@@ -856,6 +856,7 @@ def service_worker():
 
 
 def create_admin_user():
+    admin_created = False
     company = Company.query.first()
     if company is None:
         company = Company(name=os.environ.get("COMPANY_NAME", "StockArmobile"))
@@ -879,20 +880,22 @@ def create_admin_user():
             if payload["code"] not in existing_codes:
                 db.session.add(Plan(**payload))
 
-    if User.query.first() is None:
+    if User.query.filter_by(username="admin").first() is None:
         is_production = os.environ.get("FLASK_ENV") == "production" or os.environ.get("RENDER")
         admin_password = os.environ.get("ADMIN_PASSWORD")
         if is_production and not admin_password:
-            app.logger.warning("ADMIN_PASSWORD no configurado; se omite la creacion del usuario admin por defecto.")
+            app.logger.warning("ADMIN_PASSWORD no configurado; no se pudo crear el usuario admin.")
         else:
             user = User(
-                username=os.environ.get("ADMIN_USERNAME", "admin"),
+                username="admin",
                 email=os.environ.get("ADMIN_EMAIL", "admin@stockarmobile.local"),
                 company_id=company.id,
+                active=True,
             )
             user.set_password(admin_password or "admin123")
-            user.role = "superadmin"
+            user.role = "admin"
             db.session.add(user)
+            admin_created = True
 
     if Subscription.query.filter_by(company_id=company.id).first() is None:
         trial_plan = Plan.query.filter_by(code="trial").first() or Plan.query.order_by(Plan.id.asc()).first()
@@ -910,6 +913,9 @@ def create_admin_user():
         )
         db.session.add(subscription)
     db.session.commit()
+    if admin_created:
+        app.logger.info("Admin creado")
+    return admin_created
 
 
 def bootstrap_database():
@@ -917,10 +923,17 @@ def bootstrap_database():
     if getattr(app, "_bootstrap_done", False):
         return
     with app.app_context():
+        app.logger.info("Creando tablas...")
         db.create_all()
+        inspector = inspect(db.engine)
+        if "users" in set(inspector.get_table_names()):
+            app.logger.info("Tabla users creada")
+        else:
+            app.logger.error("Tabla users no encontrada luego de create_all")
         ensure_database_schema()
         create_admin_user()
         ensure_primary_superadmin()
+        app.logger.info("Bootstrap completado")
     app._bootstrap_done = True
 
 
@@ -943,8 +956,8 @@ def ensure_primary_superadmin():
     if not first_user.active:
         first_user.active = True
         changed = True
-    if first_user.role != "superadmin":
-        first_user.role = "superadmin"
+    if first_user.role not in {"admin", "superadmin"}:
+        first_user.role = "admin"
         changed = True
 
     if changed:
