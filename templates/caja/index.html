@@ -1,0 +1,47 @@
+{% extends "base_master.html" %}
+
+{% block title %}Caja - StockArmobile{% endblock %}
+
+{% block content %}
+<div class="app-shell">
+  <div class="d-flex flex-wrap justify-content-between align-items-center gap-3 mb-4">
+    <div><span class="page-kicker"><i class="bi bi-cash-coin"></i> Tesoreria</span><h1 class="h3 fw-bold mb-0">Caja</h1><p class="text-muted mb-0">Apertura, cierre, arqueo, ingresos y egresos.</p></div>
+  </div>
+  <div class="row g-3 mb-4">
+    <div class="col-lg-4">
+      <div class="card app-card h-100"><div class="card-body">
+        {% if open_session %}
+        <h2 class="h6 fw-bold">Caja abierta #{{ open_session.id }}</h2>
+        <p class="text-muted">Apertura: ${{ "%.2f"|format(open_session.opening_amount or 0) }}</p>
+        <form method="post" class="row g-2">
+          <input type="hidden" name="csrf_token" value="{{ csrf_token() }}"><input type="hidden" name="action" value="close">
+          <div class="col-12"><label class="form-label">Importe contado</label><input class="form-control" name="closing_amount" type="number" step="0.01" required></div>
+          <div class="col-12"><button class="btn btn-danger w-100">Cerrar caja</button></div>
+        </form>
+        {% else %}
+        <h2 class="h6 fw-bold">Abrir caja</h2>
+        <form method="post" class="row g-2">
+          <input type="hidden" name="csrf_token" value="{{ csrf_token() }}"><input type="hidden" name="action" value="open">
+          <div class="col-12"><label class="form-label">Monto inicial</label><input class="form-control" name="opening_amount" type="number" step="0.01" value="0"></div>
+          <div class="col-12"><button class="btn btn-primary w-100">Abrir</button></div>
+        </form>
+        {% endif %}
+      </div></div>
+    </div>
+    <div class="col-lg-8">
+      <div class="card app-card h-100"><div class="card-body">
+        <h2 class="h6 fw-bold">Movimiento</h2>
+        <form method="post" class="row g-2">
+          <input type="hidden" name="csrf_token" value="{{ csrf_token() }}"><input type="hidden" name="action" value="movement">
+          <div class="col-md-3"><select class="form-select" name="movement_type"><option value="ingreso">Ingreso</option><option value="egreso">Egreso</option></select></div>
+          <div class="col-md-3"><input class="form-control" name="category" placeholder="Categoria"></div>
+          <div class="col-md-3"><input class="form-control" name="amount" type="number" step="0.01" placeholder="Importe"></div>
+          <div class="col-md-3"><button class="btn btn-success w-100" {% if not open_session %}disabled{% endif %}>Registrar</button></div>
+          <div class="col-12"><input class="form-control" name="description" placeholder="Descripcion"></div>
+        </form>
+      </div></div>
+    </div>
+  </div>
+  <div class="card app-card"><div class="table-responsive"><table class="table table-hover mb-0"><thead><tr><th>Fecha</th><th>Tipo</th><th>Categoria</th><th class="text-end">Importe</th></tr></thead><tbody>{% for movement in movements %}<tr><td>{{ movement.created_at.strftime('%Y-%m-%d %H:%M') }}</td><td>{{ movement.movement_type }}</td><td>{{ movement.category or '-' }}</td><td class="text-end">${{ "%.2f"|format(movement.amount) }}</td></tr>{% else %}<tr><td colspan="4" class="text-center text-muted py-4">Sin movimientos.</td></tr>{% endfor %}</tbody></table></div></div>
+</div>
+{% endblock %}

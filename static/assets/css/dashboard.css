@@ -1,0 +1,9 @@
+/* Ajustes especificos del dashboard; la base visual vive en base_master.html. */
+
+.dashboard-chart {
+  min-height: 220px;
+}
+
+.list-group-item-action:hover {
+  background-color: rgba(37, 99, 235, .08);
+}

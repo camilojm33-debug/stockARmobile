@@ -1,0 +1,203 @@
+{% extends "base_master.html" %}
+
+{% block content %}
+
+<div class="container-fluid py-4">
+
+    <!-- Encabezado -->
+    <div class="d-flex justify-content-between align-items-center mb-4">
+        <div>
+            <h2 class="fw-bold mb-0">
+                <i class="bi bi-shop me-2"></i>POS Premium
+            </h2>
+            <small class="text-muted">
+                Punto de Venta
+            </small>
+        </div>
+
+        <div class="text-end">
+            {% if current_user %}
+                <span class="text-muted small">
+                    {{ current_user.username }}
+                </span>
+            {% endif %}
+        </div>
+    </div>
+
+    <!-- Buscador -->
+    <div class="input-group input-group-lg mb-4">
+        <span class="input-group-text">
+            <i class="bi bi-search"></i>
+        </span>
+
+        <input
+            type="text"
+            class="form-control"
+            placeholder="Buscar productos..."
+            autocomplete="off">
+    </div>
+
+    <div class="row g-4">
+
+        <!-- Columna izquierda -->
+        <div class="col-lg-8">
+
+            <!-- Escáner -->
+            <div class="card shadow-sm border-0 mb-4">
+
+                <div class="card-header bg-white">
+                    <strong>
+                        <i class="bi bi-upc-scan me-2"></i>
+                        Escáner
+                    </strong>
+                </div>
+
+                <div class="card-body">
+
+                    <input
+                        type="text"
+                        class="form-control form-control-lg"
+                        placeholder="Escanear código de barras">
+
+                </div>
+
+            </div>
+
+            <!-- Productos -->
+            <div class="card shadow-sm border-0">
+
+                <div class="card-header bg-white">
+                    <strong>
+                        Productos
+                    </strong>
+                </div>
+
+                <div class="card-body">
+
+                    <div
+                        id="product-grid"
+                        class="row row-cols-1 row-cols-sm-2 row-cols-lg-3 g-3">
+
+                        <!-- Productos -->
+
+                    </div>
+
+                </div>
+
+            </div>
+
+        </div>
+
+        <!-- Columna derecha -->
+        <div class="col-lg-4">
+
+            <!-- Carrito -->
+            <div class="card shadow-sm border-0 mb-3">
+
+                <div class="card-header bg-white">
+                    <strong>
+                        <i class="bi bi-cart3 me-2"></i>
+                        Carrito
+                    </strong>
+                </div>
+
+                <div
+                    class="card-body"
+                    style="min-height:300px;">
+
+                    <div class="text-center text-muted">
+
+                        El carrito está vacío
+
+                    </div>
+
+                </div>
+
+            </div>
+
+            <!-- Totales -->
+            <div class="card shadow-sm border-0 mb-3">
+
+                <div class="card-header bg-white">
+
+                    <strong>Totales</strong>
+
+                </div>
+
+                <div class="card-body">
+
+                    <div class="d-flex justify-content-between mb-2">
+                        <span>Subtotal</span>
+                        <strong>$0.00</strong>
+                    </div>
+
+                    <div class="d-flex justify-content-between mb-2">
+                        <span>IVA</span>
+                        <strong>$0.00</strong>
+                    </div>
+
+                    <div class="d-flex justify-content-between mb-2">
+                        <span>Descuento</span>
+                        <strong>$0.00</strong>
+                    </div>
+
+                    <hr>
+
+                    <div class="d-flex justify-content-between">
+
+                        <h5 class="mb-0">
+                            TOTAL
+                        </h5>
+
+                        <h5 class="mb-0 text-success">
+                            $0.00
+                        </h5>
+
+                    </div>
+
+                </div>
+
+            </div>
+
+            <!-- Métodos de pago -->
+            <div class="card shadow-sm border-0">
+
+                <div class="card-header bg-white">
+
+                    <strong>Métodos de pago</strong>
+
+                </div>
+
+                <div class="card-body d-grid gap-2">
+
+                    <button class="btn btn-success">
+                        💵 Efectivo
+                    </button>
+
+                    <button class="btn btn-primary">
+                        💳 Débito
+                    </button>
+
+                    <button class="btn btn-primary">
+                        💳 Crédito
+                    </button>
+
+                    <button class="btn btn-secondary">
+                        🏦 Transferencia
+                    </button>
+
+                    <button class="btn btn-warning">
+                        📱 QR
+                    </button>
+
+                </div>
+
+            </div>
+
+        </div>
+
+    </div>
+
+</div>
+
+{% endblock %}

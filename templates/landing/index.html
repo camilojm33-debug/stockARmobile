@@ -1,0 +1,488 @@
+<!doctype html>
+<html lang="es">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>StockArmobile | Controlá tu negocio desde cualquier lugar</title>
+  <meta name="description" content="Gestioná productos, clientes y ventas desde una plataforma simple, rápida y segura para emprendedores y negocios en crecimiento.">
+  <meta name="theme-color" content="#2563EB">
+  <meta name="color-scheme" content="light dark">
+  <meta property="og:title" content="StockArmobile | Controlá tu negocio desde cualquier lugar">
+  <meta property="og:description" content="Gestioná productos, clientes y ventas desde una plataforma simple, rápida y segura.">
+  <meta property="og:type" content="website">
+  <meta property="og:image" content="{{ url_for('static', filename='assets/icons/icon-192.png') }}">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Poppins:wght@400;500;600;700&display=swap" rel="stylesheet">
+  <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/css/bootstrap.min.css" rel="stylesheet">
+  <link href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.11.3/font/bootstrap-icons.min.css" rel="stylesheet">
+  <link href="{{ url_for('static', filename='assets/css/landing.css') }}" rel="stylesheet">
+</head>
+<body>
+  <div class="page-shell">
+    <div class="announcement-bar">
+      <div class="container d-flex flex-wrap align-items-center justify-content-center gap-2">
+        <span class="announcement-pill"><i class="bi bi-lightning-charge-fill"></i> Lanzamiento comercial SaaS</span>
+        <span class="announcement-text">Activa tu prueba y empezá a vender con control total desde hoy.</span>
+      </div>
+    </div>
+
+    <header class="hero-section">
+      <div class="bg-orb orb-one"></div>
+      <div class="bg-orb orb-two"></div>
+      <div class="bg-grid" aria-hidden="true"></div>
+      <nav class="navbar navbar-expand-lg py-3">
+        <div class="container">
+          <a class="navbar-brand d-flex align-items-center gap-2 fw-bold" href="{{ url_for('index') }}">
+            <span class="brand-mark"><i class="bi bi-phone"></i></span>
+            <span>StockArmobile</span>
+          </a>
+          <div class="ms-auto d-flex align-items-center gap-2">
+            <button class="theme-toggle" id="themeToggle" type="button" aria-label="Cambiar tema">
+              <i class="bi bi-moon-fill icon-moon"></i>
+              <i class="bi bi-sun-fill icon-sun"></i>
+            </button>
+            <a class="btn btn-link text-dark fw-semibold px-3" href="{{ url_for('auth.login') }}">Iniciar Sesión</a>
+            <a class="btn btn-primary btn-pill" href="{{ url_for('auth.register') }}">Probar Gratis 14 días</a>
+          </div>
+        </div>
+      </nav>
+
+      <div class="container py-5 py-lg-6">
+        <div class="row align-items-center g-5">
+          <div class="col-lg-7 reveal" data-delay="80">
+            <div class="hero-copy">
+              <div class="hero-badges">
+                <span class="eyebrow"><i class="bi bi-stars"></i> Gestión premium para negocios en movimiento</span>
+                <span class="trust-badge"><i class="bi bi-shield-check"></i> 99.9% uptime garantizado</span>
+              </div>
+              <h1 class="display-4 fw-bold mb-4">El sistema que hace que tu operación se vea y funcione al nivel de una gran marca.</h1>
+              <p class="lead text-muted mb-4">Unificá inventario, clientes, ventas, caja y reportes en una sola experiencia. Rápida en móvil, clara en escritorio y pensada para decisiones diarias.</p>
+              <div class="d-flex flex-wrap gap-3 mb-4">
+                <a class="btn btn-primary btn-lg btn-pill" href="{{ url_for('auth.register') }}">Iniciar Prueba Gratis</a>
+                <a class="btn btn-outline-primary btn-lg btn-pill" href="#capturas">Ver Cómo Se Ve</a>
+              </div>
+              <div class="hero-highlights d-flex flex-wrap gap-3">
+                <span><i class="bi bi-shield-check"></i> Seguridad comercial</span>
+                <span><i class="bi bi-phone"></i> UX táctil real</span>
+                <span><i class="bi bi-lightning-charge"></i> Implementación en minutos</span>
+              </div>
+              <div class="hero-stats mt-4">
+                <div class="metric-card reveal">
+                  <div class="metric-value" data-counter="99.9" data-suffix="%">0</div>
+                  <div class="metric-label">Disponibilidad</div>
+                </div>
+                <div class="metric-card reveal">
+                  <div class="metric-value" data-counter="4.8" data-suffix="/5">0</div>
+                  <div class="metric-label">Satisfacción</div>
+                </div>
+                <div class="metric-card reveal">
+                  <div class="metric-value" data-counter="72" data-suffix="h">0</div>
+                  <div class="metric-label">Onboarding promedio</div>
+                </div>
+              </div>
+            </div>
+          </div>
+          <div class="col-lg-5 reveal" data-delay="180">
+            <div class="hero-mockup" role="img" aria-label="Mockup del dashboard de StockArmobile">
+              <div class="mockup-window">
+                <div class="mockup-toolbar">
+                  <span></span>
+                  <span></span>
+                  <span></span>
+                  <div class="toolbar-url">app.stockarmobile.com/dashboard</div>
+                </div>
+                <div class="mockup-body">
+                  <div class="mockup-sidebar">
+                    <div class="sidebar-pill"></div>
+                    <div class="sidebar-pill short"></div>
+                    <div class="sidebar-pill"></div>
+                    <div class="sidebar-pill short"></div>
+                  </div>
+                  <div class="mockup-content">
+                    <div class="mockup-card large">
+                      <div class="mockup-head">Dashboard comercial</div>
+                      <div class="mockup-chart">
+                        <span></span><span></span><span></span><span></span>
+                      </div>
+                    </div>
+                    <div class="mockup-grid">
+                      <div class="mockup-card small">
+                        <div class="mockup-label">Ventas del día</div>
+                        <div class="mockup-value">$41.280</div>
+                      </div>
+                      <div class="mockup-card small">
+                        <div class="mockup-label">Ticket promedio</div>
+                        <div class="mockup-value">$8.540</div>
+                      </div>
+                      <div class="mockup-card small">
+                        <div class="mockup-label">Clientes activos</div>
+                        <div class="mockup-value">318</div>
+                      </div>
+                      <div class="mockup-card small">
+                        <div class="mockup-label">Stock crítico</div>
+                        <div class="mockup-value">12 ítems</div>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              </div>
+              <div class="mockup-floating">
+                <span class="pulse-dot"></span>
+                Sincronización en tiempo real
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </header>
+
+    <section class="section-compact logo-strip">
+      <div class="container">
+        <div class="logo-row reveal" data-delay="80">
+          <span class="logo-pill"><strong>AR</strong> Aurora Retail</span>
+          <span class="logo-pill"><strong>NM</strong> Norte Market</span>
+          <span class="logo-pill"><strong>BB</strong> Blue Box</span>
+          <span class="logo-pill"><strong>MM</strong> Mundo Moda</span>
+          <span class="logo-pill"><strong>OA</strong> Oro & Arte</span>
+          <span class="logo-pill"><strong>CV</strong> Casa Verde</span>
+        </div>
+      </div>
+    </section>
+
+    <main>
+      <section class="section" id="beneficios">
+        <div class="container">
+          <div class="section-heading text-center reveal" data-delay="40">
+            <span class="eyebrow">Por qué elegir StockArmobile</span>
+            <h2 class="section-title">Todo lo que necesitas para crecer sin fricción</h2>
+          </div>
+          <div class="row g-4 mt-2">
+            <div class="col-md-4 reveal" data-delay="80">
+              <article class="feature-card h-100">
+                <div class="feature-icon"><i class="bi bi-box-seam"></i></div>
+                <h3>Control de Stock</h3>
+                <p>Controlá inventario en tiempo real con visibilidad de cada producto y movimiento.</p>
+              </article>
+            </div>
+            <div class="col-md-4 reveal" data-delay="140">
+              <article class="feature-card h-100">
+                <div class="feature-icon"><i class="bi bi-people"></i></div>
+                <h3>Clientes</h3>
+                <p>Gestioná clientes, seguimiento y comunicación desde un solo lugar.</p>
+              </article>
+            </div>
+            <div class="col-md-4 reveal" data-delay="200">
+              <article class="feature-card h-100">
+                <div class="feature-icon"><i class="bi bi-cash-coin"></i></div>
+                <h3>Ventas</h3>
+                <p>Registrá ventas en segundos y tomá decisiones con datos claros y precisos.</p>
+              </article>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <section class="section section-soft" id="funcionalidades">
+        <div class="container">
+          <div class="row align-items-center g-5">
+            <div class="col-lg-6 reveal" data-delay="60">
+              <span class="eyebrow">Funcionalidades pensadas para operar mejor</span>
+              <h2 class="section-title">Una solución completa para tu día a día</h2>
+              <p class="text-muted mb-4">Conectá productos, clientes, ventas y reportes en una plataforma que reduce fricción y te ayuda a enfocar tus operaciones.</p>
+              <ul class="feature-list list-unstyled">
+                <li><i class="bi bi-check-circle-fill"></i> Productos</li>
+                <li><i class="bi bi-check-circle-fill"></i> Clientes</li>
+                <li><i class="bi bi-check-circle-fill"></i> Ventas</li>
+                <li><i class="bi bi-check-circle-fill"></i> Estadísticas</li>
+                <li><i class="bi bi-check-circle-fill"></i> QR</li>
+                <li><i class="bi bi-check-circle-fill"></i> Etiquetas PDF</li>
+                <li><i class="bi bi-check-circle-fill"></i> Responsive</li>
+                <li><i class="bi bi-check-circle-fill"></i> Seguridad</li>
+              </ul>
+            </div>
+            <div class="col-lg-6 reveal" data-delay="140">
+              <div class="system-card">
+                <div class="system-visual">
+                  <div class="visual-top">
+                    <h3>Vista real del flujo operativo</h3>
+                    <p>Panel de control, ventas y alertas en una sola pantalla.</p>
+                  </div>
+                  <div class="visual-row real-shot-grid">
+                    <div class="visual-panel real-shot-card">
+                      <h4>Ventas</h4>
+                      <strong>$126.540</strong>
+                      <span>Últimos 7 días</span>
+                    </div>
+                    <div class="visual-panel wide real-shot-card">
+                      <h4>Stock crítico</h4>
+                      <strong>12 productos</strong>
+                      <span>Reposición sugerida</span>
+                    </div>
+                  </div>
+                  <div class="visual-row real-shot-grid">
+                    <div class="visual-panel wide real-shot-card">
+                      <h4>Clientes frecuentes</h4>
+                      <strong>64 activos</strong>
+                      <span>+18% mensual</span>
+                    </div>
+                    <div class="visual-panel real-shot-card">
+                      <h4>Caja</h4>
+                      <strong>Abierta</strong>
+                      <span>Sin desvíos</span>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <section class="section" id="capturas">
+        <div class="container">
+          <div class="section-heading text-center reveal" data-delay="40">
+            <span class="eyebrow">Capturas del producto</span>
+            <h2 class="section-title">Diseño claro, foco en ventas y operación</h2>
+          </div>
+          <div class="row g-4 mt-2">
+            <div class="col-sm-6 col-lg-3 reveal" data-delay="70">
+              <article class="capture-card">
+                <div class="capture-placeholder">
+                  <i class="bi bi-speedometer2"></i>
+                  <span>Dashboard Ejecutivo</span>
+                </div>
+              </article>
+            </div>
+            <div class="col-sm-6 col-lg-3 reveal" data-delay="120">
+              <article class="capture-card">
+                <div class="capture-placeholder">
+                  <i class="bi bi-cart-check"></i>
+                  <span>POS de Ventas</span>
+                </div>
+              </article>
+            </div>
+            <div class="col-sm-6 col-lg-3 reveal" data-delay="170">
+              <article class="capture-card">
+                <div class="capture-placeholder">
+                  <i class="bi bi-people"></i>
+                  <span>CRM de Clientes</span>
+                </div>
+              </article>
+            </div>
+            <div class="col-sm-6 col-lg-3 reveal" data-delay="220">
+              <article class="capture-card">
+                <div class="capture-placeholder">
+                  <i class="bi bi-file-earmark-bar-graph"></i>
+                  <span>Reportes y Excel</span>
+                </div>
+              </article>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <section class="section section-soft" id="como-funciona">
+        <div class="container">
+          <div class="section-heading text-center reveal" data-delay="40">
+            <span class="eyebrow">Cómo funciona</span>
+            <h2 class="section-title">En cuatro pasos, listo para operar</h2>
+          </div>
+          <div class="process-grid mt-5">
+            <div class="process-step reveal" data-delay="80">
+              <span class="step-number">1</span>
+              <h3>Registrate</h3>
+              <p>Crea tu cuenta y accedé al panel en minutos.</p>
+            </div>
+            <div class="process-step reveal" data-delay="130">
+              <span class="step-number">2</span>
+              <h3>Cargá productos</h3>
+              <p>Organizá inventario y precios con una experiencia simple.</p>
+            </div>
+            <div class="process-step reveal" data-delay="180">
+              <span class="step-number">3</span>
+              <h3>Vendé</h3>
+              <p>Registrar ventas y clientes sin complicaciones.</p>
+            </div>
+            <div class="process-step reveal" data-delay="230">
+              <span class="step-number">4</span>
+              <h3>Analizá resultados</h3>
+              <p>Tomá decisiones con métricas claras y en tiempo real.</p>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <section class="section" id="planes">
+        <div class="container">
+          <div class="section-heading text-center reveal" data-delay="40">
+            <span class="eyebrow">Planes claros</span>
+            <h2 class="section-title">Elige el plan que acompaña tu crecimiento</h2>
+          </div>
+          <div class="row g-4 mt-2">
+            <div class="col-lg-6 reveal" data-delay="90">
+              <article class="pricing-card">
+                <div class="pricing-head">
+                  <h3>Emprendedor</h3>
+                  <p class="price">$0</p>
+                  <p class="text-muted">Perfecto para comenzar.</p>
+                </div>
+                <ul>
+                  <li><i class="bi bi-check2"></i> Productos y clientes</li>
+                  <li><i class="bi bi-check2"></i> Registro de ventas</li>
+                  <li><i class="bi bi-check2"></i> Soporte básico</li>
+                </ul>
+                <a class="btn btn-outline-primary btn-pill w-100" href="{{ url_for('auth.register') }}">Empezar ahora</a>
+              </article>
+            </div>
+            <div class="col-lg-6 reveal" data-delay="150">
+              <article class="pricing-card featured">
+                <div class="pricing-head">
+                  <span class="recommended">Recomendado</span>
+                  <h3>Negocio</h3>
+                  <p class="price">$29<span>/mes</span></p>
+                  <p class="text-muted">Escala con confianza.</p>
+                </div>
+                <ul>
+                  <li><i class="bi bi-check2"></i> Funcionalidades avanzadas</li>
+                  <li><i class="bi bi-check2"></i> Reportes y métricas</li>
+                  <li><i class="bi bi-check2"></i> Soporte prioritario</li>
+                </ul>
+                <a class="btn btn-primary btn-pill w-100" href="{{ url_for('auth.register') }}">Empezar ahora</a>
+              </article>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <section class="section section-soft" id="faq">
+        <div class="container">
+          <div class="section-heading text-center reveal" data-delay="40">
+            <span class="eyebrow">Preguntas frecuentes</span>
+            <h2 class="section-title">Todo lo que necesitás saber</h2>
+          </div>
+          <div class="row justify-content-center mt-4">
+            <div class="col-lg-10 reveal" data-delay="100">
+              <div class="accordion" id="faqAccordion">
+                <div class="accordion-item">
+                  <h3 class="accordion-header">
+                    <button class="accordion-button" type="button" data-bs-toggle="collapse" data-bs-target="#faq-1" aria-expanded="true" aria-controls="faq-1">
+                      ¿Necesito instalar algo?
+                    </button>
+                  </h3>
+                  <div id="faq-1" class="accordion-collapse collapse show" data-bs-parent="#faqAccordion">
+                    <div class="accordion-body">No. StockArmobile funciona directamente desde tu navegador, sin instalaciones adicionales.</div>
+                  </div>
+                </div>
+                <div class="accordion-item">
+                  <h3 class="accordion-header">
+                    <button class="accordion-button collapsed" type="button" data-bs-toggle="collapse" data-bs-target="#faq-2" aria-expanded="false" aria-controls="faq-2">
+                      ¿Funciona desde el celular?
+                    </button>
+                  </h3>
+                  <div id="faq-2" class="accordion-collapse collapse" data-bs-parent="#faqAccordion">
+                    <div class="accordion-body">Sí. La interfaz está diseñada para funcionar de forma óptima en desktop, tablet y móvil.</div>
+                  </div>
+                </div>
+                <div class="accordion-item">
+                  <h3 class="accordion-header">
+                    <button class="accordion-button collapsed" type="button" data-bs-toggle="collapse" data-bs-target="#faq-3" aria-expanded="false" aria-controls="faq-3">
+                      ¿Tiene prueba gratis?
+                    </button>
+                  </h3>
+                  <div id="faq-3" class="accordion-collapse collapse" data-bs-parent="#faqAccordion">
+                    <div class="accordion-body">Sí, podés comenzar con una prueba gratuita y ver si el sistema se adapta a tu negocio.</div>
+                  </div>
+                </div>
+                <div class="accordion-item">
+                  <h3 class="accordion-header">
+                    <button class="accordion-button collapsed" type="button" data-bs-toggle="collapse" data-bs-target="#faq-4" aria-expanded="false" aria-controls="faq-4">
+                      ¿Cómo pago?
+                    </button>
+                  </h3>
+                  <div id="faq-4" class="accordion-collapse collapse" data-bs-parent="#faqAccordion">
+                    <div class="accordion-body">Los pagos se gestionan de forma simple y segura, con opciones flexibles según el plan elegido.</div>
+                  </div>
+                </div>
+                <div class="accordion-item">
+                  <h3 class="accordion-header">
+                    <button class="accordion-button collapsed" type="button" data-bs-toggle="collapse" data-bs-target="#faq-5" aria-expanded="false" aria-controls="faq-5">
+                      ¿Pierdo mis datos?
+                    </button>
+                  </h3>
+                  <div id="faq-5" class="accordion-collapse collapse" data-bs-parent="#faqAccordion">
+                    <div class="accordion-body">No. Tus registros se almacenan de forma segura y la plataforma está preparada para mantener continuidad operativa.</div>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <section class="section">
+        <div class="container">
+          <div class="cta-block reveal" data-delay="80">
+            <div class="row align-items-center g-4">
+              <div class="col-lg-8">
+                <h2>Pasá de “administrar” a escalar con control.</h2>
+                <p>Creá tu cuenta en menos de 2 minutos y probá una operación más rápida, más clara y lista para crecer.</p>
+              </div>
+              <div class="col-lg-4 text-lg-end">
+                <a class="btn btn-light btn-lg btn-pill cta-strong" href="{{ url_for('auth.register') }}">Quiero mi prueba gratis</a>
+              </div>
+            </div>
+          </div>
+        </div>
+      </section>
+    </main>
+
+    <footer class="footer">
+      <div class="container">
+        <div class="row g-4 align-items-start">
+          <div class="col-md-4">
+            <a class="navbar-brand d-flex align-items-center gap-2 fw-bold mb-3" href="{{ url_for('index') }}">
+              <span class="brand-mark"><i class="bi bi-phone"></i></span>
+              <span>StockArmobile</span>
+            </a>
+            <p class="text-muted">Una plataforma moderna para gestionar inventario, ventas y clientes con agilidad y control.</p>
+            <div class="footer-social">
+              <a href="#" aria-label="Instagram"><i class="bi bi-instagram"></i></a>
+              <a href="#" aria-label="LinkedIn"><i class="bi bi-linkedin"></i></a>
+              <a href="#" aria-label="YouTube"><i class="bi bi-youtube"></i></a>
+            </div>
+          </div>
+          <div class="col-md-2">
+            <h3>Producto</h3>
+            <ul>
+              <li><a href="#beneficios">Beneficios</a></li>
+              <li><a href="#funcionalidades">Funcionalidades</a></li>
+              <li><a href="#planes">Planes</a></li>
+            </ul>
+          </div>
+          <div class="col-md-3">
+            <h3>Contacto</h3>
+            <ul>
+              <li><a href="mailto:hola@stockarmobile.com">hola@stockarmobile.com</a></li>
+              <li><a href="{{ url_for('auth.login') }}">Acceder</a></li>
+              <li><a href="{{ url_for('auth.register') }}">Crear cuenta</a></li>
+            </ul>
+          </div>
+          <div class="col-md-3">
+            <h3>Legal</h3>
+            <ul>
+              <li><a href="#faq">FAQ</a></li>
+              <li><a href="#">Privacidad</a></li>
+              <li><a href="#">Términos</a></li>
+            </ul>
+          </div>
+        </div>
+        <div class="footer-bottom">© 2026 StockArmobile SaaS. Todos los derechos reservados.</div>
+      </div>
+    </footer>
+  </div>
+
+  <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/js/bootstrap.bundle.min.js"></script>
+  <script src="{{ url_for('static', filename='assets/js/landing.js') }}" defer></script>
+</body>
+</html>

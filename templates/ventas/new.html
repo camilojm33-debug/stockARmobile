@@ -1,0 +1,169 @@
+{% extends "base_master.html" %}
+
+{% block title %}Nueva Venta - StockArmobile{% endblock %}
+
+{% block content %}
+<div class="container py-4">
+    <div class="row">
+        <!-- Sidebar con productos -->
+        <div class="col-lg-8 mb-3">
+            <div class="card shadow-sm border-0">
+                <div class="card-header bg-white border-0 pt-3 px-4">
+                    <h5 class="mb-0 text-primary"><i class="bi bi-box-seam me-2"></i>Productos Disponibles</h5>
+                    <p class="text-muted mb-0 small text-uppercase">{{ products|length }} productos</p>
+                </div>
+                
+                <!-- Barra de búsqueda -->
+                <div class="card-body p-3 bg-light">
+                    <form method="get" action="{{ url_for('sales.new_sale') }}">
+                        <input type="text" name="q" id="search-input" 
+                               class="form-control form-control-lg border-0 shadow-sm" 
+                               placeholder="Buscar por nombre, SKU o categoría..."
+                               value="{{ request.args.get('q', '') }}">
+                    </form>
+                </div>
+                
+                <!-- Lista de productos -->
+                <div class="table-responsive">
+                    <table class="table table-hover mb-0 align-middle">
+                        <thead class="bg-light sticky-top">
+                            <tr>
+                                <th class="ps-4 py-3">Producto</th>
+                                <th>Precio</th>
+                                <th>Stock</th>
+                                <th>Dcto</th>
+                                <th class="text-end pe-4 py-3">Acción</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            {% for product in products %}
+                            <tr>
+                                <td class="ps-4 py-3">
+                                    <div class="d-flex align-items-center">
+                                        <i class="bi bi-box text-primary me-2"></i>
+                                        <div>
+                                            <div>{{ product.name }}</div>
+                                            {% if product.sku %}
+                                            <small class="text-muted">{{ product.sku }}</small>
+                                            {% endif %}
+                                        </div>
+                                    </div>
+                                </td>
+                                <td class="py-3">${{ '%.2f' | format(product.price) }}</td>
+                                <td class="py-3">
+                                    {% if product.stock > 0 %}
+                                    <span class="badge bg-success">{{ product.stock }}</span>
+                                    {% else %}
+                                    <span class="badge bg-danger">Sin stock</span>
+                                    {% endif %}
+                                </td>
+                                <td class="py-3">
+                                    {% if product.discount > 0 %}
+                                    <span class="badge bg-info">{{ '%.1f' | format(product.discount) }}%</span>
+                                    {% else %}
+                                    -{% endif %}
+                                </td>
+                                <td class="text-end pe-4 py-3">
+                                    <form method="post" action="{{ url_for('sales.add_to_cart', product_id=product.id) }}" 
+                                          class="d-inline">
+                                        <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                                        <input type="hidden" name="qty" value="1">
+                                        <button type="submit" 
+                                                class="btn btn-sm btn-primary {% if product.stock == 0 %}disabled{% endif %}"
+                                                {% if product.stock == 0 %}disabled{% endif %}>
+                                            <i class="bi bi-cart-plus me-1"></i> Agregar
+                                        </button>
+                                    </form>
+                                </td>
+                            </tr>
+                            {% else %}
+                            <tr>
+                                <td colspan="5" class="text-center py-5 text-muted">
+                                    <i class="bi bi-box display-6 d-block mb-2"></i>
+                                    <p>No hay productos disponibles para mostrar.</p>
+                                    <a href="{{ url_for('sales.new_sale') }}" class="btn btn-outline-primary btn-sm">
+                                        Crear nueva venta
+                                    </a>
+                                </td>
+                            </tr>
+                            {% endfor %}
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+        </div>
+
+        <!-- Sidebar de carrito -->
+        <div class="col-lg-4">
+            <div class="card shadow-sm border-0 sticky-top" style="top: 2rem; z-index: 1;">
+                <div class="card-header bg-primary text-white pt-3 px-4 border-0">
+                    <h5 class="mb-0"><i class="bi bi-cart3 me-2"></i>Carrito</h5>
+                </div>
+                
+                <div class="card-body p-4">
+                    {% if cart %}
+                    <div class="table-responsive mb-3">
+                        <table class="table table-sm align-middle">
+                            <thead class="table-light">
+                                <tr>
+                                    <th class="ps-2">Producto</th>
+                                    <th class="text-center">Cant.</th>
+                                    <th class="text-end pe-2">Total</th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                                {% for item in cart %}
+                                <tr>
+                                    <td class="ps-2">
+                                        <div class="small">{{ item.product.name }}</div>
+                                        {% if item.product.sku %}
+                                        <div class="text-muted xxsmall">{{ item.product.sku }}</div>
+                                        {% endif %}
+                                    </td>
+                                    <td class="text-center">
+                                        <form method="post" action="{{ url_for('sales.add_to_cart', product_id=item.product.id) }}">
+                                            <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                                            <input type="hidden" name="qty" value="1">
+                                            <button type="submit" class="btn btn-sm btn-outline-secondary">
+                                                +{{ item.qty }}
+                                            </button>
+                                        </form>
+                                    </td>
+                                    <td class="text-end pe-2 fw-bold">${{ '%.2f' | format(item.product.price * item.qty) }}</td>
+                                </tr>
+                                {% endfor %}
+                            </tbody>
+                        </table>
+                    </div>
+
+                    <div class="d-grid gap-2">
+                        <a href="{{ checkout_url }}" class="btn btn-primary btn-lg">
+                            <i class="bi bi-check2 me-2"></i>Ir a Pago
+                        </a>
+                        <a href="{{ url_for('sales.new_sale') }}" class="btn btn-outline-secondary">
+                            <i class="bi bi-arrow-clockwise me-2"></i>Nueva Venta
+                        </a>
+                    </div>
+
+                    {% else %}
+                    <div class="text-center py-4 text-muted">
+                        <i class="bi bi-cart3 display-6 d-block mb-3 opacity-50"></i>
+                        <p>No hay productos en el carrito</p>
+                        <a href="{{ url_for('products.index') }}" class="btn btn-outline-primary btn-sm">
+                            Ver Productos
+                        </a>
+                    </div>
+                    {% endif %}
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %}
+
+{% block extra_css %}
+<style>
+.xxsmall { font-size: 0.75rem; }
+.table > :not(caption) > * > * { vertical-align: middle; }
+</style>
+{% endblock %}

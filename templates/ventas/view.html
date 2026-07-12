@@ -1,0 +1,48 @@
+{% extends "base_master.html" %}
+
+{% block title %}Venta #{{ sale.id }} - StockArmobile{% endblock %}
+
+{% block content %}
+<div class="container">
+  <div class="card border-0 shadow-sm">
+    <div class="card-body">
+      <div class="d-flex justify-content-between align-items-start mb-4">
+        <div>
+          <h1 class="h4 fw-bold mb-1">Venta #{{ sale.id }}</h1>
+          <p class="text-muted mb-0">{{ sale.date.strftime('%Y-%m-%d %H:%M') if sale.date else '' }} - {{ sale.customer or 'Consumidor final' }}</p>
+        </div>
+        <div class="d-flex gap-2">
+          <a class="btn btn-outline-primary" href="{{ url_for('qr_labels.generate_pdf_ticket', sale_id=sale.id) }}" target="_blank">PDF</a>
+          <a class="btn btn-outline-secondary" href="{{ url_for('sales.index') }}">Volver</a>
+        </div>
+      </div>
+
+      <div class="table-responsive">
+        <table class="table align-middle">
+          <thead class="table-light"><tr><th>Producto</th><th>Cantidad</th><th>Precio</th><th class="text-end">Subtotal</th></tr></thead>
+          <tbody>
+            {% for item in sale.items %}
+            <tr>
+              <td>{{ item.product.name if item.product else 'Producto eliminado' }}</td>
+              <td>{{ item.quantity }}</td>
+              <td>${{ "%.2f"|format(item.price) }}</td>
+              <td class="text-end">${{ "%.2f"|format(item.total_amount) }}</td>
+            </tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      </div>
+
+      <div class="row justify-content-end">
+        <div class="col-md-4">
+          <div class="d-flex justify-content-between"><span>Subtotal</span><strong>${{ "%.2f"|format(sale.subtotal) }}</strong></div>
+          <div class="d-flex justify-content-between"><span>Descuento</span><strong>${{ "%.2f"|format(sale.discount) }}</strong></div>
+          <div class="d-flex justify-content-between"><span>IVA</span><strong>${{ "%.2f"|format(sale.tax) }}</strong></div>
+          <hr>
+          <div class="d-flex justify-content-between fs-5"><span>Total</span><strong>${{ "%.2f"|format(sale.total_amount) }}</strong></div>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+{% endblock %}

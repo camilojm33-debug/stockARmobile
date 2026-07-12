@@ -1,0 +1,434 @@
+﻿
+
+### DIFF CHANGELOG.md
+
+diff --git "a/C:\\Users\\USUARIO\\Documents\\Codex\\2026-07-02\\realiz-una-auditor-a-completa-del\\StockArmobile_SaaS_Audit_Release\\CHANGELOG.md" "b/C:\\Users\\USUARIO\\Documents\\Codex\\2026-07-02\\realiz-una-auditor-a-completa-del\\StockArmobile_SaaS_Audit_Work\\CHANGELOG.md"
+index c0a8d81..f6f3875 100644
+--- "a/C:\\Users\\USUARIO\\Documents\\Codex\\2026-07-02\\realiz-una-auditor-a-completa-del\\StockArmobile_SaaS_Audit_Release\\CHANGELOG.md"
++++ "b/C:\\Users\\USUARIO\\Documents\\Codex\\2026-07-02\\realiz-una-auditor-a-completa-del\\StockArmobile_SaaS_Audit_Work\\CHANGELOG.md"
+@@ -24,3 +24,20 @@
+ - Sintaxis Python por AST: OK.
+ - Sintaxis JavaScript con Node `--check`: OK.
+ - `pytest -q tests -p no:cacheprovider`: 2 tests OK.
++
++## 2026-07-11
++
++- Se completo la exportacion Excel `.xlsx` para reportes operativos: ventas, compras, gastos, caja, clientes, productos y stock.
++- Se agregaron botones Excel en la pantalla de Reportes.
++- Se agrego Kardex por producto con movimientos de ventas, compras y modificaciones.
++- Se conecto el acceso a Kardex desde el listado de Productos.
++- Se agrego exportacion Excel de metricas SaaS/Superadmin.
++- Se agrego accion segura para suspender/reactivar empresas desde Superadmin, sincronizando usuarios de esa empresa.
++- Se registro auditoria al cambiar el estado de una empresa.
++- Se ampliaron tests smoke para reportes Excel, Kardex y metricas Superadmin.
++
++## Verificacion adicional
++
++- Sintaxis Python por AST: OK.
++- Sintaxis JavaScript con Node `--check`: OK.
++- `pytest -q tests -p no:cacheprovider`: 2 tests OK.
+
+### DIFF AUDIT_REPORT.md
+
+diff --git "a/C:\\Users\\USUARIO\\Documents\\Codex\\2026-07-02\\realiz-una-auditor-a-completa-del\\StockArmobile_SaaS_Audit_Release\\AUDIT_REPORT.md" "b/C:\\Users\\USUARIO\\Documents\\Codex\\2026-07-02\\realiz-una-auditor-a-completa-del\\StockArmobile_SaaS_Audit_Work\\AUDIT_REPORT.md"
+index da99eb1..db2183d 100644
+--- "a/C:\\Users\\USUARIO\\Documents\\Codex\\2026-07-02\\realiz-una-auditor-a-completa-del\\StockArmobile_SaaS_Audit_Release\\AUDIT_REPORT.md"
++++ "b/C:\\Users\\USUARIO\\Documents\\Codex\\2026-07-02\\realiz-una-auditor-a-completa-del\\StockArmobile_SaaS_Audit_Work\\AUDIT_REPORT.md"
+@@ -36,6 +36,10 @@ Se audito la aplicacion Flask StockArmobile sobre una copia de trabajo. El proye
+ - Excel real para productos: exportacion `.xlsx` e importacion actualizando por codigo.
+ - CRM con compras y total comprado por cliente.
+ - Panel SaaS/Superadmin con metricas comerciales y operativas.
++- Acciones Superadmin para suspender/reactivar empresas con registro de auditoria.
++- Exportacion Excel de metricas globales del SaaS.
++- Reportes Excel para ventas, compras, gastos, caja, clientes, productos y stock.
++- Kardex por producto con ventas, compras y modificaciones.
+ - UI tactil con controles minimos de 44px.
+ - Reduccion de duplicacion visual en CSS del dashboard.
+ 
+@@ -58,6 +62,7 @@ Se audito la aplicacion Flask StockArmobile sobre una copia de trabajo. El proye
+ - Separar modelos/formularios desde `app.py` hacia modulos propios cuando se haga una refactorizacion mayor.
+ - Implementar aislamiento multiempresa completo filtrando por `company_id` en todos los blueprints.
+ - Crear roles diferenciados `superadmin`, `owner`, `seller` y permisos por modulo.
++- Implementar impersonacion segura con logs, vencimiento de sesion y aviso visual antes de habilitarla en produccion.
+ - Agregar migraciones Alembic formales para reemplazar ajustes automaticos de schema en arranque.
+ - Agregar pruebas visuales con navegador para POS, dashboard y mobile.
+ - Reemplazar gradualmente `datetime.utcnow()` por fechas timezone-aware.
+
+### DIFF products.py
+
+diff --git "a/C:\\Users\\USUARIO\\Documents\\Codex\\2026-07-02\\realiz-una-auditor-a-completa-del\\StockArmobile_SaaS_Audit_Release\\products.py" "b/C:\\Users\\USUARIO\\Documents\\Codex\\2026-07-02\\realiz-una-auditor-a-completa-del\\StockArmobile_SaaS_Audit_Work\\products.py"
+index 94f6da3..d88397e 100644
+--- "a/C:\\Users\\USUARIO\\Documents\\Codex\\2026-07-02\\realiz-una-auditor-a-completa-del\\StockArmobile_SaaS_Audit_Release\\products.py"
++++ "b/C:\\Users\\USUARIO\\Documents\\Codex\\2026-07-02\\realiz-una-auditor-a-completa-del\\StockArmobile_SaaS_Audit_Work\\products.py"
+@@ -197,6 +197,71 @@ def delete(product_id=None, id=None):
+     return redirect(url_for("products.index"))
+ 
+ 
++@bp.route("/<int:product_id>/kardex")
++@login_required
++def kardex(product_id):
++    from app import Product, ProductModification, PurchaseItem, PurchaseOrder, Sale, SaleItem, db
++
++    product = db.session.get(Product, product_id)
++    if product is None:
++        flash("Producto no encontrado.", "warning")
++        return redirect(url_for("products.index"))
++
++    movements = []
++    sale_rows = (
++        db.session.query(Sale, SaleItem)
++        .join(SaleItem, Sale.id == SaleItem.sale_id)
++        .filter(SaleItem.product_id == product.id)
++        .order_by(Sale.date.desc())
++        .limit(100)
++        .all()
++    )
++    for sale, item in sale_rows:
++        movements.append(
++            {
++                "date": sale.date,
++                "type": "Venta",
++                "detail": f"Venta #{sale.id} - {sale.customer or 'Consumidor final'}",
++                "quantity": -float(item.quantity or 0),
++                "unit_value": float(item.price or 0),
++            }
++        )
++
++    purchase_rows = (
++        db.session.query(PurchaseOrder, PurchaseItem)
++        .join(PurchaseItem, PurchaseOrder.id == PurchaseItem.purchase_order_id)
++        .filter(PurchaseItem.product_id == product.id)
++        .order_by(PurchaseOrder.date.desc())
++        .limit(100)
++        .all()
++    )
++    for purchase, item in purchase_rows:
++        movements.append(
++            {
++                "date": purchase.date,
++                "type": "Compra",
++                "detail": f"Compra #{purchase.id}",
++                "quantity": float(item.quantity or 0),
++                "unit_value": float(item.unit_cost or 0),
++            }
++        )
++
++    modifications = ProductModification.query.filter_by(product_id=product.id).order_by(ProductModification.created_at.desc()).limit(50).all()
++    for modification in modifications:
++        movements.append(
++            {
++                "date": modification.created_at,
++                "type": modification.action.capitalize(),
++                "detail": modification.detail or "",
++                "quantity": None,
++                "unit_value": None,
++            }
++        )
++
++    movements.sort(key=lambda item: item["date"] or datetime.min, reverse=True)
++    return render_template("productos/kardex.html", product=product, movements=movements[:150])
++
++
+ @bp.route("/export.xlsx")
+ @login_required
+ def export_excel():
+
+### DIFF reports.py
+
+diff --git "a/C:\\Users\\USUARIO\\Documents\\Codex\\2026-07-02\\realiz-una-auditor-a-completa-del\\StockArmobile_SaaS_Audit_Release\\reports.py" "b/C:\\Users\\USUARIO\\Documents\\Codex\\2026-07-02\\realiz-una-auditor-a-completa-del\\StockArmobile_SaaS_Audit_Work\\reports.py"
+index a64d3f6..818b515 100644
+--- "a/C:\\Users\\USUARIO\\Documents\\Codex\\2026-07-02\\realiz-una-auditor-a-completa-del\\StockArmobile_SaaS_Audit_Release\\reports.py"
++++ "b/C:\\Users\\USUARIO\\Documents\\Codex\\2026-07-02\\realiz-una-auditor-a-completa-del\\StockArmobile_SaaS_Audit_Work\\reports.py"
+@@ -1,4 +1,4 @@
+-"""Reportes CSV/PDF para ventas, compras, gastos y balance."""
++"""Reportes CSV, Excel y PDF para ventas, compras, gastos y balance."""
+ 
+ import csv
+ from datetime import datetime
+@@ -8,6 +8,8 @@ from flask import Blueprint, make_response, render_template, request, send_file
+ from flask_login import login_required
+ from reportlab.lib.pagesizes import letter
+ from reportlab.pdfgen import canvas
++from openpyxl import Workbook
++from openpyxl.styles import Font, PatternFill
+ 
+ bp = Blueprint("reports", __name__)
+ 
+@@ -56,6 +58,35 @@ def export_csv(kind):
+     return response
+ 
+ 
++@bp.route("/<kind>.xlsx")
++@login_required
++def export_excel(kind):
++    rows, filename = _rows_for(kind)
++    workbook = Workbook()
++    sheet = workbook.active
++    sheet.title = filename[:31]
++    header_fill = PatternFill("solid", fgColor="2563EB")
++    header_font = Font(color="FFFFFF", bold=True)
++    for row_index, row in enumerate(rows, start=1):
++        sheet.append(row)
++        if row_index == 1:
++            for cell in sheet[row_index]:
++                cell.fill = header_fill
++                cell.font = header_font
++    for column in sheet.columns:
++        width = max(len(str(cell.value or "")) for cell in column) + 2
++        sheet.column_dimensions[column[0].column_letter].width = min(width, 42)
++    buffer = BytesIO()
++    workbook.save(buffer)
++    buffer.seek(0)
++    return send_file(
++        buffer,
++        mimetype="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
++        as_attachment=True,
++        download_name=f"{filename}_{datetime.utcnow():%Y%m%d}.xlsx",
++    )
++
++
+ @bp.route("/balance.pdf")
+ @login_required
+ def balance_pdf():
+
+### DIFF saas.py
+
+diff --git "a/C:\\Users\\USUARIO\\Documents\\Codex\\2026-07-02\\realiz-una-auditor-a-completa-del\\StockArmobile_SaaS_Audit_Release\\saas.py" "b/C:\\Users\\USUARIO\\Documents\\Codex\\2026-07-02\\realiz-una-auditor-a-completa-del\\StockArmobile_SaaS_Audit_Work\\saas.py"
+index 294ba3d..664ef25 100644
+--- "a/C:\\Users\\USUARIO\\Documents\\Codex\\2026-07-02\\realiz-una-auditor-a-completa-del\\StockArmobile_SaaS_Audit_Release\\saas.py"
++++ "b/C:\\Users\\USUARIO\\Documents\\Codex\\2026-07-02\\realiz-una-auditor-a-completa-del\\StockArmobile_SaaS_Audit_Work\\saas.py"
+@@ -1,18 +1,27 @@
+ """Estructura SaaS: empresas, planes, suscripciones, logs y backups."""
+ 
++from datetime import datetime
++from io import BytesIO
++
+ from flask import Blueprint, abort, flash, redirect, render_template, request, url_for
+ from flask_login import current_user, login_required
++from flask import send_file
++from openpyxl import Workbook
+ 
+ bp = Blueprint("saas", __name__)
+ 
+ 
++def _require_superadmin():
++    if current_user.role not in ("admin", "superadmin"):
++        abort(403)
++
++
+ @bp.route("/", methods=["GET", "POST"])
+ @login_required
+ def index():
+     from app import AuditLog, BackupLog, Company, Plan, Product, Sale, Subscription, User, db
+ 
+-    if current_user.role not in ("admin", "superadmin"):
+-        abort(403)
++    _require_superadmin()
+ 
+     if request.method == "POST":
+         name = (request.form.get("name") or "").strip()
+@@ -56,3 +65,60 @@ def index():
+     logs = AuditLog.query.order_by(AuditLog.created_at.desc()).limit(20).all()
+     backups = BackupLog.query.order_by(BackupLog.created_at.desc()).limit(10).all()
+     return render_template("saas/index.html", companies=companies, plans=plans, logs=logs, backups=backups, metrics=metrics)
++
++
++@bp.route("/companies/<int:company_id>/toggle", methods=["POST"])
++@login_required
++def toggle_company(company_id):
++    from app import AuditLog, Company, User, db
++
++    _require_superadmin()
++    company = db.session.get(Company, company_id)
++    if company is None:
++        abort(404)
++    company.active = not company.active
++    User.query.filter_by(company_id=company.id).update({User.active: company.active}, synchronize_session=False)
++    db.session.add(
++        AuditLog(
++            user_id=current_user.id,
++            action="toggle_company",
++            entity="company",
++            entity_id=company.id,
++            detail=f"Empresa {'reactivada' if company.active else 'suspendida'} desde Superadmin",
++        )
++    )
++    db.session.commit()
++    flash(f"Empresa {company.name} {'reactivada' if company.active else 'suspendida'}.", "success")
++    return redirect(url_for("saas.index"))
++
++
++@bp.route("/metrics.xlsx")
++@login_required
++def export_metrics():
++    from app import Company, Product, Sale, Subscription, User, db
++
++    _require_superadmin()
++    workbook = Workbook()
++    sheet = workbook.active
++    sheet.title = "Metricas SaaS"
++    rows = [
++        ("Empresas", Company.query.count()),
++        ("Empresas activas", Company.query.filter_by(active=True).count()),
++        ("Usuarios", User.query.count()),
++        ("Productos", Product.query.count()),
++        ("Ventas", Sale.query.count()),
++        ("Ingresos comercios", float(db.session.query(db.func.coalesce(db.func.sum(Sale.total_amount), 0)).scalar() or 0)),
++        ("Suscripciones", Subscription.query.count()),
++    ]
++    sheet.append(["Metrica", "Valor"])
++    for row in rows:
++        sheet.append(row)
++    buffer = BytesIO()
++    workbook.save(buffer)
++    buffer.seek(0)
++    return send_file(
++        buffer,
++        mimetype="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
++        as_attachment=True,
++        download_name=f"metricas_saas_{datetime.utcnow():%Y%m%d}.xlsx",
++    )
+
+### DIFF templates/productos/index.html
+
+diff --git "a/C:\\Users\\USUARIO\\Documents\\Codex\\2026-07-02\\realiz-una-auditor-a-completa-del\\StockArmobile_SaaS_Audit_Release\\templates\\productos\\index.html" "b/C:\\Users\\USUARIO\\Documents\\Codex\\2026-07-02\\realiz-una-auditor-a-completa-del\\StockArmobile_SaaS_Audit_Work\\templates\\productos\\index.html"
+index 9987b50..46b3f75 100644
+--- "a/C:\\Users\\USUARIO\\Documents\\Codex\\2026-07-02\\realiz-una-auditor-a-completa-del\\StockArmobile_SaaS_Audit_Release\\templates\\productos\\index.html"
++++ "b/C:\\Users\\USUARIO\\Documents\\Codex\\2026-07-02\\realiz-una-auditor-a-completa-del\\StockArmobile_SaaS_Audit_Work\\templates\\productos\\index.html"
+@@ -79,6 +79,7 @@
+             <td><span class="badge {{ 'bg-danger' if producto.stock <= producto.min_stock else 'bg-success' }}">{{ "%.3g"|format(producto.stock) }} {{ producto.unit_measure or '' }}</span></td>
+             <td class="text-end">
+               <a class="btn btn-sm btn-outline-secondary" title="Editar" href="{{ url_for('products.edit', product_id=producto.id) }}"><i class="bi bi-pencil"></i></a>
++              <a class="btn btn-sm btn-outline-info" title="Kardex" href="{{ url_for('products.kardex', product_id=producto.id) }}"><i class="bi bi-clock-history"></i></a>
+               <a class="btn btn-sm btn-outline-primary" title="Etiqueta" href="{{ url_for('qr_labels.print_single', id=producto.id) }}"><i class="bi bi-upc-scan"></i></a>
+               <form class="d-inline" method="post" action="{{ url_for('products.delete', product_id=producto.id) }}">
+                 <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+
+### DIFF templates/reportes/index.html
+
+diff --git "a/C:\\Users\\USUARIO\\Documents\\Codex\\2026-07-02\\realiz-una-auditor-a-completa-del\\StockArmobile_SaaS_Audit_Release\\templates\\reportes\\index.html" "b/C:\\Users\\USUARIO\\Documents\\Codex\\2026-07-02\\realiz-una-auditor-a-completa-del\\StockArmobile_SaaS_Audit_Work\\templates\\reportes\\index.html"
+index 3cb0775..cafba84 100644
+--- "a/C:\\Users\\USUARIO\\Documents\\Codex\\2026-07-02\\realiz-una-auditor-a-completa-del\\StockArmobile_SaaS_Audit_Release\\templates\\reportes\\index.html"
++++ "b/C:\\Users\\USUARIO\\Documents\\Codex\\2026-07-02\\realiz-una-auditor-a-completa-del\\StockArmobile_SaaS_Audit_Work\\templates\\reportes\\index.html"
+@@ -4,7 +4,7 @@
+ 
+ {% block content %}
+ <div class="app-shell">
+-  <div class="d-flex flex-wrap justify-content-between align-items-center gap-3 mb-4"><div><span class="page-kicker"><i class="bi bi-file-earmark-bar-graph"></i> Analitica</span><h1 class="h3 fw-bold mb-0">Reportes</h1><p class="text-muted mb-0">Balance, ganancias, ventas, compras, gastos y rentabilidad.</p></div><div class="d-flex gap-2"><a class="btn btn-outline-primary" href="{{ url_for('reports.balance_csv') }}"><i class="bi bi-filetype-csv me-1"></i>CSV / Excel</a><a class="btn btn-primary" href="{{ url_for('reports.balance_pdf') }}"><i class="bi bi-filetype-pdf me-1"></i>PDF</a></div></div>
++  <div class="d-flex flex-wrap justify-content-between align-items-center gap-3 mb-4"><div><span class="page-kicker"><i class="bi bi-file-earmark-bar-graph"></i> Analitica</span><h1 class="h3 fw-bold mb-0">Reportes</h1><p class="text-muted mb-0">Balance, ganancias, ventas, compras, gastos y rentabilidad.</p></div><div class="d-flex gap-2"><a class="btn btn-outline-primary" href="{{ url_for('reports.balance_csv') }}"><i class="bi bi-filetype-csv me-1"></i>Balance CSV</a><a class="btn btn-primary" href="{{ url_for('reports.balance_pdf') }}"><i class="bi bi-filetype-pdf me-1"></i>Balance PDF</a></div></div>
+   <div class="row g-3">
+     <div class="col-md-4"><div class="card app-card metric-card"><div class="card-body"><div class="text-muted small fw-semibold text-uppercase">Ventas</div><div class="metric-value fw-bold">${{ "%.2f"|format(sales_total) }}</div></div></div></div>
+     <div class="col-md-4"><div class="card app-card metric-card"><div class="card-body"><div class="text-muted small fw-semibold text-uppercase">Compras</div><div class="metric-value fw-bold">${{ "%.2f"|format(purchases_total) }}</div></div></div></div>
+@@ -17,8 +17,18 @@
+         <div class="col-md-3"><label class="form-label">Desde</label><input class="form-control" type="date" name="desde"></div>
+         <div class="col-md-3"><label class="form-label">Hasta</label><input class="form-control" type="date" name="hasta"></div>
+         <div class="col-md-3"><label class="form-label">Reporte</label><select class="form-select" id="report-kind"><option value="ventas">Ventas</option><option value="compras">Compras</option><option value="caja">Caja</option><option value="gastos">Gastos</option><option value="clientes">Clientes</option><option value="productos">Productos</option><option value="stock">Stock</option></select></div>
+-        <div class="col-md-3"><button class="btn btn-outline-primary w-100" onclick="this.form.action='/reportes/' + document.getElementById('report-kind').value + '.csv'"><i class="bi bi-download me-1"></i>Descargar CSV</button></div>
++        <div class="col-md-3 d-grid gap-2 d-md-flex">
++          <button class="btn btn-outline-primary flex-fill" onclick="this.form.action='/reportes/' + document.getElementById('report-kind').value + '.csv'"><i class="bi bi-filetype-csv me-1"></i>CSV</button>
++          <button class="btn btn-outline-success flex-fill" onclick="this.form.action='/reportes/' + document.getElementById('report-kind').value + '.xlsx'"><i class="bi bi-file-earmark-excel me-1"></i>Excel</button>
++        </div>
+       </form>
++      <div class="row g-2">
++        {% for kind, label in [('ventas','Ventas'), ('compras','Compras'), ('gastos','Gastos'), ('caja','Caja'), ('clientes','Clientes'), ('productos','Productos'), ('stock','Stock')] %}
++        <div class="col-6 col-md-3 col-xl-2">
++          <a class="btn btn-light border w-100" href="{{ url_for('reports.export_excel', kind=kind) }}">{{ label }} XLSX</a>
++        </div>
++        {% endfor %}
++      </div>
+     </div>
+   </div>
+ </div>
+
+### DIFF templates/saas/index.html
+
+diff --git "a/C:\\Users\\USUARIO\\Documents\\Codex\\2026-07-02\\realiz-una-auditor-a-completa-del\\StockArmobile_SaaS_Audit_Release\\templates\\saas\\index.html" "b/C:\\Users\\USUARIO\\Documents\\Codex\\2026-07-02\\realiz-una-auditor-a-completa-del\\StockArmobile_SaaS_Audit_Work\\templates\\saas\\index.html"
+index e482b2b..d70f5ba 100644
+--- "a/C:\\Users\\USUARIO\\Documents\\Codex\\2026-07-02\\realiz-una-auditor-a-completa-del\\StockArmobile_SaaS_Audit_Release\\templates\\saas\\index.html"
++++ "b/C:\\Users\\USUARIO\\Documents\\Codex\\2026-07-02\\realiz-una-auditor-a-completa-del\\StockArmobile_SaaS_Audit_Work\\templates\\saas\\index.html"
+@@ -10,6 +10,7 @@
+       <h1 class="h3 fw-bold mb-0">Panel de plataforma</h1>
+       <p class="text-muted mb-0">Control comercial, operativo y tecnico del SaaS.</p>
+     </div>
++    <a class="btn btn-outline-success" href="{{ url_for('saas.export_metrics') }}"><i class="bi bi-file-earmark-excel me-1"></i>Exportar metricas</a>
+   </div>
+ 
+   <div class="row g-3 mb-4">
+@@ -47,7 +48,7 @@
+   </div>
+ 
+   <div class="row g-3">
+-    <div class="col-lg-6"><div class="card app-card h-100"><div class="card-header bg-white fw-bold">Empresas</div><div class="card-body">{% for company in companies %}<div class="d-flex justify-content-between border-bottom py-2"><span>{{ company.name }}</span><span class="badge {{ 'text-bg-success' if company.active else 'text-bg-danger' }}">{{ 'activa' if company.active else 'suspendida' }}</span></div>{% else %}<p class="text-muted mb-0">La empresa base se creara al inicializar datos.</p>{% endfor %}</div></div></div>
++    <div class="col-lg-6"><div class="card app-card h-100"><div class="card-header bg-white fw-bold">Empresas</div><div class="card-body">{% for company in companies %}<div class="d-flex justify-content-between align-items-center border-bottom py-2 gap-2"><span>{{ company.name }}</span><div class="d-flex align-items-center gap-2"><span class="badge {{ 'text-bg-success' if company.active else 'text-bg-danger' }}">{{ 'activa' if company.active else 'suspendida' }}</span><form method="post" action="{{ url_for('saas.toggle_company', company_id=company.id) }}"><input type="hidden" name="csrf_token" value="{{ csrf_token() }}"><button class="btn btn-sm {{ 'btn-outline-danger' if company.active else 'btn-outline-success' }}" onclick="return confirm('Confirmar cambio de estado de la empresa?')">{{ 'Suspender' if company.active else 'Reactivar' }}</button></form></div></div>{% else %}<p class="text-muted mb-0">La empresa base se creara al inicializar datos.</p>{% endfor %}</div></div></div>
+     <div class="col-lg-3"><div class="card app-card h-100"><div class="card-header bg-white fw-bold">Logs recientes</div><div class="card-body">{% for log in logs %}<div class="small border-bottom py-2">{{ log.created_at.strftime('%Y-%m-%d %H:%M') }} / {{ log.action }}</div>{% else %}<p class="text-muted mb-0">Sin logs.</p>{% endfor %}</div></div></div>
+     <div class="col-lg-3"><div class="card app-card h-100"><div class="card-header bg-white fw-bold">Backups</div><div class="card-body">{% for backup in backups %}<div class="small border-bottom py-2"><span class="badge text-bg-secondary">{{ backup.status }}</span> {{ backup.created_at.strftime('%Y-%m-%d') }}</div>{% else %}<p class="text-muted mb-0">Sin backups.</p>{% endfor %}</div></div></div>
+   </div>
+
+### DIFF tests/test_smoke.py
+
+diff --git "a/C:\\Users\\USUARIO\\Documents\\Codex\\2026-07-02\\realiz-una-auditor-a-completa-del\\StockArmobile_SaaS_Audit_Release\\tests\\test_smoke.py" "b/C:\\Users\\USUARIO\\Documents\\Codex\\2026-07-02\\realiz-una-auditor-a-completa-del\\StockArmobile_SaaS_Audit_Work\\tests\\test_smoke.py"
+index 44fd3a5..370f1b4 100644
+--- "a/C:\\Users\\USUARIO\\Documents\\Codex\\2026-07-02\\realiz-una-auditor-a-completa-del\\StockArmobile_SaaS_Audit_Release\\tests\\test_smoke.py"
++++ "b/C:\\Users\\USUARIO\\Documents\\Codex\\2026-07-02\\realiz-una-auditor-a-completa-del\\StockArmobile_SaaS_Audit_Work\\tests\\test_smoke.py"
+@@ -75,11 +75,14 @@ def test_exports_and_security_methods():
+     client = stock_app.app.test_client()
+     client.post("/auth/login", data={"username": "admin", "password": "admin123"})
+     assert client.get("/reportes/ventas.csv").status_code == 200
++    assert client.get("/reportes/ventas.xlsx").status_code == 200
+     assert client.get("/manifest.json").status_code == 200
+     assert client.get("/service-worker.js").status_code == 200
+     assert client.get("/api/search?q=Yerba").status_code == 200
+     assert client.get("/api/notifications").status_code == 200
+     assert client.get("/ventas/api/recent").status_code == 200
+     assert client.get("/productos/export.xlsx").status_code == 200
++    assert client.get("/productos/1/kardex").status_code == 200
++    assert client.get("/admin/metrics.xlsx").status_code == 200
+     assert client.get("/qr/print-all").status_code == 405
+     assert client.get("/productos/delete/1").status_code == 405
+
+### NEW templates/productos/kardex.html
+
++ {% extends "base_master.html" %}
++ 
++ {% block title %}Kardex - {{ product.name }}{% endblock %}
++ 
++ {% block content %}
++ <div class="app-shell">
++   <div class="d-flex flex-wrap justify-content-between align-items-center gap-3 mb-4">
++     <div>
++       <span class="page-kicker"><i class="bi bi-clock-history"></i> Kardex</span>
++       <h1 class="h3 fw-bold mb-0">{{ product.name }}</h1>
++       <p class="text-muted mb-0">Movimientos de ventas, compras y modificaciones.</p>
++     </div>
++     <a class="btn btn-outline-secondary" href="{{ url_for('products.index') }}"><i class="bi bi-arrow-left me-1"></i>Productos</a>
++   </div>
++ 
++   <div class="row g-3 mb-4">
++     <div class="col-md-3"><div class="card app-card metric-card"><div class="card-body"><div class="text-muted small fw-semibold text-uppercase">Stock actual</div><div class="metric-value fw-bold">{{ "%.3g"|format(product.stock or 0) }}</div><div class="text-muted small">{{ product.unit_measure or 'u' }}</div></div></div></div>
++     <div class="col-md-3"><div class="card app-card metric-card"><div class="card-body"><div class="text-muted small fw-semibold text-uppercase">Stock minimo</div><div class="metric-value fw-bold">{{ "%.3g"|format(product.min_stock or 0) }}</div><div class="text-muted small">Alerta critica</div></div></div></div>
++     <div class="col-md-3"><div class="card app-card metric-card"><div class="card-body"><div class="text-muted small fw-semibold text-uppercase">Costo</div><div class="metric-value fw-bold">${{ "%.2f"|format(product.cost_price or 0) }}</div><div class="text-muted small">Promedio actual</div></div></div></div>
++     <div class="col-md-3"><div class="card app-card metric-card"><div class="card-body"><div class="text-muted small fw-semibold text-uppercase">Precio</div><div class="metric-value fw-bold">${{ "%.2f"|format(product.price or 0) }}</div><div class="text-muted small">Venta</div></div></div></div>
++   </div>
++ 
++   <div class="card app-card">
++     <div class="table-responsive">
++       <table class="table table-hover align-middle mb-0">
++         <thead class="table-light"><tr><th>Fecha</th><th>Tipo</th><th>Detalle</th><th class="text-end">Cantidad</th><th class="text-end">Valor unit.</th></tr></thead>
++         <tbody>
++           {% for movement in movements %}
++           <tr>
++             <td>{{ movement.date.strftime('%Y-%m-%d %H:%M') if movement.date else '-' }}</td>
++             <td><span class="badge {{ 'text-bg-success' if movement.type == 'Compra' else ('text-bg-primary' if movement.type == 'Venta' else 'text-bg-secondary') }}">{{ movement.type }}</span></td>
++             <td>{{ movement.detail }}</td>
++             <td class="text-end">{{ "%.3g"|format(movement.quantity) if movement.quantity is not none else '-' }}</td>
++             <td class="text-end">{{ "$%.2f"|format(movement.unit_value) if movement.unit_value is not none else '-' }}</td>
++           </tr>
++           {% else %}
++           <tr><td colspan="5" class="text-center text-muted py-5">Todavia no hay movimientos para este producto.</td></tr>
++           {% endfor %}
++         </tbody>
++       </table>
++     </div>
++   </div>
++ </div>
++ {% endblock %}

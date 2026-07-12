@@ -1,0 +1,76 @@
+{% extends "base_master.html" %}
+
+{% block title %}Mi suscripcion - StockArmobile{% endblock %}
+
+{% block content %}
+<div class="app-shell">
+  <div class="d-flex flex-wrap justify-content-between align-items-center gap-3 mb-4">
+    <div>
+      <span class="page-kicker"><i class="bi bi-credit-card-2-front"></i> Suscripcion</span>
+      <h1 class="h3 fw-bold mb-0">Plan y facturacion</h1>
+      <p class="text-muted mb-0">Gestiona tu plan, renovaciones y estado de cobro.</p>
+    </div>
+    <a class="btn btn-outline-secondary" href="{{ url_for('dashboard.index') }}"><i class="bi bi-arrow-left me-1"></i>Volver al panel</a>
+  </div>
+
+  <div class="row g-3 mb-4">
+    <div class="col-md-4">
+      <div class="card app-card metric-card"><div class="card-body">
+        <div class="text-muted small fw-semibold text-uppercase">Empresa</div>
+        <div class="metric-value fw-bold">{{ company.name }}</div>
+      </div></div>
+    </div>
+    <div class="col-md-4">
+      <div class="card app-card metric-card"><div class="card-body">
+        <div class="text-muted small fw-semibold text-uppercase">Estado</div>
+        <div class="metric-value fw-bold">{{ subscription.status }}</div>
+      </div></div>
+    </div>
+    <div class="col-md-4">
+      <div class="card app-card metric-card"><div class="card-body">
+        <div class="text-muted small fw-semibold text-uppercase">Proximo vencimiento</div>
+        <div class="metric-value fw-bold">{{ subscription.next_billing_date.strftime('%Y-%m-%d') if subscription.next_billing_date else '—' }}</div>
+      </div></div>
+    </div>
+  </div>
+
+  <div class="row g-3">
+    {% for plan in plans %}
+    <div class="col-md-6 col-xl-3">
+      <div class="card app-card h-100">
+        <div class="card-body d-flex flex-column">
+          <h3 class="h5 mb-1">{{ plan.name }}</h3>
+          <p class="text-muted mb-2 small">{{ plan.currency }} {{ '%.2f'|format(plan.price or 0) }} / {{ plan.duration_days }} dias</p>
+          <ul class="small text-muted list-unstyled mb-3">
+            <li><i class="bi bi-check2"></i> {{ plan.max_users }} usuarios</li>
+            <li><i class="bi bi-check2"></i> {{ plan.max_products }} productos</li>
+            <li><i class="bi bi-check2"></i> {{ plan.max_clients }} clientes</li>
+          </ul>
+          <form method="post" action="{{ url_for('saas.create_checkout') }}" class="mt-auto">
+            <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+            <input type="hidden" name="plan_id" value="{{ plan.id }}">
+            <button class="btn {{ 'btn-outline-primary' if subscription.plan_id == plan.id else 'btn-primary' }} w-100" type="submit">
+              {% if subscription.plan_id == plan.id %}Plan actual{% else %}Comenzar suscripcion{% endif %}
+            </button>
+          </form>
+        </div>
+      </div>
+    </div>
+    {% endfor %}
+  </div>
+
+  <div class="card app-card mt-4">
+    <div class="card-body d-flex flex-wrap gap-2">
+      <form method="post" action="{{ url_for('saas.cancel_subscription') }}">
+        <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+        <button class="btn btn-outline-danger" type="submit">Cancelar suscripcion</button>
+      </form>
+      <form method="post" action="{{ url_for('saas.reactivate_subscription') }}">
+        <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+        <button class="btn btn-outline-success" type="submit">Reactivar renovacion</button>
+      </form>
+      <span class="text-muted small ms-auto align-self-center">Public key: {{ mp_config.public_key or 'no configurada' }}</span>
+    </div>
+  </div>
+</div>
+{% endblock %}

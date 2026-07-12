@@ -1,0 +1,99 @@
+{% extends "base_master.html" %}
+
+{% block title %}Empresa {{ company.name }} - SuperAdmin{% endblock %}
+
+{% block content %}
+<div class="app-shell">
+  <div class="d-flex flex-wrap justify-content-between align-items-center gap-3 mb-4">
+    <div>
+      <span class="page-kicker"><i class="bi bi-building"></i> Empresa</span>
+      <h1 class="h3 fw-bold mb-0">{{ company.name }}</h1>
+      <p class="text-muted mb-0">Gestion y estadisticas de la empresa seleccionada.</p>
+    </div>
+    <a class="btn btn-outline-secondary" href="{{ url_for('saas.companies_panel') }}"><i class="bi bi-arrow-left me-1"></i>Volver a empresas</a>
+  </div>
+
+  <div class="row g-3 mb-4">
+    <div class="col-lg-5">
+      <div class="card app-card h-100">
+        <div class="card-header bg-white fw-bold">Editar empresa</div>
+        <div class="card-body">
+          <form method="post" action="{{ url_for('saas.company_update', company_id=company.id) }}" class="row g-2">
+            <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+            <div class="col-12">
+              <label class="form-label">Nombre</label>
+              <input class="form-control" name="name" value="{{ company.name }}" required>
+            </div>
+            <div class="col-12">
+              <label class="form-label">Email</label>
+              <input class="form-control" name="contact_email" value="{{ company.contact_email or '' }}" placeholder="contacto@empresa.com">
+            </div>
+            <div class="col-12">
+              <label class="form-label">Logo URL</label>
+              <input class="form-control" name="logo" value="{{ company.logo or '' }}" placeholder="https://...">
+            </div>
+            <div class="col-12 d-grid">
+              <button class="btn btn-primary" type="submit">Guardar cambios</button>
+            </div>
+          </form>
+        </div>
+      </div>
+    </div>
+    <div class="col-lg-7" id="stats">
+      <div class="card app-card h-100">
+        <div class="card-header bg-white fw-bold">Resumen operativo</div>
+        <div class="card-body">
+          <div class="row g-2 mb-3">
+            <div class="col-sm-6 col-xl-4"><div class="border rounded p-2"><div class="text-muted small">Usuarios</div><div class="fw-bold">{{ stats.users }}</div><div class="small text-muted">Activos {{ stats.active_users }}</div></div></div>
+            <div class="col-sm-6 col-xl-4"><div class="border rounded p-2"><div class="text-muted small">Productos</div><div class="fw-bold">{{ stats.products }}</div></div></div>
+            <div class="col-sm-6 col-xl-4"><div class="border rounded p-2"><div class="text-muted small">Clientes</div><div class="fw-bold">{{ stats.clients }}</div></div></div>
+            <div class="col-sm-6 col-xl-4"><div class="border rounded p-2"><div class="text-muted small">Ventas</div><div class="fw-bold">{{ stats.sales }}</div></div></div>
+            <div class="col-sm-6 col-xl-4"><div class="border rounded p-2"><div class="text-muted small">Monto ventas</div><div class="fw-bold">${{ '%.2f'|format(stats.sales_amount) }}</div></div></div>
+            <div class="col-sm-6 col-xl-4"><div class="border rounded p-2"><div class="text-muted small">Pagos aprobados</div><div class="fw-bold">${{ '%.2f'|format(stats.payments_approved) }}</div></div></div>
+          </div>
+          <div class="small text-muted">
+            Estado empresa: <span class="badge {{ 'text-bg-success' if company.active else 'text-bg-danger' }}">{{ 'Activa' if company.active else 'Suspendida' }}</span>
+            {% if subscription %}
+            · Suscripcion: <strong>{{ subscription.status }}</strong>
+            {% if subscription.plan %} ({{ subscription.plan.name }}){% endif %}
+            {% endif %}
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div class="row g-3">
+    <div class="col-lg-6">
+      <div class="card app-card h-100">
+        <div class="card-header bg-white fw-bold">Ultimos pagos</div>
+        <div class="card-body">
+          {% for payment in last_payments %}
+          <div class="d-flex justify-content-between border-bottom py-2 small">
+            <span>{{ payment.payment_id or payment.reference or 'Pago' }}</span>
+            <span class="text-muted">{{ payment.status }} · ${{ '%.2f'|format(payment.amount or 0) }}</span>
+          </div>
+          {% else %}
+          <p class="text-muted mb-0">Sin pagos registrados.</p>
+          {% endfor %}
+        </div>
+      </div>
+    </div>
+    <div class="col-lg-6">
+      <div class="card app-card h-100">
+        <div class="card-header bg-white fw-bold">Auditoria empresa</div>
+        <div class="card-body">
+          {% for row in audit %}
+          <div class="border-bottom py-2 small">
+            <div class="fw-semibold">{{ row.action }}</div>
+            <div class="text-muted">{{ row.detail or 'Sin detalle' }}</div>
+          </div>
+          {% else %}
+          <p class="text-muted mb-0">Sin eventos de auditoria.</p>
+          {% endfor %}
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+{% endblock %}

@@ -1,0 +1,221 @@
+{% extends "base_master.html" %}
+
+{% block title %}Suscripciones - SuperAdmin{% endblock %}
+
+{% block content %}
+<div class="app-shell">
+  <div class="d-flex flex-wrap justify-content-between align-items-center gap-3 mb-4">
+    <div>
+      <span class="page-kicker"><i class="bi bi-credit-card-2-front"></i> Suscripciones</span>
+      <h1 class="h3 fw-bold mb-0">Gestión de suscripciones</h1>
+      <p class="text-muted mb-0">Control total de ciclo de vida de suscripciones SaaS.</p>
+    </div>
+    <div class="d-flex gap-2">
+      <a class="btn btn-outline-secondary" href="{{ url_for('saas.index') }}"><i class="bi bi-arrow-left me-1"></i>Volver</a>
+    </div>
+  </div>
+
+  <div class="card app-card mb-4">
+    <div class="card-header bg-white fw-bold">Crear suscripción</div>
+    <div class="card-body">
+      <form method="post" action="{{ url_for('saas.subscriptions_create') }}" class="row g-2">
+        <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+        <input type="hidden" name="next" value="{{ request.full_path }}">
+        <div class="col-md-3">
+          <select class="form-select" name="company_id" required>
+            <option value="">Empresa...</option>
+            {% for company in companies %}
+            <option value="{{ company.id }}">{{ company.name }}</option>
+            {% endfor %}
+          </select>
+        </div>
+        <div class="col-md-2">
+          <select class="form-select" name="plan_id" required>
+            <option value="">Plan...</option>
+            {% for plan in plans %}
+            <option value="{{ plan.id }}">{{ plan.name }}</option>
+            {% endfor %}
+          </select>
+        </div>
+        <div class="col-md-2">
+          <select class="form-select" name="status">
+            {% for option in status_options %}
+            <option value="{{ option }}" {% if option == 'pending' %}selected{% endif %}>{{ option }}</option>
+            {% endfor %}
+          </select>
+        </div>
+        <div class="col-md-2"><input class="form-control" type="datetime-local" name="start_date"></div>
+        <div class="col-md-2"><input class="form-control" type="datetime-local" name="next_billing_date"></div>
+        <div class="col-md-1">
+          <select class="form-select" name="renewal_enabled">
+            <option value="1" selected>Auto</option>
+            <option value="0">Manual</option>
+          </select>
+        </div>
+        <div class="col-12 d-grid d-md-flex justify-content-md-end">
+          <button class="btn btn-primary" type="submit">Crear suscripción</button>
+        </div>
+      </form>
+    </div>
+  </div>
+
+  <div class="card app-card mb-4">
+    <div class="card-body">
+      <form class="row g-2" method="get" action="{{ url_for('saas.subscriptions_panel') }}">
+        <div class="col-md-4"><input class="form-control" name="q" value="{{ filters.q }}" placeholder="Buscar por empresa, plan o estado"></div>
+        <div class="col-md-3">
+          <select class="form-select" name="status">
+            <option value="all" {% if filters.status == 'all' %}selected{% endif %}>Todos los estados</option>
+            {% for option in status_options %}
+            <option value="{{ option }}" {% if filters.status == option %}selected{% endif %}>{{ option }}</option>
+            {% endfor %}
+          </select>
+        </div>
+        <div class="col-md-3">
+          <select class="form-select" name="plan">
+            <option value="all" {% if filters.plan == 'all' %}selected{% endif %}>Todos los planes</option>
+            {% for plan in plans %}
+            <option value="{{ plan.code }}" {% if filters.plan == plan.code %}selected{% endif %}>{{ plan.name }}</option>
+            {% endfor %}
+          </select>
+        </div>
+        <div class="col-md-1">
+          <select class="form-select" name="per_page">
+            {% for size in [10, 12, 25, 50] %}
+            <option value="{{ size }}" {% if filters.per_page == size %}selected{% endif %}>{{ size }}</option>
+            {% endfor %}
+          </select>
+        </div>
+        <div class="col-md-1 d-grid"><button class="btn btn-primary" type="submit"><i class="bi bi-search"></i></button></div>
+      </form>
+    </div>
+  </div>
+
+  <div class="card app-card">
+    <div class="card-header bg-white fw-bold d-flex justify-content-between align-items-center">
+      <span>Suscripciones</span>
+      <small class="text-muted">{{ pagination.total }} resultados</small>
+    </div>
+    <div class="table-responsive">
+      <table class="table table-hover mb-0">
+        <thead>
+          <tr>
+            <th>Empresa</th>
+            <th>Plan</th>
+            <th>Estado</th>
+            <th>Inicio</th>
+            <th>Próx. vencimiento</th>
+            <th>Último pago</th>
+            <th>Renovación</th>
+            <th class="text-end">Acciones</th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for subscription in subscriptions %}
+          <tr>
+            <td>{{ subscription.company.name if subscription.company else subscription.company_id }}</td>
+            <td>{{ subscription.plan.name if subscription.plan else '—' }}</td>
+            <td><span class="badge text-bg-info">{{ subscription.status }}</span></td>
+            <td>{{ subscription.start_date.strftime('%Y-%m-%d %H:%M') if subscription.start_date else '—' }}</td>
+            <td>{{ subscription.next_billing_date.strftime('%Y-%m-%d %H:%M') if subscription.next_billing_date else '—' }}</td>
+            <td>{{ subscription.last_payment_date.strftime('%Y-%m-%d %H:%M') if subscription.last_payment_date else '—' }}</td>
+            <td><span class="badge {{ 'text-bg-success' if subscription.renewal_enabled else 'text-bg-secondary' }}">{{ 'Automática' if subscription.renewal_enabled else 'Manual' }}</span></td>
+            <td class="text-end">
+              <div class="d-flex flex-wrap justify-content-end gap-1">
+                <button class="btn btn-sm btn-outline-primary" data-bs-toggle="collapse" data-bs-target="#editSub{{ subscription.id }}">Modificar</button>
+                <form method="post" action="{{ url_for('saas.subscriptions_action', subscription_id=subscription.id) }}">
+                  <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                  <input type="hidden" name="next" value="{{ request.full_path }}">
+                  <input type="hidden" name="action" value="cancel">
+                  <button class="btn btn-sm btn-outline-danger" type="submit">Cancelar</button>
+                </form>
+                <form method="post" action="{{ url_for('saas.subscriptions_action', subscription_id=subscription.id) }}">
+                  <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                  <input type="hidden" name="next" value="{{ request.full_path }}">
+                  <input type="hidden" name="action" value="reactivate">
+                  <button class="btn btn-sm btn-outline-success" type="submit">Reactivar</button>
+                </form>
+                <form method="post" action="{{ url_for('saas.subscriptions_action', subscription_id=subscription.id) }}">
+                  <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                  <input type="hidden" name="next" value="{{ request.full_path }}">
+                  <input type="hidden" name="action" value="suspend">
+                  <button class="btn btn-sm btn-outline-warning" type="submit">Suspender</button>
+                </form>
+                <form method="post" action="{{ url_for('saas.subscriptions_action', subscription_id=subscription.id) }}">
+                  <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                  <input type="hidden" name="next" value="{{ request.full_path }}">
+                  <input type="hidden" name="action" value="renew_now">
+                  <button class="btn btn-sm btn-outline-dark" type="submit">Renovar</button>
+                </form>
+              </div>
+            </td>
+          </tr>
+          <tr class="collapse" id="editSub{{ subscription.id }}">
+            <td colspan="8" class="bg-light-subtle">
+              <form method="post" action="{{ url_for('saas.subscriptions_update', subscription_id=subscription.id) }}" class="row g-2">
+                <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                <input type="hidden" name="next" value="{{ request.full_path }}">
+                <div class="col-md-2">
+                  <select class="form-select" name="plan_id">
+                    {% for plan in plans %}
+                    <option value="{{ plan.id }}" {% if subscription.plan_id == plan.id %}selected{% endif %}>{{ plan.name }}</option>
+                    {% endfor %}
+                  </select>
+                </div>
+                <div class="col-md-2">
+                  <select class="form-select" name="status">
+                    {% for option in status_options %}
+                    <option value="{{ option }}" {% if subscription.status == option %}selected{% endif %}>{{ option }}</option>
+                    {% endfor %}
+                  </select>
+                </div>
+                <div class="col-md-2"><input class="form-control" type="datetime-local" name="start_date" value="{{ subscription.start_date.strftime('%Y-%m-%dT%H:%M') if subscription.start_date else '' }}"></div>
+                <div class="col-md-2"><input class="form-control" type="datetime-local" name="next_billing_date" value="{{ subscription.next_billing_date.strftime('%Y-%m-%dT%H:%M') if subscription.next_billing_date else '' }}"></div>
+                <div class="col-md-2"><input class="form-control" type="datetime-local" name="last_payment_date" value="{{ subscription.last_payment_date.strftime('%Y-%m-%dT%H:%M') if subscription.last_payment_date else '' }}"></div>
+                <div class="col-md-1">
+                  <select class="form-select" name="renewal_enabled">
+                    <option value="1" {% if subscription.renewal_enabled %}selected{% endif %}>Auto</option>
+                    <option value="0" {% if not subscription.renewal_enabled %}selected{% endif %}>Manual</option>
+                  </select>
+                </div>
+                <div class="col-md-1 d-grid"><button class="btn btn-primary" type="submit">Guardar</button></div>
+              </form>
+              <div class="d-flex flex-wrap gap-2 mt-2">
+                <form method="post" action="{{ url_for('saas.subscriptions_action', subscription_id=subscription.id) }}" class="d-flex gap-2 align-items-center">
+                  <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                  <input type="hidden" name="next" value="{{ request.full_path }}">
+                  <input type="hidden" name="action" value="extend">
+                  <input class="form-control form-control-sm" name="days" type="number" min="1" max="365" value="7" style="width:120px">
+                  <button class="btn btn-sm btn-outline-primary" type="submit">Extender</button>
+                </form>
+                <form method="post" action="{{ url_for('saas.subscriptions_action', subscription_id=subscription.id) }}" onsubmit="return confirm('Eliminar lógicamente esta suscripción?');">
+                  <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                  <input type="hidden" name="next" value="{{ request.full_path }}">
+                  <input type="hidden" name="action" value="delete">
+                  <button class="btn btn-sm btn-outline-danger" type="submit">Eliminar</button>
+                </form>
+              </div>
+            </td>
+          </tr>
+          {% else %}
+          <tr><td colspan="8" class="text-center text-muted py-4">No hay suscripciones para mostrar.</td></tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+    <div class="card-body border-top">
+      <nav aria-label="Paginacion suscripciones">
+        <ul class="pagination mb-0 justify-content-center">
+          <li class="page-item {% if not pagination.has_prev %}disabled{% endif %}">
+            <a class="page-link" href="{{ url_for('saas.subscriptions_panel', q=filters.q, status=filters.status, plan=filters.plan, per_page=filters.per_page, page=pagination.prev_num) if pagination.has_prev else '#' }}">Anterior</a>
+          </li>
+          <li class="page-item disabled"><span class="page-link">Pagina {{ pagination.page }} de {{ pagination.pages or 1 }}</span></li>
+          <li class="page-item {% if not pagination.has_next %}disabled{% endif %}">
+            <a class="page-link" href="{{ url_for('saas.subscriptions_panel', q=filters.q, status=filters.status, plan=filters.plan, per_page=filters.per_page, page=pagination.next_num) if pagination.has_next else '#' }}">Siguiente</a>
+          </li>
+        </ul>
+      </nav>
+    </div>
+  </div>
+</div>
+{% endblock %}

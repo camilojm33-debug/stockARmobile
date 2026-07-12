@@ -1,0 +1,11 @@
+{% extends "base_master.html" %}
+
+{% block title %}Gastos - StockArmobile{% endblock %}
+
+{% block content %}
+<div class="app-shell">
+  <div class="d-flex flex-wrap justify-content-between align-items-center gap-3 mb-4"><div><span class="page-kicker"><i class="bi bi-receipt"></i> Costos operativos</span><h1 class="h3 fw-bold mb-0">Gastos</h1><p class="text-muted mb-0">Servicios, combustible, alquiler, sueldos, impuestos, compras y otros.</p></div><div class="metric-value h3 mb-0">${{ "%.2f"|format(total) }}</div></div>
+  <div class="card app-card mb-4"><div class="card-body"><form method="post" class="row g-3"><input type="hidden" name="csrf_token" value="{{ csrf_token() }}"><div class="col-md-3"><select class="form-select" name="category"><option>Servicios</option><option>Combustible</option><option>Alquiler</option><option>Sueldos</option><option>Impuestos</option><option>Compras</option><option>Otros</option></select></div><div class="col-md-4"><input class="form-control" name="description" placeholder="Descripcion" required></div><div class="col-md-2"><input class="form-control" name="amount" type="number" min="0.01" step="0.01" placeholder="Importe" required></div><div class="col-md-2"><select class="form-select" name="payment_method"><option>EFECTIVO</option><option>TARJETA</option><option>TRANSFERENCIA</option></select></div><div class="col-md-1"><button class="btn btn-primary w-100"><i class="bi bi-plus"></i></button></div></form></div></div>
+  <div class="card app-card"><div class="table-responsive"><table class="table table-hover mb-0"><thead><tr><th>Fecha</th><th>Categoria</th><th>Descripcion</th><th>Pago</th><th class="text-end">Importe</th></tr></thead><tbody>{% for expense in expenses %}<tr><td>{{ expense.date.strftime('%Y-%m-%d') }}</td><td>{{ expense.category }}</td><td>{{ expense.description }}</td><td>{{ expense.payment_method or '-' }}</td><td class="text-end fw-bold">${{ "%.2f"|format(expense.amount) }}</td></tr>{% else %}<tr><td colspan="5" class="text-center text-muted py-4">No hay gastos.</td></tr>{% endfor %}</tbody></table></div></div>
+</div>
+{% endblock %}

@@ -1,0 +1,32 @@
+services:
+  - type: web
+    name: stockarmobile
+    env: python
+    buildCommand: pip install -r requirements.txt
+    startCommand: gunicorn wsgi:app
+    envVars:
+      - key: SECRET_KEY
+        generateValue: true
+      - key: ADMIN_PASSWORD
+        generateValue: true
+      - key: MP_MODE
+        value: sandbox
+      - key: APP_URL
+        value: https://stockarmobile.onrender.com
+      - key: MP_NOTIFICATION_URL
+        value: https://stockarmobile.onrender.com/admin/webhooks/mercadopago
+      - key: MP_SUCCESS_URL
+        value: https://stockarmobile.onrender.com/admin/billing?checkout=success
+      - key: MP_PENDING_URL
+        value: https://stockarmobile.onrender.com/admin/billing?checkout=pending
+      - key: MP_FAILURE_URL
+        value: https://stockarmobile.onrender.com/admin/billing?checkout=failure
+      - key: DATABASE_URL
+        fromDatabase:
+          name: stockarmobile-db
+          property: connectionString
+
+databases:
+  - name: stockarmobile-db
+    databaseName: stockarmobile
+    user: stockarmobile

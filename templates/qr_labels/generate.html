@@ -1,0 +1,77 @@
+{% extends "base_master.html" %}
+
+{% block title %}QR y Etiquetas - StockArmobile{% endblock %}
+
+{% block content %}
+<div class="app-shell">
+  <div class="d-flex flex-wrap justify-content-between align-items-center gap-2 mb-4">
+    <div>
+      <span class="page-kicker"><i class="bi bi-qr-code"></i> Etiquetas</span>
+      <h1 class="h3 fw-bold mb-0">QR y etiquetas</h1>
+      <p class="text-muted mb-0">Generacion de QR, EAN13, Code128 y PDFs.</p>
+    </div>
+    <form method="get" class="d-flex gap-2">
+      <input class="form-control" name="search" value="{{ request.args.get('search','') }}" placeholder="Buscar producto">
+      <button class="btn btn-outline-primary"><i class="bi bi-search me-1"></i>Buscar</button>
+    </form>
+  </div>
+
+  <form method="post" action="{{ url_for('qr_labels.print_all') }}" class="row g-2 align-items-end mb-3">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+    <div class="col-md-3"><label class="form-label">Tamano</label><select class="form-select" name="size"><option value="small">Chica</option><option value="standard" selected>Normal</option><option value="large">Grande</option></select></div>
+    <div class="col-md-3"><label class="form-label">Copias por producto</label><input class="form-control" name="copies" type="number" min="1" max="20" value="1"></div>
+    <div class="col-md-4"><button class="btn btn-success" {% if not products %}disabled{% endif %}><i class="bi bi-file-earmark-pdf me-1"></i>Descargar PDF</button></div>
+  </form>
+
+  <div class="card app-card mb-4">
+    <div class="card-header bg-white fw-bold">QR de cobro sin integracion</div>
+    <div class="card-body">
+      <form method="get" action="{{ url_for('qr_labels.payment_qr') }}" class="row g-2 align-items-end">
+        <div class="col-md-2"><label class="form-label">Alias</label><input class="form-control" name="alias"></div>
+        <div class="col-md-2"><label class="form-label">CBU</label><input class="form-control" name="cbu"></div>
+        <div class="col-md-2"><label class="form-label">CVU</label><input class="form-control" name="cvu"></div>
+        <div class="col-md-3"><label class="form-label">Texto</label><input class="form-control" name="text" value="Pago StockArmobile"></div>
+        <div class="col-md-2"><label class="form-label">URL</label><input class="form-control" name="url"></div>
+        <div class="col-md-1"><button class="btn btn-outline-primary w-100"><i class="bi bi-qr-code"></i></button></div>
+      </form>
+    </div>
+  </div>
+
+  <div class="row g-3">
+    {% for product in products %}
+    <div class="col-md-6 col-lg-3">
+      <div class="card app-card h-100">
+        <div class="card-body text-center">
+          <img src="{{ url_for('qr_labels.qr_image', id=product.id) }}" class="img-fluid mb-2" style="max-width:140px" alt="QR {{ product.name }}">
+          <h2 class="h6">{{ product.name }}</h2>
+          <p class="text-muted small mb-2"><code>{{ product.barcode }}</code></p>
+          <div class="d-flex justify-content-center gap-2">
+            <a class="btn btn-sm btn-outline-primary" href="{{ url_for('qr_labels.print_single', id=product.id) }}">Etiqueta</a>
+            <a class="btn btn-sm btn-outline-secondary" title="Code128" href="{{ url_for('qr_labels.code128_image', id=product.id) }}"><i class="bi bi-upc"></i></a>
+          </div>
+          <form method="post" action="{{ url_for('qr_labels.print_product_sheet', id=product.id) }}" class="border-top mt-3 pt-3 text-start">
+            <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+            <div class="row g-2">
+              <div class="col-7"><select class="form-select form-select-sm" name="label_size"><option value="30x20">30x20 mm</option><option value="40x30">40x30 mm</option><option value="50x25" selected>50x25 mm</option><option value="60x40">60x40 mm</option><option value="80x50">80x50 mm</option></select></div>
+              <div class="col-5"><input class="form-control form-control-sm" name="quantity" type="number" min="1" value="1"></div>
+              <div class="col-12 small d-flex flex-wrap gap-2">
+                <label><input type="checkbox" name="include_name" checked> Nombre</label>
+                <label><input type="checkbox" name="include_price" checked> Precio</label>
+                <label><input type="checkbox" name="include_code" checked> Codigo</label>
+                <label><input type="checkbox" name="include_qr" checked> QR</label>
+                <label><input type="checkbox" name="include_ean"> EAN13</label>
+                <label><input type="checkbox" name="include_code128" checked> Code128</label>
+                <label><input type="checkbox" name="include_date"> Fecha</label>
+              </div>
+              <div class="col-12"><button class="btn btn-sm btn-primary w-100"><i class="bi bi-printer me-1"></i>Imprimir etiquetas</button></div>
+            </div>
+          </form>
+        </div>
+      </div>
+    </div>
+    {% else %}
+    <div class="col-12"><div class="alert alert-info">No hay productos para generar QR.</div></div>
+    {% endfor %}
+  </div>
+</div>
+{% endblock %}

@@ -1,0 +1,239 @@
+﻿{% extends "base_master.html" %}
+
+{% block title %}Ventas - StockArmobile{% endblock %}
+
+{% block content %}
+<div class="app-shell pos-shell">
+  <div class="pos-hero mb-3">
+    <div>
+      <span class="page-kicker"><i class="bi bi-lightning-charge"></i> POS Premium</span>
+      <h1 class="h3 fw-bold mb-1">Ventas</h1>
+      <p class="text-muted mb-0">Venta rapida con scanner, carrito inteligente y pago mixto.</p>
+    </div>
+    <div class="d-flex flex-wrap gap-2">
+      <button class="btn btn-outline-primary" data-bs-toggle="modal" data-bs-target="#cameraScannerModal" onclick="startCameraScanner()"><i class="bi bi-camera me-1"></i>Camara</button>
+      <button class="btn btn-success" onclick="openCartModal()"><i class="bi bi-credit-card me-1"></i>Cobrar <span class="cart-count badge text-bg-light">0</span></button>
+    </div>
+  </div>
+
+  <div class="pos-toolbar app-card mb-3">
+    <div class="row g-2 align-items-center">
+      <div class="col-lg-7">
+        <div class="input-group input-group-lg">
+          <span class="input-group-text bg-white"><i class="bi bi-search text-primary"></i></span>
+          <input id="pos-search-input" class="form-control" value="{{ request.args.get('q','') }}" autocomplete="off" placeholder="Buscar por producto, codigo, marca o categoria">
+        </div>
+      </div>
+      <div class="col-lg-5">
+        <div class="input-group input-group-lg">
+          <span class="input-group-text bg-white"><i class="bi bi-upc-scan text-primary"></i></span>
+          <input id="fast-scanner-input" class="form-control" inputmode="none" autocomplete="off" placeholder="Escanear QR, EAN13, Code128 o interno">
+          <button class="btn btn-outline-primary" type="button" onclick="document.getElementById('fast-scanner-input').focus()">Activar</button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div class="pos-category-strip mb-3" aria-label="Categorias">
+    <a class="btn {{ 'btn-primary' if not request.args.get('category') else 'btn-outline-primary' }}" href="{{ url_for('sales.index') }}">Todas</a>
+    {% for categoria in categorias %}
+    <a class="btn {{ 'btn-primary' if request.args.get('category') == categoria else 'btn-outline-primary' }}" href="{{ url_for('sales.index', category=categoria) }}">{{ categoria }}</a>
+    {% endfor %}
+  </div>
+
+  <div class="row g-3 align-items-start">
+    <div class="col-xl-8 col-xxl-9">
+      <div class="pos-grid" id="pos-product-grid">
+        {% for product in products %}
+        <article class="card app-card pos-product-card" data-product-card data-search="{{ (product.name ~ ' ' ~ product.barcode ~ ' ' ~ (product.brand or '') ~ ' ' ~ (product.category or ''))|lower }}" data-category="{{ product.category or '' }}">
+          <div class="card-body d-flex flex-column">
+            <div class="d-flex justify-content-between align-items-start gap-2 mb-3">
+              <span class="metric-icon"><i class="bi bi-box"></i></span>
+              <div class="text-end">
+                {% if product.favorite %}<span class="badge text-bg-warning mb-1"><i class="bi bi-star-fill"></i></span>{% endif %}
+                <span class="badge {{ 'text-bg-danger' if product.stock <= 0 else ('text-bg-warning' if product.stock <= product.min_stock else 'text-bg-success') }} d-block">Stock {{ "%.3g"|format(product.stock or 0) }}</span>
+              </div>
+            </div>
+            <h2 class="h6 fw-bold mb-1 text-truncate" title="{{ product.name }}">{{ product.name }}</h2>
+            <div class="small text-muted mb-3"><code class="bg-light px-2 py-1 rounded">{{ product.barcode }}</code> / {{ product.unit_measure or 'u' }}</div>
+            <div class="d-flex justify-content-between align-items-center mb-3 mt-auto">
+              <span class="text-muted small">Precio</span>
+              <strong class="fs-5">${{ "%.2f"|format(product.price) }}</strong>
+            </div>
+            <div class="input-group mb-2">
+              <span class="input-group-text">Cant.</span>
+              <input id="qty-{{ product.id }}" class="form-control" type="number" min="0.001" step="0.001" value="1" inputmode="decimal">
+            </div>
+            <button class="btn btn-primary w-100" {% if product.stock <= 0 %}disabled{% endif %}
+              onclick="addToCart({{ product.id }}, {{ product.name|tojson }}, {{ product.price }}, {{ product.stock }}, {{ product.barcode|tojson }}, document.getElementById('qty-{{ product.id }}').value, {{ (product.unit_measure or 'u')|tojson }})">
+              <i class="bi bi-plus-lg me-1"></i>Agregar
+            </button>
+          </div>
+        </article>
+        {% else %}
+        <div class="alert alert-info mb-0">No hay productos activos para vender.</div>
+        {% endfor %}
+      </div>
+    </div>
+
+    <aside class="col-xl-4 col-xxl-3 d-none d-xl-block">
+      <div class="card app-card pos-cart-panel sticky-xl-top">
+        <div class="card-header bg-white border-0 d-flex justify-content-between align-items-center">
+          <strong><i class="bi bi-cart3 me-2 text-primary"></i>Carrito</strong>
+          <span class="badge text-bg-primary cart-count">0</span>
+        </div>
+        <div class="card-body">
+          <div id="pos-cart-items" class="pos-cart-items mb-3"></div>
+          <div class="summary-panel">
+            <div class="d-flex justify-content-between mb-1"><span class="text-muted">Subtotal</span><strong id="pos-subtotal">$0.00</strong></div>
+            <div class="d-flex justify-content-between mb-1"><span class="text-muted">Descuento</span><strong id="pos-discount">$0.00</strong></div>
+            <div class="d-flex justify-content-between mb-1"><span class="text-muted">IVA 21%</span><strong id="pos-tax">$0.00</strong></div>
+            <div class="d-flex justify-content-between mb-2"><span class="text-muted">Recargo</span><strong id="pos-surcharge">$0.00</strong></div>
+            <div class="d-flex justify-content-between fs-5 border-top pt-2"><span>Total</span><strong id="pos-total" class="text-primary">$0.00</strong></div>
+          </div>
+          <button class="btn btn-success btn-lg w-100 mt-3" onclick="openCartModal()"><i class="bi bi-credit-card me-1"></i>Cobrar ahora</button>
+        </div>
+      </div>
+    </aside>
+  </div>
+
+  <div class="card app-card mt-4">
+    <div class="card-header bg-white fw-bold">Ventas recientes</div>
+    <div class="table-responsive">
+      <table class="table table-sm mb-0">
+        <thead><tr><th>ID</th><th>Cliente</th><th>Fecha</th><th>Total</th></tr></thead>
+        <tbody>
+          {% for sale in sales %}
+          <tr><td><a href="{{ url_for('sales.view_sale', sale_id=sale.id) }}">#{{ sale.id }}</a></td><td>{{ sale.customer or '-' }}</td><td>{{ sale.date.strftime('%Y-%m-%d %H:%M') }}</td><td>${{ "%.2f"|format(sale.total_amount) }}</td></tr>
+          {% else %}
+          <tr><td colspan="4" class="text-center text-muted py-3">No hay ventas registradas.</td></tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+  </div>
+</div>
+
+<button class="btn btn-success position-fixed d-xl-none" style="right:16px;bottom:86px;z-index:1010;min-width:58px;min-height:58px;border-radius:999px" onclick="openCartModal()" aria-label="Cobrar">
+  <i class="bi bi-credit-card"></i> <span class="cart-count badge text-bg-light">0</span>
+</button>
+
+<div class="modal fade" id="cartModal" tabindex="-1">
+  <div class="modal-dialog modal-lg modal-dialog-scrollable">
+    <div class="modal-content border-0 shadow">
+      <div class="modal-header bg-white border-0">
+        <h5 class="modal-title fw-bold"><i class="bi bi-cart3 me-2 text-primary"></i>Cobro</h5>
+        <button class="btn-close" data-bs-dismiss="modal"></button>
+      </div>
+      <div class="modal-body">
+        <div id="cart-items-container" class="mb-3"></div>
+        <div class="summary-panel">
+          <div class="d-flex justify-content-between mb-1"><span class="text-muted">Subtotal</span><strong id="cart-subtotal">$0.00</strong></div>
+          <div class="d-flex justify-content-between mb-2"><span class="text-muted">IVA 21%</span><strong id="cart-tax">$0.00</strong></div>
+          <div class="d-flex justify-content-between fs-5 border-top pt-2"><span>Total</span><strong id="cart-total" class="text-primary">$0.00</strong></div>
+        </div>
+        <form id="checkout-form" class="mt-3">
+          <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+          <div class="row g-2">
+            <div class="col-md-6">
+              <label class="form-label">Cliente</label>
+              <select id="checkout-client-select" class="form-select" name="client_id">
+                <option value="">Consumidor final</option>
+                {% for cliente in clientes %}<option value="{{ cliente.id }}">{{ cliente.name }}</option>{% endfor %}
+              </select>
+            </div>
+            <div class="col-md-6">
+              <label class="form-label">Metodo de pago</label>
+              <select id="checkout-payment-method" class="form-select" name="metodo_pago">
+                <option value="EFECTIVO">Efectivo</option>
+                <option value="TARJETA">Tarjeta</option>
+                <option value="TRANSFERENCIA">Transferencia</option>
+                <option value="QR">QR</option>
+              </select>
+            </div>
+            <div class="col-md-6">
+              <label class="form-label">Pago secundario</label>
+              <select id="checkout-payment-method-2" class="form-select" name="metodo_pago_2">
+                <option value="">Sin pago mixto</option>
+                <option value="EFECTIVO">Efectivo</option>
+                <option value="TARJETA">Tarjeta</option>
+                <option value="TRANSFERENCIA">Transferencia</option>
+                <option value="QR">QR</option>
+              </select>
+            </div>
+            <div class="col-md-3"><label class="form-label">Monto 1</label><input id="checkout-paid-amount" class="form-control" name="monto_pago" type="number" min="0" step="0.01" inputmode="decimal"></div>
+            <div class="col-md-3"><label class="form-label">Monto 2</label><input id="checkout-paid-amount-2" class="form-control" name="monto_pago_2" type="number" min="0" step="0.01" inputmode="decimal"></div>
+            <div class="col-md-3"><label class="form-label">Descuento</label><input id="checkout-general-discount" class="form-control" name="descuento_general" type="number" min="0" step="0.01" inputmode="decimal"></div>
+            <div class="col-md-3"><label class="form-label">Recargo</label><input id="checkout-surcharge" class="form-control" name="recargo" type="number" min="0" step="0.01" inputmode="decimal"></div>
+            <div class="col-md-3"><label class="form-label">Cambio</label><div id="checkout-change" class="form-control bg-body-tertiary fw-bold">$0.00</div></div>
+            <div class="col-md-4">
+              <label class="form-label">Documento</label>
+              <select id="checkout-document-type" class="form-select" name="document_type">
+                <option value="venta">Venta</option>
+                <option value="presupuesto">Presupuesto</option>
+                <option value="remito">Remito</option>
+                <option value="factura">Factura</option>
+                <option value="apartado">Apartado</option>
+              </select>
+            </div>
+            <div class="col-12"><label class="form-label">Nota</label><input id="checkout-note" class="form-control" name="note"></div>
+          </div>
+        </form>
+      </div>
+      <div class="modal-footer">
+        <button class="btn btn-outline-danger me-auto" onclick="clearCart()">Vaciar</button>
+        <button class="btn btn-success btn-lg" onclick="processCheckout()">Procesar venta</button>
+      </div>
+    </div>
+  </div>
+</div>
+
+<div class="modal fade" id="cameraScannerModal" tabindex="-1">
+  <div class="modal-dialog modal-dialog-centered">
+    <div class="modal-content border-0 shadow">
+      <div class="modal-header">
+        <h5 class="modal-title"><i class="bi bi-camera me-2"></i>Scanner con camara</h5>
+        <button class="btn-close" data-bs-dismiss="modal" onclick="stopCameraScanner()"></button>
+      </div>
+      <div class="modal-body">
+        <video id="camera-scanner-video" class="w-100 rounded bg-dark" playsinline muted style="aspect-ratio: 4/3; object-fit: cover;"></video>
+        <p id="camera-scanner-status" class="text-muted small mt-2 mb-0">Apunta al QR, EAN13, Code128 o codigo interno.</p>
+      </div>
+    </div>
+  </div>
+</div>
+{% endblock %}
+
+{% block extra_css %}
+<style>
+  .pos-hero { display: flex; align-items: center; justify-content: space-between; gap: 1rem; flex-wrap: wrap; }
+  .pos-toolbar { padding: 14px; }
+  .pos-category-strip { display: flex; gap: .5rem; overflow-x: auto; padding-bottom: .25rem; }
+  .pos-category-strip .btn { min-width: max-content; }
+  .pos-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(210px, 1fr)); gap: 1rem; }
+  .pos-product-card { min-height: 100%; }
+  .pos-cart-panel { top: 1rem; }
+  .pos-cart-items { max-height: 48vh; overflow: auto; }
+  .pos-cart-line { display: flex; justify-content: space-between; align-items: center; gap: .75rem; padding: .75rem 0; border-bottom: 1px solid var(--app-line); }
+  @media (max-width: 575.98px) {
+    .pos-grid { grid-template-columns: 1fr; }
+    .pos-hero .btn { flex: 1 1 auto; }
+  }
+</style>
+{% endblock %}
+
+{% block extra_js %}
+<script src="{{ url_for('static', filename='assets/js/cart-manager.js') }}"></script>
+<script>
+  const posSearch = document.getElementById('pos-search-input');
+  const posCards = Array.from(document.querySelectorAll('[data-product-card]'));
+  function filterPosProducts() {
+    const q = (posSearch?.value || '').trim().toLowerCase();
+    posCards.forEach(card => {
+      card.classList.toggle('d-none', q && !card.dataset.search.includes(q));
+    });
+  }
+  posSearch?.addEventListener('input', filterPosProducts);
+  filterPosProducts();
+</script>
+{% endblock %}

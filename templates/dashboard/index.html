@@ -1,0 +1,245 @@
+{% extends "base_master.html" %}
+
+{% block title %}Dashboard - StockArmobile{% endblock %}
+
+{% block content %}
+<div class="app-shell">
+  <div class="d-flex flex-wrap justify-content-between align-items-center gap-3 mb-4">
+    <div>
+      <span class="page-kicker"><i class="bi bi-grid-1x2"></i> Vista general</span>
+      <h1 class="h3 fw-bold page-title mb-1">Dashboard</h1>
+      <p class="text-muted mb-0">Estado general de inventario, ventas y clientes.</p>
+    </div>
+    <div class="d-flex gap-2">
+      <a href="{{ url_for('dashboard.stats') }}" class="btn btn-outline-primary"><i class="bi bi-bar-chart me-1"></i>Estadisticas</a>
+      <a href="{{ url_for('sales.index') }}" class="btn btn-primary"><i class="bi bi-cart-plus me-1"></i>Nueva venta</a>
+    </div>
+  </div>
+
+  <div class="row g-3 mb-4">
+    <div class="col-sm-6 col-xl-3">
+      <div class="card app-card metric-card"><div class="card-body">
+        <div class="d-flex justify-content-between align-items-start"><div><div class="text-muted small fw-semibold text-uppercase">Ingresos hoy</div><div class="metric-value fw-bold">${{ "%.2f"|format(ingresos_hoy) }}</div></div><span class="metric-icon"><i class="bi bi-cash-stack"></i></span></div>
+        <div class="text-muted small mt-2">{{ ventas_hoy }} ventas hoy</div>
+      </div></div>
+    </div>
+    <div class="col-sm-6 col-xl-3">
+      <div class="card app-card metric-card"><div class="card-body">
+        <div class="d-flex justify-content-between align-items-start"><div><div class="text-muted small fw-semibold text-uppercase">Ingresos mes</div><div class="metric-value fw-bold">${{ "%.2f"|format(ingresos_mes) }}</div></div><span class="metric-icon"><i class="bi bi-graph-up-arrow"></i></span></div>
+        <div class="text-muted small mt-2">{{ ventas_semana }} ventas esta semana · {{ ventas_mes }} mes</div>
+      </div></div>
+    </div>
+    <div class="col-sm-6 col-xl-3">
+      <div class="card app-card metric-card"><div class="card-body">
+        <div class="d-flex justify-content-between align-items-start"><div><div class="text-muted small fw-semibold text-uppercase">Productos</div><div class="metric-value fw-bold">{{ productos_total }}</div></div><span class="metric-icon"><i class="bi bi-box-seam"></i></span></div>
+        <div class="text-muted small mt-2">{{ productos_stock }} con stock disponible</div>
+      </div></div>
+    </div>
+    <div class="col-sm-6 col-xl-3">
+      <div class="card app-card metric-card"><div class="card-body">
+        <div class="d-flex justify-content-between align-items-start"><div><div class="text-muted small fw-semibold text-uppercase">Stock bajo</div><div class="metric-value fw-bold">{{ productos_bajo_nivel }}</div></div><span class="metric-icon"><i class="bi bi-exclamation-triangle"></i></span></div>
+        <div class="text-muted small mt-2">Productos para revisar</div>
+      </div></div>
+    </div>
+    <div class="col-sm-6 col-xl-3">
+      <div class="card app-card metric-card"><div class="card-body">
+        <div class="d-flex justify-content-between align-items-start"><div><div class="text-muted small fw-semibold text-uppercase">Ganancia hoy</div><div class="metric-value fw-bold">${{ "%.2f"|format(ganancia_hoy) }}</div></div><span class="metric-icon"><i class="bi bi-piggy-bank"></i></span></div>
+        <div class="text-muted small mt-2">Despues de costos y gastos</div>
+      </div></div>
+    </div>
+    <div class="col-sm-6 col-xl-3">
+      <div class="card app-card metric-card"><div class="card-body">
+        <div class="d-flex justify-content-between align-items-start"><div><div class="text-muted small fw-semibold text-uppercase">Ganancia mes</div><div class="metric-value fw-bold">${{ "%.2f"|format(ganancia_mes) }}</div></div><span class="metric-icon"><i class="bi bi-graph-up"></i></span></div>
+        <div class="text-muted small mt-2">Rentabilidad {{ "%.1f"|format(rentabilidad) }}%</div>
+      </div></div>
+    </div>
+    <div class="col-sm-6 col-xl-3">
+      <div class="card app-card metric-card"><div class="card-body">
+        <div class="d-flex justify-content-between align-items-start"><div><div class="text-muted small fw-semibold text-uppercase">Ticket promedio</div><div class="metric-value fw-bold">${{ "%.2f"|format(ticket_promedio) }}</div></div><span class="metric-icon"><i class="bi bi-receipt-cutoff"></i></span></div>
+        <div class="text-muted small mt-2">{{ "%.3g"|format(productos_vendidos) }} productos vendidos</div>
+      </div></div>
+    </div>
+    <div class="col-sm-6 col-xl-3">
+      <div class="card app-card metric-card"><div class="card-body">
+        <div class="d-flex justify-content-between align-items-start"><div><div class="text-muted small fw-semibold text-uppercase">Clientes nuevos</div><div class="metric-value fw-bold">{{ clientes_nuevos }}</div></div><span class="metric-icon"><i class="bi bi-person-plus"></i></span></div>
+        <div class="text-muted small mt-2">{{ total_clients }} clientes activos</div>
+      </div></div>
+    </div>
+    <div class="col-sm-6 col-xl-3">
+      <div class="card app-card metric-card"><div class="card-body">
+        <div class="d-flex justify-content-between align-items-start"><div><div class="text-muted small fw-semibold text-uppercase">Stock agotado</div><div class="metric-value fw-bold">{{ stock_agotado }}</div></div><span class="metric-icon"><i class="bi bi-x-octagon"></i></span></div>
+        <div class="text-muted small mt-2">Productos sin unidades</div>
+      </div></div>
+    </div>
+  </div>
+
+  <div class="row g-4 mb-4">
+    <div class="col-lg-8">
+      <div class="card app-card h-100">
+        <div class="card-header bg-white border-0 fw-bold pt-3">Ventas de los ultimos 7 dias</div>
+        <div class="card-body"><canvas id="salesTrendChart" height="110"></canvas></div>
+      </div>
+    </div>
+    <div class="col-lg-4">
+      <div class="card app-card h-100">
+        <div class="card-header bg-white border-0 fw-bold pt-3">Ranking categorias</div>
+        <div class="card-body"><canvas id="categoryChart" height="220"></canvas></div>
+      </div>
+    </div>
+  </div>
+
+  <div class="row g-4">
+    <div class="col-lg-7">
+      <div class="card app-card h-100">
+        <div class="card-header bg-white border-0 fw-bold pt-3">Productos mas vendidos</div>
+        <div class="card-body pt-0">
+          {% if productos_mas_vendidos %}
+          <div class="table-responsive">
+            <table class="table table-hover align-middle">
+              <thead><tr><th>Producto</th><th>Cantidad</th><th class="text-end">Total</th></tr></thead>
+              <tbody>
+                {% for p in productos_mas_vendidos %}
+                <tr><td class="fw-semibold">{{ p.name }}</td><td>{{ p.sales_count }}</td><td class="text-end fw-semibold">${{ "%.2f"|format(p.total_sales) }}</td></tr>
+                {% endfor %}
+              </tbody>
+            </table>
+          </div>
+          {% else %}
+          <p class="text-muted mb-0">Todavia no hay ventas registradas.</p>
+          {% endif %}
+        </div>
+      </div>
+    </div>
+    <div class="col-lg-5">
+      <div class="card app-card h-100">
+        <div class="card-header bg-white border-0 fw-bold pt-3">Ultimas ventas</div>
+        <div class="card-body pt-0">
+          {% if ventas_recientes %}
+          <div class="list-group list-group-flush">
+            {% for sale in ventas_recientes %}
+            <a class="list-group-item list-group-item-action d-flex justify-content-between align-items-center px-0" href="{{ url_for('sales.view_sale', sale_id=sale.id) }}">
+              <span><strong>#{{ sale.id }}</strong><br><small class="text-muted">{{ sale.customer or 'Consumidor final' }}</small></span>
+              <strong>${{ "%.2f"|format(sale.total_amount) }}</strong>
+            </a>
+            {% endfor %}
+          </div>
+          {% else %}
+          <p class="text-muted mb-0">No hay ventas recientes.</p>
+          {% endif %}
+        </div>
+      </div>
+    </div>
+  </div>
+  <div class="row g-4 mt-1">
+    <div class="col-lg-6">
+      <div class="card app-card h-100">
+        <div class="card-header bg-white border-0 fw-bold pt-3">Productos menos vendidos</div>
+        <div class="card-body pt-0">
+          {% if productos_menos_vendidos %}
+          <div class="list-group list-group-flush">
+            {% for p in productos_menos_vendidos %}
+            <div class="list-group-item d-flex justify-content-between px-0"><span>{{ p.name }}</span><span class="badge bg-secondary">{{ "%.3g"|format(p.sales_count or 0) }}</span></div>
+            {% endfor %}
+          </div>
+          {% else %}<p class="text-muted mb-0">Sin datos.</p>{% endif %}
+        </div>
+      </div>
+    </div>
+    <div class="col-lg-6">
+      <div class="card app-card h-100">
+        <div class="card-header bg-white border-0 fw-bold pt-3">Productos sin movimiento</div>
+        <div class="card-body pt-0">
+          {% if productos_sin_movimiento %}
+          {% for p in productos_sin_movimiento %}<span class="badge text-bg-warning me-1 mb-1">{{ p.name }}</span>{% endfor %}
+          {% else %}<p class="text-muted mb-0">No hay productos sin movimiento en el ranking actual.</p>{% endif %}
+        </div>
+      </div>
+    </div>
+  </div>
+  <div class="row g-4 mt-1">
+    <div class="col-lg-6">
+      <div class="card app-card h-100">
+        <div class="card-header bg-white border-0 fw-bold pt-3">Ranking clientes</div>
+        <div class="card-body pt-0">
+          {% if ranking_clientes %}
+          <div class="list-group list-group-flush">
+            {% for client in ranking_clientes %}
+            <div class="list-group-item d-flex justify-content-between px-0"><span>{{ client.nombre }}</span><strong>${{ "%.2f"|format(client.total_compras or 0) }}</strong></div>
+            {% endfor %}
+          </div>
+          {% else %}<p class="text-muted mb-0">Sin compras de clientes todavia.</p>{% endif %}
+        </div>
+      </div>
+    </div>
+    <div class="col-lg-6">
+      <div class="card app-card h-100">
+        <div class="card-header bg-white border-0 fw-bold pt-3">Stock agotado</div>
+        <div class="card-body pt-0">
+          {% if low_stock %}
+          <div class="list-group list-group-flush">
+            {% for product in low_stock %}
+            <a class="list-group-item list-group-item-action d-flex justify-content-between px-0" href="{{ url_for('products.index', low_stock=1) }}">
+              <span>{{ product.name }}</span>
+              <span class="badge {{ 'text-bg-danger' if product.stock <= 0 else 'text-bg-warning' }}">{{ "%.3g"|format(product.stock or 0) }} {{ product.unit_measure or '' }}</span>
+            </a>
+            {% endfor %}
+          </div>
+          {% else %}
+          <p class="text-muted mb-0">No hay productos criticos.</p>
+          {% endif %}
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+{% endblock %}
+
+{% block extra_css %}
+<link rel="stylesheet" href="{{ url_for('static', filename='assets/css/dashboard.css') }}">
+{% endblock %}
+
+{% block extra_js %}
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.7/dist/chart.umd.min.js"></script>
+<script>
+  const salesTrendCanvas = document.getElementById('salesTrendChart');
+  if (salesTrendCanvas) {
+    new Chart(salesTrendCanvas, {
+      type: 'line',
+      data: {
+        labels: {{ chart_labels|tojson }},
+        datasets: [{
+          label: 'Ventas',
+          data: {{ chart_sales|tojson }},
+          borderColor: '#2563eb',
+          backgroundColor: 'rgba(37, 99, 235, .12)',
+          fill: true,
+          tension: .35
+        }]
+      },
+      options: {
+        responsive: true,
+        plugins: { legend: { display: false } },
+        scales: { y: { beginAtZero: true } }
+      }
+    });
+  }
+
+  const categoryCanvas = document.getElementById('categoryChart');
+  if (categoryCanvas) {
+    new Chart(categoryCanvas, {
+      type: 'doughnut',
+      data: {
+        labels: {{ chart_categories_labels|tojson }},
+        datasets: [{
+          data: {{ chart_categories_data|tojson }},
+          backgroundColor: ['#2563eb', '#0ea5e9', '#10b981', '#f59e0b', '#ef4444', '#8b5cf6', '#14b8a6', '#64748b']
+        }]
+      },
+      options: {
+        responsive: true,
+        plugins: { legend: { position: 'bottom' } }
+      }
+    });
+  }
+</script>
+{% endblock %}
