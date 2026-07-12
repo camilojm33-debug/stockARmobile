@@ -15,6 +15,7 @@ from flask_sqlalchemy import SQLAlchemy
 from flask_wtf import CSRFProtect, FlaskForm
 from sqlalchemy import Index, inspect, text
 from werkzeug.security import check_password_hash, generate_password_hash
+from werkzeug.middleware.proxy_fix import ProxyFix
 from wtforms import BooleanField, DateField, DecimalField, PasswordField, SelectField, StringField, SubmitField, TextAreaField
 from wtforms.validators import DataRequired, Email, Length, NumberRange, Optional
 from config.logging_config import configure_logging
@@ -37,12 +38,14 @@ app.config["WTF_CSRF_TIME_LIMIT"] = None
 if is_production_env:
     app.config["SESSION_COOKIE_SECURE"] = True
     app.config["REMEMBER_COOKIE_SECURE"] = True
+    app.config["PREFERRED_URL_SCHEME"] = "https"
 
 database_url = os.environ.get("DATABASE_URL", "sqlite:///stock_armobile.db")
 if database_url.startswith("postgres://"):
     database_url = database_url.replace("postgres://", "postgresql://", 1)
 app.config["SQLALCHEMY_DATABASE_URI"] = database_url
 app.config["SQLALCHEMY_TRACK_MODIFICATIONS"] = False
+app.wsgi_app = ProxyFix(app.wsgi_app, x_proto=1, x_host=1)
 
 db = SQLAlchemy(app)
 migrate = Migrate(app, db)
@@ -186,6 +189,11 @@ class User(UserMixin, db.Model):
     username = db.Column(db.String(80), unique=True, nullable=False, index=True)
     email = db.Column(db.String(120), unique=True, nullable=False, index=True)
     password_hash = db.Column(db.String(256), nullable=False)
+    first_name = db.Column(db.String(80))
+    last_name = db.Column(db.String(80))
+    avatar_url = db.Column(db.String(255))
+    auth_provider = db.Column(db.String(30), default="local")
+    google_sub = db.Column(db.String(120), unique=True, index=True)
     role = db.Column(db.String(20), default="user")
     active = db.Column(db.Boolean, default=True, nullable=False)
     company_id = db.Column(db.Integer, db.ForeignKey("companies.id"))
@@ -194,7 +202,8 @@ class User(UserMixin, db.Model):
 
     @property
     def name(self):
-        return self.username
+        full_name = " ".join(part for part in [self.first_name, self.last_name] if part)
+        return full_name or self.username
 
     def set_password(self, password):
         self.password_hash = generate_password_hash(password)
@@ -670,6 +679,7 @@ class RegisterForm(FlaskForm):
 class LoginForm(FlaskForm):
     username = StringField("Usuario / Email", validators=[DataRequired()])
     password = PasswordField("Contrasena", validators=[DataRequired()])
+    remember = BooleanField("Recordarme")
     submit = SubmitField("Iniciar sesion")
 
 
@@ -764,6 +774,8 @@ cash_bp = cash.bp
 expenses_bp = expenses.bp
 reports_bp = reports.bp
 saas_bp = saas.bp
+
+auth.init_oauth(app)
 
 app.register_blueprint(auth_bp, url_prefix="/auth")
 app.register_blueprint(dashboard_bp, url_prefix="/dashboard")
@@ -947,6 +959,11 @@ def ensure_database_schema():
         "users": {
             "active": "BOOLEAN DEFAULT TRUE",
             "company_id": "INTEGER",
+            "first_name": "VARCHAR(80)",
+            "last_name": "VARCHAR(80)",
+            "avatar_url": "VARCHAR(255)",
+            "auth_provider": "VARCHAR(30) DEFAULT 'local'",
+            "google_sub": "VARCHAR(120)",
         },
         "companies": {
             "contact_email": "VARCHAR(160)",
@@ -1110,6 +1127,7 @@ def ensure_database_schema():
             connection.execute(text("ALTER TABLE sale_items ALTER COLUMN quantity TYPE DOUBLE PRECISION USING quantity::double precision"))
 
         index_statements = [
+            "CREATE UNIQUE INDEX IF NOT EXISTS ix_users_google_sub ON users(google_sub)",
             "CREATE UNIQUE INDEX IF NOT EXISTS ix_plans_code ON plans(code)",
             "CREATE INDEX IF NOT EXISTS ix_subscriptions_company_status ON subscriptions(company_id, status)",
             "CREATE INDEX IF NOT EXISTS ix_subscriptions_next_billing_date ON subscriptions(next_billing_date)",
