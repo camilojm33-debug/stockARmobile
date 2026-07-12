@@ -187,7 +187,6 @@ def login():
 def google_login():
     client = _google_client()
     if client is None:
-        flash('Google Login no está configurado.', 'warning')
         return redirect(url_for('auth.login'))
     redirect_uri = url_for('auth.google_callback', _external=True)
     return client.authorize_redirect(redirect_uri)
@@ -197,7 +196,6 @@ def google_login():
 def google_callback():
     client = _google_client()
     if client is None:
-        flash('Google Login no está configurado.', 'warning')
         return redirect(url_for('auth.login'))
 
     try:

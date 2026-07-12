@@ -1153,7 +1153,7 @@ def init_db_command():
     ensure_database_schema()
     create_admin_user()
     ensure_primary_superadmin()
-    print("Base de datos inicializada. Usuario: admin / admin123")
+    print("Base de datos inicializada correctamente.")
 
 
 if __name__ == "__main__":
