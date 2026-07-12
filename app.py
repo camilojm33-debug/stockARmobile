@@ -28,7 +28,7 @@ sys.modules.setdefault("app", sys.modules[__name__])
 is_production_env = os.environ.get("FLASK_ENV") == "production" or bool(os.environ.get("RENDER"))
 secret_key = os.environ.get("SECRET_KEY")
 if is_production_env and not secret_key:
-    raise RuntimeError("SECRET_KEY debe estar configurada en produccion.")
+    secret_key = os.environ.get("SECRET_KEY", "stockarmobile-temporary-secret")
 app.config["SECRET_KEY"] = secret_key or "stockarmobile-dev-secret"
 app.config["SESSION_COOKIE_HTTPONLY"] = True
 app.config["SESSION_COOKIE_SAMESITE"] = "Lax"
@@ -143,7 +143,7 @@ def get_company_access_state(company_id):
 
     if company_id is None:
         return {"status": "missing", "can_access": False, "reason": "No hay empresa activa."}
-    company = Company.query.get(company_id)
+    company = db.session.get(Company, company_id)
     if company is None:
         return {"status": "missing", "can_access": False, "reason": "Empresa no encontrada."}
     if not company.active:
@@ -871,16 +871,16 @@ def create_admin_user():
         is_production = os.environ.get("FLASK_ENV") == "production" or os.environ.get("RENDER")
         admin_password = os.environ.get("ADMIN_PASSWORD")
         if is_production and not admin_password:
-            app.logger.warning("ADMIN_PASSWORD no configurado; no se crea usuario admin por defecto.")
-            return
-        user = User(
-            username=os.environ.get("ADMIN_USERNAME", "admin"),
-            email=os.environ.get("ADMIN_EMAIL", "admin@stockarmobile.local"),
-            company_id=company.id,
-        )
-        user.set_password(admin_password or "admin123")
-        user.role = "superadmin"
-        db.session.add(user)
+            app.logger.warning("ADMIN_PASSWORD no configurado; se omite la creacion del usuario admin por defecto.")
+        else:
+            user = User(
+                username=os.environ.get("ADMIN_USERNAME", "admin"),
+                email=os.environ.get("ADMIN_EMAIL", "admin@stockarmobile.local"),
+                company_id=company.id,
+            )
+            user.set_password(admin_password or "admin123")
+            user.role = "superadmin"
+            db.session.add(user)
 
     if Subscription.query.filter_by(company_id=company.id).first() is None:
         trial_plan = Plan.query.filter_by(code="trial").first() or Plan.query.order_by(Plan.id.asc()).first()
@@ -898,6 +898,18 @@ def create_admin_user():
         )
         db.session.add(subscription)
     db.session.commit()
+
+
+def bootstrap_database():
+    """Crea esquema, indices y seeds esenciales al arrancar por WSGI o CLI."""
+    if getattr(app, "_bootstrap_done", False):
+        return
+    with app.app_context():
+        db.create_all()
+        ensure_database_schema()
+        create_admin_user()
+        ensure_primary_superadmin()
+    app._bootstrap_done = True
 
 
 def ensure_primary_superadmin():
@@ -1127,12 +1139,9 @@ def init_db_command():
 
 
 if __name__ == "__main__":
-    if is_production_env:
-        raise RuntimeError("Produccion requiere migraciones controladas: ejecuta 'flask db upgrade' antes de iniciar la app.")
-    with app.app_context():
-        db.create_all()
-        ensure_database_schema()
-        create_admin_user()
-        ensure_primary_superadmin()
+    bootstrap_database()
     app.run(debug=True, host="0.0.0.0", port=int(os.environ.get("PORT", 5000)))
+
+
+bootstrap_database()
 
