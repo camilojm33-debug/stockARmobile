@@ -11,6 +11,16 @@ services:
         generateValue: true
       - key: MP_MODE
         value: sandbox
+      - key: MP_ACCESS_TOKEN
+        sync: false
+      - key: MP_PUBLIC_KEY
+        sync: false
+      - key: MP_WEBHOOK_SECRET
+        sync: false
+      - key: GOOGLE_CLIENT_ID
+        sync: false
+      - key: GOOGLE_CLIENT_SECRET
+        sync: false
       - key: APP_URL
         value: https://stockarmobile.onrender.com
       - key: MP_NOTIFICATION_URL

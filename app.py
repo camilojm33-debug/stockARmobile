@@ -855,6 +855,11 @@ def service_worker():
     return response
 
 
+@app.route("/offline.html")
+def offline_page():
+    return send_from_directory(app.static_folder, "offline.html", mimetype="text/html")
+
+
 def create_admin_user():
     admin_created = False
     admin_updated = False
