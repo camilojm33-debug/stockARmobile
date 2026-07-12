@@ -857,6 +857,7 @@ def service_worker():
 
 def create_admin_user():
     admin_created = False
+    admin_updated = False
     company = Company.query.first()
     if company is None:
         company = Company(name=os.environ.get("COMPANY_NAME", "StockArmobile"))
@@ -880,15 +881,43 @@ def create_admin_user():
             if payload["code"] not in existing_codes:
                 db.session.add(Plan(**payload))
 
-    if User.query.filter_by(username="admin").first() is None:
-        is_production = os.environ.get("FLASK_ENV") == "production" or os.environ.get("RENDER")
-        admin_password = os.environ.get("ADMIN_PASSWORD")
+    admin_username = (os.environ.get("ADMIN_USERNAME", "admin") or "admin").strip() or "admin"
+    admin_email = (os.environ.get("ADMIN_EMAIL", "admin@stockarmobile.local") or "admin@stockarmobile.local").strip().lower()
+    by_username = User.query.filter_by(username=admin_username).first()
+    by_email = User.query.filter_by(email=admin_email).first()
+
+    is_production = os.environ.get("FLASK_ENV") == "production" or os.environ.get("RENDER")
+    admin_password = os.environ.get("ADMIN_PASSWORD")
+
+    target_admin = by_email or by_username
+    if target_admin is not None:
+        changed = False
+        if by_email is not None:
+            # Priorizamos el email para evitar IntegrityError cuando OAuth ya creó ese usuario.
+            username_taken_by_other = by_username is not None and by_username.id != by_email.id
+            if not username_taken_by_other and target_admin.username != admin_username:
+                target_admin.username = admin_username
+                changed = True
+            elif username_taken_by_other and target_admin.username != admin_username:
+                app.logger.warning("No se pudo normalizar username admin por conflicto con otro usuario existente.")
+        if target_admin.role != "admin":
+            target_admin.role = "admin"
+            changed = True
+        if not target_admin.active:
+            target_admin.active = True
+            changed = True
+        if target_admin.company_id is None:
+            target_admin.company_id = company.id
+            changed = True
+        if changed:
+            admin_updated = True
+    else:
         if is_production and not admin_password:
             app.logger.warning("ADMIN_PASSWORD no configurado; no se pudo crear el usuario admin.")
         else:
             user = User(
-                username="admin",
-                email=os.environ.get("ADMIN_EMAIL", "admin@stockarmobile.local"),
+                username=admin_username,
+                email=admin_email,
                 company_id=company.id,
                 active=True,
             )
@@ -915,6 +944,8 @@ def create_admin_user():
     db.session.commit()
     if admin_created:
         app.logger.info("Admin creado")
+    elif admin_updated:
+        app.logger.info("Admin actualizado")
     return admin_created
 
 
