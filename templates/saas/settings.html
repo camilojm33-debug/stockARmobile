@@ -1,0 +1,16 @@
+{% extends "base_master.html" %}
+{% block title %}Configuracion global - SuperAdmin{% endblock %}
+{% block content %}
+<div class="app-shell">
+  <div class="d-flex justify-content-between align-items-center mb-3"><h1 class="h3 fw-bold mb-0">Configuracion global</h1><a class="btn btn-outline-secondary" href="{{ url_for('saas.index') }}">Volver</a></div>
+  <div class="card app-card"><div class="table-responsive"><table class="table mb-0"><tbody>
+    <tr><th>APP_URL</th><td>{{ settings_snapshot.app_url or 'No configurada' }}</td></tr>
+    <tr><th>SECRET_KEY</th><td>{{ 'Configurada' if settings_snapshot.secret_key_configured else 'Faltante' }}</td></tr>
+    <tr><th>GOOGLE_CLIENT_ID</th><td>{{ 'Configurada' if settings_snapshot.google_client_id_configured else 'Faltante' }}</td></tr>
+    <tr><th>GOOGLE_CLIENT_SECRET</th><td>{{ 'Configurada' if settings_snapshot.google_client_secret_configured else 'Faltante' }}</td></tr>
+    <tr><th>MP_ACCESS_TOKEN</th><td>{{ 'Configurada' if settings_snapshot.mp_access_token_configured else 'Faltante' }}</td></tr>
+    <tr><th>MP_PUBLIC_KEY</th><td>{{ 'Configurada' if settings_snapshot.mp_public_key_configured else 'Faltante' }}</td></tr>
+    <tr><th>MP_WEBHOOK_SECRET</th><td>{{ 'Configurada' if settings_snapshot.mp_webhook_secret_configured else 'Faltante' }}</td></tr>
+  </tbody></table></div></div>
+</div>
+{% endblock %}

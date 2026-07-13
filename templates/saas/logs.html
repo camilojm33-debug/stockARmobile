@@ -1,0 +1,8 @@
+{% extends "base_master.html" %}
+{% block title %}Logs - SuperAdmin{% endblock %}
+{% block content %}
+<div class="app-shell">
+  <div class="d-flex justify-content-between align-items-center mb-3"><h1 class="h3 fw-bold mb-0">Logs globales</h1><a class="btn btn-outline-secondary" href="{{ url_for('saas.index') }}">Volver</a></div>
+  <div class="card app-card"><div class="table-responsive"><table class="table mb-0 table-hover"><thead><tr><th>Fecha</th><th>Accion</th><th>Entidad</th><th>Empresa</th><th>Detalle</th></tr></thead><tbody>{% for log in logs %}<tr><td>{{ log.created_at.strftime('%Y-%m-%d %H:%M') if log.created_at else '-' }}</td><td>{{ log.action }}</td><td>{{ log.entity or '-' }}</td><td>{{ log.company_id or '-' }}</td><td>{{ log.detail or '-' }}</td></tr>{% else %}<tr><td colspan="5" class="text-center text-muted py-4">Sin logs.</td></tr>{% endfor %}</tbody></table></div></div>
+</div>
+{% endblock %}

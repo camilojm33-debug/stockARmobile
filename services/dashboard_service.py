@@ -19,15 +19,15 @@ def build_dashboard_context():
     total_clients = scope_query_to_company(Client.query.filter_by(active=True), Client).count()
     new_clients_month = scope_query_to_company(Client.query.filter(Client.active.is_(True), Client.created_at >= month_start), Client).count()
 
-    total_sales_amount = _sum(Sale.total_amount)
+    total_sales_amount = _sum(Sale.total_amount, model=Sale)
     sales_today = scope_query_to_company(Sale.query.filter(Sale.date >= today_start), Sale).count()
     sales_week = scope_query_to_company(Sale.query.filter(Sale.date >= week_start), Sale).count()
     sales_month = scope_query_to_company(Sale.query.filter(Sale.date >= month_start), Sale).count()
-    income_today = _sum(Sale.total_amount, Sale.date >= today_start)
-    income_week = _sum(Sale.total_amount, Sale.date >= week_start)
-    income_month = _sum(Sale.total_amount, Sale.date >= month_start)
-    expenses_today = _sum(Expense.amount, Expense.date >= today_start)
-    expenses_month = _sum(Expense.amount, Expense.date >= month_start)
+    income_today = _sum(Sale.total_amount, Sale.date >= today_start, model=Sale)
+    income_week = _sum(Sale.total_amount, Sale.date >= week_start, model=Sale)
+    income_month = _sum(Sale.total_amount, Sale.date >= month_start, model=Sale)
+    expenses_today = _sum(Expense.amount, Expense.date >= today_start, model=Expense)
+    expenses_month = _sum(Expense.amount, Expense.date >= month_start, model=Expense)
     cost_today = _sum_item_cost(Sale.date >= today_start)
     cost_month = _sum_item_cost(Sale.date >= month_start)
 
@@ -123,10 +123,10 @@ def build_dashboard_context():
     }
 
 
-def _sum(column, *filters):
-    from app import Sale, db, scope_query_to_company
+def _sum(column, *filters, model):
+    from app import db, scope_query_to_company
 
-    query = scope_query_to_company(db.session.query(db.func.coalesce(db.func.sum(column), 0)), Sale)
+    query = scope_query_to_company(db.session.query(db.func.coalesce(db.func.sum(column), 0)), model)
     for condition in filters:
         query = query.filter(condition)
     return query.scalar() or 0

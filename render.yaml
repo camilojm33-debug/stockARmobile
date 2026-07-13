@@ -26,11 +26,11 @@ services:
       - key: MP_NOTIFICATION_URL
         value: https://stockarmobile.onrender.com/admin/webhooks/mercadopago
       - key: MP_SUCCESS_URL
-        value: https://stockarmobile.onrender.com/admin/billing?checkout=success
+        value: https://stockarmobile.onrender.com/admin/portal?checkout=success
       - key: MP_PENDING_URL
-        value: https://stockarmobile.onrender.com/admin/billing?checkout=pending
+        value: https://stockarmobile.onrender.com/admin/portal?checkout=pending
       - key: MP_FAILURE_URL
-        value: https://stockarmobile.onrender.com/admin/billing?checkout=failure
+        value: https://stockarmobile.onrender.com/admin/portal?checkout=failure
       - key: DATABASE_URL
         fromDatabase:
           name: stockarmobile-db

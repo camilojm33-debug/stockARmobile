@@ -1,6 +1,6 @@
 """Modulo de gastos con impacto en rentabilidad."""
 
-from flask import Blueprint, flash, redirect, render_template, request, session, url_for
+from flask import Blueprint, flash, redirect, render_template, request, url_for
 from flask_login import current_user, login_required
 from app import tenant_required
 
@@ -32,7 +32,7 @@ def index():
                 amount=amount,
                 payment_method=request.form.get("payment_method"),
                 user_id=current_user.id,
-                company_id=getattr(current_user, "company_id", None) or session.get("company_id"),
+                company_id=getattr(current_user, "company_id", None),
             )
         )
         db.session.commit()

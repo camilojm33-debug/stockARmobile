@@ -78,15 +78,15 @@ def load_user(user_id):
 def get_current_company_id():
     if not current_user.is_authenticated:
         return None
-    if getattr(current_user, "role", None) in {"admin", "superadmin"}:
-        return session.get("company_id") or getattr(current_user, "company_id", None)
-    return session.get("company_id") or getattr(current_user, "company_id", None)
+    if getattr(current_user, "role", None) == "superadmin":
+        return None
+    return getattr(current_user, "company_id", None)
 
 
 def scope_query_to_company(query, model):
     if not current_user.is_authenticated:
         return query
-    if getattr(current_user, "role", None) in {"admin", "superadmin"}:
+    if getattr(current_user, "role", None) == "superadmin":
         return query
     company_id = get_current_company_id()
     if company_id is None or not hasattr(model, "company_id"):
@@ -106,8 +106,9 @@ def tenant_required(func):
     @wraps(func)
     @login_required
     def decorated(*args, **kwargs):
-        if getattr(current_user, "role", None) in {"admin", "superadmin"}:
-            return func(*args, **kwargs)
+        if getattr(current_user, "role", None) == "superadmin":
+            flash("El panel de empresa no está disponible para SuperAdmin.", "warning")
+            return redirect(url_for("saas.index"))
         company_id = get_current_company_id()
         if company_id is None:
             if request.is_json or request.path.startswith("/api"):
@@ -127,11 +128,22 @@ def superadmin_required(func):
     @wraps(func)
     @login_required
     def decorated(*args, **kwargs):
-        if getattr(current_user, "role", None) not in {"admin", "superadmin"}:
-            abort(403)
-        if not is_control_panel_owner(current_user):
+        if getattr(current_user, "role", None) != "superadmin":
             abort(403)
         return func(*args, **kwargs)
+    return decorated
+
+
+def company_admin_required(func):
+    @wraps(func)
+    @login_required
+    def decorated(*args, **kwargs):
+        if getattr(current_user, "role", None) != "admin":
+            abort(403)
+        if get_current_company_id() is None:
+            abort(403)
+        return func(*args, **kwargs)
+
     return decorated
 
 
@@ -139,8 +151,9 @@ def trial_required(func):
     @wraps(func)
     @login_required
     def decorated(*args, **kwargs):
-        if getattr(current_user, "role", None) in {"admin", "superadmin"}:
-            return func(*args, **kwargs)
+        if getattr(current_user, "role", None) == "superadmin":
+            flash("El panel de empresa no está disponible para SuperAdmin.", "warning")
+            return redirect(url_for("saas.index"))
         company_id = get_current_company_id()
         if company_id is None:
             return redirect(url_for("auth.login"))
@@ -184,9 +197,10 @@ def get_company_access_state(company_id):
 @app.before_request
 def bind_tenant_context():
     if current_user.is_authenticated:
-        company_id = session.get("company_id") or getattr(current_user, "company_id", None)
-        if company_id is not None and session.get("company_id") is None:
-            session["company_id"] = company_id
+        if getattr(current_user, "role", None) == "superadmin":
+            company_id = None
+        else:
+            company_id = getattr(current_user, "company_id", None)
         g.current_company_id = company_id
     else:
         g.current_company_id = None
@@ -770,6 +784,7 @@ import purchases  # noqa: E402
 import qr_labels  # noqa: E402
 import reports  # noqa: E402
 import saas  # noqa: E402
+import company_billing  # noqa: E402
 import sales  # noqa: E402
 
 auth_bp = auth.bp
@@ -783,6 +798,7 @@ cash_bp = cash.bp
 expenses_bp = expenses.bp
 reports_bp = reports.bp
 saas_bp = saas.bp
+company_billing_bp = company_billing.bp
 
 auth.init_oauth(app)
 
@@ -796,7 +812,8 @@ app.register_blueprint(purchases_bp, url_prefix="/compras")
 app.register_blueprint(cash_bp, url_prefix="/caja")
 app.register_blueprint(expenses_bp, url_prefix="/gastos")
 app.register_blueprint(reports_bp, url_prefix="/reportes")
-app.register_blueprint(saas_bp, url_prefix="/admin")
+app.register_blueprint(saas_bp, url_prefix="/superadmin")
+app.register_blueprint(company_billing_bp, url_prefix="/admin")
 
 
 @app.route("/")
@@ -914,8 +931,9 @@ def create_admin_user():
                 changed = True
             elif username_taken_by_other and target_admin.username != admin_username:
                 app.logger.warning("No se pudo normalizar username admin por conflicto con otro usuario existente.")
-        if target_admin.role != "admin":
-            target_admin.role = "admin"
+        desired_role = "superadmin" if is_control_panel_owner(target_admin) else "admin"
+        if target_admin.role != desired_role:
+            target_admin.role = desired_role
             changed = True
         if not target_admin.active:
             target_admin.active = True
@@ -936,7 +954,7 @@ def create_admin_user():
                 active=True,
             )
             user.set_password(admin_password or "admin123")
-            user.role = "admin"
+            user.role = "superadmin"
             db.session.add(user)
             admin_created = True
 
@@ -1001,8 +1019,9 @@ def ensure_primary_superadmin():
     if not first_user.active:
         first_user.active = True
         changed = True
-    if first_user.role not in {"admin", "superadmin"}:
-        first_user.role = "admin"
+    expected_role = "superadmin" if is_control_panel_owner(first_user) else (first_user.role or "user")
+    if first_user.role != expected_role:
+        first_user.role = expected_role
         changed = True
 
     if changed:

@@ -86,7 +86,11 @@ def _seed_google_company_and_subscription(display_name):
 def _login_user_and_bind_company(user, remember=False):
     session.clear()
     login_user(user, remember=remember)
-    session['company_id'] = user.company_id
+
+
+def _post_login_redirect():
+    from flask_login import current_user
+    return url_for('saas.index') if getattr(current_user, 'role', None) == 'superadmin' else url_for('dashboard.index')
 
 
 def _google_upsert_user(userinfo):
@@ -175,7 +179,7 @@ def login():
                 if not _is_safe_redirect(next_page):
                     next_page = None
                 flash('Inicio de sesión exitoso', 'success')
-                return redirect(next_page if next_page else url_for('dashboard.index'))
+                return redirect(next_page if next_page else _post_login_redirect())
             
             flash('Usuario o contraseña incorrectos.', 'danger')
     
@@ -212,7 +216,7 @@ def google_callback():
 
     _login_user_and_bind_company(user, remember=False)
     flash('Inicio de sesión con Google exitoso.', 'success')
-    return redirect(url_for('dashboard.index'))
+    return redirect(_post_login_redirect())
 
 
 @bp.route('/register', methods=['GET', 'POST'])

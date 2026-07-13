@@ -1,6 +1,6 @@
 """Blueprint de clientes: CRUD y API."""
 
-from flask import Blueprint, flash, jsonify, redirect, render_template, request, session, url_for
+from flask import Blueprint, flash, jsonify, redirect, render_template, request, url_for
 from flask_login import current_user, login_required
 from app import tenant_required
 
@@ -68,7 +68,7 @@ def post():
     from app import Client, db, scope_query_to_company
 
     client = Client(
-        company_id=getattr(current_user, "company_id", None) or session.get("company_id"),
+        company_id=getattr(current_user, "company_id", None),
         name=request.form.get("name", "").strip(),
         email=request.form.get("email") or None,
         phone=request.form.get("phone") or None,

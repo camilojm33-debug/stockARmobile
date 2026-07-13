@@ -524,7 +524,7 @@
 <body data-bs-theme="light">
   {% if current_user.is_authenticated %}
   <aside class="app-sidebar" id="appSidebar">
-    <a class="app-brand" href="{{ url_for('dashboard.index') }}">
+    <a class="app-brand" href="{{ url_for('saas.index') if current_user.role == 'superadmin' else url_for('dashboard.index') }}">
       <span class="app-brand-mark"><i class="bi bi-phone"></i></span>
       <span>
         <span class="fw-bold d-block">StockArmobile</span>
@@ -532,6 +532,22 @@
       </span>
     </a>
     <nav class="app-nav nav flex-column">
+      {% if current_user.role == 'superadmin' %}
+      <a class="nav-link {% if request.endpoint == 'saas.index' %}active{% endif %}" href="{{ url_for('saas.index') }}"><i class="bi bi-grid-1x2"></i>Dashboard SaaS</a>
+      <a class="nav-link {% if request.endpoint == 'saas.companies_panel' %}active{% endif %}" href="{{ url_for('saas.companies_panel') }}"><i class="bi bi-buildings"></i>Empresas</a>
+      <a class="nav-link {% if request.endpoint == 'saas.users_panel' %}active{% endif %}" href="{{ url_for('saas.users_panel') }}"><i class="bi bi-people"></i>Usuarios globales</a>
+      <a class="nav-link {% if request.endpoint == 'saas.subscriptions_panel' %}active{% endif %}" href="{{ url_for('saas.subscriptions_panel') }}"><i class="bi bi-credit-card-2-front"></i>Suscripciones</a>
+      <a class="nav-link {% if request.endpoint == 'saas.plans_panel' %}active{% endif %}" href="{{ url_for('saas.plans_panel') }}"><i class="bi bi-diagram-3"></i>Planes</a>
+      <a class="nav-link {% if request.endpoint == 'saas.mercadopago_settings' %}active{% endif %}" href="{{ url_for('saas.mercadopago_settings') }}"><i class="bi bi-wallet2"></i>Mercado Pago</a>
+      <a class="nav-link {% if request.endpoint == 'saas.billing' %}active{% endif %}" href="{{ url_for('saas.billing') }}"><i class="bi bi-receipt"></i>Facturacion</a>
+      <a class="nav-link {% if request.endpoint == 'saas.trials_panel' %}active{% endif %}" href="{{ url_for('saas.trials_panel') }}"><i class="bi bi-hourglass-split"></i>Trials</a>
+      <a class="nav-link {% if request.endpoint == 'saas.payments_panel' %}active{% endif %}" href="{{ url_for('saas.payments_panel') }}"><i class="bi bi-cash-coin"></i>Pagos</a>
+      <a class="nav-link {% if request.endpoint == 'saas.renewals_panel' %}active{% endif %}" href="{{ url_for('saas.renewals_panel') }}"><i class="bi bi-arrow-repeat"></i>Renovaciones</a>
+      <a class="nav-link {% if request.endpoint == 'saas.logs_panel' %}active{% endif %}" href="{{ url_for('saas.logs_panel') }}"><i class="bi bi-journal-text"></i>Logs</a>
+      <a class="nav-link {% if request.endpoint == 'saas.server_status' %}active{% endif %}" href="{{ url_for('saas.server_status') }}"><i class="bi bi-hdd-network"></i>Estado servidor</a>
+      <a class="nav-link {% if request.endpoint == 'saas.global_stats' %}active{% endif %}" href="{{ url_for('saas.global_stats') }}"><i class="bi bi-graph-up"></i>Estadisticas globales</a>
+      <a class="nav-link {% if request.endpoint == 'saas.global_settings' %}active{% endif %}" href="{{ url_for('saas.global_settings') }}"><i class="bi bi-gear"></i>Configuracion global</a>
+      {% else %}
       <a class="nav-link {% if request.endpoint == 'dashboard.index' %}active{% endif %}" href="{{ url_for('dashboard.index') }}"><i class="bi bi-grid-1x2"></i>Dashboard</a>
       <a class="nav-link {% if request.endpoint == 'dashboard.quick_start' %}active{% endif %}" href="{{ url_for('dashboard.quick_start') }}"><i class="bi bi-lightning-charge"></i>Inicio rapido</a>
       <a class="nav-link {% if request.endpoint and request.endpoint.startswith('products.') %}active{% endif %}" href="{{ url_for('products.index') }}"><i class="bi bi-box-seam"></i>Productos</a>
@@ -542,8 +558,8 @@
       <a class="nav-link {% if request.endpoint and request.endpoint.startswith('expenses.') %}active{% endif %}" href="{{ url_for('expenses.index') }}"><i class="bi bi-receipt"></i>Gastos</a>
       <a class="nav-link {% if request.endpoint and request.endpoint.startswith('reports.') %}active{% endif %}" href="{{ url_for('reports.index') }}"><i class="bi bi-file-earmark-bar-graph"></i>Reportes</a>
       <a class="nav-link {% if request.endpoint and request.endpoint.startswith('qr_labels.') %}active{% endif %}" href="{{ url_for('qr_labels.generate') }}"><i class="bi bi-qr-code"></i>QR y etiquetas</a>
-      <a class="nav-link {% if request.endpoint and (request.endpoint.startswith('saas.subscription_') or request.endpoint == 'saas.create_checkout') %}active{% endif %}" href="{{ url_for('saas.subscription_portal') }}"><i class="bi bi-credit-card-2-front"></i>Suscripcion</a>
-      <a class="nav-link {% if request.endpoint and request.endpoint.startswith('saas.') %}active{% endif %}" href="{{ url_for('saas.index') }}"><i class="bi bi-shield-check"></i>SaaS</a>
+      <a class="nav-link {% if request.endpoint and request.endpoint.startswith('company_billing.') %}active{% endif %}" href="{{ url_for('company_billing.subscription_portal') }}"><i class="bi bi-credit-card-2-front"></i>Suscripcion</a>
+      {% endif %}
     </nav>
     <div class="app-sidebar-footer">
       <div class="user-chip mb-3">

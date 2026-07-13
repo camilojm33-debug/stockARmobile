@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import os
 from datetime import datetime, timedelta
 from io import BytesIO
 
@@ -10,19 +11,17 @@ from flask import Blueprint, abort, current_app, flash, jsonify, redirect, rende
 from flask import send_file
 from flask_login import current_user, login_required
 from openpyxl import Workbook
+from sqlalchemy import text
 
-from app import csrf, superadmin_required, tenant_required, utcnow
+from app import superadmin_required, utcnow
 from config.billing_config import load_billing_config
-from services.billing_service import BillingService
 from services.plan_service import PlanService
-from services.subscription_service import SubscriptionService
-from services.webhook_service import WebhookService
 
 bp = Blueprint("saas", __name__)
 
 
 def _require_superadmin():
-    if current_user.role not in ("admin", "superadmin"):
+    if current_user.role != "superadmin":
         abort(403)
 
 
@@ -448,8 +447,7 @@ def company_impersonate(company_id):
     _require_superadmin()
     company = Company.query.filter_by(id=company_id).first_or_404()
     session["impersonator_user_id"] = current_user.id
-    session["impersonator_company_id"] = session.get("company_id") or getattr(current_user, "company_id", None)
-    session["company_id"] = company.id
+    session["impersonated_company_id"] = company.id
 
     db.session.add(
         AuditLog(
@@ -462,8 +460,8 @@ def company_impersonate(company_id):
         )
     )
     db.session.commit()
-    flash(f"Ahora operás como empresa: {company.name}", "info")
-    return redirect(url_for("dashboard.index"))
+    flash(f"Modo auditoría de empresa activado para: {company.name}", "info")
+    return redirect(url_for("saas.company_detail", company_id=company.id))
 
 
 @bp.route("/impersonation/exit", methods=["POST"])
@@ -472,10 +470,9 @@ def impersonation_exit():
     from app import AuditLog, db
 
     _require_superadmin()
-    previous_company_id = session.get("company_id")
-    restore_company_id = session.get("impersonator_company_id")
-    session["company_id"] = restore_company_id
-    session.pop("impersonator_company_id", None)
+    previous_company_id = session.get("impersonated_company_id")
+    restore_company_id = getattr(current_user, "company_id", None)
+    session.pop("impersonated_company_id", None)
     session.pop("impersonator_user_id", None)
 
     db.session.add(
@@ -750,104 +747,130 @@ def subscriptions_action(subscription_id):
     return _redirect_back("saas.subscriptions_panel")
 
 
-@bp.route("/portal")
-@tenant_required
-def subscription_portal():
-    from app import Company, db
+@bp.route("/users")
+@superadmin_required
+def users_panel():
+    from app import User
 
-    company_id = session.get("company_id") or getattr(current_user, "company_id", None)
-    company = Company.query.filter_by(id=company_id).first_or_404()
-
-    PlanService.ensure_defaults(db.session)
-    plans = PlanService.all_commercial_plans()
-    subscription = SubscriptionService.active_subscription_for_company(company.id)
-
-    if subscription is None:
-        trial_plan = PlanService.get_plan(code="trial")
-        subscription = SubscriptionService.ensure_company_trial(db.session, company=company, trial_plan=trial_plan)
-        db.session.commit()
-
-    return render_template("saas/portal.html", company=company, plans=plans, subscription=subscription, mp_config=load_billing_config())
+    _require_superadmin()
+    users = User.query.order_by(User.created_at.desc()).limit(200).all()
+    return render_template("saas/users.html", users=users)
 
 
-@bp.route("/checkout", methods=["POST"])
-@tenant_required
-def create_checkout():
-    from app import Company, db
+@bp.route("/plans")
+@superadmin_required
+def plans_panel():
+    from app import Plan
 
-    company_id = session.get("company_id") or getattr(current_user, "company_id", None)
-    company = Company.query.filter_by(id=company_id).first_or_404()
+    _require_superadmin()
+    plans = Plan.query.order_by(Plan.price.asc()).all()
+    return render_template("saas/plans.html", plans=plans)
 
-    plan_id = request.form.get("plan_id", type=int)
-    plan = PlanService.get_plan(plan_id=plan_id)
-    if plan is None:
-        flash("Plan no encontrado.", "danger")
-        return redirect(url_for("saas.subscription_portal"))
 
-    if float(plan.price or 0) <= 0:
-        subscription = SubscriptionService.start_or_change_plan(db.session, company=company, plan=plan, user_id=current_user.id)
-        db.session.commit()
-        flash("Plan actualizado correctamente.", "success")
-        return redirect(url_for("saas.subscription_portal"))
+@bp.route("/payments")
+@superadmin_required
+def payments_panel():
+    from app import Payment
 
+    _require_superadmin()
+    payments = Payment.query.order_by(Payment.created_at.desc()).limit(200).all()
+    return render_template("saas/payments.html", payments=payments)
+
+
+@bp.route("/trials")
+@superadmin_required
+def trials_panel():
+    from app import Company, Subscription
+
+    _require_superadmin()
+    trials = (
+        Subscription.query.filter(Subscription.status == "trial")
+        .order_by(Subscription.starts_at.desc().nullslast(), Subscription.id.desc())
+        .all()
+    )
+    companies = {company.id: company for company in Company.query.filter(Company.id.in_([sub.company_id for sub in trials])).all()} if trials else {}
+    return render_template("saas/trials.html", trials=trials, companies=companies)
+
+
+@bp.route("/renewals")
+@superadmin_required
+def renewals_panel():
+    from app import Subscription, utcnow
+
+    _require_superadmin()
+    upcoming = (
+        Subscription.query.filter(
+            Subscription.renewal_enabled.is_(True),
+            Subscription.next_billing_date.isnot(None),
+            Subscription.next_billing_date >= utcnow(),
+        )
+        .order_by(Subscription.next_billing_date.asc())
+        .limit(200)
+        .all()
+    )
+    return render_template("saas/renewals.html", renewals=upcoming)
+
+
+@bp.route("/logs")
+@superadmin_required
+def logs_panel():
+    from app import AuditLog
+
+    _require_superadmin()
+    logs = AuditLog.query.order_by(AuditLog.created_at.desc()).limit(400).all()
+    return render_template("saas/logs.html", logs=logs)
+
+
+@bp.route("/server-status")
+@superadmin_required
+def server_status():
+    from app import db
+
+    _require_superadmin()
+    db_ok = True
+    db_error = None
     try:
-        payload = BillingService().create_checkout_for_plan(db_session=db.session, company=company, plan=plan, user=current_user)
-        preference = payload["preference"]
+        db.session.execute(text("SELECT 1"))
     except Exception as exc:
-        current_app.logger.exception("Error creando checkout Mercado Pago: %s", exc)
-        flash("No se pudo iniciar el checkout. Revisá la configuración de Mercado Pago.", "danger")
-        return redirect(url_for("saas.subscription_portal"))
-
-    checkout_url = preference.get("init_point") or preference.get("sandbox_init_point")
-    if not checkout_url:
-        flash("Mercado Pago no devolvió URL de checkout.", "danger")
-        return redirect(url_for("saas.subscription_portal"))
-    return redirect(checkout_url)
-
-
-@bp.route("/subscription/cancel", methods=["POST"])
-@tenant_required
-def cancel_subscription():
-    from app import db
-
-    company_id = session.get("company_id") or getattr(current_user, "company_id", None)
-    subscription = SubscriptionService.active_subscription_for_company(company_id)
-    if subscription is None:
-        flash("No hay suscripción activa.", "warning")
-        return redirect(url_for("saas.subscription_portal"))
-    BillingService.cancel_subscription(db.session, subscription=subscription, user_id=current_user.id)
-    flash("La suscripción se cancelará al finalizar el período actual.", "success")
-    return redirect(url_for("saas.subscription_portal"))
+        db_ok = False
+        db_error = str(exc)
+    context = {
+        "db_ok": db_ok,
+        "db_error": db_error,
+        "flask_env": os.environ.get("FLASK_ENV", "development"),
+        "render": bool(os.environ.get("RENDER")),
+        "database_url_configured": bool(os.environ.get("DATABASE_URL")),
+    }
+    return render_template("saas/server_status.html", status=context)
 
 
-@bp.route("/subscription/reactivate", methods=["POST"])
-@tenant_required
-def reactivate_subscription():
-    from app import db
-
-    company_id = session.get("company_id") or getattr(current_user, "company_id", None)
-    subscription = SubscriptionService.active_subscription_for_company(company_id)
-    if subscription is None:
-        flash("No hay suscripción para reactivar.", "warning")
-        return redirect(url_for("saas.subscription_portal"))
-    BillingService.reactivate_subscription(db.session, subscription=subscription, user_id=current_user.id)
-    flash("Renovación automática reactivada.", "success")
-    return redirect(url_for("saas.subscription_portal"))
+@bp.route("/stats")
+@superadmin_required
+def global_stats():
+    return redirect(url_for("saas.index"))
 
 
-@bp.route("/webhooks/mercadopago", methods=["POST"])
-@csrf.exempt
-def webhook_mercadopago():
-    from app import db
+@bp.route("/mercadopago")
+@superadmin_required
+def mercadopago_settings():
+    _require_superadmin()
+    return render_template("saas/mercadopago.html", mp_config=load_billing_config())
 
-    payload = request.get_json(silent=True) or {}
-    try:
-        result = WebhookService().process(db_session=db.session, headers=dict(request.headers), payload=payload)
-    except Exception as exc:
-        current_app.logger.exception("Webhook Mercado Pago rechazado: %s", exc)
-        db.session.rollback()
-        return jsonify({"ok": False, "error": str(exc)}), 400
-    return jsonify({"ok": True, "result": result}), 200
+
+@bp.route("/settings")
+@superadmin_required
+def global_settings():
+    _require_superadmin()
+    settings_snapshot = {
+        "app_url": os.environ.get("APP_URL") or "",
+        "secret_key_configured": bool(os.environ.get("SECRET_KEY")),
+        "google_client_id_configured": bool(os.environ.get("GOOGLE_CLIENT_ID")),
+        "google_client_secret_configured": bool(os.environ.get("GOOGLE_CLIENT_SECRET")),
+        "mp_access_token_configured": bool(os.environ.get("MP_ACCESS_TOKEN")),
+        "mp_public_key_configured": bool(os.environ.get("MP_PUBLIC_KEY")),
+        "mp_webhook_secret_configured": bool(os.environ.get("MP_WEBHOOK_SECRET")),
+    }
+    return render_template("saas/settings.html", settings_snapshot=settings_snapshot)
 
 
 @bp.route("/metrics.xlsx")

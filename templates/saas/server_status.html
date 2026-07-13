@@ -1,0 +1,11 @@
+{% extends "base_master.html" %}
+{% block title %}Estado del servidor - SuperAdmin{% endblock %}
+{% block content %}
+<div class="app-shell">
+  <div class="d-flex justify-content-between align-items-center mb-3"><h1 class="h3 fw-bold mb-0">Estado del servidor</h1><a class="btn btn-outline-secondary" href="{{ url_for('saas.index') }}">Volver</a></div>
+  <div class="row g-3">
+    <div class="col-md-6"><div class="card app-card"><div class="card-body"><div class="text-muted small">Base de datos</div><div class="h4 mb-0 {{ 'text-success' if status.db_ok else 'text-danger' }}">{{ 'OK' if status.db_ok else 'ERROR' }}</div>{% if status.db_error %}<div class="small text-danger mt-2">{{ status.db_error }}</div>{% endif %}</div></div></div>
+    <div class="col-md-6"><div class="card app-card"><div class="card-body"><div class="text-muted small">Entorno</div><div class="h4 mb-0">{{ status.flask_env }}</div><div class="small text-muted mt-2">Render: {{ 'si' if status.render else 'no' }} · DATABASE_URL: {{ 'configurada' if status.database_url_configured else 'faltante' }}</div></div></div></div>
+  </div>
+</div>
+{% endblock %}

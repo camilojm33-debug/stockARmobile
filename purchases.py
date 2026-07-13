@@ -2,7 +2,7 @@
 
 from datetime import datetime
 
-from flask import Blueprint, flash, redirect, render_template, request, session, url_for
+from flask import Blueprint, flash, redirect, render_template, request, url_for
 from flask_login import current_user, login_required
 from app import tenant_required
 
@@ -42,7 +42,7 @@ def index():
 
         order = PurchaseOrder(
             supplier_id=supplier_id or None,
-            company_id=getattr(current_user, "company_id", None) or session.get("company_id"),
+            company_id=getattr(current_user, "company_id", None),
             date=utcnow(),
             status="recibida",
             subtotal=quantity * unit_cost,
@@ -76,7 +76,7 @@ def add_supplier():
         flash("El proveedor necesita nombre.", "danger")
         return redirect(url_for("purchases.index"))
     supplier = Supplier(
-        company_id=getattr(current_user, "company_id", None) or session.get("company_id"),
+        company_id=getattr(current_user, "company_id", None),
         name=name,
         email=request.form.get("email") or None,
         phone=request.form.get("phone") or None,

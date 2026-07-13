@@ -1,0 +1,22 @@
+{% extends "base_master.html" %}
+{% block title %}Usuarios globales - SuperAdmin{% endblock %}
+{% block content %}
+<div class="app-shell">
+  <div class="d-flex justify-content-between align-items-center mb-3">
+    <div>
+      <span class="page-kicker"><i class="bi bi-people"></i> SuperAdmin</span>
+      <h1 class="h3 fw-bold mb-0">Usuarios globales</h1>
+    </div>
+    <a class="btn btn-outline-secondary" href="{{ url_for('saas.index') }}">Volver</a>
+  </div>
+  <div class="card app-card">
+    <div class="table-responsive"><table class="table mb-0 table-hover"><thead><tr><th>ID</th><th>Usuario</th><th>Email</th><th>Rol</th><th>Empresa</th><th>Estado</th></tr></thead><tbody>
+      {% for user in users %}
+      <tr><td>{{ user.id }}</td><td>{{ user.username }}</td><td>{{ user.email }}</td><td>{{ user.role }}</td><td>{{ user.company_id or '-' }}</td><td>{{ 'activo' if user.active else 'inactivo' }}</td></tr>
+      {% else %}
+      <tr><td colspan="6" class="text-center text-muted py-4">Sin usuarios.</td></tr>
+      {% endfor %}
+    </tbody></table></div>
+  </div>
+</div>
+{% endblock %}

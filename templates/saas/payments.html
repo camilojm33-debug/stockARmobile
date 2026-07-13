@@ -1,0 +1,8 @@
+{% extends "base_master.html" %}
+{% block title %}Pagos - SuperAdmin{% endblock %}
+{% block content %}
+<div class="app-shell">
+  <div class="d-flex justify-content-between align-items-center mb-3"><h1 class="h3 fw-bold mb-0">Pagos</h1><a class="btn btn-outline-secondary" href="{{ url_for('saas.index') }}">Volver</a></div>
+  <div class="card app-card"><div class="table-responsive"><table class="table mb-0 table-hover"><thead><tr><th>Fecha</th><th>Empresa</th><th>Referencia</th><th>Estado</th><th class="text-end">Monto</th></tr></thead><tbody>{% for payment in payments %}<tr><td>{{ payment.created_at.strftime('%Y-%m-%d %H:%M') if payment.created_at else '-' }}</td><td>{{ payment.company_id or '-' }}</td><td>{{ payment.payment_id or payment.reference or '-' }}</td><td>{{ payment.status }}</td><td class="text-end">${{ '%.2f'|format(payment.amount or 0) }}</td></tr>{% else %}<tr><td colspan="5" class="text-center text-muted py-4">Sin pagos.</td></tr>{% endfor %}</tbody></table></div></div>
+</div>
+{% endblock %}

@@ -2,7 +2,7 @@
 
 from datetime import datetime
 
-from flask import Blueprint, flash, redirect, render_template, request, session, url_for
+from flask import Blueprint, flash, redirect, render_template, request, url_for
 from flask_login import current_user, login_required
 from app import tenant_required
 
@@ -27,7 +27,7 @@ def index():
         if action == "open" and open_session is None:
             open_session = CashSession(
                 user_id=current_user.id,
-                company_id=getattr(current_user, "company_id", None) or session.get("company_id"),
+                company_id=getattr(current_user, "company_id", None),
                 opening_amount=_to_float(request.form.get("opening_amount")),
                 note=request.form.get("note"),
             )
@@ -44,7 +44,7 @@ def index():
                     CashMovement(
                         session_id=open_session.id,
                         user_id=current_user.id,
-                        company_id=getattr(current_user, "company_id", None) or session.get("company_id"),
+                        company_id=getattr(current_user, "company_id", None),
                         movement_type=movement_type,
                         category=request.form.get("category"),
                         amount=amount,

@@ -46,7 +46,7 @@
             <li><i class="bi bi-check2"></i> {{ plan.max_products }} productos</li>
             <li><i class="bi bi-check2"></i> {{ plan.max_clients }} clientes</li>
           </ul>
-          <form method="post" action="{{ url_for('saas.create_checkout') }}" class="mt-auto">
+          <form method="post" action="{{ url_for('company_billing.create_checkout') }}" class="mt-auto">
             <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
             <input type="hidden" name="plan_id" value="{{ plan.id }}">
             <button class="btn {{ 'btn-outline-primary' if subscription.plan_id == plan.id else 'btn-primary' }} w-100" type="submit">
@@ -61,11 +61,11 @@
 
   <div class="card app-card mt-4">
     <div class="card-body d-flex flex-wrap gap-2">
-      <form method="post" action="{{ url_for('saas.cancel_subscription') }}">
+      <form method="post" action="{{ url_for('company_billing.cancel_subscription') }}">
         <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
         <button class="btn btn-outline-danger" type="submit">Cancelar suscripcion</button>
       </form>
-      <form method="post" action="{{ url_for('saas.reactivate_subscription') }}">
+      <form method="post" action="{{ url_for('company_billing.reactivate_subscription') }}">
         <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
         <button class="btn btn-outline-success" type="submit">Reactivar renovacion</button>
       </form>

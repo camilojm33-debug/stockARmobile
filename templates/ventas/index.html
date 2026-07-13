@@ -64,8 +64,15 @@
               <span class="input-group-text">Cant.</span>
               <input id="qty-{{ product.id }}" class="form-control" type="number" min="0.001" step="0.001" value="1" inputmode="decimal">
             </div>
-            <button class="btn btn-primary w-100" {% if product.stock <= 0 %}disabled{% endif %}
-              onclick="addToCart({{ product.id }}, {{ product.name|tojson }}, {{ (product.price or 0)|tojson }}, {{ (product.stock or 0)|tojson }}, {{ product.barcode|tojson }}, document.getElementById('qty-{{ product.id }}').value, {{ (product.unit_measure or 'u')|tojson }})">
+            <button class="btn btn-primary w-100"
+              {% if product.stock <= 0 %}disabled{% endif %}
+              data-product-id="{{ product.id }}"
+              data-product-name="{{ product.name|e }}"
+              data-product-price="{{ product.price or 0 }}"
+              data-product-stock="{{ product.stock or 0 }}"
+              data-product-barcode="{{ product.barcode|e }}"
+              data-product-unit="{{ (product.unit_measure or 'u')|e }}"
+              onclick="handleAddToCartClick(this)">
               <i class="bi bi-plus-lg me-1"></i>Agregar
             </button>
           </div>
@@ -227,6 +234,23 @@
 <script>
   const posSearch = document.getElementById('pos-search-input');
   const posCards = Array.from(document.querySelectorAll('[data-product-card]'));
+
+  function handleAddToCartClick(button) {
+    const id = Number(button.dataset.productId || 0);
+    const name = button.dataset.productName || '';
+    const price = Number(button.dataset.productPrice || 0);
+    const stock = Number(button.dataset.productStock || 0);
+    const barcode = button.dataset.productBarcode || '';
+    const unit = button.dataset.productUnit || 'u';
+    const qtyInput = document.getElementById(`qty-${id}`);
+    const qty = qtyInput ? qtyInput.value : '1';
+
+    console.log('[DIAG][1] Click Agregar', { id, name, price, stock, qtyInput: qty });
+    addToCart(id, name, price, stock, barcode, qty, unit);
+  }
+
+  window.handleAddToCartClick = handleAddToCartClick;
+
   function filterPosProducts() {
     const q = (posSearch?.value || '').trim().toLowerCase();
     posCards.forEach(card => {

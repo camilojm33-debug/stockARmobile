@@ -35,9 +35,9 @@ def load_billing_config() -> BillingConfig:
 
     app_url = (os.environ.get("APP_URL") or "http://localhost:5000").rstrip("/")
     notification_url = os.environ.get("MP_NOTIFICATION_URL") or f"{app_url}/admin/webhooks/mercadopago"
-    success_url = os.environ.get("MP_SUCCESS_URL") or f"{app_url}/admin/billing?checkout=success"
-    pending_url = os.environ.get("MP_PENDING_URL") or f"{app_url}/admin/billing?checkout=pending"
-    failure_url = os.environ.get("MP_FAILURE_URL") or f"{app_url}/admin/billing?checkout=failure"
+    success_url = os.environ.get("MP_SUCCESS_URL") or f"{app_url}/admin/portal?checkout=success"
+    pending_url = os.environ.get("MP_PENDING_URL") or f"{app_url}/admin/portal?checkout=pending"
+    failure_url = os.environ.get("MP_FAILURE_URL") or f"{app_url}/admin/portal?checkout=failure"
 
     return BillingConfig(
         mode=mode,

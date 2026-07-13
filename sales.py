@@ -221,7 +221,7 @@ def _create_sale_from_items(items, data, json_response=False):
             note=data.get("note"),
             client_id=client.id if client else None,
             seller_id=current_user.id,
-            company_id=getattr(current_user, "company_id", None) or session.get("company_id"),
+            company_id=getattr(current_user, "company_id", None),
             date=utcnow(),
         )
         db.session.add(sale)

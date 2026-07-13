@@ -6,7 +6,7 @@ from datetime import datetime
 from io import BytesIO
 from pathlib import Path
 
-from flask import Blueprint, current_app, flash, jsonify, redirect, render_template, request, send_file, session, url_for
+from flask import Blueprint, current_app, flash, jsonify, redirect, render_template, request, send_file, url_for
 from flask_login import current_user, login_required
 from sqlalchemy.exc import IntegrityError
 from app import tenant_required, utcnow
@@ -155,7 +155,7 @@ def add():
             flash("El codigo de barras ya existe.", "danger")
             return redirect(url_for("products.index"))
 
-        product = Product(barcode=barcode, name=form.name.data, company_id=getattr(current_user, 'company_id', None) or session.get('company_id'))
+        product = Product(barcode=barcode, name=form.name.data, company_id=getattr(current_user, 'company_id', None))
         _apply_product_form(product, form)
         upload = request.files.get("photo_file")
         if upload and (upload.filename or "").strip():
@@ -404,7 +404,7 @@ def import_excel():
                 barcode=barcode,
                 name=name,
                 active=True,
-                company_id=getattr(current_user, "company_id", None) or session.get("company_id"),
+                company_id=getattr(current_user, "company_id", None),
             )
             db.session.add(product)
             db.session.flush()
