@@ -238,9 +238,12 @@ class User(UserMixin, db.Model):
 
 class Product(db.Model):
     __tablename__ = "products"
+    __table_args__ = (
+        Index("ix_products_company_barcode", "company_id", "barcode", unique=True),
+    )
 
     id = db.Column(db.Integer, primary_key=True)
-    barcode = db.Column(db.String(50), unique=True, nullable=False, index=True)
+    barcode = db.Column(db.String(50), nullable=False, index=True)
     name = db.Column(db.String(200), nullable=False)
     description = db.Column(db.Text)
     category = db.Column(db.String(100))
@@ -1204,6 +1207,7 @@ def ensure_database_schema():
             connection.execute(text("ALTER TABLE sale_items ALTER COLUMN quantity TYPE DOUBLE PRECISION USING quantity::double precision"))
 
         index_statements = [
+            "CREATE UNIQUE INDEX IF NOT EXISTS ix_products_company_barcode ON products(company_id, barcode)",
             "CREATE UNIQUE INDEX IF NOT EXISTS ix_users_google_sub ON users(google_sub)",
             "CREATE UNIQUE INDEX IF NOT EXISTS ix_plans_code ON plans(code)",
             "CREATE INDEX IF NOT EXISTS ix_subscriptions_company_status ON subscriptions(company_id, status)",
@@ -1221,6 +1225,17 @@ def ensure_database_schema():
                 connection.execute(text(stmt))
             except Exception:
                 # Compatibilidad con motores que no soportan IF NOT EXISTS en todos los índices.
+                pass
+
+        if db.engine.dialect.name == "postgresql" and "products" in existing_tables:
+            # Legacy global uniqueness on barcode must be removed in favor of tenant-scoped uniqueness.
+            try:
+                connection.execute(text("ALTER TABLE products DROP CONSTRAINT IF EXISTS products_barcode_key"))
+            except Exception:
+                pass
+            try:
+                connection.execute(text("DROP INDEX IF EXISTS ix_products_barcode"))
+            except Exception:
                 pass
 
 

@@ -206,3 +206,79 @@ def test_cross_tenant_id_url_access_is_blocked():
     report_csv = client.get("/reportes/ventas.csv")
     assert report_csv.status_code == 200
     assert "Cliente Empresa Dos" not in report_csv.data.decode("utf-8")
+
+
+def test_product_barcode_is_unique_per_company():
+    client = stock_app.app.test_client()
+
+    with stock_app.app.app_context():
+        company_one = Company.query.filter_by(name="Empresa Demo").first()
+        company_two = Company(name="Empresa Dos", active=True)
+        db.session.add(company_two)
+        db.session.flush()
+
+        user_two = User(username="tenant_conflict", email="tenant_conflict@test.local", role="admin", company_id=company_two.id, active=True)
+        user_two.set_password("admin123")
+        db.session.add(user_two)
+
+        db.session.add(
+            Product(
+                barcode="DUPLICADO-001",
+                name="Producto Empresa Uno",
+                price=100,
+                cost_price=50,
+                stock=5,
+                min_stock=1,
+                active=True,
+                company_id=company_one.id,
+            )
+        )
+        db.session.commit()
+        company_two_id = company_two.id
+
+    client.post("/auth/login", data={"username": "tenant_conflict", "password": "admin123"})
+
+    post_response = client.post(
+        "/productos/add",
+        data={
+            "barcode": "DUPLICADO-001",
+            "name": "Producto Empresa Dos",
+            "sale_type": "unidad",
+            "unit_measure": "u",
+            "price": "200",
+            "cost_price": "120",
+            "stock": "3",
+            "min_stock": "1",
+        },
+        follow_redirects=False,
+    )
+    assert post_response.status_code in (301, 302)
+
+    with stock_app.app.app_context():
+        created_for_company_two = Product.query.filter_by(company_id=company_two_id, barcode="DUPLICADO-001").count()
+        assert created_for_company_two == 1
+
+    # Same company must still reject duplicated barcode.
+    post_response_same_company = client.post(
+        "/productos/add",
+        data={
+            "barcode": "DUPLICADO-001",
+            "name": "Producto Empresa Dos Duplicado",
+            "sale_type": "unidad",
+            "unit_measure": "u",
+            "price": "210",
+            "cost_price": "120",
+            "stock": "2",
+            "min_stock": "1",
+        },
+        follow_redirects=False,
+    )
+    assert post_response_same_company.status_code in (301, 302)
+
+    with stock_app.app.app_context():
+        still_one_for_company_two = Product.query.filter_by(company_id=company_two_id, barcode="DUPLICADO-001").count()
+        assert still_one_for_company_two == 1
+
+    # Session must remain authenticated; if it was lost this route would redirect to login.
+    products_response = client.get("/productos/", follow_redirects=False)
+    assert products_response.status_code == 200

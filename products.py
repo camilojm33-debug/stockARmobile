@@ -164,18 +164,18 @@ def add():
             except ValueError as exc:
                 flash(str(exc), "danger")
                 return redirect(url_for("products.index"))
-        db.session.add(product)
-        db.session.flush()
-        db.session.add(
-            ProductModification(
-                product_id=product.id,
-                company_id=product.company_id,
-                user_id=current_user.id,
-                action="creacion",
-                detail="Producto creado",
-            )
-        )
         try:
+            db.session.add(product)
+            db.session.flush()
+            db.session.add(
+                ProductModification(
+                    product_id=product.id,
+                    company_id=product.company_id,
+                    user_id=current_user.id,
+                    action="creacion",
+                    detail="Producto creado",
+                )
+            )
             db.session.commit()
         except IntegrityError:
             db.session.rollback()
