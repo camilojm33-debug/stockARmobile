@@ -1,14 +1,20 @@
 """Blueprint de productos: CRUD e inventario."""
 
+import os
+import uuid
 from datetime import datetime
 from io import BytesIO
+from pathlib import Path
 
-from flask import Blueprint, flash, jsonify, redirect, render_template, request, send_file, session, url_for
+from flask import Blueprint, current_app, flash, jsonify, redirect, render_template, request, send_file, session, url_for
 from flask_login import current_user, login_required
 from sqlalchemy.exc import IntegrityError
 from app import tenant_required, utcnow
 
 bp = Blueprint("products", __name__)
+
+ALLOWED_IMAGE_EXTENSIONS = {".jpg", ".jpeg", ".png", ".webp"}
+MAX_IMAGE_SIZE_BYTES = 5 * 1024 * 1024
 
 
 def _product_to_dict(product):
@@ -50,7 +56,6 @@ def _apply_product_form(product, form):
     product.category = form.category.data
     product.sale_type = form.sale_type.data or "unidad"
     product.unit_measure = (form.unit_measure.data or "").strip() or _default_unit(product.sale_type)
-    product.photo = form.photo.data
     product.brand = form.brand.data
     product.supplier = form.supplier.data
     product.cost_price = float(form.cost_price.data or 0)
@@ -83,6 +88,29 @@ def _float_value(value, default=0.0):
         return float(value if value not in (None, "") else default)
     except (TypeError, ValueError):
         return default
+
+
+def _save_product_image(upload):
+    filename = (upload.filename or "").strip()
+    if not filename:
+        return None
+
+    extension = Path(filename).suffix.lower()
+    if extension not in ALLOWED_IMAGE_EXTENSIONS:
+        raise ValueError("Formato de imagen no permitido. Usa JPG, JPEG, PNG o WEBP.")
+
+    upload.stream.seek(0, os.SEEK_END)
+    size = upload.stream.tell()
+    upload.stream.seek(0)
+    if size > MAX_IMAGE_SIZE_BYTES:
+        raise ValueError("La imagen supera el tamaño máximo de 5 MB.")
+
+    upload_dir = Path(current_app.static_folder) / "uploads" / "products"
+    upload_dir.mkdir(parents=True, exist_ok=True)
+    unique_name = f"{uuid.uuid4().hex}{extension}"
+    destination = upload_dir / unique_name
+    upload.save(destination)
+    return f"/static/uploads/products/{unique_name}"
 
 
 @bp.route("/")
@@ -129,6 +157,13 @@ def add():
 
         product = Product(barcode=barcode, name=form.name.data, company_id=getattr(current_user, 'company_id', None) or session.get('company_id'))
         _apply_product_form(product, form)
+        upload = request.files.get("photo_file")
+        if upload and (upload.filename or "").strip():
+            try:
+                product.photo = _save_product_image(upload)
+            except ValueError as exc:
+                flash(str(exc), "danger")
+                return redirect(url_for("products.index"))
         db.session.add(product)
         db.session.flush()
         db.session.add(
@@ -168,6 +203,13 @@ def edit(product_id=None, id=None):
         old_price = float(product.price or 0)
         old_cost = float(product.cost_price or 0)
         _apply_product_form(product, form)
+        upload = request.files.get("photo_file")
+        if upload and (upload.filename or "").strip():
+            try:
+                product.photo = _save_product_image(upload)
+            except ValueError as exc:
+                flash(str(exc), "danger")
+                return redirect(url_for("products.edit", product_id=product.id))
         if old_price != float(product.price or 0) or old_cost != float(product.cost_price or 0):
             db.session.add(
                 ProductPriceHistory(

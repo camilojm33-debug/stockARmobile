@@ -16,7 +16,7 @@
   <div class="collapse {{ 'show' if edit else '' }} mb-4" id="productForm">
     <div class="card app-card">
       <div class="card-body">
-        <form method="post" action="{{ url_for('products.edit', product_id=productos[0].id) if edit and productos else url_for('products.add') }}">
+        <form method="post" action="{{ url_for('products.edit', product_id=productos[0].id) if edit and productos else url_for('products.add') }}" enctype="multipart/form-data">
           {{ form.hidden_tag() }}
           <div class="row g-3">
             <div class="col-md-3">{{ form.barcode.label(class_="form-label") }}{{ form.barcode(class_="form-control") }}</div>
@@ -33,9 +33,20 @@
             <div class="col-md-2">{{ form.stock.label(class_="form-label") }}{{ form.stock(class_="form-control") }}</div>
             <div class="col-md-2">{{ form.min_stock.label(class_="form-label") }}{{ form.min_stock(class_="form-control") }}</div>
             <div class="col-md-2">{{ form.discount.label(class_="form-label") }}{{ form.discount(class_="form-control") }}</div>
-            <div class="col-md-4">{{ form.photo.label(class_="form-label") }}{{ form.photo(class_="form-control") }}</div>
+            <div class="col-md-4">
+              <label class="form-label" for="photoFileInput">Imagen del producto</label>
+              <input class="form-control" id="photoFileInput" type="file" name="photo_file" accept="image/*">
+              <div class="form-text">Formatos permitidos: JPG, JPEG, PNG y WEBP. Maximo 5 MB.</div>
+            </div>
             <div class="col-md-2 d-flex align-items-end"><div class="form-check">{{ form.favorite(class_="form-check-input") }} {{ form.favorite.label(class_="form-check-label") }}</div></div>
             <div class="col-12">{{ form.description.label(class_="form-label") }}{{ form.description(class_="form-control", rows=2) }}</div>
+            <div class="col-12">
+              {% set current_photo = productos[0].photo if edit and productos and productos[0].photo else '' %}
+              {% if current_photo %}
+              <div class="small text-muted mb-2">Imagen actual:</div>
+              {% endif %}
+              <img id="photoPreview" src="{{ current_photo }}" alt="Vista previa" class="img-thumbnail {{ '' if current_photo else 'd-none' }}" style="max-width: 220px; max-height: 180px; object-fit: cover;">
+            </div>
           </div>
           <button class="btn btn-success mt-3" type="submit">Guardar</button>
           {% if edit %}
@@ -129,4 +140,21 @@
     </div>
   </div>
 </div>
+{% endblock %}
+
+{% block extra_js %}
+<script>
+  (() => {
+    const input = document.getElementById('photoFileInput');
+    const preview = document.getElementById('photoPreview');
+    if (!input || !preview) return;
+
+    input.addEventListener('change', () => {
+      const [file] = input.files || [];
+      if (!file) return;
+      preview.src = URL.createObjectURL(file);
+      preview.classList.remove('d-none');
+    });
+  })();
+</script>
 {% endblock %}

@@ -711,7 +711,6 @@ class ProductForm(FlaskForm):
         default="unidad",
     )
     unit_measure = StringField("Unidad medida", validators=[Optional(), Length(max=20)], default="u")
-    photo = StringField("Foto URL", validators=[Optional(), Length(max=255)])
     brand = StringField("Marca", validators=[Optional(), Length(max=120)])
     supplier = StringField("Proveedor", validators=[Optional(), Length(max=160)])
     cost_price = DecimalField("Precio costo", validators=[Optional(), NumberRange(min=0)], default=0)
