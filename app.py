@@ -75,12 +75,14 @@ def add_security_headers(response):
     response.headers.setdefault("Permissions-Policy", "camera=(self), microphone=()")
     response.headers.setdefault(
         "Content-Security-Policy",
-        "default-src 'self'; "
-        "script-src 'self' 'unsafe-inline' https://cdn.jsdelivr.net; "
-        "style-src 'self' 'unsafe-inline' https://cdn.jsdelivr.net https://fonts.googleapis.com; "
-        "font-src 'self' https://cdn.jsdelivr.net https://fonts.gstatic.com; "
+        "default-src 'self' https: data: blob:; "
+        "script-src 'self' 'unsafe-inline' 'unsafe-eval' https:; "
+        "style-src 'self' 'unsafe-inline' https:; "
+        "font-src 'self' data: https:; "
         "img-src 'self' data: blob: https:; "
-        "connect-src 'self' https://api.mercadopago.com https://accounts.google.com; "
+        "connect-src 'self' https: wss:; "
+        "worker-src 'self' blob:; "
+        "frame-src 'self' https://*.mercadopago.com https://accounts.google.com; "
         "frame-ancestors 'self';",
     )
     if is_production_env:
