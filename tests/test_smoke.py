@@ -282,3 +282,137 @@ def test_product_barcode_is_unique_per_company():
     # Session must remain authenticated; if it was lost this route would redirect to login.
     products_response = client.get("/productos/", follow_redirects=False)
     assert products_response.status_code == 200
+
+
+def test_checkout_does_not_apply_automatic_tax():
+    client = stock_app.app.test_client()
+    client.post("/auth/login", data={"username": "empresa_admin", "password": "admin123"})
+
+    response = client.post(
+        "/ventas/api/checkout",
+        json={
+            "items": [{"productId": 1, "quantity": 1}],
+            "metodo_pago": "EFECTIVO",
+            "descuento_general": 500,
+            "recargo": 200,
+        },
+    )
+    assert response.status_code == 200
+
+    with stock_app.app.app_context():
+        from app import Sale
+
+        sale = Sale.query.order_by(Sale.id.desc()).first()
+        assert sale is not None
+        assert float(sale.subtotal) == 18000.0
+        assert float(sale.tax or 0) == 0.0
+        assert float(sale.total_amount) == 17700.0
+
+
+def test_product_price_margin_profit_reciprocal_calculation():
+    client = stock_app.app.test_client()
+    client.post("/auth/login", data={"username": "empresa_admin", "password": "admin123"})
+
+    by_margin_response = client.post(
+        "/productos/add",
+        data={
+            "barcode": "RECIP-001",
+            "name": "Producto por margen",
+            "sale_type": "unidad",
+            "unit_measure": "u",
+            "cost_price": "100",
+            "profit_percent": "50",
+            "stock": "2",
+            "min_stock": "1",
+        },
+        follow_redirects=False,
+    )
+    assert by_margin_response.status_code in (301, 302)
+
+    by_price_response = client.post(
+        "/productos/add",
+        data={
+            "barcode": "RECIP-002",
+            "name": "Producto por precio final",
+            "sale_type": "unidad",
+            "unit_measure": "u",
+            "cost_price": "80",
+            "price": "100",
+            "stock": "2",
+            "min_stock": "1",
+        },
+        follow_redirects=False,
+    )
+    assert by_price_response.status_code in (301, 302)
+
+    with stock_app.app.app_context():
+        prod_margin = Product.query.filter_by(barcode="RECIP-001").first()
+        prod_price = Product.query.filter_by(barcode="RECIP-002").first()
+        assert prod_margin is not None
+        assert prod_price is not None
+
+        assert float(prod_margin.price) == 150.0
+        assert float(prod_margin.margin) == 50.0
+        assert float(prod_margin.profit_percent) == 50.0
+
+        assert float(prod_price.price) == 100.0
+        assert float(prod_price.margin) == 20.0
+        assert float(prod_price.profit_percent) == 25.0
+
+
+def test_product_edit_reciprocal_calculation():
+    client = stock_app.app.test_client()
+    client.post("/auth/login", data={"username": "empresa_admin", "password": "admin123"})
+
+    with stock_app.app.app_context():
+        product = Product.query.filter_by(barcode="123456789012").first()
+        assert product is not None
+        product_id = product.id
+
+    edit_by_percent = client.post(
+        f"/productos/edit/{product_id}",
+        data={
+            "barcode": "123456789012",
+            "name": "Yerba kilo",
+            "sale_type": "unidad",
+            "unit_measure": "u",
+            "cost_price": "200",
+            "profit_percent": "50",
+            "stock": "2.5",
+            "min_stock": "0.5",
+        },
+        follow_redirects=False,
+    )
+    assert edit_by_percent.status_code in (301, 302)
+
+    with stock_app.app.app_context():
+        edited = db.session.get(Product, product_id)
+        assert edited is not None
+        assert float(edited.cost_price) == 200.0
+        assert float(edited.price) == 300.0
+        assert float(edited.margin) == 100.0
+        assert float(edited.profit_percent) == 50.0
+
+    edit_by_price = client.post(
+        f"/productos/edit/{product_id}",
+        data={
+            "barcode": "123456789012",
+            "name": "Yerba kilo",
+            "sale_type": "unidad",
+            "unit_measure": "u",
+            "cost_price": "200",
+            "price": "260",
+            "stock": "2.5",
+            "min_stock": "0.5",
+        },
+        follow_redirects=False,
+    )
+    assert edit_by_price.status_code in (301, 302)
+
+    with stock_app.app.app_context():
+        edited = db.session.get(Product, product_id)
+        assert edited is not None
+        assert float(edited.cost_price) == 200.0
+        assert float(edited.price) == 260.0
+        assert float(edited.margin) == 60.0
+        assert float(edited.profit_percent) == 30.0

@@ -269,21 +269,18 @@ function getCheckoutTotals() {
   const discount = readMoneyInput('checkout-general-discount');
   const surcharge = readMoneyInput('checkout-surcharge');
   const taxable = Math.max(subtotal - discount, 0);
-  const tax = taxable * 0.21;
-  const total = taxable + tax + surcharge;
+  const total = taxable + surcharge;
   const paid = readMoneyInput('checkout-paid-amount') + readMoneyInput('checkout-paid-amount-2');
-  return { subtotal, discount, surcharge, tax, total, paid, change: Math.max(paid - total, 0) };
+  return { subtotal, discount, surcharge, total, paid, change: Math.max(paid - total, 0) };
 }
 
 function updateCheckoutTotals() {
   const totals = getCheckoutTotals();
   const pairs = {
     'cart-subtotal': totals.subtotal,
-    'cart-tax': totals.tax,
     'cart-total': totals.total,
     'pos-subtotal': totals.subtotal,
     'pos-discount': totals.discount,
-    'pos-tax': totals.tax,
     'pos-surcharge': totals.surcharge,
     'pos-total': totals.total,
     'checkout-change': totals.change

@@ -60,8 +60,8 @@ def _calculate_lines(items):
         discount_total += line_discount
         lines.append({"product": product, "quantity": qty, "price": float(product.price or 0), "discount": line_discount})
     taxable = max(subtotal - discount_total, 0)
-    tax = taxable * 0.21
-    total = taxable + tax
+    tax = 0.0
+    total = taxable
     return lines, subtotal, discount_total, tax, total
 
 
@@ -200,8 +200,8 @@ def _create_sale_from_items(items, data, json_response=False):
         general_discount = _to_float(data.get("descuento_general") or data.get("general_discount"))
         surcharge = _to_float(data.get("recargo") or data.get("surcharge"))
         taxable = max(subtotal - discount - general_discount, 0)
-        tax_total = taxable * 0.21
-        final_total = taxable + tax_total + surcharge
+        tax_total = 0.0
+        final_total = taxable + surcharge
         client_id = data.get("client_id") or data.get("cliente_id") or None
         client = scope_query_to_company(Client.query.filter_by(id=int(client_id), active=True), Client).first() if client_id else None
         sale = Sale(

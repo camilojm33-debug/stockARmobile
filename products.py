@@ -58,14 +58,45 @@ def _apply_product_form(product, form):
     product.unit_measure = (form.unit_measure.data or "").strip() or _default_unit(product.sale_type)
     product.brand = form.brand.data
     product.supplier = form.supplier.data
-    product.cost_price = float(form.cost_price.data or 0)
-    product.price = float(form.price.data or 0)
-    product.margin = float(form.margin.data or 0)
-    product.profit_percent = float(form.profit_percent.data or 0)
-    if not product.profit_percent and product.cost_price:
-        product.profit_percent = ((product.price - product.cost_price) / product.cost_price) * 100
-    if not product.margin:
-        product.margin = product.price - product.cost_price
+    cost_price = float(form.cost_price.data or 0)
+    raw_price = (request.form.get("price") or "").strip()
+    raw_profit_percent = (request.form.get("profit_percent") or "").strip()
+    raw_margin = (request.form.get("margin") or "").strip()
+
+    if raw_price:
+        final_price = float(form.price.data or 0)
+        if final_price < 0:
+            raise ValueError("El precio de venta no puede ser negativo.")
+        gain_amount = final_price - cost_price
+        if gain_amount < 0:
+            raise ValueError("El precio de venta no puede ser menor al costo.")
+        margin_percent = (gain_amount / cost_price * 100) if cost_price > 0 else 0.0
+    elif raw_profit_percent:
+        margin_percent = float(form.profit_percent.data or 0)
+        if margin_percent < 0:
+            raise ValueError("El margen % no puede ser negativo.")
+        final_price = cost_price * (1 + (margin_percent / 100))
+        gain_amount = final_price - cost_price
+    elif raw_margin:
+        gain_amount = float(form.margin.data or 0)
+        if gain_amount < 0:
+            raise ValueError("La ganancia no puede ser negativa.")
+        final_price = cost_price + gain_amount
+        margin_percent = (gain_amount / cost_price * 100) if cost_price > 0 else 0.0
+    else:
+        # Compatibilidad con datos existentes y formularios parciales.
+        final_price = float(form.price.data or product.price or 0)
+        if final_price < 0:
+            raise ValueError("El precio de venta no puede ser negativo.")
+        gain_amount = final_price - cost_price
+        if gain_amount < 0:
+            raise ValueError("El precio de venta no puede ser menor al costo.")
+        margin_percent = (gain_amount / cost_price * 100) if cost_price > 0 else 0.0
+
+    product.cost_price = cost_price
+    product.price = final_price
+    product.margin = gain_amount
+    product.profit_percent = margin_percent
     product.stock = float(form.stock.data or 0)
     product.min_stock = float(form.min_stock.data or 0)
     product.discount = float(form.discount.data or 0)
@@ -156,7 +187,11 @@ def add():
             return redirect(url_for("products.index"))
 
         product = Product(barcode=barcode, name=form.name.data, company_id=getattr(current_user, 'company_id', None))
-        _apply_product_form(product, form)
+        try:
+            _apply_product_form(product, form)
+        except ValueError as exc:
+            flash(str(exc), "danger")
+            return redirect(url_for("products.index"))
         upload = request.files.get("photo_file")
         if upload and (upload.filename or "").strip():
             try:
@@ -202,7 +237,11 @@ def edit(product_id=None, id=None):
     if form.validate_on_submit():
         old_price = float(product.price or 0)
         old_cost = float(product.cost_price or 0)
-        _apply_product_form(product, form)
+        try:
+            _apply_product_form(product, form)
+        except ValueError as exc:
+            flash(str(exc), "danger")
+            return redirect(url_for("products.edit", product_id=product.id))
         upload = request.files.get("photo_file")
         if upload and (upload.filename or "").strip():
             try:
