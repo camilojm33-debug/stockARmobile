@@ -7,6 +7,7 @@ import os
 import sys
 from datetime import datetime, timedelta, timezone
 from functools import wraps
+from decimal import Decimal
 
 from flask import Flask, abort, flash, g, jsonify, redirect, render_template, request, send_from_directory, session, url_for
 from flask_login import LoginManager, UserMixin, current_user, login_required
@@ -27,9 +28,10 @@ configure_logging()
 app = Flask(__name__, template_folder="templates", static_folder="static")
 sys.modules.setdefault("app", sys.modules[__name__])
 is_production_env = os.environ.get("FLASK_ENV") == "production" or bool(os.environ.get("RENDER"))
+is_pytest_context = "pytest" in sys.modules or bool(os.environ.get("PYTEST_CURRENT_TEST"))
 secret_key = os.environ.get("SECRET_KEY")
-if is_production_env and not secret_key:
-    secret_key = os.environ.get("SECRET_KEY", "stockarmobile-temporary-secret")
+if is_production_env and not is_pytest_context and not secret_key:
+    raise RuntimeError("SECRET_KEY es obligatorio en produccion.")
 app.config["SECRET_KEY"] = secret_key or "stockarmobile-dev-secret"
 app.config["SESSION_COOKIE_HTTPONLY"] = True
 app.config["SESSION_COOKIE_SAMESITE"] = "Lax"
@@ -51,6 +53,9 @@ db = SQLAlchemy(app)
 migrate = Migrate(app, db)
 csrf = CSRFProtect(app)
 
+MONEY = db.Numeric(18, 2)
+PERCENT = db.Numeric(10, 4)
+
 login_manager = LoginManager(app)
 login_manager.login_view = "auth.login"
 login_manager.login_message = "Debes iniciar sesion para acceder a esta pagina."
@@ -67,6 +72,19 @@ def add_security_headers(response):
     response.headers.setdefault("X-Content-Type-Options", "nosniff")
     response.headers.setdefault("X-Frame-Options", "SAMEORIGIN")
     response.headers.setdefault("Referrer-Policy", "strict-origin-when-cross-origin")
+    response.headers.setdefault("Permissions-Policy", "camera=(self), microphone=()")
+    response.headers.setdefault(
+        "Content-Security-Policy",
+        "default-src 'self'; "
+        "script-src 'self' 'unsafe-inline' https://cdn.jsdelivr.net; "
+        "style-src 'self' 'unsafe-inline' https://cdn.jsdelivr.net https://fonts.googleapis.com; "
+        "font-src 'self' https://cdn.jsdelivr.net https://fonts.gstatic.com; "
+        "img-src 'self' data: blob: https:; "
+        "connect-src 'self' https://api.mercadopago.com https://accounts.google.com; "
+        "frame-ancestors 'self';",
+    )
+    if is_production_env:
+        response.headers.setdefault("Strict-Transport-Security", "max-age=31536000; includeSubDomains")
     return response
 
 
@@ -253,14 +271,14 @@ class Product(db.Model):
     brand = db.Column(db.String(120))
     supplier = db.Column(db.String(160))
     supplier_id = db.Column(db.Integer, db.ForeignKey("suppliers.id"))
-    cost_price = db.Column(db.Float, default=0.0)
-    price = db.Column(db.Float, default=0.0)
-    margin = db.Column(db.Float, default=0.0)
-    profit_percent = db.Column(db.Float, default=0.0)
-    tax = db.Column(db.Float, default=0.0)
+    cost_price = db.Column(MONEY, default=Decimal("0.00"))
+    price = db.Column(MONEY, default=Decimal("0.00"))
+    margin = db.Column(MONEY, default=Decimal("0.00"))
+    profit_percent = db.Column(PERCENT, default=Decimal("0.0000"))
+    tax = db.Column(PERCENT, default=Decimal("0.0000"))
     stock = db.Column(db.Float, default=0.0)
     min_stock = db.Column(db.Float, default=5.0)
-    discount = db.Column(db.Float, default=0.0)
+    discount = db.Column(MONEY, default=Decimal("0.00"))
     favorite = db.Column(db.Boolean, default=False, nullable=False)
     active = db.Column(db.Boolean, default=True, nullable=False)
     company_id = db.Column(db.Integer, db.ForeignKey("companies.id"))
@@ -331,8 +349,8 @@ class Client(db.Model):
     notes = db.Column(db.Text)
     whatsapp = db.Column(db.String(30))
     birthday = db.Column(db.Date)
-    balance = db.Column(db.Float, default=0.0)
-    credit_limit = db.Column(db.Float, default=0.0)
+    balance = db.Column(MONEY, default=Decimal("0.00"))
+    credit_limit = db.Column(MONEY, default=Decimal("0.00"))
     observations = db.Column(db.Text)
     account_current_enabled = db.Column(db.Boolean, default=False, nullable=False)
     active = db.Column(db.Boolean, default=True, nullable=False)
@@ -355,15 +373,15 @@ class Sale(db.Model):
     id = db.Column(db.Integer, primary_key=True)
     date = db.Column(db.DateTime, default=utcnow, index=True)
     customer = db.Column(db.String(200))
-    subtotal = db.Column(db.Float, default=0.0)
-    discount = db.Column(db.Float, default=0.0)
-    tax = db.Column(db.Float, default=0.0)
-    total_amount = db.Column(db.Float, default=0.0)
+    subtotal = db.Column(MONEY, default=Decimal("0.00"))
+    discount = db.Column(MONEY, default=Decimal("0.00"))
+    tax = db.Column(MONEY, default=Decimal("0.00"))
+    total_amount = db.Column(MONEY, default=Decimal("0.00"))
     payment_method = db.Column(db.String(50))
     secondary_payment_method = db.Column(db.String(50))
-    paid_amount = db.Column(db.Float, default=0.0)
-    secondary_paid_amount = db.Column(db.Float, default=0.0)
-    surcharge = db.Column(db.Float, default=0.0)
+    paid_amount = db.Column(MONEY, default=Decimal("0.00"))
+    secondary_paid_amount = db.Column(MONEY, default=Decimal("0.00"))
+    surcharge = db.Column(MONEY, default=Decimal("0.00"))
     document_type = db.Column(db.String(30), default="venta")
     status = db.Column(db.String(30), default="confirmada", index=True)
     qr_reference = db.Column(db.String(160))
@@ -387,9 +405,9 @@ class SaleItem(db.Model):
 
     id = db.Column(db.Integer, primary_key=True)
     quantity = db.Column(db.Float, nullable=False)
-    price = db.Column(db.Float, nullable=False)
-    cost_price = db.Column(db.Float, default=0.0)
-    discount = db.Column(db.Float, default=0.0)
+    price = db.Column(MONEY, nullable=False)
+    cost_price = db.Column(MONEY, default=Decimal("0.00"))
+    discount = db.Column(MONEY, default=Decimal("0.00"))
     sale_id = db.Column(db.Integer, db.ForeignKey("sales.id"), nullable=False)
     product_id = db.Column(db.Integer, db.ForeignKey("products.id"), nullable=False)
     product = db.relationship("Product", backref="sale_items")
@@ -425,7 +443,7 @@ class Plan(db.Model):
     id = db.Column(db.Integer, primary_key=True)
     code = db.Column(db.String(40), unique=True, index=True)
     name = db.Column(db.String(100), nullable=False)
-    price = db.Column(db.Float, default=0.0)
+    price = db.Column(MONEY, default=Decimal("0.00"))
     currency = db.Column(db.String(10), default="ARS")
     duration_days = db.Column(db.Integer, default=30)
     max_users = db.Column(db.Integer, default=1)
@@ -476,8 +494,8 @@ class Invoice(db.Model):
     company_id = db.Column(db.Integer, db.ForeignKey("companies.id"), nullable=False)
     subscription_id = db.Column(db.Integer, db.ForeignKey("subscriptions.id"))
     status = db.Column(db.String(30), default="draft", index=True)
-    amount = db.Column(db.Float, default=0.0)
-    vat_amount = db.Column(db.Float, default=0.0)
+    amount = db.Column(MONEY, default=Decimal("0.00"))
+    vat_amount = db.Column(MONEY, default=Decimal("0.00"))
     currency = db.Column(db.String(10), default="USD")
     due_at = db.Column(db.DateTime)
     issued_at = db.Column(db.DateTime, default=utcnow)
@@ -508,7 +526,7 @@ class Payment(db.Model):
     subscription_id = db.Column(db.Integer, db.ForeignKey("subscriptions.id"))
     user_id = db.Column(db.Integer, db.ForeignKey("users.id"))
     invoice_id = db.Column(db.Integer, db.ForeignKey("invoices.id"))
-    amount = db.Column(db.Float, default=0.0)
+    amount = db.Column(MONEY, default=Decimal("0.00"))
     currency = db.Column(db.String(10), default="USD")
     status = db.Column(db.String(30), default="pending", index=True)
     payment_method = db.Column(db.String(80))
@@ -586,8 +604,8 @@ class PurchaseOrder(db.Model):
     company_id = db.Column(db.Integer, db.ForeignKey("companies.id"))
     date = db.Column(db.DateTime, default=utcnow, index=True)
     status = db.Column(db.String(30), default="recibida", index=True)
-    subtotal = db.Column(db.Float, default=0.0)
-    total_amount = db.Column(db.Float, default=0.0)
+    subtotal = db.Column(MONEY, default=Decimal("0.00"))
+    total_amount = db.Column(MONEY, default=Decimal("0.00"))
     note = db.Column(db.Text)
     supplier = db.relationship("Supplier", backref="purchase_orders")
     items = db.relationship("PurchaseItem", backref="purchase_order", cascade="all, delete-orphan")
@@ -600,7 +618,7 @@ class PurchaseItem(db.Model):
     purchase_order_id = db.Column(db.Integer, db.ForeignKey("purchase_orders.id"), nullable=False)
     product_id = db.Column(db.Integer, db.ForeignKey("products.id"), nullable=False)
     quantity = db.Column(db.Float, nullable=False)
-    unit_cost = db.Column(db.Float, nullable=False)
+    unit_cost = db.Column(MONEY, nullable=False)
     product = db.relationship("Product")
 
     @property
@@ -616,9 +634,9 @@ class CashSession(db.Model):
     company_id = db.Column(db.Integer, db.ForeignKey("companies.id"))
     opened_at = db.Column(db.DateTime, default=utcnow, index=True)
     closed_at = db.Column(db.DateTime)
-    opening_amount = db.Column(db.Float, default=0.0)
-    closing_amount = db.Column(db.Float)
-    expected_amount = db.Column(db.Float, default=0.0)
+    opening_amount = db.Column(MONEY, default=Decimal("0.00"))
+    closing_amount = db.Column(MONEY)
+    expected_amount = db.Column(MONEY, default=Decimal("0.00"))
     status = db.Column(db.String(20), default="abierta", index=True)
     note = db.Column(db.Text)
     user = db.relationship("User")
@@ -634,7 +652,7 @@ class CashMovement(db.Model):
     company_id = db.Column(db.Integer, db.ForeignKey("companies.id"))
     movement_type = db.Column(db.String(20), nullable=False)
     category = db.Column(db.String(80))
-    amount = db.Column(db.Float, nullable=False)
+    amount = db.Column(MONEY, nullable=False)
     description = db.Column(db.Text)
     created_at = db.Column(db.DateTime, default=utcnow, index=True)
     user = db.relationship("User")
@@ -647,7 +665,7 @@ class Expense(db.Model):
     date = db.Column(db.DateTime, default=utcnow, index=True)
     category = db.Column(db.String(80), nullable=False)
     description = db.Column(db.String(240), nullable=False)
-    amount = db.Column(db.Float, nullable=False)
+    amount = db.Column(MONEY, nullable=False)
     payment_method = db.Column(db.String(50))
     user_id = db.Column(db.Integer, db.ForeignKey("users.id"))
     company_id = db.Column(db.Integer, db.ForeignKey("companies.id"))
@@ -660,10 +678,10 @@ class ProductPriceHistory(db.Model):
     id = db.Column(db.Integer, primary_key=True)
     product_id = db.Column(db.Integer, db.ForeignKey("products.id"), nullable=False)
     company_id = db.Column(db.Integer, db.ForeignKey("companies.id"))
-    old_price = db.Column(db.Float, default=0.0)
-    new_price = db.Column(db.Float, default=0.0)
-    old_cost = db.Column(db.Float, default=0.0)
-    new_cost = db.Column(db.Float, default=0.0)
+    old_price = db.Column(MONEY, default=Decimal("0.00"))
+    new_price = db.Column(MONEY, default=Decimal("0.00"))
+    old_cost = db.Column(MONEY, default=Decimal("0.00"))
+    new_cost = db.Column(MONEY, default=Decimal("0.00"))
     user_id = db.Column(db.Integer, db.ForeignKey("users.id"))
     created_at = db.Column(db.DateTime, default=utcnow, index=True)
     product = db.relationship("Product", backref="price_history")
@@ -704,6 +722,22 @@ class BackupLog(db.Model):
     path = db.Column(db.String(255))
     detail = db.Column(db.Text)
     created_at = db.Column(db.DateTime, default=utcnow, index=True)
+
+
+def record_audit(*, action, entity=None, entity_id=None, detail=None, user_id=None, company_id=None):
+    try:
+        db.session.add(
+            AuditLog(
+                user_id=user_id if user_id is not None else (current_user.id if current_user.is_authenticated else None),
+                company_id=company_id if company_id is not None else get_current_company_id(),
+                action=action,
+                entity=entity,
+                entity_id=entity_id,
+                detail=detail,
+            )
+        )
+    except Exception:
+        app.logger.exception("No se pudo registrar auditoria: %s", action)
 
 
 class RegisterForm(FlaskForm):
@@ -1000,18 +1034,18 @@ def create_admin_user():
 
 
 def bootstrap_database():
-    """Crea esquema, indices y seeds esenciales al arrancar por WSGI o CLI."""
+    """Bootstrap opcional de datos base usando migraciones."""
     if getattr(app, "_bootstrap_done", False):
         return
+    if (os.environ.get("ENABLE_BOOTSTRAP") or "").strip().lower() != "true":
+        app.logger.info("Bootstrap deshabilitado. Usa ENABLE_BOOTSTRAP=true para habilitarlo.")
+        app._bootstrap_done = True
+        return
     with app.app_context():
-        app.logger.info("Creando tablas...")
-        db.create_all()
-        inspector = inspect(db.engine)
-        if "users" in set(inspector.get_table_names()):
-            app.logger.info("Tabla users creada")
-        else:
-            app.logger.error("Tabla users no encontrada luego de create_all")
-        ensure_database_schema()
+        from flask_migrate import upgrade
+
+        app.logger.info("Aplicando migraciones por bootstrap...")
+        upgrade()
         create_admin_user()
         ensure_primary_superadmin()
         app.logger.info("Bootstrap completado")
@@ -1047,232 +1081,20 @@ def ensure_primary_superadmin():
 
 
 def ensure_database_schema():
-    """Agrega columnas nuevas en bases existentes sin romper SQLite/PostgreSQL."""
-    inspector = inspect(db.engine)
-    existing_tables = set(inspector.get_table_names())
-    column_specs = {
-        "users": {
-            "active": "BOOLEAN DEFAULT TRUE",
-            "company_id": "INTEGER",
-            "first_name": "VARCHAR(80)",
-            "last_name": "VARCHAR(80)",
-            "avatar_url": "VARCHAR(255)",
-            "auth_provider": "VARCHAR(30) DEFAULT 'local'",
-            "google_sub": "VARCHAR(120)",
-        },
-        "companies": {
-            "contact_email": "VARCHAR(160)",
-            "payment_alias": "VARCHAR(120)",
-            "payment_cbu": "VARCHAR(40)",
-            "payment_cvu": "VARCHAR(40)",
-            "payment_qr_text": "VARCHAR(255)",
-            "payment_qr_url": "VARCHAR(255)",
-        },
-        "products": {
-            "sale_type": "VARCHAR(30) DEFAULT 'unidad'",
-            "unit_measure": "VARCHAR(20) DEFAULT 'u'",
-            "photo": "VARCHAR(255)",
-            "brand": "VARCHAR(120)",
-            "supplier": "VARCHAR(160)",
-            "supplier_id": "INTEGER",
-            "margin": "DOUBLE PRECISION DEFAULT 0",
-            "profit_percent": "DOUBLE PRECISION DEFAULT 0",
-            "tax": "DOUBLE PRECISION DEFAULT 0",
-            "favorite": "BOOLEAN DEFAULT FALSE",
-            "company_id": "INTEGER",
-        },
-        "clients": {
-            "whatsapp": "VARCHAR(30)",
-            "birthday": "DATE",
-            "balance": "DOUBLE PRECISION DEFAULT 0",
-            "credit_limit": "DOUBLE PRECISION DEFAULT 0",
-            "observations": "TEXT",
-            "account_current_enabled": "BOOLEAN DEFAULT FALSE",
-            "company_id": "INTEGER",
-        },
-        "sales": {
-            "secondary_payment_method": "VARCHAR(50)",
-            "paid_amount": "DOUBLE PRECISION DEFAULT 0",
-            "secondary_paid_amount": "DOUBLE PRECISION DEFAULT 0",
-            "surcharge": "DOUBLE PRECISION DEFAULT 0",
-            "document_type": "VARCHAR(30) DEFAULT 'venta'",
-            "status": "VARCHAR(30) DEFAULT 'confirmada'",
-            "qr_reference": "VARCHAR(160)",
-            "company_id": "INTEGER",
-        },
-        "sale_items": {
-            "cost_price": "DOUBLE PRECISION DEFAULT 0",
-            "discount": "DOUBLE PRECISION DEFAULT 0",
-        },
-        "suppliers": {
-            "company_id": "INTEGER",
-        },
-        "purchase_orders": {
-            "company_id": "INTEGER",
-        },
-        "expenses": {
-            "company_id": "INTEGER",
-        },
-        "cash_sessions": {
-            "company_id": "INTEGER",
-        },
-        "cash_movements": {
-            "company_id": "INTEGER",
-        },
-        "product_price_history": {
-            "company_id": "INTEGER",
-        },
-        "product_modifications": {
-            "company_id": "INTEGER",
-        },
-        "audit_logs": {
-            "company_id": "INTEGER",
-        },
-        "backup_logs": {
-            "company_id": "INTEGER",
-        },
-        "plans": {
-            "code": "VARCHAR(40)",
-            "currency": "VARCHAR(10) DEFAULT 'ARS'",
-            "duration_days": "INTEGER DEFAULT 30",
-            "max_clients": "INTEGER DEFAULT 1000",
-            "features_json": "TEXT",
-            "state": "VARCHAR(20) DEFAULT 'active'",
-            "created_at": "DATETIME",
-            "updated_at": "DATETIME",
-        },
-        "subscriptions": {
-            "trial_end": "DATETIME",
-            "start_date": "DATETIME",
-            "next_billing_date": "DATETIME",
-            "last_payment_date": "DATETIME",
-            "cancel_at_period_end": "BOOLEAN DEFAULT FALSE",
-            "renewal_enabled": "BOOLEAN DEFAULT TRUE",
-            "mercadopago_subscription_id": "VARCHAR(120)",
-            "external_reference": "VARCHAR(120)",
-            "metadata_json": "TEXT",
-            "created_at": "DATETIME",
-            "updated_at": "DATETIME",
-        },
-        "invoices": {
-            "company_id": "INTEGER",
-            "subscription_id": "INTEGER",
-            "status": "VARCHAR(30) DEFAULT 'draft'",
-            "amount": "DOUBLE PRECISION DEFAULT 0",
-            "vat_amount": "DOUBLE PRECISION DEFAULT 0",
-            "currency": "VARCHAR(10) DEFAULT 'USD'",
-            "due_at": "DATETIME",
-            "issued_at": "DATETIME",
-            "paid_at": "DATETIME",
-            "invoice_number": "VARCHAR(80)",
-            "detail": "TEXT",
-            "line_items_json": "TEXT",
-            "provider": "VARCHAR(40) DEFAULT 'manual'",
-            "reference": "VARCHAR(120)",
-            "note": "TEXT",
-            "created_at": "DATETIME",
-            "updated_at": "DATETIME",
-        },
-        "payments": {
-            "payment_id": "VARCHAR(120)",
-            "preference_id": "VARCHAR(120)",
-            "external_reference": "VARCHAR(120)",
-            "company_id": "INTEGER",
-            "subscription_id": "INTEGER",
-            "user_id": "INTEGER",
-            "invoice_id": "INTEGER",
-            "amount": "DOUBLE PRECISION DEFAULT 0",
-            "currency": "VARCHAR(10) DEFAULT 'USD'",
-            "status": "VARCHAR(30) DEFAULT 'pending'",
-            "payment_method": "VARCHAR(80)",
-            "provider": "VARCHAR(40) DEFAULT 'manual'",
-            "reference": "VARCHAR(120)",
-            "paid_at": "DATETIME",
-            "payload_json": "TEXT",
-            "next_billing_date": "DATETIME",
-            "last_payment_date": "DATETIME",
-            "updated_at": "DATETIME",
-        },
-        "payment_history": {
-            "payment_id": "INTEGER",
-            "subscription_id": "INTEGER",
-            "invoice_id": "INTEGER",
-            "company_id": "INTEGER",
-            "event": "VARCHAR(80)",
-            "detail": "TEXT",
-            "source": "VARCHAR(40)",
-            "event_id": "VARCHAR(120)",
-            "payload_json": "TEXT",
-            "status": "VARCHAR(30)",
-        },
-        "webhook_events": {
-            "provider": "VARCHAR(40) DEFAULT 'mercadopago'",
-            "event_key": "VARCHAR(180)",
-            "event_type": "VARCHAR(80)",
-            "status": "VARCHAR(30)",
-            "payload_json": "TEXT",
-            "created_at": "DATETIME",
-        },
-    }
-    with db.engine.begin() as connection:
-        for table_name, specs in column_specs.items():
-            if table_name not in existing_tables:
-                continue
-            existing_columns = {column["name"] for column in inspector.get_columns(table_name)}
-            for column_name, ddl_type in specs.items():
-                if column_name not in existing_columns:
-                    connection.execute(text(f"ALTER TABLE {table_name} ADD COLUMN {column_name} {ddl_type}"))
-        if db.engine.dialect.name == "postgresql" and "products" in existing_tables:
-            connection.execute(text("ALTER TABLE products ALTER COLUMN stock TYPE DOUBLE PRECISION USING stock::double precision"))
-            connection.execute(text("ALTER TABLE products ALTER COLUMN min_stock TYPE DOUBLE PRECISION USING min_stock::double precision"))
-            connection.execute(text("ALTER TABLE sale_items ALTER COLUMN quantity TYPE DOUBLE PRECISION USING quantity::double precision"))
-
-        index_statements = [
-            "CREATE UNIQUE INDEX IF NOT EXISTS ix_products_company_barcode ON products(company_id, barcode)",
-            "CREATE UNIQUE INDEX IF NOT EXISTS ix_users_google_sub ON users(google_sub)",
-            "CREATE UNIQUE INDEX IF NOT EXISTS ix_plans_code ON plans(code)",
-            "CREATE INDEX IF NOT EXISTS ix_subscriptions_company_status ON subscriptions(company_id, status)",
-            "CREATE INDEX IF NOT EXISTS ix_subscriptions_next_billing_date ON subscriptions(next_billing_date)",
-            "CREATE UNIQUE INDEX IF NOT EXISTS ix_invoices_invoice_number ON invoices(invoice_number)",
-            "CREATE INDEX IF NOT EXISTS ix_invoices_company_status ON invoices(company_id, status)",
-            "CREATE UNIQUE INDEX IF NOT EXISTS ix_payments_payment_id ON payments(payment_id)",
-            "CREATE INDEX IF NOT EXISTS ix_payments_external_reference ON payments(external_reference)",
-            "CREATE INDEX IF NOT EXISTS ix_payments_company_status ON payments(company_id, status)",
-            "CREATE INDEX IF NOT EXISTS ix_payment_history_company_event ON payment_history(company_id, event)",
-            "CREATE UNIQUE INDEX IF NOT EXISTS ix_webhook_events_event_key ON webhook_events(event_key)",
-        ]
-        for stmt in index_statements:
-            try:
-                connection.execute(text(stmt))
-            except Exception:
-                # Compatibilidad con motores que no soportan IF NOT EXISTS en todos los índices.
-                pass
-
-        if db.engine.dialect.name == "postgresql" and "products" in existing_tables:
-            # Legacy global uniqueness on barcode must be removed in favor of tenant-scoped uniqueness.
-            try:
-                connection.execute(text("ALTER TABLE products DROP CONSTRAINT IF EXISTS products_barcode_key"))
-            except Exception:
-                pass
-            try:
-                connection.execute(text("DROP INDEX IF EXISTS ix_products_barcode"))
-            except Exception:
-                pass
+    """Compatibilidad retroactiva: deshabilitado para forzar migraciones Alembic."""
+    app.logger.info("ensure_database_schema() deshabilitado. Usa migraciones Alembic.")
 
 
 @app.cli.command("init-db")
 def init_db_command():
-    db.create_all()
-    ensure_database_schema()
+    from flask_migrate import upgrade
+
+    upgrade()
     create_admin_user()
     ensure_primary_superadmin()
-    print("Base de datos inicializada correctamente.")
+    app.logger.info("Base de datos inicializada correctamente.")
 
 
 if __name__ == "__main__":
-    bootstrap_database()
     app.run(debug=True, host="0.0.0.0", port=int(os.environ.get("PORT", 5000)))
-
-
-bootstrap_database()
 

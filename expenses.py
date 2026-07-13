@@ -17,7 +17,7 @@ def _to_float(value, default=0.0):
 @bp.route("/", methods=["GET", "POST"])
 @tenant_required
 def index():
-    from app import Expense, db, scope_query_to_company
+    from app import Expense, db, record_audit, scope_query_to_company
 
     if request.method == "POST":
         amount = _to_float(request.form.get("amount"))
@@ -25,16 +25,17 @@ def index():
         if amount <= 0 or not description:
             flash("Completa descripcion e importe.", "danger")
             return redirect(url_for("expenses.index"))
-        db.session.add(
-            Expense(
-                category=request.form.get("category") or "Otros",
-                description=description,
-                amount=amount,
-                payment_method=request.form.get("payment_method"),
-                user_id=current_user.id,
-                company_id=getattr(current_user, "company_id", None),
-            )
+        expense = Expense(
+            category=request.form.get("category") or "Otros",
+            description=description,
+            amount=amount,
+            payment_method=request.form.get("payment_method"),
+            user_id=current_user.id,
+            company_id=getattr(current_user, "company_id", None),
         )
+        db.session.add(expense)
+        db.session.flush()
+        record_audit(action="expense_create", entity="expense", entity_id=expense.id, detail=f"Gasto {expense.category} por {amount}")
         db.session.commit()
         flash("Gasto registrado.", "success")
         return redirect(url_for("expenses.index"))

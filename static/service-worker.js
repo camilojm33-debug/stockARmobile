@@ -133,7 +133,13 @@ async function deleteQueued(id) {
 async function flushQueue() {
   const queued = await readQueue();
   for (const item of queued) {
-    const response = await fetch(item.url, { method: item.method, headers: item.headers, body: item.body || undefined });
-    if (response.ok) await deleteQueued(item.id);
+    try {
+      const response = await fetch(item.url, { method: item.method, headers: item.headers, body: item.body || undefined });
+      if (response.ok) {
+        await deleteQueued(item.id);
+      }
+    } catch (error) {
+      // Keep queued item for next background sync attempt.
+    }
   }
 }

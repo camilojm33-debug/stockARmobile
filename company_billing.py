@@ -44,7 +44,7 @@ def subscription_portal():
 @bp.route("/checkout", methods=["POST"])
 @tenant_required
 def create_checkout():
-    from app import Company, db
+    from app import Company, db, record_audit
 
     company_id = getattr(current_user, "company_id", None)
     company = Company.query.filter_by(id=company_id).first_or_404()
@@ -57,6 +57,7 @@ def create_checkout():
 
     if float(plan.price or 0) <= 0:
         SubscriptionService.start_or_change_plan(db.session, company=company, plan=plan, user_id=current_user.id)
+        record_audit(action="subscription_change", entity="subscription", detail=f"Plan actualizado a {plan.code or plan.name}")
         db.session.commit()
         flash("Plan actualizado correctamente.", "success")
         return redirect(url_for("company_billing.subscription_portal"))
@@ -79,7 +80,7 @@ def create_checkout():
 @bp.route("/subscription/cancel", methods=["POST"])
 @tenant_required
 def cancel_subscription():
-    from app import db
+    from app import db, record_audit
 
     company_id = getattr(current_user, "company_id", None)
     subscription = SubscriptionService.active_subscription_for_company(company_id)
@@ -87,6 +88,8 @@ def cancel_subscription():
         flash("No hay suscripción activa.", "warning")
         return redirect(url_for("company_billing.subscription_portal"))
     BillingService.cancel_subscription(db.session, subscription=subscription, user_id=current_user.id)
+    record_audit(action="subscription_cancel", entity="subscription", entity_id=subscription.id, detail="Cancelacion de suscripcion solicitada")
+    db.session.commit()
     flash("La suscripción se cancelará al finalizar el período actual.", "success")
     return redirect(url_for("company_billing.subscription_portal"))
 
@@ -94,7 +97,7 @@ def cancel_subscription():
 @bp.route("/subscription/reactivate", methods=["POST"])
 @tenant_required
 def reactivate_subscription():
-    from app import db
+    from app import db, record_audit
 
     company_id = getattr(current_user, "company_id", None)
     subscription = SubscriptionService.active_subscription_for_company(company_id)
@@ -102,6 +105,8 @@ def reactivate_subscription():
         flash("No hay suscripción para reactivar.", "warning")
         return redirect(url_for("company_billing.subscription_portal"))
     BillingService.reactivate_subscription(db.session, subscription=subscription, user_id=current_user.id)
+    record_audit(action="subscription_reactivate", entity="subscription", entity_id=subscription.id, detail="Renovacion automatica reactivada")
+    db.session.commit()
     flash("Renovación automática reactivada.", "success")
     return redirect(url_for("company_billing.subscription_portal"))
 
@@ -137,11 +142,13 @@ def company_settings():
 @bp.route("/webhooks/mercadopago", methods=["POST"])
 @csrf.exempt
 def webhook_mercadopago():
-    from app import db
+    from app import db, record_audit
 
     payload = request.get_json(silent=True) or {}
     try:
         result = WebhookService().process(db_session=db.session, headers=dict(request.headers), payload=payload)
+        record_audit(action="webhook_mercadopago", entity="webhook", detail=f"Webhook procesado: {result.get('status')}")
+        db.session.commit()
     except Exception as exc:
         current_app.logger.exception("Webhook Mercado Pago rechazado: %s", exc)
         db.session.rollback()

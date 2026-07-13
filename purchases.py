@@ -19,7 +19,7 @@ def _to_float(value, default=0.0):
 @bp.route("/", methods=["GET", "POST"])
 @tenant_required
 def index():
-    from app import Product, PurchaseItem, PurchaseOrder, Supplier, db, scope_query_to_company, utcnow
+    from app import Product, PurchaseItem, PurchaseOrder, Supplier, db, record_audit, scope_query_to_company, utcnow
 
     if request.method == "POST":
         product_id = request.form.get("product_id", type=int)
@@ -56,6 +56,7 @@ def index():
         product.cost_price = average_cost
         product.margin = float(product.price or 0) - average_cost
         product.profit_percent = (product.margin / average_cost * 100) if average_cost else 0
+        record_audit(action="purchase_create", entity="purchase_order", entity_id=order.id, detail=f"Compra registrada producto={product.id} qty={quantity}")
         db.session.commit()
         flash("Compra registrada y stock actualizado.", "success")
         return redirect(url_for("purchases.index"))
@@ -69,7 +70,7 @@ def index():
 @bp.route("/proveedores", methods=["POST"])
 @tenant_required
 def add_supplier():
-    from app import Supplier, db, scope_query_to_company
+    from app import Supplier, db, record_audit, scope_query_to_company
 
     name = (request.form.get("name") or "").strip()
     if not name:
@@ -85,6 +86,8 @@ def add_supplier():
         notes=request.form.get("notes") or None,
     )
     db.session.add(supplier)
+    db.session.flush()
+    record_audit(action="supplier_create", entity="supplier", entity_id=supplier.id, detail=f"Proveedor creado: {supplier.name}")
     db.session.commit()
     flash("Proveedor creado.", "success")
     return redirect(url_for("purchases.index"))

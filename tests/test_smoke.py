@@ -23,7 +23,6 @@ def clean_database():
 
 def seed():
     db.create_all()
-    stock_app.ensure_database_schema()
     company = Company(name="Empresa Demo", active=True)
     db.session.add(company)
     db.session.flush()
@@ -482,3 +481,15 @@ def test_company_can_save_qr_payment_settings():
         assert company.payment_cvu == "0001234500001234500001"
         assert company.payment_qr_text == "Cobro caja principal"
         assert company.payment_qr_url == "https://example.com/pago"
+
+
+def test_security_headers_are_present():
+    client = stock_app.app.test_client()
+
+    response = client.get("/auth/login")
+    assert response.status_code == 200
+    assert response.headers.get("X-Content-Type-Options") == "nosniff"
+    assert response.headers.get("X-Frame-Options") == "SAMEORIGIN"
+    assert response.headers.get("Referrer-Policy") == "strict-origin-when-cross-origin"
+    assert "Content-Security-Policy" in response.headers
+    assert "Permissions-Policy" in response.headers

@@ -9,7 +9,7 @@ from urllib.parse import urlsplit
 
 from authlib.integrations.flask_client import OAuth
 from flask import Blueprint, flash, redirect, render_template, request, session, url_for
-from flask_login import login_required, login_user, logout_user
+from flask_login import current_user, login_required, login_user, logout_user
 
 bp = Blueprint('auth', __name__, template_folder='templates')
 oauth = OAuth()
@@ -159,7 +159,7 @@ def _is_safe_redirect(target):
 @bp.route('/login', methods=['GET', 'POST'])
 def login():
     """Login de usuario"""
-    from app import LoginForm, User, db
+    from app import LoginForm, User, db, record_audit
     
     if request.method == 'POST':
         form = LoginForm()
@@ -175,12 +175,16 @@ def login():
             
             if user and user.active and user.check_password(form.password.data):
                 _login_user_and_bind_company(user, remember=form.remember.data)
+                record_audit(action="login_success", entity="user", entity_id=user.id, detail="Inicio de sesion exitoso")
+                db.session.commit()
                 next_page = request.args.get('next')
                 if not _is_safe_redirect(next_page):
                     next_page = None
                 flash('Inicio de sesión exitoso', 'success')
                 return redirect(next_page if next_page else _post_login_redirect())
             
+            record_audit(action="login_failed", entity="user", detail=f"Intento de login fallido: {username_or_email}")
+            db.session.commit()
             flash('Usuario o contraseña incorrectos.', 'danger')
     
     form = LoginForm()
@@ -215,6 +219,10 @@ def google_callback():
         return redirect(url_for('auth.login'))
 
     _login_user_and_bind_company(user, remember=False)
+    from app import db, record_audit
+
+    record_audit(action="google_login_success", entity="user", entity_id=user.id, detail="Inicio de sesion Google exitoso")
+    db.session.commit()
     flash('Inicio de sesión con Google exitoso.', 'success')
     return redirect(_post_login_redirect())
 
@@ -222,7 +230,7 @@ def google_callback():
 @bp.route('/register', methods=['GET', 'POST'])
 def register():
     """Registro de usuario nuevo"""
-    from app import Company, RegisterForm, User, db, utcnow
+    from app import Company, RegisterForm, User, db, record_audit, utcnow
     
     if request.method == 'POST':
         form = RegisterForm()
@@ -248,6 +256,8 @@ def register():
             user.role = "user"
             
             db.session.add(user)
+            db.session.flush()
+            record_audit(action="register_success", entity="user", entity_id=user.id, detail="Registro de usuario exitoso")
             db.session.commit()
             
             flash('Registro exitoso. Puedes iniciar sesión ahora.', 'success')
@@ -261,6 +271,11 @@ def register():
 @login_required
 def logout():
     """Cerrar sesión"""
+    from app import db, record_audit
+
+    if current_user.is_authenticated:
+        record_audit(action="logout", entity="user", entity_id=current_user.id, detail="Cierre de sesion")
+        db.session.commit()
     logout_user()
     session.clear()
     flash('Has cerrado la sesión.', 'info')

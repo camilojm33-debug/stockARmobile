@@ -285,7 +285,6 @@
     const qtyInput = document.getElementById(`qty-${id}`);
     const qty = qtyInput ? qtyInput.value : '1';
 
-    console.log('[DIAG][1] Click Agregar', { id, name, price, stock, qtyInput: qty });
     addToCart(id, name, price, stock, barcode, qty, unit);
   }
 

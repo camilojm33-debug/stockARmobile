@@ -19,7 +19,7 @@ def _to_float(value, default=0.0):
 @bp.route("/", methods=["GET", "POST"])
 @tenant_required
 def index():
-    from app import CashMovement, CashSession, db, scope_query_to_company, utcnow
+    from app import CashMovement, CashSession, db, record_audit, scope_query_to_company, utcnow
 
     open_session = scope_query_to_company(CashSession.query.filter_by(user_id=current_user.id, status="abierta"), CashSession).order_by(CashSession.opened_at.desc()).first()
     if request.method == "POST":
@@ -32,6 +32,8 @@ def index():
                 note=request.form.get("note"),
             )
             db.session.add(open_session)
+            db.session.flush()
+            record_audit(action="cash_open", entity="cash_session", entity_id=open_session.id, detail="Apertura de caja")
             db.session.commit()
             flash("Caja abierta.", "success")
         elif action == "movement" and open_session:
@@ -51,12 +53,15 @@ def index():
                         description=request.form.get("description"),
                     )
                 )
+                db.session.flush()
+                record_audit(action="cash_movement", entity="cash_movement", detail=f"Movimiento {movement_type} por {amount}")
                 db.session.commit()
                 flash("Movimiento registrado.", "success")
         elif action == "close" and open_session:
             open_session.closed_at = utcnow()
             open_session.closing_amount = _to_float(request.form.get("closing_amount"))
             open_session.status = "cerrada"
+            record_audit(action="cash_close", entity="cash_session", entity_id=open_session.id, detail="Cierre de caja")
             db.session.commit()
             flash("Caja cerrada.", "success")
         return redirect(url_for("cash.index"))

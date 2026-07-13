@@ -216,7 +216,7 @@ def index():
 @bp.route("/add", methods=["GET", "POST"])
 @tenant_required
 def add():
-    from app import Product, ProductForm, ProductModification, db, scope_query_to_company
+    from app import Product, ProductForm, ProductModification, db, record_audit, scope_query_to_company
 
     form = ProductForm()
     if form.validate_on_submit():
@@ -251,6 +251,7 @@ def add():
                     detail="Producto creado",
                 )
             )
+            record_audit(action="product_create", entity="product", entity_id=product.id, detail=f"Producto creado: {product.name}")
             db.session.commit()
         except IntegrityError:
             db.session.rollback()
@@ -266,7 +267,7 @@ def add():
 @bp.route("/edit/<int:id>", methods=["GET", "POST"])
 @tenant_required
 def edit(product_id=None, id=None):
-    from app import Product, ProductForm, ProductModification, ProductPriceHistory, db, scope_query_to_company
+    from app import Product, ProductForm, ProductModification, ProductPriceHistory, db, record_audit, scope_query_to_company
 
     product = scope_query_to_company(db.session.query(Product), Product).filter(Product.id == (product_id or id)).first()
     if product is None:
@@ -310,6 +311,7 @@ def edit(product_id=None, id=None):
                 detail="Producto actualizado",
             )
         )
+        record_audit(action="product_update", entity="product", entity_id=product.id, detail=f"Producto actualizado: {product.name}")
         try:
             db.session.commit()
         except IntegrityError:
@@ -327,11 +329,12 @@ def edit(product_id=None, id=None):
 @bp.route("/delete/<int:id>", methods=["POST"])
 @tenant_required
 def delete(product_id=None, id=None):
-    from app import Product, db, scope_query_to_company
+    from app import Product, db, record_audit, scope_query_to_company
 
     product = scope_query_to_company(db.session.query(Product), Product).filter(Product.id == (product_id or id)).first()
     if product:
         product.active = False
+        record_audit(action="product_deactivate", entity="product", entity_id=product.id, detail=f"Producto desactivado: {product.name}")
         db.session.commit()
         flash("Producto desactivado exitosamente.", "success")
     return redirect(url_for("products.index"))

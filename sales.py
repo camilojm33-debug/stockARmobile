@@ -224,7 +224,7 @@ def api_checkout():
 
 
 def _create_sale_from_items(items, data, json_response=False):
-    from app import Client, Sale, SaleItem, db, scope_query_to_company
+    from app import Client, Sale, SaleItem, db, record_audit, scope_query_to_company
 
     try:
         lines, subtotal, discount, tax_total, final_total = _calculate_lines(items)
@@ -273,11 +273,17 @@ def _create_sale_from_items(items, data, json_response=False):
             )
 
         db.session.commit()
+        record_audit(action="sale_create", entity="sale", entity_id=sale.id, detail=f"Venta registrada total={final_total}")
+        db.session.commit()
         session.pop(_cart_key(), None)
     except Exception as exc:
         db.session.rollback()
+        record_audit(action="sale_error", entity="sale", detail=f"Error al crear venta: {exc}")
+        db.session.commit()
         if json_response:
-            return jsonify({"error": str(exc)}), 400
+            message = str(exc)
+            safe_message = message if isinstance(exc, ValueError) else "No se pudo completar la venta. Revisa los datos e intenta nuevamente."
+            return jsonify({"error": safe_message}), 400
         flash(f"No se pudo completar la venta: {exc}", "danger")
         return redirect(url_for("sales.new_sale"))
 
@@ -405,7 +411,7 @@ def _ticket_text(sale):
     for item in sale.items:
         name = item.product.name if item.product else f"Producto {item.product_id}"
         lines.append(f"{name}: ${item.price:.2f} x {item.quantity} = ${item.total_amount:.2f}")
-    lines.extend(["-" * 32, f"Subtotal: ${sale.subtotal:.2f}", f"Descuento: -${sale.discount:.2f}", f"IVA (21%): ${sale.tax:.2f}", "=" * 32, f"TOTAL: ${sale.total_amount:.2f}", "Gracias por su compra!"])
+    lines.extend(["-" * 32, f"Subtotal: ${sale.subtotal:.2f}", f"Descuento: -${sale.discount:.2f}", f"Impuestos: ${sale.tax:.2f}", "=" * 32, f"TOTAL: ${sale.total_amount:.2f}", "Gracias por su compra!"])
     return "\n".join(lines)
 
 

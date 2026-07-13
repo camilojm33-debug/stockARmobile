@@ -27,10 +27,9 @@ function loadCart() {
 function saveCart() {
   try {
     localStorage.setItem(CART_KEY, JSON.stringify(cart));
-    console.log('[DIAG][7] Antes de updateCartUI() desde saveCart()');
     updateCartUI();
   } catch (error) {
-    console.error('[DIAG][11] Excepcion en saveCart():', error);
+    console.error('Excepcion en saveCart():', error);
     throw error;
   }
 }
@@ -45,10 +44,6 @@ function saveCart() {
  */
 function addToCart(productId, name, price, stock, barcode = '', quantity = 1, unitMeasure = 'u') {
   try {
-    console.log('[DIAG][2] addToCart() inicio');
-    const productPayload = { productId, name, price, stock, barcode, quantity, unitMeasure };
-    console.log('[DIAG][3] Objeto producto recibido:', productPayload);
-
     const qty = Math.max(parseFloat(quantity) || 1, 0.001);
     const availableStock = parseFloat(stock) || 0;
     // Buscar si el producto ya existe en el carrito
@@ -56,7 +51,6 @@ function addToCart(productId, name, price, stock, barcode = '', quantity = 1, un
 
     if (existingItem) {
       existingItem.quantity = Math.min((parseFloat(existingItem.quantity) || 0) + qty, availableStock);
-      console.log('[DIAG][5] cart.length tras actualizar existente =', cart.length);
     } else {
       // Agregar nuevo producto al carrito
       const newItem = {
@@ -68,18 +62,14 @@ function addToCart(productId, name, price, stock, barcode = '', quantity = 1, un
         unitMeasure: unitMeasure || 'u',
         quantity: Math.min(qty, availableStock)
       };
-      console.log('[DIAG][4] Antes de cart.push()', { cartLength: cart.length, newItem });
       cart.push(newItem);
-      console.log('[DIAG][4] Después de cart.push()', { cartLength: cart.length, lastItem: cart[cart.length - 1] });
-      console.log('[DIAG][5] cart.length =', cart.length);
     }
 
-    console.log('[DIAG][6] Antes de saveCart()');
     saveCart();
 
     showNotification(name + ' agregado al carrito', 'success');
   } catch (error) {
-    console.error('[DIAG][11] Excepcion en addToCart():', error);
+    console.error('Excepcion en addToCart():', error);
     throw error;
   }
 }
@@ -141,7 +131,7 @@ function updateCartUI() {
       }
     }
   } catch (error) {
-    console.error('[DIAG][11] Excepcion en updateCartUI():', error);
+    console.error('Excepcion en updateCartUI():', error);
     throw error;
   }
 }
@@ -179,14 +169,11 @@ function renderCartModal() {
 
 function renderCartSidebar() {
   try {
-    console.log('[DIAG][8] Dentro de renderCartSidebar()');
     const container = document.getElementById('pos-cart-items');
-    console.log('[DIAG][10] document.getElementById("pos-cart-items") =>', container);
     if (!container) return;
 
     if (cart.length === 0) {
       container.innerHTML = '<div class="empty-state py-4"><i class="bi bi-cart3 display-6 mb-2"></i><span>El carrito esta vacio.</span></div>';
-      console.log('[DIAG][9] HTML generado (carrito vacío):', container.innerHTML);
       return;
     }
 
@@ -209,9 +196,8 @@ function renderCartSidebar() {
   `;
     }).join('');
     container.innerHTML = html;
-    console.log('[DIAG][9] HTML generado:', html);
   } catch (error) {
-    console.error('[DIAG][11] Excepcion en renderCartSidebar():', error);
+    console.error('Excepcion en renderCartSidebar():', error);
     throw error;
   }
 }
