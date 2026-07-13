@@ -445,7 +445,10 @@ function setupFastScanner() {
   let scanTimer = null;
   input.focus();
   document.addEventListener('click', () => {
-    if (document.activeElement?.tagName !== 'INPUT' && document.activeElement?.tagName !== 'TEXTAREA') {
+    const activeTag = document.activeElement?.tagName;
+    const cartModalOpen = document.getElementById('cartModal')?.classList.contains('show');
+    const isEditableElement = ['INPUT', 'TEXTAREA', 'SELECT', 'OPTION', 'BUTTON'].includes(activeTag);
+    if (!cartModalOpen && !isEditableElement) {
       input.focus();
     }
   });
