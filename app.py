@@ -94,6 +94,14 @@ def scope_query_to_company(query, model):
     return query.filter(model.company_id == company_id)
 
 
+def is_control_panel_owner(user):
+    owner_username = (os.environ.get("ADMIN_USERNAME") or "admin").strip().lower()
+    owner_email = (os.environ.get("ADMIN_EMAIL") or "admin@stockarmobile.local").strip().lower()
+    username = (getattr(user, "username", None) or "").strip().lower()
+    email = (getattr(user, "email", None) or "").strip().lower()
+    return username == owner_username or email == owner_email
+
+
 def tenant_required(func):
     @wraps(func)
     @login_required
@@ -120,6 +128,8 @@ def superadmin_required(func):
     @login_required
     def decorated(*args, **kwargs):
         if getattr(current_user, "role", None) not in {"admin", "superadmin"}:
+            abort(403)
+        if not is_control_panel_owner(current_user):
             abort(403)
         return func(*args, **kwargs)
     return decorated
