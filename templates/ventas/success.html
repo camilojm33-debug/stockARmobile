@@ -28,6 +28,9 @@
               <i class="bi bi-filetype-pdf me-2"></i>Ver PDF
             </a>
             <div class="d-flex gap-2">
+              <a href="{{ url_for('sales.share_whatsapp', sale_id=sale.id) }}" class="btn btn-outline-success">
+                <i class="bi bi-whatsapp me-1"></i>Enviar por WhatsApp
+              </a>
               <a href="{{ url_for('sales.new_sale') }}" class="btn btn-primary">
                 <i class="bi bi-plus-lg me-1"></i>Nueva venta
               </a>

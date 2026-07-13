@@ -377,7 +377,11 @@ def test_product_edit_reciprocal_calculation():
             "sale_type": "unidad",
             "unit_measure": "u",
             "cost_price": "200",
+            "price": "18000",
+            "margin": "100",
             "profit_percent": "50",
+            "pricing_source": "profit_percent",
+            "tax": "21",
             "stock": "2.5",
             "min_stock": "0.5",
         },
@@ -392,6 +396,7 @@ def test_product_edit_reciprocal_calculation():
         assert float(edited.price) == 300.0
         assert float(edited.margin) == 100.0
         assert float(edited.profit_percent) == 50.0
+        assert float(edited.tax) == 21.0
 
     edit_by_price = client.post(
         f"/productos/edit/{product_id}",
@@ -402,6 +407,10 @@ def test_product_edit_reciprocal_calculation():
             "unit_measure": "u",
             "cost_price": "200",
             "price": "260",
+            "margin": "777",
+            "profit_percent": "777",
+            "pricing_source": "price",
+            "tax": "10.5",
             "stock": "2.5",
             "min_stock": "0.5",
         },
@@ -416,3 +425,60 @@ def test_product_edit_reciprocal_calculation():
         assert float(edited.price) == 260.0
         assert float(edited.margin) == 60.0
         assert float(edited.profit_percent) == 30.0
+        assert float(edited.tax) == 10.5
+
+    edit_by_margin = client.post(
+        f"/productos/edit/{product_id}",
+        data={
+            "barcode": "123456789012",
+            "name": "Yerba kilo",
+            "sale_type": "unidad",
+            "unit_measure": "u",
+            "cost_price": "200",
+            "price": "260",
+            "margin": "90",
+            "profit_percent": "999",
+            "pricing_source": "margin",
+            "tax": "0",
+            "stock": "2.5",
+            "min_stock": "0.5",
+        },
+        follow_redirects=False,
+    )
+    assert edit_by_margin.status_code in (301, 302)
+
+    with stock_app.app.app_context():
+        edited = db.session.get(Product, product_id)
+        assert edited is not None
+        assert float(edited.cost_price) == 200.0
+        assert float(edited.price) == 290.0
+        assert float(edited.margin) == 90.0
+        assert float(edited.profit_percent) == 45.0
+        assert float(edited.tax) == 0.0
+
+
+def test_company_can_save_qr_payment_settings():
+    client = stock_app.app.test_client()
+    client.post("/auth/login", data={"username": "empresa_admin", "password": "admin123"})
+
+    response = client.post(
+        "/admin/payment-qr-settings",
+        data={
+            "payment_alias": "negocio.demo",
+            "payment_cbu": "1234567890123456789012",
+            "payment_cvu": "0001234500001234500001",
+            "payment_qr_text": "Cobro caja principal",
+            "payment_qr_url": "https://example.com/pago",
+        },
+        follow_redirects=False,
+    )
+    assert response.status_code in (301, 302)
+
+    with stock_app.app.app_context():
+        company = Company.query.filter_by(name="Empresa Demo").first()
+        assert company is not None
+        assert company.payment_alias == "negocio.demo"
+        assert company.payment_cbu == "1234567890123456789012"
+        assert company.payment_cvu == "0001234500001234500001"
+        assert company.payment_qr_text == "Cobro caja principal"
+        assert company.payment_qr_url == "https://example.com/pago"

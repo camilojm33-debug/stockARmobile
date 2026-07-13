@@ -257,6 +257,7 @@ class Product(db.Model):
     price = db.Column(db.Float, default=0.0)
     margin = db.Column(db.Float, default=0.0)
     profit_percent = db.Column(db.Float, default=0.0)
+    tax = db.Column(db.Float, default=0.0)
     stock = db.Column(db.Float, default=0.0)
     min_stock = db.Column(db.Float, default=5.0)
     discount = db.Column(db.Float, default=0.0)
@@ -309,6 +310,10 @@ class Product(db.Model):
     @property
     def profit_amount(self):
         return float(self.price or 0) - float(self.cost_price or 0)
+
+    @property
+    def iva(self):
+        return self.tax
 
     def __repr__(self):
         return f"<Product {self.name}>"
@@ -402,6 +407,11 @@ class Company(db.Model):
     name = db.Column(db.String(160), nullable=False, default="StockArmobile")
     contact_email = db.Column(db.String(160), index=True)
     tax_id = db.Column(db.String(50))
+    payment_alias = db.Column(db.String(120))
+    payment_cbu = db.Column(db.String(40))
+    payment_cvu = db.Column(db.String(40))
+    payment_qr_text = db.Column(db.String(255))
+    payment_qr_url = db.Column(db.String(255))
     logo = db.Column(db.String(255))
     active = db.Column(db.Boolean, default=True, nullable=False)
     trial_ends_at = db.Column(db.DateTime)
@@ -734,6 +744,7 @@ class ProductForm(FlaskForm):
     price = DecimalField("Precio venta", validators=[Optional(), NumberRange(min=0)], default=0)
     margin = DecimalField("Ganancia $", validators=[Optional(), NumberRange(min=0)], default=0)
     profit_percent = DecimalField("Margen %", validators=[Optional(), NumberRange(min=0)], default=0)
+    tax = DecimalField("IVA %", validators=[Optional(), NumberRange(min=0)], default=0)
     stock = DecimalField("Stock", validators=[Optional(), NumberRange(min=0)], default=0)
     min_stock = DecimalField("Stock minimo", validators=[Optional(), NumberRange(min=0)], default=5)
     discount = DecimalField("Descuento", validators=[Optional(), NumberRange(min=0)], default=0)
@@ -759,6 +770,10 @@ class ProductForm(FlaskForm):
     @property
     def precio_venta(self):
         return self.price
+
+    @property
+    def iva(self):
+        return self.tax
 
 
 class ClientForm(FlaskForm):
@@ -1047,6 +1062,11 @@ def ensure_database_schema():
         },
         "companies": {
             "contact_email": "VARCHAR(160)",
+            "payment_alias": "VARCHAR(120)",
+            "payment_cbu": "VARCHAR(40)",
+            "payment_cvu": "VARCHAR(40)",
+            "payment_qr_text": "VARCHAR(255)",
+            "payment_qr_url": "VARCHAR(255)",
         },
         "products": {
             "sale_type": "VARCHAR(30) DEFAULT 'unidad'",
@@ -1057,6 +1077,7 @@ def ensure_database_schema():
             "supplier_id": "INTEGER",
             "margin": "DOUBLE PRECISION DEFAULT 0",
             "profit_percent": "DOUBLE PRECISION DEFAULT 0",
+            "tax": "DOUBLE PRECISION DEFAULT 0",
             "favorite": "BOOLEAN DEFAULT FALSE",
             "company_id": "INTEGER",
         },

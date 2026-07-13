@@ -18,6 +18,7 @@
       <div class="card-body">
         <form method="post" action="{{ url_for('products.edit', product_id=productos[0].id) if edit and productos else url_for('products.add') }}" enctype="multipart/form-data">
           {{ form.hidden_tag() }}
+          <input type="hidden" name="pricing_source" id="pricingSource" value="price">
           <div class="row g-3">
             <div class="col-md-3">{{ form.barcode.label(class_="form-label") }}{{ form.barcode(class_="form-control") }}</div>
             <div class="col-md-5">{{ form.name.label(class_="form-label") }}{{ form.name(class_="form-control") }}</div>
@@ -30,6 +31,7 @@
             <div class="col-md-3">{{ form.price.label(class_="form-label") }}{{ form.price(class_="form-control") }}</div>
             <div class="col-md-3">{{ form.margin.label(class_="form-label") }}{{ form.margin(class_="form-control") }}</div>
             <div class="col-md-3">{{ form.profit_percent.label(class_="form-label") }}{{ form.profit_percent(class_="form-control") }}</div>
+            <div class="col-md-2">{{ form.tax.label(class_="form-label") }}{{ form.tax(class_="form-control") }}</div>
             <div class="col-md-2">{{ form.stock.label(class_="form-label") }}{{ form.stock(class_="form-control") }}</div>
             <div class="col-md-2">{{ form.min_stock.label(class_="form-label") }}{{ form.min_stock(class_="form-control") }}</div>
             <div class="col-md-2">{{ form.discount.label(class_="form-label") }}{{ form.discount(class_="form-control") }}</div>
@@ -155,6 +157,22 @@
   (() => {
     const input = document.getElementById('photoFileInput');
     const preview = document.getElementById('photoPreview');
+    const pricingSourceInput = document.getElementById('pricingSource');
+    const priceInput = document.getElementById('price');
+    const marginInput = document.getElementById('margin');
+    const profitInput = document.getElementById('profit_percent');
+
+    const bindPricingSource = (field, source) => {
+      if (!field || !pricingSourceInput) return;
+      field.addEventListener('input', () => {
+        pricingSourceInput.value = source;
+      });
+    };
+
+    bindPricingSource(priceInput, 'price');
+    bindPricingSource(marginInput, 'margin');
+    bindPricingSource(profitInput, 'profit_percent');
+
     if (!input || !preview) return;
 
     input.addEventListener('change', () => {

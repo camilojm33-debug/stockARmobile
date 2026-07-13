@@ -293,6 +293,54 @@ function updateCheckoutTotals() {
   if (paidInput && !paidInput.value && totals.total > 0) {
     paidInput.placeholder = totals.total.toFixed(2);
   }
+
+  syncPaymentInputsWithMethods(totals.total);
+}
+
+function syncPaymentInputsWithMethods(total) {
+  const method2 = document.getElementById('checkout-payment-method-2');
+  const method1 = document.getElementById('checkout-payment-method');
+  const paid1 = document.getElementById('checkout-paid-amount');
+  const paid2 = document.getElementById('checkout-paid-amount-2');
+  const qrPanel = document.getElementById('checkout-qr-panel');
+  if (!method2 || !paid1 || !paid2) return;
+
+  const showQr = (method1?.value === 'QR') || (method2.value === 'QR');
+  if (qrPanel) {
+    qrPanel.classList.toggle('d-none', !showQr);
+  }
+
+  const hasSecondary = Boolean((method2.value || '').trim());
+  paid2.disabled = !hasSecondary;
+
+  if (!hasSecondary) {
+    paid2.value = '';
+    if (!paid1.value && total > 0) {
+      paid1.value = total.toFixed(2);
+    }
+    return;
+  }
+
+  if (!paid1.value && !paid2.value && total > 0) {
+    const half = total / 2;
+    paid1.value = half.toFixed(2);
+    paid2.value = (total - half).toFixed(2);
+  }
+}
+
+function setupCheckoutPaymentBehavior() {
+  const method1 = document.getElementById('checkout-payment-method');
+  const method2 = document.getElementById('checkout-payment-method-2');
+  const paid1 = document.getElementById('checkout-paid-amount');
+  const paid2 = document.getElementById('checkout-paid-amount-2');
+  if (!method1 || !method2 || !paid1 || !paid2) return;
+
+  const refresh = () => updateCheckoutTotals();
+  method1.addEventListener('change', refresh);
+  method2.addEventListener('change', refresh);
+  paid1.addEventListener('input', refresh);
+  paid2.addEventListener('input', refresh);
+  refresh();
 }
 
 /**
@@ -385,6 +433,7 @@ function showNotification(message, type = 'success') {
 document.addEventListener('DOMContentLoaded', () => {
   loadCart();
   setupFastScanner();
+  setupCheckoutPaymentBehavior();
   ['checkout-general-discount', 'checkout-surcharge', 'checkout-paid-amount', 'checkout-paid-amount-2'].forEach(id => {
     document.getElementById(id)?.addEventListener('input', updateCheckoutTotals);
   });

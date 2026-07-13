@@ -42,6 +42,8 @@ def _product_to_dict(product):
         "precio_venta": float(product.price or 0),
         "margin": float(product.margin or 0),
         "profit_percent": float(product.profit_percent or 0),
+        "tax": float(product.tax or 0),
+        "iva": float(product.tax or 0),
         "stock": product.stock or 0,
         "min_stock": product.min_stock or 0,
         "discount": float(product.discount or 0),
@@ -59,11 +61,40 @@ def _apply_product_form(product, form):
     product.brand = form.brand.data
     product.supplier = form.supplier.data
     cost_price = float(form.cost_price.data or 0)
+    tax_percent = float(form.tax.data or 0)
     raw_price = (request.form.get("price") or "").strip()
     raw_profit_percent = (request.form.get("profit_percent") or "").strip()
     raw_margin = (request.form.get("margin") or "").strip()
+    pricing_source = (request.form.get("pricing_source") or "").strip().lower()
 
-    if raw_price:
+    if pricing_source not in {"price", "profit_percent", "margin"}:
+        if request.endpoint == "products.edit":
+            posted_price = float(form.price.data or 0)
+            posted_margin = float(form.margin.data or 0)
+            posted_profit = float(form.profit_percent.data or 0)
+            current_price = float(product.price or 0)
+            current_margin = float(product.margin or 0)
+            current_profit = float(product.profit_percent or 0)
+            if raw_margin and posted_margin != current_margin:
+                pricing_source = "margin"
+            elif raw_profit_percent and posted_profit != current_profit:
+                pricing_source = "profit_percent"
+            elif raw_price and posted_price != current_price:
+                pricing_source = "price"
+
+    if pricing_source == "profit_percent" and raw_profit_percent:
+        margin_percent = float(form.profit_percent.data or 0)
+        if margin_percent < 0:
+            raise ValueError("El margen % no puede ser negativo.")
+        final_price = cost_price * (1 + (margin_percent / 100))
+        gain_amount = final_price - cost_price
+    elif pricing_source == "margin" and raw_margin:
+        gain_amount = float(form.margin.data or 0)
+        if gain_amount < 0:
+            raise ValueError("La ganancia no puede ser negativa.")
+        final_price = cost_price + gain_amount
+        margin_percent = (gain_amount / cost_price * 100) if cost_price > 0 else 0.0
+    elif pricing_source == "price" and raw_price:
         final_price = float(form.price.data or 0)
         if final_price < 0:
             raise ValueError("El precio de venta no puede ser negativo.")
@@ -83,6 +114,14 @@ def _apply_product_form(product, form):
             raise ValueError("La ganancia no puede ser negativa.")
         final_price = cost_price + gain_amount
         margin_percent = (gain_amount / cost_price * 100) if cost_price > 0 else 0.0
+    elif raw_price:
+        final_price = float(form.price.data or 0)
+        if final_price < 0:
+            raise ValueError("El precio de venta no puede ser negativo.")
+        gain_amount = final_price - cost_price
+        if gain_amount < 0:
+            raise ValueError("El precio de venta no puede ser menor al costo.")
+        margin_percent = (gain_amount / cost_price * 100) if cost_price > 0 else 0.0
     else:
         # Compatibilidad con datos existentes y formularios parciales.
         final_price = float(form.price.data or product.price or 0)
@@ -97,6 +136,7 @@ def _apply_product_form(product, form):
     product.price = final_price
     product.margin = gain_amount
     product.profit_percent = margin_percent
+    product.tax = tax_percent
     product.stock = float(form.stock.data or 0)
     product.min_stock = float(form.min_stock.data or 0)
     product.discount = float(form.discount.data or 0)

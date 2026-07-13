@@ -3,6 +3,7 @@
 import csv
 from datetime import datetime
 from io import StringIO
+from urllib.parse import quote
 
 from flask import Blueprint, flash, jsonify, make_response, redirect, render_template, request, session, url_for
 from flask_login import current_user, login_required
@@ -68,7 +69,7 @@ def _calculate_lines(items):
 @bp.route("/")
 @tenant_required
 def index():
-    from app import Client, Product, Sale, db, scope_query_to_company
+    from app import Client, Company, Product, Sale, db, scope_query_to_company
 
     low_stock = request.args.get("low_stock")
     search = request.args.get("q") or request.args.get("search")
@@ -84,9 +85,39 @@ def index():
     products = products_query.order_by(Product.favorite.desc(), Product.name).all()
     categories = [c[0] for c in scope_query_to_company(Product.query.with_entities(Product.category), Product).filter(Product.active.is_(True)).distinct().order_by(Product.category).all() if c[0]]
     clients = scope_query_to_company(Client.query.filter_by(active=True), Client).order_by(Client.name).all()
+    company = Company.query.filter_by(id=getattr(current_user, "company_id", None)).first()
+    has_qr_data = bool(
+        company
+        and (
+            company.payment_alias
+            or company.payment_cbu
+            or company.payment_cvu
+            or company.payment_qr_text
+            or company.payment_qr_url
+        )
+    )
+    qr_payment_image_url = None
+    if has_qr_data:
+        qr_payment_image_url = url_for(
+            "qr_labels.payment_qr",
+            alias=company.payment_alias or "",
+            cbu=company.payment_cbu or "",
+            cvu=company.payment_cvu or "",
+            text=company.payment_qr_text or company.name or "",
+            url=company.payment_qr_url or "",
+        )
     total_sales_amount = scope_query_to_company(db.session.query(db.func.coalesce(db.func.sum(Sale.total_amount), 0)), Sale).scalar() or 0
     sales = scope_query_to_company(Sale.query.options(selectinload(Sale.client)), Sale).order_by(Sale.date.desc()).limit(20).all()
-    return render_template("ventas/index.html", products=products, categorias=categories, clientes=clients, sales=sales, total_sales=total_sales_amount)
+    return render_template(
+        "ventas/index.html",
+        products=products,
+        categorias=categories,
+        clientes=clients,
+        sales=sales,
+        total_sales=total_sales_amount,
+        qr_payment_image_url=qr_payment_image_url,
+        has_qr_payment_data=has_qr_data,
+    )
 
 
 @bp.route("/nueva-venta")
@@ -376,3 +407,44 @@ def _ticket_text(sale):
         lines.append(f"{name}: ${item.price:.2f} x {item.quantity} = ${item.total_amount:.2f}")
     lines.extend(["-" * 32, f"Subtotal: ${sale.subtotal:.2f}", f"Descuento: -${sale.discount:.2f}", f"IVA (21%): ${sale.tax:.2f}", "=" * 32, f"TOTAL: ${sale.total_amount:.2f}", "Gracias por su compra!"])
     return "\n".join(lines)
+
+
+def _normalize_phone(value):
+    if not value:
+        return ""
+    return "".join(ch for ch in str(value) if ch.isdigit())
+
+
+def _ticket_text_for_whatsapp(sale):
+    lines = [f"Ticket de compra - Venta #{sale.id}", f"Fecha: {sale.date:%Y-%m-%d %H:%M}"]
+    if sale.customer:
+        lines.append(f"Cliente: {sale.customer}")
+    lines.append("------------------------------")
+    for item in sale.items:
+        name = item.product.name if item.product else f"Producto {item.product_id}"
+        lines.append(f"{name}: ${item.price:.2f} x {item.quantity} = ${item.total_amount:.2f}")
+    lines.extend([
+        "------------------------------",
+        f"Subtotal: ${sale.subtotal:.2f}",
+        f"Descuento: -${sale.discount:.2f}",
+        f"Impuestos: ${sale.tax:.2f}",
+        f"Total: ${sale.total_amount:.2f}",
+        "Gracias por su compra!",
+    ])
+    return "\n".join(lines)
+
+
+@bp.route("/<int:sale_id>/share-whatsapp")
+@tenant_required
+def share_whatsapp(sale_id):
+    from app import Sale, SaleItem, scope_query_to_company
+
+    sale = scope_query_to_company(Sale.query.options(selectinload(Sale.items).selectinload(SaleItem.product), selectinload(Sale.client)), Sale).filter(Sale.id == sale_id).first_or_404()
+    raw_phone = (sale.client.whatsapp if getattr(sale, "client", None) else "") or (sale.client.phone if getattr(sale, "client", None) else "")
+    phone = _normalize_phone(raw_phone)
+    if not phone:
+        flash("El cliente no tiene WhatsApp o telefono registrado.", "warning")
+        return redirect(url_for("sales.success", sale_id=sale.id))
+
+    text = quote(_ticket_text_for_whatsapp(sale))
+    return redirect(f"https://wa.me/{phone}?text={text}")

@@ -106,6 +106,28 @@ def reactivate_subscription():
     return redirect(url_for("company_billing.subscription_portal"))
 
 
+@bp.route("/payment-qr-settings", methods=["POST"])
+@company_admin_required
+def payment_qr_settings():
+    from app import Company, db
+
+    company_id = getattr(current_user, "company_id", None)
+    company = Company.query.filter_by(id=company_id).first_or_404()
+
+    company.payment_alias = (request.form.get("payment_alias") or "").strip() or None
+    company.payment_cbu = (request.form.get("payment_cbu") or "").strip() or None
+    company.payment_cvu = (request.form.get("payment_cvu") or "").strip() or None
+    company.payment_qr_text = (request.form.get("payment_qr_text") or "").strip() or None
+    company.payment_qr_url = (request.form.get("payment_qr_url") or "").strip() or None
+
+    if not any([company.payment_alias, company.payment_cbu, company.payment_cvu, company.payment_qr_text, company.payment_qr_url]):
+        flash("Guardado. Agrega al menos un dato para generar el QR de cobro.", "warning")
+    else:
+        flash("Datos de cobro QR guardados correctamente.", "success")
+    db.session.commit()
+    return redirect(url_for("company_billing.subscription_portal"))
+
+
 @bp.route("/company-settings")
 @company_admin_required
 def company_settings():

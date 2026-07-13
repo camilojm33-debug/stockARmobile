@@ -72,5 +72,47 @@
       <span class="text-muted small ms-auto align-self-center">Public key: {{ mp_config.public_key or 'no configurada' }}</span>
     </div>
   </div>
+
+  <div class="card app-card mt-4">
+    <div class="card-header bg-white fw-bold">Datos de cobro por QR</div>
+    <div class="card-body">
+      <form method="post" action="{{ url_for('company_billing.payment_qr_settings') }}">
+        <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+        <div class="row g-3">
+          <div class="col-md-6">
+            <label class="form-label">Alias</label>
+            <input class="form-control" name="payment_alias" value="{{ company.payment_alias or '' }}" placeholder="ej: mi.negocio.mp">
+          </div>
+          <div class="col-md-6">
+            <label class="form-label">Texto visible en QR</label>
+            <input class="form-control" name="payment_qr_text" value="{{ company.payment_qr_text or company.name or '' }}" placeholder="Cobro en caja - Tu negocio">
+          </div>
+          <div class="col-md-6">
+            <label class="form-label">CBU</label>
+            <input class="form-control" name="payment_cbu" value="{{ company.payment_cbu or '' }}" placeholder="22 digitos">
+          </div>
+          <div class="col-md-6">
+            <label class="form-label">CVU</label>
+            <input class="form-control" name="payment_cvu" value="{{ company.payment_cvu or '' }}" placeholder="22 digitos">
+          </div>
+          <div class="col-12">
+            <label class="form-label">URL de pago (opcional)</label>
+            <input class="form-control" name="payment_qr_url" value="{{ company.payment_qr_url or '' }}" placeholder="https://...">
+          </div>
+          <div class="col-12 d-flex justify-content-between align-items-center">
+            <button class="btn btn-primary" type="submit"><i class="bi bi-save me-1"></i>Guardar datos QR</button>
+            {% set has_qr_data = company.payment_alias or company.payment_cbu or company.payment_cvu or company.payment_qr_text or company.payment_qr_url %}
+            {% if has_qr_data %}
+            <img
+              src="{{ url_for('qr_labels.payment_qr', alias=company.payment_alias or '', cbu=company.payment_cbu or '', cvu=company.payment_cvu or '', text=company.payment_qr_text or company.name or '', url=company.payment_qr_url or '') }}"
+              alt="QR de cobro"
+              style="width: 132px; height: 132px; border: 1px solid var(--app-line); border-radius: 12px; object-fit: contain;"
+            >
+            {% endif %}
+          </div>
+        </div>
+      </form>
+    </div>
+  </div>
 </div>
 {% endblock %}
