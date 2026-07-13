@@ -308,7 +308,7 @@
   {% block extra_css %}{% endblock %}
   {% block extra_styles %}{% endblock %}
 </head>
-<body data-bs-theme="light">
+<body data-bs-theme="light"{% if current_user.is_authenticated %} data-user-id="{{ current_user.id }}" data-company-id="{{ current_user.company_id or '' }}" data-cart-tenant="{{ (current_user.company_id or 'global') ~ ':' ~ current_user.id }}"{% endif %}>
   {% if current_user.is_authenticated %}
   <aside class="app-sidebar" id="appSidebar">
     <a class="app-brand" href="{{ url_for('saas.index') if current_user.role == 'superadmin' else url_for('dashboard.index') }}">
@@ -451,6 +451,30 @@
       }
       document.querySelectorAll('.toast').forEach(function(toastEl) {
         bootstrap.Toast.getOrCreateInstance(toastEl).show();
+      });
+      function clearCartStorage() {
+        const tenantKey = document.body?.dataset.cartTenant;
+        const keys = ['stockarmobile_cart'];
+        if (tenantKey) keys.push(`stockarmobile_cart_${tenantKey}`);
+        keys.forEach(function(key) {
+          try {
+            localStorage.removeItem(key);
+          } catch (error) {
+            console.warn('No se pudo limpiar el carrito local:', error);
+          }
+        });
+      }
+      function clearOfflineQueue() {
+        if (!('serviceWorker' in navigator)) return;
+        navigator.serviceWorker.ready.then(function(registration) {
+          registration.active?.postMessage({ type: 'CLEAR_OFFLINE_QUEUE' });
+        }).catch(function() {});
+      }
+      document.querySelectorAll('form[action*="/auth/logout"]').forEach(function(form) {
+        form.addEventListener('submit', function() {
+          clearCartStorage();
+          clearOfflineQueue();
+        });
       });
       document.querySelectorAll('form[method="post"]').forEach(function(form) {
         form.addEventListener('submit', function() {

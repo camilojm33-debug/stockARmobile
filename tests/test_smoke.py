@@ -73,7 +73,11 @@ def test_core_routes_and_decimal_checkout():
         response = client.get(path)
         assert response.status_code == 200, path
 
-    response = client.post("/ventas/api/checkout", json={"items": [{"productId": 1, "quantity": 0.350}], "metodo_pago": "EFECTIVO"})
+    response = client.post(
+        "/ventas/api/checkout",
+        json={"items": [{"productId": 1, "quantity": 0.350}], "metodo_pago": "EFECTIVO"},
+        headers={"X-Cart-Tenant": "1:1"},
+    )
     assert response.status_code == 200
     with stock_app.app.app_context():
         product = db.session.get(Product, 1)
@@ -295,6 +299,7 @@ def test_checkout_does_not_apply_automatic_tax():
             "descuento_general": 500,
             "recargo": 200,
         },
+        headers={"X-Cart-Tenant": "1:1"},
     )
     assert response.status_code == 200
 
@@ -306,6 +311,18 @@ def test_checkout_does_not_apply_automatic_tax():
         assert float(sale.subtotal) == 18000.0
         assert float(sale.tax or 0) == 0.0
         assert float(sale.total_amount) == 17700.0
+
+
+def test_checkout_rejects_stale_tenant_cart():
+    client = stock_app.app.test_client()
+    client.post("/auth/login", data={"username": "empresa_admin", "password": "admin123"})
+
+    response = client.post(
+        "/ventas/api/checkout",
+        json={"items": [{"productId": 1, "quantity": 1}], "metodo_pago": "EFECTIVO"},
+        headers={"X-Cart-Tenant": "999:999"},
+    )
+    assert response.status_code == 409
 
 
 def test_product_price_margin_profit_reciprocal_calculation():

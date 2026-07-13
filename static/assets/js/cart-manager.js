@@ -1,15 +1,31 @@
 // CartManager - Gestor del Carrito de Compras
 // Guarda y maneja productos en localStorage
 let cart = [];
-const CART_KEY = 'stockarmobile_cart';
+const CART_KEY_PREFIX = 'stockarmobile_cart';
 let scannerStream = null;
 let scannerLoopActive = false;
+
+function getCartTenantKey() {
+  const body = document.body;
+  const tenantKey = body?.dataset?.cartTenant || '';
+  if (tenantKey) return tenantKey;
+  const companyId = body?.dataset?.companyId || 'global';
+  const userId = body?.dataset?.userId || 'anonymous';
+  return `${companyId}:${userId}`;
+}
+
+function getCartStorageKey() {
+  return `${CART_KEY_PREFIX}_${getCartTenantKey()}`;
+}
 
 /**
  * Cargar carrito desde localStorage al iniciar
  */
 function loadCart() {
-  const savedCart = localStorage.getItem(CART_KEY);
+  const savedCart = localStorage.getItem(getCartStorageKey());
+  if (localStorage.getItem(CART_KEY_PREFIX)) {
+    localStorage.removeItem(CART_KEY_PREFIX);
+  }
   if (savedCart) {
     try {
       cart = JSON.parse(savedCart);
@@ -26,7 +42,7 @@ function loadCart() {
  */
 function saveCart() {
   try {
-    localStorage.setItem(CART_KEY, JSON.stringify(cart));
+    localStorage.setItem(getCartStorageKey(), JSON.stringify(cart));
     updateCartUI();
   } catch (error) {
     console.error('Excepcion en saveCart():', error);
@@ -231,7 +247,7 @@ async function processCheckout() {
   try {
     const response = await fetch('/ventas/api/checkout', {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json', 'X-CSRFToken': csrf },
+      headers: { 'Content-Type': 'application/json', 'X-CSRFToken': csrf, 'X-Cart-Tenant': getCartTenantKey() },
       body: JSON.stringify(payload)
     });
     const data = await response.json();

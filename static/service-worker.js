@@ -31,7 +31,7 @@ self.addEventListener('fetch', event => {
     return;
   }
   if (API_CACHE_PREFIXES.some(prefix => url.pathname.startsWith(prefix))) {
-    event.respondWith(networkFirst(request));
+    event.respondWith(networkOnly(request));
     return;
   }
   if (request.mode === 'navigate') {
@@ -50,6 +50,9 @@ self.addEventListener('sync', event => {
 self.addEventListener('message', event => {
   if (event.data && event.data.type === 'FLUSH_QUEUE') {
     event.waitUntil(flushQueue());
+  }
+  if (event.data && event.data.type === 'CLEAR_OFFLINE_QUEUE') {
+    event.waitUntil(clearQueue());
   }
 });
 
@@ -74,6 +77,14 @@ async function networkFirst(request, offlineFallback = false) {
     const cached = await cache.match(request);
     if (cached) return cached;
     if (offlineFallback) return cache.match('/offline.html');
+    return new Response(JSON.stringify({ offline: true, error: 'Sin conexion' }), { status: 503, headers: { 'Content-Type': 'application/json' } });
+  }
+}
+
+async function networkOnly(request) {
+  try {
+    return await fetch(request);
+  } catch (error) {
     return new Response(JSON.stringify({ offline: true, error: 'Sin conexion' }), { status: 503, headers: { 'Content-Type': 'application/json' } });
   }
 }
@@ -135,11 +146,21 @@ async function flushQueue() {
   for (const item of queued) {
     try {
       const response = await fetch(item.url, { method: item.method, headers: item.headers, body: item.body || undefined });
-      if (response.ok) {
+      if (response.ok || [401, 403, 409, 412].includes(response.status)) {
         await deleteQueued(item.id);
       }
     } catch (error) {
       // Keep queued item for next background sync attempt.
     }
   }
+}
+
+async function clearQueue() {
+  const db = await openQueueDB();
+  return new Promise((resolve, reject) => {
+    const tx = db.transaction('requests', 'readwrite');
+    tx.objectStore('requests').clear();
+    tx.oncomplete = resolve;
+    tx.onerror = () => reject(tx.error);
+  });
 }

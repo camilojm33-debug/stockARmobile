@@ -21,7 +21,13 @@ def _to_float(value, default=0.0):
 
 
 def _cart_key():
-    return f"cart_{current_user.id}"
+    company_id = getattr(current_user, "company_id", None) or "global"
+    return f"cart_{company_id}_{current_user.id}"
+
+
+def _cart_tenant_key():
+    company_id = getattr(current_user, "company_id", None) or "global"
+    return f"{company_id}:{current_user.id}"
 
 
 def _get_cart():
@@ -207,6 +213,10 @@ def checkout():
 @tenant_required
 def api_checkout():
     payload = request.get_json(silent=True) or {}
+    incoming_tenant = (request.headers.get("X-Cart-Tenant") or "").strip()
+    expected_tenant = _cart_tenant_key()
+    if incoming_tenant != expected_tenant:
+        return jsonify({"error": "Carrito fuera de contexto de empresa o usuario."}), 409
     raw_items = payload.get("items", [])
     items = {}
     try:
