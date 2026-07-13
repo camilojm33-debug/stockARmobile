@@ -416,8 +416,11 @@ class SaleItem(db.Model):
 
     @property
     def total_amount(self):
-        gross = (self.price or 0) * (self.quantity or 0)
-        return max(gross - (self.discount or 0), 0)
+        unit_price = self.price or Decimal("0.00")
+        quantity = Decimal(str(self.quantity or 0))
+        discount = self.discount or Decimal("0.00")
+        gross = unit_price * quantity
+        return max(gross - discount, Decimal("0.00"))
 
 
 class Company(db.Model):

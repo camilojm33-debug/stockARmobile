@@ -1,11 +1,12 @@
 """Blueprint de ventas: carrito, checkout, historial y tickets."""
 
 import csv
+from decimal import Decimal, InvalidOperation
 from datetime import datetime
 from io import StringIO
 from urllib.parse import quote
 
-from flask import Blueprint, flash, jsonify, make_response, redirect, render_template, request, session, url_for
+from flask import Blueprint, current_app, flash, jsonify, make_response, redirect, render_template, request, session, url_for
 from flask_login import current_user, login_required
 from sqlalchemy.orm import selectinload
 from app import tenant_required, utcnow
@@ -18,6 +19,17 @@ def _to_float(value, default=0.0):
         return float(value if value not in (None, "") else default)
     except (TypeError, ValueError):
         return default
+
+
+def _to_decimal(value, default="0.00"):
+    try:
+        if value in (None, ""):
+            return Decimal(default)
+        if isinstance(value, Decimal):
+            return value
+        return Decimal(str(value))
+    except (InvalidOperation, TypeError, ValueError):
+        return Decimal(default)
 
 
 def _cart_key():
@@ -45,13 +57,14 @@ def _calculate_lines(items):
     from app import Product, db, scope_query_to_company
 
     lines = []
-    subtotal = 0.0
-    discount_total = 0.0
+    subtotal = Decimal("0.00")
+    discount_total = Decimal("0.00")
     product_ids = [int(prod_id) for prod_id in items.keys()]
     products = {
         product.id: product
         for product in scope_query_to_company(db.session.query(Product), Product).filter(Product.id.in_(product_ids), Product.active.is_(True)).all()
     }
+    current_app.logger.info("[sales] productos recibidos para calcular lineas: product_ids=%s encontrados=%s", product_ids, len(products))
     for prod_id, qty in items.items():
         product = products.get(int(prod_id))
         if not product:
@@ -61,14 +74,25 @@ def _calculate_lines(items):
             raise ValueError("La cantidad debe ser mayor a cero.")
         if float(product.stock or 0) < qty:
             raise ValueError(f"Stock insuficiente para {product.name}. Disponible: {product.stock:g} {product.unit_measure or ''}.")
-        line_subtotal = float(product.price or 0) * qty
-        line_discount = min(float(product.discount or 0) * qty, line_subtotal)
+        quantity_dec = _to_decimal(qty)
+        unit_price = _to_decimal(product.price)
+        unit_discount = _to_decimal(product.discount)
+        line_subtotal = unit_price * quantity_dec
+        line_discount = min(unit_discount * quantity_dec, line_subtotal)
         subtotal += line_subtotal
         discount_total += line_discount
-        lines.append({"product": product, "quantity": qty, "price": float(product.price or 0), "discount": line_discount})
-    taxable = max(subtotal - discount_total, 0)
-    tax = 0.0
+        lines.append({"product": product, "quantity": qty, "price": unit_price, "discount": line_discount})
+    taxable = max(subtotal - discount_total, Decimal("0.00"))
+    tax = Decimal("0.00")
     total = taxable
+    current_app.logger.info(
+        "[sales] cantidades y totales de lineas calculados: cantidades=%s subtotal=%s descuento=%s tax=%s total=%s",
+        [{"product_id": line["product"].id, "quantity": line["quantity"]} for line in lines],
+        str(subtotal),
+        str(discount_total),
+        str(tax),
+        str(total),
+    )
     return lines, subtotal, discount_total, tax, total
 
 
@@ -213,9 +237,11 @@ def checkout():
 @tenant_required
 def api_checkout():
     payload = request.get_json(silent=True) or {}
+    current_app.logger.info("[sales] carrito recibido (api_checkout): payload=%s", payload)
     incoming_tenant = (request.headers.get("X-Cart-Tenant") or "").strip()
     expected_tenant = _cart_tenant_key()
     if incoming_tenant != expected_tenant:
+        current_app.logger.warning("[sales] tenant key invalido en checkout: incoming=%s expected=%s", incoming_tenant, expected_tenant)
         return jsonify({"error": "Carrito fuera de contexto de empresa o usuario."}), 409
     raw_items = payload.get("items", [])
     items = {}
@@ -236,15 +262,27 @@ def api_checkout():
 def _create_sale_from_items(items, data, json_response=False):
     from app import Client, Sale, SaleItem, db, record_audit, scope_query_to_company
 
+    sale = None
     try:
+        current_app.logger.info("[sales] carrito recibido (_create_sale_from_items): items=%s json_response=%s", items, json_response)
         lines, subtotal, discount, tax_total, final_total = _calculate_lines(items)
-        general_discount = _to_float(data.get("descuento_general") or data.get("general_discount"))
-        surcharge = _to_float(data.get("recargo") or data.get("surcharge"))
-        taxable = max(subtotal - discount - general_discount, 0)
-        tax_total = 0.0
+        general_discount = _to_decimal(data.get("descuento_general") or data.get("general_discount"))
+        surcharge = _to_decimal(data.get("recargo") or data.get("surcharge"))
+        taxable = max(subtotal - discount - general_discount, Decimal("0.00"))
+        tax_total = Decimal("0.00")
         final_total = taxable + surcharge
         client_id = data.get("client_id") or data.get("cliente_id") or None
         client = scope_query_to_company(Client.query.filter_by(id=int(client_id), active=True), Client).first() if client_id else None
+        current_app.logger.info("[sales] cliente recibido: client_id=%s resolved_client=%s", client_id, getattr(client, "id", None))
+        current_app.logger.info(
+            "[sales] total calculado: subtotal=%s descuento_lineas=%s descuento_general=%s recargo=%s total=%s",
+            str(subtotal),
+            str(discount),
+            str(general_discount),
+            str(surcharge),
+            str(final_total),
+        )
+        current_app.logger.info("[sales] creando Sale")
         sale = Sale(
             customer=client.name if client else current_user.username,
             subtotal=subtotal,
@@ -253,8 +291,8 @@ def _create_sale_from_items(items, data, json_response=False):
             total_amount=final_total,
             payment_method=data.get("metodo_pago") or data.get("payment_method"),
             secondary_payment_method=data.get("metodo_pago_2") or data.get("secondary_payment_method"),
-            paid_amount=_to_float(data.get("monto_pago") or data.get("paid_amount"), final_total),
-            secondary_paid_amount=_to_float(data.get("monto_pago_2") or data.get("secondary_paid_amount")),
+            paid_amount=_to_decimal(data.get("monto_pago") or data.get("paid_amount") or final_total),
+            secondary_paid_amount=_to_decimal(data.get("monto_pago_2") or data.get("secondary_paid_amount")),
             surcharge=surcharge,
             document_type=data.get("document_type") or data.get("tipo_comprobante") or "venta",
             status=data.get("status") or "confirmada",
@@ -267,29 +305,48 @@ def _create_sale_from_items(items, data, json_response=False):
         )
         db.session.add(sale)
         db.session.flush()
+        current_app.logger.info("[sales] Sale creada en flush: sale_id=%s", sale.id)
 
         for line in lines:
             product = line["product"]
+            current_app.logger.info(
+                "[sales] actualizando stock: product_id=%s stock_actual=%s cantidad=%s",
+                product.id,
+                str(product.stock),
+                str(line["quantity"]),
+            )
             product.stock -= line["quantity"]
+            current_app.logger.info("[sales] creando SaleItem: sale_id=%s product_id=%s", sale.id, product.id)
             db.session.add(
                 SaleItem(
                     sale_id=sale.id,
                     product_id=product.id,
                     quantity=line["quantity"],
                     price=line["price"],
-                    cost_price=float(product.cost_price or 0),
+                    cost_price=_to_decimal(product.cost_price),
                     discount=line["discount"],
                 )
             )
 
+        current_app.logger.info("[sales] commit de transaccion de venta: sale_id=%s", sale.id)
         db.session.commit()
-        record_audit(action="sale_create", entity="sale", entity_id=sale.id, detail=f"Venta registrada total={final_total}")
-        db.session.commit()
+        current_app.logger.info("[sales] commit exitoso: sale_id=%s", sale.id)
+        try:
+            record_audit(action="sale_create", entity="sale", entity_id=sale.id, detail=f"Venta registrada total={final_total}")
+            db.session.commit()
+        except Exception:
+            db.session.rollback()
+            current_app.logger.exception("[sales] no se pudo persistir auditoria post-venta: sale_id=%s", sale.id)
         session.pop(_cart_key(), None)
     except Exception as exc:
         db.session.rollback()
-        record_audit(action="sale_error", entity="sale", detail=f"Error al crear venta: {exc}")
-        db.session.commit()
+        current_app.logger.exception("[sales] error creando venta")
+        try:
+            record_audit(action="sale_error", entity="sale", detail=f"Error al crear venta: {exc}")
+            db.session.commit()
+        except Exception:
+            db.session.rollback()
+            current_app.logger.exception("[sales] no se pudo persistir auditoria de error")
         if json_response:
             message = str(exc)
             safe_message = message if isinstance(exc, ValueError) else "No se pudo completar la venta. Revisa los datos e intenta nuevamente."

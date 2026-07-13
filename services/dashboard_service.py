@@ -1,5 +1,6 @@
 """Consultas agregadas para el dashboard."""
 
+from decimal import Decimal
 from datetime import datetime, timedelta, time
 
 from sqlalchemy.orm import selectinload
@@ -34,7 +35,7 @@ def build_dashboard_context():
     profit_today = income_today - cost_today - expenses_today
     profit_month = income_month - cost_month - expenses_month
     total_sales_count = scope_query_to_company(Sale.query, Sale).count()
-    average_ticket = (float(total_sales_amount) / total_sales_count) if total_sales_count else 0
+    average_ticket = (total_sales_amount / Decimal(total_sales_count)) if total_sales_count else Decimal("0.00")
     sold_units = scope_query_to_company(db.session.query(db.func.coalesce(db.func.sum(SaleItem.quantity), 0)).join(Sale, SaleItem.sale_id == Sale.id), Sale).scalar() or 0
 
     top_products_query = db.session.query(
@@ -92,21 +93,21 @@ def build_dashboard_context():
         "productos_bajo_nivel": low_stock_count,
         "low_stock_products": low_stock_count,
         "stock_agotado": out_stock_count,
-        "ventas_totales": float(total_sales_amount),
-        "total_sales_amount": float(total_sales_amount),
+        "ventas_totales": total_sales_amount,
+        "total_sales_amount": total_sales_amount,
         "total_clients": total_clients,
         "clientes_nuevos": new_clients_month,
         "ventas_hoy": sales_today,
         "ventas_semana": sales_week,
         "ventas_mes": sales_month,
-        "ingresos_hoy": float(income_today),
-        "ingresos_semana": float(income_week),
-        "ingresos_mes": float(income_month),
-        "ganancia_hoy": float(profit_today),
-        "ganancia_mes": float(profit_month),
-        "rentabilidad": float((profit_month / income_month * 100) if income_month else 0),
-        "ticket_promedio": float(average_ticket),
-        "productos_vendidos": float(sold_units),
+        "ingresos_hoy": income_today,
+        "ingresos_semana": income_week,
+        "ingresos_mes": income_month,
+        "ganancia_hoy": profit_today,
+        "ganancia_mes": profit_month,
+        "rentabilidad": ((profit_month / income_month) * Decimal("100")) if income_month else Decimal("0.00"),
+        "ticket_promedio": average_ticket,
+        "productos_vendidos": sold_units,
         "ventas_recientes": recent_sales,
         "recent_sales": recent_sales,
         "low_stock": scope_query_to_company(Product.query.filter(Product.active.is_(True), Product.stock <= Product.min_stock), Product).order_by(Product.stock.asc()).limit(5).all(),
@@ -119,7 +120,7 @@ def build_dashboard_context():
         "chart_labels": _last_days_labels(7),
         "chart_sales": _sales_by_day(7),
         "chart_categories_labels": [item.category or "Sin categoria" for item in ranking_categories],
-        "chart_categories_data": [float(item.sold or 0) for item in ranking_categories],
+        "chart_categories_data": [item.sold or 0 for item in ranking_categories],
     }
 
 
@@ -129,7 +130,7 @@ def _sum(column, *filters, model):
     query = scope_query_to_company(db.session.query(db.func.coalesce(db.func.sum(column), 0)), model)
     for condition in filters:
         query = query.filter(condition)
-    return query.scalar() or 0
+    return _to_decimal(query.scalar())
 
 
 def _sum_item_cost(*filters):
@@ -138,7 +139,16 @@ def _sum_item_cost(*filters):
     query = scope_query_to_company(db.session.query(db.func.coalesce(db.func.sum(SaleItem.quantity * SaleItem.cost_price), 0)).join(Sale, SaleItem.sale_id == Sale.id), Sale)
     for condition in filters:
         query = query.filter(condition)
-    return query.scalar() or 0
+    return _to_decimal(query.scalar())
+
+
+def _to_decimal(value):
+    """Normaliza valores numéricos a Decimal evitando mezcla con float."""
+    if value is None:
+        return Decimal("0.00")
+    if isinstance(value, Decimal):
+        return value
+    return Decimal(str(value))
 
 
 def _last_days_labels(days):
@@ -158,5 +168,5 @@ def _sales_by_day(days):
         start = datetime.combine(day, time.min)
         end = datetime.combine(day, time.max)
         total = scope_query_to_company(db.session.query(db.func.coalesce(db.func.sum(Sale.total_amount), 0)).filter(Sale.date >= start, Sale.date <= end), Sale).scalar() or 0
-        data.append(float(total))
+        data.append(_to_decimal(total))
     return data

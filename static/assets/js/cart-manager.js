@@ -243,6 +243,7 @@ async function processCheckout() {
     document_type: document.getElementById('checkout-document-type')?.value || 'venta',
     note: document.getElementById('checkout-note')?.value || ''
   };
+  console.info('[sales] carrito recibido (frontend):', payload);
 
   try {
     const response = await fetch('/ventas/api/checkout', {
@@ -252,12 +253,15 @@ async function processCheckout() {
     });
     const data = await response.json();
     if (!response.ok) {
+      console.error('[sales] error de backend al procesar venta:', { status: response.status, data });
       showNotification(data.error || 'No se pudo procesar la venta', 'danger');
       return;
     }
+    console.info('[sales] venta procesada correctamente:', data);
     clearCart();
     window.location.href = data.redirect_url;
   } catch (error) {
+    console.error('[sales] excepcion en processCheckout():', error);
     showNotification('No se pudo conectar con el servidor', 'danger');
   }
 }
