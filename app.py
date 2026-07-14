@@ -190,7 +190,10 @@ def seller_required(func):
             abort(403)
         profile = ReferralSeller.query.filter_by(user_id=current_user.id, active=True).first()
         if profile is None:
-            abort(403)
+            if request.is_json or request.path.startswith("/api"):
+                abort(403)
+            flash("Activa tu Programa de Referidos para acceder al portal.", "info")
+            return redirect(url_for("referrals.activate_seller"))
         return func(*args, **kwargs)
 
     return decorated
