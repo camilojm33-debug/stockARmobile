@@ -38,7 +38,7 @@ def upgrade() -> None:
     bind = op.get_bind()
 
     if not _has_column(bind, "users", "must_change_password"):
-        op.add_column("users", sa.Column("must_change_password", sa.Boolean(), nullable=False, server_default=sa.text("0")))
+        op.add_column("users", sa.Column("must_change_password", sa.Boolean(), nullable=False, server_default=sa.false()))
 
     if not _has_table(bind, "support_tickets"):
         op.create_table(
