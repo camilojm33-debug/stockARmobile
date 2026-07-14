@@ -693,6 +693,94 @@ def test_my_company_module_requires_pin_and_shows_tenant_admin_features():
     assert forbidden.status_code == 403
 
 
+def test_my_company_module_supports_employee_create_and_reset():
+    client = stock_app.app.test_client()
+
+    with stock_app.app.app_context():
+        from services.company_security_service import CompanySecurityService
+        from services.plan_service import PlanService
+        from services.subscription_service import SubscriptionService
+
+        company = Company.query.filter_by(name="Empresa Demo").first()
+        admin_user = User.query.filter_by(username="negocio_admin").first()
+        assert company is not None
+        assert admin_user is not None
+
+        CompanySecurityService.set_pin(company, "1234")
+        PlanService.ensure_defaults(db.session)
+        plan = PlanService.get_plan(code="entrepreneur")
+        assert plan is not None
+        SubscriptionService.start_or_change_plan(db.session, company=company, plan=plan, user_id=admin_user.id)
+        db.session.commit()
+
+    client.post("/auth/login", data={"username": "negocio_admin", "password": "admin123"})
+    client.post("/admin/company-settings/pin/verify", data={"access_pin": "1234"}, follow_redirects=True)
+
+    create_user = client.post(
+        "/admin/company-settings/users/create",
+        data={
+            "username": "cajero_nuevo",
+            "email": "cajero_nuevo@test.local",
+            "full_name": "Cajero Nuevo",
+            "role": "user",
+        },
+        follow_redirects=True,
+    )
+    assert create_user.status_code == 200
+    assert "Empleado creado correctamente" in create_user.data.decode("utf-8")
+
+    with stock_app.app.app_context():
+        created = User.query.filter_by(username="cajero_nuevo").first()
+        assert created is not None
+        assert created.role == "user"
+        assert created.must_change_password is True
+        created_id = created.id
+
+    reset_password = client.post(
+        f"/admin/company-settings/users/{created_id}/reset-password",
+        follow_redirects=True,
+    )
+    assert reset_password.status_code == 200
+    assert "Contrasena restablecida" in reset_password.data.decode("utf-8")
+
+
+def test_my_company_module_blocks_create_when_plan_user_limit_is_reached():
+    client = stock_app.app.test_client()
+
+    with stock_app.app.app_context():
+        from services.company_security_service import CompanySecurityService
+        from services.plan_service import PlanService
+        from services.subscription_service import SubscriptionService
+
+        company = Company.query.filter_by(name="Empresa Demo").first()
+        admin_user = User.query.filter_by(username="negocio_admin").first()
+        assert company is not None
+        assert admin_user is not None
+
+        CompanySecurityService.set_pin(company, "1234")
+        PlanService.ensure_defaults(db.session)
+        plan = PlanService.get_plan(code="trial")
+        assert plan is not None
+        SubscriptionService.start_or_change_plan(db.session, company=company, plan=plan, user_id=admin_user.id)
+        db.session.commit()
+
+    client.post("/auth/login", data={"username": "negocio_admin", "password": "admin123"})
+    client.post("/admin/company-settings/pin/verify", data={"access_pin": "1234"}, follow_redirects=True)
+
+    create_user = client.post(
+        "/admin/company-settings/users/create",
+        data={
+            "username": "extra_trial",
+            "email": "extra_trial@test.local",
+            "full_name": "Extra Trial",
+            "role": "user",
+        },
+        follow_redirects=True,
+    )
+    assert create_user.status_code == 200
+    assert "Has alcanzado el limite de usuarios" in create_user.data.decode("utf-8")
+
+
 def test_security_headers_are_present():
     client = stock_app.app.test_client()
 

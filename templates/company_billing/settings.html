@@ -41,6 +41,70 @@
     </form>
   </div>
 
+  <div class="row g-4 mb-4">
+    <div class="col-xl-4">
+      <div class="card app-card h-100">
+        <div class="card-header bg-white fw-bold">Resumen de la empresa</div>
+        <div class="card-body">
+          <div class="small text-muted mb-1">Nombre</div>
+          <div class="fw-semibold mb-3">{{ company.name or '-' }}</div>
+          <div class="small text-muted mb-1">Email</div>
+          <div class="fw-semibold mb-3">{{ company.contact_email or '-' }}</div>
+          <div class="small text-muted mb-1">Plan contratado</div>
+          <div class="fw-semibold mb-3">{{ current_plan.name if current_plan else 'Trial' }}</div>
+          <div class="small text-muted mb-1">Vencimiento</div>
+          <div class="fw-semibold mb-3">{{ plan_expiration.strftime('%Y-%m-%d') if plan_expiration else '-' }}</div>
+          <div class="small text-muted mb-1">Estado de la suscripción</div>
+          <span class="badge text-bg-{{ 'success' if subscription and subscription.status in ['active', 'approved', 'trial'] else 'warning' }}">{{ subscription.status if subscription else 'trial' }}</span>
+        </div>
+      </div>
+    </div>
+    <div class="col-xl-4">
+      <div class="card app-card h-100">
+        <div class="card-header bg-white fw-bold d-flex justify-content-between align-items-center">
+          <span>Seguridad</span>
+          <form method="post" action="{{ url_for('company_billing.company_settings_pin_regenerate') }}">
+            <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+            <button class="btn btn-sm btn-outline-warning" type="submit"><i class="bi bi-arrow-repeat me-1"></i>Regenerar PIN</button>
+          </form>
+        </div>
+        <div class="card-body">
+          <div class="small text-muted mb-1">PIN administrativo</div>
+          <div class="fw-semibold mb-3">{{ 'Configurado' if company.business_pin_hash else 'No configurado' }}</div>
+          <div class="small text-muted mb-1">Fecha de creación</div>
+          <div class="fw-semibold mb-3">{{ pin_created_at.strftime('%Y-%m-%d %H:%M') if pin_created_at else '-' }}</div>
+          <div class="small text-muted mb-1">Último uso</div>
+          <div class="fw-semibold mb-3">{{ pin_last_used_at.strftime('%Y-%m-%d %H:%M') if pin_last_used_at else '-' }}</div>
+          <div class="small text-muted">El PIN protege el acceso al panel interno de Mi Empresa.</div>
+        </div>
+      </div>
+    </div>
+    <div class="col-xl-4">
+      <div class="card app-card h-100">
+        <div class="card-header bg-white fw-bold">Límites del plan</div>
+        <div class="card-body">
+          {% if users_metric %}
+          <div class="d-flex justify-content-between align-items-center mb-2">
+            <span class="small text-muted">Usuarios utilizados</span>
+            <span class="fw-semibold">{{ users_metric.used }} / {{ users_metric.limit }}</span>
+          </div>
+          <div class="progress mb-3" role="progressbar" aria-valuenow="{{ users_metric.percent }}" aria-valuemin="0" aria-valuemax="100" style="height: 12px;">
+            <div class="progress-bar {{ users_metric.bar_class }}" style="width: {{ users_metric.percent }}%"></div>
+          </div>
+          <div class="small text-muted mb-2">{{ current_plan.name if current_plan else 'Trial' }} → {{ users_metric.limit }} usuarios</div>
+          {% if users_metric.remaining <= 0 %}
+          <div class="alert alert-warning py-2 mb-0">Ya alcanzaste el límite de usuarios de tu plan.</div>
+          {% else %}
+          <div class="small text-muted">Quedan {{ users_metric.remaining }} usuarios disponibles.</div>
+          {% endif %}
+          {% else %}
+          <div class="text-muted">No se pudo calcular el límite del plan.</div>
+          {% endif %}
+        </div>
+      </div>
+    </div>
+  </div>
+
   <div class="card app-card">
     <div class="card-header bg-white fw-bold">Datos del negocio</div>
     <div class="card-body">
@@ -112,6 +176,37 @@
   </div>
 
   <div class="card app-card mt-4">
+    <div class="card-header bg-white fw-bold">Alta de empleados</div>
+    <div class="card-body">
+      <form method="post" action="{{ url_for('company_billing.company_settings_user_create') }}" class="row g-3">
+        <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+        <div class="col-md-3">
+          <label class="form-label">Usuario</label>
+          <input class="form-control" name="username" maxlength="80" required>
+        </div>
+        <div class="col-md-3">
+          <label class="form-label">Email</label>
+          <input class="form-control" type="email" name="email" maxlength="120" required>
+        </div>
+        <div class="col-md-3">
+          <label class="form-label">Nombre completo</label>
+          <input class="form-control" name="full_name" maxlength="160">
+        </div>
+        <div class="col-md-2">
+          <label class="form-label">Rol</label>
+          <select class="form-select" name="role">
+            <option value="user">Empleado</option>
+            <option value="admin">Administrador</option>
+          </select>
+        </div>
+        <div class="col-md-1 d-flex align-items-end">
+          <button class="btn btn-primary w-100" type="submit"><i class="bi bi-person-plus"></i></button>
+        </div>
+      </form>
+    </div>
+  </div>
+
+  <div class="card app-card mt-4">
     <div class="card-header bg-white fw-bold">Usuarios del negocio</div>
     <div class="table-responsive">
       <table class="table table-hover mb-0">
@@ -122,6 +217,7 @@
             <th>Estado</th>
             <th>Rol</th>
             <th>Fecha alta</th>
+            <th>Último acceso</th>
             <th class="text-end">Acciones</th>
           </tr>
         </thead>
@@ -132,24 +228,34 @@
             <td>{{ user.name }}</td>
             <td>{{ user.email }}</td>
             <td><span class="badge {{ 'text-bg-success' if user.active else 'text-bg-secondary' }}">{{ 'Activo' if user.active else 'Inactivo' }}</span></td>
-            <td>{{ user.role }}</td>
+            <td>{{ 'Administrador' if user.role == 'admin' else 'Empleado' }}</td>
             <td>{{ user.created_at.strftime('%Y-%m-%d') if user.created_at else '-' }}</td>
+            <td>{{ row.last_access.strftime('%Y-%m-%d %H:%M') if row.last_access else '-' }}</td>
             <td class="text-end">
-              <div class="d-flex justify-content-end gap-1">
-                <form method="post" action="{{ url_for('company_billing.company_settings_user_update', user_id=user.id) }}" class="d-flex gap-1">
+              <div class="d-flex justify-content-end gap-1 flex-wrap">
+                <form method="post" action="{{ url_for('company_billing.company_settings_user_update', user_id=user.id) }}" class="d-flex gap-1 flex-wrap justify-content-end">
                   <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
                   <input class="form-control form-control-sm" name="full_name" value="{{ user.name }}" style="min-width: 180px;">
+                  <input class="form-control form-control-sm" name="email" value="{{ user.email }}" style="min-width: 200px;">
+                  <select class="form-select form-select-sm" name="role" style="min-width: 150px;">
+                    <option value="user" {% if user.role != 'admin' %}selected{% endif %}>Empleado</option>
+                    <option value="admin" {% if user.role == 'admin' %}selected{% endif %}>Administrador</option>
+                  </select>
                   <button class="btn btn-sm btn-outline-primary" type="submit">Guardar</button>
                 </form>
                 <form method="post" action="{{ url_for('company_billing.company_settings_user_toggle', user_id=user.id) }}">
                   <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
                   <button class="btn btn-sm {{ 'btn-outline-danger' if user.active else 'btn-outline-success' }}" type="submit">{{ 'Desactivar' if user.active else 'Activar' }}</button>
                 </form>
+                <form method="post" action="{{ url_for('company_billing.company_settings_user_reset_password', user_id=user.id) }}">
+                  <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                  <button class="btn btn-sm btn-outline-warning" type="submit">Restablecer contraseña</button>
+                </form>
               </div>
             </td>
           </tr>
           {% else %}
-          <tr><td colspan="6" class="text-center text-muted py-4">No hay usuarios para esta empresa.</td></tr>
+          <tr><td colspan="7" class="text-center text-muted py-4">No hay usuarios para esta empresa.</td></tr>
           {% endfor %}
         </tbody>
       </table>
@@ -165,13 +271,37 @@
         <button class="btn btn-sm btn-outline-primary" type="submit">Filtrar</button>
       </form>
     </div>
+    <div class="card-body border-bottom">
+      <div class="row g-3">
+        <div class="col-md-4">
+          <div class="rounded-3 border p-3 h-100">
+            <div class="small text-muted">Total vendido</div>
+            <div class="h5 mb-0">${{ '%.2f'|format(cash_summary.total_sold) }}</div>
+          </div>
+        </div>
+        <div class="col-md-4">
+          <div class="rounded-3 border p-3 h-100">
+            <div class="small text-muted">Cantidad de ventas</div>
+            <div class="h5 mb-0">{{ cash_summary.total_sales }}</div>
+          </div>
+        </div>
+        <div class="col-md-4">
+          <div class="rounded-3 border p-3 h-100">
+            <div class="small text-muted">Promedio</div>
+            <div class="h5 mb-0">${{ '%.2f'|format(cash_summary.average_ticket) }}</div>
+          </div>
+        </div>
+      </div>
+    </div>
     <div class="table-responsive">
       <table class="table table-hover mb-0">
         <thead>
           <tr>
+            <th>Ranking</th>
             <th>Usuario</th>
             <th>Total vendido</th>
             <th>Cantidad de ventas</th>
+            <th>Promedio</th>
             <th>Ingresos</th>
             <th>Egresos</th>
             <th>Saldo</th>
@@ -180,18 +310,53 @@
         <tbody>
           {% for row in cash_rows %}
           <tr>
+            <td>#{{ row.rank }}</td>
             <td>{{ row.user.name }}</td>
             <td>${{ '%.2f'|format(row.total_sold) }}</td>
             <td>{{ row.sales_count }}</td>
+            <td>${{ '%.2f'|format(row.average_ticket) }}</td>
             <td>${{ '%.2f'|format(row.ingresos) }}</td>
             <td>${{ '%.2f'|format(row.egresos) }}</td>
             <td><span class="fw-semibold {{ 'text-danger' if row.saldo < 0 else 'text-success' }}">${{ '%.2f'|format(row.saldo) }}</span></td>
           </tr>
           {% else %}
-          <tr><td colspan="6" class="text-center text-muted py-4">No hay datos de caja para el rango seleccionado.</td></tr>
+          <tr><td colspan="8" class="text-center text-muted py-4">No hay datos de caja para el rango seleccionado.</td></tr>
           {% endfor %}
         </tbody>
       </table>
+    </div>
+  </div>
+
+  <div class="card app-card mt-4">
+    <div class="card-header bg-white fw-bold">Configuración</div>
+    <div class="card-body">
+      <div class="row g-4">
+        <div class="col-lg-6">
+          <h2 class="h6 fw-bold">Empresa</h2>
+          <p class="text-muted small mb-0">Los datos generales se actualizan desde el bloque "Datos del negocio".</p>
+        </div>
+        <div class="col-lg-6">
+          <h2 class="h6 fw-bold">Cambiar contraseña</h2>
+          <form method="post" action="{{ url_for('company_billing.company_settings_change_password') }}" class="row g-3">
+            <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+            <div class="col-12">
+              <label class="form-label">Contraseña actual</label>
+              <input class="form-control" type="password" name="current_password" required>
+            </div>
+            <div class="col-md-6">
+              <label class="form-label">Nueva contraseña</label>
+              <input class="form-control" type="password" name="new_password" required>
+            </div>
+            <div class="col-md-6">
+              <label class="form-label">Confirmar contraseña</label>
+              <input class="form-control" type="password" name="confirm_password" required>
+            </div>
+            <div class="col-12">
+              <button class="btn btn-outline-primary" type="submit">Actualizar contraseña</button>
+            </div>
+          </form>
+        </div>
+      </div>
     </div>
   </div>
   {% endif %}
