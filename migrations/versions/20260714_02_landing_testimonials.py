@@ -37,7 +37,7 @@ def upgrade():
             sa.Column("author_name", sa.String(length=120), nullable=False),
             sa.Column("company_name", sa.String(length=160), nullable=True),
             sa.Column("quote", sa.Text(), nullable=False),
-            sa.Column("active", sa.Boolean(), nullable=False, server_default=sa.text("1")),
+            sa.Column("active", sa.Boolean(), nullable=False, server_default=sa.true()),
             sa.Column("created_at", sa.DateTime(), nullable=False, server_default=sa.func.now()),
             sa.Column("updated_at", sa.DateTime(), nullable=True),
             sa.PrimaryKeyConstraint("id"),
