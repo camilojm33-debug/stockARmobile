@@ -54,25 +54,17 @@
         <label class="form-check-label" for="fillPage">Completar una hoja A4 (solo producto unico 5x5)</label>
       </div>
     </div>
+    <div class="col-md-3">
+      <div class="form-check mt-4">
+        <input class="form-check-input" type="checkbox" name="ordered_a4" id="orderedA4">
+        <label class="form-check-label" for="orderedA4">Imprimir ordenado en hoja A4</label>
+      </div>
+    </div>
     <div class="col-md-2"><button class="btn btn-success" {% if not products %}disabled{% endif %}><i class="bi bi-file-earmark-pdf me-1"></i>Descargar PDF</button></div>
     <div class="col-12" id="selectedHint" style="display:none;">
       <div class="small text-muted">Selecciona productos desde las tarjetas de abajo para imprimir solo esos.</div>
     </div>
   </form>
-
-  <div class="card app-card mb-4">
-    <div class="card-header bg-white fw-bold">QR de cobro sin integracion</div>
-    <div class="card-body">
-      <form method="get" action="{{ url_for('qr_labels.payment_qr') }}" class="row g-2 align-items-end">
-        <div class="col-md-2"><label class="form-label">Alias</label><input class="form-control" name="alias"></div>
-        <div class="col-md-2"><label class="form-label">CBU</label><input class="form-control" name="cbu"></div>
-        <div class="col-md-2"><label class="form-label">CVU</label><input class="form-control" name="cvu"></div>
-        <div class="col-md-3"><label class="form-label">Texto</label><input class="form-control" name="text" value="Pago StockArmobile"></div>
-        <div class="col-md-2"><label class="form-label">URL</label><input class="form-control" name="url"></div>
-        <div class="col-md-1"><button class="btn btn-outline-primary w-100"><i class="bi bi-qr-code"></i></button></div>
-      </form>
-    </div>
-  </div>
 
   <div class="row g-3">
     {% for product in products %}
@@ -93,7 +85,7 @@
           <form method="post" action="{{ url_for('qr_labels.print_product_sheet', id=product.id) }}" class="border-top mt-3 pt-3 text-start">
             <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
             <div class="row g-2">
-              <div class="col-7"><select class="form-select form-select-sm" name="label_size"><option value="30x20">30x20 mm</option><option value="40x30">40x30 mm</option><option value="50x25" selected>50x25 mm</option><option value="60x40">60x40 mm</option><option value="80x50">80x50 mm</option></select></div>
+              <div class="col-7"><select class="form-select form-select-sm" name="label_size"><option value="30x20">30x20 mm</option><option value="40x30">40x30 mm</option><option value="50x25" selected>50x25 mm</option><option value="50x50">50x50 mm (5x5 cm)</option><option value="60x40">60x40 mm</option><option value="80x50">80x50 mm</option></select></div>
               <div class="col-5"><input class="form-control form-control-sm" name="quantity" type="number" min="1" value="1"></div>
               <div class="col-12 small d-flex flex-wrap gap-2">
                 <label><input type="checkbox" name="include_name" checked> Nombre</label>
@@ -103,6 +95,9 @@
                 <label><input type="checkbox" name="include_ean"> EAN13</label>
                 <label><input type="checkbox" name="include_code128" checked> Code128</label>
                 <label><input type="checkbox" name="include_date"> Fecha</label>
+              </div>
+              <div class="col-12 small">
+                <label><input type="checkbox" name="ordered_a4"> Imprimir ordenado en hoja A4</label>
               </div>
               <div class="col-12"><button class="btn btn-sm btn-primary w-100"><i class="bi bi-printer me-1"></i>Imprimir etiquetas</button></div>
             </div>

@@ -359,6 +359,9 @@
         </div>
         <div class="col-lg-6">
           <h2 class="h6 fw-bold">Cambiar contraseña</h2>
+          <div class="alert alert-light border small mb-3" role="alert">
+            Esta contraseña es la de ingreso al sistema (login del usuario actual). No modifica el PIN administrativo de Mi Empresa.
+          </div>
           <form method="post" action="{{ url_for('company_billing.company_settings_change_password') }}" class="row g-3">
             <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
             <div class="col-12">

@@ -85,6 +85,7 @@ def _label_dimensions_mm(size_key):
         "30x20": (30, 20),
         "40x30": (40, 30),
         "50x25": (50, 25),
+        "50x50": (50, 50),
         "60x40": (60, 40),
         "80x50": (80, 50),
     }.get(size_key, (50, 25))
@@ -239,6 +240,135 @@ def _build_square_5x5_a4_pdf(products, copies):
     return buffer
 
 
+def _bulk_dimensions_mm(size_key):
+    return {
+        "small": (40, 30),
+        "standard": (50, 25),
+        "large": (60, 40),
+    }.get(size_key, (50, 25))
+
+
+def _build_current_a4_pdf(products, copies, size_key):
+    width_mm, height_mm = _bulk_dimensions_mm(size_key)
+    label_w = width_mm * mm
+    label_h = height_mm * mm
+    grid = _compute_a4_grid(label_w, label_h)
+    per_page = grid["cols"] * grid["rows"]
+
+    pixel_sizes = {
+        "small": (260, 320),
+        "standard": (300, 400),
+        "large": (380, 480),
+    }
+    img_size = pixel_sizes.get(size_key, (300, 400))
+
+    buffer = BytesIO()
+    pdf = canvas.Canvas(buffer, pagesize=A4)
+    index = 0
+    for product in _iter_products_with_copies(products, copies):
+        slot = index % per_page
+        if index > 0 and slot == 0:
+            pdf.showPage()
+        row = slot // grid["cols"]
+        col = slot % grid["cols"]
+        x = grid["margin_x"] + (col * (label_w + grid["gap_x"]))
+        y_top = grid["page_h"] - grid["margin_y"] - (row * (label_h + grid["gap_y"]))
+        y = y_top - label_h
+
+        label_img = create_product_label(product.barcode, product.name, product.price, size=img_size)
+        label_buffer = BytesIO()
+        label_img.save(label_buffer, "PNG")
+        label_buffer.seek(0)
+        pdf.drawImage(ImageReader(label_buffer), x, y, width=label_w, height=label_h, preserveAspectRatio=False, mask="auto")
+        index += 1
+
+    if index == 0:
+        pdf.showPage()
+    pdf.save()
+    buffer.seek(0)
+    return buffer
+
+
+def _create_sheet_label_image(
+    product,
+    width_mm,
+    height_mm,
+    *,
+    include_name,
+    include_price,
+    include_code,
+    include_qr,
+    include_ean,
+    include_code128,
+    include_date,
+):
+    img = Image.new("RGB", (int(width_mm * 8), int(height_mm * 8)), "white")
+    draw = ImageDraw.Draw(img)
+    y = 8
+    if include_name:
+        draw.text((10, y), product.name[:28], fill="black", font=_font(14))
+        y += 20
+    if include_price:
+        draw.text((10, y), f"${float(product.price or 0):.2f}", fill="black", font=_font(18))
+        y += 24
+    if include_code:
+        draw.text((10, y), str(product.barcode or product.id)[:28], fill="black", font=_font(10))
+        y += 14
+    if include_qr:
+        qr_img = generate_qr_code(product.barcode or product.id)
+        qr_img.thumbnail((52, 52), Image.Resampling.LANCZOS)
+        img.paste(qr_img, (img.width - 60, 8))
+    if include_ean or include_code128:
+        code_img = generate_code128_code(product.barcode or product.id) if include_code128 else generate_ean13_code(product.barcode)
+        code_img.thumbnail((img.width - 18, 48), Image.Resampling.LANCZOS)
+        img.paste(code_img, (9, img.height - 56))
+    if include_date:
+        draw.text((10, img.height - 12), utcnow().strftime("%Y-%m-%d"), fill="black", font=_font(9))
+    return img
+
+
+def _build_custom_sheet_a4_pdf(product, quantity, size_key, *, include_name, include_price, include_code, include_qr, include_ean, include_code128, include_date):
+    width_mm, height_mm = _label_dimensions_mm(size_key)
+    label_w = width_mm * mm
+    label_h = height_mm * mm
+    grid = _compute_a4_grid(label_w, label_h)
+    per_page = grid["cols"] * grid["rows"]
+
+    buffer = BytesIO()
+    pdf = canvas.Canvas(buffer, pagesize=A4)
+    total = max(quantity, 1)
+    for index in range(total):
+        slot = index % per_page
+        if index > 0 and slot == 0:
+            pdf.showPage()
+        row = slot // grid["cols"]
+        col = slot % grid["cols"]
+        x = grid["margin_x"] + (col * (label_w + grid["gap_x"]))
+        y_top = grid["page_h"] - grid["margin_y"] - (row * (label_h + grid["gap_y"]))
+        y = y_top - label_h
+
+        label_img = _create_sheet_label_image(
+            product,
+            width_mm,
+            height_mm,
+            include_name=include_name,
+            include_price=include_price,
+            include_code=include_code,
+            include_qr=include_qr,
+            include_ean=include_ean,
+            include_code128=include_code128,
+            include_date=include_date,
+        )
+        label_buffer = BytesIO()
+        label_img.save(label_buffer, "PNG")
+        label_buffer.seek(0)
+        pdf.drawImage(ImageReader(label_buffer), x, y, width=label_w, height=label_h, preserveAspectRatio=False, mask="auto")
+
+    pdf.save()
+    buffer.seek(0)
+    return buffer
+
+
 def _square_labels_per_page():
     grid = _compute_a4_grid(50 * mm, 50 * mm)
     return max(1, grid["cols"] * grid["rows"])
@@ -346,33 +476,39 @@ def print_product_sheet(id):
     include_ean = bool(request.form.get("include_ean"))
     include_code128 = bool(request.form.get("include_code128"))
     include_date = bool(request.form.get("include_date"))
+    ordered_a4 = bool(request.form.get("ordered_a4"))
+
+    if ordered_a4:
+        buffer = _build_custom_sheet_a4_pdf(
+            product,
+            quantity,
+            size_key,
+            include_name=include_name,
+            include_price=include_price,
+            include_code=include_code,
+            include_qr=include_qr,
+            include_ean=include_ean,
+            include_code128=include_code128,
+            include_date=include_date,
+        )
+        return send_file(buffer, mimetype="application/pdf", as_attachment=True, download_name=f"etiquetas_a4_{product.id}_{size_key}.pdf")
 
     buffer = BytesIO()
     doc = SimpleDocTemplate(buffer, pagesize=letter, leftMargin=8 * mm, rightMargin=8 * mm, topMargin=8 * mm, bottomMargin=8 * mm)
     elements = []
     for _ in range(max(quantity, 1)):
-        img = Image.new("RGB", (int(width_mm * 8), int(height_mm * 8)), "white")
-        draw = ImageDraw.Draw(img)
-        y = 8
-        if include_name:
-            draw.text((10, y), product.name[:28], fill="black", font=_font(14))
-            y += 20
-        if include_price:
-            draw.text((10, y), f"${float(product.price or 0):.2f}", fill="black", font=_font(18))
-            y += 24
-        if include_code:
-            draw.text((10, y), str(product.barcode or product.id)[:28], fill="black", font=_font(10))
-            y += 14
-        if include_qr:
-            qr_img = generate_qr_code(product.barcode or product.id)
-            qr_img.thumbnail((52, 52), Image.Resampling.LANCZOS)
-            img.paste(qr_img, (img.width - 60, 8))
-        if include_ean or include_code128:
-            code_img = generate_code128_code(product.barcode or product.id) if include_code128 else generate_ean13_code(product.barcode)
-            code_img.thumbnail((img.width - 18, 48), Image.Resampling.LANCZOS)
-            img.paste(code_img, (9, img.height - 56))
-        if include_date:
-            draw.text((10, img.height - 12), utcnow().strftime("%Y-%m-%d"), fill="black", font=_font(9))
+        img = _create_sheet_label_image(
+            product,
+            width_mm,
+            height_mm,
+            include_name=include_name,
+            include_price=include_price,
+            include_code=include_code,
+            include_qr=include_qr,
+            include_ean=include_ean,
+            include_code128=include_code128,
+            include_date=include_date,
+        )
         img_buffer = BytesIO()
         img.save(img_buffer, "PNG")
         img_buffer.seek(0)
@@ -420,6 +556,7 @@ def print_all():
     label_size = request.form.get("size") or request.args.get("size") or "standard"
     copies = request.form.get("copies", request.args.get("copies", 1), type=int) or 1
     fill_page = bool(request.form.get("fill_page"))
+    ordered_a4 = bool(request.form.get("ordered_a4"))
 
     if scope_key == "single" and fill_page and format_key == "square_5x5":
         copies = _square_labels_per_page()
@@ -427,6 +564,10 @@ def print_all():
     if format_key == "square_5x5":
         buffer = _build_square_5x5_a4_pdf(products, copies)
         return send_file(buffer, mimetype="application/pdf", as_attachment=True, download_name="etiquetas_5x5_a4.pdf")
+
+    if ordered_a4:
+        buffer = _build_current_a4_pdf(products, copies, label_size)
+        return send_file(buffer, mimetype="application/pdf", as_attachment=True, download_name="etiquetas_a4_ordenadas.pdf")
 
     buffer = BytesIO()
     doc = SimpleDocTemplate(buffer, pagesize=letter)
