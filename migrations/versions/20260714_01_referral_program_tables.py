@@ -55,7 +55,7 @@ def upgrade():
             sa.Column("account_holder", sa.String(length=120), nullable=True),
             sa.Column("referral_code", sa.String(length=24), nullable=False),
             sa.Column("referral_url", sa.String(length=255), nullable=False),
-            sa.Column("active", sa.Boolean(), nullable=False, server_default=sa.text("1")),
+            sa.Column("active", sa.Boolean(), nullable=False, server_default=sa.true()),
             sa.Column("created_at", sa.DateTime(), nullable=False, server_default=sa.func.now()),
             sa.Column("updated_at", sa.DateTime(), nullable=True),
             sa.ForeignKeyConstraint(["user_id"], ["users.id"]),
