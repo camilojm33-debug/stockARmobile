@@ -15,6 +15,7 @@ from flask_migrate import Migrate
 from flask_sqlalchemy import SQLAlchemy
 from flask_wtf import CSRFProtect, FlaskForm
 from sqlalchemy import Index, inspect, text
+from sqlalchemy.exc import ProgrammingError
 from werkzeug.security import check_password_hash, generate_password_hash
 from werkzeug.middleware.proxy_fix import ProxyFix
 from wtforms import BooleanField, DateField, DecimalField, PasswordField, SelectField, StringField, SubmitField, TextAreaField
@@ -22,6 +23,11 @@ from wtforms.validators import DataRequired, Email, Length, NumberRange, Optiona
 from config.logging_config import configure_logging
 from services.notification_service import build_notifications
 from services.search_service import global_search
+
+try:
+    from psycopg2.errors import UndefinedTable as PGUndefinedTable
+except Exception:  # pragma: no cover - unavailable outside postgres runtime
+    PGUndefinedTable = None
 
 
 configure_logging()
@@ -1112,19 +1118,32 @@ def index():
     plan_feature_rows = {plan.id: _plan_feature_flags(plan) for plan in plans}
     referral_percent = float(ReferralService.COMMISSION_PERCENT)
 
-    ranking_rows = (
-        db.session.query(
-            ReferralSeller,
-            db.func.coalesce(db.func.sum(ReferralCommission.sold_amount), 0).label("sold_total"),
-            db.func.coalesce(db.func.count(db.distinct(ReferralAttribution.company_id)), 0).label("clients_total"),
+    ranking_rows = []
+    try:
+        ranking_rows = (
+            db.session.query(
+                ReferralSeller,
+                db.func.coalesce(db.func.sum(ReferralCommission.sold_amount), 0).label("sold_total"),
+                db.func.coalesce(db.func.count(db.distinct(ReferralAttribution.company_id)), 0).label("clients_total"),
+            )
+            .outerjoin(ReferralCommission, ReferralCommission.seller_id == ReferralSeller.id)
+            .outerjoin(ReferralAttribution, ReferralAttribution.seller_id == ReferralSeller.id)
+            .group_by(ReferralSeller.id)
+            .order_by(db.text("sold_total DESC"))
+            .limit(3)
+            .all()
         )
-        .outerjoin(ReferralCommission, ReferralCommission.seller_id == ReferralSeller.id)
-        .outerjoin(ReferralAttribution, ReferralAttribution.seller_id == ReferralSeller.id)
-        .group_by(ReferralSeller.id)
-        .order_by(db.text("sold_total DESC"))
-        .limit(3)
-        .all()
-    )
+    except ProgrammingError as exc:
+        is_undefined_table = PGUndefinedTable is not None and isinstance(getattr(exc, "orig", None), PGUndefinedTable)
+        if not is_undefined_table:
+            raise
+        db.session.rollback()
+        app.logger.warning("Landing cargada sin ranking de referidos por tabla inexistente: %s", exc)
+    except Exception as exc:
+        if PGUndefinedTable is None or not isinstance(exc, PGUndefinedTable):
+            raise
+        db.session.rollback()
+        app.logger.warning("Landing cargada sin ranking de referidos por UndefinedTable: %s", exc)
 
     medal_targets = [1, 5, 10, 25, 50, 100]
     medal_progress = []
