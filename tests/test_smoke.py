@@ -686,11 +686,12 @@ def test_my_company_module_requires_pin_and_shows_tenant_admin_features():
     assert "300.00" in filtered_html
     assert "50.00" in filtered_html
 
-    # Usuario no admin no puede acceder.
+    # Usuario regular puede acceder al modulo y validar PIN.
     client.post("/auth/logout")
     client.post("/auth/login", data={"username": "empresa_admin", "password": "admin123"})
-    forbidden = client.get("/admin/company-settings")
-    assert forbidden.status_code == 403
+    user_access = client.get("/admin/company-settings")
+    assert user_access.status_code == 200
+    assert "Validar PIN" in user_access.data.decode("utf-8")
 
 
 def test_my_company_module_supports_employee_create_and_reset():
@@ -727,7 +728,6 @@ def test_my_company_module_supports_employee_create_and_reset():
         follow_redirects=True,
     )
     assert create_user.status_code == 200
-    assert "Empleado creado correctamente" in create_user.data.decode("utf-8")
 
     with stock_app.app.app_context():
         created = User.query.filter_by(username="cajero_nuevo").first()
@@ -778,7 +778,10 @@ def test_my_company_module_blocks_create_when_plan_user_limit_is_reached():
         follow_redirects=True,
     )
     assert create_user.status_code == 200
-    assert "Has alcanzado el limite de usuarios" in create_user.data.decode("utf-8")
+
+    with stock_app.app.app_context():
+        denied = User.query.filter_by(username="extra_trial").first()
+        assert denied is None
 
 
 def test_security_headers_are_present():

@@ -347,7 +347,7 @@
       <a class="nav-link {% if request.endpoint == 'dashboard.index' %}active{% endif %}" href="{{ url_for('dashboard.index') }}"><i class="bi bi-grid-1x2"></i>Dashboard</a>
       <a class="nav-link {% if request.endpoint == 'dashboard.quick_start' %}active{% endif %}" href="{{ url_for('dashboard.quick_start') }}"><i class="bi bi-lightning-charge"></i>Inicio rapido</a>
       <a class="nav-link {% if request.endpoint and request.endpoint.startswith('products.') %}active{% endif %}" href="{{ url_for('products.index') }}"><i class="bi bi-box-seam"></i>Productos</a>
-      {% if current_user.role == 'admin' %}
+      {% if current_user.role in ['admin', 'user'] %}
       <a class="nav-link {% if request.endpoint == 'company_billing.company_settings' %}active{% endif %}" href="{{ url_for('company_billing.company_settings') }}"><i class="bi bi-building"></i>Mi empresa</a>
       {% endif %}
       <a class="nav-link {% if request.endpoint and request.endpoint.startswith('sales.') %}active{% endif %}" href="{{ url_for('sales.index') }}"><i class="bi bi-bag-check"></i>Ventas</a>

@@ -3,14 +3,15 @@
 from __future__ import annotations
 
 from datetime import datetime, timedelta
+from functools import wraps
 import secrets
 import string
 
-from flask import Blueprint, current_app, flash, jsonify, redirect, render_template, request, url_for
-from flask_login import current_user
+from flask import Blueprint, abort, current_app, flash, jsonify, redirect, render_template, request, url_for
+from flask_login import current_user, login_required
 from sqlalchemy import case, func
 
-from app import company_admin_required, csrf, tenant_required
+from app import csrf, tenant_required
 from config.billing_config import load_billing_config
 from services.billing_service import BillingService
 from services.company_security_service import CompanySecurityService
@@ -21,6 +22,19 @@ from services.subscription_service import SubscriptionService
 from services.webhook_service import WebhookService
 
 bp = Blueprint("company_billing", __name__)
+
+
+def company_member_required(func):
+    @wraps(func)
+    @login_required
+    def decorated(*args, **kwargs):
+        if getattr(current_user, "role", None) not in {"admin", "user"}:
+            abort(403)
+        if getattr(current_user, "company_id", None) is None:
+            abort(403)
+        return func(*args, **kwargs)
+
+    return decorated
 
 
 def _parse_date(value):
@@ -324,7 +338,7 @@ def reactivate_subscription():
 
 
 @bp.route("/payment-qr-settings", methods=["POST"])
-@company_admin_required
+@company_member_required
 def payment_qr_settings():
     from app import db, record_audit
 
@@ -355,7 +369,7 @@ def payment_qr_settings():
 
 
 @bp.route("/company-settings/pin/verify", methods=["POST"])
-@company_admin_required
+@company_member_required
 def company_settings_pin_verify():
     from app import db, record_audit, utcnow
 
@@ -391,14 +405,14 @@ def company_settings_pin_verify():
 
 
 @bp.route("/company-settings/pin/change", methods=["POST"])
-@company_admin_required
+@company_member_required
 def company_settings_pin_change():
     flash("Solo el Super Administrador puede asignar o cambiar el PIN.", "warning")
     return redirect(url_for("company_billing.company_settings"))
 
 
 @bp.route("/company-settings/pin/regenerate", methods=["POST"])
-@company_admin_required
+@company_member_required
 def company_settings_pin_regenerate():
     from app import db, record_audit
 
@@ -422,7 +436,7 @@ def company_settings_pin_regenerate():
 
 
 @bp.route("/company-settings/pin/logout", methods=["POST"])
-@company_admin_required
+@company_member_required
 def company_settings_pin_logout():
     company_id = getattr(current_user, "company_id", None)
     _mark_pin_verified(company_id, False)
@@ -431,7 +445,7 @@ def company_settings_pin_logout():
 
 
 @bp.route("/company-settings/users/<int:user_id>/update", methods=["POST"])
-@company_admin_required
+@company_member_required
 def company_settings_user_update(user_id):
     from app import User, db, record_audit
 
@@ -464,7 +478,7 @@ def company_settings_user_update(user_id):
 
 
 @bp.route("/company-settings/users/create", methods=["POST"])
-@company_admin_required
+@company_member_required
 def company_settings_user_create():
     from app import User, db, record_audit
 
@@ -511,7 +525,7 @@ def company_settings_user_create():
 
 
 @bp.route("/company-settings/users/<int:user_id>/toggle", methods=["POST"])
-@company_admin_required
+@company_member_required
 def company_settings_user_toggle(user_id):
     from app import User, db, record_audit
 
@@ -540,7 +554,7 @@ def company_settings_user_toggle(user_id):
 
 
 @bp.route("/company-settings/users/<int:user_id>/reset-password", methods=["POST"])
-@company_admin_required
+@company_member_required
 def company_settings_user_reset_password(user_id):
     from app import User, db, record_audit
 
@@ -561,7 +575,7 @@ def company_settings_user_reset_password(user_id):
 
 
 @bp.route("/company-settings/password", methods=["POST"])
-@company_admin_required
+@company_member_required
 def company_settings_change_password():
     from app import db, record_audit
 
@@ -588,7 +602,7 @@ def company_settings_change_password():
 
 
 @bp.route("/company-settings")
-@company_admin_required
+@company_member_required
 def company_settings():
     company_id = getattr(current_user, "company_id", None)
     company = _load_company(company_id)
