@@ -125,6 +125,175 @@ def test_exports_and_security_methods():
     assert client.get("/productos/delete/1").status_code == 405
 
 
+def test_superadmin_subscriptions_actions_visibility_and_flows():
+    client = stock_app.app.test_client()
+
+    with stock_app.app.app_context():
+        from app import Plan
+
+        company = Company.query.filter_by(name="Empresa Demo").first()
+        assert company is not None
+
+        plan_basic = Plan(code="basic_sub_test", name="Plan Basic Test", price=1000, currency="ARS", duration_days=30, active=True)
+        plan_pro = Plan(code="pro_sub_test", name="Plan Pro Test", price=2000, currency="ARS", duration_days=30, active=True)
+        db.session.add(plan_basic)
+        db.session.add(plan_pro)
+        db.session.flush()
+
+        active_sub = Subscription(
+            company_id=company.id,
+            plan_id=plan_basic.id,
+            status="active",
+            renewal_enabled=True,
+            auto_renew=True,
+            cancel_at_period_end=False,
+        )
+        suspended_sub = Subscription(
+            company_id=company.id,
+            plan_id=plan_basic.id,
+            status="suspended",
+            renewal_enabled=False,
+            auto_renew=False,
+            cancel_at_period_end=False,
+        )
+        expired_sub = Subscription(
+            company_id=company.id,
+            plan_id=plan_basic.id,
+            status="expired",
+            renewal_enabled=False,
+            auto_renew=False,
+            cancel_at_period_end=False,
+        )
+        cancelled_sub = Subscription(
+            company_id=company.id,
+            plan_id=plan_basic.id,
+            status="cancelled",
+            renewal_enabled=False,
+            auto_renew=False,
+            cancel_at_period_end=True,
+        )
+        db.session.add_all([active_sub, suspended_sub, expired_sub, cancelled_sub])
+        db.session.commit()
+
+        plan_basic_id = plan_basic.id
+        plan_pro_id = plan_pro.id
+        active_id = active_sub.id
+        suspended_id = suspended_sub.id
+        expired_id = expired_sub.id
+        cancelled_id = cancelled_sub.id
+        company_id = company.id
+
+    client.post("/auth/login", data={"username": "superadmin", "password": "admin123"})
+
+    panel = client.get("/superadmin/subscriptions")
+    assert panel.status_code == 200
+    html = panel.data.decode("utf-8")
+
+    active_block = re.search(rf'id="subActions{active_id}".*?</div>', html, re.DOTALL)
+    assert active_block is not None
+    assert 'data-action="modify"' in active_block.group(0)
+    assert 'data-action="suspend"' in active_block.group(0)
+    assert 'data-action="cancel"' in active_block.group(0)
+    assert 'data-action="reactivate"' not in active_block.group(0)
+    assert 'data-action="renew_now"' not in active_block.group(0)
+
+    suspended_block = re.search(rf'id="subActions{suspended_id}".*?</div>', html, re.DOTALL)
+    assert suspended_block is not None
+    assert 'data-action="reactivate"' in suspended_block.group(0)
+    assert 'data-action="modify"' not in suspended_block.group(0)
+    assert 'data-action="suspend"' not in suspended_block.group(0)
+    assert 'data-action="cancel"' not in suspended_block.group(0)
+    assert 'data-action="renew_now"' not in suspended_block.group(0)
+
+    expired_block = re.search(rf'id="subActions{expired_id}".*?</div>', html, re.DOTALL)
+    assert expired_block is not None
+    assert 'data-action="renew_now"' in expired_block.group(0)
+    assert 'data-action="modify"' not in expired_block.group(0)
+    assert 'data-action="suspend"' not in expired_block.group(0)
+    assert 'data-action="cancel"' not in expired_block.group(0)
+
+    cancelled_block = re.search(rf'id="subActions{cancelled_id}".*?</div>', html, re.DOTALL)
+    assert cancelled_block is not None
+    assert 'data-action="reactivate"' in cancelled_block.group(0)
+    assert 'data-action="renew_now"' in cancelled_block.group(0)
+    assert 'data-action="modify"' not in cancelled_block.group(0)
+    assert 'data-action="suspend"' not in cancelled_block.group(0)
+    assert 'data-action="cancel"' not in cancelled_block.group(0)
+
+    assert "¿Cancelar esta suscripción?" in html
+    assert "¿Suspender esta suscripción?" in html
+
+    create_resp = client.post(
+        "/superadmin/subscriptions/create",
+        data={
+            "company_id": company_id,
+            "plan_id": plan_basic_id,
+            "status": "pending",
+            "renewal_enabled": "1",
+        },
+        follow_redirects=True,
+    )
+    assert create_resp.status_code == 200
+    assert "Suscripción creada correctamente." in create_resp.data.decode("utf-8")
+
+    update_resp = client.post(
+        f"/superadmin/subscriptions/{active_id}/update",
+        data={
+            "plan_id": plan_pro_id,
+            "status": "active",
+            "renewal_enabled": "1",
+        },
+        follow_redirects=True,
+    )
+    assert update_resp.status_code == 200
+    assert "Suscripción modificada correctamente." in update_resp.data.decode("utf-8")
+
+    suspend_resp = client.post(
+        f"/superadmin/subscriptions/{active_id}/action",
+        data={"action": "suspend"},
+        follow_redirects=True,
+    )
+    assert suspend_resp.status_code == 200
+    assert "Suscripción suspendida." in suspend_resp.data.decode("utf-8")
+
+    invalid_cancel_resp = client.post(
+        f"/superadmin/subscriptions/{active_id}/action",
+        data={"action": "cancel"},
+        follow_redirects=True,
+    )
+    assert invalid_cancel_resp.status_code == 200
+    assert "La acción no está permitida para el estado actual de la suscripción." in invalid_cancel_resp.data.decode("utf-8")
+
+    reactivate_resp = client.post(
+        f"/superadmin/subscriptions/{active_id}/action",
+        data={"action": "reactivate"},
+        follow_redirects=True,
+    )
+    assert reactivate_resp.status_code == 200
+    assert "Suscripción reactivada." in reactivate_resp.data.decode("utf-8")
+
+    cancel_resp = client.post(
+        f"/superadmin/subscriptions/{active_id}/action",
+        data={"action": "cancel"},
+        follow_redirects=True,
+    )
+    assert cancel_resp.status_code == 200
+    assert "Suscripción cancelada." in cancel_resp.data.decode("utf-8")
+
+    renew_resp = client.post(
+        f"/superadmin/subscriptions/{active_id}/action",
+        data={"action": "renew_now"},
+        follow_redirects=True,
+    )
+    assert renew_resp.status_code == 200
+    assert "Suscripción renovada." in renew_resp.data.decode("utf-8")
+
+    with stock_app.app.app_context():
+        refreshed = db.session.get(Subscription, active_id)
+        assert refreshed is not None
+        assert refreshed.status == "active"
+
+
 def test_superadmin_login_survives_admin_bootstrap_with_different_env_owner(monkeypatch):
     with stock_app.app.app_context():
         monkeypatch.setenv("ADMIN_USERNAME", "otro_admin")

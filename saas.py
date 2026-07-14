@@ -21,6 +21,20 @@ from services.plan_service import PlanService
 
 bp = Blueprint("saas", __name__)
 
+SUBSCRIPTION_STATUS_OPTIONS = ["trial", "pending", "active", "approved", "cancelled", "suspended", "expired", "rejected"]
+
+# Acciones de UI permitidas por estado para evitar botones invalidos.
+SUBSCRIPTION_UI_ACTIONS = {
+    "active": {"modify", "suspend", "cancel"},
+    "approved": {"modify", "suspend", "cancel"},
+    "trial": {"modify", "suspend", "cancel"},
+    "pending": {"modify", "suspend", "cancel"},
+    "suspended": {"reactivate"},
+    "expired": {"renew_now"},
+    "cancelled": {"reactivate", "renew_now"},
+    "rejected": {"renew_now"},
+}
+
 
 def _temporary_password(length: int = 12) -> str:
     alphabet = string.ascii_letters + string.digits
@@ -47,6 +61,22 @@ def _parse_dt(value: str | None):
         return datetime.fromisoformat(raw)
     except ValueError:
         return None
+
+
+def _normalized_subscription_status(value: str | None) -> str:
+    status = (value or "pending").strip().lower()
+    return status if status in SUBSCRIPTION_STATUS_OPTIONS else "pending"
+
+
+def _allowed_ui_actions_for_status(status: str | None):
+    normalized = _normalized_subscription_status(status)
+    return SUBSCRIPTION_UI_ACTIONS.get(normalized, {"modify"})
+
+
+def _action_allowed_for_status(status: str | None, action: str) -> bool:
+    if action == "extend":
+        return True
+    return action in _allowed_ui_actions_for_status(status)
 
 
 @bp.route("/", methods=["GET", "POST"])
@@ -659,26 +689,31 @@ def subscriptions_panel():
     subscriptions = pagination.items
     companies = Company.query.order_by(Company.name.asc()).all()
     plans = Plan.query.filter(Plan.active.is_(True)).order_by(Plan.price.asc()).all()
+    subscription_actions = {
+        sub.id: _allowed_ui_actions_for_status(sub.status)
+        for sub in subscriptions
+    }
     return render_template(
         "saas/subscriptions.html",
         subscriptions=subscriptions,
+        subscription_actions=subscription_actions,
         pagination=pagination,
         companies=companies,
         plans=plans,
         filters={"q": q, "status": status, "plan": plan_code, "per_page": per_page},
-        status_options=["trial", "pending", "active", "approved", "cancelled", "suspended", "expired", "rejected"],
+        status_options=SUBSCRIPTION_STATUS_OPTIONS,
     )
 
 
 @bp.route("/subscriptions/create", methods=["POST"])
 @superadmin_required
 def subscriptions_create():
-    from app import AuditLog, Company, Plan, Subscription
+    from app import AuditLog, Company, Plan, Subscription, db
 
     _require_superadmin()
     company_id = request.form.get("company_id", type=int)
     plan_id = request.form.get("plan_id", type=int)
-    status = (request.form.get("status") or "pending").strip().lower()
+    status = _normalized_subscription_status(request.form.get("status"))
     start_date = _parse_dt(request.form.get("start_date")) or utcnow()
     next_billing_date = _parse_dt(request.form.get("next_billing_date"))
     renewal_enabled = (request.form.get("renewal_enabled") or "1") == "1"
@@ -703,27 +738,32 @@ def subscriptions_create():
         auto_renew=renewal_enabled,
         cancel_at_period_end=not renewal_enabled,
     )
-    db.session.add(subscription)
-    db.session.flush()
-    db.session.add(
-        AuditLog(
-            user_id=current_user.id,
-            company_id=company.id,
-            action="subscription_create",
-            entity="subscription",
-            entity_id=subscription.id,
-            detail=f"Suscripción creada plan={plan.code} status={status}. ip={request.remote_addr or 'unknown'} resultado=ok",
+    try:
+        db.session.add(subscription)
+        db.session.flush()
+        db.session.add(
+            AuditLog(
+                user_id=current_user.id,
+                company_id=company.id,
+                action="subscription_create",
+                entity="subscription",
+                entity_id=subscription.id,
+                detail=f"Suscripción creada plan={plan.code} status={status}. ip={request.remote_addr or 'unknown'} resultado=ok",
+            )
         )
-    )
-    db.session.commit()
-    flash("Suscripción creada correctamente.", "success")
+        db.session.commit()
+        flash("Suscripción creada correctamente.", "success")
+    except Exception as exc:
+        db.session.rollback()
+        current_app.logger.exception("Error al crear suscripción company_id=%s plan_id=%s: %s", company_id, plan_id, exc)
+        flash("No se pudo crear la suscripción. Revisá los datos e intentá nuevamente.", "danger")
     return _redirect_back("saas.subscriptions_panel")
 
 
 @bp.route("/subscriptions/<int:subscription_id>/update", methods=["POST"])
 @superadmin_required
 def subscriptions_update(subscription_id):
-    from app import AuditLog, Plan, Subscription
+    from app import AuditLog, Plan, Subscription, db
 
     _require_superadmin()
     subscription = Subscription.query.filter_by(id=subscription_id).first_or_404()
@@ -733,9 +773,13 @@ def subscriptions_update(subscription_id):
         flash("Plan inválido.", "danger")
         return _redirect_back("saas.subscriptions_panel")
 
+    if not _action_allowed_for_status(subscription.status, "modify"):
+        flash("No se puede modificar esta suscripción en su estado actual.", "warning")
+        return _redirect_back("saas.subscriptions_panel")
+
     if plan:
         subscription.plan_id = plan.id
-    subscription.status = (request.form.get("status") or subscription.status or "pending").strip().lower()
+    subscription.status = _normalized_subscription_status(request.form.get("status") or subscription.status)
     start_date = _parse_dt(request.form.get("start_date"))
     next_billing_date = _parse_dt(request.form.get("next_billing_date"))
     last_payment_date = _parse_dt(request.form.get("last_payment_date"))
@@ -753,30 +797,40 @@ def subscriptions_update(subscription_id):
     subscription.auto_renew = renewal_enabled
     subscription.cancel_at_period_end = not renewal_enabled
 
-    db.session.add(
-        AuditLog(
-            user_id=current_user.id,
-            company_id=subscription.company_id,
-            action="subscription_update",
-            entity="subscription",
-            entity_id=subscription.id,
-            detail=f"Suscripción actualizada status={subscription.status}. ip={request.remote_addr or 'unknown'} resultado=ok",
+    try:
+        db.session.add(
+            AuditLog(
+                user_id=current_user.id,
+                company_id=subscription.company_id,
+                action="subscription_update",
+                entity="subscription",
+                entity_id=subscription.id,
+                detail=f"Suscripción actualizada status={subscription.status}. ip={request.remote_addr or 'unknown'} resultado=ok",
+            )
         )
-    )
-    db.session.commit()
-    flash("Suscripción actualizada.", "success")
+        db.session.commit()
+        flash("Suscripción modificada correctamente.", "success")
+    except Exception as exc:
+        db.session.rollback()
+        current_app.logger.exception("Error al modificar suscripción id=%s: %s", subscription_id, exc)
+        flash("No se pudo modificar la suscripción.", "danger")
     return _redirect_back("saas.subscriptions_panel")
 
 
 @bp.route("/subscriptions/<int:subscription_id>/action", methods=["POST"])
 @superadmin_required
 def subscriptions_action(subscription_id):
-    from app import AuditLog, PaymentHistory, Subscription
+    from app import AuditLog, PaymentHistory, Subscription, db
 
     _require_superadmin()
     subscription = Subscription.query.filter_by(id=subscription_id).first_or_404()
     action = (request.form.get("action") or "").strip().lower()
     detail = ""
+    status_before = _normalized_subscription_status(subscription.status)
+
+    if not _action_allowed_for_status(status_before, action):
+        flash("La acción no está permitida para el estado actual de la suscripción.", "warning")
+        return _redirect_back("saas.subscriptions_panel")
 
     if action == "cancel":
         subscription.status = "cancelled"
@@ -811,7 +865,7 @@ def subscriptions_action(subscription_id):
         subscription.status = "active"
         subscription.renewal_enabled = True
         subscription.auto_renew = True
-        detail = "Renovación manual aplicada"
+        detail = "Suscripción renovada"
     elif action == "delete":
         subscription.status = "cancelled"
         subscription.renewal_enabled = False
@@ -826,29 +880,54 @@ def subscriptions_action(subscription_id):
         flash("Acción de suscripción inválida.", "danger")
         return _redirect_back("saas.subscriptions_panel")
 
-    db.session.add(
-        AuditLog(
-            user_id=current_user.id,
-            company_id=subscription.company_id,
-            action=f"subscription_{action}",
-            entity="subscription",
-            entity_id=subscription.id,
-            detail=f"{detail}. ip={request.remote_addr or 'unknown'} resultado=ok",
+    try:
+        db.session.add(
+            AuditLog(
+                user_id=current_user.id,
+                company_id=subscription.company_id,
+                action=f"subscription_{action}",
+                entity="subscription",
+                entity_id=subscription.id,
+                detail=(
+                    f"{detail}. from_status={status_before} to_status={subscription.status}. "
+                    f"ip={request.remote_addr or 'unknown'} resultado=ok"
+                ),
+            )
         )
-    )
-    db.session.add(
-        PaymentHistory(
-            company_id=subscription.company_id,
-            subscription_id=subscription.id,
-            event=f"subscription_{action}",
-            detail=detail,
-            source="superadmin",
-            status=subscription.status,
-            payload_json=json.dumps({"action": action, "user_id": current_user.id}, ensure_ascii=False),
+        db.session.add(
+            PaymentHistory(
+                company_id=subscription.company_id,
+                subscription_id=subscription.id,
+                event=f"subscription_{action}",
+                detail=detail,
+                source="superadmin",
+                status=subscription.status,
+                payload_json=json.dumps({"action": action, "user_id": current_user.id}, ensure_ascii=False),
+            )
         )
-    )
-    db.session.commit()
-    flash(f"{detail}.", "success")
+        db.session.commit()
+    except Exception as exc:
+        db.session.rollback()
+        current_app.logger.exception(
+            "Error en acción de suscripción action=%s subscription_id=%s status_before=%s: %s",
+            action,
+            subscription_id,
+            status_before,
+            exc,
+        )
+        flash("No se pudo ejecutar la acción de suscripción.", "danger")
+        return _redirect_back("saas.subscriptions_panel")
+
+    if action == "cancel":
+        flash("Suscripción cancelada.", "success")
+    elif action == "suspend":
+        flash("Suscripción suspendida.", "success")
+    elif action == "reactivate":
+        flash("Suscripción reactivada.", "success")
+    elif action == "renew_now":
+        flash("Suscripción renovada.", "success")
+    else:
+        flash(f"{detail}.", "success")
     return _redirect_back("saas.subscriptions_panel")
 
 

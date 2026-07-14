@@ -112,6 +112,8 @@
         </thead>
         <tbody>
           {% for subscription in subscriptions %}
+          {% set allowed_actions = subscription_actions.get(subscription.id, []) %}
+          {% set can_modify = 'modify' in allowed_actions %}
           <tr>
             <td>{{ subscription.company.name if subscription.company else subscription.company_id }}</td>
             <td>{{ subscription.plan.name if subscription.plan else '—' }}</td>
@@ -121,35 +123,46 @@
             <td>{{ subscription.last_payment_date.strftime('%Y-%m-%d %H:%M') if subscription.last_payment_date else '—' }}</td>
             <td><span class="badge {{ 'text-bg-success' if subscription.renewal_enabled else 'text-bg-secondary' }}">{{ 'Automática' if subscription.renewal_enabled else 'Manual' }}</span></td>
             <td class="text-end">
-              <div class="d-flex flex-wrap justify-content-end gap-1">
-                <button class="btn btn-sm btn-outline-primary" data-bs-toggle="collapse" data-bs-target="#editSub{{ subscription.id }}">Modificar</button>
+              <div class="d-flex flex-wrap justify-content-end gap-1" id="subActions{{ subscription.id }}" data-status="{{ (subscription.status or 'pending')|lower }}">
+                {% if can_modify %}
+                <button class="btn btn-sm btn-outline-primary" data-action="modify" data-bs-toggle="collapse" data-bs-target="#editSub{{ subscription.id }}">Modificar</button>
+                {% endif %}
+                {% if 'cancel' in allowed_actions %}
                 <form method="post" action="{{ url_for('saas.subscriptions_action', subscription_id=subscription.id) }}">
                   <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
                   <input type="hidden" name="next" value="{{ request.full_path }}">
                   <input type="hidden" name="action" value="cancel">
-                  <button class="btn btn-sm btn-outline-danger" type="submit">Cancelar</button>
+                  <button class="btn btn-sm btn-outline-danger" data-action="cancel" type="submit" onclick="return confirm('¿Cancelar esta suscripción?');">Cancelar</button>
                 </form>
+                {% endif %}
+                {% if 'reactivate' in allowed_actions %}
                 <form method="post" action="{{ url_for('saas.subscriptions_action', subscription_id=subscription.id) }}">
                   <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
                   <input type="hidden" name="next" value="{{ request.full_path }}">
                   <input type="hidden" name="action" value="reactivate">
-                  <button class="btn btn-sm btn-outline-success" type="submit">Reactivar</button>
+                  <button class="btn btn-sm btn-outline-success" data-action="reactivate" type="submit">Reactivar</button>
                 </form>
+                {% endif %}
+                {% if 'suspend' in allowed_actions %}
                 <form method="post" action="{{ url_for('saas.subscriptions_action', subscription_id=subscription.id) }}">
                   <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
                   <input type="hidden" name="next" value="{{ request.full_path }}">
                   <input type="hidden" name="action" value="suspend">
-                  <button class="btn btn-sm btn-outline-warning" type="submit">Suspender</button>
+                  <button class="btn btn-sm btn-outline-warning" data-action="suspend" type="submit" onclick="return confirm('¿Suspender esta suscripción?');">Suspender</button>
                 </form>
+                {% endif %}
+                {% if 'renew_now' in allowed_actions %}
                 <form method="post" action="{{ url_for('saas.subscriptions_action', subscription_id=subscription.id) }}">
                   <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
                   <input type="hidden" name="next" value="{{ request.full_path }}">
                   <input type="hidden" name="action" value="renew_now">
-                  <button class="btn btn-sm btn-outline-dark" type="submit">Renovar</button>
+                  <button class="btn btn-sm btn-outline-dark" data-action="renew_now" type="submit">Renovar</button>
                 </form>
+                {% endif %}
               </div>
             </td>
           </tr>
+          {% if can_modify %}
           <tr class="collapse" id="editSub{{ subscription.id }}">
             <td colspan="8" class="bg-light-subtle">
               <form method="post" action="{{ url_for('saas.subscriptions_update', subscription_id=subscription.id) }}" class="row g-2">
@@ -197,6 +210,7 @@
               </div>
             </td>
           </tr>
+          {% endif %}
           {% else %}
           <tr><td colspan="8" class="text-center text-muted py-4">No hay suscripciones para mostrar.</td></tr>
           {% endfor %}

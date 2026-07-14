@@ -19,10 +19,16 @@ from app import tenant_required, utcnow
 bp = Blueprint("qr_labels", __name__)
 
 
-def _font(size):
+def _font(size, bold=False):
+    font_name = "arialbd.ttf" if bold else "arial.ttf"
     try:
-        return ImageFont.truetype("arial.ttf", size)
+        return ImageFont.truetype(font_name, size)
     except OSError:
+        if bold:
+            try:
+                return ImageFont.truetype("arial.ttf", size)
+            except OSError:
+                pass
         return ImageFont.load_default()
 
 
@@ -50,33 +56,114 @@ def generate_code128_code(barcode_string):
     return Image.open(buffer).convert("RGB")
 
 
-def generate_qr_code(text):
-    qr = qrcode.QRCode(version=None, error_correction=qrcode.constants.ERROR_CORRECT_L, box_size=10, border=4)
+def generate_qr_code(text, *, box_size=16, border=2, error_correction=qrcode.constants.ERROR_CORRECT_M):
+    # Genera QR en alta resolucion para evitar pixelado al imprimir.
+    qr = qrcode.QRCode(version=None, error_correction=error_correction, box_size=box_size, border=border)
     qr.add_data(str(text))
     qr.make(fit=True)
     return qr.make_image(fill_color="black", back_color="white").convert("RGB")
 
 
-def create_product_label(barcode_string, product_name, price, size=(300, 400)):
+def _fit_wrapped_text(draw, text, max_width, *, max_lines=2, max_size=32, min_size=10, bold=False):
+    clean = " ".join(str(text or "").split())
+    if not clean:
+        return _font(min_size, bold=bold), [""]
+
+    for size in range(max_size, min_size - 1, -1):
+        font = _font(size, bold=bold)
+        lines = _wrap_text(draw, clean, font, max_width)
+        if len(lines) <= max_lines:
+            return font, lines
+
+    font = _font(min_size, bold=bold)
+    lines = _wrap_text(draw, clean, font, max_width)
+    if len(lines) > max_lines:
+        lines = lines[:max_lines]
+        last = lines[-1]
+        while last and draw.textbbox((0, 0), f"{last}...", font=font)[2] > max_width:
+            last = last[:-1]
+        lines[-1] = f"{last}..." if last else "..."
+    return font, lines
+
+
+def create_product_label(barcode_string, product_name, price, size=(1000, 500), *, include_name=True, include_price=True, include_code=True, include_qr=True):
     img = Image.new("RGB", size, color="white")
     draw = ImageDraw.Draw(img)
-    font_large = _font(32)
-    font_medium = _font(18)
-    font_small = _font(12)
+    width, height = size
+    padding = max(6, int(min(width, height) * 0.04))
+    usable_w = width - (padding * 2)
+    usable_h = height - (padding * 2)
 
-    name_text = str(product_name or "Producto")[:32]
+    name_text = str(product_name or "Producto")
+    sku_text = str(barcode_string or "").strip() or "SIN-CODIGO"
     price_text = f"ARS {float(price or 0):.2f}"
-    draw.text((size[0] / 2, 35), name_text, fill="black", anchor="mm", font=font_medium)
-    draw.text((size[0] / 2, 80), price_text, fill="black", anchor="mm", font=font_large)
 
-    qr_img = generate_qr_code(barcode_string or name_text)
-    qr_img.thumbnail((105, 105), Image.Resampling.LANCZOS)
-    img.paste(qr_img, (size[0] - 125, 115))
+    # Para 50x25 (o formatos apaisados similares) reservamos ~70% del ancho util al QR.
+    if width / max(height, 1) >= 1.6:
+        qr_block_w = int(usable_w * 0.70)
+        text_block_w = usable_w - qr_block_w
+        qr_side = max(48, int(min(usable_h * 0.92, qr_block_w * 0.95)))
 
-    barcode_img = generate_code128_code(barcode_string) if not str(barcode_string or "").isdigit() else generate_ean13_code(barcode_string)
-    barcode_img.thumbnail((220, 95), Image.Resampling.LANCZOS)
-    img.paste(barcode_img, ((size[0] - barcode_img.width) // 2, size[1] - 125))
-    draw.text((size[0] / 2, size[1] - 18), str(barcode_string or "")[:32], fill="black", anchor="mm", font=font_small)
+        if include_qr:
+            qr_img = generate_qr_code(sku_text, box_size=20, border=2, error_correction=qrcode.constants.ERROR_CORRECT_H)
+            qr_img = qr_img.resize((qr_side, qr_side), Image.Resampling.NEAREST)
+            qr_x = padding + text_block_w + ((qr_block_w - qr_side) // 2)
+            qr_y = padding + ((usable_h - qr_side) // 2)
+            img.paste(qr_img, (qr_x, qr_y))
+
+        text_x = padding + 1
+        text_w = max(40, text_block_w - 2)
+        y = padding
+
+        if include_name:
+            name_font, name_lines = _fit_wrapped_text(
+                draw,
+                name_text,
+                text_w,
+                max_lines=2,
+                max_size=max(12, int(height * 0.22)),
+                min_size=max(9, int(height * 0.14)),
+                bold=True,
+            )
+            line_h = max(12, int(getattr(name_font, "size", 12) * 1.05))
+            for line in name_lines:
+                draw.text((text_x, y), line, fill="black", font=name_font)
+                y += line_h
+
+        if include_code:
+            sku_font = _fit_font_for_text(draw, sku_text, text_w, max_size=max(11, int(height * 0.17)), min_size=8)
+            draw.text((text_x, y + 1), sku_text, fill="black", font=sku_font)
+
+        if include_price:
+            price_font = _fit_font_for_text(draw, price_text, text_w, max_size=max(14, int(height * 0.24)), min_size=10)
+            draw.text((text_x, height - padding), price_text, fill="black", anchor="ls", font=price_font)
+        return img
+
+    # Fallback para etiquetas no apaisadas: mantiene formato simple y legible.
+    title_font = _fit_font_for_text(draw, name_text, usable_w, max_size=32, min_size=10)
+    price_font = _fit_font_for_text(draw, price_text, usable_w, max_size=42, min_size=14)
+    code_font = _fit_font_for_text(draw, sku_text, usable_w, max_size=14, min_size=9)
+
+    y = padding
+    if include_name:
+        wrapped_name = _wrap_text(draw, name_text, title_font, usable_w)[:2]
+        line_h = max(14, int(getattr(title_font, "size", 12) * 1.1))
+        for line in wrapped_name:
+            draw.text((width / 2, y), line, fill="black", anchor="ma", font=title_font)
+            y += line_h
+
+    if include_price:
+        draw.text((width / 2, y + 4), price_text, fill="black", anchor="ma", font=price_font)
+        y += int(getattr(price_font, "size", 20) * 1.2)
+
+    if include_qr:
+        qr_side = max(80, int(min(usable_w * 0.72, (height - y - padding - 20))))
+        qr_img = generate_qr_code(sku_text, box_size=16, border=2)
+        qr_img = qr_img.resize((qr_side, qr_side), Image.Resampling.NEAREST)
+        img.paste(qr_img, ((width - qr_side) // 2, y))
+
+    if include_code:
+        draw.text((width / 2, height - padding), sku_text, fill="black", anchor="ms", font=code_font)
     return img
 
 
@@ -169,22 +256,23 @@ def create_square_label_5x5(product):
     return img
 
 
-def _compute_a4_grid(label_w_pt, label_h_pt):
+def _compute_a4_grid(label_w_pt, label_h_pt, *, min_margin_mm=2, min_gap_mm=1):
     page_w, page_h = A4
-    min_margin = 8 * mm
-    min_gap = 2 * mm
+    min_margin = min_margin_mm * mm
+    min_gap = min_gap_mm * mm
 
     def _best_axis(page_size, label_size):
-        max_slots = max(1, int((page_size - (2 * min_margin) + min_gap) // (label_size + min_gap)))
+        max_slots = max(1, int((page_size + min_gap) // (label_size + min_gap)))
         for slots in range(max_slots, 0, -1):
             if slots == 1:
-                return 1, 0, (page_size - label_size) / 2
-            remaining = page_size - (2 * min_margin) - (slots * label_size)
-            gap = remaining / (slots - 1)
-            if gap >= min_gap:
-                content = (slots * label_size) + ((slots - 1) * gap)
-                margin = (page_size - content) / 2
-                return slots, gap, margin
+                if label_size <= (page_size - (2 * min_margin)):
+                    return 1, 0, (page_size - label_size) / 2
+                continue
+            min_required = (slots * label_size) + ((slots - 1) * min_gap) + (2 * min_margin)
+            if min_required <= page_size:
+                extra = page_size - min_required
+                gap = min_gap + (extra / (slots - 1))
+                return slots, gap, min_margin
         return 1, 0, (page_size - label_size) / 2
 
     cols, gap_x, margin_x = _best_axis(page_w, label_w_pt)
@@ -248,19 +336,17 @@ def _bulk_dimensions_mm(size_key):
     }.get(size_key, (50, 25))
 
 
+def _label_pixel_size(width_mm, height_mm, px_per_mm=20):
+    return max(200, int(width_mm * px_per_mm)), max(120, int(height_mm * px_per_mm))
+
+
 def _build_current_a4_pdf(products, copies, size_key):
     width_mm, height_mm = _bulk_dimensions_mm(size_key)
     label_w = width_mm * mm
     label_h = height_mm * mm
     grid = _compute_a4_grid(label_w, label_h)
     per_page = grid["cols"] * grid["rows"]
-
-    pixel_sizes = {
-        "small": (260, 320),
-        "standard": (300, 400),
-        "large": (380, 480),
-    }
-    img_size = pixel_sizes.get(size_key, (300, 400))
+    img_size = _label_pixel_size(width_mm, height_mm)
 
     buffer = BytesIO()
     pdf = canvas.Canvas(buffer, pagesize=A4)
@@ -302,7 +388,41 @@ def _create_sheet_label_image(
     include_code128,
     include_date,
 ):
-    img = Image.new("RGB", (int(width_mm * 8), int(height_mm * 8)), "white")
+    if abs(width_mm - 50) < 0.1 and abs(height_mm - 25) < 0.1:
+        img_size = _label_pixel_size(width_mm, height_mm)
+        label = create_product_label(
+            product.barcode or product.id,
+            product.name,
+            product.price,
+            size=img_size,
+            include_name=include_name,
+            include_price=include_price,
+            include_code=include_code,
+            include_qr=include_qr,
+        )
+
+        if include_ean or include_code128:
+            draw = ImageDraw.Draw(label)
+            code_value = str(product.barcode or product.id)
+            try:
+                code_img = generate_code128_code(code_value) if include_code128 else generate_ean13_code(code_value)
+                code_h = max(34, int(label.height * 0.18))
+                code_w = max(90, int(label.width * 0.42))
+                code_img.thumbnail((code_w, code_h), Image.Resampling.LANCZOS)
+                x = max(2, int(label.width * 0.015))
+                y = label.height - code_img.height - max(2, int(label.height * 0.02))
+                label.paste(code_img, (x, y))
+                # Refuerza contraste del area de codigo para lectura de escaner laser/camara.
+                draw.rectangle((x - 1, y - 1, x + code_img.width + 1, y + code_img.height + 1), outline="black", width=1)
+            except Exception:
+                pass
+
+        if include_date:
+            draw = ImageDraw.Draw(label)
+            draw.text((max(2, int(label.width * 0.015)), max(2, int(label.height * 0.02))), utcnow().strftime("%Y-%m-%d"), fill="black", font=_font(max(8, int(label.height * 0.06))))
+        return label
+
+    img = Image.new("RGB", _label_pixel_size(width_mm, height_mm, px_per_mm=14), "white")
     draw = ImageDraw.Draw(img)
     y = 8
     if include_name:

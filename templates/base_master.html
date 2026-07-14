@@ -51,6 +51,7 @@
         var(--app-bg);
       color: var(--app-ink);
       letter-spacing: 0;
+      overflow-x: hidden;
     }
     .app-layout { min-height: 100vh; }
     .app-shell { max-width: 1240px; margin: 0 auto; }
@@ -63,6 +64,8 @@
       backdrop-filter: var(--surface-blur);
       display: flex;
       flex-direction: column;
+      overflow-y: auto;
+      -webkit-overflow-scrolling: touch;
       z-index: 1030;
     }
     [data-bs-theme="dark"] .app-sidebar,
@@ -137,7 +140,13 @@
       justify-content: center;
       font-weight: 800;
     }
-    .app-main { margin-left: var(--sidebar-width); min-height: 100vh; }
+    .app-main {
+      margin-left: var(--sidebar-width);
+      min-height: 100vh;
+      min-height: 100dvh;
+      display: flex;
+      flex-direction: column;
+    }
     .app-mobilebar {
       display: none;
       min-height: 64px;
@@ -266,7 +275,12 @@
       .app-sidebar.show { transform: translateX(0); }
       .app-main { margin-left: 0; }
       .app-mobilebar { display: flex; align-items: center; justify-content: space-between; padding: 0 14px; }
-      main.container-fluid { padding: 1rem .85rem 1.5rem; }
+      main.container-fluid {
+        flex: 1;
+        padding: 1rem .85rem;
+        /* Evita que el ultimo bloque quede detras del boton flotante y barras del sistema. */
+        padding-bottom: calc(6.5rem + env(safe-area-inset-bottom));
+      }
       .metric-card { min-height: auto; }
       .app-nav .nav-link { min-height: 46px; }
       .app-sidebar-footer .btn, .app-mobilebar .btn { min-width: 44px; min-height: 44px; }
@@ -276,7 +290,11 @@
       .toolbar-card { padding: 10px; }
       .btn-lg, .form-control-lg { font-size: 1rem; }
       .table { font-size: .9rem; }
-      .table-responsive { overflow: visible; }
+      .table-responsive {
+        overflow-x: auto;
+        overflow-y: visible;
+        -webkit-overflow-scrolling: touch;
+      }
       table.mobile-card-table thead { display: none; }
       table.mobile-card-table, table.mobile-card-table tbody, table.mobile-card-table tr, table.mobile-card-table td { display: block; width: 100%; }
       table.mobile-card-table tr {
