@@ -29,6 +29,10 @@ def _has_column(bind, table_name, column_name):
 
 def upgrade() -> None:
     bind = op.get_bind()
+
+    if bind.dialect.name == "postgresql":
+        op.execute("ALTER TABLE alembic_version ALTER COLUMN version_num TYPE VARCHAR(64)")
+
     if _has_table(bind, "referral_commissions") and not _has_column(bind, "referral_commissions", "note"):
         op.add_column("referral_commissions", sa.Column("note", sa.Text(), nullable=True))
 

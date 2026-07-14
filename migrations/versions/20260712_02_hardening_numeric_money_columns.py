@@ -15,6 +15,18 @@ branch_labels = None
 depends_on = None
 
 
+def _ensure_baseline_schema(bind):
+    inspector = sa.inspect(bind)
+    existing = set(inspector.get_table_names())
+    required = {"users", "companies", "plans", "payments", "subscriptions"}
+    if required.issubset(existing):
+        return
+
+    from app import db
+
+    db.metadata.create_all(bind=bind)
+
+
 def _has_column(bind, table_name, column_name):
     inspector = sa.inspect(bind)
     if table_name not in inspector.get_table_names():
@@ -23,6 +35,10 @@ def _has_column(bind, table_name, column_name):
 
 
 def _add_company_qr_columns(bind):
+    inspector = sa.inspect(bind)
+    if "companies" not in inspector.get_table_names():
+        return
+
     if not _has_column(bind, "companies", "payment_alias"):
         op.add_column("companies", sa.Column("payment_alias", sa.String(length=120), nullable=True))
     if not _has_column(bind, "companies", "payment_cbu"):
@@ -124,6 +140,7 @@ def _downgrade_numeric_postgresql(bind):
 
 def upgrade() -> None:
     bind = op.get_bind()
+    _ensure_baseline_schema(bind)
     _add_company_qr_columns(bind)
     _upgrade_numeric_postgresql(bind)
 
