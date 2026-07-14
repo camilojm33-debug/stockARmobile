@@ -1,72 +1,106 @@
 {% extends "base_master.html" %}
 {% block title %}Vendedores | Referidos{% endblock %}
 {% block content %}
-<div class="d-flex justify-content-between align-items-center mb-3">
+<div class="d-flex justify-content-between align-items-center mb-3 flex-wrap gap-2">
   <h1 class="h4 mb-0">Vendedores de Referidos</h1>
-  <a class="btn btn-outline-secondary btn-sm" href="{{ url_for('referrals.admin_referrals_dashboard') }}">Volver al panel</a>
+  <a class="btn btn-outline-secondary btn-sm" href="{{ url_for('referrals.admin_referrals_dashboard') }}"><i class="bi bi-arrow-left me-1"></i>Volver al panel</a>
 </div>
 
-<div class="card mb-4">
-  <div class="card-header">Crear vendedor</div>
-  <div class="card-body">
-    <form method="post" class="row g-2">
-      <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
-      <div class="col-md-2"><input class="form-control" name="username" placeholder="Usuario" required></div>
-      <div class="col-md-3"><input type="email" class="form-control" name="email" placeholder="Email" required></div>
-      <div class="col-md-2"><input class="form-control" name="first_name" placeholder="Nombre"></div>
-      <div class="col-md-2"><input class="form-control" name="last_name" placeholder="Apellido"></div>
-      <div class="col-md-3"><input class="form-control" name="dni" placeholder="DNI" required></div>
-      <div class="col-md-3"><input class="form-control" name="phone" placeholder="Telefono"></div>
-      <div class="col-md-3"><input class="form-control" name="tax_id" placeholder="CUIT/CUIL"></div>
-      <div class="col-md-3"><input class="form-control" name="province" placeholder="Provincia"></div>
-      <div class="col-md-3"><input class="form-control" name="city" placeholder="Ciudad"></div>
-      <div class="col-md-3"><input class="form-control" name="address" placeholder="Direccion"></div>
-      <div class="col-md-3"><input class="form-control" name="bank" placeholder="Banco"></div>
-      <div class="col-md-3"><input class="form-control" name="alias" placeholder="Alias"></div>
-      <div class="col-md-3"><input class="form-control" name="cbu" placeholder="CBU (22 digitos)"></div>
-      <div class="col-md-3"><input class="form-control" name="account_holder" placeholder="Titular"></div>
-      <div class="col-md-2"><input class="form-control" name="temp_password" placeholder="Clave inicial"></div>
-      <div class="col-md-2">
-        <select name="active" class="form-select">
-          <option value="1">Activo</option>
-          <option value="0">Inactivo</option>
-        </select>
+<div class="row g-3 mb-4">
+  <div class="col-sm-6 col-xl-3">
+    <div class="card app-card h-100 border-0">
+      <div class="card-body">
+        <div class="d-flex align-items-center justify-content-between">
+          <div>
+            <small class="text-muted d-block">Total de vendedores</small>
+            <strong class="fs-4">{{ summary.total_sellers }}</strong>
+          </div>
+          <i class="bi bi-people fs-3 text-primary"></i>
+        </div>
       </div>
-      <div class="col-12 text-end"><button class="btn btn-primary">Guardar vendedor</button></div>
-    </form>
+    </div>
+  </div>
+  <div class="col-sm-6 col-xl-3">
+    <div class="card app-card h-100 border-0">
+      <div class="card-body">
+        <div class="d-flex align-items-center justify-content-between">
+          <div>
+            <small class="text-muted d-block">Vendedores activos</small>
+            <strong class="fs-4">{{ summary.active_sellers }}</strong>
+          </div>
+          <i class="bi bi-person-check fs-3 text-success"></i>
+        </div>
+      </div>
+    </div>
+  </div>
+  <div class="col-sm-6 col-xl-3">
+    <div class="card app-card h-100 border-0">
+      <div class="card-body">
+        <div class="d-flex align-items-center justify-content-between">
+          <div>
+            <small class="text-muted d-block">Clientes referidos</small>
+            <strong class="fs-4">{{ summary.referred_clients }}</strong>
+          </div>
+          <i class="bi bi-buildings fs-3 text-info"></i>
+        </div>
+      </div>
+    </div>
+  </div>
+  <div class="col-sm-6 col-xl-3">
+    <div class="card app-card h-100 border-0">
+      <div class="card-body">
+        <div class="d-flex align-items-center justify-content-between">
+          <div>
+            <small class="text-muted d-block">Comision pendiente</small>
+            <strong class="fs-4">ARS {{ '%.2f'|format(summary.pending_total) }}</strong>
+          </div>
+          <i class="bi bi-cash-coin fs-3 text-warning"></i>
+        </div>
+      </div>
+    </div>
   </div>
 </div>
 
-<div class="card">
-  <div class="table-responsive">
-    <table class="table mb-0 align-middle">
-      <thead><tr><th>ID</th><th>Usuario</th><th>Codigo</th><th>URL</th><th>DNI</th><th>Banco</th><th>Activo</th><th></th></tr></thead>
-      <tbody>
-      {% for row in sellers %}
-        <tr>
-          <td>{{ row.id }}</td>
-          <td>{{ row.user.username if row.user else 'N/A' }}</td>
-          <td><code>{{ row.referral_code }}</code></td>
-          <td><small>{{ row.referral_url }}</small></td>
-          <td>{{ row.dni or '-' }}</td>
-          <td>{{ row.bank or '-' }}</td>
-          <td>
-            <span class="badge text-bg-{% if row.active %}success{% else %}secondary{% endif %}">
-              {% if row.active %}Activo{% else %}Inactivo{% endif %}
-            </span>
-          </td>
-          <td class="text-end">
-            <form method="post" action="{{ url_for('referrals.admin_referrals_seller_toggle', seller_id=row.id) }}">
-              <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
-              <button class="btn btn-sm btn-outline-primary">Toggle</button>
-            </form>
-          </td>
-        </tr>
-      {% else %}
-        <tr><td colspan="8" class="text-center text-muted">Sin vendedores.</td></tr>
-      {% endfor %}
-      </tbody>
-    </table>
+<div class="row g-3">
+  <div class="col-lg-6">
+    <div class="card app-card h-100 border-0">
+      <div class="card-body p-4 d-flex flex-column">
+        <div class="d-flex align-items-center gap-3 mb-3">
+          <span class="rounded-circle bg-primary-subtle text-primary d-inline-flex align-items-center justify-content-center" style="width:44px;height:44px;">
+            <i class="bi bi-person-plus fs-5"></i>
+          </span>
+          <div>
+            <h2 class="h5 mb-1">Crear vendedor</h2>
+            <p class="text-muted mb-0">Alta completa de datos personales y bancarios en una pantalla dedicada.</p>
+          </div>
+        </div>
+        <div class="mt-auto">
+          <a class="btn btn-primary" href="{{ url_for('referrals.admin_referrals_sellers_create') }}">
+            <i class="bi bi-plus-lg me-1"></i>Crear vendedor
+          </a>
+        </div>
+      </div>
+    </div>
+  </div>
+  <div class="col-lg-6">
+    <div class="card app-card h-100 border-0">
+      <div class="card-body p-4 d-flex flex-column">
+        <div class="d-flex align-items-center gap-3 mb-3">
+          <span class="rounded-circle bg-success-subtle text-success d-inline-flex align-items-center justify-content-center" style="width:44px;height:44px;">
+            <i class="bi bi-table fs-5"></i>
+          </span>
+          <div>
+            <h2 class="h5 mb-1">Ver vendedores</h2>
+            <p class="text-muted mb-0">Tabla responsive con estado, metricas y acciones de administracion.</p>
+          </div>
+        </div>
+        <div class="mt-auto">
+          <a class="btn btn-outline-primary" href="{{ url_for('referrals.admin_referrals_sellers_list') }}">
+            <i class="bi bi-people me-1"></i>Ver vendedores
+          </a>
+        </div>
+      </div>
+    </div>
   </div>
 </div>
 {% endblock %}

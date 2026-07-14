@@ -1,0 +1,63 @@
+{% extends "base_master.html" %}
+{% block title %}Listado de Vendedores | Referidos{% endblock %}
+{% block content %}
+<div class="d-flex justify-content-between align-items-center mb-3 flex-wrap gap-2">
+  <h1 class="h4 mb-0">Ver vendedores</h1>
+  <div class="d-flex gap-2">
+    <a class="btn btn-outline-secondary btn-sm" href="{{ url_for('referrals.admin_referrals_sellers') }}"><i class="bi bi-grid me-1"></i>Panel</a>
+    <a class="btn btn-primary btn-sm" href="{{ url_for('referrals.admin_referrals_sellers_create') }}"><i class="bi bi-plus-lg me-1"></i>Crear vendedor</a>
+  </div>
+</div>
+
+<div class="card app-card border-0">
+  <div class="table-responsive">
+    <table class="table align-middle mb-0">
+      <thead>
+        <tr>
+          <th>Usuario</th>
+          <th>Nombre</th>
+          <th>Estado</th>
+          <th>Empresas referidas</th>
+          <th>Clientes activos</th>
+          <th>Comision pendiente</th>
+          <th>Comision pagada</th>
+          <th class="text-end">Acciones</th>
+        </tr>
+      </thead>
+      <tbody>
+      {% for row in sellers %}
+        {% set m = metrics.get(row.id, {}) %}
+        <tr>
+          <td>
+            <div class="fw-semibold">{{ row.user.username if row.user else 'N/A' }}</div>
+            <small class="text-muted">{{ row.referral_code }}</small>
+          </td>
+          <td>{{ row.user.name if row.user else '-' }}</td>
+          <td>
+            <span class="badge text-bg-{% if row.active %}success{% else %}secondary{% endif %}">
+              {% if row.active %}Activo{% else %}Inactivo{% endif %}
+            </span>
+          </td>
+          <td>{{ m.referred_companies or 0 }}</td>
+          <td>{{ m.active_clients or 0 }}</td>
+          <td>ARS {{ '%.2f'|format(m.pending_commission or 0) }}</td>
+          <td>ARS {{ '%.2f'|format(m.paid_commission or 0) }}</td>
+          <td class="text-end">
+            <div class="btn-group btn-group-sm" role="group">
+              <a class="btn btn-outline-primary" href="{{ url_for('referrals.admin_referrals_seller_detail', seller_id=row.id) }}"><i class="bi bi-bar-chart me-1"></i>Ver detalle</a>
+              <a class="btn btn-outline-secondary" href="{{ url_for('referrals.admin_referrals_sellers_edit', seller_id=row.id) }}"><i class="bi bi-pencil me-1"></i>Editar</a>
+              <form method="post" action="{{ url_for('referrals.admin_referrals_seller_delete', seller_id=row.id) }}" onsubmit="return confirm('Se desactivara el vendedor para preservar su historial. Continuar?');">
+                <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                <button class="btn btn-outline-danger" type="submit"><i class="bi bi-trash me-1"></i>Eliminar</button>
+              </form>
+            </div>
+          </td>
+        </tr>
+      {% else %}
+        <tr><td colspan="8" class="text-center text-muted py-4">No hay vendedores registrados.</td></tr>
+      {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</div>
+{% endblock %}

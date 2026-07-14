@@ -56,9 +56,18 @@
     <div class="card-body row g-2">
       <input type="hidden" name="seller_id" id="seller_id">
       <div class="col-md-3"><input type="date" class="form-control" name="transfer_date" required></div>
+      <div class="col-md-3">
+        <select class="form-select" name="payment_method">
+          <option value="">Medio de pago</option>
+          <option value="Transferencia bancaria">Transferencia bancaria</option>
+          <option value="Mercado Pago">Mercado Pago</option>
+          <option value="Efectivo">Efectivo</option>
+          <option value="Otro">Otro</option>
+        </select>
+      </div>
       <div class="col-md-3"><input class="form-control" name="transfer_number" placeholder="Numero de transferencia"></div>
       <div class="col-md-3"><input class="form-control" name="receipt" placeholder="Comprobante"></div>
-      <div class="col-md-3"><input class="form-control" name="observations" placeholder="Observaciones"></div>
+      <div class="col-md-12"><input class="form-control" name="observations" placeholder="Observaciones"></div>
       <div class="col-12 text-end"><button class="btn btn-primary">Registrar pago de seleccionadas</button></div>
     </div>
   </div>

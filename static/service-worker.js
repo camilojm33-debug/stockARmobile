@@ -5,8 +5,8 @@ const STATIC_ASSETS = [
   '/manifest.json',
   '/static/assets/css/styles.css',
   '/static/assets/js/cart-manager.js',
-  '/static/assets/icons/icon-192.png',
-  '/static/assets/icons/icon-512.png'
+  '/static/images/branding/icon-192.png',
+  '/static/images/branding/icon-512.png'
 ];
 const API_CACHE_PREFIXES = ['/productos/api/products', '/clientes/api/clients', '/ventas/api/recent'];
 const SYNCABLE_POST_PREFIXES = ['/ventas/api/checkout'];

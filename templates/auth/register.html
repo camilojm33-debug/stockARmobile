@@ -8,7 +8,7 @@
     <div class="card app-card border-0">
       <div class="card-body p-4 p-md-5">
         <div class="text-center mb-4">
-          <div class="metric-icon mx-auto mb-3"><i class="bi bi-person-plus"></i></div>
+          <img class="auth-logo" src="{{ url_for('static', filename='images/branding/logo.png') }}" alt="StockArmobile logo">
           <h1 class="h3 fw-bold text-primary mb-1">{% if registration_mode == 'seller' %}Crear cuenta de vendedor{% else %}Crear cuenta{% endif %}</h1>
           <p class="text-muted mb-0">{% if registration_mode == 'seller' %}Registrate para activar tu Programa de Referidos.{% else %}Empeza en minutos con tu panel comercial.{% endif %}</p>
         </div>

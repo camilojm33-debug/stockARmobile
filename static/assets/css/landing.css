@@ -132,9 +132,18 @@ a { text-decoration: none; }
   align-items: center;
   justify-content: center;
   border-radius: 12px;
-  color: #fff;
-  background: linear-gradient(140deg, var(--primary), var(--accent));
-  box-shadow: 0 10px 24px rgba(15, 98, 254, 0.28);
+  background: rgba(255, 255, 255, 0.92);
+  border: 1px solid var(--border);
+  box-shadow: 0 10px 24px rgba(15, 23, 42, 0.12);
+  overflow: hidden;
+}
+
+.brand-logo {
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+  object-position: center;
+  display: block;
 }
 
 .theme-toggle {

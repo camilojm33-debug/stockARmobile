@@ -55,6 +55,7 @@ class ReferralService:
             "city",
             "address",
             "alias",
+            "cvu",
             "cbu",
             "bank",
             "account_holder",
@@ -160,9 +161,10 @@ class ReferralService:
         commission_ids: list[int],
         processed_by_user_id: int,
         transfer_date,
-        receipt: str | None,
-        transfer_number: str | None,
-        observations: str | None,
+        payment_method: str | None = None,
+        receipt: str | None = None,
+        transfer_number: str | None = None,
+        observations: str | None = None,
     ):
         from app import ReferralCommission, ReferralPayout, ReferralPayoutItem
 
@@ -180,6 +182,7 @@ class ReferralService:
             processed_by_user_id=processed_by_user_id,
             amount=total,
             transfer_date=transfer_date,
+            payment_method=(payment_method or "").strip() or None,
             receipt=(receipt or "").strip() or None,
             transfer_number=(transfer_number or "").strip() or None,
             observations=(observations or "").strip() or None,

@@ -15,6 +15,8 @@ from flask import Blueprint, abort, flash, make_response, redirect, render_templ
 from flask_login import current_user, login_required
 from reportlab.lib.pagesizes import A4
 from reportlab.pdfgen import canvas
+from sqlalchemy import case
+from sqlalchemy.orm import joinedload
 
 from app import seller_required, superadmin_required
 from services.referral_service import ReferralService
@@ -44,6 +46,89 @@ def _seller_state(seller) -> tuple[str, str]:
     if not has_billing_data:
         return "Pendiente", "warning"
     return "Activo", "success"
+
+
+def _seller_management_summary(db_session):
+    from app import ReferralAttribution, ReferralCommission, ReferralSeller, db
+
+    total_sellers = ReferralSeller.query.count()
+    active_sellers = ReferralSeller.query.filter_by(active=True).count()
+    referred_clients = ReferralAttribution.query.count()
+    pending_total = float(
+        db.session.query(db.func.coalesce(db.func.sum(ReferralCommission.commission_amount), 0))
+        .filter(ReferralCommission.status.in_(["pendiente", "disponible"]))
+        .scalar()
+        or 0
+    )
+    return {
+        "total_sellers": total_sellers,
+        "active_sellers": active_sellers,
+        "referred_clients": referred_clients,
+        "pending_total": pending_total,
+    }
+
+
+def _seller_metrics_map(seller_ids: list[int]):
+    from app import Company, ReferralAttribution, ReferralCommission, db
+
+    metrics = {
+        seller_id: {
+            "referred_companies": 0,
+            "active_clients": 0,
+            "pending_commission": 0.0,
+            "paid_commission": 0.0,
+        }
+        for seller_id in seller_ids
+    }
+    if not seller_ids:
+        return metrics
+
+    referred_rows = (
+        db.session.query(ReferralAttribution.seller_id, db.func.count(ReferralAttribution.id))
+        .filter(ReferralAttribution.seller_id.in_(seller_ids))
+        .group_by(ReferralAttribution.seller_id)
+        .all()
+    )
+    for seller_id, total in referred_rows:
+        metrics.setdefault(seller_id, {})["referred_companies"] = int(total or 0)
+
+    active_rows = (
+        db.session.query(ReferralAttribution.seller_id, db.func.count(ReferralAttribution.id))
+        .join(Company, Company.id == ReferralAttribution.company_id)
+        .filter(ReferralAttribution.seller_id.in_(seller_ids), Company.active.is_(True))
+        .group_by(ReferralAttribution.seller_id)
+        .all()
+    )
+    for seller_id, total in active_rows:
+        metrics.setdefault(seller_id, {})["active_clients"] = int(total or 0)
+
+    commission_rows = (
+        db.session.query(
+            ReferralCommission.seller_id,
+            db.func.coalesce(
+                db.func.sum(
+                    case(
+                        (ReferralCommission.status.in_(["pendiente", "disponible"]), ReferralCommission.commission_amount),
+                        else_=0,
+                    )
+                ),
+                0,
+            ).label("pending_amount"),
+            db.func.coalesce(
+                db.func.sum(case((ReferralCommission.status == "pagada", ReferralCommission.commission_amount), else_=0)),
+                0,
+            ).label("paid_amount"),
+        )
+        .filter(ReferralCommission.seller_id.in_(seller_ids))
+        .group_by(ReferralCommission.seller_id)
+        .all()
+    )
+    for seller_id, pending_amount, paid_amount in commission_rows:
+        bucket = metrics.setdefault(seller_id, {})
+        bucket["pending_commission"] = float(pending_amount or 0)
+        bucket["paid_commission"] = float(paid_amount or 0)
+
+    return metrics
 
 
 def _level_progress(total_sales: int):
@@ -155,56 +240,63 @@ def admin_referrals_dashboard():
     )
 
 
-@bp.route("/superadmin/referrals/sellers", methods=["GET", "POST"])
+@bp.route("/superadmin/referrals/sellers")
 @superadmin_required
 def admin_referrals_sellers():
-    from app import ReferralSeller, User, db
+    from app import db
+
+    summary = _seller_management_summary(db.session)
+    return render_template("saas/referrals_sellers.html", summary=summary)
+
+
+@bp.route("/superadmin/referrals/sellers/list")
+@superadmin_required
+def admin_referrals_sellers_list():
+    from app import ReferralSeller
+
+    sellers = (
+        ReferralSeller.query.options(joinedload(ReferralSeller.user)).order_by(ReferralSeller.created_at.desc(), ReferralSeller.id.desc()).all()
+    )
+    metrics = _seller_metrics_map([row.id for row in sellers])
+    return render_template("saas/referrals_sellers_list.html", sellers=sellers, metrics=metrics)
+
+
+@bp.route("/superadmin/referrals/sellers/create", methods=["GET", "POST"])
+@superadmin_required
+def admin_referrals_sellers_create():
+    from app import User, db
 
     if request.method == "POST":
-        seller_id = request.form.get("seller_id", type=int)
         username = (request.form.get("username") or "").strip()
         email = (request.form.get("email") or "").strip().lower()
+        if not username or not email:
+            flash("Usuario y email son obligatorios.", "danger")
+            return redirect(url_for("referrals.admin_referrals_sellers_create"))
 
-        if seller_id:
-            profile = ReferralSeller.query.filter_by(id=seller_id).first_or_404()
-            user = db.session.get(User, profile.user_id)
-            if user is None:
-                abort(404)
-        else:
-            if not username or not email:
-                flash("Usuario y email son obligatorios.", "danger")
-                return redirect(url_for("referrals.admin_referrals_sellers"))
-            if User.query.filter_by(username=username).first() is not None:
-                flash("El usuario ya existe.", "danger")
-                return redirect(url_for("referrals.admin_referrals_sellers"))
-            if User.query.filter_by(email=email).first() is not None:
-                flash("El email ya existe.", "danger")
-                return redirect(url_for("referrals.admin_referrals_sellers"))
+        if User.query.filter_by(username=username).first() is not None:
+            flash("El usuario ya existe.", "danger")
+            return redirect(url_for("referrals.admin_referrals_sellers_create"))
+        if User.query.filter_by(email=email).first() is not None:
+            flash("El email ya existe.", "danger")
+            return redirect(url_for("referrals.admin_referrals_sellers_create"))
 
-            user = User(
-                username=username,
-                email=email,
-                role="seller",
-                active=True,
-            )
-            temp_password = (request.form.get("temp_password") or "seller123").strip()
-            user.set_password(temp_password)
-            db.session.add(user)
-            db.session.flush()
-            profile = None
+        user = User(username=username, email=email, role="seller", active=True)
+        temp_password = (request.form.get("temp_password") or "seller123").strip()
+        user.set_password(temp_password)
+        db.session.add(user)
+        db.session.flush()
 
         first_name = (request.form.get("first_name") or "").strip()
         last_name = (request.form.get("last_name") or "").strip()
         user.first_name = first_name[:80] or None
         user.last_name = last_name[:80] or None
-        user.email = email or user.email
         user.active = (request.form.get("active") or "1") == "1"
         user.role = "seller"
 
         cbu = _normalize_digits(request.form.get("cbu"))
         if cbu and len(cbu) != 22:
             flash("El CBU debe tener 22 digitos.", "danger")
-            return redirect(url_for("referrals.admin_referrals_sellers"))
+            return redirect(url_for("referrals.admin_referrals_sellers_create"))
 
         profile_data = {
             "dni": (request.form.get("dni") or "").strip(),
@@ -214,23 +306,199 @@ def admin_referrals_sellers():
             "city": (request.form.get("city") or "").strip() or None,
             "address": (request.form.get("address") or "").strip() or None,
             "alias": (request.form.get("alias") or "").strip() or None,
+            "cvu": (request.form.get("cvu") or "").strip() or None,
             "cbu": cbu or None,
             "bank": (request.form.get("bank") or "").strip() or None,
             "account_holder": (request.form.get("account_holder") or "").strip() or None,
             "active": user.active,
         }
-
         if not profile_data["dni"]:
             flash("El DNI es obligatorio.", "danger")
-            return redirect(url_for("referrals.admin_referrals_sellers"))
+            return redirect(url_for("referrals.admin_referrals_sellers_create"))
 
-        profile = ReferralService.create_or_update_seller(db.session, user=user, profile_data=profile_data, profile=profile)
+        ReferralService.create_or_update_seller(db.session, user=user, profile_data=profile_data, profile=None)
         db.session.commit()
-        flash("Vendedor guardado correctamente.", "success")
-        return redirect(url_for("referrals.admin_referrals_sellers"))
+        flash("Vendedor creado correctamente.", "success")
+        return redirect(url_for("referrals.admin_referrals_sellers_list"))
 
-    sellers = ReferralSeller.query.order_by(ReferralSeller.created_at.desc()).all()
-    return render_template("saas/referrals_sellers.html", sellers=sellers)
+    return render_template("saas/referrals_seller_form.html", mode="create", profile=None, user=None)
+
+
+@bp.route("/superadmin/referrals/sellers/<int:seller_id>/edit", methods=["GET", "POST"])
+@superadmin_required
+def admin_referrals_sellers_edit(seller_id):
+    from app import ReferralSeller, User, db
+
+    profile = ReferralSeller.query.options(joinedload(ReferralSeller.user)).filter_by(id=seller_id).first_or_404()
+    user = db.session.get(User, profile.user_id)
+    if user is None:
+        abort(404)
+
+    if request.method == "POST":
+        username = (request.form.get("username") or "").strip()
+        email = (request.form.get("email") or "").strip().lower()
+        if not username or not email:
+            flash("Usuario y email son obligatorios.", "danger")
+            return redirect(url_for("referrals.admin_referrals_sellers_edit", seller_id=seller_id))
+
+        existing_username = User.query.filter(User.username == username, User.id != user.id).first()
+        if existing_username is not None:
+            flash("El usuario ya existe.", "danger")
+            return redirect(url_for("referrals.admin_referrals_sellers_edit", seller_id=seller_id))
+
+        existing_email = User.query.filter(User.email == email, User.id != user.id).first()
+        if existing_email is not None:
+            flash("El email ya existe.", "danger")
+            return redirect(url_for("referrals.admin_referrals_sellers_edit", seller_id=seller_id))
+
+        user.username = username
+        user.email = email
+        user.first_name = ((request.form.get("first_name") or "").strip()[:80] or None)
+        user.last_name = ((request.form.get("last_name") or "").strip()[:80] or None)
+        user.active = (request.form.get("active") or "1") == "1"
+        user.role = "seller"
+
+        cbu = _normalize_digits(request.form.get("cbu"))
+        if cbu and len(cbu) != 22:
+            flash("El CBU debe tener 22 digitos.", "danger")
+            return redirect(url_for("referrals.admin_referrals_sellers_edit", seller_id=seller_id))
+
+        profile_data = {
+            "dni": (request.form.get("dni") or "").strip(),
+            "tax_id": (request.form.get("tax_id") or "").strip() or None,
+            "phone": (request.form.get("phone") or "").strip() or None,
+            "province": (request.form.get("province") or "").strip() or None,
+            "city": (request.form.get("city") or "").strip() or None,
+            "address": (request.form.get("address") or "").strip() or None,
+            "alias": (request.form.get("alias") or "").strip() or None,
+            "cvu": (request.form.get("cvu") or "").strip() or None,
+            "cbu": cbu or None,
+            "bank": (request.form.get("bank") or "").strip() or None,
+            "account_holder": (request.form.get("account_holder") or "").strip() or None,
+            "active": user.active,
+        }
+        if not profile_data["dni"]:
+            flash("El DNI es obligatorio.", "danger")
+            return redirect(url_for("referrals.admin_referrals_sellers_edit", seller_id=seller_id))
+
+        ReferralService.create_or_update_seller(db.session, user=user, profile_data=profile_data, profile=profile)
+        db.session.commit()
+        flash("Vendedor actualizado correctamente.", "success")
+        return redirect(url_for("referrals.admin_referrals_seller_detail", seller_id=seller_id))
+
+    return render_template("saas/referrals_seller_form.html", mode="edit", profile=profile, user=user)
+
+
+@bp.route("/superadmin/referrals/sellers/<int:seller_id>")
+@superadmin_required
+def admin_referrals_seller_detail(seller_id):
+    from app import AuditLog, Company, ReferralAttribution, ReferralCommission, ReferralPayout, ReferralSeller, Subscription, db
+
+    profile = ReferralSeller.query.options(joinedload(ReferralSeller.user)).filter_by(id=seller_id).first_or_404()
+    user = profile.user
+    if user is None:
+        abort(404)
+
+    ReferralService.refresh_commission_states(db.session)
+    db.session.commit()
+
+    attributions = ReferralAttribution.query.filter_by(seller_id=profile.id).order_by(ReferralAttribution.created_at.desc()).all()
+    company_ids = [row.company_id for row in attributions]
+
+    subscriptions_by_company = {}
+    if company_ids:
+        subscriptions = (
+            Subscription.query.filter(Subscription.company_id.in_(company_ids))
+            .order_by(Subscription.start_date.desc().nullslast(), Subscription.id.desc())
+            .all()
+        )
+        for row in subscriptions:
+            subscriptions_by_company.setdefault(row.company_id, row)
+
+    referred_companies = len(attributions)
+    active_clients = Company.query.filter(Company.id.in_(company_ids), Company.active.is_(True)).count() if company_ids else 0
+    free_trials = 0
+    active_subscriptions = 0
+    expired_subscriptions = 0
+    for subscription in subscriptions_by_company.values():
+        status = (subscription.status or "").lower()
+        if status == "trial":
+            free_trials += 1
+        if status in {"active", "approved", "trial"}:
+            active_subscriptions += 1
+        if status in {"cancelled", "expired", "suspended", "rejected"}:
+            expired_subscriptions += 1
+
+    commissions = ReferralCommission.query.filter_by(seller_id=profile.id).order_by(ReferralCommission.created_at.desc()).all()
+    billing_generated = sum(float(row.sold_amount or 0) for row in commissions)
+    commission_total = sum(float(row.commission_amount or 0) for row in commissions)
+    commission_pending = sum(float(row.commission_amount or 0) for row in commissions if row.status in {"pendiente", "disponible"})
+    commission_paid = sum(float(row.commission_amount or 0) for row in commissions if row.status == "pagada")
+    available_commissions = [row for row in commissions if row.status == "disponible"]
+    available_total = sum(float(row.commission_amount or 0) for row in available_commissions)
+
+    payouts = (
+        ReferralPayout.query.filter_by(seller_id=profile.id)
+        .options(joinedload(ReferralPayout.processed_by))
+        .order_by(ReferralPayout.transfer_date.desc(), ReferralPayout.id.desc())
+        .all()
+    )
+
+    companies_by_id = {}
+    if company_ids:
+        companies_by_id = {row.id: row for row in Company.query.filter(Company.id.in_(company_ids)).all()}
+
+    attribution_rows = []
+    for attr in attributions:
+        company = companies_by_id.get(attr.company_id)
+        subscription = subscriptions_by_company.get(attr.company_id)
+        attribution_rows.append({"attribution": attr, "company": company, "subscription": subscription})
+
+    last_access = (
+        AuditLog.query.filter_by(user_id=user.id, action="login_success").order_by(AuditLog.created_at.desc(), AuditLog.id.desc()).first()
+    )
+
+    return render_template(
+        "saas/referrals_seller_detail.html",
+        profile=profile,
+        user=user,
+        attribution_rows=attribution_rows,
+        available_commissions=available_commissions,
+        payouts=payouts,
+        metrics={
+            "referred_companies": referred_companies,
+            "free_trials": free_trials,
+            "active_subscriptions": active_subscriptions,
+            "expired_subscriptions": expired_subscriptions,
+            "active_clients": active_clients,
+            "billing_generated": billing_generated,
+            "commission_total": commission_total,
+            "commission_pending": commission_pending,
+            "commission_paid": commission_paid,
+            "available_total": available_total,
+            "created_at": profile.created_at,
+            "last_access": last_access.created_at if last_access else None,
+        },
+    )
+
+
+@bp.route("/superadmin/referrals/sellers/<int:seller_id>/delete", methods=["POST"])
+@superadmin_required
+def admin_referrals_seller_delete(seller_id):
+    from app import ReferralSeller, User, db
+
+    profile = ReferralSeller.query.filter_by(id=seller_id).first_or_404()
+    user = db.session.get(User, profile.user_id)
+    if user is None:
+        abort(404)
+
+    # Baja logica para preservar historico de comisiones, pagos y atribuciones.
+    profile.active = False
+    user.active = False
+    user.role = "seller"
+    db.session.commit()
+    flash("Vendedor eliminado del panel (desactivado con historial preservado).", "success")
+    return redirect(url_for("referrals.admin_referrals_sellers_list"))
 
 
 @bp.route("/superadmin/referrals/sellers/<int:seller_id>/toggle", methods=["POST"])
@@ -247,7 +515,7 @@ def admin_referrals_seller_toggle(seller_id):
     user.active = profile.active
     db.session.commit()
     flash("Estado del vendedor actualizado.", "success")
-    return redirect(url_for("referrals.admin_referrals_sellers"))
+    return redirect(url_for("referrals.admin_referrals_sellers_list"))
 
 
 @bp.route("/superadmin/referrals/commissions")
@@ -285,6 +553,7 @@ def admin_referrals_register_payout():
         commission_ids=parsed_ids,
         processed_by_user_id=current_user.id,
         transfer_date=transfer_date,
+        payment_method=(request.form.get("payment_method") or "").strip() or None,
         receipt=request.form.get("receipt"),
         transfer_number=request.form.get("transfer_number"),
         observations=request.form.get("observations"),
@@ -962,12 +1231,26 @@ def seller_material_referrals_program():
 def seller_material_images_zip():
     from flask import current_app
 
-    icons_dir = Path(current_app.static_folder) / "assets" / "icons"
-    files = [icons_dir / "icon-192.png", icons_dir / "icon-512.png"]
+    branding_dir = Path(current_app.static_folder) / "images" / "branding"
+    legacy_icons_dir = Path(current_app.static_folder) / "assets" / "icons"
+    files = [
+        branding_dir / "logo.png",
+        branding_dir / "icon-192.png",
+        branding_dir / "icon-512.png",
+    ]
+    legacy_fallback = [
+        legacy_icons_dir / "icon-192.png",
+        legacy_icons_dir / "icon-512.png",
+    ]
     buffer = BytesIO()
     with zipfile.ZipFile(buffer, "w", zipfile.ZIP_DEFLATED) as archive:
         for file_path in files:
             if file_path.exists():
                 archive.write(file_path, arcname=file_path.name)
+        # Compatibilidad temporal: si faltan branding assets nuevos, incluye iconos legacy.
+        if not any((branding_dir / name).exists() for name in ["icon-192.png", "icon-512.png"]):
+            for file_path in legacy_fallback:
+                if file_path.exists():
+                    archive.write(file_path, arcname=file_path.name)
     buffer.seek(0)
     return send_file(buffer, mimetype="application/zip", as_attachment=True, download_name="stockarmobile_imagenes.zip")

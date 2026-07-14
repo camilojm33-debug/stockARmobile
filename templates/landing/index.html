@@ -18,6 +18,8 @@
   <meta name="twitter:title" content="{{ seo.title }}">
   <meta name="twitter:description" content="{{ seo.description }}">
   <meta name="twitter:image" content="{{ seo.image }}">
+  <link rel="icon" type="image/x-icon" href="{{ url_for('static', filename='images/branding/favicon.ico') }}">
+  <link rel="apple-touch-icon" href="{{ url_for('static', filename='images/branding/apple-touch-icon.png') }}">
 
   <script type="application/ld+json">
   {
@@ -53,7 +55,9 @@
       <nav class="navbar navbar-expand-lg py-3">
         <div class="container">
           <a class="navbar-brand d-flex align-items-center gap-2 fw-bold" href="{{ url_for('index') }}">
-            <span class="brand-mark"><i class="bi bi-phone"></i></span>
+            <span class="brand-mark">
+              <img class="brand-logo" src="{{ url_for('static', filename='images/branding/logo.png') }}" alt="StockArmobile logo">
+            </span>
             <span>StockArmobile</span>
           </a>
           <div class="ms-auto d-flex align-items-center gap-2">
@@ -473,7 +477,9 @@
         <div class="row g-4 align-items-start">
           <div class="col-md-4">
             <a class="navbar-brand d-flex align-items-center gap-2 fw-bold mb-3" href="{{ url_for('index') }}">
-              <span class="brand-mark"><i class="bi bi-phone"></i></span>
+              <span class="brand-mark">
+                <img class="brand-logo" src="{{ url_for('static', filename='images/branding/logo.png') }}" alt="StockArmobile logo">
+              </span>
               <span>StockArmobile</span>
             </a>
             <p class="text-muted">Plataforma SaaS para ventas, stock, clientes y operación comercial profesional.</p>

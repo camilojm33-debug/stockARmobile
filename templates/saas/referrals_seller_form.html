@@ -1,0 +1,110 @@
+{% extends "base_master.html" %}
+{% block title %}{% if mode == 'edit' %}Editar vendedor{% else %}Crear vendedor{% endif %} | Referidos{% endblock %}
+{% block content %}
+<div class="d-flex justify-content-between align-items-center mb-3 flex-wrap gap-2">
+  <h1 class="h4 mb-0">{% if mode == 'edit' %}Editar vendedor{% else %}Crear vendedor{% endif %}</h1>
+  <a class="btn btn-outline-secondary btn-sm" href="{{ url_for('referrals.admin_referrals_sellers_list') }}"><i class="bi bi-arrow-left me-1"></i>Ver vendedores</a>
+</div>
+
+<div class="card app-card border-0">
+  <div class="card-body">
+    <form method="post" class="row g-3">
+      <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+
+      <div class="col-12">
+        <h2 class="h6 mb-1">Datos personales</h2>
+        <p class="text-muted mb-0">Informacion de acceso y contacto del vendedor.</p>
+      </div>
+
+      <div class="col-md-4">
+        <label class="form-label">Usuario</label>
+        <input class="form-control" name="username" value="{{ (user.username if user else '') }}" required>
+      </div>
+      <div class="col-md-4">
+        <label class="form-label">Nombre</label>
+        <input class="form-control" name="first_name" value="{{ (user.first_name if user else '') }}">
+      </div>
+      <div class="col-md-4">
+        <label class="form-label">Apellido</label>
+        <input class="form-control" name="last_name" value="{{ (user.last_name if user else '') }}">
+      </div>
+      <div class="col-md-4">
+        <label class="form-label">Email</label>
+        <input type="email" class="form-control" name="email" value="{{ (user.email if user else '') }}" required>
+      </div>
+      <div class="col-md-4">
+        <label class="form-label">DNI</label>
+        <input class="form-control" name="dni" value="{{ (profile.dni if profile else '') }}" required>
+      </div>
+      <div class="col-md-4">
+        <label class="form-label">CUIT/CUIL</label>
+        <input class="form-control" name="tax_id" value="{{ (profile.tax_id if profile else '') }}">
+      </div>
+      <div class="col-md-4">
+        <label class="form-label">Telefono</label>
+        <input class="form-control" name="phone" value="{{ (profile.phone if profile else '') }}">
+      </div>
+      <div class="col-md-4">
+        <label class="form-label">Direccion</label>
+        <input class="form-control" name="address" value="{{ (profile.address if profile else '') }}">
+      </div>
+      <div class="col-md-2">
+        <label class="form-label">Provincia</label>
+        <input class="form-control" name="province" value="{{ (profile.province if profile else '') }}">
+      </div>
+      <div class="col-md-2">
+        <label class="form-label">Ciudad</label>
+        <input class="form-control" name="city" value="{{ (profile.city if profile else '') }}">
+      </div>
+
+      <div class="col-12 pt-2">
+        <h2 class="h6 mb-1">Datos bancarios</h2>
+        <p class="text-muted mb-0">Datos para pago de comisiones.</p>
+      </div>
+
+      <div class="col-md-4">
+        <label class="form-label">Banco</label>
+        <input class="form-control" name="bank" value="{{ (profile.bank if profile else '') }}">
+      </div>
+      <div class="col-md-4">
+        <label class="form-label">Titular de la cuenta</label>
+        <input class="form-control" name="account_holder" value="{{ (profile.account_holder if profile else '') }}">
+      </div>
+      <div class="col-md-4">
+        <label class="form-label">Alias</label>
+        <input class="form-control" name="alias" value="{{ (profile.alias if profile else '') }}">
+      </div>
+      <div class="col-md-6">
+        <label class="form-label">CVU</label>
+        <input class="form-control" name="cvu" value="{{ (profile.cvu if profile else '') }}" placeholder="Opcional">
+      </div>
+      <div class="col-md-6">
+        <label class="form-label">CBU</label>
+        <input class="form-control" name="cbu" maxlength="22" value="{{ (profile.cbu if profile else '') }}" placeholder="22 digitos">
+      </div>
+
+      <div class="col-md-4">
+        <label class="form-label">Estado</label>
+        <select class="form-select" name="active">
+          <option value="1" {% if not profile or profile.active %}selected{% endif %}>Activo</option>
+          <option value="0" {% if profile and not profile.active %}selected{% endif %}>Inactivo</option>
+        </select>
+      </div>
+
+      {% if mode == 'create' %}
+      <div class="col-md-4">
+        <label class="form-label">Clave inicial</label>
+        <input class="form-control" name="temp_password" placeholder="seller123">
+      </div>
+      {% endif %}
+
+      <div class="col-12 d-flex justify-content-end gap-2 pt-2">
+        <a class="btn btn-outline-secondary" href="{{ url_for('referrals.admin_referrals_sellers_list') }}">Cancelar</a>
+        <button class="btn btn-primary" type="submit">
+          <i class="bi bi-check2 me-1"></i>{% if mode == 'edit' %}Guardar cambios{% else %}Guardar vendedor{% endif %}
+        </button>
+      </div>
+    </form>
+  </div>
+</div>
+{% endblock %}

@@ -1,0 +1,203 @@
+{% extends "base_master.html" %}
+{% block title %}Detalle de vendedor | Referidos{% endblock %}
+{% block content %}
+<div class="d-flex justify-content-between align-items-center mb-3 flex-wrap gap-2">
+  <h1 class="h4 mb-0">Ficha de vendedor</h1>
+  <div class="d-flex gap-2">
+    <a class="btn btn-outline-secondary btn-sm" href="{{ url_for('referrals.admin_referrals_sellers_list') }}"><i class="bi bi-arrow-left me-1"></i>Ver vendedores</a>
+    <a class="btn btn-primary btn-sm" href="{{ url_for('referrals.admin_referrals_sellers_edit', seller_id=profile.id) }}"><i class="bi bi-pencil me-1"></i>Editar</a>
+  </div>
+</div>
+
+<div class="row g-3 mb-4">
+  <div class="col-lg-6">
+    <div class="card app-card h-100 border-0">
+      <div class="card-header bg-white fw-semibold">Datos personales</div>
+      <div class="card-body row g-2">
+        <div class="col-sm-6"><small class="text-muted d-block">Usuario</small><strong>{{ user.username }}</strong></div>
+        <div class="col-sm-6"><small class="text-muted d-block">Nombre</small><strong>{{ user.first_name or '-' }}</strong></div>
+        <div class="col-sm-6"><small class="text-muted d-block">Apellido</small><strong>{{ user.last_name or '-' }}</strong></div>
+        <div class="col-sm-6"><small class="text-muted d-block">Email</small><strong>{{ user.email or '-' }}</strong></div>
+        <div class="col-sm-6"><small class="text-muted d-block">DNI</small><strong>{{ profile.dni or '-' }}</strong></div>
+        <div class="col-sm-6"><small class="text-muted d-block">CUIT/CUIL</small><strong>{{ profile.tax_id or '-' }}</strong></div>
+        <div class="col-sm-6"><small class="text-muted d-block">Telefono</small><strong>{{ profile.phone or '-' }}</strong></div>
+        <div class="col-sm-6"><small class="text-muted d-block">Direccion</small><strong>{{ profile.address or '-' }}</strong></div>
+        <div class="col-sm-6"><small class="text-muted d-block">Provincia</small><strong>{{ profile.province or '-' }}</strong></div>
+        <div class="col-sm-6"><small class="text-muted d-block">Ciudad</small><strong>{{ profile.city or '-' }}</strong></div>
+      </div>
+    </div>
+  </div>
+  <div class="col-lg-6">
+    <div class="card app-card h-100 border-0">
+      <div class="card-header bg-white fw-semibold">Datos bancarios</div>
+      <div class="card-body row g-2">
+        <div class="col-sm-6"><small class="text-muted d-block">Banco</small><strong>{{ profile.bank or '-' }}</strong></div>
+        <div class="col-sm-6"><small class="text-muted d-block">Titular</small><strong>{{ profile.account_holder or '-' }}</strong></div>
+        <div class="col-sm-6"><small class="text-muted d-block">Alias</small><strong>{{ profile.alias or '-' }}</strong></div>
+        <div class="col-sm-6"><small class="text-muted d-block">CVU</small><strong>{{ profile.cvu or '-' }}</strong></div>
+        <div class="col-sm-6"><small class="text-muted d-block">CBU</small><strong>{{ profile.cbu or '-' }}</strong></div>
+        <div class="col-sm-6"><small class="text-muted d-block">Estado</small><strong>{% if profile.active %}Activo{% else %}Inactivo{% endif %}</strong></div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<div class="card app-card border-0 mb-4">
+  <div class="card-header bg-white fw-semibold">Metricas</div>
+  <div class="card-body">
+    <div class="row g-3">
+      <div class="col-sm-6 col-xl-3"><div class="border rounded p-3 h-100"><small class="text-muted d-block">Empresas referidas</small><strong>{{ metrics.referred_companies }}</strong></div></div>
+      <div class="col-sm-6 col-xl-3"><div class="border rounded p-3 h-100"><small class="text-muted d-block">Pruebas gratuitas</small><strong>{{ metrics.free_trials }}</strong></div></div>
+      <div class="col-sm-6 col-xl-3"><div class="border rounded p-3 h-100"><small class="text-muted d-block">Suscripciones activas</small><strong>{{ metrics.active_subscriptions }}</strong></div></div>
+      <div class="col-sm-6 col-xl-3"><div class="border rounded p-3 h-100"><small class="text-muted d-block">Suscripciones vencidas</small><strong>{{ metrics.expired_subscriptions }}</strong></div></div>
+      <div class="col-sm-6 col-xl-3"><div class="border rounded p-3 h-100"><small class="text-muted d-block">Clientes activos</small><strong>{{ metrics.active_clients }}</strong></div></div>
+      <div class="col-sm-6 col-xl-3"><div class="border rounded p-3 h-100"><small class="text-muted d-block">Facturacion generada</small><strong>ARS {{ '%.2f'|format(metrics.billing_generated) }}</strong></div></div>
+      <div class="col-sm-6 col-xl-3"><div class="border rounded p-3 h-100"><small class="text-muted d-block">Comision del 30%</small><strong>ARS {{ '%.2f'|format(metrics.commission_total) }}</strong></div></div>
+      <div class="col-sm-6 col-xl-3"><div class="border rounded p-3 h-100"><small class="text-muted d-block">Comision pendiente</small><strong>ARS {{ '%.2f'|format(metrics.commission_pending) }}</strong></div></div>
+      <div class="col-sm-6 col-xl-3"><div class="border rounded p-3 h-100"><small class="text-muted d-block">Comision pagada</small><strong>ARS {{ '%.2f'|format(metrics.commission_paid) }}</strong></div></div>
+      <div class="col-sm-6 col-xl-3"><div class="border rounded p-3 h-100"><small class="text-muted d-block">Fecha de alta</small><strong>{{ metrics.created_at.strftime('%Y-%m-%d') if metrics.created_at else '-' }}</strong></div></div>
+      <div class="col-sm-6 col-xl-3"><div class="border rounded p-3 h-100"><small class="text-muted d-block">Ultimo acceso</small><strong>{{ metrics.last_access.strftime('%Y-%m-%d %H:%M') if metrics.last_access else '-' }}</strong></div></div>
+    </div>
+  </div>
+</div>
+
+<div class="card app-card border-0 mb-4">
+  <div class="card-header bg-white fw-semibold d-flex justify-content-between align-items-center">
+    <span>Marcar comision como pagada</span>
+    <small class="text-muted">Disponible: ARS {{ '%.2f'|format(metrics.available_total) }}</small>
+  </div>
+  <div class="card-body">
+    <form method="post" action="{{ url_for('referrals.admin_referrals_register_payout') }}" id="payoutForm">
+      <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+      <input type="hidden" name="seller_id" value="{{ profile.id }}">
+
+      <div class="row g-2 mb-3">
+        <div class="col-md-3">
+          <label class="form-label">Fecha</label>
+          <input type="date" class="form-control" name="transfer_date" required>
+        </div>
+        <div class="col-md-3">
+          <label class="form-label">Monto</label>
+          <input type="text" class="form-control" id="selectedAmount" value="ARS 0.00" readonly>
+        </div>
+        <div class="col-md-3">
+          <label class="form-label">Medio de pago</label>
+          <select class="form-select" name="payment_method" required>
+            <option value="">Seleccionar...</option>
+            <option value="Transferencia bancaria">Transferencia bancaria</option>
+            <option value="Mercado Pago">Mercado Pago</option>
+            <option value="Efectivo">Efectivo</option>
+            <option value="Otro">Otro</option>
+          </select>
+        </div>
+        <div class="col-md-3">
+          <label class="form-label">Numero de operacion</label>
+          <input class="form-control" name="transfer_number" placeholder="Opcional">
+        </div>
+        <div class="col-md-6">
+          <label class="form-label">Comprobante</label>
+          <input class="form-control" name="receipt" placeholder="URL o referencia">
+        </div>
+        <div class="col-md-6">
+          <label class="form-label">Observaciones</label>
+          <input class="form-control" name="observations" placeholder="Detalle adicional">
+        </div>
+      </div>
+
+      <div class="table-responsive mb-3">
+        <table class="table align-middle">
+          <thead><tr><th></th><th>ID</th><th>Empresa</th><th>Monto comision</th><th>Disponible desde</th></tr></thead>
+          <tbody>
+          {% for row in available_commissions %}
+            <tr>
+              <td><input class="form-check-input commission-check" type="checkbox" name="commission_ids" value="{{ row.id }}" data-amount="{{ row.commission_amount or 0 }}"></td>
+              <td>{{ row.id }}</td>
+              <td>{{ row.company.name if row.company else 'N/A' }}</td>
+              <td>ARS {{ '%.2f'|format(row.commission_amount or 0) }}</td>
+              <td>{{ row.available_at.strftime('%Y-%m-%d') if row.available_at else '-' }}</td>
+            </tr>
+          {% else %}
+            <tr><td colspan="5" class="text-center text-muted py-3">No hay comisiones disponibles para pagar.</td></tr>
+          {% endfor %}
+          </tbody>
+        </table>
+      </div>
+
+      <div class="d-flex justify-content-end">
+        <button class="btn btn-primary" type="submit"><i class="bi bi-check2-circle me-1"></i>Marcar comision como pagada</button>
+      </div>
+    </form>
+  </div>
+</div>
+
+<div class="card app-card border-0 mb-4">
+  <div class="card-header bg-white fw-semibold">Historial de pagos</div>
+  <div class="table-responsive">
+    <table class="table table-hover align-middle mb-0">
+      <thead><tr><th>Fecha</th><th>Monto</th><th>Medio de pago</th><th>Observaciones</th><th>Registrado por</th></tr></thead>
+      <tbody>
+      {% for row in payouts %}
+        <tr>
+          <td>{{ row.transfer_date.strftime('%Y-%m-%d') if row.transfer_date else '-' }}</td>
+          <td>ARS {{ '%.2f'|format(row.amount or 0) }}</td>
+          <td>{{ row.payment_method or 'Transferencia bancaria' }}</td>
+          <td>{{ row.observations or row.transfer_number or row.receipt or '-' }}</td>
+          <td>{{ row.processed_by.username if row.processed_by else '-' }}</td>
+        </tr>
+      {% else %}
+        <tr><td colspan="5" class="text-center text-muted py-4">Sin pagos registrados.</td></tr>
+      {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</div>
+
+<div class="card app-card border-0">
+  <div class="card-header bg-white fw-semibold">Empresas referidas</div>
+  <div class="table-responsive">
+    <table class="table align-middle mb-0">
+      <thead><tr><th>Empresa</th><th>Estado empresa</th><th>Estado suscripcion</th><th>Fecha de atribucion</th></tr></thead>
+      <tbody>
+      {% for row in attribution_rows %}
+        <tr>
+          <td>{{ row.company.name if row.company else 'N/A' }}</td>
+          <td>
+            {% if row.company %}
+              <span class="badge text-bg-{% if row.company.active %}success{% else %}secondary{% endif %}">{% if row.company.active %}Activa{% else %}Inactiva{% endif %}</span>
+            {% else %}
+              -
+            {% endif %}
+          </td>
+          <td>{{ row.subscription.status if row.subscription else '-' }}</td>
+          <td>{{ row.attribution.created_at.strftime('%Y-%m-%d') if row.attribution and row.attribution.created_at else '-' }}</td>
+        </tr>
+      {% else %}
+        <tr><td colspan="4" class="text-center text-muted py-4">Sin empresas referidas.</td></tr>
+      {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</div>
+
+<script>
+  (function () {
+    const checks = Array.from(document.querySelectorAll('.commission-check'));
+    const amountInput = document.getElementById('selectedAmount');
+
+    function updateAmount() {
+      let total = 0;
+      checks.forEach(function (check) {
+        if (check.checked) {
+          total += parseFloat(check.dataset.amount || '0');
+        }
+      });
+      amountInput.value = 'ARS ' + total.toFixed(2);
+    }
+
+    checks.forEach(function (check) {
+      check.addEventListener('change', updateAmount);
+    });
+    updateAmount();
+  })();
+</script>
+{% endblock %}

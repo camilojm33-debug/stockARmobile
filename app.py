@@ -826,6 +826,7 @@ class ReferralSeller(db.Model):
     city = db.Column(db.String(120))
     address = db.Column(db.String(255))
     alias = db.Column(db.String(120))
+    cvu = db.Column(db.String(30))
     cbu = db.Column(db.String(22))
     bank = db.Column(db.String(120))
     account_holder = db.Column(db.String(160))
@@ -889,6 +890,7 @@ class ReferralPayout(db.Model):
     processed_by_user_id = db.Column(db.Integer, db.ForeignKey("users.id"), nullable=False, index=True)
     amount = db.Column(MONEY, default=Decimal("0.00"), nullable=False)
     transfer_date = db.Column(db.DateTime, nullable=False)
+    payment_method = db.Column(db.String(80))
     receipt = db.Column(db.String(255))
     transfer_number = db.Column(db.String(120))
     observations = db.Column(db.Text)
@@ -1193,7 +1195,8 @@ def index():
         "title": "StockArmobile | Controla tu negocio desde cualquier lugar",
         "description": "Ventas, Stock, Clientes, Caja, QR, Etiquetas y Reportes en una sola plataforma con prueba gratuita y programa profesional de referidos.",
         "url": f"{app_base_url}/",
-        "image": f"{app_base_url}{url_for('static', filename='assets/icons/icon-512.png')}",
+        # Branding centralizado: esta ruta quedara estable para futuros reemplazos de identidad visual.
+        "image": f"{app_base_url}{url_for('static', filename='images/branding/logo.png')}",
         "site_name": "StockArmobile",
     }
 
@@ -1354,6 +1357,17 @@ def api_notifications():
 @app.route("/manifest.json")
 def web_manifest():
     return send_from_directory(app.static_folder, "manifest.json", mimetype="application/manifest+json")
+
+
+@app.route("/favicon.ico")
+def favicon():
+    # Branding centralizado para permitir reemplazo de identidad sin tocar codigo.
+    return send_from_directory(app.static_folder, "images/branding/favicon.ico", mimetype="image/x-icon")
+
+
+@app.route("/apple-touch-icon.png")
+def apple_touch_icon():
+    return send_from_directory(app.static_folder, "images/branding/apple-touch-icon.png", mimetype="image/png")
 
 
 @app.route("/service-worker.js")
