@@ -125,6 +125,30 @@ def test_exports_and_security_methods():
     assert client.get("/productos/delete/1").status_code == 405
 
 
+def test_superadmin_login_survives_admin_bootstrap_with_different_env_owner(monkeypatch):
+    with stock_app.app.app_context():
+        monkeypatch.setenv("ADMIN_USERNAME", "otro_admin")
+        monkeypatch.setenv("ADMIN_EMAIL", "otro_admin@test.local")
+
+        super_user = User.query.filter_by(username="superadmin").first()
+        assert super_user is not None
+        assert super_user.role == "superadmin"
+
+        stock_app.create_admin_user()
+
+        refreshed = User.query.filter_by(username="superadmin").first()
+        assert refreshed is not None
+        assert refreshed.role == "superadmin"
+        assert refreshed.active is True
+
+    client = stock_app.app.test_client()
+    login = client.post("/auth/login", data={"username": "superadmin", "password": "admin123"}, follow_redirects=False)
+    assert login.status_code in (301, 302)
+
+    panel = client.get("/superadmin/")
+    assert panel.status_code == 200
+
+
 def test_qr_print_all_supports_square_5x5_a4_format():
     client = stock_app.app.test_client()
     client.post("/auth/login", data={"username": "empresa_admin", "password": "admin123"})

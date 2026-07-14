@@ -1341,7 +1341,9 @@ def create_admin_user():
                 changed = True
             elif username_taken_by_other and target_admin.username != admin_username:
                 app.logger.warning("No se pudo normalizar username admin por conflicto con otro usuario existente.")
-        desired_role = "superadmin" if is_control_panel_owner(target_admin) else "admin"
+        desired_role = target_admin.role or "user"
+        if desired_role != "superadmin":
+            desired_role = "superadmin" if is_control_panel_owner(target_admin) else "admin"
         if target_admin.role != desired_role:
             target_admin.role = desired_role
             changed = True
@@ -1429,7 +1431,9 @@ def ensure_primary_superadmin():
     if not first_user.active:
         first_user.active = True
         changed = True
-    expected_role = "superadmin" if is_control_panel_owner(first_user) else (first_user.role or "user")
+    expected_role = first_user.role or "user"
+    if expected_role != "superadmin" and is_control_panel_owner(first_user):
+        expected_role = "superadmin"
     if first_user.role != expected_role:
         first_user.role = expected_role
         changed = True
