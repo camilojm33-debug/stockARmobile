@@ -1,0 +1,46 @@
+{% extends "base_master.html" %}
+{% block title %}Ayuda - Mis tickets{% endblock %}
+{% block content %}
+<div class="app-shell">
+  <div class="d-flex justify-content-between align-items-center mb-3">
+    <div>
+      <span class="page-kicker"><i class="bi bi-life-preserver"></i> Soporte</span>
+      <h1 class="h3 fw-bold mb-0">Mis tickets</h1>
+    </div>
+    <a class="btn btn-primary" href="{{ url_for('support.new_ticket') }}"><i class="bi bi-plus-circle me-1"></i>Nuevo ticket</a>
+  </div>
+
+  <div class="card app-card">
+    <div class="table-responsive">
+      <table class="table table-hover mb-0">
+        <thead>
+          <tr>
+            <th>#</th>
+            <th>Motivo</th>
+            <th>Descripcion</th>
+            <th>Fecha</th>
+            <th>Estado</th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for ticket in tickets %}
+          <tr>
+            <td>{{ ticket.id }}</td>
+            <td>{{ ticket.reason }}</td>
+            <td>{{ (ticket.description or '')[:120] }}{% if (ticket.description or '')|length > 120 %}...{% endif %}</td>
+            <td>{{ ticket.created_at.strftime('%Y-%m-%d %H:%M') if ticket.created_at else '-' }}</td>
+            <td>
+              <span class="badge text-bg-{{ 'warning' if ticket.status == 'pendiente' else 'success' }}">{{ ticket.status|capitalize }}</span>
+            </td>
+          </tr>
+          {% else %}
+          <tr>
+            <td colspan="5" class="text-center text-muted py-4">Todavia no enviaste tickets.</td>
+          </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+  </div>
+</div>
+{% endblock %}

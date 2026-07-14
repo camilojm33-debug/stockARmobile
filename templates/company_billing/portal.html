@@ -14,33 +14,88 @@
   </div>
 
   <div class="row g-3 mb-4">
-    <div class="col-md-4">
+    <div class="col-md-3">
       <div class="card app-card metric-card"><div class="card-body">
         <div class="text-muted small fw-semibold text-uppercase">Empresa</div>
         <div class="metric-value fw-bold">{{ company.name }}</div>
       </div></div>
     </div>
-    <div class="col-md-4">
+    <div class="col-md-3">
       <div class="card app-card metric-card"><div class="card-body">
         <div class="text-muted small fw-semibold text-uppercase">Estado</div>
         <div class="metric-value fw-bold">{{ subscription.status }}</div>
       </div></div>
     </div>
-    <div class="col-md-4">
+    <div class="col-md-3">
       <div class="card app-card metric-card"><div class="card-body">
         <div class="text-muted small fw-semibold text-uppercase">Proximo vencimiento</div>
         <div class="metric-value fw-bold">{{ subscription.next_billing_date.strftime('%Y-%m-%d') if subscription.next_billing_date else '—' }}</div>
       </div></div>
     </div>
+    <div class="col-md-3">
+      <div class="card app-card metric-card"><div class="card-body">
+        <div class="text-muted small fw-semibold text-uppercase">Plan contratado</div>
+        <div class="metric-value fw-bold">{{ usage_snapshot.plan.name if usage_snapshot.plan else 'Trial' }}</div>
+      </div></div>
+    </div>
   </div>
 
-  <div class="row g-3">
+  <div class="card app-card mb-4">
+    <div class="card-header bg-white fw-bold d-flex justify-content-between align-items-center">
+      <span>Uso del plan</span>
+      <a class="btn btn-sm btn-outline-primary" href="#planes-disponibles">Actualizar mi plan</a>
+    </div>
+    <div class="card-body">
+      {% if usage_snapshot.warning_90 %}
+      <div class="alert alert-warning">Está próximo a alcanzar el límite de su plan.</div>
+      {% endif %}
+
+      <div class="row g-3 mb-3">
+        {% for metric in usage_snapshot.metrics %}
+        <div class="col-lg-3 col-md-6">
+          <div class="border rounded p-3 h-100">
+            <div class="fw-semibold mb-1">{{ metric.label }}</div>
+            <div class="small text-muted mb-2">{{ metric.used }} / {{ metric.limit }} utilizados</div>
+            <div class="progress" role="progressbar" aria-valuenow="{{ metric.percent }}" aria-valuemin="0" aria-valuemax="100" style="height: 10px;">
+              <div class="progress-bar {{ metric.bar_class }}" style="width: {{ metric.percent }}%"></div>
+            </div>
+            <div class="small mt-2 fw-semibold">{{ metric.percent }}%</div>
+          </div>
+        </div>
+        {% endfor %}
+      </div>
+
+      {% set products_metric = usage_snapshot.metrics | selectattr('key', 'equalto', 'products') | first %}
+      <div class="border rounded p-3 mb-3">
+        <div class="fw-semibold">Espacio disponible</div>
+        <div class="text-muted small">{{ products_metric.remaining if products_metric else 0 }} productos restantes</div>
+      </div>
+
+      {% if usage_snapshot.estimated_days is not none %}
+      <div class="alert alert-info mb-0">Con el ritmo actual alcanzara el limite aproximadamente en {{ usage_snapshot.estimated_days }} dias.</div>
+      {% endif %}
+    </div>
+  </div>
+
+  {% if usage_snapshot.recommendation_plan %}
+  <div class="alert alert-primary d-flex justify-content-between align-items-center mb-4">
+    <span>Por el crecimiento de su negocio le recomendamos actualizar al Plan {{ usage_snapshot.recommendation_plan.name }}.</span>
+    <a class="btn btn-sm btn-primary" href="#planes-disponibles">Ver planes</a>
+  </div>
+  {% endif %}
+
+  <div id="planes-disponibles" class="row g-3">
     {% for plan in plans %}
     <div class="col-md-6 col-xl-3">
-      <div class="card app-card h-100">
+      <div class="card app-card h-100 {% if usage_snapshot.plan and usage_snapshot.plan.id == plan.id %}border-primary{% endif %}">
         <div class="card-body d-flex flex-column">
-          <h3 class="h5 mb-1">{{ plan.name }}</h3>
-          <p class="text-muted mb-2 small">{{ plan.currency }} {{ '%.2f'|format(plan.price or 0) }} / {{ plan.duration_days }} dias</p>
+          <div class="d-flex justify-content-between align-items-start">
+            <h3 class="h5 mb-1">{{ plan.name }}</h3>
+            {% if usage_snapshot.plan and usage_snapshot.plan.id == plan.id %}
+            <span class="badge text-bg-primary">Plan actual</span>
+            {% endif %}
+          </div>
+          <p class="text-muted mb-2 small">{{ plan.currency }} {{ '{:,.0f}'.format(plan.price or 0).replace(',', '.') }} / {{ 'mes' if (plan.duration_days or 30) >= 30 else (plan.duration_days ~ ' dias') }}</p>
           <ul class="small text-muted list-unstyled mb-3">
             <li><i class="bi bi-check2"></i> {{ plan.max_users }} usuarios</li>
             <li><i class="bi bi-check2"></i> {{ plan.max_products }} productos</li>
@@ -49,8 +104,8 @@
           <form method="post" action="{{ url_for('company_billing.create_checkout') }}" class="mt-auto">
             <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
             <input type="hidden" name="plan_id" value="{{ plan.id }}">
-            <button class="btn {{ 'btn-outline-primary' if subscription.plan_id == plan.id else 'btn-primary' }} w-100" type="submit">
-              {% if subscription.plan_id == plan.id %}Plan actual{% else %}Comenzar suscripcion{% endif %}
+            <button class="btn {{ 'btn-outline-primary' if usage_snapshot.plan and usage_snapshot.plan.id == plan.id else 'btn-primary' }} w-100" type="submit">
+              {% if usage_snapshot.plan and usage_snapshot.plan.id == plan.id %}Plan actual{% else %}Comenzar suscripcion{% endif %}
             </button>
           </form>
         </div>
@@ -73,46 +128,5 @@
     </div>
   </div>
 
-  <div class="card app-card mt-4">
-    <div class="card-header bg-white fw-bold">Datos de cobro por QR</div>
-    <div class="card-body">
-      <form method="post" action="{{ url_for('company_billing.payment_qr_settings') }}">
-        <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
-        <div class="row g-3">
-          <div class="col-md-6">
-            <label class="form-label">Alias</label>
-            <input class="form-control" name="payment_alias" value="{{ company.payment_alias or '' }}" placeholder="ej: mi.negocio.mp">
-          </div>
-          <div class="col-md-6">
-            <label class="form-label">Texto visible en QR</label>
-            <input class="form-control" name="payment_qr_text" value="{{ company.payment_qr_text or company.name or '' }}" placeholder="Cobro en caja - Tu negocio">
-          </div>
-          <div class="col-md-6">
-            <label class="form-label">CBU</label>
-            <input class="form-control" name="payment_cbu" value="{{ company.payment_cbu or '' }}" placeholder="22 digitos">
-          </div>
-          <div class="col-md-6">
-            <label class="form-label">CVU</label>
-            <input class="form-control" name="payment_cvu" value="{{ company.payment_cvu or '' }}" placeholder="22 digitos">
-          </div>
-          <div class="col-12">
-            <label class="form-label">URL de pago (opcional)</label>
-            <input class="form-control" name="payment_qr_url" value="{{ company.payment_qr_url or '' }}" placeholder="https://...">
-          </div>
-          <div class="col-12 d-flex justify-content-between align-items-center">
-            <button class="btn btn-primary" type="submit"><i class="bi bi-save me-1"></i>Guardar datos QR</button>
-            {% set has_qr_data = company.payment_alias or company.payment_cbu or company.payment_cvu or company.payment_qr_text or company.payment_qr_url %}
-            {% if has_qr_data %}
-            <img
-              src="{{ url_for('qr_labels.payment_qr', alias=company.payment_alias or '', cbu=company.payment_cbu or '', cvu=company.payment_cvu or '', text=company.payment_qr_text or company.name or '', url=company.payment_qr_url or '') }}"
-              alt="QR de cobro"
-              style="width: 132px; height: 132px; border: 1px solid var(--app-line); border-radius: 12px; object-fit: contain;"
-            >
-            {% endif %}
-          </div>
-        </div>
-      </form>
-    </div>
-  </div>
 </div>
 {% endblock %}

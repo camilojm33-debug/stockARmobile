@@ -70,14 +70,6 @@ class PlanService:
             if existing is None:
                 db_session.add(Plan(**plan_payload))
                 changed = True
-                continue
-            for key, value in plan_payload.items():
-                if getattr(existing, key, None) != value:
-                    setattr(existing, key, value)
-                    changed = True
-            if not existing.active:
-                existing.active = True
-                changed = True
         if changed:
             db_session.commit()
 

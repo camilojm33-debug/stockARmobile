@@ -1,22 +1,199 @@
 {% extends "base_master.html" %}
 
-{% block title %}Configuracion de empresa - StockArmobile{% endblock %}
+{% block title %}Mi empresa - StockArmobile{% endblock %}
 
 {% block content %}
 <div class="app-shell">
   <div class="d-flex flex-wrap justify-content-between align-items-center gap-3 mb-4">
     <div>
-      <span class="page-kicker"><i class="bi bi-gear"></i> Empresa</span>
-      <h1 class="h3 fw-bold mb-0">Configuracion de empresa</h1>
-      <p class="text-muted mb-0">Seccion reservada para administradores de empresa.</p>
+      <span class="page-kicker"><i class="bi bi-building"></i> Inventario</span>
+      <h1 class="h3 fw-bold mb-0">Mi empresa</h1>
+      <p class="text-muted mb-0">Centro de administracion del negocio: datos, usuarios y caja por usuario.</p>
     </div>
-    <a class="btn btn-outline-secondary" href="{{ url_for('dashboard.index') }}"><i class="bi bi-arrow-left me-1"></i>Volver</a>
+    <a class="btn btn-outline-secondary" href="{{ url_for('products.index') }}"><i class="bi bi-arrow-left me-1"></i>Volver a inventario</a>
+  </div>
+
+  {% if not pin_verified %}
+  <div class="card app-card mb-4">
+    <div class="card-header bg-white fw-bold">Verificacion de seguridad</div>
+    <div class="card-body">
+      <p class="text-muted mb-3">Para ingresar a Mi Empresa debes validar el PIN de 4 digitos.</p>
+      {% if pin_block_seconds and pin_block_seconds > 0 %}
+      <div class="alert alert-danger">Acceso bloqueado temporalmente. Intenta en {{ pin_block_seconds }} segundos.</div>
+      {% endif %}
+      <form method="post" action="{{ url_for('company_billing.company_settings_pin_verify') }}" class="row g-3">
+        <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+        <div class="col-md-4">
+          <label class="form-label">PIN</label>
+          <input class="form-control" name="access_pin" maxlength="4" pattern="[0-9]{4}" inputmode="numeric" placeholder="1234" required>
+        </div>
+        <div class="col-md-3 d-flex align-items-end">
+          <button class="btn btn-primary w-100" type="submit"><i class="bi bi-shield-lock me-1"></i>Validar PIN</button>
+        </div>
+      </form>
+    </div>
+  </div>
+  {% else %}
+  <div class="d-flex justify-content-end mb-3">
+    <form method="post" action="{{ url_for('company_billing.company_settings_pin_logout') }}">
+      <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+      <button class="btn btn-sm btn-outline-secondary" type="submit"><i class="bi bi-lock me-1"></i>Bloquear Mi Empresa</button>
+    </form>
   </div>
 
   <div class="card app-card">
+    <div class="card-header bg-white fw-bold">Datos del negocio</div>
     <div class="card-body">
-      <p class="mb-0">Aqui puedes centralizar ajustes internos de tu empresa (usuarios, politicas y parametros comerciales).</p>
+      <form method="post" action="{{ url_for('company_billing.payment_qr_settings') }}">
+        <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+        <div class="row g-3">
+          <div class="col-md-6">
+            <label class="form-label">Nombre del negocio</label>
+            <input class="form-control" name="name" value="{{ company.name or '' }}" required>
+          </div>
+          <div class="col-md-6">
+            <label class="form-label">Razon social</label>
+            <input class="form-control" name="legal_name" value="{{ company.legal_name or '' }}">
+          </div>
+          <div class="col-md-6">
+            <label class="form-label">Direccion</label>
+            <input class="form-control" name="address" value="{{ company.address or '' }}">
+          </div>
+          <div class="col-md-3">
+            <label class="form-label">Telefono</label>
+            <input class="form-control" name="phone" value="{{ company.phone or '' }}">
+          </div>
+          <div class="col-md-3">
+            <label class="form-label">Email</label>
+            <input class="form-control" type="email" name="contact_email" value="{{ company.contact_email or '' }}">
+          </div>
+          <div class="col-md-6">
+            <label class="form-label">Logo (URL)</label>
+            <input class="form-control" name="logo" value="{{ company.logo or '' }}" placeholder="https://...">
+          </div>
+          <div class="col-md-6">
+            <label class="form-label">CUIT / Tax ID</label>
+            <input class="form-control" name="tax_id" value="{{ company.tax_id or '' }}">
+          </div>
+          <div class="col-md-6">
+            <label class="form-label">Alias</label>
+            <input class="form-control" name="payment_alias" value="{{ company.payment_alias or '' }}" placeholder="ej: mi.negocio.mp">
+          </div>
+          <div class="col-md-6">
+            <label class="form-label">Texto visible en QR</label>
+            <input class="form-control" name="payment_qr_text" value="{{ company.payment_qr_text or company.name or '' }}" placeholder="Cobro en caja - Tu negocio">
+          </div>
+          <div class="col-md-6">
+            <label class="form-label">CBU</label>
+            <input class="form-control" name="payment_cbu" value="{{ company.payment_cbu or '' }}" placeholder="22 digitos">
+          </div>
+          <div class="col-md-6">
+            <label class="form-label">CVU</label>
+            <input class="form-control" name="payment_cvu" value="{{ company.payment_cvu or '' }}" placeholder="22 digitos">
+          </div>
+          <div class="col-12">
+            <label class="form-label">URL de pago (opcional)</label>
+            <input class="form-control" name="payment_qr_url" value="{{ company.payment_qr_url or '' }}" placeholder="https://...">
+          </div>
+          <div class="col-12 d-flex justify-content-between align-items-center">
+            <button class="btn btn-primary" type="submit"><i class="bi bi-save me-1"></i>Guardar datos del negocio</button>
+            {% set has_qr_data = company.payment_alias or company.payment_cbu or company.payment_cvu or company.payment_qr_text or company.payment_qr_url %}
+            {% if has_qr_data %}
+            <img
+              src="{{ url_for('qr_labels.payment_qr', alias=company.payment_alias or '', cbu=company.payment_cbu or '', cvu=company.payment_cvu or '', text=company.payment_qr_text or company.name or '', url=company.payment_qr_url or '') }}"
+              alt="QR de cobro"
+              style="width: 132px; height: 132px; border: 1px solid var(--app-line); border-radius: 12px; object-fit: contain;"
+            >
+            {% endif %}
+          </div>
+        </div>
+      </form>
     </div>
   </div>
+
+  <div class="card app-card mt-4">
+    <div class="card-header bg-white fw-bold">Usuarios del negocio</div>
+    <div class="table-responsive">
+      <table class="table table-hover mb-0">
+        <thead>
+          <tr>
+            <th>Nombre</th>
+            <th>Email</th>
+            <th>Estado</th>
+            <th>Rol</th>
+            <th>Fecha alta</th>
+            <th class="text-end">Acciones</th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for row in cash_rows %}
+          {% set user = row.user %}
+          <tr>
+            <td>{{ user.name }}</td>
+            <td>{{ user.email }}</td>
+            <td><span class="badge {{ 'text-bg-success' if user.active else 'text-bg-secondary' }}">{{ 'Activo' if user.active else 'Inactivo' }}</span></td>
+            <td>{{ user.role }}</td>
+            <td>{{ user.created_at.strftime('%Y-%m-%d') if user.created_at else '-' }}</td>
+            <td class="text-end">
+              <div class="d-flex justify-content-end gap-1">
+                <form method="post" action="{{ url_for('company_billing.company_settings_user_update', user_id=user.id) }}" class="d-flex gap-1">
+                  <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                  <input class="form-control form-control-sm" name="full_name" value="{{ user.name }}" style="min-width: 180px;">
+                  <button class="btn btn-sm btn-outline-primary" type="submit">Guardar</button>
+                </form>
+                <form method="post" action="{{ url_for('company_billing.company_settings_user_toggle', user_id=user.id) }}">
+                  <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                  <button class="btn btn-sm {{ 'btn-outline-danger' if user.active else 'btn-outline-success' }}" type="submit">{{ 'Desactivar' if user.active else 'Activar' }}</button>
+                </form>
+              </div>
+            </td>
+          </tr>
+          {% else %}
+          <tr><td colspan="6" class="text-center text-muted py-4">No hay usuarios para esta empresa.</td></tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+  </div>
+
+  <div class="card app-card mt-4">
+    <div class="card-header bg-white fw-bold d-flex justify-content-between align-items-center">
+      <span>Caja por usuario</span>
+      <form method="get" action="{{ url_for('company_billing.company_settings') }}" class="d-flex gap-2">
+        <input class="form-control form-control-sm" type="date" name="from" value="{{ date_from }}">
+        <input class="form-control form-control-sm" type="date" name="to" value="{{ date_to }}">
+        <button class="btn btn-sm btn-outline-primary" type="submit">Filtrar</button>
+      </form>
+    </div>
+    <div class="table-responsive">
+      <table class="table table-hover mb-0">
+        <thead>
+          <tr>
+            <th>Usuario</th>
+            <th>Total vendido</th>
+            <th>Cantidad de ventas</th>
+            <th>Ingresos</th>
+            <th>Egresos</th>
+            <th>Saldo</th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for row in cash_rows %}
+          <tr>
+            <td>{{ row.user.name }}</td>
+            <td>${{ '%.2f'|format(row.total_sold) }}</td>
+            <td>{{ row.sales_count }}</td>
+            <td>${{ '%.2f'|format(row.ingresos) }}</td>
+            <td>${{ '%.2f'|format(row.egresos) }}</td>
+            <td><span class="fw-semibold {{ 'text-danger' if row.saldo < 0 else 'text-success' }}">${{ '%.2f'|format(row.saldo) }}</span></td>
+          </tr>
+          {% else %}
+          <tr><td colspan="6" class="text-center text-muted py-4">No hay datos de caja para el rango seleccionado.</td></tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+  </div>
+  {% endif %}
 </div>
 {% endblock %}

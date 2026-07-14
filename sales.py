@@ -488,6 +488,16 @@ def _normalize_phone(value):
     return "".join(ch for ch in str(value) if ch.isdigit())
 
 
+def _is_valid_whatsapp_phone(value):
+    normalized = _normalize_phone(value)
+    return 8 <= len(normalized) <= 15
+
+
+def _build_whatsapp_link(sale, phone):
+    text = quote(_ticket_text_for_whatsapp(sale))
+    return f"https://wa.me/{phone}?text={text}"
+
+
 def _ticket_text_for_whatsapp(sale):
     lines = [f"Ticket de compra - Venta #{sale.id}", f"Fecha: {sale.date:%Y-%m-%d %H:%M}"]
     if sale.customer:
@@ -507,17 +517,52 @@ def _ticket_text_for_whatsapp(sale):
     return "\n".join(lines)
 
 
-@bp.route("/<int:sale_id>/share-whatsapp")
+@bp.route("/<int:sale_id>/share-whatsapp", methods=["GET", "POST"])
 @tenant_required
 def share_whatsapp(sale_id):
-    from app import Sale, SaleItem, scope_query_to_company
+    from app import Sale, SaleItem, db, scope_query_to_company
 
     sale = scope_query_to_company(Sale.query.options(selectinload(Sale.items).selectinload(SaleItem.product), selectinload(Sale.client)), Sale).filter(Sale.id == sale_id).first_or_404()
     raw_phone = (sale.client.whatsapp if getattr(sale, "client", None) else "") or (sale.client.phone if getattr(sale, "client", None) else "")
     phone = _normalize_phone(raw_phone)
-    if not phone:
-        flash("El cliente no tiene WhatsApp o telefono registrado.", "warning")
-        return redirect(url_for("sales.success", sale_id=sale.id))
 
-    text = quote(_ticket_text_for_whatsapp(sale))
-    return redirect(f"https://wa.me/{phone}?text={text}")
+    if request.method == "POST":
+        phone_input = (request.form.get("whatsapp_phone") or "").strip()
+        action = (request.form.get("phone_action") or "send_once").strip()
+        normalized_phone = _normalize_phone(phone_input)
+
+        if not _is_valid_whatsapp_phone(normalized_phone):
+            flash("Numero de WhatsApp invalido. Ingresa entre 8 y 15 digitos.", "danger")
+            return render_template(
+                "ventas/whatsapp_dialog.html",
+                sale=sale,
+                entered_phone=phone_input,
+                selected_action=action,
+                can_save_phone=bool(getattr(sale, "client", None)),
+            )
+
+        if action == "save_and_send":
+            if not getattr(sale, "client", None):
+                flash("No se puede guardar el numero porque esta venta no tiene cliente asociado.", "warning")
+                return render_template(
+                    "ventas/whatsapp_dialog.html",
+                    sale=sale,
+                    entered_phone=phone_input,
+                    selected_action=action,
+                    can_save_phone=False,
+                )
+            sale.client.whatsapp = normalized_phone
+            db.session.commit()
+
+        return redirect(_build_whatsapp_link(sale, normalized_phone))
+
+    if _is_valid_whatsapp_phone(phone):
+        return redirect(_build_whatsapp_link(sale, phone))
+
+    return render_template(
+        "ventas/whatsapp_dialog.html",
+        sale=sale,
+        entered_phone="",
+        selected_action="send_once",
+        can_save_phone=bool(getattr(sale, "client", None)),
+    )

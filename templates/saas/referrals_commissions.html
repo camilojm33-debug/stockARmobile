@@ -1,0 +1,84 @@
+{% extends "base_master.html" %}
+{% block title %}Comisiones | Referidos{% endblock %}
+{% block content %}
+<div class="d-flex justify-content-between align-items-center mb-3">
+  <h1 class="h4 mb-0">Comisiones de Referidos</h1>
+  <div>
+    <a class="btn btn-outline-secondary btn-sm" href="{{ url_for('referrals.admin_referrals_dashboard') }}">Volver al panel</a>
+  </div>
+</div>
+
+<form class="mb-3" method="get">
+  <div class="row g-2">
+    <div class="col-md-3">
+      <select class="form-select" name="status" onchange="this.form.submit()">
+        <option value="all" {% if current_status == 'all' %}selected{% endif %}>Todos</option>
+        <option value="pendiente" {% if current_status == 'pendiente' %}selected{% endif %}>Pendiente</option>
+        <option value="disponible" {% if current_status == 'disponible' %}selected{% endif %}>Disponible</option>
+        <option value="pagada" {% if current_status == 'pagada' %}selected{% endif %}>Pagada</option>
+        <option value="anulada" {% if current_status == 'anulada' %}selected{% endif %}>Anulada</option>
+      </select>
+    </div>
+  </div>
+</form>
+
+<form method="post" action="{{ url_for('referrals.admin_referrals_register_payout') }}">
+  <div class="card">
+    <div class="table-responsive">
+      <table class="table mb-0 align-middle">
+        <thead><tr><th></th><th>ID</th><th>Vendedor</th><th>Cliente</th><th>Comision</th><th>Estado</th><th>Disponible</th></tr></thead>
+        <tbody>
+        {% for row in commissions %}
+          <tr>
+            <td>
+              {% if row.status == 'disponible' %}
+                <input type="checkbox" name="commission_ids" value="{{ row.id }}" data-seller-id="{{ row.seller_id }}" class="commission-check">
+              {% endif %}
+            </td>
+            <td>{{ row.id }}</td>
+            <td>{{ row.seller.user.username if row.seller and row.seller.user else 'N/A' }}</td>
+            <td>{{ row.company.name if row.company else 'N/A' }}</td>
+            <td>${{ '%.2f'|format(row.commission_amount or 0) }}</td>
+            <td><span class="badge text-bg-{% if row.status == 'pagada' %}success{% elif row.status == 'disponible' %}warning{% elif row.status == 'anulada' %}danger{% else %}secondary{% endif %}">{{ row.status }}</span></td>
+            <td>{{ row.available_at.strftime('%Y-%m-%d') if row.available_at else '-' }}</td>
+          </tr>
+        {% else %}
+          <tr><td colspan="7" class="text-center text-muted">Sin comisiones.</td></tr>
+        {% endfor %}
+        </tbody>
+      </table>
+    </div>
+  </div>
+
+  <div class="card mt-3">
+    <div class="card-header">Registrar pago</div>
+    <div class="card-body row g-2">
+      <input type="hidden" name="seller_id" id="seller_id">
+      <div class="col-md-3"><input type="date" class="form-control" name="transfer_date" required></div>
+      <div class="col-md-3"><input class="form-control" name="transfer_number" placeholder="Numero de transferencia"></div>
+      <div class="col-md-3"><input class="form-control" name="receipt" placeholder="Comprobante"></div>
+      <div class="col-md-3"><input class="form-control" name="observations" placeholder="Observaciones"></div>
+      <div class="col-12 text-end"><button class="btn btn-primary">Registrar pago de seleccionadas</button></div>
+    </div>
+  </div>
+</form>
+
+<script>
+  document.addEventListener('change', function (event) {
+    if (!event.target.classList.contains('commission-check')) return;
+    const checks = Array.from(document.querySelectorAll('.commission-check:checked'));
+    const sellerIdInput = document.getElementById('seller_id');
+    if (!checks.length) {
+      sellerIdInput.value = '';
+      return;
+    }
+    const sellerIds = [...new Set(checks.map(c => c.dataset.sellerId))];
+    if (sellerIds.length > 1) {
+      alert('Solo puedes seleccionar comisiones de un mismo vendedor por pago.');
+      event.target.checked = false;
+      return;
+    }
+    sellerIdInput.value = sellerIds[0];
+  });
+</script>
+{% endblock %}

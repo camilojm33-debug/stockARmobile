@@ -4,6 +4,8 @@ from __future__ import annotations
 
 import json
 import os
+import secrets
+import string
 from datetime import datetime, timedelta
 from io import BytesIO
 
@@ -18,6 +20,11 @@ from config.billing_config import load_billing_config
 from services.plan_service import PlanService
 
 bp = Blueprint("saas", __name__)
+
+
+def _temporary_password(length: int = 12) -> str:
+    alphabet = string.ascii_letters + string.digits
+    return "".join(secrets.choice(alphabet) for _ in range(length))
 
 
 def _require_superadmin():
@@ -407,6 +414,35 @@ def company_update(company_id):
     return _redirect_back("saas.companies_panel")
 
 
+@bp.route("/companies/<int:company_id>/pin/assign", methods=["POST"])
+@superadmin_required
+def company_assign_pin(company_id):
+    from app import AuditLog, Company, db
+    from services.company_security_service import CompanySecurityService
+
+    _require_superadmin()
+    company = Company.query.filter_by(id=company_id).first_or_404()
+    raw_pin = (request.form.get("admin_pin") or "").strip()
+    if not CompanySecurityService.is_valid_pin(raw_pin):
+        flash("El PIN debe ser numerico y de 4 digitos.", "danger")
+        return redirect(url_for("saas.company_detail", company_id=company.id))
+
+    CompanySecurityService.set_pin(company, raw_pin)
+    db.session.add(
+        AuditLog(
+            user_id=current_user.id,
+            company_id=company.id,
+            action="company_pin_assigned",
+            entity="company",
+            entity_id=company.id,
+            detail=f"PIN Mi Empresa asignado/actualizado por superadmin. ip={request.remote_addr or 'unknown'} resultado=ok",
+        )
+    )
+    db.session.commit()
+    flash("PIN asignado correctamente.", "success")
+    return redirect(url_for("saas.company_detail", company_id=company.id))
+
+
 @bp.route("/companies/<int:company_id>/delete", methods=["POST"])
 @superadmin_required
 def company_delete(company_id):
@@ -757,6 +793,89 @@ def users_panel():
     return render_template("saas/users.html", users=users)
 
 
+@bp.route("/password-recovery")
+@superadmin_required
+def password_recovery_panel():
+    from app import PasswordRecoveryRequest
+
+    _require_superadmin()
+    status = (request.args.get("status") or "all").strip().lower()
+    query = PasswordRecoveryRequest.query
+    if status in {"pendiente", "atendida", "cerrada"}:
+        query = query.filter(PasswordRecoveryRequest.status == status)
+    items = query.order_by(PasswordRecoveryRequest.requested_at.desc()).all()
+    temp_password = session.pop("password_recovery_temp_password", None)
+    temp_password_user = session.pop("password_recovery_temp_password_user", None)
+    return render_template(
+        "saas/password_recovery.html",
+        items=items,
+        current_status=status,
+        temp_password=temp_password,
+        temp_password_user=temp_password_user,
+    )
+
+
+@bp.route("/password-recovery/<int:request_id>/status", methods=["POST"])
+@superadmin_required
+def password_recovery_update_status(request_id):
+    from app import PasswordRecoveryRequest, db
+
+    _require_superadmin()
+    item = PasswordRecoveryRequest.query.filter_by(id=request_id).first_or_404()
+    status = (request.form.get("status") or "").strip().lower()
+    if status not in {"pendiente", "atendida", "cerrada"}:
+        flash("Estado invalido.", "danger")
+        return _redirect_back("saas.password_recovery_panel")
+
+    item.status = status
+    if status in {"atendida", "cerrada"}:
+        item.processed_at = utcnow()
+        item.processed_by_user_id = current_user.id
+    else:
+        item.processed_at = None
+        item.processed_by_user_id = None
+    db.session.commit()
+    flash("Estado actualizado.", "success")
+    return _redirect_back("saas.password_recovery_panel")
+
+
+@bp.route("/password-recovery/<int:request_id>/reset", methods=["POST"])
+@superadmin_required
+def password_recovery_reset(request_id):
+    from app import PasswordRecoveryRequest, User, db, record_audit
+
+    _require_superadmin()
+    item = PasswordRecoveryRequest.query.filter_by(id=request_id).first_or_404()
+    user = db.session.get(User, item.user_id)
+    if user is None:
+        flash("Usuario no encontrado.", "danger")
+        return _redirect_back("saas.password_recovery_panel")
+
+    temp_password = _temporary_password()
+    user.set_password(temp_password)
+    user.must_change_password = True
+
+    item.status = "atendida"
+    item.processed_at = utcnow()
+    item.processed_by_user_id = current_user.id
+
+    record_audit(
+        action="password_recovery_reset",
+        entity="password_recovery_request",
+        entity_id=item.id,
+        detail=f"Password temporal generada para user_id={user.id}",
+        user_id=current_user.id,
+        company_id=item.company_id,
+    )
+    db.session.commit()
+
+    # Mostrar una sola vez en la pantalla de recuperacion.
+    session["password_recovery_temp_password"] = temp_password
+    session["password_recovery_temp_password_user"] = user.username
+    flash("Contrasena temporal generada. Se mostrara una sola vez.", "warning")
+    return _redirect_back("saas.password_recovery_panel")
+
+
 @bp.route("/plans")
 @superadmin_required
 def plans_panel():
@@ -864,13 +983,94 @@ def global_settings():
     settings_snapshot = {
         "app_url": os.environ.get("APP_URL") or "",
         "secret_key_configured": bool(os.environ.get("SECRET_KEY")),
-        "google_client_id_configured": bool(os.environ.get("GOOGLE_CLIENT_ID")),
-        "google_client_secret_configured": bool(os.environ.get("GOOGLE_CLIENT_SECRET")),
         "mp_access_token_configured": bool(os.environ.get("MP_ACCESS_TOKEN")),
         "mp_public_key_configured": bool(os.environ.get("MP_PUBLIC_KEY")),
         "mp_webhook_secret_configured": bool(os.environ.get("MP_WEBHOOK_SECRET")),
     }
     return render_template("saas/settings.html", settings_snapshot=settings_snapshot)
+
+
+@bp.route("/landing/testimonials", methods=["GET", "POST"])
+@superadmin_required
+def landing_testimonials_panel():
+    from app import LandingTestimonial, db
+
+    _require_superadmin()
+    if request.method == "POST":
+        author_name = (request.form.get("author_name") or "").strip()
+        company_name = (request.form.get("company_name") or "").strip()
+        quote = (request.form.get("quote") or "").strip()
+        active = (request.form.get("active") or "1") == "1"
+
+        if not author_name or not quote:
+            flash("Autor y testimonio son obligatorios.", "danger")
+            return redirect(url_for("saas.landing_testimonials_panel"))
+
+        row = LandingTestimonial(
+            author_name=author_name[:120],
+            company_name=company_name[:160] or None,
+            quote=quote,
+            active=active,
+        )
+        db.session.add(row)
+        db.session.commit()
+        flash("Testimonio guardado correctamente.", "success")
+        return redirect(url_for("saas.landing_testimonials_panel"))
+
+    testimonials = LandingTestimonial.query.order_by(LandingTestimonial.created_at.desc()).all()
+    return render_template("saas/landing_testimonials.html", testimonials=testimonials)
+
+
+@bp.route("/landing/testimonials/<int:testimonial_id>/toggle", methods=["POST"])
+@superadmin_required
+def landing_testimonials_toggle(testimonial_id):
+    from app import LandingTestimonial, db
+
+    _require_superadmin()
+    row = LandingTestimonial.query.filter_by(id=testimonial_id).first_or_404()
+    row.active = not row.active
+    db.session.commit()
+    flash("Estado del testimonio actualizado.", "success")
+    return redirect(url_for("saas.landing_testimonials_panel"))
+
+
+@bp.route("/landing/testimonials/<int:testimonial_id>/update", methods=["POST"])
+@superadmin_required
+def landing_testimonials_update(testimonial_id):
+    from app import LandingTestimonial, db
+
+    _require_superadmin()
+    row = LandingTestimonial.query.filter_by(id=testimonial_id).first_or_404()
+
+    author_name = (request.form.get("author_name") or "").strip()
+    company_name = (request.form.get("company_name") or "").strip()
+    quote = (request.form.get("quote") or "").strip()
+    active = (request.form.get("active") or "1") == "1"
+
+    if not author_name or not quote:
+        flash("Autor y testimonio son obligatorios para actualizar.", "danger")
+        return redirect(url_for("saas.landing_testimonials_panel"))
+
+    row.author_name = author_name[:120]
+    row.company_name = company_name[:160] or None
+    row.quote = quote
+    row.active = active
+    db.session.commit()
+    flash("Testimonio actualizado correctamente.", "success")
+    return redirect(url_for("saas.landing_testimonials_panel"))
+
+
+@bp.route("/landing/testimonials/<int:testimonial_id>/delete", methods=["POST"])
+@superadmin_required
+def landing_testimonials_delete(testimonial_id):
+    from app import LandingTestimonial, db
+
+    _require_superadmin()
+    row = LandingTestimonial.query.filter_by(id=testimonial_id).first_or_404()
+    db.session.delete(row)
+    db.session.commit()
+    flash("Testimonio eliminado.", "warning")
+    return redirect(url_for("saas.landing_testimonials_panel"))
 
 
 @bp.route("/metrics.xlsx")

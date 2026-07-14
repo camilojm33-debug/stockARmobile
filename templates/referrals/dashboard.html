@@ -1,0 +1,63 @@
+{% extends "base_master.html" %}
+{% block title %}Panel de vendedor{% endblock %}
+{% block content %}
+<div class="d-flex justify-content-between align-items-center mb-3">
+  <h1 class="h4 mb-0">Panel de Referidos</h1>
+  <span class="badge text-bg-primary">Codigo: {{ profile.referral_code }}</span>
+</div>
+
+<div class="alert alert-info">
+  Tu link de vendedor: <a href="{{ profile.referral_url }}" target="_blank">{{ profile.referral_url }}</a>
+</div>
+
+<div class="row g-3 mb-4">
+  <div class="col-md-2"><div class="card card-body"><small>Clientes</small><strong class="fs-5">{{ snapshot.total_clients }}</strong></div></div>
+  <div class="col-md-2"><div class="card card-body"><small>Activos</small><strong class="fs-5">{{ snapshot.active_clients }}</strong></div></div>
+  <div class="col-md-2"><div class="card card-body"><small>Pendientes</small><strong class="fs-5">{{ snapshot.pending_clients }}</strong></div></div>
+  <div class="col-md-2"><div class="card card-body"><small>Ventas mes</small><strong class="fs-5">{{ snapshot.month_sales }}</strong></div></div>
+  <div class="col-md-2"><div class="card card-body"><small>Renovaciones</small><strong class="fs-5">{{ snapshot.renewals }}</strong></div></div>
+  <div class="col-md-2"><div class="card card-body"><small>Conversion</small><strong class="fs-5">{{ snapshot.conversion }}%</strong></div></div>
+</div>
+
+<div class="row g-3 mb-4">
+  <div class="col-md-3"><div class="card card-body"><small>Comision pendiente</small><strong>${{ '%.2f'|format(snapshot.commissions_by_status.pendiente or 0) }}</strong></div></div>
+  <div class="col-md-3"><div class="card card-body"><small>Comision disponible</small><strong>${{ '%.2f'|format(snapshot.commissions_by_status.disponible or 0) }}</strong></div></div>
+  <div class="col-md-3"><div class="card card-body"><small>Comision pagada</small><strong>${{ '%.2f'|format(snapshot.commissions_by_status.pagada or 0) }}</strong></div></div>
+  <div class="col-md-3"><div class="card card-body"><small>Comision anulada</small><strong>${{ '%.2f'|format(snapshot.commissions_by_status.anulada or 0) }}</strong></div></div>
+</div>
+
+<div class="card mb-4">
+  <div class="card-header">Medallas</div>
+  <div class="card-body">
+    {% if medals %}
+      {% for target in medals %}
+        <span class="badge text-bg-success me-1">{{ target }} clientes</span>
+      {% endfor %}
+    {% else %}
+      <span class="text-muted">Aun no alcanzas medallas. Objetivo inicial: 1 cliente activo.</span>
+    {% endif %}
+  </div>
+</div>
+
+<div class="card">
+  <div class="card-header">Ultimas comisiones</div>
+  <div class="table-responsive">
+    <table class="table mb-0">
+      <thead><tr><th>ID</th><th>Cliente</th><th>Venta</th><th>Comision</th><th>Estado</th></tr></thead>
+      <tbody>
+      {% for row in snapshot.commissions[:20] %}
+        <tr>
+          <td>{{ row.id }}</td>
+          <td>{{ row.company.name if row.company else 'N/A' }}</td>
+          <td>${{ '%.2f'|format(row.sold_amount or 0) }}</td>
+          <td>${{ '%.2f'|format(row.commission_amount or 0) }}</td>
+          <td>{{ row.status }}</td>
+        </tr>
+      {% else %}
+        <tr><td colspan="5" class="text-center text-muted">No hay comisiones aun.</td></tr>
+      {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</div>
+{% endblock %}

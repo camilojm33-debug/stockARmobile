@@ -2,17 +2,120 @@
 
 from __future__ import annotations
 
+from datetime import datetime, timedelta
+
 from flask import Blueprint, current_app, flash, jsonify, redirect, render_template, request, url_for
 from flask_login import current_user
+from sqlalchemy import case, func
 
 from app import company_admin_required, csrf, tenant_required
 from config.billing_config import load_billing_config
 from services.billing_service import BillingService
+from services.company_security_service import CompanySecurityService
 from services.plan_service import PlanService
+from services.plan_usage_service import PlanUsageService
+from services.referral_service import ReferralService
 from services.subscription_service import SubscriptionService
 from services.webhook_service import WebhookService
 
 bp = Blueprint("company_billing", __name__)
+
+
+def _parse_date(value):
+    raw = (value or "").strip()
+    if not raw:
+        return None
+    try:
+        return datetime.strptime(raw, "%Y-%m-%d")
+    except ValueError:
+        return None
+
+
+def _pin_session_key(company_id):
+    return f"company_pin_verified_{company_id}"
+
+
+def _is_pin_verified(company_id):
+    from flask import session
+
+    return bool(session.get(_pin_session_key(company_id)))
+
+
+def _mark_pin_verified(company_id, verified=True):
+    from flask import session
+
+    key = _pin_session_key(company_id)
+    if verified:
+        session[key] = True
+    else:
+        session.pop(key, None)
+
+
+def _load_company(company_id):
+    from app import Company
+
+    return Company.query.filter_by(id=company_id).first_or_404()
+
+
+def _build_user_and_cash_rows(company_id, date_from=None, date_to=None):
+    from app import CashMovement, Sale, User, db
+
+    users = (
+        User.query.filter_by(company_id=company_id)
+        .order_by(User.created_at.asc(), User.id.asc())
+        .all()
+    )
+
+    sales_query = db.session.query(
+        Sale.seller_id.label("user_id"),
+        func.count(Sale.id).label("sales_count"),
+        func.coalesce(func.sum(Sale.total_amount), 0).label("total_sold"),
+    ).filter(Sale.company_id == company_id)
+    movement_query = db.session.query(
+        CashMovement.user_id.label("user_id"),
+        func.coalesce(func.sum(case((CashMovement.movement_type == "ingreso", CashMovement.amount), else_=0)), 0).label("ingresos"),
+        func.coalesce(func.sum(case((CashMovement.movement_type == "egreso", CashMovement.amount), else_=0)), 0).label("egresos"),
+    ).filter(CashMovement.company_id == company_id)
+
+    if date_from:
+        sales_query = sales_query.filter(Sale.date >= date_from)
+        movement_query = movement_query.filter(CashMovement.created_at >= date_from)
+    if date_to:
+        until = date_to + timedelta(days=1)
+        sales_query = sales_query.filter(Sale.date < until)
+        movement_query = movement_query.filter(CashMovement.created_at < until)
+
+    sales_rows = {
+        int(row.user_id): row
+        for row in sales_query.group_by(Sale.seller_id).all()
+        if row.user_id is not None
+    }
+    movement_rows = {
+        int(row.user_id): row
+        for row in movement_query.group_by(CashMovement.user_id).all()
+        if row.user_id is not None
+    }
+
+    result_rows = []
+    for user in users:
+        sales_data = sales_rows.get(user.id)
+        movement_data = movement_rows.get(user.id)
+        total_sold = float(getattr(sales_data, "total_sold", 0) or 0)
+        sales_count = int(getattr(sales_data, "sales_count", 0) or 0)
+        ingresos = float(getattr(movement_data, "ingresos", 0) or 0)
+        egresos = float(getattr(movement_data, "egresos", 0) or 0)
+        saldo = ingresos - egresos
+        result_rows.append(
+            {
+                "user": user,
+                "total_sold": total_sold,
+                "sales_count": sales_count,
+                "ingresos": ingresos,
+                "egresos": egresos,
+                "saldo": saldo,
+            }
+        )
+    return users, result_rows
 
 
 @bp.route("/portal")
@@ -32,11 +135,13 @@ def subscription_portal():
         subscription = SubscriptionService.ensure_company_trial(db.session, company=company, trial_plan=trial_plan)
         db.session.commit()
 
+    usage_snapshot = PlanUsageService.usage_snapshot(company.id)
     return render_template(
         "company_billing/portal.html",
         company=company,
         plans=plans,
         subscription=subscription,
+        usage_snapshot=usage_snapshot,
         mp_config=load_billing_config(),
     )
 
@@ -56,7 +161,14 @@ def create_checkout():
         return redirect(url_for("company_billing.subscription_portal"))
 
     if float(plan.price or 0) <= 0:
-        SubscriptionService.start_or_change_plan(db.session, company=company, plan=plan, user_id=current_user.id)
+        subscription = SubscriptionService.start_or_change_plan(db.session, company=company, plan=plan, user_id=current_user.id)
+        ReferralService.create_commission_for_sale(
+            db.session,
+            company_id=company.id,
+            subscription=subscription,
+            payment=None,
+            plan=plan,
+        )
         record_audit(action="subscription_change", entity="subscription", detail=f"Plan actualizado a {plan.code or plan.name}")
         db.session.commit()
         flash("Plan actualizado correctamente.", "success")
@@ -114,29 +226,159 @@ def reactivate_subscription():
 @bp.route("/payment-qr-settings", methods=["POST"])
 @company_admin_required
 def payment_qr_settings():
-    from app import Company, db
+    from app import db, record_audit
 
     company_id = getattr(current_user, "company_id", None)
-    company = Company.query.filter_by(id=company_id).first_or_404()
+    company = _load_company(company_id)
 
+    company.name = (request.form.get("name") or company.name or "").strip()[:160] or company.name
+    company.legal_name = (request.form.get("legal_name") or "").strip()[:160] or None
+    company.address = (request.form.get("address") or "").strip()[:255] or None
+    company.phone = (request.form.get("phone") or "").strip()[:40] or None
+    company.contact_email = (request.form.get("contact_email") or "").strip()[:160] or None
+    company.logo = (request.form.get("logo") or "").strip()[:255] or None
+    company.tax_id = (request.form.get("tax_id") or "").strip()[:50] or None
     company.payment_alias = (request.form.get("payment_alias") or "").strip() or None
     company.payment_cbu = (request.form.get("payment_cbu") or "").strip() or None
     company.payment_cvu = (request.form.get("payment_cvu") or "").strip() or None
     company.payment_qr_text = (request.form.get("payment_qr_text") or "").strip() or None
     company.payment_qr_url = (request.form.get("payment_qr_url") or "").strip() or None
 
+    record_audit(action="company_settings_update", entity="company", entity_id=company.id, detail="Datos de Mi Empresa actualizados")
+
     if not any([company.payment_alias, company.payment_cbu, company.payment_cvu, company.payment_qr_text, company.payment_qr_url]):
         flash("Guardado. Agrega al menos un dato para generar el QR de cobro.", "warning")
     else:
         flash("Datos de cobro QR guardados correctamente.", "success")
     db.session.commit()
-    return redirect(url_for("company_billing.subscription_portal"))
+    return redirect(url_for("company_billing.company_settings"))
+
+
+@bp.route("/company-settings/pin/verify", methods=["POST"])
+@company_admin_required
+def company_settings_pin_verify():
+    from app import db, record_audit, utcnow
+
+    company_id = getattr(current_user, "company_id", None)
+    company = _load_company(company_id)
+
+    if not company.business_pin_hash:
+        flash("El PIN no esta configurado. Solicita al Super Administrador que lo asigne.", "warning")
+        return redirect(url_for("company_billing.company_settings"))
+
+    remaining = CompanySecurityService.remaining_block_seconds(company, now=utcnow())
+    if remaining > 0:
+        flash(f"Acceso bloqueado temporalmente. Intenta en {remaining} segundos.", "danger")
+        return redirect(url_for("company_billing.company_settings"))
+
+    pin = request.form.get("access_pin")
+    if CompanySecurityService.verify_pin(company, pin):
+        CompanySecurityService.reset_attempts(company)
+        _mark_pin_verified(company.id, True)
+        record_audit(action="company_settings_pin_ok", entity="company", entity_id=company.id, detail="PIN Mi Empresa validado")
+        db.session.commit()
+        flash("PIN correcto. Acceso concedido a Mi Empresa.", "success")
+        return redirect(url_for("company_billing.company_settings"))
+
+    attempts, blocked = CompanySecurityService.register_failed_attempt(company)
+    record_audit(action="company_settings_pin_failed", entity="company", entity_id=company.id, detail=f"Intento PIN fallido #{attempts}")
+    db.session.commit()
+    if blocked:
+        flash("Demasiados intentos fallidos. Acceso bloqueado temporalmente.", "danger")
+    else:
+        flash("PIN incorrecto.", "danger")
+    return redirect(url_for("company_billing.company_settings"))
+
+
+@bp.route("/company-settings/pin/change", methods=["POST"])
+@company_admin_required
+def company_settings_pin_change():
+    flash("Solo el Super Administrador puede asignar o cambiar el PIN.", "warning")
+    return redirect(url_for("company_billing.company_settings"))
+
+
+@bp.route("/company-settings/pin/logout", methods=["POST"])
+@company_admin_required
+def company_settings_pin_logout():
+    company_id = getattr(current_user, "company_id", None)
+    _mark_pin_verified(company_id, False)
+    flash("Se cerro la sesion de seguridad de Mi Empresa.", "info")
+    return redirect(url_for("company_billing.company_settings"))
+
+
+@bp.route("/company-settings/users/<int:user_id>/update", methods=["POST"])
+@company_admin_required
+def company_settings_user_update(user_id):
+    from app import User, db, record_audit
+
+    company_id = getattr(current_user, "company_id", None)
+    company = _load_company(company_id)
+    if not _is_pin_verified(company.id):
+        flash("Debes validar PIN para gestionar usuarios.", "warning")
+        return redirect(url_for("company_billing.company_settings"))
+
+    user = User.query.filter_by(id=user_id, company_id=company.id).first_or_404()
+    full_name = (request.form.get("full_name") or "").strip()[:160]
+    if full_name:
+        parts = full_name.split(" ", 1)
+        user.first_name = parts[0][:80]
+        user.last_name = (parts[1] if len(parts) > 1 else "")[:80] or None
+    record_audit(action="company_user_name_update", entity="user", entity_id=user.id, detail=f"Nombre actualizado para {user.username}")
+    db.session.commit()
+    flash("Usuario actualizado correctamente.", "success")
+    return redirect(url_for("company_billing.company_settings"))
+
+
+@bp.route("/company-settings/users/<int:user_id>/toggle", methods=["POST"])
+@company_admin_required
+def company_settings_user_toggle(user_id):
+    from app import User, db, record_audit
+
+    company_id = getattr(current_user, "company_id", None)
+    company = _load_company(company_id)
+    if not _is_pin_verified(company.id):
+        flash("Debes validar PIN para gestionar usuarios.", "warning")
+        return redirect(url_for("company_billing.company_settings"))
+
+    user = User.query.filter_by(id=user_id, company_id=company.id).first_or_404()
+    if user.id == current_user.id and user.active:
+        flash("No puedes desactivar tu propio usuario administrador.", "warning")
+        return redirect(url_for("company_billing.company_settings"))
+
+    user.active = not user.active
+    record_audit(action="company_user_toggle", entity="user", entity_id=user.id, detail=f"Usuario {'activado' if user.active else 'desactivado'}")
+    db.session.commit()
+    flash(f"Usuario {'activado' if user.active else 'desactivado'} correctamente.", "success")
+    return redirect(url_for("company_billing.company_settings"))
 
 
 @bp.route("/company-settings")
 @company_admin_required
 def company_settings():
-    return render_template("company_billing/settings.html")
+    company_id = getattr(current_user, "company_id", None)
+    company = _load_company(company_id)
+
+    pin_verified = _is_pin_verified(company.id)
+    date_from_raw = request.args.get("from") or ""
+    date_to_raw = request.args.get("to") or ""
+    date_from = _parse_date(date_from_raw)
+    date_to = _parse_date(date_to_raw)
+
+    users = []
+    cash_rows = []
+    if pin_verified:
+        users, cash_rows = _build_user_and_cash_rows(company.id, date_from=date_from, date_to=date_to)
+
+    return render_template(
+        "company_billing/settings.html",
+        company=company,
+        users=users,
+        cash_rows=cash_rows,
+        pin_verified=pin_verified,
+        date_from=date_from_raw,
+        date_to=date_to_raw,
+        pin_block_seconds=CompanySecurityService.remaining_block_seconds(company),
+    )
 
 
 @bp.route("/webhooks/mercadopago", methods=["POST"])

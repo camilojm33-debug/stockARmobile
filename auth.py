@@ -1,86 +1,12 @@
-"""
-Blueprint de Autenticación: Login, Registro y Google OAuth.
-"""
+"""Blueprint de autenticacion: login, registro y recuperacion de contrasena."""
 
-import os
-import secrets
 from datetime import timedelta
 from urllib.parse import urlsplit
 
-from authlib.integrations.flask_client import OAuth
 from flask import Blueprint, flash, redirect, render_template, request, session, url_for
 from flask_login import current_user, login_required, login_user, logout_user
 
-bp = Blueprint('auth', __name__, template_folder='templates')
-oauth = OAuth()
-_google_oauth_enabled = False
-
-
-def init_oauth(app):
-    global _google_oauth_enabled
-    client_id = (app.config.get("GOOGLE_CLIENT_ID") or os.environ.get("GOOGLE_CLIENT_ID") or "").strip()
-    client_secret = (app.config.get("GOOGLE_CLIENT_SECRET") or os.environ.get("GOOGLE_CLIENT_SECRET") or "").strip()
-    _google_oauth_enabled = bool(client_id and client_secret)
-    if _google_oauth_enabled:
-        oauth.register(
-            name="google",
-            client_id=client_id,
-            client_secret=client_secret,
-            server_metadata_url="https://accounts.google.com/.well-known/openid-configuration",
-            client_kwargs={"scope": "openid email profile"},
-        )
-    return _google_oauth_enabled
-
-
-def google_oauth_enabled():
-    return _google_oauth_enabled
-
-
-def _google_client():
-    if not _google_oauth_enabled:
-        return None
-    return oauth.create_client("google")
-
-
-def _safe_username(base_username):
-    from app import User
-
-    candidate = (base_username or "google-user").strip().lower() or "google-user"
-    index = 1
-    while User.query.filter_by(username=candidate).first() is not None:
-        candidate = f"{(base_username or 'google-user').strip().lower()}-{index}"
-        index += 1
-    return candidate
-
-
-def _seed_google_company_and_subscription(display_name):
-    from app import Company, Plan, Subscription, db, utcnow
-
-    company = Company(
-        name=display_name or "StockArmobile",
-        active=True,
-        trial_ends_at=utcnow() + timedelta(days=10),
-    )
-    db.session.add(company)
-    db.session.flush()
-
-    trial_plan = Plan.query.filter_by(code="trial").first() or Plan.query.order_by(Plan.id.asc()).first()
-    if trial_plan is not None:
-        db.session.add(
-            Subscription(
-                company_id=company.id,
-                plan_id=trial_plan.id,
-                status="trial",
-                trial_end=company.trial_ends_at,
-                start_date=utcnow(),
-                starts_at=utcnow(),
-                ends_at=company.trial_ends_at,
-                next_billing_date=company.trial_ends_at,
-                renewal_enabled=True,
-                auto_renew=True,
-            )
-        )
-    return company
+bp = Blueprint("auth", __name__, template_folder="templates")
 
 
 def _login_user_and_bind_company(user, remember=False):
@@ -89,64 +15,7 @@ def _login_user_and_bind_company(user, remember=False):
 
 
 def _post_login_redirect():
-    from flask_login import current_user
-    return url_for('saas.index') if getattr(current_user, 'role', None) == 'superadmin' else url_for('dashboard.index')
-
-
-def _google_upsert_user(userinfo):
-    from app import User, db, generate_password_hash
-
-    email = (userinfo.get("email") or "").strip().lower()
-    if not email:
-        return None, "No se recibió un correo válido desde Google."
-    if not userinfo.get("email_verified"):
-        return None, "El correo de Google no fue verificado."
-
-    google_sub = (userinfo.get("sub") or "").strip() or None
-    first_name = (userinfo.get("given_name") or "").strip() or None
-    last_name = (userinfo.get("family_name") or "").strip() or None
-    avatar_url = (userinfo.get("picture") or "").strip() or None
-    display_name = (userinfo.get("name") or " ".join(part for part in [first_name, last_name] if part) or email.split("@")[0]).strip()
-
-    user = None
-    if google_sub:
-        user = User.query.filter_by(google_sub=google_sub).first()
-    if user is None:
-        user = User.query.filter(db.func.lower(User.email) == email).first()
-
-    if user is None:
-        company = _seed_google_company_and_subscription(display_name)
-        user = User(
-            username=_safe_username(email.split("@")[0]),
-            email=email,
-            password_hash=generate_password_hash(secrets.token_urlsafe(48)),
-            first_name=first_name,
-            last_name=last_name,
-            avatar_url=avatar_url,
-            auth_provider="google",
-            google_sub=google_sub,
-            role="user",
-            active=True,
-            company_id=company.id,
-        )
-        db.session.add(user)
-        db.session.commit()
-        return user, None
-
-    if user.company_id is None:
-        company = _seed_google_company_and_subscription(display_name)
-        user.company_id = company.id
-    user.first_name = first_name or user.first_name
-    user.last_name = last_name or user.last_name
-    user.avatar_url = avatar_url or user.avatar_url
-    user.google_sub = google_sub or user.google_sub
-    user.auth_provider = "google"
-    if not user.active:
-        user.active = True
-    if not user.password_hash:
-        user.password_hash = generate_password_hash(secrets.token_urlsafe(48))
-    db.session.commit()
-    return user, None
+    return url_for("saas.index") if getattr(current_user, "role", None) == "superadmin" else url_for("dashboard.index")
 
 
 def _is_safe_redirect(target):
@@ -156,96 +25,155 @@ def _is_safe_redirect(target):
     return not parsed.netloc and parsed.path.startswith("/")
 
 
-@bp.route('/login', methods=['GET', 'POST'])
+@bp.route("/login", methods=["GET", "POST"])
 def login():
-    """Login de usuario"""
+    """Login de usuario local."""
     from app import LoginForm, User, db, record_audit
-    
-    if request.method == 'POST':
+
+    if request.method == "POST":
         form = LoginForm()
         if "email" in request.form and "username" not in request.form:
             form.username.data = request.form.get("email", "")
         if form.validate_on_submit():
             username_or_email = form.username.data.strip().lower()
-            
+
             user = User.query.filter(
                 (db.func.lower(User.username) == username_or_email)
                 | (db.func.lower(User.email) == username_or_email)
             ).first()
-            
+
             if user and user.active and user.check_password(form.password.data):
                 _login_user_and_bind_company(user, remember=form.remember.data)
                 record_audit(action="login_success", entity="user", entity_id=user.id, detail="Inicio de sesion exitoso")
                 db.session.commit()
-                next_page = request.args.get('next')
+                if getattr(user, "must_change_password", False):
+                    flash("Debes cambiar tu contrasena para continuar.", "warning")
+                    return redirect(url_for("auth.force_password_change"))
+                next_page = request.args.get("next")
                 if not _is_safe_redirect(next_page):
                     next_page = None
-                flash('Inicio de sesión exitoso', 'success')
+                flash("Inicio de sesion exitoso", "success")
                 return redirect(next_page if next_page else _post_login_redirect())
-            
+
             record_audit(action="login_failed", entity="user", detail=f"Intento de login fallido: {username_or_email}")
             db.session.commit()
-            flash('Usuario o contraseña incorrectos.', 'danger')
-    
+            flash("Usuario o contrasena incorrectos.", "danger")
+
     form = LoginForm()
-    return render_template('auth/login.html', form=form, google_oauth_enabled=google_oauth_enabled())
+    return render_template("auth/login.html", form=form)
 
 
-@bp.route('/google')
-def google_login():
-    client = _google_client()
-    if client is None:
-        return redirect(url_for('auth.login'))
-    redirect_uri = url_for('auth.google_callback', _external=True)
-    return client.authorize_redirect(redirect_uri)
+@bp.route("/forgot-password", methods=["GET", "POST"])
+def forgot_password():
+    from app import PasswordRecoveryRequest, User, db, record_audit
+
+    if request.method == "POST":
+        email = (request.form.get("email") or "").strip().lower()
+        if not email:
+            flash("Debes ingresar un correo electronico.", "danger")
+            return render_template("auth/forgot_password.html", email="")
+
+        user = User.query.filter(db.func.lower(User.email) == email).first()
+        if user is not None:
+            existing = (
+                PasswordRecoveryRequest.query.filter_by(user_id=user.id)
+                .filter(PasswordRecoveryRequest.status.in_(["pendiente", "atendida"]))
+                .order_by(PasswordRecoveryRequest.requested_at.desc())
+                .first()
+            )
+            if existing is None:
+                req = PasswordRecoveryRequest(
+                    user_id=user.id,
+                    company_id=user.company_id,
+                    email=user.email,
+                    status="pendiente",
+                )
+                db.session.add(req)
+                db.session.flush()
+                record_audit(
+                    action="password_recovery_requested",
+                    entity="password_recovery_request",
+                    entity_id=req.id,
+                    user_id=user.id,
+                    company_id=user.company_id,
+                    detail="Solicitud de recuperacion creada desde login.",
+                )
+                db.session.commit()
+
+        # Mensaje neutro para no revelar si el correo existe o no.
+        flash("Solicitud registrada. El administrador la revisara.", "info")
+        return redirect(url_for("auth.login"))
+
+    return render_template("auth/forgot_password.html", email="")
 
 
-@bp.route('/google/callback')
-def google_callback():
-    client = _google_client()
-    if client is None:
-        return redirect(url_for('auth.login'))
+@bp.route("/force-password-change", methods=["GET", "POST"])
+@login_required
+def force_password_change():
+    from app import PasswordRecoveryRequest, db, record_audit
 
-    try:
-        client.authorize_access_token()
-        userinfo = client.get('userinfo').json()
-    except Exception:
-        flash('No se pudo completar el inicio de sesión con Google.', 'danger')
-        return redirect(url_for('auth.login'))
+    if not getattr(current_user, "must_change_password", False):
+        return redirect(_post_login_redirect())
 
-    user, error = _google_upsert_user(userinfo)
-    if error:
-        flash(error, 'danger')
-        return redirect(url_for('auth.login'))
+    if request.method == "POST":
+        new_password = (request.form.get("new_password") or "").strip()
+        confirm_password = (request.form.get("confirm_password") or "").strip()
 
-    _login_user_and_bind_company(user, remember=False)
-    from app import db, record_audit
+        if len(new_password) < 6:
+            flash("La nueva contrasena debe tener al menos 6 caracteres.", "danger")
+            return render_template("auth/force_password_change.html")
+        if new_password != confirm_password:
+            flash("Las contrasenas no coinciden.", "danger")
+            return render_template("auth/force_password_change.html")
 
-    record_audit(action="google_login_success", entity="user", entity_id=user.id, detail="Inicio de sesion Google exitoso")
-    db.session.commit()
-    flash('Inicio de sesión con Google exitoso.', 'success')
-    return redirect(_post_login_redirect())
+        current_user.set_password(new_password)
+        current_user.must_change_password = False
+
+        pending = (
+            PasswordRecoveryRequest.query.filter_by(user_id=current_user.id)
+            .filter(PasswordRecoveryRequest.status.in_(["pendiente", "atendida"]))
+            .all()
+        )
+        for item in pending:
+            item.status = "cerrada"
+            item.processed_at = db.func.now()
+
+        record_audit(
+            action="password_changed_after_recovery",
+            entity="user",
+            entity_id=current_user.id,
+            detail="Contrasena actualizada por flujo obligatorio de recuperacion.",
+            user_id=current_user.id,
+            company_id=current_user.company_id,
+        )
+        db.session.commit()
+        flash("Contrasena actualizada correctamente.", "success")
+        return redirect(_post_login_redirect())
+
+    return render_template("auth/force_password_change.html")
 
 
-@bp.route('/register', methods=['GET', 'POST'])
+@bp.route("/register", methods=["GET", "POST"])
 def register():
-    """Registro de usuario nuevo"""
+    """Registro de usuario nuevo."""
     from app import Company, RegisterForm, User, db, record_audit, utcnow
-    
-    if request.method == 'POST':
+    from services.plan_service import PlanService
+    from services.referral_service import ReferralService
+    from services.subscription_service import SubscriptionService
+
+    selected_plan_code = (request.values.get("selected_plan") or "trial").strip().lower()
+
+    if request.method == "POST":
         form = RegisterForm()
         if form.validate_on_submit():
-            # Verificar si username ya existe
             if User.query.filter_by(username=form.username.data).first():
-                flash('El nombre de usuario ya está en uso.', 'danger')
-                return redirect(url_for('auth.register'))
-            
-            # Verificar si email ya está registrado
+                flash("El nombre de usuario ya esta en uso.", "danger")
+                return redirect(url_for("auth.register"))
+
             if User.query.filter_by(email=form.email.data).first():
-                flash('Este correo electrónico ya está registrado.', 'danger')
-                return redirect(url_for('auth.register'))
-            
-            # Cada registro crea su propia empresa para mantener aislamiento tenant.
+                flash("Este correo electronico ya esta registrado.", "danger")
+                return redirect(url_for("auth.register"))
+
             company_name = f"Empresa {form.username.data.strip()}"
             company = Company(name=company_name, active=True, trial_ends_at=utcnow() + timedelta(days=10))
             db.session.add(company)
@@ -254,23 +182,49 @@ def register():
             user = User(username=form.username.data, email=form.email.data, company_id=company.id, auth_provider="local")
             user.set_password(form.password.data)
             user.role = "user"
-            
+
             db.session.add(user)
             db.session.flush()
+
+            PlanService.ensure_defaults(db.session)
+            selected_plan = PlanService.get_plan(code=selected_plan_code) or PlanService.get_plan(code="trial")
+            if selected_plan is not None and selected_plan.code != "trial":
+                SubscriptionService.start_or_change_plan(
+                    db.session,
+                    company=company,
+                    plan=selected_plan,
+                    user_id=user.id,
+                )
+
+            referral_code = (
+                (request.values.get("ref") or "").strip()
+                or (session.get("referral_code") or "").strip()
+                or (request.cookies.get("stockarmobile_ref") or "").strip()
+            )
+            seller = ReferralService.find_seller_by_code(referral_code)
+            if seller is not None:
+                ReferralService.attribute_company(
+                    db.session,
+                    seller=seller,
+                    company=company,
+                    user=user,
+                    referral_code=referral_code,
+                )
+
             record_audit(action="register_success", entity="user", entity_id=user.id, detail="Registro de usuario exitoso")
             db.session.commit()
-            
-            flash('Registro exitoso. Puedes iniciar sesión ahora.', 'success')
-            return redirect(url_for('auth.login'))
-    
+
+            flash("Registro exitoso. Puedes iniciar sesion ahora.", "success")
+            return redirect(url_for("auth.login"))
+
     form = RegisterForm()
-    return render_template('auth/register.html', form=form)
+    return render_template("auth/register.html", form=form, selected_plan=selected_plan_code)
 
 
-@bp.route('/logout', methods=['POST'])
+@bp.route("/logout", methods=["POST"])
 @login_required
 def logout():
-    """Cerrar sesión"""
+    """Cerrar sesion."""
     from app import db, record_audit
 
     if current_user.is_authenticated:
@@ -278,5 +232,5 @@ def logout():
         db.session.commit()
     logout_user()
     session.clear()
-    flash('Has cerrado la sesión.', 'info')
-    return redirect(url_for('auth.login'))
+    flash("Has cerrado la sesion.", "info")
+    return redirect(url_for("auth.login"))

@@ -14,6 +14,7 @@
         </div>
         <form method="post" action="{{ url_for('auth.register') }}">
           {{ form.hidden_tag() }}
+          <input type="hidden" name="selected_plan" value="{{ selected_plan or 'trial' }}">
           <div class="mb-3">{{ form.username.label(class_="form-label fw-semibold") }}{{ form.username(class_="form-control form-control-lg", autocomplete="username") }}</div>
           <div class="mb-3">{{ form.email.label(class_="form-label fw-semibold") }}{{ form.email(class_="form-control form-control-lg", autocomplete="email") }}</div>
           <div class="mb-4">{{ form.password.label(class_="form-label fw-semibold") }}{{ form.password(class_="form-control form-control-lg", autocomplete="new-password") }}</div>

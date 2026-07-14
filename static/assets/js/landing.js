@@ -75,4 +75,39 @@
   document.querySelectorAll("[data-counter]").forEach(function (counter) {
     counterObserver.observe(counter);
   });
+
+  const calcPlan = document.getElementById("calcPlan");
+  const calcClients = document.getElementById("calcClients");
+  const calcRevenue = document.getElementById("calcRevenue");
+  const calcCommission = document.getElementById("calcCommission");
+  const calcTotal = document.getElementById("calcTotal");
+  const calculatorRate = document.querySelector("[data-commission-percent]");
+
+  const formatARS = function (value) {
+    const number = Number.isFinite(value) ? value : 0;
+    return "ARS " + number.toLocaleString("es-AR", { maximumFractionDigits: 2 });
+  };
+
+  const refreshCalculator = function () {
+    if (!calcPlan || !calcClients || !calcRevenue || !calcCommission || !calcTotal || !calculatorRate) {
+      return;
+    }
+
+    const selected = calcPlan.options[calcPlan.selectedIndex];
+    const planPrice = parseFloat(selected?.dataset.price || "0");
+    const clientsCount = Math.max(1, parseInt(calcClients.value || "1", 10));
+    const commissionPercent = parseFloat(calculatorRate.dataset.commissionPercent || "0");
+
+    const monthlyGenerated = planPrice * clientsCount;
+    const commission = monthlyGenerated * commissionPercent;
+    const estimatedTotal = commission * 12;
+
+    calcRevenue.textContent = formatARS(monthlyGenerated);
+    calcCommission.textContent = formatARS(commission);
+    calcTotal.textContent = formatARS(estimatedTotal);
+  };
+
+  calcPlan?.addEventListener("change", refreshCalculator);
+  calcClients?.addEventListener("input", refreshCalculator);
+  refreshCalculator();
 })();

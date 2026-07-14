@@ -66,6 +66,12 @@ def new():
 @tenant_required
 def post():
     from app import Client, db, scope_query_to_company
+    from services.plan_usage_service import PlanUsageService
+
+    allowed, message = PlanUsageService.can_create(getattr(current_user, "company_id", None), PlanUsageService.RESOURCE_CLIENTS)
+    if not allowed:
+        flash(message, "warning")
+        return redirect(url_for("company_billing.subscription_portal"))
 
     client = Client(
         company_id=getattr(current_user, "company_id", None),

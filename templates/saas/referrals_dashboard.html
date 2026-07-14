@@ -1,0 +1,81 @@
+{% extends "base_master.html" %}
+{% block title %}Referidos | SuperAdmin{% endblock %}
+{% block content %}
+<div class="d-flex justify-content-between align-items-center mb-3">
+  <h1 class="h4 mb-0">Programa de Referidos</h1>
+  <div>
+    <a class="btn btn-outline-secondary btn-sm" href="{{ url_for('referrals.admin_referrals_export') }}">Exportar CSV</a>
+    <a class="btn btn-primary btn-sm" href="{{ url_for('referrals.admin_referrals_sellers') }}">Gestionar vendedores</a>
+  </div>
+</div>
+
+<div class="row g-3 mb-4">
+  <div class="col-md-2"><div class="card card-body"><small>Vendedores</small><strong class="fs-5">{{ stats.sellers_count }}</strong></div></div>
+  <div class="col-md-2"><div class="card card-body"><small>Pendientes</small><strong class="fs-5">{{ stats.pending_count }}</strong></div></div>
+  <div class="col-md-2"><div class="card card-body"><small>Pagadas</small><strong class="fs-5">{{ stats.paid_count }}</strong></div></div>
+  <div class="col-md-3"><div class="card card-body"><small>Ventas referidas</small><strong class="fs-5">${{ '%.2f'|format(stats.total_sold) }}</strong></div></div>
+  <div class="col-md-3"><div class="card card-body"><small>Comisiones pagadas</small><strong class="fs-5">${{ '%.2f'|format(stats.total_paid) }}</strong></div></div>
+</div>
+
+<div class="row g-3 mb-4">
+  <div class="col-lg-6">
+    <div class="card">
+      <div class="card-header">Top 3 vendedores</div>
+      <div class="table-responsive">
+        <table class="table mb-0">
+          <thead><tr><th>#</th><th>Vendedor</th><th>Ventas</th></tr></thead>
+          <tbody>
+          {% for row in ranking %}
+            <tr>
+              <td>{{ loop.index }}</td>
+              <td>{{ row[0].user.username if row[0] and row[0].user else 'N/A' }}</td>
+              <td>${{ '%.2f'|format(row[1] or 0) }}</td>
+            </tr>
+          {% else %}
+            <tr><td colspan="3" class="text-center text-muted">Sin datos</td></tr>
+          {% endfor %}
+          </tbody>
+        </table>
+      </div>
+    </div>
+  </div>
+  <div class="col-lg-6">
+    <div class="card card-body">
+      <h2 class="h6">Mejor vendedor</h2>
+      {% if stats.best_seller %}
+        <p class="mb-1">{{ stats.best_seller[0].user.username if stats.best_seller[0] and stats.best_seller[0].user else 'N/A' }}</p>
+        <p class="mb-0 text-muted">Ventas: ${{ '%.2f'|format(stats.best_seller[1] or 0) }}</p>
+      {% else %}
+        <p class="text-muted mb-0">Sin ventas registradas.</p>
+      {% endif %}
+    </div>
+  </div>
+</div>
+
+<div class="card">
+  <div class="card-header d-flex justify-content-between align-items-center">
+    <span>Ultimas comisiones</span>
+    <a href="{{ url_for('referrals.admin_referrals_commissions') }}" class="btn btn-sm btn-outline-primary">Ver todas</a>
+  </div>
+  <div class="table-responsive">
+    <table class="table mb-0 align-middle">
+      <thead><tr><th>ID</th><th>Vendedor</th><th>Cliente</th><th>Venta</th><th>Comision</th><th>Estado</th><th>Fecha</th></tr></thead>
+      <tbody>
+      {% for row in commissions[:20] %}
+        <tr>
+          <td>{{ row.id }}</td>
+          <td>{{ row.seller.user.username if row.seller and row.seller.user else 'N/A' }}</td>
+          <td>{{ row.company.name if row.company else 'N/A' }}</td>
+          <td>${{ '%.2f'|format(row.sold_amount or 0) }}</td>
+          <td>${{ '%.2f'|format(row.commission_amount or 0) }}</td>
+          <td><span class="badge text-bg-{% if row.status == 'pagada' %}success{% elif row.status == 'disponible' %}warning{% elif row.status == 'anulada' %}danger{% else %}secondary{% endif %}">{{ row.status }}</span></td>
+          <td>{{ row.created_at.strftime('%Y-%m-%d') if row.created_at else '-' }}</td>
+        </tr>
+      {% else %}
+        <tr><td colspan="7" class="text-center text-muted">Aun no hay comisiones.</td></tr>
+      {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</div>
+{% endblock %}

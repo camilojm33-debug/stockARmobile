@@ -217,9 +217,15 @@ def index():
 @tenant_required
 def add():
     from app import Product, ProductForm, ProductModification, db, record_audit, scope_query_to_company
+    from services.plan_usage_service import PlanUsageService
 
     form = ProductForm()
     if form.validate_on_submit():
+        allowed, message = PlanUsageService.can_create(getattr(current_user, "company_id", None), PlanUsageService.RESOURCE_PRODUCTS)
+        if not allowed:
+            flash(message, "warning")
+            return redirect(url_for("company_billing.subscription_portal"))
+
         next_id = (db.session.query(db.func.coalesce(db.func.max(Product.id), 0)).scalar() or 0) + 1
         barcode = (form.barcode.data or "").strip() or f"P{next_id:06d}"
         if scope_query_to_company(Product.query.filter_by(barcode=barcode), Product).first():

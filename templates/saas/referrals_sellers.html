@@ -1,0 +1,70 @@
+{% extends "base_master.html" %}
+{% block title %}Vendedores | Referidos{% endblock %}
+{% block content %}
+<div class="d-flex justify-content-between align-items-center mb-3">
+  <h1 class="h4 mb-0">Vendedores de Referidos</h1>
+  <a class="btn btn-outline-secondary btn-sm" href="{{ url_for('referrals.admin_referrals_dashboard') }}">Volver al panel</a>
+</div>
+
+<div class="card mb-4">
+  <div class="card-header">Crear vendedor</div>
+  <div class="card-body">
+    <form method="post" class="row g-2">
+      <div class="col-md-2"><input class="form-control" name="username" placeholder="Usuario" required></div>
+      <div class="col-md-3"><input type="email" class="form-control" name="email" placeholder="Email" required></div>
+      <div class="col-md-2"><input class="form-control" name="first_name" placeholder="Nombre"></div>
+      <div class="col-md-2"><input class="form-control" name="last_name" placeholder="Apellido"></div>
+      <div class="col-md-3"><input class="form-control" name="dni" placeholder="DNI" required></div>
+      <div class="col-md-3"><input class="form-control" name="phone" placeholder="Telefono"></div>
+      <div class="col-md-3"><input class="form-control" name="tax_id" placeholder="CUIT/CUIL"></div>
+      <div class="col-md-3"><input class="form-control" name="province" placeholder="Provincia"></div>
+      <div class="col-md-3"><input class="form-control" name="city" placeholder="Ciudad"></div>
+      <div class="col-md-3"><input class="form-control" name="address" placeholder="Direccion"></div>
+      <div class="col-md-3"><input class="form-control" name="bank" placeholder="Banco"></div>
+      <div class="col-md-3"><input class="form-control" name="alias" placeholder="Alias"></div>
+      <div class="col-md-3"><input class="form-control" name="cbu" placeholder="CBU (22 digitos)"></div>
+      <div class="col-md-3"><input class="form-control" name="account_holder" placeholder="Titular"></div>
+      <div class="col-md-2"><input class="form-control" name="temp_password" placeholder="Clave inicial"></div>
+      <div class="col-md-2">
+        <select name="active" class="form-select">
+          <option value="1">Activo</option>
+          <option value="0">Inactivo</option>
+        </select>
+      </div>
+      <div class="col-12 text-end"><button class="btn btn-primary">Guardar vendedor</button></div>
+    </form>
+  </div>
+</div>
+
+<div class="card">
+  <div class="table-responsive">
+    <table class="table mb-0 align-middle">
+      <thead><tr><th>ID</th><th>Usuario</th><th>Codigo</th><th>URL</th><th>DNI</th><th>Banco</th><th>Activo</th><th></th></tr></thead>
+      <tbody>
+      {% for row in sellers %}
+        <tr>
+          <td>{{ row.id }}</td>
+          <td>{{ row.user.username if row.user else 'N/A' }}</td>
+          <td><code>{{ row.referral_code }}</code></td>
+          <td><small>{{ row.referral_url }}</small></td>
+          <td>{{ row.dni or '-' }}</td>
+          <td>{{ row.bank or '-' }}</td>
+          <td>
+            <span class="badge text-bg-{% if row.active %}success{% else %}secondary{% endif %}">
+              {% if row.active %}Activo{% else %}Inactivo{% endif %}
+            </span>
+          </td>
+          <td class="text-end">
+            <form method="post" action="{{ url_for('referrals.admin_referrals_seller_toggle', seller_id=row.id) }}">
+              <button class="btn btn-sm btn-outline-primary">Toggle</button>
+            </form>
+          </td>
+        </tr>
+      {% else %}
+        <tr><td colspan="8" class="text-center text-muted">Sin vendedores.</td></tr>
+      {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</div>
+{% endblock %}

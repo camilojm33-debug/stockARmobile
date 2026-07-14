@@ -1,0 +1,68 @@
+{% extends "base_master.html" %}
+{% block title %}Ticket de Soporte #{{ ticket.id }}{% endblock %}
+{% block content %}
+<div class="app-shell">
+  <div class="d-flex justify-content-between align-items-center mb-3">
+    <div>
+      <span class="page-kicker"><i class="bi bi-life-preserver"></i> SuperAdmin</span>
+      <h1 class="h3 fw-bold mb-0">Ticket #{{ ticket.id }}</h1>
+    </div>
+    <a class="btn btn-outline-secondary" href="{{ url_for('support.admin_index') }}">Volver</a>
+  </div>
+
+  {% if temp_password %}
+  <div class="alert alert-warning border border-warning-subtle" role="alert">
+    <div class="fw-semibold mb-1">Contrasena temporal (visible una sola vez)</div>
+    <code class="fs-6">{{ temp_password }}</code>
+  </div>
+  {% endif %}
+
+  <div class="row g-3">
+    <div class="col-lg-8">
+      <div class="card app-card h-100">
+        <div class="card-body">
+          <dl class="row mb-0">
+            <dt class="col-sm-3">Empresa</dt><dd class="col-sm-9">{{ ticket.company.name if ticket.company else '-' }}</dd>
+            <dt class="col-sm-3">Usuario</dt><dd class="col-sm-9">{{ ticket.user.username if ticket.user else '-' }}</dd>
+            <dt class="col-sm-3">Email</dt><dd class="col-sm-9">{{ ticket.email }}</dd>
+            <dt class="col-sm-3">Motivo</dt><dd class="col-sm-9">{{ ticket.reason }}</dd>
+            <dt class="col-sm-3">Fecha</dt><dd class="col-sm-9">{{ ticket.created_at.strftime('%Y-%m-%d %H:%M') if ticket.created_at else '-' }}</dd>
+            <dt class="col-sm-3">Estado</dt>
+            <dd class="col-sm-9"><span class="badge text-bg-{{ 'warning' if ticket.status == 'pendiente' else 'success' }}">{{ ticket.status|capitalize }}</span></dd>
+            <dt class="col-sm-3">Descripcion</dt><dd class="col-sm-9" style="white-space:pre-wrap">{{ ticket.description }}</dd>
+          </dl>
+        </div>
+      </div>
+    </div>
+
+    <div class="col-lg-4">
+      <div class="card app-card mb-3">
+        <div class="card-body">
+          <h2 class="h6 fw-bold">Resolver ticket</h2>
+          <form method="post" action="{{ url_for('support.admin_resolve', ticket_id=ticket.id) }}">
+            <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+            <label class="form-label">Nota de resolucion</label>
+            <textarea class="form-control" name="resolved_note" rows="3" placeholder="Detalle de la solucion aplicada"></textarea>
+            <button class="btn btn-success w-100 mt-3" type="submit" {% if ticket.status == 'resuelto' %}disabled{% endif %}>Marcar como resuelto</button>
+          </form>
+        </div>
+      </div>
+
+      <div class="card app-card">
+        <div class="card-body">
+          <h2 class="h6 fw-bold">Contrasena temporal</h2>
+          <p class="text-muted small">Se guarda usando hash. No se almacena texto plano.</p>
+          <form method="post" action="{{ url_for('support.admin_generate_temp_password', ticket_id=ticket.id) }}">
+            <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+            <div class="form-check mb-3">
+              <input class="form-check-input" type="checkbox" name="require_password_change" value="1" id="requireChange">
+              <label class="form-check-label" for="requireChange">Marcar cambio obligatorio en proximo login (opcional)</label>
+            </div>
+            <button class="btn btn-outline-primary w-100" type="submit">Generar contrasena temporal</button>
+          </form>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+{% endblock %}

@@ -9,7 +9,7 @@ from datetime import datetime, timedelta, timezone
 from functools import wraps
 from decimal import Decimal
 
-from flask import Flask, abort, flash, g, jsonify, redirect, render_template, request, send_from_directory, session, url_for
+from flask import Flask, abort, flash, g, jsonify, make_response, redirect, render_template, request, send_from_directory, session, url_for
 from flask_login import LoginManager, UserMixin, current_user, login_required
 from flask_migrate import Migrate
 from flask_sqlalchemy import SQLAlchemy
@@ -82,7 +82,7 @@ def add_security_headers(response):
         "img-src 'self' data: blob: https:; "
         "connect-src 'self' https: wss:; "
         "worker-src 'self' blob:; "
-        "frame-src 'self' https://*.mercadopago.com https://accounts.google.com; "
+        "frame-src 'self' https://*.mercadopago.com; "
         "frame-ancestors 'self';",
     )
     if is_production_env:
@@ -167,6 +167,17 @@ def company_admin_required(func):
     return decorated
 
 
+def seller_required(func):
+    @wraps(func)
+    @login_required
+    def decorated(*args, **kwargs):
+        if getattr(current_user, "role", None) != "seller":
+            abort(403)
+        return func(*args, **kwargs)
+
+    return decorated
+
+
 def trial_required(func):
     @wraps(func)
     @login_required
@@ -226,6 +237,24 @@ def bind_tenant_context():
         g.current_company_id = None
 
 
+@app.before_request
+def enforce_password_change_if_required():
+    if not current_user.is_authenticated:
+        return None
+    if not getattr(current_user, "must_change_password", False):
+        return None
+
+    endpoint = request.endpoint or ""
+    allowed = {
+        "auth.force_password_change",
+        "auth.logout",
+        "static",
+    }
+    if endpoint in allowed:
+        return None
+    return redirect(url_for("auth.force_password_change"))
+
+
 class User(UserMixin, db.Model):
     __tablename__ = "users"
 
@@ -240,6 +269,7 @@ class User(UserMixin, db.Model):
     google_sub = db.Column(db.String(120), unique=True, index=True)
     role = db.Column(db.String(20), default="user")
     active = db.Column(db.Boolean, default=True, nullable=False)
+    must_change_password = db.Column(db.Boolean, default=False, nullable=False)
     company_id = db.Column(db.Integer, db.ForeignKey("companies.id"))
     created_at = db.Column(db.DateTime, default=utcnow)
     updated_at = db.Column(db.DateTime, default=utcnow, onupdate=utcnow)
@@ -428,6 +458,9 @@ class Company(db.Model):
 
     id = db.Column(db.Integer, primary_key=True)
     name = db.Column(db.String(160), nullable=False, default="StockArmobile")
+    legal_name = db.Column(db.String(160))
+    address = db.Column(db.String(255))
+    phone = db.Column(db.String(40))
     contact_email = db.Column(db.String(160), index=True)
     tax_id = db.Column(db.String(50))
     payment_alias = db.Column(db.String(120))
@@ -436,6 +469,10 @@ class Company(db.Model):
     payment_qr_text = db.Column(db.String(255))
     payment_qr_url = db.Column(db.String(255))
     logo = db.Column(db.String(255))
+    business_pin_hash = db.Column(db.String(255))
+    business_pin_failed_attempts = db.Column(db.Integer, default=0, nullable=False)
+    business_pin_blocked_until = db.Column(db.DateTime)
+    business_pin_updated_at = db.Column(db.DateTime)
     active = db.Column(db.Boolean, default=True, nullable=False)
     trial_ends_at = db.Column(db.DateTime)
     license_key = db.Column(db.String(120), index=True)
@@ -729,6 +766,150 @@ class BackupLog(db.Model):
     created_at = db.Column(db.DateTime, default=utcnow, index=True)
 
 
+class PasswordRecoveryRequest(db.Model):
+    __tablename__ = "password_recovery_requests"
+
+    id = db.Column(db.Integer, primary_key=True)
+    company_id = db.Column(db.Integer, db.ForeignKey("companies.id"), index=True)
+    user_id = db.Column(db.Integer, db.ForeignKey("users.id"), nullable=False, index=True)
+    email = db.Column(db.String(160), nullable=False, index=True)
+    status = db.Column(db.String(20), nullable=False, default="pendiente", index=True)
+    requested_at = db.Column(db.DateTime, default=utcnow, index=True)
+    processed_at = db.Column(db.DateTime)
+    processed_by_user_id = db.Column(db.Integer, db.ForeignKey("users.id"))
+
+    company = db.relationship("Company", foreign_keys=[company_id], backref="password_recovery_requests")
+    user = db.relationship("User", foreign_keys=[user_id], backref="password_recovery_requests")
+    processed_by = db.relationship("User", foreign_keys=[processed_by_user_id], backref="password_recovery_processed")
+
+
+class ReferralSeller(db.Model):
+    __tablename__ = "referral_sellers"
+
+    id = db.Column(db.Integer, primary_key=True)
+    user_id = db.Column(db.Integer, db.ForeignKey("users.id"), nullable=False, unique=True, index=True)
+    dni = db.Column(db.String(30), nullable=False)
+    tax_id = db.Column(db.String(30))
+    phone = db.Column(db.String(30))
+    province = db.Column(db.String(120))
+    city = db.Column(db.String(120))
+    address = db.Column(db.String(255))
+    alias = db.Column(db.String(120))
+    cbu = db.Column(db.String(22))
+    bank = db.Column(db.String(120))
+    account_holder = db.Column(db.String(160))
+    referral_code = db.Column(db.String(20), nullable=False, unique=True, index=True)
+    referral_url = db.Column(db.String(255), nullable=False)
+    active = db.Column(db.Boolean, default=True, nullable=False)
+    created_at = db.Column(db.DateTime, default=utcnow, index=True)
+    updated_at = db.Column(db.DateTime, default=utcnow, onupdate=utcnow)
+
+    user = db.relationship("User", backref="seller_profile")
+
+
+class ReferralAttribution(db.Model):
+    __tablename__ = "referral_attributions"
+
+    id = db.Column(db.Integer, primary_key=True)
+    seller_id = db.Column(db.Integer, db.ForeignKey("referral_sellers.id"), nullable=False, index=True)
+    company_id = db.Column(db.Integer, db.ForeignKey("companies.id"), nullable=False, unique=True, index=True)
+    user_id = db.Column(db.Integer, db.ForeignKey("users.id"), index=True)
+    referral_code = db.Column(db.String(20), nullable=False, index=True)
+    created_at = db.Column(db.DateTime, default=utcnow, index=True)
+
+    seller = db.relationship("ReferralSeller", backref="attributions")
+    company = db.relationship("Company", backref="referral_attribution")
+    user = db.relationship("User", backref="referral_attributions")
+
+
+class ReferralCommission(db.Model):
+    __tablename__ = "referral_commissions"
+
+    id = db.Column(db.Integer, primary_key=True)
+    seller_id = db.Column(db.Integer, db.ForeignKey("referral_sellers.id"), nullable=False, index=True)
+    attribution_id = db.Column(db.Integer, db.ForeignKey("referral_attributions.id"), nullable=False, index=True)
+    company_id = db.Column(db.Integer, db.ForeignKey("companies.id"), nullable=False, index=True)
+    subscription_id = db.Column(db.Integer, db.ForeignKey("subscriptions.id"), index=True)
+    payment_id = db.Column(db.Integer, db.ForeignKey("payments.id"), index=True)
+    plan_id = db.Column(db.Integer, db.ForeignKey("plans.id"), index=True)
+    sold_amount = db.Column(MONEY, default=Decimal("0.00"), nullable=False)
+    commission_percent = db.Column(PERCENT, default=Decimal("0.3000"), nullable=False)
+    commission_amount = db.Column(MONEY, default=Decimal("0.00"), nullable=False)
+    status = db.Column(db.String(20), default="pendiente", nullable=False, index=True)
+    created_at = db.Column(db.DateTime, default=utcnow, index=True)
+    available_at = db.Column(db.DateTime, index=True)
+    paid_at = db.Column(db.DateTime)
+    cancelled_at = db.Column(db.DateTime)
+    note = db.Column(db.Text)
+
+    seller = db.relationship("ReferralSeller", backref="commissions")
+    attribution = db.relationship("ReferralAttribution", backref="commissions")
+    company = db.relationship("Company", backref="referral_commissions")
+    subscription = db.relationship("Subscription", backref="referral_commissions")
+    payment = db.relationship("Payment", backref="referral_commissions")
+    plan = db.relationship("Plan")
+
+
+class ReferralPayout(db.Model):
+    __tablename__ = "referral_payouts"
+
+    id = db.Column(db.Integer, primary_key=True)
+    seller_id = db.Column(db.Integer, db.ForeignKey("referral_sellers.id"), nullable=False, index=True)
+    processed_by_user_id = db.Column(db.Integer, db.ForeignKey("users.id"), nullable=False, index=True)
+    amount = db.Column(MONEY, default=Decimal("0.00"), nullable=False)
+    transfer_date = db.Column(db.DateTime, nullable=False)
+    receipt = db.Column(db.String(255))
+    transfer_number = db.Column(db.String(120))
+    observations = db.Column(db.Text)
+    created_at = db.Column(db.DateTime, default=utcnow, index=True)
+
+    seller = db.relationship("ReferralSeller", backref="payouts")
+    processed_by = db.relationship("User")
+
+
+class ReferralPayoutItem(db.Model):
+    __tablename__ = "referral_payout_items"
+
+    id = db.Column(db.Integer, primary_key=True)
+    payout_id = db.Column(db.Integer, db.ForeignKey("referral_payouts.id"), nullable=False, index=True)
+    commission_id = db.Column(db.Integer, db.ForeignKey("referral_commissions.id"), nullable=False, unique=True, index=True)
+
+    payout = db.relationship("ReferralPayout", backref="items")
+    commission = db.relationship("ReferralCommission", backref="payout_item")
+
+
+class LandingTestimonial(db.Model):
+    __tablename__ = "landing_testimonials"
+
+    id = db.Column(db.Integer, primary_key=True)
+    author_name = db.Column(db.String(120), nullable=False)
+    company_name = db.Column(db.String(160))
+    quote = db.Column(db.Text, nullable=False)
+    active = db.Column(db.Boolean, default=True, nullable=False, index=True)
+    created_at = db.Column(db.DateTime, default=utcnow, index=True)
+    updated_at = db.Column(db.DateTime, default=utcnow, onupdate=utcnow)
+
+
+class SupportTicket(db.Model):
+    __tablename__ = "support_tickets"
+
+    id = db.Column(db.Integer, primary_key=True)
+    company_id = db.Column(db.Integer, db.ForeignKey("companies.id"), index=True)
+    user_id = db.Column(db.Integer, db.ForeignKey("users.id"), nullable=False, index=True)
+    email = db.Column(db.String(160), nullable=False)
+    reason = db.Column(db.String(80), nullable=False, index=True)
+    description = db.Column(db.Text, nullable=False)
+    status = db.Column(db.String(20), nullable=False, default="pendiente", index=True)
+    created_at = db.Column(db.DateTime, default=utcnow, index=True)
+    resolved_at = db.Column(db.DateTime)
+    resolved_by_user_id = db.Column(db.Integer, db.ForeignKey("users.id"))
+    resolved_note = db.Column(db.Text)
+
+    company = db.relationship("Company", foreign_keys=[company_id], backref="support_tickets")
+    user = db.relationship("User", foreign_keys=[user_id], backref="support_tickets_created")
+    resolved_by = db.relationship("User", foreign_keys=[resolved_by_user_id], backref="support_tickets_resolved")
+
+
 def record_audit(*, action, entity=None, entity_id=None, detail=None, user_id=None, company_id=None):
     try:
         db.session.add(
@@ -842,7 +1023,9 @@ import qr_labels  # noqa: E402
 import reports  # noqa: E402
 import saas  # noqa: E402
 import company_billing  # noqa: E402
+import referrals  # noqa: E402
 import sales  # noqa: E402
+import support  # noqa: E402
 
 auth_bp = auth.bp
 dashboard_bp = dashboard.bp
@@ -856,8 +1039,8 @@ expenses_bp = expenses.bp
 reports_bp = reports.bp
 saas_bp = saas.bp
 company_billing_bp = company_billing.bp
-
-auth.init_oauth(app)
+referrals_bp = referrals.bp
+support_bp = support.bp
 
 app.register_blueprint(auth_bp, url_prefix="/auth")
 app.register_blueprint(dashboard_bp, url_prefix="/dashboard")
@@ -871,11 +1054,147 @@ app.register_blueprint(expenses_bp, url_prefix="/gastos")
 app.register_blueprint(reports_bp, url_prefix="/reportes")
 app.register_blueprint(saas_bp, url_prefix="/superadmin")
 app.register_blueprint(company_billing_bp, url_prefix="/admin")
+app.register_blueprint(referrals_bp)
+app.register_blueprint(support_bp, url_prefix="/soporte")
+
+
+def _plan_feature_flags(plan):
+    raw = (getattr(plan, "features_json", "") or "").strip().lower()
+    tokens = {item.strip() for item in raw.replace(";", ",").split(",") if item.strip()}
+    has_all = "all" in tokens
+
+    def has(*names):
+        return has_all or any(name in tokens for name in names)
+
+    return {
+        "usuarios": int(getattr(plan, "max_users", 0) or 0),
+        "productos": int(getattr(plan, "max_products", 0) or 0),
+        "clientes": int(getattr(plan, "max_clients", 0) or 0),
+        "ventas": has("ventas"),
+        "caja": has("caja"),
+        "reportes": has("reportes", "reportes_basicos"),
+        "qr": has("qr"),
+        "etiquetas": has("etiquetas", "excel", "kardex"),
+        "whatsapp": has("whatsapp"),
+        "multiusuario": int(getattr(plan, "max_users", 0) or 0) > 1,
+        "soporte": True,
+    }
 
 
 @app.route("/")
 def index():
-    return render_template("landing/index.html")
+    from services.plan_service import PlanService
+    from services.referral_service import ReferralService
+    from services.subscription_service import SubscriptionService
+    from app import LandingTestimonial, ReferralAttribution, ReferralCommission, ReferralSeller
+
+    PlanService.ensure_defaults(db.session)
+    plans = PlanService.all_commercial_plans()
+
+    current_plan_id = None
+    if current_user.is_authenticated and getattr(current_user, "role", None) != "superadmin":
+        company_id = getattr(current_user, "company_id", None)
+        if company_id:
+            subscription = SubscriptionService.active_subscription_for_company(company_id)
+            current_plan_id = getattr(subscription, "plan_id", None)
+
+    trial_plan = next((plan for plan in plans if (plan.code or "").lower() == "trial"), None)
+    paid_plans = [plan for plan in plans if float(plan.price or 0) > 0]
+    recommended_plan = None
+    if current_plan_id:
+        recommended_plan = next((plan for plan in plans if plan.id == current_plan_id), None)
+    if recommended_plan is None:
+        if paid_plans:
+            recommended_plan = paid_plans[len(paid_plans) // 2]
+        elif plans:
+            recommended_plan = plans[0]
+
+    plan_feature_rows = {plan.id: _plan_feature_flags(plan) for plan in plans}
+    referral_percent = float(ReferralService.COMMISSION_PERCENT)
+
+    ranking_rows = (
+        db.session.query(
+            ReferralSeller,
+            db.func.coalesce(db.func.sum(ReferralCommission.sold_amount), 0).label("sold_total"),
+            db.func.coalesce(db.func.count(db.distinct(ReferralAttribution.company_id)), 0).label("clients_total"),
+        )
+        .outerjoin(ReferralCommission, ReferralCommission.seller_id == ReferralSeller.id)
+        .outerjoin(ReferralAttribution, ReferralAttribution.seller_id == ReferralSeller.id)
+        .group_by(ReferralSeller.id)
+        .order_by(db.text("sold_total DESC"))
+        .limit(3)
+        .all()
+    )
+
+    medal_targets = [1, 5, 10, 25, 50, 100]
+    medal_progress = []
+    for row in ranking_rows:
+        clients_total = int(row.clients_total or 0)
+        medal_progress.append(
+            {
+                "seller": row[0],
+                "clients_total": clients_total,
+                "medals": [target for target in medal_targets if clients_total >= target],
+                "sold_total": float(row.sold_total or 0),
+            }
+        )
+
+    app_base_url = (os.environ.get("APP_URL") or request.url_root.rstrip("/")).rstrip("/")
+    seo = {
+        "title": "StockArmobile | Controla tu negocio desde cualquier lugar",
+        "description": "Ventas, Stock, Clientes, Caja, QR, Etiquetas y Reportes en una sola plataforma con prueba gratuita y programa profesional de referidos.",
+        "url": f"{app_base_url}/",
+        "image": f"{app_base_url}{url_for('static', filename='assets/icons/icon-512.png')}",
+        "site_name": "StockArmobile",
+    }
+
+    whatsapp_value = (os.environ.get("LANDING_WHATSAPP") or "+54 9 11 0000-0000").strip()
+    whatsapp_digits = "".join(ch for ch in whatsapp_value if ch.isdigit())
+    contact = {
+        "whatsapp": whatsapp_value,
+        "whatsapp_link": f"https://wa.me/{whatsapp_digits}" if whatsapp_digits else "https://wa.me/",
+        "email": (os.environ.get("LANDING_EMAIL") or "hola@stockarmobile.com").strip(),
+    }
+
+    testimonials = LandingTestimonial.query.filter(LandingTestimonial.active.is_(True)).order_by(LandingTestimonial.created_at.desc()).limit(6).all()
+
+    referral_code = (request.args.get("ref") or "").strip().upper()
+    response = make_response(
+        render_template(
+            "landing/index.html",
+            plans=plans,
+            current_plan_id=current_plan_id,
+            recommended_plan_id=getattr(recommended_plan, "id", None),
+            trial_plan=trial_plan,
+            plan_feature_rows=plan_feature_rows,
+            referral_percent=referral_percent,
+            ranking_rows=ranking_rows,
+            medal_targets=medal_targets,
+            medal_progress=medal_progress,
+            testimonials=testimonials,
+            seo=seo,
+            contact=contact,
+        )
+    )
+    if referral_code:
+        session["referral_code"] = referral_code
+        response.set_cookie("stockarmobile_ref", referral_code, max_age=60 * 60 * 24 * 90, samesite="Lax")
+    return response
+
+
+@app.route("/landing/contact", methods=["POST"])
+def landing_contact():
+    name = (request.form.get("name") or "").strip()
+    email = (request.form.get("email") or "").strip()
+    message = (request.form.get("message") or "").strip()
+
+    if not name or not email or not message:
+        flash("Completa nombre, email y mensaje para enviarnos tu consulta.", "warning")
+        return redirect(url_for("index", _anchor="contacto"))
+
+    app.logger.info("Lead landing contacto: name=%s email=%s message_len=%s", name, email, len(message))
+    flash("Recibimos tu mensaje. Te responderemos a la brevedad.", "success")
+    return redirect(url_for("index", _anchor="contacto"))
 
 
 @app.route("/access-status")
@@ -944,6 +1263,8 @@ def offline_page():
 
 
 def create_admin_user():
+    from services.plan_service import PlanService
+
     admin_created = False
     admin_updated = False
     company = Company.query.first()
@@ -953,21 +1274,7 @@ def create_admin_user():
         db.session.flush()
     if company.trial_ends_at is None:
         company.trial_ends_at = utcnow() + timedelta(days=10)
-
-    existing_codes = {plan.code for plan in Plan.query.all() if plan.code}
-    plan_seed = [
-        {"code": "trial", "name": "Trial", "price": 0.0, "currency": "ARS", "duration_days": 10, "max_users": 2, "max_products": 150, "max_clients": 250, "features_json": "inventario,ventas,clientes,reportes_basicos", "state": "active"},
-        {"code": "entrepreneur", "name": "Emprendedor", "price": 12999.0, "currency": "ARS", "duration_days": 30, "max_users": 3, "max_products": 1200, "max_clients": 2000, "features_json": "inventario,ventas,clientes,reportes,excel", "state": "active"},
-        {"code": "business", "name": "Negocio", "price": 29999.0, "currency": "ARS", "duration_days": 30, "max_users": 8, "max_products": 12000, "max_clients": 12000, "features_json": "inventario,ventas,clientes,compras,caja,reportes,excel,kardex", "state": "active"},
-        {"code": "premium", "name": "Premium", "price": 54999.0, "currency": "ARS", "duration_days": 30, "max_users": 50, "max_products": 100000, "max_clients": 100000, "features_json": "all", "state": "active"},
-    ]
-    if not existing_codes:
-        for payload in plan_seed:
-            db.session.add(Plan(**payload))
-    else:
-        for payload in plan_seed:
-            if payload["code"] not in existing_codes:
-                db.session.add(Plan(**payload))
+    PlanService.ensure_defaults(db.session)
 
     admin_username = (os.environ.get("ADMIN_USERNAME", "admin") or "admin").strip() or "admin"
     admin_email = (os.environ.get("ADMIN_EMAIL", "admin@stockarmobile.local") or "admin@stockarmobile.local").strip().lower()

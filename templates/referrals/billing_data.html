@@ -1,0 +1,20 @@
+{% extends "base_master.html" %}
+{% block title %}Datos de cobro{% endblock %}
+{% block content %}
+<h1 class="h4 mb-3">Mis datos de cobro</h1>
+{% if missing_bank_data %}
+<div class="alert alert-warning">Completa tus datos bancarios para poder cobrar comisiones.</div>
+{% endif %}
+<div class="card">
+  <div class="card-body">
+    <form method="post" class="row g-2">
+      <div class="col-md-3"><label class="form-label">Alias</label><input class="form-control" name="alias" value="{{ seller.alias or '' }}"></div>
+      <div class="col-md-3"><label class="form-label">CBU</label><input class="form-control" name="cbu" maxlength="22" value="{{ seller.cbu or '' }}"></div>
+      <div class="col-md-3"><label class="form-label">Banco</label><input class="form-control" name="bank" value="{{ seller.bank or '' }}"></div>
+      <div class="col-md-3"><label class="form-label">Titular</label><input class="form-control" name="account_holder" value="{{ seller.account_holder or '' }}"></div>
+      <div class="col-md-3"><label class="form-label">CUIT/CUIL</label><input class="form-control" name="tax_id" value="{{ seller.tax_id or '' }}"></div>
+      <div class="col-12 text-end"><button class="btn btn-primary">Guardar datos</button></div>
+    </form>
+  </div>
+</div>
+{% endblock %}

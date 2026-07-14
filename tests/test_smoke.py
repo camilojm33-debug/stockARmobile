@@ -1,4 +1,6 @@
 import os
+import re
+from datetime import timedelta
 
 os.environ["DATABASE_URL"] = "sqlite:///:memory:"
 
@@ -27,9 +29,13 @@ def seed():
     db.session.add(company)
     db.session.flush()
 
-    company_admin = User(username="empresa_admin", email="admin@test.local", role="admin", company_id=company.id, active=True)
+    company_admin = User(username="empresa_admin", email="admin@test.local", role="user", company_id=company.id, active=True)
     company_admin.set_password("admin123")
     db.session.add(company_admin)
+
+    business_admin = User(username="negocio_admin", email="negocio_admin@test.local", role="admin", company_id=company.id, active=True)
+    business_admin.set_password("admin123")
+    db.session.add(business_admin)
 
     superadmin = User(username="superadmin", email="superadmin@test.local", role="superadmin", company_id=company.id, active=True)
     superadmin.set_password("admin123")
@@ -111,6 +117,52 @@ def test_exports_and_security_methods():
     assert client.get("/superadmin/metrics.xlsx").status_code == 200
     assert client.get("/qr/print-all").status_code == 405
     assert client.get("/productos/delete/1").status_code == 405
+
+
+def test_qr_print_all_supports_square_5x5_a4_format():
+    client = stock_app.app.test_client()
+    client.post("/auth/login", data={"username": "empresa_admin", "password": "admin123"})
+
+    response = client.post(
+        "/qr/print-all",
+        data={
+            "label_format": "square_5x5",
+            "copies": 1,
+        },
+    )
+    assert response.status_code == 200
+    assert response.mimetype == "application/pdf"
+    assert response.headers.get("Content-Disposition", "").find("etiquetas_5x5_a4.pdf") >= 0
+
+
+def test_qr_print_all_supports_selected_and_single_scope():
+    client = stock_app.app.test_client()
+    client.post("/auth/login", data={"username": "empresa_admin", "password": "admin123"})
+
+    selected_response = client.post(
+        "/qr/print-all",
+        data={
+            "label_format": "square_5x5",
+            "print_scope": "selected",
+            "selected_product_ids": ["1"],
+            "copies": 1,
+        },
+    )
+    assert selected_response.status_code == 200
+    assert selected_response.mimetype == "application/pdf"
+
+    single_response = client.post(
+        "/qr/print-all",
+        data={
+            "label_format": "square_5x5",
+            "print_scope": "single",
+            "single_product_id": "1",
+            "fill_page": "1",
+            "copies": 1,
+        },
+    )
+    assert single_response.status_code == 200
+    assert single_response.mimetype == "application/pdf"
 
 
 def test_subscription_state_guard():
@@ -475,7 +527,7 @@ def test_product_edit_reciprocal_calculation():
 
 def test_company_can_save_qr_payment_settings():
     client = stock_app.app.test_client()
-    client.post("/auth/login", data={"username": "empresa_admin", "password": "admin123"})
+    client.post("/auth/login", data={"username": "negocio_admin", "password": "admin123"})
 
     response = client.post(
         "/admin/payment-qr-settings",
@@ -493,11 +545,122 @@ def test_company_can_save_qr_payment_settings():
     with stock_app.app.app_context():
         company = Company.query.filter_by(name="Empresa Demo").first()
         assert company is not None
+        company_id = company.id
         assert company.payment_alias == "negocio.demo"
         assert company.payment_cbu == "1234567890123456789012"
         assert company.payment_cvu == "0001234500001234500001"
         assert company.payment_qr_text == "Cobro caja principal"
         assert company.payment_qr_url == "https://example.com/pago"
+
+
+def test_my_company_module_requires_pin_and_shows_tenant_admin_features():
+    client = stock_app.app.test_client()
+    company_id = None
+
+    with stock_app.app.app_context():
+        from app import CashMovement, Company, Sale, utcnow
+
+        company = Company.query.filter_by(name="Empresa Demo").first()
+        admin_user = User.query.filter_by(username="negocio_admin").first()
+        regular_user = User.query.filter_by(username="empresa_admin").first()
+        assert company is not None
+        company_id = company.id
+        assert admin_user is not None
+        assert regular_user is not None
+        company.business_pin_hash = None
+
+        db.session.add(
+            Sale(
+                customer="Cliente demo",
+                subtotal=1000,
+                discount=0,
+                tax=0,
+                total_amount=1000,
+                payment_method="EFECTIVO",
+                seller_id=regular_user.id,
+                company_id=company.id,
+            )
+        )
+        db.session.add(
+            CashMovement(
+                user_id=regular_user.id,
+                company_id=company.id,
+                movement_type="ingreso",
+                category="venta",
+                amount=300,
+                description="Ingreso prueba",
+                created_at=utcnow(),
+            )
+        )
+        db.session.add(
+            CashMovement(
+                user_id=regular_user.id,
+                company_id=company.id,
+                movement_type="egreso",
+                category="gasto",
+                amount=50,
+                description="Egreso prueba",
+                created_at=utcnow(),
+            )
+        )
+        db.session.commit()
+
+    # Sin PIN asignado por superadmin, no se permite validar acceso.
+    client.post("/auth/login", data={"username": "negocio_admin", "password": "admin123"})
+    no_pin = client.post("/admin/company-settings/pin/verify", data={"access_pin": "1234"}, follow_redirects=True)
+    assert no_pin.status_code == 200
+    assert "no esta configurado" in no_pin.data.decode("utf-8").lower()
+
+    client.post("/auth/logout")
+    client.post("/auth/login", data={"username": "superadmin", "password": "admin123"})
+    assign_pin = client.post(f"/superadmin/companies/{company_id}/pin/assign", data={"admin_pin": "1234"}, follow_redirects=True)
+    assert assign_pin.status_code == 200
+    assert "PIN asignado correctamente" in assign_pin.data.decode("utf-8")
+
+    client.post("/auth/login", data={"username": "negocio_admin", "password": "admin123"})
+    locked_page = client.get("/admin/company-settings")
+    assert locked_page.status_code == 200
+    assert "Validar PIN" in locked_page.data.decode("utf-8")
+
+    bad_pin = client.post("/admin/company-settings/pin/verify", data={"access_pin": "9999"}, follow_redirects=True)
+    assert bad_pin.status_code == 200
+    assert "PIN incorrecto" in bad_pin.data.decode("utf-8")
+
+    ok_pin = client.post("/admin/company-settings/pin/verify", data={"access_pin": "1234"}, follow_redirects=True)
+    assert ok_pin.status_code == 200
+    html = ok_pin.data.decode("utf-8")
+    assert "Usuarios del negocio" in html
+    assert "Caja por usuario" in html
+
+    with stock_app.app.app_context():
+        target_user = User.query.filter_by(username="empresa_admin").first()
+        assert target_user is not None
+        target_user_id = target_user.id
+
+    update_user = client.post(
+        f"/admin/company-settings/users/{target_user_id}/update",
+        data={"full_name": "Cajero Uno"},
+        follow_redirects=True,
+    )
+    assert update_user.status_code == 200
+
+    toggle_user = client.post(f"/admin/company-settings/users/{target_user_id}/toggle", follow_redirects=True)
+    assert toggle_user.status_code == 200
+    toggle_user_back = client.post(f"/admin/company-settings/users/{target_user_id}/toggle", follow_redirects=True)
+    assert toggle_user_back.status_code == 200
+
+    filtered = client.get("/admin/company-settings?from=2026-01-01&to=2026-12-31")
+    assert filtered.status_code == 200
+    filtered_html = filtered.data.decode("utf-8")
+    assert "1000.00" in filtered_html
+    assert "300.00" in filtered_html
+    assert "50.00" in filtered_html
+
+    # Usuario no admin no puede acceder.
+    client.post("/auth/logout")
+    client.post("/auth/login", data={"username": "empresa_admin", "password": "admin123"})
+    forbidden = client.get("/admin/company-settings")
+    assert forbidden.status_code == 403
 
 
 def test_security_headers_are_present():
@@ -510,3 +673,683 @@ def test_security_headers_are_present():
     assert response.headers.get("Referrer-Policy") == "strict-origin-when-cross-origin"
     assert "Content-Security-Policy" in response.headers
     assert "Permissions-Policy" in response.headers
+
+
+def test_support_ticket_flow_and_temp_password_generation():
+    client = stock_app.app.test_client()
+
+    client.post("/auth/login", data={"username": "empresa_admin", "password": "admin123"})
+    create_ticket = client.post(
+        "/soporte/nuevo",
+        data={
+            "email": "cliente.soporte@test.local",
+            "reason": "Problemas con ventas",
+            "description": "No puedo cerrar una venta desde checkout.",
+        },
+        follow_redirects=True,
+    )
+    assert create_ticket.status_code == 200
+    assert "Mis tickets" in create_ticket.data.decode("utf-8")
+
+    with stock_app.app.app_context():
+        from app import SupportTicket
+
+        ticket = SupportTicket.query.order_by(SupportTicket.id.desc()).first()
+        assert ticket is not None
+        assert ticket.reason == "Problemas con ventas"
+        assert ticket.status == "pendiente"
+        ticket_id = ticket.id
+
+    client.post("/auth/logout")
+    client.post("/auth/login", data={"username": "superadmin", "password": "admin123"})
+
+    admin_list = client.get("/soporte/admin")
+    assert admin_list.status_code == 200
+    assert "Soporte" in admin_list.data.decode("utf-8")
+
+    detail = client.get(f"/soporte/admin/{ticket_id}")
+    assert detail.status_code == 200
+
+    generate_temp = client.post(
+        f"/soporte/admin/{ticket_id}/temp-password",
+        data={"require_password_change": "1"},
+        follow_redirects=True,
+    )
+    assert generate_temp.status_code == 200
+    detail_html = generate_temp.data.decode("utf-8")
+    assert "Contrasena temporal" in detail_html
+
+    # Visible una sola vez en la siguiente carga.
+    second_detail = client.get(f"/soporte/admin/{ticket_id}")
+    assert second_detail.status_code == 200
+    assert "visible una sola vez" not in second_detail.data.decode("utf-8")
+
+    resolve = client.post(
+        f"/soporte/admin/{ticket_id}/resolve",
+        data={"resolved_note": "Se reseteo password y se confirmo acceso."},
+        follow_redirects=True,
+    )
+    assert resolve.status_code == 200
+
+    with stock_app.app.app_context():
+        from app import SupportTicket
+
+        updated = db.session.get(SupportTicket, ticket_id)
+        assert updated is not None
+        assert updated.status == "resuelto"
+
+
+def test_share_whatsapp_keeps_existing_phone_flow():
+    client = stock_app.app.test_client()
+
+    with stock_app.app.app_context():
+        from app import Sale, SaleItem, utcnow
+
+        seller = User.query.filter_by(username="empresa_admin").first()
+        cli = Client.query.filter_by(name="Cliente demo").first()
+        prod = Product.query.filter_by(name="Yerba kilo").first()
+        assert seller is not None
+        assert cli is not None
+        assert prod is not None
+        cli.whatsapp = "549111111111"
+
+        sale = Sale(
+            customer=cli.name,
+            subtotal=100,
+            discount=0,
+            tax=0,
+            total_amount=100,
+            payment_method="EFECTIVO",
+            seller_id=seller.id,
+            client_id=cli.id,
+            company_id=seller.company_id,
+            date=utcnow(),
+        )
+        db.session.add(sale)
+        db.session.flush()
+        db.session.add(SaleItem(sale_id=sale.id, product_id=prod.id, quantity=1, price=100, cost_price=70, discount=0))
+        db.session.commit()
+        sale_id = sale.id
+
+    client.post("/auth/login", data={"username": "empresa_admin", "password": "admin123"})
+    response = client.get(f"/ventas/{sale_id}/share-whatsapp", follow_redirects=False)
+    assert response.status_code in (301, 302)
+    location = response.headers.get("Location", "")
+    assert location.startswith("https://wa.me/")
+    assert "text=" in location
+
+
+def test_share_whatsapp_shows_dialog_and_allows_send_once_without_saving():
+    client = stock_app.app.test_client()
+
+    with stock_app.app.app_context():
+        from app import Sale, SaleItem, utcnow
+
+        seller = User.query.filter_by(username="empresa_admin").first()
+        cli = Client.query.filter_by(name="Cliente demo").first()
+        prod = Product.query.filter_by(name="Yerba kilo").first()
+        assert seller is not None
+        assert cli is not None
+        assert prod is not None
+        cli.whatsapp = None
+        cli.phone = None
+
+        sale = Sale(
+            customer=cli.name,
+            subtotal=100,
+            discount=0,
+            tax=0,
+            total_amount=100,
+            payment_method="EFECTIVO",
+            seller_id=seller.id,
+            client_id=cli.id,
+            company_id=seller.company_id,
+            date=utcnow(),
+        )
+        db.session.add(sale)
+        db.session.flush()
+        db.session.add(SaleItem(sale_id=sale.id, product_id=prod.id, quantity=1, price=100, cost_price=70, discount=0))
+        db.session.commit()
+        sale_id = sale.id
+        client_id = cli.id
+
+    client.post("/auth/login", data={"username": "empresa_admin", "password": "admin123"})
+
+    dialog = client.get(f"/ventas/{sale_id}/share-whatsapp")
+    assert dialog.status_code == 200
+    html = dialog.data.decode("utf-8")
+    assert "No existe un numero de WhatsApp asociado a esta venta." in html
+
+    invalid = client.post(
+        f"/ventas/{sale_id}/share-whatsapp",
+        data={"whatsapp_phone": "123", "phone_action": "send_once"},
+    )
+    assert invalid.status_code == 200
+    assert "Numero de WhatsApp invalido" in invalid.data.decode("utf-8")
+
+    send_once = client.post(
+        f"/ventas/{sale_id}/share-whatsapp",
+        data={"whatsapp_phone": "5491122233344", "phone_action": "send_once"},
+        follow_redirects=False,
+    )
+    assert send_once.status_code in (301, 302)
+    assert send_once.headers.get("Location", "").startswith("https://wa.me/5491122233344")
+
+    with stock_app.app.app_context():
+        unchanged_client = db.session.get(Client, client_id)
+        assert unchanged_client is not None
+        assert not (unchanged_client.whatsapp or "").strip()
+
+
+def test_share_whatsapp_allows_save_and_send():
+    client = stock_app.app.test_client()
+
+    with stock_app.app.app_context():
+        from app import Sale, SaleItem, utcnow
+
+        seller = User.query.filter_by(username="empresa_admin").first()
+        cli = Client.query.filter_by(name="Cliente demo").first()
+        prod = Product.query.filter_by(name="Yerba kilo").first()
+        assert seller is not None
+        assert cli is not None
+        assert prod is not None
+        cli.whatsapp = None
+
+        sale = Sale(
+            customer=cli.name,
+            subtotal=100,
+            discount=0,
+            tax=0,
+            total_amount=100,
+            payment_method="EFECTIVO",
+            seller_id=seller.id,
+            client_id=cli.id,
+            company_id=seller.company_id,
+            date=utcnow(),
+        )
+        db.session.add(sale)
+        db.session.flush()
+        db.session.add(SaleItem(sale_id=sale.id, product_id=prod.id, quantity=1, price=100, cost_price=70, discount=0))
+        db.session.commit()
+        sale_id = sale.id
+        client_id = cli.id
+
+    client.post("/auth/login", data={"username": "empresa_admin", "password": "admin123"})
+    save_and_send = client.post(
+        f"/ventas/{sale_id}/share-whatsapp",
+        data={"whatsapp_phone": "5491155566677", "phone_action": "save_and_send"},
+        follow_redirects=False,
+    )
+    assert save_and_send.status_code in (301, 302)
+    assert save_and_send.headers.get("Location", "").startswith("https://wa.me/5491155566677")
+
+    with stock_app.app.app_context():
+        saved_client = db.session.get(Client, client_id)
+        assert saved_client is not None
+        assert saved_client.whatsapp == "5491155566677"
+
+
+def test_login_has_no_google_button_and_has_forgot_password_link():
+    client = stock_app.app.test_client()
+    response = client.get("/auth/login")
+    assert response.status_code == 200
+    html = response.data.decode("utf-8")
+    assert "Continuar con Google" not in html
+    assert "/auth/google" not in html
+    assert "auth.google_login" not in html
+    assert "¿Olvidaste tu contrasena?" in html
+
+
+def test_password_recovery_request_and_superadmin_reset_flow():
+    client = stock_app.app.test_client()
+
+    # Usuario solicita recuperacion por correo.
+    forgot = client.post(
+        "/auth/forgot-password",
+        data={"email": "admin@test.local"},
+        follow_redirects=True,
+    )
+    assert forgot.status_code == 200
+
+    with stock_app.app.app_context():
+        from app import PasswordRecoveryRequest
+
+        req = PasswordRecoveryRequest.query.order_by(PasswordRecoveryRequest.id.desc()).first()
+        assert req is not None
+        assert req.status == "pendiente"
+        request_id = req.id
+
+    # SuperAdmin visualiza y restablece.
+    client.post("/auth/login", data={"username": "superadmin", "password": "admin123"})
+    panel = client.get("/superadmin/password-recovery")
+    assert panel.status_code == 200
+    assert "Recuperacion de contrasenas" in panel.data.decode("utf-8")
+
+    reset = client.post(
+        f"/superadmin/password-recovery/{request_id}/reset",
+        follow_redirects=True,
+    )
+    assert reset.status_code == 200
+    reset_html = reset.data.decode("utf-8")
+    assert "Contrasena temporal" in reset_html
+    match = re.search(r"<code class=\"fs-6\">([^<]+)</code>", reset_html)
+    assert match is not None
+    temp_password = match.group(1).strip()
+    assert temp_password
+
+    # Se muestra una sola vez.
+    panel_again = client.get("/superadmin/password-recovery")
+    assert panel_again.status_code == 200
+    assert "Contrasena temporal" not in panel_again.data.decode("utf-8")
+
+    with stock_app.app.app_context():
+        from app import PasswordRecoveryRequest
+
+        user = User.query.filter_by(username="empresa_admin").first()
+        assert user is not None
+        assert user.must_change_password is True
+        assert user.password_hash != temp_password
+        assert user.check_password(temp_password)
+
+        req = db.session.get(PasswordRecoveryRequest, request_id)
+        assert req is not None
+        assert req.status == "atendida"
+
+    # Usuario inicia con temporal y queda obligado a cambiar contrasena.
+    client.post("/auth/logout")
+    login_with_temp = client.post(
+        "/auth/login",
+        data={"username": "empresa_admin", "password": temp_password},
+        follow_redirects=False,
+    )
+    assert login_with_temp.status_code in (301, 302)
+    assert "/auth/force-password-change" in (login_with_temp.headers.get("Location") or "")
+
+    blocked_dashboard = client.get("/dashboard/", follow_redirects=False)
+    assert blocked_dashboard.status_code in (301, 302)
+    assert "/auth/force-password-change" in (blocked_dashboard.headers.get("Location") or "")
+
+    change_password = client.post(
+        "/auth/force-password-change",
+        data={"new_password": "nueva123", "confirm_password": "nueva123"},
+        follow_redirects=False,
+    )
+    assert change_password.status_code in (301, 302)
+
+    with stock_app.app.app_context():
+        from app import PasswordRecoveryRequest
+
+        user = User.query.filter_by(username="empresa_admin").first()
+        assert user is not None
+        assert user.must_change_password is False
+        assert user.check_password("nueva123")
+
+        req = db.session.get(PasswordRecoveryRequest, request_id)
+        assert req is not None
+        assert req.status == "cerrada"
+
+
+def test_landing_and_subscription_use_same_plan_catalog():
+    client = stock_app.app.test_client()
+
+    landing = client.get("/")
+    assert landing.status_code == 200
+    landing_html = landing.data.decode("utf-8")
+    for value in [
+        "Trial",
+        "Emprendedor",
+        "Negocio",
+        "Premium",
+        "12.999",
+        "29.999",
+        "54.999",
+        "Controla tu negocio desde cualquier lugar",
+        "Comparación comercial completa",
+        "Gana dinero recomendando StockArmobile",
+        "Comisión configurada",
+        "Prueba StockArmobile GRATIS",
+        "Sin tarjeta de crédito",
+    ]:
+        assert value in landing_html
+
+    client.post("/auth/login", data={"username": "empresa_admin", "password": "admin123"})
+    portal = client.get("/admin/portal")
+    assert portal.status_code == 200
+    portal_html = portal.data.decode("utf-8")
+    assert "Uso del plan" in portal_html
+    assert "Plan contratado" in portal_html
+    assert "Comenzar suscripcion" in portal_html
+
+
+def test_landing_contact_form_endpoint():
+    client = stock_app.app.test_client()
+
+    invalid = client.post(
+        "/landing/contact",
+        data={"name": "", "email": "", "message": ""},
+        follow_redirects=True,
+    )
+    assert invalid.status_code == 200
+    assert "Completa nombre, email y mensaje" in invalid.data.decode("utf-8")
+
+    ok = client.post(
+        "/landing/contact",
+        data={"name": "Lead Demo", "email": "lead@test.com", "message": "Quiero una demo."},
+        follow_redirects=True,
+    )
+    assert ok.status_code == 200
+    assert "Recibimos tu mensaje" in ok.data.decode("utf-8")
+
+
+def test_landing_testimonials_visibility_with_real_data_only():
+    client = stock_app.app.test_client()
+
+    empty_state = client.get("/")
+    assert empty_state.status_code == 200
+    assert "Experiencias reales de clientes" not in empty_state.data.decode("utf-8")
+
+    with stock_app.app.app_context():
+        from app import LandingTestimonial
+
+        db.session.add(
+            LandingTestimonial(
+                author_name="Cliente Real",
+                company_name="Tienda Centro",
+                quote="Mejoramos el control de ventas y stock en la primera semana.",
+                active=True,
+            )
+        )
+        db.session.commit()
+
+    populated_state = client.get("/")
+    assert populated_state.status_code == 200
+    html = populated_state.data.decode("utf-8")
+    assert "Experiencias reales de clientes" in html
+    assert "Cliente Real" in html
+    assert "Tienda Centro" in html
+
+
+def test_superadmin_can_update_landing_testimonial():
+    client = stock_app.app.test_client()
+
+    with stock_app.app.app_context():
+        from app import LandingTestimonial
+
+        row = LandingTestimonial(
+            author_name="Autor Inicial",
+            company_name="Empresa Inicial",
+            quote="Texto inicial",
+            active=True,
+        )
+        db.session.add(row)
+        db.session.commit()
+        testimonial_id = row.id
+
+    client.post("/auth/login", data={"username": "superadmin", "password": "admin123"})
+    updated = client.post(
+        f"/superadmin/landing/testimonials/{testimonial_id}/update",
+        data={
+            "author_name": "Autor Editado",
+            "company_name": "Empresa Editada",
+            "quote": "Texto editado real",
+            "active": "0",
+        },
+        follow_redirects=True,
+    )
+    assert updated.status_code == 200
+    assert "Testimonio actualizado correctamente" in updated.data.decode("utf-8")
+
+    with stock_app.app.app_context():
+        from app import LandingTestimonial
+
+        refreshed = LandingTestimonial.query.filter_by(id=testimonial_id).first()
+        assert refreshed is not None
+        assert refreshed.author_name == "Autor Editado"
+        assert refreshed.company_name == "Empresa Editada"
+        assert refreshed.quote == "Texto editado real"
+        assert refreshed.active is False
+
+
+def test_plan_limits_block_create_products_and_clients_without_breaking_portal():
+    from services.plan_service import PlanService
+
+    client = stock_app.app.test_client()
+    with stock_app.app.app_context():
+        from app import Plan
+
+        PlanService.ensure_defaults(db.session)
+        trial = Plan.query.filter_by(code="trial").first()
+        assert trial is not None
+        trial.max_products = 1
+        trial.max_clients = 1
+        db.session.commit()
+
+    client.post("/auth/login", data={"username": "empresa_admin", "password": "admin123"})
+
+    product_response = client.post(
+        "/productos/add",
+        data={
+            "barcode": "LIM-001",
+            "name": "Producto limite",
+            "sale_type": "unidad",
+            "unit_measure": "u",
+            "price": "100",
+            "cost_price": "50",
+            "stock": "1",
+            "min_stock": "1",
+            "pricing_source": "price",
+        },
+        follow_redirects=True,
+    )
+    assert product_response.status_code == 200
+    product_html = product_response.data.decode("utf-8")
+    assert "Has alcanzado el limite de productos permitido por tu plan" in product_html
+
+    client_response = client.post(
+        "/clientes/add",
+        data={
+            "name": "Cliente limite",
+            "email": "limite@test.local",
+        },
+        follow_redirects=True,
+    )
+    assert client_response.status_code == 200
+    client_html = client_response.data.decode("utf-8")
+    assert "Has alcanzado el limite de clientes permitido por tu plan" in client_html
+
+    portal = client.get("/admin/portal")
+    assert portal.status_code == 200
+    portal_html = portal.data.decode("utf-8")
+    assert "Está próximo a alcanzar el límite de su plan." in portal_html
+    assert "Por el crecimiento de su negocio le recomendamos actualizar al Plan" in portal_html
+
+
+def test_referral_capture_and_register_attribution_flow():
+    client = stock_app.app.test_client()
+
+    with stock_app.app.app_context():
+        from app import Company, ReferralSeller
+
+        seller_company = Company(name="Empresa Seller", active=True)
+        db.session.add(seller_company)
+        db.session.flush()
+
+        seller_user = User(
+            username="seller_user",
+            email="seller@test.local",
+            role="seller",
+            company_id=seller_company.id,
+            active=True,
+        )
+        seller_user.set_password("seller123")
+        db.session.add(seller_user)
+        db.session.flush()
+
+        seller_profile = ReferralSeller(
+            user_id=seller_user.id,
+            dni="30111222",
+            referral_code="REF7777",
+            referral_url="https://stockarmobile.com/?ref=REF7777",
+            active=True,
+        )
+        db.session.add(seller_profile)
+        db.session.commit()
+
+    landing = client.get("/?ref=ref7777")
+    assert landing.status_code == 200
+    set_cookie = landing.headers.get("Set-Cookie", "")
+    assert "stockarmobile_ref=REF7777" in set_cookie
+
+    register = client.post(
+        "/auth/register",
+        data={
+            "username": "nuevo_ref",
+            "email": "nuevo_ref@test.com",
+            "password": "nuevo123",
+            "selected_plan": "trial",
+        },
+        follow_redirects=False,
+    )
+    assert register.status_code in (301, 302)
+
+    with stock_app.app.app_context():
+        from app import Company, ReferralAttribution
+
+        company = Company.query.filter_by(name="Empresa nuevo_ref").first()
+        assert company is not None
+        attribution = ReferralAttribution.query.filter_by(company_id=company.id).first()
+        assert attribution is not None
+        assert attribution.referral_code == "REF7777"
+
+
+def test_referral_commission_lifecycle_and_payout_are_persistent():
+    with stock_app.app.app_context():
+        from app import Company, Plan, ReferralAttribution, ReferralCommission, ReferralPayout, ReferralSeller, utcnow
+        from services.plan_service import PlanService
+        from services.referral_service import ReferralService
+
+        PlanService.ensure_defaults(db.session)
+
+        seller_company = Company(name="Empresa Seller 2", active=True)
+        referred_company = Company(name="Empresa Referida", active=True)
+        db.session.add_all([seller_company, referred_company])
+        db.session.flush()
+
+        seller_user = User(
+            username="seller_lifecycle",
+            email="seller_lifecycle@test.local",
+            role="seller",
+            company_id=seller_company.id,
+            active=True,
+        )
+        seller_user.set_password("seller123")
+        db.session.add(seller_user)
+        db.session.flush()
+
+        profile = ReferralSeller(
+            user_id=seller_user.id,
+            dni="30999888",
+            referral_code="REF8888",
+            referral_url="https://stockarmobile.com/?ref=REF8888",
+            active=True,
+        )
+        db.session.add(profile)
+        db.session.flush()
+
+        attribution = ReferralAttribution(
+            seller_id=profile.id,
+            company_id=referred_company.id,
+            user_id=seller_user.id,
+            referral_code="REF8888",
+        )
+        db.session.add(attribution)
+        db.session.flush()
+
+        paid_plan = Plan.query.filter_by(code="entrepreneur").first()
+        assert paid_plan is not None
+
+        commission = ReferralService.create_commission_for_sale(
+            db.session,
+            company_id=referred_company.id,
+            payment=None,
+            subscription=None,
+            plan=paid_plan,
+        )
+        assert commission is not None
+        assert float(commission.commission_amount) > 0
+        assert commission.status == "pendiente"
+
+        commission.available_at = utcnow() - timedelta(days=1)
+        ReferralService.refresh_commission_states(db.session)
+        assert commission.status == "disponible"
+
+        superadmin = User.query.filter_by(username="superadmin").first()
+        assert superadmin is not None
+
+        payout = ReferralService.register_payout(
+            db.session,
+            seller_id=profile.id,
+            commission_ids=[commission.id],
+            processed_by_user_id=superadmin.id,
+            transfer_date=utcnow(),
+            receipt="comp-001",
+            transfer_number="tx-001",
+            observations="Pago de prueba",
+        )
+        db.session.commit()
+
+        persisted_commission = ReferralCommission.query.filter_by(id=commission.id).first()
+        persisted_payout = ReferralPayout.query.filter_by(id=payout.id).first()
+        assert persisted_commission is not None
+        assert persisted_commission.status == "pagada"
+        assert persisted_payout is not None
+        assert float(persisted_payout.amount) == float(persisted_commission.commission_amount)
+
+
+def test_referral_role_isolation_between_seller_and_superadmin():
+    client = stock_app.app.test_client()
+
+    with stock_app.app.app_context():
+        from app import Company, ReferralSeller
+
+        seller_company = Company(name="Empresa Seller 3", active=True)
+        db.session.add(seller_company)
+        db.session.flush()
+
+        seller_user = User(
+            username="seller_portal",
+            email="seller_portal@test.local",
+            role="seller",
+            company_id=seller_company.id,
+            active=True,
+        )
+        seller_user.set_password("seller123")
+        db.session.add(seller_user)
+        db.session.flush()
+
+        db.session.add(
+            ReferralSeller(
+                user_id=seller_user.id,
+                dni="30123123",
+                referral_code="REF1234",
+                referral_url="https://stockarmobile.com/?ref=REF1234",
+                active=True,
+            )
+        )
+        db.session.commit()
+
+    client.post("/auth/login", data={"username": "seller_portal", "password": "seller123"})
+    seller_portal = client.get("/referidos")
+    assert seller_portal.status_code == 200
+
+    seller_forbidden_admin = client.get("/superadmin/referrals")
+    assert seller_forbidden_admin.status_code == 403
+
+    client.post("/auth/logout")
+    client.post("/auth/login", data={"username": "superadmin", "password": "admin123"})
+
+    admin_referrals = client.get("/superadmin/referrals")
+    assert admin_referrals.status_code == 200
+
+    admin_forbidden_seller = client.get("/referidos")
+    assert admin_forbidden_seller.status_code == 403

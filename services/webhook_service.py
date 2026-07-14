@@ -8,6 +8,7 @@ import json
 from services.billing_notification_service import NotificationService
 from services.invoice_service import InvoiceService
 from services.mercadopago_service import MercadoPagoService
+from services.referral_service import ReferralService
 from services.subscription_service import SubscriptionService
 
 
@@ -179,6 +180,14 @@ class WebhookService:
                         )
                         payment.invoice_id = invoice.id
 
+                    ReferralService.create_commission_for_sale(
+                        db_session,
+                        company_id=company.id,
+                        subscription=subscription,
+                        payment=payment,
+                        plan=subscription.plan,
+                    )
+
                 user = User.query.filter_by(id=payment.user_id).first() if payment.user_id else None
                 NotificationService.record_event(
                     db_session,
@@ -211,6 +220,7 @@ class WebhookService:
             result = {"status": "processed_preapproval", "event_key": event_key}
 
         event_row.status = result.get("status")
+        ReferralService.refresh_commission_states(db_session)
         db_session.add(event_row)
         db_session.commit()
         return result

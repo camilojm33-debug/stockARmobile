@@ -16,11 +16,48 @@
     </form>
   </div>
 
-  <form method="post" action="{{ url_for('qr_labels.print_all') }}" class="row g-2 align-items-end mb-3">
+  <form method="post" action="{{ url_for('qr_labels.print_all') }}" id="bulkPrintForm" class="row g-2 align-items-end mb-3">
     <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+    <div class="col-md-4">
+      <label class="form-label d-block mb-1">Formato de etiqueta</label>
+      <div class="form-check form-check-inline">
+        <input class="form-check-input" type="radio" name="label_format" id="formatCurrent" value="current" checked>
+        <label class="form-check-label" for="formatCurrent">Formato actual</label>
+      </div>
+      <div class="form-check form-check-inline">
+        <input class="form-check-input" type="radio" name="label_format" id="formatSquare5" value="square_5x5">
+        <label class="form-check-label" for="formatSquare5">Etiqueta cuadrada 5 x 5 cm</label>
+      </div>
+    </div>
+    <div class="col-md-4">
+      <label class="form-label">Productos a imprimir</label>
+      <select class="form-select" name="print_scope" id="printScope">
+        <option value="all" selected>Todos los productos</option>
+        <option value="selected">Solo seleccionados</option>
+        <option value="single">Un solo producto repetido</option>
+      </select>
+    </div>
+    <div class="col-md-4" id="singleProductWrap" style="display:none;">
+      <label class="form-label">Producto unico</label>
+      <select class="form-select" name="single_product_id">
+        <option value="">Seleccionar producto</option>
+        {% for product in products %}
+        <option value="{{ product.id }}">{{ product.name }}</option>
+        {% endfor %}
+      </select>
+    </div>
     <div class="col-md-3"><label class="form-label">Tamano</label><select class="form-select" name="size"><option value="small">Chica</option><option value="standard" selected>Normal</option><option value="large">Grande</option></select></div>
     <div class="col-md-3"><label class="form-label">Copias por producto</label><input class="form-control" name="copies" type="number" min="1" max="20" value="1"></div>
-    <div class="col-md-4"><button class="btn btn-success" {% if not products %}disabled{% endif %}><i class="bi bi-file-earmark-pdf me-1"></i>Descargar PDF</button></div>
+    <div class="col-md-3" id="fillPageWrap" style="display:none;">
+      <div class="form-check mt-4">
+        <input class="form-check-input" type="checkbox" name="fill_page" id="fillPage">
+        <label class="form-check-label" for="fillPage">Completar una hoja A4 (solo producto unico 5x5)</label>
+      </div>
+    </div>
+    <div class="col-md-2"><button class="btn btn-success" {% if not products %}disabled{% endif %}><i class="bi bi-file-earmark-pdf me-1"></i>Descargar PDF</button></div>
+    <div class="col-12" id="selectedHint" style="display:none;">
+      <div class="small text-muted">Selecciona productos desde las tarjetas de abajo para imprimir solo esos.</div>
+    </div>
   </form>
 
   <div class="card app-card mb-4">
@@ -42,6 +79,10 @@
     <div class="col-md-6 col-lg-3">
       <div class="card app-card h-100">
         <div class="card-body text-center">
+          <div class="form-check text-start mb-2">
+            <input class="form-check-input" type="checkbox" name="selected_product_ids" value="{{ product.id }}" form="bulkPrintForm" id="selectProduct{{ product.id }}">
+            <label class="form-check-label small" for="selectProduct{{ product.id }}">Seleccionar para impresion masiva</label>
+          </div>
           <img src="{{ url_for('qr_labels.qr_image', id=product.id) }}" class="img-fluid mb-2" style="max-width:140px" alt="QR {{ product.name }}">
           <h2 class="h6">{{ product.name }}</h2>
           <p class="text-muted small mb-2"><code>{{ product.barcode }}</code></p>
@@ -74,4 +115,35 @@
     {% endfor %}
   </div>
 </div>
+{% endblock %}
+
+{% block extra_js %}
+<script>
+  (() => {
+    const scopeSelect = document.getElementById('printScope');
+    const singleWrap = document.getElementById('singleProductWrap');
+    const fillWrap = document.getElementById('fillPageWrap');
+    const selectedHint = document.getElementById('selectedHint');
+    const fillCheckbox = document.getElementById('fillPage');
+
+    if (!scopeSelect) return;
+
+    const syncScopeUI = () => {
+      const scope = scopeSelect.value;
+      const isSingle = scope === 'single';
+      const isSelected = scope === 'selected';
+
+      if (singleWrap) singleWrap.style.display = isSingle ? '' : 'none';
+      if (fillWrap) fillWrap.style.display = isSingle ? '' : 'none';
+      if (selectedHint) selectedHint.style.display = isSelected ? '' : 'none';
+
+      if (!isSingle && fillCheckbox) {
+        fillCheckbox.checked = false;
+      }
+    };
+
+    scopeSelect.addEventListener('change', syncScopeUI);
+    syncScopeUI();
+  })();
+</script>
 {% endblock %}

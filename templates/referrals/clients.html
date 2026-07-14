@@ -1,0 +1,29 @@
+{% extends "base_master.html" %}
+{% block title %}Mis clientes referidos{% endblock %}
+{% block content %}
+<h1 class="h4 mb-3">Mis clientes referidos</h1>
+<div class="card">
+  <div class="table-responsive">
+    <table class="table mb-0 align-middle">
+      <thead><tr><th>Empresa</th><th>Email</th><th>Estado</th><th>Plan</th><th>Fecha alta</th></tr></thead>
+      <tbody>
+      {% for row in rows %}
+        <tr>
+          <td>{{ row.company.name if row.company else 'N/A' }}</td>
+          <td>{{ row.company.email if row.company else '-' }}</td>
+          <td>
+            <span class="badge text-bg-{% if row.company and row.company.active %}success{% else %}secondary{% endif %}">
+              {% if row.company and row.company.active %}Activa{% else %}Inactiva{% endif %}
+            </span>
+          </td>
+          <td>{{ row.subscription.plan.name if row.subscription and row.subscription.plan else '-' }}</td>
+          <td>{{ row.attribution.created_at.strftime('%Y-%m-%d') if row.attribution and row.attribution.created_at else '-' }}</td>
+        </tr>
+      {% else %}
+        <tr><td colspan="5" class="text-center text-muted">No hay clientes referidos todavia.</td></tr>
+      {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</div>
+{% endblock %}
