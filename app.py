@@ -26,8 +26,15 @@ from services.search_service import global_search
 
 try:
     from psycopg2.errors import UndefinedTable as PGUndefinedTable
-except Exception:  # pragma: no cover - unavailable outside postgres runtime
+except ImportError:  # pragma: no cover - unavailable outside postgres runtime
     PGUndefinedTable = None
+
+
+class _NeverUndefinedTableError(Exception):
+    pass
+
+
+UndefinedTableError = PGUndefinedTable or _NeverUndefinedTableError
 
 
 configure_logging()
@@ -1119,6 +1126,14 @@ def index():
     referral_percent = float(ReferralService.COMMISSION_PERCENT)
 
     ranking_rows = []
+
+    def _is_undefined_table(error):
+        if PGUndefinedTable is None:
+            return False
+        if isinstance(error, PGUndefinedTable):
+            return True
+        return isinstance(getattr(error, "orig", None), PGUndefinedTable)
+
     try:
         ranking_rows = (
             db.session.query(
@@ -1134,14 +1149,11 @@ def index():
             .all()
         )
     except ProgrammingError as exc:
-        is_undefined_table = PGUndefinedTable is not None and isinstance(getattr(exc, "orig", None), PGUndefinedTable)
-        if not is_undefined_table:
+        if not _is_undefined_table(exc):
             raise
         db.session.rollback()
         app.logger.warning("Landing cargada sin ranking de referidos por tabla inexistente: %s", exc)
-    except Exception as exc:
-        if PGUndefinedTable is None or not isinstance(exc, PGUndefinedTable):
-            raise
+    except UndefinedTableError as exc:
         db.session.rollback()
         app.logger.warning("Landing cargada sin ranking de referidos por UndefinedTable: %s", exc)
 
@@ -1175,7 +1187,22 @@ def index():
         "email": (os.environ.get("LANDING_EMAIL") or "hola@stockarmobile.com").strip(),
     }
 
-    testimonials = LandingTestimonial.query.filter(LandingTestimonial.active.is_(True)).order_by(LandingTestimonial.created_at.desc()).limit(6).all()
+    testimonials = []
+    try:
+        testimonials = (
+            LandingTestimonial.query.filter(LandingTestimonial.active.is_(True))
+            .order_by(LandingTestimonial.created_at.desc())
+            .limit(6)
+            .all()
+        )
+    except ProgrammingError as exc:
+        if not _is_undefined_table(exc):
+            raise
+        db.session.rollback()
+        app.logger.warning("Landing cargada sin testimonios por tabla inexistente: %s", exc)
+    except UndefinedTableError as exc:
+        db.session.rollback()
+        app.logger.warning("Landing cargada sin testimonios por UndefinedTable: %s", exc)
 
     referral_code = (request.args.get("ref") or "").strip().upper()
     response = make_response(

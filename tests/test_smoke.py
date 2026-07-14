@@ -8,6 +8,12 @@ import pytest
 
 import app as stock_app
 from app import Client, Company, Product, Subscription, User, db
+from sqlalchemy.exc import ProgrammingError
+
+try:
+    from psycopg2.errors import UndefinedTable as PGUndefinedTable
+except ImportError:  # pragma: no cover
+    PGUndefinedTable = None
 
 
 @pytest.fixture(autouse=True)
@@ -1108,6 +1114,51 @@ def test_superadmin_can_update_landing_testimonial():
         assert refreshed.company_name == "Empresa Editada"
         assert refreshed.quote == "Texto editado real"
         assert refreshed.active is False
+
+
+@pytest.mark.skipif(PGUndefinedTable is None, reason="psycopg2 UndefinedTable no disponible")
+def test_landing_survives_optional_referral_ranking_table_missing(monkeypatch):
+    client = stock_app.app.test_client()
+    original_query = stock_app.db.session.query
+
+    def broken_query(*args, **kwargs):
+        if args and args[0] is stock_app.ReferralSeller:
+            raise ProgrammingError("SELECT ...", {}, PGUndefinedTable("relation referral_sellers does not exist"))
+        return original_query(*args, **kwargs)
+
+    monkeypatch.setattr(stock_app.db.session, "query", broken_query)
+
+    response = client.get("/")
+    assert response.status_code == 200
+    html = response.data.decode("utf-8")
+    assert "Top referidores" in html
+    assert "Aún no hay datos suficientes para mostrar ranking" in html
+
+
+@pytest.mark.skipif(PGUndefinedTable is None, reason="psycopg2 UndefinedTable no disponible")
+def test_landing_survives_optional_testimonials_table_missing(monkeypatch):
+    client = stock_app.app.test_client()
+
+    class BrokenTestimonialsQuery:
+        def filter(self, *args, **kwargs):
+            return self
+
+        def order_by(self, *args, **kwargs):
+            return self
+
+        def limit(self, *args, **kwargs):
+            return self
+
+        def all(self):
+            raise ProgrammingError("SELECT ...", {}, PGUndefinedTable("relation landing_testimonials does not exist"))
+
+    with stock_app.app.app_context():
+        monkeypatch.setattr(stock_app.LandingTestimonial, "query", BrokenTestimonialsQuery(), raising=False)
+
+    response = client.get("/")
+    assert response.status_code == 200
+    html = response.data.decode("utf-8")
+    assert "Experiencias reales de clientes" not in html
 
 
 def test_plan_limits_block_create_products_and_clients_without_breaking_portal():
