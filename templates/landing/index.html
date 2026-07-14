@@ -281,9 +281,9 @@
             <div class="col-lg-10 reveal" data-delay="90">
               <div class="feature-card text-center">
                 <p class="mb-3">Comparte tu enlace, acompaña a tus clientes y cobra comisiones recurrentes todos los meses.</p>
-                <div class="d-flex flex-wrap justify-content-center gap-2">
-                  <a class="btn btn-primary btn-pill btn-lg" href="{{ url_for('auth.register') }}">Quiero ser vendedor</a>
-                  <a class="btn btn-outline-primary btn-pill btn-lg" href="{{ url_for('auth.login') }}">Ya tengo cuenta</a>
+                <div class="d-flex flex-column flex-md-row justify-content-center gap-2">
+                  <a class="btn btn-outline-primary btn-pill btn-lg" href="{{ url_for('auth.login', next=url_for('referrals.activate_seller')) }}">Ya sos cliente? Iniciar sesion y activar Referidos</a>
+                  <a class="btn btn-primary btn-pill btn-lg" href="{{ url_for('auth.register', mode='seller') }}">No sos cliente? Crear cuenta de vendedor</a>
                 </div>
               </div>
             </div>

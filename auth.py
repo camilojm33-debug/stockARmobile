@@ -49,7 +49,7 @@ def login():
                 if getattr(user, "must_change_password", False):
                     flash("Debes cambiar tu contrasena para continuar.", "warning")
                     return redirect(url_for("auth.force_password_change"))
-                next_page = request.args.get("next")
+                next_page = (request.form.get("next") or request.args.get("next") or "").strip()
                 if not _is_safe_redirect(next_page):
                     next_page = None
                 flash("Inicio de sesion exitoso", "success")
@@ -162,17 +162,57 @@ def register():
     from services.subscription_service import SubscriptionService
 
     selected_plan_code = (request.values.get("selected_plan") or "trial").strip().lower()
+    registration_mode = (request.values.get("mode") or "").strip().lower()
 
     if request.method == "POST":
         form = RegisterForm()
+        if registration_mode == "seller":
+            email_candidate = (request.form.get("email") or "").strip().lower()
+            if email_candidate:
+                existing_user = User.query.filter(db.func.lower(User.email) == email_candidate).first()
+                if existing_user is not None:
+                    flash("Este correo ya pertenece a un cliente existente. Inicia sesion para activar Referidos desde tu cuenta.", "warning")
+                    return redirect(url_for("auth.login", next=url_for("referrals.activate_seller")))
         if form.validate_on_submit():
             if User.query.filter_by(username=form.username.data).first():
                 flash("El nombre de usuario ya esta en uso.", "danger")
-                return redirect(url_for("auth.register"))
+                return redirect(url_for("auth.register", selected_plan=selected_plan_code, mode=registration_mode))
 
-            if User.query.filter_by(email=form.email.data).first():
+            existing_user = User.query.filter_by(email=form.email.data).first()
+            if existing_user:
+                if registration_mode == "seller":
+                    flash("Este correo ya pertenece a un cliente existente. Inicia sesion para activar Referidos desde tu cuenta.", "warning")
+                    return redirect(url_for("auth.login", next=url_for("referrals.activate_seller")))
                 flash("Este correo electronico ya esta registrado.", "danger")
-                return redirect(url_for("auth.register"))
+                return redirect(url_for("auth.register", selected_plan=selected_plan_code, mode=registration_mode))
+
+            if registration_mode == "seller":
+                user = User(username=form.username.data, email=form.email.data, auth_provider="local", active=True)
+                user.set_password(form.password.data)
+                user.role = "seller"
+                db.session.add(user)
+                db.session.flush()
+
+                profile_data = {
+                    "dni": (request.form.get("dni") or "").strip() or f"AUTO-{user.id}",
+                    "tax_id": None,
+                    "phone": None,
+                    "province": None,
+                    "city": None,
+                    "address": None,
+                    "alias": None,
+                    "cbu": None,
+                    "bank": None,
+                    "account_holder": None,
+                    "active": True,
+                }
+                ReferralService.create_or_update_seller(db.session, user=user, profile_data=profile_data)
+
+                record_audit(action="register_seller_success", entity="user", entity_id=user.id, detail="Registro de vendedor exitoso")
+                db.session.commit()
+
+                flash("Registro de vendedor exitoso. Inicia sesion para entrar a tu panel.", "success")
+                return redirect(url_for("auth.login", next=url_for("referrals.seller_dashboard")))
 
             company_name = f"Empresa {form.username.data.strip()}"
             company = Company(name=company_name, active=True, trial_ends_at=utcnow() + timedelta(days=10))
@@ -218,7 +258,7 @@ def register():
             return redirect(url_for("auth.login"))
 
     form = RegisterForm()
-    return render_template("auth/register.html", form=form, selected_plan=selected_plan_code)
+    return render_template("auth/register.html", form=form, selected_plan=selected_plan_code, registration_mode=registration_mode)
 
 
 @bp.route("/logout", methods=["POST"])

@@ -1159,6 +1159,8 @@ def test_landing_and_subscription_use_same_plan_catalog():
         "Comisión configurada",
         "Prueba StockArmobile GRATIS",
         "Sin tarjeta de crédito",
+        "Ya sos cliente? Iniciar sesion y activar Referidos",
+        "No sos cliente? Crear cuenta de vendedor",
     ]:
         assert value in landing_html
 
@@ -1548,3 +1550,59 @@ def test_referral_role_isolation_between_seller_and_superadmin():
 
     admin_forbidden_seller = client.get("/referidos")
     assert admin_forbidden_seller.status_code == 403
+
+
+def test_existing_customer_can_activate_referrals_without_duplicate_account():
+    client = stock_app.app.test_client()
+
+    with stock_app.app.app_context():
+        from app import Company, ReferralSeller
+
+        target_user = User.query.filter_by(username="empresa_admin").first()
+        assert target_user is not None
+        assert target_user.role == "user"
+        assert target_user.email == "admin@test.local"
+        assert ReferralSeller.query.filter_by(user_id=target_user.id).first() is None
+
+        base_user_count = User.query.count()
+        base_company_count = Company.query.count()
+
+    register_attempt = client.post(
+        "/auth/register",
+        data={
+            "username": "vendedor_existente",
+            "email": "admin@test.local",
+            "password": "seller123",
+            "selected_plan": "trial",
+            "mode": "seller",
+        },
+        follow_redirects=False,
+    )
+    assert register_attempt.status_code in (301, 302)
+    location = register_attempt.headers.get("Location") or ""
+    assert "/auth/login" in location
+
+    login = client.post(
+        "/auth/login?next=/referidos/activar",
+        data={"username": "empresa_admin", "password": "admin123"},
+        follow_redirects=False,
+    )
+    assert login.status_code in (301, 302)
+    assert "/referidos/activar" in (login.headers.get("Location") or "")
+
+    activate = client.post("/referidos/activar", data={"dni": "30123456"}, follow_redirects=True)
+    assert activate.status_code == 200
+    assert "Panel de Referidos" in activate.data.decode("utf-8")
+
+    with stock_app.app.app_context():
+        from app import Company, ReferralSeller
+
+        target_user = User.query.filter_by(username="empresa_admin").first()
+        assert target_user is not None
+        assert User.query.filter_by(email="admin@test.local").count() == 1
+        assert User.query.count() == base_user_count
+        assert Company.query.count() == base_company_count
+
+        seller_profile = ReferralSeller.query.filter_by(user_id=target_user.id).first()
+        assert seller_profile is not None
+        assert seller_profile.referral_code.startswith("REF")

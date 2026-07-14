@@ -1,63 +1,244 @@
 {% extends "base_master.html" %}
-{% block title %}Panel de vendedor{% endblock %}
+{% block title %}Portal de Vendedor{% endblock %}
 {% block content %}
-<div class="d-flex justify-content-between align-items-center mb-3">
+<div class="d-flex justify-content-between align-items-center mb-3 flex-wrap gap-2">
   <h1 class="h4 mb-0">Panel de Referidos</h1>
-  <span class="badge text-bg-primary">Codigo: {{ profile.referral_code }}</span>
-</div>
-
-<div class="alert alert-info">
-  Tu link de vendedor: <a href="{{ profile.referral_url }}" target="_blank">{{ profile.referral_url }}</a>
+  <span class="badge text-bg-{{ seller_state_color }}">{{ seller_state_label }}</span>
 </div>
 
 <div class="row g-3 mb-4">
-  <div class="col-md-2"><div class="card card-body"><small>Clientes</small><strong class="fs-5">{{ snapshot.total_clients }}</strong></div></div>
-  <div class="col-md-2"><div class="card card-body"><small>Activos</small><strong class="fs-5">{{ snapshot.active_clients }}</strong></div></div>
-  <div class="col-md-2"><div class="card card-body"><small>Pendientes</small><strong class="fs-5">{{ snapshot.pending_clients }}</strong></div></div>
-  <div class="col-md-2"><div class="card card-body"><small>Ventas mes</small><strong class="fs-5">{{ snapshot.month_sales }}</strong></div></div>
-  <div class="col-md-2"><div class="card card-body"><small>Renovaciones</small><strong class="fs-5">{{ snapshot.renewals }}</strong></div></div>
-  <div class="col-md-2"><div class="card card-body"><small>Conversion</small><strong class="fs-5">{{ snapshot.conversion }}%</strong></div></div>
-</div>
-
-<div class="row g-3 mb-4">
-  <div class="col-md-3"><div class="card card-body"><small>Comision pendiente</small><strong>${{ '%.2f'|format(snapshot.commissions_by_status.pendiente or 0) }}</strong></div></div>
-  <div class="col-md-3"><div class="card card-body"><small>Comision disponible</small><strong>${{ '%.2f'|format(snapshot.commissions_by_status.disponible or 0) }}</strong></div></div>
-  <div class="col-md-3"><div class="card card-body"><small>Comision pagada</small><strong>${{ '%.2f'|format(snapshot.commissions_by_status.pagada or 0) }}</strong></div></div>
-  <div class="col-md-3"><div class="card card-body"><small>Comision anulada</small><strong>${{ '%.2f'|format(snapshot.commissions_by_status.anulada or 0) }}</strong></div></div>
-</div>
-
-<div class="card mb-4">
-  <div class="card-header">Medallas</div>
-  <div class="card-body">
-    {% if medals %}
-      {% for target in medals %}
-        <span class="badge text-bg-success me-1">{{ target }} clientes</span>
-      {% endfor %}
-    {% else %}
-      <span class="text-muted">Aun no alcanzas medallas. Objetivo inicial: 1 cliente activo.</span>
-    {% endif %}
+  <div class="col-lg-6">
+    <div class="card app-card h-100">
+      <div class="card-header bg-white fw-bold">Perfil de vendedor</div>
+      <div class="card-body">
+        <div class="row g-2">
+          <div class="col-sm-6"><small class="text-muted d-block">Nombre</small><strong>{{ profile.user.name if profile.user else current_user.name }}</strong></div>
+          <div class="col-sm-6"><small class="text-muted d-block">Fecha de alta</small><strong>{{ profile.created_at.strftime('%Y-%m-%d') if profile.created_at else '-' }}</strong></div>
+          <div class="col-sm-6"><small class="text-muted d-block">Codigo de referido</small><strong>{{ profile.referral_code }}</strong></div>
+          <div class="col-sm-6"><small class="text-muted d-block">URL personalizada</small><a href="{{ profile.referral_url }}" target="_blank">{{ profile.referral_url }}</a></div>
+        </div>
+        <div class="d-flex flex-wrap gap-2 mt-3">
+          <button class="btn btn-outline-primary btn-sm" type="button" data-copy-text="{{ profile.referral_url }}">Copiar enlace</button>
+          <a class="btn btn-success btn-sm" href="{{ share_links.whatsapp }}" target="_blank" rel="noopener">Compartir por WhatsApp</a>
+          <a class="btn btn-outline-primary btn-sm" href="{{ share_links.facebook }}" target="_blank" rel="noopener">Compartir por Facebook</a>
+          <button class="btn btn-outline-danger btn-sm" type="button" data-share-instagram="{{ profile.referral_url }}">Compartir por Instagram</button>
+          <a class="btn btn-outline-secondary btn-sm" href="{{ share_links.linkedin }}" target="_blank" rel="noopener">Compartir por LinkedIn</a>
+        </div>
+      </div>
+    </div>
+  </div>
+  <div class="col-lg-6">
+    <div class="card app-card h-100">
+      <div class="card-header bg-white fw-bold">Estadisticas</div>
+      <div class="card-body">
+        <div class="row g-2 text-center">
+          <div class="col-6 col-md-4"><div class="border rounded p-2"><small class="text-muted d-block">Clicks</small><strong>{{ stats.clicks }}</strong></div></div>
+          <div class="col-6 col-md-4"><div class="border rounded p-2"><small class="text-muted d-block">Registros</small><strong>{{ stats.registrations }}</strong></div></div>
+          <div class="col-6 col-md-4"><div class="border rounded p-2"><small class="text-muted d-block">Empresas</small><strong>{{ stats.companies_created }}</strong></div></div>
+          <div class="col-6 col-md-4"><div class="border rounded p-2"><small class="text-muted d-block">Pruebas</small><strong>{{ stats.free_trials }}</strong></div></div>
+          <div class="col-6 col-md-4"><div class="border rounded p-2"><small class="text-muted d-block">Activas</small><strong>{{ stats.active_subscriptions }}</strong></div></div>
+          <div class="col-6 col-md-4"><div class="border rounded p-2"><small class="text-muted d-block">Canceladas</small><strong>{{ stats.cancelled_subscriptions }}</strong></div></div>
+        </div>
+        <div class="mt-3">
+          <small class="text-muted">Conversion</small>
+          <div class="d-flex justify-content-between align-items-center">
+            <strong>{{ stats.conversion }}%</strong>
+            <small class="text-muted">Registros / Clicks</small>
+          </div>
+          <div class="progress" style="height: 10px;"><div class="progress-bar bg-success" style="width: {{ stats.conversion if stats.conversion <= 100 else 100 }}%"></div></div>
+        </div>
+      </div>
+    </div>
   </div>
 </div>
 
-<div class="card">
-  <div class="card-header">Ultimas comisiones</div>
+<div class="row g-3 mb-4">
+  <div class="col-md-4 col-xl-2"><div class="card app-card card-body"><small class="text-muted">Pendientes</small><strong>ARS {{ '%.2f'|format(commission_cards.pending) }}</strong></div></div>
+  <div class="col-md-4 col-xl-2"><div class="card app-card card-body"><small class="text-muted">Disponibles</small><strong>ARS {{ '%.2f'|format(commission_cards.available) }}</strong></div></div>
+  <div class="col-md-4 col-xl-2"><div class="card app-card card-body"><small class="text-muted">Pagadas</small><strong>ARS {{ '%.2f'|format(commission_cards.paid) }}</strong></div></div>
+  <div class="col-md-4 col-xl-3"><div class="card app-card card-body"><small class="text-muted">Total historico ganado</small><strong>ARS {{ '%.2f'|format(commission_cards.total_historical) }}</strong></div></div>
+  <div class="col-md-4 col-xl-3"><div class="card app-card card-body"><small class="text-muted">Saldo disponible para cobrar</small><strong>ARS {{ '%.2f'|format(commission_cards.balance_available) }}</strong></div></div>
+  <div class="col-md-4 col-xl-6">
+    <div class="card app-card h-100">
+      <div class="card-header bg-white fw-bold">Objetivo del mes</div>
+      <div class="card-body">
+        <div class="fw-semibold mb-2">Tu objetivo este mes</div>
+        <div class="d-flex justify-content-between"><span>Ventas realizadas</span><strong>{{ monthly_goal.sales }}</strong></div>
+        <div class="d-flex justify-content-between"><span>Meta</span><strong>{{ monthly_goal.target }}</strong></div>
+        <div class="small text-muted my-2">{{ monthly_goal.percent }}%</div>
+        <div class="progress" style="height: 12px;"><div class="progress-bar" style="width: {{ monthly_goal.percent }}%"></div></div>
+        <div class="mt-2 text-muted">Te faltan {{ monthly_goal.remaining }} ventas para llegar a {{ monthly_goal.next_level }}.</div>
+      </div>
+    </div>
+  </div>
+  <div class="col-md-8 col-xl-6">
+    <div class="card app-card h-100">
+      <div class="card-header bg-white fw-bold">Ranking y nivel</div>
+      <div class="card-body">
+        <div class="d-flex flex-wrap gap-2 mb-2">
+          {% for level in level_progress.levels %}
+          <span class="badge {{ 'text-bg-primary' if level.name == level_progress.current.name else 'text-bg-light border' }}">{{ level.name }}</span>
+          {% endfor %}
+        </div>
+        <div class="small text-muted mb-1">{{ level_progress.progress_text }}</div>
+        <div class="progress" style="height: 12px;"><div class="progress-bar bg-primary" style="width: {{ level_progress.percent }}%"></div></div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<div class="card app-card mb-4">
+  <div class="card-header bg-white fw-bold">Clientes referidos</div>
   <div class="table-responsive">
-    <table class="table mb-0">
-      <thead><tr><th>ID</th><th>Cliente</th><th>Venta</th><th>Comision</th><th>Estado</th></tr></thead>
+    <table class="table table-hover mb-0 align-middle">
+      <thead><tr><th>Empresa</th><th>Contacto</th><th>Fecha de registro</th><th>Plan contratado</th><th>Estado</th><th>Monto mensual</th><th>Comision</th><th>Estado comision</th></tr></thead>
       <tbody>
-      {% for row in snapshot.commissions[:20] %}
+      {% for row in clients_rows %}
         <tr>
-          <td>{{ row.id }}</td>
           <td>{{ row.company.name if row.company else 'N/A' }}</td>
-          <td>${{ '%.2f'|format(row.sold_amount or 0) }}</td>
-          <td>${{ '%.2f'|format(row.commission_amount or 0) }}</td>
-          <td>{{ row.status }}</td>
+          <td>{{ row.company.contact_email if row.company and row.company.contact_email else '-' }}</td>
+          <td>{{ row.attribution.created_at.strftime('%Y-%m-%d') if row.attribution and row.attribution.created_at else '-' }}</td>
+          <td>{{ row.subscription.plan.name if row.subscription and row.subscription.plan else '-' }}</td>
+          <td>{{ row.subscription.status if row.subscription else '-' }}</td>
+          <td>ARS {{ '%.2f'|format(row.monthly_amount or 0) }}</td>
+          <td>ARS {{ '%.2f'|format(row.commission_amount or 0) }}</td>
+          <td>{{ row.commission_status }}</td>
         </tr>
       {% else %}
-        <tr><td colspan="5" class="text-center text-muted">No hay comisiones aun.</td></tr>
+        <tr><td colspan="8" class="text-center text-muted py-4">No hay clientes referidos todavia.</td></tr>
       {% endfor %}
       </tbody>
     </table>
   </div>
 </div>
+
+<div class="card app-card mb-4">
+  <div class="card-header bg-white fw-bold">Historial de pagos</div>
+  <div class="table-responsive">
+    <table class="table table-hover mb-0 align-middle">
+      <thead><tr><th>Fecha</th><th>Importe</th><th>Metodo</th><th>Estado</th><th>Numero de pago</th></tr></thead>
+      <tbody>
+      {% for row in payouts %}
+        <tr>
+          <td>{{ row.transfer_date.strftime('%Y-%m-%d') if row.transfer_date else '-' }}</td>
+          <td>ARS {{ '%.2f'|format(row.amount or 0) }}</td>
+          <td>Transferencia</td>
+          <td><span class="badge text-bg-success">Pagado</span></td>
+          <td>{{ row.transfer_number or row.receipt or ('PAGO-' ~ row.id) }}</td>
+        </tr>
+      {% else %}
+        <tr><td colspan="5" class="text-center text-muted py-4">No hay pagos registrados.</td></tr>
+      {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</div>
+
+<div class="row g-3 mb-4">
+  <div class="col-lg-7">
+    <div class="card app-card h-100">
+      <div class="card-header bg-white fw-bold">Datos de cobro</div>
+      <div class="card-body">
+        <form method="post" action="{{ url_for('referrals.seller_billing_data') }}" class="row g-2">
+          <div class="col-md-6"><label class="form-label">Nombre completo</label><input class="form-control" name="full_name" value="{{ current_user.name }}"></div>
+          <div class="col-md-6"><label class="form-label">DNI</label><input class="form-control" name="dni" value="{{ profile.dni or '' }}"></div>
+          <div class="col-md-6"><label class="form-label">CUIT/CUIL</label><input class="form-control" name="tax_id" value="{{ profile.tax_id or '' }}"></div>
+          <div class="col-md-6"><label class="form-label">CBU</label><input class="form-control" name="cbu" maxlength="22" value="{{ profile.cbu or '' }}"></div>
+          <div class="col-md-6"><label class="form-label">Alias</label><input class="form-control" name="alias" value="{{ profile.alias or '' }}"></div>
+          <div class="col-md-6"><label class="form-label">Banco</label><input class="form-control" name="bank" value="{{ profile.bank or '' }}"></div>
+          <div class="col-md-6"><label class="form-label">Email de cobro</label><input class="form-control" type="email" name="billing_email" value="{{ current_user.email or '' }}"></div>
+          <div class="col-md-6"><label class="form-label">Telefono</label><input class="form-control" name="phone" value="{{ profile.phone or '' }}"></div>
+          <div class="col-md-6"><label class="form-label">Titular de cuenta</label><input class="form-control" name="account_holder" value="{{ profile.account_holder or current_user.name }}"></div>
+          <div class="col-12 text-end"><button class="btn btn-primary" type="submit">Guardar datos de cobro</button></div>
+        </form>
+      </div>
+    </div>
+  </div>
+  <div class="col-lg-5">
+    <div class="card app-card h-100">
+      <div class="card-header bg-white fw-bold">Material de venta</div>
+      <div class="card-body d-grid gap-2">
+        <a class="btn btn-outline-primary" href="{{ url_for('static', filename='assets/icons/icon-512.png') }}" download>Descargar logo</a>
+        <a class="btn btn-outline-primary" href="{{ url_for('referrals.seller_material_brochure') }}">Descargar folleto PDF</a>
+        <a class="btn btn-outline-primary" href="{{ url_for('referrals.seller_material_catalog') }}">Descargar catalogo</a>
+        <a class="btn btn-outline-primary" href="{{ url_for('referrals.seller_material_images_zip') }}">Descargar imagenes</a>
+        <a class="btn btn-outline-primary" href="{{ url_for('index', _anchor='video-demo') }}" target="_blank">Ver video comercial</a>
+        <button class="btn btn-outline-secondary" type="button" data-copy-text="{{ copy_templates.whatsapp }}">Copiar texto para WhatsApp</button>
+        <button class="btn btn-outline-secondary" type="button" data-copy-text="{{ copy_templates.facebook }}">Copiar texto para Facebook</button>
+        <button class="btn btn-outline-secondary" type="button" data-copy-text="{{ copy_templates.instagram }}">Copiar texto para Instagram</button>
+        <button class="btn btn-outline-secondary" type="button" data-copy-text="{{ copy_templates.email }}">Copiar texto para Email</button>
+      </div>
+    </div>
+  </div>
+</div>
+
+<div class="row g-3 mb-4">
+  <div class="col-lg-6">
+    <div class="card app-card h-100">
+      <div class="card-header bg-white fw-bold">Notificaciones</div>
+      <div class="card-body">
+        {% for item in notifications %}
+        <div class="border rounded p-2 mb-2">
+          <div class="d-flex justify-content-between align-items-start gap-2">
+            <strong>{{ item.title }}</strong>
+            <span class="badge text-bg-{{ item.badge }}">{{ item.created_at.strftime('%Y-%m-%d') if item.created_at else 'Hoy' }}</span>
+          </div>
+          <div class="text-muted small">{{ item.detail }}</div>
+        </div>
+        {% else %}
+        <div class="text-muted">Sin notificaciones por el momento.</div>
+        {% endfor %}
+      </div>
+    </div>
+  </div>
+  <div class="col-lg-6">
+    <div class="card app-card h-100">
+      <div class="card-header bg-white fw-bold">Ayuda</div>
+      <div class="card-body">
+        <div class="accordion" id="sellerHelpFaq">
+          <div class="accordion-item"><h2 class="accordion-header"><button class="accordion-button" data-bs-toggle="collapse" data-bs-target="#sfaq1" type="button">Como comparto mi enlace?</button></h2><div id="sfaq1" class="accordion-collapse collapse show" data-bs-parent="#sellerHelpFaq"><div class="accordion-body">Copia tu URL personalizada y compartela por WhatsApp, Facebook, Instagram o LinkedIn desde los botones del perfil.</div></div></div>
+          <div class="accordion-item"><h2 class="accordion-header"><button class="accordion-button collapsed" data-bs-toggle="collapse" data-bs-target="#sfaq2" type="button">Cuando se habilita una comision?</button></h2><div id="sfaq2" class="accordion-collapse collapse" data-bs-parent="#sellerHelpFaq"><div class="accordion-body">La comision pasa de pendiente a disponible segun el ciclo definido en el sistema y estado del cliente referido.</div></div></div>
+          <div class="accordion-item"><h2 class="accordion-header"><button class="accordion-button collapsed" data-bs-toggle="collapse" data-bs-target="#sfaq3" type="button">Como cobro?</button></h2><div id="sfaq3" class="accordion-collapse collapse" data-bs-parent="#sellerHelpFaq"><div class="accordion-body">Completa tus datos de cobro y el pago se registra en tu historial cuando sea procesado.</div></div></div>
+        </div>
+        <div class="d-flex gap-2 mt-3 flex-wrap">
+          <a class="btn btn-outline-primary" href="{{ url_for('referrals.seller_material_brochure') }}">Manual del vendedor</a>
+          <a class="btn btn-primary" href="{{ url_for('support.new_ticket') }}">Contacto soporte</a>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<script>
+  (() => {
+    const copyButtons = document.querySelectorAll('[data-copy-text]');
+    copyButtons.forEach((button) => {
+      button.addEventListener('click', async () => {
+        const text = button.getAttribute('data-copy-text') || '';
+        try {
+          await navigator.clipboard.writeText(text);
+          button.classList.remove('btn-outline-secondary', 'btn-outline-primary');
+          button.classList.add('btn-success');
+          button.textContent = 'Copiado';
+          setTimeout(() => window.location.reload(), 700);
+        } catch (error) {
+          console.error(error);
+        }
+      });
+    });
+
+    const instagramButton = document.querySelector('[data-share-instagram]');
+    if (instagramButton) {
+      instagramButton.addEventListener('click', async () => {
+        const link = instagramButton.getAttribute('data-share-instagram') || '';
+        try {
+          await navigator.clipboard.writeText('Mira StockArmobile: ' + link);
+        } catch (error) {
+          console.error(error);
+        }
+        window.open('https://www.instagram.com/', '_blank', 'noopener');
+      });
+    }
+  })();
+</script>
 {% endblock %}

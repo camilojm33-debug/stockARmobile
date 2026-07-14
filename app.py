@@ -184,7 +184,12 @@ def seller_required(func):
     @wraps(func)
     @login_required
     def decorated(*args, **kwargs):
-        if getattr(current_user, "role", None) != "seller":
+        if getattr(current_user, "role", None) == "seller":
+            return func(*args, **kwargs)
+        if getattr(current_user, "role", None) == "superadmin":
+            abort(403)
+        profile = ReferralSeller.query.filter_by(user_id=current_user.id, active=True).first()
+        if profile is None:
             abort(403)
         return func(*args, **kwargs)
 
@@ -1225,6 +1230,17 @@ def index():
         )
     )
     if referral_code:
+        seller = ReferralService.find_seller_by_code(referral_code)
+        if seller is not None:
+            record_audit(
+                action="referral_link_click",
+                entity="referral_seller",
+                entity_id=seller.id,
+                detail=f"Click registrado para codigo {referral_code}.",
+                user_id=seller.user_id,
+                company_id=getattr(getattr(seller, "user", None), "company_id", None),
+            )
+            db.session.commit()
         session["referral_code"] = referral_code
         response.set_cookie("stockarmobile_ref", referral_code, max_age=60 * 60 * 24 * 90, samesite="Lax")
     return response
@@ -1274,10 +1290,17 @@ def internal_error(error):
 
 @app.context_processor
 def inject_notifications():
+    has_active_seller_profile = False
     if current_user.is_authenticated:
         notifications = build_notifications()
-        return {"notification_items": notifications, "notification_count": len(notifications)}
-    return {"notification_items": [], "notification_count": 0}
+        if getattr(current_user, "role", None) != "superadmin":
+            has_active_seller_profile = ReferralSeller.query.filter_by(user_id=current_user.id, active=True).first() is not None
+        return {
+            "notification_items": notifications,
+            "notification_count": len(notifications),
+            "has_active_seller_profile": has_active_seller_profile,
+        }
+    return {"notification_items": [], "notification_count": 0, "has_active_seller_profile": False}
 
 
 @app.route("/api/search")

@@ -3,11 +3,18 @@
 from __future__ import annotations
 
 import csv
+from decimal import Decimal
 from datetime import datetime
 from io import StringIO
+from io import BytesIO
+from pathlib import Path
+from urllib.parse import quote_plus
+import zipfile
 
-from flask import Blueprint, abort, flash, make_response, redirect, render_template, request, url_for
+from flask import Blueprint, abort, flash, make_response, redirect, render_template, request, send_file, url_for
 from flask_login import current_user, login_required
+from reportlab.lib.pagesizes import A4
+from reportlab.pdfgen import canvas
 
 from app import seller_required, superadmin_required
 from services.referral_service import ReferralService
@@ -28,6 +35,75 @@ def _parse_transfer_date(value: str | None):
         return datetime.strptime(raw, "%Y-%m-%d")
     except ValueError:
         return None
+
+
+def _seller_state(seller) -> tuple[str, str]:
+    if not getattr(seller, "active", False):
+        return "Suspendido", "danger"
+    has_billing_data = bool(seller.alias and seller.cbu and seller.bank and seller.account_holder)
+    if not has_billing_data:
+        return "Pendiente", "warning"
+    return "Activo", "success"
+
+
+def _level_progress(total_sales: int):
+    levels = [
+        {"name": "Bronce", "target": 0},
+        {"name": "Plata", "target": 10},
+        {"name": "Oro", "target": 20},
+        {"name": "Platino", "target": 40},
+        {"name": "Diamante", "target": 80},
+    ]
+
+    current = levels[0]
+    next_level = None
+    for index, level in enumerate(levels):
+        if total_sales >= level["target"]:
+            current = level
+            next_level = levels[index + 1] if index + 1 < len(levels) else None
+
+    if next_level is None:
+        return {
+            "levels": levels,
+            "current": current,
+            "next": None,
+            "percent": 100,
+            "progress_text": f"{total_sales} ventas registradas. Nivel maximo alcanzado.",
+        }
+
+    start = current["target"]
+    end = next_level["target"]
+    segment_total = max(1, end - start)
+    segment_current = max(0, total_sales - start)
+    percent = int(round((segment_current / segment_total) * 100))
+    return {
+        "levels": levels,
+        "current": current,
+        "next": next_level,
+        "percent": max(0, min(100, percent)),
+        "progress_text": f"{total_sales} / {next_level['target']} ventas para llegar a {next_level['name']}.",
+    }
+
+
+def _pdf_from_lines(title: str, lines: list[str], download_name: str):
+    buffer = BytesIO()
+    pdf = canvas.Canvas(buffer, pagesize=A4)
+    width, height = A4
+    y = height - 72
+    pdf.setFont("Helvetica-Bold", 16)
+    pdf.drawString(52, y, title)
+    y -= 28
+    pdf.setFont("Helvetica", 11)
+    for line in lines:
+        if y < 60:
+            pdf.showPage()
+            pdf.setFont("Helvetica", 11)
+            y = height - 60
+        pdf.drawString(52, y, line)
+        y -= 18
+    pdf.save()
+    buffer.seek(0)
+    return send_file(buffer, mimetype="application/pdf", as_attachment=True, download_name=download_name)
 
 
 @bp.route("/superadmin/referrals")
@@ -250,14 +326,226 @@ def admin_referrals_export():
 @bp.route("/referidos")
 @seller_required
 def seller_dashboard():
-    from app import ReferralSeller, db
+    from app import AuditLog, Company, ReferralAttribution, ReferralCommission, ReferralPayout, ReferralSeller, Subscription, db
 
     profile = ReferralSeller.query.filter_by(user_id=current_user.id).first_or_404()
     snapshot = ReferralService.seller_dashboard_snapshot(profile.id)
 
+    attributions = (
+        ReferralAttribution.query.filter_by(seller_id=profile.id)
+        .order_by(ReferralAttribution.created_at.desc(), ReferralAttribution.id.desc())
+        .all()
+    )
+    company_ids = [row.company_id for row in attributions]
+
+    subscriptions_by_company = {}
+    if company_ids:
+        subscriptions = (
+            Subscription.query.filter(Subscription.company_id.in_(company_ids))
+            .order_by(Subscription.start_date.desc().nullslast(), Subscription.id.desc())
+            .all()
+        )
+        for sub in subscriptions:
+            if sub.company_id not in subscriptions_by_company:
+                subscriptions_by_company[sub.company_id] = sub
+
+    commissions_by_company = {}
+    for row in snapshot["commissions"]:
+        bucket = commissions_by_company.setdefault(
+            row.company_id,
+            {
+                "commission_amount": Decimal("0.00"),
+                "status": row.status,
+            },
+        )
+        bucket["commission_amount"] += Decimal(str(row.commission_amount or 0))
+        if row.created_at and row.created_at >= (row.created_at if bucket.get("last_at") is None else bucket["last_at"]):
+            bucket["status"] = row.status
+            bucket["last_at"] = row.created_at
+
+    rows = []
+    for attr in attributions:
+        company = Company.query.filter_by(id=attr.company_id).first()
+        subscription = subscriptions_by_company.get(attr.company_id)
+        commission_data = commissions_by_company.get(attr.company_id, {})
+        monthly_amount = float(getattr(getattr(subscription, "plan", None), "price", 0) or 0)
+        commission_amount = float(commission_data.get("commission_amount", 0) or 0)
+        rows.append(
+            {
+                "company": company,
+                "subscription": subscription,
+                "attribution": attr,
+                "monthly_amount": monthly_amount,
+                "commission_amount": commission_amount,
+                "commission_status": commission_data.get("status") or "-",
+            }
+        )
+
+    clicks = AuditLog.query.filter_by(action="referral_link_click", user_id=profile.user_id).count()
+    registrations_obtained = len(attributions)
+    companies_created = registrations_obtained
+    free_trials = sum(1 for row in rows if row["subscription"] is not None and (row["subscription"].status or "").lower() == "trial")
+    active_subscriptions = sum(1 for row in rows if row["subscription"] is not None and (row["subscription"].status or "").lower() in {"active", "approved", "trial"})
+    cancelled_subscriptions = sum(1 for row in rows if row["subscription"] is not None and (row["subscription"].status or "").lower() in {"cancelled", "expired", "suspended", "rejected"})
+    conversion = round((registrations_obtained / clicks) * 100, 2) if clicks else 0.0
+
+    commissions_by_status = snapshot["commissions_by_status"]
+    commissions_pending = float(commissions_by_status.get("pendiente", 0) or 0)
+    commissions_available = float(commissions_by_status.get("disponible", 0) or 0)
+    commissions_paid = float(commissions_by_status.get("pagada", 0) or 0)
+    total_historical = commissions_pending + commissions_available + commissions_paid
+
+    payouts = (
+        ReferralPayout.query.filter_by(seller_id=profile.id)
+        .order_by(ReferralPayout.transfer_date.desc(), ReferralPayout.id.desc())
+        .limit(50)
+        .all()
+    )
+
+    total_sales = len(snapshot["commissions"])
+    level_progress = _level_progress(total_sales)
+    avg_commission = (total_historical / total_sales) if total_sales else 0.0
+    monthly_target = 10
+    monthly_sales = int(snapshot["month_sales"])
+    monthly_progress_percent = int(round((monthly_sales / monthly_target) * 100)) if monthly_target else 0
+    monthly_progress_percent = max(0, min(100, monthly_progress_percent))
+    monthly_remaining = max(0, monthly_target - monthly_sales)
+    estimated_commission = avg_commission * monthly_target
+
+    notifications = []
+    latest_sales = sorted(snapshot["commissions"], key=lambda row: (row.created_at or datetime.min), reverse=True)[:3]
+    for row in latest_sales:
+        notifications.append(
+            {
+                "title": "Nueva venta referida",
+                "detail": f"{row.company.name if row.company else 'Empresa'} genero ARS {float(row.sold_amount or 0):.2f}",
+                "created_at": row.created_at,
+                "badge": "primary",
+            }
+        )
+    latest_paid = [row for row in snapshot["commissions"] if row.status == "pagada"]
+    latest_paid.sort(key=lambda row: (row.paid_at or datetime.min), reverse=True)
+    for row in latest_paid[:2]:
+        notifications.append(
+            {
+                "title": "Pago de comision realizado",
+                "detail": f"Se acredito ARS {float(row.commission_amount or 0):.2f} por {row.company.name if row.company else 'empresa'}.",
+                "created_at": row.paid_at,
+                "badge": "success",
+            }
+        )
+    for row in sorted(snapshot["commissions"], key=lambda item: (item.cancelled_at or datetime.min), reverse=True):
+        if row.status == "anulada":
+            notifications.append(
+                {
+                    "title": "Cambio de estado",
+                    "detail": f"Una comision fue anulada para {row.company.name if row.company else 'empresa'}.",
+                    "created_at": row.cancelled_at,
+                    "badge": "warning",
+                }
+            )
+            break
+
+    notifications.sort(key=lambda item: (item["created_at"] or datetime.min), reverse=True)
+    notifications = notifications[:8]
+
+    seller_state_label, seller_state_color = _seller_state(profile)
+
+    wa_text = f"Hola! Te comparto StockArmobile para gestionar ventas, stock y clientes: {profile.referral_url}"
+    share_links = {
+        "whatsapp": f"https://wa.me/?text={quote_plus(wa_text)}",
+        "facebook": f"https://www.facebook.com/sharer/sharer.php?u={quote_plus(profile.referral_url)}",
+        "instagram": "https://www.instagram.com/",
+        "linkedin": f"https://www.linkedin.com/sharing/share-offsite/?url={quote_plus(profile.referral_url)}",
+    }
+
+    copy_templates = {
+        "whatsapp": f"Quiero recomendarte StockArmobile. Te dejo mi enlace: {profile.referral_url}",
+        "facebook": f"Estoy recomendando StockArmobile para negocios. Mira de que se trata: {profile.referral_url}",
+        "instagram": f"Si tienes negocio, prueba StockArmobile. Link: {profile.referral_url}",
+        "email": f"Hola,\n\nTe recomiendo StockArmobile para gestionar tu negocio.\nPuedes ver mas detalles aqui: {profile.referral_url}\n\nSaludos.",
+    }
+
     milestones = [1, 5, 10, 25, 50, 100]
     medals = [target for target in milestones if snapshot["total_clients"] >= target]
-    return render_template("referrals/dashboard.html", profile=profile, snapshot=snapshot, medals=medals)
+    return render_template(
+        "referrals/dashboard.html",
+        profile=profile,
+        snapshot=snapshot,
+        medals=medals,
+        seller_state_label=seller_state_label,
+        seller_state_color=seller_state_color,
+        share_links=share_links,
+        copy_templates=copy_templates,
+        stats={
+            "clicks": clicks,
+            "registrations": registrations_obtained,
+            "companies_created": companies_created,
+            "free_trials": free_trials,
+            "active_subscriptions": active_subscriptions,
+            "cancelled_subscriptions": cancelled_subscriptions,
+            "conversion": conversion,
+        },
+        commission_cards={
+            "pending": commissions_pending,
+            "available": commissions_available,
+            "paid": commissions_paid,
+            "total_historical": total_historical,
+            "balance_available": commissions_available,
+        },
+        clients_rows=rows,
+        payouts=payouts,
+        level_progress=level_progress,
+        monthly_goal={
+            "sales": monthly_sales,
+            "target": monthly_target,
+            "percent": monthly_progress_percent,
+            "remaining": monthly_remaining,
+            "next_level": "Plata",
+            "estimated_commission": float(estimated_commission),
+        },
+        notifications=notifications,
+    )
+
+
+@bp.route("/referidos/activar", methods=["GET", "POST"])
+@login_required
+def activate_seller():
+    from app import ReferralSeller, db
+
+    if getattr(current_user, "role", None) == "superadmin":
+        flash("El Programa de Referidos no esta disponible para SuperAdmin.", "warning")
+        return redirect(url_for("saas.index"))
+
+    existing = ReferralSeller.query.filter_by(user_id=current_user.id).first()
+    if existing is not None:
+        if not existing.active:
+            existing.active = True
+            db.session.commit()
+        flash("Tu Programa de Referidos ya esta activo.", "info")
+        return redirect(url_for("referrals.seller_dashboard"))
+
+    if request.method == "POST":
+        dni = (request.form.get("dni") or "").strip() or f"AUTO-{current_user.id}"
+        profile_data = {
+            "dni": dni,
+            "tax_id": None,
+            "phone": None,
+            "province": None,
+            "city": None,
+            "address": None,
+            "alias": None,
+            "cbu": None,
+            "bank": None,
+            "account_holder": None,
+            "active": True,
+        }
+        ReferralService.create_or_update_seller(db.session, user=current_user, profile_data=profile_data)
+        db.session.commit()
+        flash("Programa de Referidos activado correctamente.", "success")
+        return redirect(url_for("referrals.seller_dashboard"))
+
+    return render_template("referrals/activate.html")
 
 
 @bp.route("/referidos/clientes")
@@ -292,7 +580,7 @@ def seller_commissions():
 @bp.route("/referidos/datos-cobro", methods=["GET", "POST"])
 @seller_required
 def seller_billing_data():
-    from app import ReferralSeller, db
+    from app import ReferralSeller, User, db
 
     seller = ReferralSeller.query.filter_by(user_id=current_user.id).first_or_404()
     if request.method == "POST":
@@ -301,14 +589,75 @@ def seller_billing_data():
             flash("El CBU debe tener 22 digitos.", "danger")
             return redirect(url_for("referrals.seller_billing_data"))
 
+        billing_email = (request.form.get("billing_email") or "").strip().lower()
+        if billing_email:
+            existing_email = User.query.filter(User.email == billing_email, User.id != current_user.id).first()
+            if existing_email is not None:
+                flash("El email de cobro ya esta en uso por otro usuario.", "danger")
+                return redirect(url_for("referrals.seller_billing_data"))
+            current_user.email = billing_email
+
+        full_name = (request.form.get("full_name") or "").strip()
+        if full_name:
+            parts = full_name.split(" ", 1)
+            current_user.first_name = parts[0][:80]
+            current_user.last_name = (parts[1] if len(parts) > 1 else "")[:80] or None
+
+        seller.dni = (request.form.get("dni") or "").strip() or seller.dni
         seller.alias = (request.form.get("alias") or "").strip() or None
         seller.cbu = cbu or None
         seller.bank = (request.form.get("bank") or "").strip() or None
-        seller.account_holder = (request.form.get("account_holder") or "").strip() or None
+        seller.account_holder = (request.form.get("account_holder") or full_name or "").strip() or None
         seller.tax_id = (request.form.get("tax_id") or "").strip() or None
+        seller.phone = (request.form.get("phone") or "").strip() or None
         db.session.commit()
         flash("Datos de cobro actualizados.", "success")
         return redirect(url_for("referrals.seller_billing_data"))
 
     missing_bank_data = not (seller.alias and seller.cbu and seller.bank and seller.account_holder)
     return render_template("referrals/billing_data.html", seller=seller, missing_bank_data=missing_bank_data)
+
+
+@bp.route("/referidos/materiales/folleto.pdf")
+@seller_required
+def seller_material_brochure():
+    lines = [
+        "StockArmobile es una plataforma para ventas, stock, clientes y caja.",
+        "Beneficios para tus clientes:",
+        "- Operacion centralizada en una sola herramienta.",
+        "- Control de usuarios y seguridad con PIN en Mi Empresa.",
+        "- Reportes para tomar decisiones con datos reales.",
+        "- Implementacion rapida, sin instalacion compleja.",
+    ]
+    return _pdf_from_lines("Folleto Comercial StockArmobile", lines, "stockarmobile_folleto.pdf")
+
+
+@bp.route("/referidos/materiales/catalogo.pdf")
+@seller_required
+def seller_material_catalog():
+    lines = [
+        "Catalogo Comercial:",
+        "- Prueba Gratis 10 dias.",
+        "- Plan Emprendedor.",
+        "- Plan Negocio.",
+        "- Plan Premium.",
+        "Cada plan escala en capacidad de usuarios, productos y clientes.",
+        "El detalle actualizado se consulta en la Landing oficial.",
+    ]
+    return _pdf_from_lines("Catalogo de Planes StockArmobile", lines, "stockarmobile_catalogo.pdf")
+
+
+@bp.route("/referidos/materiales/imagenes.zip")
+@seller_required
+def seller_material_images_zip():
+    from flask import current_app
+
+    icons_dir = Path(current_app.static_folder) / "assets" / "icons"
+    files = [icons_dir / "icon-192.png", icons_dir / "icon-512.png"]
+    buffer = BytesIO()
+    with zipfile.ZipFile(buffer, "w", zipfile.ZIP_DEFLATED) as archive:
+        for file_path in files:
+            if file_path.exists():
+                archive.write(file_path, arcname=file_path.name)
+    buffer.seek(0)
+    return send_file(buffer, mimetype="application/zip", as_attachment=True, download_name="stockarmobile_imagenes.zip")
