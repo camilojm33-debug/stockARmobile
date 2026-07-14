@@ -51,6 +51,10 @@ def _pin_session_key(company_id):
     return f"company_pin_verified_{company_id}"
 
 
+def _pin_reveal_session_key(company_id):
+    return f"company_pin_reveal_{company_id}"
+
+
 def _is_pin_verified(company_id):
     from flask import session
 
@@ -411,6 +415,34 @@ def company_settings_pin_change():
     return redirect(url_for("company_billing.company_settings"))
 
 
+@bp.route("/company-settings/pin/bootstrap", methods=["POST"])
+@company_member_required
+def company_settings_pin_bootstrap():
+    from app import db, record_audit
+    from flask import session
+
+    company_id = getattr(current_user, "company_id", None)
+    company = _load_company(company_id)
+
+    if company.business_pin_hash:
+        flash("El PIN ya esta configurado para esta empresa.", "warning")
+        return redirect(url_for("company_billing.company_settings"))
+
+    raw_pin = f"{secrets.randbelow(10000):04d}"
+    CompanySecurityService.set_pin(company, raw_pin)
+    _mark_pin_verified(company.id, True)
+    session[_pin_reveal_session_key(company.id)] = raw_pin
+    record_audit(
+        action="company_pin_bootstrap",
+        entity="company",
+        entity_id=company.id,
+        detail="PIN inicial de Mi Empresa generado por usuario de la empresa.",
+    )
+    db.session.commit()
+    flash("PIN inicial generado. Guardalo ahora: se muestra una sola vez.", "success")
+    return redirect(url_for("company_billing.company_settings"))
+
+
 @bp.route("/company-settings/pin/regenerate", methods=["POST"])
 @company_member_required
 def company_settings_pin_regenerate():
@@ -604,6 +636,8 @@ def company_settings_change_password():
 @bp.route("/company-settings")
 @company_member_required
 def company_settings():
+    from flask import session
+
     company_id = getattr(current_user, "company_id", None)
     company = _load_company(company_id)
 
@@ -619,6 +653,7 @@ def company_settings():
     subscription = usage_snapshot["subscription"]
     plan = usage_snapshot["plan"]
     pin_created_at, pin_last_used_at = _pin_metadata(company)
+    pin_bootstrap_reveal = session.pop(_pin_reveal_session_key(company.id), None)
     cash_summary = {"total_sold": 0.0, "total_sales": 0, "average_ticket": 0.0}
     if pin_verified:
         users, cash_rows = _build_user_and_cash_rows(company.id, date_from=date_from, date_to=date_to)
@@ -638,6 +673,7 @@ def company_settings():
         pin_verified=pin_verified,
         pin_created_at=pin_created_at,
         pin_last_used_at=pin_last_used_at,
+        pin_bootstrap_reveal=pin_bootstrap_reveal,
         date_from=date_from_raw,
         date_to=date_to_raw,
         pin_block_seconds=CompanySecurityService.remaining_block_seconds(company),

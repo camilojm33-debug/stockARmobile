@@ -13,11 +13,33 @@
     <a class="btn btn-outline-secondary" href="{{ url_for('products.index') }}"><i class="bi bi-arrow-left me-1"></i>Volver a inventario</a>
   </div>
 
+  {% if pin_bootstrap_reveal %}
+  <div class="alert alert-warning" role="alert">
+    <div class="fw-semibold">PIN inicial generado (mostrar solo una vez)</div>
+    <div class="small">{{ pin_bootstrap_reveal }}</div>
+  </div>
+  {% endif %}
+
   {% if not pin_verified %}
   <div class="card app-card mb-4">
     <div class="card-header bg-white fw-bold">Verificacion de seguridad</div>
     <div class="card-body">
       <p class="text-muted mb-3">Para ingresar a Mi Empresa debes validar el PIN de 4 digitos.</p>
+      {% if not company.business_pin_hash %}
+      <div class="alert alert-info d-flex flex-column flex-md-row justify-content-between align-items-md-center gap-2">
+        <div>
+          <div class="fw-semibold"><i class="bi bi-info-circle me-1"></i>Primera configuracion de PIN</div>
+          <div class="small">Tenes una sola oportunidad para generar el PIN inicial desde esta pantalla. Si no lo generas ahora, debera asignarlo un SuperAdmin.</div>
+        </div>
+        <div class="d-flex gap-2">
+          <form method="post" action="{{ url_for('company_billing.company_settings_pin_bootstrap') }}">
+            <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+            <button class="btn btn-sm btn-primary" type="submit"><i class="bi bi-stars me-1"></i>Generar PIN inicial</button>
+          </form>
+          <a class="btn btn-sm btn-outline-secondary" href="{{ url_for('support.new_ticket') }}"><i class="bi bi-life-preserver me-1"></i>Pedir ayuda a SuperAdmin</a>
+        </div>
+      </div>
+      {% endif %}
       {% if pin_block_seconds and pin_block_seconds > 0 %}
       <div class="alert alert-danger">Acceso bloqueado temporalmente. Intenta en {{ pin_block_seconds }} segundos.</div>
       {% endif %}

@@ -784,6 +784,35 @@ def test_my_company_module_blocks_create_when_plan_user_limit_is_reached():
         assert denied is None
 
 
+def test_my_company_module_allows_one_time_initial_pin_generation():
+    client = stock_app.app.test_client()
+
+    with stock_app.app.app_context():
+        company = Company.query.filter_by(name="Empresa Demo").first()
+        assert company is not None
+        assert not company.business_pin_hash
+
+    client.post("/auth/login", data={"username": "empresa_admin", "password": "admin123"})
+    initial_page = client.get("/admin/company-settings")
+    assert initial_page.status_code == 200
+    assert "Generar PIN inicial" in initial_page.data.decode("utf-8")
+
+    generated = client.post("/admin/company-settings/pin/bootstrap", follow_redirects=True)
+    assert generated.status_code == 200
+    generated_html = generated.data.decode("utf-8")
+    assert "PIN inicial generado" in generated_html
+    assert "mostrar solo una vez" in generated_html
+
+    with stock_app.app.app_context():
+        company_after = Company.query.filter_by(name="Empresa Demo").first()
+        assert company_after is not None
+        assert company_after.business_pin_hash is not None
+
+    second_attempt = client.post("/admin/company-settings/pin/bootstrap", follow_redirects=True)
+    assert second_attempt.status_code == 200
+    assert "ya esta configurado" in second_attempt.data.decode("utf-8")
+
+
 def test_security_headers_are_present():
     client = stock_app.app.test_client()
 
