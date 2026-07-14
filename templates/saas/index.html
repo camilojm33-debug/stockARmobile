@@ -33,6 +33,10 @@
     <div class="col-sm-6 col-lg-4 col-xl-3"><div class="card app-card metric-card"><div class="card-body"><div class="text-muted small fw-semibold text-uppercase">Facturacion mensual</div><div class="metric-value fw-bold">${{ "%.2f"|format(metrics.monthly_billing) }}</div><div class="text-muted small">Anual ${{ "%.2f"|format(metrics.annual_billing) }}</div></div></div></div>
     <div class="col-sm-6 col-lg-4 col-xl-3"><div class="card app-card metric-card"><div class="card-body"><div class="text-muted small fw-semibold text-uppercase">Ingresos cobrados</div><div class="metric-value fw-bold">${{ "%.2f"|format(metrics.income_month) }}</div><div class="text-muted small">Año ${{ "%.2f"|format(metrics.income_year) }}</div></div></div></div>
     <div class="col-sm-6 col-lg-4 col-xl-3"><div class="card app-card metric-card"><div class="card-body"><div class="text-muted small fw-semibold text-uppercase">Planes activos</div><div class="metric-value fw-bold">{{ plans|length }}</div><div class="text-muted small">Suscripciones activas {{ metrics.active_subscriptions }}</div></div></div></div>
+
+    <div class="col-sm-6 col-lg-4 col-xl-3"><div class="card app-card metric-card"><div class="card-body"><div class="text-muted small fw-semibold text-uppercase">Vendedores referidos</div><div class="metric-value fw-bold">{{ metrics.referral_sellers_count }}</div><div class="text-muted small">Comisiones {{ metrics.referral_commissions_count }}</div></div></div></div>
+    <div class="col-sm-6 col-lg-4 col-xl-3"><div class="card app-card metric-card"><div class="card-body"><div class="text-muted small fw-semibold text-uppercase">Referidos pendientes</div><div class="metric-value fw-bold">{{ metrics.referral_pending_count }}</div><div class="text-muted small">Seguimiento comercial</div></div></div></div>
+    <div class="col-sm-6 col-lg-4 col-xl-3"><div class="card app-card metric-card"><div class="card-body"><div class="text-muted small fw-semibold text-uppercase">Ventas referidas</div><div class="metric-value fw-bold">${{ "%.2f"|format(metrics.referral_sold_total) }}</div><div class="text-muted small">Comisiones pagadas ${{ "%.2f"|format(metrics.referral_paid_total) }}</div></div></div></div>
   </div>
 
   <div class="row g-3 mb-4">
@@ -110,6 +114,42 @@
             </div>
           {% else %}
             <p class="text-muted mb-0">Sin errores recientes.</p>
+          {% endfor %}
+        </div>
+      </div>
+    </div>
+    <div class="col-lg-4">
+      <div class="card app-card h-100">
+        <div class="card-header bg-white fw-bold d-flex justify-content-between align-items-center">
+          <span>Ultimos usuarios</span>
+          <a class="btn btn-sm btn-outline-primary" href="{{ url_for('saas.users_panel') }}">Ver todos</a>
+        </div>
+        <div class="card-body">
+          {% for user in last_users %}
+            <div class="d-flex justify-content-between border-bottom py-2 small">
+              <span class="fw-semibold">{{ user.username }}</span>
+              <span class="text-muted">{{ user.role }} · {{ 'activo' if user.active else 'inactivo' }}</span>
+            </div>
+          {% else %}
+            <p class="text-muted mb-0">Sin usuarios recientes.</p>
+          {% endfor %}
+        </div>
+      </div>
+    </div>
+    <div class="col-lg-4">
+      <div class="card app-card h-100">
+        <div class="card-header bg-white fw-bold d-flex justify-content-between align-items-center">
+          <span>Ultimos referidos</span>
+          <a class="btn btn-sm btn-outline-primary" href="{{ url_for('referrals.admin_referrals_dashboard') }}">Ver panel</a>
+        </div>
+        <div class="card-body">
+          {% for row in latest_referral_commissions %}
+            <div class="d-flex justify-content-between border-bottom py-2 small">
+              <span class="fw-semibold">{{ row.seller.user.username if row.seller and row.seller.user else 'N/A' }}</span>
+              <span class="text-muted">${{ '%.2f'|format(row.commission_amount or 0) }} · {{ row.status }}</span>
+            </div>
+          {% else %}
+            <p class="text-muted mb-0">Sin actividad de referidos.</p>
           {% endfor %}
         </div>
       </div>

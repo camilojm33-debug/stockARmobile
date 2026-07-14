@@ -23,6 +23,7 @@
 </form>
 
 <form method="post" action="{{ url_for('referrals.admin_referrals_register_payout') }}">
+  <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
   <div class="card">
     <div class="table-responsive">
       <table class="table mb-0 align-middle">

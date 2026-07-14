@@ -10,6 +10,7 @@
   <div class="card-header">Crear vendedor</div>
   <div class="card-body">
     <form method="post" class="row g-2">
+      <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
       <div class="col-md-2"><input class="form-control" name="username" placeholder="Usuario" required></div>
       <div class="col-md-3"><input type="email" class="form-control" name="email" placeholder="Email" required></div>
       <div class="col-md-2"><input class="form-control" name="first_name" placeholder="Nombre"></div>
@@ -56,6 +57,7 @@
           </td>
           <td class="text-end">
             <form method="post" action="{{ url_for('referrals.admin_referrals_seller_toggle', seller_id=row.id) }}">
+              <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
               <button class="btn btn-sm btn-outline-primary">Toggle</button>
             </form>
           </td>

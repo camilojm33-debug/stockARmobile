@@ -277,13 +277,50 @@
             <h2 class="section-title">Gana dinero recomendando StockArmobile</h2>
             <p class="text-muted mb-0">Comisión configurada: {{ (referral_percent * 100)|round(0)|int }}% mensual por cliente activo referido.</p>
           </div>
-          <div class="row justify-content-center mt-3">
-            <div class="col-lg-10 reveal" data-delay="90">
-              <div class="feature-card text-center">
-                <p class="mb-3">Comparte tu enlace, acompaña a tus clientes y cobra comisiones recurrentes todos los meses.</p>
-                <div class="d-flex flex-column flex-md-row justify-content-center gap-2">
-                  <a class="btn btn-outline-primary btn-pill btn-lg" href="{{ url_for('auth.login', next=url_for('referrals.activate_seller')) }}">Ya sos cliente? Iniciar sesion y activar Referidos</a>
-                  <a class="btn btn-primary btn-pill btn-lg" href="{{ url_for('auth.register', mode='seller') }}">No sos cliente? Crear cuenta de vendedor</a>
+          <div class="referral-spotlight reveal" data-delay="90">
+            <div class="row g-3 align-items-stretch">
+              <div class="col-lg-7">
+                <div class="referral-main h-100">
+                  <div class="referral-tag">Comisiones recurrentes</div>
+                  <h3 class="h3 fw-bold mb-2">Converti tu red en ingresos mensuales</h3>
+                  <p class="mb-3">Comparte tu enlace, acompaña a tus clientes y cobra comisiones todos los meses mientras su suscripción se mantenga activa.</p>
+                  <div class="referral-benefits mb-3">
+                    <span><i class="bi bi-check2-circle"></i> Alta sin costo</span>
+                    <span><i class="bi bi-check2-circle"></i> Panel con métricas y pagos</span>
+                    <span><i class="bi bi-check2-circle"></i> Material comercial listo</span>
+                    <span><i class="bi bi-check2-circle"></i> Soporte para vendedores</span>
+                  </div>
+                  <div class="d-flex flex-column flex-md-row gap-2">
+                    <a class="btn btn-outline-primary btn-pill btn-lg" href="{{ url_for('auth.login', next=url_for('referrals.activate_seller')) }}">Ya sos cliente? Iniciar sesion y activar Referidos</a>
+                    <a class="btn btn-primary btn-pill btn-lg" href="{{ url_for('auth.register', mode='seller') }}">No sos cliente? Crear cuenta de vendedor</a>
+                  </div>
+                </div>
+              </div>
+              <div class="col-lg-5">
+                <div class="referral-proof h-100">
+                  <h4 class="h5 mb-2">Escenario de venta rapido</h4>
+                  <p class="text-muted mb-3">Si referis 5 clientes activos, tu ingreso mensual escala de forma sostenida con cada renovación.</p>
+                  <div class="referral-kpi-grid">
+                    <div>
+                      <small>Clientes activos</small>
+                      <strong>5</strong>
+                    </div>
+                    <div>
+                      <small>Comision</small>
+                      <strong>{{ (referral_percent * 100)|round(0)|int }}%</strong>
+                    </div>
+                    <div>
+                      <small>Cobro</small>
+                      <strong>Mensual</strong>
+                    </div>
+                    <div>
+                      <small>Escalable</small>
+                      <strong>Si</strong>
+                    </div>
+                  </div>
+                  <div class="mt-3 referral-mini-cta">
+                    <a class="btn btn-dark btn-pill w-100" href="#ranking-referidos">Ver ranking y medallas</a>
+                  </div>
                 </div>
               </div>
             </div>

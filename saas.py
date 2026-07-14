@@ -52,7 +52,22 @@ def _parse_dt(value: str | None):
 @bp.route("/", methods=["GET", "POST"])
 @superadmin_required
 def index():
-    from app import AuditLog, BackupLog, Client, Company, Invoice, Payment, Plan, Product, Sale, Subscription, User, db
+    from app import (
+        AuditLog,
+        BackupLog,
+        Client,
+        Company,
+        Invoice,
+        Payment,
+        Plan,
+        Product,
+        ReferralCommission,
+        ReferralSeller,
+        Sale,
+        Subscription,
+        User,
+        db,
+    )
 
     _require_superadmin()
     PlanService.ensure_defaults(db.session)
@@ -160,6 +175,7 @@ def index():
     )
 
     last_registrations = Company.query.order_by(Company.created_at.desc()).limit(10).all()
+    last_users = User.query.order_by(User.created_at.desc()).limit(10).all()
     last_payments = Payment.query.order_by(Payment.created_at.desc()).limit(10).all()
     last_errors = AuditLog.query.filter(
         db.or_(
@@ -210,6 +226,13 @@ def index():
     plan_state_labels = [row[0] or "Sin plan" for row in plan_state_rows]
     plan_state_data = [int(row[1] or 0) for row in plan_state_rows]
 
+    referral_sellers_count = ReferralSeller.query.count()
+    referral_commissions_count = ReferralCommission.query.count()
+    referral_sold_total = float(db.session.query(db.func.coalesce(db.func.sum(ReferralCommission.sold_amount), 0)).scalar() or 0)
+    referral_paid_total = float(db.session.query(db.func.coalesce(db.func.sum(ReferralCommission.commission_amount), 0)).filter(ReferralCommission.status == "pagada").scalar() or 0)
+    referral_pending_count = ReferralCommission.query.filter(ReferralCommission.status.in_(["pendiente", "disponible"])).count()
+    latest_referral_commissions = ReferralCommission.query.order_by(ReferralCommission.created_at.desc()).limit(10).all()
+
     metrics = {
         "companies_total": companies_total,
         "active_companies": active_companies,
@@ -242,6 +265,11 @@ def index():
         "renewals_data": renewals_data,
         "plan_state_labels": plan_state_labels,
         "plan_state_data": plan_state_data,
+        "referral_sellers_count": referral_sellers_count,
+        "referral_commissions_count": referral_commissions_count,
+        "referral_sold_total": referral_sold_total,
+        "referral_paid_total": referral_paid_total,
+        "referral_pending_count": referral_pending_count,
     }
 
     logs = AuditLog.query.order_by(AuditLog.created_at.desc()).limit(20).all()
@@ -254,7 +282,9 @@ def index():
         backups=backups,
         metrics=metrics,
         last_registrations=last_registrations,
+        last_users=last_users,
         last_payments=last_payments,
+        latest_referral_commissions=latest_referral_commissions,
         last_errors=last_errors,
     )
 

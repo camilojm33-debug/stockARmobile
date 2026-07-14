@@ -140,6 +140,7 @@
       <div class="card-header bg-white fw-bold">Datos de cobro</div>
       <div class="card-body">
         <form method="post" action="{{ url_for('referrals.seller_billing_data') }}" class="row g-2">
+          <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
           <div class="col-md-6"><label class="form-label">Nombre completo</label><input class="form-control" name="full_name" value="{{ current_user.name }}"></div>
           <div class="col-md-6"><label class="form-label">DNI</label><input class="form-control" name="dni" value="{{ profile.dni or '' }}"></div>
           <div class="col-md-6"><label class="form-label">CUIT/CUIL</label><input class="form-control" name="tax_id" value="{{ profile.tax_id or '' }}"></div>

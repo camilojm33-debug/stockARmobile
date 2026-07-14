@@ -779,6 +779,78 @@ a { text-decoration: none; }
   background: linear-gradient(90deg, var(--primary), var(--accent));
 }
 
+.referral-spotlight {
+  border: 1px solid rgba(15, 98, 254, 0.22);
+  border-radius: 30px;
+  padding: 1rem;
+  background: linear-gradient(145deg, rgba(15, 98, 254, 0.08), rgba(18, 185, 129, 0.08));
+  box-shadow: var(--shadow-sm);
+}
+
+.referral-main,
+.referral-proof {
+  border-radius: 22px;
+  border: 1px solid var(--border);
+  background: var(--surface-muted);
+  padding: 1.4rem;
+}
+
+.referral-tag {
+  display: inline-block;
+  border-radius: 999px;
+  padding: 0.35rem 0.72rem;
+  font-size: 0.76rem;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--primary-dark);
+  background: rgba(15, 98, 254, 0.14);
+  margin-bottom: 0.8rem;
+}
+
+.referral-benefits {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 0.55rem;
+}
+
+.referral-benefits span {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.45rem;
+  font-weight: 600;
+  color: var(--text);
+}
+
+.referral-benefits i {
+  color: var(--accent);
+}
+
+.referral-kpi-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 0.65rem;
+}
+
+.referral-kpi-grid div {
+  border: 1px dashed var(--border);
+  border-radius: 14px;
+  padding: 0.7rem;
+  background: var(--surface);
+}
+
+.referral-kpi-grid small {
+  display: block;
+  color: var(--muted);
+  font-size: 0.75rem;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+}
+
+.referral-kpi-grid strong {
+  font-size: 1.05rem;
+}
+
 .five-steps {
   grid-template-columns: repeat(5, minmax(0, 1fr));
 }
@@ -965,6 +1037,10 @@ a { text-decoration: none; }
     justify-content: flex-start;
   }
   .visual-row {
+    grid-template-columns: 1fr;
+  }
+  .referral-benefits,
+  .referral-kpi-grid {
     grid-template-columns: 1fr;
   }
 }
