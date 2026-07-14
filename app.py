@@ -60,6 +60,16 @@ if database_url.startswith("postgres://"):
     database_url = database_url.replace("postgres://", "postgresql://", 1)
 app.config["SQLALCHEMY_DATABASE_URI"] = database_url
 app.config["SQLALCHEMY_TRACK_MODIFICATIONS"] = False
+
+# Official support contact channels centralized for full-platform reuse.
+app.config["SUPPORT_EMAIL"] = (os.environ.get("SUPPORT_EMAIL") or os.environ.get("LANDING_EMAIL") or "stockarmobile@gmail.com").strip()
+app.config["SUPPORT_WHATSAPP_DISPLAY"] = (os.environ.get("SUPPORT_WHATSAPP_DISPLAY") or os.environ.get("LANDING_WHATSAPP") or "+54 9 3624 22-8296").strip()
+app.config["SUPPORT_WHATSAPP_NUMBER"] = (
+    os.environ.get("SUPPORT_WHATSAPP_NUMBER")
+    or "".join(ch for ch in app.config["SUPPORT_WHATSAPP_DISPLAY"] if ch.isdigit())
+    or "5493624228296"
+).strip()
+app.config["COMPANY_PIN_SESSION_TTL_MINUTES"] = int(os.environ.get("COMPANY_PIN_SESSION_TTL_MINUTES", "30"))
 app.wsgi_app = ProxyFix(app.wsgi_app, x_proto=1, x_host=1)
 
 db = SQLAlchemy(app)
@@ -1187,12 +1197,12 @@ def index():
         "site_name": "StockArmobile",
     }
 
-    whatsapp_value = (os.environ.get("LANDING_WHATSAPP") or "+54 9 11 0000-0000").strip()
-    whatsapp_digits = "".join(ch for ch in whatsapp_value if ch.isdigit())
+    whatsapp_value = app.config.get("SUPPORT_WHATSAPP_DISPLAY", "+54 9 3624 22-8296")
+    whatsapp_digits = app.config.get("SUPPORT_WHATSAPP_NUMBER", "5493624228296")
     contact = {
         "whatsapp": whatsapp_value,
         "whatsapp_link": f"https://wa.me/{whatsapp_digits}" if whatsapp_digits else "https://wa.me/",
-        "email": (os.environ.get("LANDING_EMAIL") or "hola@stockarmobile.com").strip(),
+        "email": app.config.get("SUPPORT_EMAIL", "stockarmobile@gmail.com"),
     }
     demo_video_url = (os.environ.get("LANDING_DEMO_VIDEO_URL") or "").strip()
 
@@ -1259,8 +1269,18 @@ def landing_contact():
         flash("Completa nombre, email y mensaje para enviarnos tu consulta.", "warning")
         return redirect(url_for("index", _anchor="contacto"))
 
-    app.logger.info("Lead landing contacto: name=%s email=%s message_len=%s", name, email, len(message))
-    flash("Recibimos tu mensaje. Te responderemos a la brevedad.", "success")
+    support_email = app.config.get("SUPPORT_EMAIL", "stockarmobile@gmail.com")
+    app.logger.info(
+        "Lead landing contacto: to=%s name=%s email=%s message_len=%s",
+        support_email,
+        name,
+        email,
+        len(message),
+    )
+    flash(
+        "Gracias por comunicarte con StockArmobile. Nuestro equipo respondera tu consulta a la brevedad.",
+        "success",
+    )
     return redirect(url_for("index", _anchor="contacto"))
 
 
@@ -1294,6 +1314,13 @@ def internal_error(error):
 @app.context_processor
 def inject_notifications():
     has_active_seller_profile = False
+    support_contact = {
+        "email": app.config.get("SUPPORT_EMAIL", "stockarmobile@gmail.com"),
+        "whatsapp_display": app.config.get("SUPPORT_WHATSAPP_DISPLAY", "+54 9 3624 22-8296"),
+        "whatsapp_number": app.config.get("SUPPORT_WHATSAPP_NUMBER", "5493624228296"),
+        "whatsapp_link": f"https://wa.me/{app.config.get('SUPPORT_WHATSAPP_NUMBER', '5493624228296')}",
+        "email_link": f"mailto:{app.config.get('SUPPORT_EMAIL', 'stockarmobile@gmail.com')}",
+    }
     if current_user.is_authenticated:
         notifications = build_notifications()
         if getattr(current_user, "role", None) != "superadmin":
@@ -1302,8 +1329,14 @@ def inject_notifications():
             "notification_items": notifications,
             "notification_count": len(notifications),
             "has_active_seller_profile": has_active_seller_profile,
+            "support_contact": support_contact,
         }
-    return {"notification_items": [], "notification_count": 0, "has_active_seller_profile": False}
+    return {
+        "notification_items": [],
+        "notification_count": 0,
+        "has_active_seller_profile": False,
+        "support_contact": support_contact,
+    }
 
 
 @app.route("/api/search")

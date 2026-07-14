@@ -1,0 +1,14 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="675" viewBox="0 0 1200 675">
+  <defs>
+    <linearGradient id="g4" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0%" stop-color="#052e16"/>
+      <stop offset="100%" stop-color="#16a34a"/>
+    </linearGradient>
+  </defs>
+  <rect width="1200" height="675" fill="url(#g4)"/>
+  <text x="70" y="160" fill="#bbf7d0" font-family="Verdana" font-size="30">Programa de Referidos</text>
+  <text x="70" y="280" fill="#ffffff" font-family="Verdana" font-size="66" font-weight="700">Tutorial Completo</text>
+  <text x="70" y="350" fill="#dcfce7" font-family="Verdana" font-size="38">Activa, comparte y cobra</text>
+  <rect x="70" y="410" width="380" height="72" rx="14" fill="#fef08a"/>
+  <text x="108" y="456" fill="#14532d" font-family="Verdana" font-size="33" font-weight="700">VER INSTRUCCIONES</text>
+</svg>

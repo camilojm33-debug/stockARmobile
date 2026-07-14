@@ -1,0 +1,10 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1080" height="1920" viewBox="0 0 1080 1920">
+  <defs><linearGradient id="st" x1="0" y1="0" x2="1" y2="1"><stop offset="0%" stop-color="#0f172a"/><stop offset="100%" stop-color="#0ea5e9"/></linearGradient></defs>
+  <rect width="1080" height="1920" fill="url(#st)"/>
+  <text x="90" y="240" fill="#bae6fd" font-family="Verdana" font-size="42">StockArmobile</text>
+  <text x="90" y="460" fill="#ffffff" font-family="Verdana" font-size="92" font-weight="700">Demo</text>
+  <text x="90" y="570" fill="#ffffff" font-family="Verdana" font-size="92" font-weight="700">60 segundos</text>
+  <text x="90" y="710" fill="#e2e8f0" font-family="Verdana" font-size="52">Mira como vender mas rapido</text>
+  <rect x="90" y="820" width="550" height="120" rx="20" fill="#22c55e"/>
+  <text x="150" y="896" fill="#052e16" font-family="Verdana" font-size="52" font-weight="700">VER DEMO</text>
+</svg>

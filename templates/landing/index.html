@@ -411,7 +411,7 @@
               <div class="feature-card h-100">
                 <h3 class="h5">Correo</h3>
                 <p class="text-muted mb-3">{{ contact.email }}</p>
-                <a class="btn btn-outline-primary btn-pill" href="mailto:{{ contact.email }}">Enviar email</a>
+                <a class="btn btn-outline-primary btn-pill" href="{{ support_contact.email_link }}">Enviar email</a>
               </div>
             </div>
             <div class="col-lg-4 reveal" data-delay="130">
@@ -463,6 +463,13 @@
               <li><a href="{{ url_for('auth.login') }}">Iniciar sesión</a></li>
               <li><a href="{{ url_for('auth.register') }}">Crear cuenta</a></li>
               <li><a href="{{ url_for('auth.register') }}?selected_plan=trial">Prueba Gratis 10 días</a></li>
+            </ul>
+          </div>
+          <div class="col-md-3">
+            <h3>Soporte</h3>
+            <ul>
+              <li><a href="{{ support_contact.whatsapp_link }}" target="_blank" rel="noopener">WhatsApp {{ support_contact.whatsapp_display }}</a></li>
+              <li><a href="{{ support_contact.email_link }}">{{ support_contact.email }}</a></li>
             </ul>
           </div>
         </div>

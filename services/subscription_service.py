@@ -83,18 +83,29 @@ class SubscriptionService:
     def apply_payment_status(subscription, payment_status: str):
         from app import utcnow
 
+        previous_status = (subscription.status or "pending").lower()
         normalized = (payment_status or "pending").lower()
         mapped = SubscriptionService.PAYMENT_STATUS_MAP.get(normalized, normalized)
         subscription.status = mapped
 
         if mapped in {"active", "approved"}:
-            subscription.last_payment_date = utcnow()
-            if subscription.next_billing_date:
-                subscription.start_date = subscription.next_billing_date
+            now = utcnow()
+            subscription.last_payment_date = now
             duration = int(subscription.plan.duration_days if subscription.plan else 30)
-            base = subscription.next_billing_date or utcnow()
-            subscription.next_billing_date = base + timedelta(days=duration)
+
+            # First successful payment activates immediately.
+            # Renewals only extend from next_billing_date if the current period is still open.
+            if previous_status in {"active", "approved"} and subscription.next_billing_date and subscription.next_billing_date > now:
+                period_start = subscription.next_billing_date
+            else:
+                period_start = now
+
+            subscription.start_date = period_start
+            subscription.starts_at = period_start
+            subscription.next_billing_date = period_start + timedelta(days=duration)
             subscription.ends_at = subscription.next_billing_date
+            subscription.renewal_enabled = True
+            subscription.auto_renew = True
         elif mapped in {"cancelled", "expired", "suspended", "rejected"}:
             subscription.renewal_enabled = False
             subscription.auto_renew = False

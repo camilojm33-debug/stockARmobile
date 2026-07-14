@@ -327,6 +327,7 @@ def admin_referrals_export():
 @seller_required
 def seller_dashboard():
     from app import AuditLog, Company, ReferralAttribution, ReferralCommission, ReferralPayout, ReferralSeller, Subscription, db
+    from flask import current_app
 
     profile = ReferralSeller.query.filter_by(user_id=current_user.id).first_or_404()
     snapshot = ReferralService.seller_dashboard_snapshot(profile.id)
@@ -466,6 +467,278 @@ def seller_dashboard():
         "email": f"Hola,\n\nTe recomiendo StockArmobile para gestionar tu negocio.\nPuedes ver mas detalles aqui: {profile.referral_url}\n\nSaludos.",
     }
 
+    videos_dir = Path(current_app.static_folder) / "assets" / "videos"
+    has_demo_30 = (videos_dir / "demo-30.mp4").exists()
+    has_demo_60 = (videos_dir / "demo-60.mp4").exists()
+    has_demo_90 = (videos_dir / "demo-90.mp4").exists()
+    has_ref_tutorial = (videos_dir / "tutorial-referidos.mp4").exists()
+    has_sales_tutorial = (videos_dir / "como-vender.mp4").exists()
+    demo_fallback = (current_app.config.get("LANDING_DEMO_VIDEO_URL") or "").strip()
+
+    videos = [
+        {
+            "id": "video-demo-30",
+            "title": "Video Demo 30 segundos",
+            "description": "Presentacion ultra rapida para captar interes en menos de un minuto.",
+            "thumbnail": url_for("static", filename="assets/social/thumb-demo-30.svg"),
+            "available": has_demo_30,
+            "view_url": url_for("static", filename="assets/videos/demo-30.mp4") if has_demo_30 else "",
+            "download_url": url_for("static", filename="assets/videos/demo-30.mp4") if has_demo_30 else "",
+        },
+        {
+            "id": "video-demo-60",
+            "title": "Video Demo 60 segundos",
+            "description": "Recorrido breve de ventas, stock y reportes para compartir en WhatsApp.",
+            "thumbnail": url_for("static", filename="assets/social/thumb-demo-60.svg"),
+            "available": bool(has_demo_60 or demo_fallback),
+            "view_url": url_for("static", filename="assets/videos/demo-60.mp4") if has_demo_60 else demo_fallback,
+            "download_url": url_for("static", filename="assets/videos/demo-60.mp4") if has_demo_60 else "",
+        },
+        {
+            "id": "video-demo-90",
+            "title": "Video Demo 90 segundos",
+            "description": "Demo completa para reuniones comerciales y cierres con negocios medianos.",
+            "thumbnail": url_for("static", filename="assets/social/thumb-demo-90.svg"),
+            "available": has_demo_90,
+            "view_url": url_for("static", filename="assets/videos/demo-90.mp4") if has_demo_90 else "",
+            "download_url": url_for("static", filename="assets/videos/demo-90.mp4") if has_demo_90 else "",
+        },
+        {
+            "id": "video-tutorial-referidos",
+            "title": "Tutorial del Programa de Referidos",
+            "description": "Explica activacion, seguimiento de clientes, comisiones y cobros.",
+            "thumbnail": url_for("static", filename="assets/social/thumb-referidos.svg"),
+            "available": has_ref_tutorial,
+            "view_url": url_for("static", filename="assets/videos/tutorial-referidos.mp4") if has_ref_tutorial else "",
+            "download_url": url_for("static", filename="assets/videos/tutorial-referidos.mp4") if has_ref_tutorial else "",
+        },
+        {
+            "id": "video-como-vender",
+            "title": "Como vender StockArmobile",
+            "description": "Guia audiovisual para detectar necesidades y cerrar ventas con confianza.",
+            "thumbnail": url_for("static", filename="assets/social/thumb-como-vender.svg"),
+            "available": has_sales_tutorial,
+            "view_url": url_for("static", filename="assets/videos/como-vender.mp4") if has_sales_tutorial else "",
+            "download_url": url_for("static", filename="assets/videos/como-vender.mp4") if has_sales_tutorial else "",
+        },
+    ]
+
+    social_images = [
+        {
+            "platform": "Facebook",
+            "title": "Post Facebook: Control total del negocio",
+            "preview_url": url_for("static", filename="assets/social/facebook-post.svg"),
+            "download_url": url_for("static", filename="assets/social/facebook-post.svg"),
+            "suggested_text": f"Controla stock, ventas, caja y clientes en un solo lugar. Pruebalo gratis: {profile.referral_url}",
+        },
+        {
+            "platform": "Instagram",
+            "title": "Post Instagram: Vende desde el celular",
+            "preview_url": url_for("static", filename="assets/social/instagram-post.svg"),
+            "download_url": url_for("static", filename="assets/social/instagram-post.svg"),
+            "suggested_text": f"Tu negocio en la palma de tu mano. Gestiona todo con StockArmobile: {profile.referral_url}",
+        },
+        {
+            "platform": "Historias",
+            "title": "Historia: Demo en 60 segundos",
+            "preview_url": url_for("static", filename="assets/social/story-post.svg"),
+            "download_url": url_for("static", filename="assets/social/story-post.svg"),
+            "suggested_text": f"Mira como vender y controlar stock en segundos. Prueba gratis: {profile.referral_url}",
+        },
+        {
+            "platform": "Estados de WhatsApp",
+            "title": "Estado: Prueba gratis 10 dias",
+            "preview_url": url_for("static", filename="assets/social/whatsapp-status.svg"),
+            "download_url": url_for("static", filename="assets/social/whatsapp-status.svg"),
+            "suggested_text": f"Prueba StockArmobile gratis por 10 dias y ordena tu negocio hoy: {profile.referral_url}",
+        },
+        {
+            "platform": "LinkedIn",
+            "title": "Post LinkedIn: Profesionaliza tu operacion",
+            "preview_url": url_for("static", filename="assets/social/linkedin-post.svg"),
+            "download_url": url_for("static", filename="assets/social/linkedin-post.svg"),
+            "suggested_text": f"Digitaliza procesos comerciales y mejora indicadores en tiempo real con StockArmobile: {profile.referral_url}",
+        },
+    ]
+
+    whatsapp_messages = [
+        f"Hola. Queria mostrarte StockArmobile. Es un sistema para controlar stock, ventas, clientes y caja desde cualquier dispositivo. Puedes probarlo gratis durante 10 dias. {profile.referral_url}",
+        f"Todavia llevas el stock en una planilla? Con StockArmobile puedes controlar todo desde el celular y evitar quiebres de stock. Pruebalo gratis aqui: {profile.referral_url}",
+        f"Si quieres vender mas rapido y con menos errores, StockArmobile te permite cobrar, descontar stock y registrar clientes en segundos. Mira aqui: {profile.referral_url}",
+        f"Muchos negocios pierden dinero por no medir costos y caja al dia. StockArmobile te muestra reportes claros para decidir mejor. Prueba gratis: {profile.referral_url}",
+        f"Si tienes equipo, con StockArmobile puedes asignar usuarios con permisos y mantener control de operaciones sin complicarte. Link: {profile.referral_url}",
+        f"Quieres saber que productos se venden mas y cuales estan frenando tu rotacion? StockArmobile te lo muestra en el dashboard. Empieza hoy: {profile.referral_url}",
+        f"StockArmobile funciona en celular, tablet y PC sin instalaciones complejas. Ideal para comercio, distribucion y venta diaria. Prueba gratis: {profile.referral_url}",
+        f"Con StockArmobile puedes registrar compras, gastos y ventas en un mismo sistema para tener numeros reales de tu negocio. Te paso el acceso: {profile.referral_url}",
+        f"Si hoy cobras en varios metodos de pago, StockArmobile te ayuda a ordenar caja y conciliacion diaria en minutos. Mira la demo aqui: {profile.referral_url}",
+        f"Te comparto una herramienta que ayuda a vender mejor y controlar inventario sin perder tiempo. Se llama StockArmobile y tiene prueba gratis: {profile.referral_url}",
+    ]
+
+    email_templates = [
+        {
+            "name": "Primer contacto",
+            "subject": "Te presento StockArmobile para ordenar tu negocio",
+            "body": (
+                "Hola,\n\n"
+                "Vi que gestionas ventas y stock en tu negocio, por eso queria mostrarte StockArmobile."
+                " Te permite controlar ventas, inventario, clientes y caja desde cualquier dispositivo.\n\n"
+                f"Puedes empezar con prueba gratis aqui: {profile.referral_url}\n\n"
+                "Quedo atento para ayudarte con la implementacion."
+            ),
+        },
+        {
+            "name": "Seguimiento",
+            "subject": "Te comparto una demo corta de StockArmobile",
+            "body": (
+                "Hola,\n\n"
+                "Retomo nuestro contacto para compartirte una demo breve de como funciona StockArmobile en el dia a dia."
+                " Veras ventas, control de stock y reportes en pocos minutos.\n\n"
+                f"Acceso a demo y prueba: {profile.referral_url}\n\n"
+                "Si quieres, coordinamos una llamada de 15 minutos."
+            ),
+        },
+        {
+            "name": "Recordatorio",
+            "subject": "Recordatorio: prueba gratis de StockArmobile",
+            "body": (
+                "Hola,\n\n"
+                "Te recuerdo que puedes activar tu prueba gratis de StockArmobile y empezar hoy mismo"
+                " a controlar stock, ventas y caja en un solo lugar.\n\n"
+                f"Activalo aqui: {profile.referral_url}\n\n"
+                "Si necesitas ayuda, te acompano en la configuracion inicial."
+            ),
+        },
+        {
+            "name": "Cierre de venta",
+            "subject": "Listos para empezar con StockArmobile",
+            "body": (
+                "Hola,\n\n"
+                "Segun lo que conversamos, StockArmobile cubre tus necesidades de control de inventario,"
+                " ventas y reportes. La mejor forma de avanzar es activar la prueba y validar resultados"
+                " reales en tu operacion.\n\n"
+                f"Inicio inmediato: {profile.referral_url}\n\n"
+                "Estoy disponible para acompanarte en el arranque."
+            ),
+        },
+        {
+            "name": "Cliente interesado",
+            "subject": "Siguiente paso para implementar StockArmobile",
+            "body": (
+                "Hola,\n\n"
+                "Excelente que te haya interesado StockArmobile. El siguiente paso es activar la prueba gratuita"
+                " y cargar tus productos principales para que veas impacto desde el primer dia.\n\n"
+                f"Comienza aqui: {profile.referral_url}\n\n"
+                "Cuando quieras, te envio una guia rapida de puesta en marcha."
+            ),
+        },
+    ]
+
+    faq_items = [
+        {"q": "Funciona desde celular?", "a": "Si, puedes operar desde celular, tablet o PC con la misma cuenta."},
+        {"q": "Necesito instalar algo?", "a": "No, se usa desde navegador web sin instalaciones complejas."},
+        {"q": "Tiene prueba gratis?", "a": "Si, incluye prueba gratuita para validar flujo real de trabajo."},
+        {"q": "Cuantos usuarios puedo crear?", "a": "Depende del plan contratado y del nivel de operacion."},
+        {"q": "Tiene soporte?", "a": "Si, hay soporte y canal de ayuda para resolver dudas operativas."},
+        {"q": "Puedo controlar varias cajas?", "a": "Si, puedes registrar movimientos y cierres para control de caja."},
+        {"q": "Permite registrar clientes frecuentes?", "a": "Si, puedes almacenar clientes e historial de compras."},
+        {"q": "Sirve para negocios pequenos?", "a": "Si, esta pensado para emprendedores y comercios en crecimiento."},
+        {"q": "Sirve para negocios con alto volumen?", "a": "Si, permite escalar procesos y orden operativo."},
+        {"q": "Puedo cargar compras y gastos?", "a": "Si, integra compras, gastos y ventas en un mismo entorno."},
+        {"q": "Se pueden ver reportes?", "a": "Si, cuenta con reportes de ventas, stock y rendimiento comercial."},
+        {"q": "Se puede usar para control de stock por producto?", "a": "Si, el stock se actualiza segun operaciones registradas."},
+        {"q": "Tiene gestion de codigos de barras?", "a": "Si, incluye herramientas de etiquetas y codigos para productos."},
+        {"q": "Puedo operar si no soy tecnico?", "a": "Si, la interfaz esta orientada a uso diario y rapido aprendizaje."},
+        {"q": "Puedo exportar informacion?", "a": "Si, existen opciones de exportacion para analisis y gestion."},
+        {"q": "Que pasa si mi internet falla?", "a": "Se recomienda conexion estable; tambien hay mejoras de experiencia offline en el sistema."},
+        {"q": "Se adapta a distintos rubros?", "a": "Si, aplica a retail, distribucion y servicios con manejo de stock."},
+        {"q": "Tiene seguridad de acceso?", "a": "Si, incluye autenticacion y controles de acceso por usuario."},
+        {"q": "Puedo empezar rapido?", "a": "Si, puedes cargar productos base y vender el mismo dia."},
+        {"q": "Como contrato luego de la prueba?", "a": "Desde el portal se selecciona plan y se activa suscripcion."},
+    ]
+
+    sales_guide_steps = [
+        "Paso 1: Pregunta como controla hoy su stock, ventas y caja.",
+        "Paso 2: Identifica una perdida concreta de tiempo o dinero en su proceso actual.",
+        "Paso 3: Muestra la demo de 60 segundos enfocada en esa necesidad.",
+        "Paso 4: Explica la prueba gratis y propone una meta medible para los primeros 7 dias.",
+        "Paso 5: Cierra con una accion clara: activar prueba hoy y agendar seguimiento en 48 horas.",
+    ]
+
+    objection_handling = [
+        {
+            "objection": "No tengo tiempo.",
+            "response": "Justamente por falta de tiempo conviene empezar. En una hora de configuracion inicial puedes ahorrar varias horas por semana en control manual.",
+        },
+        {
+            "objection": "Ya uso otro sistema.",
+            "response": "Perfecto. Podemos comparar tiempos de carga, claridad de reportes y facilidad de uso para validar si StockArmobile mejora tu operacion diaria.",
+        },
+        {
+            "objection": "Es caro.",
+            "response": "Cuando se mide stock perdido, errores de caja y tiempo operativo, el costo del sistema suele ser menor que el costo de no tener control.",
+        },
+        {
+            "objection": "No entiendo de computadoras.",
+            "response": "No necesitas conocimientos tecnicos. El flujo es simple y te acompano con una guia practica para tus primeras ventas y movimientos.",
+        },
+    ]
+
+    sales_tips = [
+        "No empieces por precio: empieza por problema de negocio.",
+        "Habla con datos concretos de tiempo ahorrado por dia.",
+        "Muestra una venta real en menos de un minuto.",
+        "Conecta cada funcion con un beneficio operativo.",
+        "Prioriza el dolor principal del cliente en la demo.",
+        "Propone metas de prueba de 7 dias, no promesas vagas.",
+        "Usa preguntas de diagnostico antes de presentar.",
+        "Menciona resultados rapidos: orden de caja y stock.",
+        "Comparte testimonios o casos similares de rubro.",
+        "Resume al final tres beneficios y un siguiente paso.",
+        "Agenda seguimiento antes de cerrar la llamada.",
+        "Haz que el cliente navegue la demo contigo.",
+        "Presenta la prueba gratis como decision sin riesgo.",
+        "Enfoca el cierre en implementacion inmediata.",
+        "Evita tecnicismos; usa lenguaje de negocio.",
+        "Valida objeciones y responde con ejemplos reales.",
+        "Comparte material visual despues de cada reunion.",
+        "Adapta el discurso segun tamano del negocio.",
+        "Mide conversion por canal para optimizar esfuerzos.",
+        "Construye confianza cumpliendo cada seguimiento prometido.",
+    ]
+
+    resource_center = {
+        "videos": videos,
+        "social_images": social_images,
+        "pdfs": [
+            {"title": "Folleto Comercial", "url": url_for("referrals.seller_material_brochure")},
+            {"title": "Catalogo de funciones", "url": url_for("referrals.seller_material_catalog")},
+            {"title": "Comparativa de planes", "url": url_for("referrals.seller_material_plan_comparison")},
+            {"title": "Programa de Referidos", "url": url_for("referrals.seller_material_referrals_program")},
+        ],
+        "whatsapp_messages": whatsapp_messages,
+        "email_templates": email_templates,
+        "faq_items": faq_items,
+        "sales_guide_steps": sales_guide_steps,
+        "objection_handling": objection_handling,
+        "sales_tips": sales_tips,
+        "share": {
+            "whatsapp": share_links["whatsapp"],
+            "facebook": share_links["facebook"],
+            "linkedin": share_links["linkedin"],
+            "referral_url": profile.referral_url,
+            "referral_code": profile.referral_code,
+        },
+        "support": {
+            "email": current_app.config.get("SUPPORT_EMAIL", "stockarmobile@gmail.com"),
+            "email_link": f"mailto:{current_app.config.get('SUPPORT_EMAIL', 'stockarmobile@gmail.com')}",
+            "whatsapp_display": current_app.config.get("SUPPORT_WHATSAPP_DISPLAY", "+54 9 3624 22-8296"),
+            "whatsapp": f"https://wa.me/{current_app.config.get('SUPPORT_WHATSAPP_NUMBER', '5493624228296')}?text={quote_plus('Hola equipo de StockArmobile, necesito soporte comercial para vendedores.')}",
+            "manual_pdf": url_for("referrals.seller_material_brochure"),
+            "tutorial_anchor": "#resource-center-videos",
+            "faq_anchor": "#resource-center-faq",
+        },
+    }
+
     milestones = [1, 5, 10, 25, 50, 100]
     medals = [target for target in milestones if snapshot["total_clients"] >= target]
     return render_template(
@@ -505,6 +778,7 @@ def seller_dashboard():
             "estimated_commission": float(estimated_commission),
         },
         notifications=notifications,
+        resource_center=resource_center,
     )
 
 
@@ -645,6 +919,42 @@ def seller_material_catalog():
         "El detalle actualizado se consulta en la Landing oficial.",
     ]
     return _pdf_from_lines("Catalogo de Planes StockArmobile", lines, "stockarmobile_catalogo.pdf")
+
+
+@bp.route("/referidos/materiales/comparativa-planes.pdf")
+@seller_required
+def seller_material_plan_comparison():
+    lines = [
+        "Comparativa de Planes StockArmobile:",
+        "- Emprendedor: ideal para comenzar con operaciones basicas de ventas y stock.",
+        "- Negocio: recomendado para equipos con mayor volumen y seguimiento comercial.",
+        "- Premium: pensado para crecimiento, control avanzado y analitica extendida.",
+        "Criterios de comparacion:",
+        "1) Cantidad de usuarios operativos.",
+        "2) Escala de productos y clientes administrados.",
+        "3) Nivel de reportes y control de gestion.",
+        "4) Soporte y acompanamiento segun necesidad.",
+        "Tip comercial: vende por impacto operativo, no por precio aislado.",
+    ]
+    return _pdf_from_lines("Comparativa de Planes", lines, "stockarmobile_comparativa_planes.pdf")
+
+
+@bp.route("/referidos/materiales/programa-referidos.pdf")
+@seller_required
+def seller_material_referrals_program():
+    lines = [
+        "Programa de Referidos StockArmobile:",
+        "1) Comparte tu enlace personalizado.",
+        "2) El cliente activa prueba o plan desde tu enlace.",
+        "3) El sistema registra atribucion automaticamente.",
+        "4) Las comisiones se calculan segun reglas vigentes.",
+        "5) Consulta estados en tu portal: pendiente, disponible, pagada.",
+        "Buenas practicas:",
+        "- Realiza seguimiento en 24 horas despues de cada demo.",
+        "- Envia material visual segun el canal del prospecto.",
+        "- Registra objeciones para responder con argumentos concretos.",
+    ]
+    return _pdf_from_lines("Programa de Referidos", lines, "stockarmobile_programa_referidos.pdf")
 
 
 @bp.route("/referidos/materiales/imagenes.zip")

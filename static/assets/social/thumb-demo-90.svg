@@ -1,0 +1,14 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="675" viewBox="0 0 1200 675">
+  <defs>
+    <linearGradient id="g3" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0%" stop-color="#111827"/>
+      <stop offset="100%" stop-color="#334155"/>
+    </linearGradient>
+  </defs>
+  <rect width="1200" height="675" fill="url(#g3)"/>
+  <rect x="760" y="120" width="350" height="430" rx="24" fill="#1d4ed8" opacity="0.35"/>
+  <text x="70" y="170" fill="#93c5fd" font-family="Verdana" font-size="30">StockArmobile Business</text>
+  <text x="70" y="275" fill="#ffffff" font-family="Verdana" font-size="66" font-weight="700">Demo 90s</text>
+  <text x="70" y="350" fill="#e5e7eb" font-family="Verdana" font-size="38">Presentacion completa</text>
+  <text x="70" y="410" fill="#cbd5e1" font-family="Verdana" font-size="32">ideal para cierre comercial</text>
+</svg>

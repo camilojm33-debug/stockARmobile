@@ -358,13 +358,9 @@
       <a class="nav-link {% if request.endpoint and request.endpoint.startswith('reports.') %}active{% endif %}" href="{{ url_for('reports.index') }}"><i class="bi bi-file-earmark-bar-graph"></i>Reportes</a>
       <a class="nav-link {% if request.endpoint and request.endpoint.startswith('qr_labels.') %}active{% endif %}" href="{{ url_for('qr_labels.generate') }}"><i class="bi bi-qr-code"></i>QR y etiquetas</a>
       <a class="nav-link {% if request.endpoint and request.endpoint.startswith('company_billing.') %}active{% endif %}" href="{{ url_for('company_billing.subscription_portal') }}"><i class="bi bi-credit-card-2-front"></i>Suscripcion</a>
-      {% if has_active_seller_profile %}
-      <a class="nav-link {% if request.endpoint == 'referrals.seller_dashboard' %}active{% endif %}" href="{{ url_for('referrals.seller_dashboard') }}"><i class="bi bi-speedometer2"></i>Portal de Vendedor</a>
-      <a class="nav-link {% if request.endpoint == 'referrals.seller_clients' %}active{% endif %}" href="{{ url_for('referrals.seller_clients') }}"><i class="bi bi-buildings"></i>Mis clientes referidos</a>
-      <a class="nav-link {% if request.endpoint == 'referrals.seller_commissions' %}active{% endif %}" href="{{ url_for('referrals.seller_commissions') }}"><i class="bi bi-cash-stack"></i>Mis comisiones</a>
-      {% else %}
-      <a class="nav-link {% if request.endpoint == 'referrals.activate_seller' %}active{% endif %}" href="{{ url_for('referrals.activate_seller') }}"><i class="bi bi-megaphone"></i>Activar Referidos</a>
       {% endif %}
+      {% if current_user.role != 'superadmin' %}
+      <a class="nav-link {% if request.endpoint and request.endpoint.startswith('referrals.') %}active{% endif %}" href="{{ url_for('referrals.seller_dashboard') }}"><i class="bi bi-megaphone"></i>Referidos</a>
       {% endif %}
       <a class="nav-link {% if request.endpoint and request.endpoint.startswith('support.') %}active{% endif %}" href="{{ url_for('support.new_ticket') }}"><i class="bi bi-life-preserver"></i>Ayuda</a>
     </nav>

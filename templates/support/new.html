@@ -8,7 +8,11 @@
       <h1 class="h3 fw-bold mb-0">Ayuda</h1>
       <p class="text-muted mb-0">Envia tu consulta y nuestro equipo la revisara.</p>
     </div>
-    <a class="btn btn-outline-secondary" href="{{ url_for('support.my_tickets') if current_user.role != 'superadmin' else url_for('support.admin_index') }}">Ver tickets</a>
+    <div class="d-flex gap-2 flex-wrap justify-content-end">
+      <a class="btn btn-success" href="{{ support_contact.whatsapp_link }}" target="_blank" rel="noopener">Contactar Soporte</a>
+      <a class="btn btn-outline-primary" href="{{ support_contact.email_link }}">Enviar email</a>
+      <a class="btn btn-outline-secondary" href="{{ url_for('support.my_tickets') if current_user.role != 'superadmin' else url_for('support.admin_index') }}">Ver tickets</a>
+    </div>
   </div>
 
   <div class="card app-card">

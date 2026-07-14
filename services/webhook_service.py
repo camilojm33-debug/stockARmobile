@@ -98,6 +98,7 @@ class WebhookService:
             paid_at = self._parse_mp_datetime(payment_data.get("date_approved"))
 
             payment = Payment.query.filter_by(payment_id=str(payment_data.get("id"))).first()
+            previous_payment_status = (payment.status or "").lower() if payment is not None else ""
             if payment is None:
                 metadata = payment_data.get("metadata") or {}
                 company_id = int(metadata.get("company_id") or 0)
@@ -165,7 +166,9 @@ class WebhookService:
 
             company = subscription.company if subscription and subscription.company else None
             if subscription and company:
-                SubscriptionService.apply_payment_status(subscription, payment_status)
+                should_apply_status_transition = previous_payment_status != payment_status
+                if should_apply_status_transition:
+                    SubscriptionService.apply_payment_status(subscription, payment_status)
                 company.active = subscription.status in {"active", "approved", "trial"}
                 if subscription.status in {"active", "approved"}:
                     if payment.invoice_id is None:

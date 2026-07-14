@@ -85,10 +85,12 @@
       <div class="card app-card h-100">
         <div class="card-header bg-white fw-bold d-flex justify-content-between align-items-center">
           <span>Seguridad</span>
+          {% if current_user.role == 'admin' %}
           <form method="post" action="{{ url_for('company_billing.company_settings_pin_regenerate') }}">
             <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
             <button class="btn btn-sm btn-outline-warning" type="submit"><i class="bi bi-arrow-repeat me-1"></i>Regenerar PIN</button>
           </form>
+          {% endif %}
         </div>
         <div class="card-body">
           <div class="small text-muted mb-1">PIN administrativo</div>
@@ -197,6 +199,7 @@
     </div>
   </div>
 
+  {% if current_user.role == 'admin' %}
   <div class="card app-card mt-4">
     <div class="card-header bg-white fw-bold">Alta de empleados</div>
     <div class="card-body">
@@ -227,6 +230,7 @@
       </form>
     </div>
   </div>
+  {% endif %}
 
   <div class="card app-card mt-4">
     <div class="card-header bg-white fw-bold">Usuarios del negocio</div>
@@ -254,6 +258,7 @@
             <td>{{ user.created_at.strftime('%Y-%m-%d') if user.created_at else '-' }}</td>
             <td>{{ row.last_access.strftime('%Y-%m-%d %H:%M') if row.last_access else '-' }}</td>
             <td class="text-end">
+              {% if current_user.role == 'admin' %}
               <div class="d-flex justify-content-end gap-1 flex-wrap">
                 <form method="post" action="{{ url_for('company_billing.company_settings_user_update', user_id=user.id) }}" class="d-flex gap-1 flex-wrap justify-content-end">
                   <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
@@ -274,6 +279,9 @@
                   <button class="btn btn-sm btn-outline-warning" type="submit">Restablecer contraseña</button>
                 </form>
               </div>
+              {% else %}
+              <span class="text-muted small">Solo visible para administradores.</span>
+              {% endif %}
             </td>
           </tr>
           {% else %}

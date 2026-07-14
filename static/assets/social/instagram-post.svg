@@ -1,0 +1,9 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1080" height="1080" viewBox="0 0 1080 1080">
+  <defs><linearGradient id="ig" x1="0" y1="0" x2="1" y2="1"><stop offset="0%" stop-color="#f97316"/><stop offset="50%" stop-color="#ec4899"/><stop offset="100%" stop-color="#7c3aed"/></linearGradient></defs>
+  <rect width="1080" height="1080" fill="url(#ig)"/>
+  <text x="90" y="180" fill="#fff7ed" font-family="Verdana" font-size="34">StockArmobile</text>
+  <text x="90" y="330" fill="#ffffff" font-family="Verdana" font-size="72" font-weight="700">Tu negocio</text>
+  <text x="90" y="420" fill="#ffffff" font-family="Verdana" font-size="72" font-weight="700">en orden</text>
+  <text x="90" y="520" fill="#fde68a" font-family="Verdana" font-size="40">Vende, controla stock y caja</text>
+  <text x="90" y="580" fill="#fef3c7" font-family="Verdana" font-size="40">desde el celular</text>
+</svg>

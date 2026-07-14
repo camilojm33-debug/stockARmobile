@@ -1190,7 +1190,7 @@ def test_landing_contact_form_endpoint():
         follow_redirects=True,
     )
     assert ok.status_code == 200
-    assert "Recibimos tu mensaje" in ok.data.decode("utf-8")
+    assert "Gracias por comunicarte con StockArmobile" in ok.data.decode("utf-8")
 
 
 def test_landing_testimonials_visibility_with_real_data_only():
@@ -1606,3 +1606,173 @@ def test_existing_customer_can_activate_referrals_without_duplicate_account():
         seller_profile = ReferralSeller.query.filter_by(user_id=target_user.id).first()
         assert seller_profile is not None
         assert seller_profile.referral_code.startswith("REF")
+
+
+def test_webhook_approved_activates_subscription_and_creates_commission_automatically(monkeypatch):
+    from services.subscription_service import SubscriptionService
+    from services.webhook_service import WebhookService
+
+    with stock_app.app.app_context():
+        from app import Payment, Plan, ReferralAttribution, ReferralCommission, ReferralSeller, User, WebhookEvent
+
+        company = Company.query.filter_by(name="Empresa Demo").first()
+        assert company is not None
+
+        user = User.query.filter_by(username="empresa_admin").first()
+        assert user is not None
+
+        seller_user = User(username="seller_demo", email="seller_demo@test.local", role="seller", active=True)
+        seller_user.set_password("seller123")
+        db.session.add(seller_user)
+        db.session.flush()
+
+        seller = ReferralSeller(
+            user_id=seller_user.id,
+            referral_code="REF9999",
+            referral_url="https://stockarmobile.com/?ref=REF9999",
+            active=True,
+            dni="12345678",
+        )
+        db.session.add(seller)
+        db.session.flush()
+
+        db.session.add(
+            ReferralAttribution(
+                seller_id=seller.id,
+                company_id=company.id,
+                user_id=user.id,
+                referral_code="REF9999",
+            )
+        )
+
+        plan = Plan(code="biz_mp", name="Negocio MP", price=12999, currency="ARS", duration_days=30, max_users=5, max_products=5000, max_clients=5000, active=True)
+        db.session.add(plan)
+        db.session.flush()
+
+        subscription = SubscriptionService.start_or_change_plan(db.session, company=company, plan=plan, user_id=user.id)
+        db.session.flush()
+
+        subscription.external_reference = (
+            f"company_id:{company.id}|plan_id:{plan.id}|subscription_id:{subscription.id}|"
+            f"user_id:{user.id}|ts:123"
+        )
+        db.session.commit()
+
+        approved_payload = {
+            "id": "evt-1",
+            "type": "payment",
+            "data": {"id": "mp-pay-1"},
+        }
+        approved_payment = {
+            "id": "mp-pay-1",
+            "status": "approved",
+            "date_last_updated": "2026-07-14T10:00:00Z",
+            "date_approved": "2026-07-14T10:00:00Z",
+            "transaction_amount": 12999,
+            "currency_id": "ARS",
+            "payment_method_id": "visa",
+            "external_reference": subscription.external_reference,
+            "metadata": {
+                "company_id": company.id,
+                "subscription_id": subscription.id,
+                "plan_id": plan.id,
+                "user_id": user.id,
+            },
+        }
+
+        service = WebhookService()
+        monkeypatch.setattr(service.mp_service, "validate_webhook_signature", lambda **kwargs: True)
+        monkeypatch.setattr(service.mp_service, "get_payment", lambda payment_id: approved_payment)
+
+        result = service.process(
+            db_session=db.session,
+            headers={"x-request-id": "rq-1", "x-signature": "ts=1,v1=abc"},
+            payload=approved_payload,
+        )
+
+        assert result["status"] == "processed"
+
+        db.session.refresh(subscription)
+        assert subscription.status == "active"
+        assert subscription.start_date is not None
+        assert subscription.ends_at is not None
+        assert subscription.next_billing_date is not None
+        assert subscription.renewal_enabled is True
+
+        payment_row = Payment.query.filter_by(payment_id="mp-pay-1").first()
+        assert payment_row is not None
+        assert payment_row.status == "approved"
+
+        commission = ReferralCommission.query.filter_by(payment_id=payment_row.id).first()
+        assert commission is not None
+        assert float(commission.commission_percent) == 0.3
+
+        duplicate = service.process(
+            db_session=db.session,
+            headers={"x-request-id": "rq-1", "x-signature": "ts=1,v1=abc"},
+            payload=approved_payload,
+        )
+        assert duplicate["status"] == "duplicate"
+
+        assert Payment.query.filter_by(payment_id="mp-pay-1").count() == 1
+        assert ReferralCommission.query.filter_by(payment_id=payment_row.id).count() == 1
+        assert WebhookEvent.query.count() == 1
+
+
+def test_webhook_pending_or_rejected_does_not_activate_subscription(monkeypatch):
+    from services.subscription_service import SubscriptionService
+    from services.webhook_service import WebhookService
+
+    with stock_app.app.app_context():
+        from app import Payment, Plan, User
+
+        company = Company.query.filter_by(name="Empresa Demo").first()
+        assert company is not None
+
+        user = User.query.filter_by(username="empresa_admin").first()
+        assert user is not None
+
+        plan = Plan(code="negocio_pending", name="Negocio Pending", price=12999, currency="ARS", duration_days=30, active=True)
+        db.session.add(plan)
+        db.session.flush()
+
+        subscription = SubscriptionService.start_or_change_plan(db.session, company=company, plan=plan, user_id=user.id)
+        db.session.flush()
+        subscription.external_reference = (
+            f"company_id:{company.id}|plan_id:{plan.id}|subscription_id:{subscription.id}|"
+            f"user_id:{user.id}|ts:124"
+        )
+        db.session.commit()
+
+        service = WebhookService()
+        monkeypatch.setattr(service.mp_service, "validate_webhook_signature", lambda **kwargs: True)
+
+        pending_payment = {
+            "id": "mp-pay-pending",
+            "status": "pending",
+            "date_last_updated": "2026-07-14T10:00:00Z",
+            "transaction_amount": 12999,
+            "currency_id": "ARS",
+            "external_reference": subscription.external_reference,
+            "metadata": {
+                "company_id": company.id,
+                "subscription_id": subscription.id,
+                "plan_id": plan.id,
+                "user_id": user.id,
+            },
+        }
+        monkeypatch.setattr(service.mp_service, "get_payment", lambda payment_id: pending_payment)
+
+        pending_result = service.process(
+            db_session=db.session,
+            headers={"x-request-id": "rq-2", "x-signature": "ts=1,v1=abc"},
+            payload={"id": "evt-2", "type": "payment", "data": {"id": "mp-pay-pending"}},
+        )
+        assert pending_result["status"] == "processed"
+
+        db.session.refresh(subscription)
+        assert subscription.status == "pending"
+
+        payment_row = Payment.query.filter_by(payment_id="mp-pay-pending").first()
+        assert payment_row is not None
+        assert payment_row.status == "pending"

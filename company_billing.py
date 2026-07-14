@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from functools import wraps
 import secrets
 import string
@@ -11,7 +11,7 @@ from flask import Blueprint, abort, current_app, flash, jsonify, redirect, rende
 from flask_login import current_user, login_required
 from sqlalchemy import case, func
 
-from app import csrf, tenant_required
+from app import company_admin_required, csrf, tenant_required
 from config.billing_config import load_billing_config
 from services.billing_service import BillingService
 from services.company_security_service import CompanySecurityService
@@ -58,7 +58,21 @@ def _pin_reveal_session_key(company_id):
 def _is_pin_verified(company_id):
     from flask import session
 
-    return bool(session.get(_pin_session_key(company_id)))
+    value = session.get(_pin_session_key(company_id))
+    if not value:
+        return False
+
+    # Legacy sessions stored a boolean. Force re-validation for safer behavior.
+    if isinstance(value, bool):
+        session.pop(_pin_session_key(company_id), None)
+        return False
+
+    ttl_minutes = int(current_app.config.get("COMPANY_PIN_SESSION_TTL_MINUTES", 30) or 30)
+    expires_at = float(value) + (ttl_minutes * 60)
+    if datetime.now(timezone.utc).timestamp() > expires_at:
+        session.pop(_pin_session_key(company_id), None)
+        return False
+    return True
 
 
 def _mark_pin_verified(company_id, verified=True):
@@ -66,7 +80,7 @@ def _mark_pin_verified(company_id, verified=True):
 
     key = _pin_session_key(company_id)
     if verified:
-        session[key] = True
+        session[key] = datetime.now(timezone.utc).timestamp()
     else:
         session.pop(key, None)
 
@@ -409,7 +423,7 @@ def company_settings_pin_verify():
 
 
 @bp.route("/company-settings/pin/change", methods=["POST"])
-@company_member_required
+@company_admin_required
 def company_settings_pin_change():
     flash("Solo el Super Administrador puede asignar o cambiar el PIN.", "warning")
     return redirect(url_for("company_billing.company_settings"))
@@ -444,7 +458,7 @@ def company_settings_pin_bootstrap():
 
 
 @bp.route("/company-settings/pin/regenerate", methods=["POST"])
-@company_member_required
+@company_admin_required
 def company_settings_pin_regenerate():
     from app import db, record_audit
 
@@ -477,7 +491,7 @@ def company_settings_pin_logout():
 
 
 @bp.route("/company-settings/users/<int:user_id>/update", methods=["POST"])
-@company_member_required
+@company_admin_required
 def company_settings_user_update(user_id):
     from app import User, db, record_audit
 
@@ -510,7 +524,7 @@ def company_settings_user_update(user_id):
 
 
 @bp.route("/company-settings/users/create", methods=["POST"])
-@company_member_required
+@company_admin_required
 def company_settings_user_create():
     from app import User, db, record_audit
 
@@ -557,7 +571,7 @@ def company_settings_user_create():
 
 
 @bp.route("/company-settings/users/<int:user_id>/toggle", methods=["POST"])
-@company_member_required
+@company_admin_required
 def company_settings_user_toggle(user_id):
     from app import User, db, record_audit
 
@@ -586,7 +600,7 @@ def company_settings_user_toggle(user_id):
 
 
 @bp.route("/company-settings/users/<int:user_id>/reset-password", methods=["POST"])
-@company_member_required
+@company_admin_required
 def company_settings_user_reset_password(user_id):
     from app import User, db, record_audit
 

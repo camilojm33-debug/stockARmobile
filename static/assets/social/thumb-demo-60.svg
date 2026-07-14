@@ -1,0 +1,15 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="675" viewBox="0 0 1200 675">
+  <defs>
+    <linearGradient id="g2" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0%" stop-color="#1e293b"/>
+      <stop offset="100%" stop-color="#0ea5e9"/>
+    </linearGradient>
+  </defs>
+  <rect width="1200" height="675" fill="url(#g2)"/>
+  <rect x="65" y="80" width="420" height="54" rx="8" fill="#0f172a" opacity="0.42"/>
+  <text x="85" y="116" fill="#e2e8f0" font-family="Verdana" font-size="30">Portal de Vendedores</text>
+  <text x="65" y="270" fill="#ffffff" font-family="Verdana" font-size="70" font-weight="700">Demo 60s</text>
+  <text x="65" y="335" fill="#f1f5f9" font-family="Verdana" font-size="38">Ventas, stock y caja</text>
+  <rect x="65" y="390" width="410" height="70" rx="14" fill="#f59e0b"/>
+  <text x="105" y="434" fill="#111827" font-family="Verdana" font-size="34" font-weight="700">COMPARTIR DEMO</text>
+</svg>

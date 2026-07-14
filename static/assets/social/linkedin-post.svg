@@ -1,0 +1,8 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="627" viewBox="0 0 1200 627">
+  <defs><linearGradient id="li" x1="0" y1="0" x2="1" y2="1"><stop offset="0%" stop-color="#0f172a"/><stop offset="100%" stop-color="#0369a1"/></linearGradient></defs>
+  <rect width="1200" height="627" fill="url(#li)"/>
+  <text x="70" y="120" fill="#bae6fd" font-family="Verdana" font-size="30">StockArmobile para equipos comerciales</text>
+  <text x="70" y="250" fill="#ffffff" font-family="Verdana" font-size="62" font-weight="700">Profesionaliza</text>
+  <text x="70" y="330" fill="#ffffff" font-family="Verdana" font-size="62" font-weight="700">tu operacion diaria</text>
+  <text x="70" y="430" fill="#e2e8f0" font-family="Verdana" font-size="34">Control en tiempo real de ventas, stock y caja</text>
+</svg>

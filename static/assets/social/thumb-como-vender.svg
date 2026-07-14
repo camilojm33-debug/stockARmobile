@@ -1,0 +1,13 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="675" viewBox="0 0 1200 675">
+  <defs>
+    <linearGradient id="g5" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0%" stop-color="#3f1d2e"/>
+      <stop offset="100%" stop-color="#be185d"/>
+    </linearGradient>
+  </defs>
+  <rect width="1200" height="675" fill="url(#g5)"/>
+  <text x="70" y="145" fill="#fbcfe8" font-family="Verdana" font-size="30">Academia Comercial</text>
+  <text x="70" y="275" fill="#ffffff" font-family="Verdana" font-size="64" font-weight="700">Como vender</text>
+  <text x="70" y="345" fill="#ffe4e6" font-family="Verdana" font-size="40">StockArmobile con confianza</text>
+  <text x="70" y="420" fill="#fce7f3" font-family="Verdana" font-size="32">Guion + objeciones + cierre</text>
+</svg>
