@@ -382,9 +382,18 @@ def company_detail(company_id):
         "sales_amount": float(db.session.query(db.func.coalesce(db.func.sum(Sale.total_amount), 0)).filter(Sale.company_id == company.id).scalar() or 0),
         "payments_approved": float(db.session.query(db.func.coalesce(db.func.sum(Payment.amount), 0)).filter(Payment.company_id == company.id, Payment.status == "approved").scalar() or 0),
     }
+    pin_revealed_once = session.pop(f"company_pin_reveal_{company.id}", None)
     last_payments = Payment.query.filter_by(company_id=company.id).order_by(Payment.created_at.desc()).limit(10).all()
     audit = AuditLog.query.filter_by(company_id=company.id).order_by(AuditLog.created_at.desc()).limit(20).all()
-    return render_template("saas/company_detail.html", company=company, subscription=subscription, stats=stats, last_payments=last_payments, audit=audit)
+    return render_template(
+        "saas/company_detail.html",
+        company=company,
+        subscription=subscription,
+        stats=stats,
+        last_payments=last_payments,
+        audit=audit,
+        pin_revealed_once=pin_revealed_once,
+    )
 
 
 @bp.route("/companies/<int:company_id>/update", methods=["POST"])
@@ -423,11 +432,12 @@ def company_assign_pin(company_id):
     _require_superadmin()
     company = Company.query.filter_by(id=company_id).first_or_404()
     raw_pin = (request.form.get("admin_pin") or "").strip()
-    if not CompanySecurityService.is_valid_pin(raw_pin):
+    if len(raw_pin) != 4 or not raw_pin.isdigit():
         flash("El PIN debe ser numerico y de 4 digitos.", "danger")
         return redirect(url_for("saas.company_detail", company_id=company.id))
 
     CompanySecurityService.set_pin(company, raw_pin)
+    session[f"company_pin_reveal_{company.id}"] = raw_pin
     db.session.add(
         AuditLog(
             user_id=current_user.id,
@@ -440,6 +450,35 @@ def company_assign_pin(company_id):
     )
     db.session.commit()
     flash("PIN asignado correctamente.", "success")
+    return redirect(url_for("saas.company_detail", company_id=company.id))
+
+
+@bp.route("/companies/<int:company_id>/pin/generate", methods=["POST"])
+@superadmin_required
+def company_generate_pin(company_id):
+    from app import AuditLog, Company, db
+    from services.company_security_service import CompanySecurityService
+
+    _require_superadmin()
+    company = Company.query.filter_by(id=company_id).first_or_404()
+    had_pin = bool(company.business_pin_hash)
+
+    raw_pin = f"{secrets.randbelow(10000):04d}"
+    CompanySecurityService.set_pin(company, raw_pin)
+    session[f"company_pin_reveal_{company.id}"] = raw_pin
+
+    db.session.add(
+        AuditLog(
+            user_id=current_user.id,
+            company_id=company.id,
+            action="company_pin_regenerated" if had_pin else "company_pin_generated",
+            entity="company",
+            entity_id=company.id,
+            detail=f"PIN Mi Empresa {'regenerado' if had_pin else 'generado'} automaticamente por superadmin. ip={request.remote_addr or 'unknown'} resultado=ok",
+        )
+    )
+    db.session.commit()
+    flash("PIN generado correctamente. Se mostrara una sola vez.", "success")
     return redirect(url_for("saas.company_detail", company_id=company.id))
 
 
