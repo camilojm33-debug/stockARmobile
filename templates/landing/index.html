@@ -57,11 +57,15 @@
             <span>StockArmobile</span>
           </a>
           <div class="ms-auto d-flex align-items-center gap-2">
+            <a class="btn btn-link text-dark fw-semibold px-2" href="#beneficios">Beneficios</a>
+            <a class="btn btn-link text-dark fw-semibold px-2" href="#planes">Planes</a>
+            <a class="btn btn-link text-dark fw-semibold px-2" href="#faq">FAQ</a>
             <button class="theme-toggle" id="themeToggle" type="button" aria-label="Cambiar tema">
               <i class="bi bi-moon-fill icon-moon"></i>
               <i class="bi bi-sun-fill icon-sun"></i>
             </button>
-            <a class="btn btn-link text-dark fw-semibold px-3" href="{{ url_for('auth.login') }}">Iniciar sesión</a>
+            <a class="btn btn-link text-dark fw-semibold px-2" href="{{ url_for('auth.login') }}">Iniciar sesión</a>
+            <a class="btn btn-primary btn-pill" href="{{ url_for('auth.register') }}?selected_plan=trial">Prueba Gratis 10 días</a>
           </div>
         </div>
       </nav>
@@ -77,21 +81,21 @@
 
         <div class="row align-items-center g-5">
           <div class="col-lg-7 reveal" data-delay="80">
-            <span class="eyebrow"><i class="bi bi-stars"></i> Plataforma comercial profesional</span>
+            <span class="eyebrow"><i class="bi bi-graph-up-arrow"></i> Plataforma SaaS para comercios</span>
             <h1 class="display-4 fw-bold mb-3">Controla tu negocio desde cualquier lugar</h1>
-            <p class="lead text-muted mb-4">Ventas, Stock, Clientes, Caja, QR, Etiquetas, Reportes y mucho más desde una única plataforma.</p>
+            <p class="lead text-muted mb-4">Ventas, stock, clientes, caja, QR, etiquetas y reportes en una sola plataforma profesional lista para operar y crecer.</p>
             <div class="d-flex flex-wrap gap-3 mb-3">
               <a class="btn btn-primary btn-lg btn-pill" href="{{ url_for('auth.register') }}?selected_plan=trial">Comenzar prueba gratuita</a>
-              <a class="btn btn-outline-primary btn-lg btn-pill" href="#planes">Ver planes</a>
+              <a class="btn btn-outline-primary btn-lg btn-pill" href="#video-demo">Ver demostración</a>
             </div>
             <div class="hero-highlights d-flex flex-wrap gap-3">
               <span><i class="bi bi-check2-circle"></i> Sin instalación</span>
-              <span><i class="bi bi-phone"></i> 100% responsive</span>
-              <span><i class="bi bi-cloud-check"></i> Listo para Render y PostgreSQL</span>
+              <span><i class="bi bi-phone"></i> Funciona en PC y móvil</span>
+              <span><i class="bi bi-shield-check"></i> Gestión por roles y empresa</span>
             </div>
           </div>
           <div class="col-lg-5 reveal" data-delay="180">
-            <div class="hero-mockup" role="img" aria-label="Vista de módulos operativos de StockArmobile">
+            <div class="hero-mockup" role="img" aria-label="Vista operativa de StockArmobile">
               <div class="mockup-window">
                 <div class="mockup-toolbar">
                   <span></span><span></span><span></span>
@@ -105,10 +109,10 @@
                     <div class="sidebar-pill short"></div>
                   </div>
                   <div class="mockup-content">
-                    <div class="mockup-card small"><div class="mockup-label">Ventas</div><div class="mockup-value">En vivo</div></div>
-                    <div class="mockup-card small"><div class="mockup-label">Stock</div><div class="mockup-value">Controlado</div></div>
-                    <div class="mockup-card small"><div class="mockup-label">Caja</div><div class="mockup-value">Consolidada</div></div>
-                    <div class="mockup-card small"><div class="mockup-label">Reportes</div><div class="mockup-value">Automáticos</div></div>
+                    <div class="mockup-card small"><div class="mockup-label">Ventas</div><div class="mockup-value">Control diario</div></div>
+                    <div class="mockup-card small"><div class="mockup-label">Stock</div><div class="mockup-value">Actualizado</div></div>
+                    <div class="mockup-card small"><div class="mockup-label">Caja</div><div class="mockup-value">Por usuario</div></div>
+                    <div class="mockup-card small"><div class="mockup-label">Reportes</div><div class="mockup-value">Decisiones rápidas</div></div>
                   </div>
                 </div>
               </div>
@@ -119,11 +123,69 @@
     </header>
 
     <main>
-      <section class="section" id="planes">
+      <section class="section" id="video-demo">
+        <div class="container">
+          <div class="section-heading text-center reveal" data-delay="40">
+            <span class="eyebrow">Video demostración</span>
+            <h2 class="section-title">Mira cómo se usa StockArmobile en un flujo real</h2>
+            <p class="text-muted mb-0">Desde la venta hasta el reporte final, sin salir de la plataforma.</p>
+          </div>
+          <div class="row justify-content-center mt-3">
+            <div class="col-lg-10 reveal" data-delay="90">
+              <div class="feature-card p-3 p-md-4">
+                {% if demo_video_url %}
+                <div class="video-frame">
+                  <iframe src="{{ demo_video_url }}" title="Video demostración StockArmobile" allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture" allowfullscreen loading="lazy"></iframe>
+                </div>
+                {% else %}
+                <div class="video-fallback text-center p-4">
+                  <i class="bi bi-play-btn"></i>
+                  <h3 class="h5 fw-bold mt-3">Demo comercial en video</h3>
+                  <p class="text-muted mb-3">Solicita la demo guiada para ver el flujo completo de ventas, stock, clientes y caja.</p>
+                  <a class="btn btn-primary btn-pill" href="{{ contact.whatsapp_link }}" target="_blank" rel="noopener">Ver demo por WhatsApp</a>
+                </div>
+                {% endif %}
+              </div>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <section class="section section-soft" id="beneficios">
+        <div class="container">
+          <div class="section-heading text-center reveal" data-delay="40">
+            <span class="eyebrow">Beneficios</span>
+            <h2 class="section-title">Beneficios que impactan en la operación diaria</h2>
+          </div>
+          <div class="row g-3 mt-2">
+            <div class="col-md-6 col-xl-3 reveal" data-delay="70"><div class="feature-card h-100"><div class="feature-icon"><i class="bi bi-cart-check"></i></div><h3 class="h5">Ventas más ágiles</h3><p class="text-muted mb-0">Checkout rápido y control de comprobantes en una sola interfaz.</p></div></div>
+            <div class="col-md-6 col-xl-3 reveal" data-delay="100"><div class="feature-card h-100"><div class="feature-icon"><i class="bi bi-box-seam"></i></div><h3 class="h5">Stock bajo control</h3><p class="text-muted mb-0">Gestión de productos, alertas y movimientos con trazabilidad.</p></div></div>
+            <div class="col-md-6 col-xl-3 reveal" data-delay="130"><div class="feature-card h-100"><div class="feature-icon"><i class="bi bi-people"></i></div><h3 class="h5">Equipo organizado</h3><p class="text-muted mb-0">Multiusuario por plan, permisos y seguridad por PIN para Mi Empresa.</p></div></div>
+            <div class="col-md-6 col-xl-3 reveal" data-delay="160"><div class="feature-card h-100"><div class="feature-icon"><i class="bi bi-bar-chart"></i></div><h3 class="h5">Decisiones con datos</h3><p class="text-muted mb-0">Reportes comerciales y métricas para crecer con información real.</p></div></div>
+          </div>
+        </div>
+      </section>
+
+      <section class="section" id="para-quien">
+        <div class="container">
+          <div class="section-heading text-center reveal" data-delay="40">
+            <span class="eyebrow">Para quién está pensado</span>
+            <h2 class="section-title">Hecho para negocios que necesitan ordenar y escalar</h2>
+          </div>
+          <div class="row g-3 mt-2">
+            <div class="col-md-4 reveal" data-delay="70"><div class="feature-card h-100"><h3 class="h5">Emprendedores</h3><p class="text-muted">Ideal para iniciar con control profesional sin perder simplicidad.</p></div></div>
+            <div class="col-md-4 reveal" data-delay="100"><div class="feature-card h-100"><h3 class="h5">Comercios con equipo</h3><p class="text-muted">Administra usuarios, caja por vendedor y flujos operativos en tiempo real.</p></div></div>
+            <div class="col-md-4 reveal" data-delay="130"><div class="feature-card h-100"><h3 class="h5">Negocios en crecimiento</h3><p class="text-muted">Escala catálogo, clientes y procesos con planes de mayor capacidad.</p></div></div>
+          </div>
+        </div>
+      </section>
+
+      <section class="section section-soft" id="planes">
         <div class="container">
           <div class="section-heading text-center reveal" data-delay="40">
             <span class="eyebrow">Planes</span>
-            <h2 class="section-title">Planes conectados a la configuración real del sistema</h2>
+            <h2 class="section-title">Planes listos para empezar hoy</h2>
+            <p class="text-muted mb-0">Prueba Gratis 10 días, Emprendedor, Negocio y Premium.</p>
           </div>
           <div class="row g-4 mt-2">
             {% for plan in plans %}
@@ -146,19 +208,34 @@
                   <li><i class="bi bi-check2"></i> {{ plan.max_users }} usuarios</li>
                   <li><i class="bi bi-check2"></i> {{ plan.max_products }} productos</li>
                   <li><i class="bi bi-check2"></i> {{ plan.max_clients }} clientes</li>
+                  <li><i class="bi bi-check2"></i> {{ plan.duration_days }} días por ciclo</li>
                 </ul>
-                <a class="btn btn-primary btn-pill w-100" href="{{ url_for('auth.register') }}?selected_plan={{ plan.code|urlencode }}">Comenzar</a>
+                <div class="d-grid gap-2">
+                  <a class="btn btn-primary btn-pill w-100" href="{{ url_for('auth.register') }}?selected_plan={{ plan.code|urlencode }}">{% if (plan.price or 0) <= 0 %}Iniciar prueba{% else %}Comprar plan{% endif %}</a>
+                  <a class="btn btn-outline-primary btn-pill w-100" href="#comparador">Ver funciones</a>
+                </div>
               </article>
             </div>
             {% endfor %}
           </div>
+          <div class="cta-block mt-4 reveal" data-delay="220">
+            <div class="row align-items-center g-3">
+              <div class="col-lg-8">
+                <h2 class="mb-2">Prueba StockArmobile GRATIS durante {{ trial_plan.duration_days if trial_plan else 10 }} días</h2>
+                <p class="mb-0">Incluye hasta {{ trial_plan.max_users if trial_plan else 2 }} usuarios, {{ trial_plan.max_products if trial_plan else 150 }} productos y {{ trial_plan.max_clients if trial_plan else 250 }} clientes. Sin tarjeta de crédito.</p>
+              </div>
+              <div class="col-lg-4 text-lg-end">
+                <a class="btn btn-light btn-lg btn-pill cta-strong" href="{{ url_for('auth.register') }}?selected_plan=trial">Comenzar ahora</a>
+              </div>
+            </div>
+          </div>
         </div>
       </section>
 
-      <section class="section section-soft" id="comparador">
+      <section class="section" id="comparador">
         <div class="container">
           <div class="section-heading text-center reveal" data-delay="40">
-            <span class="eyebrow">Comparador de planes</span>
+            <span class="eyebrow">Comparación de funciones</span>
             <h2 class="section-title">Comparación comercial completa</h2>
           </div>
           <div class="card app-card reveal" data-delay="90">
@@ -169,9 +246,7 @@
                     <tr>
                       <th>Funcionalidad</th>
                       {% for plan in plans %}
-                      <th class="{% if recommended_plan_id and recommended_plan_id == plan.id %}highlight-col{% endif %}">
-                        {{ plan.name }}
-                      </th>
+                      <th class="{% if recommended_plan_id and recommended_plan_id == plan.id %}highlight-col{% endif %}">{{ plan.name }}</th>
                       {% endfor %}
                     </tr>
                   </thead>
@@ -195,156 +270,74 @@
         </div>
       </section>
 
-      <section class="section" id="prueba-gratis">
-        <div class="container">
-          <div class="cta-block reveal" data-delay="80">
-            <div class="row align-items-center g-4">
-              <div class="col-lg-8">
-                <h2>Prueba StockArmobile GRATIS durante {{ trial_plan.duration_days if trial_plan else 10 }} días</h2>
-                <p class="mb-2">Incluye:</p>
-                <ul class="mb-0">
-                  <li>Hasta {{ trial_plan.max_users if trial_plan else 2 }} usuarios</li>
-                  <li>{{ trial_plan.max_products if trial_plan else 150 }} productos</li>
-                  <li>{{ trial_plan.max_clients if trial_plan else 250 }} clientes</li>
-                  <li>Sin tarjeta de crédito</li>
-                </ul>
-              </div>
-              <div class="col-lg-4 text-lg-end">
-                <a class="btn btn-light btn-lg btn-pill cta-strong" href="{{ url_for('auth.register') }}?selected_plan=trial">Comenzar ahora</a>
-              </div>
-            </div>
-          </div>
-        </div>
-      </section>
-
       <section class="section section-soft" id="referidos">
         <div class="container">
           <div class="section-heading text-center reveal" data-delay="40">
-            <span class="eyebrow">Programa de referidos</span>
+            <span class="eyebrow">Programa Oficial de Referidos</span>
             <h2 class="section-title">Gana dinero recomendando StockArmobile</h2>
-            <p class="text-muted">Obtén el {{ (referral_percent * 100)|round(0)|int }}% de comisión por cada cliente activo.</p>
+            <p class="text-muted mb-0">Comisión configurada: {{ (referral_percent * 100)|round(0)|int }}% mensual por cliente activo referido.</p>
+          </div>
+          <div class="row justify-content-center mt-3">
+            <div class="col-lg-10 reveal" data-delay="90">
+              <div class="feature-card text-center">
+                <p class="mb-3">Comparte tu enlace, acompaña a tus clientes y cobra comisiones recurrentes todos los meses.</p>
+                <div class="d-flex flex-wrap justify-content-center gap-2">
+                  <a class="btn btn-primary btn-pill btn-lg" href="{{ url_for('auth.register') }}">Quiero ser vendedor</a>
+                  <a class="btn btn-outline-primary btn-pill btn-lg" href="{{ url_for('auth.login') }}">Ya tengo cuenta</a>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <section class="section" id="testimonios">
+        <div class="container">
+          <div class="section-heading text-center reveal" data-delay="40">
+            <span class="eyebrow">Testimonios</span>
+            {% if testimonials %}
+            <h2 class="section-title">Experiencias reales de clientes</h2>
+            {% else %}
+            <h2 class="section-title">Testimonios de clientes</h2>
+            {% endif %}
           </div>
           <div class="row g-3 mt-2">
-            <div class="col-6 col-md-4 col-lg-2 reveal" data-delay="60"><div class="feature-card h-100 text-center p-3"><i class="bi bi-piggy-bank fs-4"></i><p class="mb-0 mt-2">Sin inversión</p></div></div>
-            <div class="col-6 col-md-4 col-lg-2 reveal" data-delay="90"><div class="feature-card h-100 text-center p-3"><i class="bi bi-link-45deg fs-4"></i><p class="mb-0 mt-2">Link personalizado</p></div></div>
-            <div class="col-6 col-md-4 col-lg-2 reveal" data-delay="120"><div class="feature-card h-100 text-center p-3"><i class="bi bi-speedometer2 fs-4"></i><p class="mb-0 mt-2">Panel propio</p></div></div>
-            <div class="col-6 col-md-4 col-lg-2 reveal" data-delay="150"><div class="feature-card h-100 text-center p-3"><i class="bi bi-bar-chart fs-4"></i><p class="mb-0 mt-2">Estadísticas</p></div></div>
-            <div class="col-6 col-md-4 col-lg-2 reveal" data-delay="180"><div class="feature-card h-100 text-center p-3"><i class="bi bi-receipt fs-4"></i><p class="mb-0 mt-2">Historial de pagos</p></div></div>
-            <div class="col-6 col-md-4 col-lg-2 reveal" data-delay="210"><div class="feature-card h-100 text-center p-3"><i class="bi bi-bank fs-4"></i><p class="mb-0 mt-2">Cobro por transferencia</p></div></div>
-          </div>
-          <div class="text-center mt-4 reveal" data-delay="240">
-            <a class="btn btn-primary btn-pill btn-lg" href="{{ url_for('auth.register') }}">Quiero ser Referidor</a>
-          </div>
-        </div>
-      </section>
-
-      <section class="section" id="calculadora">
-        <div class="container">
-          <div class="section-heading text-center reveal" data-delay="40">
-            <span class="eyebrow">Calculadora</span>
-            <h2 class="section-title">Calcula tus ganancias estimadas</h2>
-          </div>
-          <div class="row justify-content-center">
-            <div class="col-lg-10">
-              <div class="card app-card reveal" data-delay="90">
-                <div class="card-body">
-                  <div class="row g-3 align-items-end">
-                    <div class="col-md-5">
-                      <label class="form-label">Plan</label>
-                      <select class="form-select" id="calcPlan">
-                        {% for plan in plans if (plan.price or 0) > 0 %}
-                        <option value="{{ plan.id }}" data-price="{{ plan.price or 0 }}">{{ plan.name }} - ARS {{ '{:,.0f}'.format(plan.price or 0).replace(',', '.') }}</option>
-                        {% endfor %}
-                      </select>
-                    </div>
-                    <div class="col-md-3">
-                      <label class="form-label">Cantidad de clientes</label>
-                      <input class="form-control" id="calcClients" type="number" min="1" value="1">
-                    </div>
-                    <div class="col-md-4">
-                      <div class="calculator-rate" data-commission-percent="{{ referral_percent }}">Comisión configurada: {{ (referral_percent * 100)|round(2) }}%</div>
-                    </div>
-                  </div>
-                  <div class="row g-3 mt-2">
-                    <div class="col-md-4"><div class="metric-card"><div class="metric-label">Ingreso mensual generado</div><div class="metric-value" id="calcRevenue">ARS 0</div></div></div>
-                    <div class="col-md-4"><div class="metric-card"><div class="metric-label">Comisión</div><div class="metric-value" id="calcCommission">ARS 0</div></div></div>
-                    <div class="col-md-4"><div class="metric-card"><div class="metric-label">Total estimado</div><div class="metric-value" id="calcTotal">ARS 0</div></div></div>
-                  </div>
+            {% if testimonials %}
+              {% for item in testimonials %}
+              <div class="col-md-4 reveal" data-delay="{{ 70 + loop.index0 * 40 }}">
+                <div class="feature-card h-100">
+                  <p class="mb-3">{{ item.quote }}</p>
+                  <p class="mb-0 fw-semibold">{{ item.author_name }}</p>
+                  {% if item.company_name %}
+                  <small class="text-muted">{{ item.company_name }}</small>
+                  {% endif %}
                 </div>
               </div>
-            </div>
-          </div>
-        </div>
-      </section>
-
-      <section class="section section-soft" id="como-funciona">
-        <div class="container">
-          <div class="section-heading text-center reveal" data-delay="40">
-            <span class="eyebrow">Cómo funciona</span>
-            <h2 class="section-title">Programa profesional en 5 pasos</h2>
-          </div>
-          <div class="process-grid five-steps mt-4">
-            <div class="process-step reveal" data-delay="70"><span class="step-number">1</span><h3>Registrarse</h3></div>
-            <div class="process-step reveal" data-delay="100"><span class="step-number">2</span><h3>Compartir enlace</h3></div>
-            <div class="process-step reveal" data-delay="130"><span class="step-number">3</span><h3>Cliente compra</h3></div>
-            <div class="process-step reveal" data-delay="160"><span class="step-number">4</span><h3>Sistema registra comisión</h3></div>
-            <div class="process-step reveal" data-delay="190"><span class="step-number">5</span><h3>Cobrar</h3></div>
-          </div>
-        </div>
-      </section>
-
-      <section class="section" id="materiales">
-        <div class="container">
-          <div class="section-heading text-center reveal" data-delay="40">
-            <span class="eyebrow">Herramientas para vender</span>
-            <h2 class="section-title">Materiales para referidor</h2>
-            <p class="text-muted">Disponibles dentro del Panel de Referidos.</p>
-          </div>
-          <div class="row g-3 mt-2 text-center">
-            <div class="col-6 col-md-4 col-lg-2 reveal" data-delay="70"><div class="feature-card p-3"><i class="bi bi-image"></i><p class="mb-0 mt-2">Flyers</p></div></div>
-            <div class="col-6 col-md-4 col-lg-2 reveal" data-delay="100"><div class="feature-card p-3"><i class="bi bi-camera-video"></i><p class="mb-0 mt-2">Videos</p></div></div>
-            <div class="col-6 col-md-4 col-lg-2 reveal" data-delay="130"><div class="feature-card p-3"><i class="bi bi-vector-pen"></i><p class="mb-0 mt-2">Logos</p></div></div>
-            <div class="col-6 col-md-4 col-lg-2 reveal" data-delay="160"><div class="feature-card p-3"><i class="bi bi-journal-text"></i><p class="mb-0 mt-2">Manual</p></div></div>
-            <div class="col-6 col-md-4 col-lg-4 reveal" data-delay="190"><div class="feature-card p-3"><i class="bi bi-chat-square-quote"></i><p class="mb-0 mt-2">Argumentos de venta</p></div></div>
-          </div>
-        </div>
-      </section>
-
-      <section class="section section-soft" id="objetivos">
-        <div class="container">
-          <div class="section-heading text-center reveal" data-delay="40">
-            <span class="eyebrow">Objetivos</span>
-            <h2 class="section-title">Seguimiento de metas</h2>
-          </div>
-          <div class="row justify-content-center">
-            <div class="col-lg-8 reveal" data-delay="90">
-              <div class="card app-card">
-                <div class="card-body">
-                  <h3 class="h5">Objetivo</h3>
-                  <p class="mb-2">10 clientes</p>
-                  <div class="goal-track" role="img" aria-label="Progreso de 6 sobre 10 clientes">
-                    <div class="goal-fill" style="width: 60%;"></div>
-                  </div>
-                  <p class="mt-2 mb-0 fw-semibold">6/10</p>
+              {% endfor %}
+            {% else %}
+              <div class="col-12 reveal" data-delay="70">
+                <div class="feature-card text-center">
+                  <p class="mb-3">Estamos incorporando nuevos casos reales de implementación para publicar aquí.</p>
+                  <a class="btn btn-outline-primary btn-pill" href="{{ contact.whatsapp_link }}" target="_blank" rel="noopener">Solicitar referencias comerciales</a>
                 </div>
               </div>
-            </div>
+            {% endif %}
           </div>
         </div>
       </section>
 
-      <section class="section" id="ranking">
+      <section class="section" id="ranking-referidos">
         <div class="container">
           <div class="section-heading text-center reveal" data-delay="40">
-            <span class="eyebrow">Top referidores</span>
-            <h2 class="section-title">Ranking dinámico del programa</h2>
+            <span class="eyebrow">Referidos</span>
+            <h2 class="section-title">Top referidores</h2>
           </div>
           <div class="row g-3 mt-2">
             {% if ranking_rows %}
               {% for row in ranking_rows %}
               <div class="col-md-4 reveal" data-delay="{{ 70 + loop.index0 * 40 }}">
                 <div class="feature-card h-100 text-center">
-                  <div class="fs-2">{% if loop.index == 1 %}🥇{% elif loop.index == 2 %}🥈{% else %}🥉{% endif %}</div>
+                  <div class="fs-2">{% if loop.index == 1 %}1{% elif loop.index == 2 %}2{% else %}3{% endif %}</div>
                   <h3 class="h5 mt-2 mb-1">{{ row[0].user.name if row[0] and row[0].user else 'Referidor' }}</h3>
                   <p class="mb-1 text-muted">Ventas referidas: ARS {{ '{:,.0f}'.format(row[1] or 0).replace(',', '.') }}</p>
                   <p class="mb-0 text-muted">Clientes: {{ row[2] or 0 }}</p>
@@ -352,95 +345,59 @@
               </div>
               {% endfor %}
             {% else %}
-              <div class="col-12"><div class="alert alert-secondary mb-0">Aún no hay datos suficientes para mostrar ranking.</div></div>
+              <div class="col-12 reveal" data-delay="70">
+                <div class="feature-card text-center">
+                  <p class="mb-0">Aún no hay datos suficientes para mostrar ranking.</p>
+                </div>
+              </div>
             {% endif %}
           </div>
         </div>
       </section>
 
-      <section class="section section-soft" id="medallas">
-        <div class="container">
-          <div class="section-heading text-center reveal" data-delay="40">
-            <span class="eyebrow">Medallas</span>
-            <h2 class="section-title">Logros del programa</h2>
-          </div>
-          <div class="row g-3 mt-2">
-            {% for target in medal_targets %}
-            <div class="col-6 col-md-4 col-lg-2 reveal" data-delay="{{ 70 + loop.index0 * 25 }}">
-              <div class="feature-card text-center p-3">
-                <i class="bi bi-award fs-3"></i>
-                <p class="mb-0 mt-2">{% if target == 1 %}Primer cliente{% else %}{{ target }} clientes{% endif %}</p>
-              </div>
-            </div>
-            {% endfor %}
-          </div>
-        </div>
-      </section>
-
-      {% if testimonials %}
-      <section class="section" id="testimonios">
-        <div class="container">
-          <div class="section-heading text-center reveal" data-delay="40">
-            <span class="eyebrow">Testimonios</span>
-            <h2 class="section-title">Experiencias reales de clientes</h2>
-          </div>
-          <div class="row g-3 mt-2">
-            {% for item in testimonials %}
-            <div class="col-md-4 reveal" data-delay="{{ 70 + loop.index0 * 40 }}">
-              <div class="feature-card h-100">
-                <p class="mb-3">{{ item.quote }}</p>
-                <p class="mb-0 fw-semibold">{{ item.author_name }}</p>
-                {% if item.company_name %}
-                <small class="text-muted">{{ item.company_name }}</small>
-                {% endif %}
-              </div>
-            </div>
-            {% endfor %}
-          </div>
-        </div>
-      </section>
-      {% endif %}
-
-      <section class="section" id="faq">
+      <section class="section section-soft" id="faq">
         <div class="container">
           <div class="section-heading text-center reveal" data-delay="40">
             <span class="eyebrow">Preguntas frecuentes</span>
-            <h2 class="section-title">Respuestas rápidas</h2>
+            <h2 class="section-title">Todo lo que necesitas para decidir</h2>
           </div>
           <div class="row justify-content-center mt-3">
             <div class="col-lg-10 reveal" data-delay="90">
               <div class="accordion" id="faqAccordion">
                 <div class="accordion-item">
-                  <h3 class="accordion-header"><button class="accordion-button" type="button" data-bs-toggle="collapse" data-bs-target="#faq-1" aria-expanded="true">¿Tiene prueba gratis?</button></h3>
-                  <div id="faq-1" class="accordion-collapse collapse show" data-bs-parent="#faqAccordion"><div class="accordion-body">Sí, puedes comenzar con el plan de prueba configurado en el sistema sin tarjeta de crédito.</div></div>
+                  <h3 class="accordion-header"><button class="accordion-button" type="button" data-bs-toggle="collapse" data-bs-target="#faq-1" aria-expanded="true">¿Puedo empezar gratis?</button></h3>
+                  <div id="faq-1" class="accordion-collapse collapse show" data-bs-parent="#faqAccordion"><div class="accordion-body">Sí. Puedes iniciar con Prueba Gratis {{ trial_plan.duration_days if trial_plan else 10 }} días sin tarjeta de crédito.</div></div>
                 </div>
                 <div class="accordion-item">
-                  <h3 class="accordion-header"><button class="accordion-button collapsed" type="button" data-bs-toggle="collapse" data-bs-target="#faq-2">¿Puedo cancelar?</button></h3>
-                  <div id="faq-2" class="accordion-collapse collapse" data-bs-parent="#faqAccordion"><div class="accordion-body">Sí. Puedes cancelar desde el portal de suscripción cuando quieras.</div></div>
+                  <h3 class="accordion-header"><button class="accordion-button collapsed" type="button" data-bs-toggle="collapse" data-bs-target="#faq-2">¿Cómo elijo un plan pago?</button></h3>
+                  <div id="faq-2" class="accordion-collapse collapse" data-bs-parent="#faqAccordion"><div class="accordion-body">En cada plan tienes CTA de compra que te lleva al flujo de registro con el plan seleccionado.</div></div>
                 </div>
                 <div class="accordion-item">
-                  <h3 class="accordion-header"><button class="accordion-button collapsed" type="button" data-bs-toggle="collapse" data-bs-target="#faq-3">¿Cómo cobro las comisiones?</button></h3>
-                  <div id="faq-3" class="accordion-collapse collapse" data-bs-parent="#faqAccordion"><div class="accordion-body">Las comisiones se liquidan por transferencia bancaria y quedan registradas en tu historial de pagos.</div></div>
+                  <h3 class="accordion-header"><button class="accordion-button collapsed" type="button" data-bs-toggle="collapse" data-bs-target="#faq-3">¿Puedo cambiar de plan después?</button></h3>
+                  <div id="faq-3" class="accordion-collapse collapse" data-bs-parent="#faqAccordion"><div class="accordion-body">Sí. Desde el portal de suscripción puedes actualizar o gestionar tu plan cuando lo necesites.</div></div>
                 </div>
                 <div class="accordion-item">
-                  <h3 class="accordion-header"><button class="accordion-button collapsed" type="button" data-bs-toggle="collapse" data-bs-target="#faq-4">¿Necesito instalar algo?</button></h3>
-                  <div id="faq-4" class="accordion-collapse collapse" data-bs-parent="#faqAccordion"><div class="accordion-body">No. Funciona directamente desde navegador en computadora o móvil.</div></div>
+                  <h3 class="accordion-header"><button class="accordion-button collapsed" type="button" data-bs-toggle="collapse" data-bs-target="#faq-4">¿Funciona para varios usuarios?</button></h3>
+                  <div id="faq-4" class="accordion-collapse collapse" data-bs-parent="#faqAccordion"><div class="accordion-body">Sí, según el plan dispones de distintos límites de usuarios para operar en equipo.</div></div>
                 </div>
                 <div class="accordion-item">
-                  <h3 class="accordion-header"><button class="accordion-button collapsed" type="button" data-bs-toggle="collapse" data-bs-target="#faq-5">¿Cómo funciona WhatsApp?</button></h3>
-                  <div id="faq-5" class="accordion-collapse collapse" data-bs-parent="#faqAccordion"><div class="accordion-body">La plataforma permite compartir comprobantes y ventas por WhatsApp en el flujo comercial.</div></div>
+                  <h3 class="accordion-header"><button class="accordion-button collapsed" type="button" data-bs-toggle="collapse" data-bs-target="#faq-5">¿Hay soporte comercial?</button></h3>
+                  <div id="faq-5" class="accordion-collapse collapse" data-bs-parent="#faqAccordion"><div class="accordion-body">Sí. Puedes escribir por WhatsApp o por email para recibir ayuda comercial y de implementación.</div></div>
                 </div>
+              </div>
+              <div class="text-center mt-4">
+                <a class="btn btn-primary btn-pill" href="{{ url_for('auth.register') }}?selected_plan=trial">Probar ahora</a>
               </div>
             </div>
           </div>
         </div>
       </section>
 
-      <section class="section section-soft" id="contacto">
+      <section class="section" id="contacto">
         <div class="container">
           <div class="section-heading text-center reveal" data-delay="40">
             <span class="eyebrow">Contacto</span>
-            <h2 class="section-title">Estamos para ayudarte a vender más</h2>
+            <h2 class="section-title">Habla con nuestro equipo comercial</h2>
           </div>
           <div class="row g-4 mt-2">
             <div class="col-lg-4 reveal" data-delay="70">
@@ -465,27 +422,8 @@
                   <div class="mb-2"><input class="form-control" name="name" placeholder="Nombre" required></div>
                   <div class="mb-2"><input class="form-control" name="email" type="email" placeholder="Email" required></div>
                   <div class="mb-3"><textarea class="form-control" name="message" rows="3" placeholder="Mensaje" required></textarea></div>
-                  <button class="btn btn-primary btn-pill w-100" type="submit">Enviar</button>
+                  <button class="btn btn-primary btn-pill w-100" type="submit">Enviar consulta</button>
                 </form>
-              </div>
-            </div>
-          </div>
-        </div>
-      </section>
-
-      <section class="section" id="legal">
-        <div class="container">
-          <div class="row g-4">
-            <div class="col-md-6">
-              <div class="feature-card h-100" id="privacidad">
-                <h3 class="h5">Política de privacidad</h3>
-                <p class="text-muted mb-0">Tratamos los datos de negocio con medidas de seguridad y control de acceso según los permisos del sistema.</p>
-              </div>
-            </div>
-            <div class="col-md-6">
-              <div class="feature-card h-100" id="terminos">
-                <h3 class="h5">Términos</h3>
-                <p class="text-muted mb-0">El uso del servicio se rige por el plan contratado, políticas de facturación y estado de suscripción vigente.</p>
               </div>
             </div>
           </div>
@@ -501,21 +439,22 @@
               <span class="brand-mark"><i class="bi bi-phone"></i></span>
               <span>StockArmobile</span>
             </a>
-            <p class="text-muted">Software comercial y programa de referidos para crecer con datos reales.</p>
+            <p class="text-muted">Plataforma SaaS para ventas, stock, clientes y operación comercial profesional.</p>
           </div>
           <div class="col-md-2">
-            <h3>Legal</h3>
+            <h3>Producto</h3>
             <ul>
-              <li><a href="#privacidad">Política de privacidad</a></li>
-              <li><a href="#terminos">Términos</a></li>
+              <li><a href="#beneficios">Beneficios</a></li>
+              <li><a href="#planes">Planes</a></li>
+              <li><a href="#comparador">Funciones</a></li>
             </ul>
           </div>
           <div class="col-md-3">
             <h3>Comercial</h3>
             <ul>
               <li><a href="#referidos">Programa de Referidos</a></li>
-              <li><a href="#planes">Planes</a></li>
               <li><a href="#contacto">Contacto</a></li>
+              <li><a href="#faq">Preguntas frecuentes</a></li>
             </ul>
           </div>
           <div class="col-md-3">
@@ -523,6 +462,7 @@
             <ul>
               <li><a href="{{ url_for('auth.login') }}">Iniciar sesión</a></li>
               <li><a href="{{ url_for('auth.register') }}">Crear cuenta</a></li>
+              <li><a href="{{ url_for('auth.register') }}?selected_plan=trial">Prueba Gratis 10 días</a></li>
             </ul>
           </div>
         </div>

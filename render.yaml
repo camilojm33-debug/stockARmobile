@@ -19,6 +19,8 @@ services:
         sync: false
       - key: APP_URL
         value: https://stockarmobile.onrender.com
+      - key: LANDING_DEMO_VIDEO_URL
+        value: https://www.youtube.com/embed/5qap5aO4i9A
       - key: MP_NOTIFICATION_URL
         value: https://stockarmobile.onrender.com/admin/webhooks/mercadopago
       - key: MP_SUCCESS_URL

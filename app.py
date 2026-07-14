@@ -1186,6 +1186,7 @@ def index():
         "whatsapp_link": f"https://wa.me/{whatsapp_digits}" if whatsapp_digits else "https://wa.me/",
         "email": (os.environ.get("LANDING_EMAIL") or "hola@stockarmobile.com").strip(),
     }
+    demo_video_url = (os.environ.get("LANDING_DEMO_VIDEO_URL") or "").strip()
 
     testimonials = []
     try:
@@ -1220,6 +1221,7 @@ def index():
             testimonials=testimonials,
             seo=seo,
             contact=contact,
+            demo_video_url=demo_video_url,
         )
     )
     if referral_code:
