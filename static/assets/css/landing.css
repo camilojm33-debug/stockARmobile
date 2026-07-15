@@ -236,6 +236,30 @@ a { text-decoration: none; }
 
 .hero-highlights i { color: var(--accent); }
 
+.hero-media-col {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+}
+
+.hero-logo-wrap {
+  width: 100%;
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  overflow: hidden;
+  margin-bottom: 1rem;
+}
+
+.hero-logo {
+  width: 100%;
+  max-width: 420px;
+  height: auto;
+  object-fit: contain;
+  display: block;
+}
+
 .hero-stats {
   display: grid;
   grid-template-columns: repeat(3, minmax(0, 1fr));
@@ -1038,6 +1062,9 @@ a { text-decoration: none; }
     left: 1.25rem;
     bottom: -14px;
   }
+  .hero-logo {
+    max-width: 320px;
+  }
 }
 
 @media (max-width: 767px) {
@@ -1062,6 +1089,12 @@ a { text-decoration: none; }
   .navbar .ms-auto .btn-pill {
     width: 100%;
     text-align: center;
+  }
+  .hero-logo-wrap {
+    margin-bottom: 0.75rem;
+  }
+  .hero-logo {
+    max-width: 240px;
   }
   .section { padding: 4.5rem 0; }
   .hero-section { padding-bottom: 2.8rem; }
