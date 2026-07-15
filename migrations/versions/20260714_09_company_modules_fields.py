@@ -32,24 +32,24 @@ def upgrade() -> None:
 
     if _has_table(bind, "companies"):
         company_columns = [
-            ("website", sa.String(length=255), True),
-            ("social_facebook", sa.String(length=255), True),
-            ("social_instagram", sa.String(length=255), True),
-            ("social_tiktok", sa.String(length=255), True),
-            ("social_youtube", sa.String(length=255), True),
-            ("social_linkedin", sa.String(length=255), True),
-            ("language", sa.String(length=20), False),
-            ("timezone", sa.String(length=80), False),
-            ("currency", sa.String(length=10), False),
-            ("date_format", sa.String(length=20), False),
-            ("numbering_format", sa.String(length=20), False),
-            ("printer_settings_json", sa.Text(), True),
-            ("preferences_json", sa.Text(), True),
-            ("schedules_json", sa.Text(), True),
+            ("website", sa.String(length=255), True, None),
+            ("social_facebook", sa.String(length=255), True, None),
+            ("social_instagram", sa.String(length=255), True, None),
+            ("social_tiktok", sa.String(length=255), True, None),
+            ("social_youtube", sa.String(length=255), True, None),
+            ("social_linkedin", sa.String(length=255), True, None),
+            ("language", sa.String(length=20), False, sa.text("'es'")),
+            ("timezone", sa.String(length=80), False, sa.text("'America/Argentina/Buenos_Aires'")),
+            ("currency", sa.String(length=10), False, sa.text("'ARS'")),
+            ("date_format", sa.String(length=20), False, sa.text("'%Y-%m-%d'")),
+            ("numbering_format", sa.String(length=20), False, sa.text("'es_AR'")),
+            ("printer_settings_json", sa.Text(), True, None),
+            ("preferences_json", sa.Text(), True, None),
+            ("schedules_json", sa.Text(), True, None),
         ]
-        for name, col_type, nullable in company_columns:
+        for name, col_type, nullable, server_default in company_columns:
             if not _has_column(bind, "companies", name):
-                op.add_column("companies", sa.Column(name, col_type, nullable=nullable))
+                op.add_column("companies", sa.Column(name, col_type, nullable=nullable, server_default=server_default))
 
         op.execute("UPDATE companies SET language = COALESCE(language, 'es')")
         op.execute("UPDATE companies SET timezone = COALESCE(timezone, 'America/Argentina/Buenos_Aires')")
