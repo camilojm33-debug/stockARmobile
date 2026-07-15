@@ -16,13 +16,19 @@
   'authorized': 'Autorizada'
 } %}
 <div class="app-shell">
+  <nav aria-label="breadcrumb" class="mb-2">
+    <ol class="breadcrumb mb-1">
+      <li class="breadcrumb-item"><a href="{{ url_for('company_billing.company_settings') }}">Mi Empresa</a></li>
+      <li class="breadcrumb-item active" aria-current="page">Suscripción</li>
+    </ol>
+  </nav>
   <div class="d-flex flex-wrap justify-content-between align-items-center gap-3 mb-4">
     <div>
       <span class="page-kicker"><i class="bi bi-credit-card-2-front"></i> Suscripción</span>
       <h1 class="h3 fw-bold mb-0">Plan y facturación</h1>
-      <p class="text-muted mb-0">Gestiona tu plan, renovaciones y estado de cobro.</p>
+      <p class="text-muted mb-0">Gestioná tu plan actual, trial, renovación y facturación.</p>
     </div>
-    <a class="btn btn-outline-secondary" href="{{ url_for('dashboard.index') }}"><i class="bi bi-arrow-left me-1"></i>Volver al panel</a>
+    <a class="btn btn-outline-secondary" href="{{ url_for('company_billing.company_settings') }}"><i class="bi bi-arrow-left me-1"></i>Volver a Mi Empresa</a>
   </div>
 
   <div class="row g-3 mb-4">
@@ -134,7 +140,7 @@
       </form>
       <form method="post" action="{{ url_for('company_billing.reactivate_subscription') }}">
         <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
-        <button class="btn btn-outline-success" type="submit">Reactivar renovación</button>
+        <button class="btn btn-outline-success" type="submit">Renovar</button>
       </form>
       <span class="text-muted small ms-auto align-self-center">Clave pública: {{ mp_config.public_key or 'no configurada' }}</span>
     </div>

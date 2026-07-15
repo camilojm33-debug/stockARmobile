@@ -4,12 +4,16 @@ from __future__ import annotations
 
 from datetime import datetime, timedelta, timezone
 from functools import wraps
+from io import BytesIO
+import json
 import secrets
 import string
 
-from flask import Blueprint, abort, current_app, flash, jsonify, redirect, render_template, request, url_for
+from flask import Blueprint, abort, current_app, flash, jsonify, redirect, render_template, request, send_file, url_for
 from flask_login import current_user, login_required
 from sqlalchemy import case, func
+from reportlab.lib.pagesizes import letter
+from reportlab.pdfgen import canvas
 
 from app import company_admin_required, csrf, tenant_required
 from config.billing_config import load_billing_config
@@ -22,6 +26,14 @@ from services.subscription_service import SubscriptionService
 from services.webhook_service import WebhookService
 
 bp = Blueprint("company_billing", __name__)
+
+EMPLOYEE_PERMISSIONS = [
+    ("inventory", "Inventario"),
+    ("sales", "Ventas"),
+    ("clients", "Clientes"),
+    ("reports", "Reportes"),
+    ("cash", "Caja"),
+]
 
 
 def company_member_required(func):
@@ -99,6 +111,58 @@ def _normalize_company_role(raw_role):
 def _temporary_password(length=10):
     alphabet = string.ascii_letters + string.digits
     return "".join(secrets.choice(alphabet) for _ in range(length))
+
+
+def _user_permissions(user):
+    raw = (getattr(user, "permissions_json", None) or "").strip()
+    if not raw:
+        return []
+    try:
+        data = json.loads(raw)
+    except json.JSONDecodeError:
+        return []
+    if not isinstance(data, list):
+        return []
+    return [str(item).strip() for item in data if str(item).strip()]
+
+
+def _set_user_permissions(user, permission_keys):
+    valid_keys = {key for key, _label in EMPLOYEE_PERMISSIONS}
+    cleaned = sorted({key for key in permission_keys if key in valid_keys})
+    user.permissions_json = json.dumps(cleaned)
+
+
+def _json_company_dict(value):
+    raw = (value or "").strip()
+    if not raw:
+        return {}
+    try:
+        payload = json.loads(raw)
+    except json.JSONDecodeError:
+        return {}
+    return payload if isinstance(payload, dict) else {}
+
+
+def _pdf_from_lines(title, lines, filename):
+    buffer = BytesIO()
+    pdf = canvas.Canvas(buffer, pagesize=letter)
+    width, height = letter
+    y = height - 52
+    pdf.setTitle(title)
+    pdf.setFont("Helvetica-Bold", 14)
+    pdf.drawString(42, y, title)
+    y -= 26
+    pdf.setFont("Helvetica", 10)
+    for line in lines:
+        if y < 52:
+            pdf.showPage()
+            y = height - 52
+            pdf.setFont("Helvetica", 10)
+        pdf.drawString(42, y, str(line)[:180])
+        y -= 14
+    pdf.save()
+    buffer.seek(0)
+    return send_file(buffer, mimetype="application/pdf", as_attachment=True, download_name=filename)
 
 
 def _plan_limit_context(company_id):
@@ -182,14 +246,30 @@ def _pin_guard(company):
     return redirect(url_for("company_billing.company_settings"))
 
 
-def _build_user_and_cash_rows(company_id, date_from=None, date_to=None):
+def _build_user_and_cash_rows(company_id, date_from=None, date_to=None, search_text="", role_filter="", status_filter=""):
     from app import CashMovement, Sale, User, db
 
-    users = (
-        User.query.filter_by(company_id=company_id)
-        .order_by(User.created_at.asc(), User.id.asc())
-        .all()
-    )
+    users_query = User.query.filter_by(company_id=company_id)
+    normalized_search = (search_text or "").strip().lower()
+    normalized_role = (role_filter or "").strip().lower()
+    normalized_status = (status_filter or "").strip().lower()
+
+    if normalized_search:
+        search_like = f"%{normalized_search}%"
+        users_query = users_query.filter(
+            func.lower(func.coalesce(User.username, "")).like(search_like)
+            | func.lower(func.coalesce(User.email, "")).like(search_like)
+            | func.lower(func.coalesce(User.first_name, "")).like(search_like)
+            | func.lower(func.coalesce(User.last_name, "")).like(search_like)
+        )
+    if normalized_role in {"admin", "user"}:
+        users_query = users_query.filter(User.role == normalized_role)
+    if normalized_status == "active":
+        users_query = users_query.filter(User.active.is_(True))
+    elif normalized_status == "inactive":
+        users_query = users_query.filter(User.active.is_(False))
+
+    users = users_query.order_by(User.created_at.asc(), User.id.asc()).all()
 
     sales_query = db.session.query(
         Sale.seller_id.label("user_id"),
@@ -242,6 +322,7 @@ def _build_user_and_cash_rows(company_id, date_from=None, date_to=None):
                 "egresos": egresos,
                 "saldo": saldo,
                 "last_access": access_rows.get(user.id),
+                "permissions": _user_permissions(user),
             }
         )
     result_rows.sort(key=lambda item: (-item["total_sold"], item["user"].created_at or datetime.min, item["user"].id))
@@ -386,6 +467,12 @@ def payment_qr_settings():
     company.phone = (request.form.get("phone") or "").strip()[:40] or None
     company.whatsapp = (request.form.get("whatsapp") or "").strip()[:40] or None
     company.contact_email = (request.form.get("contact_email") or "").strip()[:160] or None
+    company.website = (request.form.get("website") or "").strip()[:255] or None
+    company.social_facebook = (request.form.get("social_facebook") or "").strip()[:255] or None
+    company.social_instagram = (request.form.get("social_instagram") or "").strip()[:255] or None
+    company.social_tiktok = (request.form.get("social_tiktok") or "").strip()[:255] or None
+    company.social_youtube = (request.form.get("social_youtube") or "").strip()[:255] or None
+    company.social_linkedin = (request.form.get("social_linkedin") or "").strip()[:255] or None
     company.logo = (request.form.get("logo") or "").strip()[:255] or None
     company.tax_id = (request.form.get("tax_id") or "").strip()[:50] or None
     company.payment_alias = (request.form.get("payment_alias") or "").strip() or None
@@ -502,8 +589,18 @@ def company_settings_pin_regenerate():
 @bp.route("/company-settings/pin/logout", methods=["POST"])
 @company_member_required
 def company_settings_pin_logout():
+    from app import db, record_audit
+
     company_id = getattr(current_user, "company_id", None)
+    company = _load_company(company_id)
+    access_pin = (request.form.get("access_pin") or "").strip()
+    if not CompanySecurityService.verify_pin(company, access_pin):
+        flash("PIN inválido. No se pudo bloquear Mi Empresa.", "danger")
+        return redirect(url_for("company_billing.company_settings", panel="security"))
+
     _mark_pin_verified(company_id, False)
+    record_audit(action="company_settings_pin_logout", entity="company", entity_id=company.id, detail="Sesion de Mi Empresa bloqueada manualmente")
+    db.session.commit()
     flash("Se cerro la sesion de seguridad de Mi Empresa.", "info")
     return redirect(url_for("dashboard.index"))
 
@@ -539,6 +636,67 @@ def company_settings_user_update(user_id):
     db.session.commit()
     flash("Usuario actualizado correctamente.", "success")
     return redirect(url_for("company_billing.company_settings"))
+
+
+@bp.route("/company-settings/users/<int:user_id>/permissions", methods=["POST"])
+@company_admin_required
+def company_settings_user_permissions(user_id):
+    from app import User, db, record_audit
+
+    company_id = getattr(current_user, "company_id", None)
+    company = _load_company(company_id)
+    blocked = _pin_guard(company)
+    if blocked is not None:
+        return blocked
+
+    user = User.query.filter_by(id=user_id, company_id=company.id).first_or_404()
+    selected = request.form.getlist("permissions")
+    _set_user_permissions(user, selected)
+    record_audit(action="company_user_permissions", entity="user", entity_id=user.id, detail=f"Permisos actualizados para {user.username}")
+    db.session.commit()
+    flash("Permisos del empleado actualizados.", "success")
+    return redirect(url_for("company_billing.company_settings", panel="employees"))
+
+
+@bp.route("/company-settings/users/<int:user_id>/delete", methods=["POST"])
+@company_admin_required
+def company_settings_user_delete(user_id):
+    from app import CashMovement, Expense, Sale, User, db, record_audit
+
+    company_id = getattr(current_user, "company_id", None)
+    company = _load_company(company_id)
+    blocked = _pin_guard(company)
+    if blocked is not None:
+        return blocked
+
+    user = User.query.filter_by(id=user_id, company_id=company.id).first_or_404()
+    if user.id == current_user.id:
+        flash("No puedes eliminar tu propio usuario administrador.", "warning")
+        return redirect(url_for("company_billing.company_settings", panel="employees"))
+
+    linked_sales = Sale.query.filter_by(company_id=company.id, seller_id=user.id).count()
+    linked_cash = CashMovement.query.filter_by(company_id=company.id, user_id=user.id).count()
+    linked_expenses = Expense.query.filter_by(company_id=company.id, user_id=user.id).count()
+    has_history = (linked_sales + linked_cash + linked_expenses) > 0
+
+    if has_history:
+        user.active = False
+        record_audit(
+            action="company_user_soft_delete",
+            entity="user",
+            entity_id=user.id,
+            detail=f"Usuario desactivado por historial vinculado ({linked_sales} ventas, {linked_cash} movimientos, {linked_expenses} gastos)",
+        )
+        db.session.commit()
+        flash("El empleado tenía historial y fue desactivado en lugar de eliminarse.", "warning")
+        return redirect(url_for("company_billing.company_settings", panel="employees"))
+
+    username = user.username
+    db.session.delete(user)
+    record_audit(action="company_user_delete", entity="user", entity_id=user_id, detail=f"Empleado eliminado: {username}")
+    db.session.commit()
+    flash("Empleado eliminado correctamente.", "success")
+    return redirect(url_for("company_billing.company_settings", panel="employees"))
 
 
 @bp.route("/company-settings/users/create", methods=["POST"])
@@ -665,13 +823,144 @@ def company_settings_change_password():
     return redirect(url_for("company_billing.company_settings"))
 
 
+@bp.route("/company-settings/general", methods=["POST"])
+@company_admin_required
+def company_settings_general_save():
+    from app import db, record_audit
+
+    company_id = getattr(current_user, "company_id", None)
+    company = _load_company(company_id)
+    blocked = _pin_guard(company)
+    if blocked is not None:
+        return blocked
+
+    company.language = (request.form.get("language") or "es").strip()[:20] or "es"
+    company.timezone = (request.form.get("timezone") or "America/Argentina/Buenos_Aires").strip()[:80] or "America/Argentina/Buenos_Aires"
+    company.currency = (request.form.get("currency") or "ARS").strip()[:10] or "ARS"
+    company.date_format = (request.form.get("date_format") or "%Y-%m-%d").strip()[:20] or "%Y-%m-%d"
+    company.numbering_format = (request.form.get("numbering_format") or "es_AR").strip()[:20] or "es_AR"
+
+    preferences = {
+        "allow_negative_stock": bool(request.form.get("allow_negative_stock")),
+        "show_costs": bool(request.form.get("show_costs")),
+        "compact_print": bool(request.form.get("compact_print")),
+    }
+    printer_settings = {
+        "printer_name": (request.form.get("printer_name") or "").strip()[:160],
+        "paper_size": (request.form.get("paper_size") or "A4").strip()[:20] or "A4",
+    }
+
+    company.preferences_json = json.dumps(preferences)
+    company.printer_settings_json = json.dumps(printer_settings)
+    record_audit(action="company_general_settings", entity="company", entity_id=company.id, detail="Configuracion general actualizada")
+    db.session.commit()
+    flash("Configuración general guardada correctamente.", "success")
+    return redirect(url_for("company_billing.company_settings", panel="general"))
+
+
+@bp.route("/company-settings/schedules", methods=["POST"])
+@company_admin_required
+def company_settings_schedules_save():
+    from app import db, record_audit
+
+    company_id = getattr(current_user, "company_id", None)
+    company = _load_company(company_id)
+    blocked = _pin_guard(company)
+    if blocked is not None:
+        return blocked
+
+    weekdays = ["lunes", "martes", "miercoles", "jueves", "viernes", "sabado", "domingo"]
+    weekly = {}
+    for day in weekdays:
+        weekly[day] = {
+            "open": (request.form.get(f"{day}_open") or "").strip()[:5],
+            "close": (request.form.get(f"{day}_close") or "").strip()[:5],
+        }
+
+    schedules_payload = {
+        "weekly": weekly,
+        "special_shifts": (request.form.get("special_shifts") or "").strip()[:2000],
+        "vacations": (request.form.get("vacations") or "").strip()[:2000],
+        "licenses": (request.form.get("licenses") or "").strip()[:2000],
+    }
+    company.schedules_json = json.dumps(schedules_payload)
+    record_audit(action="company_schedules_update", entity="company", entity_id=company.id, detail="Horarios de atencion actualizados")
+    db.session.commit()
+    flash("Horarios de atención guardados correctamente.", "success")
+    return redirect(url_for("company_billing.company_settings", panel="schedules"))
+
+
+@bp.route("/company-settings/security/logout-current", methods=["POST"])
+@company_member_required
+def company_settings_security_logout_current():
+    from app import db, record_audit
+    from flask_login import logout_user
+
+    company_id = getattr(current_user, "company_id", None)
+    company = _load_company(company_id)
+    _mark_pin_verified(company.id, False)
+    record_audit(action="company_security_logout_current", entity="company", entity_id=company.id, detail="Usuario cerro sesion actual desde Mi Empresa")
+    db.session.commit()
+    logout_user()
+    flash("Sesión cerrada correctamente.", "info")
+    return redirect(url_for("auth.login"))
+
+
+@bp.route("/company-settings/billing/invoice/<int:invoice_id>/pdf")
+@company_member_required
+def company_settings_billing_invoice_pdf(invoice_id):
+    from app import Invoice
+
+    company_id = getattr(current_user, "company_id", None)
+    company = _load_company(company_id)
+    blocked = _pin_guard(company)
+    if blocked is not None:
+        return blocked
+
+    invoice = Invoice.query.filter_by(id=invoice_id, company_id=company.id).first_or_404()
+    lines = [
+        f"Empresa: {company.name}",
+        f"Factura: {invoice.invoice_number or ('#' + str(invoice.id))}",
+        f"Estado: {invoice.status or '-'}",
+        f"Importe: {float(invoice.amount or 0):.2f} {invoice.currency or ''}",
+        f"Vencimiento: {invoice.due_at.strftime('%Y-%m-%d') if invoice.due_at else '-'}",
+        f"Emision: {invoice.issued_at.strftime('%Y-%m-%d %H:%M') if invoice.issued_at else '-'}",
+        f"Detalle: {(invoice.detail or '-').strip()[:500]}",
+    ]
+    return _pdf_from_lines("Factura SaaS - StockArmobile", lines, f"factura_{invoice.id}.pdf")
+
+
+@bp.route("/company-settings/billing/payment/<int:payment_id>/pdf")
+@company_member_required
+def company_settings_billing_payment_pdf(payment_id):
+    from app import Payment
+
+    company_id = getattr(current_user, "company_id", None)
+    company = _load_company(company_id)
+    blocked = _pin_guard(company)
+    if blocked is not None:
+        return blocked
+
+    payment = Payment.query.filter_by(id=payment_id, company_id=company.id).first_or_404()
+    lines = [
+        f"Empresa: {company.name}",
+        f"Pago: {payment.payment_id or ('#' + str(payment.id))}",
+        f"Estado: {payment.status or '-'}",
+        f"Importe: {float(payment.amount or 0):.2f} {payment.currency or ''}",
+        f"Metodo: {payment.payment_method or '-'}",
+        f"Referencia: {payment.reference or '-'}",
+        f"Fecha de registro: {payment.created_at.strftime('%Y-%m-%d %H:%M') if payment.created_at else '-'}",
+    ]
+    return _pdf_from_lines("Comprobante de Pago - StockArmobile", lines, f"pago_{payment.id}.pdf")
+
+
 @bp.route("/company-settings")
 @company_member_required
 def company_settings():
     from flask import session
     from sqlalchemy.orm import selectinload
 
-    from app import Invoice, Payment, PaymentHistory, Sale, SaleItem
+    from app import AuditLog, Invoice, Payment, PaymentHistory, Sale, SaleItem
 
     company_id = getattr(current_user, "company_id", None)
     company = _load_company(company_id)
@@ -684,6 +973,9 @@ def company_settings():
         settings_panel = "stats"
     date_from = _parse_date(date_from_raw)
     date_to = _parse_date(date_to_raw)
+    employee_search = (request.args.get("q") or "").strip()
+    employee_role = (request.args.get("role") or "").strip().lower()
+    employee_status = (request.args.get("status") or "").strip().lower()
 
     users = []
     cash_rows = []
@@ -697,8 +989,19 @@ def company_settings():
     billing_invoices = []
     billing_payments = []
     billing_history = []
+    company_preferences = _json_company_dict(company.preferences_json)
+    printer_settings = _json_company_dict(company.printer_settings_json)
+    schedules_settings = _json_company_dict(company.schedules_json)
+    device_rows = []
     if pin_verified:
-        users, cash_rows = _build_user_and_cash_rows(company.id, date_from=date_from, date_to=date_to)
+        users, cash_rows = _build_user_and_cash_rows(
+            company.id,
+            date_from=date_from,
+            date_to=date_to,
+            search_text=employee_search if settings_panel == "employees" else "",
+            role_filter=employee_role if settings_panel == "employees" else "",
+            status_filter=employee_status if settings_panel == "employees" else "",
+        )
         cash_summary = _cash_summary(cash_rows)
         recent_sales = (
             Sale.query.options(selectinload(Sale.items).selectinload(SaleItem.product))
@@ -725,6 +1028,12 @@ def company_settings():
             .limit(30)
             .all()
         )
+        device_rows = (
+            AuditLog.query.filter_by(company_id=company.id, action="login_success")
+            .order_by(AuditLog.created_at.desc(), AuditLog.id.desc())
+            .limit(12)
+            .all()
+        )
 
     return render_template(
         "company_billing/settings.html",
@@ -749,6 +1058,14 @@ def company_settings():
         billing_invoices=billing_invoices,
         billing_payments=billing_payments,
         billing_history=billing_history,
+        employee_search=employee_search,
+        employee_role=employee_role,
+        employee_status=employee_status,
+        employee_permissions=EMPLOYEE_PERMISSIONS,
+        company_preferences=company_preferences,
+        printer_settings=printer_settings,
+        schedules_settings=schedules_settings,
+        device_rows=device_rows,
     )
 
 

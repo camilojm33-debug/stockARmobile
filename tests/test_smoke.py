@@ -747,6 +747,9 @@ def test_company_can_save_qr_payment_settings():
     response = client.post(
         "/admin/payment-qr-settings",
         data={
+            "website": "https://empresa-demo.com",
+            "social_facebook": "https://facebook.com/empresa-demo",
+            "social_instagram": "https://instagram.com/empresa-demo",
             "payment_alias": "negocio.demo",
             "payment_cbu": "1234567890123456789012",
             "payment_cvu": "0001234500001234500001",
@@ -766,6 +769,9 @@ def test_company_can_save_qr_payment_settings():
         assert company.payment_cvu == "0001234500001234500001"
         assert company.payment_qr_text == "Cobro caja principal"
         assert company.payment_qr_url == "https://example.com/pago"
+        assert company.website == "https://empresa-demo.com"
+        assert company.social_facebook == "https://facebook.com/empresa-demo"
+        assert company.social_instagram == "https://instagram.com/empresa-demo"
 
 
 def test_my_company_module_requires_pin_and_shows_tenant_admin_features():
@@ -883,7 +889,7 @@ def test_my_company_module_requires_pin_and_shows_tenant_admin_features():
     assert "300.00" in filtered_html
     assert "50.00" in filtered_html
 
-    lock_response = client.post("/admin/company-settings/pin/logout", follow_redirects=False)
+    lock_response = client.post("/admin/company-settings/pin/logout", data={"access_pin": "1234"}, follow_redirects=False)
     assert lock_response.status_code in (301, 302)
     assert "/dashboard/" in (lock_response.headers.get("Location") or "")
 
@@ -943,6 +949,93 @@ def test_my_company_module_supports_employee_create_and_reset():
     )
     assert reset_password.status_code == 200
     assert "Contrasena restablecida" in reset_password.data.decode("utf-8")
+
+
+def test_my_company_module_employee_permissions_delete_and_billing_pdf():
+    client = stock_app.app.test_client()
+
+    with stock_app.app.app_context():
+        from app import Invoice, Payment
+        from services.company_security_service import CompanySecurityService
+
+        company = Company.query.filter_by(name="Empresa Demo").first()
+        admin_user = User.query.filter_by(username="negocio_admin").first()
+        target_user = User.query.filter_by(username="empresa_admin").first()
+        assert company is not None
+        assert admin_user is not None
+        assert target_user is not None
+
+        CompanySecurityService.set_pin(company, "1234")
+
+        invoice = Invoice(
+            company_id=company.id,
+            status="issued",
+            amount=1500,
+            currency="ARS",
+            invoice_number=f"INV-TEST-{company.id}",
+        )
+        db.session.add(invoice)
+        db.session.flush()
+        payment = Payment(
+            company_id=company.id,
+            user_id=admin_user.id,
+            invoice_id=invoice.id,
+            amount=1500,
+            currency="ARS",
+            status="approved",
+            payment_method="transferencia",
+            reference="TEST-REF",
+        )
+        db.session.add(payment)
+
+        deletable = User(
+            username="empleado_borrable",
+            email="empleado_borrable@test.local",
+            company_id=company.id,
+            role="user",
+            active=True,
+            auth_provider="local",
+        )
+        deletable.set_password("admin123")
+        db.session.add(deletable)
+        db.session.commit()
+        invoice_id = invoice.id
+        payment_id = payment.id
+        target_user_id = target_user.id
+        deletable_id = deletable.id
+
+    client.post("/auth/login", data={"username": "negocio_admin", "password": "admin123"})
+    client.post("/admin/company-settings/pin/verify", data={"access_pin": "1234"}, follow_redirects=True)
+
+    set_permissions = client.post(
+        f"/admin/company-settings/users/{target_user_id}/permissions",
+        data={"permissions": ["sales", "clients"]},
+        follow_redirects=True,
+    )
+    assert set_permissions.status_code == 200
+
+    remove_user = client.post(
+        f"/admin/company-settings/users/{deletable_id}/delete",
+        follow_redirects=True,
+    )
+    assert remove_user.status_code == 200
+
+    invoice_pdf = client.get(f"/admin/company-settings/billing/invoice/{invoice_id}/pdf")
+    assert invoice_pdf.status_code == 200
+    assert invoice_pdf.mimetype == "application/pdf"
+
+    payment_pdf = client.get(f"/admin/company-settings/billing/payment/{payment_id}/pdf")
+    assert payment_pdf.status_code == 200
+    assert payment_pdf.mimetype == "application/pdf"
+
+    with stock_app.app.app_context():
+        target_user = db.session.get(User, target_user_id)
+        deleted_user = db.session.get(User, deletable_id)
+        assert target_user is not None
+        assert target_user.permissions_json is not None
+        assert "sales" in target_user.permissions_json
+        assert "clients" in target_user.permissions_json
+        assert deleted_user is None
 
 
 def test_my_company_module_blocks_create_when_plan_user_limit_is_reached():

@@ -15,13 +15,38 @@
     <div class="d-flex flex-wrap gap-2">
       <a class="btn btn-outline-secondary" href="{{ url_for('products.index') }}"><i class="bi bi-arrow-left me-1"></i>Volver a inventario</a>
       {% if pin_verified %}
-      <form method="post" action="{{ url_for('company_billing.company_settings_pin_logout') }}" onsubmit="return confirm('¿Deseas bloquear Mi Empresa y volver al panel principal?');">
+      <form method="post" action="{{ url_for('company_billing.company_settings_pin_logout') }}" onsubmit="if(!confirm('¿Deseas bloquear Mi Empresa y volver al panel principal?')){return false;} var pin=prompt('Confirmá tu PIN para bloquear Mi Empresa'); if(!pin){return false;} this.querySelector('input[name=access_pin]').value = pin; return true;">
         <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+        <input type="hidden" name="access_pin" value="">
         <button class="btn btn-outline-secondary" type="submit"><i class="bi bi-lock me-1"></i>Bloquear Mi Empresa</button>
       </form>
       {% endif %}
     </div>
   </div>
+
+  {% if panel %}
+  {% set panel_meta = {
+    'company': {'title': 'Datos de la Empresa', 'subtitle': 'Gestioná datos comerciales, fiscales y canales de contacto.'},
+    'employees': {'title': 'Empleados', 'subtitle': 'Alta, edición, permisos y estado operativo del personal.'},
+    'schedules': {'title': 'Horarios de Atención', 'subtitle': 'Configurá calendario semanal, turnos especiales y ausencias.'},
+    'branches': {'title': 'Sucursales', 'subtitle': 'Administrá sedes y puntos de atención de la empresa.'},
+    'billing': {'title': 'Facturación', 'subtitle': 'Consultá facturas, cobros, comprobantes e historial.'},
+    'security': {'title': 'Seguridad', 'subtitle': 'Controlá PIN, contraseña, sesiones y accesos recientes.'},
+    'general': {'title': 'Configuración General', 'subtitle': 'Idioma, zona horaria, moneda, numeración e impresoras.'},
+    'stats': {'title': 'Estadísticas de la Empresa', 'subtitle': 'Seguimiento de ventas, caja, actividad y rentabilidad.'}
+  } %}
+  {% set current_meta = panel_meta.get(panel, {'title': 'Módulo', 'subtitle': 'Gestión interna de Mi Empresa.'}) %}
+  <div class="mb-3">
+    <nav aria-label="breadcrumb">
+      <ol class="breadcrumb mb-1">
+        <li class="breadcrumb-item"><a href="{{ url_for('company_billing.company_settings') }}">Mi Empresa</a></li>
+        <li class="breadcrumb-item active" aria-current="page">{{ current_meta.title }}</li>
+      </ol>
+    </nav>
+    <h2 class="h4 fw-bold mb-1">{{ current_meta.title }}</h2>
+    <p class="text-muted mb-0">{{ current_meta.subtitle }}</p>
+  </div>
+  {% endif %}
 
   {% if pin_bootstrap_reveal %}
   <div class="alert alert-warning" role="alert">
@@ -212,6 +237,10 @@
             <input class="form-control" type="email" name="contact_email" value="{{ company.contact_email or '' }}">
           </div>
           <div class="col-md-6">
+            <label class="form-label">Sitio web</label>
+            <input class="form-control" name="website" value="{{ company.website or '' }}" placeholder="https://tusitio.com">
+          </div>
+          <div class="col-md-6">
             <label class="form-label">Logo (URL)</label>
             <input class="form-control" name="logo" value="{{ company.logo or '' }}" placeholder="https://...">
           </div>
@@ -239,8 +268,32 @@
             <label class="form-label">URL de pago (opcional)</label>
             <input class="form-control" name="payment_qr_url" value="{{ company.payment_qr_url or '' }}" placeholder="https://...">
           </div>
+          <div class="col-md-6">
+            <label class="form-label">Facebook</label>
+            <input class="form-control" name="social_facebook" value="{{ company.social_facebook or '' }}" placeholder="https://facebook.com/...">
+          </div>
+          <div class="col-md-6">
+            <label class="form-label">Instagram</label>
+            <input class="form-control" name="social_instagram" value="{{ company.social_instagram or '' }}" placeholder="https://instagram.com/...">
+          </div>
+          <div class="col-md-6">
+            <label class="form-label">TikTok</label>
+            <input class="form-control" name="social_tiktok" value="{{ company.social_tiktok or '' }}" placeholder="https://tiktok.com/@...">
+          </div>
+          <div class="col-md-6">
+            <label class="form-label">YouTube</label>
+            <input class="form-control" name="social_youtube" value="{{ company.social_youtube or '' }}" placeholder="https://youtube.com/...">
+          </div>
+          <div class="col-md-6">
+            <label class="form-label">LinkedIn</label>
+            <input class="form-control" name="social_linkedin" value="{{ company.social_linkedin or '' }}" placeholder="https://linkedin.com/company/...">
+          </div>
           <div class="col-12 d-flex justify-content-between align-items-center">
-            <button class="btn btn-primary" type="submit"><i class="bi bi-save me-1"></i>Guardar datos del negocio</button>
+            <div class="d-flex gap-2">
+              <button class="btn btn-primary" type="submit"><i class="bi bi-save me-1"></i>Guardar</button>
+              <button class="btn btn-outline-secondary" type="reset"><i class="bi bi-x-circle me-1"></i>Cancelar</button>
+              <a class="btn btn-outline-secondary" href="{{ url_for('company_billing.company_settings') }}"><i class="bi bi-arrow-left me-1"></i>Volver</a>
+            </div>
             {% set has_qr_data = company.payment_alias or company.payment_cbu or company.payment_cvu or company.payment_qr_text or company.payment_qr_url %}
             {% if has_qr_data %}
             <img
@@ -261,6 +314,31 @@
       <a class="btn btn-sm btn-outline-secondary" href="{{ url_for('company_billing.company_settings') }}"><i class="bi bi-grid me-1"></i>Volver al hub</a>
     </div>
     <div class="card-body">
+      <form method="get" action="{{ url_for('company_billing.company_settings') }}" class="row g-2 mb-3">
+        <input type="hidden" name="panel" value="employees">
+        <div class="col-md-4">
+          <input class="form-control" type="search" name="q" value="{{ employee_search or '' }}" placeholder="Buscar por usuario, email o nombre">
+        </div>
+        <div class="col-md-3">
+          <select class="form-select" name="role">
+            <option value="" {% if not employee_role %}selected{% endif %}>Todos los roles</option>
+            <option value="admin" {% if employee_role == 'admin' %}selected{% endif %}>Administrador</option>
+            <option value="user" {% if employee_role == 'user' %}selected{% endif %}>Empleado</option>
+          </select>
+        </div>
+        <div class="col-md-3">
+          <select class="form-select" name="status">
+            <option value="" {% if not employee_status %}selected{% endif %}>Todos los estados</option>
+            <option value="active" {% if employee_status == 'active' %}selected{% endif %}>Activos</option>
+            <option value="inactive" {% if employee_status == 'inactive' %}selected{% endif %}>Inactivos</option>
+          </select>
+        </div>
+        <div class="col-md-2 d-flex gap-2">
+          <button class="btn btn-outline-primary w-100" type="submit">Filtrar</button>
+          <a class="btn btn-outline-secondary" href="{{ url_for('company_billing.company_settings', panel='employees') }}">Limpiar</a>
+        </div>
+      </form>
+
       {% if current_user.role == 'admin' %}
       <form method="post" action="{{ url_for('company_billing.company_settings_user_create') }}" class="row g-3 mb-4">
         <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
@@ -331,6 +409,20 @@
                   <form method="post" action="{{ url_for('company_billing.company_settings_user_reset_password', user_id=user.id) }}">
                     <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
                     <button class="btn btn-sm btn-outline-warning" type="submit">Restablecer contraseña</button>
+                  </form>
+                  <form method="post" action="{{ url_for('company_billing.company_settings_user_delete', user_id=user.id) }}" onsubmit="return confirm('¿Eliminar empleado {{ user.name }}? Si tiene historial será desactivado automáticamente.');">
+                    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                    <button class="btn btn-sm btn-outline-danger" type="submit">Eliminar</button>
+                  </form>
+                  <form method="post" action="{{ url_for('company_billing.company_settings_user_permissions', user_id=user.id) }}" class="d-flex gap-1 flex-wrap justify-content-end">
+                    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                    {% for permission_key, permission_label in employee_permissions %}
+                    <div class="form-check form-check-inline m-0">
+                      <input class="form-check-input" type="checkbox" id="perm_{{ user.id }}_{{ permission_key }}" name="permissions" value="{{ permission_key }}" {% if permission_key in row.permissions %}checked{% endif %}>
+                      <label class="form-check-label small" for="perm_{{ user.id }}_{{ permission_key }}">{{ permission_label }}</label>
+                    </div>
+                    {% endfor %}
+                    <button class="btn btn-sm btn-outline-secondary" type="submit">Permisos</button>
                   </form>
                 </div>
                 {% else %}
@@ -409,8 +501,31 @@
             <div class="fw-semibold mb-3">{{ 'Bloqueado temporalmente' if pin_block_seconds and pin_block_seconds > 0 else 'Sin bloqueo activo' }}</div>
             <div class="small text-muted mb-1">Tiempo restante</div>
             <div class="fw-semibold mb-3">{{ pin_block_seconds if pin_block_seconds and pin_block_seconds > 0 else 0 }} segundos</div>
-            <div class="alert alert-light border small mb-0" role="alert">
-              Las vistas de sesiones activas y dispositivos conectados estarán disponibles próximamente.
+            <form method="post" action="{{ url_for('company_billing.company_settings_security_logout_current') }}" onsubmit="return confirm('¿Deseas cerrar la sesión actual del sistema?');">
+              <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+              <button class="btn btn-outline-danger btn-sm" type="submit"><i class="bi bi-box-arrow-right me-1"></i>Cerrar sesión actual</button>
+            </form>
+          </div>
+        </div>
+        <div class="col-12">
+          <div class="border rounded-3 p-3 h-100">
+            <h2 class="h6 fw-bold mb-2">Sesiones y dispositivos recientes</h2>
+            <div class="table-responsive">
+              <table class="table table-sm table-hover mb-0">
+                <thead><tr><th>Fecha</th><th>Usuario</th><th>Evento</th><th>Detalle</th></tr></thead>
+                <tbody>
+                  {% for audit in device_rows %}
+                  <tr>
+                    <td>{{ audit.created_at.strftime('%Y-%m-%d %H:%M') if audit.created_at else '-' }}</td>
+                    <td>{{ audit.user_id or '-' }}</td>
+                    <td>{{ audit.action or '-' }}</td>
+                    <td>{{ audit.detail or '-' }}</td>
+                  </tr>
+                  {% else %}
+                  <tr><td colspan="4" class="text-center text-muted py-3">Sin actividad de sesiones registrada.</td></tr>
+                  {% endfor %}
+                </tbody>
+              </table>
             </div>
           </div>
         </div>
@@ -429,7 +544,7 @@
           <h2 class="h6 fw-bold mb-2">Facturas</h2>
           <div class="table-responsive">
             <table class="table table-sm table-hover mb-0">
-              <thead><tr><th>Comprobante</th><th>Estado</th><th>Importe</th><th>Vencimiento</th></tr></thead>
+              <thead><tr><th>Comprobante</th><th>Estado</th><th>Importe</th><th>Vencimiento</th><th>PDF</th></tr></thead>
               <tbody>
                 {% for invoice in billing_invoices %}
                 <tr>
@@ -437,9 +552,10 @@
                   <td>{{ invoice.status }}</td>
                   <td>${{ '%.2f'|format(invoice.amount or 0) }}</td>
                   <td>{{ invoice.due_at.strftime('%Y-%m-%d') if invoice.due_at else '-' }}</td>
+                  <td><a class="btn btn-sm btn-outline-primary" href="{{ url_for('company_billing.company_settings_billing_invoice_pdf', invoice_id=invoice.id) }}">Descargar</a></td>
                 </tr>
                 {% else %}
-                <tr><td colspan="4" class="text-center text-muted py-3">Sin facturas registradas.</td></tr>
+                <tr><td colspan="5" class="text-center text-muted py-3">Sin facturas registradas.</td></tr>
                 {% endfor %}
               </tbody>
             </table>
@@ -449,7 +565,7 @@
           <h2 class="h6 fw-bold mb-2">Cobros</h2>
           <div class="table-responsive">
             <table class="table table-sm table-hover mb-0">
-              <thead><tr><th>Pago</th><th>Estado</th><th>Importe</th><th>Comprobante</th></tr></thead>
+              <thead><tr><th>Pago</th><th>Estado</th><th>Importe</th><th>Comprobante</th><th>PDF</th></tr></thead>
               <tbody>
                 {% for payment in billing_payments %}
                 <tr>
@@ -457,9 +573,10 @@
                   <td>{{ payment.status }}</td>
                   <td>${{ '%.2f'|format(payment.amount or 0) }}</td>
                   <td>{{ payment.reference or '-' }}</td>
+                  <td><a class="btn btn-sm btn-outline-primary" href="{{ url_for('company_billing.company_settings_billing_payment_pdf', payment_id=payment.id) }}">Descargar</a></td>
                 </tr>
                 {% else %}
-                <tr><td colspan="4" class="text-center text-muted py-3">Sin cobros registrados.</td></tr>
+                <tr><td colspan="5" class="text-center text-muted py-3">Sin cobros registrados.</td></tr>
                 {% endfor %}
               </tbody>
             </table>
@@ -492,14 +609,37 @@
       <span>Horarios de Atención</span>
       <a class="btn btn-sm btn-outline-secondary" href="{{ url_for('company_billing.company_settings') }}"><i class="bi bi-grid me-1"></i>Volver a Mi Empresa</a>
     </div>
+    {% set weekly = schedules_settings.get('weekly', {}) %}
     <div class="card-body p-4">
-      <div class="d-flex flex-column flex-lg-row justify-content-between align-items-lg-center gap-3">
-        <div>
-          <div class="fw-bold h5 mb-1">Este módulo estará disponible próximamente.</div>
-          <p class="text-muted mb-0">La administración de horarios por empleado se habilitará en una próxima versión.</p>
+      <form method="post" action="{{ url_for('company_billing.company_settings_schedules_save') }}" class="row g-3">
+        <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+        {% for day, day_label in [('lunes','Lunes'),('martes','Martes'),('miercoles','Miércoles'),('jueves','Jueves'),('viernes','Viernes'),('sabado','Sábado'),('domingo','Domingo')] %}
+        {% set day_data = weekly.get(day, {}) %}
+        <div class="col-md-6 col-xl-4">
+          <label class="form-label fw-semibold">{{ day_label }}</label>
+          <div class="d-flex gap-2">
+            <input class="form-control" type="time" name="{{ day }}_open" value="{{ day_data.get('open', '') }}" placeholder="Apertura">
+            <input class="form-control" type="time" name="{{ day }}_close" value="{{ day_data.get('close', '') }}" placeholder="Cierre">
+          </div>
         </div>
-        <a class="btn btn-outline-secondary" href="{{ url_for('company_billing.company_settings') }}"><i class="bi bi-arrow-left me-1"></i>Volver a Mi Empresa</a>
-      </div>
+        {% endfor %}
+        <div class="col-12">
+          <label class="form-label">Turnos especiales</label>
+          <textarea class="form-control" name="special_shifts" rows="3" placeholder="Ej: Feriados, horarios extendidos">{{ schedules_settings.get('special_shifts', '') }}</textarea>
+        </div>
+        <div class="col-md-6">
+          <label class="form-label">Vacaciones</label>
+          <textarea class="form-control" name="vacations" rows="3" placeholder="Ej: Equipo de ventas 15/01 al 31/01">{{ schedules_settings.get('vacations', '') }}</textarea>
+        </div>
+        <div class="col-md-6">
+          <label class="form-label">Licencias</label>
+          <textarea class="form-control" name="licenses" rows="3" placeholder="Ej: Licencia médica - Caja 2">{{ schedules_settings.get('licenses', '') }}</textarea>
+        </div>
+        <div class="col-12 d-flex gap-2">
+          <button class="btn btn-primary" type="submit"><i class="bi bi-save me-1"></i>Guardar</button>
+          <a class="btn btn-outline-secondary" href="{{ url_for('company_billing.company_settings') }}"><i class="bi bi-arrow-left me-1"></i>Volver</a>
+        </div>
+      </form>
     </div>
   </div>
   {% elif panel == 'branches' %}
@@ -525,13 +665,63 @@
       <a class="btn btn-sm btn-outline-secondary" href="{{ url_for('company_billing.company_settings') }}"><i class="bi bi-grid me-1"></i>Volver a Mi Empresa</a>
     </div>
     <div class="card-body p-4">
-      <div class="d-flex flex-column flex-lg-row justify-content-between align-items-lg-center gap-3">
-        <div>
-          <div class="fw-bold h5 mb-1">Este módulo estará disponible próximamente.</div>
-          <p class="text-muted mb-2">Se incluirán preferencias de moneda, zona horaria, idioma, formato de fecha, numeración e impresoras.</p>
+      <form method="post" action="{{ url_for('company_billing.company_settings_general_save') }}" class="row g-3">
+        <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+        <div class="col-md-4">
+          <label class="form-label">Idioma</label>
+          <select class="form-select" name="language">
+            <option value="es" {% if company.language == 'es' %}selected{% endif %}>Español</option>
+            <option value="en" {% if company.language == 'en' %}selected{% endif %}>Inglés</option>
+            <option value="pt" {% if company.language == 'pt' %}selected{% endif %}>Portugués</option>
+          </select>
         </div>
-        <a class="btn btn-outline-secondary" href="{{ url_for('company_billing.company_settings') }}"><i class="bi bi-arrow-left me-1"></i>Volver a Mi Empresa</a>
-      </div>
+        <div class="col-md-4">
+          <label class="form-label">Zona horaria</label>
+          <input class="form-control" name="timezone" value="{{ company.timezone or 'America/Argentina/Buenos_Aires' }}">
+        </div>
+        <div class="col-md-4">
+          <label class="form-label">Moneda</label>
+          <input class="form-control" name="currency" value="{{ company.currency or 'ARS' }}">
+        </div>
+        <div class="col-md-4">
+          <label class="form-label">Formato de fecha</label>
+          <input class="form-control" name="date_format" value="{{ company.date_format or '%Y-%m-%d' }}">
+        </div>
+        <div class="col-md-4">
+          <label class="form-label">Numeración</label>
+          <input class="form-control" name="numbering_format" value="{{ company.numbering_format or 'es_AR' }}">
+        </div>
+        <div class="col-md-4">
+          <label class="form-label">Impresora</label>
+          <input class="form-control" name="printer_name" value="{{ printer_settings.get('printer_name', '') }}" placeholder="Nombre de impresora">
+        </div>
+        <div class="col-md-4">
+          <label class="form-label">Tamaño de papel</label>
+          <select class="form-select" name="paper_size">
+            <option value="A4" {% if printer_settings.get('paper_size', 'A4') == 'A4' %}selected{% endif %}>A4</option>
+            <option value="Ticket80" {% if printer_settings.get('paper_size') == 'Ticket80' %}selected{% endif %}>Ticket 80mm</option>
+            <option value="Carta" {% if printer_settings.get('paper_size') == 'Carta' %}selected{% endif %}>Carta</option>
+          </select>
+        </div>
+        <div class="col-md-8 d-flex flex-wrap gap-3 align-items-center">
+          <div class="form-check">
+            <input class="form-check-input" type="checkbox" id="pref_negative_stock" name="allow_negative_stock" {% if company_preferences.get('allow_negative_stock') %}checked{% endif %}>
+            <label class="form-check-label" for="pref_negative_stock">Permitir stock negativo</label>
+          </div>
+          <div class="form-check">
+            <input class="form-check-input" type="checkbox" id="pref_show_costs" name="show_costs" {% if company_preferences.get('show_costs') %}checked{% endif %}>
+            <label class="form-check-label" for="pref_show_costs">Mostrar costos en panel</label>
+          </div>
+          <div class="form-check">
+            <input class="form-check-input" type="checkbox" id="pref_compact_print" name="compact_print" {% if company_preferences.get('compact_print') %}checked{% endif %}>
+            <label class="form-check-label" for="pref_compact_print">Impresión compacta</label>
+          </div>
+        </div>
+        <div class="col-12 d-flex gap-2">
+          <button class="btn btn-primary" type="submit"><i class="bi bi-save me-1"></i>Guardar</button>
+          <a class="btn btn-outline-secondary" href="{{ url_for('company_billing.company_settings') }}"><i class="bi bi-arrow-left me-1"></i>Volver</a>
+        </div>
+      </form>
     </div>
   </div>
   {% elif panel == 'stats' %}
@@ -648,8 +838,8 @@
     <div class="card-body p-4">
       <div class="d-flex flex-column flex-lg-row justify-content-between align-items-lg-center gap-3">
         <div>
-          <div class="fw-bold h5 mb-1">Sección en preparación</div>
-          <p class="text-muted mb-0">Esta tarjeta está disponible como punto de navegación, pero todavía no tiene formulario operativo.</p>
+          <div class="fw-bold h5 mb-1">Este módulo estará disponible próximamente.</div>
+          <p class="text-muted mb-0">Podés volver al centro de Mi Empresa para continuar gestionando el resto de módulos operativos.</p>
         </div>
         <a class="btn btn-outline-secondary" href="{{ url_for('company_billing.company_settings') }}"><i class="bi bi-grid me-1"></i>Volver al hub</a>
       </div>
