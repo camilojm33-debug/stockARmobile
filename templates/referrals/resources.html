@@ -1,0 +1,349 @@
+{% extends "base_master.html" %}
+
+{% block title %}Centro de Recursos - StockArmobile{% endblock %}
+
+{% block content %}
+{% set panel = (resource_panel or 'hub')|lower %}
+{% set show_materials = panel in ['material', 'pdfs'] %}
+{% set show_images = panel in ['material', 'images'] %}
+<div class="app-shell">
+  <div class="d-flex flex-wrap justify-content-between align-items-center gap-3 mb-4">
+    <div>
+      <span class="page-kicker"><i class="bi bi-folder2-open"></i> Centro de Recursos</span>
+      <h1 class="h3 fw-bold mb-0">Material comercial</h1>
+      <p class="text-muted mb-0">Todo el contenido comercial organizado por módulos. Primero elegís una acción, después ves el contenido.</p>
+    </div>
+    <div class="d-flex flex-wrap gap-2">
+      <a class="btn btn-outline-secondary" href="{{ url_for('referrals.seller_dashboard') }}"><i class="bi bi-arrow-left me-1"></i>Volver al panel</a>
+      <a class="btn btn-outline-primary" href="{{ url_for('referrals.seller_resources') }}"><i class="bi bi-grid me-1"></i>Centro de recursos</a>
+    </div>
+  </div>
+
+  <div class="row g-3 mb-4">
+    {% for card in resource_cards %}
+    <div class="col-md-6 col-xl-4">
+      <a class="card app-card h-100 text-decoration-none text-reset company-nav-card {% if panel == card.key %}border-primary{% endif %}" href="{{ card.href }}">
+        <div class="card-body d-flex gap-3 align-items-start">
+          <div class="rounded-3 bg-light border d-inline-flex align-items-center justify-content-center flex-shrink-0" style="width: 48px; height: 48px;">
+            <i class="bi {{ card.icon }} fs-4 text-primary"></i>
+          </div>
+          <div class="flex-grow-1">
+            <div class="d-flex justify-content-between align-items-start gap-2">
+              <h2 class="h6 fw-bold mb-1">{{ card.title }}</h2>
+              <i class="bi bi-arrow-right-short text-muted"></i>
+            </div>
+            <p class="text-muted small mb-0">{{ card.description }}</p>
+          </div>
+        </div>
+      </a>
+    </div>
+    {% endfor %}
+  </div>
+
+  {% if panel == 'hub' %}
+  <div class="card app-card">
+    <div class="card-body p-4">
+      <div class="d-flex flex-column flex-lg-row justify-content-between align-items-lg-center gap-3">
+        <div>
+          <div class="fw-bold h5 mb-1">Elegí un módulo para continuar</div>
+          <p class="text-muted mb-0">No mostramos listas largas ni contenido completo al ingresar. Cada tarjeta abre su propio módulo.</p>
+        </div>
+        <div class="d-flex flex-wrap gap-2">
+          <a class="btn btn-primary" href="{{ url_for('referrals.seller_resources', panel='material') }}"><i class="bi bi-folder2-open me-1"></i>Material Comercial</a>
+          <a class="btn btn-outline-primary" href="{{ url_for('referrals.seller_resources', panel='messages') }}"><i class="bi bi-chat-dots me-1"></i>Mensajes Comerciales</a>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  {% elif panel in ['material', 'pdfs', 'images'] %}
+  <div class="card app-card mb-4">
+    <div class="card-header bg-white fw-bold d-flex justify-content-between align-items-center">
+      <span>Material comercial</span>
+      <div class="d-flex gap-2 flex-wrap">
+        <a class="btn btn-sm btn-outline-secondary" href="{{ url_for('referrals.seller_resources') }}"><i class="bi bi-grid me-1"></i>Hub</a>
+        <a class="btn btn-sm btn-outline-primary" href="{{ url_for('referrals.seller_resources', panel='pdfs') }}">PDFs</a>
+        <a class="btn btn-sm btn-outline-primary" href="{{ url_for('referrals.seller_resources', panel='images') }}">Imágenes</a>
+      </div>
+    </div>
+    <div class="card-body">
+      <div class="row g-3">
+        {% if show_materials %}
+        {% for item in materials %}
+        <div class="col-md-6 col-xl-3">
+          <div class="card h-100 resource-card">
+            <div class="card-body d-flex flex-column">
+              <div class="d-flex align-items-start justify-content-between gap-2 mb-3">
+                <span class="metric-icon"><i class="bi {{ item.icon }}"></i></span>
+                <span class="badge text-bg-light border">PDF</span>
+              </div>
+              <h2 class="h6 fw-bold mb-1">{{ item.title }}</h2>
+              <p class="text-muted small mb-3 flex-grow-1">{{ item.description }}</p>
+              <div class="d-grid gap-2">
+                <a class="btn btn-outline-primary btn-sm" href="{{ item.view_url }}" target="_blank" rel="noopener">Ver</a>
+                <a class="btn btn-primary btn-sm" href="{{ item.download_url }}" download>Descargar</a>
+                <a class="btn btn-outline-secondary btn-sm" href="{{ item.share_url }}" target="_blank" rel="noopener">Compartir</a>
+              </div>
+            </div>
+          </div>
+        </div>
+        {% endfor %}
+        {% endif %}
+        {% if show_images %}
+        {% for item in images %}
+        <div class="col-md-6 col-xl-4">
+          <div class="card h-100 resource-card">
+            <img src="{{ item.thumbnail }}" class="card-img-top" alt="{{ item.title }}">
+            <div class="card-body d-flex flex-column">
+              <div class="d-flex justify-content-between align-items-start gap-2 mb-2">
+                <h2 class="h6 fw-bold mb-0">{{ item.title }}</h2>
+                <span class="badge text-bg-light border">Imagen</span>
+              </div>
+              <p class="text-muted small mb-3 flex-grow-1">{{ item.description }}</p>
+              <div class="d-grid gap-2">
+                <a class="btn btn-outline-primary btn-sm" href="{{ item.download_url }}" download>Descargar</a>
+                <a class="btn btn-primary btn-sm" href="{{ item.share_url }}" target="_blank" rel="noopener">Compartir</a>
+                <button class="btn btn-outline-secondary btn-sm" type="button" data-copy-text="{{ item.share_text }}">Copiar texto</button>
+              </div>
+            </div>
+          </div>
+        </div>
+        {% endfor %}
+        {% endif %}
+      </div>
+    </div>
+  </div>
+
+  {% elif panel == 'videos' %}
+  <div class="card app-card mb-4">
+    <div class="card-header bg-white fw-bold d-flex justify-content-between align-items-center">
+      <span>Videos comerciales</span>
+      <a class="btn btn-sm btn-outline-secondary" href="{{ url_for('referrals.seller_resources') }}"><i class="bi bi-grid me-1"></i>Hub</a>
+    </div>
+    <div class="card-body">
+      {% if available_videos %}
+      <div class="row g-3">
+        {% for video in available_videos %}
+        <div class="col-md-6 col-xl-4">
+          <div class="card h-100 resource-card">
+            <img src="{{ video.thumbnail }}" class="card-img-top" alt="{{ video.title }}">
+            <div class="card-body d-flex flex-column">
+              <div class="d-flex justify-content-between align-items-start gap-2 mb-2">
+                <h2 class="h6 fw-bold mb-0">{{ video.title }}</h2>
+                <span class="badge text-bg-light border">{{ video.duration }}</span>
+              </div>
+              <p class="text-muted small mb-2">{{ video.description }}</p>
+              <div class="small text-muted mb-3">{{ video.updated_at }}</div>
+              <div class="d-grid gap-2 mt-auto">
+                <a class="btn btn-primary btn-sm" href="{{ video.view_url }}" target="_blank" rel="noopener">▶ Ver video</a>
+                {% if video.download_url %}
+                <a class="btn btn-outline-primary btn-sm" href="{{ video.download_url }}" download>⬇ Descargar</a>
+                {% else %}
+                <button class="btn btn-outline-secondary btn-sm" type="button" disabled>⬇ Descargar</button>
+                {% endif %}
+                <a class="btn btn-outline-secondary btn-sm" href="{{ video.share_url }}" target="_blank" rel="noopener">📤 Compartir</a>
+              </div>
+            </div>
+          </div>
+        </div>
+        {% endfor %}
+      </div>
+      {% else %}
+      <div class="alert alert-light border mb-0">No hay videos disponibles.</div>
+      {% endif %}
+    </div>
+  </div>
+
+  {% elif panel == 'messages' %}
+  <div class="card app-card mb-4">
+    <div class="card-header bg-white fw-bold d-flex justify-content-between align-items-center">
+      <span>Mensajes comerciales</span>
+      <a class="btn btn-sm btn-outline-secondary" href="{{ url_for('referrals.seller_resources') }}"><i class="bi bi-grid me-1"></i>Hub</a>
+    </div>
+    <div class="card-body">
+      <form class="row g-2 align-items-end mb-4" method="get" action="{{ url_for('referrals.seller_resources') }}">
+        <input type="hidden" name="panel" value="messages">
+        <div class="col-md-8">
+          <label class="form-label">Buscar mensajes</label>
+          <input class="form-control" name="q" value="{{ search_term }}" placeholder="Título, categoría o contenido">
+        </div>
+        <div class="col-md-4 d-grid">
+          <button class="btn btn-primary" type="submit"><i class="bi bi-search me-1"></i>Buscar</button>
+        </div>
+      </form>
+
+      <div class="d-flex flex-wrap gap-2 mb-3">
+        {% for key, label in resource_message_categories %}
+        <a class="btn btn-sm btn-outline-primary" href="{{ url_for('referrals.seller_resources', panel='messages', q=label) }}">{{ label }}</a>
+        {% endfor %}
+      </div>
+
+      {% for group in grouped_messages %}
+      <div class="mb-4">
+        <div class="d-flex justify-content-between align-items-center gap-2 mb-2">
+          <h2 class="h6 fw-bold mb-0">{{ group.label }}</h2>
+          <span class="badge text-bg-light border">{{ group.messages|length }}</span>
+        </div>
+        <div class="row g-3">
+          {% for message in group.messages %}
+          <div class="col-lg-6">
+            <div class="card h-100 resource-card">
+              <div class="card-body d-flex flex-column">
+                <div class="d-flex justify-content-between align-items-start gap-2 mb-2">
+                  <h3 class="h6 fw-bold mb-0">{{ message.title }}</h3>
+                  <span class="badge text-bg-light border">{{ message.category|replace('_', ' ') }}</span>
+                </div>
+                <p class="small text-muted mb-3 flex-grow-1">{{ message.content }}</p>
+                <div class="d-flex flex-wrap gap-2 mt-auto">
+                  <button class="btn btn-sm btn-outline-primary" type="button" data-copy-text="{{ message.content }}">📋 Copiar</button>
+                  <a class="btn btn-sm btn-success" href="https://wa.me/?text={{ ('StockArmobile: ' ~ message.title ~ ' - ' ~ message.content)|urlencode }}" target="_blank" rel="noopener">📤 WhatsApp</a>
+                </div>
+              </div>
+            </div>
+          </div>
+          {% endfor %}
+        </div>
+      </div>
+      {% else %}
+      <div class="alert alert-light border mb-0">No hay mensajes comerciales disponibles.</div>
+      {% endfor %}
+    </div>
+  </div>
+
+  {% elif panel == 'guide' %}
+  <div class="card app-card mb-4">
+    <div class="card-header bg-white fw-bold d-flex justify-content-between align-items-center">
+      <span>Guía de ventas</span>
+      <a class="btn btn-sm btn-outline-secondary" href="{{ url_for('referrals.seller_resources') }}"><i class="bi bi-grid me-1"></i>Hub</a>
+    </div>
+    <div class="card-body">
+      <div class="row g-3 mb-3">
+        {% for step in guide_steps %}
+        <div class="col-md-6 col-xl-4">
+          <div class="card h-100 resource-card"><div class="card-body">{{ step }}</div></div>
+        </div>
+        {% endfor %}
+      </div>
+      <div class="row g-3">
+        <div class="col-lg-6">
+          <div class="card h-100 resource-card"><div class="card-header bg-white fw-bold">Objeciones frecuentes</div><div class="card-body"><div class="accordion" id="resourceObjections">{% for item in [('No tengo tiempo', 'Arrancá con una demo corta y una meta simple para la primera semana.'), ('Ya uso otro sistema', 'Compará tiempos, errores y claridad para mostrar una mejora concreta.'), ('Es caro', 'Mostrá el costo de no controlar stock, caja y reportes.') ] %}<div class="accordion-item"><h2 class="accordion-header"><button class="accordion-button collapsed" type="button" data-bs-toggle="collapse" data-bs-target="#objection{{ loop.index }}">{{ item[0] }}</button></h2><div id="objection{{ loop.index }}" class="accordion-collapse collapse" data-bs-parent="#resourceObjections"><div class="accordion-body">{{ item[1] }}</div></div></div>{% endfor %}</div></div></div>
+        </div>
+        <div class="col-lg-6">
+          <div class="card h-100 resource-card"><div class="card-header bg-white fw-bold">Tips rápidos</div><div class="card-body d-grid gap-2">{% for tip in tips %}<div class="border rounded p-2">{{ tip }}</div>{% endfor %}</div></div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  {% elif panel == 'faq' %}
+  <div class="card app-card mb-4" id="resource-faq">
+    <div class="card-header bg-white fw-bold d-flex justify-content-between align-items-center">
+      <span>Preguntas frecuentes</span>
+      <a class="btn btn-sm btn-outline-secondary" href="{{ url_for('referrals.seller_resources') }}"><i class="bi bi-grid me-1"></i>Hub</a>
+    </div>
+    <div class="card-body">
+      <div class="accordion" id="resourceFaq">
+        {% for item in faq_items %}
+        <div class="accordion-item resource-card">
+          <h2 class="accordion-header" id="faqHeading{{ loop.index }}">
+            <button class="accordion-button collapsed" type="button" data-bs-toggle="collapse" data-bs-target="#faqCollapse{{ loop.index }}" aria-expanded="false" aria-controls="faqCollapse{{ loop.index }}">{{ item.q }}</button>
+          </h2>
+          <div id="faqCollapse{{ loop.index }}" class="accordion-collapse collapse" aria-labelledby="faqHeading{{ loop.index }}" data-bs-parent="#resourceFaq">
+            <div class="accordion-body">{{ item.a }}</div>
+          </div>
+        </div>
+        {% endfor %}
+      </div>
+    </div>
+  </div>
+
+  {% elif panel == 'tips' %}
+  <div class="card app-card mb-4">
+    <div class="card-header bg-white fw-bold d-flex justify-content-between align-items-center">
+      <span>Tips de venta</span>
+      <a class="btn btn-sm btn-outline-secondary" href="{{ url_for('referrals.seller_resources') }}"><i class="bi bi-grid me-1"></i>Hub</a>
+    </div>
+    <div class="card-body">
+      <div class="row g-3">
+        {% for tip in tips %}
+        <div class="col-md-6 col-xl-4">
+          <div class="card h-100 resource-card"><div class="card-body">{{ loop.index }}. {{ tip }}</div></div>
+        </div>
+        {% endfor %}
+      </div>
+    </div>
+  </div>
+
+  {% elif panel == 'support' %}
+  <div class="card app-card mb-4">
+    <div class="card-header bg-white fw-bold d-flex justify-content-between align-items-center">
+      <span>Soporte</span>
+      <a class="btn btn-sm btn-outline-secondary" href="{{ url_for('referrals.seller_resources') }}"><i class="bi bi-grid me-1"></i>Hub</a>
+    </div>
+    <div class="card-body">
+      <div class="row g-3">
+        <div class="col-md-4">
+          <div class="card h-100 resource-card">
+            <div class="card-body d-grid gap-2">
+              <h2 class="h6 fw-bold">Email</h2>
+              <div class="text-muted small">{{ support.email }}</div>
+              <a class="btn btn-sm btn-outline-primary" href="{{ support.email_link }}">Enviar email</a>
+              <button class="btn btn-sm btn-outline-secondary" type="button" data-copy-text="{{ support.email }}">Copiar email</button>
+            </div>
+          </div>
+        </div>
+        <div class="col-md-4">
+          <div class="card h-100 resource-card">
+            <div class="card-body d-grid gap-2">
+              <h2 class="h6 fw-bold">WhatsApp</h2>
+              <div class="text-muted small">{{ support.whatsapp_display }}</div>
+              <a class="btn btn-sm btn-success" href="{{ support.whatsapp_link }}" target="_blank" rel="noopener">Abrir WhatsApp</a>
+            </div>
+          </div>
+        </div>
+        <div class="col-md-4">
+          <div class="card h-100 resource-card">
+            <div class="card-body d-grid gap-2">
+              <h2 class="h6 fw-bold">Documentación</h2>
+              <a class="btn btn-sm btn-outline-primary" href="{{ support.manual_pdf }}">Manual PDF</a>
+                <a class="btn btn-sm btn-outline-primary" href="{{ support.faq_link }}">Preguntas frecuentes</a>
+                <a class="btn btn-sm btn-outline-primary" href="{{ support.video_link }}">Videos comerciales</a>
+              <a class="btn btn-sm btn-outline-primary" href="{{ url_for('support.new_ticket') }}">Crear ticket</a>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+  {% endif %}
+</div>
+
+<style>
+  #resource-center, .resource-card {
+    transition: transform .22s ease, box-shadow .22s ease;
+  }
+  .resource-card:hover {
+    transform: translateY(-2px);
+    box-shadow: 0 0.5rem 1rem rgba(0, 0, 0, 0.08);
+  }
+</style>
+
+<script>
+  (() => {
+    document.querySelectorAll('[data-copy-text]').forEach((button) => {
+      button.addEventListener('click', async () => {
+        const text = button.getAttribute('data-copy-text') || '';
+        try {
+          await navigator.clipboard.writeText(text);
+          button.classList.remove('btn-outline-secondary', 'btn-outline-primary');
+          button.classList.add('btn-success');
+          button.textContent = 'Copiado';
+          setTimeout(() => window.location.reload(), 700);
+        } catch (error) {
+          console.error(error);
+        }
+      });
+    });
+  })();
+</script>
+{% endblock %}

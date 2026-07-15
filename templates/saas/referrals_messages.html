@@ -1,0 +1,108 @@
+{% extends "base_master.html" %}
+
+{% block title %}Mensajes Comerciales - StockArmobile{% endblock %}
+
+{% block content %}
+<div class="app-shell">
+  <div class="d-flex flex-wrap justify-content-between align-items-center gap-3 mb-4">
+    <div>
+      <span class="page-kicker"><i class="bi bi-chat-dots"></i> Centro de Recursos</span>
+      <h1 class="h3 fw-bold mb-0">Mensajes Comerciales</h1>
+      <p class="text-muted mb-0">Crear, categorizar, editar y eliminar mensajes desde una sola pantalla.</p>
+    </div>
+    <div class="d-flex flex-wrap gap-2">
+      <a class="btn btn-outline-secondary" href="{{ url_for('referrals.admin_referrals_dashboard') }}"><i class="bi bi-arrow-left me-1"></i>Volver</a>
+      <a class="btn btn-outline-primary" href="{{ url_for('referrals.seller_resources', panel='messages') }}"><i class="bi bi-eye me-1"></i>Vista del vendedor</a>
+    </div>
+  </div>
+
+  <div class="card app-card mb-4">
+    <div class="card-body p-4">
+      <form method="get" action="{{ url_for('referrals.admin_resource_messages') }}" class="row g-2 align-items-end mb-4">
+        <div class="col-md-8">
+          <label class="form-label">Buscar</label>
+          <input class="form-control" name="q" value="{{ search_term }}" placeholder="Título, categoría o contenido">
+        </div>
+        <div class="col-md-4 d-grid">
+          <button class="btn btn-outline-primary" type="submit"><i class="bi bi-search me-1"></i>Buscar</button>
+        </div>
+      </form>
+
+      <div class="row g-4">
+        <div class="col-xl-5">
+          <div class="border rounded-3 p-3 h-100">
+            <div class="d-flex justify-content-between align-items-center mb-3">
+              <h2 class="h6 fw-bold mb-0">{{ 'Editar mensaje' if edit_message else 'Crear mensaje' }}</h2>
+              {% if edit_message %}
+              <a class="btn btn-sm btn-outline-secondary" href="{{ url_for('referrals.admin_resource_messages') }}">Cancelar edición</a>
+              {% endif %}
+            </div>
+            <form method="post" action="{{ url_for('referrals.admin_resource_messages') }}" class="row g-3">
+              <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+              {% if edit_message %}<input type="hidden" name="message_id" value="{{ edit_message.id }}">{% endif %}
+              <div class="col-12">
+                <label class="form-label">Categoría</label>
+                <select class="form-select" name="category" required>
+                  {% for key, label in categories %}
+                  <option value="{{ key }}" {% if edit_message and edit_message.category == key %}selected{% endif %}>{{ label }}</option>
+                  {% endfor %}
+                </select>
+              </div>
+              <div class="col-12">
+                <label class="form-label">Título</label>
+                <input class="form-control" name="title" value="{{ edit_message.title if edit_message else '' }}" required>
+              </div>
+              <div class="col-12">
+                <label class="form-label">Texto</label>
+                <textarea class="form-control" name="content" rows="7" required>{{ edit_message.content if edit_message else '' }}</textarea>
+              </div>
+              <div class="col-md-6">
+                <label class="form-label">Orden</label>
+                <input class="form-control" type="number" name="sort_order" value="{{ edit_message.sort_order if edit_message else 0 }}">
+              </div>
+              <div class="col-md-6 d-flex align-items-end">
+                <div class="form-check">
+                  <input class="form-check-input" type="checkbox" name="active" value="1" id="messageActive" {% if not edit_message or edit_message.active %}checked{% endif %}>
+                  <label class="form-check-label" for="messageActive">Activo</label>
+                </div>
+              </div>
+              <div class="col-12 d-grid">
+                <button class="btn btn-primary" type="submit">{{ 'Guardar cambios' if edit_message else 'Crear mensaje' }}</button>
+              </div>
+            </form>
+          </div>
+        </div>
+
+        <div class="col-xl-7">
+          <div class="row g-3">
+            {% for message in messages %}
+            <div class="col-md-6">
+              <div class="card h-100 resource-card">
+                <div class="card-body d-flex flex-column">
+                  <div class="d-flex justify-content-between align-items-start gap-2 mb-2">
+                    <h3 class="h6 fw-bold mb-0">{{ message.title }}</h3>
+                    <span class="badge text-bg-light border">{{ message.category|replace('_', ' ') }}</span>
+                  </div>
+                  <p class="small text-muted mb-3 flex-grow-1">{{ message.content }}</p>
+                  <div class="d-flex flex-wrap gap-2 mt-auto">
+                    <a class="btn btn-sm btn-outline-primary" href="{{ url_for('referrals.admin_resource_messages', edit_id=message.id, q=search_term) }}">Editar</a>
+                    <form method="post" action="{{ url_for('referrals.admin_resource_message_delete', message_id=message.id) }}" onsubmit="return confirm('Eliminar este mensaje?');">
+                      <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                      <button class="btn btn-sm btn-outline-danger" type="submit">Eliminar</button>
+                    </form>
+                  </div>
+                </div>
+              </div>
+            </div>
+            {% else %}
+            <div class="col-12">
+              <div class="alert alert-light border mb-0">No hay mensajes registrados.</div>
+            </div>
+            {% endfor %}
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+{% endblock %}

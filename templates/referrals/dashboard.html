@@ -213,254 +213,42 @@
 </div>
 
 <div class="card app-card mb-4" id="resource-center">
-  <div class="card-body">
-    <div class="d-flex flex-wrap justify-content-between align-items-center gap-2 mb-3">
+  <div class="card-body p-4">
+    <div class="d-flex flex-column flex-lg-row justify-content-between align-items-lg-center gap-3 mb-3">
       <div>
         <h2 class="h4 mb-1">Centro de Recursos</h2>
-        <div class="text-muted">Todo el material comercial para vender StockArmobile desde un solo lugar.</div>
+        <div class="text-muted">Accesos rápidos al material comercial, mensajes, guía y soporte.</div>
       </div>
-      <div class="d-flex gap-2 flex-wrap">
-        <input id="resourceSearch" class="form-control" style="min-width: 240px;" placeholder="Buscar recursos..." type="search">
+      <a class="btn btn-primary" href="{{ url_for('referrals.seller_resources') }}"><i class="bi bi-folder2-open me-1"></i>Abrir módulo</a>
+    </div>
+    <div class="row g-3">
+      <div class="col-md-4">
+        <a class="card app-card h-100 text-decoration-none text-reset company-nav-card" href="{{ url_for('referrals.seller_resources', panel='material') }}">
+          <div class="card-body d-flex gap-3 align-items-start">
+            <div class="rounded-3 bg-light border d-inline-flex align-items-center justify-content-center flex-shrink-0" style="width: 48px; height: 48px;"><i class="bi bi-folder2-open fs-4 text-primary"></i></div>
+            <div><h3 class="h6 fw-bold mb-1">Material Comercial</h3><p class="text-muted small mb-0">Catálogos, folletos, logos e imágenes.</p></div>
+          </div>
+        </a>
+      </div>
+      <div class="col-md-4">
+        <a class="card app-card h-100 text-decoration-none text-reset company-nav-card" href="{{ url_for('referrals.seller_resources', panel='videos') }}">
+          <div class="card-body d-flex gap-3 align-items-start">
+            <div class="rounded-3 bg-light border d-inline-flex align-items-center justify-content-center flex-shrink-0" style="width: 48px; height: 48px;"><i class="bi bi-play-circle fs-4 text-primary"></i></div>
+            <div><h3 class="h6 fw-bold mb-1">Videos Comerciales</h3><p class="text-muted small mb-0">Videos reales con miniaturas y descarga.</p></div>
+          </div>
+        </a>
+      </div>
+      <div class="col-md-4">
+        <a class="card app-card h-100 text-decoration-none text-reset company-nav-card" href="{{ url_for('referrals.seller_resources', panel='messages') }}">
+          <div class="card-body d-flex gap-3 align-items-start">
+            <div class="rounded-3 bg-light border d-inline-flex align-items-center justify-content-center flex-shrink-0" style="width: 48px; height: 48px;"><i class="bi bi-chat-dots fs-4 text-primary"></i></div>
+            <div><h3 class="h6 fw-bold mb-1">Mensajes Comerciales</h3><p class="text-muted small mb-0">Mensajes listos para WhatsApp y seguimiento.</p></div>
+          </div>
+        </a>
       </div>
     </div>
-
-    <div class="d-flex flex-wrap gap-2 mb-4" id="resourceFilters">
-      <button class="btn btn-sm btn-primary" data-category="all" type="button">Todos</button>
-      <button class="btn btn-sm btn-outline-primary" data-category="videos" type="button">Videos</button>
-      <button class="btn btn-sm btn-outline-primary" data-category="imagenes" type="button">Imagenes</button>
-      <button class="btn btn-sm btn-outline-primary" data-category="pdfs" type="button">Folletos PDF</button>
-      <button class="btn btn-sm btn-outline-primary" data-category="whatsapp" type="button">WhatsApp</button>
-      <button class="btn btn-sm btn-outline-primary" data-category="emails" type="button">Emails</button>
-      <button class="btn btn-sm btn-outline-primary" data-category="faq" type="button">FAQ</button>
-      <button class="btn btn-sm btn-outline-primary" data-category="guia" type="button">Guia de venta</button>
-      <button class="btn btn-sm btn-outline-primary" data-category="tips" type="button">Tips</button>
-      <button class="btn btn-sm btn-outline-primary" data-category="compartir" type="button">Compartir</button>
-      <button class="btn btn-sm btn-outline-primary" data-category="soporte" type="button">Soporte</button>
-    </div>
-
-    <section class="resource-item" data-category="videos" id="resource-center-videos">
-      <h3 class="h5 mb-3">Videos comerciales</h3>
-      <div class="row g-3 mb-4">
-        {% for video in resource_center.videos %}
-        <div class="col-md-6 col-xl-4">
-          <div class="card h-100 resource-card">
-            <img src="{{ video.thumbnail }}" class="card-img-top" alt="{{ video.title }}">
-            <div class="card-body">
-              <h4 class="h6 mb-1">{{ video.title }}</h4>
-              <p class="text-muted small mb-2">{{ video.description }}</p>
-              {% if not video.available %}
-              <span class="badge text-bg-warning">Proximamente</span>
-              {% endif %}
-            </div>
-            <div class="card-footer bg-white border-0 d-flex gap-2">
-              {% if video.available and video.view_url %}
-              <a class="btn btn-sm btn-primary" href="{{ video.view_url }}" target="_blank" rel="noopener">Ver video</a>
-              {% else %}
-              <button class="btn btn-sm btn-outline-secondary" type="button" disabled>Ver video</button>
-              {% endif %}
-              {% if video.available and video.download_url %}
-              <a class="btn btn-sm btn-outline-primary" href="{{ video.download_url }}" download>Descargar</a>
-              {% else %}
-              <button class="btn btn-sm btn-outline-secondary" type="button" disabled>Descargar</button>
-              {% endif %}
-            </div>
-          </div>
-        </div>
-        {% endfor %}
-      </div>
-    </section>
-
-    <section class="resource-item" data-category="imagenes">
-      <h3 class="h5 mb-3">Imagenes para redes sociales</h3>
-      <div class="row g-3 mb-4">
-        {% for image in resource_center.social_images %}
-        <div class="col-md-6 col-xl-4">
-          <div class="card h-100 resource-card">
-            <img src="{{ image.preview_url }}" class="card-img-top" alt="{{ image.title }}">
-            <div class="card-body">
-              <div class="d-flex justify-content-between align-items-center gap-2 mb-2">
-                <h4 class="h6 mb-0">{{ image.title }}</h4>
-                <span class="badge text-bg-light border">{{ image.platform }}</span>
-              </div>
-              <div class="d-flex gap-2 flex-wrap">
-                <a class="btn btn-sm btn-outline-primary" href="{{ image.download_url }}" download>Descargar</a>
-                <button class="btn btn-sm btn-outline-secondary" type="button" data-copy-text="{{ image.suggested_text }}">Copiar texto sugerido</button>
-              </div>
-            </div>
-          </div>
-        </div>
-        {% endfor %}
-      </div>
-    </section>
-
-    <section class="resource-item" data-category="pdfs">
-      <h3 class="h5 mb-3">Folletos PDF</h3>
-      <div class="row g-3 mb-4">
-        {% for pdf in resource_center.pdfs %}
-        <div class="col-md-6 col-xl-3">
-          <div class="card h-100 resource-card">
-            <div class="card-body d-flex flex-column">
-              <h4 class="h6">{{ pdf.title }}</h4>
-              <p class="text-muted small flex-grow-1">Material comercial listo para compartir con prospectos.</p>
-              <a class="btn btn-sm btn-outline-primary" href="{{ pdf.url }}">Descargar</a>
-            </div>
-          </div>
-        </div>
-        {% endfor %}
-      </div>
-    </section>
-
-    <section class="resource-item" data-category="whatsapp">
-      <h3 class="h5 mb-3">Mensajes listos para WhatsApp</h3>
-      <div class="row g-3 mb-4">
-        {% for message in resource_center.whatsapp_messages %}
-        <div class="col-lg-6">
-          <div class="card h-100 resource-card">
-            <div class="card-body">
-              <div class="fw-semibold mb-2">Mensaje {{ loop.index }}</div>
-              <p class="mb-3 small">{{ message }}</p>
-              <button class="btn btn-sm btn-outline-secondary" type="button" data-copy-text="{{ message }}">Copiar</button>
-            </div>
-          </div>
-        </div>
-        {% endfor %}
-      </div>
-    </section>
-
-    <section class="resource-item" data-category="emails">
-      <h3 class="h5 mb-3">Emails listos</h3>
-      <div class="row g-3 mb-4">
-        {% for email in resource_center.email_templates %}
-        <div class="col-lg-6">
-          <div class="card h-100 resource-card">
-            <div class="card-body">
-              <div class="fw-semibold mb-1">{{ email.name }}</div>
-              <div class="small mb-2"><strong>Asunto:</strong> {{ email.subject }}</div>
-              <pre class="small bg-light p-2 rounded border">{{ email.body }}</pre>
-              <button class="btn btn-sm btn-outline-secondary" type="button" data-copy-text="Asunto: {{ email.subject }}\n\n{{ email.body }}">Copiar</button>
-            </div>
-          </div>
-        </div>
-        {% endfor %}
-      </div>
-    </section>
-
-    <section class="resource-item" data-category="faq" id="resource-center-faq">
-      <h3 class="h5 mb-3">Preguntas frecuentes</h3>
-      <div class="accordion mb-4" id="resourceFaq">
-        {% for item in resource_center.faq_items %}
-        <div class="accordion-item resource-card">
-          <h2 class="accordion-header" id="faqHeading{{ loop.index }}">
-            <button class="accordion-button collapsed" type="button" data-bs-toggle="collapse" data-bs-target="#faqCollapse{{ loop.index }}" aria-expanded="false" aria-controls="faqCollapse{{ loop.index }}">{{ item.q }}</button>
-          </h2>
-          <div id="faqCollapse{{ loop.index }}" class="accordion-collapse collapse" aria-labelledby="faqHeading{{ loop.index }}" data-bs-parent="#resourceFaq">
-            <div class="accordion-body">{{ item.a }}</div>
-          </div>
-        </div>
-        {% endfor %}
-      </div>
-    </section>
-
-    <section class="resource-item" data-category="guia">
-      <h3 class="h5 mb-3">Guia para vender StockArmobile</h3>
-      <div class="card resource-card mb-3">
-        <div class="card-body">
-          <ol class="mb-0">
-            {% for step in resource_center.sales_guide_steps %}
-            <li class="mb-2">{{ step }}</li>
-            {% endfor %}
-          </ol>
-        </div>
-      </div>
-      <div class="row g-3 mb-4">
-        {% for row in resource_center.objection_handling %}
-        <div class="col-lg-6">
-          <div class="card h-100 resource-card">
-            <div class="card-body">
-              <h4 class="h6">Objecion: {{ row.objection }}</h4>
-              <p class="small mb-0">{{ row.response }}</p>
-            </div>
-          </div>
-        </div>
-        {% endfor %}
-      </div>
-    </section>
-
-    <section class="resource-item" data-category="tips">
-      <h3 class="h5 mb-3">Tips para vender mas</h3>
-      <div class="row g-2 mb-4">
-        {% for tip in resource_center.sales_tips %}
-        <div class="col-md-6 col-xl-4">
-          <div class="border rounded p-2 h-100 resource-card small">{{ loop.index }}. {{ tip }}</div>
-        </div>
-        {% endfor %}
-      </div>
-    </section>
-
-    <section class="resource-item" data-category="compartir">
-      <h3 class="h5 mb-3">Compartir</h3>
-      <div class="d-flex flex-wrap gap-2 mb-4">
-        <a class="btn btn-success btn-sm" href="{{ resource_center.share.whatsapp }}" target="_blank" rel="noopener">WhatsApp</a>
-        <a class="btn btn-primary btn-sm" href="{{ resource_center.share.facebook }}" target="_blank" rel="noopener">Facebook</a>
-        <a class="btn btn-outline-primary btn-sm" href="{{ resource_center.share.linkedin }}" target="_blank" rel="noopener">LinkedIn</a>
-        <button class="btn btn-outline-secondary btn-sm" type="button" data-copy-text="{{ resource_center.share.referral_url }}">Copiar enlace</button>
-        <button class="btn btn-outline-secondary btn-sm" type="button" data-copy-text="{{ resource_center.share.referral_code }}">Copiar codigo referido</button>
-      </div>
-    </section>
-
-    <section class="resource-item" data-category="soporte">
-      <h3 class="h5 mb-3">Soporte para vendedores</h3>
-      <div class="row g-3">
-        <div class="col-md-6 col-xl-4">
-          <div class="card h-100 resource-card">
-            <div class="card-body">
-              <h4 class="h6">Email</h4>
-              <p class="small">{{ resource_center.support.email }}</p>
-              <a class="btn btn-sm btn-outline-primary mb-2" href="{{ resource_center.support.email_link }}">Enviar email</a>
-              <button class="btn btn-sm btn-outline-secondary" type="button" data-copy-text="{{ resource_center.support.email }}">Copiar email</button>
-            </div>
-          </div>
-        </div>
-        <div class="col-md-6 col-xl-4">
-          <div class="card h-100 resource-card">
-            <div class="card-body">
-              <h4 class="h6">WhatsApp soporte</h4>
-              <p class="small">{{ resource_center.support.whatsapp_display }}</p>
-              <a class="btn btn-sm btn-success" href="{{ resource_center.support.whatsapp }}" target="_blank" rel="noopener">Abrir WhatsApp</a>
-            </div>
-          </div>
-        </div>
-        <div class="col-md-6 col-xl-4">
-          <div class="card h-100 resource-card">
-            <div class="card-body">
-              <h4 class="h6">Documentacion</h4>
-              <div class="d-grid gap-2">
-                <a class="btn btn-sm btn-outline-primary" href="{{ resource_center.support.manual_pdf }}">Manual PDF</a>
-                <a class="btn btn-sm btn-outline-primary" href="{{ resource_center.support.tutorial_anchor }}">Tutoriales</a>
-                <a class="btn btn-sm btn-outline-primary" href="{{ resource_center.support.faq_anchor }}">Preguntas frecuentes</a>
-              </div>
-            </div>
-          </div>
-        </div>
-      </div>
-    </section>
   </div>
 </div>
-
-<style>
-  #resource-center .resource-card {
-    transition: transform .22s ease, box-shadow .22s ease;
-    animation: resourceFade .35s ease;
-  }
-  #resource-center .resource-card:hover {
-    transform: translateY(-2px);
-    box-shadow: 0 0.5rem 1rem rgba(0, 0, 0, 0.08);
-  }
-  @keyframes resourceFade {
-    from { opacity: 0; transform: translateY(6px); }
-    to { opacity: 1; transform: translateY(0); }
-  }
-</style>
 
 <script>
   (() => {
@@ -479,52 +267,6 @@
         }
       });
     });
-
-    const instagramButton = document.querySelector('[data-share-instagram]');
-    if (instagramButton) {
-      instagramButton.addEventListener('click', async () => {
-        const link = instagramButton.getAttribute('data-share-instagram') || '';
-        try {
-          await navigator.clipboard.writeText('Mira StockArmobile: ' + link);
-        } catch (error) {
-          console.error(error);
-        }
-        window.open('https://www.instagram.com/', '_blank', 'noopener');
-      });
-    }
-
-    const searchInput = document.getElementById('resourceSearch');
-    const filterButtons = document.querySelectorAll('#resourceFilters [data-category]');
-    const sections = document.querySelectorAll('#resource-center .resource-item');
-    let activeCategory = 'all';
-
-    const applyResourceFilters = () => {
-      const term = (searchInput?.value || '').toLowerCase().trim();
-      sections.forEach((section) => {
-        const category = section.getAttribute('data-category') || '';
-        const matchesCategory = activeCategory === 'all' || activeCategory === category;
-        const text = (section.textContent || '').toLowerCase();
-        const matchesSearch = term.length === 0 || text.includes(term);
-        section.style.display = matchesCategory && matchesSearch ? '' : 'none';
-      });
-    };
-
-    filterButtons.forEach((button) => {
-      button.addEventListener('click', () => {
-        activeCategory = button.getAttribute('data-category') || 'all';
-        filterButtons.forEach((btn) => {
-          btn.classList.remove('btn-primary');
-          btn.classList.add('btn-outline-primary');
-        });
-        button.classList.add('btn-primary');
-        button.classList.remove('btn-outline-primary');
-        applyResourceFilters();
-      });
-    });
-
-    if (searchInput) {
-      searchInput.addEventListener('input', applyResourceFilters);
-    }
   })();
 </script>
 {% endblock %}

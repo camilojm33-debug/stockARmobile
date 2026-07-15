@@ -1530,6 +1530,92 @@ def test_plan_limits_block_create_products_and_clients_without_breaking_portal()
     assert "Por el crecimiento de su negocio le recomendamos actualizar al Plan" in portal_html
 
 
+def test_trial_has_priority_over_pending_subscription_and_keeps_dashboard_open():
+    client = stock_app.app.test_client()
+
+    with stock_app.app.app_context():
+        from app import Plan, Subscription
+        from services.plan_service import PlanService
+
+        PlanService.ensure_defaults(db.session)
+        trial_plan = Plan.query.filter_by(code="trial").first()
+        assert trial_plan is not None
+
+        company = Company.query.filter_by(name="Empresa Demo").first()
+        assert company is not None
+        company.trial_ends_at = stock_app.utcnow() + timedelta(days=3)
+
+        pending_plan = Plan.query.filter_by(code="entrepreneur").first()
+        if pending_plan is None:
+            pending_plan = Plan(code="entrepreneur", name="Emprendedor", price=12999, currency="ARS", duration_days=30, active=True)
+            db.session.add(pending_plan)
+            db.session.flush()
+
+        subscription = Subscription.query.filter_by(company_id=company.id).first()
+        if subscription is None:
+            subscription = Subscription(company_id=company.id, plan_id=pending_plan.id, status="pending")
+            db.session.add(subscription)
+        subscription.plan_id = pending_plan.id
+        subscription.status = "pending"
+        subscription.trial_end = company.trial_ends_at
+        subscription.start_date = stock_app.utcnow()
+        subscription.starts_at = stock_app.utcnow()
+        subscription.ends_at = company.trial_ends_at
+        subscription.next_billing_date = company.trial_ends_at
+        db.session.commit()
+
+    client.post("/auth/login", data={"username": "empresa_admin", "password": "admin123"})
+    dashboard = client.get("/dashboard/", follow_redirects=False)
+    assert dashboard.status_code == 200
+    assert "Estado de acceso" not in dashboard.data.decode("utf-8")
+
+
+def test_expired_trial_allows_subscription_portal_and_blocks_dashboard():
+    client = stock_app.app.test_client()
+
+    with stock_app.app.app_context():
+        from app import Plan, Subscription
+        from services.plan_service import PlanService
+
+        PlanService.ensure_defaults(db.session)
+
+        company = Company.query.filter_by(name="Empresa Demo").first()
+        assert company is not None
+        company.trial_ends_at = stock_app.utcnow() - timedelta(days=1)
+
+        pending_plan = Plan.query.filter_by(code="entrepreneur").first()
+        assert pending_plan is not None
+
+        subscription = Subscription.query.filter_by(company_id=company.id).first()
+        if subscription is None:
+            subscription = Subscription(company_id=company.id, plan_id=pending_plan.id, status="pending")
+            db.session.add(subscription)
+        subscription.plan_id = pending_plan.id
+        subscription.status = "pending"
+        subscription.trial_end = company.trial_ends_at
+        subscription.start_date = stock_app.utcnow() - timedelta(days=5)
+        subscription.starts_at = stock_app.utcnow() - timedelta(days=5)
+        subscription.ends_at = stock_app.utcnow() - timedelta(days=1)
+        subscription.next_billing_date = stock_app.utcnow() - timedelta(days=1)
+        db.session.commit()
+
+    client.post("/auth/login", data={"username": "empresa_admin", "password": "admin123"})
+    blocked_dashboard = client.get("/dashboard/", follow_redirects=False)
+    assert blocked_dashboard.status_code in (301, 302)
+    assert "/access-status" in (blocked_dashboard.headers.get("Location") or "")
+
+    portal = client.get("/admin/portal")
+    assert portal.status_code == 200
+    portal_html = portal.data.decode("utf-8")
+    assert "Uso del plan" in portal_html
+    assert "Comenzar suscripcion" in portal_html or "Plan actual" in portal_html
+
+    status_page = client.get("/access-status")
+    assert status_page.status_code == 200
+    status_html = status_page.data.decode("utf-8")
+    assert "Pago pendiente" in status_html or "Tu prueba finalizo" in status_html
+
+
 def test_referral_capture_and_register_attribution_flow():
     client = stock_app.app.test_client()
 

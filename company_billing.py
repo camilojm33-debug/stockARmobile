@@ -251,7 +251,7 @@ def _build_user_and_cash_rows(company_id, date_from=None, date_to=None):
 
 
 @bp.route("/portal")
-@tenant_required
+@company_member_required
 def subscription_portal():
     from app import Company, db
 
@@ -279,7 +279,7 @@ def subscription_portal():
 
 
 @bp.route("/checkout", methods=["POST"])
-@tenant_required
+@company_member_required
 def create_checkout():
     from app import Company, db, record_audit
 
@@ -322,7 +322,7 @@ def create_checkout():
 
 
 @bp.route("/subscription/cancel", methods=["POST"])
-@tenant_required
+@company_member_required
 def cancel_subscription():
     from app import db, record_audit
 
@@ -339,7 +339,7 @@ def cancel_subscription():
 
 
 @bp.route("/subscription/reactivate", methods=["POST"])
-@tenant_required
+@company_member_required
 def reactivate_subscription():
     from app import db, record_audit
 

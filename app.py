@@ -236,13 +236,20 @@ def get_company_access_state(company_id):
         return {"status": "missing", "can_access": False, "reason": "Empresa no encontrada."}
     if not company.active:
         return {"status": "suspended", "can_access": False, "reason": "La empresa ha sido suspendida."}
+
+    trial_limit = None
     subscription = Subscription.query.filter_by(company_id=company.id).order_by(Subscription.starts_at.desc()).first()
     if subscription is None:
-        if company.trial_ends_at and utcnow() > company.trial_ends_at:
+        trial_limit = company.trial_ends_at
+        if trial_limit and utcnow() <= trial_limit:
+            return {"status": "trial", "can_access": True, "reason": "Periodo de prueba activo."}
+        if trial_limit and utcnow() > trial_limit:
             return {"status": "trial_expired", "can_access": False, "reason": "El periodo de prueba finalizó."}
         return {"status": "trial", "can_access": True, "reason": "Periodo de prueba activo."}
 
     trial_limit = subscription.trial_end or company.trial_ends_at
+    if trial_limit and utcnow() <= trial_limit:
+        return {"status": "trial", "can_access": True, "reason": "Periodo de prueba activo."}
     if trial_limit and utcnow() > trial_limit and (subscription.status or "").lower() == "trial":
         return {"status": "trial_expired", "can_access": False, "reason": "Tu prueba expiró. Suscribite para continuar."}
 
@@ -941,6 +948,19 @@ class SupportTicket(db.Model):
     company = db.relationship("Company", foreign_keys=[company_id], backref="support_tickets")
     user = db.relationship("User", foreign_keys=[user_id], backref="support_tickets_created")
     resolved_by = db.relationship("User", foreign_keys=[resolved_by_user_id], backref="support_tickets_resolved")
+
+
+class ResourceMessage(db.Model):
+    __tablename__ = "resource_messages"
+
+    id = db.Column(db.Integer, primary_key=True)
+    category = db.Column(db.String(40), nullable=False, index=True)
+    title = db.Column(db.String(160), nullable=False)
+    content = db.Column(db.Text, nullable=False)
+    sort_order = db.Column(db.Integer, default=0, nullable=False)
+    active = db.Column(db.Boolean, default=True, nullable=False, index=True)
+    created_at = db.Column(db.DateTime, default=utcnow, index=True)
+    updated_at = db.Column(db.DateTime, default=utcnow, onupdate=utcnow)
 
 
 def record_audit(*, action, entity=None, entity_id=None, detail=None, user_id=None, company_id=None):

@@ -15,7 +15,7 @@ from flask import Blueprint, abort, flash, make_response, redirect, render_templ
 from flask_login import current_user, login_required
 from reportlab.lib.pagesizes import A4
 from reportlab.pdfgen import canvas
-from sqlalchemy import case
+from sqlalchemy import case, or_
 from sqlalchemy.orm import joinedload
 
 from app import seller_required, superadmin_required
@@ -189,6 +189,359 @@ def _pdf_from_lines(title: str, lines: list[str], download_name: str):
     pdf.save()
     buffer.seek(0)
     return send_file(buffer, mimetype="application/pdf", as_attachment=True, download_name=download_name)
+
+
+RESOURCE_MESSAGE_CATEGORIES = [
+    ("whatsapp", "WhatsApp"),
+    ("facebook", "Facebook"),
+    ("instagram", "Instagram"),
+    ("email", "Email"),
+    ("primer_contacto", "Primer contacto"),
+    ("seguimiento", "Seguimiento"),
+    ("cierre_venta", "Cierre de venta"),
+    ("promociones", "Promociones"),
+    ("clientes_actuales", "Clientes actuales"),
+]
+
+
+def _resource_message_label(category: str) -> str:
+    labels = dict(RESOURCE_MESSAGE_CATEGORIES)
+    return labels.get(category, category.replace("_", " ").title())
+
+
+def _seed_default_resource_messages(db_session):
+    from app import ResourceMessage
+
+    if ResourceMessage.query.count() > 0:
+        return
+
+    defaults = [
+        ("whatsapp", "Primer mensaje de WhatsApp", "Hola, te comparto StockArmobile para ordenar ventas, stock y clientes desde un solo lugar. Puedo mostrártelo en una demo breve."),
+        ("facebook", "Publicación para Facebook", "StockArmobile ayuda a controlar caja, stock y ventas sin planillas ni procesos confusos. Ideal para negocios en crecimiento."),
+        ("instagram", "Story para Instagram", "Mostrá tu negocio con una herramienta moderna para vender, controlar stock y mejorar la gestión diaria."),
+        ("email", "Email de presentación", "Hola, te presento StockArmobile: una plataforma para ventas, stock, clientes y reportes que se adapta a celulares y PC."),
+        ("primer_contacto", "Apertura de conversación", "Hola, quería contarte sobre una herramienta que puede ahorrarte tiempo y errores al vender y controlar inventario."),
+        ("seguimiento", "Mensaje de seguimiento", "Te escribo para retomar la conversación y compartirte una demo corta con los beneficios más importantes de StockArmobile."),
+        ("cierre_venta", "Cierre comercial", "Si querés profesionalizar el control de tu negocio, el siguiente paso es activar la prueba y validar el flujo real en operación."),
+        ("promociones", "Promoción de lanzamiento", "Tenemos prueba gratuita y planes escalables para que empieces sin fricción y con acompañamiento inicial."),
+        ("clientes_actuales", "Mensaje para clientes actuales", "Para quienes ya usan la plataforma, este es un buen momento para sumar más usuarios y aprovechar el control operativo completo."),
+    ]
+    db_session.add_all(
+        [
+            ResourceMessage(category=category, title=title, content=content, sort_order=index * 10)
+            for index, (category, title, content) in enumerate(defaults, start=1)
+        ]
+    )
+    db_session.commit()
+
+
+def _build_resource_center_context(profile, search_term: str = ""):
+    from app import ResourceMessage, db
+
+    videos_dir = Path(current_app.static_folder) / "assets" / "videos"
+    has_demo_30 = (videos_dir / "demo-30.mp4").exists()
+    has_demo_60 = (videos_dir / "demo-60.mp4").exists()
+    has_demo_90 = (videos_dir / "demo-90.mp4").exists()
+    has_ref_tutorial = (videos_dir / "tutorial-referidos.mp4").exists()
+    has_sales_tutorial = (videos_dir / "como-vender.mp4").exists()
+    demo_fallback = (current_app.config.get("LANDING_DEMO_VIDEO_URL") or "").strip()
+
+    videos = [
+        {
+            "id": "video-demo-30",
+            "title": "Video Demo 30 segundos",
+            "description": "Presentacion ultra rapida para captar interes en menos de un minuto.",
+            "duration": "0:30",
+            "updated_at": "Actualizado hoy",
+            "thumbnail": url_for("static", filename="assets/social/thumb-demo-30.svg"),
+            "available": has_demo_30,
+            "view_url": url_for("static", filename="assets/videos/demo-30.mp4") if has_demo_30 else "",
+            "download_url": url_for("static", filename="assets/videos/demo-30.mp4") if has_demo_30 else "",
+            "share_url": f"https://wa.me/?text={quote_plus('Video comercial StockArmobile: ' + (url_for('static', filename='assets/videos/demo-30.mp4') if has_demo_30 else profile.referral_url))}",
+        },
+        {
+            "id": "video-demo-60",
+            "title": "Video Demo 60 segundos",
+            "description": "Recorrido breve de ventas, stock y reportes para compartir en WhatsApp.",
+            "duration": "1:00",
+            "updated_at": "Actualizado hoy",
+            "thumbnail": url_for("static", filename="assets/social/thumb-demo-60.svg"),
+            "available": bool(has_demo_60 or demo_fallback),
+            "view_url": url_for("static", filename="assets/videos/demo-60.mp4") if has_demo_60 else demo_fallback,
+            "download_url": url_for("static", filename="assets/videos/demo-60.mp4") if has_demo_60 else "",
+            "share_url": f"https://wa.me/?text={quote_plus('Video comercial StockArmobile: ' + (url_for('static', filename='assets/videos/demo-60.mp4') if has_demo_60 else profile.referral_url))}",
+        },
+        {
+            "id": "video-demo-90",
+            "title": "Video Demo 90 segundos",
+            "description": "Demo completa para reuniones comerciales y cierres con negocios medianos.",
+            "duration": "1:30",
+            "updated_at": "Actualizado hoy",
+            "thumbnail": url_for("static", filename="assets/social/thumb-demo-90.svg"),
+            "available": has_demo_90,
+            "view_url": url_for("static", filename="assets/videos/demo-90.mp4") if has_demo_90 else "",
+            "download_url": url_for("static", filename="assets/videos/demo-90.mp4") if has_demo_90 else "",
+            "share_url": f"https://wa.me/?text={quote_plus('Video comercial StockArmobile: ' + (url_for('static', filename='assets/videos/demo-90.mp4') if has_demo_90 else profile.referral_url))}",
+        },
+        {
+            "id": "video-tutorial-referidos",
+            "title": "Tutorial del Programa de Referidos",
+            "description": "Explica activacion, seguimiento de clientes, comisiones y cobros.",
+            "duration": "2:00",
+            "updated_at": "Actualizado hoy",
+            "thumbnail": url_for("static", filename="assets/social/thumb-referidos.svg"),
+            "available": has_ref_tutorial,
+            "view_url": url_for("static", filename="assets/videos/tutorial-referidos.mp4") if has_ref_tutorial else "",
+            "download_url": url_for("static", filename="assets/videos/tutorial-referidos.mp4") if has_ref_tutorial else "",
+            "share_url": f"https://wa.me/?text={quote_plus('Tutorial de referidos StockArmobile: ' + (url_for('static', filename='assets/videos/tutorial-referidos.mp4') if has_ref_tutorial else profile.referral_url))}",
+        },
+        {
+            "id": "video-como-vender",
+            "title": "Como vender StockArmobile",
+            "description": "Guia audiovisual para detectar necesidades y cerrar ventas con confianza.",
+            "duration": "2:30",
+            "updated_at": "Actualizado hoy",
+            "thumbnail": url_for("static", filename="assets/social/thumb-como-vender.svg"),
+            "available": has_sales_tutorial,
+            "view_url": url_for("static", filename="assets/videos/como-vender.mp4") if has_sales_tutorial else "",
+            "download_url": url_for("static", filename="assets/videos/como-vender.mp4") if has_sales_tutorial else "",
+            "share_url": f"https://wa.me/?text={quote_plus('Como vender StockArmobile: ' + (url_for('static', filename='assets/videos/como-vender.mp4') if has_sales_tutorial else profile.referral_url))}",
+        },
+    ]
+
+    materials = [
+        {
+            "title": "Catálogo de funciones",
+            "description": "Resumen comercial con beneficios principales.",
+            "icon": "bi-journal-richtext",
+            "view_url": url_for("referrals.seller_material_catalog"),
+            "download_url": url_for("referrals.seller_material_catalog"),
+            "share_url": url_for("referrals.seller_material_catalog", _external=True),
+        },
+        {
+            "title": "Folleto comercial",
+            "description": "Folleto listo para prospectos y demostraciones.",
+            "icon": "bi-file-earmark-pdf",
+            "view_url": url_for("referrals.seller_material_brochure"),
+            "download_url": url_for("referrals.seller_material_brochure"),
+            "share_url": url_for("referrals.seller_material_brochure", _external=True),
+        },
+        {
+            "title": "Comparativa de planes",
+            "description": "Ayuda a elegir la suscripción correcta.",
+            "icon": "bi-columns-gap",
+            "view_url": url_for("referrals.seller_material_plan_comparison"),
+            "download_url": url_for("referrals.seller_material_plan_comparison"),
+            "share_url": url_for("referrals.seller_material_plan_comparison", _external=True),
+        },
+        {
+            "title": "Programa de referidos",
+            "description": "Explica pasos, atribución y comisiones.",
+            "icon": "bi-people",
+            "view_url": url_for("referrals.seller_material_referrals_program"),
+            "download_url": url_for("referrals.seller_material_referrals_program"),
+            "share_url": url_for("referrals.seller_material_referrals_program", _external=True),
+        },
+    ]
+
+    images = [
+        {
+            "title": "Logo oficial",
+            "description": "Uso en redes, presentaciones y material comercial.",
+            "thumbnail": url_for("static", filename="images/branding/logo.png"),
+            "download_url": url_for("static", filename="images/branding/logo.png"),
+            "share_url": f"https://wa.me/?text={quote_plus('Logo oficial de StockArmobile: ' + profile.referral_url)}",
+            "share_text": f"Descargá el logo oficial de StockArmobile: {profile.referral_url}",
+        },
+        {
+            "title": "Post Facebook",
+            "description": "Pieza lista para compartir en redes sociales.",
+            "thumbnail": url_for("static", filename="assets/social/facebook-post.svg"),
+            "download_url": url_for("static", filename="assets/social/facebook-post.svg"),
+            "share_url": f"https://wa.me/?text={quote_plus('Post para Facebook de StockArmobile: ' + profile.referral_url)}",
+            "share_text": f"Controlá stock, ventas y caja con StockArmobile: {profile.referral_url}",
+        },
+        {
+            "title": "Post Instagram",
+            "description": "Formato pensado para publicar en Instagram.",
+            "thumbnail": url_for("static", filename="assets/social/instagram-post.svg"),
+            "download_url": url_for("static", filename="assets/social/instagram-post.svg"),
+            "share_url": f"https://wa.me/?text={quote_plus('Post para Instagram de StockArmobile: ' + profile.referral_url)}",
+            "share_text": f"Tu negocio en la palma de tu mano con StockArmobile: {profile.referral_url}",
+        },
+    ]
+
+    guide_steps = [
+        "Paso 1: Pregunta cómo controla hoy stock, ventas y caja.",
+        "Paso 2: Identifica una pérdida concreta de tiempo o dinero.",
+        "Paso 3: Muestra la demo de 60 segundos enfocada en ese dolor.",
+        "Paso 4: Explica la prueba gratis y define una meta de 7 días.",
+        "Paso 5: Cierra con una acción concreta y seguimiento breve.",
+    ]
+
+    faq_items = [
+        {"q": "¿Funciona desde celular?", "a": "Sí, puedes operar desde celular, tablet o PC."},
+        {"q": "¿Necesita instalación?", "a": "No, se usa desde navegador web."},
+        {"q": "¿Tiene prueba gratis?", "a": "Sí, incluye prueba gratuita para comenzar sin riesgo."},
+        {"q": "¿Hay soporte?", "a": "Sí, hay canales de soporte comercial y técnico."},
+        {"q": "¿Se adapta a varios rubros?", "a": "Sí, sirve para comercios y operaciones con stock."},
+    ]
+
+    tips = [
+        "Empezá por el problema, no por el precio.",
+        "Mostrá una venta real en menos de un minuto.",
+        "Adaptá el discurso al rubro del cliente.",
+        "Usá la prueba gratis como cierre sin riesgo.",
+        "Seguimiento en 24 horas después de cada demo.",
+        "Mostrá beneficios operativos con datos simples.",
+    ]
+
+    support = {
+        "email": current_app.config.get("SUPPORT_EMAIL", "stockarmobile@gmail.com"),
+        "email_link": f"mailto:{current_app.config.get('SUPPORT_EMAIL', 'stockarmobile@gmail.com')}",
+        "whatsapp_display": current_app.config.get("SUPPORT_WHATSAPP_DISPLAY", "+54 9 3624 22-8296"),
+        "whatsapp_link": f"https://wa.me/{current_app.config.get('SUPPORT_WHATSAPP_NUMBER', '5493624228296')}?text={quote_plus('Hola equipo de StockArmobile, necesito soporte comercial para vendedores.')}",
+        "manual_pdf": url_for("referrals.seller_material_brochure"),
+        "faq_link": url_for("referrals.seller_resources", panel="faq"),
+        "video_link": url_for("referrals.seller_resources", panel="videos"),
+    }
+
+    messages_query = ResourceMessage.query.filter(ResourceMessage.active.is_(True))
+    if search_term:
+        like = f"%{search_term}%"
+        messages_query = messages_query.filter(
+            or_(
+                ResourceMessage.title.ilike(like),
+                ResourceMessage.category.ilike(like),
+                ResourceMessage.content.ilike(like),
+            )
+        )
+    messages = messages_query.order_by(ResourceMessage.category.asc(), ResourceMessage.sort_order.asc(), ResourceMessage.title.asc()).all()
+    grouped_messages = []
+    for category, label in RESOURCE_MESSAGE_CATEGORIES:
+        category_messages = [message for message in messages if message.category == category]
+        if category_messages:
+            grouped_messages.append({"key": category, "label": label, "messages": category_messages})
+    other_messages = [message for message in messages if message.category not in {category for category, _ in RESOURCE_MESSAGE_CATEGORIES}]
+    if other_messages:
+        grouped_messages.append({"key": "otros", "label": "Otros", "messages": other_messages})
+
+    resource_cards = [
+        {"key": "material", "title": "Material Comercial", "icon": "bi-folder2-open", "description": "Catálogos, folletos, logos, imágenes y presentaciones.", "href": url_for("referrals.seller_resources", panel="material")},
+        {"key": "videos", "title": "Videos Comerciales", "icon": "bi-play-circle", "description": "Videos reales con miniaturas, descarga y compartido.", "href": url_for("referrals.seller_resources", panel="videos")},
+        {"key": "pdfs", "title": "PDFs y Folletos", "icon": "bi-filetype-pdf", "description": "Material descargable para enviar a prospectos.", "href": url_for("referrals.seller_resources", panel="pdfs")},
+        {"key": "images", "title": "Logos e Imágenes", "icon": "bi-image", "description": "Piezas listas para redes y presentaciones.", "href": url_for("referrals.seller_resources", panel="images")},
+        {"key": "messages", "title": "Mensajes Comerciales", "icon": "bi-chat-dots", "description": "Mensajes organizados por categoría y búsqueda.", "href": url_for("referrals.seller_resources", panel="messages")},
+        {"key": "guide", "title": "Guía de Ventas", "icon": "bi-book", "description": "Guion comercial y manejo de objeciones.", "href": url_for("referrals.seller_resources", panel="guide")},
+        {"key": "faq", "title": "Preguntas Frecuentes", "icon": "bi-question-circle", "description": "Respuestas cortas para objeciones comunes.", "href": url_for("referrals.seller_resources", panel="faq")},
+        {"key": "tips", "title": "Tips de Venta", "icon": "bi-lightbulb", "description": "Ideas rápidas para mejorar la conversión.", "href": url_for("referrals.seller_resources", panel="tips")},
+        {"key": "support", "title": "Soporte", "icon": "bi-life-preserver", "description": "Canales de ayuda y documentación.", "href": url_for("referrals.seller_resources", panel="support")},
+    ]
+
+    return {
+        "materials": materials,
+        "videos": videos,
+        "available_videos": [video for video in videos if video.get("available")],
+        "images": images,
+        "guide_steps": guide_steps,
+        "faq_items": faq_items,
+        "tips": tips,
+        "support": support,
+        "messages": messages,
+        "grouped_messages": grouped_messages,
+        "resource_cards": resource_cards,
+    }
+
+
+@bp.route("/referidos/recursos")
+@seller_required
+def seller_resources():
+    from app import ResourceMessage, db
+
+    profile = ReferralSeller.query.filter_by(user_id=current_user.id).first_or_404()
+    _seed_default_resource_messages(db.session)
+    panel = (request.args.get("panel") or "hub").strip().lower()
+    search_term = (request.args.get("q") or "").strip()
+    context = _build_resource_center_context(profile, search_term=search_term)
+    return render_template(
+        "referrals/resources.html",
+        profile=profile,
+        resource_panel=panel,
+        search_term=search_term,
+        resource_message_categories=RESOURCE_MESSAGE_CATEGORIES,
+        resource_message_labels=dict(RESOURCE_MESSAGE_CATEGORIES),
+        **context,
+    )
+
+
+@bp.route("/superadmin/referrals/resource-messages", methods=["GET", "POST"])
+@superadmin_required
+def admin_resource_messages():
+    from app import ResourceMessage, db
+
+    _seed_default_resource_messages(db.session)
+    edit_id = request.args.get("edit_id", type=int)
+    edit_message = ResourceMessage.query.filter_by(id=edit_id).first() if edit_id else None
+    search_term = (request.args.get("q") or "").strip()
+
+    if request.method == "POST":
+        message_id = request.form.get("message_id", type=int)
+        category = (request.form.get("category") or "").strip()
+        title = (request.form.get("title") or "").strip()
+        content = (request.form.get("content") or "").strip()
+        sort_order = request.form.get("sort_order", type=int) or 0
+        if category not in {key for key, _ in RESOURCE_MESSAGE_CATEGORIES}:
+            flash("Categoria invalida.", "danger")
+            return redirect(url_for("referrals.admin_resource_messages", edit_id=message_id or edit_id, q=search_term))
+        if not title or not content:
+            flash("Completa titulo y texto.", "danger")
+            return redirect(url_for("referrals.admin_resource_messages", edit_id=message_id or edit_id, q=search_term))
+
+        message = ResourceMessage.query.filter_by(id=message_id).first() if message_id else ResourceMessage()
+        if message is None:
+            flash("Mensaje no encontrado.", "danger")
+            return redirect(url_for("referrals.admin_resource_messages", q=search_term))
+
+        message.category = category
+        message.title = title
+        message.content = content
+        message.sort_order = sort_order
+        message.active = request.form.get("active") == "1"
+        db.session.add(message)
+        db.session.commit()
+        flash("Mensaje guardado correctamente.", "success")
+        return redirect(url_for("referrals.admin_resource_messages", q=search_term))
+
+    messages_query = ResourceMessage.query
+    if search_term:
+        like = f"%{search_term}%"
+        messages_query = messages_query.filter(
+            or_(
+                ResourceMessage.title.ilike(like),
+                ResourceMessage.category.ilike(like),
+                ResourceMessage.content.ilike(like),
+            )
+        )
+    messages = messages_query.order_by(ResourceMessage.category.asc(), ResourceMessage.sort_order.asc(), ResourceMessage.title.asc()).all()
+    return render_template(
+        "saas/referrals_messages.html",
+        messages=messages,
+        edit_message=edit_message,
+        categories=RESOURCE_MESSAGE_CATEGORIES,
+        search_term=search_term,
+    )
+
+
+@bp.route("/superadmin/referrals/resource-messages/<int:message_id>/delete", methods=["POST"])
+@superadmin_required
+def admin_resource_message_delete(message_id):
+    from app import ResourceMessage, db
+
+    message = ResourceMessage.query.filter_by(id=message_id).first_or_404()
+    db.session.delete(message)
+    db.session.commit()
+    flash("Mensaje eliminado correctamente.", "success")
+    return redirect(url_for("referrals.admin_resource_messages"))
 
 
 @bp.route("/superadmin/referrals")
