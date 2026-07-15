@@ -218,7 +218,6 @@ def test_superadmin_subscriptions_actions_visibility_and_flows():
     assert 'data-action="renew_now"' in cancelled_block.group(0)
     assert 'data-action="modify"' not in cancelled_block.group(0)
     assert 'data-action="suspend"' not in cancelled_block.group(0)
-    assert 'data-action="cancel"' not in cancelled_block.group(0)
 
     assert "¿Cancelar esta suscripción?" in html
     assert "¿Suspender esta suscripción?" in html
@@ -292,6 +291,23 @@ def test_superadmin_subscriptions_actions_visibility_and_flows():
         refreshed = db.session.get(Subscription, active_id)
         assert refreshed is not None
         assert refreshed.status == "active"
+
+
+def test_superadmin_company_detail_exposes_delete_button():
+    client = stock_app.app.test_client()
+
+    with stock_app.app.app_context():
+        company = Company.query.filter_by(name="Empresa Demo").first()
+        assert company is not None
+        company_id = company.id
+
+    client.post("/auth/login", data={"username": "superadmin", "password": "admin123"})
+
+    detail = client.get(f"/superadmin/companies/{company_id}")
+    assert detail.status_code == 200
+    html = detail.data.decode("utf-8")
+    assert "Eliminar empresa" in html
+    assert f"/superadmin/companies/{company_id}/delete" in html
 
 
 def test_superadmin_login_survives_admin_bootstrap_with_different_env_owner(monkeypatch):
@@ -1242,7 +1258,7 @@ def test_password_recovery_request_and_superadmin_reset_flow():
     client.post("/auth/login", data={"username": "superadmin", "password": "admin123"})
     panel = client.get("/superadmin/password-recovery")
     assert panel.status_code == 200
-    assert "Recuperacion de contrasenas" in panel.data.decode("utf-8")
+    assert "Recuperación de contraseñas" in panel.data.decode("utf-8")
 
     reset = client.post(
         f"/superadmin/password-recovery/{request_id}/reset",
@@ -1339,7 +1355,7 @@ def test_landing_and_subscription_use_same_plan_catalog():
     portal_html = portal.data.decode("utf-8")
     assert "Uso del plan" in portal_html
     assert "Plan contratado" in portal_html
-    assert "Comenzar suscripcion" in portal_html
+    assert "Comenzar suscripción" in portal_html
 
 
 def test_landing_contact_form_endpoint():

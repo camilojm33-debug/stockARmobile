@@ -3,6 +3,18 @@
 {% block title %}Mi suscripcion - StockArmobile{% endblock %}
 
 {% block content %}
+{% set status_labels = {
+  'trial': 'Prueba',
+  'pending': 'Pago pendiente',
+  'approved': 'Aprobada',
+  'active': 'Activa',
+  'cancelled': 'Cancelada',
+  'suspended': 'Suspendida',
+  'expired': 'Vencida',
+  'rejected': 'Rechazada',
+  'in_process': 'En proceso',
+  'authorized': 'Autorizada'
+} %}
 <div class="app-shell">
   <div class="d-flex flex-wrap justify-content-between align-items-center gap-3 mb-4">
     <div>
@@ -23,7 +35,7 @@
     <div class="col-md-3">
       <div class="card app-card metric-card"><div class="card-body">
         <div class="text-muted small fw-semibold text-uppercase">Estado</div>
-        <div class="metric-value fw-bold">{{ subscription.status }}</div>
+        <div class="metric-value fw-bold">{{ status_labels.get(subscription.status, subscription.status|replace('_', ' ')|title) }}</div>
       </div></div>
     </div>
     <div class="col-md-3">
@@ -35,7 +47,7 @@
     <div class="col-md-3">
       <div class="card app-card metric-card"><div class="card-body">
         <div class="text-muted small fw-semibold text-uppercase">Plan contratado</div>
-        <div class="metric-value fw-bold">{{ usage_snapshot.plan.name if usage_snapshot.plan else 'Trial' }}</div>
+        <div class="metric-value fw-bold">{{ usage_snapshot.plan.name if usage_snapshot.plan else 'Prueba' }}</div>
       </div></div>
     </div>
   </div>
@@ -105,7 +117,7 @@
             <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
             <input type="hidden" name="plan_id" value="{{ plan.id }}">
             <button class="btn {{ 'btn-outline-primary' if usage_snapshot.plan and usage_snapshot.plan.id == plan.id else 'btn-primary' }} w-100" type="submit">
-              {% if usage_snapshot.plan and usage_snapshot.plan.id == plan.id %}Plan actual{% else %}Comenzar suscripcion{% endif %}
+              {% if usage_snapshot.plan and usage_snapshot.plan.id == plan.id %}Plan actual{% else %}Comenzar suscripción{% endif %}
             </button>
           </form>
         </div>
@@ -118,13 +130,13 @@
     <div class="card-body d-flex flex-wrap gap-2">
       <form method="post" action="{{ url_for('company_billing.cancel_subscription') }}">
         <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
-        <button class="btn btn-outline-danger" type="submit">Cancelar suscripcion</button>
+        <button class="btn btn-outline-danger" type="submit">Cancelar suscripción</button>
       </form>
       <form method="post" action="{{ url_for('company_billing.reactivate_subscription') }}">
         <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
-        <button class="btn btn-outline-success" type="submit">Reactivar renovacion</button>
+        <button class="btn btn-outline-success" type="submit">Reactivar renovación</button>
       </form>
-      <span class="text-muted small ms-auto align-self-center">Public key: {{ mp_config.public_key or 'no configurada' }}</span>
+      <span class="text-muted small ms-auto align-self-center">Clave pública: {{ mp_config.public_key or 'no configurada' }}</span>
     </div>
   </div>
 

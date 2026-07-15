@@ -99,7 +99,7 @@ def add_security_headers(response):
     response.headers.setdefault(
         "Content-Security-Policy",
         "default-src 'self' https: data: blob:; "
-        "script-src 'self' 'unsafe-inline' 'unsafe-eval' https:; "
+        "script-src 'self' 'unsafe-inline' https:; "
         "style-src 'self' 'unsafe-inline' https:; "
         "font-src 'self' data: https:; "
         "img-src 'self' data: blob: https:; "

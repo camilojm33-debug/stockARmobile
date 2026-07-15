@@ -26,11 +26,11 @@ def upgrade() -> None:
         op.create_table(
             "resource_messages",
             sa.Column("id", sa.Integer(), primary_key=True),
-            sa.Column("category", sa.String(length=40), nullable=False, index=True),
+            sa.Column("category", sa.String(length=40), nullable=False),
             sa.Column("title", sa.String(length=160), nullable=False),
             sa.Column("content", sa.Text(), nullable=False),
             sa.Column("sort_order", sa.Integer(), nullable=False, server_default="0"),
-            sa.Column("active", sa.Boolean(), nullable=False, server_default=sa.text("1")),
+            sa.Column("active", sa.Boolean(), nullable=False, server_default=sa.true()),
             sa.Column("created_at", sa.DateTime(), nullable=True),
             sa.Column("updated_at", sa.DateTime(), nullable=True),
         )

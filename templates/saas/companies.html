@@ -3,6 +3,13 @@
 {% block title %}Empresas - SuperAdmin{% endblock %}
 
 {% block content %}
+{% set status_labels = {
+  'trial': 'Prueba',
+  'expired': 'Vencida',
+  'active': 'Activa',
+  'inactive': 'Inactiva',
+  'suspended': 'Suspendida'
+} %}
 <div class="app-shell">
   <div class="d-flex flex-wrap justify-content-between align-items-center gap-3 mb-4">
     <div>
@@ -33,7 +40,7 @@
             <option value="all" {% if filters.status == 'all' %}selected{% endif %}>Todos</option>
             <option value="active" {% if filters.status == 'active' %}selected{% endif %}>Activas</option>
             <option value="inactive" {% if filters.status == 'inactive' %}selected{% endif %}>Inactivas</option>
-            <option value="trial" {% if filters.status == 'trial' %}selected{% endif %}>Trial</option>
+            <option value="trial" {% if filters.status == 'trial' %}selected{% endif %}>Prueba</option>
             <option value="expired" {% if filters.status == 'expired' %}selected{% endif %}>Vencidas</option>
           </select>
         </div>
@@ -91,7 +98,7 @@
             <td>
               {% if sub and sub.plan %}
                 <div class="fw-semibold">{{ sub.plan.name }}</div>
-                <div class="small text-muted">{{ sub.status }}</div>
+                <div class="small text-muted">{{ status_labels.get(sub.status, sub.status|replace('_', ' ')|title) }}</div>
               {% else %}
                 <span class="text-muted">Sin suscripcion</span>
               {% endif %}

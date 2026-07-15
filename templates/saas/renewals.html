@@ -1,8 +1,20 @@
 {% extends "base_master.html" %}
 {% block title %}Renovaciones - SuperAdmin{% endblock %}
 {% block content %}
+{% set status_labels = {
+  'trial': 'Prueba',
+  'pending': 'Pago pendiente',
+  'active': 'Activa',
+  'approved': 'Aprobada',
+  'cancelled': 'Cancelada',
+  'suspended': 'Suspendida',
+  'expired': 'Vencida',
+  'rejected': 'Rechazada',
+  'in_process': 'En proceso',
+  'authorized': 'Autorizada'
+} %}
 <div class="app-shell">
   <div class="d-flex justify-content-between align-items-center mb-3"><h1 class="h3 fw-bold mb-0">Renovaciones</h1><a class="btn btn-outline-secondary" href="{{ url_for('saas.index') }}">Volver</a></div>
-  <div class="card app-card"><div class="table-responsive"><table class="table mb-0 table-hover"><thead><tr><th>Suscripcion</th><th>Empresa</th><th>Plan</th><th>Proximo cobro</th><th>Estado</th></tr></thead><tbody>{% for sub in renewals %}<tr><td>#{{ sub.id }}</td><td>{{ sub.company_id }}</td><td>{{ sub.plan.name if sub.plan else '-' }}</td><td>{{ sub.next_billing_date.strftime('%Y-%m-%d') if sub.next_billing_date else '-' }}</td><td>{{ sub.status }}</td></tr>{% else %}<tr><td colspan="5" class="text-center text-muted py-4">Sin renovaciones programadas.</td></tr>{% endfor %}</tbody></table></div></div>
+  <div class="card app-card"><div class="table-responsive"><table class="table mb-0 table-hover"><thead><tr><th>Suscripción</th><th>Empresa</th><th>Plan</th><th>Próximo cobro</th><th>Estado</th></tr></thead><tbody>{% for sub in renewals %}<tr><td>#{{ sub.id }}</td><td>{{ sub.company_id }}</td><td>{{ sub.plan.name if sub.plan else '-' }}</td><td>{{ sub.next_billing_date.strftime('%Y-%m-%d') if sub.next_billing_date else '-' }}</td><td>{{ status_labels.get(sub.status, sub.status|replace('_', ' ')|title) }}</td></tr>{% else %}<tr><td colspan="5" class="text-center text-muted py-4">Sin renovaciones programadas.</td></tr>{% endfor %}</tbody></table></div></div>
 </div>
 {% endblock %}

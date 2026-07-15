@@ -5,9 +5,9 @@
   <div class="d-flex justify-content-between align-items-center mb-3"><h1 class="h3 fw-bold mb-0">Mercado Pago</h1><a class="btn btn-outline-secondary" href="{{ url_for('saas.index') }}">Volver</a></div>
   <div class="card app-card"><div class="card-body">
     <div class="row g-3">
-      <div class="col-md-4"><div class="text-muted small">Public key</div><div class="fw-semibold">{{ mp_config.public_key or 'No configurada' }}</div></div>
-      <div class="col-md-4"><div class="text-muted small">Webhook URL</div><div class="fw-semibold">{{ mp_config.notification_url or 'No configurada' }}</div></div>
-      <div class="col-md-4"><div class="text-muted small">Checkout mode</div><div class="fw-semibold">{{ mp_config.environment or 'default' }}</div></div>
+      <div class="col-md-4"><div class="text-muted small">Clave pública</div><div class="fw-semibold">{{ mp_config.public_key or 'No configurada' }}</div></div>
+      <div class="col-md-4"><div class="text-muted small">URL de notificación</div><div class="fw-semibold">{{ mp_config.notification_url or 'No configurada' }}</div></div>
+      <div class="col-md-4"><div class="text-muted small">Modo de checkout</div><div class="fw-semibold">{{ mp_config.environment or 'predeterminado' }}</div></div>
     </div>
   </div></div>
 </div>
