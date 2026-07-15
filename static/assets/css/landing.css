@@ -1009,9 +1009,24 @@ a { text-decoration: none; }
 }
 
 @media (max-width: 991px) {
+  .navbar .container {
+    align-items: flex-start;
+    gap: 0.7rem;
+  }
+  .navbar-brand {
+    flex: 0 0 auto;
+    max-width: 100%;
+  }
   .navbar .ms-auto {
+    margin-left: 0 !important;
+    width: 100%;
     flex-wrap: wrap;
-    justify-content: flex-end;
+    justify-content: flex-start;
+    row-gap: 0.45rem;
+  }
+  .navbar .ms-auto .btn-link {
+    padding-left: 0;
+    padding-right: 0.55rem;
   }
   .hero-stats { grid-template-columns: 1fr; }
   .feature-list { grid-template-columns: 1fr; }
@@ -1026,6 +1041,28 @@ a { text-decoration: none; }
 }
 
 @media (max-width: 767px) {
+  .navbar .container {
+    gap: 0.55rem;
+  }
+  .navbar-brand {
+    gap: 0.55rem !important;
+    font-size: 1rem;
+    line-height: 1.1;
+  }
+  .brand-mark {
+    width: 34px;
+    height: 34px;
+    border-radius: 10px;
+    flex: 0 0 34px;
+  }
+  .navbar .ms-auto {
+    gap: 0.35rem !important;
+    align-items: center;
+  }
+  .navbar .ms-auto .btn-pill {
+    width: 100%;
+    text-align: center;
+  }
   .section { padding: 4.5rem 0; }
   .hero-section { padding-bottom: 2.8rem; }
   .mockup-body { min-height: 320px; }
