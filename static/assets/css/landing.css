@@ -243,23 +243,6 @@ a { text-decoration: none; }
   justify-content: center;
 }
 
-.hero-lead-logo-wrap {
-  width: 100%;
-  display: flex;
-  justify-content: center;
-  align-items: center;
-  overflow: hidden;
-  margin-bottom: 1rem;
-}
-
-.hero-lead-logo {
-  width: auto;
-  max-width: 180px;
-  height: auto;
-  object-fit: contain;
-  display: block;
-}
-
 .hero-stats {
   display: grid;
   grid-template-columns: repeat(3, minmax(0, 1fr));
@@ -1086,9 +1069,6 @@ a { text-decoration: none; }
   .navbar .ms-auto .btn-pill {
     width: 100%;
     text-align: center;
-  }
-  .hero-lead-logo-wrap {
-    margin-bottom: 0.75rem;
   }
   .section { padding: 4.5rem 0; }
   .hero-section { padding-bottom: 2.8rem; }
