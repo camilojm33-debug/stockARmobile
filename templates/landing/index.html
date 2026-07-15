@@ -141,12 +141,36 @@
                 <div class="video-frame">
                   <iframe src="{{ demo_video_url }}" title="Video demostración StockArmobile" allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture" allowfullscreen loading="lazy"></iframe>
                 </div>
+                {% elif demo_video_file_url %}
+                <div class="video-frame">
+                  <video controls preload="metadata" title="Video demostración StockArmobile">
+                    <source src="{{ demo_video_file_url }}" type="video/mp4">
+                    Tu navegador no soporta reproducción de video.
+                  </video>
+                </div>
                 {% else %}
                 <div class="video-fallback text-center p-4">
                   <i class="bi bi-play-btn"></i>
                   <h3 class="h5 fw-bold mt-3">Demo comercial en video</h3>
                   <p class="text-muted mb-3">Solicita la demo guiada para ver el flujo completo de ventas, stock, clientes y caja.</p>
                   <a class="btn btn-primary btn-pill" href="{{ contact.whatsapp_link }}" target="_blank" rel="noopener">Ver demo por WhatsApp</a>
+                </div>
+                {% endif %}
+
+                {% if demo_audio_file_url %}
+                <div class="landing-audio-box mt-3">
+                  <div class="d-flex align-items-center justify-content-between gap-2 flex-wrap">
+                    <span class="small fw-semibold"><i class="bi bi-music-note-beamed me-1"></i>Música de muestra</span>
+                    <span class="small text-muted">Pista local con licencia</span>
+                  </div>
+                  <audio controls preload="none" loop class="w-100 mt-2">
+                    <source src="{{ demo_audio_file_url }}" type="audio/mpeg">
+                    Tu navegador no soporta reproducción de audio.
+                  </audio>
+                </div>
+                {% else %}
+                <div class="landing-audio-box mt-3 text-center">
+                  <div class="small text-muted">Para activar música en esta sección, coloca un archivo con licencia en <strong>static/assets/audio/landing-theme.mp3</strong>.</div>
                 </div>
                 {% endif %}
               </div>

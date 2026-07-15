@@ -1247,6 +1247,10 @@ def index():
         "email": app.config.get("SUPPORT_EMAIL", "stockarmobile@gmail.com"),
     }
     demo_video_url = (os.environ.get("LANDING_DEMO_VIDEO_URL") or "").strip()
+    local_demo_video_path = os.path.join(app.static_folder, "assets", "videos", "landing-demo.mp4")
+    demo_video_file_url = url_for("static", filename="assets/videos/landing-demo.mp4") if os.path.exists(local_demo_video_path) else ""
+    local_demo_audio_path = os.path.join(app.static_folder, "assets", "audio", "landing-theme.mp3")
+    demo_audio_file_url = url_for("static", filename="assets/audio/landing-theme.mp3") if os.path.exists(local_demo_audio_path) else ""
 
     testimonials = []
     try:
@@ -1282,6 +1286,8 @@ def index():
             seo=seo,
             contact=contact,
             demo_video_url=demo_video_url,
+            demo_video_file_url=demo_video_file_url,
+            demo_audio_file_url=demo_audio_file_url,
         )
     )
     if referral_code:
