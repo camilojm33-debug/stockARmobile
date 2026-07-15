@@ -221,6 +221,12 @@
 
       <section class="section section-soft" id="planes">
         <div class="container">
+          {% set backup_limits = {
+            'trial': 1,
+            'entrepreneur': 1,
+            'business': 2,
+            'premium': 3
+          } %}
           <div class="section-heading text-center reveal" data-delay="40">
             <span class="eyebrow">Planes</span>
             <h2 class="section-title">Planes listos para empezar hoy</h2>
@@ -248,6 +254,7 @@
                   <li><i class="bi bi-check2"></i> {{ plan.max_products }} productos</li>
                   <li><i class="bi bi-check2"></i> {{ plan.max_clients }} clientes</li>
                   <li><i class="bi bi-check2"></i> {{ plan.duration_days }} días por ciclo</li>
+                  <li><i class="bi bi-check2"></i> {{ backup_limits.get((plan.code or '')|lower, 1) }} backup{{ 's' if backup_limits.get((plan.code or '')|lower, 1) != 1 else '' }} almacenado{{ 's' if backup_limits.get((plan.code or '')|lower, 1) != 1 else '' }}</li>
                 </ul>
                 <div class="d-grid gap-2">
                   <a class="btn btn-primary btn-pill w-100" href="{{ url_for('auth.register') }}?selected_plan={{ plan.code|urlencode }}">{% if (plan.price or 0) <= 0 %}Iniciar prueba{% else %}Comprar plan{% endif %}</a>
@@ -298,6 +305,7 @@
                     <tr><td>Reportes</td>{% for plan in plans %}<td class="{% if recommended_plan_id and recommended_plan_id == plan.id %}highlight-col{% endif %}">{% if plan_feature_rows[plan.id].reportes %}<i class="bi bi-check2 text-success"></i>{% else %}<i class="bi bi-dash"></i>{% endif %}</td>{% endfor %}</tr>
                     <tr><td>QR</td>{% for plan in plans %}<td class="{% if recommended_plan_id and recommended_plan_id == plan.id %}highlight-col{% endif %}">{% if plan_feature_rows[plan.id].qr %}<i class="bi bi-check2 text-success"></i>{% else %}<i class="bi bi-dash"></i>{% endif %}</td>{% endfor %}</tr>
                     <tr><td>Etiquetas</td>{% for plan in plans %}<td class="{% if recommended_plan_id and recommended_plan_id == plan.id %}highlight-col{% endif %}">{% if plan_feature_rows[plan.id].etiquetas %}<i class="bi bi-check2 text-success"></i>{% else %}<i class="bi bi-dash"></i>{% endif %}</td>{% endfor %}</tr>
+                    <tr><td>Backups almacenados</td>{% for plan in plans %}<td class="{% if recommended_plan_id and recommended_plan_id == plan.id %}highlight-col{% endif %}">{{ backup_limits.get((plan.code or '')|lower, 1) }}</td>{% endfor %}</tr>
                     <tr><td>WhatsApp</td>{% for plan in plans %}<td class="{% if recommended_plan_id and recommended_plan_id == plan.id %}highlight-col{% endif %}">{% if plan_feature_rows[plan.id].whatsapp %}<i class="bi bi-check2 text-success"></i>{% else %}<i class="bi bi-dash"></i>{% endif %}</td>{% endfor %}</tr>
                     <tr><td>Multiusuario</td>{% for plan in plans %}<td class="{% if recommended_plan_id and recommended_plan_id == plan.id %}highlight-col{% endif %}">{% if plan_feature_rows[plan.id].multiusuario %}<i class="bi bi-check2 text-success"></i>{% else %}<i class="bi bi-dash"></i>{% endif %}</td>{% endfor %}</tr>
                     <tr><td>Soporte</td>{% for plan in plans %}<td class="{% if recommended_plan_id and recommended_plan_id == plan.id %}highlight-col{% endif %}">{% if plan_feature_rows[plan.id].soporte %}<i class="bi bi-check2 text-success"></i>{% else %}<i class="bi bi-dash"></i>{% endif %}</td>{% endfor %}</tr>

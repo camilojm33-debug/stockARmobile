@@ -145,6 +145,7 @@ def index():
         clientes=clients,
         sales=sales,
         total_sales=total_sales_amount,
+        company_name=(company.name if company else "Mi comercio"),
         qr_payment_image_url=qr_payment_image_url,
         has_qr_payment_data=has_qr_data,
     )
@@ -153,7 +154,7 @@ def index():
 @bp.route("/nueva-venta")
 @tenant_required
 def new_sale():
-    from app import Product, db, scope_query_to_company
+    from app import Company, Product, db, scope_query_to_company
 
     products_query = scope_query_to_company(Product.query.filter_by(active=True), Product)
     search = request.args.get("q") or request.args.get("search")
@@ -171,7 +172,14 @@ def new_sale():
         product = products_by_id.get(int(prod_id))
         if product:
             cart_items.append({"product": product, "qty": qty})
-    return render_template("ventas/new.html", products=products, cart=cart_items, checkout_url=url_for("sales.checkout"))
+    company = Company.query.filter_by(id=getattr(current_user, "company_id", None)).first()
+    return render_template(
+        "ventas/new.html",
+        products=products,
+        cart=cart_items,
+        checkout_url=url_for("sales.checkout"),
+        company_name=(company.name if company else "Mi comercio"),
+    )
 
 
 @bp.route("/carrito")

@@ -826,9 +826,22 @@ class BackupLog(db.Model):
     id = db.Column(db.Integer, primary_key=True)
     company_id = db.Column(db.Integer, db.ForeignKey("companies.id"))
     status = db.Column(db.String(30), default="pendiente")
+    trigger_type = db.Column(db.String(30), default="manual", nullable=False)
+    plan_code = db.Column(db.String(40), index=True)
+    file_name = db.Column(db.String(255))
+    file_size_bytes = db.Column(db.BigInteger, default=0)
     path = db.Column(db.String(255))
+    created_by_user_id = db.Column(db.Integer, db.ForeignKey("users.id"))
+    restored_by_user_id = db.Column(db.Integer, db.ForeignKey("users.id"))
+    restored_at = db.Column(db.DateTime)
+    is_automated = db.Column(db.Boolean, default=False, nullable=False)
+    next_run_at = db.Column(db.DateTime)
+    metadata_json = db.Column(db.Text)
     detail = db.Column(db.Text)
     created_at = db.Column(db.DateTime, default=utcnow, index=True)
+    company = db.relationship("Company", backref="backup_logs")
+    created_by_user = db.relationship("User", foreign_keys=[created_by_user_id], backref="created_backups")
+    restored_by_user = db.relationship("User", foreign_keys=[restored_by_user_id], backref="restored_backups")
 
 
 class PasswordRecoveryRequest(db.Model):

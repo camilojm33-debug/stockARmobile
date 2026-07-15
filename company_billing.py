@@ -18,6 +18,7 @@ from reportlab.pdfgen import canvas
 from app import company_admin_required, csrf, tenant_required
 from config.billing_config import load_billing_config
 from services.billing_service import BillingService
+from services.backup_service import BackupService
 from services.company_security_service import CompanySecurityService
 from services.plan_service import PlanService
 from services.plan_usage_service import PlanUsageService
@@ -57,6 +58,13 @@ def _parse_date(value):
         return datetime.strptime(raw, "%Y-%m-%d")
     except ValueError:
         return None
+
+
+def _to_float(value, default=0.0):
+    try:
+        return float(value if value not in (None, "") else default)
+    except (TypeError, ValueError):
+        return default
 
 
 def _pin_session_key(company_id):
@@ -201,6 +209,16 @@ def _plan_limit_context(company_id):
         None,
     )
     return usage_snapshot, users_metric
+
+
+def _format_size(size_bytes):
+    value = float(size_bytes or 0)
+    units = ["B", "KB", "MB", "GB"]
+    for unit in units:
+        if value < 1024 or unit == units[-1]:
+            return f"{value:.2f} {unit}"
+        value /= 1024
+    return f"{value:.2f} GB"
 
 
 def _subscription_expiration(subscription, company):
@@ -487,6 +505,10 @@ def payment_qr_settings():
     company_id = getattr(current_user, "company_id", None)
     company = _load_company(company_id)
 
+    if getattr(current_user, "role", None) != "admin":
+        flash("Solo el administrador puede modificar datos de la empresa.", "warning")
+        return redirect(url_for("company_billing.company_settings", panel="company"))
+
     company.name = (request.form.get("name") or company.name or "").strip()[:160] or company.name
     company.legal_name = (request.form.get("legal_name") or "").strip()[:160] or None
     company.address = (request.form.get("address") or "").strip()[:255] or None
@@ -518,6 +540,115 @@ def payment_qr_settings():
         flash("Datos de cobro QR guardados correctamente.", "success")
     db.session.commit()
     return redirect(url_for("company_billing.company_settings"))
+
+
+@bp.route("/company-settings/cash/open", methods=["POST"])
+@company_admin_required
+def company_settings_cash_open():
+    from app import CashSession, db, record_audit
+
+    company_id = getattr(current_user, "company_id", None)
+    company = _load_company(company_id)
+    blocked = _pin_guard(company)
+    if blocked is not None:
+        return blocked
+
+    open_session = (
+        CashSession.query.filter_by(company_id=company.id, status="abierta")
+        .order_by(CashSession.opened_at.desc(), CashSession.id.desc())
+        .first()
+    )
+    if open_session is not None:
+        flash("Ya existe una caja abierta para la empresa.", "warning")
+        return redirect(url_for("company_billing.company_settings", panel="stats"))
+
+    opening_amount = _to_float(request.form.get("opening_amount"), default=0.0)
+    note = (request.form.get("note") or "").strip() or None
+    session_row = CashSession(
+        user_id=current_user.id,
+        company_id=company.id,
+        opening_amount=opening_amount,
+        note=note,
+    )
+    db.session.add(session_row)
+    db.session.flush()
+    record_audit(
+        action="company_cash_open",
+        entity="cash_session",
+        entity_id=session_row.id,
+        company_id=company.id,
+        detail=f"Apertura de caja desde Mi Empresa por admin {current_user.id}",
+    )
+    db.session.commit()
+    flash("Caja abierta correctamente.", "success")
+    return redirect(url_for("company_billing.company_settings", panel="stats"))
+
+
+@bp.route("/company-settings/cash/close/<int:session_id>", methods=["POST"])
+@company_admin_required
+def company_settings_cash_close(session_id):
+    from app import CashSession, db, record_audit, utcnow
+
+    company_id = getattr(current_user, "company_id", None)
+    company = _load_company(company_id)
+    blocked = _pin_guard(company)
+    if blocked is not None:
+        return blocked
+
+    session_row = CashSession.query.filter_by(id=session_id, company_id=company.id).first_or_404()
+    if session_row.status != "abierta":
+        flash("La caja seleccionada ya está cerrada.", "warning")
+        return redirect(url_for("company_billing.company_settings", panel="stats"))
+
+    session_row.closing_amount = _to_float(request.form.get("closing_amount"), default=float(session_row.closing_amount or 0))
+    session_row.closed_at = utcnow()
+    session_row.status = "cerrada"
+    note = (request.form.get("note") or "").strip()
+    if note:
+        session_row.note = note
+
+    record_audit(
+        action="company_cash_close",
+        entity="cash_session",
+        entity_id=session_row.id,
+        company_id=company.id,
+        detail=f"Cierre de caja desde Mi Empresa por admin {current_user.id}",
+    )
+    db.session.commit()
+    flash("Caja cerrada correctamente.", "success")
+    return redirect(url_for("company_billing.company_settings", panel="stats"))
+
+
+@bp.route("/company-settings/cash/update/<int:session_id>", methods=["POST"])
+@company_admin_required
+def company_settings_cash_update(session_id):
+    from app import CashSession, db, record_audit
+
+    company_id = getattr(current_user, "company_id", None)
+    company = _load_company(company_id)
+    blocked = _pin_guard(company)
+    if blocked is not None:
+        return blocked
+
+    session_row = CashSession.query.filter_by(id=session_id, company_id=company.id).first_or_404()
+    if request.form.get("opening_amount") not in (None, ""):
+        session_row.opening_amount = _to_float(request.form.get("opening_amount"), default=float(session_row.opening_amount or 0))
+    if request.form.get("closing_amount") not in (None, ""):
+        session_row.closing_amount = _to_float(request.form.get("closing_amount"), default=float(session_row.closing_amount or 0))
+    note = request.form.get("note")
+    if note is not None:
+        session_row.note = (note or "").strip() or None
+
+    record_audit(
+        action="company_cash_update",
+        entity="cash_session",
+        entity_id=session_row.id,
+        company_id=company.id,
+        detail=f"Edición de caja desde Mi Empresa por admin {current_user.id}",
+    )
+    db.session.commit()
+    flash("Caja editada correctamente.", "success")
+    return redirect(url_for("company_billing.company_settings", panel="stats"))
 
 
 @bp.route("/company-settings/pin/verify", methods=["POST"])
@@ -1080,13 +1211,110 @@ def company_settings_billing_payment_pdf(payment_id):
     return _pdf_from_lines("Comprobante de Pago - StockArmobile", lines, f"pago_{payment.id}.pdf")
 
 
+@bp.route("/company-settings/backups/create", methods=["POST"])
+@company_member_required
+def company_settings_backups_create():
+    from app import db, record_audit
+
+    company_id = getattr(current_user, "company_id", None)
+    company = _load_company(company_id)
+    blocked = _pin_guard(company)
+    if blocked is not None:
+        return blocked
+
+    backup, plan = BackupService.create_manual_backup(company_id, user_id=current_user.id, trigger_type="manual")
+    record_audit(
+        action="backup_create",
+        entity="backup",
+        entity_id=backup.id,
+        company_id=company_id,
+        detail=f"Backup manual creado por usuario empresa. plan={plan['code']}",
+    )
+    db.session.commit()
+    flash("Backup creado correctamente.", "success")
+    if BackupService.plan_limit_status(company_id)["count"] >= plan["limit"]:
+        flash("Límite de Backups alcanzado. Se eliminó automáticamente el backup más antiguo.", "warning")
+    return redirect(url_for("company_billing.company_settings", panel="backups"))
+
+
+@bp.route("/company-settings/backups/<int:backup_id>/download")
+@company_member_required
+def company_settings_backups_download(backup_id):
+    from app import BackupLog
+
+    company_id = getattr(current_user, "company_id", None)
+    company = _load_company(company_id)
+    blocked = _pin_guard(company)
+    if blocked is not None:
+        return blocked
+
+    backup = BackupLog.query.filter_by(id=backup_id, company_id=company_id).first_or_404()
+    backup_path = BackupService.backup_download_path(backup)
+    return send_file(
+        backup_path,
+        mimetype="application/gzip",
+        as_attachment=True,
+        download_name=backup.file_name or backup_path.name,
+    )
+
+
+@bp.route("/company-settings/backups/<int:backup_id>/restore", methods=["POST"])
+@company_member_required
+def company_settings_backups_restore(backup_id):
+    from app import BackupLog, db, record_audit
+
+    company_id = getattr(current_user, "company_id", None)
+    company = _load_company(company_id)
+    blocked = _pin_guard(company)
+    if blocked is not None:
+        return blocked
+
+    backup = BackupLog.query.filter_by(id=backup_id, company_id=company_id).first_or_404()
+    BackupService.restore_backup(backup, expected_company_id=company_id, restored_by_user_id=current_user.id)
+    record_audit(
+        action="backup_restore",
+        entity="backup",
+        entity_id=backup.id,
+        company_id=company_id,
+        detail="Backup restaurado desde Mi Empresa.",
+    )
+    db.session.commit()
+    flash("Backup restaurado correctamente.", "success")
+    return redirect(url_for("company_billing.company_settings", panel="backups"))
+
+
+@bp.route("/company-settings/backups/<int:backup_id>/delete", methods=["POST"])
+@company_member_required
+def company_settings_backups_delete(backup_id):
+    from app import BackupLog, db, record_audit
+
+    company_id = getattr(current_user, "company_id", None)
+    company = _load_company(company_id)
+    blocked = _pin_guard(company)
+    if blocked is not None:
+        return blocked
+
+    backup = BackupLog.query.filter_by(id=backup_id, company_id=company_id).first_or_404()
+    BackupService.delete_backup(backup)
+    record_audit(
+        action="backup_delete",
+        entity="backup",
+        entity_id=backup_id,
+        company_id=company_id,
+        detail="Backup eliminado desde Mi Empresa.",
+    )
+    db.session.commit()
+    flash("Backup eliminado correctamente.", "success")
+    return redirect(url_for("company_billing.company_settings", panel="backups"))
+
+
 @bp.route("/company-settings")
 @company_member_required
 def company_settings():
     from flask import session
     from sqlalchemy.orm import selectinload
 
-    from app import AuditLog, Invoice, Payment, PaymentHistory, Sale, SaleItem, User
+    from app import AuditLog, CashSession, Invoice, Payment, PaymentHistory, Sale, SaleItem, User
 
     company_id = getattr(current_user, "company_id", None)
     company = _load_company(company_id)
@@ -1112,6 +1340,8 @@ def company_settings():
     pin_created_at, pin_last_used_at = _pin_metadata(company)
     pin_bootstrap_reveal = session.pop(_pin_reveal_session_key(company.id), None)
     cash_summary = {"total_sold": 0.0, "total_sales": 0, "average_ticket": 0.0}
+    cash_sessions_recent = []
+    open_cash_session = None
     billing_invoices = []
     billing_payments = []
     billing_history = []
@@ -1121,6 +1351,10 @@ def company_settings():
     schedule_assignments = schedules_settings.get("employee_assignments", [])
     active_employees = []
     device_rows = []
+    backups = []
+    backup_plan = {}
+    backup_storage_used = "0.00 B"
+    backup_automation = BackupService.automation_scaffold()
     if pin_verified:
         users, cash_rows = _build_user_and_cash_rows(
             company.id,
@@ -1167,6 +1401,16 @@ def company_settings():
             .limit(12)
             .all()
         )
+        cash_sessions_recent = (
+            CashSession.query.filter_by(company_id=company.id)
+            .order_by(CashSession.opened_at.desc(), CashSession.id.desc())
+            .limit(12)
+            .all()
+        )
+        open_cash_session = next((item for item in cash_sessions_recent if (item.status or "").lower() == "abierta"), None)
+        backups = BackupService.company_backups(company.id)
+        backup_plan = BackupService.plan_limit_status(company.id)
+        backup_storage_used = _format_size(sum(int(item.file_size_bytes or 0) for item in backups))
 
     return render_template(
         "company_billing/settings.html",
@@ -1201,6 +1445,13 @@ def company_settings():
         schedule_assignments=schedule_assignments,
         active_employees=active_employees,
         device_rows=device_rows,
+        cash_sessions_recent=cash_sessions_recent,
+        open_cash_session=open_cash_session,
+        backups=backups,
+        backup_plan=backup_plan,
+        backup_storage_used=backup_storage_used,
+        backup_automation=backup_automation,
+        format_size=_format_size,
     )
 
 

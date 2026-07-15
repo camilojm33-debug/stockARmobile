@@ -245,7 +245,7 @@ def create_square_label_5x5(product):
     return img
 
 
-def _compute_a4_grid(label_w_pt, label_h_pt, *, min_margin_mm=2, gap_mm=1):
+def _compute_a4_grid(label_w_pt, label_h_pt, *, min_margin_mm=1.5, gap_mm=0.8):
     page_w, page_h = A4
     min_margin = min_margin_mm * mm
     gap = gap_mm * mm
@@ -295,51 +295,99 @@ def _fit_canvas_text(pdf, text, max_w, max_size, min_size=6, font_name="Helvetic
     return (f"{clipped}..." if clipped else ""), min_size
 
 
+def _wrap_canvas_text(pdf, text, max_w, font_name, font_size):
+    words = str(text or "").split()
+    if not words:
+        return [""]
+    lines = []
+    current = words[0]
+    for word in words[1:]:
+        candidate = f"{current} {word}"
+        if pdf.stringWidth(candidate, font_name, font_size) <= max_w:
+            current = candidate
+        else:
+            lines.append(current)
+            current = word
+    lines.append(current)
+    return lines
+
+
+def _fit_canvas_wrapped_text(pdf, text, max_w, *, max_lines=2, max_size=12, min_size=7, font_name="Helvetica-Bold"):
+    content = " ".join(str(text or "").split())
+    if not content:
+        return [""], min_size
+
+    for size in range(max_size, min_size - 1, -1):
+        lines = _wrap_canvas_text(pdf, content, max_w, font_name, size)
+        if len(lines) <= max_lines:
+            return lines, size
+
+    lines = _wrap_canvas_text(pdf, content, max_w, font_name, min_size)
+    if len(lines) > max_lines:
+        lines = lines[:max_lines]
+        last = lines[-1]
+        while last and pdf.stringWidth(f"{last}...", font_name, min_size) > max_w:
+            last = last[:-1]
+        lines[-1] = f"{last}..." if last else "..."
+    return lines, min_size
+
+
 def _draw_label_on_canvas(pdf, product, x, y, label_w_pt, label_h_pt, *, include_name=True, include_price=True, include_code=True, include_qr=True):
-    padding = 1.0 * mm
+    padding = 0.9 * mm
     inner_x = x + padding
     inner_y = y + padding
     inner_w = max(1, label_w_pt - (2 * padding))
     inner_h = max(1, label_h_pt - (2 * padding))
+    label_w_mm = label_w_pt / mm
+    label_h_mm = label_h_pt / mm
 
     name_text = str(getattr(product, "name", "") or "Producto")
     sku_text = str(getattr(product, "barcode", "") or getattr(product, "id", "SIN-CODIGO"))
     price_text = f"ARS {float(getattr(product, 'price', 0) or 0):.2f}"
 
-    row_gap = max(0.25 * mm, inner_h * 0.02)
-    name_h = max(2.0 * mm, inner_h * 0.12) if include_name else 0
-    price_h = max(2.2 * mm, inner_h * 0.12) if include_price else 0
+    row_gap = max(0.35 * mm, inner_h * 0.018)
+    name_h = max(3.2 * mm, inner_h * 0.18) if include_name else 0
+    price_h = max(4.0 * mm, inner_h * 0.22) if include_price else 0
     sku_h = max(1.8 * mm, inner_h * 0.10) if include_code else 0
-    reserved = name_h + price_h + sku_h + (row_gap * sum(1 for flag in [include_name, include_price, include_code] if flag))
+    active_blocks = sum(1 for flag in [include_name, include_price, include_code] if flag)
+    reserved = name_h + price_h + sku_h + (row_gap * active_blocks)
 
     qr_side = 0
     if include_qr:
-        qr_available = max(6 * mm, inner_h - reserved)
-        qr_side = max(6 * mm, min(inner_w * 0.70, qr_available))
+        qr_available = max(8 * mm, inner_h - reserved)
+        qr_side = max(8 * mm, min(inner_w * 0.74, qr_available))
 
     # Reacomoda alturas para etiquetas bajas (ej: 50x25) sin perder legibilidad de QR.
-    if include_qr and qr_side < (inner_h * 0.55):
-        name_h = max(1.5 * mm, name_h * 0.70)
-        price_h = max(1.8 * mm, price_h * 0.70)
-        sku_h = max(1.4 * mm, sku_h * 0.70)
-        reserved = name_h + price_h + sku_h + (row_gap * sum(1 for flag in [include_name, include_price, include_code] if flag))
-        qr_side = max(6 * mm, min(inner_w * 0.70, max(6 * mm, inner_h - reserved)))
+    if include_qr and qr_side < (inner_h * 0.52):
+        name_h = max(2.4 * mm, name_h * 0.76)
+        price_h = max(3.2 * mm, price_h * 0.80)
+        sku_h = max(1.5 * mm, sku_h * 0.75)
+        reserved = name_h + price_h + sku_h + (row_gap * active_blocks)
+        qr_side = max(8 * mm, min(inner_w * 0.72, max(8 * mm, inner_h - reserved)))
 
     cursor_top = y + label_h_pt - padding
     center_x = x + (label_w_pt / 2)
 
     if include_name:
-        name_y_center = cursor_top - (name_h / 2)
-        name_value, name_size = _fit_canvas_text(
+        max_name_size = 12 if label_h_mm >= 45 else 10
+        min_name_size = 7 if label_h_mm >= 30 else 6
+        name_lines, name_size = _fit_canvas_wrapped_text(
             pdf,
             name_text,
             max_w=inner_w,
-            max_size=min(12, max(7, int(name_h * 0.85))),
-            min_size=6,
+            max_lines=2,
+            max_size=max_name_size,
+            min_size=min_name_size,
             font_name="Helvetica-Bold",
         )
+        line_h = name_size * 1.12
+        block_h = line_h * len(name_lines)
+        text_y = cursor_top - ((name_h - block_h) / 2) - name_size
+        pdf.setFillColorRGB(0, 0, 0)
         pdf.setFont("Helvetica-Bold", name_size)
-        pdf.drawCentredString(center_x, name_y_center - (name_size * 0.35), name_value)
+        for line in name_lines:
+            pdf.drawCentredString(center_x, text_y, line)
+            text_y -= line_h
         cursor_top -= name_h + row_gap
 
     if include_qr:
@@ -356,15 +404,26 @@ def _draw_label_on_canvas(pdf, product, x, y, label_w_pt, label_h_pt, *, include
         cursor_top = qr_bottom - row_gap
 
     if include_price:
-        price_y_center = cursor_top - (price_h / 2)
+        if label_w_mm >= 49 and label_h_mm >= 49:
+            max_price_size = 22
+            min_price_size = 18
+        elif label_h_mm >= 38:
+            max_price_size = 16
+            min_price_size = 12
+        else:
+            max_price_size = 13
+            min_price_size = 9
+
         price_value, price_size = _fit_canvas_text(
             pdf,
             price_text,
             max_w=inner_w,
-            max_size=min(13, max(7, int(price_h * 0.9))),
-            min_size=6,
+            max_size=max_price_size,
+            min_size=min_price_size,
             font_name="Helvetica-Bold",
         )
+        price_y_center = cursor_top - (price_h / 2)
+        pdf.setFillColorRGB(0, 0, 0)
         pdf.setFont("Helvetica-Bold", price_size)
         pdf.drawCentredString(center_x, price_y_center - (price_size * 0.35), price_value)
         cursor_top -= price_h + row_gap
@@ -463,6 +522,52 @@ def _build_current_a4_pdf(products, copies, size_key):
         index += 1
 
     if index == 0:
+        pdf.showPage()
+    pdf.save()
+    buffer.seek(0)
+    return buffer
+
+
+def _build_sixup_a4_pdf(label_images):
+    page_w, page_h = A4
+    cols, rows = 2, 3
+    margin_x = 5 * mm
+    margin_y = 6 * mm
+    gap_x = 3 * mm
+    gap_y = 3 * mm
+    cell_w = (page_w - (2 * margin_x) - ((cols - 1) * gap_x)) / cols
+    cell_h = (page_h - (2 * margin_y) - ((rows - 1) * gap_y)) / rows
+    per_page = cols * rows
+
+    buffer = BytesIO()
+    pdf = canvas.Canvas(buffer, pagesize=A4)
+    count = 0
+
+    for index, label_img in enumerate(label_images):
+        slot = index % per_page
+        if index > 0 and slot == 0:
+            pdf.showPage()
+
+        row = slot // cols
+        col = slot % cols
+        cell_x = margin_x + (col * (cell_w + gap_x))
+        cell_top = page_h - margin_y - (row * (cell_h + gap_y))
+        cell_y = cell_top - cell_h
+
+        src_w, src_h = label_img.size
+        scale = min(cell_w / max(1, src_w), cell_h / max(1, src_h))
+        draw_w = src_w * scale
+        draw_h = src_h * scale
+        draw_x = cell_x + ((cell_w - draw_w) / 2)
+        draw_y = cell_y + ((cell_h - draw_h) / 2)
+
+        img_buffer = BytesIO()
+        label_img.save(img_buffer, "PNG")
+        img_buffer.seek(0)
+        pdf.drawImage(ImageReader(img_buffer), draw_x, draw_y, width=draw_w, height=draw_h, preserveAspectRatio=False, mask="auto")
+        count += 1
+
+    if count == 0:
         pdf.showPage()
     pdf.save()
     buffer.seek(0)
@@ -698,29 +803,23 @@ def print_product_sheet(id):
         )
         return send_file(buffer, mimetype="application/pdf", as_attachment=True, download_name=f"etiquetas_a4_{product.id}_{size_key}.pdf")
 
-    buffer = BytesIO()
-    doc = SimpleDocTemplate(buffer, pagesize=letter, leftMargin=8 * mm, rightMargin=8 * mm, topMargin=8 * mm, bottomMargin=8 * mm)
-    elements = []
+    images = []
     for _ in range(max(quantity, 1)):
-        img = _create_sheet_label_image(
-            product,
-            width_mm,
-            height_mm,
-            include_name=include_name,
-            include_price=include_price,
-            include_code=include_code,
-            include_qr=include_qr,
-            include_ean=include_ean,
-            include_code128=include_code128,
-            include_date=include_date,
+        images.append(
+            _create_sheet_label_image(
+                product,
+                width_mm,
+                height_mm,
+                include_name=include_name,
+                include_price=include_price,
+                include_code=include_code,
+                include_qr=include_qr,
+                include_ean=include_ean,
+                include_code128=include_code128,
+                include_date=include_date,
+            )
         )
-        img_buffer = BytesIO()
-        img.save(img_buffer, "PNG")
-        img_buffer.seek(0)
-        elements.append(PdfImage(img_buffer, width=width_mm * mm, height=height_mm * mm))
-        elements.append(Spacer(1, 3 * mm))
-    doc.build(elements)
-    buffer.seek(0)
+    buffer = _build_sixup_a4_pdf(images)
     return send_file(buffer, mimetype="application/pdf", as_attachment=True, download_name=f"etiquetas_{product.id}_{size_key}.pdf")
 
 
@@ -774,20 +873,12 @@ def print_all():
         buffer = _build_current_a4_pdf(products, copies, label_size)
         return send_file(buffer, mimetype="application/pdf", as_attachment=True, download_name="etiquetas_a4_ordenadas.pdf")
 
-    buffer = BytesIO()
-    doc = SimpleDocTemplate(buffer, pagesize=letter)
-    elements = []
+    images = []
     dimensions = {"small": (260, 320), "standard": (300, 400), "large": (380, 480)}.get(label_size, (300, 400))
     for product in products:
-        img = create_product_label(product.barcode, product.name, product.price, size=dimensions)
-        img_buffer = BytesIO()
-        img.save(img_buffer, "PNG")
-        img_buffer.seek(0)
         for _ in range(max(copies, 1)):
-            elements.append(PdfImage(img_buffer, width=180, height=240))
-            elements.append(Spacer(1, 12))
-    doc.build(elements)
-    buffer.seek(0)
+            images.append(create_product_label(product.barcode, product.name, product.price, size=dimensions))
+    buffer = _build_sixup_a4_pdf(images)
     return send_file(buffer, mimetype="application/pdf", as_attachment=True, download_name="etiquetas_productos.pdf")
 
 

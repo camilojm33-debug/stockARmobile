@@ -17,6 +17,7 @@ from sqlalchemy import text
 
 from app import superadmin_required, utcnow
 from config.billing_config import load_billing_config
+from services.backup_service import BackupService
 from services.plan_service import PlanService
 
 bp = Blueprint("saas", __name__)
@@ -77,6 +78,16 @@ def _action_allowed_for_status(status: str | None, action: str) -> bool:
     if action == "extend":
         return True
     return action in _allowed_ui_actions_for_status(status)
+
+
+def _format_size(size_bytes):
+    value = float(size_bytes or 0)
+    units = ["B", "KB", "MB", "GB"]
+    for unit in units:
+        if value < 1024 or unit == units[-1]:
+            return f"{value:.2f} {unit}"
+        value /= 1024
+    return f"{value:.2f} GB"
 
 
 @bp.route("/", methods=["GET", "POST"])
@@ -1109,6 +1120,112 @@ def server_status():
         "database_url_configured": bool(os.environ.get("DATABASE_URL")),
     }
     return render_template("saas/server_status.html", status=context)
+
+
+@bp.route("/backups")
+@superadmin_required
+def backups_panel():
+    from app import Company
+
+    _require_superadmin()
+    q = (request.args.get("q") or "").strip()
+    status = (request.args.get("status") or "all").strip().lower()
+    plan_code = (request.args.get("plan") or "all").strip().lower()
+    company_id = request.args.get("company_id", type=int)
+
+    backups = BackupService.superadmin_backups(q=q, company_id=company_id, status=status, plan_code=plan_code)
+    companies = Company.query.order_by(Company.name.asc()).all()
+    return render_template(
+        "saas/backups.html",
+        backups=backups,
+        companies=companies,
+        filters={"q": q, "status": status, "plan": plan_code, "company_id": company_id},
+        format_size=_format_size,
+    )
+
+
+@bp.route("/backups/create", methods=["POST"])
+@superadmin_required
+def backups_create():
+    from app import db, record_audit
+
+    _require_superadmin()
+    company_id = request.form.get("company_id", type=int)
+    if not company_id:
+        flash("Seleccioná una empresa para crear el backup.", "warning")
+        return _redirect_back("saas.backups_panel")
+
+    backup, plan = BackupService.create_manual_backup(company_id, user_id=current_user.id, trigger_type="manual_superadmin")
+    record_audit(
+        action="backup_create_superadmin",
+        entity="backup",
+        entity_id=backup.id,
+        company_id=company_id,
+        detail=f"Backup creado por superadmin. plan={plan['code']}",
+        user_id=current_user.id,
+    )
+    db.session.commit()
+    flash("Backup creado correctamente.", "success")
+    return _redirect_back("saas.backups_panel")
+
+
+@bp.route("/backups/<int:backup_id>/download")
+@superadmin_required
+def backups_download(backup_id):
+    from app import BackupLog
+
+    _require_superadmin()
+    backup = BackupLog.query.filter_by(id=backup_id).first_or_404()
+    backup_path = BackupService.backup_download_path(backup)
+    return send_file(
+        backup_path,
+        mimetype="application/gzip",
+        as_attachment=True,
+        download_name=backup.file_name or backup_path.name,
+    )
+
+
+@bp.route("/backups/<int:backup_id>/restore", methods=["POST"])
+@superadmin_required
+def backups_restore(backup_id):
+    from app import BackupLog, db, record_audit
+
+    _require_superadmin()
+    backup = BackupLog.query.filter_by(id=backup_id).first_or_404()
+    BackupService.restore_backup(backup, expected_company_id=backup.company_id, restored_by_user_id=current_user.id)
+    record_audit(
+        action="backup_restore_superadmin",
+        entity="backup",
+        entity_id=backup.id,
+        company_id=backup.company_id,
+        detail="Backup restaurado por superadmin.",
+        user_id=current_user.id,
+    )
+    db.session.commit()
+    flash("Backup restaurado correctamente.", "success")
+    return _redirect_back("saas.backups_panel")
+
+
+@bp.route("/backups/<int:backup_id>/delete", methods=["POST"])
+@superadmin_required
+def backups_delete(backup_id):
+    from app import BackupLog, db, record_audit
+
+    _require_superadmin()
+    backup = BackupLog.query.filter_by(id=backup_id).first_or_404()
+    company_id = backup.company_id
+    BackupService.delete_backup(backup)
+    record_audit(
+        action="backup_delete_superadmin",
+        entity="backup",
+        entity_id=backup_id,
+        company_id=company_id,
+        detail="Backup eliminado por superadmin.",
+        user_id=current_user.id,
+    )
+    db.session.commit()
+    flash("Backup eliminado correctamente.", "success")
+    return _redirect_back("saas.backups_panel")
 
 
 @bp.route("/stats")

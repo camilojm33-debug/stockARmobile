@@ -199,6 +199,10 @@
     <div class="card-body">
       <form method="post" action="{{ url_for('company_billing.payment_qr_settings') }}">
         <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+        {% if current_user.role != 'admin' %}
+        <div class="alert alert-warning">Solo el administrador puede modificar los datos de la empresa.</div>
+        {% endif %}
+        <fieldset {% if current_user.role != 'admin' %}disabled{% endif %}>
         <div class="row g-3">
           <div class="col-md-6">
             <label class="form-label">Nombre del negocio</label>
@@ -290,8 +294,10 @@
           </div>
           <div class="col-12 d-flex justify-content-between align-items-center">
             <div class="d-flex gap-2">
+              {% if current_user.role == 'admin' %}
               <button class="btn btn-primary" type="submit"><i class="bi bi-save me-1"></i>Guardar</button>
               <button class="btn btn-outline-secondary" type="reset"><i class="bi bi-x-circle me-1"></i>Cancelar</button>
+              {% endif %}
               <a class="btn btn-outline-secondary" href="{{ url_for('company_billing.company_settings') }}"><i class="bi bi-arrow-left me-1"></i>Volver</a>
             </div>
             {% set has_qr_data = company.payment_alias or company.payment_cbu or company.payment_cvu or company.payment_qr_text or company.payment_qr_url %}
@@ -304,6 +310,7 @@
             {% endif %}
           </div>
         </div>
+        </fieldset>
       </form>
     </div>
   </div>
@@ -797,6 +804,73 @@
       <a class="btn btn-sm btn-outline-secondary" href="{{ url_for('company_billing.company_settings') }}"><i class="bi bi-grid me-1"></i>Volver al hub</a>
     </div>
     <div class="card-body">
+      {% if current_user.role == 'admin' %}
+      <div class="border rounded p-3 mb-4">
+        <div class="d-flex justify-content-between align-items-center mb-2">
+          <h2 class="h6 fw-bold mb-0">Gestión de caja (solo administrador)</h2>
+          {% if open_cash_session %}
+          <span class="badge text-bg-success">Caja abierta #{{ open_cash_session.id }}</span>
+          {% else %}
+          <span class="badge text-bg-secondary">Sin caja abierta</span>
+          {% endif %}
+        </div>
+        <div class="row g-2 align-items-end mb-3">
+          <div class="col-md-4">
+            <label class="form-label">Monto de apertura</label>
+            <input class="form-control" form="openCashForm" name="opening_amount" type="number" step="0.01" min="0" value="0">
+          </div>
+          <div class="col-md-6">
+            <label class="form-label">Nota</label>
+            <input class="form-control" form="openCashForm" name="note" placeholder="Turno mañana / caja principal">
+          </div>
+          <div class="col-md-2 d-grid">
+            <form id="openCashForm" method="post" action="{{ url_for('company_billing.company_settings_cash_open') }}">
+              <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+              <button class="btn btn-outline-primary" type="submit" {% if open_cash_session %}disabled{% endif %}>Abrir caja</button>
+            </form>
+          </div>
+        </div>
+
+        <div class="table-responsive">
+          <table class="table table-sm table-hover mb-0 align-middle">
+            <thead><tr><th>ID</th><th>Apertura</th><th>Cierre</th><th>Monto apertura</th><th>Monto cierre</th><th>Estado</th><th>Nota</th><th class="text-end">Acciones</th></tr></thead>
+            <tbody>
+              {% for session in cash_sessions_recent %}
+              <tr>
+                <td>#{{ session.id }}</td>
+                <td>{{ session.opened_at.strftime('%Y-%m-%d %H:%M') if session.opened_at else '-' }}</td>
+                <td>{{ session.closed_at.strftime('%Y-%m-%d %H:%M') if session.closed_at else '-' }}</td>
+                <td>${{ '%.2f'|format(session.opening_amount or 0) }}</td>
+                <td>${{ '%.2f'|format(session.closing_amount or 0) }}</td>
+                <td><span class="badge {{ 'text-bg-success' if session.status == 'abierta' else 'text-bg-secondary' }}">{{ session.status|title }}</span></td>
+                <td>{{ session.note or '-' }}</td>
+                <td class="text-end">
+                  <form method="post" action="{{ url_for('company_billing.company_settings_cash_update', session_id=session.id) }}" class="d-inline-flex gap-1 align-items-center">
+                    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                    <input class="form-control form-control-sm" style="max-width:100px" name="opening_amount" type="number" step="0.01" min="0" value="{{ session.opening_amount or 0 }}" title="Monto apertura">
+                    <input class="form-control form-control-sm" style="max-width:100px" name="closing_amount" type="number" step="0.01" min="0" value="{{ session.closing_amount or 0 }}" title="Monto cierre">
+                    <button class="btn btn-sm btn-outline-dark" type="submit">Editar</button>
+                  </form>
+                  {% if session.status == 'abierta' %}
+                  <form method="post" action="{{ url_for('company_billing.company_settings_cash_close', session_id=session.id) }}" class="d-inline-flex gap-1 align-items-center ms-1" onsubmit="return confirm('¿Cerrar esta caja?');">
+                    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                    <input class="form-control form-control-sm" style="max-width:110px" name="closing_amount" type="number" step="0.01" min="0" value="{{ session.opening_amount or 0 }}" title="Monto cierre">
+                    <button class="btn btn-sm btn-outline-danger" type="submit">Cerrar</button>
+                  </form>
+                  {% endif %}
+                </td>
+              </tr>
+              {% else %}
+              <tr><td colspan="8" class="text-center text-muted py-3">Sin sesiones de caja registradas.</td></tr>
+              {% endfor %}
+            </tbody>
+          </table>
+        </div>
+      </div>
+      {% else %}
+      <div class="alert alert-warning mb-4">La apertura, cierre y edición de caja desde Mi Empresa está habilitada solo para administradores.</div>
+      {% endif %}
+
       <form method="get" action="{{ url_for('company_billing.company_settings') }}" class="d-flex flex-wrap gap-2 mb-4">
         <input type="hidden" name="panel" value="stats">
         <input class="form-control form-control-sm" type="date" name="from" value="{{ date_from }}">
