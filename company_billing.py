@@ -651,18 +651,25 @@ def company_settings_change_password():
 @company_member_required
 def company_settings():
     from flask import session
+    from sqlalchemy.orm import selectinload
+
+    from app import Sale, SaleItem
 
     company_id = getattr(current_user, "company_id", None)
     company = _load_company(company_id)
+    settings_panel = (request.args.get("panel") or "").strip().lower()
 
     pin_verified = _is_pin_verified(company.id)
     date_from_raw = request.args.get("from") or ""
     date_to_raw = request.args.get("to") or ""
+    if not settings_panel and (date_from_raw or date_to_raw):
+        settings_panel = "stats"
     date_from = _parse_date(date_from_raw)
     date_to = _parse_date(date_to_raw)
 
     users = []
     cash_rows = []
+    recent_sales = []
     usage_snapshot, users_metric = _plan_limit_context(company.id)
     subscription = usage_snapshot["subscription"]
     plan = usage_snapshot["plan"]
@@ -672,12 +679,20 @@ def company_settings():
     if pin_verified:
         users, cash_rows = _build_user_and_cash_rows(company.id, date_from=date_from, date_to=date_to)
         cash_summary = _cash_summary(cash_rows)
+        recent_sales = (
+            Sale.query.options(selectinload(Sale.items).selectinload(SaleItem.product))
+            .filter_by(company_id=company.id)
+            .order_by(Sale.date.desc())
+            .limit(12)
+            .all()
+        )
 
     return render_template(
         "company_billing/settings.html",
         company=company,
         users=users,
         cash_rows=cash_rows,
+        recent_sales=recent_sales,
         cash_summary=cash_summary,
         subscription=subscription,
         current_plan=plan,
@@ -685,6 +700,7 @@ def company_settings():
         users_metric=users_metric,
         usage_snapshot=usage_snapshot,
         pin_verified=pin_verified,
+        settings_panel=settings_panel,
         pin_created_at=pin_created_at,
         pin_last_used_at=pin_last_used_at,
         pin_bootstrap_reveal=pin_bootstrap_reveal,

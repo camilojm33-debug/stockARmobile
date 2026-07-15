@@ -251,18 +251,16 @@ def _compute_a4_grid(label_w_pt, label_h_pt, *, min_margin_mm=2, gap_mm=1):
     gap = gap_mm * mm
 
     def _axis(page_size, label_size):
-        usable = max(label_size, page_size - (2 * min_margin))
-        slots = max(1, int((usable + gap) // (label_size + gap)))
-        while slots > 1:
-            required = (slots * label_size) + ((slots - 1) * gap) + (2 * min_margin)
-            if required <= page_size:
-                break
-            slots -= 1
+        available = max(0, page_size - (2 * min_margin))
+        if available <= label_size:
+            margin = max(min_margin, (page_size - label_size) / 2)
+            return 1, gap, margin
 
+        slots = int((available + gap) // (label_size + gap))
+        slots = max(1, slots)
         used = (slots * label_size) + ((slots - 1) * gap)
-        margin = (page_size - used) / 2
-        if margin < min_margin:
-            margin = min_margin
+        remaining = max(0, page_size - used)
+        margin = max(min_margin, remaining / 2)
         return slots, gap, margin
 
     cols, gap_x, margin_x = _axis(page_w, label_w_pt)

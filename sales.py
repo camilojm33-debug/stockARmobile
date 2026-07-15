@@ -6,7 +6,7 @@ from datetime import datetime
 from io import StringIO
 from urllib.parse import quote
 
-from flask import Blueprint, current_app, flash, jsonify, make_response, redirect, render_template, request, session, url_for
+from flask import Blueprint, abort, current_app, flash, jsonify, make_response, redirect, render_template, request, session, url_for
 from flask_login import current_user, login_required
 from sqlalchemy.orm import selectinload
 from app import tenant_required, utcnow
@@ -397,6 +397,33 @@ def edit(sale_id):
         flash("Venta actualizada correctamente.", "success")
         return redirect(url_for("sales.view_sale", sale_id=sale.id))
     return render_template("ventas/edit_sale.html", sale=sale, clients=clients)
+
+
+@bp.route("/<int:sale_id>/delete", methods=["POST"])
+@tenant_required
+def delete_sale(sale_id):
+    from app import Product, Sale, SaleItem, db, record_audit, scope_query_to_company
+
+    if getattr(current_user, "role", None) != "admin":
+        abort(403)
+
+    sale = scope_query_to_company(Sale.query.options(selectinload(Sale.items).selectinload(SaleItem.product)), Sale).filter(Sale.id == sale_id).first_or_404()
+
+    for item in sale.items:
+        product = item.product or scope_query_to_company(db.session.query(Product), Product).filter(Product.id == item.product_id).first()
+        if product is not None:
+            product.stock = (product.stock or 0) + (item.quantity or 0)
+
+    record_audit(
+        action="sale_delete",
+        entity="sale",
+        entity_id=sale.id,
+        detail=f"Venta eliminada y stock restituido. Total={sale.total_amount}",
+    )
+    db.session.delete(sale)
+    db.session.commit()
+    flash("Venta eliminada correctamente y stock restaurado.", "success")
+    return redirect(request.referrer or url_for("company_billing.company_settings", panel="stats"))
 
 
 @bp.route("/<int:sale_id>/imprimir-ticket")

@@ -13,6 +13,12 @@
         </div>
         <div class="d-flex gap-2">
           <a class="btn btn-outline-primary" href="{{ url_for('qr_labels.generate_pdf_ticket', sale_id=sale.id) }}" target="_blank">PDF</a>
+          {% if current_user.role == 'admin' %}
+          <form method="post" action="{{ url_for('sales.delete_sale', sale_id=sale.id) }}" onsubmit="return confirm('Eliminar la venta #{{ sale.id }}? Se restituirá el stock.');">
+            <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+            <button class="btn btn-outline-danger" type="submit">Eliminar</button>
+          </form>
+          {% endif %}
           <a class="btn btn-outline-secondary" href="{{ url_for('sales.index') }}">Volver</a>
         </div>
       </div>
