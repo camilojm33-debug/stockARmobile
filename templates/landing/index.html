@@ -84,7 +84,10 @@
         {% endwith %}
 
         <div class="row align-items-center g-5">
-          <div class="col-lg-7 reveal" data-delay="80">
+          <div class="col-lg-6 reveal" data-delay="80">
+            <div class="hero-lead-logo-wrap">
+              <img class="hero-lead-logo" src="{{ url_for('static', filename='images/branding/isotipo.png') }}" alt="StockArmobile isotipo">
+            </div>
             <span class="eyebrow"><i class="bi bi-graph-up-arrow"></i> Plataforma SaaS para comercios</span>
             <h1 class="display-4 fw-bold mb-3">Controla tu negocio desde cualquier lugar</h1>
             <p class="lead text-muted mb-4">Ventas, stock, clientes, caja, QR, etiquetas y reportes en una sola plataforma profesional lista para operar y crecer.</p>
@@ -98,10 +101,7 @@
               <span><i class="bi bi-shield-check"></i> Gestión por roles y empresa</span>
             </div>
           </div>
-          <div class="col-lg-5 reveal hero-media-col" data-delay="180">
-            <div class="hero-logo-wrap">
-              <img class="hero-logo" src="{{ url_for('static', filename='images/branding/logo.png') }}" alt="Logo StockArmobile">
-            </div>
+          <div class="col-lg-6 reveal hero-media-col" data-delay="180">
             <div class="hero-mockup" role="img" aria-label="Vista operativa de StockArmobile">
               <div class="mockup-window">
                 <div class="mockup-toolbar">

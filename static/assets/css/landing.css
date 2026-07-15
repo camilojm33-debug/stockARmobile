@@ -243,7 +243,7 @@ a { text-decoration: none; }
   justify-content: center;
 }
 
-.hero-logo-wrap {
+.hero-lead-logo-wrap {
   width: 100%;
   display: flex;
   justify-content: center;
@@ -252,9 +252,9 @@ a { text-decoration: none; }
   margin-bottom: 1rem;
 }
 
-.hero-logo {
-  width: 100%;
-  max-width: 420px;
+.hero-lead-logo {
+  width: auto;
+  max-width: 180px;
   height: auto;
   object-fit: contain;
   display: block;
@@ -1062,9 +1062,6 @@ a { text-decoration: none; }
     left: 1.25rem;
     bottom: -14px;
   }
-  .hero-logo {
-    max-width: 320px;
-  }
 }
 
 @media (max-width: 767px) {
@@ -1090,11 +1087,8 @@ a { text-decoration: none; }
     width: 100%;
     text-align: center;
   }
-  .hero-logo-wrap {
+  .hero-lead-logo-wrap {
     margin-bottom: 0.75rem;
-  }
-  .hero-logo {
-    max-width: 240px;
   }
   .section { padding: 4.5rem 0; }
   .hero-section { padding-bottom: 2.8rem; }
