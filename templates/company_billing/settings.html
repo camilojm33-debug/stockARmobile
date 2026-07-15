@@ -149,13 +149,13 @@
           {'title': 'Empleados', 'desc': 'Usuarios del negocio: alta, edición y estado de usuarios.', 'icon': 'bi-people', 'url': url_for('company_billing.company_settings', panel='employees')},
           {'title': 'Horarios de Atención', 'desc': 'Definí franjas y reglas operativas.', 'icon': 'bi-clock-history', 'url': url_for('company_billing.company_settings', panel='schedules')},
           {'title': 'Sucursales', 'desc': 'Gestioná sedes y puntos de atención.', 'icon': 'bi-shop', 'url': url_for('company_billing.company_settings', panel='branches')},
-          {'title': 'Suscripción', 'desc': 'Plan contratado, renovaciones y límites.', 'icon': 'bi-credit-card-2-front', 'url': url_for('company_billing.subscription_portal')},
+          {'title': 'Suscripción', 'desc': 'Plan contratado, renovaciones y límites.', 'icon': 'bi-credit-card-2-front', 'url': url_for('company_billing.subscription_portal'), 'admin_only': True},
           {'title': 'Facturación', 'desc': 'Estado de cobros y checkout disponible.', 'icon': 'bi-receipt', 'url': url_for('company_billing.company_settings', panel='billing')},
           {'title': 'Seguridad', 'desc': 'PIN interno y contraseña del usuario.', 'icon': 'bi-shield-lock', 'url': url_for('company_billing.company_settings', panel='security')},
           {'title': 'Configuración General', 'desc': 'Ajustes base y preferencias operativas.', 'icon': 'bi-sliders', 'url': url_for('company_billing.company_settings', panel='general')},
           {'title': 'Estadísticas de la Empresa', 'desc': 'Ventas, caja y actividad por usuario.', 'icon': 'bi-bar-chart-line', 'url': url_for('company_billing.company_settings', panel='stats')},
         ] %}
-        {% for card in company_cards %}
+        {% for card in company_cards if (not card.get('admin_only')) or current_user.role == 'admin' %}
         <div class="col-md-6 col-xl-4">
           <a class="card app-card h-100 text-decoration-none text-reset company-nav-card" href="{{ card.url }}">
             <div class="card-body d-flex gap-3 align-items-start">
@@ -396,11 +396,16 @@
                     <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
                     <input class="form-control form-control-sm" name="full_name" value="{{ user.name }}" style="min-width: 180px;">
                     <input class="form-control form-control-sm" name="email" value="{{ user.email }}" style="min-width: 200px;">
+                    <input type="hidden" name="role" value="{{ user.role }}">
+                    <button class="btn btn-sm btn-outline-primary" type="submit">Guardar</button>
+                  </form>
+                  <form method="post" action="{{ url_for('company_billing.company_settings_user_role_update', user_id=user.id) }}" class="d-flex gap-1">
+                    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
                     <select class="form-select form-select-sm" name="role" style="min-width: 150px;">
                       <option value="user" {% if user.role != 'admin' %}selected{% endif %}>Empleado</option>
                       <option value="admin" {% if user.role == 'admin' %}selected{% endif %}>Administrador</option>
                     </select>
-                    <button class="btn btn-sm btn-outline-primary" type="submit">Guardar</button>
+                    <button class="btn btn-sm btn-outline-dark" type="submit">Cambiar rol</button>
                   </form>
                   <form method="post" action="{{ url_for('company_billing.company_settings_user_toggle', user_id=user.id) }}">
                     <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
@@ -640,6 +645,67 @@
           <a class="btn btn-outline-secondary" href="{{ url_for('company_billing.company_settings') }}"><i class="bi bi-arrow-left me-1"></i>Volver</a>
         </div>
       </form>
+
+      <hr class="my-4">
+
+      <h3 class="h6 fw-bold mb-3">Asignación de actividad por empleado</h3>
+      <form method="post" action="{{ url_for('company_billing.company_settings_schedules_assign_add') }}" class="row g-2 mb-3">
+        <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+        <div class="col-md-4">
+          <select class="form-select" name="user_id" required>
+            <option value="">Seleccionar empleado</option>
+            {% for employee in active_employees %}
+            <option value="{{ employee.id }}">{{ employee.name }} ({{ employee.username }})</option>
+            {% endfor %}
+          </select>
+        </div>
+        <div class="col-md-3">
+          <select class="form-select" name="day" required>
+            <option value="">Día</option>
+            <option value="lunes">Lunes</option>
+            <option value="martes">Martes</option>
+            <option value="miercoles">Miércoles</option>
+            <option value="jueves">Jueves</option>
+            <option value="viernes">Viernes</option>
+            <option value="sabado">Sábado</option>
+            <option value="domingo">Domingo</option>
+          </select>
+        </div>
+        <div class="col-md-2">
+          <input class="form-control" type="time" name="start" required>
+        </div>
+        <div class="col-md-2">
+          <input class="form-control" type="time" name="end" required>
+        </div>
+        <div class="col-md-1 d-grid">
+          <button class="btn btn-outline-primary" type="submit">+</button>
+        </div>
+      </form>
+
+      <div class="table-responsive">
+        <table class="table table-sm table-hover mb-0">
+          <thead><tr><th>Empleado</th><th>Día</th><th>Desde</th><th>Hasta</th><th class="text-end">Acción</th></tr></thead>
+          <tbody>
+            {% for assignment in schedule_assignments %}
+            {% set assigned_user = (active_employees | selectattr('id', 'equalto', assignment.user_id) | first) %}
+            <tr>
+              <td>{{ assigned_user.name if assigned_user else ('Usuario #' ~ assignment.user_id) }}</td>
+              <td>{{ assignment.day|title }}</td>
+              <td>{{ assignment.start }}</td>
+              <td>{{ assignment.end }}</td>
+              <td class="text-end">
+                <form method="post" action="{{ url_for('company_billing.company_settings_schedules_assign_delete', assignment_id=assignment.id) }}" class="d-inline" onsubmit="return confirm('¿Eliminar asignación de horario?');">
+                  <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                  <button class="btn btn-sm btn-outline-danger" type="submit">Quitar</button>
+                </form>
+              </td>
+            </tr>
+            {% else %}
+            <tr><td colspan="5" class="text-center text-muted py-3">Sin asignaciones de actividad por empleado.</td></tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      </div>
     </div>
   </div>
   {% elif panel == 'branches' %}

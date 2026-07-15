@@ -1038,6 +1038,67 @@ def test_my_company_module_employee_permissions_delete_and_billing_pdf():
         assert deleted_user is None
 
 
+def test_my_company_module_role_update_and_schedule_assignment():
+    client = stock_app.app.test_client()
+
+    with stock_app.app.app_context():
+        from services.company_security_service import CompanySecurityService
+
+        company = Company.query.filter_by(name="Empresa Demo").first()
+        admin_user = User.query.filter_by(username="negocio_admin").first()
+        target_user = User.query.filter_by(username="empresa_admin").first()
+        assert company is not None
+        assert admin_user is not None
+        assert target_user is not None
+        CompanySecurityService.set_pin(company, "1234")
+        db.session.commit()
+        target_user_id = target_user.id
+
+    client.post("/auth/login", data={"username": "negocio_admin", "password": "admin123"})
+    client.post("/admin/company-settings/pin/verify", data={"access_pin": "1234"}, follow_redirects=True)
+
+    role_change = client.post(
+        f"/admin/company-settings/users/{target_user_id}/role",
+        data={"role": "admin"},
+        follow_redirects=True,
+    )
+    assert role_change.status_code == 200
+
+    assign_schedule = client.post(
+        "/admin/company-settings/schedules/assign",
+        data={
+            "user_id": str(target_user_id),
+            "day": "lunes",
+            "start": "09:00",
+            "end": "13:00",
+        },
+        follow_redirects=True,
+    )
+    assert assign_schedule.status_code == 200
+
+    with stock_app.app.app_context():
+        target_user = db.session.get(User, target_user_id)
+        company = Company.query.filter_by(name="Empresa Demo").first()
+        assert target_user is not None
+        assert target_user.role == "admin"
+        assert company is not None
+        assert company.schedules_json is not None
+        assert "09:00" in company.schedules_json
+
+
+def test_subscription_option_hidden_for_non_admin_user():
+    client = stock_app.app.test_client()
+    client.post("/auth/login", data={"username": "empresa_admin", "password": "admin123"})
+
+    sidebar = client.get("/dashboard/")
+    assert sidebar.status_code == 200
+    html = sidebar.data.decode("utf-8")
+    assert "Suscripción" not in html
+
+    portal = client.get("/admin/portal")
+    assert portal.status_code == 200
+
+
 def test_my_company_module_blocks_create_when_plan_user_limit_is_reached():
     client = stock_app.app.test_client()
 

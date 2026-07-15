@@ -143,6 +143,35 @@ def _json_company_dict(value):
     return payload if isinstance(payload, dict) else {}
 
 
+def _company_schedules_payload(company):
+    payload = _json_company_dict(company.schedules_json)
+    if not isinstance(payload.get("weekly"), dict):
+        payload["weekly"] = {}
+    assignments = payload.get("employee_assignments")
+    if not isinstance(assignments, list):
+        assignments = []
+    cleaned = []
+    for row in assignments:
+        if not isinstance(row, dict):
+            continue
+        assignment_id = str(row.get("id") or "").strip()
+        user_id = int(row.get("user_id") or 0)
+        day = str(row.get("day") or "").strip().lower()
+        start = str(row.get("start") or "").strip()[:5]
+        end = str(row.get("end") or "").strip()[:5]
+        if not assignment_id or user_id <= 0 or not day or not start or not end:
+            continue
+        cleaned.append({
+            "id": assignment_id,
+            "user_id": user_id,
+            "day": day,
+            "start": start,
+            "end": end,
+        })
+    payload["employee_assignments"] = cleaned
+    return payload
+
+
 def _pdf_from_lines(title, lines, filename):
     buffer = BytesIO()
     pdf = canvas.Canvas(buffer, pagesize=letter)
@@ -638,6 +667,30 @@ def company_settings_user_update(user_id):
     return redirect(url_for("company_billing.company_settings"))
 
 
+@bp.route("/company-settings/users/<int:user_id>/role", methods=["POST"])
+@company_admin_required
+def company_settings_user_role_update(user_id):
+    from app import User, db, record_audit
+
+    company_id = getattr(current_user, "company_id", None)
+    company = _load_company(company_id)
+    blocked = _pin_guard(company)
+    if blocked is not None:
+        return blocked
+
+    user = User.query.filter_by(id=user_id, company_id=company.id).first_or_404()
+    role = _normalize_company_role(request.form.get("role"))
+    if user.id == current_user.id and role != "admin":
+        flash("No puedes quitarte el rol administrador desde tu propia sesión.", "warning")
+        return redirect(url_for("company_billing.company_settings", panel="employees"))
+
+    user.role = role
+    record_audit(action="company_user_role_update", entity="user", entity_id=user.id, detail=f"Rol actualizado a {role} para {user.username}")
+    db.session.commit()
+    flash("Rol del empleado actualizado correctamente.", "success")
+    return redirect(url_for("company_billing.company_settings", panel="employees"))
+
+
 @bp.route("/company-settings/users/<int:user_id>/permissions", methods=["POST"])
 @company_admin_required
 def company_settings_user_permissions(user_id):
@@ -883,10 +936,83 @@ def company_settings_schedules_save():
         "vacations": (request.form.get("vacations") or "").strip()[:2000],
         "licenses": (request.form.get("licenses") or "").strip()[:2000],
     }
+    existing = _company_schedules_payload(company)
+    schedules_payload["employee_assignments"] = existing.get("employee_assignments", [])
     company.schedules_json = json.dumps(schedules_payload)
     record_audit(action="company_schedules_update", entity="company", entity_id=company.id, detail="Horarios de atencion actualizados")
     db.session.commit()
     flash("Horarios de atención guardados correctamente.", "success")
+    return redirect(url_for("company_billing.company_settings", panel="schedules"))
+
+
+@bp.route("/company-settings/schedules/assign", methods=["POST"])
+@company_admin_required
+def company_settings_schedules_assign_add():
+    from app import User, db, record_audit
+
+    company_id = getattr(current_user, "company_id", None)
+    company = _load_company(company_id)
+    blocked = _pin_guard(company)
+    if blocked is not None:
+        return blocked
+
+    user_id = request.form.get("user_id", type=int)
+    day = (request.form.get("day") or "").strip().lower()
+    start = (request.form.get("start") or "").strip()[:5]
+    end = (request.form.get("end") or "").strip()[:5]
+    valid_days = {"lunes", "martes", "miercoles", "jueves", "viernes", "sabado", "domingo"}
+
+    user = User.query.filter_by(id=user_id, company_id=company.id, active=True).first()
+    if user is None:
+        flash("Debes seleccionar un empleado activo válido.", "danger")
+        return redirect(url_for("company_billing.company_settings", panel="schedules"))
+    if day not in valid_days or not start or not end:
+        flash("Completa día y rango horario para asignar actividad.", "danger")
+        return redirect(url_for("company_billing.company_settings", panel="schedules"))
+    if start >= end:
+        flash("El horario de inicio debe ser menor al de cierre.", "danger")
+        return redirect(url_for("company_billing.company_settings", panel="schedules"))
+
+    schedules_payload = _company_schedules_payload(company)
+    assignments = schedules_payload.get("employee_assignments", [])
+    assignments.append({
+        "id": secrets.token_hex(6),
+        "user_id": user.id,
+        "day": day,
+        "start": start,
+        "end": end,
+    })
+    schedules_payload["employee_assignments"] = assignments
+    company.schedules_json = json.dumps(schedules_payload)
+    record_audit(action="company_schedule_assignment_add", entity="company", entity_id=company.id, detail=f"Asignación de horario para {user.username} {day} {start}-{end}")
+    db.session.commit()
+    flash("Asignación de horario guardada correctamente.", "success")
+    return redirect(url_for("company_billing.company_settings", panel="schedules"))
+
+
+@bp.route("/company-settings/schedules/assign/<string:assignment_id>/delete", methods=["POST"])
+@company_admin_required
+def company_settings_schedules_assign_delete(assignment_id):
+    from app import db, record_audit
+
+    company_id = getattr(current_user, "company_id", None)
+    company = _load_company(company_id)
+    blocked = _pin_guard(company)
+    if blocked is not None:
+        return blocked
+
+    schedules_payload = _company_schedules_payload(company)
+    assignments = schedules_payload.get("employee_assignments", [])
+    filtered = [row for row in assignments if row.get("id") != assignment_id]
+    if len(filtered) == len(assignments):
+        flash("No se encontró la asignación solicitada.", "warning")
+        return redirect(url_for("company_billing.company_settings", panel="schedules"))
+
+    schedules_payload["employee_assignments"] = filtered
+    company.schedules_json = json.dumps(schedules_payload)
+    record_audit(action="company_schedule_assignment_delete", entity="company", entity_id=company.id, detail=f"Asignación eliminada {assignment_id}")
+    db.session.commit()
+    flash("Asignación de horario eliminada correctamente.", "success")
     return redirect(url_for("company_billing.company_settings", panel="schedules"))
 
 
@@ -960,7 +1086,7 @@ def company_settings():
     from flask import session
     from sqlalchemy.orm import selectinload
 
-    from app import AuditLog, Invoice, Payment, PaymentHistory, Sale, SaleItem
+    from app import AuditLog, Invoice, Payment, PaymentHistory, Sale, SaleItem, User
 
     company_id = getattr(current_user, "company_id", None)
     company = _load_company(company_id)
@@ -991,7 +1117,9 @@ def company_settings():
     billing_history = []
     company_preferences = _json_company_dict(company.preferences_json)
     printer_settings = _json_company_dict(company.printer_settings_json)
-    schedules_settings = _json_company_dict(company.schedules_json)
+    schedules_settings = _company_schedules_payload(company)
+    schedule_assignments = schedules_settings.get("employee_assignments", [])
+    active_employees = []
     device_rows = []
     if pin_verified:
         users, cash_rows = _build_user_and_cash_rows(
@@ -1026,6 +1154,11 @@ def company_settings():
             PaymentHistory.query.filter_by(company_id=company.id)
             .order_by(PaymentHistory.created_at.desc(), PaymentHistory.id.desc())
             .limit(30)
+            .all()
+        )
+        active_employees = (
+            User.query.filter_by(company_id=company.id, active=True)
+            .order_by(User.first_name.asc(), User.last_name.asc(), User.username.asc())
             .all()
         )
         device_rows = (
@@ -1065,6 +1198,8 @@ def company_settings():
         company_preferences=company_preferences,
         printer_settings=printer_settings,
         schedules_settings=schedules_settings,
+        schedule_assignments=schedule_assignments,
+        active_employees=active_employees,
         device_rows=device_rows,
     )
 

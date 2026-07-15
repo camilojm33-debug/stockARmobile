@@ -408,7 +408,9 @@
       <a class="nav-link {% if request.endpoint and request.endpoint.startswith('expenses.') %}active{% endif %}" href="{{ url_for('expenses.index') }}"><i class="bi bi-receipt"></i>Gastos</a>
       <a class="nav-link {% if request.endpoint and request.endpoint.startswith('reports.') %}active{% endif %}" href="{{ url_for('reports.index') }}"><i class="bi bi-file-earmark-bar-graph"></i>Reportes</a>
       <a class="nav-link {% if request.endpoint and request.endpoint.startswith('qr_labels.') %}active{% endif %}" href="{{ url_for('qr_labels.generate') }}"><i class="bi bi-qr-code"></i>QR y etiquetas</a>
+      {% if current_user.role == 'admin' %}
       <a class="nav-link {% if request.endpoint and request.endpoint.startswith('company_billing.') %}active{% endif %}" href="{{ url_for('company_billing.subscription_portal') }}"><i class="bi bi-credit-card-2-front"></i>Suscripción</a>
+      {% endif %}
       {% endif %}
       {% if current_user.role != 'superadmin' %}
       <a class="nav-link {% if request.endpoint and request.endpoint.startswith('referrals.') %}active{% endif %}" href="{{ url_for('referrals.seller_dashboard') }}"><i class="bi bi-megaphone"></i>Referidos</a>
