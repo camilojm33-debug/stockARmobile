@@ -385,6 +385,7 @@
       <a class="nav-link {% if request.endpoint == 'saas.plans_panel' %}active{% endif %}" href="{{ url_for('saas.plans_panel') }}"><i class="bi bi-diagram-3"></i>Planes</a>
       <a class="nav-link {% if request.endpoint == 'saas.mercadopago_settings' %}active{% endif %}" href="{{ url_for('saas.mercadopago_settings') }}"><i class="bi bi-wallet2"></i>Mercado Pago</a>
       <a class="nav-link {% if request.endpoint == 'saas.billing' %}active{% endif %}" href="{{ url_for('saas.billing') }}"><i class="bi bi-receipt"></i>Facturación</a>
+      <a class="nav-link {% if request.endpoint and request.endpoint.startswith('saas.backups') %}active{% endif %}" href="{{ url_for('saas.backups_panel') }}"><i class="bi bi-hdd-stack"></i>Backups</a>
       <a class="nav-link {% if request.endpoint == 'saas.trials_panel' %}active{% endif %}" href="{{ url_for('saas.trials_panel') }}"><i class="bi bi-hourglass-split"></i>Pruebas</a>
       <a class="nav-link {% if request.endpoint == 'saas.payments_panel' %}active{% endif %}" href="{{ url_for('saas.payments_panel') }}"><i class="bi bi-cash-coin"></i>Pagos</a>
       <a class="nav-link {% if request.endpoint == 'saas.renewals_panel' %}active{% endif %}" href="{{ url_for('saas.renewals_panel') }}"><i class="bi bi-arrow-repeat"></i>Renovaciones</a>

@@ -1,0 +1,128 @@
+{% extends "base_master.html" %}
+
+{% block title %}Backups - Superadmin{% endblock %}
+
+{% block content %}
+<div class="app-shell">
+  <div class="d-flex flex-wrap justify-content-between align-items-center gap-3 mb-4">
+    <div>
+      <span class="page-kicker"><i class="bi bi-hdd-stack"></i> Superadmin</span>
+      <h1 class="h3 fw-bold mb-0">Backups globales</h1>
+      <p class="text-muted mb-0">Administrá respaldos por empresa: crear, descargar, restaurar y eliminar.</p>
+    </div>
+    <div class="d-flex gap-2">
+      <a class="btn btn-outline-secondary" href="{{ url_for('saas.index') }}"><i class="bi bi-arrow-left me-1"></i>Volver al panel</a>
+    </div>
+  </div>
+
+  <div class="card app-card mb-4">
+    <div class="card-body">
+      <form method="get" action="{{ url_for('saas.backups_panel') }}" class="row g-2 align-items-end mb-3">
+        <div class="col-md-4">
+          <label class="form-label">Buscar</label>
+          <input class="form-control" type="search" name="q" value="{{ filters.q or '' }}" placeholder="Empresa, usuario o archivo">
+        </div>
+        <div class="col-md-3">
+          <label class="form-label">Empresa</label>
+          <select class="form-select" name="company_id">
+            <option value="">Todas</option>
+            {% for company in companies %}
+            <option value="{{ company.id }}" {% if filters.company_id and filters.company_id == company.id %}selected{% endif %}>{{ company.name }}</option>
+            {% endfor %}
+          </select>
+        </div>
+        <div class="col-md-2">
+          <label class="form-label">Estado</label>
+          <select class="form-select" name="status">
+            <option value="all" {% if (filters.status or 'all') == 'all' %}selected{% endif %}>Todos</option>
+            <option value="ready" {% if filters.status == 'ready' %}selected{% endif %}>Ready</option>
+            <option value="restored" {% if filters.status == 'restored' %}selected{% endif %}>Restored</option>
+            <option value="error" {% if filters.status == 'error' %}selected{% endif %}>Error</option>
+          </select>
+        </div>
+        <div class="col-md-2">
+          <label class="form-label">Plan</label>
+          <select class="form-select" name="plan">
+            <option value="all" {% if (filters.plan or 'all') == 'all' %}selected{% endif %}>Todos</option>
+            <option value="trial" {% if filters.plan == 'trial' %}selected{% endif %}>Trial</option>
+            <option value="entrepreneur" {% if filters.plan == 'entrepreneur' %}selected{% endif %}>Emprendedor</option>
+            <option value="business" {% if filters.plan == 'business' %}selected{% endif %}>Negocio</option>
+            <option value="premium" {% if filters.plan == 'premium' %}selected{% endif %}>Premium</option>
+          </select>
+        </div>
+        <div class="col-md-1 d-grid">
+          <button class="btn btn-outline-primary" type="submit">Filtrar</button>
+        </div>
+      </form>
+
+      <form method="post" action="{{ url_for('saas.backups_create') }}" class="row g-2 align-items-end mb-4">
+        <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+        <div class="col-md-6 col-lg-4">
+          <label class="form-label">Crear backup manual para empresa</label>
+          <select class="form-select" name="company_id" required>
+            <option value="">Seleccionar empresa</option>
+            {% for company in companies %}
+            <option value="{{ company.id }}">{{ company.name }}</option>
+            {% endfor %}
+          </select>
+        </div>
+        <div class="col-md-3 col-lg-2 d-grid">
+          <button class="btn btn-primary" type="submit"><i class="bi bi-plus-circle me-1"></i>Crear backup</button>
+        </div>
+      </form>
+
+      <div class="table-responsive">
+        <table class="table table-sm table-hover align-middle mb-0">
+          <thead>
+            <tr>
+              <th>#</th>
+              <th>Empresa</th>
+              <th>Archivo</th>
+              <th>Estado</th>
+              <th>Tipo</th>
+              <th>Plan</th>
+              <th>Tamaño</th>
+              <th>Creado</th>
+              <th>Restaurado</th>
+              <th class="text-end">Acciones</th>
+            </tr>
+          </thead>
+          <tbody>
+            {% for backup in backups %}
+            <tr>
+              <td>#{{ backup.id }}</td>
+              <td>{{ backup.company.name if backup.company else ('Empresa #' ~ backup.company_id) }}</td>
+              <td>
+                <div class="fw-semibold">{{ backup.file_name or ('backup_' ~ backup.id) }}</div>
+                <div class="small text-muted">{{ backup.detail or '-' }}</div>
+              </td>
+              <td><span class="badge {{ 'text-bg-success' if backup.status == 'ready' else 'text-bg-secondary' }}">{{ backup.status or '-' }}</span></td>
+              <td>{{ backup.trigger_type or '-' }}</td>
+              <td>{{ backup.plan_code or '-' }}</td>
+              <td>{{ format_size(backup.file_size_bytes or 0) }}</td>
+              <td>{{ backup.created_at.strftime('%Y-%m-%d %H:%M') if backup.created_at else '-' }}</td>
+              <td>{{ backup.restored_at.strftime('%Y-%m-%d %H:%M') if backup.restored_at else '-' }}</td>
+              <td class="text-end">
+                <div class="d-inline-flex gap-1 flex-wrap justify-content-end">
+                  <a class="btn btn-sm btn-outline-primary" href="{{ url_for('saas.backups_download', backup_id=backup.id) }}">Descargar</a>
+                  <form method="post" action="{{ url_for('saas.backups_restore', backup_id=backup.id) }}" onsubmit="return confirm('¿Restaurar este backup para la empresa seleccionada?');">
+                    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                    <button class="btn btn-sm btn-outline-warning" type="submit">Restaurar</button>
+                  </form>
+                  <form method="post" action="{{ url_for('saas.backups_delete', backup_id=backup.id) }}" onsubmit="return confirm('¿Eliminar este backup?');">
+                    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                    <button class="btn btn-sm btn-outline-danger" type="submit">Eliminar</button>
+                  </form>
+                </div>
+              </td>
+            </tr>
+            {% else %}
+            <tr><td colspan="10" class="text-center text-muted py-4">No hay backups para los filtros seleccionados.</td></tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      </div>
+    </div>
+  </div>
+</div>
+{% endblock %}
