@@ -69,6 +69,14 @@ app.config["SUPPORT_WHATSAPP_NUMBER"] = (
     or "".join(ch for ch in app.config["SUPPORT_WHATSAPP_DISPLAY"] if ch.isdigit())
     or "5493624228296"
 ).strip()
+app.config["PASSWORD_RESET_TOKEN_TTL_MINUTES"] = int(os.environ.get("PASSWORD_RESET_TOKEN_TTL_MINUTES", "60"))
+app.config["SMTP_HOST"] = (os.environ.get("SMTP_HOST") or "").strip()
+app.config["SMTP_PORT"] = int(os.environ.get("SMTP_PORT") or "587")
+app.config["SMTP_USE_TLS"] = (os.environ.get("SMTP_USE_TLS") or "1").strip().lower() in {"1", "true", "yes", "on"}
+app.config["SMTP_USER"] = (os.environ.get("SMTP_USER") or "").strip()
+app.config["SMTP_PASSWORD"] = (os.environ.get("SMTP_PASSWORD") or "").strip()
+app.config["SMTP_FROM_EMAIL"] = (os.environ.get("SMTP_FROM_EMAIL") or app.config["SUPPORT_EMAIL"] or "no-reply@stockarmobile.com").strip()
+app.config["APP_URL"] = (os.environ.get("APP_URL") or "https://stockarmobile.com").strip().rstrip("/")
 app.config["COMPANY_PIN_SESSION_TTL_MINUTES"] = int(os.environ.get("COMPANY_PIN_SESSION_TTL_MINUTES", "30"))
 app.wsgi_app = ProxyFix(app.wsgi_app, x_proto=1, x_host=1)
 
@@ -840,6 +848,21 @@ class PasswordRecoveryRequest(db.Model):
     processed_by = db.relationship("User", foreign_keys=[processed_by_user_id], backref="password_recovery_processed")
 
 
+class PasswordResetToken(db.Model):
+    __tablename__ = "password_reset_tokens"
+
+    id = db.Column(db.Integer, primary_key=True)
+    user_id = db.Column(db.Integer, db.ForeignKey("users.id"), nullable=False, index=True)
+    email = db.Column(db.String(160), nullable=False, index=True)
+    token_hash = db.Column(db.String(128), nullable=False, unique=True, index=True)
+    expires_at = db.Column(db.DateTime, nullable=False, index=True)
+    used_at = db.Column(db.DateTime, index=True)
+    revoked_at = db.Column(db.DateTime, index=True)
+    created_at = db.Column(db.DateTime, default=utcnow, index=True)
+
+    user = db.relationship("User", backref="password_reset_tokens")
+
+
 class ReferralSeller(db.Model):
     __tablename__ = "referral_sellers"
 
@@ -1413,6 +1436,36 @@ def favicon():
 @app.route("/apple-touch-icon.png")
 def apple_touch_icon():
     return send_from_directory(app.static_folder, "images/branding/apple-touch-icon.png", mimetype="image/png")
+
+
+@app.route("/icon-192.png")
+def icon_192():
+    return send_from_directory(app.static_folder, "images/branding/icon-192.png", mimetype="image/png")
+
+
+@app.route("/icon-256.png")
+def icon_256():
+    return send_from_directory(app.static_folder, "images/branding/icon-256.png", mimetype="image/png")
+
+
+@app.route("/icon-384.png")
+def icon_384():
+    return send_from_directory(app.static_folder, "images/branding/icon-384.png", mimetype="image/png")
+
+
+@app.route("/icon-512.png")
+def icon_512():
+    return send_from_directory(app.static_folder, "images/branding/icon-512.png", mimetype="image/png")
+
+
+@app.route("/icon-maskable-512.png")
+def icon_maskable_512():
+    return send_from_directory(app.static_folder, "images/branding/icon-maskable-512.png", mimetype="image/png")
+
+
+@app.route("/splash.png")
+def splash_icon():
+    return send_from_directory(app.static_folder, "images/branding/splash.png", mimetype="image/png")
 
 
 @app.route("/service-worker.js")

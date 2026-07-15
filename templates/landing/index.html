@@ -6,6 +6,13 @@
   <title>{{ seo.title }}</title>
   <meta name="description" content="{{ seo.description }}">
   <meta name="theme-color" content="#0f62fe">
+  <meta name="application-name" content="StockArmobile">
+  <meta name="mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+  <meta name="apple-mobile-web-app-title" content="StockArmobile">
+  <meta name="msapplication-TileColor" content="#0f62fe">
+  <meta name="msapplication-TileImage" content="{{ url_for('static', filename='images/branding/icon-512.png') }}">
 
   <meta property="og:type" content="website">
   <meta property="og:title" content="{{ seo.title }}">
@@ -18,8 +25,12 @@
   <meta name="twitter:title" content="{{ seo.title }}">
   <meta name="twitter:description" content="{{ seo.description }}">
   <meta name="twitter:image" content="{{ seo.image }}">
+  <link rel="manifest" href="{{ url_for('web_manifest') }}">
   <link rel="icon" type="image/x-icon" href="{{ url_for('static', filename='images/branding/favicon.ico') }}">
+  <link rel="icon" type="image/png" sizes="192x192" href="{{ url_for('static', filename='images/branding/icon-192.png') }}">
+  <link rel="icon" type="image/png" sizes="512x512" href="{{ url_for('static', filename='images/branding/icon-512.png') }}">
   <link rel="apple-touch-icon" href="{{ url_for('static', filename='images/branding/apple-touch-icon.png') }}">
+  <link rel="apple-touch-startup-image" href="{{ url_for('static', filename='images/branding/splash.png') }}">
 
   <script type="application/ld+json">
   {
@@ -167,10 +178,6 @@
                     <source src="{{ demo_audio_file_url }}" type="audio/mpeg">
                     Tu navegador no soporta reproducción de audio.
                   </audio>
-                </div>
-                {% else %}
-                <div class="landing-audio-box mt-3 text-center">
-                  <div class="small text-muted">Para activar música en esta sección, coloca un archivo con licencia en <strong>static/assets/audio/landing-theme.mp3</strong>.</div>
                 </div>
                 {% endif %}
               </div>

@@ -1,12 +1,18 @@
-const CACHE_NAME = 'stockarmobile-pwa-v4';
+const CACHE_NAME = 'stockarmobile-pwa-v5';
 const STATIC_ASSETS = [
   '/',
   '/offline.html',
   '/manifest.json',
   '/static/assets/css/styles.css',
   '/static/assets/js/cart-manager.js',
+  '/static/images/branding/favicon.ico',
+  '/static/images/branding/apple-touch-icon.png',
   '/static/images/branding/icon-192.png',
-  '/static/images/branding/icon-512.png'
+  '/static/images/branding/icon-256.png',
+  '/static/images/branding/icon-384.png',
+  '/static/images/branding/icon-512.png',
+  '/static/images/branding/icon-maskable-512.png',
+  '/static/images/branding/splash.png'
 ];
 const API_CACHE_PREFIXES = ['/productos/api/products', '/clientes/api/clients', '/ventas/api/recent'];
 const SYNCABLE_POST_PREFIXES = ['/ventas/api/checkout'];

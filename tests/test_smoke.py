@@ -1494,6 +1494,65 @@ def test_password_recovery_request_and_superadmin_reset_flow():
         assert req.status == "cerrada"
 
 
+def test_referral_user_password_reset_token_flow():
+    client = stock_app.app.test_client()
+
+    with stock_app.app.app_context():
+        seller_user = User(username="seller_recovery", email="seller_recovery@test.local", role="seller", active=True)
+        seller_user.set_password("inicio123")
+        db.session.add(seller_user)
+        db.session.commit()
+
+    forgot = client.post(
+        "/auth/forgot-password",
+        data={"email": "seller_recovery@test.local"},
+        follow_redirects=True,
+    )
+    assert forgot.status_code == 200
+
+    token = stock_app.app.config.get("_LAST_PASSWORD_RESET_TOKEN")
+    assert token
+
+    reset_page = client.get(f"/auth/reset-password/{token}")
+    assert reset_page.status_code == 200
+    assert "Restablecer contrasena" in reset_page.data.decode("utf-8")
+
+    reset_submit = client.post(
+        f"/auth/reset-password/{token}",
+        data={"new_password": "nueva123", "confirm_password": "nueva123"},
+        follow_redirects=True,
+    )
+    assert reset_submit.status_code == 200
+    assert "Contrasena actualizada correctamente" in reset_submit.data.decode("utf-8")
+
+    reused = client.get(f"/auth/reset-password/{token}", follow_redirects=True)
+    assert reused.status_code == 200
+    assert "invalido o expiro" in reused.data.decode("utf-8")
+
+    login_new_password = client.post(
+        "/auth/login",
+        data={"username": "seller_recovery", "password": "nueva123"},
+        follow_redirects=False,
+    )
+    assert login_new_password.status_code in (301, 302)
+
+    with stock_app.app.app_context():
+        from app import PasswordRecoveryRequest, PasswordResetToken
+
+        user = User.query.filter_by(username="seller_recovery").first()
+        assert user is not None
+        assert user.must_change_password is False
+        assert user.check_password("nueva123")
+
+        token_row = PasswordResetToken.query.filter_by(user_id=user.id).order_by(PasswordResetToken.id.desc()).first()
+        assert token_row is not None
+        assert token_row.used_at is not None
+
+        req = PasswordRecoveryRequest.query.filter_by(user_id=user.id).order_by(PasswordRecoveryRequest.id.desc()).first()
+        assert req is not None
+        assert req.status == "cerrada"
+
+
 def test_landing_and_subscription_use_same_plan_catalog():
     client = stock_app.app.test_client()
 

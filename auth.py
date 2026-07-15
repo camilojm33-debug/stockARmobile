@@ -5,6 +5,8 @@ from urllib.parse import urlsplit
 
 from flask import Blueprint, flash, redirect, render_template, request, session, url_for
 from flask_login import current_user, login_required, login_user, logout_user
+from sqlalchemy.exc import OperationalError, ProgrammingError
+from services.password_recovery_service import PasswordRecoveryService
 
 bp = Blueprint("auth", __name__, template_folder="templates")
 
@@ -74,37 +76,83 @@ def forgot_password():
             return render_template("auth/forgot_password.html", email="")
 
         user = User.query.filter(db.func.lower(User.email) == email).first()
-        if user is not None:
-            existing = (
-                PasswordRecoveryRequest.query.filter_by(user_id=user.id)
-                .filter(PasswordRecoveryRequest.status.in_(["pendiente", "atendida"]))
-                .order_by(PasswordRecoveryRequest.requested_at.desc())
-                .first()
-            )
-            if existing is None:
-                req = PasswordRecoveryRequest(
-                    user_id=user.id,
-                    company_id=user.company_id,
-                    email=user.email,
-                    status="pendiente",
-                )
-                db.session.add(req)
-                db.session.flush()
-                record_audit(
-                    action="password_recovery_requested",
-                    entity="password_recovery_request",
-                    entity_id=req.id,
-                    user_id=user.id,
-                    company_id=user.company_id,
-                    detail="Solicitud de recuperacion creada desde login.",
-                )
+        if user is not None and user.active:
+            try:
+                PasswordRecoveryService.request_password_reset(db.session, user=user)
                 db.session.commit()
+            except (OperationalError, ProgrammingError):
+                db.session.rollback()
+                existing = (
+                    PasswordRecoveryRequest.query.filter_by(user_id=user.id)
+                    .filter(PasswordRecoveryRequest.status.in_(["pendiente", "atendida"]))
+                    .order_by(PasswordRecoveryRequest.requested_at.desc())
+                    .first()
+                )
+                if existing is None:
+                    req = PasswordRecoveryRequest(
+                        user_id=user.id,
+                        company_id=user.company_id,
+                        email=user.email,
+                        status="pendiente",
+                    )
+                    db.session.add(req)
+                    db.session.flush()
+                    record_audit(
+                        action="password_recovery_requested",
+                        entity="password_recovery_request",
+                        entity_id=req.id,
+                        user_id=user.id,
+                        company_id=user.company_id,
+                        detail="Solicitud de recuperacion creada desde login (fallback sin tabla de tokens).",
+                    )
+                    db.session.commit()
 
         # Mensaje neutro para no revelar si el correo existe o no.
-        flash("Solicitud registrada. El administrador la revisara.", "info")
+        flash("Si el correo existe, enviaremos instrucciones para recuperar tu contrasena.", "info")
         return redirect(url_for("auth.login"))
 
     return render_template("auth/forgot_password.html", email="")
+
+
+@bp.route("/reset-password/<token>", methods=["GET", "POST"])
+def reset_password(token):
+    from app import db
+
+    token = (token or "").strip()
+    try:
+        token_row = PasswordRecoveryService.get_valid_token_row(raw_token=token)
+    except (OperationalError, ProgrammingError):
+        token_row = None
+    if token_row is None:
+        flash("El enlace de recuperacion es invalido o expiro.", "danger")
+        return redirect(url_for("auth.forgot_password"))
+
+    if request.method == "POST":
+        new_password = (request.form.get("new_password") or "").strip()
+        confirm_password = (request.form.get("confirm_password") or "").strip()
+
+        if len(new_password) < 6:
+            flash("La nueva contrasena debe tener al menos 6 caracteres.", "danger")
+            return render_template("auth/reset_password.html", token=token)
+        if new_password != confirm_password:
+            flash("Las contrasenas no coinciden.", "danger")
+            return render_template("auth/reset_password.html", token=token)
+
+        user = PasswordRecoveryService.consume_token_and_set_password(
+            db.session,
+            raw_token=token,
+            new_password=new_password,
+        )
+        if user is None:
+            db.session.rollback()
+            flash("El enlace de recuperacion es invalido o expiro.", "danger")
+            return redirect(url_for("auth.forgot_password"))
+
+        db.session.commit()
+        flash("Contrasena actualizada correctamente. Ya puedes iniciar sesion.", "success")
+        return redirect(url_for("auth.login"))
+
+    return render_template("auth/reset_password.html", token=token)
 
 
 @bp.route("/force-password-change", methods=["GET", "POST"])
