@@ -110,4 +110,63 @@
   calcPlan?.addEventListener("change", refreshCalculator);
   calcClients?.addEventListener("input", refreshCalculator);
   refreshCalculator();
+
+  const installBtn = document.getElementById("pwaInstallBtn");
+  const installHint = document.getElementById("pwaInstallHint");
+  let deferredInstallPrompt = null;
+
+  const isStandalone = window.matchMedia("(display-mode: standalone)").matches || window.navigator.standalone === true;
+  if (isStandalone) {
+    return;
+  }
+
+  const showHint = function (message) {
+    if (!installHint) {
+      return;
+    }
+    installHint.textContent = message;
+    installHint.hidden = false;
+  };
+
+  window.addEventListener("beforeinstallprompt", function (event) {
+    event.preventDefault();
+    deferredInstallPrompt = event;
+    if (installBtn) {
+      installBtn.hidden = false;
+    }
+    showHint("Instala StockArmobile en tu dispositivo para abrirla como app nativa.");
+  });
+
+  installBtn?.addEventListener("click", async function () {
+    if (!deferredInstallPrompt) {
+      const isiOS = /iphone|ipad|ipod/i.test(window.navigator.userAgent || "");
+      if (isiOS) {
+        showHint("En iPhone: toca Compartir y luego 'Añadir a pantalla de inicio'.");
+      } else {
+        showHint("Desde el navegador, abre el menú y selecciona 'Instalar aplicación'.");
+      }
+      return;
+    }
+
+    deferredInstallPrompt.prompt();
+    const choice = await deferredInstallPrompt.userChoice;
+    if (choice && choice.outcome === "accepted") {
+      showHint("Instalación iniciada. Busca StockArmobile en tu pantalla principal.");
+      installBtn.hidden = true;
+    }
+    deferredInstallPrompt = null;
+  });
+
+  window.addEventListener("appinstalled", function () {
+    if (installBtn) {
+      installBtn.hidden = true;
+    }
+    showHint("StockArmobile se instaló correctamente en tu dispositivo.");
+  });
+
+  const isiOS = /iphone|ipad|ipod/i.test(window.navigator.userAgent || "");
+  if (isiOS && installBtn) {
+    installBtn.hidden = false;
+    showHint("En iPhone puedes instalarla desde Compartir > Añadir a pantalla de inicio.");
+  }
 })();

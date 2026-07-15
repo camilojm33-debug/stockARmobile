@@ -102,7 +102,11 @@
             <div class="d-flex flex-wrap gap-3 mb-3">
               <a class="btn btn-primary btn-lg btn-pill" href="{{ url_for('auth.register') }}?selected_plan=trial">Comenzar prueba gratuita</a>
               <a class="btn btn-outline-primary btn-lg btn-pill" href="#video-demo">Ver demostración</a>
+              <button class="btn btn-outline-primary btn-lg btn-pill" type="button" id="pwaInstallBtn" hidden>
+                <i class="bi bi-download me-1"></i> Descargar app (PWA)
+              </button>
             </div>
+            <div id="pwaInstallHint" class="small text-muted mb-3" hidden></div>
             <div class="hero-highlights d-flex flex-wrap gap-3">
               <span><i class="bi bi-check2-circle"></i> Sin instalación</span>
               <span><i class="bi bi-phone"></i> Funciona en PC y móvil</span>
