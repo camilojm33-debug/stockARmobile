@@ -29,9 +29,9 @@ def load_billing_config() -> BillingConfig:
     if mode not in {"sandbox", "production"}:
         mode = "sandbox"
 
-    webhook_secret = (os.environ.get("MP_WEBHOOK_SECRET") or "").strip()
+    webhook_secret = (os.environ.get("WEBHOOK_SECRET") or os.environ.get("MP_WEBHOOK_SECRET") or "").strip()
     if mode == "production" and not webhook_secret:
-        raise RuntimeError("MP_WEBHOOK_SECRET es obligatorio en produccion.")
+        raise RuntimeError("WEBHOOK_SECRET es obligatorio en produccion.")
 
     app_url = (os.environ.get("APP_URL") or "http://localhost:5000").rstrip("/")
     notification_url = os.environ.get("MP_NOTIFICATION_URL") or f"{app_url}/admin/webhooks/mercadopago"

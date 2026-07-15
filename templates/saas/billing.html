@@ -105,17 +105,20 @@
         <div class="card-header bg-white fw-bold">Pagos recientes</div>
         <div class="table-responsive">
           <table class="table mb-0">
-            <thead><tr><th>Estado</th><th>Importe</th><th>Metodo</th><th>Pago ID</th></tr></thead>
+            <thead><tr><th>Empresa</th><th>Usuario</th><th>Plan</th><th>Fecha</th><th>Importe</th><th>Estado</th><th>Operación</th></tr></thead>
             <tbody>
               {% for payment in payments %}
               <tr>
-                <td><span class="badge {{ 'text-bg-success' if payment.status == 'approved' else 'text-bg-warning' if payment.status in ['pending', 'authorized', 'in_process'] else 'text-bg-danger' }}">{{ status_labels.get(payment.status, payment.status|replace('_', ' ')|title) }}</span></td>
+                <td>{{ payment.company.name if payment.company else payment.company_id }}</td>
+                <td>{{ payment.user.username if payment.user else '-' }}</td>
+                <td>{{ payment.subscription.plan.name if payment.subscription and payment.subscription.plan else '-' }}</td>
+                <td>{{ payment.paid_at.strftime('%Y-%m-%d %H:%M') if payment.paid_at else (payment.created_at.strftime('%Y-%m-%d %H:%M') if payment.created_at else '-') }}</td>
                 <td>${{ "%.2f"|format(payment.amount or 0) }}</td>
-                <td>{{ payment.payment_method or '—' }}</td>
+                <td><span class="badge {{ 'text-bg-success' if payment.status == 'approved' else 'text-bg-warning' if payment.status in ['pending', 'authorized', 'in_process'] else 'text-bg-danger' }}">{{ status_labels.get(payment.status, payment.status|replace('_', ' ')|title) }}</span></td>
                 <td>{{ payment.payment_id or payment.reference or '—' }}</td>
               </tr>
               {% else %}
-              <tr><td colspan="4" class="text-center text-muted py-4">Sin pagos registrados.</td></tr>
+              <tr><td colspan="7" class="text-center text-muted py-4">Sin pagos registrados.</td></tr>
               {% endfor %}
             </tbody>
           </table>

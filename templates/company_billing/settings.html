@@ -408,13 +408,14 @@
                     <input type="hidden" name="role" value="{{ user.role }}">
                     <button class="btn btn-sm btn-outline-primary" type="submit">Guardar</button>
                   </form>
-                  <form method="post" action="{{ url_for('company_billing.company_settings_user_role_update', user_id=user.id) }}" class="d-flex gap-1">
+                  <form method="post" action="{{ url_for('company_billing.company_settings_user_role_update', user_id=user.id) }}" class="d-flex gap-1 align-items-center flex-wrap">
                     <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                    <span class="small text-muted">Rol:</span>
                     <select class="form-select form-select-sm" name="role" style="min-width: 150px;">
                       <option value="user" {% if user.role != 'admin' %}selected{% endif %}>Empleado</option>
                       <option value="admin" {% if user.role == 'admin' %}selected{% endif %}>Administrador</option>
                     </select>
-                    <button class="btn btn-sm btn-outline-dark" type="submit">Cambiar rol</button>
+                    <button class="btn btn-sm btn-primary" type="submit">Guardar rol</button>
                   </form>
                   <form method="post" action="{{ url_for('company_billing.company_settings_user_toggle', user_id=user.id) }}">
                     <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">

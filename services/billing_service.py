@@ -2,6 +2,11 @@
 
 from __future__ import annotations
 
+import base64
+from io import BytesIO
+
+import qrcode
+
 from services.billing_notification_service import NotificationService
 from services.mercadopago_service import MercadoPagoService
 from services.subscription_service import SubscriptionService
@@ -54,6 +59,30 @@ class BillingService:
         )
         db_session.commit()
         return {"subscription": subscription, "preference": preference}
+
+    @staticmethod
+    def checkout_preview_payload(*, preference: dict, plan, company) -> dict:
+        checkout_url = preference.get("init_point") or preference.get("sandbox_init_point") or ""
+        return {
+            "preference_id": preference.get("id"),
+            "checkout_url": checkout_url,
+            "plan_name": getattr(plan, "name", "Plan"),
+            "amount": float(getattr(plan, "price", 0) or 0),
+            "currency": getattr(plan, "currency", "ARS") or "ARS",
+            "company_name": getattr(company, "name", ""),
+            "qr_data_uri": BillingService._qr_data_uri(checkout_url) if checkout_url else "",
+        }
+
+    @staticmethod
+    def _qr_data_uri(content: str) -> str:
+        qr = qrcode.QRCode(error_correction=qrcode.constants.ERROR_CORRECT_M, box_size=8, border=2)
+        qr.add_data(content)
+        qr.make(fit=True)
+        image = qr.make_image(fill_color="black", back_color="white")
+        buffer = BytesIO()
+        image.save(buffer, format="PNG")
+        encoded = base64.b64encode(buffer.getvalue()).decode("ascii")
+        return f"data:image/png;base64,{encoded}"
 
     @staticmethod
     def cancel_subscription(db_session, *, subscription, user_id: int | None = None):

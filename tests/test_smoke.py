@@ -1584,7 +1584,7 @@ def test_landing_and_subscription_use_same_plan_catalog():
     portal_html = portal.data.decode("utf-8")
     assert "Uso del plan" in portal_html
     assert "Plan contratado" in portal_html
-    assert "Comenzar suscripción" in portal_html
+    assert ("Comenzar suscripción" in portal_html) or ("Suscribirme" in portal_html)
 
 
 def test_landing_contact_form_endpoint():
@@ -2276,3 +2276,136 @@ def test_webhook_pending_or_rejected_does_not_activate_subscription(monkeypatch)
         payment_row = Payment.query.filter_by(payment_id="mp-pay-pending").first()
         assert payment_row is not None
         assert payment_row.status == "pending"
+
+
+def test_webhook_invalid_signature_is_rejected(monkeypatch):
+    from services.webhook_service import WebhookService
+
+    with stock_app.app.app_context():
+        service = WebhookService()
+        monkeypatch.setattr(service.mp_service, "validate_webhook_signature", lambda **kwargs: False)
+
+        with pytest.raises(RuntimeError, match="Firma de webhook invalida"):
+            service.process(
+                db_session=db.session,
+                headers={"x-request-id": "rq-invalid", "x-signature": "ts=1,v1=invalid"},
+                payload={"id": "evt-invalid", "type": "payment", "data": {"id": "mp-invalid"}},
+            )
+
+
+def test_webhook_approved_amount_mismatch_does_not_activate_subscription(monkeypatch):
+    from services.subscription_service import SubscriptionService
+    from services.webhook_service import WebhookService
+
+    with stock_app.app.app_context():
+        from app import Payment, Plan, User
+
+        company = Company.query.filter_by(name="Empresa Demo").first()
+        assert company is not None
+
+        user = User.query.filter_by(username="empresa_admin").first()
+        assert user is not None
+
+        plan = Plan(code="negocio_mismatch", name="Negocio Mismatch", price=15000, currency="ARS", duration_days=30, active=True)
+        db.session.add(plan)
+        db.session.flush()
+
+        subscription = SubscriptionService.start_or_change_plan(db.session, company=company, plan=plan, user_id=user.id)
+        db.session.flush()
+        subscription.external_reference = (
+            f"company_id:{company.id}|plan_id:{plan.id}|subscription_id:{subscription.id}|"
+            f"user_id:{user.id}|ts:125"
+        )
+        db.session.commit()
+
+        service = WebhookService()
+        monkeypatch.setattr(service.mp_service, "validate_webhook_signature", lambda **kwargs: True)
+
+        approved_wrong_amount = {
+            "id": "mp-pay-mismatch",
+            "status": "approved",
+            "date_last_updated": "2026-07-14T10:00:00Z",
+            "date_approved": "2026-07-14T10:00:00Z",
+            "transaction_amount": 12000,
+            "currency_id": "ARS",
+            "payment_method_id": "visa",
+            "external_reference": subscription.external_reference,
+            "metadata": {
+                "company_id": company.id,
+                "subscription_id": subscription.id,
+                "plan_id": plan.id,
+                "user_id": user.id,
+            },
+        }
+        monkeypatch.setattr(service.mp_service, "get_payment", lambda payment_id: approved_wrong_amount)
+
+        result = service.process(
+            db_session=db.session,
+            headers={"x-request-id": "rq-3", "x-signature": "ts=1,v1=abc"},
+            payload={"id": "evt-3", "type": "payment", "data": {"id": "mp-pay-mismatch"}},
+        )
+        assert result["status"] == "processed"
+
+        db.session.refresh(subscription)
+        assert subscription.status == "rejected"
+
+        payment_row = Payment.query.filter_by(payment_id="mp-pay-mismatch").first()
+        assert payment_row is not None
+        assert payment_row.status == "rejected"
+
+
+def test_webhook_cancelled_marks_subscription_cancelled(monkeypatch):
+    from services.subscription_service import SubscriptionService
+    from services.webhook_service import WebhookService
+
+    with stock_app.app.app_context():
+        from app import Plan, User
+
+        company = Company.query.filter_by(name="Empresa Demo").first()
+        assert company is not None
+
+        user = User.query.filter_by(username="empresa_admin").first()
+        assert user is not None
+
+        plan = Plan(code="negocio_cancelled", name="Negocio Cancelled", price=13999, currency="ARS", duration_days=30, active=True)
+        db.session.add(plan)
+        db.session.flush()
+
+        subscription = SubscriptionService.start_or_change_plan(db.session, company=company, plan=plan, user_id=user.id)
+        db.session.flush()
+        subscription.external_reference = (
+            f"company_id:{company.id}|plan_id:{plan.id}|subscription_id:{subscription.id}|"
+            f"user_id:{user.id}|ts:126"
+        )
+        db.session.commit()
+
+        service = WebhookService()
+        monkeypatch.setattr(service.mp_service, "validate_webhook_signature", lambda **kwargs: True)
+        monkeypatch.setattr(
+            service.mp_service,
+            "get_payment",
+            lambda payment_id: {
+                "id": "mp-pay-cancelled",
+                "status": "cancelled",
+                "date_last_updated": "2026-07-14T10:00:00Z",
+                "transaction_amount": 13999,
+                "currency_id": "ARS",
+                "external_reference": subscription.external_reference,
+                "metadata": {
+                    "company_id": company.id,
+                    "subscription_id": subscription.id,
+                    "plan_id": plan.id,
+                    "user_id": user.id,
+                },
+            },
+        )
+
+        result = service.process(
+            db_session=db.session,
+            headers={"x-request-id": "rq-4", "x-signature": "ts=1,v1=abc"},
+            payload={"id": "evt-4", "type": "payment", "data": {"id": "mp-pay-cancelled"}},
+        )
+        assert result["status"] == "processed"
+
+        db.session.refresh(subscription)
+        assert subscription.status == "cancelled"

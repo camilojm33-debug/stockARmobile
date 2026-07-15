@@ -52,6 +52,14 @@ class WebhookService:
         updated_at = payment_data.get("date_last_updated") or payment_data.get("date_approved") or "na"
         return f"payment:{payment_id}:{status}:{updated_at}"
 
+    @staticmethod
+    def _external_reference_parts(external_reference: str) -> dict:
+        return {
+            segment.split(":", 1)[0]: segment.split(":", 1)[1]
+            for segment in str(external_reference or "").split("|")
+            if ":" in segment
+        }
+
     def process(self, *, db_session, headers: dict, payload: dict) -> dict:
         from app import Payment, Subscription, User, WebhookEvent
 
@@ -105,7 +113,7 @@ class WebhookService:
                 subscription_id = int(metadata.get("subscription_id") or 0) or None
                 user_id = int(metadata.get("user_id") or 0) or None
 
-                ref_parts = {segment.split(":", 1)[0]: segment.split(":", 1)[1] for segment in external_reference.split("|") if ":" in segment}
+                ref_parts = self._external_reference_parts(external_reference)
                 if not subscription_id and str(ref_parts.get("subscription_id") or "").isdigit():
                     subscription_id = int(ref_parts.get("subscription_id"))
                 if not company_id and str(ref_parts.get("company_id") or "").isdigit():
@@ -156,16 +164,77 @@ class WebhookService:
             if payment.subscription_id:
                 subscription = Subscription.query.filter_by(id=payment.subscription_id).first()
             if subscription is None:
-                ref_parts = {segment.split(":", 1)[0]: segment.split(":", 1)[1] for segment in external_reference.split("|") if ":" in segment}
+                ref_parts = self._external_reference_parts(external_reference)
                 sub_id = ref_parts.get("subscription_id")
                 if sub_id:
                     subscription = Subscription.query.filter_by(id=int(sub_id)).first()
                     if subscription:
                         payment.subscription_id = subscription.id
                         payment.company_id = subscription.company_id
+                        if not payment.user_id and str(ref_parts.get("user_id") or "").isdigit():
+                            payment.user_id = int(ref_parts.get("user_id"))
 
             company = subscription.company if subscription and subscription.company else None
             if subscription and company:
+                metadata = payment_data.get("metadata") or {}
+                ref_parts = self._external_reference_parts(external_reference)
+                validation_errors = []
+
+                expected_company_id = company.id
+                expected_plan_id = int(getattr(subscription, "plan_id", 0) or 0)
+                expected_user_id = int(getattr(subscription, "user_id", 0) or getattr(payment, "user_id", 0) or 0)
+
+                metadata_company_id = int(metadata.get("company_id") or 0)
+                metadata_plan_id = int(metadata.get("plan_id") or 0)
+                metadata_user_id = int(metadata.get("user_id") or 0)
+
+                ref_company_id = int(ref_parts.get("company_id") or 0) if str(ref_parts.get("company_id") or "").isdigit() else 0
+                ref_plan_id = int(ref_parts.get("plan_id") or 0) if str(ref_parts.get("plan_id") or "").isdigit() else 0
+                ref_user_id = int(ref_parts.get("user_id") or 0) if str(ref_parts.get("user_id") or "").isdigit() else 0
+
+                if metadata_company_id and metadata_company_id != expected_company_id:
+                    validation_errors.append("company_mismatch_metadata")
+                if ref_company_id and ref_company_id != expected_company_id:
+                    validation_errors.append("company_mismatch_reference")
+                if metadata_plan_id and expected_plan_id and metadata_plan_id != expected_plan_id:
+                    validation_errors.append("plan_mismatch_metadata")
+                if ref_plan_id and expected_plan_id and ref_plan_id != expected_plan_id:
+                    validation_errors.append("plan_mismatch_reference")
+                if metadata_user_id and expected_user_id and metadata_user_id != expected_user_id:
+                    validation_errors.append("user_mismatch_metadata")
+                if ref_user_id and expected_user_id and ref_user_id != expected_user_id:
+                    validation_errors.append("user_mismatch_reference")
+
+                # Validación fuerte para activación: sólo permitir approved si monto y moneda coinciden con el plan.
+                if payment_status == "approved":
+                    expected_amount = float(getattr(subscription.plan, "price", 0) or 0)
+                    incoming_amount = float(payment.amount or 0)
+                    if abs(expected_amount - incoming_amount) > 0.01:
+                        validation_errors.append("amount_mismatch")
+
+                    expected_currency = str(getattr(subscription.plan, "currency", "ARS") or "ARS").upper()
+                    incoming_currency = str(payment.currency or "").upper()
+                    if expected_currency != incoming_currency:
+                        validation_errors.append("currency_mismatch")
+
+                if validation_errors:
+                    payment_status = "rejected"
+                    payment.status = "rejected"
+
+                    NotificationService.record_event(
+                        db_session,
+                        company_id=company.id,
+                        payment_id=payment.id,
+                        subscription_id=subscription.id,
+                        event="mercadopago_webhook_validation_error",
+                        detail="Validación de webhook fallida: " + ",".join(validation_errors),
+                        source="mercadopago",
+                        status="rejected",
+                        event_id=event_key,
+                        payload={"payment": payment_data, "errors": validation_errors},
+                        user_id=payment.user_id,
+                    )
+
                 should_apply_status_transition = previous_payment_status != payment_status
                 if should_apply_status_transition:
                     SubscriptionService.apply_payment_status(subscription, payment_status)

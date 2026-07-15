@@ -31,6 +31,41 @@
     <a class="btn btn-outline-secondary" href="{{ url_for('company_billing.company_settings') }}"><i class="bi bi-arrow-left me-1"></i>Volver a Mi Empresa</a>
   </div>
 
+  {% if checkout_status == 'success' %}
+  <div class="alert alert-success">Pago aprobado. Estamos confirmando tu suscripción automáticamente.</div>
+  {% elif checkout_status == 'pending' %}
+  <div class="alert alert-warning">Tu pago quedó pendiente. Se activará automáticamente cuando Mercado Pago lo confirme.</div>
+  {% elif checkout_status == 'failure' %}
+  <div class="alert alert-danger">No se pudo completar el pago. Podés reintentar desde esta pantalla.</div>
+  {% endif %}
+
+  {% if checkout_preview and checkout_preview.checkout_url %}
+  <div class="card app-card mb-4 border-primary">
+    <div class="card-header bg-white fw-bold d-flex justify-content-between align-items-center">
+      <span>Checkout Mercado Pago listo</span>
+      <span class="badge text-bg-primary">{{ checkout_preview.plan_name }}</span>
+    </div>
+    <div class="card-body">
+      <div class="row g-3 align-items-center">
+        <div class="col-md-4 text-center">
+          {% if checkout_preview.qr_data_uri %}
+          <img src="{{ checkout_preview.qr_data_uri }}" alt="QR Mercado Pago" style="max-width: 220px; width: 100%; border: 1px solid var(--app-line); border-radius: 12px; padding: 8px; background: #fff;">
+          {% endif %}
+        </div>
+        <div class="col-md-8">
+          <div class="h5 mb-2">{{ checkout_preview.currency }} {{ '{:,.0f}'.format(checkout_preview.amount or 0).replace(',', '.') }}</div>
+          <p class="text-muted mb-3">Escaneá el QR dinámico o continuá desde el checkout oficial para completar la suscripción.</p>
+          <div class="d-flex gap-2 flex-wrap">
+            <a class="btn btn-primary" href="{{ checkout_preview.checkout_url }}" target="_blank" rel="noopener noreferrer">Pagar con Mercado Pago</a>
+            <a class="btn btn-outline-secondary" href="{{ checkout_preview.checkout_url }}" target="_blank" rel="noopener noreferrer">Abrir checkout</a>
+          </div>
+          <div class="small text-muted mt-2">Operación: {{ checkout_preview.preference_id or '-' }}</div>
+        </div>
+      </div>
+    </div>
+  </div>
+  {% endif %}
+
   <div class="row g-3 mb-4">
     <div class="col-md-3">
       <div class="card app-card metric-card"><div class="card-body">
@@ -123,7 +158,7 @@
             <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
             <input type="hidden" name="plan_id" value="{{ plan.id }}">
             <button class="btn {{ 'btn-outline-primary' if usage_snapshot.plan and usage_snapshot.plan.id == plan.id else 'btn-primary' }} w-100" type="submit">
-              {% if usage_snapshot.plan and usage_snapshot.plan.id == plan.id %}Plan actual{% else %}Comenzar suscripción{% endif %}
+              {% if usage_snapshot.plan and usage_snapshot.plan.id == plan.id %}Plan actual{% else %}Suscribirme{% endif %}
             </button>
           </form>
         </div>
@@ -152,17 +187,19 @@
         <div class="card-header bg-white fw-bold">Historial de cobros</div>
         <div class="table-responsive">
           <table class="table table-sm table-hover mb-0">
-            <thead><tr><th>Pago</th><th>Estado</th><th>Importe</th><th>Comprobante</th></tr></thead>
+            <thead><tr><th>Pago</th><th>Estado</th><th>Fecha</th><th>Importe</th><th>Factura</th><th>Comprobante</th></tr></thead>
             <tbody>
               {% for payment in recent_payments %}
               <tr>
                 <td>{{ payment.payment_id or ('#' ~ payment.id) }}</td>
                 <td>{{ status_labels.get(payment.status, payment.status|replace('_', ' ')|title) }}</td>
+                <td>{{ payment.paid_at.strftime('%Y-%m-%d %H:%M') if payment.paid_at else (payment.created_at.strftime('%Y-%m-%d %H:%M') if payment.created_at else '-') }}</td>
                 <td>${{ '%.2f'|format(payment.amount or 0) }}</td>
+                <td>{{ payment.invoice.invoice_number if payment.invoice else '-' }}</td>
                 <td>{{ payment.reference or '-' }}</td>
               </tr>
               {% else %}
-              <tr><td colspan="4" class="text-center text-muted py-3">Sin cobros registrados.</td></tr>
+              <tr><td colspan="6" class="text-center text-muted py-3">Sin cobros registrados.</td></tr>
               {% endfor %}
             </tbody>
           </table>

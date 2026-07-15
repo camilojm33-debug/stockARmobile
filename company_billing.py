@@ -381,6 +381,8 @@ def _build_user_and_cash_rows(company_id, date_from=None, date_to=None, search_t
 @bp.route("/portal")
 @company_member_required
 def subscription_portal():
+    from flask import session
+
     from app import Company, Invoice, Payment, db
 
     company_id = getattr(current_user, "company_id", None)
@@ -408,6 +410,8 @@ def subscription_portal():
         .limit(20)
         .all()
     )
+    checkout_preview = session.pop("mp_checkout_preview", None)
+    checkout_status = (request.args.get("checkout") or "").strip().lower()
     return render_template(
         "company_billing/portal.html",
         company=company,
@@ -416,6 +420,8 @@ def subscription_portal():
         usage_snapshot=usage_snapshot,
         recent_payments=recent_payments,
         recent_invoices=recent_invoices,
+        checkout_preview=checkout_preview,
+        checkout_status=checkout_status,
         mp_config=load_billing_config(),
     )
 
@@ -423,6 +429,8 @@ def subscription_portal():
 @bp.route("/checkout", methods=["POST"])
 @company_member_required
 def create_checkout():
+    from flask import session
+
     from app import Company, db, record_audit
 
     company_id = getattr(current_user, "company_id", None)
@@ -460,7 +468,14 @@ def create_checkout():
     if not checkout_url:
         flash("Mercado Pago no devolvió URL de checkout.", "danger")
         return redirect(url_for("company_billing.subscription_portal"))
-    return redirect(checkout_url)
+
+    session["mp_checkout_preview"] = BillingService.checkout_preview_payload(
+        preference=preference,
+        plan=plan,
+        company=company,
+    )
+    flash("Checkout generado correctamente. Escaneá el QR o continuá con el botón de pago.", "info")
+    return redirect(url_for("company_billing.subscription_portal", checkout="created"))
 
 
 @bp.route("/subscription/cancel", methods=["POST"])
