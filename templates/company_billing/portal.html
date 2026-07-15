@@ -1,6 +1,6 @@
 {% extends "base_master.html" %}
 
-{% block title %}Mi suscripcion - StockArmobile{% endblock %}
+{% block title %}Mi suscripción - StockArmobile{% endblock %}
 
 {% block content %}
 {% set status_labels = {
@@ -18,8 +18,8 @@
 <div class="app-shell">
   <div class="d-flex flex-wrap justify-content-between align-items-center gap-3 mb-4">
     <div>
-      <span class="page-kicker"><i class="bi bi-credit-card-2-front"></i> Suscripcion</span>
-      <h1 class="h3 fw-bold mb-0">Plan y facturacion</h1>
+      <span class="page-kicker"><i class="bi bi-credit-card-2-front"></i> Suscripción</span>
+      <h1 class="h3 fw-bold mb-0">Plan y facturación</h1>
       <p class="text-muted mb-0">Gestiona tu plan, renovaciones y estado de cobro.</p>
     </div>
     <a class="btn btn-outline-secondary" href="{{ url_for('dashboard.index') }}"><i class="bi bi-arrow-left me-1"></i>Volver al panel</a>
@@ -137,6 +137,53 @@
         <button class="btn btn-outline-success" type="submit">Reactivar renovación</button>
       </form>
       <span class="text-muted small ms-auto align-self-center">Clave pública: {{ mp_config.public_key or 'no configurada' }}</span>
+    </div>
+  </div>
+
+  <div class="row g-3 mt-1">
+    <div class="col-lg-6">
+      <div class="card app-card h-100">
+        <div class="card-header bg-white fw-bold">Historial de cobros</div>
+        <div class="table-responsive">
+          <table class="table table-sm table-hover mb-0">
+            <thead><tr><th>Pago</th><th>Estado</th><th>Importe</th><th>Comprobante</th></tr></thead>
+            <tbody>
+              {% for payment in recent_payments %}
+              <tr>
+                <td>{{ payment.payment_id or ('#' ~ payment.id) }}</td>
+                <td>{{ status_labels.get(payment.status, payment.status|replace('_', ' ')|title) }}</td>
+                <td>${{ '%.2f'|format(payment.amount or 0) }}</td>
+                <td>{{ payment.reference or '-' }}</td>
+              </tr>
+              {% else %}
+              <tr><td colspan="4" class="text-center text-muted py-3">Sin cobros registrados.</td></tr>
+              {% endfor %}
+            </tbody>
+          </table>
+        </div>
+      </div>
+    </div>
+    <div class="col-lg-6">
+      <div class="card app-card h-100">
+        <div class="card-header bg-white fw-bold">Historial de facturas</div>
+        <div class="table-responsive">
+          <table class="table table-sm table-hover mb-0">
+            <thead><tr><th>Factura</th><th>Estado</th><th>Importe</th><th>Vencimiento</th></tr></thead>
+            <tbody>
+              {% for invoice in recent_invoices %}
+              <tr>
+                <td>{{ invoice.invoice_number or ('#' ~ invoice.id) }}</td>
+                <td>{{ status_labels.get(invoice.status, invoice.status|replace('_', ' ')|title) }}</td>
+                <td>${{ '%.2f'|format(invoice.amount or 0) }}</td>
+                <td>{{ invoice.due_at.strftime('%Y-%m-%d') if invoice.due_at else '-' }}</td>
+              </tr>
+              {% else %}
+              <tr><td colspan="4" class="text-center text-muted py-3">Sin facturas registradas.</td></tr>
+              {% endfor %}
+            </tbody>
+          </table>
+        </div>
+      </div>
     </div>
   </div>
 

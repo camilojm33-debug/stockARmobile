@@ -253,7 +253,7 @@ def _build_user_and_cash_rows(company_id, date_from=None, date_to=None):
 @bp.route("/portal")
 @company_member_required
 def subscription_portal():
-    from app import Company, db
+    from app import Company, Invoice, Payment, db
 
     company_id = getattr(current_user, "company_id", None)
     company = Company.query.filter_by(id=company_id).first_or_404()
@@ -268,12 +268,26 @@ def subscription_portal():
         db.session.commit()
 
     usage_snapshot = PlanUsageService.usage_snapshot(company.id)
+    recent_payments = (
+        Payment.query.filter_by(company_id=company.id)
+        .order_by(Payment.created_at.desc(), Payment.id.desc())
+        .limit(20)
+        .all()
+    )
+    recent_invoices = (
+        Invoice.query.filter_by(company_id=company.id)
+        .order_by(Invoice.issued_at.desc(), Invoice.id.desc())
+        .limit(20)
+        .all()
+    )
     return render_template(
         "company_billing/portal.html",
         company=company,
         plans=plans,
         subscription=subscription,
         usage_snapshot=usage_snapshot,
+        recent_payments=recent_payments,
+        recent_invoices=recent_invoices,
         mp_config=load_billing_config(),
     )
 
@@ -366,7 +380,11 @@ def payment_qr_settings():
     company.name = (request.form.get("name") or company.name or "").strip()[:160] or company.name
     company.legal_name = (request.form.get("legal_name") or "").strip()[:160] or None
     company.address = (request.form.get("address") or "").strip()[:255] or None
+    company.province = (request.form.get("province") or "").strip()[:120] or None
+    company.city = (request.form.get("city") or "").strip()[:120] or None
+    company.postal_code = (request.form.get("postal_code") or "").strip()[:20] or None
     company.phone = (request.form.get("phone") or "").strip()[:40] or None
+    company.whatsapp = (request.form.get("whatsapp") or "").strip()[:40] or None
     company.contact_email = (request.form.get("contact_email") or "").strip()[:160] or None
     company.logo = (request.form.get("logo") or "").strip()[:255] or None
     company.tax_id = (request.form.get("tax_id") or "").strip()[:50] or None
@@ -487,7 +505,7 @@ def company_settings_pin_logout():
     company_id = getattr(current_user, "company_id", None)
     _mark_pin_verified(company_id, False)
     flash("Se cerro la sesion de seguridad de Mi Empresa.", "info")
-    return redirect(url_for("company_billing.company_settings"))
+    return redirect(url_for("dashboard.index"))
 
 
 @bp.route("/company-settings/users/<int:user_id>/update", methods=["POST"])
@@ -653,7 +671,7 @@ def company_settings():
     from flask import session
     from sqlalchemy.orm import selectinload
 
-    from app import Sale, SaleItem
+    from app import Invoice, Payment, PaymentHistory, Sale, SaleItem
 
     company_id = getattr(current_user, "company_id", None)
     company = _load_company(company_id)
@@ -676,6 +694,9 @@ def company_settings():
     pin_created_at, pin_last_used_at = _pin_metadata(company)
     pin_bootstrap_reveal = session.pop(_pin_reveal_session_key(company.id), None)
     cash_summary = {"total_sold": 0.0, "total_sales": 0, "average_ticket": 0.0}
+    billing_invoices = []
+    billing_payments = []
+    billing_history = []
     if pin_verified:
         users, cash_rows = _build_user_and_cash_rows(company.id, date_from=date_from, date_to=date_to)
         cash_summary = _cash_summary(cash_rows)
@@ -684,6 +705,24 @@ def company_settings():
             .filter_by(company_id=company.id)
             .order_by(Sale.date.desc())
             .limit(12)
+            .all()
+        )
+        billing_invoices = (
+            Invoice.query.filter_by(company_id=company.id)
+            .order_by(Invoice.issued_at.desc(), Invoice.id.desc())
+            .limit(30)
+            .all()
+        )
+        billing_payments = (
+            Payment.query.filter_by(company_id=company.id)
+            .order_by(Payment.created_at.desc(), Payment.id.desc())
+            .limit(30)
+            .all()
+        )
+        billing_history = (
+            PaymentHistory.query.filter_by(company_id=company.id)
+            .order_by(PaymentHistory.created_at.desc(), PaymentHistory.id.desc())
+            .limit(30)
             .all()
         )
 
@@ -707,6 +746,9 @@ def company_settings():
         date_from=date_from_raw,
         date_to=date_to_raw,
         pin_block_seconds=CompanySecurityService.remaining_block_seconds(company),
+        billing_invoices=billing_invoices,
+        billing_payments=billing_payments,
+        billing_history=billing_history,
     )
 
 

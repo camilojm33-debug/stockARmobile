@@ -846,6 +846,18 @@ def test_my_company_module_requires_pin_and_shows_tenant_admin_features():
     html = ok_pin.data.decode("utf-8")
     assert "Usuarios del negocio" in html
     assert "Caja por usuario" in html
+    assert "panel=company" in html
+    assert "panel=employees" in html
+    assert "panel=schedules" in html
+    assert "panel=branches" in html
+    assert "panel=security" in html
+    assert "panel=general" in html
+    assert "panel=stats" in html
+    assert "panel=billing" in html
+
+    for panel_name in ["company", "employees", "schedules", "branches", "billing", "security", "general", "stats"]:
+        panel_response = client.get(f"/admin/company-settings?panel={panel_name}")
+        assert panel_response.status_code == 200
 
     with stock_app.app.app_context():
         target_user = User.query.filter_by(username="empresa_admin").first()
@@ -870,6 +882,10 @@ def test_my_company_module_requires_pin_and_shows_tenant_admin_features():
     assert "1000.00" in filtered_html
     assert "300.00" in filtered_html
     assert "50.00" in filtered_html
+
+    lock_response = client.post("/admin/company-settings/pin/logout", follow_redirects=False)
+    assert lock_response.status_code in (301, 302)
+    assert "/dashboard/" in (lock_response.headers.get("Location") or "")
 
     # Usuario regular puede acceder al modulo y validar PIN.
     client.post("/auth/logout")
