@@ -811,7 +811,8 @@ def thermal_ticket(sale_id):
     from app import Sale, SaleItem, scope_query_to_company
 
     sale = scope_query_to_company(Sale.query.options(selectinload(Sale.items).selectinload(SaleItem.product)), Sale).filter(Sale.id == sale_id).first_or_404()
-    return render_template("ventas/ticket.html", sale=sale, rows=_ticket_rows(sale), ticket_text=_ticket_text(sale))
+    ticket_brand = _ticket_brand_name()
+    return render_template("ventas/ticket.html", sale=sale, rows=_ticket_rows(sale), ticket_text=_ticket_text(sale, ticket_brand=ticket_brand), ticket_brand=ticket_brand)
 
 
 @bp.route("/<int:sale_id>/print-thermal", methods=["POST"])
@@ -890,8 +891,33 @@ def api_recent_sales():
     )
 
 
-def _ticket_text(sale):
-    lines = ["STOCK ARMOBILE - TICKET DE VENTA", "-" * 32, f"Venta: #{sale.id}", f"Fecha: {sale.date:%Y-%m-%d %H:%M}"]
+def _ticket_brand_name():
+    from app import Company
+
+    fallback = "STOCK ARMOBILE"
+    company_id = getattr(current_user, "company_id", None)
+    if not company_id:
+        return fallback
+
+    company = Company.query.filter_by(id=company_id).first()
+    if company is None:
+        return fallback
+
+    settings = {}
+    raw = getattr(company, "printer_settings_json", None)
+    if raw:
+        try:
+            settings = json.loads(raw)
+        except Exception:
+            settings = {}
+
+    name = (settings.get("ticket_name") or settings.get("printer_name") or getattr(company, "name", "") or fallback).strip()
+    return name[:120] or fallback
+
+
+def _ticket_text(sale, ticket_brand=None):
+    brand = (ticket_brand or _ticket_brand_name() or "STOCK ARMOBILE").strip()
+    lines = [f"{brand} - TICKET DE VENTA", "-" * 32, f"Venta: #{sale.id}", f"Fecha: {sale.date:%Y-%m-%d %H:%M}"]
     if sale.customer:
         lines.append(f"Cliente: {sale.customer}")
     lines.append("-" * 32)
@@ -931,7 +957,8 @@ def _build_whatsapp_link(sale, phone):
 
 
 def _ticket_text_for_whatsapp(sale):
-    lines = [f"Ticket de compra - Venta #{sale.id}", f"Fecha: {sale.date:%Y-%m-%d %H:%M}"]
+    brand = _ticket_brand_name()
+    lines = [f"{brand} - Ticket de compra", f"Venta #{sale.id}", f"Fecha: {sale.date:%Y-%m-%d %H:%M}"]
     if sale.customer:
         lines.append(f"Cliente: {sale.customer}")
     lines.append("------------------------------")

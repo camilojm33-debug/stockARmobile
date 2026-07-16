@@ -63,7 +63,7 @@ class ThermalPrinterService:
             return ThermalPrintResult(attempted=False, printed=False, message="Impresión térmica no configurada")
 
         try:
-            self._send_ticket(printer, sale, preferences=preferences)
+            self._send_ticket(printer, sale, company=company, settings=settings, preferences=preferences)
             if settings.get("cashdrawer_enabled"):
                 try:
                     printer.cashdraw()
@@ -83,10 +83,11 @@ class ThermalPrinterService:
             except Exception:
                 pass
 
-    def _send_ticket(self, printer, sale, *, preferences: dict[str, Any]):
+    def _send_ticket(self, printer, sale, *, company, settings: dict[str, Any], preferences: dict[str, Any]):
         compact = bool(preferences.get("compact_print"))
+        ticket_name = (settings.get("ticket_name") or settings.get("printer_name") or getattr(company, "name", None) or "STOCK ARMOBILE").strip()[:120]
         printer.set(align="center", bold=True, width=2 if not compact else 1, height=2 if not compact else 1)
-        printer.text("STOCK ARMOBILE\n")
+        printer.text(f"{ticket_name or 'STOCK ARMOBILE'}\n")
         printer.set(align="center", bold=False)
         printer.text("Ticket de venta\n")
         printer.text("-" * 32 + "\n")

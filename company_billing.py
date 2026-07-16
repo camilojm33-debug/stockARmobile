@@ -1394,6 +1394,7 @@ def company_settings_general_save():
 
     printer_settings = {
         "printer_name": (request.form.get("printer_name") or "").strip()[:160],
+        "ticket_name": (request.form.get("ticket_name") or "").strip()[:120],
         "paper_size": (request.form.get("paper_size") or "A4").strip()[:20] or "A4",
         "printer_type": (request.form.get("printer_type") or "browser").strip()[:20] or "browser",
         "printer_host": (request.form.get("printer_host") or "").strip()[:120],

@@ -1089,6 +1089,21 @@
           <input class="form-control" name="printer_name" value="{{ printer_settings.get('printer_name', '') }}" placeholder="Nombre de impresora">
         </div>
         <div class="col-md-4">
+          <label class="form-label">Nombre en ticket emitido</label>
+          <input class="form-control" name="ticket_name" value="{{ printer_settings.get('ticket_name', company.name or '') }}" placeholder="Nombre comercial para tickets">
+        </div>
+        <div class="col-12">
+          <div class="border rounded-3 bg-light p-3">
+            <div class="small text-muted mb-2">Vista previa del encabezado del ticket</div>
+            <div class="bg-white border rounded-3 p-3" style="max-width: 320px; font-family: Arial, Helvetica, sans-serif;">
+              <div id="ticket-name-live-preview" class="fw-bold text-uppercase" style="letter-spacing:.4px;">{{ (printer_settings.get('ticket_name') or printer_settings.get('printer_name') or company.name or 'STOCK ARMOBILE')|upper }}</div>
+              <div class="small text-muted">Ticket de venta</div>
+              <hr class="my-2">
+              <div class="small text-muted">Este título se usará en ticket web, WhatsApp y térmico.</div>
+            </div>
+          </div>
+        </div>
+        <div class="col-md-4">
           <label class="form-label">Modo de impresión</label>
           <select class="form-select" name="printer_type">
             <option value="browser" {% if printer_settings.get('printer_type', 'browser') == 'browser' %}selected{% endif %}>Navegador / PDF</option>
@@ -1469,6 +1484,22 @@
             </div>
           </div>
         </div>
+        <div class="col-lg-4">
+          <div class="card app-card h-100 border-0">
+            <div class="card-body p-4 d-flex flex-column gap-3">
+              <div>
+                <div class="fw-bold h5 mb-1">Accesos del administrador</div>
+                <p class="text-muted mb-0">Atajos para las tareas que no deben quedar visibles para empleados.</p>
+              </div>
+              {% if current_user.role == 'admin' %}
+              <a class="btn btn-primary btn-lg" href="{{ url_for('purchases.index') }}"><i class="bi bi-truck me-1"></i>Compras y proveedores</a>
+              <div class="small text-muted">Registro de mercadería, proveedores y costo promedio.</div>
+              {% else %}
+              <div class="alert alert-secondary mb-0">Este acceso está disponible solo para administradores.</div>
+              {% endif %}
+            </div>
+          </div>
+        </div>
       </div>
       {% else %}
       <div class="card app-card border-warning">
@@ -1634,6 +1665,29 @@
         }
       });
     }
+  })();
+</script>
+{% endif %}
+{% if panel == 'general' %}
+<script>
+  (() => {
+    const ticketNameInput = document.querySelector('input[name="ticket_name"]');
+    const printerNameInput = document.querySelector('input[name="printer_name"]');
+    const preview = document.getElementById('ticket-name-live-preview');
+    if (!preview) return;
+
+    const fallbackName = {{ (company.name or 'STOCK ARMOBILE')|tojson }};
+
+    const syncPreview = () => {
+      const ticketName = (ticketNameInput?.value || '').trim();
+      const printerName = (printerNameInput?.value || '').trim();
+      const finalName = (ticketName || printerName || fallbackName || 'STOCK ARMOBILE').toUpperCase();
+      preview.textContent = finalName;
+    };
+
+    ticketNameInput?.addEventListener('input', syncPreview);
+    printerNameInput?.addEventListener('input', syncPreview);
+    syncPreview();
   })();
 </script>
 {% endif %}

@@ -4,7 +4,7 @@ from datetime import datetime
 
 from flask import Blueprint, flash, redirect, render_template, request, url_for
 from flask_login import current_user, login_required
-from app import tenant_required
+from app import company_admin_required
 
 bp = Blueprint("purchases", __name__)
 
@@ -17,7 +17,7 @@ def _to_float(value, default=0.0):
 
 
 @bp.route("/", methods=["GET", "POST"])
-@tenant_required
+@company_admin_required
 def index():
     from app import Product, PurchaseItem, PurchaseOrder, Supplier, db, record_audit, scope_query_to_company, utcnow
 
@@ -68,7 +68,7 @@ def index():
 
 
 @bp.route("/proveedores", methods=["POST"])
-@tenant_required
+@company_admin_required
 def add_supplier():
     from app import Supplier, db, record_audit, scope_query_to_company
 

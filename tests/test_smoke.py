@@ -89,7 +89,6 @@ def test_core_routes_and_decimal_checkout():
         "/clientes/",
         "/ventas/",
         "/qr/",
-        "/compras/",
         "/caja/",
         "/gastos/",
         "/reportes/",
@@ -98,12 +97,18 @@ def test_core_routes_and_decimal_checkout():
         response = client.get(path)
         assert response.status_code == 200, path
 
+    assert client.get("/compras/").status_code == 403
+
+    client.post("/auth/logout")
+    client.post("/auth/login", data={"username": "negocio_admin", "password": "admin123"})
+    assert client.get("/compras/").status_code == 200
+
     open_cash_session(client)
 
     response = client.post(
         "/ventas/api/checkout",
         json={"items": [{"productId": 1, "quantity": 0.350}], "metodo_pago": "EFECTIVO"},
-        headers={"X-Cart-Tenant": "1:1"},
+        headers={"X-Cart-Tenant": "1:2"},
     )
     assert response.status_code == 200
     with stock_app.app.app_context():

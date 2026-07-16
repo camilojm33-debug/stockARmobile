@@ -14,7 +14,9 @@
     <div class="col-6 col-md-4 col-xl-2"><a class="card app-card text-decoration-none text-reset h-100" href="{{ url_for('products.index') }}#productForm"><div class="card-body text-center py-4"><i class="bi bi-box-seam display-6 text-primary"></i><div class="fw-bold mt-2">Nuevo producto</div></div></a></div>
     <div class="col-6 col-md-4 col-xl-2"><a class="card app-card text-decoration-none text-reset h-100" href="{{ url_for('clients.index') }}#clientForm"><div class="card-body text-center py-4"><i class="bi bi-person-plus display-6 text-primary"></i><div class="fw-bold mt-2">Nuevo cliente</div></div></a></div>
     <div class="col-6 col-md-4 col-xl-2"><a class="card app-card text-decoration-none text-reset h-100" href="{{ url_for('cash.index') }}"><div class="card-body text-center py-4"><i class="bi bi-cash-coin display-6 text-primary"></i><div class="fw-bold mt-2">Caja</div></div></a></div>
+    {% if current_user.role == 'admin' %}
     <div class="col-6 col-md-4 col-xl-2"><a class="card app-card text-decoration-none text-reset h-100" href="{{ url_for('purchases.index') }}"><div class="card-body text-center py-4"><i class="bi bi-truck display-6 text-primary"></i><div class="fw-bold mt-2">Compras</div></div></a></div>
+    {% endif %}
     <div class="col-6 col-md-4 col-xl-2"><a class="card app-card text-decoration-none text-reset h-100" href="{{ url_for('sales.index') }}?scanner=1"><div class="card-body text-center py-4"><i class="bi bi-upc-scan display-6 text-primary"></i><div class="fw-bold mt-2">Escanear</div></div></a></div>
     <div class="col-6 col-md-4 col-xl-2"><a class="card app-card text-decoration-none text-reset h-100" href="{{ url_for('referrals.seller_dashboard') }}"><div class="card-body text-center py-4"><i class="bi bi-megaphone display-6 text-primary"></i><div class="fw-bold mt-2">Referidos</div></div></a></div>
   </div>

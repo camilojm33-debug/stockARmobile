@@ -410,7 +410,9 @@
       {% endif %}
       <a class="nav-link {% if request.endpoint and request.endpoint.startswith('sales.') %}active{% endif %}" href="{{ url_for('sales.index') }}"><i class="bi bi-bag-check"></i>Ventas</a>
       <a class="nav-link {% if request.endpoint and request.endpoint.startswith('clients.') %}active{% endif %}" href="{{ url_for('clients.index') }}"><i class="bi bi-people"></i>Clientes</a>
+      {% if current_user.role == 'admin' %}
       <a class="nav-link {% if request.endpoint and request.endpoint.startswith('purchases.') %}active{% endif %}" href="{{ url_for('purchases.index') }}"><i class="bi bi-truck"></i>Compras</a>
+      {% endif %}
       <a class="nav-link {% if request.endpoint and request.endpoint.startswith('cash.') %}active{% endif %}" href="{{ url_for('cash.index') }}"><i class="bi bi-cash-coin"></i>Caja</a>
       <a class="nav-link {% if request.endpoint and request.endpoint.startswith('expenses.') %}active{% endif %}" href="{{ url_for('expenses.index') }}"><i class="bi bi-receipt"></i>Gastos</a>
       <a class="nav-link {% if request.endpoint and request.endpoint.startswith('reports.') %}active{% endif %}" href="{{ url_for('reports.index') }}"><i class="bi bi-file-earmark-bar-graph"></i>Reportes</a>

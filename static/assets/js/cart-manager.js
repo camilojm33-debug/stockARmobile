@@ -29,6 +29,12 @@ let mpQrDraftState = {
   approved: false,
 };
 
+function getCsrfToken() {
+  return document.querySelector('#checkout-form input[name="csrf_token"]')?.value
+    || document.querySelector('meta[name="csrf-token"]')?.content
+    || '';
+}
+
 function getCartTenantKey() {
   const body = document.body;
   const tenantKey = body?.dataset?.cartTenant || '';
@@ -264,7 +270,7 @@ async function processCheckout() {
     return;
   }
 
-  const csrf = document.querySelector('#checkout-form input[name="csrf_token"]')?.value || document.querySelector('meta[name="csrf-token"]')?.content || '';
+  const csrf = getCsrfToken();
   const payload = {
     items: getCartForCheckout(),
     client_id: document.getElementById('checkout-client-select')?.value || '',
@@ -483,6 +489,7 @@ async function pollMpQrStatus() {
 
 async function processMercadoPagoQrCheckout() {
   const total = getCheckoutTotals();
+  const csrf = getCsrfToken();
   const payload = {
     items: getCartForCheckout(),
     general_discount: total.discount,
@@ -501,6 +508,7 @@ async function processMercadoPagoQrCheckout() {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
+        'X-CSRFToken': csrf,
         'X-Cart-Tenant': getCartTenantKey(),
       },
       body: JSON.stringify(payload),
@@ -527,6 +535,7 @@ async function processMercadoPagoQrCheckout() {
 
 async function finalizeMercadoPagoQrSale() {
   if (!mpQrDraftState.finalizeUrl || !mpQrDraftState.paymentId) return;
+  const csrf = getCsrfToken();
   if (checkoutProcessButton) {
     checkoutProcessButton.disabled = true;
     checkoutProcessButton.textContent = 'Finalizando venta...';
@@ -536,6 +545,7 @@ async function finalizeMercadoPagoQrSale() {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
+        'X-CSRFToken': csrf,
         'X-Cart-Tenant': getCartTenantKey(),
       },
       body: JSON.stringify({ draft_id: mpQrDraftState.paymentId }),
