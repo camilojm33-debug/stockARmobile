@@ -71,29 +71,28 @@
             </span>
             <span>StockArmobile</span>
           </a>
-          <div class="ms-auto d-flex align-items-center gap-3">
-            <!-- Nav links -->
-            <nav class="d-none d-lg-flex align-items-center gap-1">
+          <div class="navbar-actions">
+            <!-- Nav links (solo desktop) -->
+            <nav class="navbar-navlinks">
               <a class="nav-text-link" href="#beneficios">Beneficios</a>
               <a class="nav-text-link" href="#planes">Planes</a>
               <a class="nav-text-link" href="#faq">FAQ</a>
             </nav>
-            <!-- Separador -->
-            <span class="d-none d-lg-block vr opacity-25 mx-1" style="height:28px;"></span>
             <!-- Tema -->
             <button class="theme-toggle" id="themeToggle" type="button" aria-label="Cambiar tema">
               <i class="bi bi-moon-fill icon-moon"></i>
               <i class="bi bi-sun-fill icon-sun"></i>
             </button>
-            <!-- CTAs -->
-            <a class="btn btn-outline-primary btn-pill fw-semibold px-3 d-none d-md-inline-flex align-items-center gap-1"
+            <!-- CTAs siempre visibles -->
+            <a class="btn btn-outline-primary btn-pill btn-cta-login fw-semibold"
                href="{{ url_for('auth.login') }}">
-              <i class="bi bi-box-arrow-in-right"></i> Iniciar sesión
+              <i class="bi bi-box-arrow-in-right"></i>
+              <span class="btn-cta-text">Iniciar sesión</span>
             </a>
-            <a class="btn btn-primary btn-pill fw-bold px-4 shadow-sm d-inline-flex align-items-center gap-1"
+            <a class="btn btn-primary btn-pill btn-cta-register fw-bold shadow-sm"
                href="{{ url_for('auth.register') }}?selected_plan=trial">
               <i class="bi bi-rocket-takeoff"></i>
-              <span>Prueba Gratis <span class="d-none d-sm-inline">10 días</span></span>
+              <span class="btn-cta-text">Prueba Gratis 10 días</span>
             </a>
           </div>
         </div>
