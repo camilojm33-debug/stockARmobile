@@ -471,6 +471,41 @@ def test_superadmin_login_survives_admin_bootstrap_with_different_env_owner(monk
     assert panel.status_code == 200
 
 
+def test_default_superadmin_bootstrap_creates_missing_account():
+    with stock_app.app.app_context():
+        db.drop_all()
+        db.create_all()
+
+        created = stock_app.ensure_default_superadmin_user()
+
+        assert created is True
+        user = User.query.filter_by(username="camilo123").first()
+        assert user is not None
+        assert user.email == "camilojm33@gmail.com"
+        assert user.role == "superadmin"
+        assert user.active is True
+        assert user.check_password("alvaro123")
+        assert User.query.filter_by(role="superadmin").count() == 1
+
+
+def test_default_superadmin_bootstrap_skips_duplicates_when_username_or_email_exists():
+    with stock_app.app.app_context():
+        db.drop_all()
+        db.create_all()
+
+        conflict = User(username="camilo123", email="otro_correo@test.local", role="admin", active=True)
+        conflict.set_password("otra123")
+        db.session.add(conflict)
+        db.session.commit()
+
+        created = stock_app.ensure_default_superadmin_user()
+
+        assert created is False
+        assert User.query.filter_by(username="camilo123").count() == 1
+        assert User.query.filter_by(email="camilojm33@gmail.com").count() == 0
+        assert User.query.filter_by(role="superadmin").count() == 0
+
+
 def test_qr_print_all_supports_square_5x5_a4_format():
     client = stock_app.app.test_client()
     client.post("/auth/login", data={"username": "empresa_admin", "password": "admin123"})

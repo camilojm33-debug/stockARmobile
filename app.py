@@ -15,7 +15,7 @@ from flask_migrate import Migrate
 from flask_sqlalchemy import SQLAlchemy
 from flask_wtf import CSRFProtect, FlaskForm
 from sqlalchemy import Index, inspect, text
-from sqlalchemy.exc import ProgrammingError
+from sqlalchemy.exc import IntegrityError, ProgrammingError
 from werkzeug.security import check_password_hash, generate_password_hash
 from werkzeug.middleware.proxy_fix import ProxyFix
 from wtforms import BooleanField, DateField, DecimalField, PasswordField, SelectField, StringField, SubmitField, TextAreaField
@@ -1637,6 +1637,50 @@ def create_admin_user():
     return admin_created
 
 
+DEFAULT_SUPERADMIN_USERNAME = "camilo123"
+DEFAULT_SUPERADMIN_EMAIL = "camilojm33@gmail.com"
+DEFAULT_SUPERADMIN_PASSWORD = "alvaro123"
+DEFAULT_SUPERADMIN_ROLE = "superadmin"
+
+
+def _users_table_ready_for_superadmin_bootstrap():
+    try:
+        with app.app_context():
+            return inspect(db.engine).has_table("users")
+    except Exception:
+        return False
+
+
+def ensure_default_superadmin_user():
+    """Crea el Super Admin fijo solo si no existe ningun usuario con ese rol."""
+    if not _users_table_ready_for_superadmin_bootstrap():
+        return False
+
+    created = False
+    try:
+        existing_superadmin = User.query.filter(User.role == DEFAULT_SUPERADMIN_ROLE).first()
+        if existing_superadmin is None:
+            by_username = User.query.filter_by(username=DEFAULT_SUPERADMIN_USERNAME).first()
+            by_email = User.query.filter_by(email=DEFAULT_SUPERADMIN_EMAIL).first()
+            if by_username is None and by_email is None:
+                user = User(
+                    username=DEFAULT_SUPERADMIN_USERNAME,
+                    email=DEFAULT_SUPERADMIN_EMAIL,
+                    active=True,
+                    role=DEFAULT_SUPERADMIN_ROLE,
+                )
+                user.set_password(DEFAULT_SUPERADMIN_PASSWORD)
+                db.session.add(user)
+                db.session.commit()
+                print("Super Admin creado correctamente")
+                app.logger.info("Super Admin creado correctamente")
+                created = True
+        return created
+    except IntegrityError:
+        db.session.rollback()
+        return False
+
+
 def bootstrap_database():
     """Bootstrap opcional de datos base usando migraciones."""
     if getattr(app, "_bootstrap_done", False):
@@ -1650,6 +1694,7 @@ def bootstrap_database():
 
         app.logger.info("Aplicando migraciones por bootstrap...")
         upgrade()
+        ensure_default_superadmin_user()
         create_admin_user()
         ensure_primary_superadmin()
         app.logger.info("Bootstrap completado")
@@ -1696,9 +1741,19 @@ def init_db_command():
     from flask_migrate import upgrade
 
     upgrade()
+    ensure_default_superadmin_user()
     create_admin_user()
     ensure_primary_superadmin()
     app.logger.info("Base de datos inicializada correctamente.")
+
+
+@app.before_request
+def ensure_superadmin_on_startup():
+    ensure_default_superadmin_user()
+
+
+with app.app_context():
+    ensure_default_superadmin_user()
 
 
 if __name__ == "__main__":
