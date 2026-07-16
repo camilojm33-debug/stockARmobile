@@ -5,6 +5,8 @@ from hashlib import sha256
 import json
 
 from flask_login import current_user
+from sqlalchemy import or_
+from services.sales_calculation_service import CONFIRMED_SALE_STATUSES
 
 
 def build_notifications():
@@ -135,10 +137,11 @@ def _build_user_notifications():
 
     now = utcnow()
     today_start = datetime.combine(now.date(), time.min)
+    confirmed_sale_filter = or_(Sale.status.is_(None), db.func.lower(Sale.status).in_(list(CONFIRMED_SALE_STATUSES)))
 
-    sales_today = scope_query_to_company(Sale.query.filter(Sale.date >= today_start), Sale).count()
+    sales_today = scope_query_to_company(Sale.query.filter(Sale.date >= today_start, confirmed_sale_filter), Sale).count()
     sales_amount = (
-        scope_query_to_company(db.session.query(db.func.coalesce(db.func.sum(Sale.total_amount), 0)).filter(Sale.date >= today_start), Sale).scalar()
+        scope_query_to_company(db.session.query(db.func.coalesce(db.func.sum(Sale.total_amount), 0)).filter(Sale.date >= today_start, confirmed_sale_filter), Sale).scalar()
         or 0
     )
     low_stock = scope_query_to_company(

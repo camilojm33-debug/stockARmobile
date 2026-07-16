@@ -4,7 +4,9 @@ import json
 from decimal import Decimal
 from datetime import datetime, timedelta, time
 
+from sqlalchemy import func, or_
 from sqlalchemy.orm import selectinload
+from services.sales_calculation_service import sale_payment_breakdown, to_decimal
 
 
 def build_dashboard_context():
@@ -23,13 +25,14 @@ def build_dashboard_context():
 
     can_view_economic_metrics = _can_view_economic_metrics()
 
-    total_sales_amount = _sum(Sale.total_amount, model=Sale) if can_view_economic_metrics else Decimal("0.00")
-    sales_today = scope_query_to_company(Sale.query.filter(Sale.date >= today_start), Sale).count()
-    sales_week = scope_query_to_company(Sale.query.filter(Sale.date >= week_start), Sale).count()
-    sales_month = scope_query_to_company(Sale.query.filter(Sale.date >= month_start), Sale).count()
-    income_today = _sum(Sale.total_amount, Sale.date >= today_start, model=Sale) if can_view_economic_metrics else None
-    income_week = _sum(Sale.total_amount, Sale.date >= week_start, model=Sale) if can_view_economic_metrics else None
-    income_month = _sum(Sale.total_amount, Sale.date >= month_start, model=Sale) if can_view_economic_metrics else None
+    confirmed_sales_base = _confirmed_sales_query(Sale.query, Sale)
+    total_sales_amount = _sum(Sale.total_amount, model=Sale, base_query=confirmed_sales_base) if can_view_economic_metrics else Decimal("0.00")
+    sales_today = confirmed_sales_base.filter(Sale.date >= today_start).count()
+    sales_week = confirmed_sales_base.filter(Sale.date >= week_start).count()
+    sales_month = confirmed_sales_base.filter(Sale.date >= month_start).count()
+    income_today = _sum(Sale.total_amount, Sale.date >= today_start, model=Sale, base_query=confirmed_sales_base) if can_view_economic_metrics else None
+    income_week = _sum(Sale.total_amount, Sale.date >= week_start, model=Sale, base_query=confirmed_sales_base) if can_view_economic_metrics else None
+    income_month = _sum(Sale.total_amount, Sale.date >= month_start, model=Sale, base_query=confirmed_sales_base) if can_view_economic_metrics else None
     expenses_today = _sum(Expense.amount, Expense.date >= today_start, model=Expense) if can_view_economic_metrics else Decimal("0.00")
     expenses_month = _sum(Expense.amount, Expense.date >= month_start, model=Expense) if can_view_economic_metrics else Decimal("0.00")
     cost_today = _sum_item_cost(Sale.date >= today_start) if can_view_economic_metrics else Decimal("0.00")
@@ -37,9 +40,9 @@ def build_dashboard_context():
 
     profit_today = (income_today - cost_today - expenses_today) if can_view_economic_metrics else None
     profit_month = (income_month - cost_month - expenses_month) if can_view_economic_metrics else None
-    total_sales_count = scope_query_to_company(Sale.query, Sale).count()
+    total_sales_count = confirmed_sales_base.count()
     average_ticket = ((total_sales_amount / Decimal(total_sales_count)) if total_sales_count else Decimal("0.00")) if can_view_economic_metrics else None
-    sold_units = scope_query_to_company(db.session.query(db.func.coalesce(db.func.sum(SaleItem.quantity), 0)).join(Sale, SaleItem.sale_id == Sale.id), Sale).scalar() or 0
+    sold_units = _sum_item_quantity() if can_view_economic_metrics else 0
 
     top_products = []
     if can_view_economic_metrics:
@@ -52,6 +55,8 @@ def build_dashboard_context():
         top_products = scope_query_to_company(
             top_products_query
             .join(SaleItem, Product.id == SaleItem.product_id)
+            .join(Sale, SaleItem.sale_id == Sale.id)
+            .filter(_confirmed_sale_status_expression(Sale))
             .group_by(Product.id, Product.name)
             .order_by(db.desc("sales_count")),
             Product,
@@ -64,6 +69,8 @@ def build_dashboard_context():
     least_products = scope_query_to_company(
         least_products_query
         .outerjoin(SaleItem, Product.id == SaleItem.product_id)
+        .outerjoin(Sale, SaleItem.sale_id == Sale.id)
+        .filter(or_(Sale.id.is_(None), _confirmed_sale_status_expression(Sale)))
         .filter(Product.active.is_(True))
         .group_by(Product.id, Product.name)
         .order_by(db.asc("sales_count")),
@@ -79,6 +86,7 @@ def build_dashboard_context():
         ranking_clients = scope_query_to_company(
             ranking_clients_query
             .join(Sale, Client.id == Sale.client_id)
+            .filter(_confirmed_sale_status_expression(Sale))
             .group_by(Client.id, Client.name)
             .order_by(db.desc("total_compras")),
             Client,
@@ -87,12 +95,14 @@ def build_dashboard_context():
     ranking_categories = scope_query_to_company(
         ranking_categories_query
         .join(SaleItem, Product.id == SaleItem.product_id)
+        .join(Sale, SaleItem.sale_id == Sale.id)
+        .filter(_confirmed_sale_status_expression(Sale))
         .group_by(Product.category)
         .order_by(db.desc("sold")),
         Product,
     ).limit(8).all()
     recent_sales = (
-        scope_query_to_company(Sale.query.options(selectinload(Sale.client)), Sale).order_by(Sale.date.desc()).limit(5).all()
+        _confirmed_sales_query(Sale.query.options(selectinload(Sale.client)), Sale).order_by(Sale.date.desc()).limit(5).all()
         if can_view_economic_metrics
         else []
     )
@@ -112,19 +122,19 @@ def build_dashboard_context():
             CashSession.query.filter(CashSession.status == "cerrada", CashSession.closed_at >= today_start),
             CashSession,
         ).count()
-        today_sales = scope_query_to_company(Sale.query.filter(Sale.date >= today_start), Sale).all()
+        today_sales = _confirmed_sales_query(Sale.query.filter(Sale.date >= today_start), Sale).all()
         for sale in today_sales:
-            breakdown = _sale_payment_breakdown(sale)
+            breakdown = sale_payment_breakdown(sale)
             cash_stats["sold_cash_today"] += breakdown["efectivo"]
             cash_stats["sold_mp_today"] += breakdown["mercado_pago"]
-            cash_stats["sold_total_today"] += _to_decimal(getattr(sale, "total_amount", 0))
+            cash_stats["sold_total_today"] += to_decimal(getattr(sale, "total_amount", 0))
 
         closed_sessions_today = scope_query_to_company(
             CashSession.query.filter(CashSession.status == "cerrada", CashSession.closed_at >= today_start),
             CashSession,
         ).all()
         for session in closed_sessions_today:
-            cash_stats["difference_today"] += _to_decimal(getattr(session, "difference_amount", 0))
+            cash_stats["difference_today"] += to_decimal(getattr(session, "difference_amount", 0))
 
         cash_stats["last_closings"] = scope_query_to_company(
             CashSession.query.filter(CashSession.status == "cerrada"),
@@ -191,31 +201,62 @@ def _can_view_economic_metrics():
     return "economic_stats" in normalized
 
 
-def _sum(column, *filters, model):
+def _sum(column, *filters, model, base_query=None):
     from app import db, scope_query_to_company
+
+    if base_query is not None:
+        filtered = base_query
+        for condition in filters:
+            filtered = filtered.filter(condition)
+        subquery = filtered.with_entities(column.label("value")).subquery()
+        total = db.session.query(db.func.coalesce(db.func.sum(subquery.c.value), 0)).scalar()
+        return to_decimal(total)
 
     query = scope_query_to_company(db.session.query(db.func.coalesce(db.func.sum(column), 0)), model)
     for condition in filters:
         query = query.filter(condition)
-    return _to_decimal(query.scalar())
+    return to_decimal(query.scalar())
 
 
 def _sum_item_cost(*filters):
     from app import Sale, SaleItem, db, scope_query_to_company
 
-    query = scope_query_to_company(db.session.query(db.func.coalesce(db.func.sum(SaleItem.quantity * SaleItem.cost_price), 0)).join(Sale, SaleItem.sale_id == Sale.id), Sale)
+    query = _confirmed_sales_query(
+        scope_query_to_company(db.session.query(db.func.coalesce(db.func.sum(SaleItem.quantity * SaleItem.cost_price), 0)).join(Sale, SaleItem.sale_id == Sale.id), Sale),
+        Sale,
+    )
     for condition in filters:
         query = query.filter(condition)
-    return _to_decimal(query.scalar())
+    return to_decimal(query.scalar())
+
+
+def _sum_item_quantity(*filters):
+    from app import Sale, SaleItem, db, scope_query_to_company
+
+    query = _confirmed_sales_query(
+        scope_query_to_company(db.session.query(db.func.coalesce(db.func.sum(SaleItem.quantity), 0)).join(Sale, SaleItem.sale_id == Sale.id), Sale),
+        Sale,
+    )
+    for condition in filters:
+        query = query.filter(condition)
+    return query.scalar() or 0
+
+
+def _confirmed_sale_status_expression(sale_model):
+    return or_(sale_model.status.is_(None), func.lower(sale_model.status).in_(list(_confirmed_status_values())))
+
+
+def _confirmed_status_values():
+    return {status.lower() for status in ("confirmada", "confirmed", "aprobada", "approved", "completada", "complete")}
+
+
+def _confirmed_sales_query(query, sale_model):
+    return query.filter(_confirmed_sale_status_expression(sale_model))
 
 
 def _to_decimal(value):
-    """Normaliza valores numéricos a Decimal evitando mezcla con float."""
-    if value is None:
-        return Decimal("0.00")
-    if isinstance(value, Decimal):
-        return value
-    return Decimal(str(value))
+    """Compatibilidad retroactiva para conversiones locales."""
+    return to_decimal(value)
 
 
 def _last_days_labels(days):
@@ -234,55 +275,12 @@ def _sales_by_day(days):
         day = today - timedelta(days=offset)
         start = datetime.combine(day, time.min)
         end = datetime.combine(day, time.max)
-        total = scope_query_to_company(db.session.query(db.func.coalesce(db.func.sum(Sale.total_amount), 0)).filter(Sale.date >= start, Sale.date <= end), Sale).scalar() or 0
+        total = _confirmed_sales_query(
+            scope_query_to_company(
+                db.session.query(db.func.coalesce(db.func.sum(Sale.total_amount), 0)).filter(Sale.date >= start, Sale.date <= end),
+                Sale,
+            ),
+            Sale,
+        ).scalar() or 0
         data.append(_to_decimal(total))
     return data
-
-
-def _normalize_payment_method(value):
-    raw = (value or "").strip().lower()
-    if not raw:
-        return "otros"
-    if "efect" in raw:
-        return "efectivo"
-    if "mercado" in raw or raw == "mp" or "qr" in raw:
-        return "mercado_pago"
-    if "deb" in raw:
-        return "debito"
-    if "cred" in raw or "crédito" in raw:
-        return "credito"
-    if "transfer" in raw:
-        return "transferencia"
-    return "otros"
-
-
-def _sale_payment_breakdown(sale):
-    total = _to_decimal(getattr(sale, "total_amount", 0))
-    primary_method = _normalize_payment_method(getattr(sale, "payment_method", None))
-    secondary_method = _normalize_payment_method(getattr(sale, "secondary_payment_method", None))
-    primary_amount = _to_decimal(getattr(sale, "paid_amount", None))
-    secondary_amount = _to_decimal(getattr(sale, "secondary_paid_amount", None))
-
-    result = {
-        "efectivo": Decimal("0.00"),
-        "mercado_pago": Decimal("0.00"),
-        "debito": Decimal("0.00"),
-        "credito": Decimal("0.00"),
-        "transferencia": Decimal("0.00"),
-        "otros": Decimal("0.00"),
-    }
-    has_secondary = bool((getattr(sale, "secondary_payment_method", "") or "").strip())
-    if has_secondary:
-        if secondary_amount <= 0:
-            secondary_amount = Decimal("0.00")
-        if primary_amount <= 0:
-            primary_amount = max(total - secondary_amount, Decimal("0.00"))
-    else:
-        if primary_amount <= 0:
-            primary_amount = total
-        secondary_amount = Decimal("0.00")
-
-    result[primary_method] = result.get(primary_method, Decimal("0.00")) + primary_amount
-    if has_secondary:
-        result[secondary_method] = result.get(secondary_method, Decimal("0.00")) + secondary_amount
-    return result

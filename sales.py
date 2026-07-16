@@ -4,6 +4,8 @@ import csv
 import base64
 import hashlib
 import json
+import re
+import uuid
 from decimal import Decimal, InvalidOperation
 from datetime import datetime
 from io import BytesIO, StringIO
@@ -11,10 +13,12 @@ from urllib.parse import quote
 
 from flask import Blueprint, abort, current_app, flash, jsonify, make_response, redirect, render_template, request, session, url_for
 from flask_login import current_user, login_required
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import selectinload
 from app import tenant_required, utcnow
 from services.mercadopago_oauth_service import MercadoPagoOAuthService
 from services.mercadopago_service import MercadoPagoService
+from services.sales_calculation_service import calculate_sale_totals, normalize_payment_split, sale_payment_breakdown_from_values, to_decimal
 import qrcode
 
 bp = Blueprint("sales", __name__)
@@ -38,6 +42,20 @@ def _to_decimal(value, default="0.00"):
         return Decimal(default)
 
 
+def _sanitize_checkout_token(raw_value):
+    token = (raw_value or "").strip()
+    if not token:
+        return None
+    token = token[:64]
+    if not re.fullmatch(r"[A-Za-z0-9_.:-]+", token):
+        raise ValueError("Token de checkout inválido.")
+    return token
+
+
+def _new_checkout_token():
+    return f"chk_{uuid.uuid4()}"
+
+
 def _cart_key():
     company_id = getattr(current_user, "company_id", None) or "global"
     return f"cart_{company_id}_{current_user.id}"
@@ -53,31 +71,6 @@ def _current_open_cash_session():
 
     session_query = scope_query_to_company(CashSession.query.filter_by(status="abierta", user_id=current_user.id), CashSession)
     return session_query.order_by(CashSession.opened_at.desc()).first()
-
-
-def _cash_sale_amount(data, final_total):
-    primary_method = (data.get("metodo_pago") or data.get("payment_method") or "").strip().upper()
-    secondary_method = (data.get("metodo_pago_2") or data.get("secondary_payment_method") or "").strip().upper()
-    primary_amount = _to_decimal(data.get("monto_pago") or data.get("paid_amount"))
-    secondary_amount = _to_decimal(data.get("monto_pago_2") or data.get("secondary_paid_amount"))
-
-    if primary_method == "EFECTIVO" and primary_amount <= 0:
-        if secondary_method == "EFECTIVO" and secondary_amount > 0:
-            primary_amount = max(final_total - secondary_amount, Decimal("0.00"))
-        else:
-            primary_amount = final_total
-    if secondary_method == "EFECTIVO" and secondary_amount <= 0:
-        if primary_method == "EFECTIVO" and primary_amount > 0:
-            secondary_amount = Decimal("0.00")
-        else:
-            secondary_amount = max(final_total - primary_amount, Decimal("0.00"))
-
-    cash_amount = Decimal("0.00")
-    if primary_method == "EFECTIVO":
-        cash_amount += primary_amount
-    if secondary_method == "EFECTIVO":
-        cash_amount += secondary_amount
-    return min(cash_amount, final_total)
 
 
 def _require_open_cash_session(json_response=False):
@@ -111,6 +104,7 @@ def _pos_qr_snapshot(items, payload, *, total_amount, currency):
     return {
         "items": normalized_items,
         "client_id": payload.get("client_id") or payload.get("cliente_id") or "",
+        "checkout_token": payload.get("checkout_token") or payload.get("checkoutToken") or "",
         "note": payload.get("note") or "",
         "document_type": payload.get("document_type") or payload.get("tipo_comprobante") or "venta",
         "descuento_general": float(payload.get("descuento_general") or payload.get("general_discount") or 0),
@@ -155,17 +149,15 @@ def _save_cart(cart):
     session.modified = True
 
 
-def _calculate_lines(items):
+def _calculate_lines(items, *, lock_for_update=False):
     from app import Product, db, scope_query_to_company
 
     lines = []
-    subtotal = Decimal("0.00")
-    discount_total = Decimal("0.00")
-    product_ids = [int(prod_id) for prod_id in items.keys()]
-    products = {
-        product.id: product
-        for product in scope_query_to_company(db.session.query(Product), Product).filter(Product.id.in_(product_ids), Product.active.is_(True)).all()
-    }
+    product_ids = sorted(int(prod_id) for prod_id in items.keys())
+    product_query = scope_query_to_company(db.session.query(Product), Product).filter(Product.id.in_(product_ids), Product.active.is_(True)).order_by(Product.id.asc())
+    if lock_for_update:
+        product_query = product_query.with_for_update()
+    products = {product.id: product for product in product_query.all()}
     current_app.logger.info("[sales] productos recibidos para calcular lineas: product_ids=%s encontrados=%s", product_ids, len(products))
     for prod_id, qty in items.items():
         product = products.get(int(prod_id))
@@ -181,21 +173,8 @@ def _calculate_lines(items):
         unit_discount = _to_decimal(product.discount)
         line_subtotal = unit_price * quantity_dec
         line_discount = min(unit_discount * quantity_dec, line_subtotal)
-        subtotal += line_subtotal
-        discount_total += line_discount
         lines.append({"product": product, "quantity": qty, "price": unit_price, "discount": line_discount})
-    taxable = max(subtotal - discount_total, Decimal("0.00"))
-    tax = Decimal("0.00")
-    total = taxable
-    current_app.logger.info(
-        "[sales] cantidades y totales de lineas calculados: cantidades=%s subtotal=%s descuento=%s tax=%s total=%s",
-        [{"product_id": line["product"].id, "quantity": line["quantity"]} for line in lines],
-        str(subtotal),
-        str(discount_total),
-        str(tax),
-        str(total),
-    )
-    return lines, subtotal, discount_total, tax, total
+    return lines
 
 
 @bp.route("/")
@@ -336,7 +315,10 @@ def checkout():
         flash("Carrito vacio.", "warning")
         return redirect(url_for("sales.new_sale"))
     try:
-        products, subtotal, discount, tax_total, total = _calculate_lines(cart["items"])
+        products = _calculate_lines(cart["items"])
+        sale_totals = calculate_sale_totals(
+            [{"price": line["price"], "quantity": line["quantity"], "line_discount": line["discount"]} for line in products]
+        )
     except ValueError as exc:
         flash(str(exc), "danger")
         return redirect(url_for("sales.new_sale"))
@@ -344,10 +326,11 @@ def checkout():
         "ventas/checkout.html",
         products=products,
         clientes=scope_query_to_company(Client.query.filter_by(active=True), Client).order_by(Client.name).all(),
-        subtotal=subtotal,
-        discount=discount,
-        tax_total=tax_total,
-        total=total,
+        subtotal=sale_totals["subtotal"],
+        discount=sale_totals["line_discount_total"],
+        tax_total=sale_totals["tax"],
+        total=sale_totals["total"],
+        checkout_token=_new_checkout_token(),
         checkout_url=url_for("sales.checkout"),
     )
 
@@ -411,11 +394,15 @@ def api_mp_qr_create():
         return open_session
 
     try:
-        lines, subtotal, discount, tax_total, total = _calculate_lines(items)
+        lines = _calculate_lines(items, lock_for_update=True)
         general_discount = _to_decimal(payload.get("descuento_general") or payload.get("general_discount"))
         surcharge = _to_decimal(payload.get("recargo") or payload.get("surcharge"))
-        taxable = max(subtotal - discount - general_discount, Decimal("0.00"))
-        final_total = taxable + surcharge
+        sale_totals = calculate_sale_totals(
+            [{"price": line["price"], "quantity": line["quantity"], "line_discount": line["discount"]} for line in lines],
+            general_discount=general_discount,
+            surcharge=surcharge,
+        )
+        final_total = sale_totals["total"]
         currency = "ARS"
         company_id = getattr(current_user, "company_id", None)
         snapshot = _pos_qr_snapshot(
@@ -577,6 +564,7 @@ def api_mp_qr_finalize():
 
     sale_payload = {
         "client_id": snapshot.get("client_id") or "",
+        "checkout_token": snapshot.get("checkout_token") or "",
         "metodo_pago": "QR Mercado Pago",
         "payment_method": "QR Mercado Pago",
         "monto_pago": payment.amount,
@@ -609,6 +597,7 @@ def _create_sale_from_items(items, data, json_response=False):
     from app import CashMovement, Client, Sale, SaleItem, db, record_audit, scope_query_to_company
 
     sale = None
+    final_total = Decimal("0.00")
     try:
         current_app.logger.info("[sales] carrito recibido (_create_sale_from_items): items=%s json_response=%s", items, json_response)
         cash_session = _require_open_cash_session(json_response=json_response)
@@ -616,12 +605,41 @@ def _create_sale_from_items(items, data, json_response=False):
             return redirect(url_for("cash.index"))
         if isinstance(cash_session, tuple):
             return cash_session
-        lines, subtotal, discount, tax_total, final_total = _calculate_lines(items)
+
+        checkout_token = _sanitize_checkout_token(data.get("checkout_token") or data.get("checkoutToken"))
+        company_id = getattr(current_user, "company_id", None)
+        if checkout_token:
+            existing_sale = scope_query_to_company(Sale.query, Sale).filter(Sale.client_txn_id == checkout_token).first()
+            if existing_sale is not None:
+                if json_response:
+                    return jsonify({"sale_id": existing_sale.id, "redirect_url": url_for("sales.success", sale_id=existing_sale.id)})
+                return redirect(url_for("sales.success", sale_id=existing_sale.id))
+
+        lines = _calculate_lines(items)
         general_discount = _to_decimal(data.get("descuento_general") or data.get("general_discount"))
         surcharge = _to_decimal(data.get("recargo") or data.get("surcharge"))
-        taxable = max(subtotal - discount - general_discount, Decimal("0.00"))
-        tax_total = Decimal("0.00")
-        final_total = taxable + surcharge
+        sale_totals = calculate_sale_totals(
+            [{"price": line["price"], "quantity": line["quantity"], "line_discount": line["discount"]} for line in lines],
+            general_discount=general_discount,
+            surcharge=surcharge,
+        )
+        general_discount = sale_totals["general_discount"]
+        surcharge = sale_totals["surcharge"]
+        subtotal = sale_totals["subtotal"]
+        discount = sale_totals["line_discount_total"]
+        tax_total = sale_totals["tax"]
+        final_total = sale_totals["total"]
+
+        payment_primary_method = data.get("metodo_pago") or data.get("payment_method") or "EFECTIVO"
+        payment_secondary_method = data.get("metodo_pago_2") or data.get("secondary_payment_method") or ""
+        payment_split = normalize_payment_split(
+            total_amount=final_total,
+            primary_method=payment_primary_method,
+            secondary_method=payment_secondary_method,
+            primary_amount=(data.get("monto_pago") or data.get("paid_amount")),
+            secondary_amount=(data.get("monto_pago_2") or data.get("secondary_paid_amount")),
+        )
+
         client_id = data.get("client_id") or data.get("cliente_id") or None
         client = scope_query_to_company(Client.query.filter_by(id=int(client_id), active=True), Client).first() if client_id else None
         current_app.logger.info("[sales] cliente recibido: client_id=%s resolved_client=%s", client_id, getattr(client, "id", None))
@@ -640,32 +658,40 @@ def _create_sale_from_items(items, data, json_response=False):
             discount=discount + general_discount,
             tax=tax_total,
             total_amount=final_total,
-            payment_method=data.get("metodo_pago") or data.get("payment_method"),
-            secondary_payment_method=data.get("metodo_pago_2") or data.get("secondary_payment_method"),
-            paid_amount=_to_decimal(data.get("monto_pago") or data.get("paid_amount") or final_total),
-            secondary_paid_amount=_to_decimal(data.get("monto_pago_2") or data.get("secondary_paid_amount")),
+            payment_method=payment_split["primary_method"],
+            secondary_payment_method=payment_split["secondary_method"],
+            paid_amount=payment_split["primary_amount"],
+            secondary_paid_amount=payment_split["secondary_amount"],
             surcharge=surcharge,
+            client_txn_id=checkout_token,
             document_type=data.get("document_type") or data.get("tipo_comprobante") or "venta",
             status=data.get("status") or "confirmada",
             qr_reference=data.get("qr_reference"),
             note=data.get("note"),
             client_id=client.id if client else None,
             seller_id=current_user.id,
-            company_id=getattr(current_user, "company_id", None),
+            company_id=company_id,
             cash_session_id=cash_session.id,
             date=utcnow(),
+        )
+        payment_breakdown = sale_payment_breakdown_from_values(
+            total_amount=final_total,
+            primary_method=payment_split["primary_method"],
+            secondary_method=payment_split["secondary_method"],
+            primary_amount=payment_split["primary_amount"],
+            secondary_amount=payment_split["secondary_amount"],
         )
         db.session.add(sale)
         db.session.flush()
         current_app.logger.info("[sales] Sale creada en flush: sale_id=%s", sale.id)
 
-        cash_amount = _cash_sale_amount(data, final_total)
+        cash_amount = to_decimal(payment_breakdown.get("efectivo", 0))
         if cash_amount > 0:
             db.session.add(
                 CashMovement(
                     session_id=cash_session.id,
                     user_id=current_user.id,
-                    company_id=getattr(current_user, "company_id", None),
+                    company_id=company_id,
                     sale_id=sale.id,
                     movement_type="ingreso",
                     category="venta",
@@ -674,8 +700,9 @@ def _create_sale_from_items(items, data, json_response=False):
                 )
             )
 
-        for line in lines:
+        for idx, line in enumerate(lines):
             product = line["product"]
+            calculated_line = sale_totals["lines"][idx]
             current_app.logger.info(
                 "[sales] actualizando stock: product_id=%s stock_actual=%s cantidad=%s",
                 product.id,
@@ -691,7 +718,7 @@ def _create_sale_from_items(items, data, json_response=False):
                     quantity=line["quantity"],
                     price=line["price"],
                     cost_price=_to_decimal(product.cost_price),
-                    discount=line["discount"],
+                    discount=calculated_line["final_discount"],
                 )
             )
 
@@ -705,6 +732,22 @@ def _create_sale_from_items(items, data, json_response=False):
             db.session.rollback()
             current_app.logger.exception("[sales] no se pudo persistir auditoria post-venta: sale_id=%s", sale.id)
         session.pop(_cart_key(), None)
+    except IntegrityError as exc:
+        db.session.rollback()
+        current_app.logger.exception("[sales] integridad al crear venta")
+        token = _sanitize_checkout_token(data.get("checkout_token") or data.get("checkoutToken"))
+        if token:
+            from app import Sale, scope_query_to_company
+
+            existing_sale = scope_query_to_company(Sale.query, Sale).filter(Sale.client_txn_id == token).first()
+            if existing_sale is not None:
+                if json_response:
+                    return jsonify({"sale_id": existing_sale.id, "redirect_url": url_for("sales.success", sale_id=existing_sale.id)})
+                return redirect(url_for("sales.success", sale_id=existing_sale.id))
+        if json_response:
+            return jsonify({"error": "No se pudo completar la venta. Revisa los datos e intenta nuevamente."}), 400
+        flash("No se pudo completar la venta por un conflicto de concurrencia.", "danger")
+        return redirect(url_for("sales.new_sale"))
     except Exception as exc:
         db.session.rollback()
         current_app.logger.exception("[sales] error creando venta")

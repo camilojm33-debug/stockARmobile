@@ -462,6 +462,9 @@ class Client(db.Model):
 
 class Sale(db.Model):
     __tablename__ = "sales"
+    __table_args__ = (
+        Index("ix_sales_company_client_txn", "company_id", "client_txn_id", unique=True),
+    )
 
     id = db.Column(db.Integer, primary_key=True)
     date = db.Column(db.DateTime, default=utcnow, index=True)
@@ -475,6 +478,7 @@ class Sale(db.Model):
     paid_amount = db.Column(MONEY, default=Decimal("0.00"))
     secondary_paid_amount = db.Column(MONEY, default=Decimal("0.00"))
     surcharge = db.Column(MONEY, default=Decimal("0.00"))
+    client_txn_id = db.Column(db.String(64), index=True)
     document_type = db.Column(db.String(30), default="venta")
     status = db.Column(db.String(30), default="confirmada", index=True)
     qr_reference = db.Column(db.String(160))

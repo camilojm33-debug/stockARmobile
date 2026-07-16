@@ -28,6 +28,26 @@ let mpQrDraftState = {
   pollTimer: null,
   approved: false,
 };
+let checkoutInFlight = false;
+let checkoutToken = null;
+
+function generateCheckoutToken() {
+  if (window.crypto && typeof window.crypto.randomUUID === 'function') {
+    return window.crypto.randomUUID();
+  }
+  return `chk_${Date.now()}_${Math.random().toString(36).slice(2, 10)}`;
+}
+
+function ensureCheckoutToken() {
+  if (!checkoutToken) {
+    checkoutToken = generateCheckoutToken();
+  }
+  return checkoutToken;
+}
+
+function resetCheckoutToken() {
+  checkoutToken = null;
+}
 
 function getCsrfToken() {
   return document.querySelector('#checkout-form input[name="csrf_token"]')?.value
@@ -58,7 +78,18 @@ function loadCart() {
   }
   if (savedCart) {
     try {
-      cart = JSON.parse(savedCart);
+      const parsed = JSON.parse(savedCart);
+      cart = Array.isArray(parsed)
+        ? parsed.filter(item => {
+            const qty = parseFloat(item?.quantity || 0);
+            const stock = parseFloat(item?.stock || 0);
+            const price = parseFloat(item?.price || 0);
+            return Number.isFinite(qty) && qty > 0 && Number.isFinite(stock) && stock > 0 && Number.isFinite(price) && price >= 0 && item?.productId;
+          }).map(item => ({
+            ...item,
+            quantity: Math.min(parseFloat(item.quantity), parseFloat(item.stock)),
+          }))
+        : [];
     } catch(e) {
       console.warn('Error cargando carrito:', e);
       cart = [];
@@ -92,6 +123,10 @@ function addToCart(productId, name, price, stock, barcode = '', quantity = 1, un
   try {
     const qty = Math.max(parseFloat(quantity) || 1, 0.001);
     const availableStock = parseFloat(stock) || 0;
+    if (availableStock <= 0 || qty <= 0) {
+      showNotification('Stock insuficiente para agregar este producto', 'warning');
+      return;
+    }
     // Buscar si el producto ya existe en el carrito
     const existingItem = cart.find(item => item.productId === productId);
 
@@ -136,8 +171,9 @@ function removeFromCart(productId) {
  */
 function updateQuantity(productId, newQuantity) {
   const item = cart.find(item => item.productId === productId);
-  if (item && newQuantity > 0) {
-    item.quantity = Math.min(parseFloat(newQuantity), item.stock);
+  const parsedQty = parseFloat(newQuantity);
+  if (item && Number.isFinite(parsedQty) && parsedQty > 0) {
+    item.quantity = Math.min(parsedQty, item.stock);
   } else {
     // Si la cantidad es <= 0, eliminar el producto
     removeFromCart(productId);
@@ -150,6 +186,7 @@ function updateQuantity(productId, newQuantity) {
  */
 function clearCart() {
   cart = [];
+  resetCheckoutToken();
   saveCart();
   renderCartModal();
 }
@@ -255,18 +292,28 @@ function openCartModal() {
 }
 
 async function processCheckout() {
+  if (checkoutInFlight) {
+    return;
+  }
   if (cart.length === 0) {
     showNotification('El carrito esta vacio', 'danger');
     return;
+  }
+
+  checkoutInFlight = true;
+  if (checkoutProcessButton) {
+    checkoutProcessButton.disabled = true;
   }
 
   const selectedMethod = document.getElementById('checkout-payment-method')?.value || '';
   if (selectedMethod === 'QR Mercado Pago') {
     if (mpQrDraftState.approved && mpQrDraftState.finalizeUrl && mpQrDraftState.paymentId) {
       await finalizeMercadoPagoQrSale();
+      checkoutInFlight = false;
       return;
     }
     await processMercadoPagoQrCheckout();
+    checkoutInFlight = false;
     return;
   }
 
@@ -281,7 +328,8 @@ async function processCheckout() {
     descuento_general: document.getElementById('checkout-general-discount')?.value || '',
     recargo: document.getElementById('checkout-surcharge')?.value || '',
     document_type: document.getElementById('checkout-document-type')?.value || 'venta',
-    note: document.getElementById('checkout-note')?.value || ''
+    note: document.getElementById('checkout-note')?.value || '',
+    checkout_token: ensureCheckoutToken()
   };
   console.info('[sales] carrito recibido (frontend):', payload);
 
@@ -303,6 +351,12 @@ async function processCheckout() {
   } catch (error) {
     console.error('[sales] excepcion en processCheckout():', error);
     showNotification('No se pudo conectar con el servidor', 'danger');
+  } finally {
+    checkoutInFlight = false;
+    if (checkoutProcessButton) {
+      checkoutProcessButton.disabled = false;
+      checkoutProcessButton.textContent = 'Procesar venta';
+    }
   }
 }
 
@@ -497,6 +551,7 @@ async function processMercadoPagoQrCheckout() {
     client_id: document.getElementById('checkout-client-select')?.value || '',
     note: document.getElementById('checkout-note')?.value || '',
     document_type: document.getElementById('checkout-document-type')?.value || '',
+    checkout_token: ensureCheckoutToken(),
   };
   if (checkoutProcessButton) {
     checkoutProcessButton.disabled = true;
@@ -555,6 +610,7 @@ async function finalizeMercadoPagoQrSale() {
       throw new Error(result.error || 'No se pudo finalizar la venta.');
     }
     clearCart();
+    resetCheckoutToken();
     resetMpQrPanel('Venta finalizada correctamente.');
     if (result.redirect_url) {
       window.location.href = result.redirect_url;

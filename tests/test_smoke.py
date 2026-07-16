@@ -12,7 +12,7 @@ import pytest
 from flask_login import login_user, logout_user
 
 import app as stock_app
-from app import CashMovement, CashSession, Client, Company, Product, ReferralAttribution, Sale, Subscription, User, db
+from app import CashMovement, CashSession, Client, Company, Product, ReferralAttribution, Sale, SaleItem, Subscription, User, db
 from sqlalchemy.exc import ProgrammingError
 
 try:
@@ -176,6 +176,149 @@ def test_cash_session_links_sales_and_movement():
         assert session.status == "cerrada"
         assert float(session.expected_amount) == 18100.0
         assert float(session.difference_amount) == 0.0
+
+
+def test_cash_close_breakdown_counts_tarjeta_sales():
+    client = stock_app.app.test_client()
+    client.post("/auth/login", data={"username": "empresa_admin", "password": "admin123"})
+
+    open_cash_session(client, opening_amount="100")
+
+    response = client.post(
+        "/ventas/api/checkout",
+        json={"items": [{"productId": 1, "quantity": 1}], "metodo_pago": "TARJETA"},
+        headers={"X-Cart-Tenant": "1:1"},
+    )
+    assert response.status_code == 200
+
+    cash_page = client.get("/caja/")
+    assert cash_page.status_code == 200
+    html = cash_page.data.decode("utf-8")
+    assert "Ventas débito" in html
+    assert "$18000.00" in html
+
+
+def test_final_audit_full_sales_flow_consistency():
+    client = stock_app.app.test_client()
+    client.post("/auth/login", data={"username": "negocio_admin", "password": "admin123"})
+
+    with stock_app.app.app_context():
+        second_product = Product(
+            barcode="AUD-0002",
+            name="Producto auditoria 2",
+            price=5000,
+            cost_price=2500,
+            stock=10,
+            min_stock=1,
+            active=True,
+            sale_type="unidad",
+            unit_measure="u",
+            company_id=1,
+        )
+        db.session.add(second_product)
+        db.session.commit()
+        second_product_id = second_product.id
+
+    open_cash_session(client, opening_amount="100")
+
+    # 1) Venta simple de un producto.
+    sale_one_response = client.post(
+        "/ventas/api/checkout",
+        json={
+            "items": [{"productId": 1, "quantity": 1}],
+            "metodo_pago": "EFECTIVO",
+            "checkout_token": "audit-flow-sale-1",
+            "monto_pago": 20000,
+        },
+        headers={"X-Cart-Tenant": "1:2"},
+    )
+    assert sale_one_response.status_code == 200
+    sale_one_id = sale_one_response.get_json()["sale_id"]
+
+    # Reintento con mismo token: no debe crear venta duplicada.
+    sale_one_retry = client.post(
+        "/ventas/api/checkout",
+        json={
+            "items": [{"productId": 1, "quantity": 1}],
+            "metodo_pago": "EFECTIVO",
+            "checkout_token": "audit-flow-sale-1",
+            "monto_pago": 20000,
+        },
+        headers={"X-Cart-Tenant": "1:2"},
+    )
+    assert sale_one_retry.status_code == 200
+    assert sale_one_retry.get_json()["sale_id"] == sale_one_id
+
+    # 2 y 3) Segunda venta con varios productos y cantidades modificadas.
+    sale_two_response = client.post(
+        "/ventas/api/checkout",
+        json={
+            "items": [
+                {"productId": 1, "quantity": 0.75},
+                {"productId": second_product_id, "quantity": 2},
+            ],
+            "metodo_pago": "EFECTIVO",
+            "checkout_token": "audit-flow-sale-2",
+            "descuento_general": 100,
+            "recargo": 50,
+            "monto_pago": 25000,
+        },
+        headers={"X-Cart-Tenant": "1:2"},
+    )
+    assert sale_two_response.status_code == 200
+    sale_two_id = sale_two_response.get_json()["sale_id"]
+
+    # 4) Cancelar venta 1.
+    cancel_response = client.post(f"/ventas/{sale_one_id}/delete", follow_redirects=False)
+    assert cancel_response.status_code in (301, 302)
+
+    with stock_app.app.app_context():
+        confirmed_sales = Sale.query.filter_by(company_id=1, status="confirmada").order_by(Sale.id.asc()).all()
+        assert len(confirmed_sales) == 1
+        assert confirmed_sales[0].id == sale_two_id
+
+        # 7 y 8) SaleItem y Sale.total consistentes.
+        sale_two = confirmed_sales[0]
+        assert len(sale_two.items) == 2
+        sale_two_items_total = sum(float(item.total_amount or 0) for item in sale_two.items)
+        assert round(float(sale_two.total_amount or 0), 2) == round(sale_two_items_total, 2)
+
+        # 6) Stock final consistente con ventas confirmadas (venta 1 fue cancelada).
+        product_one = Product.query.get(1)
+        product_two = Product.query.get(second_product_id)
+        assert product_one is not None
+        assert product_two is not None
+        assert round(float(product_one.stock), 3) == 1.75
+        assert round(float(product_two.stock), 3) == 8.0
+
+        # Sin ventas duplicadas por token idempotente.
+        sale_rows_token_one = Sale.query.filter_by(company_id=1, client_txn_id="audit-flow-sale-1").count()
+        sale_rows_token_two = Sale.query.filter_by(company_id=1, client_txn_id="audit-flow-sale-2").count()
+        assert sale_rows_token_one <= 1
+        assert sale_rows_token_two == 1
+
+    # 9) Dashboard debe reflejar solo ventas confirmadas.
+    dashboard_response = client.get("/dashboard/")
+    assert dashboard_response.status_code == 200
+    dashboard_html = dashboard_response.data.decode("utf-8")
+    assert "Ingreso" in dashboard_html or "Ingresos" in dashboard_html
+    assert "$23450.00" in dashboard_html
+
+    # 10) Cierre de caja: esperado = apertura + suma ventas confirmadas en efectivo.
+    close_response = client.post(
+        "/caja/",
+        data={"action": "close", "counted_amount": "23550", "closing_note": "Cierre auditoria final"},
+        follow_redirects=True,
+    )
+    assert close_response.status_code == 200
+
+    with stock_app.app.app_context():
+        session = CashSession.query.order_by(CashSession.id.desc()).first()
+        assert session is not None
+        assert session.status == "cerrada"
+        assert round(float(session.expected_amount or 0), 2) == 23550.00
+        assert round(float(session.counted_amount or 0), 2) == 23550.00
+        assert round(float(session.difference_amount or 0), 2) == 0.00
 
 
 def test_admin_can_switch_to_employee_session_from_sidebar_flow():
@@ -819,6 +962,135 @@ def test_checkout_does_not_apply_automatic_tax():
         assert float(sale.subtotal) == 18000.0
         assert float(sale.tax or 0) == 0.0
         assert float(sale.total_amount) == 17700.0
+        sum_items = sum(float(item.total_amount or 0) for item in sale.items)
+        assert round(sum_items, 2) == round(float(sale.total_amount), 2)
+
+
+def test_checkout_is_idempotent_with_checkout_token():
+    client = stock_app.app.test_client()
+    client.post("/auth/login", data={"username": "empresa_admin", "password": "admin123"})
+
+    open_cash_session(client)
+
+    payload = {
+        "items": [{"productId": 1, "quantity": 1}],
+        "metodo_pago": "EFECTIVO",
+        "checkout_token": "dup-token-001",
+    }
+    first = client.post("/ventas/api/checkout", json=payload, headers={"X-Cart-Tenant": "1:1"})
+    second = client.post("/ventas/api/checkout", json=payload, headers={"X-Cart-Tenant": "1:1"})
+
+    assert first.status_code == 200
+    assert second.status_code == 200
+    first_data = first.get_json()
+    second_data = second.get_json()
+    assert first_data["sale_id"] == second_data["sale_id"]
+
+    with stock_app.app.app_context():
+        sales = Sale.query.filter_by(company_id=1).all()
+        assert len(sales) == 1
+        assert sales[0].client_txn_id == "dup-token-001"
+
+
+def test_dashboard_ignores_non_confirmed_sales_in_metrics():
+    client = stock_app.app.test_client()
+
+    with stock_app.app.app_context():
+        user = User.query.filter_by(username="negocio_admin").first()
+        assert user is not None
+
+        confirmed_sale = Sale(
+            customer="Cliente confirmado",
+            subtotal=1000,
+            discount=0,
+            tax=0,
+            total_amount=1000,
+            payment_method="EFECTIVO",
+            status="confirmada",
+            seller_id=user.id,
+            company_id=1,
+        )
+        cancelled_sale = Sale(
+            customer="Cliente anulada",
+            subtotal=9000,
+            discount=0,
+            tax=0,
+            total_amount=9000,
+            payment_method="EFECTIVO",
+            status="anulada",
+            seller_id=user.id,
+            company_id=1,
+        )
+        db.session.add(confirmed_sale)
+        db.session.add(cancelled_sale)
+        db.session.flush()
+
+        db.session.add(SaleItem(sale_id=confirmed_sale.id, product_id=1, quantity=1, price=1000, discount=0, cost_price=100))
+        db.session.add(SaleItem(sale_id=cancelled_sale.id, product_id=1, quantity=2, price=4500, discount=0, cost_price=100))
+        db.session.commit()
+
+    client.post("/auth/login", data={"username": "negocio_admin", "password": "admin123"})
+    response = client.get("/dashboard/")
+    assert response.status_code == 200
+    html = response.data.decode("utf-8")
+    assert "$1000.00" in html
+    assert "$10000.00" not in html
+
+
+def test_dashboard_sum_uses_confirmed_sales_aggregate():
+    client = stock_app.app.test_client()
+
+    with stock_app.app.app_context():
+        user = User.query.filter_by(username="negocio_admin").first()
+        assert user is not None
+
+        db.session.add(
+            Sale(
+                customer="A",
+                subtotal=100,
+                discount=0,
+                tax=0,
+                total_amount=100,
+                payment_method="EFECTIVO",
+                status="confirmada",
+                seller_id=user.id,
+                company_id=1,
+            )
+        )
+        db.session.add(
+            Sale(
+                customer="B",
+                subtotal=250,
+                discount=0,
+                tax=0,
+                total_amount=250,
+                payment_method="EFECTIVO",
+                status="confirmada",
+                seller_id=user.id,
+                company_id=1,
+            )
+        )
+        db.session.add(
+            Sale(
+                customer="C",
+                subtotal=999,
+                discount=0,
+                tax=0,
+                total_amount=999,
+                payment_method="EFECTIVO",
+                status="anulada",
+                seller_id=user.id,
+                company_id=1,
+            )
+        )
+        db.session.commit()
+
+    client.post("/auth/login", data={"username": "negocio_admin", "password": "admin123"})
+    dashboard = client.get("/dashboard/")
+    assert dashboard.status_code == 200
+    html = dashboard.data.decode("utf-8")
+    assert "$350.00" in html
+    assert "$1349.00" not in html
 
 
 def test_checkout_rejects_stale_tenant_cart():

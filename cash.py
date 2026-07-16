@@ -11,6 +11,7 @@ from reportlab.lib.pagesizes import A4
 from reportlab.pdfgen import canvas
 
 from app import tenant_required
+from services.sales_calculation_service import is_confirmed_sale_status, sale_payment_breakdown
 
 bp = Blueprint("cash", __name__)
 
@@ -66,7 +67,7 @@ def _current_open_session():
 
 
 def _session_summary(session):
-    sales = list(getattr(session, "sales", []) or [])
+    sales = [sale for sale in (list(getattr(session, "sales", []) or [])) if is_confirmed_sale_status(getattr(sale, "status", None))]
     movements = list(getattr(session, "movements", []) or [])
     opening = _to_decimal(session.opening_amount)
 
@@ -81,7 +82,7 @@ def _session_summary(session):
     total_sold = Decimal("0.00")
     for sale in sales:
         total_sold += _to_decimal(getattr(sale, "total_amount", 0))
-        for method_key, amount in _sale_payment_breakdown(sale).items():
+        for method_key, amount in sale_payment_breakdown(sale).items():
             payment_totals[method_key] = payment_totals.get(method_key, Decimal("0.00")) + _to_decimal(amount)
 
     income = Decimal("0.00")
@@ -127,62 +128,6 @@ def _session_summary(session):
     }
 
 
-def _normalize_payment_method(value):
-    raw = (value or "").strip().lower()
-    if not raw:
-        return "otros"
-    if "efect" in raw:
-        return "efectivo"
-    if "mercado" in raw or raw == "mp" or "qr" in raw:
-        return "mercado_pago"
-    if "deb" in raw:
-        return "debito"
-    if "cred" in raw or "crédito" in raw:
-        return "credito"
-    if "transfer" in raw:
-        return "transferencia"
-    return "otros"
-
-
-def _sale_payment_breakdown(sale):
-    total = _to_decimal(getattr(sale, "total_amount", 0))
-    primary_method = _normalize_payment_method(getattr(sale, "payment_method", None))
-    secondary_method = _normalize_payment_method(getattr(sale, "secondary_payment_method", None))
-    primary_amount = _to_decimal(getattr(sale, "paid_amount", None))
-    secondary_amount = _to_decimal(getattr(sale, "secondary_paid_amount", None))
-
-    result = {
-        "efectivo": Decimal("0.00"),
-        "mercado_pago": Decimal("0.00"),
-        "debito": Decimal("0.00"),
-        "credito": Decimal("0.00"),
-        "transferencia": Decimal("0.00"),
-        "otros": Decimal("0.00"),
-    }
-
-    has_secondary = bool((getattr(sale, "secondary_payment_method", "") or "").strip())
-    if has_secondary:
-        if secondary_amount <= 0:
-            secondary_amount = Decimal("0.00")
-        if primary_amount <= 0:
-            primary_amount = max(total - secondary_amount, Decimal("0.00"))
-        # Asegurar que la suma no supere el total de la venta
-        combined = primary_amount + secondary_amount
-        if combined > total and combined > Decimal("0.00"):
-            primary_amount = (primary_amount * total / combined).quantize(Decimal("0.01"))
-            secondary_amount = total - primary_amount
-    else:
-        # Capear al total: el excedente entregado al cliente como vuelto
-        # no debe contar como ingreso de la venta
-        primary_amount = min(primary_amount, total) if primary_amount > Decimal("0.00") else total
-        secondary_amount = Decimal("0.00")
-
-    result[primary_method] = result.get(primary_method, Decimal("0.00")) + primary_amount
-    if has_secondary:
-        result[secondary_method] = result.get(secondary_method, Decimal("0.00")) + secondary_amount
-    return result
-
-
 def _build_cash_close_rows(session):
     summary = _session_summary(session)
     return [
@@ -192,6 +137,7 @@ def _build_cash_close_rows(session):
         ("Ventas débito", summary["sales_debit"]),
         ("Ventas crédito", summary["sales_credit"]),
         ("Ventas transferencia", summary["sales_transfer"]),
+        ("Ventas otros/tarjeta", summary["sales_other"]),
         ("Ingresos", summary["income"]),
         ("Egresos", summary["expense"]),
         ("Retiros", summary["withdrawals"]),

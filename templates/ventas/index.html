@@ -138,10 +138,25 @@
           <button class="btn btn-success btn-lg w-100 mt-3" {% if not cash_session_open %}disabled title="Abrí una caja para cobrar"{% endif %} onclick="openCartModal()"><i class="bi bi-credit-card me-1"></i>Cobrar ahora</button>
         </div>
       </div>
+      <div class="card app-card mt-3 pos-recent-sales-desktop">
+        <div class="card-header bg-white fw-bold">Ventas recientes</div>
+        <div class="table-responsive">
+          <table class="table table-sm mb-0">
+            <thead><tr><th>ID</th><th>Cliente</th><th>Fecha</th><th>Total</th></tr></thead>
+            <tbody>
+              {% for sale in sales %}
+              <tr><td><a href="{{ url_for('sales.view_sale', sale_id=sale.id) }}">#{{ sale.id }}</a></td><td>{{ sale.customer or '-' }}</td><td>{{ sale.date.strftime('%Y-%m-%d %H:%M') }}</td><td>${{ "%.2f"|format(sale.total_amount) }}</td></tr>
+              {% else %}
+              <tr><td colspan="4" class="text-center text-muted py-3">No hay ventas registradas.</td></tr>
+              {% endfor %}
+            </tbody>
+          </table>
+        </div>
+      </div>
     </aside>
   </div>
 
-  <div class="card app-card mt-4 quick-mode-hidden">
+  <div class="card app-card mt-4 quick-mode-hidden d-xl-none">
     <div class="card-header bg-white fw-bold">Ventas recientes</div>
     <div class="table-responsive">
       <table class="table table-sm mb-0">
@@ -353,19 +368,39 @@
     min-width: 76px;
   }
   body.quick-mode-active .pos-toolbar,
-  body.quick-mode-active .pos-category-strip,
-  body.quick-mode-active .card-header,
-  body.quick-mode-active .card-footer {
+  body.quick-mode-active .pos-category-strip {
     display: none !important;
   }
   .pos-quick-controls {
-    position: fixed;
-    top: 92px;
-    right: 18px;
-    z-index: 1020;
+    position: sticky;
+    top: .75rem;
+    z-index: 1000;
+    margin-left: auto;
+    width: max-content;
+    margin-bottom: .75rem;
     display: flex;
     flex-direction: column;
     gap: .6rem;
+  }
+  .pos-recent-sales-desktop {
+    max-height: 42vh;
+    overflow: auto;
+  }
+  @media (min-width: 1200px) {
+    .pos-cart-items {
+      max-height: 52vh;
+    }
+    .pos-recent-sales-desktop {
+      max-height: calc(100vh - 10.5rem);
+    }
+  }
+  @media (min-width: 1600px) {
+    .pos-cart-items {
+      max-height: 56vh;
+    }
+    .pos-recent-sales-desktop {
+      max-height: calc(100vh - 9.5rem);
+    }
   }
   .pos-quick-toggle {
     border: 0;
