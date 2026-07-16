@@ -1922,6 +1922,9 @@ def test_referral_capture_and_register_attribution_flow():
         attribution = ReferralAttribution.query.filter_by(company_id=company.id).first()
         assert attribution is not None
         assert attribution.referral_code == "REF7777"
+        owner_user = User.query.filter_by(username="nuevo_ref").first()
+        assert owner_user is not None
+        assert owner_user.role == "admin"
 
 
 def test_referral_commission_lifecycle_and_payout_are_persistent():

@@ -962,11 +962,88 @@ def subscriptions_action(subscription_id):
 @bp.route("/users")
 @superadmin_required
 def users_panel():
-    from app import User
+    from app import Company, User, db
 
     _require_superadmin()
-    users = User.query.order_by(User.created_at.desc()).limit(200).all()
-    return render_template("saas/users.html", users=users)
+    q = (request.args.get("q") or "").strip()
+    role = (request.args.get("role") or "all").strip().lower()
+    company_id = request.args.get("company_id", type=int)
+
+    query = User.query
+    if q:
+        like = f"%{q}%"
+        query = query.filter(
+            db.or_(
+                User.username.ilike(like),
+                User.email.ilike(like),
+                User.first_name.ilike(like),
+                User.last_name.ilike(like),
+            )
+        )
+    if role in {"admin", "user", "superadmin"}:
+        query = query.filter(User.role == role)
+    if company_id:
+        query = query.filter(User.company_id == company_id)
+
+    users = query.order_by(User.created_at.desc(), User.id.desc()).limit(300).all()
+    company_ids = sorted({item.company_id for item in users if item.company_id})
+    companies = (
+        Company.query.filter(Company.id.in_(company_ids)).order_by(Company.name.asc()).all() if company_ids else []
+    )
+    companies_by_id = {item.id: item for item in companies}
+    all_companies = Company.query.order_by(Company.name.asc()).all()
+
+    return render_template(
+        "saas/users.html",
+        users=users,
+        companies_by_id=companies_by_id,
+        all_companies=all_companies,
+        filters={"q": q, "role": role, "company_id": company_id},
+    )
+
+
+@bp.route("/users/<int:user_id>/role", methods=["POST"])
+@superadmin_required
+def users_update_role(user_id):
+    from app import AuditLog, User, db
+
+    _require_superadmin()
+    user = db.session.get(User, user_id)
+    if user is None:
+        abort(404)
+
+    new_role = (request.form.get("role") or "").strip().lower()
+    if new_role not in {"admin", "user"}:
+        flash("Rol inválido. Solo se permite admin o user.", "danger")
+        return _redirect_back("saas.users_panel")
+
+    if user.role == "superadmin":
+        flash("No se puede modificar el rol de un superadmin.", "warning")
+        return _redirect_back("saas.users_panel")
+
+    if user.company_id is None:
+        flash("Solo se pueden modificar roles de empleados de empresas.", "warning")
+        return _redirect_back("saas.users_panel")
+
+    previous_role = (user.role or "").strip().lower()
+    if previous_role == new_role:
+        flash("El empleado ya tiene ese rol.", "info")
+        return _redirect_back("saas.users_panel")
+
+    user.role = new_role
+    db.session.add(
+        AuditLog(
+            user_id=current_user.id,
+            company_id=user.company_id,
+            action="superadmin_user_role_update",
+            entity="user",
+            entity_id=user.id,
+            detail=f"Rol actualizado de {previous_role or '-'} a {new_role} por superadmin",
+        )
+    )
+    db.session.commit()
+    flash(f"Rol actualizado correctamente para {user.username}: {new_role}.", "success")
+    return _redirect_back("saas.users_panel")
 
 
 @bp.route("/password-recovery")

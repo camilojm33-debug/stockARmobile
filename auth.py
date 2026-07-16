@@ -269,7 +269,9 @@ def register():
 
             user = User(username=form.username.data, email=form.email.data, company_id=company.id, auth_provider="local")
             user.set_password(form.password.data)
-            user.role = "user"
+            # Defensa adicional: solo el primer usuario de la empresa queda como admin.
+            is_first_company_user = User.query.filter_by(company_id=company.id).count() == 0
+            user.role = "admin" if is_first_company_user else "user"
 
             db.session.add(user)
             db.session.flush()

@@ -9,12 +9,89 @@
     </div>
     <a class="btn btn-outline-secondary" href="{{ url_for('saas.index') }}">Volver</a>
   </div>
+
+  <div class="card app-card mb-3">
+    <div class="card-body">
+      <form method="get" action="{{ url_for('saas.users_panel') }}" class="row g-2">
+        <div class="col-md-4">
+          <input class="form-control" name="q" value="{{ filters.q }}" placeholder="Buscar por usuario, email o nombre">
+        </div>
+        <div class="col-md-3">
+          <select class="form-select" name="company_id">
+            <option value="">Todas las empresas</option>
+            {% for company in all_companies %}
+            <option value="{{ company.id }}" {% if filters.company_id == company.id %}selected{% endif %}>{{ company.name }} (ID {{ company.id }})</option>
+            {% endfor %}
+          </select>
+        </div>
+        <div class="col-md-3">
+          <select class="form-select" name="role">
+            <option value="all" {% if filters.role == 'all' %}selected{% endif %}>Todos los roles</option>
+            <option value="admin" {% if filters.role == 'admin' %}selected{% endif %}>Administrador</option>
+            <option value="user" {% if filters.role == 'user' %}selected{% endif %}>Empleado</option>
+            <option value="superadmin" {% if filters.role == 'superadmin' %}selected{% endif %}>Superadmin</option>
+          </select>
+        </div>
+        <div class="col-md-2 d-flex gap-2">
+          <button class="btn btn-primary w-100" type="submit">Filtrar</button>
+          <a class="btn btn-outline-secondary" href="{{ url_for('saas.users_panel') }}">Limpiar</a>
+        </div>
+      </form>
+    </div>
+  </div>
+
   <div class="card app-card">
-    <div class="table-responsive"><table class="table mb-0 table-hover"><thead><tr><th>ID</th><th>Usuario</th><th>Email</th><th>Rol</th><th>Empresa</th><th>Estado</th></tr></thead><tbody>
+    <div class="card-header bg-white fw-bold d-flex justify-content-between align-items-center">
+      <span>Empleados y usuarios</span>
+      <small class="text-muted">{{ users|length }} registros</small>
+    </div>
+    <div class="table-responsive"><table class="table mb-0 table-hover align-middle"><thead><tr><th>ID</th><th>Usuario</th><th>Email</th><th>Rol actual</th><th>Empresa</th><th>Estado</th><th class="text-end">Acciones</th></tr></thead><tbody>
       {% for user in users %}
-      <tr><td>{{ user.id }}</td><td>{{ user.username }}</td><td>{{ user.email }}</td><td>{{ user.role }}</td><td>{{ user.company_id or '-' }}</td><td>{{ 'activo' if user.active else 'inactivo' }}</td></tr>
+      {% set company = companies_by_id.get(user.company_id) if user.company_id else None %}
+      <tr>
+        <td>{{ user.id }}</td>
+        <td>
+          <div class="fw-semibold">{{ user.username }}</div>
+          <div class="small text-muted">{{ (user.first_name or '') ~ ' ' ~ (user.last_name or '') }}</div>
+        </td>
+        <td>{{ user.email }}</td>
+        <td>
+          <span class="badge {{ 'text-bg-primary' if user.role == 'superadmin' else ('text-bg-dark' if user.role == 'admin' else 'text-bg-secondary') }}">{{ user.role }}</span>
+        </td>
+        <td>
+          {% if company %}
+          <div class="fw-semibold">{{ company.name }}</div>
+          <div class="small text-muted">ID {{ company.id }}</div>
+          {% elif user.company_id %}
+          <span>ID {{ user.company_id }}</span>
+          {% else %}
+          <span class="text-muted">Global</span>
+          {% endif %}
+        </td>
+        <td>{{ 'activo' if user.active else 'inactivo' }}</td>
+        <td class="text-end">
+          {% if user.role != 'superadmin' and user.company_id %}
+          <div class="d-inline-flex gap-1 flex-wrap justify-content-end">
+            <form method="post" action="{{ url_for('saas.users_update_role', user_id=user.id) }}">
+              <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+              <input type="hidden" name="next" value="{{ request.full_path }}">
+              <input type="hidden" name="role" value="admin">
+              <button class="btn btn-sm {{ 'btn-dark' if user.role == 'admin' else 'btn-outline-dark' }}" type="submit" {% if user.role == 'admin' %}disabled{% endif %}>Hacer admin</button>
+            </form>
+            <form method="post" action="{{ url_for('saas.users_update_role', user_id=user.id) }}">
+              <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+              <input type="hidden" name="next" value="{{ request.full_path }}">
+              <input type="hidden" name="role" value="user">
+              <button class="btn btn-sm {{ 'btn-secondary' if user.role == 'user' else 'btn-outline-secondary' }}" type="submit" {% if user.role == 'user' %}disabled{% endif %}>Hacer user</button>
+            </form>
+          </div>
+          {% else %}
+          <span class="text-muted small">Sin cambios</span>
+          {% endif %}
+        </td>
+      </tr>
       {% else %}
-      <tr><td colspan="6" class="text-center text-muted py-4">Sin usuarios.</td></tr>
+      <tr><td colspan="7" class="text-center text-muted py-4">Sin usuarios.</td></tr>
       {% endfor %}
     </tbody></table></div>
   </div>

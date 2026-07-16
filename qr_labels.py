@@ -102,7 +102,8 @@ def create_product_label(barcode_string, product_name, price, size=(1000, 500), 
     # Estructura vertical: nombre arriba, QR centrado grande, precio y SKU debajo.
     row_gap = max(3, int(usable_h * 0.02))
     name_h = max(16, int(usable_h * 0.14)) if include_name else 0
-    price_h = max(14, int(usable_h * 0.12)) if include_price else 0
+    # Reserva mas altura para el precio, priorizando lectura en etiquetas de gondola.
+    price_h = max(20, int(usable_h * 0.20)) if include_price else 0
     sku_h = max(12, int(usable_h * 0.10)) if include_code else 0
 
     reserved = name_h + price_h + sku_h
@@ -145,9 +146,16 @@ def create_product_label(barcode_string, product_name, price, size=(1000, 500), 
         y += qr_side + row_gap
 
     if include_price:
-        price_font = _fit_font_for_text(draw, price_text, usable_w, max_size=max(10, int(price_h * 0.8)), min_size=7)
+        price_font = _fit_font_for_text(
+            draw,
+            price_text,
+            usable_w,
+            max_size=max(16, int(price_h * 1.25)),
+            min_size=11,
+            bold=True,
+        )
         draw.text((center_x, y), price_text, fill="black", anchor="ma", font=price_font)
-        y += max(8, int(getattr(price_font, "size", 8) * 1.0)) + row_gap
+        y += max(12, int(getattr(price_font, "size", 12) * 1.05)) + row_gap
 
     if include_code:
         code_font = _fit_font_for_text(draw, sku_text, usable_w, max_size=max(9, int(sku_h * 0.75)), min_size=6)
@@ -167,13 +175,13 @@ def _label_dimensions_mm(size_key):
     }.get(size_key, (50, 25))
 
 
-def _fit_font_for_text(draw, text, max_width, max_size=38, min_size=10):
+def _fit_font_for_text(draw, text, max_width, max_size=38, min_size=10, bold=False):
     for size in range(max_size, min_size - 1, -1):
-        font = _font(size)
+        font = _font(size, bold=bold)
         left, _, right, _ = draw.textbbox((0, 0), text, font=font)
         if (right - left) <= max_width:
             return font
-    return _font(min_size)
+    return _font(min_size, bold=bold)
 
 
 def _wrap_text(draw, text, font, max_width):
@@ -347,7 +355,8 @@ def _draw_label_on_canvas(pdf, product, x, y, label_w_pt, label_h_pt, *, include
 
     row_gap = max(0.35 * mm, inner_h * 0.018)
     name_h = max(3.2 * mm, inner_h * 0.18) if include_name else 0
-    price_h = max(4.0 * mm, inner_h * 0.22) if include_price else 0
+    # Precio mas protagonista debajo del QR para impresion legible en producto.
+    price_h = max(6.0 * mm, inner_h * 0.30) if include_price else 0
     sku_h = max(1.8 * mm, inner_h * 0.10) if include_code else 0
     active_blocks = sum(1 for flag in [include_name, include_price, include_code] if flag)
     reserved = name_h + price_h + sku_h + (row_gap * active_blocks)
@@ -405,14 +414,14 @@ def _draw_label_on_canvas(pdf, product, x, y, label_w_pt, label_h_pt, *, include
 
     if include_price:
         if label_w_mm >= 49 and label_h_mm >= 49:
-            max_price_size = 22
-            min_price_size = 18
+            max_price_size = 34
+            min_price_size = 24
         elif label_h_mm >= 38:
-            max_price_size = 16
-            min_price_size = 12
+            max_price_size = 24
+            min_price_size = 17
         else:
-            max_price_size = 13
-            min_price_size = 9
+            max_price_size = 18
+            min_price_size = 12
 
         price_value, price_size = _fit_canvas_text(
             pdf,

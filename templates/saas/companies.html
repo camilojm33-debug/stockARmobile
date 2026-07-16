@@ -110,6 +110,7 @@
               <div class="d-flex flex-wrap justify-content-end gap-1">
                 <a class="btn btn-sm btn-outline-primary" href="{{ url_for('saas.company_detail', company_id=company.id) }}">Ver empresa</a>
                 <a class="btn btn-sm btn-outline-secondary" href="{{ url_for('saas.company_detail', company_id=company.id) }}#stats">Ver estadisticas</a>
+                <a class="btn btn-sm btn-outline-info" href="{{ url_for('saas.users_panel', company_id=company.id) }}">Ver empleados</a>
                 <form method="post" action="{{ url_for('saas.company_impersonate', company_id=company.id) }}">
                   <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
                   <button class="btn btn-sm btn-outline-dark" type="submit">Impersonar</button>
