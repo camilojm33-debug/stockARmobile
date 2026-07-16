@@ -1351,10 +1351,14 @@
     <div class="card-body p-4">
       <div class="d-flex flex-column flex-lg-row justify-content-between align-items-lg-center gap-3">
         <div>
-          <div class="fw-bold h5 mb-1">Este módulo estará disponible próximamente.</div>
-          <p class="text-muted mb-0">Podés volver al centro de Mi Empresa para continuar gestionando el resto de módulos operativos.</p>
+          <div class="fw-bold h5 mb-1">Panel principal</div>
+          <p class="text-muted mb-0">Acceso directo a la gestión principal de Mi Empresa.</p>
         </div>
-        <a class="btn btn-outline-secondary" href="{{ url_for('company_billing.company_settings') }}"><i class="bi bi-grid me-1"></i>Volver al hub</a>
+        {% if current_user.role == 'admin' %}
+        <a class="btn btn-primary" href="{{ url_for('company_billing.company_settings', panel='stats') }}"><i class="bi bi-gear me-1"></i>Administrar Mi Empresa</a>
+        {% else %}
+        <span class="text-muted small">Solo el administrador de la empresa puede ver este acceso.</span>
+        {% endif %}
       </div>
     </div>
   </div>
