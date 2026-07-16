@@ -13,6 +13,11 @@
         </div>
         <div class="d-flex gap-2">
           <a class="btn btn-outline-primary" href="{{ url_for('qr_labels.generate_pdf_ticket', sale_id=sale.id) }}" target="_blank">PDF</a>
+          <form method="post" action="{{ url_for('sales.print_thermal_ticket', sale_id=sale.id) }}">
+            <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+            <button class="btn btn-outline-dark" type="submit"><i class="bi bi-printer me-1"></i>Imprimir térmico</button>
+          </form>
+          <a class="btn btn-outline-dark" href="{{ url_for('sales.thermal_ticket', sale_id=sale.id) }}" target="_blank"><i class="bi bi-printer me-1"></i>Ticket térmico</a>
           {% if current_user.role == 'admin' %}
           <form method="post" action="{{ url_for('sales.delete_sale', sale_id=sale.id) }}" onsubmit="return confirm('Eliminar la venta #{{ sale.id }}? Se restituirá el stock.');">
             <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">

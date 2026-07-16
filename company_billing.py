@@ -708,7 +708,9 @@ def mercado_pago_connect():
     session_key = f"mp_oauth_state_{company.id}"
     session[session_key] = state
     session.modified = True
-    redirect_uri = service.oauth_redirect_uri(service.default_oauth_redirect_uri())
+    redirect_uri = service.default_oauth_redirect_uri()
+    session[f"mp_oauth_redirect_uri_{company.id}"] = redirect_uri
+    session.modified = True
     auth_url = service.build_authorization_url(state=state, redirect_uri=redirect_uri)
     current_app.logger.info(
         "Mercado Pago OAuth start: company_id=%s client_id=%s redirect_uri=%s state=%s auth_url=%s",
@@ -750,13 +752,15 @@ def mercado_pago_callback():
     state = (request.args.get("state") or "").strip()
     session_key = f"mp_oauth_state_{company.id}"
     expected_state = session.get(session_key)
+    redirect_uri_session_key = f"mp_oauth_redirect_uri_{company.id}"
+    redirect_uri = session.get(redirect_uri_session_key) or service.default_oauth_redirect_uri()
     current_app.logger.info(
         "Mercado Pago OAuth callback received: company_id=%s code_present=%s state=%s expected_state=%s redirect_uri=%s args=%s",
         company.id,
         bool(code),
         state,
         expected_state,
-        service.oauth_redirect_uri(url_for("company_billing.mercado_pago_callback", _external=True)),
+        redirect_uri,
         dict(request.args),
     )
     if not code or not state or not expected_state or state != expected_state:
@@ -772,7 +776,7 @@ def mercado_pago_callback():
         return redirect(url_for("company_billing.company_settings", panel="mercado-pago"))
 
     session.pop(session_key, None)
-    redirect_uri = service.oauth_redirect_uri(service.default_oauth_redirect_uri())
+    session.pop(redirect_uri_session_key, None)
     try:
         token_payload = service.exchange_code(code=code, redirect_uri=redirect_uri)
         access_token = token_payload.get("access_token") or ""
@@ -1381,10 +1385,20 @@ def company_settings_general_save():
         "allow_negative_stock": bool(request.form.get("allow_negative_stock")),
         "show_costs": bool(request.form.get("show_costs")),
         "compact_print": bool(request.form.get("compact_print")),
+        "quick_mode_default": bool(request.form.get("quick_mode_default")),
     }
+    try:
+        printer_port = int(request.form.get("printer_port") or 9100)
+    except (TypeError, ValueError):
+        printer_port = 9100
+
     printer_settings = {
         "printer_name": (request.form.get("printer_name") or "").strip()[:160],
         "paper_size": (request.form.get("paper_size") or "A4").strip()[:20] or "A4",
+        "printer_type": (request.form.get("printer_type") or "browser").strip()[:20] or "browser",
+        "printer_host": (request.form.get("printer_host") or "").strip()[:120],
+        "printer_port": printer_port,
+        "cashdrawer_enabled": bool(request.form.get("cashdrawer_enabled")),
     }
 
     company.preferences_json = json.dumps(preferences)

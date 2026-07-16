@@ -1089,6 +1089,21 @@
           <input class="form-control" name="printer_name" value="{{ printer_settings.get('printer_name', '') }}" placeholder="Nombre de impresora">
         </div>
         <div class="col-md-4">
+          <label class="form-label">Modo de impresión</label>
+          <select class="form-select" name="printer_type">
+            <option value="browser" {% if printer_settings.get('printer_type', 'browser') == 'browser' %}selected{% endif %}>Navegador / PDF</option>
+            <option value="thermal" {% if printer_settings.get('printer_type') == 'thermal' %}selected{% endif %}>Térmica ESC/POS</option>
+          </select>
+        </div>
+        <div class="col-md-4">
+          <label class="form-label">Host impresora térmica</label>
+          <input class="form-control" name="printer_host" value="{{ printer_settings.get('printer_host', '') }}" placeholder="192.168.1.50">
+        </div>
+        <div class="col-md-2">
+          <label class="form-label">Puerto</label>
+          <input class="form-control" name="printer_port" type="number" min="1" max="65535" value="{{ printer_settings.get('printer_port', 9100) }}">
+        </div>
+        <div class="col-md-4">
           <label class="form-label">Tamaño de papel</label>
           <select class="form-select" name="paper_size">
             <option value="A4" {% if printer_settings.get('paper_size', 'A4') == 'A4' %}selected{% endif %}>A4</option>
@@ -1108,6 +1123,14 @@
           <div class="form-check">
             <input class="form-check-input" type="checkbox" id="pref_compact_print" name="compact_print" {% if company_preferences.get('compact_print') %}checked{% endif %}>
             <label class="form-check-label" for="pref_compact_print">Impresión compacta</label>
+          </div>
+          <div class="form-check">
+            <input class="form-check-input" type="checkbox" id="pref_quick_mode_default" name="quick_mode_default" {% if company_preferences.get('quick_mode_default') %}checked{% endif %}>
+            <label class="form-check-label" for="pref_quick_mode_default">Abrir POS en modo rápido</label>
+          </div>
+          <div class="form-check">
+            <input class="form-check-input" type="checkbox" id="pref_cashdrawer_enabled" name="cashdrawer_enabled" {% if printer_settings.get('cashdrawer_enabled') %}checked{% endif %}>
+            <label class="form-check-label" for="pref_cashdrawer_enabled">Abrir cajón en ticket térmico</label>
           </div>
         </div>
         <div class="col-12 d-flex gap-2">

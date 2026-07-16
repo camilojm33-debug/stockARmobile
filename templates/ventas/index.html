@@ -114,7 +114,7 @@
     </aside>
   </div>
 
-  <div class="card app-card mt-4">
+  <div class="card app-card mt-4 quick-mode-hidden">
     <div class="card-header bg-white fw-bold">Ventas recientes</div>
     <div class="table-responsive">
       <table class="table table-sm mb-0">
@@ -129,6 +129,33 @@
       </table>
     </div>
   </div>
+</div>
+
+<div class="pos-quick-controls shadow-lg">
+  <button id="quick-mode-toggle"
+    class="btn pos-quick-toggle"
+    type="button"
+    onclick="toggleQuickMode()"
+    aria-pressed="false"
+    aria-label="Activar o desactivar modo rápido">
+    <span class="pos-quick-toggle-icon"><i class="bi bi-lightning-charge-fill"></i></span>
+    <span class="pos-quick-toggle-copy">
+      <span class="pos-quick-toggle-title">Modo rápido</span>
+      <span class="pos-quick-toggle-state">Vista completa</span>
+    </span>
+  </button>
+  <button id="fullscreen-toggle"
+    class="btn pos-quick-toggle pos-quick-toggle-secondary"
+    type="button"
+    onclick="toggleSalesFullscreen()"
+    aria-pressed="false"
+    aria-label="Activar o desactivar pantalla completa">
+    <span class="pos-quick-toggle-icon"><i class="bi bi-arrows-fullscreen"></i></span>
+    <span class="pos-quick-toggle-copy">
+      <span class="pos-quick-toggle-title">Pantalla completa</span>
+      <span class="pos-quick-toggle-state">Modo puesto</span>
+    </span>
+  </button>
 </div>
 
 <button class="btn btn-success position-fixed d-xl-none" style="right:16px;bottom:86px;z-index:1010;min-width:58px;min-height:58px;border-radius:999px" {% if not cash_session_open %}disabled title="Abrí una caja para cobrar"{% endif %} onclick="openCartModal()" aria-label="Cobrar">
@@ -268,6 +295,7 @@
       </div>
       <div class="modal-body">
         <video id="camera-scanner-video" class="w-100 rounded bg-dark" playsinline muted style="aspect-ratio: 4/3; object-fit: cover;"></video>
+        <div id="camera-scanner-container" class="d-none w-100"></div>
         <p id="camera-scanner-status" class="text-muted small mt-2 mb-0">Apunta al QR, EAN13, Code128 o codigo interno.</p>
       </div>
     </div>
@@ -286,18 +314,199 @@
   .pos-cart-panel { top: 1rem; }
   .pos-cart-items { max-height: 48vh; overflow: auto; }
   .pos-cart-line { display: flex; justify-content: space-between; align-items: center; gap: .75rem; padding: .75rem 0; border-bottom: 1px solid var(--app-line); }
+  body.quick-mode-active .pos-toolbar,
+  body.quick-mode-active .pos-category-strip,
+  body.quick-mode-active .card-header,
+  body.quick-mode-active .card-footer {
+    display: none !important;
+  }
+  .pos-quick-controls {
+    position: fixed;
+    top: 92px;
+    right: 18px;
+    z-index: 1020;
+    display: flex;
+    flex-direction: column;
+    gap: .6rem;
+  }
+  .pos-quick-toggle {
+    border: 0;
+    color: #fff;
+    padding: .85rem 1rem;
+    border-radius: 999px;
+    background: linear-gradient(135deg, rgba(13,110,253,.96), rgba(25,135,84,.96));
+    box-shadow: 0 18px 40px rgba(13,110,253,.28);
+    display: inline-flex;
+    align-items: center;
+    gap: .75rem;
+    text-align: left;
+    backdrop-filter: blur(12px);
+    -webkit-backdrop-filter: blur(12px);
+  }
+  .pos-quick-toggle-secondary {
+    background: linear-gradient(135deg, rgba(52,58,64,.96), rgba(108,117,125,.96));
+  }
+  .pos-quick-toggle-secondary.active {
+    background: linear-gradient(135deg, rgba(102,16,242,.96), rgba(13,110,253,.96));
+  }
+  .pos-quick-toggle:hover {
+    transform: translateY(-1px);
+    color: #fff;
+  }
+  .pos-quick-toggle:focus-visible {
+    outline: 3px solid rgba(13,110,253,.22);
+    outline-offset: 3px;
+  }
+  .pos-quick-toggle.active {
+    background: linear-gradient(135deg, rgba(25,135,84,.96), rgba(32,201,151,.96));
+    box-shadow: 0 18px 42px rgba(25,135,84,.28);
+  }
+  .pos-quick-toggle-icon {
+    width: 2.25rem;
+    height: 2.25rem;
+    border-radius: 50%;
+    display: grid;
+    place-items: center;
+    background: rgba(255,255,255,.15);
+    flex: 0 0 auto;
+  }
+  .pos-quick-toggle-copy {
+    display: flex;
+    flex-direction: column;
+    line-height: 1.05;
+  }
+  .pos-quick-toggle-title {
+    font-weight: 700;
+    font-size: .92rem;
+  }
+  .pos-quick-toggle-state {
+    font-size: .75rem;
+    opacity: .92;
+  }
+  body.quick-mode-active .pos-grid {
+    grid-template-columns: repeat(auto-fill, minmax(180px, 1fr));
+    gap: .75rem;
+  }
+  body.quick-mode-active .pos-product-card .card-body {
+    padding: .9rem !important;
+  }
+  body.quick-mode-active .pos-product-card .fs-5 {
+    font-size: 1.15rem !important;
+  }
+  body.quick-mode-active .quick-mode-hidden {
+    display: none !important;
+  }
   @media (max-width: 575.98px) {
     .pos-grid { grid-template-columns: 1fr; }
     .pos-hero .btn { flex: 1 1 auto; }
+    .pos-quick-controls {
+      top: auto;
+      bottom: 166px;
+      right: 14px;
+      left: 14px;
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+    }
+    .pos-quick-toggle { width: 100%; justify-content: center; }
   }
 </style>
 {% endblock %}
 
 {% block extra_js %}
+<script src="https://unpkg.com/html5-qrcode"></script>
 <script src="{{ url_for('static', filename='assets/js/cart-manager.js') }}"></script>
 <script>
   const posSearch = document.getElementById('pos-search-input');
+  const fastScannerInput = document.getElementById('fast-scanner-input');
   const posCards = Array.from(document.querySelectorAll('[data-product-card]'));
+  const quickModeKey = 'stockarmobile_quick_mode';
+  const quickModeToggle = document.getElementById('quick-mode-toggle');
+  const fullscreenToggle = document.getElementById('fullscreen-toggle');
+
+  function setFullscreenToggleUI(enabled) {
+    if (!fullscreenToggle) return;
+    fullscreenToggle.classList.toggle('active', enabled);
+    fullscreenToggle.setAttribute('aria-pressed', enabled ? 'true' : 'false');
+    const title = fullscreenToggle.querySelector('.pos-quick-toggle-title');
+    const state = fullscreenToggle.querySelector('.pos-quick-toggle-state');
+    if (title) title.textContent = enabled ? 'Pantalla activa' : 'Pantalla completa';
+    if (state) state.textContent = enabled ? 'Salir con un toque' : 'Modo puesto';
+  }
+
+  function syncQuickModeToggleUI(enabled) {
+    if (!quickModeToggle) return;
+    quickModeToggle.classList.toggle('active', enabled);
+    quickModeToggle.setAttribute('aria-pressed', enabled ? 'true' : 'false');
+    const title = quickModeToggle.querySelector('.pos-quick-toggle-title');
+    const state = quickModeToggle.querySelector('.pos-quick-toggle-state');
+    const icon = quickModeToggle.querySelector('.pos-quick-toggle-icon i');
+    if (title) title.textContent = enabled ? 'Modo rápido activo' : 'Modo rápido';
+    if (state) state.textContent = enabled ? 'Vista limpia para vender' : 'Vista completa';
+    if (icon) icon.className = enabled ? 'bi bi-lightning-charge-fill' : 'bi bi-lightning-charge-fill';
+  }
+
+  async function toggleSalesFullscreen() {
+    const root = document.documentElement;
+    const isFullscreen = Boolean(document.fullscreenElement);
+    try {
+      if (isFullscreen) {
+        await document.exitFullscreen();
+      } else if (root.requestFullscreen) {
+        await root.requestFullscreen();
+      }
+    } catch (error) {
+      console.warn('Fullscreen no disponible', error);
+    }
+    setFullscreenToggleUI(Boolean(document.fullscreenElement));
+  }
+
+  function applyQuickMode(enabled) {
+    document.body.classList.toggle('quick-mode-active', enabled);
+    document.querySelectorAll('.quick-mode-hidden').forEach(el => el.classList.toggle('d-none', enabled));
+    syncQuickModeToggleUI(enabled);
+  }
+
+  function toggleQuickMode() {
+    const nextValue = document.body.classList.contains('quick-mode-active') ? '0' : '1';
+    localStorage.setItem(quickModeKey, nextValue);
+    applyQuickMode(nextValue === '1');
+  }
+
+  applyQuickMode(localStorage.getItem(quickModeKey) === '1');
+  setFullscreenToggleUI(Boolean(document.fullscreenElement));
+  document.addEventListener('fullscreenchange', () => setFullscreenToggleUI(Boolean(document.fullscreenElement)));
+
+  async function addScannedBarcodeToCart(rawValue) {
+    const barcode = (rawValue || '').trim();
+    if (!barcode) return;
+
+    try {
+      const response = await fetch(`/productos/api/${encodeURIComponent(barcode)}`, { headers: { 'Accept': 'application/json' } });
+      const product = await response.json();
+      if (!response.ok) {
+        showNotification(product.error || 'Producto no encontrado', 'danger');
+        return;
+      }
+      addToCart(
+        Number(product.id),
+        product.name,
+        Number(product.price || 0),
+        Number(product.stock || 0),
+        product.barcode || barcode,
+        1,
+        product.unit_measure || 'u'
+      );
+      if (fastScannerInput) {
+        fastScannerInput.value = '';
+        fastScannerInput.focus();
+      }
+      const qtyInput = document.getElementById(`qty-${product.id}`);
+      if (qtyInput) qtyInput.value = '1';
+    } catch (error) {
+      console.error('[sales] error leyendo código de barras:', error);
+      showNotification('No se pudo leer el código de barras', 'danger');
+    }
+  }
 
   function handleAddToCartClick(button) {
     const id = Number(button.dataset.productId || 0);
@@ -313,6 +522,26 @@
   }
 
   window.handleAddToCartClick = handleAddToCartClick;
+  window.toggleQuickMode = toggleQuickMode;
+  window.toggleSalesFullscreen = toggleSalesFullscreen;
+
+  fastScannerInput?.addEventListener('keydown', function(event) {
+    if (event.key !== 'Enter') return;
+    event.preventDefault();
+    addScannedBarcodeToCart(this.value);
+  });
+
+  window.addEventListener('load', function() {
+    fastScannerInput?.focus();
+  });
+
+  document.addEventListener('click', function(event) {
+    if (fastScannerInput && !event.target.closest('#cartModal') && !event.target.closest('#cameraScannerModal')) {
+      if (document.activeElement !== fastScannerInput) {
+        fastScannerInput.focus();
+      }
+    }
+  });
 
   function filterPosProducts() {
     const q = (posSearch?.value || '').trim().toLowerCase();

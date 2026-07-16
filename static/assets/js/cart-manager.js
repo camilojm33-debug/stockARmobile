@@ -4,6 +4,7 @@ let cart = [];
 const CART_KEY_PREFIX = 'stockarmobile_cart';
 let scannerStream = null;
 let scannerLoopActive = false;
+let html5QrScanner = null;
 
 const checkoutProcessButton = document.getElementById('checkout-process-button');
 const mpQrPanelTitle = document.getElementById('mp-qr-panel-title');
@@ -686,21 +687,55 @@ function setupFastScanner() {
 
 async function startCameraScanner() {
   const video = document.getElementById('camera-scanner-video');
+  const container = document.getElementById('camera-scanner-container');
   const status = document.getElementById('camera-scanner-status');
-  if (!video) return;
-  if (!('BarcodeDetector' in window)) {
-    if (status) status.textContent = 'Este navegador no soporta escaneo nativo. Usa lector Bluetooth/USB o el campo de codigo.';
-    return;
-  }
+  if (!video && !container) return;
+  const useNativeDetector = 'BarcodeDetector' in window && navigator.mediaDevices?.getUserMedia;
   try {
-    scannerStream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: 'environment' }, audio: false });
-    video.srcObject = scannerStream;
-    await video.play();
-    scannerLoopActive = true;
-    const detector = new BarcodeDetector({ formats: ['qr_code', 'ean_13', 'code_128'] });
-    scanCameraFrame(detector, video, status);
+    stopCameraScanner();
+    if (useNativeDetector && video) {
+      video.classList.remove('d-none');
+      if (container) container.classList.add('d-none');
+      scannerStream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: 'environment' }, audio: false });
+      video.srcObject = scannerStream;
+      await video.play();
+      scannerLoopActive = true;
+      const detector = new BarcodeDetector({ formats: ['qr_code', 'ean_13', 'code_128'] });
+      if (status) status.textContent = 'Apunta al QR o código del producto.';
+      scanCameraFrame(detector, video, status);
+      return;
+    }
+
+    if (typeof Html5Qrcode === 'undefined') {
+      if (status) status.textContent = 'Este navegador no soporta cámara nativa. Usa lector Bluetooth/USB o el campo de código.';
+      return;
+    }
+
+    if (container) {
+      if (video) video.classList.add('d-none');
+      container.classList.remove('d-none');
+      container.innerHTML = '<div id="html5qr-reader" style="width:100%"></div>';
+      html5QrScanner = new Html5Qrcode('html5qr-reader');
+      if (status) status.textContent = 'Abriendo cámara para leer QR del producto...';
+      await html5QrScanner.start(
+        { facingMode: 'environment' },
+        { fps: 12, qrbox: { width: 240, height: 240 }, aspectRatio: 1 },
+        async decodedText => {
+          if (!scannerLoopActive) return;
+          if (status) status.textContent = 'Código detectado: ' + decodedText;
+          await processScan(decodedText);
+          stopCameraScanner();
+          const modal = bootstrap.Modal.getInstance(document.getElementById('cameraScannerModal'));
+          modal?.hide();
+        },
+        () => {
+          if (status) status.textContent = 'Esperando código...';
+        }
+      );
+      scannerLoopActive = true;
+    }
   } catch (error) {
-    if (status) status.textContent = 'No se pudo acceder a la camara.';
+    if (status) status.textContent = 'No se pudo acceder a la cámara.';
   }
 }
 
@@ -729,6 +764,16 @@ function stopCameraScanner() {
     scannerStream.getTracks().forEach(track => track.stop());
     scannerStream = null;
   }
+  if (html5QrScanner) {
+    html5QrScanner.stop().catch(() => {}).finally(() => {
+      html5QrScanner.clear().catch(() => {});
+      html5QrScanner = null;
+    });
+  }
+  const container = document.getElementById('camera-scanner-container');
+  if (container) container.innerHTML = '';
+  const video = document.getElementById('camera-scanner-video');
+  if (video) video.classList.remove('d-none');
 }
 
 async function processScan(code) {

@@ -2,4 +2,5 @@
 __pycache__/
 .pytest_cache/
 instance/*.db
+instance/backups/
 *.pyc

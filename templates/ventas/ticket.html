@@ -1,0 +1,94 @@
+{% extends "base_master.html" %}
+
+{% block title %}Ticket de Venta #{{ sale.id }}{% endblock %}
+
+{% block content %}
+<div class="ticket-shell">
+  <div class="ticket-paper">
+    <div class="ticket-header text-center">
+      <div class="ticket-brand">STOCK ARMOBILE</div>
+      <div class="ticket-subtitle">Ticket de venta</div>
+    </div>
+
+    <div class="ticket-meta">
+      <div><strong>Venta:</strong> #{{ sale.id }}</div>
+      <div><strong>Fecha:</strong> {{ sale.date.strftime('%Y-%m-%d %H:%M') if sale.date else '' }}</div>
+      <div><strong>Cliente:</strong> {{ sale.customer or 'Consumidor final' }}</div>
+      {% if sale.payment_method %}<div><strong>Pago:</strong> {{ sale.payment_method }}{% if sale.secondary_payment_method %} + {{ sale.secondary_payment_method }}{% endif %}</div>{% endif %}
+    </div>
+
+    <hr>
+
+    <div class="ticket-lines">
+      {% for row in rows %}
+      <div class="ticket-line">
+        <div class="ticket-line-name">{{ row.name }}</div>
+        <div class="ticket-line-detail">{{ row.quantity }} x ${{ "%.2f"|format(row.price) }}</div>
+        <div class="ticket-line-total">${{ "%.2f"|format(row.total) }}</div>
+      </div>
+      {% endfor %}
+    </div>
+
+    <hr>
+
+    <div class="ticket-totals">
+      <div><span>Subtotal</span><strong>${{ "%.2f"|format(sale.subtotal) }}</strong></div>
+      <div><span>Descuento</span><strong>-${{ "%.2f"|format(sale.discount) }}</strong></div>
+      <div><span>Impuestos</span><strong>${{ "%.2f"|format(sale.tax) }}</strong></div>
+      <div class="ticket-total-final"><span>Total</span><strong>${{ "%.2f"|format(sale.total_amount) }}</strong></div>
+    </div>
+
+    {% if sale.note %}
+    <hr>
+    <div class="ticket-note"><strong>Nota:</strong> {{ sale.note }}</div>
+    {% endif %}
+
+    <div class="ticket-actions no-print">
+      <a class="btn btn-primary" href="javascript:window.print()">Imprimir</a>
+      <a class="btn btn-outline-secondary" href="{{ url_for('sales.view_sale', sale_id=sale.id) }}">Volver</a>
+    </div>
+  </div>
+</div>
+{% endblock %}
+
+{% block extra_css %}
+<style>
+  .ticket-shell { display: flex; justify-content: center; padding: 24px 12px; }
+  .ticket-paper {
+    width: 80mm;
+    max-width: calc(100vw - 24px);
+    background: #fff;
+    color: #111;
+    padding: 14px 12px;
+    border: 1px solid #ddd;
+    border-radius: 10px;
+    font-family: Arial, Helvetica, sans-serif;
+    font-size: 12px;
+    line-height: 1.35;
+  }
+  .ticket-brand { font-size: 18px; font-weight: 800; letter-spacing: .5px; }
+  .ticket-subtitle { font-size: 12px; color: #666; margin-top: 2px; }
+  .ticket-meta > div, .ticket-note { margin-bottom: 4px; }
+  .ticket-line { padding: 6px 0; border-bottom: 1px dotted #ddd; }
+  .ticket-line-name { font-weight: 700; }
+  .ticket-line-detail, .ticket-line-total { color: #444; }
+  .ticket-line-total { font-weight: 700; }
+  .ticket-totals > div { display: flex; justify-content: space-between; margin: 3px 0; }
+  .ticket-total-final { font-size: 15px; font-weight: 800; padding-top: 6px; border-top: 1px solid #222; }
+  .ticket-actions { display: flex; gap: 8px; margin-top: 14px; }
+  @media print {
+    body { background: #fff !important; }
+    .no-print, .app-sidebar, .app-mobilebar, .app-navbar, .toast-container { display: none !important; }
+    .ticket-shell { padding: 0; }
+    .ticket-paper { border: 0; border-radius: 0; width: 80mm; max-width: 80mm; }
+  }
+</style>
+{% endblock %}
+
+{% block extra_scripts_inline %}
+<script>
+  window.addEventListener('load', function() {
+    setTimeout(function() { window.print(); }, 400);
+  });
+</script>
+{% endblock %}

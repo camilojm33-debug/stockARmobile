@@ -805,6 +805,31 @@ def print_ticket(sale_id):
     return response
 
 
+@bp.route("/<int:sale_id>/ticket")
+@tenant_required
+def thermal_ticket(sale_id):
+    from app import Sale, SaleItem, scope_query_to_company
+
+    sale = scope_query_to_company(Sale.query.options(selectinload(Sale.items).selectinload(SaleItem.product)), Sale).filter(Sale.id == sale_id).first_or_404()
+    return render_template("ventas/ticket.html", sale=sale, rows=_ticket_rows(sale), ticket_text=_ticket_text(sale))
+
+
+@bp.route("/<int:sale_id>/print-thermal", methods=["POST"])
+@tenant_required
+def print_thermal_ticket(sale_id):
+    from app import Company, Sale, SaleItem, scope_query_to_company
+    from services.thermal_printer_service import ThermalPrinterService
+
+    company = Company.query.filter_by(id=getattr(current_user, "company_id", None)).first_or_404()
+    sale = scope_query_to_company(Sale.query.options(selectinload(Sale.items).selectinload(SaleItem.product)), Sale).filter(Sale.id == sale_id).first_or_404()
+    result = ThermalPrinterService().print_sale_ticket(company, sale)
+    if result.printed:
+        flash("Ticket enviado a la impresora térmica.", "success")
+    else:
+        flash("No hay impresora térmica configurada o no se pudo imprimir. Se abrió el ticket web.", "warning")
+    return redirect(url_for("sales.thermal_ticket", sale_id=sale.id))
+
+
 @bp.route("/exportar-ventas/csv")
 @tenant_required
 def export_sales_csv():
@@ -875,6 +900,18 @@ def _ticket_text(sale):
         lines.append(f"{name}: ${item.price:.2f} x {item.quantity} = ${item.total_amount:.2f}")
     lines.extend(["-" * 32, f"Subtotal: ${sale.subtotal:.2f}", f"Descuento: -${sale.discount:.2f}", f"Impuestos: ${sale.tax:.2f}", "=" * 32, f"TOTAL: ${sale.total_amount:.2f}", "Gracias por su compra!"])
     return "\n".join(lines)
+
+
+def _ticket_rows(sale):
+    return [
+        {
+            "name": item.product.name if item.product else f"Producto {item.product_id}",
+            "quantity": item.quantity,
+            "price": item.price,
+            "total": item.total_amount,
+        }
+        for item in sale.items
+    ]
 
 
 def _normalize_phone(value):
