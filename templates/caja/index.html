@@ -88,18 +88,23 @@
       <div class="small text-muted fw-semibold text-uppercase mb-2">Menu de caja</div>
       <div class="d-flex flex-wrap gap-2">
         <a class="btn btn-sm btn-outline-secondary" href="#section-apertura"><i class="bi bi-unlock me-1"></i>Apertura</a>
-        <a class="btn btn-sm btn-outline-secondary" href="#section-movimientos"><i class="bi bi-arrow-left-right me-1"></i>Movimientos</a>
         <a class="btn btn-sm btn-outline-secondary" href="#section-arqueo"><i class="bi bi-calculator me-1"></i>Arqueo / Cierre</a>
         <a class="btn btn-sm btn-outline-secondary" href="#section-historial"><i class="bi bi-clock-history me-1"></i>Historial</a>
+        {% if is_admin %}
+        <a class="btn btn-sm btn-outline-secondary" href="#section-movimientos"><i class="bi bi-arrow-left-right me-1"></i>Movimientos</a>
+        {% endif %}
         {% if is_admin %}
         <a class="btn btn-sm btn-outline-primary" href="#section-admin"><i class="bi bi-shield-lock me-1"></i>Administración</a>
         {% endif %}
       </div>
+      {% if not is_admin %}
+      <div class="small text-muted mt-2">Vista simplificada para operación diaria: abrí, cerrá y revisá tu diferencia de apertura/cierre.</div>
+      {% endif %}
     </div>
   </div>
 
   <div class="row g-3 mb-4">
-    <div class="col-lg-4">
+    <div class="{{ 'col-lg-4' if is_admin else 'col-lg-12' }}">
       <div class="card app-card h-100" id="section-apertura">
         <div class="card-body">
           {% if open_session %}
@@ -113,8 +118,14 @@
             <div class="d-flex justify-content-between"><span class="text-muted">Ingresos</span><strong>${{ "%.2f"|format(session_summary.income if session_summary else 0) }}</strong></div>
             <div class="d-flex justify-content-between"><span class="text-muted">Egresos</span><strong>${{ "%.2f"|format(session_summary.expense if session_summary else 0) }}</strong></div>
             <div class="d-flex justify-content-between"><span class="text-muted">Retiros</span><strong>${{ "%.2f"|format(session_summary.withdrawals if session_summary else 0) }}</strong></div>
+            {% if session_summary and session_summary.opening_vs_closing_difference is not none %}
+            <div class="d-flex justify-content-between"><span class="text-muted">Dif. apertura/cierre</span><strong>${{ "%.2f"|format(session_summary.opening_vs_closing_difference) }}</strong></div>
+            {% endif %}
           </div>
+          {% if is_admin %}
           <div class="small text-muted fw-semibold text-uppercase mb-2" id="section-movimientos">Movimientos</div>
+          {% endif %}
+          {% if is_admin %}
           <form method="post" class="row g-2 mb-3">
             <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
             <input type="hidden" name="action" value="movement">
@@ -130,6 +141,7 @@
             <div class="col-12"><input class="form-control" name="description" placeholder="Descripción del movimiento"></div>
             <div class="col-12"><button class="btn btn-success w-100">Registrar movimiento</button></div>
           </form>
+          {% endif %}
           <div class="small text-muted fw-semibold text-uppercase mb-2" id="section-arqueo">Arqueo y cierre</div>
           <form method="post" class="row g-2">
             <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
@@ -142,24 +154,40 @@
                 {% endfor %}
               </div>
             </div>
-            <div class="col-12"><label class="form-label">Importe contado</label><input class="form-control" name="counted_amount" type="number" step="0.01" min="0" value="{{ '%.2f'|format(session_summary.expected if session_summary else 0) }}"></div>
-            <div class="col-12"><label class="form-label">Nota de cierre</label><input class="form-control" name="closing_note" placeholder="Observaciones del arqueo"></div>
-            <div class="col-12"><button class="btn btn-danger w-100">Cerrar caja</button></div>
+            <div class="col-12">
+              <label class="form-label">Monto de apertura</label>
+              <input class="form-control js-opening-amount" type="number" step="0.01" value="{{ '%.2f'|format(session_summary.opening if session_summary else 0) }}" readonly>
+            </div>
+            <div class="col-12">
+              <label class="form-label">Monto de cierre (contado)</label>
+              <input class="form-control js-close-counted" name="counted_amount" type="number" step="0.01" min="0" value="{{ '%.2f'|format(session_summary.expected if session_summary else 0) }}">
+            </div>
+            <div class="col-12">
+              <div class="alert alert-light border mb-0 py-2">
+                <div class="d-flex justify-content-between">
+                  <span class="small text-muted">Diferencia apertura vs cierre</span>
+                  <strong class="js-open-close-diff">${{ '%.2f'|format((session_summary.expected if session_summary else 0) - (session_summary.opening if session_summary else 0)) }}</strong>
+                </div>
+              </div>
+            </div>
+            <div class="col-12"><label class="form-label">Nota de cierre</label><input class="form-control" name="closing_note" placeholder="Observaciones del arqueo (opcional)"></div>
+            <div class="col-12"><button class="btn btn-danger w-100">{{ 'Cerrar caja' if is_admin else 'Cerrar caja y ver diferencia' }}</button></div>
           </form>
           {% else %}
           <h2 class="h6 fw-bold mb-2">Abrir caja</h2>
-          <p class="text-muted">Define el fondo inicial con el que vas a operar.</p>
+          <p class="text-muted">Definí el fondo inicial con el que vas a operar.</p>
           <form method="post" class="row g-2">
             <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
             <input type="hidden" name="action" value="open">
             <div class="col-12"><label class="form-label">Monto inicial</label><input class="form-control" name="opening_amount" type="number" step="0.01" min="0" value="0"></div>
-            <div class="col-12"><label class="form-label">Nota</label><input class="form-control" name="note" placeholder="Opcional"></div>
+            <div class="col-12"><label class="form-label">Nota</label><input class="form-control" name="note" placeholder="Opcional (turno/caja)"></div>
             <div class="col-12"><button class="btn btn-primary w-100">Abrir caja</button></div>
           </form>
           {% endif %}
         </div>
       </div>
     </div>
+    {% if is_admin %}
     <div class="col-lg-8" id="section-movimientos-tabla">
       <div class="card app-card h-100" id="section-movimientos-listado">
         <div class="card-body">
@@ -196,6 +224,7 @@
         </div>
       </div>
     </div>
+    {% endif %}
 
     <div class="card app-card mb-4" id="section-historial">
       <div class="card-body">
@@ -213,21 +242,40 @@
         </div>
         <div class="table-responsive">
           <table class="table table-hover align-middle mb-0">
-            <thead class="table-light"><tr><th>ID</th><th>Usuario</th><th>Estado</th><th>Apertura</th><th>Esperado</th><th>Contado</th><th>Diferencia</th><th>Acciones</th></tr></thead>
+            <thead class="table-light">
+              {% if is_admin %}
+              <tr><th>ID</th><th>Usuario</th><th>Estado</th><th>Tipos de venta</th><th>Apertura</th><th>Esperado</th><th>Contado</th><th>Diferencia</th><th>Dif. A/C</th><th>Acciones</th></tr>
+              {% else %}
+              <tr><th>ID</th><th>Estado</th><th>Apertura</th><th>Cierre</th><th>Dif. A/C</th></tr>
+              {% endif %}
+            </thead>
             <tbody>
-              {% for session in sessions %}
-              {% set row_summary = session_summary if open_session and session.id == open_session.id else none %}
+              {% for session in (sessions if is_admin else sessions[:10]) %}
+              {% set row_summary = session_summaries.get(session.id) %}
               {% set session_expected = row_summary.expected if row_summary else (session.expected_amount or 0) %}
               {% set session_counted = row_summary.counted if row_summary and row_summary.counted is not none else (session.counted_amount or 0) %}
               {% set session_difference = row_summary.difference if row_summary and row_summary.difference is not none else (session.difference_amount or 0) %}
+              {% set session_open_close_difference = row_summary.opening_vs_closing_difference if row_summary and row_summary.opening_vs_closing_difference is not none else ((session.closing_amount - session.opening_amount) if session.closing_amount is not none else none) %}
               <tr>
                 <td>#{{ session.id }}</td>
+                {% if is_admin %}
                 <td>{{ session.user.name if session.user else session.user_id }}</td>
                 <td><span class="badge {{ 'text-bg-success' if session.status == 'abierta' else ('text-bg-secondary' if session.status == 'cerrada' else 'text-bg-danger') }}">{{ session.status }}</span></td>
+                <td>
+                  <div class="small">
+                    <div>Efectivo: <strong>${{ "%.2f"|format(row_summary.sales_cash if row_summary else 0) }}</strong></div>
+                    <div>Transferencia: <strong>${{ "%.2f"|format(row_summary.sales_transfer if row_summary else 0) }}</strong></div>
+                    <div>Débito: <strong>${{ "%.2f"|format(row_summary.sales_debit if row_summary else 0) }}</strong></div>
+                    <div>Crédito: <strong>${{ "%.2f"|format(row_summary.sales_credit if row_summary else 0) }}</strong></div>
+                    <div>Mercado Pago: <strong>${{ "%.2f"|format(row_summary.sales_mp if row_summary else 0) }}</strong></div>
+                    <div>Otros: <strong>${{ "%.2f"|format(row_summary.sales_other if row_summary else 0) }}</strong></div>
+                  </div>
+                </td>
                 <td>${{ "%.2f"|format(session.opening_amount or 0) }}</td>
                 <td>${{ "%.2f"|format(session_expected) }}</td>
                 <td>${{ "%.2f"|format(session_counted) }}</td>
                 <td class="fw-semibold {{ 'text-success' if session_difference == 0 else 'text-danger' }}">${{ "%.2f"|format(session_difference) }}</td>
+                <td class="fw-semibold {{ 'text-success' if session_open_close_difference is not none and session_open_close_difference >= 0 else 'text-danger' if session_open_close_difference is not none else 'text-muted' }}">{{ '$' ~ ('%.2f'|format(session_open_close_difference)) if session_open_close_difference is not none else '-' }}</td>
                 <td>
                   <div class="d-flex flex-wrap gap-2">
                     <a class="btn btn-outline-secondary btn-sm" href="{{ url_for('cash.print_session', session_id=session.id) }}" target="_blank" rel="noopener noreferrer">Imprimir</a>
@@ -248,14 +296,46 @@
                     {% endif %}
                   </div>
                 </td>
+                {% else %}
+                <td><span class="badge {{ 'text-bg-success' if session.status == 'abierta' else ('text-bg-secondary' if session.status == 'cerrada' else 'text-bg-danger') }}">{{ session.status }}</span></td>
+                <td>${{ "%.2f"|format(session.opening_amount or 0) }}</td>
+                <td>{{ '$' ~ ('%.2f'|format(session_counted)) if session.status == 'cerrada' else '-' }}</td>
+                <td class="fw-semibold {{ 'text-success' if session_open_close_difference is not none and session_open_close_difference >= 0 else 'text-danger' if session_open_close_difference is not none else 'text-muted' }}">{{ '$' ~ ('%.2f'|format(session_open_close_difference)) if session_open_close_difference is not none else '-' }}</td>
+                {% endif %}
               </tr>
               {% else %}
-              <tr><td colspan="8" class="text-center text-muted py-4">No hay sesiones para mostrar.</td></tr>
+              <tr><td colspan="{{ 10 if is_admin else 5 }}" class="text-center text-muted py-4">No hay sesiones para mostrar.</td></tr>
               {% endfor %}
             </tbody>
           </table>
         </div>
+        {% if not is_admin %}
+        <div class="small text-muted mt-2">Mostrando las ultimas 10 sesiones para mantener la vista simple.</div>
+        {% endif %}
       </div>
     </div>
   </div>
+{% endblock %}
+
+{% block extra_scripts_inline %}
+<script>
+  (function () {
+    const openingInput = document.querySelector('.js-opening-amount');
+    const countedInput = document.querySelector('.js-close-counted');
+    const diffNode = document.querySelector('.js-open-close-diff');
+    if (!openingInput || !countedInput || !diffNode) return;
+
+    function updateOpenCloseDiff() {
+      const opening = parseFloat(openingInput.value || '0');
+      const counted = parseFloat(countedInput.value || '0');
+      const diff = counted - opening;
+      diffNode.textContent = '$' + diff.toFixed(2);
+      diffNode.classList.toggle('text-success', diff >= 0);
+      diffNode.classList.toggle('text-danger', diff < 0);
+    }
+
+    countedInput.addEventListener('input', updateOpenCloseDiff);
+    updateOpenCloseDiff();
+  })();
+</script>
 {% endblock %}

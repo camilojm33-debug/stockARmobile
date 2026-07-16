@@ -646,7 +646,7 @@
       {% endif %}
       <div class="d-flex gap-2">
         <button class="btn btn-outline-primary flex-shrink-0" type="button" data-bs-toggle="modal" data-bs-target="#spotlightModal" title="Buscar Ctrl+K"><i class="bi bi-search"></i></button>
-        <button class="btn btn-outline-secondary flex-shrink-0 position-relative" type="button" data-bs-toggle="offcanvas" data-bs-target="#notificationCenter" title="Notificaciones"><i class="bi bi-bell"></i>{% if notification_count %}<span class="position-absolute top-0 start-100 translate-middle badge rounded-pill bg-danger">{{ notification_count }}</span>{% endif %}</button>
+        <button class="btn btn-outline-secondary flex-shrink-0 position-relative" type="button" data-bs-toggle="offcanvas" data-bs-target="#notificationCenter" title="Notificaciones"><i class="bi bi-bell"></i>{% if notification_count %}<span class="js-notification-badge position-absolute top-0 start-100 translate-middle badge rounded-pill bg-danger">{{ notification_count }}</span>{% endif %}</button>
         <button class="btn btn-outline-secondary flex-shrink-0" type="button" id="themeToggle" title="Cambiar tema"><i class="bi bi-moon-stars"></i></button>
         <form method="post" action="{{ url_for('auth.logout') }}" class="flex-grow-1">
           <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
@@ -664,7 +664,7 @@
       </span>
       <div class="d-flex gap-2">
         <button class="btn btn-outline-primary btn-sm" type="button" data-bs-toggle="modal" data-bs-target="#spotlightModal"><i class="bi bi-search"></i></button>
-        <button class="btn btn-outline-secondary btn-sm position-relative" type="button" data-bs-toggle="offcanvas" data-bs-target="#notificationCenter"><i class="bi bi-bell"></i>{% if notification_count %}<span class="position-absolute top-0 start-100 translate-middle badge rounded-pill bg-danger">{{ notification_count }}</span>{% endif %}</button>
+        <button class="btn btn-outline-secondary btn-sm position-relative" type="button" data-bs-toggle="offcanvas" data-bs-target="#notificationCenter"><i class="bi bi-bell"></i>{% if notification_count %}<span class="js-notification-badge position-absolute top-0 start-100 translate-middle badge rounded-pill bg-danger">{{ notification_count }}</span>{% endif %}</button>
       </div>
     </div>
   {% endif %}
@@ -742,6 +742,28 @@
       }
       document.querySelectorAll('.toast').forEach(function(toastEl) {
         bootstrap.Toast.getOrCreateInstance(toastEl).show();
+      });
+      const notificationCenter = document.getElementById('notificationCenter');
+      function clearNotificationBadges() {
+        document.querySelectorAll('.js-notification-badge').forEach(function(el) {
+          el.remove();
+        });
+      }
+      notificationCenter?.addEventListener('shown.bs.offcanvas', function() {
+        fetch('/api/notifications/mark-seen', {
+          method: 'POST',
+          headers: {
+            'X-CSRFToken': '{{ csrf_token() }}',
+            'Content-Type': 'application/json',
+          },
+          credentials: 'same-origin',
+          body: '{}',
+        })
+          .then(function(response) {
+            if (!response.ok) return;
+            clearNotificationBadges();
+          })
+          .catch(function() {});
       });
       function clearCartStorage() {
         const tenantKey = document.body?.dataset.cartTenant;

@@ -323,6 +323,35 @@
     min-height: 58px;
     border-radius: 999px;
   }
+  #cartModal .modal-body,
+  #cartModal .modal-content {
+    overflow-x: hidden;
+  }
+  .pos-cart-modal-line {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    gap: .75rem;
+    flex-wrap: wrap;
+    border-bottom: 1px solid var(--app-line);
+    padding: .6rem 0;
+  }
+  .pos-cart-modal-info {
+    min-width: 0;
+    flex: 1 1 180px;
+  }
+  .pos-cart-modal-controls {
+    display: flex;
+    align-items: center;
+    gap: .35rem;
+    flex-wrap: wrap;
+    justify-content: flex-end;
+    flex: 1 1 220px;
+  }
+  .pos-cart-modal-qty-input {
+    width: 88px;
+    min-width: 76px;
+  }
   body.quick-mode-active .pos-toolbar,
   body.quick-mode-active .pos-category-strip,
   body.quick-mode-active .card-header,
@@ -422,6 +451,32 @@
     .pos-hero .btn { flex: 1 1 auto; }
     .pos-quick-controls { grid-template-columns: 1fr; }
     .pos-cart-fab { bottom: calc(72px + env(safe-area-inset-bottom)); }
+    #cartModal .modal-dialog {
+      margin: .35rem;
+    }
+    #cartModal .modal-footer {
+      flex-wrap: wrap;
+      gap: .5rem;
+    }
+    #cartModal .modal-footer .btn {
+      flex: 1 1 100%;
+      margin: 0 !important;
+    }
+    .pos-cart-modal-controls {
+      width: 100%;
+      justify-content: space-between;
+      gap: .4rem;
+    }
+    .pos-cart-modal-controls .btn {
+      padding-left: .55rem;
+      padding-right: .55rem;
+    }
+    .pos-cart-modal-qty-input {
+      width: 72px;
+      min-width: 70px;
+      padding-left: .35rem;
+      padding-right: .35rem;
+    }
   }
 </style>
 {% endblock %}

@@ -15,13 +15,13 @@ from flask_migrate import Migrate
 from flask_sqlalchemy import SQLAlchemy
 from flask_wtf import CSRFProtect, FlaskForm
 from sqlalchemy import Index, false, inspect, text
-from sqlalchemy.exc import IntegrityError, ProgrammingError
+from sqlalchemy.exc import IntegrityError, OperationalError, ProgrammingError
 from werkzeug.security import check_password_hash, generate_password_hash
 from werkzeug.middleware.proxy_fix import ProxyFix
 from wtforms import BooleanField, DateField, DecimalField, PasswordField, SelectField, StringField, SubmitField, TextAreaField
 from wtforms.validators import DataRequired, Email, Length, NumberRange, Optional
 from config.logging_config import configure_logging
-from services.notification_service import build_notifications
+from services.notification_service import get_notification_payload, mark_notifications_seen
 from services.search_service import global_search
 
 try:
@@ -334,6 +334,17 @@ class User(UserMixin, db.Model):
 
     def check_password(self, password):
         return check_password_hash(self.password_hash, password)
+
+
+class NotificationReadState(db.Model):
+    __tablename__ = "notification_read_states"
+
+    id = db.Column(db.Integer, primary_key=True)
+    user_id = db.Column(db.Integer, db.ForeignKey("users.id"), nullable=False, unique=True, index=True)
+    last_seen_signature = db.Column(db.String(64), nullable=False)
+    last_seen_at = db.Column(db.DateTime, nullable=False, default=utcnow)
+    created_at = db.Column(db.DateTime, default=utcnow)
+    updated_at = db.Column(db.DateTime, default=utcnow, onupdate=utcnow)
 
 
 class Product(db.Model):
@@ -1454,7 +1465,7 @@ def inject_notifications():
         "email_link": f"mailto:{app.config.get('SUPPORT_EMAIL', 'stockarmobile@gmail.com')}",
     }
     if current_user.is_authenticated:
-        notifications = build_notifications()
+        notification_payload = get_notification_payload()
         if getattr(current_user, "role", None) != "superadmin":
             has_active_seller_profile = ReferralSeller.query.filter_by(user_id=current_user.id, active=True).first() is not None
         if getattr(current_user, "role", None) == "admin" and getattr(current_user, "company_id", None):
@@ -1469,8 +1480,8 @@ def inject_notifications():
                 .all()
             )
         return {
-            "notification_items": notifications,
-            "notification_count": len(notifications),
+            "notification_items": notification_payload["items"],
+            "notification_count": notification_payload["count"],
             "has_active_seller_profile": has_active_seller_profile,
             "support_contact": support_contact,
             "switchable_company_users": switchable_company_users,
@@ -1493,7 +1504,15 @@ def api_search():
 @app.route("/api/notifications")
 @login_required
 def api_notifications():
-    return jsonify({"notifications": build_notifications()})
+    payload = get_notification_payload()
+    return jsonify({"notifications": payload["items"], "notification_count": payload["count"]})
+
+
+@app.route("/api/notifications/mark-seen", methods=["POST"])
+@login_required
+def api_notifications_mark_seen():
+    payload = mark_notifications_seen()
+    return jsonify(payload)
 
 
 @app.route("/manifest.json")
@@ -1689,7 +1708,7 @@ def ensure_default_superadmin_user():
                 app.logger.info("Super Admin creado correctamente")
                 created = True
         return created
-    except IntegrityError:
+    except (IntegrityError, OperationalError, ProgrammingError):
         db.session.rollback()
         return False
 

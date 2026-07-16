@@ -36,9 +36,13 @@ def _has_index(bind, table_name, index_name):
 
 def upgrade() -> None:
     bind = op.get_bind()
+    is_sqlite = bind.dialect.name == "sqlite"
 
     if _has_table(bind, "sales") and not _has_column(bind, "sales", "cash_session_id"):
-        op.add_column("sales", sa.Column("cash_session_id", sa.Integer(), sa.ForeignKey("cash_sessions.id"), nullable=True))
+        cash_session_column = sa.Column("cash_session_id", sa.Integer(), nullable=True)
+        if not is_sqlite:
+            cash_session_column = sa.Column("cash_session_id", sa.Integer(), sa.ForeignKey("cash_sessions.id"), nullable=True)
+        op.add_column("sales", cash_session_column)
         if not _has_index(bind, "sales", "ix_sales_cash_session_id"):
             op.create_index("ix_sales_cash_session_id", "sales", ["cash_session_id"], unique=False)
 
@@ -59,7 +63,10 @@ def upgrade() -> None:
                 op.add_column("cash_sessions", sa.Column(name, col_type, nullable=nullable, server_default=server_default))
 
     if _has_table(bind, "cash_movements") and not _has_column(bind, "cash_movements", "sale_id"):
-        op.add_column("cash_movements", sa.Column("sale_id", sa.Integer(), sa.ForeignKey("sales.id"), nullable=True))
+        sale_column = sa.Column("sale_id", sa.Integer(), nullable=True)
+        if not is_sqlite:
+            sale_column = sa.Column("sale_id", sa.Integer(), sa.ForeignKey("sales.id"), nullable=True)
+        op.add_column("cash_movements", sale_column)
         if not _has_index(bind, "cash_movements", "ix_cash_movements_sale_id"):
             op.create_index("ix_cash_movements_sale_id", "cash_movements", ["sale_id"], unique=False)
 

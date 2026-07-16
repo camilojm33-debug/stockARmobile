@@ -103,7 +103,9 @@ def _session_summary(session):
 
     expected = opening + payment_totals["efectivo"] + income - expense - withdrawals
     counted = _to_decimal(session.counted_amount) if session.counted_amount is not None else None
+    closing_amount = _to_decimal(session.closing_amount) if session.closing_amount is not None else counted
     difference = _to_decimal(session.difference_amount) if session.difference_amount is not None else (counted - expected if counted is not None else None)
+    opening_vs_closing_difference = (closing_amount - opening) if closing_amount is not None else None
     return {
         "opening": opening,
         "sales_cash": payment_totals["efectivo"],
@@ -118,8 +120,10 @@ def _session_summary(session):
         "withdrawals": withdrawals,
         "total_cash": opening + payment_totals["efectivo"] + income,
         "expected": expected,
+        "closing_amount": closing_amount,
         "counted": counted,
         "difference": difference,
+        "opening_vs_closing_difference": opening_vs_closing_difference,
     }
 
 
@@ -221,6 +225,8 @@ def _session_ticket_text(session):
         lines.append(f"Contado: ${summary['counted']:.2f}")
     if summary["difference"] is not None:
         lines.append(f"Diferencia: ${summary['difference']:.2f}")
+    if summary["opening_vs_closing_difference"] is not None:
+        lines.append(f"Dif. apertura/cierre: ${summary['opening_vs_closing_difference']:.2f}")
     lines.append("-" * 32)
     for movement in session.movements:
         lines.append(f"{movement.created_at:%Y-%m-%d %H:%M} | {movement.movement_type} | {movement.category or '-'} | ${movement.amount:.2f}")
@@ -303,6 +309,7 @@ def index():
             else:
                 summary = _session_summary(target_session)
                 counted_amount = _to_decimal(request.form.get("counted_amount") or request.form.get("closing_amount") or summary["expected"])
+                opening_vs_closing_difference = counted_amount - summary["opening"]
                 target_session.closed_at = utcnow()
                 target_session.expected_amount = summary["expected"]
                 target_session.counted_amount = counted_amount
@@ -312,7 +319,10 @@ def index():
                 target_session.status = "cerrada"
                 record_audit(action="cash_close", entity="cash_session", entity_id=target_session.id, detail=f"Cierre de caja diferencia={target_session.difference_amount}")
                 db.session.commit()
-                flash("Caja cerrada.", "success")
+                flash(
+                    f"Caja cerrada. Apertura ${summary['opening']:.2f} | Cierre ${counted_amount:.2f} | Diferencia apertura/cierre ${opening_vs_closing_difference:.2f}",
+                    "success",
+                )
         elif action == "notify_admin":
             if target_session is None or target_session.status != "abierta":
                 flash("No hay caja abierta para notificar.", "warning")
@@ -375,6 +385,7 @@ def index():
     movements = movements_query.order_by(CashMovement.created_at.desc()).limit(40).all()
 
     session_summary = _session_summary(open_session) if open_session else None
+    session_summaries = {session.id: _session_summary(session) for session in sessions}
     company = Company.query.filter_by(id=getattr(current_user, "company_id", None)).first()
     employees = []
     if _is_admin():
@@ -386,6 +397,7 @@ def index():
         is_admin=_is_admin(),
         open_session=open_session,
         session_summary=session_summary,
+        session_summaries=session_summaries,
         sessions=sessions,
         movements=movements,
         employees=employees,
@@ -407,14 +419,51 @@ def export_cash_csv():
 
     output = StringIO()
     writer = csv.writer(output)
-    writer.writerow(["ID", "Usuario", "Estado", "Apertura", "Cierre", "Esperado", "Diferencia", "Apertura fecha", "Cierre fecha", "Nota"])
+    totals = {
+        "sales_cash": Decimal("0.00"),
+        "sales_transfer": Decimal("0.00"),
+        "sales_debit": Decimal("0.00"),
+        "sales_credit": Decimal("0.00"),
+        "sales_mp": Decimal("0.00"),
+        "sales_other": Decimal("0.00"),
+    }
+    writer.writerow([
+        "ID",
+        "Usuario",
+        "Estado",
+        "Apertura",
+        "Ventas efectivo",
+        "Ventas transferencia",
+        "Ventas debito",
+        "Ventas credito",
+        "Ventas MP",
+        "Ventas otros",
+        "Cierre",
+        "Esperado",
+        "Diferencia",
+        "Apertura fecha",
+        "Cierre fecha",
+        "Nota",
+    ])
     for session in scope_query_to_company(CashSession.query, CashSession).order_by(CashSession.opened_at.desc()).all():
         summary = _session_summary(session)
+        totals["sales_cash"] += summary["sales_cash"]
+        totals["sales_transfer"] += summary["sales_transfer"]
+        totals["sales_debit"] += summary["sales_debit"]
+        totals["sales_credit"] += summary["sales_credit"]
+        totals["sales_mp"] += summary["sales_mp"]
+        totals["sales_other"] += summary["sales_other"]
         writer.writerow([
             session.id,
             session.user.name if session.user else session.user_id,
             session.status,
             f"{summary['opening']:.2f}",
+            f"{summary['sales_cash']:.2f}",
+            f"{summary['sales_transfer']:.2f}",
+            f"{summary['sales_debit']:.2f}",
+            f"{summary['sales_credit']:.2f}",
+            f"{summary['sales_mp']:.2f}",
+            f"{summary['sales_other']:.2f}",
             f"{_to_decimal(session.counted_amount) if session.counted_amount is not None else Decimal('0.00'):.2f}",
             f"{summary['expected']:.2f}",
             f"{(summary['difference'] if summary['difference'] is not None else Decimal('0.00')):.2f}",
@@ -422,6 +471,26 @@ def export_cash_csv():
             session.closed_at.strftime("%Y-%m-%d %H:%M") if session.closed_at else "",
             session.note or session.closing_note or "",
         ])
+
+    writer.writerow([])
+    writer.writerow([
+        "TOTAL CONSOLIDADO METODOS",
+        "",
+        "",
+        "",
+        f"{totals['sales_cash']:.2f}",
+        f"{totals['sales_transfer']:.2f}",
+        f"{totals['sales_debit']:.2f}",
+        f"{totals['sales_credit']:.2f}",
+        f"{totals['sales_mp']:.2f}",
+        f"{totals['sales_other']:.2f}",
+        "",
+        "",
+        "",
+        "",
+        "",
+        "",
+    ])
 
     response = make_response(output.getvalue())
     response.headers["Content-Type"] = "text/csv; charset=utf-8"
@@ -440,6 +509,14 @@ def export_cash_excel():
     workbook = Workbook()
     sheet = workbook.active
     sheet.title = "Cajas"
+    totals = {
+        "sales_cash": Decimal("0.00"),
+        "sales_transfer": Decimal("0.00"),
+        "sales_debit": Decimal("0.00"),
+        "sales_credit": Decimal("0.00"),
+        "sales_mp": Decimal("0.00"),
+        "sales_other": Decimal("0.00"),
+    }
     sheet.append([
         "ID",
         "Usuario",
@@ -450,6 +527,7 @@ def export_cash_excel():
         "Ventas débito",
         "Ventas crédito",
         "Ventas transferencia",
+        "Ventas otros",
         "Ingresos",
         "Egresos",
         "Retiros",
@@ -464,6 +542,12 @@ def export_cash_excel():
     sessions = scope_query_to_company(CashSession.query, CashSession).order_by(CashSession.opened_at.desc()).all()
     for session in sessions:
         summary = _session_summary(session)
+        totals["sales_cash"] += summary["sales_cash"]
+        totals["sales_transfer"] += summary["sales_transfer"]
+        totals["sales_debit"] += summary["sales_debit"]
+        totals["sales_credit"] += summary["sales_credit"]
+        totals["sales_mp"] += summary["sales_mp"]
+        totals["sales_other"] += summary["sales_other"]
         sheet.append([
             session.id,
             session.user.name if session.user else session.user_id,
@@ -474,6 +558,7 @@ def export_cash_excel():
             float(summary["sales_debit"]),
             float(summary["sales_credit"]),
             float(summary["sales_transfer"]),
+            float(summary["sales_other"]),
             float(summary["income"]),
             float(summary["expense"]),
             float(summary["withdrawals"]),
@@ -484,6 +569,29 @@ def export_cash_excel():
             session.opened_at.strftime("%Y-%m-%d %H:%M") if session.opened_at else "",
             session.closed_at.strftime("%Y-%m-%d %H:%M") if session.closed_at else "",
         ])
+
+    sheet.append([])
+    sheet.append([
+        "TOTAL CONSOLIDADO METODOS",
+        "",
+        "",
+        "",
+        float(totals["sales_cash"]),
+        float(totals["sales_mp"]),
+        float(totals["sales_debit"]),
+        float(totals["sales_credit"]),
+        float(totals["sales_transfer"]),
+        float(totals["sales_other"]),
+        "",
+        "",
+        "",
+        "",
+        "",
+        "",
+        "",
+        "",
+        "",
+    ])
 
     binary = BytesIO()
     workbook.save(binary)
@@ -510,20 +618,65 @@ def export_cash_pdf():
     pdf.drawString(36, y, "StockArmobile - Administración de Cajas")
     y -= 20
     pdf.setFont("Helvetica", 9)
+    totals = {
+        "sales_cash": Decimal("0.00"),
+        "sales_transfer": Decimal("0.00"),
+        "sales_debit": Decimal("0.00"),
+        "sales_credit": Decimal("0.00"),
+        "sales_mp": Decimal("0.00"),
+        "sales_other": Decimal("0.00"),
+    }
 
     sessions = scope_query_to_company(CashSession.query, CashSession).order_by(CashSession.opened_at.desc()).limit(100).all()
     for session in sessions:
         summary = _session_summary(session)
-        line = (
-            f"Caja #{session.id} | {session.user.name if session.user else session.user_id} | {session.status} "
-            f"| Efectivo esperado ${summary['expected']:.2f} | Diferencia ${((summary['difference'] or Decimal('0.00'))):.2f}"
+        totals["sales_cash"] += summary["sales_cash"]
+        totals["sales_transfer"] += summary["sales_transfer"]
+        totals["sales_debit"] += summary["sales_debit"]
+        totals["sales_credit"] += summary["sales_credit"]
+        totals["sales_mp"] += summary["sales_mp"]
+        totals["sales_other"] += summary["sales_other"]
+        line = f"Caja #{session.id} | {session.user.name if session.user else session.user_id} | {session.status}"
+        breakdown = (
+            f"EF ${summary['sales_cash']:.2f} | TR ${summary['sales_transfer']:.2f} | DB ${summary['sales_debit']:.2f} | "
+            f"CR ${summary['sales_credit']:.2f} | MP ${summary['sales_mp']:.2f} | OT ${summary['sales_other']:.2f}"
         )
+        totals = f"Esperado ${summary['expected']:.2f} | Diferencia ${((summary['difference'] or Decimal('0.00'))):.2f}"
         if y < 40:
             pdf.showPage()
             y = page_h - 40
             pdf.setFont("Helvetica", 9)
         pdf.drawString(36, y, line[:180])
         y -= 14
+        if y < 40:
+            pdf.showPage()
+            y = page_h - 40
+            pdf.setFont("Helvetica", 9)
+        pdf.drawString(36, y, breakdown[:180])
+        y -= 14
+        if y < 40:
+            pdf.showPage()
+            y = page_h - 40
+            pdf.setFont("Helvetica", 9)
+        pdf.drawString(36, y, totals[:180])
+        y -= 18
+
+    if y < 80:
+        pdf.showPage()
+        y = page_h - 40
+        pdf.setFont("Helvetica", 9)
+    pdf.setFont("Helvetica-Bold", 10)
+    pdf.drawString(36, y, "TOTAL CONSOLIDADO DE METODOS")
+    y -= 14
+    pdf.setFont("Helvetica", 9)
+    pdf.drawString(
+        36,
+        y,
+        (
+            f"EF ${totals['sales_cash']:.2f} | TR ${totals['sales_transfer']:.2f} | DB ${totals['sales_debit']:.2f} | "
+            f"CR ${totals['sales_credit']:.2f} | MP ${totals['sales_mp']:.2f} | OT ${totals['sales_other']:.2f}"
+        )[:180],
+    )
 
     pdf.save()
     buffer.seek(0)

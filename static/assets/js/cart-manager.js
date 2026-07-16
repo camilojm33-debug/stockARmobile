@@ -194,14 +194,14 @@ function renderCartModal() {
       const quantity = parseFloat(item.quantity) || 0;
       const stock = parseFloat(item.stock) || 0;
       return `
-      <div class="d-flex justify-content-between align-items-center border-bottom py-2">
-        <div>
-          <strong>${escapeHtml(item.name)}</strong><br>
+        <div class="pos-cart-modal-line">
+          <div class="pos-cart-modal-info">
+            <strong class="d-block text-truncate">${escapeHtml(item.name)}</strong>
           <small class="text-muted">${formatPrice(item.price)} x ${formatQuantity(quantity)} ${escapeHtml(item.unitMeasure || 'u')}</small>
         </div>
-        <div class="d-flex align-items-center gap-2">
+          <div class="pos-cart-modal-controls">
           <button class="btn btn-sm btn-outline-secondary" onclick="updateQuantity(${productId}, ${quantity - 1}); renderCartModal();">-</button>
-          <input class="form-control form-control-sm text-center" style="width: 92px" type="number" min="0.001" step="0.001" value="${quantity}" onchange="updateQuantity(${productId}, this.value); renderCartModal();">
+            <input class="form-control form-control-sm text-center pos-cart-modal-qty-input" type="number" min="0.001" step="0.001" value="${quantity}" onchange="updateQuantity(${productId}, this.value); renderCartModal();">
           <button class="btn btn-sm btn-outline-secondary" onclick="updateQuantity(${productId}, ${quantity + 1}); renderCartModal();" ${quantity >= stock ? 'disabled' : ''}>+</button>
           <button class="btn btn-sm btn-outline-danger" onclick="removeFromCart(${productId}); renderCartModal();">Eliminar</button>
         </div>

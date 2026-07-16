@@ -119,10 +119,19 @@ a { text-decoration: none; }
 
 .navbar-brand { color: var(--text) !important; }
 
-.btn-link.text-dark,
-.btn-link.text-dark:focus,
-.btn-link.text-dark:hover {
-  color: var(--text) !important;
+/* Nav text links (Beneficios, Planes, FAQ) */
+.nav-text-link {
+  color: var(--text-muted);
+  font-weight: 500;
+  font-size: 0.925rem;
+  text-decoration: none;
+  padding: 0.35rem 0.6rem;
+  border-radius: 6px;
+  transition: color 0.18s ease, background 0.18s ease;
+}
+.nav-text-link:hover {
+  color: var(--primary);
+  background: rgba(15, 98, 254, 0.07);
 }
 
 .brand-mark {
@@ -1049,9 +1058,11 @@ a { text-decoration: none; }
     justify-content: flex-start;
     row-gap: 0.45rem;
   }
-  .navbar .ms-auto .btn-link {
-    padding-left: 0;
-    padding-right: 0.55rem;
+  .navbar .ms-auto nav {
+    display: none !important;
+  }
+  .navbar .ms-auto .vr {
+    display: none !important;
   }
   .hero-stats { grid-template-columns: 1fr; }
   .feature-list { grid-template-columns: 1fr; }
@@ -1089,8 +1100,9 @@ a { text-decoration: none; }
     align-items: center;
   }
   .navbar .ms-auto .btn-pill {
-    width: 100%;
+    flex: 1;
     text-align: center;
+    justify-content: center;
   }
   .section { padding: 4.5rem 0; }
   .hero-section { padding-bottom: 2.8rem; }

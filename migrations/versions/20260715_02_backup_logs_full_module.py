@@ -36,6 +36,7 @@ def _has_index(bind, table_name, index_name):
 
 def upgrade() -> None:
     bind = op.get_bind()
+    is_sqlite = bind.dialect.name == "sqlite"
 
     if not _has_table(bind, "backup_logs"):
         op.create_table(
@@ -59,13 +60,19 @@ def upgrade() -> None:
         )
 
     if _has_table(bind, "backup_logs"):
+        fk_user_column = sa.Column("created_by_user_id", sa.Integer(), nullable=True)
+        fk_restore_column = sa.Column("restored_by_user_id", sa.Integer(), nullable=True)
+        if not is_sqlite:
+            fk_user_column = sa.Column("created_by_user_id", sa.Integer(), sa.ForeignKey("users.id"), nullable=True)
+            fk_restore_column = sa.Column("restored_by_user_id", sa.Integer(), sa.ForeignKey("users.id"), nullable=True)
+
         columns_to_add = [
             ("trigger_type", sa.Column("trigger_type", sa.String(length=30), nullable=False, server_default="manual")),
             ("plan_code", sa.Column("plan_code", sa.String(length=40), nullable=True)),
             ("file_name", sa.Column("file_name", sa.String(length=255), nullable=True)),
             ("file_size_bytes", sa.Column("file_size_bytes", sa.BigInteger(), nullable=True, server_default="0")),
-            ("created_by_user_id", sa.Column("created_by_user_id", sa.Integer(), sa.ForeignKey("users.id"), nullable=True)),
-            ("restored_by_user_id", sa.Column("restored_by_user_id", sa.Integer(), sa.ForeignKey("users.id"), nullable=True)),
+            ("created_by_user_id", fk_user_column),
+            ("restored_by_user_id", fk_restore_column),
             ("restored_at", sa.Column("restored_at", sa.DateTime(), nullable=True)),
             ("is_automated", sa.Column("is_automated", sa.Boolean(), nullable=False, server_default=sa.text("false"))),
             ("next_run_at", sa.Column("next_run_at", sa.DateTime(), nullable=True)),

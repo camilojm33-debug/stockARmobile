@@ -1,6 +1,8 @@
 """Centro de notificaciones operativo separado por rol."""
 
 from datetime import datetime, time, timedelta
+from hashlib import sha256
+import json
 
 from flask_login import current_user
 
@@ -11,6 +13,70 @@ def build_notifications():
     if getattr(current_user, "role", None) == "superadmin":
         return _build_superadmin_notifications()
     return _build_user_notifications()
+
+
+def get_notification_payload():
+    """Return notifications and unseen badge count for current user."""
+    items = build_notifications()
+    if not getattr(current_user, "is_authenticated", False):
+        return {"items": [], "count": 0, "signature": None}
+
+    signature = _signature_for_items(items)
+    if not items:
+        return {"items": [], "count": 0, "signature": signature}
+
+    from app import NotificationReadState
+
+    state = NotificationReadState.query.filter_by(user_id=current_user.id).first()
+    is_seen = bool(state and state.last_seen_signature == signature)
+    return {
+        "items": items,
+        "count": 0 if is_seen else len(items),
+        "signature": signature,
+    }
+
+
+def mark_notifications_seen():
+    """Persist current notifications signature as seen for current user."""
+    if not getattr(current_user, "is_authenticated", False):
+        return {"ok": False, "count": 0}
+
+    from app import NotificationReadState, db, utcnow
+
+    items = build_notifications()
+    signature = _signature_for_items(items)
+    state = NotificationReadState.query.filter_by(user_id=current_user.id).first()
+    now = utcnow()
+
+    if state is None:
+        state = NotificationReadState(
+            user_id=current_user.id,
+            last_seen_signature=signature,
+            last_seen_at=now,
+        )
+        db.session.add(state)
+    else:
+        state.last_seen_signature = signature
+        state.last_seen_at = now
+        state.updated_at = now
+
+    db.session.commit()
+    return {"ok": True, "count": len(items), "signature": signature}
+
+
+def _signature_for_items(items):
+    normalized = []
+    for item in items:
+        normalized.append(
+            {
+                "type": item.get("type"),
+                "title": item.get("title"),
+                "body": item.get("body"),
+                "href": item.get("href"),
+            }
+        )
+    payload = json.dumps(normalized, sort_keys=True, ensure_ascii=False)
+    return sha256(payload.encode("utf-8")).hexdigest()
 
 
 def _build_superadmin_notifications():
