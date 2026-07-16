@@ -8,7 +8,7 @@ from sqlalchemy.orm import selectinload
 
 
 def build_dashboard_context():
-    from app import Client, Expense, Product, Sale, SaleItem, db, scope_query_to_company, utcnow
+    from app import CashSession, Client, Expense, Product, Sale, SaleItem, db, scope_query_to_company, utcnow
 
     now = utcnow()
     today_start = datetime.combine(now.date(), time.min)
@@ -97,6 +97,40 @@ def build_dashboard_context():
         else []
     )
 
+    cash_stats = {
+        "open_sessions": 0,
+        "closed_today": 0,
+        "sold_cash_today": Decimal("0.00"),
+        "sold_mp_today": Decimal("0.00"),
+        "sold_total_today": Decimal("0.00"),
+        "difference_today": Decimal("0.00"),
+        "last_closings": [],
+    }
+    if can_view_economic_metrics:
+        cash_stats["open_sessions"] = scope_query_to_company(CashSession.query.filter(CashSession.status == "abierta"), CashSession).count()
+        cash_stats["closed_today"] = scope_query_to_company(
+            CashSession.query.filter(CashSession.status == "cerrada", CashSession.closed_at >= today_start),
+            CashSession,
+        ).count()
+        today_sales = scope_query_to_company(Sale.query.filter(Sale.date >= today_start), Sale).all()
+        for sale in today_sales:
+            breakdown = _sale_payment_breakdown(sale)
+            cash_stats["sold_cash_today"] += breakdown["efectivo"]
+            cash_stats["sold_mp_today"] += breakdown["mercado_pago"]
+            cash_stats["sold_total_today"] += _to_decimal(getattr(sale, "total_amount", 0))
+
+        closed_sessions_today = scope_query_to_company(
+            CashSession.query.filter(CashSession.status == "cerrada", CashSession.closed_at >= today_start),
+            CashSession,
+        ).all()
+        for session in closed_sessions_today:
+            cash_stats["difference_today"] += _to_decimal(getattr(session, "difference_amount", 0))
+
+        cash_stats["last_closings"] = scope_query_to_company(
+            CashSession.query.filter(CashSession.status == "cerrada"),
+            CashSession,
+        ).order_by(CashSession.closed_at.desc()).limit(3).all()
+
     return {
         "can_view_economic_metrics": can_view_economic_metrics,
         "productos_total": total_products,
@@ -133,6 +167,7 @@ def build_dashboard_context():
         "chart_sales": _sales_by_day(7) if can_view_economic_metrics else [],
         "chart_categories_labels": [item.category or "Sin categoria" for item in ranking_categories],
         "chart_categories_data": [item.sold or 0 for item in ranking_categories],
+        "cash_stats": cash_stats,
     }
 
 
@@ -202,3 +237,52 @@ def _sales_by_day(days):
         total = scope_query_to_company(db.session.query(db.func.coalesce(db.func.sum(Sale.total_amount), 0)).filter(Sale.date >= start, Sale.date <= end), Sale).scalar() or 0
         data.append(_to_decimal(total))
     return data
+
+
+def _normalize_payment_method(value):
+    raw = (value or "").strip().lower()
+    if not raw:
+        return "otros"
+    if "efect" in raw:
+        return "efectivo"
+    if "mercado" in raw or raw == "mp" or "qr" in raw:
+        return "mercado_pago"
+    if "deb" in raw:
+        return "debito"
+    if "cred" in raw or "crédito" in raw:
+        return "credito"
+    if "transfer" in raw:
+        return "transferencia"
+    return "otros"
+
+
+def _sale_payment_breakdown(sale):
+    total = _to_decimal(getattr(sale, "total_amount", 0))
+    primary_method = _normalize_payment_method(getattr(sale, "payment_method", None))
+    secondary_method = _normalize_payment_method(getattr(sale, "secondary_payment_method", None))
+    primary_amount = _to_decimal(getattr(sale, "paid_amount", None))
+    secondary_amount = _to_decimal(getattr(sale, "secondary_paid_amount", None))
+
+    result = {
+        "efectivo": Decimal("0.00"),
+        "mercado_pago": Decimal("0.00"),
+        "debito": Decimal("0.00"),
+        "credito": Decimal("0.00"),
+        "transferencia": Decimal("0.00"),
+        "otros": Decimal("0.00"),
+    }
+    has_secondary = bool((getattr(sale, "secondary_payment_method", "") or "").strip())
+    if has_secondary:
+        if secondary_amount <= 0:
+            secondary_amount = Decimal("0.00")
+        if primary_amount <= 0:
+            primary_amount = max(total - secondary_amount, Decimal("0.00"))
+    else:
+        if primary_amount <= 0:
+            primary_amount = total
+        secondary_amount = Decimal("0.00")
+
+    result[primary_method] = result.get(primary_method, Decimal("0.00")) + primary_amount
+    if has_secondary:
+        result[secondary_method] = result.get(secondary_method, Decimal("0.00")) + secondary_amount
+    return result

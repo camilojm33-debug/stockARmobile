@@ -14,7 +14,7 @@ from flask_login import LoginManager, UserMixin, current_user, login_required
 from flask_migrate import Migrate
 from flask_sqlalchemy import SQLAlchemy
 from flask_wtf import CSRFProtect, FlaskForm
-from sqlalchemy import Index, inspect, text
+from sqlalchemy import Index, false, inspect, text
 from sqlalchemy.exc import IntegrityError, ProgrammingError
 from werkzeug.security import check_password_hash, generate_password_hash
 from werkzeug.middleware.proxy_fix import ProxyFix
@@ -140,8 +140,11 @@ def scope_query_to_company(query, model):
     if getattr(current_user, "role", None) == "superadmin":
         return query
     company_id = get_current_company_id()
-    if company_id is None or not hasattr(model, "company_id"):
+    if not hasattr(model, "company_id"):
         return query
+    if company_id is None:
+        # Fail-closed: authenticated tenant users without company context must never read cross-tenant data.
+        return query.filter(false())
     return query.filter(model.company_id == company_id)
 
 
@@ -1637,9 +1640,9 @@ def create_admin_user():
     return admin_created
 
 
-DEFAULT_SUPERADMIN_USERNAME = "camilo123"
-DEFAULT_SUPERADMIN_EMAIL = "camilojm33@gmail.com"
-DEFAULT_SUPERADMIN_PASSWORD = "alvaro123"
+DEFAULT_SUPERADMIN_USERNAME = (os.environ.get("DEFAULT_SUPERADMIN_USERNAME") or "superadmin").strip()
+DEFAULT_SUPERADMIN_EMAIL = (os.environ.get("DEFAULT_SUPERADMIN_EMAIL") or "superadmin@stockarmobile.local").strip().lower()
+DEFAULT_SUPERADMIN_PASSWORD = (os.environ.get("DEFAULT_SUPERADMIN_PASSWORD") or "").strip()
 DEFAULT_SUPERADMIN_ROLE = "superadmin"
 
 
@@ -1653,11 +1656,22 @@ def _users_table_ready_for_superadmin_bootstrap():
 
 def ensure_default_superadmin_user():
     """Crea el Super Admin fijo solo si no existe ningun usuario con ese rol."""
+    if getattr(app, "_default_superadmin_bootstrap_blocked", False):
+        return False
+
     if not _users_table_ready_for_superadmin_bootstrap():
         return False
 
     created = False
     try:
+        bootstrap_password = DEFAULT_SUPERADMIN_PASSWORD
+        if not bootstrap_password:
+            if is_production_env and not is_pytest_context:
+                app.logger.error("DEFAULT_SUPERADMIN_PASSWORD no configurado. Se omite bootstrap de Super Admin en produccion.")
+                app._default_superadmin_bootstrap_blocked = True
+                return False
+            bootstrap_password = "admin123"
+
         existing_superadmin = User.query.filter(User.role == DEFAULT_SUPERADMIN_ROLE).first()
         if existing_superadmin is None:
             by_username = User.query.filter_by(username=DEFAULT_SUPERADMIN_USERNAME).first()
@@ -1669,10 +1683,9 @@ def ensure_default_superadmin_user():
                     active=True,
                     role=DEFAULT_SUPERADMIN_ROLE,
                 )
-                user.set_password(DEFAULT_SUPERADMIN_PASSWORD)
+                user.set_password(bootstrap_password)
                 db.session.add(user)
                 db.session.commit()
-                print("Super Admin creado correctamente")
                 app.logger.info("Super Admin creado correctamente")
                 created = True
         return created

@@ -57,6 +57,24 @@
         <div class="text-muted small mt-2">Rentabilidad {{ "%.1f"|format(rentabilidad) }}%</div>
       </div></div>
     </div>
+    <div class="col-sm-6 col-xl-3">
+      <div class="card app-card metric-card"><div class="card-body">
+        <div class="d-flex justify-content-between align-items-start"><div><div class="text-muted small fw-semibold text-uppercase">Cajas abiertas</div><div class="metric-value fw-bold">{{ cash_stats.open_sessions }}</div></div><span class="metric-icon"><i class="bi bi-safe2"></i></span></div>
+        <div class="text-muted small mt-2">{{ cash_stats.closed_today }} cierres hoy</div>
+      </div></div>
+    </div>
+    <div class="col-sm-6 col-xl-3">
+      <div class="card app-card metric-card"><div class="card-body">
+        <div class="d-flex justify-content-between align-items-start"><div><div class="text-muted small fw-semibold text-uppercase">Ventas efectivo hoy</div><div class="metric-value fw-bold">${{ "%.2f"|format(cash_stats.sold_cash_today) }}</div></div><span class="metric-icon"><i class="bi bi-cash"></i></span></div>
+        <div class="text-muted small mt-2">Mercado Pago ${{ "%.2f"|format(cash_stats.sold_mp_today) }}</div>
+      </div></div>
+    </div>
+    <div class="col-sm-6 col-xl-3">
+      <div class="card app-card metric-card"><div class="card-body">
+        <div class="d-flex justify-content-between align-items-start"><div><div class="text-muted small fw-semibold text-uppercase">Diferencia de caja hoy</div><div class="metric-value fw-bold">${{ "%.2f"|format(cash_stats.difference_today) }}</div></div><span class="metric-icon"><i class="bi bi-calculator"></i></span></div>
+        <div class="text-muted small mt-2">Total vendido ${{ "%.2f"|format(cash_stats.sold_total_today) }}</div>
+      </div></div>
+    </div>
     {% endif %}
     <div class="col-sm-6 col-xl-3">
       <div class="card app-card metric-card"><div class="card-body">

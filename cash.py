@@ -2,10 +2,13 @@
 
 import csv
 from decimal import Decimal
-from io import StringIO
+from io import BytesIO, StringIO
 
 from flask import Blueprint, abort, flash, make_response, redirect, render_template, request, url_for
 from flask_login import current_user
+from openpyxl import Workbook
+from reportlab.lib.pagesizes import A4
+from reportlab.pdfgen import canvas
 
 from app import tenant_required
 
@@ -63,27 +66,128 @@ def _current_open_session():
 
 
 def _session_summary(session):
+    sales = list(getattr(session, "sales", []) or [])
+    movements = list(getattr(session, "movements", []) or [])
     opening = _to_decimal(session.opening_amount)
+
+    payment_totals = {
+        "efectivo": Decimal("0.00"),
+        "mercado_pago": Decimal("0.00"),
+        "debito": Decimal("0.00"),
+        "credito": Decimal("0.00"),
+        "transferencia": Decimal("0.00"),
+        "otros": Decimal("0.00"),
+    }
+    total_sold = Decimal("0.00")
+    for sale in sales:
+        total_sold += _to_decimal(getattr(sale, "total_amount", 0))
+        for method_key, amount in _sale_payment_breakdown(sale).items():
+            payment_totals[method_key] = payment_totals.get(method_key, Decimal("0.00")) + _to_decimal(amount)
+
     income = Decimal("0.00")
     expense = Decimal("0.00")
-    for movement in session.movements:
+    withdrawals = Decimal("0.00")
+    for movement in movements:
         movement_amount = _to_decimal(movement.amount)
         movement_type = (movement.movement_type or "").strip().lower()
-        if movement_type in {"egreso", "retiro", "salida", "gasto"}:
+        movement_category = (movement.category or "").strip().lower()
+        is_sale_auto_movement = bool(movement.sale_id) or movement_category == "venta"
+        if movement_type == "retiro":
+            withdrawals += movement_amount
+            continue
+        if movement_type in {"egreso", "salida", "gasto"}:
             expense += movement_amount
-        else:
+            continue
+        if movement_type == "ingreso" and not is_sale_auto_movement:
             income += movement_amount
-    expected = opening + income - expense
+
+    expected = opening + payment_totals["efectivo"] + income - expense - withdrawals
     counted = _to_decimal(session.counted_amount) if session.counted_amount is not None else None
     difference = _to_decimal(session.difference_amount) if session.difference_amount is not None else (counted - expected if counted is not None else None)
     return {
         "opening": opening,
+        "sales_cash": payment_totals["efectivo"],
+        "sales_mp": payment_totals["mercado_pago"],
+        "sales_debit": payment_totals["debito"],
+        "sales_credit": payment_totals["credito"],
+        "sales_transfer": payment_totals["transferencia"],
+        "sales_other": payment_totals["otros"],
+        "total_sold": total_sold,
         "income": income,
         "expense": expense,
+        "withdrawals": withdrawals,
+        "total_cash": opening + payment_totals["efectivo"] + income,
         "expected": expected,
         "counted": counted,
         "difference": difference,
     }
+
+
+def _normalize_payment_method(value):
+    raw = (value or "").strip().lower()
+    if not raw:
+        return "otros"
+    if "efect" in raw:
+        return "efectivo"
+    if "mercado" in raw or raw == "mp" or "qr" in raw:
+        return "mercado_pago"
+    if "deb" in raw:
+        return "debito"
+    if "cred" in raw or "crédito" in raw:
+        return "credito"
+    if "transfer" in raw:
+        return "transferencia"
+    return "otros"
+
+
+def _sale_payment_breakdown(sale):
+    total = _to_decimal(getattr(sale, "total_amount", 0))
+    primary_method = _normalize_payment_method(getattr(sale, "payment_method", None))
+    secondary_method = _normalize_payment_method(getattr(sale, "secondary_payment_method", None))
+    primary_amount = _to_decimal(getattr(sale, "paid_amount", None))
+    secondary_amount = _to_decimal(getattr(sale, "secondary_paid_amount", None))
+
+    result = {
+        "efectivo": Decimal("0.00"),
+        "mercado_pago": Decimal("0.00"),
+        "debito": Decimal("0.00"),
+        "credito": Decimal("0.00"),
+        "transferencia": Decimal("0.00"),
+        "otros": Decimal("0.00"),
+    }
+
+    has_secondary = bool((getattr(sale, "secondary_payment_method", "") or "").strip())
+    if has_secondary:
+        if secondary_amount <= 0:
+            secondary_amount = Decimal("0.00")
+        if primary_amount <= 0:
+            primary_amount = max(total - secondary_amount, Decimal("0.00"))
+    else:
+        if primary_amount <= 0:
+            primary_amount = total
+        secondary_amount = Decimal("0.00")
+
+    result[primary_method] = result.get(primary_method, Decimal("0.00")) + primary_amount
+    if has_secondary:
+        result[secondary_method] = result.get(secondary_method, Decimal("0.00")) + secondary_amount
+    return result
+
+
+def _build_cash_close_rows(session):
+    summary = _session_summary(session)
+    return [
+        ("Monto inicial", summary["opening"]),
+        ("Ventas efectivo", summary["sales_cash"]),
+        ("Ventas Mercado Pago", summary["sales_mp"]),
+        ("Ventas débito", summary["sales_debit"]),
+        ("Ventas crédito", summary["sales_credit"]),
+        ("Ventas transferencia", summary["sales_transfer"]),
+        ("Ingresos", summary["income"]),
+        ("Egresos", summary["expense"]),
+        ("Retiros", summary["withdrawals"]),
+        ("Total vendido", summary["total_sold"]),
+        ("Efectivo esperado", summary["expected"]),
+    ]
 
 
 def _get_session_or_404(session_id):
@@ -142,6 +246,10 @@ def index():
         sessions_query = sessions_query.filter((CashSession.note.ilike(like)) | (CashSession.closing_note.ilike(like)) | (CashSession.void_reason.ilike(like)))
 
     open_session = _current_open_session()
+    stale_open_session = None
+    now = utcnow()
+    if open_session and open_session.opened_at and open_session.opened_at.date() < now.date():
+        stale_open_session = open_session
 
     if request.method == "POST":
         action = (request.form.get("action") or "").strip().lower()
@@ -205,6 +313,18 @@ def index():
                 record_audit(action="cash_close", entity="cash_session", entity_id=target_session.id, detail=f"Cierre de caja diferencia={target_session.difference_amount}")
                 db.session.commit()
                 flash("Caja cerrada.", "success")
+        elif action == "notify_admin":
+            if target_session is None or target_session.status != "abierta":
+                flash("No hay caja abierta para notificar.", "warning")
+            else:
+                record_audit(
+                    action="cash_notify_admin",
+                    entity="cash_session",
+                    entity_id=target_session.id,
+                    detail="Empleado notificó caja abierta pendiente de cierre.",
+                )
+                db.session.commit()
+                flash("Aviso enviado al administrador.", "info")
         elif action == "reopen":
             if not _is_admin():
                 abort(403)
@@ -272,6 +392,8 @@ def index():
         status_filter=status_filter,
         selected_user_id=user_filter,
         search_query=request.args.get("q", ""),
+        stale_open_session=stale_open_session,
+        close_rows=_build_cash_close_rows(open_session) if open_session else [],
     )
 
 
@@ -304,6 +426,110 @@ def export_cash_csv():
     response = make_response(output.getvalue())
     response.headers["Content-Type"] = "text/csv; charset=utf-8"
     response.headers["Content-Disposition"] = f'attachment; filename="caja_{current_user.company_id or "global"}.csv"'
+    return response
+
+
+@bp.route("/exportar-excel")
+@tenant_required
+def export_cash_excel():
+    from app import CashSession, scope_query_to_company
+
+    if not _is_admin():
+        abort(403)
+
+    workbook = Workbook()
+    sheet = workbook.active
+    sheet.title = "Cajas"
+    sheet.append([
+        "ID",
+        "Usuario",
+        "Estado",
+        "Monto inicial",
+        "Ventas efectivo",
+        "Ventas MP",
+        "Ventas débito",
+        "Ventas crédito",
+        "Ventas transferencia",
+        "Ingresos",
+        "Egresos",
+        "Retiros",
+        "Total vendido",
+        "Esperado",
+        "Contado",
+        "Diferencia",
+        "Apertura",
+        "Cierre",
+    ])
+
+    sessions = scope_query_to_company(CashSession.query, CashSession).order_by(CashSession.opened_at.desc()).all()
+    for session in sessions:
+        summary = _session_summary(session)
+        sheet.append([
+            session.id,
+            session.user.name if session.user else session.user_id,
+            session.status,
+            float(summary["opening"]),
+            float(summary["sales_cash"]),
+            float(summary["sales_mp"]),
+            float(summary["sales_debit"]),
+            float(summary["sales_credit"]),
+            float(summary["sales_transfer"]),
+            float(summary["income"]),
+            float(summary["expense"]),
+            float(summary["withdrawals"]),
+            float(summary["total_sold"]),
+            float(summary["expected"]),
+            float(summary["counted"] or 0),
+            float(summary["difference"] or 0),
+            session.opened_at.strftime("%Y-%m-%d %H:%M") if session.opened_at else "",
+            session.closed_at.strftime("%Y-%m-%d %H:%M") if session.closed_at else "",
+        ])
+
+    binary = BytesIO()
+    workbook.save(binary)
+    binary.seek(0)
+    response = make_response(binary.getvalue())
+    response.headers["Content-Type"] = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+    response.headers["Content-Disposition"] = f'attachment; filename="caja_{current_user.company_id or "global"}.xlsx"'
+    return response
+
+
+@bp.route("/exportar-pdf")
+@tenant_required
+def export_cash_pdf():
+    from app import CashSession, scope_query_to_company
+
+    if not _is_admin():
+        abort(403)
+
+    buffer = BytesIO()
+    pdf = canvas.Canvas(buffer, pagesize=A4)
+    _, page_h = A4
+    y = page_h - 40
+    pdf.setFont("Helvetica-Bold", 12)
+    pdf.drawString(36, y, "StockArmobile - Administración de Cajas")
+    y -= 20
+    pdf.setFont("Helvetica", 9)
+
+    sessions = scope_query_to_company(CashSession.query, CashSession).order_by(CashSession.opened_at.desc()).limit(100).all()
+    for session in sessions:
+        summary = _session_summary(session)
+        line = (
+            f"Caja #{session.id} | {session.user.name if session.user else session.user_id} | {session.status} "
+            f"| Efectivo esperado ${summary['expected']:.2f} | Diferencia ${((summary['difference'] or Decimal('0.00'))):.2f}"
+        )
+        if y < 40:
+            pdf.showPage()
+            y = page_h - 40
+            pdf.setFont("Helvetica", 9)
+        pdf.drawString(36, y, line[:180])
+        y -= 14
+
+    pdf.save()
+    buffer.seek(0)
+    response = make_response(buffer.getvalue())
+    response.headers["Content-Type"] = "application/pdf"
+    response.headers["Content-Disposition"] = f'attachment; filename="caja_{current_user.company_id or "global"}.pdf"'
     return response
 
 

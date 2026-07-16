@@ -1443,6 +1443,34 @@
         </div>
       </div>
 
+      {% set cash_stats = dashboard.get('cash_stats', {}) %}
+      <div class="row g-4 mb-4">
+        <div class="col-12 col-md-3">
+          <div class="company-mini-stat">
+            <div class="small text-muted text-uppercase fw-semibold">Cajas abiertas</div>
+            <div class="h4 mb-0">{{ cash_stats.get('open_sessions', 0) }}</div>
+          </div>
+        </div>
+        <div class="col-12 col-md-3">
+          <div class="company-mini-stat">
+            <div class="small text-muted text-uppercase fw-semibold">Cierres hoy</div>
+            <div class="h4 mb-0">{{ cash_stats.get('closed_today', 0) }}</div>
+          </div>
+        </div>
+        <div class="col-12 col-md-3">
+          <div class="company-mini-stat">
+            <div class="small text-muted text-uppercase fw-semibold">Efectivo hoy</div>
+            <div class="h4 mb-0">${{ '%.2f'|format(cash_stats.get('sold_cash_today', 0)) }}</div>
+          </div>
+        </div>
+        <div class="col-12 col-md-3">
+          <div class="company-mini-stat">
+            <div class="small text-muted text-uppercase fw-semibold">Diferencia hoy</div>
+            <div class="h4 mb-0">${{ '%.2f'|format(cash_stats.get('difference_today', 0)) }}</div>
+          </div>
+        </div>
+      </div>
+
       <div class="row g-4 mb-4">
         <div class="col-lg-8">
           <div class="card app-card h-100 border-0 company-chart-card">
@@ -1494,6 +1522,8 @@
               {% if current_user.role == 'admin' %}
               <a class="btn btn-primary btn-lg" href="{{ url_for('purchases.index') }}"><i class="bi bi-truck me-1"></i>Compras y proveedores</a>
               <div class="small text-muted">Registro de mercadería, proveedores y costo promedio.</div>
+              <a class="btn btn-outline-primary btn-lg" href="{{ url_for('cash.index') }}"><i class="bi bi-cash-coin me-1"></i>Administración de cajas</a>
+              <div class="small text-muted">Arqueo, cierre, diferencias y exportaciones de caja por usuario.</div>
               {% else %}
               <div class="alert alert-secondary mb-0">Este acceso está disponible solo para administradores.</div>
               {% endif %}

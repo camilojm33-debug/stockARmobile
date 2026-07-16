@@ -13,10 +13,32 @@
     <div class="d-flex flex-wrap gap-2">
       {% if is_admin %}
       <a class="btn btn-outline-primary" href="{{ url_for('cash.export_cash_csv') }}"><i class="bi bi-download me-1"></i>Exportar CSV</a>
+      <a class="btn btn-outline-primary" href="{{ url_for('cash.export_cash_excel') }}"><i class="bi bi-file-earmark-excel me-1"></i>Exportar Excel</a>
+      <a class="btn btn-outline-primary" href="{{ url_for('cash.export_cash_pdf') }}"><i class="bi bi-file-earmark-pdf me-1"></i>Exportar PDF</a>
       {% endif %}
       <a class="btn btn-outline-secondary" href="{{ url_for('sales.index') }}"><i class="bi bi-bag-check me-1"></i>Ir a ventas</a>
     </div>
   </div>
+
+  {% if stale_open_session %}
+  <div class="alert alert-warning border-0 shadow-sm mb-3">
+    <div class="fw-semibold mb-1"><i class="bi bi-alarm me-1"></i>Tu caja abierta quedó pendiente del día anterior.</div>
+    <div class="small mb-2">Sesion #{{ stale_open_session.id }} abierta el {{ stale_open_session.opened_at.strftime('%Y-%m-%d %H:%M') }}. Para vender hoy, recomendamos cerrar con arqueo o avisar al administrador.</div>
+    <div class="d-flex flex-wrap gap-2">
+      <a class="btn btn-sm btn-warning" href="{{ url_for('sales.index') }}">Continuar igual</a>
+      <form method="post" class="d-inline">
+        <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+        <input type="hidden" name="action" value="close">
+        <button class="btn btn-sm btn-danger" type="submit">Cerrar ahora</button>
+      </form>
+      <form method="post" class="d-inline">
+        <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+        <input type="hidden" name="action" value="notify_admin">
+        <button class="btn btn-sm btn-outline-secondary" type="submit">Avisar admin</button>
+      </form>
+    </div>
+  </div>
+  {% endif %}
 
   {% if is_admin %}
   <div class="card app-card mb-3">
@@ -61,9 +83,24 @@
   </div>
   {% endif %}
 
+  <div class="card app-card mb-3">
+    <div class="card-body py-3">
+      <div class="small text-muted fw-semibold text-uppercase mb-2">Menu de caja</div>
+      <div class="d-flex flex-wrap gap-2">
+        <a class="btn btn-sm btn-outline-secondary" href="#section-apertura"><i class="bi bi-unlock me-1"></i>Apertura</a>
+        <a class="btn btn-sm btn-outline-secondary" href="#section-movimientos"><i class="bi bi-arrow-left-right me-1"></i>Movimientos</a>
+        <a class="btn btn-sm btn-outline-secondary" href="#section-arqueo"><i class="bi bi-calculator me-1"></i>Arqueo / Cierre</a>
+        <a class="btn btn-sm btn-outline-secondary" href="#section-historial"><i class="bi bi-clock-history me-1"></i>Historial</a>
+        {% if is_admin %}
+        <a class="btn btn-sm btn-outline-primary" href="#section-admin"><i class="bi bi-shield-lock me-1"></i>Administración</a>
+        {% endif %}
+      </div>
+    </div>
+  </div>
+
   <div class="row g-3 mb-4">
     <div class="col-lg-4">
-      <div class="card app-card h-100">
+      <div class="card app-card h-100" id="section-apertura">
         <div class="card-body">
           {% if open_session %}
           <h2 class="h6 fw-bold mb-2">Caja abierta #{{ open_session.id }}</h2>
@@ -71,9 +108,13 @@
           <div class="summary-panel mb-3">
             <div class="d-flex justify-content-between"><span class="text-muted">Apertura</span><strong>${{ "%.2f"|format(session_summary.opening if session_summary else 0) }}</strong></div>
             <div class="d-flex justify-content-between"><span class="text-muted">Esperado</span><strong>${{ "%.2f"|format(session_summary.expected if session_summary else 0) }}</strong></div>
+            <div class="d-flex justify-content-between"><span class="text-muted">Ventas efectivo</span><strong>${{ "%.2f"|format(session_summary.sales_cash if session_summary else 0) }}</strong></div>
+            <div class="d-flex justify-content-between"><span class="text-muted">Ventas MP</span><strong>${{ "%.2f"|format(session_summary.sales_mp if session_summary else 0) }}</strong></div>
             <div class="d-flex justify-content-between"><span class="text-muted">Ingresos</span><strong>${{ "%.2f"|format(session_summary.income if session_summary else 0) }}</strong></div>
             <div class="d-flex justify-content-between"><span class="text-muted">Egresos</span><strong>${{ "%.2f"|format(session_summary.expense if session_summary else 0) }}</strong></div>
+            <div class="d-flex justify-content-between"><span class="text-muted">Retiros</span><strong>${{ "%.2f"|format(session_summary.withdrawals if session_summary else 0) }}</strong></div>
           </div>
+          <div class="small text-muted fw-semibold text-uppercase mb-2" id="section-movimientos">Movimientos</div>
           <form method="post" class="row g-2 mb-3">
             <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
             <input type="hidden" name="action" value="movement">
@@ -89,9 +130,18 @@
             <div class="col-12"><input class="form-control" name="description" placeholder="Descripción del movimiento"></div>
             <div class="col-12"><button class="btn btn-success w-100">Registrar movimiento</button></div>
           </form>
+          <div class="small text-muted fw-semibold text-uppercase mb-2" id="section-arqueo">Arqueo y cierre</div>
           <form method="post" class="row g-2">
             <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
             <input type="hidden" name="action" value="close">
+            <div class="col-12">
+              <div class="border rounded-3 p-2 bg-light">
+                <div class="small text-muted mb-2">Arqueo automático (referencia)</div>
+                {% for label, amount in close_rows %}
+                <div class="d-flex justify-content-between small"><span>{{ label }}</span><strong>${{ "%.2f"|format(amount) }}</strong></div>
+                {% endfor %}
+              </div>
+            </div>
             <div class="col-12"><label class="form-label">Importe contado</label><input class="form-control" name="counted_amount" type="number" step="0.01" min="0" value="{{ '%.2f'|format(session_summary.expected if session_summary else 0) }}"></div>
             <div class="col-12"><label class="form-label">Nota de cierre</label><input class="form-control" name="closing_note" placeholder="Observaciones del arqueo"></div>
             <div class="col-12"><button class="btn btn-danger w-100">Cerrar caja</button></div>
@@ -110,8 +160,8 @@
         </div>
       </div>
     </div>
-    <div class="col-lg-8">
-      <div class="card app-card h-100">
+    <div class="col-lg-8" id="section-movimientos-tabla">
+      <div class="card app-card h-100" id="section-movimientos-listado">
         <div class="card-body">
           <div class="d-flex justify-content-between align-items-center mb-3">
             <div>
@@ -147,7 +197,7 @@
       </div>
     </div>
 
-    <div class="card app-card mb-4">
+    <div class="card app-card mb-4" id="section-historial">
       <div class="card-body">
         <div class="d-flex flex-wrap justify-content-between align-items-center gap-2 mb-3">
           <div>
@@ -156,6 +206,9 @@
           </div>
           {% if open_session %}
           <span class="badge text-bg-success">Sesion abierta #{{ open_session.id }}</span>
+          {% endif %}
+          {% if is_admin %}
+          <span class="badge text-bg-primary" id="section-admin">Panel admin</span>
           {% endif %}
         </div>
         <div class="table-responsive">

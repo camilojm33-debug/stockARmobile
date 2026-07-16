@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import secrets
+import string
 from datetime import timedelta
 from decimal import Decimal
 
@@ -26,9 +28,16 @@ class ReferralService:
     def generate_referral_code(cls, db_session) -> str:
         from app import ReferralSeller
 
+        alphabet = string.ascii_uppercase + string.digits
+        for _ in range(20):
+            candidate = f"REF{''.join(secrets.choice(alphabet) for _ in range(6))}"
+            if ReferralSeller.query.filter_by(referral_code=candidate).first() is None:
+                return candidate
+
+        # Fallback deterministico ante colisiones extremas.
         last = ReferralSeller.query.order_by(ReferralSeller.id.desc()).first()
         next_number = (last.id + 1) if last else 1
-        return f"REF{next_number:04d}"
+        return f"REF{next_number:06d}"
 
     @classmethod
     def build_referral_url(cls, referral_code: str) -> str:
@@ -78,6 +87,15 @@ class ReferralService:
     @classmethod
     def attribute_company(cls, db_session, *, seller, company, user, referral_code: str):
         from app import ReferralAttribution
+
+        # Anti-fraude: no permitir autorreferido directo por mismo usuario/email.
+        if user is not None and getattr(seller, "user_id", None) == getattr(user, "id", None):
+            return None
+        seller_user = getattr(seller, "user", None)
+        seller_email = (getattr(seller_user, "email", None) or "").strip().lower()
+        user_email = (getattr(user, "email", None) or "").strip().lower() if user is not None else ""
+        if seller_email and user_email and seller_email == user_email:
+            return None
 
         existing = ReferralAttribution.query.filter_by(company_id=company.id).first()
         if existing:

@@ -9,9 +9,10 @@ os.environ["DATABASE_URL"] = "sqlite:///:memory:"
 os.environ.setdefault("MP_OAUTH_ENCRYPTION_KEY", "test-oauth-encryption-key")
 
 import pytest
+from flask_login import login_user, logout_user
 
 import app as stock_app
-from app import CashMovement, CashSession, Client, Company, Product, Sale, Subscription, User, db
+from app import CashMovement, CashSession, Client, Company, Product, ReferralAttribution, Sale, Subscription, User, db
 from sqlalchemy.exc import ProgrammingError
 
 try:
@@ -484,12 +485,12 @@ def test_default_superadmin_bootstrap_creates_missing_account():
         created = stock_app.ensure_default_superadmin_user()
 
         assert created is True
-        user = User.query.filter_by(username="camilo123").first()
+        user = User.query.filter_by(username="superadmin").first()
         assert user is not None
-        assert user.email == "camilojm33@gmail.com"
+        assert user.email == "superadmin@stockarmobile.local"
         assert user.role == "superadmin"
         assert user.active is True
-        assert user.check_password("alvaro123")
+        assert user.check_password("admin123")
         assert User.query.filter_by(role="superadmin").count() == 1
 
 
@@ -498,7 +499,7 @@ def test_default_superadmin_bootstrap_skips_duplicates_when_username_or_email_ex
         db.drop_all()
         db.create_all()
 
-        conflict = User(username="camilo123", email="otro_correo@test.local", role="admin", active=True)
+        conflict = User(username="superadmin", email="otro_correo@test.local", role="admin", active=True)
         conflict.set_password("otra123")
         db.session.add(conflict)
         db.session.commit()
@@ -506,9 +507,70 @@ def test_default_superadmin_bootstrap_skips_duplicates_when_username_or_email_ex
         created = stock_app.ensure_default_superadmin_user()
 
         assert created is False
-        assert User.query.filter_by(username="camilo123").count() == 1
-        assert User.query.filter_by(email="camilojm33@gmail.com").count() == 0
+        assert User.query.filter_by(username="superadmin").count() == 1
+        assert User.query.filter_by(email="superadmin@stockarmobile.local").count() == 0
         assert User.query.filter_by(role="superadmin").count() == 0
+
+
+def test_scope_query_to_company_fails_closed_without_company_context():
+    with stock_app.app.app_context():
+        db.drop_all()
+        db.create_all()
+
+        company_a = Company(name="Empresa A", active=True)
+        company_b = Company(name="Empresa B", active=True)
+        db.session.add_all([company_a, company_b])
+        db.session.flush()
+
+        user = User(username="sin_empresa", email="sin_empresa@test.local", role="user", active=True, company_id=None)
+        user.set_password("abc12345")
+        db.session.add(user)
+        db.session.add(Product(barcode="P-A", name="Producto A", price=100, stock=1, min_stock=0, company_id=company_a.id, active=True))
+        db.session.add(Product(barcode="P-B", name="Producto B", price=100, stock=1, min_stock=0, company_id=company_b.id, active=True))
+        db.session.commit()
+
+        with stock_app.app.test_request_context("/"):
+            login_user(user)
+            rows = stock_app.scope_query_to_company(Product.query, Product).all()
+            logout_user()
+
+        assert rows == []
+
+
+def test_referral_attribute_blocks_self_referral_by_same_user():
+    from services.referral_service import ReferralService
+
+    with stock_app.app.app_context():
+        db.drop_all()
+        db.create_all()
+
+        seller_user = User(username="seller_self", email="same@test.local", role="seller", active=True)
+        seller_user.set_password("seller123")
+        db.session.add(seller_user)
+        db.session.flush()
+
+        seller = ReferralService.create_or_update_seller(
+            db.session,
+            user=seller_user,
+            profile_data={"dni": "30111222", "active": True},
+        )
+        db.session.flush()
+
+        company = Company(name="Empresa Referida", active=True)
+        db.session.add(company)
+        db.session.flush()
+
+        attribution = ReferralService.attribute_company(
+            db.session,
+            seller=seller,
+            company=company,
+            user=seller_user,
+            referral_code=seller.referral_code,
+        )
+        db.session.commit()
+
+        assert attribution is None
+        assert ReferralAttribution.query.filter_by(company_id=company.id).first() is None
 
 
 def test_qr_print_all_supports_square_5x5_a4_format():

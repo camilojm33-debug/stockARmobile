@@ -75,13 +75,21 @@ class MercadoPagoOAuthService:
         }
         authorization_url = f"{self.AUTH_URL}?{urlencode(params)}"
         self._logger().info(
-            "Mercado Pago OAuth authorization generated: url=%s client_id=%s redirect_uri=%s state=%s",
-            authorization_url,
+            "Mercado Pago OAuth authorization generated: client_id=%s redirect_uri=%s",
             params["client_id"],
             redirect_uri,
-            state,
         )
         return authorization_url
+
+    @staticmethod
+    def _safe_error_excerpt(value: str | None) -> str:
+        raw = (value or "").replace("\n", " ").replace("\r", " ").strip()
+        if not raw:
+            return ""
+        lowered = raw.lower()
+        if "access_token" in lowered or "refresh_token" in lowered or "client_secret" in lowered:
+            return "[redacted-sensitive-response]"
+        return raw[:300]
 
     def _post_token(self, *, payload: dict[str, str]) -> dict:
         client_id = self._client_id()
@@ -107,7 +115,7 @@ class MercadoPagoOAuthService:
             self._logger().error(
                 "Mercado Pago OAuth token error: http_status=%s response_body=%s",
                 response.status_code,
-                response.text,
+                self._safe_error_excerpt(response.text),
             )
             raise RuntimeError(f"Mercado Pago OAuth error {response.status_code}: {response.text[:500]}")
         token_payload = response.json()
@@ -145,7 +153,7 @@ class MercadoPagoOAuthService:
             self._logger().error(
                 "Mercado Pago OAuth userinfo error: http_status=%s response_body=%s",
                 response.status_code,
-                response.text,
+                self._safe_error_excerpt(response.text),
             )
             raise RuntimeError(f"Mercado Pago user profile error {response.status_code}: {response.text[:500]}")
         profile = response.json()

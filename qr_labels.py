@@ -20,16 +20,18 @@ bp = Blueprint("qr_labels", __name__)
 
 
 def _font(size, bold=False):
-    font_name = "arialbd.ttf" if bold else "arial.ttf"
-    try:
-        return ImageFont.truetype(font_name, size)
-    except OSError:
-        if bold:
-            try:
-                return ImageFont.truetype("arial.ttf", size)
-            except OSError:
-                pass
-        return ImageFont.load_default()
+    candidates = [
+        "arialbd.ttf" if bold else "arial.ttf",
+        "arial.ttf",
+        "DejaVuSans-Bold.ttf" if bold else "DejaVuSans.ttf",
+        "DejaVuSans.ttf",
+    ]
+    for font_name in candidates:
+        try:
+            return ImageFont.truetype(font_name, size)
+        except OSError:
+            continue
+    return ImageFont.load_default()
 
 
 def _ean_payload(value):
@@ -103,7 +105,7 @@ def create_product_label(barcode_string, product_name, price, size=(1000, 500), 
     row_gap = max(3, int(usable_h * 0.02))
     name_h = max(16, int(usable_h * 0.14)) if include_name else 0
     # Reserva mas altura para el precio, priorizando lectura en etiquetas de gondola.
-    price_h = max(20, int(usable_h * 0.20)) if include_price else 0
+    price_h = max(20, int(usable_h * 0.16)) if include_price else 0
     sku_h = max(12, int(usable_h * 0.10)) if include_code else 0
 
     reserved = name_h + price_h + sku_h
@@ -156,7 +158,7 @@ def create_product_label(barcode_string, product_name, price, size=(1000, 500), 
         )
         _, _, _, text_bottom = draw.textbbox((0, 0), price_text, font=price_font)
         text_h = max(1, text_bottom)
-        band_h = max(int(price_h * 0.95), text_h + max(8, int(row_gap * 1.2)))
+        band_h = max(int(price_h * 0.72), text_h + max(8, int(row_gap * 1.2)))
         band_top = max(padding, y)
         band_bottom = min(height - padding, band_top + band_h)
         draw.rectangle((padding, band_top, width - padding, band_bottom), fill="black", outline="black")
