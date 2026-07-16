@@ -12,9 +12,17 @@
     </div>
     <div class="d-flex flex-wrap gap-2">
       <button class="btn btn-outline-primary" data-bs-toggle="modal" data-bs-target="#cameraScannerModal" onclick="startCameraScanner()"><i class="bi bi-camera me-1"></i>Camara</button>
-      <button class="btn btn-success" onclick="openCartModal()"><i class="bi bi-credit-card me-1"></i>Cobrar <span class="cart-count badge text-bg-light">0</span></button>
+      <button class="btn btn-success" {% if not cash_session_open %}disabled title="Abrí una caja para cobrar"{% endif %} onclick="openCartModal()"><i class="bi bi-credit-card me-1"></i>Cobrar <span class="cart-count badge text-bg-light">0</span></button>
     </div>
   </div>
+
+  {% if not cash_session_open %}
+  <div class="alert alert-warning border-0 shadow-sm mb-3">
+    <div class="fw-semibold mb-1"><i class="bi bi-exclamation-triangle me-1"></i>Debes abrir una caja antes de comenzar a vender.</div>
+    <div class="small">Podés seguir revisando productos, pero el cobro quedará bloqueado hasta que abras tu caja en el módulo Caja.</div>
+    <a class="btn btn-warning btn-sm mt-2" href="{{ url_for('cash.index') }}">Abrir caja</a>
+  </div>
+  {% endif %}
 
   <div class="pos-toolbar app-card mb-3">
     <div class="row g-2 align-items-center">
@@ -100,7 +108,7 @@
             <div class="d-flex justify-content-between mb-2"><span class="text-muted">Recargo</span><strong id="pos-surcharge">$0.00</strong></div>
             <div class="d-flex justify-content-between fs-5 border-top pt-2"><span>Total</span><strong id="pos-total" class="text-primary">$0.00</strong></div>
           </div>
-          <button class="btn btn-success btn-lg w-100 mt-3" onclick="openCartModal()"><i class="bi bi-credit-card me-1"></i>Cobrar ahora</button>
+          <button class="btn btn-success btn-lg w-100 mt-3" {% if not cash_session_open %}disabled title="Abrí una caja para cobrar"{% endif %} onclick="openCartModal()"><i class="bi bi-credit-card me-1"></i>Cobrar ahora</button>
         </div>
       </div>
     </aside>
@@ -123,7 +131,7 @@
   </div>
 </div>
 
-<button class="btn btn-success position-fixed d-xl-none" style="right:16px;bottom:86px;z-index:1010;min-width:58px;min-height:58px;border-radius:999px" onclick="openCartModal()" aria-label="Cobrar">
+<button class="btn btn-success position-fixed d-xl-none" style="right:16px;bottom:86px;z-index:1010;min-width:58px;min-height:58px;border-radius:999px" {% if not cash_session_open %}disabled title="Abrí una caja para cobrar"{% endif %} onclick="openCartModal()" aria-label="Cobrar">
   <i class="bi bi-credit-card"></i> <span class="cart-count badge text-bg-light">0</span>
 </button>
 

@@ -22,21 +22,21 @@ services:
       - key: MP_OAUTH_ENCRYPTION_KEY
         sync: false
       - key: MP_OAUTH_REDIRECT_URI
-        value: https://stockarmobile.onrender.com/admin/mercado-pago/callback
+        value: https://www.stockarmobile.com/admin/mercado-pago/callback
       - key: MP_WEBHOOK_SECRET
         sync: false
       - key: APP_URL
-        value: https://stockarmobile.onrender.com
+        value: https://www.stockarmobile.com
       - key: LANDING_DEMO_VIDEO_URL
         value: https://www.youtube.com/embed/5qap5aO4i9A
       - key: MP_NOTIFICATION_URL
-        value: https://stockarmobile.onrender.com/admin/webhooks/mercadopago
+        value: https://www.stockarmobile.com/admin/webhooks/mercadopago
       - key: MP_SUCCESS_URL
-        value: https://stockarmobile.onrender.com/admin/portal?checkout=success
+        value: https://www.stockarmobile.com/admin/portal?checkout=success
       - key: MP_PENDING_URL
-        value: https://stockarmobile.onrender.com/admin/portal?checkout=pending
+        value: https://www.stockarmobile.com/admin/portal?checkout=pending
       - key: MP_FAILURE_URL
-        value: https://stockarmobile.onrender.com/admin/portal?checkout=failure
+        value: https://www.stockarmobile.com/admin/portal?checkout=failure
       - key: DATABASE_URL
         fromDatabase:
           name: stockarmobile-db

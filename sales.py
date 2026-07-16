@@ -48,6 +48,49 @@ def _cart_tenant_key():
     return f"{company_id}:{current_user.id}"
 
 
+def _current_open_cash_session():
+    from app import CashSession, scope_query_to_company
+
+    session_query = scope_query_to_company(CashSession.query.filter_by(status="abierta", user_id=current_user.id), CashSession)
+    return session_query.order_by(CashSession.opened_at.desc()).first()
+
+
+def _cash_sale_amount(data, final_total):
+    primary_method = (data.get("metodo_pago") or data.get("payment_method") or "").strip().upper()
+    secondary_method = (data.get("metodo_pago_2") or data.get("secondary_payment_method") or "").strip().upper()
+    primary_amount = _to_decimal(data.get("monto_pago") or data.get("paid_amount"))
+    secondary_amount = _to_decimal(data.get("monto_pago_2") or data.get("secondary_paid_amount"))
+
+    if primary_method == "EFECTIVO" and primary_amount <= 0:
+        if secondary_method == "EFECTIVO" and secondary_amount > 0:
+            primary_amount = max(final_total - secondary_amount, Decimal("0.00"))
+        else:
+            primary_amount = final_total
+    if secondary_method == "EFECTIVO" and secondary_amount <= 0:
+        if primary_method == "EFECTIVO" and primary_amount > 0:
+            secondary_amount = Decimal("0.00")
+        else:
+            secondary_amount = max(final_total - primary_amount, Decimal("0.00"))
+
+    cash_amount = Decimal("0.00")
+    if primary_method == "EFECTIVO":
+        cash_amount += primary_amount
+    if secondary_method == "EFECTIVO":
+        cash_amount += secondary_amount
+    return min(cash_amount, final_total)
+
+
+def _require_open_cash_session(json_response=False):
+    open_session = _current_open_cash_session()
+    if open_session is not None:
+        return open_session
+    message = "Debes abrir una caja antes de comenzar a vender."
+    if json_response:
+        return jsonify({"error": message}), 409
+    flash(message, "warning")
+    return None
+
+
 def _pos_qr_draft_session_key():
     return f"pos_qr_draft_{_cart_tenant_key()}"
 
@@ -196,6 +239,7 @@ def index():
             url=company.payment_qr_url or "",
         )
     mp_connection_summary = MercadoPagoOAuthService().summarize_connection(getattr(company, "mercadopago_connection", None)) if company else MercadoPagoOAuthService().summarize_connection(None)
+    cash_session_open = _current_open_cash_session() is not None
     total_sales_amount = scope_query_to_company(db.session.query(db.func.coalesce(db.func.sum(Sale.total_amount), 0)), Sale).scalar() or 0
     sales = scope_query_to_company(Sale.query.options(selectinload(Sale.client)), Sale).order_by(Sale.date.desc()).limit(20).all()
     return render_template(
@@ -209,6 +253,7 @@ def index():
         qr_payment_image_url=qr_payment_image_url,
         has_qr_payment_data=has_qr_data,
         mp_connection_summary=mp_connection_summary,
+        cash_session_open=cash_session_open,
     )
 
 
@@ -279,7 +324,12 @@ def checkout():
     from app import Client, scope_query_to_company
 
     if request.method == "POST":
+        if _require_open_cash_session() is None:
+            return redirect(url_for("cash.index"))
         return _create_sale_from_items(_get_cart().get("items", {}), request.form)
+
+    if _require_open_cash_session() is None:
+        return redirect(url_for("cash.index"))
 
     cart = _get_cart()
     if not cart.get("items"):
@@ -324,6 +374,9 @@ def api_checkout():
         return jsonify({"error": "Datos de carrito invalidos."}), 400
     if not items:
         return jsonify({"error": "El carrito esta vacio."}), 400
+    open_session = _require_open_cash_session(json_response=True)
+    if isinstance(open_session, tuple):
+        return open_session
     result = _create_sale_from_items(items, payload, json_response=True)
     return result
 
@@ -352,6 +405,10 @@ def api_mp_qr_create():
 
     if not items:
         return jsonify({"error": "El carrito esta vacio."}), 400
+
+    open_session = _require_open_cash_session(json_response=True)
+    if isinstance(open_session, tuple):
+        return open_session
 
     try:
         lines, subtotal, discount, tax_total, total = _calculate_lines(items)
@@ -498,6 +555,10 @@ def api_mp_qr_finalize():
     if not draft_id:
         return jsonify({"error": "draft_id requerido"}), 400
 
+    open_session = _require_open_cash_session(json_response=True)
+    if isinstance(open_session, tuple):
+        return open_session
+
     payment = Payment.query.filter_by(id=draft_id, company_id=getattr(current_user, "company_id", None)).first_or_404()
     if (payment.status or "").lower() != "approved":
         return jsonify({"error": "El pago aun no fue aprobado."}), 409
@@ -545,11 +606,16 @@ def api_mp_qr_finalize():
 
 
 def _create_sale_from_items(items, data, json_response=False):
-    from app import Client, Sale, SaleItem, db, record_audit, scope_query_to_company
+    from app import CashMovement, Client, Sale, SaleItem, db, record_audit, scope_query_to_company
 
     sale = None
     try:
         current_app.logger.info("[sales] carrito recibido (_create_sale_from_items): items=%s json_response=%s", items, json_response)
+        cash_session = _require_open_cash_session(json_response=json_response)
+        if cash_session is None:
+            return redirect(url_for("cash.index"))
+        if isinstance(cash_session, tuple):
+            return cash_session
         lines, subtotal, discount, tax_total, final_total = _calculate_lines(items)
         general_discount = _to_decimal(data.get("descuento_general") or data.get("general_discount"))
         surcharge = _to_decimal(data.get("recargo") or data.get("surcharge"))
@@ -586,11 +652,27 @@ def _create_sale_from_items(items, data, json_response=False):
             client_id=client.id if client else None,
             seller_id=current_user.id,
             company_id=getattr(current_user, "company_id", None),
+            cash_session_id=cash_session.id,
             date=utcnow(),
         )
         db.session.add(sale)
         db.session.flush()
         current_app.logger.info("[sales] Sale creada en flush: sale_id=%s", sale.id)
+
+        cash_amount = _cash_sale_amount(data, final_total)
+        if cash_amount > 0:
+            db.session.add(
+                CashMovement(
+                    session_id=cash_session.id,
+                    user_id=current_user.id,
+                    company_id=getattr(current_user, "company_id", None),
+                    sale_id=sale.id,
+                    movement_type="ingreso",
+                    category="venta",
+                    amount=cash_amount,
+                    description=f"Venta #{sale.id}",
+                )
+            )
 
         for line in lines:
             product = line["product"]
@@ -687,13 +769,14 @@ def edit(sale_id):
 @bp.route("/<int:sale_id>/delete", methods=["POST"])
 @tenant_required
 def delete_sale(sale_id):
-    from app import Product, Sale, SaleItem, db, record_audit, scope_query_to_company
+    from app import CashMovement, Product, Sale, SaleItem, db, record_audit, scope_query_to_company
 
     if getattr(current_user, "role", None) != "admin":
         abort(403)
 
     sale = scope_query_to_company(Sale.query.options(selectinload(Sale.items).selectinload(SaleItem.product)), Sale).filter(Sale.id == sale_id).first_or_404()
 
+    CashMovement.query.filter_by(sale_id=sale.id).delete(synchronize_session=False)
     for item in sale.items:
         product = item.product or scope_query_to_company(db.session.query(Product), Product).filter(Product.id == item.product_id).first()
         if product is not None:

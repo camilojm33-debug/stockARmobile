@@ -506,9 +506,19 @@
                     <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
                     <button class="btn btn-sm {{ 'btn-outline-danger' if user.active else 'btn-outline-success' }}" type="submit">{{ 'Desactivar' if user.active else 'Activar' }}</button>
                   </form>
-                  <form method="post" action="{{ url_for('company_billing.company_settings_user_reset_password', user_id=user.id) }}">
+                  <form method="post" action="{{ url_for('company_billing.company_settings_user_reset_password', user_id=user.id) }}" class="border rounded-3 p-2 bg-light d-grid gap-2" style="min-width: 320px;">
                     <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
-                    <button class="btn btn-sm btn-outline-warning" type="submit">Restablecer contraseña</button>
+                    <div class="d-flex align-items-center justify-content-between gap-2">
+                      <span class="small fw-semibold text-muted">Contraseña</span>
+                      <label class="form-check-label small text-muted d-flex align-items-center gap-1 mb-0">
+                        <input class="form-check-input m-0" type="checkbox" name="force_change" value="1">
+                        obligar cambio
+                      </label>
+                    </div>
+                    <input class="form-control form-control-sm" type="password" name="new_password" placeholder="Nueva contraseña o dejá vacío para temporal">
+                    <input class="form-control form-control-sm" type="password" name="confirm_password" placeholder="Confirmar contraseña">
+                    <div class="small text-muted">Si no completás los campos, se genera una contraseña temporal como antes.</div>
+                    <button class="btn btn-sm btn-outline-warning" type="submit">Guardar contraseña</button>
                   </form>
                   <form method="post" action="{{ url_for('company_billing.company_settings_user_delete', user_id=user.id) }}" onsubmit="return confirm('¿Eliminar empleado {{ user.name }}? Si tiene historial será desactivado automáticamente.');">
                     <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
@@ -1332,20 +1342,276 @@
         </div>
         <a class="btn btn-primary" href="{{ url_for('company_billing.company_settings', panel='stats') }}"><i class="bi bi-graph-up me-1"></i>Estadísticas</a>
       </div>
-      <div class="row g-2">
-        <div class="col-md-6 col-xl-4"><a class="btn btn-outline-primary w-100 text-start" href="{{ url_for('company_billing.company_settings', panel='company') }}"><i class="bi bi-building me-2"></i>Datos de la empresa</a></div>
-        <div class="col-md-6 col-xl-4"><a class="btn btn-outline-primary w-100 text-start" href="{{ url_for('company_billing.company_settings', panel='employees') }}"><i class="bi bi-people me-2"></i>Empleados</a></div>
-        <div class="col-md-6 col-xl-4"><a class="btn btn-outline-primary w-100 text-start" href="{{ url_for('company_billing.company_settings', panel='schedules') }}"><i class="bi bi-calendar-week me-2"></i>Horarios de empleados</a></div>
-        <div class="col-md-6 col-xl-4"><a class="btn btn-outline-primary w-100 text-start" href="{{ url_for('company_billing.company_settings', panel='security') }}"><i class="bi bi-shield-lock me-2"></i>Seguridad</a></div>
-        <div class="col-md-6 col-xl-4"><a class="btn btn-outline-primary w-100 text-start" href="{{ url_for('company_billing.company_settings', panel='backups') }}"><i class="bi bi-hdd-stack me-2"></i>Backups</a></div>
-        <div class="col-md-6 col-xl-4"><a class="btn btn-outline-primary w-100 text-start" href="{{ url_for('company_billing.company_settings', panel='billing') }}"><i class="bi bi-receipt me-2"></i>Facturación</a></div>
-        <div class="col-md-6 col-xl-4"><a class="btn btn-outline-primary w-100 text-start" href="{{ url_for('company_billing.company_settings', panel='mercado-pago') }}"><i class="bi bi-wallet2 me-2"></i>Mercado Pago</a></div>
-        <div class="col-md-6 col-xl-4"><a class="btn btn-outline-primary w-100 text-start" href="{{ url_for('company_billing.company_settings', panel='general') }}"><i class="bi bi-sliders me-2"></i>Configuración general</a></div>
-        <div class="col-md-6 col-xl-4"><a class="btn btn-outline-primary w-100 text-start" href="{{ url_for('company_billing.company_settings', panel='branches') }}"><i class="bi bi-shop-window me-2"></i>Sucursales</a></div>
+      {% set module_tiles = [
+        {'panel': 'company', 'title': 'Datos de la empresa', 'icon': 'bi-building', 'tone': 'primary', 'description': 'Perfil, contacto y datos comerciales.'},
+        {'panel': 'employees', 'title': 'Empleados', 'icon': 'bi-people', 'tone': 'info', 'description': 'Usuarios, permisos y accesos.'},
+        {'panel': 'schedules', 'title': 'Horarios', 'icon': 'bi-calendar-week', 'tone': 'success', 'description': 'Turnos, días y asignaciones.'},
+        {'panel': 'security', 'title': 'Seguridad', 'icon': 'bi-shield-lock', 'tone': 'warning', 'description': 'PIN, sesiones y bloqueo.'},
+        {'panel': 'backups', 'title': 'Backups', 'icon': 'bi-hdd-stack', 'tone': 'dark', 'description': 'Copias, importación y restore.'},
+        {'panel': 'billing', 'title': 'Facturación', 'icon': 'bi-receipt', 'tone': 'danger', 'description': 'Cobros, comprobantes y facturas.'},
+        {'panel': 'mercado-pago', 'title': 'Mercado Pago', 'icon': 'bi-wallet2', 'tone': 'mp', 'description': 'Conectar cuenta y revisar estado.'},
+        {'panel': 'general', 'title': 'Configuración', 'icon': 'bi-sliders', 'tone': 'secondary', 'description': 'Moneda, idioma e impresoras.'},
+        {'panel': 'branches', 'title': 'Sucursales', 'icon': 'bi-shop-window', 'tone': 'indigo', 'description': 'Puntos de atención y sedes.'}
+      ] %}
+      <div class="row g-3 company-module-grid">
+        {% for tile in module_tiles %}
+        <div class="col-sm-6 col-xl-4">
+          <a class="card app-card company-module-card h-100 text-decoration-none text-reset" href="{{ url_for('company_billing.company_settings', panel=tile.panel) }}" style="--tile-accent: var(--module-{{ tile.tone }});">
+            <div class="card-body d-flex align-items-start gap-3 p-4">
+              <div class="company-module-icon"><i class="bi {{ tile.icon }}"></i></div>
+              <div class="flex-grow-1">
+                <div class="company-module-title">{{ tile.title }}</div>
+                <div class="company-module-description">{{ tile.description }}</div>
+              </div>
+              <i class="bi bi-arrow-right-short company-module-arrow"></i>
+            </div>
+          </a>
+        </div>
+        {% endfor %}
       </div>
+    </div>
+  </div>
+
+  {% set dashboard = company_dashboard or {} %}
+  <div class="card app-card mb-4 company-dashboard-shell">
+    <div class="card-body p-4 p-lg-5">
+      <div class="d-flex flex-column flex-lg-row justify-content-between align-items-lg-center gap-3 mb-4">
+        <div>
+          <div class="fw-bold h5 mb-1">Dashboard de Mi Empresa</div>
+          <p class="text-muted mb-0">Ventas, ranking de categorias y productos mas vendidos.</p>
+        </div>
+        <span class="badge text-bg-primary-subtle text-primary-emphasis rounded-pill px-3 py-2"><i class="bi bi-graph-up-arrow me-1"></i>Resumen en vivo</span>
+      </div>
+
+      {% if dashboard.get('can_view_economic_metrics') %}
+      <div class="row g-4 mb-4">
+        <div class="col-12 col-md-4">
+          <div class="company-mini-stat">
+            <div class="small text-muted text-uppercase fw-semibold">Ventas hoy</div>
+            <div class="h3 mb-0">{{ dashboard.get('ventas_hoy', 0) }}</div>
+          </div>
+        </div>
+        <div class="col-12 col-md-4">
+          <div class="company-mini-stat">
+            <div class="small text-muted text-uppercase fw-semibold">Productos vendidos</div>
+            <div class="h3 mb-0">{{ '%.3g'|format(dashboard.get('productos_vendidos', 0)) }}</div>
+          </div>
+        </div>
+        <div class="col-12 col-md-4">
+          <div class="company-mini-stat">
+            <div class="small text-muted text-uppercase fw-semibold">Total vendido</div>
+            <div class="h3 mb-0">${{ '%.2f'|format(dashboard.get('total_sales_amount', 0)) }}</div>
+          </div>
+        </div>
+      </div>
+
+      <div class="row g-4 mb-4">
+        <div class="col-lg-8">
+          <div class="card app-card h-100 border-0 company-chart-card">
+            <div class="card-header bg-white border-0 fw-bold pt-4 px-4">Ventas de los ultimos 7 dias</div>
+            <div class="card-body px-3 px-lg-4 pb-4"><canvas id="companySalesTrendChart" height="120"></canvas></div>
+          </div>
+        </div>
+        <div class="col-lg-4">
+          <div class="card app-card h-100 border-0 company-chart-card">
+            <div class="card-header bg-white border-0 fw-bold pt-4 px-4">Ranking categorias</div>
+            <div class="card-body px-3 px-lg-4 pb-4"><canvas id="companyCategoryChart" height="220"></canvas></div>
+          </div>
+        </div>
+      </div>
+
+      <div class="row g-4">
+        <div class="col-12">
+          <div class="card app-card border-0 company-chart-card">
+            <div class="card-header bg-white border-0 fw-bold pt-4 px-4">Productos mas vendidos</div>
+            <div class="card-body pt-0 px-3 px-lg-4 pb-4">
+              {% if dashboard.get('productos_mas_vendidos') %}
+              <div class="table-responsive">
+                <table class="table table-hover align-middle mb-0">
+                  <thead><tr><th>Producto</th><th>Cantidad</th><th class="text-end">Total</th></tr></thead>
+                  <tbody>
+                    {% for product in dashboard.get('productos_mas_vendidos') %}
+                    <tr>
+                      <td class="fw-semibold">{{ product.name }}</td>
+                      <td>{{ product.sales_count }}</td>
+                      <td class="text-end fw-semibold">${{ '%.2f'|format(product.total_sales) }}</td>
+                    </tr>
+                    {% endfor %}
+                  </tbody>
+                </table>
+              </div>
+              {% else %}
+              <div class="text-center text-muted py-4">Aun no hay ventas suficientes para mostrar el ranking.</div>
+              {% endif %}
+            </div>
+          </div>
+        </div>
+      </div>
+      {% else %}
+      <div class="card app-card border-warning">
+        <div class="card-body p-4 d-flex align-items-start gap-3">
+          <span class="display-6 text-warning"><i class="bi bi-lock-fill"></i></span>
+          <div>
+            <h2 class="h5 fw-bold mb-1">Información restringida</h2>
+            <p class="text-muted mb-0">Las métricas economicas del dashboard solo pueden ser visualizadas por el Administrador de la empresa.</p>
+          </div>
+        </div>
+      </div>
+      {% endif %}
     </div>
   </div>
   {% endif %}
   {% endif %}
 </div>
+{% endblock %}
+
+{% block extra_css %}
+<style>
+  :root {
+    --module-primary: #2563eb;
+    --module-info: #0ea5e9;
+    --module-success: #16a34a;
+    --module-warning: #f59e0b;
+    --module-dark: #334155;
+    --module-danger: #ef4444;
+    --module-mp: #00b1ea;
+    --module-secondary: #64748b;
+    --module-indigo: #6366f1;
+  }
+  .company-module-card {
+    border-radius: 20px;
+    border-width: 1px;
+    transition: transform .18s ease, box-shadow .18s ease, border-color .18s ease;
+    overflow: hidden;
+    position: relative;
+    background:
+      radial-gradient(circle at top right, rgba(255,255,255,.62), transparent 38%),
+      linear-gradient(180deg, rgba(255,255,255,.98), rgba(247,250,255,.96));
+  }
+  .company-module-card::before {
+    content: "";
+    position: absolute;
+    inset: 0;
+    border-radius: inherit;
+    border: 1px solid color-mix(in srgb, var(--tile-accent) 24%, transparent);
+    pointer-events: none;
+  }
+  .company-module-card:hover {
+    transform: translateY(-4px);
+    box-shadow: 0 18px 34px rgba(15, 23, 42, .12);
+    border-color: color-mix(in srgb, var(--tile-accent) 35%, var(--app-line));
+  }
+  .company-module-icon {
+    width: 58px;
+    height: 58px;
+    border-radius: 18px;
+    background: color-mix(in srgb, var(--tile-accent) 16%, white);
+    color: var(--tile-accent);
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 1.55rem;
+    flex: 0 0 auto;
+    box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--tile-accent) 18%, transparent);
+  }
+  .company-module-title {
+    font-weight: 800;
+    font-size: 1.02rem;
+    line-height: 1.2;
+    margin-bottom: .3rem;
+  }
+  .company-module-description {
+    color: var(--app-muted);
+    font-size: .92rem;
+    line-height: 1.35;
+  }
+  .company-module-arrow {
+    color: var(--tile-accent);
+    font-size: 1.7rem;
+    margin-top: .1rem;
+  }
+  .company-dashboard-shell {
+    border-radius: 24px;
+    background:
+      radial-gradient(circle at top left, rgba(37,99,235,.08), transparent 34%),
+      radial-gradient(circle at top right, rgba(14,165,233,.08), transparent 30%),
+      linear-gradient(180deg, rgba(255,255,255,.98), rgba(248,251,255,.95));
+  }
+  .company-mini-stat {
+    border: 1px solid var(--app-line);
+    border-radius: 18px;
+    background: #fff;
+    padding: 1rem 1.1rem;
+    box-shadow: var(--app-shadow-soft);
+    min-height: 100px;
+  }
+  .company-chart-card {
+    border-radius: 20px;
+  }
+  .company-module-grid { margin-top: .25rem; }
+  @media (max-width: 575.98px) {
+    .company-module-card .card-body { padding: 1rem !important; }
+    .company-module-icon { width: 50px; height: 50px; border-radius: 16px; font-size: 1.35rem; }
+    .company-module-title { font-size: .98rem; }
+    .company-module-description { font-size: .86rem; }
+  }
+</style>
+{% endblock %}
+
+{% block extra_js %}
+{% if (company_dashboard or {}).get('can_view_economic_metrics') %}
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.7/dist/chart.umd.min.js"></script>
+<script>
+  (() => {
+    const dashboard = {
+      chart_labels: {{ (company_dashboard.get('chart_labels') or [])|tojson }},
+      chart_sales: {{ (company_dashboard.get('chart_sales') or [])|tojson }},
+      chart_categories_labels: {{ (company_dashboard.get('chart_categories_labels') or [])|tojson }},
+      chart_categories_data: {{ (company_dashboard.get('chart_categories_data') or [])|tojson }}
+    };
+    const salesCanvas = document.getElementById('companySalesTrendChart');
+    if (salesCanvas && dashboard.chart_labels && dashboard.chart_sales) {
+      new Chart(salesCanvas, {
+        type: 'line',
+        data: {
+          labels: dashboard.chart_labels,
+          datasets: [{
+            label: 'Ventas',
+            data: dashboard.chart_sales,
+            borderColor: '#2563eb',
+            backgroundColor: 'rgba(37, 99, 235, .14)',
+            fill: true,
+            tension: .35,
+            pointRadius: 3,
+            pointHoverRadius: 5
+          }]
+        },
+        options: {
+          responsive: true,
+          plugins: { legend: { display: false } },
+          scales: { y: { beginAtZero: true } }
+        }
+      });
+    }
+
+    const categoryCanvas = document.getElementById('companyCategoryChart');
+    if (categoryCanvas && dashboard.chart_categories_labels && dashboard.chart_categories_data) {
+      new Chart(categoryCanvas, {
+        type: 'doughnut',
+        data: {
+          labels: dashboard.chart_categories_labels,
+          datasets: [{
+            data: dashboard.chart_categories_data,
+            backgroundColor: ['#2563eb', '#0ea5e9', '#10b981', '#f59e0b', '#ef4444', '#8b5cf6', '#14b8a6', '#64748b']
+          }]
+        },
+        options: {
+          responsive: true,
+          plugins: { legend: { position: 'bottom' } }
+        }
+      });
+    }
+  })();
+</script>
+{% endif %}
 {% endblock %}

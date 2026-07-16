@@ -708,8 +708,16 @@ def mercado_pago_connect():
     session_key = f"mp_oauth_state_{company.id}"
     session[session_key] = state
     session.modified = True
-    redirect_uri = service.oauth_redirect_uri(url_for("company_billing.mercado_pago_callback", _external=True))
+    redirect_uri = service.oauth_redirect_uri(service.default_oauth_redirect_uri())
     auth_url = service.build_authorization_url(state=state, redirect_uri=redirect_uri)
+    current_app.logger.info(
+        "Mercado Pago OAuth start: company_id=%s client_id=%s redirect_uri=%s state=%s auth_url=%s",
+        company.id,
+        service._client_id(),
+        redirect_uri,
+        state,
+        auth_url,
+    )
     record_audit(action="mercadopago_oauth_start", entity="company", entity_id=company.id, detail="Inicio de conexión OAuth con Mercado Pago")
     db.session.commit()
     return redirect(auth_url)
@@ -727,6 +735,14 @@ def mercado_pago_callback():
 
     error = request.args.get("error")
     if error:
+        error_description = request.args.get("error_description") or ""
+        current_app.logger.error(
+            "Mercado Pago OAuth callback error: company_id=%s error=%s error_description=%s args=%s",
+            company.id,
+            error,
+            error_description,
+            dict(request.args),
+        )
         flash(f"Mercado Pago rechazó la conexión: {error}", "danger")
         return redirect(url_for("company_billing.company_settings", panel="mercado-pago"))
 
@@ -734,12 +750,29 @@ def mercado_pago_callback():
     state = (request.args.get("state") or "").strip()
     session_key = f"mp_oauth_state_{company.id}"
     expected_state = session.get(session_key)
+    current_app.logger.info(
+        "Mercado Pago OAuth callback received: company_id=%s code_present=%s state=%s expected_state=%s redirect_uri=%s args=%s",
+        company.id,
+        bool(code),
+        state,
+        expected_state,
+        service.oauth_redirect_uri(url_for("company_billing.mercado_pago_callback", _external=True)),
+        dict(request.args),
+    )
     if not code or not state or not expected_state or state != expected_state:
+        current_app.logger.warning(
+            "Mercado Pago OAuth state validation failed: company_id=%s code_present=%s received_state=%s expected_state=%s session_key=%s",
+            company.id,
+            bool(code),
+            state,
+            expected_state,
+            session_key,
+        )
         flash("La devolución OAuth no pudo validarse.", "danger")
         return redirect(url_for("company_billing.company_settings", panel="mercado-pago"))
 
     session.pop(session_key, None)
-    redirect_uri = service.oauth_redirect_uri(url_for("company_billing.mercado_pago_callback", _external=True))
+    redirect_uri = service.oauth_redirect_uri(service.default_oauth_redirect_uri())
     try:
         token_payload = service.exchange_code(code=code, redirect_uri=redirect_uri)
         access_token = token_payload.get("access_token") or ""
@@ -747,6 +780,13 @@ def mercado_pago_callback():
             raise RuntimeError("Mercado Pago no devolvió access_token")
         profile = service.fetch_user_profile(access_token=access_token)
         connection = service.save_connection(company_id=company.id, token_payload=token_payload, profile=profile)
+        current_app.logger.info(
+            "Mercado Pago OAuth connected: company_id=%s mp_user_id=%s account_email=%s country=%s",
+            company.id,
+            connection.mp_user_id,
+            connection.account_email,
+            connection.country,
+        )
         record_audit(action="mercadopago_oauth_connected", entity="company", entity_id=company.id, detail=f"Cuenta Mercado Pago conectada: {connection.account_email or connection.mp_user_id or 'sin email'}")
         db.session.commit()
         flash("Mercado Pago conectado correctamente.", "success")
@@ -1261,13 +1301,36 @@ def company_settings_user_reset_password(user_id):
         return blocked
 
     user = User.query.filter_by(id=user_id, company_id=company.id).first_or_404()
+    new_password = (request.form.get("new_password") or "").strip()
+    confirm_password = (request.form.get("confirm_password") or "").strip()
+    force_change = (request.form.get("force_change") or "").strip().lower() in {"1", "true", "yes", "on"}
+
+    if new_password or confirm_password:
+        if len(new_password) < 6:
+            flash("La nueva contrasena debe tener al menos 6 caracteres.", "danger")
+            return redirect(url_for("company_billing.company_settings", panel="employees"))
+        if new_password != confirm_password:
+            flash("Las contrasenas no coinciden.", "danger")
+            return redirect(url_for("company_billing.company_settings", panel="employees"))
+        user.set_password(new_password)
+        user.must_change_password = force_change
+        record_audit(
+            action="company_user_set_password",
+            entity="user",
+            entity_id=user.id,
+            detail=f"Contrasena configurada manualmente para {user.username}. force_change={force_change}",
+        )
+        db.session.commit()
+        flash(f"Contrasena actualizada correctamente para {user.username}.", "success")
+        return redirect(url_for("company_billing.company_settings", panel="employees"))
+
     temp_password = _temporary_password()
     user.set_password(temp_password)
     user.must_change_password = True
     record_audit(action="company_user_reset_password", entity="user", entity_id=user.id, detail=f"Contrasena restablecida para {user.username}")
     db.session.commit()
     flash(f"Contrasena restablecida. Temporal para {user.username}: {temp_password}", "success")
-    return redirect(url_for("company_billing.company_settings"))
+    return redirect(url_for("company_billing.company_settings", panel="employees"))
 
 
 @bp.route("/company-settings/password", methods=["POST"])
@@ -1695,6 +1758,7 @@ def company_settings():
     selected_backup = None
     selected_backup_summary = None
     preview_backup_id = request.args.get("preview_id", type=int)
+    company_dashboard = {}
     if pin_verified:
         users, cash_rows = _build_user_and_cash_rows(
             company.id,
@@ -1761,6 +1825,11 @@ def company_settings():
             if selected_backup is not None:
                 selected_backup_summary = backup_summaries.get(selected_backup.id)
 
+        if not settings_panel:
+            from services.dashboard_service import build_dashboard_context
+
+            company_dashboard = build_dashboard_context()
+
     return render_template(
         "company_billing/settings.html",
         company=company,
@@ -1807,6 +1876,7 @@ def company_settings():
         backup_section_options=BackupService.restore_section_options(),
         preview_backup_id=preview_backup_id,
         format_size=_format_size,
+        company_dashboard=company_dashboard,
     )
 
 

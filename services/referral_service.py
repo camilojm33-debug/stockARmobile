@@ -19,8 +19,8 @@ class ReferralService:
     def _base_url() -> str:
         import os
 
-        app_url = (os.environ.get("APP_URL") or "https://stockarmobile.com").strip().rstrip("/")
-        return app_url or "https://stockarmobile.com"
+        app_url = (os.environ.get("APP_URL") or "https://www.stockarmobile.com").strip().rstrip("/")
+        return app_url or "https://www.stockarmobile.com"
 
     @classmethod
     def generate_referral_code(cls, db_session) -> str:

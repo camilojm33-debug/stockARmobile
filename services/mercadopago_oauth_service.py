@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import base64
 import hashlib
+import logging
 import json
 import os
 import secrets
@@ -12,17 +13,23 @@ from urllib.parse import urlencode
 
 import requests
 from cryptography.fernet import Fernet
+from flask import current_app, has_app_context
 
 from app import MercadoPagoConnection, db, utcnow
 
 
 class MercadoPagoOAuthService:
-    AUTH_URL = "https://auth.mercadopago.com/authorization"
+    AUTH_URL = "https://auth.mercadopago.com.ar/authorization"
     TOKEN_URL = "https://api.mercadopago.com/oauth/token"
     USERINFO_URL = "https://api.mercadopago.com/users/me"
 
     def __init__(self):
         self.session = requests.Session()
+
+    def _logger(self):
+        if has_app_context():
+            return current_app.logger
+        return logging.getLogger(__name__)
 
     def _client_id(self) -> str:
         return (os.environ.get("MP_CLIENT_ID") or "").strip()
@@ -50,6 +57,14 @@ class MercadoPagoOAuthService:
     def oauth_redirect_uri(self, fallback: str) -> str:
         return self._redirect_uri() or fallback
 
+    def default_oauth_redirect_uri(self) -> str:
+        app_url = ""
+        if has_app_context():
+            app_url = (current_app.config.get("APP_URL") or "").strip().rstrip("/")
+        if not app_url:
+            app_url = (os.environ.get("APP_URL") or "https://www.stockarmobile.com").strip().rstrip("/")
+        return f"{app_url}/admin/mercado-pago/callback"
+
     def build_authorization_url(self, *, state: str, redirect_uri: str) -> str:
         params = {
             "client_id": self._client_id(),
@@ -58,7 +73,15 @@ class MercadoPagoOAuthService:
             "state": state,
             "redirect_uri": redirect_uri,
         }
-        return f"{self.AUTH_URL}?{urlencode(params)}"
+        authorization_url = f"{self.AUTH_URL}?{urlencode(params)}"
+        self._logger().info(
+            "Mercado Pago OAuth authorization generated: url=%s client_id=%s redirect_uri=%s state=%s",
+            authorization_url,
+            params["client_id"],
+            redirect_uri,
+            state,
+        )
+        return authorization_url
 
     def _post_token(self, *, payload: dict[str, str]) -> dict:
         client_id = self._client_id()
@@ -70,10 +93,30 @@ class MercadoPagoOAuthService:
             "client_secret": client_secret,
             **payload,
         }
+        self._logger().info(
+            "Mercado Pago OAuth token request: url=%s client_id=%s grant_type=%s redirect_uri=%s has_code=%s has_refresh_token=%s",
+            self.TOKEN_URL,
+            client_id,
+            payload.get("grant_type"),
+            payload.get("redirect_uri"),
+            bool(payload.get("code")),
+            bool(payload.get("refresh_token")),
+        )
         response = self.session.post(self.TOKEN_URL, data=body, timeout=25)
         if response.status_code >= 400:
+            self._logger().error(
+                "Mercado Pago OAuth token error: http_status=%s response_body=%s",
+                response.status_code,
+                response.text,
+            )
             raise RuntimeError(f"Mercado Pago OAuth error {response.status_code}: {response.text[:500]}")
-        return response.json()
+        token_payload = response.json()
+        self._logger().info(
+            "Mercado Pago OAuth token response received: http_status=%s keys=%s",
+            response.status_code,
+            sorted(token_payload.keys()),
+        )
+        return token_payload
 
     def exchange_code(self, *, code: str, redirect_uri: str) -> dict:
         return self._post_token(
@@ -99,8 +142,19 @@ class MercadoPagoOAuthService:
             timeout=25,
         )
         if response.status_code >= 400:
+            self._logger().error(
+                "Mercado Pago OAuth userinfo error: http_status=%s response_body=%s",
+                response.status_code,
+                response.text,
+            )
             raise RuntimeError(f"Mercado Pago user profile error {response.status_code}: {response.text[:500]}")
-        return response.json()
+        profile = response.json()
+        self._logger().info(
+            "Mercado Pago OAuth userinfo response received: http_status=%s keys=%s",
+            response.status_code,
+            sorted(profile.keys()),
+        )
+        return profile
 
     def _fernet(self) -> Fernet:
         raw_env_key = (os.environ.get("MP_OAUTH_ENCRYPTION_KEY") or "").strip()

@@ -76,7 +76,7 @@ app.config["SMTP_USE_TLS"] = (os.environ.get("SMTP_USE_TLS") or "1").strip().low
 app.config["SMTP_USER"] = (os.environ.get("SMTP_USER") or "").strip()
 app.config["SMTP_PASSWORD"] = (os.environ.get("SMTP_PASSWORD") or "").strip()
 app.config["SMTP_FROM_EMAIL"] = (os.environ.get("SMTP_FROM_EMAIL") or app.config["SUPPORT_EMAIL"] or "no-reply@stockarmobile.com").strip()
-app.config["APP_URL"] = (os.environ.get("APP_URL") or "https://stockarmobile.com").strip().rstrip("/")
+app.config["APP_URL"] = (os.environ.get("APP_URL") or "https://www.stockarmobile.com").strip().rstrip("/")
 app.config["COMPANY_PIN_SESSION_TTL_MINUTES"] = int(os.environ.get("COMPANY_PIN_SESSION_TTL_MINUTES", "30"))
 app.wsgi_app = ProxyFix(app.wsgi_app, x_proto=1, x_host=1)
 
@@ -468,8 +468,10 @@ class Sale(db.Model):
     client_id = db.Column(db.Integer, db.ForeignKey("clients.id"))
     seller_id = db.Column(db.Integer, db.ForeignKey("users.id"))
     company_id = db.Column(db.Integer, db.ForeignKey("companies.id"))
+    cash_session_id = db.Column(db.Integer, db.ForeignKey("cash_sessions.id"), index=True)
     client = db.relationship("Client", backref="sales")
     seller = db.relationship("User", backref="sales")
+    cash_session = db.relationship("CashSession", backref="sales")
     items = db.relationship("SaleItem", backref="sale", lazy=True, cascade="all, delete-orphan")
     created_at = db.Column(db.DateTime, default=utcnow)
     updated_at = db.Column(db.DateTime, default=utcnow, onupdate=utcnow)
@@ -762,15 +764,28 @@ class CashSession(db.Model):
     id = db.Column(db.Integer, primary_key=True)
     user_id = db.Column(db.Integer, db.ForeignKey("users.id"), nullable=False)
     company_id = db.Column(db.Integer, db.ForeignKey("companies.id"))
+    opened_by_user_id = db.Column(db.Integer, db.ForeignKey("users.id"))
     opened_at = db.Column(db.DateTime, default=utcnow, index=True)
     closed_at = db.Column(db.DateTime)
     opening_amount = db.Column(MONEY, default=Decimal("0.00"))
     closing_amount = db.Column(MONEY)
     expected_amount = db.Column(MONEY, default=Decimal("0.00"))
+    counted_amount = db.Column(MONEY)
+    difference_amount = db.Column(MONEY)
+    closing_note = db.Column(db.Text)
     status = db.Column(db.String(20), default="abierta", index=True)
     note = db.Column(db.Text)
-    user = db.relationship("User")
+    reopened_at = db.Column(db.DateTime)
+    reopened_by_user_id = db.Column(db.Integer, db.ForeignKey("users.id"))
+    voided_at = db.Column(db.DateTime)
+    voided_by_user_id = db.Column(db.Integer, db.ForeignKey("users.id"))
+    void_reason = db.Column(db.Text)
+    user = db.relationship("User", foreign_keys=[user_id])
     movements = db.relationship("CashMovement", backref="session", cascade="all, delete-orphan")
+    company = db.relationship("Company", backref="cash_sessions")
+    opened_by = db.relationship("User", foreign_keys=[opened_by_user_id], backref="opened_cash_sessions")
+    reopened_by = db.relationship("User", foreign_keys=[reopened_by_user_id], backref="reopened_cash_sessions")
+    voided_by = db.relationship("User", foreign_keys=[voided_by_user_id], backref="voided_cash_sessions")
 
 
 class CashMovement(db.Model):
@@ -780,12 +795,18 @@ class CashMovement(db.Model):
     session_id = db.Column(db.Integer, db.ForeignKey("cash_sessions.id"))
     user_id = db.Column(db.Integer, db.ForeignKey("users.id"), nullable=False)
     company_id = db.Column(db.Integer, db.ForeignKey("companies.id"))
+    sale_id = db.Column(db.Integer, db.ForeignKey("sales.id"), index=True)
     movement_type = db.Column(db.String(20), nullable=False)
     category = db.Column(db.String(80))
     amount = db.Column(MONEY, nullable=False)
     description = db.Column(db.Text)
     created_at = db.Column(db.DateTime, default=utcnow, index=True)
     user = db.relationship("User")
+
+
+# Semantic aliases for the cash module.
+Caja = CashSession
+CajaMovimiento = CashMovement
 
 
 class Expense(db.Model):

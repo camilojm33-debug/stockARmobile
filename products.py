@@ -161,6 +161,13 @@ def _float_value(value, default=0.0):
         return default
 
 
+def _require_admin_product_management():
+    if getattr(current_user, "role", None) != "admin":
+        flash("Solo el administrador puede editar precios o eliminar productos.", "warning")
+        return redirect(url_for("products.index"))
+    return None
+
+
 def _save_product_image(upload):
     filename = (upload.filename or "").strip()
     if not filename:
@@ -275,6 +282,10 @@ def add():
 def edit(product_id=None, id=None):
     from app import Product, ProductForm, ProductModification, ProductPriceHistory, db, record_audit, scope_query_to_company
 
+    blocked = _require_admin_product_management()
+    if blocked is not None:
+        return blocked
+
     product = scope_query_to_company(db.session.query(Product), Product).filter(Product.id == (product_id or id)).first()
     if product is None:
         flash("Producto no encontrado.", "warning")
@@ -336,6 +347,10 @@ def edit(product_id=None, id=None):
 @tenant_required
 def delete(product_id=None, id=None):
     from app import Product, db, record_audit, scope_query_to_company
+
+    blocked = _require_admin_product_management()
+    if blocked is not None:
+        return blocked
 
     product = scope_query_to_company(db.session.query(Product), Product).filter(Product.id == (product_id or id)).first()
     if product:
@@ -464,6 +479,10 @@ def export_excel():
 def import_excel():
     from app import Product, ProductModification, db, scope_query_to_company
     from openpyxl import load_workbook
+
+    blocked = _require_admin_product_management()
+    if blocked is not None:
+        return blocked
 
     upload = request.files.get("file")
     if not upload or not upload.filename.lower().endswith(".xlsx"):

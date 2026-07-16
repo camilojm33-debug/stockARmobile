@@ -11,7 +11,7 @@ os.environ.setdefault("MP_OAUTH_ENCRYPTION_KEY", "test-oauth-encryption-key")
 import pytest
 
 import app as stock_app
-from app import Client, Company, Product, Subscription, User, db
+from app import CashMovement, CashSession, Client, Company, Product, Sale, Subscription, User, db
 from sqlalchemy.exc import ProgrammingError
 
 try:
@@ -69,6 +69,15 @@ def seed():
     db.session.commit()
 
 
+def open_cash_session(client, opening_amount="0"):
+    response = client.post(
+        "/caja/",
+        data={"action": "open", "opening_amount": opening_amount, "note": "Caja de prueba"},
+        follow_redirects=True,
+    )
+    assert response.status_code == 200
+
+
 def test_core_routes_and_decimal_checkout():
     client = stock_app.app.test_client()
     client.post("/auth/login", data={"username": "empresa_admin", "password": "admin123"})
@@ -89,6 +98,8 @@ def test_core_routes_and_decimal_checkout():
         response = client.get(path)
         assert response.status_code == 200, path
 
+    open_cash_session(client)
+
     response = client.post(
         "/ventas/api/checkout",
         json={"items": [{"productId": 1, "quantity": 0.350}], "metodo_pago": "EFECTIVO"},
@@ -107,6 +118,58 @@ def test_core_routes_and_decimal_checkout():
     assert client.get("/superadmin/billing").status_code == 200
     superadmin_dashboard = client.get("/dashboard/", follow_redirects=False)
     assert superadmin_dashboard.status_code in (301, 302)
+
+
+def test_checkout_requires_open_cash_session():
+    client = stock_app.app.test_client()
+    client.post("/auth/login", data={"username": "empresa_admin", "password": "admin123"})
+
+    response = client.post(
+        "/ventas/api/checkout",
+        json={"items": [{"productId": 1, "quantity": 1}], "metodo_pago": "EFECTIVO"},
+        headers={"X-Cart-Tenant": "1:1"},
+    )
+    assert response.status_code == 409
+    assert "Debes abrir una caja antes de comenzar a vender." in response.get_json()["error"]
+
+
+def test_cash_session_links_sales_and_movement():
+    client = stock_app.app.test_client()
+    client.post("/auth/login", data={"username": "empresa_admin", "password": "admin123"})
+
+    open_cash_session(client, opening_amount="100")
+
+    response = client.post(
+        "/ventas/api/checkout",
+        json={"items": [{"productId": 1, "quantity": 1}], "metodo_pago": "EFECTIVO", "monto_pago": 18000},
+        headers={"X-Cart-Tenant": "1:1"},
+    )
+    assert response.status_code == 200
+
+    with stock_app.app.app_context():
+        sale = Sale.query.order_by(Sale.id.desc()).first()
+        assert sale is not None
+        assert sale.cash_session_id is not None
+        session = CashSession.query.get(sale.cash_session_id)
+        assert session is not None
+        assert session.status == "abierta"
+        movement = CashMovement.query.filter_by(sale_id=sale.id).first()
+        assert movement is not None
+        assert float(movement.amount) == 18000.0
+
+    close_response = client.post(
+        "/caja/",
+        data={"action": "close", "counted_amount": "18100", "closing_note": "Cierre de prueba"},
+        follow_redirects=True,
+    )
+    assert close_response.status_code == 200
+
+    with stock_app.app.app_context():
+        session = CashSession.query.order_by(CashSession.id.desc()).first()
+        assert session is not None
+        assert session.status == "cerrada"
+        assert float(session.expected_amount) == 18100.0
+        assert float(session.difference_amount) == 0.0
 
 
 def test_admin_can_switch_to_employee_session_from_sidebar_flow():
@@ -632,6 +695,8 @@ def test_checkout_does_not_apply_automatic_tax():
     client = stock_app.app.test_client()
     client.post("/auth/login", data={"username": "empresa_admin", "password": "admin123"})
 
+    open_cash_session(client)
+
     response = client.post(
         "/ventas/api/checkout",
         json={
@@ -719,7 +784,7 @@ def test_product_price_margin_profit_reciprocal_calculation():
 
 def test_product_edit_reciprocal_calculation():
     client = stock_app.app.test_client()
-    client.post("/auth/login", data={"username": "empresa_admin", "password": "admin123"})
+    client.post("/auth/login", data={"username": "negocio_admin", "password": "admin123"})
 
     with stock_app.app.app_context():
         product = Product.query.filter_by(barcode="123456789012").first()
@@ -812,6 +877,58 @@ def test_product_edit_reciprocal_calculation():
         assert float(edited.margin) == 90.0
         assert float(edited.profit_percent) == 45.0
         assert float(edited.tax) == 0.0
+
+
+def test_employee_can_add_products_but_not_edit_prices_or_delete_them():
+    client = stock_app.app.test_client()
+    client.post("/auth/login", data={"username": "empresa_admin", "password": "admin123"})
+
+    created_response = client.post(
+        "/productos/add",
+        data={
+            "barcode": "EMP-ADD-001",
+            "name": "Producto empleado",
+            "sale_type": "unidad",
+            "unit_measure": "u",
+            "price": "500",
+            "cost_price": "300",
+            "stock": "4",
+            "min_stock": "1",
+        },
+        follow_redirects=False,
+    )
+    assert created_response.status_code in (301, 302)
+
+    with stock_app.app.app_context():
+        created = Product.query.filter_by(barcode="EMP-ADD-001").first()
+        assert created is not None
+        product_id = created.id
+
+    blocked_edit = client.post(
+        f"/productos/edit/{product_id}",
+        data={
+            "barcode": "EMP-ADD-001",
+            "name": "Producto empleado",
+            "sale_type": "unidad",
+            "unit_measure": "u",
+            "price": "999",
+            "cost_price": "300",
+            "stock": "4",
+            "min_stock": "1",
+            "pricing_source": "price",
+        },
+        follow_redirects=False,
+    )
+    assert blocked_edit.status_code in (301, 302)
+
+    blocked_delete = client.post(f"/productos/delete/{product_id}", follow_redirects=False)
+    assert blocked_delete.status_code in (301, 302)
+
+    with stock_app.app.app_context():
+        created = db.session.get(Product, product_id)
+        assert created is not None
+        assert float(created.price) == 500.0
+        assert created.active is True
 
 
 def test_company_can_save_qr_payment_settings():
@@ -1023,6 +1140,31 @@ def test_my_company_module_supports_employee_create_and_reset():
     )
     assert reset_password.status_code == 200
     assert "Contrasena restablecida" in reset_password.data.decode("utf-8")
+
+    custom_password = client.post(
+        f"/admin/company-settings/users/{created_id}/reset-password",
+        data={
+            "new_password": "cajero123",
+            "confirm_password": "cajero123",
+        },
+        follow_redirects=True,
+    )
+    assert custom_password.status_code == 200
+    assert "Contrasena actualizada correctamente" in custom_password.data.decode("utf-8")
+
+    with stock_app.app.app_context():
+        created = User.query.filter_by(username="cajero_nuevo").first()
+        assert created is not None
+        assert created.must_change_password is False
+        assert created.check_password("cajero123")
+
+    client.post("/auth/logout")
+    login_new_password = client.post(
+        "/auth/login",
+        data={"username": "cajero_nuevo", "password": "cajero123"},
+        follow_redirects=False,
+    )
+    assert login_new_password.status_code in (301, 302)
 
 
 def test_my_company_module_employee_permissions_delete_and_billing_pdf():
@@ -1961,7 +2103,7 @@ def test_referral_capture_and_register_attribution_flow():
             user_id=seller_user.id,
             dni="30111222",
             referral_code="REF7777",
-            referral_url="https://stockarmobile.com/?ref=REF7777",
+            referral_url="https://www.stockarmobile.com/?ref=REF7777",
             active=True,
         )
         db.session.add(seller_profile)
@@ -2025,7 +2167,7 @@ def test_referral_commission_lifecycle_and_payout_are_persistent():
             user_id=seller_user.id,
             dni="30999888",
             referral_code="REF8888",
-            referral_url="https://stockarmobile.com/?ref=REF8888",
+            referral_url="https://www.stockarmobile.com/?ref=REF8888",
             active=True,
         )
         db.session.add(profile)
@@ -2107,7 +2249,7 @@ def test_referral_role_isolation_between_seller_and_superadmin():
                 user_id=seller_user.id,
                 dni="30123123",
                 referral_code="REF1234",
-                referral_url="https://stockarmobile.com/?ref=REF1234",
+                referral_url="https://www.stockarmobile.com/?ref=REF1234",
                 active=True,
             )
         )
@@ -2207,7 +2349,7 @@ def test_webhook_approved_activates_subscription_and_creates_commission_automati
         seller = ReferralSeller(
             user_id=seller_user.id,
             referral_code="REF9999",
-            referral_url="https://stockarmobile.com/?ref=REF9999",
+            referral_url="https://www.stockarmobile.com/?ref=REF9999",
             active=True,
             dni="12345678",
         )
@@ -2371,6 +2513,7 @@ def test_pos_qr_create_generates_qr_and_reuses_pending_draft(monkeypatch):
 
         client = stock_app.app.test_client()
         client.post("/auth/login", data={"username": user.username, "password": "admin123"})
+        open_cash_session(client)
 
         monkeypatch.setattr(
             MercadoPagoService,
@@ -2594,6 +2737,7 @@ def test_mercado_pago_refresh_failure_disconnects_company(monkeypatch):
 
 def test_mercado_pago_oauth_route_starts_and_completes(monkeypatch):
     from services.mercadopago_oauth_service import MercadoPagoOAuthService
+    from urllib.parse import parse_qs, urlsplit
 
     monkeypatch.setenv("MP_CLIENT_ID", "client-id-123")
     monkeypatch.setenv("MP_CLIENT_SECRET", "client-secret-123")
@@ -2607,7 +2751,16 @@ def test_mercado_pago_oauth_route_starts_and_completes(monkeypatch):
         start_response = client.post("/admin/mercado-pago")
         assert start_response.status_code in (301, 302)
         location = start_response.headers.get("Location") or ""
-        assert "auth.mercadopago.com/authorization" in location
+        parsed = urlsplit(location)
+        params = parse_qs(parsed.query)
+        assert parsed.scheme == "https"
+        assert parsed.netloc == "auth.mercadopago.com.ar"
+        assert parsed.path == "/authorization"
+        assert params["client_id"] == ["client-id-123"]
+        assert params["response_type"] == ["code"]
+        assert params["platform_id"] == ["mp"]
+        assert params["state"]
+        assert params["redirect_uri"] == ["https://www.stockarmobile.com/admin/mercado-pago/callback"]
 
         with client.session_transaction() as sess:
             state = sess.get("mp_oauth_state_1")
@@ -2652,6 +2805,7 @@ def test_pos_qr_create_uses_company_connected_token(monkeypatch):
 
         client = stock_app.app.test_client()
         client.post("/auth/login", data={"username": user.username, "password": "admin123"})
+        open_cash_session(client)
 
         monkeypatch.setattr(MercadoPagoOAuthService, "ensure_access_token", lambda self, *, company_id: "company-access-token")
 

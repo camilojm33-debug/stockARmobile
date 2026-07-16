@@ -33,7 +33,7 @@ def load_billing_config() -> BillingConfig:
     if mode == "production" and not webhook_secret:
         raise RuntimeError("WEBHOOK_SECRET es obligatorio en produccion.")
 
-    app_url = (os.environ.get("APP_URL") or "http://localhost:5000").rstrip("/")
+    app_url = (os.environ.get("APP_URL") or "https://www.stockarmobile.com").rstrip("/")
     notification_url = os.environ.get("MP_NOTIFICATION_URL") or f"{app_url}/admin/webhooks/mercadopago"
     success_url = os.environ.get("MP_SUCCESS_URL") or f"{app_url}/admin/portal?checkout=success"
     pending_url = os.environ.get("MP_PENDING_URL") or f"{app_url}/admin/portal?checkout=pending"

@@ -70,11 +70,13 @@
       <div class="col-lg-2"><button class="btn btn-outline-primary btn-lg w-100">Buscar</button></div>
       <div class="col-lg-3"><a class="btn btn-outline-success btn-lg w-100" href="{{ url_for('products.export_excel') }}"><i class="bi bi-file-earmark-excel me-1"></i>Exportar Excel</a></div>
     </form>
-    <form class="row g-2 align-items-center mt-2" method="post" action="{{ url_for('products.import_excel') }}" enctype="multipart/form-data">
+      {% if current_user.role == 'admin' %}
+      <form class="row g-2 align-items-center mt-2" method="post" action="{{ url_for('products.import_excel') }}" enctype="multipart/form-data">
       <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
       <div class="col-lg-9"><input class="form-control" type="file" name="file" accept=".xlsx" required></div>
       <div class="col-lg-3"><button class="btn btn-outline-secondary w-100" type="submit"><i class="bi bi-upload me-1"></i>Importar Excel</button></div>
     </form>
+      {% endif %}
   </div>
 
   <div class="card app-card">
@@ -94,13 +96,17 @@
             <td class="fw-semibold">${{ "%.2f"|format(producto.price) }}</td>
             <td><span class="badge {{ 'bg-danger' if producto.stock <= producto.min_stock else 'bg-success' }}">{{ "%.3g"|format(producto.stock) }} {{ producto.unit_measure or '' }}</span></td>
             <td class="text-end">
-              <a class="btn btn-sm btn-outline-secondary" title="Editar" href="{{ url_for('products.edit', product_id=producto.id) }}"><i class="bi bi-pencil"></i></a>
+                {% if current_user.role == 'admin' %}
+                <a class="btn btn-sm btn-outline-secondary" title="Editar" href="{{ url_for('products.edit', product_id=producto.id) }}"><i class="bi bi-pencil"></i></a>
+                {% endif %}
               <a class="btn btn-sm btn-outline-info" title="Kardex" href="{{ url_for('products.kardex', product_id=producto.id) }}"><i class="bi bi-clock-history"></i></a>
               <a class="btn btn-sm btn-outline-primary" title="Etiqueta" href="{{ url_for('qr_labels.print_single', id=producto.id) }}"><i class="bi bi-upc-scan"></i></a>
-              <form class="d-inline" method="post" action="{{ url_for('products.delete', product_id=producto.id) }}">
-                <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
-                <button class="btn btn-sm btn-outline-danger" title="Desactivar" onclick="return confirm('Desactivar producto?')"><i class="bi bi-trash"></i></button>
-              </form>
+                {% if current_user.role == 'admin' %}
+                <form class="d-inline" method="post" action="{{ url_for('products.delete', product_id=producto.id) }}">
+                  <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                  <button class="btn btn-sm btn-outline-danger" title="Desactivar" onclick="return confirm('Desactivar producto?')"><i class="bi bi-trash"></i></button>
+                </form>
+                {% endif %}
             </td>
           </tr>
           {% else %}
@@ -149,6 +155,12 @@
       {% endfor %}
     </div>
   </div>
+
+    {% if current_user.role != 'admin' %}
+    <div class="alert alert-info mt-4 mb-0">
+      Como empleado podés cargar productos nuevos y consultar el inventario, pero solo el administrador puede editar precios, importar cambios masivos o eliminar productos.
+    </div>
+    {% endif %}
 </div>
 {% endblock %}
 

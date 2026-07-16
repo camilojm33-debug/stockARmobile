@@ -5,43 +5,204 @@
 {% block content %}
 <div class="app-shell">
   <div class="d-flex flex-wrap justify-content-between align-items-center gap-3 mb-4">
-    <div><span class="page-kicker"><i class="bi bi-cash-coin"></i> Tesoreria</span><h1 class="h3 fw-bold mb-0">Caja</h1><p class="text-muted mb-0">Apertura, cierre, arqueo, ingresos y egresos.</p></div>
+    <div>
+      <span class="page-kicker"><i class="bi bi-cash-coin"></i> Tesoreria</span>
+      <h1 class="h3 fw-bold mb-0">Caja</h1>
+      <p class="text-muted mb-0">Apertura, cierre, arqueo, ingresos, egresos y diferencias por sesión.</p>
+    </div>
+    <div class="d-flex flex-wrap gap-2">
+      {% if is_admin %}
+      <a class="btn btn-outline-primary" href="{{ url_for('cash.export_cash_csv') }}"><i class="bi bi-download me-1"></i>Exportar CSV</a>
+      {% endif %}
+      <a class="btn btn-outline-secondary" href="{{ url_for('sales.index') }}"><i class="bi bi-bag-check me-1"></i>Ir a ventas</a>
+    </div>
   </div>
+
+  {% if is_admin %}
+  <div class="card app-card mb-3">
+    <div class="card-body">
+      <div class="d-flex flex-wrap justify-content-between align-items-center gap-3 mb-3">
+        <div>
+          <span class="page-kicker"><i class="bi bi-diagram-3"></i> Caja por usuario</span>
+          <h2 class="h5 fw-bold mb-0">Administración de cajas</h2>
+        </div>
+        <form class="d-flex flex-wrap gap-2 align-items-center" method="get">
+          <input class="form-control" style="min-width: 220px;" name="q" value="{{ search_query }}" placeholder="Buscar por nota, cierre o anulación">
+          <select class="form-select" style="min-width: 170px;" name="status">
+            <option value="">Todos los estados</option>
+            <option value="abierta" {% if status_filter == 'abierta' %}selected{% endif %}>Abierta</option>
+            <option value="cerrada" {% if status_filter == 'cerrada' %}selected{% endif %}>Cerrada</option>
+            <option value="anulada" {% if status_filter == 'anulada' %}selected{% endif %}>Anulada</option>
+          </select>
+          <select class="form-select" style="min-width: 220px;" name="user_id">
+            <option value="">Todos los usuarios</option>
+            {% for employee in employees %}
+            <option value="{{ employee.id }}" {% if selected_user_id == employee.id %}selected{% endif %}>{{ employee.name }}</option>
+            {% endfor %}
+          </select>
+          <button class="btn btn-primary"><i class="bi bi-funnel me-1"></i>Filtrar</button>
+        </form>
+      </div>
+      <div class="row g-3">
+        <div class="col-md-3"><div class="metric-card p-3 h-100"><div class="small text-muted">Sesiones visibles</div><div class="h4 mb-0">{{ sessions|length }}</div></div></div>
+        <div class="col-md-3"><div class="metric-card p-3 h-100"><div class="small text-muted">Movimientos recientes</div><div class="h4 mb-0">{{ movements|length }}</div></div></div>
+        <div class="col-md-3"><div class="metric-card p-3 h-100"><div class="small text-muted">Caja abierta</div><div class="h4 mb-0">{{ 'Sí' if open_session else 'No' }}</div></div></div>
+        <div class="col-md-3"><div class="metric-card p-3 h-100"><div class="small text-muted">Diferencia actual</div><div class="h4 mb-0">${{ "%.2f"|format(session_summary.difference if session_summary and session_summary.difference is not none else 0) }}</div></div></div>
+      </div>
+    </div>
+  </div>
+  {% endif %}
+
+  {% if not open_session %}
+  <div class="alert alert-warning border-0 shadow-sm mb-3">
+    <div class="fw-semibold mb-1"><i class="bi bi-exclamation-triangle me-1"></i>Debes abrir una caja antes de comenzar a vender.</div>
+    <div class="small">Podés seguir revisando productos, pero el cobro quedará bloqueado hasta que abras tu caja en el módulo Caja.</div>
+    <a class="btn btn-warning btn-sm mt-2" href="{{ url_for('cash.index') }}">Abrir caja</a>
+  </div>
+  {% endif %}
+
   <div class="row g-3 mb-4">
     <div class="col-lg-4">
-      <div class="card app-card h-100"><div class="card-body">
-        {% if open_session %}
-        <h2 class="h6 fw-bold">Caja abierta #{{ open_session.id }}</h2>
-        <p class="text-muted">Apertura: ${{ "%.2f"|format(open_session.opening_amount or 0) }}</p>
-        <form method="post" class="row g-2">
-          <input type="hidden" name="csrf_token" value="{{ csrf_token() }}"><input type="hidden" name="action" value="close">
-          <div class="col-12"><label class="form-label">Importe contado</label><input class="form-control" name="closing_amount" type="number" step="0.01" required></div>
-          <div class="col-12"><button class="btn btn-danger w-100">Cerrar caja</button></div>
-        </form>
-        {% else %}
-        <h2 class="h6 fw-bold">Abrir caja</h2>
-        <form method="post" class="row g-2">
-          <input type="hidden" name="csrf_token" value="{{ csrf_token() }}"><input type="hidden" name="action" value="open">
-          <div class="col-12"><label class="form-label">Monto inicial</label><input class="form-control" name="opening_amount" type="number" step="0.01" value="0"></div>
-          <div class="col-12"><button class="btn btn-primary w-100">Abrir</button></div>
-        </form>
-        {% endif %}
-      </div></div>
+      <div class="card app-card h-100">
+        <div class="card-body">
+          {% if open_session %}
+          <h2 class="h6 fw-bold mb-2">Caja abierta #{{ open_session.id }}</h2>
+          <p class="text-muted mb-2">Usuario: {{ open_session.user.name if open_session.user else 'Sin usuario' }}</p>
+          <div class="summary-panel mb-3">
+            <div class="d-flex justify-content-between"><span class="text-muted">Apertura</span><strong>${{ "%.2f"|format(session_summary.opening if session_summary else 0) }}</strong></div>
+            <div class="d-flex justify-content-between"><span class="text-muted">Esperado</span><strong>${{ "%.2f"|format(session_summary.expected if session_summary else 0) }}</strong></div>
+            <div class="d-flex justify-content-between"><span class="text-muted">Ingresos</span><strong>${{ "%.2f"|format(session_summary.income if session_summary else 0) }}</strong></div>
+            <div class="d-flex justify-content-between"><span class="text-muted">Egresos</span><strong>${{ "%.2f"|format(session_summary.expense if session_summary else 0) }}</strong></div>
+          </div>
+          <form method="post" class="row g-2 mb-3">
+            <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+            <input type="hidden" name="action" value="movement">
+            <div class="col-md-4">
+              <select class="form-select" name="movement_type">
+                <option value="ingreso">Ingreso</option>
+                <option value="egreso">Egreso</option>
+                <option value="retiro">Retiro</option>
+              </select>
+            </div>
+            <div class="col-md-4"><input class="form-control" name="category" placeholder="Categoría"></div>
+            <div class="col-md-4"><input class="form-control" name="amount" type="number" step="0.01" min="0" placeholder="Importe"></div>
+            <div class="col-12"><input class="form-control" name="description" placeholder="Descripción del movimiento"></div>
+            <div class="col-12"><button class="btn btn-success w-100">Registrar movimiento</button></div>
+          </form>
+          <form method="post" class="row g-2">
+            <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+            <input type="hidden" name="action" value="close">
+            <div class="col-12"><label class="form-label">Importe contado</label><input class="form-control" name="counted_amount" type="number" step="0.01" min="0" value="{{ '%.2f'|format(session_summary.expected if session_summary else 0) }}"></div>
+            <div class="col-12"><label class="form-label">Nota de cierre</label><input class="form-control" name="closing_note" placeholder="Observaciones del arqueo"></div>
+            <div class="col-12"><button class="btn btn-danger w-100">Cerrar caja</button></div>
+          </form>
+          {% else %}
+          <h2 class="h6 fw-bold mb-2">Abrir caja</h2>
+          <p class="text-muted">Define el fondo inicial con el que vas a operar.</p>
+          <form method="post" class="row g-2">
+            <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+            <input type="hidden" name="action" value="open">
+            <div class="col-12"><label class="form-label">Monto inicial</label><input class="form-control" name="opening_amount" type="number" step="0.01" min="0" value="0"></div>
+            <div class="col-12"><label class="form-label">Nota</label><input class="form-control" name="note" placeholder="Opcional"></div>
+            <div class="col-12"><button class="btn btn-primary w-100">Abrir caja</button></div>
+          </form>
+          {% endif %}
+        </div>
+      </div>
     </div>
     <div class="col-lg-8">
-      <div class="card app-card h-100"><div class="card-body">
-        <h2 class="h6 fw-bold">Movimiento</h2>
-        <form method="post" class="row g-2">
-          <input type="hidden" name="csrf_token" value="{{ csrf_token() }}"><input type="hidden" name="action" value="movement">
-          <div class="col-md-3"><select class="form-select" name="movement_type"><option value="ingreso">Ingreso</option><option value="egreso">Egreso</option></select></div>
-          <div class="col-md-3"><input class="form-control" name="category" placeholder="Categoria"></div>
-          <div class="col-md-3"><input class="form-control" name="amount" type="number" step="0.01" placeholder="Importe"></div>
-          <div class="col-md-3"><button class="btn btn-success w-100" {% if not open_session %}disabled{% endif %}>Registrar</button></div>
-          <div class="col-12"><input class="form-control" name="description" placeholder="Descripcion"></div>
-        </form>
-      </div></div>
+      <div class="card app-card h-100">
+        <div class="card-body">
+          <div class="d-flex justify-content-between align-items-center mb-3">
+            <div>
+              <h2 class="h6 fw-bold mb-1">Historial y cierre</h2>
+              <p class="text-muted mb-0">Revisá movimientos, diferencias y sesiones anteriores.</p>
+            </div>
+            <span class="badge text-bg-primary">{{ movements|length }} movimientos</span>
+          </div>
+          <div class="table-responsive">
+            <table class="table table-sm align-middle mb-0">
+              <thead class="table-light"><tr><th>Fecha</th><th>Tipo</th><th>Categoría</th><th>Detalle</th><th class="text-end">Importe</th></tr></thead>
+              <tbody>
+                {% for movement in movements %}
+                <tr>
+                  <td>{{ movement.created_at.strftime('%Y-%m-%d %H:%M') }}</td>
+                  <td><span class="badge {{ 'text-bg-danger' if movement.movement_type in ['egreso', 'retiro', 'salida', 'gasto'] else 'text-bg-success' }}">{{ movement.movement_type }}</span></td>
+                  <td>{{ movement.category or '-' }}</td>
+                  <td>
+                    {{ movement.description or '-' }}
+                    {% if movement.sale_id %}
+                    <div class="small text-muted"><a href="{{ url_for('sales.view_sale', sale_id=movement.sale_id) }}">Venta #{{ movement.sale_id }}</a></div>
+                    {% endif %}
+                  </td>
+                  <td class="text-end">${{ "%.2f"|format(movement.amount) }}</td>
+                </tr>
+                {% else %}
+                <tr><td colspan="5" class="text-center text-muted py-4">Sin movimientos.</td></tr>
+                {% endfor %}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <div class="card app-card mb-4">
+      <div class="card-body">
+        <div class="d-flex flex-wrap justify-content-between align-items-center gap-2 mb-3">
+          <div>
+            <h2 class="h6 fw-bold mb-1">Sesiones de caja</h2>
+            <p class="text-muted mb-0">Resumen de aperturas, cierres y diferencias.</p>
+          </div>
+          {% if open_session %}
+          <span class="badge text-bg-success">Sesion abierta #{{ open_session.id }}</span>
+          {% endif %}
+        </div>
+        <div class="table-responsive">
+          <table class="table table-hover align-middle mb-0">
+            <thead class="table-light"><tr><th>ID</th><th>Usuario</th><th>Estado</th><th>Apertura</th><th>Esperado</th><th>Contado</th><th>Diferencia</th><th>Acciones</th></tr></thead>
+            <tbody>
+              {% for session in sessions %}
+              {% set row_summary = session_summary if open_session and session.id == open_session.id else none %}
+              {% set session_expected = row_summary.expected if row_summary else (session.expected_amount or 0) %}
+              {% set session_counted = row_summary.counted if row_summary and row_summary.counted is not none else (session.counted_amount or 0) %}
+              {% set session_difference = row_summary.difference if row_summary and row_summary.difference is not none else (session.difference_amount or 0) %}
+              <tr>
+                <td>#{{ session.id }}</td>
+                <td>{{ session.user.name if session.user else session.user_id }}</td>
+                <td><span class="badge {{ 'text-bg-success' if session.status == 'abierta' else ('text-bg-secondary' if session.status == 'cerrada' else 'text-bg-danger') }}">{{ session.status }}</span></td>
+                <td>${{ "%.2f"|format(session.opening_amount or 0) }}</td>
+                <td>${{ "%.2f"|format(session_expected) }}</td>
+                <td>${{ "%.2f"|format(session_counted) }}</td>
+                <td class="fw-semibold {{ 'text-success' if session_difference == 0 else 'text-danger' }}">${{ "%.2f"|format(session_difference) }}</td>
+                <td>
+                  <div class="d-flex flex-wrap gap-2">
+                    <a class="btn btn-outline-secondary btn-sm" href="{{ url_for('cash.print_session', session_id=session.id) }}" target="_blank" rel="noopener noreferrer">Imprimir</a>
+                    {% if is_admin and session.status == 'cerrada' %}
+                    <form method="post" class="d-inline">
+                      <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                      <input type="hidden" name="action" value="reopen">
+                      <input type="hidden" name="session_id" value="{{ session.id }}">
+                      <button class="btn btn-outline-primary btn-sm">Reabrir</button>
+                    </form>
+                    <form method="post" class="d-inline" onsubmit="return confirm('Anular esta caja?');">
+                      <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                      <input type="hidden" name="action" value="void">
+                      <input type="hidden" name="session_id" value="{{ session.id }}">
+                      <input type="hidden" name="void_reason" value="Anulada desde administración">
+                      <button class="btn btn-outline-danger btn-sm">Anular</button>
+                    </form>
+                    {% endif %}
+                  </div>
+                </td>
+              </tr>
+              {% else %}
+              <tr><td colspan="8" class="text-center text-muted py-4">No hay sesiones para mostrar.</td></tr>
+              {% endfor %}
+            </tbody>
+          </table>
+        </div>
+      </div>
     </div>
   </div>
-  <div class="card app-card"><div class="table-responsive"><table class="table table-hover mb-0"><thead><tr><th>Fecha</th><th>Tipo</th><th>Categoria</th><th class="text-end">Importe</th></tr></thead><tbody>{% for movement in movements %}<tr><td>{{ movement.created_at.strftime('%Y-%m-%d %H:%M') }}</td><td>{{ movement.movement_type }}</td><td>{{ movement.category or '-' }}</td><td class="text-end">${{ "%.2f"|format(movement.amount) }}</td></tr>{% else %}<tr><td colspan="4" class="text-center text-muted py-4">Sin movimientos.</td></tr>{% endfor %}</tbody></table></div></div>
-</div>
 {% endblock %}
