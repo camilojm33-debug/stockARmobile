@@ -1421,6 +1421,7 @@ def internal_error(error):
 @app.context_processor
 def inject_notifications():
     has_active_seller_profile = False
+    switchable_company_users = []
     support_contact = {
         "email": app.config.get("SUPPORT_EMAIL", "stockarmobile@gmail.com"),
         "whatsapp_display": app.config.get("SUPPORT_WHATSAPP_DISPLAY", "+54 9 3624 22-8296"),
@@ -1432,17 +1433,30 @@ def inject_notifications():
         notifications = build_notifications()
         if getattr(current_user, "role", None) != "superadmin":
             has_active_seller_profile = ReferralSeller.query.filter_by(user_id=current_user.id, active=True).first() is not None
+        if getattr(current_user, "role", None) == "admin" and getattr(current_user, "company_id", None):
+            switchable_company_users = (
+                User.query.filter(
+                    User.company_id == current_user.company_id,
+                    User.active.is_(True),
+                    User.id != current_user.id,
+                    User.role.in_(["user", "admin"]),
+                )
+                .order_by(User.first_name.asc(), User.last_name.asc(), User.username.asc())
+                .all()
+            )
         return {
             "notification_items": notifications,
             "notification_count": len(notifications),
             "has_active_seller_profile": has_active_seller_profile,
             "support_contact": support_contact,
+            "switchable_company_users": switchable_company_users,
         }
     return {
         "notification_items": [],
         "notification_count": 0,
         "has_active_seller_profile": False,
         "support_contact": support_contact,
+        "switchable_company_users": [],
     }
 
 

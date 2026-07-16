@@ -30,11 +30,22 @@ class MercadoPagoOAuthService:
     def _client_secret(self) -> str:
         return (os.environ.get("MP_CLIENT_SECRET") or "").strip()
 
+    def oauth_config_status(self) -> tuple[bool, list[str]]:
+        missing = []
+        if not self._client_id():
+            missing.append("MP_CLIENT_ID")
+        if not self._client_secret():
+            missing.append("MP_CLIENT_SECRET")
+        if not (os.environ.get("MP_OAUTH_ENCRYPTION_KEY") or "").strip():
+            missing.append("MP_OAUTH_ENCRYPTION_KEY")
+        return (len(missing) == 0, missing)
+
     def _redirect_uri(self) -> str:
         return (os.environ.get("MP_OAUTH_REDIRECT_URI") or "").strip()
 
     def has_oauth_config(self) -> bool:
-        return bool(self._client_id() and self._client_secret())
+        ok, _missing = self.oauth_config_status()
+        return ok
 
     def oauth_redirect_uri(self, fallback: str) -> str:
         return self._redirect_uri() or fallback

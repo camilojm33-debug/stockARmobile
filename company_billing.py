@@ -698,8 +698,10 @@ def mercado_pago_connect():
     company_id = getattr(current_user, "company_id", None)
     company = _load_company(company_id)
     service = MercadoPagoOAuthService()
-    if not service.has_oauth_config():
-        flash("Faltan las credenciales OAuth de Mercado Pago en el servidor.", "danger")
+    oauth_ready, missing_vars = service.oauth_config_status()
+    if not oauth_ready:
+        detail = ", ".join(missing_vars) if missing_vars else "credenciales OAuth"
+        flash(f"Faltan credenciales OAuth de Mercado Pago en el servidor: {detail}.", "danger")
         return redirect(url_for("company_billing.company_settings", panel="mercado-pago"))
 
     state = service.oauth_state()

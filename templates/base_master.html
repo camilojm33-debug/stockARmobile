@@ -432,6 +432,27 @@
           <small class="text-muted">{{ current_user.role or 'user' }}</small>
         </span>
       </div>
+      {% if current_user.role == 'admin' and switchable_company_users %}
+      <div class="dropdown mb-2">
+        <button class="btn btn-outline-info w-100 dropdown-toggle" type="button" data-bs-toggle="dropdown" aria-expanded="false">
+          <i class="bi bi-person-switch me-1"></i>Cambiar usuario
+        </button>
+        <div class="dropdown-menu w-100 p-2" style="max-height: 250px; overflow-y: auto;">
+          <div class="small text-muted px-2 pb-2">Seleccioná un empleado para continuar en su perfil.</div>
+          {% for switch_user in switchable_company_users %}
+          <form method="post" action="{{ url_for('auth.switch_user') }}" class="mb-1">
+            <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+            <input type="hidden" name="next" value="{{ request.full_path }}">
+            <input type="hidden" name="target_user_id" value="{{ switch_user.id }}">
+            <button class="dropdown-item rounded-2 d-flex justify-content-between align-items-center" type="submit">
+              <span class="text-truncate">{{ switch_user.name }}</span>
+              <span class="badge text-bg-secondary">{{ 'Admin' if switch_user.role == 'admin' else 'Empleado' }}</span>
+            </button>
+          </form>
+          {% endfor %}
+        </div>
+      </div>
+      {% endif %}
       <div class="d-flex gap-2">
         <button class="btn btn-outline-primary flex-shrink-0" type="button" data-bs-toggle="modal" data-bs-target="#spotlightModal" title="Buscar Ctrl+K"><i class="bi bi-search"></i></button>
         <button class="btn btn-outline-secondary flex-shrink-0 position-relative" type="button" data-bs-toggle="offcanvas" data-bs-target="#notificationCenter" title="Notificaciones"><i class="bi bi-bell"></i>{% if notification_count %}<span class="position-absolute top-0 start-100 translate-middle badge rounded-pill bg-danger">{{ notification_count }}</span>{% endif %}</button>

@@ -109,6 +109,34 @@ def test_core_routes_and_decimal_checkout():
     assert superadmin_dashboard.status_code in (301, 302)
 
 
+def test_admin_can_switch_to_employee_session_from_sidebar_flow():
+    client = stock_app.app.test_client()
+
+    with stock_app.app.app_context():
+        target = User.query.filter_by(username="empresa_admin").first()
+        assert target is not None
+        target_id = target.id
+
+    client.post("/auth/login", data={"username": "negocio_admin", "password": "admin123"})
+    switched = client.post(
+        "/auth/switch-user",
+        data={"target_user_id": str(target_id), "next": "/dashboard/"},
+        follow_redirects=True,
+    )
+    assert switched.status_code == 200
+    html = switched.data.decode("utf-8")
+    assert "Sesión cambiada a empresa_admin." in html
+    assert "empresa_admin" in html
+
+    # Ya como empleado, los endpoints admin-only deben quedar bloqueados.
+    blocked = client.post(
+        "/admin/company-settings/users/create",
+        data={"username": "x", "email": "x@test.local"},
+        follow_redirects=False,
+    )
+    assert blocked.status_code == 403
+
+
 def test_dashboard_economic_metrics_are_permission_protected():
     client = stock_app.app.test_client()
 

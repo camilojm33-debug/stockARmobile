@@ -3,7 +3,7 @@
 from datetime import timedelta
 from urllib.parse import urlsplit
 
-from flask import Blueprint, flash, redirect, render_template, request, session, url_for
+from flask import Blueprint, abort, flash, redirect, render_template, request, session, url_for
 from flask_login import current_user, login_required, login_user, logout_user
 from sqlalchemy.exc import OperationalError, ProgrammingError
 from services.password_recovery_service import PasswordRecoveryService
@@ -324,3 +324,46 @@ def logout():
     session.clear()
     flash("Has cerrado la sesion.", "info")
     return redirect(url_for("auth.login"))
+
+
+@bp.route("/switch-user", methods=["POST"])
+@login_required
+def switch_user():
+    from app import User, db, record_audit
+
+    if getattr(current_user, "role", None) != "admin":
+        abort(403)
+
+    company_id = getattr(current_user, "company_id", None)
+    if company_id is None:
+        abort(403)
+
+    target_user_id = request.form.get("target_user_id", type=int)
+    target_user = (
+        User.query.filter_by(id=target_user_id, company_id=company_id, active=True)
+        .filter(User.role.in_(["user", "admin"]))
+        .first()
+    )
+    if target_user is None:
+        flash("Empleado no encontrado o no disponible para cambio de sesión.", "warning")
+        return redirect(url_for("dashboard.index"))
+
+    actor_id = current_user.id
+    actor_username = current_user.username
+
+    _login_user_and_bind_company(target_user, remember=False)
+    record_audit(
+        action="session_switch_user",
+        entity="user",
+        entity_id=target_user.id,
+        user_id=actor_id,
+        company_id=company_id,
+        detail=f"Cambio de sesión desde {actor_username} hacia {target_user.username}",
+    )
+    db.session.commit()
+
+    next_page = (request.form.get("next") or "").strip()
+    if not _is_safe_redirect(next_page):
+        next_page = None
+    flash(f"Sesión cambiada a {target_user.username}.", "success")
+    return redirect(next_page if next_page else _post_login_redirect())
