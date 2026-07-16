@@ -7,6 +7,8 @@ services:
     envVars:
       - key: SECRET_KEY
         generateValue: true
+      - key: DEFAULT_SUPERADMIN_PASSWORD
+        generateValue: true
       - key: ADMIN_PASSWORD
         generateValue: true
       - key: MP_MODE
@@ -20,7 +22,7 @@ services:
       - key: MP_CLIENT_SECRET
         sync: false
       - key: MP_OAUTH_ENCRYPTION_KEY
-        sync: false
+        generateValue: true
       - key: MP_OAUTH_REDIRECT_URI
         value: https://www.stockarmobile.com/admin/mercado-pago/callback
       - key: MP_WEBHOOK_SECRET

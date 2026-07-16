@@ -2,7 +2,7 @@
 {% block title %}Usuarios globales - SuperAdmin{% endblock %}
 {% block content %}
 <div class="app-shell">
-  <div class="d-flex justify-content-between align-items-center mb-3">
+  <div class="d-flex flex-wrap justify-content-between align-items-center gap-2 mb-3">
     <div>
       <span class="page-kicker"><i class="bi bi-people"></i> SuperAdmin</span>
       <h1 class="h3 fw-bold mb-0">Usuarios globales</h1>
@@ -32,9 +32,9 @@
             <option value="superadmin" {% if filters.role == 'superadmin' %}selected{% endif %}>Superadmin</option>
           </select>
         </div>
-        <div class="col-md-2 d-flex gap-2">
+        <div class="col-12 col-md-2 d-grid d-md-flex gap-2">
           <button class="btn btn-primary w-100" type="submit">Filtrar</button>
-          <a class="btn btn-outline-secondary" href="{{ url_for('saas.users_panel') }}">Limpiar</a>
+          <a class="btn btn-outline-secondary w-100" href="{{ url_for('saas.users_panel') }}">Limpiar</a>
         </div>
       </form>
     </div>

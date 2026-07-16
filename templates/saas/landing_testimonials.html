@@ -1,11 +1,12 @@
 {% extends "base_master.html" %}
 {% block title %}Testimonios Landing{% endblock %}
 {% block content %}
-<div class="d-flex justify-content-between align-items-center mb-3">
+<div class="app-shell">
+<div class="d-flex flex-wrap justify-content-between align-items-center gap-2 mb-3">
   <h1 class="h4 mb-0">Testimonios de Landing</h1>
 </div>
 
-<div class="card mb-4">
+<div class="card app-card mb-4">
   <div class="card-header">Agregar testimonio real</div>
   <div class="card-body">
     <form method="post" class="row g-2">
@@ -24,7 +25,7 @@
   </div>
 </div>
 
-<div class="card">
+<div class="card app-card">
   <div class="table-responsive">
     <table class="table mb-0 align-middle">
       <thead><tr><th>ID</th><th>Autor</th><th>Empresa</th><th>Testimonio</th><th>Estado</th><th>Acciones</th></tr></thead>
@@ -34,7 +35,7 @@
           <td>{{ row.id }}</td>
           <td>{{ row.author_name }}</td>
           <td>{{ row.company_name or '-' }}</td>
-          <td style="min-width: 320px;">{{ row.quote }}</td>
+          <td class="quote-cell">{{ row.quote }}</td>
           <td><span class="badge text-bg-{% if row.active %}success{% else %}secondary{% endif %}">{% if row.active %}Activo{% else %}Inactivo{% endif %}</span></td>
           <td>
             <div class="d-flex gap-2">
@@ -48,7 +49,7 @@
               </form>
             </div>
             <details class="mt-2">
-              <summary class="small text-primary" style="cursor:pointer;">Editar</summary>
+              <summary class="small text-primary testimonial-edit-summary">Editar</summary>
               <form method="post" action="{{ url_for('saas.landing_testimonials_update', testimonial_id=row.id) }}" class="mt-2">
                 <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
                 <div class="mb-2"><input class="form-control form-control-sm" name="author_name" value="{{ row.author_name }}" required></div>
@@ -72,4 +73,16 @@
     </table>
   </div>
 </div>
+</div>
+{% endblock %}
+
+{% block extra_css %}
+<style>
+  .quote-cell {
+    min-width: 220px;
+    white-space: normal;
+    overflow-wrap: anywhere;
+  }
+  .testimonial-edit-summary { cursor: pointer; }
+</style>
 {% endblock %}

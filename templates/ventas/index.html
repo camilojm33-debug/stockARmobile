@@ -49,6 +49,33 @@
     {% endfor %}
   </div>
 
+  <div class="pos-quick-controls shadow-lg" aria-label="Controles rapidos POS">
+    <button id="quick-mode-toggle"
+      class="btn pos-quick-toggle"
+      type="button"
+      onclick="toggleQuickMode()"
+      aria-pressed="false"
+      aria-label="Activar o desactivar modo rapido">
+      <span class="pos-quick-toggle-icon"><i class="bi bi-lightning-charge-fill"></i></span>
+      <span class="pos-quick-toggle-copy">
+        <span class="pos-quick-toggle-title">Modo rapido</span>
+        <span class="pos-quick-toggle-state">Vista completa</span>
+      </span>
+    </button>
+    <button id="fullscreen-toggle"
+      class="btn pos-quick-toggle pos-quick-toggle-secondary"
+      type="button"
+      onclick="toggleSalesFullscreen()"
+      aria-pressed="false"
+      aria-label="Activar o desactivar pantalla completa">
+      <span class="pos-quick-toggle-icon"><i class="bi bi-arrows-fullscreen"></i></span>
+      <span class="pos-quick-toggle-copy">
+        <span class="pos-quick-toggle-title">Pantalla completa</span>
+        <span class="pos-quick-toggle-state">Modo puesto</span>
+      </span>
+    </button>
+  </div>
+
   <div class="row g-3 align-items-start">
     <div class="col-xl-8 col-xxl-9">
       <div class="pos-grid" id="pos-product-grid">
@@ -131,34 +158,7 @@
   </div>
 </div>
 
-<div class="pos-quick-controls shadow-lg">
-  <button id="quick-mode-toggle"
-    class="btn pos-quick-toggle"
-    type="button"
-    onclick="toggleQuickMode()"
-    aria-pressed="false"
-    aria-label="Activar o desactivar modo rápido">
-    <span class="pos-quick-toggle-icon"><i class="bi bi-lightning-charge-fill"></i></span>
-    <span class="pos-quick-toggle-copy">
-      <span class="pos-quick-toggle-title">Modo rápido</span>
-      <span class="pos-quick-toggle-state">Vista completa</span>
-    </span>
-  </button>
-  <button id="fullscreen-toggle"
-    class="btn pos-quick-toggle pos-quick-toggle-secondary"
-    type="button"
-    onclick="toggleSalesFullscreen()"
-    aria-pressed="false"
-    aria-label="Activar o desactivar pantalla completa">
-    <span class="pos-quick-toggle-icon"><i class="bi bi-arrows-fullscreen"></i></span>
-    <span class="pos-quick-toggle-copy">
-      <span class="pos-quick-toggle-title">Pantalla completa</span>
-      <span class="pos-quick-toggle-state">Modo puesto</span>
-    </span>
-  </button>
-</div>
-
-<button class="btn btn-success position-fixed d-xl-none" style="right:16px;bottom:86px;z-index:1010;min-width:58px;min-height:58px;border-radius:999px" {% if not cash_session_open %}disabled title="Abrí una caja para cobrar"{% endif %} onclick="openCartModal()" aria-label="Cobrar">
+<button class="btn btn-success position-fixed d-xl-none pos-cart-fab" {% if not cash_session_open %}disabled title="Abrí una caja para cobrar"{% endif %} onclick="openCartModal()" aria-label="Cobrar">
   <i class="bi bi-credit-card"></i> <span class="cart-count badge text-bg-light">0</span>
 </button>
 
@@ -305,15 +305,24 @@
 
 {% block extra_css %}
 <style>
+  .pos-shell { overflow-x: clip; }
   .pos-hero { display: flex; align-items: center; justify-content: space-between; gap: 1rem; flex-wrap: wrap; }
   .pos-toolbar { padding: 14px; }
   .pos-category-strip { display: flex; gap: .5rem; overflow-x: auto; padding-bottom: .25rem; }
   .pos-category-strip .btn { min-width: max-content; }
-  .pos-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(210px, 1fr)); gap: 1rem; }
+  .pos-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(min(210px, 100%), 1fr)); gap: 1rem; }
   .pos-product-card { min-height: 100%; }
   .pos-cart-panel { top: 1rem; }
   .pos-cart-items { max-height: 48vh; overflow: auto; }
   .pos-cart-line { display: flex; justify-content: space-between; align-items: center; gap: .75rem; padding: .75rem 0; border-bottom: 1px solid var(--app-line); }
+  .pos-cart-fab {
+    right: max(14px, env(safe-area-inset-right));
+    bottom: calc(82px + env(safe-area-inset-bottom));
+    z-index: 1010;
+    min-width: 58px;
+    min-height: 58px;
+    border-radius: 999px;
+  }
   body.quick-mode-active .pos-toolbar,
   body.quick-mode-active .pos-category-strip,
   body.quick-mode-active .card-header,
@@ -396,18 +405,23 @@
   body.quick-mode-active .quick-mode-hidden {
     display: none !important;
   }
+  @media (max-width: 991.98px) {
+    .pos-quick-controls {
+      position: static;
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: .5rem;
+      margin: 0 0 .75rem;
+      box-shadow: none !important;
+    }
+    .pos-quick-toggle { width: 100%; justify-content: center; }
+    .pos-quick-toggle-copy { text-align: center; }
+  }
   @media (max-width: 575.98px) {
     .pos-grid { grid-template-columns: 1fr; }
     .pos-hero .btn { flex: 1 1 auto; }
-    .pos-quick-controls {
-      top: auto;
-      bottom: 166px;
-      right: 14px;
-      left: 14px;
-      display: grid;
-      grid-template-columns: 1fr 1fr;
-    }
-    .pos-quick-toggle { width: 100%; justify-content: center; }
+    .pos-quick-controls { grid-template-columns: 1fr; }
+    .pos-cart-fab { bottom: calc(72px + env(safe-area-inset-bottom)); }
   }
 </style>
 {% endblock %}

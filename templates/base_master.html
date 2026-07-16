@@ -201,6 +201,7 @@
       min-height: 100dvh;
       display: flex;
       flex-direction: column;
+      min-width: 0;
     }
     .app-mobilebar {
       display: none;
@@ -395,6 +396,52 @@
       backdrop-filter: blur(3px);
     }
     .app-loading.show { display: grid; }
+    .app-sidebar-backdrop {
+      position: fixed;
+      inset: 0;
+      background: rgba(15, 23, 42, .45);
+      opacity: 0;
+      pointer-events: none;
+      transition: opacity .24s ease;
+      z-index: 1025;
+    }
+    .app-sidebar-backdrop.show {
+      opacity: 1;
+      pointer-events: auto;
+    }
+    [data-role="superadmin"] .app-shell,
+    [data-role="superadmin"] .app-shell .row,
+    [data-role="superadmin"] .app-shell [class*="col-"] {
+      min-width: 0;
+    }
+    [data-role="superadmin"] .app-shell > .d-flex.justify-content-between.align-items-center,
+    [data-role="superadmin"] .app-shell > .d-flex.flex-wrap.justify-content-between.align-items-center {
+      row-gap: .65rem;
+    }
+    [data-role="superadmin"] .app-shell .d-flex.gap-2,
+    [data-role="superadmin"] .app-shell .d-inline-flex.gap-1,
+    [data-role="superadmin"] .app-shell .d-inline-flex.gap-2 {
+      flex-wrap: wrap;
+    }
+    [data-role="superadmin"] .app-shell .card,
+    [data-role="superadmin"] .app-shell .card-body,
+    [data-role="superadmin"] .app-shell .table-responsive {
+      min-width: 0;
+    }
+    [data-role="superadmin"] .app-shell .table-responsive {
+      overflow-x: auto;
+      overflow-y: visible;
+      -webkit-overflow-scrolling: touch;
+    }
+    [data-role="superadmin"] .app-shell .table th,
+    [data-role="superadmin"] .app-shell .table td {
+      vertical-align: middle;
+      overflow-wrap: anywhere;
+      word-break: break-word;
+    }
+    [data-role="superadmin"] .app-shell .pagination .page-link {
+      white-space: nowrap;
+    }
     .empty-state {
       display: grid;
       place-items: center;
@@ -422,13 +469,24 @@
       .btn { min-height: 44px; }
     }
     @media (max-width: 991.98px) {
-      .app-sidebar { transform: translateX(-100%); transition: transform .24s ease; box-shadow: 24px 0 70px rgba(15,23,42,.18); }
+      .app-sidebar {
+        width: min(86vw, 320px);
+        max-width: min(86vw, 320px);
+        transform: translateX(-100%);
+        transition: transform .24s ease;
+        box-shadow: 24px 0 70px rgba(15,23,42,.18);
+      }
       .app-sidebar.show { transform: translateX(0); }
       .app-main { margin-left: 0; }
-      .app-mobilebar { display: flex; align-items: center; justify-content: space-between; padding: 0 14px; }
+      .app-mobilebar {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        padding: max(.35rem, env(safe-area-inset-top)) max(12px, env(safe-area-inset-right)) .35rem max(12px, env(safe-area-inset-left));
+      }
       main.container-fluid {
         flex: 1;
-        padding: 1rem .85rem;
+        padding: 1rem max(.8rem, env(safe-area-inset-right)) 1rem max(.8rem, env(safe-area-inset-left));
         /* Evita que el ultimo bloque quede detras del boton flotante y barras del sistema. */
         padding-bottom: calc(6.5rem + env(safe-area-inset-bottom));
       }
@@ -437,6 +495,20 @@
       .app-sidebar-footer .btn, .app-mobilebar .btn { min-width: 44px; min-height: 44px; }
       .app-brand { height: 70px; }
       .app-brand-mark { width: 36px; height: 36px; }
+      [data-role="superadmin"] .app-shell .h1,
+      [data-role="superadmin"] .app-shell .h2,
+      [data-role="superadmin"] .app-shell .h3 {
+        word-break: break-word;
+      }
+      [data-role="superadmin"] .app-shell .btn {
+        white-space: normal;
+      }
+      [data-role="superadmin"] .app-shell .metric-value {
+        font-size: clamp(1.35rem, 6vw, 1.9rem);
+      }
+      [data-role="superadmin"] .app-shell .table {
+        font-size: .88rem;
+      }
     }
     @media (max-width: 575.98px) {
       .app-card .card-body { padding: 1rem; }
@@ -479,8 +551,9 @@
   {% block extra_css %}{% endblock %}
   {% block extra_styles %}{% endblock %}
 </head>
-<body data-bs-theme="light"{% if current_user.is_authenticated %} data-user-id="{{ current_user.id }}" data-company-id="{{ current_user.company_id or '' }}" data-cart-tenant="{{ (current_user.company_id or 'global') ~ ':' ~ current_user.id }}"{% endif %}>
+<body data-bs-theme="light"{% if current_user.is_authenticated %} data-user-id="{{ current_user.id }}" data-company-id="{{ current_user.company_id or '' }}" data-cart-tenant="{{ (current_user.company_id or 'global') ~ ':' ~ current_user.id }}" data-role="{{ current_user.role or 'user' }}"{% endif %}>
   {% if current_user.is_authenticated %}
+  <div class="app-sidebar-backdrop" id="appSidebarBackdrop" aria-hidden="true"></div>
   <aside class="app-sidebar" id="appSidebar">
     <a class="app-brand" href="{{ url_for('saas.index') if current_user.role == 'superadmin' else url_for('dashboard.index') }}">
       <span class="app-brand-mark">
@@ -584,7 +657,7 @@
   </aside>
   <div class="app-main">
     <div class="app-mobilebar">
-      <button class="btn btn-outline-primary btn-sm" type="button" onclick="document.getElementById('appSidebar').classList.toggle('show')"><i class="bi bi-list"></i></button>
+      <button class="btn btn-outline-primary btn-sm" type="button" id="appSidebarToggle"><i class="bi bi-list"></i></button>
       <span class="app-mobile-brand">
         <img src="{{ url_for('static', filename='images/branding/logo.png') }}" alt="StockArmobile logo">
         <span>StockArmobile</span>
@@ -616,7 +689,7 @@
   <div class="app-loading" id="appLoading">
     <div class="spinner-border text-primary" role="status"><span class="visually-hidden">Cargando</span></div>
   </div>
-  {% if current_user.is_authenticated %}
+  {% if current_user.is_authenticated and not (request.endpoint and request.endpoint.startswith('sales.')) %}
   <button class="btn btn-primary rounded-circle position-fixed d-lg-none" style="right:16px;bottom:18px;width:56px;height:56px;z-index:1010" type="button" data-bs-toggle="modal" data-bs-target="#spotlightModal" aria-label="Buscar"><i class="bi bi-search"></i></button>
   <div class="offcanvas offcanvas-end" tabindex="-1" id="notificationCenter">
     <div class="offcanvas-header">
@@ -693,6 +766,44 @@
           clearCartStorage();
           clearOfflineQueue();
         });
+      });
+      const sidebar = document.getElementById('appSidebar');
+      const sidebarToggle = document.getElementById('appSidebarToggle');
+      const sidebarBackdrop = document.getElementById('appSidebarBackdrop');
+      const mobileViewport = window.matchMedia('(max-width: 991.98px)');
+
+      function closeSidebar() {
+        if (!sidebar) return;
+        sidebar.classList.remove('show');
+        sidebarBackdrop?.classList.remove('show');
+      }
+
+      function toggleSidebar() {
+        if (!sidebar) return;
+        const shouldOpen = !sidebar.classList.contains('show');
+        sidebar.classList.toggle('show', shouldOpen);
+        sidebarBackdrop?.classList.toggle('show', shouldOpen && mobileViewport.matches);
+      }
+
+      sidebarToggle?.addEventListener('click', function() {
+        toggleSidebar();
+      });
+      sidebarBackdrop?.addEventListener('click', function() {
+        closeSidebar();
+      });
+      document.querySelectorAll('#appSidebar .nav-link').forEach(function(link) {
+        link.addEventListener('click', function() {
+          if (mobileViewport.matches) closeSidebar();
+        });
+      });
+      window.addEventListener('resize', function() {
+        if (!mobileViewport.matches) {
+          sidebarBackdrop?.classList.remove('show');
+          sidebar?.classList.remove('show');
+        }
+      });
+      document.addEventListener('keydown', function(event) {
+        if (event.key === 'Escape') closeSidebar();
       });
       document.querySelectorAll('form[method="post"]').forEach(function(form) {
         form.addEventListener('submit', function() {
