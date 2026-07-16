@@ -109,6 +109,48 @@ def test_core_routes_and_decimal_checkout():
     assert superadmin_dashboard.status_code in (301, 302)
 
 
+def test_dashboard_economic_metrics_are_permission_protected():
+    client = stock_app.app.test_client()
+
+    # Empleado sin permiso economico: vista restringida y sin tarjetas financieras.
+    client.post("/auth/login", data={"username": "empresa_admin", "password": "admin123"})
+    restricted = client.get("/dashboard/")
+    restricted_html = restricted.data.decode("utf-8")
+    assert restricted.status_code == 200
+    assert "Información restringida" in restricted_html
+    assert "Las métricas económicas solo pueden ser visualizadas por el Administrador de la empresa." in restricted_html
+    assert "Ingresos hoy" not in restricted_html
+    assert "Ganancia hoy" not in restricted_html
+    assert "Rentabilidad" not in restricted_html
+
+    client.post("/auth/logout")
+
+    # Administrador de empresa: mantiene dashboard economico completo.
+    client.post("/auth/login", data={"username": "negocio_admin", "password": "admin123"})
+    admin_dashboard = client.get("/dashboard/")
+    admin_html = admin_dashboard.data.decode("utf-8")
+    assert admin_dashboard.status_code == 200
+    assert "Ingresos hoy" in admin_html
+    assert "Ganancia hoy" in admin_html
+    assert "Rentabilidad" in admin_html
+
+    client.post("/auth/logout")
+
+    # Permiso manual desde Mi Empresa (simulado por persistencia directa): habilita visualizacion economica.
+    with stock_app.app.app_context():
+        employee = User.query.filter_by(username="empresa_admin").first()
+        assert employee is not None
+        employee.permissions_json = json.dumps(["economic_stats"])
+        db.session.commit()
+
+    client.post("/auth/login", data={"username": "empresa_admin", "password": "admin123"})
+    granted_dashboard = client.get("/dashboard/")
+    granted_html = granted_dashboard.data.decode("utf-8")
+    assert granted_dashboard.status_code == 200
+    assert "Ingresos hoy" in granted_html
+    assert "Ganancia hoy" in granted_html
+
+
 def test_exports_and_security_methods():
     client = stock_app.app.test_client()
     client.post("/auth/login", data={"username": "empresa_admin", "password": "admin123"})

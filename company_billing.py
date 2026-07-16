@@ -34,6 +34,7 @@ EMPLOYEE_PERMISSIONS = [
     ("clients", "Clientes"),
     ("reports", "Reportes"),
     ("cash", "Caja"),
+    ("economic_stats", "Puede visualizar estadísticas económicas"),
 ]
 
 
@@ -130,13 +131,19 @@ def _user_permissions(user):
     except json.JSONDecodeError:
         return []
     if not isinstance(data, list):
-        return []
-    return [str(item).strip() for item in data if str(item).strip()]
+        data = []
+    permissions = [str(item).strip() for item in data if str(item).strip()]
+    if getattr(user, "role", None) in {"admin", "superadmin"} and "economic_stats" not in permissions:
+        permissions.append("economic_stats")
+    return sorted(set(permissions))
 
 
 def _set_user_permissions(user, permission_keys):
     valid_keys = {key for key, _label in EMPLOYEE_PERMISSIONS}
     cleaned = sorted({key for key in permission_keys if key in valid_keys})
+    if getattr(user, "role", None) in {"admin", "superadmin"} and "economic_stats" not in cleaned:
+        cleaned.append("economic_stats")
+        cleaned.sort()
     user.permissions_json = json.dumps(cleaned)
 
 

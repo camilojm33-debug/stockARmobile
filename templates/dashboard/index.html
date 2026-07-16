@@ -17,6 +17,7 @@
   </div>
 
   <div class="row g-3 mb-4">
+    {% if can_view_economic_metrics %}
     <div class="col-sm-6 col-xl-3">
       <div class="card app-card metric-card"><div class="card-body">
         <div class="d-flex justify-content-between align-items-start"><div><div class="text-muted small fw-semibold text-uppercase">Ingresos hoy</div><div class="metric-value fw-bold">${{ "%.2f"|format(ingresos_hoy) }}</div></div><span class="metric-icon"><i class="bi bi-cash-stack"></i></span></div>
@@ -53,10 +54,11 @@
         <div class="text-muted small mt-2">Rentabilidad {{ "%.1f"|format(rentabilidad) }}%</div>
       </div></div>
     </div>
+    {% endif %}
     <div class="col-sm-6 col-xl-3">
       <div class="card app-card metric-card"><div class="card-body">
-        <div class="d-flex justify-content-between align-items-start"><div><div class="text-muted small fw-semibold text-uppercase">Ticket promedio</div><div class="metric-value fw-bold">${{ "%.2f"|format(ticket_promedio) }}</div></div><span class="metric-icon"><i class="bi bi-receipt-cutoff"></i></span></div>
-        <div class="text-muted small mt-2">{{ "%.3g"|format(productos_vendidos) }} productos vendidos</div>
+        <div class="d-flex justify-content-between align-items-start"><div><div class="text-muted small fw-semibold text-uppercase">Productos vendidos</div><div class="metric-value fw-bold">{{ "%.3g"|format(productos_vendidos) }}</div></div><span class="metric-icon"><i class="bi bi-receipt-cutoff"></i></span></div>
+        <div class="text-muted small mt-2">Unidades vendidas registradas</div>
       </div></div>
     </div>
     <div class="col-sm-6 col-xl-3">
@@ -71,9 +73,23 @@
         <div class="text-muted small mt-2">Productos sin unidades</div>
       </div></div>
     </div>
+    {% if not can_view_economic_metrics %}
+    <div class="col-12">
+      <div class="card app-card border-warning">
+        <div class="card-body p-4 d-flex align-items-start gap-3">
+          <span class="display-6 text-warning"><i class="bi bi-lock-fill"></i></span>
+          <div>
+            <h2 class="h5 fw-bold mb-1">Información restringida</h2>
+            <p class="text-muted mb-0">Las métricas económicas solo pueden ser visualizadas por el Administrador de la empresa.</p>
+          </div>
+        </div>
+      </div>
+    </div>
+    {% endif %}
   </div>
 
   <div class="row g-4 mb-4">
+    {% if can_view_economic_metrics %}
     <div class="col-lg-8">
       <div class="card app-card h-100">
         <div class="card-header bg-white border-0 fw-bold pt-3">Ventas de los ultimos 7 dias</div>
@@ -81,6 +97,9 @@
       </div>
     </div>
     <div class="col-lg-4">
+    {% else %}
+    <div class="col-12">
+    {% endif %}
       <div class="card app-card h-100">
         <div class="card-header bg-white border-0 fw-bold pt-3">Ranking categorias</div>
         <div class="card-body"><canvas id="categoryChart" height="220"></canvas></div>
@@ -88,6 +107,7 @@
     </div>
   </div>
 
+  {% if can_view_economic_metrics %}
   <div class="row g-4">
     <div class="col-lg-7">
       <div class="card app-card h-100">
@@ -130,8 +150,9 @@
       </div>
     </div>
   </div>
+  {% endif %}
   <div class="row g-4 mt-1">
-    <div class="col-lg-6">
+    <div class="{{ 'col-lg-6' if can_view_economic_metrics else 'col-lg-12' }}">
       <div class="card app-card h-100">
         <div class="card-header bg-white border-0 fw-bold pt-3">Productos menos vendidos</div>
         <div class="card-body pt-0">
@@ -157,6 +178,7 @@
     </div>
   </div>
   <div class="row g-4 mt-1">
+    {% if can_view_economic_metrics %}
     <div class="col-lg-6">
       <div class="card app-card h-100">
         <div class="card-header bg-white border-0 fw-bold pt-3">Ranking clientes</div>
@@ -171,7 +193,8 @@
         </div>
       </div>
     </div>
-    <div class="col-lg-6">
+    {% endif %}
+    <div class="{{ 'col-lg-6' if can_view_economic_metrics else 'col-lg-12' }}">
       <div class="card app-card h-100">
         <div class="card-header bg-white border-0 fw-bold pt-3">Stock agotado</div>
         <div class="card-body pt-0">
@@ -201,6 +224,7 @@
 {% block extra_js %}
 <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.7/dist/chart.umd.min.js"></script>
 <script>
+  {% if can_view_economic_metrics %}
   const salesTrendCanvas = document.getElementById('salesTrendChart');
   if (salesTrendCanvas) {
     new Chart(salesTrendCanvas, {
@@ -223,6 +247,7 @@
       }
     });
   }
+  {% endif %}
 
   const categoryCanvas = document.getElementById('categoryChart');
   if (categoryCanvas) {

@@ -97,7 +97,7 @@ def create_product_label(barcode_string, product_name, price, size=(1000, 500), 
 
     name_text = str(product_name or "Producto")
     sku_text = str(barcode_string or "").strip() or "SIN-CODIGO"
-    price_text = f"ARS {float(price or 0):.2f}"
+    price_text = f"$ {float(price or 0):.2f}"
 
     # Estructura vertical: nombre arriba, QR centrado grande, precio y SKU debajo.
     row_gap = max(3, int(usable_h * 0.02))
@@ -149,16 +149,22 @@ def create_product_label(barcode_string, product_name, price, size=(1000, 500), 
         price_font = _fit_font_for_text(
             draw,
             price_text,
-            usable_w,
-            max_size=max(16, int(price_h * 1.25)),
-            min_size=11,
+            max(10, usable_w - (padding * 2)),
+            max_size=max(20, int(price_h * 1.55)),
+            min_size=13,
             bold=True,
         )
-        draw.text((center_x, y), price_text, fill="black", anchor="ma", font=price_font)
-        y += max(12, int(getattr(price_font, "size", 12) * 1.05)) + row_gap
+        _, _, _, text_bottom = draw.textbbox((0, 0), price_text, font=price_font)
+        text_h = max(1, text_bottom)
+        band_h = max(int(price_h * 0.95), text_h + max(8, int(row_gap * 1.2)))
+        band_top = max(padding, y)
+        band_bottom = min(height - padding, band_top + band_h)
+        draw.rectangle((padding, band_top, width - padding, band_bottom), fill="black", outline="black")
+        draw.text((center_x, band_top + ((band_bottom - band_top) // 2)), price_text, fill="white", anchor="mm", font=price_font)
+        y = band_bottom + row_gap
 
     if include_code:
-        code_font = _fit_font_for_text(draw, sku_text, usable_w, max_size=max(9, int(sku_h * 0.75)), min_size=6)
+        code_font = _fit_font_for_text(draw, sku_text, usable_w, max_size=max(8, int(sku_h * 0.60)), min_size=5)
         draw.text((center_x, min(height - padding, y)), sku_text, fill="black", anchor="ma", font=code_font)
 
     return img
@@ -351,7 +357,7 @@ def _draw_label_on_canvas(pdf, product, x, y, label_w_pt, label_h_pt, *, include
 
     name_text = str(getattr(product, "name", "") or "Producto")
     sku_text = str(getattr(product, "barcode", "") or getattr(product, "id", "SIN-CODIGO"))
-    price_text = f"ARS {float(getattr(product, 'price', 0) or 0):.2f}"
+    price_text = f"$ {float(getattr(product, 'price', 0) or 0):.2f}"
 
     row_gap = max(0.35 * mm, inner_h * 0.018)
     name_h = max(3.2 * mm, inner_h * 0.18) if include_name else 0
@@ -414,14 +420,14 @@ def _draw_label_on_canvas(pdf, product, x, y, label_w_pt, label_h_pt, *, include
 
     if include_price:
         if label_w_mm >= 49 and label_h_mm >= 49:
-            max_price_size = 34
-            min_price_size = 24
+            max_price_size = 38
+            min_price_size = 27
         elif label_h_mm >= 38:
-            max_price_size = 24
-            min_price_size = 17
+            max_price_size = 27
+            min_price_size = 19
         else:
-            max_price_size = 18
-            min_price_size = 12
+            max_price_size = 20
+            min_price_size = 13
 
         price_value, price_size = _fit_canvas_text(
             pdf,
@@ -431,11 +437,15 @@ def _draw_label_on_canvas(pdf, product, x, y, label_w_pt, label_h_pt, *, include
             min_size=min_price_size,
             font_name="Helvetica-Bold",
         )
-        price_y_center = cursor_top - (price_h / 2)
+        band_h = max(price_h * 0.92, price_size * 1.45)
+        band_y = cursor_top - band_h
         pdf.setFillColorRGB(0, 0, 0)
+        pdf.rect(inner_x, band_y, inner_w, band_h, stroke=0, fill=1)
+        pdf.setFillColorRGB(1, 1, 1)
         pdf.setFont("Helvetica-Bold", price_size)
-        pdf.drawCentredString(center_x, price_y_center - (price_size * 0.35), price_value)
-        cursor_top -= price_h + row_gap
+        pdf.drawCentredString(center_x, band_y + ((band_h - price_size) / 2) + (price_size * 0.18), price_value)
+        pdf.setFillColorRGB(0, 0, 0)
+        cursor_top = band_y - row_gap
 
     if include_code:
         sku_y_center = max(inner_y + (sku_h / 2), cursor_top - (sku_h / 2))
@@ -443,8 +453,8 @@ def _draw_label_on_canvas(pdf, product, x, y, label_w_pt, label_h_pt, *, include
             pdf,
             sku_text,
             max_w=inner_w,
-            max_size=min(10, max(6, int(sku_h * 0.9))),
-            min_size=6,
+            max_size=min(8, max(5, int(sku_h * 0.7))),
+            min_size=5,
             font_name="Helvetica",
         )
         pdf.setFont("Helvetica", sku_size)
