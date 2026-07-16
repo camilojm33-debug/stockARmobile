@@ -166,9 +166,15 @@ def _sale_payment_breakdown(sale):
             secondary_amount = Decimal("0.00")
         if primary_amount <= 0:
             primary_amount = max(total - secondary_amount, Decimal("0.00"))
+        # Asegurar que la suma no supere el total de la venta
+        combined = primary_amount + secondary_amount
+        if combined > total and combined > Decimal("0.00"):
+            primary_amount = (primary_amount * total / combined).quantize(Decimal("0.01"))
+            secondary_amount = total - primary_amount
     else:
-        if primary_amount <= 0:
-            primary_amount = total
+        # Capear al total: el excedente entregado al cliente como vuelto
+        # no debe contar como ingreso de la venta
+        primary_amount = min(primary_amount, total) if primary_amount > Decimal("0.00") else total
         secondary_amount = Decimal("0.00")
 
     result[primary_method] = result.get(primary_method, Decimal("0.00")) + primary_amount

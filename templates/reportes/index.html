@@ -4,7 +4,53 @@
 
 {% block content %}
 <div class="app-shell">
-  <div class="d-flex flex-wrap justify-content-between align-items-center gap-3 mb-4"><div><span class="page-kicker"><i class="bi bi-file-earmark-bar-graph"></i> Analitica</span><h1 class="h3 fw-bold mb-0">Reportes</h1><p class="text-muted mb-0">Balance, ganancias, ventas, compras, gastos y rentabilidad.</p></div><div class="d-flex gap-2"><a class="btn btn-outline-primary" href="{{ url_for('reports.balance_csv') }}"><i class="bi bi-filetype-csv me-1"></i>Balance CSV</a><a class="btn btn-primary" href="{{ url_for('reports.balance_pdf') }}"><i class="bi bi-filetype-pdf me-1"></i>Balance PDF</a></div></div>
+  <div class="d-flex flex-wrap justify-content-between align-items-center gap-3 mb-4">
+    <div>
+      <span class="page-kicker"><i class="bi bi-file-earmark-bar-graph"></i> Analitica</span>
+      <h1 class="h3 fw-bold mb-0">Reportes</h1>
+      <p class="text-muted mb-0">Balance, ganancias, ventas, compras, gastos y rentabilidad.</p>
+    </div>
+    <div class="d-flex gap-2">
+      <a class="btn btn-outline-primary" href="{{ url_for('reports.balance_csv') }}"><i class="bi bi-filetype-csv me-1"></i>Balance CSV</a>
+      <a class="btn btn-primary" href="{{ url_for('reports.balance_pdf') }}"><i class="bi bi-filetype-pdf me-1"></i>Balance PDF</a>
+    </div>
+  </div>
+
+  <!-- Filtro de periodo para métricas del resumen -->
+  <form class="card app-card mb-3" method="get" action="{{ url_for('reports.index') }}">
+    <div class="card-body py-2">
+      <div class="row g-2 align-items-end">
+        <div class="col-auto">
+          <label class="form-label small mb-1 fw-semibold">Período del resumen</label>
+        </div>
+        <div class="col-sm-auto">
+          <label class="form-label small mb-1">Desde</label>
+          <input class="form-control form-control-sm" type="date" name="desde" value="{{ desde }}">
+        </div>
+        <div class="col-sm-auto">
+          <label class="form-label small mb-1">Hasta</label>
+          <input class="form-control form-control-sm" type="date" name="hasta" value="{{ hasta }}">
+        </div>
+        <div class="col-auto">
+          <button class="btn btn-sm btn-outline-primary" type="submit"><i class="bi bi-funnel me-1"></i>Filtrar</button>
+        </div>
+        {% if desde == hasta %}
+        <div class="col-auto">
+          <span class="badge bg-primary-subtle text-primary">
+            <i class="bi bi-calendar-check me-1"></i>{{ desde }}
+          </span>
+        </div>
+        {% else %}
+        <div class="col-auto">
+          <span class="badge bg-primary-subtle text-primary">
+            <i class="bi bi-calendar-range me-1"></i>{{ desde }} → {{ hasta }}
+          </span>
+        </div>
+        {% endif %}
+      </div>
+    </div>
+  </form>
+
   <div class="row g-3">
     <div class="col-md-4"><div class="card app-card metric-card"><div class="card-body"><div class="text-muted small fw-semibold text-uppercase">Ventas</div><div class="metric-value fw-bold">${{ "%.2f"|format(sales_total) }}</div></div></div></div>
     <div class="col-md-4"><div class="card app-card metric-card"><div class="card-body"><div class="text-muted small fw-semibold text-uppercase">Compras</div><div class="metric-value fw-bold">${{ "%.2f"|format(purchases_total) }}</div></div></div></div>
@@ -14,8 +60,8 @@
     <div class="card-header bg-white fw-bold">Exportaciones operativas</div>
     <div class="card-body">
       <form class="row g-2 align-items-end mb-3" method="get" action="{{ url_for('reports.export_csv', kind='ventas') }}">
-        <div class="col-md-3"><label class="form-label">Desde</label><input class="form-control" type="date" name="desde"></div>
-        <div class="col-md-3"><label class="form-label">Hasta</label><input class="form-control" type="date" name="hasta"></div>
+        <div class="col-md-3"><label class="form-label">Desde</label><input class="form-control" type="date" name="desde" value="{{ desde }}"></div>
+        <div class="col-md-3"><label class="form-label">Hasta</label><input class="form-control" type="date" name="hasta" value="{{ hasta }}"></div>
         <div class="col-md-3"><label class="form-label">Reporte</label><select class="form-select" id="report-kind"><option value="ventas">Ventas</option><option value="compras">Compras</option><option value="caja">Caja</option><option value="gastos">Gastos</option><option value="clientes">Clientes</option><option value="productos">Productos</option><option value="stock">Stock</option></select></div>
         <div class="col-md-3 d-grid gap-2 d-md-flex">
           <button class="btn btn-outline-primary flex-fill" onclick="this.form.action='/reportes/' + document.getElementById('report-kind').value + '.csv'"><i class="bi bi-filetype-csv me-1"></i>CSV</button>

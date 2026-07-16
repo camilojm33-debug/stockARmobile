@@ -19,11 +19,36 @@ bp = Blueprint("reports", __name__)
 @tenant_required
 def index():
     from app import Expense, PurchaseOrder, Sale, db, scope_query_to_company
+    from datetime import date
 
-    sales_total = scope_query_to_company(db.session.query(db.func.coalesce(db.func.sum(Sale.total_amount), 0)), Sale).scalar() or 0
-    purchases_total = scope_query_to_company(db.session.query(db.func.coalesce(db.func.sum(PurchaseOrder.total_amount), 0)), PurchaseOrder).scalar() or 0
-    expenses_total = scope_query_to_company(db.session.query(db.func.coalesce(db.func.sum(Expense.amount), 0)), Expense).scalar() or 0
-    return render_template("reportes/index.html", sales_total=sales_total, purchases_total=purchases_total, expenses_total=expenses_total)
+    # Filtro de fecha para las métricas del resumen (por defecto: hoy)
+    today_str = date.today().isoformat()
+    desde = (request.args.get("desde") or today_str).strip()
+    hasta = (request.args.get("hasta") or today_str).strip()
+
+    def _apply_date(q, col):
+        return q.filter(col >= desde, col <= f"{hasta} 23:59:59")
+
+    sales_total = _apply_date(
+        scope_query_to_company(db.session.query(db.func.coalesce(db.func.sum(Sale.total_amount), 0)), Sale),
+        Sale.date,
+    ).scalar() or 0
+    purchases_total = _apply_date(
+        scope_query_to_company(db.session.query(db.func.coalesce(db.func.sum(PurchaseOrder.total_amount), 0)), PurchaseOrder),
+        PurchaseOrder.date,
+    ).scalar() or 0
+    expenses_total = _apply_date(
+        scope_query_to_company(db.session.query(db.func.coalesce(db.func.sum(Expense.amount), 0)), Expense),
+        Expense.date,
+    ).scalar() or 0
+    return render_template(
+        "reportes/index.html",
+        sales_total=sales_total,
+        purchases_total=purchases_total,
+        expenses_total=expenses_total,
+        desde=desde,
+        hasta=hasta,
+    )
 
 
 @bp.route("/balance.csv")
