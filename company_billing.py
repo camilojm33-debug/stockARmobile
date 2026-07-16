@@ -9,7 +9,7 @@ import json
 import secrets
 import string
 
-from flask import Blueprint, abort, current_app, flash, jsonify, redirect, render_template, request, send_file, url_for
+from flask import Blueprint, abort, current_app, flash, jsonify, redirect, render_template, request, send_file, session, url_for
 from flask_login import current_user, login_required
 from sqlalchemy import case, func
 from reportlab.lib.pagesizes import letter
@@ -180,6 +180,12 @@ def _company_schedules_payload(company):
     return payload
 
 
+def _mercadopago_connection_summary(company):
+    from services.mercadopago_oauth_service import MercadoPagoOAuthService
+
+    return MercadoPagoOAuthService().summarize_connection(getattr(company, "mercadopago_connection", None))
+
+
 def _pdf_from_lines(title, lines, filename):
     buffer = BytesIO()
     pdf = canvas.Canvas(buffer, pagesize=letter)
@@ -286,6 +292,74 @@ def _cash_summary(cash_rows):
     }
 
 
+def _days_remaining(target_date):
+    if target_date is None:
+        return None
+    delta = target_date - datetime.now(timezone.utc).replace(tzinfo=None)
+    if delta.total_seconds() <= 0:
+        return int(delta.days)
+    return int((delta.total_seconds() + 86399) // 86400)
+
+
+def _plan_features_label(plan):
+    if plan is None:
+        return []
+    raw = (getattr(plan, "features_json", None) or "").strip().lower()
+    if not raw:
+        return []
+    if raw == "all":
+        return ["Inventario", "Ventas", "Clientes", "Compras", "Caja", "Reportes", "Excel", "Kardex", "QR", "Etiquetas"]
+    mapping = {
+        "inventario": "Inventario",
+        "ventas": "Ventas",
+        "clientes": "Clientes",
+        "compras": "Compras",
+        "caja": "Caja",
+        "reportes": "Reportes",
+        "reportes_basicos": "Reportes básicos",
+        "excel": "Excel",
+        "kardex": "Kardex",
+        "qr": "QR",
+        "etiquetas": "Etiquetas",
+    }
+    return [mapping.get(item.strip(), item.strip().title()) for item in raw.split(",") if item.strip()]
+
+
+def _subscription_state_badge(subscription, days_remaining):
+    status = (getattr(subscription, "status", None) or "trial").lower()
+    label_map = {
+        "trial": "Trial",
+        "pending": "Pendiente",
+        "authorized": "Pendiente",
+        "in_process": "Pendiente",
+        "active": "Activa",
+        "approved": "Activa",
+        "cancelled": "Cancelada",
+        "expired": "Vencida",
+        "suspended": "Suspendida",
+        "rejected": "Rechazada",
+    }
+    if status in {"cancelled", "expired", "suspended", "rejected"}:
+        return {"label": label_map.get(status, status.title()), "class": "text-bg-danger", "indicator": "danger", "text": "Vencida"}
+    if status == "trial":
+        if days_remaining is not None and days_remaining <= 1:
+            return {"label": "Trial", "class": "text-bg-danger", "indicator": "danger", "text": "Vencida"}
+        if days_remaining is not None and days_remaining <= 3:
+            return {"label": "Trial", "class": "text-bg-warning", "indicator": "warning", "text": "Quedan pocos días"}
+        if days_remaining is not None and days_remaining <= 7:
+            return {"label": "Trial", "class": "text-bg-warning", "indicator": "warning", "text": "Próxima a vencer"}
+        return {"label": "Trial", "class": "text-bg-success", "indicator": "success", "text": "Activa"}
+    if days_remaining is None:
+        return {"label": label_map.get(status, status.title()), "class": "text-bg-info", "indicator": "success", "text": "Activa"}
+    if days_remaining <= 0:
+        return {"label": label_map.get(status, status.title()), "class": "text-bg-danger", "indicator": "danger", "text": "Vencida"}
+    if days_remaining <= 3:
+        return {"label": label_map.get(status, status.title()), "class": "text-bg-danger", "indicator": "warning", "text": "Quedan pocos días"}
+    if days_remaining <= 15:
+        return {"label": label_map.get(status, status.title()), "class": "text-bg-warning", "indicator": "warning", "text": "Próxima a vencer"}
+    return {"label": label_map.get(status, status.title()), "class": "text-bg-success", "indicator": "success", "text": "Activa"}
+
+
 def _pin_guard(company):
     if _is_pin_verified(company.id):
         return None
@@ -383,7 +457,7 @@ def _build_user_and_cash_rows(company_id, date_from=None, date_to=None, search_t
 def subscription_portal():
     from flask import session
 
-    from app import Company, Invoice, Payment, db
+    from app import Company, Invoice, Payment, ReferralAttribution, db
 
     company_id = getattr(current_user, "company_id", None)
     company = Company.query.filter_by(id=company_id).first_or_404()
@@ -410,6 +484,12 @@ def subscription_portal():
         .limit(20)
         .all()
     )
+    referral_attribution = ReferralAttribution.query.filter_by(company_id=company.id).first()
+    managed_by_seller = referral_attribution.seller.user.username if referral_attribution and referral_attribution.seller and referral_attribution.seller.user else None
+    reference_date = _subscription_expiration(subscription, company)
+    days_remaining = _days_remaining(reference_date)
+    status_badge = _subscription_state_badge(subscription, days_remaining)
+    plan_features = _plan_features_label(subscription.plan if subscription else None)
     checkout_preview = session.pop("mp_checkout_preview", None)
     checkout_status = (request.args.get("checkout") or "").strip().lower()
     return render_template(
@@ -422,8 +502,53 @@ def subscription_portal():
         recent_invoices=recent_invoices,
         checkout_preview=checkout_preview,
         checkout_status=checkout_status,
+        days_remaining=days_remaining,
+        reference_date=reference_date,
+        status_badge=status_badge,
+        plan_features=plan_features,
+        managed_by_seller=managed_by_seller,
         mp_config=load_billing_config(),
     )
+
+
+@bp.route("/subscription/invoices/<int:invoice_id>/pdf")
+@company_member_required
+def subscription_invoice_pdf(invoice_id):
+    from app import Company, Invoice
+
+    company_id = getattr(current_user, "company_id", None)
+    company = Company.query.filter_by(id=company_id).first_or_404()
+    invoice = Invoice.query.filter_by(id=invoice_id, company_id=company.id).first_or_404()
+    lines = [
+        f"Empresa: {company.name}",
+        f"Factura: {invoice.invoice_number or ('#' + str(invoice.id))}",
+        f"Estado: {invoice.status or '-'}",
+        f"Importe: {float(invoice.amount or 0):.2f} {invoice.currency or ''}",
+        f"Vencimiento: {invoice.due_at.strftime('%Y-%m-%d') if invoice.due_at else '-'}",
+        f"Emision: {invoice.issued_at.strftime('%Y-%m-%d %H:%M') if invoice.issued_at else '-'}",
+        f"Detalle: {(invoice.detail or '-').strip()[:500]}",
+    ]
+    return _pdf_from_lines("Factura SaaS - StockArmobile", lines, f"factura_{invoice.id}.pdf")
+
+
+@bp.route("/subscription/payments/<int:payment_id>/pdf")
+@company_member_required
+def subscription_payment_pdf(payment_id):
+    from app import Company, Payment
+
+    company_id = getattr(current_user, "company_id", None)
+    company = Company.query.filter_by(id=company_id).first_or_404()
+    payment = Payment.query.filter_by(id=payment_id, company_id=company.id).first_or_404()
+    lines = [
+        f"Empresa: {company.name}",
+        f"Pago: {payment.payment_id or ('#' + str(payment.id))}",
+        f"Estado: {payment.status or '-'}",
+        f"Importe: {float(payment.amount or 0):.2f} {payment.currency or ''}",
+        f"Metodo: {payment.payment_method or '-'}",
+        f"Referencia: {payment.reference or '-'}",
+        f"Fecha de registro: {payment.created_at.strftime('%Y-%m-%d %H:%M') if payment.created_at else '-'}",
+    ]
+    return _pdf_from_lines("Comprobante de Pago - StockArmobile", lines, f"pago_{payment.id}.pdf")
 
 
 @bp.route("/checkout", methods=["POST"])
@@ -555,6 +680,147 @@ def payment_qr_settings():
         flash("Datos de cobro QR guardados correctamente.", "success")
     db.session.commit()
     return redirect(url_for("company_billing.company_settings"))
+
+
+@bp.route("/mercado-pago", methods=["POST"])
+@company_admin_required
+def mercado_pago_connect():
+    from app import db, record_audit
+    from services.mercadopago_oauth_service import MercadoPagoOAuthService
+
+    company_id = getattr(current_user, "company_id", None)
+    company = _load_company(company_id)
+    service = MercadoPagoOAuthService()
+    if not service.has_oauth_config():
+        flash("Faltan las credenciales OAuth de Mercado Pago en el servidor.", "danger")
+        return redirect(url_for("company_billing.company_settings", panel="mercado-pago"))
+
+    state = service.oauth_state()
+    session_key = f"mp_oauth_state_{company.id}"
+    session[session_key] = state
+    session.modified = True
+    redirect_uri = service.oauth_redirect_uri(url_for("company_billing.mercado_pago_callback", _external=True))
+    auth_url = service.build_authorization_url(state=state, redirect_uri=redirect_uri)
+    record_audit(action="mercadopago_oauth_start", entity="company", entity_id=company.id, detail="Inicio de conexión OAuth con Mercado Pago")
+    db.session.commit()
+    return redirect(auth_url)
+
+
+@bp.route("/mercado-pago/callback")
+@company_admin_required
+def mercado_pago_callback():
+    from app import db, record_audit
+    from services.mercadopago_oauth_service import MercadoPagoOAuthService
+
+    company_id = getattr(current_user, "company_id", None)
+    company = _load_company(company_id)
+    service = MercadoPagoOAuthService()
+
+    error = request.args.get("error")
+    if error:
+        flash(f"Mercado Pago rechazó la conexión: {error}", "danger")
+        return redirect(url_for("company_billing.company_settings", panel="mercado-pago"))
+
+    code = (request.args.get("code") or "").strip()
+    state = (request.args.get("state") or "").strip()
+    session_key = f"mp_oauth_state_{company.id}"
+    expected_state = session.get(session_key)
+    if not code or not state or not expected_state or state != expected_state:
+        flash("La devolución OAuth no pudo validarse.", "danger")
+        return redirect(url_for("company_billing.company_settings", panel="mercado-pago"))
+
+    session.pop(session_key, None)
+    redirect_uri = service.oauth_redirect_uri(url_for("company_billing.mercado_pago_callback", _external=True))
+    try:
+        token_payload = service.exchange_code(code=code, redirect_uri=redirect_uri)
+        access_token = token_payload.get("access_token") or ""
+        if not access_token:
+            raise RuntimeError("Mercado Pago no devolvió access_token")
+        profile = service.fetch_user_profile(access_token=access_token)
+        connection = service.save_connection(company_id=company.id, token_payload=token_payload, profile=profile)
+        record_audit(action="mercadopago_oauth_connected", entity="company", entity_id=company.id, detail=f"Cuenta Mercado Pago conectada: {connection.account_email or connection.mp_user_id or 'sin email'}")
+        db.session.commit()
+        flash("Mercado Pago conectado correctamente.", "success")
+    except Exception as exc:
+        db.session.rollback()
+        current_app.logger.exception("Error completando OAuth de Mercado Pago: %s", exc)
+        flash("No se pudo completar la conexión con Mercado Pago.", "danger")
+    return redirect(url_for("company_billing.company_settings", panel="mercado-pago"))
+
+
+@bp.route("/mercado-pago/refresh", methods=["POST"])
+@company_admin_required
+def mercado_pago_refresh():
+    from app import db, record_audit
+    from services.mercadopago_oauth_service import MercadoPagoOAuthService
+
+    company_id = getattr(current_user, "company_id", None)
+    company = _load_company(company_id)
+    service = MercadoPagoOAuthService()
+    try:
+        connection = service.refresh_connection(company_id=company.id)
+        record_audit(action="mercadopago_oauth_refresh", entity="company", entity_id=company.id, detail="Conexión Mercado Pago actualizada")
+        db.session.commit()
+        flash("Conexión de Mercado Pago actualizada correctamente.", "success")
+    except Exception as exc:
+        db.session.rollback()
+        current_app.logger.exception("No se pudo actualizar Mercado Pago: %s", exc)
+        flash("No se pudo actualizar la conexión de Mercado Pago.", "danger")
+    return redirect(url_for("company_billing.company_settings", panel="mercado-pago"))
+
+
+@bp.route("/mercado-pago/test", methods=["POST"])
+@company_admin_required
+def mercado_pago_test():
+    from app import db, record_audit
+    from services.mercadopago_oauth_service import MercadoPagoOAuthService
+
+    company_id = getattr(current_user, "company_id", None)
+    company = _load_company(company_id)
+    service = MercadoPagoOAuthService()
+    try:
+        profile = service.test_connection(company_id=company.id)
+        record_audit(action="mercadopago_oauth_test", entity="company", entity_id=company.id, detail=f"Prueba de conexión Mercado Pago OK: {profile.get('id')}")
+        db.session.commit()
+        flash("La conexión con Mercado Pago funciona correctamente.", "success")
+    except Exception as exc:
+        db.session.rollback()
+        current_app.logger.exception("Error probando Mercado Pago: %s", exc)
+        flash("La conexión con Mercado Pago falló.", "danger")
+    return redirect(url_for("company_billing.company_settings", panel="mercado-pago"))
+
+
+@bp.route("/mercado-pago/disconnect", methods=["POST"])
+@company_admin_required
+def mercado_pago_disconnect():
+    from app import db, record_audit
+    from services.mercadopago_oauth_service import MercadoPagoOAuthService
+
+    company_id = getattr(current_user, "company_id", None)
+    company = _load_company(company_id)
+    service = MercadoPagoOAuthService()
+    try:
+        service.disconnect(company_id=company.id)
+        record_audit(action="mercadopago_oauth_disconnect", entity="company", entity_id=company.id, detail="Cuenta Mercado Pago desconectada")
+        db.session.commit()
+        flash("Cuenta de Mercado Pago desconectada.", "info")
+    except Exception as exc:
+        db.session.rollback()
+        current_app.logger.exception("No se pudo desconectar Mercado Pago: %s", exc)
+        flash("No se pudo desconectar la cuenta de Mercado Pago.", "danger")
+    return redirect(url_for("company_billing.company_settings", panel="mercado-pago"))
+
+
+@bp.route("/mercado-pago/status")
+@company_admin_required
+def mercado_pago_status():
+    company_id = getattr(current_user, "company_id", None)
+    company = _load_company(company_id)
+    summary = _mercadopago_connection_summary(company)
+    for key in ["connected_at", "last_synced_at", "token_expires_at"]:
+        value = summary.get(key)
+        summary[key] = value.isoformat() if value else None
+    return jsonify(summary)
 
 
 @bp.route("/company-settings/cash/open", methods=["POST"])
@@ -1252,6 +1518,41 @@ def company_settings_backups_create():
     return redirect(url_for("company_billing.company_settings", panel="backups"))
 
 
+@bp.route("/company-settings/backups/import", methods=["POST"])
+@company_member_required
+def company_settings_backups_import():
+    from app import db, record_audit
+
+    company_id = getattr(current_user, "company_id", None)
+    company = _load_company(company_id)
+    blocked = _pin_guard(company)
+    if blocked is not None:
+        return blocked
+
+    backup_file = request.files.get("backup_file")
+    if not backup_file or not getattr(backup_file, "filename", "").strip():
+        flash("Seleccioná un archivo de backup válido.", "warning")
+        return redirect(url_for("company_billing.company_settings", panel="backups"))
+
+    try:
+        backup, plan, payload = BackupService.import_backup_file(company_id=company.id, file_storage=backup_file, created_by_user_id=current_user.id)
+        record_audit(
+            action="backup_import",
+            entity="backup",
+            entity_id=backup.id,
+            company_id=company.id,
+            detail=f"Backup importado por usuario empresa. plan={plan['code']} version={payload.get('schema_version')}",
+        )
+        db.session.commit()
+        flash("Backup importado correctamente. Revisá el resumen antes de restaurar.", "success")
+        return redirect(url_for("company_billing.company_settings", panel="backups", preview_id=backup.id))
+    except Exception as exc:
+        db.session.rollback()
+        current_app.logger.exception("No se pudo importar el backup de empresa: %s", exc)
+        flash("No se pudo importar el backup.", "danger")
+        return redirect(url_for("company_billing.company_settings", panel="backups"))
+
+
 @bp.route("/company-settings/backups/<int:backup_id>/download")
 @company_member_required
 def company_settings_backups_download(backup_id):
@@ -1285,16 +1586,26 @@ def company_settings_backups_restore(backup_id):
         return blocked
 
     backup = BackupLog.query.filter_by(id=backup_id, company_id=company_id).first_or_404()
-    BackupService.restore_backup(backup, expected_company_id=company_id, restored_by_user_id=current_user.id)
-    record_audit(
-        action="backup_restore",
-        entity="backup",
-        entity_id=backup.id,
-        company_id=company_id,
-        detail="Backup restaurado desde Mi Empresa.",
-    )
-    db.session.commit()
-    flash("Backup restaurado correctamente.", "success")
+    sections = request.form.getlist("sections")
+    confirm_restore = (request.form.get("confirm_restore") or "").strip() == "1"
+    if not confirm_restore:
+        return redirect(url_for("company_billing.company_settings", panel="backups", preview_id=backup.id))
+
+    try:
+        BackupService.restore_backup(backup, expected_company_id=company_id, restored_by_user_id=current_user.id, sections=sections)
+        record_audit(
+            action="backup_restore",
+            entity="backup",
+            entity_id=backup.id,
+            company_id=company_id,
+            detail=f"Backup restaurado desde Mi Empresa. sections={','.join(sections or ['full'])}",
+        )
+        db.session.commit()
+        flash("Backup restaurado correctamente.", "success")
+    except Exception as exc:
+        db.session.rollback()
+        current_app.logger.exception("No se pudo restaurar el backup de empresa: %s", exc)
+        flash("No se pudo restaurar el backup.", "danger")
     return redirect(url_for("company_billing.company_settings", panel="backups"))
 
 
@@ -1364,12 +1675,17 @@ def company_settings():
     printer_settings = _json_company_dict(company.printer_settings_json)
     schedules_settings = _company_schedules_payload(company)
     schedule_assignments = schedules_settings.get("employee_assignments", [])
+    mercado_pago_connection_summary = _mercadopago_connection_summary(company)
     active_employees = []
     device_rows = []
     backups = []
     backup_plan = {}
     backup_storage_used = "0.00 B"
     backup_automation = BackupService.automation_scaffold()
+    backup_summaries = {}
+    selected_backup = None
+    selected_backup_summary = None
+    preview_backup_id = request.args.get("preview_id", type=int)
     if pin_verified:
         users, cash_rows = _build_user_and_cash_rows(
             company.id,
@@ -1426,6 +1742,15 @@ def company_settings():
         backups = BackupService.company_backups(company.id)
         backup_plan = BackupService.plan_limit_status(company.id)
         backup_storage_used = _format_size(sum(int(item.file_size_bytes or 0) for item in backups))
+        for backup in backups:
+            try:
+                backup_summaries[backup.id] = BackupService.summarize_backup(backup)
+            except Exception:
+                backup_summaries[backup.id] = {"schema_version": "-", "system_version": "-", "company_id": backup.company_id, "generated_at": None, "products": 0, "inventory": 0, "categories": 0, "clients": 0, "sales": 0, "employees": 0, "schedules": 0}
+        if preview_backup_id:
+            selected_backup = next((item for item in backups if item.id == preview_backup_id), None)
+            if selected_backup is not None:
+                selected_backup_summary = backup_summaries.get(selected_backup.id)
 
     return render_template(
         "company_billing/settings.html",
@@ -1458,6 +1783,7 @@ def company_settings():
         printer_settings=printer_settings,
         schedules_settings=schedules_settings,
         schedule_assignments=schedule_assignments,
+        mercado_pago_connection_summary=mercado_pago_connection_summary,
         active_employees=active_employees,
         device_rows=device_rows,
         cash_sessions_recent=cash_sessions_recent,
@@ -1466,6 +1792,11 @@ def company_settings():
         backup_plan=backup_plan,
         backup_storage_used=backup_storage_used,
         backup_automation=backup_automation,
+        backup_summaries=backup_summaries,
+        selected_backup=selected_backup,
+        selected_backup_summary=selected_backup_summary,
+        backup_section_options=BackupService.restore_section_options(),
+        preview_backup_id=preview_backup_id,
         format_size=_format_size,
     )
 

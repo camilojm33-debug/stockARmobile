@@ -104,16 +104,17 @@ class WebhookService:
             external_reference = payment_data.get("external_reference") or ""
             incoming_updated_at = self._event_updated_at(payment_data)
             paid_at = self._parse_mp_datetime(payment_data.get("date_approved"))
+            metadata = payment_data.get("metadata") or {}
+            ref_parts = self._external_reference_parts(external_reference)
+            flow = str(metadata.get("flow") or ref_parts.get("flow") or "").strip().lower()
 
             payment = Payment.query.filter_by(payment_id=str(payment_data.get("id"))).first()
             previous_payment_status = (payment.status or "").lower() if payment is not None else ""
             if payment is None:
-                metadata = payment_data.get("metadata") or {}
-                company_id = int(metadata.get("company_id") or 0)
+                company_id = int(metadata.get("company_id") or ref_parts.get("company_id") or 0)
                 subscription_id = int(metadata.get("subscription_id") or 0) or None
                 user_id = int(metadata.get("user_id") or 0) or None
 
-                ref_parts = self._external_reference_parts(external_reference)
                 if not subscription_id and str(ref_parts.get("subscription_id") or "").isdigit():
                     subscription_id = int(ref_parts.get("subscription_id"))
                 if not company_id and str(ref_parts.get("company_id") or "").isdigit():
@@ -121,27 +122,81 @@ class WebhookService:
                 if not user_id and str(ref_parts.get("user_id") or "").isdigit():
                     user_id = int(ref_parts.get("user_id"))
 
-                if not company_id or not subscription_id:
-                    raise RuntimeError("Webhook Mercado Pago sin company_id/subscription_id validos")
+                if not company_id and flow == "pos_sale" and str(ref_parts.get("draft_payment_id") or "").isdigit():
+                    draft_payment = Payment.query.filter_by(id=int(ref_parts.get("draft_payment_id"))).first()
+                    if draft_payment:
+                        company_id = draft_payment.company_id
+                        if not user_id:
+                            user_id = draft_payment.user_id
 
-                payment = Payment(
-                    payment_id=str(payment_data.get("id")),
-                    preference_id=str(payment_data.get("order", {}).get("id") or payment_data.get("metadata", {}).get("preference_id") or ""),
-                    external_reference=external_reference,
-                    company_id=company_id,
-                    subscription_id=subscription_id,
-                    user_id=user_id,
-                    amount=float(payment_data.get("transaction_amount") or 0),
-                    currency=payment_data.get("currency_id") or "ARS",
-                    status=payment_status,
-                    payment_method=payment_data.get("payment_method_id"),
-                    reference=external_reference,
-                    provider="mercadopago",
-                    payload_json=json.dumps(payment_data, ensure_ascii=False),
-                    paid_at=paid_at,
-                )
-                db_session.add(payment)
-                db_session.flush()
+                if not company_id:
+                    raise RuntimeError("Webhook Mercado Pago sin company_id valido")
+
+                if flow != "pos_sale" and not subscription_id:
+                    raise RuntimeError("Webhook Mercado Pago sin subscription_id valido")
+
+                if flow == "pos_sale":
+                    draft_payment = None
+                    draft_payment_id = ref_parts.get("draft_payment_id")
+                    if draft_payment_id and str(draft_payment_id).isdigit():
+                        draft_payment = Payment.query.filter_by(id=int(draft_payment_id), company_id=company_id).first()
+                    if draft_payment is None:
+                        draft_payment = Payment.query.filter_by(external_reference=external_reference, company_id=company_id).first()
+
+                    if draft_payment is not None:
+                        payment = draft_payment
+                        payment.payment_id = str(payment_data.get("id"))
+                        payment.preference_id = str(payment_data.get("order", {}).get("id") or payment.preference_id or payment_data.get("metadata", {}).get("preference_id") or "")
+                        payment.external_reference = external_reference or payment.external_reference
+                        payment.company_id = company_id
+                        payment.subscription_id = None
+                        payment.user_id = user_id or payment.user_id
+                        payment.amount = float(payment_data.get("transaction_amount") or payment.amount or 0)
+                        payment.currency = payment_data.get("currency_id") or payment.currency or "ARS"
+                        payment.status = payment_status
+                        payment.payment_method = payment_data.get("payment_method_id") or payment.payment_method or "QR Mercado Pago"
+                        payment.reference = external_reference or payment.reference
+                        payment.provider = "mercadopago_pos"
+                        payment.payload_json = json.dumps(payment_data, ensure_ascii=False)
+                        payment.paid_at = paid_at or payment.paid_at
+                    else:
+                        payment = Payment(
+                            payment_id=str(payment_data.get("id")),
+                            preference_id=str(payment_data.get("order", {}).get("id") or payment_data.get("metadata", {}).get("preference_id") or ""),
+                            external_reference=external_reference,
+                            company_id=company_id,
+                            subscription_id=None,
+                            user_id=user_id,
+                            amount=float(payment_data.get("transaction_amount") or 0),
+                            currency=payment_data.get("currency_id") or "ARS",
+                            status=payment_status,
+                            payment_method=payment_data.get("payment_method_id"),
+                            reference=external_reference,
+                            provider="mercadopago_pos",
+                            payload_json=json.dumps(payment_data, ensure_ascii=False),
+                            paid_at=paid_at,
+                        )
+                        db_session.add(payment)
+                        db_session.flush()
+                else:
+                    payment = Payment(
+                        payment_id=str(payment_data.get("id")),
+                        preference_id=str(payment_data.get("order", {}).get("id") or payment_data.get("metadata", {}).get("preference_id") or ""),
+                        external_reference=external_reference,
+                        company_id=company_id,
+                        subscription_id=subscription_id,
+                        user_id=user_id,
+                        amount=float(payment_data.get("transaction_amount") or 0),
+                        currency=payment_data.get("currency_id") or "ARS",
+                        status=payment_status,
+                        payment_method=payment_data.get("payment_method_id"),
+                        reference=external_reference,
+                        provider="mercadopago",
+                        payload_json=json.dumps(payment_data, ensure_ascii=False),
+                        paid_at=paid_at,
+                    )
+                    db_session.add(payment)
+                    db_session.flush()
             else:
                 previous_payload = json.loads(payment.payload_json) if payment.payload_json else {}
                 previous_updated_at = self._event_updated_at(previous_payload)
@@ -164,7 +219,6 @@ class WebhookService:
             if payment.subscription_id:
                 subscription = Subscription.query.filter_by(id=payment.subscription_id).first()
             if subscription is None:
-                ref_parts = self._external_reference_parts(external_reference)
                 sub_id = ref_parts.get("subscription_id")
                 if sub_id:
                     subscription = Subscription.query.filter_by(id=int(sub_id)).first()
@@ -175,9 +229,26 @@ class WebhookService:
                             payment.user_id = int(ref_parts.get("user_id"))
 
             company = subscription.company if subscription and subscription.company else None
-            if subscription and company:
+            if flow == "pos_sale":
+                draft_payment_id = ref_parts.get("draft_payment_id")
+                if draft_payment_id and str(draft_payment_id).isdigit():
+                    draft_payment = Payment.query.filter_by(id=int(draft_payment_id), company_id=payment.company_id).first()
+                    if draft_payment:
+                        draft_payment.payment_id = payment.payment_id or draft_payment.payment_id
+                        draft_payment.preference_id = payment.preference_id or draft_payment.preference_id
+                        draft_payment.external_reference = external_reference or draft_payment.external_reference
+                        draft_payment.status = payment_status
+                        draft_payment.amount = float(payment.amount or draft_payment.amount or 0)
+                        draft_payment.currency = payment.currency or draft_payment.currency or "ARS"
+                        draft_payment.payment_method = payment.payment_method or draft_payment.payment_method or "QR Mercado Pago"
+                        draft_payment.provider = "mercadopago_pos"
+                        draft_payment.reference = external_reference or draft_payment.reference
+                        draft_payment.payload_json = json.dumps(payment_data, ensure_ascii=False)
+                        draft_payment.paid_at = paid_at or draft_payment.paid_at
+                        payment = draft_payment
+                result = {"status": "processed", "payment_status": payment_status, "event_key": event_key}
+            elif subscription and company:
                 metadata = payment_data.get("metadata") or {}
-                ref_parts = self._external_reference_parts(external_reference)
                 validation_errors = []
 
                 expected_company_id = company.id
@@ -275,8 +346,7 @@ class WebhookService:
                     payload=payment_data,
                     user_id=user.id if user else None,
                 )
-
-            result = {"status": "processed", "payment_status": payment_status, "event_key": event_key}
+                result = {"status": "processed", "payment_status": payment_status, "event_key": event_key}
 
         elif event_type in {"preapproval", "subscription_preapproval"}:
             preapproval_data = self.mp_service.get_preapproval(data_id)

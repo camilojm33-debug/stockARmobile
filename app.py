@@ -544,6 +544,29 @@ class Company(db.Model):
     created_at = db.Column(db.DateTime, default=utcnow)
 
 
+class MercadoPagoConnection(db.Model):
+    __tablename__ = "mercadopago_connections"
+
+    id = db.Column(db.Integer, primary_key=True)
+    company_id = db.Column(db.Integer, db.ForeignKey("companies.id"), nullable=False, unique=True, index=True)
+    mp_user_id = db.Column(db.String(80), index=True)
+    account_name = db.Column(db.String(160))
+    account_email = db.Column(db.String(160), index=True)
+    country = db.Column(db.String(80))
+    status = db.Column(db.String(20), nullable=False, default="disconnected", index=True)
+    connected_at = db.Column(db.DateTime)
+    last_synced_at = db.Column(db.DateTime)
+    token_expires_at = db.Column(db.DateTime, index=True)
+    access_token_encrypted = db.Column(db.Text)
+    refresh_token_encrypted = db.Column(db.Text)
+    scope = db.Column(db.String(255))
+    metadata_json = db.Column(db.Text)
+    created_at = db.Column(db.DateTime, default=utcnow)
+    updated_at = db.Column(db.DateTime, default=utcnow, onupdate=utcnow)
+
+    company = db.relationship("Company", backref=db.backref("mercadopago_connection", uselist=False, cascade="all, delete-orphan"))
+
+
 class Plan(db.Model):
     __tablename__ = "plans"
 

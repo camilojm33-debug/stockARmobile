@@ -1,15 +1,21 @@
 """Blueprint de ventas: carrito, checkout, historial y tickets."""
 
 import csv
+import base64
+import hashlib
+import json
 from decimal import Decimal, InvalidOperation
 from datetime import datetime
-from io import StringIO
+from io import BytesIO, StringIO
 from urllib.parse import quote
 
 from flask import Blueprint, abort, current_app, flash, jsonify, make_response, redirect, render_template, request, session, url_for
 from flask_login import current_user, login_required
 from sqlalchemy.orm import selectinload
 from app import tenant_required, utcnow
+from services.mercadopago_oauth_service import MercadoPagoOAuthService
+from services.mercadopago_service import MercadoPagoService
+import qrcode
 
 bp = Blueprint("sales", __name__)
 
@@ -40,6 +46,59 @@ def _cart_key():
 def _cart_tenant_key():
     company_id = getattr(current_user, "company_id", None) or "global"
     return f"{company_id}:{current_user.id}"
+
+
+def _pos_qr_draft_session_key():
+    return f"pos_qr_draft_{_cart_tenant_key()}"
+
+
+def _pos_qr_snapshot(items, payload, *, total_amount, currency):
+    normalized_items = []
+    for item in items:
+        normalized_items.append(
+            {
+                "productId": int(item.get("productId") or item.get("product_id") or 0),
+                "name": item.get("name") or "",
+                "price": float(item.get("price") or 0),
+                "quantity": float(item.get("quantity") or 0),
+                "barcode": item.get("barcode") or "",
+            }
+        )
+    cart_hash = hashlib.sha256(json.dumps(normalized_items, sort_keys=True).encode("utf-8")).hexdigest()
+    return {
+        "items": normalized_items,
+        "client_id": payload.get("client_id") or payload.get("cliente_id") or "",
+        "note": payload.get("note") or "",
+        "document_type": payload.get("document_type") or payload.get("tipo_comprobante") or "venta",
+        "descuento_general": float(payload.get("descuento_general") or payload.get("general_discount") or 0),
+        "recargo": float(payload.get("recargo") or payload.get("surcharge") or 0),
+        "total_amount": float(total_amount),
+        "currency": currency,
+        "cart_hash": cart_hash,
+    }
+
+
+def _qr_data_uri(content: str) -> str:
+    qr = qrcode.QRCode(error_correction=qrcode.constants.ERROR_CORRECT_M, box_size=8, border=2)
+    qr.add_data(content)
+    qr.make(fit=True)
+    image = qr.make_image(fill_color="black", back_color="white")
+    buffer = BytesIO()
+    image.save(buffer, format="PNG")
+    encoded = base64.b64encode(buffer.getvalue()).decode("ascii")
+    return f"data:image/png;base64,{encoded}"
+
+
+def _get_pos_qr_draft():
+    return session.get(_pos_qr_draft_session_key())
+
+
+def _set_pos_qr_draft(value):
+    if value is None:
+        session.pop(_pos_qr_draft_session_key(), None)
+    else:
+        session[_pos_qr_draft_session_key()] = value
+    session.modified = True
 
 
 def _get_cart():
@@ -136,6 +195,7 @@ def index():
             text=company.payment_qr_text or company.name or "",
             url=company.payment_qr_url or "",
         )
+    mp_connection_summary = MercadoPagoOAuthService().summarize_connection(getattr(company, "mercadopago_connection", None)) if company else MercadoPagoOAuthService().summarize_connection(None)
     total_sales_amount = scope_query_to_company(db.session.query(db.func.coalesce(db.func.sum(Sale.total_amount), 0)), Sale).scalar() or 0
     sales = scope_query_to_company(Sale.query.options(selectinload(Sale.client)), Sale).order_by(Sale.date.desc()).limit(20).all()
     return render_template(
@@ -148,6 +208,7 @@ def index():
         company_name=(company.name if company else "Mi comercio"),
         qr_payment_image_url=qr_payment_image_url,
         has_qr_payment_data=has_qr_data,
+        mp_connection_summary=mp_connection_summary,
     )
 
 
@@ -265,6 +326,222 @@ def api_checkout():
         return jsonify({"error": "El carrito esta vacio."}), 400
     result = _create_sale_from_items(items, payload, json_response=True)
     return result
+
+
+@bp.route("/api/mp-qr/create", methods=["POST"])
+@tenant_required
+def api_mp_qr_create():
+    from app import Payment, db, scope_query_to_company
+
+    payload = request.get_json(silent=True) or {}
+    incoming_tenant = (request.headers.get("X-Cart-Tenant") or "").strip()
+    expected_tenant = _cart_tenant_key()
+    if incoming_tenant != expected_tenant:
+        return jsonify({"error": "Carrito fuera de contexto de empresa o usuario."}), 409
+
+    raw_items = payload.get("items", [])
+    items = {}
+    try:
+        for item in raw_items:
+            product_id = int(item.get("productId") or item.get("product_id") or 0)
+            quantity = _to_float(item.get("quantity") or 0)
+            if product_id > 0 and quantity > 0:
+                items[str(product_id)] = quantity
+    except (TypeError, ValueError):
+        return jsonify({"error": "Datos de carrito invalidos."}), 400
+
+    if not items:
+        return jsonify({"error": "El carrito esta vacio."}), 400
+
+    try:
+        lines, subtotal, discount, tax_total, total = _calculate_lines(items)
+        general_discount = _to_decimal(payload.get("descuento_general") or payload.get("general_discount"))
+        surcharge = _to_decimal(payload.get("recargo") or payload.get("surcharge"))
+        taxable = max(subtotal - discount - general_discount, Decimal("0.00"))
+        final_total = taxable + surcharge
+        currency = "ARS"
+        company_id = getattr(current_user, "company_id", None)
+        snapshot = _pos_qr_snapshot(
+            payload.get("items", []),
+            payload,
+            total_amount=final_total,
+            currency=currency,
+        )
+
+        existing_draft = _get_pos_qr_draft()
+        if existing_draft and existing_draft.get("cart_hash") == snapshot["cart_hash"]:
+            draft_payment = Payment.query.filter_by(id=int(existing_draft.get("payment_db_id") or 0), company_id=company_id).first()
+            if draft_payment and (draft_payment.status or "").lower() == "pending":
+                return jsonify({
+                    "status": "reused",
+                    "payment_id": draft_payment.id,
+                    "status_url": url_for("sales.api_mp_qr_status", draft_id=draft_payment.id),
+                    "finalize_url": url_for("sales.api_mp_qr_finalize", draft_id=draft_payment.id),
+                    "total": float(draft_payment.amount or final_total),
+                    "currency": draft_payment.currency or currency,
+                    "checkout_url": existing_draft.get("checkout_url") or "",
+                    "qr_data_uri": existing_draft.get("qr_data_uri") or "",
+                    "status_label": "Pendiente de aprobación",
+                })
+
+        draft_payment = Payment(
+            payment_id=None,
+            preference_id="",
+            external_reference="",
+            company_id=company_id,
+            user_id=current_user.id,
+            amount=final_total,
+            currency=currency,
+            status="pending",
+            payment_method="QR Mercado Pago",
+            provider="mercadopago_pos",
+            reference="pos_draft",
+            payload_json=json.dumps({
+                "flow": "pos_sale",
+                "snapshot": snapshot,
+            }, ensure_ascii=False),
+        )
+        db.session.add(draft_payment)
+        db.session.flush()
+        external_reference = (
+            f"flow:pos_sale|draft_payment_id:{draft_payment.id}|company_id:{company_id}|user_id:{current_user.id}|"
+            f"cart_hash:{snapshot['cart_hash']}"
+        )
+        oauth_service = MercadoPagoOAuthService()
+        try:
+            access_token = oauth_service.ensure_access_token(company_id=company_id)
+        except Exception as exc:
+            return jsonify({"error": str(exc)}), 400
+        mp_service = MercadoPagoService()
+        preference = mp_service.create_pos_checkout_preference(
+            title=f"StockArmobile POS - {company_id}",
+            amount=float(final_total),
+            currency=currency,
+            external_reference=external_reference,
+            company_id=company_id,
+            user_id=current_user.id,
+            access_token=access_token,
+            metadata={
+                "draft_payment_id": draft_payment.id,
+                "cart_hash": snapshot["cart_hash"],
+                "total_amount": float(final_total),
+            },
+        )
+        draft_payment.preference_id = preference.get("id")
+        draft_payment.external_reference = external_reference
+        draft_payment.reference = f"pos_draft:{draft_payment.id}"
+        db.session.commit()
+
+        checkout_url = preference.get("init_point") or preference.get("sandbox_init_point") or ""
+        qr_preview = {
+            "qr_data_uri": _qr_data_uri(checkout_url) if checkout_url else "",
+        }
+        _set_pos_qr_draft({
+            "payment_db_id": draft_payment.id,
+            "preference_id": preference.get("id"),
+            "checkout_url": checkout_url,
+            "qr_data_uri": qr_preview.get("qr_data_uri") or "",
+            "cart_hash": snapshot["cart_hash"],
+        })
+        return jsonify({
+            "status": "created",
+            "payment_id": draft_payment.id,
+            "status_url": url_for("sales.api_mp_qr_status", draft_id=draft_payment.id),
+            "finalize_url": url_for("sales.api_mp_qr_finalize", draft_id=draft_payment.id),
+            "checkout_url": checkout_url,
+            "qr_data_uri": qr_preview.get("qr_data_uri") or "",
+            "total": float(final_total),
+            "currency": currency,
+            "status_label": "Pendiente de aprobación",
+        })
+    except Exception as exc:
+        current_app.logger.exception("Error creando QR Mercado Pago POS: %s", exc)
+        return jsonify({"error": "No se pudo generar el QR de Mercado Pago."}), 400
+
+
+@bp.route("/api/mp-qr/status", methods=["GET"])
+@tenant_required
+def api_mp_qr_status():
+    from app import Payment
+
+    draft_id = request.args.get("draft_id", type=int)
+    if not draft_id:
+        return jsonify({"error": "draft_id requerido"}), 400
+    payment = Payment.query.filter_by(id=draft_id, company_id=getattr(current_user, "company_id", None)).first_or_404()
+    payload = json.loads(payment.payload_json) if payment.payload_json else {}
+    approved_at = payment.paid_at or payment.updated_at
+    status = (payment.status or "pending").lower()
+    can_process = status == "approved"
+    return jsonify({
+        "payment_id": payment.id,
+        "status": status,
+        "status_label": "Pago recibido" if status == "approved" else "Esperando pago" if status == "pending" else status.title(),
+        "amount": float(payment.amount or 0),
+        "currency": payment.currency or "ARS",
+        "payment_method": payment.payment_method or "QR Mercado Pago",
+        "operation_number": payment.payment_id or payment.preference_id or f"pos-{payment.id}",
+        "approved_at": approved_at.strftime("%Y-%m-%d %H:%M") if approved_at else None,
+        "can_process_sale": can_process,
+        "sale_id": payload.get("sale_id"),
+        "finalize_url": url_for("sales.api_mp_qr_finalize", draft_id=payment.id),
+    })
+
+
+@bp.route("/api/mp-qr/finalize", methods=["POST"])
+@tenant_required
+def api_mp_qr_finalize():
+    from app import Payment, Sale, db, record_audit, scope_query_to_company
+
+    payload = request.get_json(silent=True) or {}
+    draft_id = request.args.get("draft_id", type=int) or _to_float(payload.get("draft_id"), 0)
+    draft_id = int(draft_id) if draft_id else None
+    if not draft_id:
+        return jsonify({"error": "draft_id requerido"}), 400
+
+    payment = Payment.query.filter_by(id=draft_id, company_id=getattr(current_user, "company_id", None)).first_or_404()
+    if (payment.status or "").lower() != "approved":
+        return jsonify({"error": "El pago aun no fue aprobado."}), 409
+
+    draft_payload = json.loads(payment.payload_json) if payment.payload_json else {}
+    existing_sale_id = draft_payload.get("sale_id")
+    if existing_sale_id:
+        existing_sale = scope_query_to_company(Sale.query, Sale).filter(Sale.id == int(existing_sale_id)).first()
+        if existing_sale:
+            return jsonify({"sale_id": existing_sale.id, "redirect_url": url_for("sales.success", sale_id=existing_sale.id)})
+
+    snapshot = draft_payload.get("snapshot") or {}
+    items = snapshot.get("items") or []
+    if not items:
+        return jsonify({"error": "No hay items para procesar."}), 400
+
+    sale_payload = {
+        "client_id": snapshot.get("client_id") or "",
+        "metodo_pago": "QR Mercado Pago",
+        "payment_method": "QR Mercado Pago",
+        "monto_pago": payment.amount,
+        "document_type": snapshot.get("document_type") or "venta",
+        "note": snapshot.get("note") or "",
+        "qr_reference": payment.payment_id or payment.preference_id or f"pos-{payment.id}",
+        "status": "confirmada",
+        "general_discount": snapshot.get("descuento_general") or 0,
+        "surcharge": snapshot.get("recargo") or 0,
+    }
+
+    result = _create_sale_from_items({str(item["productId"]): item["quantity"] for item in items}, sale_payload, json_response=True)
+    if hasattr(result, "json"):
+        data = result.get_json() if hasattr(result, "get_json") else None
+    else:
+        data = result
+    if not isinstance(data, dict) or not data.get("sale_id"):
+        return result
+
+    sale_id = data["sale_id"]
+    payment.reference = f"sale_id:{sale_id}"
+    payment.payload_json = json.dumps({**draft_payload, "sale_id": sale_id}, ensure_ascii=False)
+    record_audit(action="pos_qr_finalize", entity="sale", entity_id=sale_id, detail=f"POS QR finalizado con pago {payment.payment_id or payment.preference_id}")
+    db.session.commit()
+    _set_pos_qr_draft(None)
+    return jsonify({"sale_id": sale_id, "redirect_url": data.get("redirect_url")})
 
 
 def _create_sale_from_items(items, data, json_response=False):

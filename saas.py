@@ -330,6 +330,23 @@ def index():
     )
 
 
+@bp.route("/mercado-pago")
+@superadmin_required
+def mercado_pago_connections():
+    from app import Company
+    from services.mercadopago_oauth_service import MercadoPagoOAuthService
+
+    service = MercadoPagoOAuthService()
+    companies = Company.query.order_by(Company.created_at.desc()).all()
+    rows = []
+    for company in companies:
+        rows.append({
+            "company": company,
+            "connection": service.summarize_connection(getattr(company, "mercadopago_connection", None)),
+        })
+    return render_template("saas/mercado_pago_connections.html", rows=rows)
+
+
 @bp.route("/companies/<int:company_id>/toggle", methods=["POST"])
 @superadmin_required
 def toggle_company(company_id):
@@ -1132,14 +1149,31 @@ def backups_panel():
     status = (request.args.get("status") or "all").strip().lower()
     plan_code = (request.args.get("plan") or "all").strip().lower()
     company_id = request.args.get("company_id", type=int)
+    preview_id = request.args.get("preview_id", type=int)
 
     backups = BackupService.superadmin_backups(q=q, company_id=company_id, status=status, plan_code=plan_code)
     companies = Company.query.order_by(Company.name.asc()).all()
+    backup_summaries = {}
+    selected_backup = None
+    selected_backup_summary = None
+    for backup in backups:
+        try:
+            backup_summaries[backup.id] = BackupService.summarize_backup(backup)
+        except Exception:
+            backup_summaries[backup.id] = {"schema_version": "-", "system_version": "-", "company_id": backup.company_id, "generated_at": None, "products": 0, "inventory": 0, "categories": 0, "clients": 0, "sales": 0, "employees": 0, "schedules": 0}
+    if preview_id:
+        selected_backup = next((item for item in backups if item.id == preview_id), None)
+        if selected_backup is not None:
+            selected_backup_summary = backup_summaries.get(selected_backup.id)
     return render_template(
         "saas/backups.html",
         backups=backups,
         companies=companies,
         filters={"q": q, "status": status, "plan": plan_code, "company_id": company_id},
+        backup_summaries=backup_summaries,
+        selected_backup=selected_backup,
+        selected_backup_summary=selected_backup_summary,
+        backup_section_options=BackupService.restore_section_options(),
         format_size=_format_size,
     )
 
@@ -1169,6 +1203,41 @@ def backups_create():
     return _redirect_back("saas.backups_panel")
 
 
+@bp.route("/backups/import", methods=["POST"])
+@superadmin_required
+def backups_import():
+    from app import db, record_audit
+
+    _require_superadmin()
+    company_id = request.form.get("company_id", type=int)
+    backup_file = request.files.get("backup_file")
+    if not company_id:
+        flash("Seleccioná una empresa para importar el backup.", "warning")
+        return _redirect_back("saas.backups_panel")
+    if not backup_file or not getattr(backup_file, "filename", "").strip():
+        flash("Seleccioná un archivo de backup válido.", "warning")
+        return _redirect_back("saas.backups_panel")
+
+    try:
+        backup, plan, payload = BackupService.import_backup_file(company_id=company_id, file_storage=backup_file, created_by_user_id=current_user.id, trigger_type="manual_superadmin_import")
+        record_audit(
+            action="backup_import_superadmin",
+            entity="backup",
+            entity_id=backup.id,
+            company_id=company_id,
+            detail=f"Backup importado por superadmin. plan={plan['code']} version={payload.get('schema_version')}",
+            user_id=current_user.id,
+        )
+        db.session.commit()
+        flash("Backup importado correctamente.", "success")
+        return redirect(url_for("saas.backups_panel", preview_id=backup.id, company_id=company_id))
+    except Exception as exc:
+        db.session.rollback()
+        current_app.logger.exception("No se pudo importar el backup global: %s", exc)
+        flash("No se pudo importar el backup.", "danger")
+        return _redirect_back("saas.backups_panel")
+
+
 @bp.route("/backups/<int:backup_id>/download")
 @superadmin_required
 def backups_download(backup_id):
@@ -1192,17 +1261,27 @@ def backups_restore(backup_id):
 
     _require_superadmin()
     backup = BackupLog.query.filter_by(id=backup_id).first_or_404()
-    BackupService.restore_backup(backup, expected_company_id=backup.company_id, restored_by_user_id=current_user.id)
-    record_audit(
-        action="backup_restore_superadmin",
-        entity="backup",
-        entity_id=backup.id,
-        company_id=backup.company_id,
-        detail="Backup restaurado por superadmin.",
-        user_id=current_user.id,
-    )
-    db.session.commit()
-    flash("Backup restaurado correctamente.", "success")
+    sections = request.form.getlist("sections")
+    confirm_restore = (request.form.get("confirm_restore") or "").strip() == "1"
+    if not confirm_restore:
+        return redirect(url_for("saas.backups_panel", preview_id=backup.id, company_id=backup.company_id))
+
+    try:
+        BackupService.restore_backup(backup, expected_company_id=backup.company_id, restored_by_user_id=current_user.id, sections=sections)
+        record_audit(
+            action="backup_restore_superadmin",
+            entity="backup",
+            entity_id=backup.id,
+            company_id=backup.company_id,
+            detail=f"Backup restaurado por superadmin. sections={','.join(sections or ['full'])}",
+            user_id=current_user.id,
+        )
+        db.session.commit()
+        flash("Backup restaurado correctamente.", "success")
+    except Exception as exc:
+        db.session.rollback()
+        current_app.logger.exception("No se pudo restaurar el backup global: %s", exc)
+        flash("No se pudo restaurar el backup.", "danger")
     return _redirect_back("saas.backups_panel")
 
 

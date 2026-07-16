@@ -5,6 +5,29 @@ const CART_KEY_PREFIX = 'stockarmobile_cart';
 let scannerStream = null;
 let scannerLoopActive = false;
 
+const checkoutProcessButton = document.getElementById('checkout-process-button');
+const mpQrPanelTitle = document.getElementById('mp-qr-panel-title');
+const mpQrPanelBadge = document.getElementById('mp-qr-panel-badge');
+const mpQrPanelAmount = document.getElementById('mp-qr-panel-amount');
+const mpQrPanelStatus = document.getElementById('mp-qr-panel-status');
+const mpQrPanelImage = document.getElementById('mp-qr-panel-image');
+const mpQrPanelOpen = document.getElementById('mp-qr-panel-open');
+const mpQrPanelOperation = document.getElementById('mp-qr-panel-operation');
+const mpQrPanelDateTime = document.getElementById('mp-qr-panel-datetime');
+const mpQrPanel = document.getElementById('checkout-qr-panel');
+const mpQrModalImage = document.getElementById('mp-qr-modal-image');
+const mpQrModalStatus = document.getElementById('mp-qr-modal-status');
+
+let mpQrDraftState = {
+  paymentId: null,
+  statusUrl: null,
+  finalizeUrl: null,
+  checkoutUrl: null,
+  qrDataUri: null,
+  pollTimer: null,
+  approved: false,
+};
+
 function getCartTenantKey() {
   const body = document.body;
   const tenantKey = body?.dataset?.cartTenant || '';
@@ -230,6 +253,16 @@ async function processCheckout() {
     return;
   }
 
+  const selectedMethod = document.getElementById('checkout-payment-method')?.value || '';
+  if (selectedMethod === 'QR Mercado Pago') {
+    if (mpQrDraftState.approved && mpQrDraftState.finalizeUrl && mpQrDraftState.paymentId) {
+      await finalizeMercadoPagoQrSale();
+      return;
+    }
+    await processMercadoPagoQrCheckout();
+    return;
+  }
+
   const csrf = document.querySelector('#checkout-form input[name="csrf_token"]')?.value || document.querySelector('meta[name="csrf-token"]')?.content || '';
   const payload = {
     items: getCartForCheckout(),
@@ -308,12 +341,15 @@ function syncPaymentInputsWithMethods(total) {
   const method1 = document.getElementById('checkout-payment-method');
   const paid1 = document.getElementById('checkout-paid-amount');
   const paid2 = document.getElementById('checkout-paid-amount-2');
-  const qrPanel = document.getElementById('checkout-qr-panel');
   if (!method2 || !paid1 || !paid2) return;
 
-  const showQr = (method1?.value === 'QR') || (method2.value === 'QR');
-  if (qrPanel) {
-    qrPanel.classList.toggle('d-none', !showQr);
+  const showQr = (method1?.value === 'QR Mercado Pago') || (method2.value === 'QR Mercado Pago');
+  if (mpQrPanel) {
+    mpQrPanel.classList.toggle('d-none', !showQr);
+  }
+
+  if (!showQr) {
+    resetMpQrPanel('Seleccioná QR Mercado Pago para generar el cobro.', total);
   }
 
   const hasSecondary = Boolean((method2.value || '').trim());
@@ -347,6 +383,178 @@ function setupCheckoutPaymentBehavior() {
   paid1.addEventListener('input', refresh);
   paid2.addEventListener('input', refresh);
   refresh();
+}
+
+function resetMpQrPanel(message, totalOverride) {
+  if (mpQrDraftState.pollTimer) {
+    clearInterval(mpQrDraftState.pollTimer);
+  }
+  mpQrDraftState = {
+    paymentId: null,
+    statusUrl: null,
+    finalizeUrl: null,
+    checkoutUrl: null,
+    qrDataUri: null,
+    pollTimer: null,
+    approved: false,
+  };
+  if (mpQrPanelTitle) mpQrPanelTitle.textContent = 'Esperando generación del QR';
+  if (mpQrPanelBadge) {
+    mpQrPanelBadge.textContent = 'Pendiente';
+    mpQrPanelBadge.className = 'badge text-bg-warning';
+  }
+  if (mpQrPanelAmount) mpQrPanelAmount.textContent = `Total a cobrar: ${formatPrice(totalOverride ?? getCheckoutTotals().total)}`;
+  if (mpQrPanelStatus) mpQrPanelStatus.textContent = message || 'Seleccioná QR Mercado Pago para generar el cobro.';
+  if (mpQrPanelImage) {
+    mpQrPanelImage.src = '';
+    mpQrPanelImage.classList.add('d-none');
+  }
+  if (mpQrModalImage) {
+    mpQrModalImage.src = '';
+    mpQrModalImage.classList.add('d-none');
+  }
+  if (mpQrModalStatus) mpQrModalStatus.textContent = message || 'Generá primero el cobro QR desde el carrito.';
+  if (mpQrPanelOpen) {
+    mpQrPanelOpen.classList.add('d-none');
+    mpQrPanelOpen.href = '#';
+  }
+  if (mpQrPanelOperation) mpQrPanelOperation.textContent = '';
+  if (mpQrPanelDateTime) mpQrPanelDateTime.textContent = '';
+  if (checkoutProcessButton) {
+    checkoutProcessButton.disabled = false;
+    checkoutProcessButton.textContent = 'Procesar venta';
+  }
+}
+
+function updateMpQrPanel(payload) {
+  mpQrDraftState.paymentId = payload.payment_id || mpQrDraftState.paymentId;
+  mpQrDraftState.statusUrl = payload.status_url || mpQrDraftState.statusUrl;
+  mpQrDraftState.finalizeUrl = payload.finalize_url || mpQrDraftState.finalizeUrl;
+  mpQrDraftState.checkoutUrl = payload.checkout_url || mpQrDraftState.checkoutUrl;
+  mpQrDraftState.qrDataUri = payload.qr_data_uri || mpQrDraftState.qrDataUri;
+  mpQrDraftState.approved = payload.can_process_sale === true || payload.status === 'approved';
+
+  if (mpQrPanelTitle) mpQrPanelTitle.textContent = 'Cobro generado con Mercado Pago';
+  if (mpQrPanelBadge) {
+    mpQrPanelBadge.textContent = payload.status_label || 'Pendiente';
+    mpQrPanelBadge.className = mpQrDraftState.approved ? 'badge text-bg-success' : 'badge text-bg-warning';
+  }
+  if (mpQrPanelAmount) mpQrPanelAmount.textContent = `Total a cobrar: ${formatPrice(Number(payload.total || getCheckoutTotals().total))}`;
+  if (mpQrPanelStatus) mpQrPanelStatus.textContent = payload.status_label || 'Pago pendiente de aprobación.';
+  if (mpQrPanelImage && mpQrDraftState.qrDataUri) {
+    mpQrPanelImage.src = mpQrDraftState.qrDataUri;
+    mpQrPanelImage.classList.remove('d-none');
+  }
+  if (mpQrModalImage && mpQrDraftState.qrDataUri) {
+    mpQrModalImage.src = mpQrDraftState.qrDataUri;
+    mpQrModalImage.classList.remove('d-none');
+  }
+  if (mpQrModalStatus) {
+    mpQrModalStatus.textContent = mpQrDraftState.approved ? 'Pago aprobado. Podés finalizar la venta.' : 'Escaneá el QR o abrí Mercado Pago para pagar.';
+  }
+  if (mpQrPanelOpen && mpQrDraftState.checkoutUrl) {
+    mpQrPanelOpen.href = mpQrDraftState.checkoutUrl;
+    mpQrPanelOpen.classList.remove('d-none');
+  }
+  if (mpQrPanelOperation) mpQrPanelOperation.textContent = payload.operation_number ? `Operación: ${payload.operation_number}` : '';
+  if (mpQrPanelDateTime) mpQrPanelDateTime.textContent = payload.approved_at ? `Aprobado: ${payload.approved_at}` : '';
+  if (checkoutProcessButton) {
+    checkoutProcessButton.disabled = !mpQrDraftState.approved;
+    checkoutProcessButton.textContent = mpQrDraftState.approved ? 'Finalizar venta' : 'Esperando pago';
+  }
+}
+
+async function pollMpQrStatus() {
+  if (!mpQrDraftState.statusUrl) return;
+  try {
+    const response = await fetch(mpQrDraftState.statusUrl, { headers: { 'Accept': 'application/json' } });
+    if (!response.ok) return;
+    const payload = await response.json();
+    updateMpQrPanel(payload);
+    if (payload.can_process_sale && mpQrDraftState.pollTimer) {
+      clearInterval(mpQrDraftState.pollTimer);
+      mpQrDraftState.pollTimer = null;
+    }
+  } catch (error) {
+    console.error('Error consultando estado de QR MP:', error);
+  }
+}
+
+async function processMercadoPagoQrCheckout() {
+  const total = getCheckoutTotals();
+  const payload = {
+    items: getCartForCheckout(),
+    general_discount: total.discount,
+    surcharge: total.surcharge,
+    client_id: document.getElementById('checkout-client-select')?.value || '',
+    note: document.getElementById('checkout-note')?.value || '',
+    document_type: document.getElementById('checkout-document-type')?.value || '',
+  };
+  if (checkoutProcessButton) {
+    checkoutProcessButton.disabled = true;
+    checkoutProcessButton.textContent = 'Generando QR...';
+  }
+
+  try {
+    const response = await fetch('/ventas/api/mp-qr/create', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'X-Cart-Tenant': getCartTenantKey(),
+      },
+      body: JSON.stringify(payload),
+    });
+    const result = await response.json();
+    if (!response.ok) {
+      throw new Error(result.error || 'No se pudo generar el cobro.');
+    }
+    updateMpQrPanel(result);
+    if (mpQrDraftState.pollTimer) clearInterval(mpQrDraftState.pollTimer);
+    mpQrDraftState.pollTimer = window.setInterval(pollMpQrStatus, 3000);
+    await pollMpQrStatus();
+    showNotification('QR generado. Esperando aprobación del pago.', 'info');
+  } catch (error) {
+    resetMpQrPanel(error.message || 'No se pudo generar el cobro.', total.total);
+    showNotification(error.message || 'No se pudo generar el cobro.', 'danger');
+  } finally {
+    if (checkoutProcessButton && !mpQrDraftState.approved) {
+      checkoutProcessButton.disabled = false;
+      checkoutProcessButton.textContent = 'Procesar venta';
+    }
+  }
+}
+
+async function finalizeMercadoPagoQrSale() {
+  if (!mpQrDraftState.finalizeUrl || !mpQrDraftState.paymentId) return;
+  if (checkoutProcessButton) {
+    checkoutProcessButton.disabled = true;
+    checkoutProcessButton.textContent = 'Finalizando venta...';
+  }
+  try {
+    const response = await fetch(mpQrDraftState.finalizeUrl, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'X-Cart-Tenant': getCartTenantKey(),
+      },
+      body: JSON.stringify({ draft_id: mpQrDraftState.paymentId }),
+    });
+    const result = await response.json();
+    if (!response.ok) {
+      throw new Error(result.error || 'No se pudo finalizar la venta.');
+    }
+    clearCart();
+    resetMpQrPanel('Venta finalizada correctamente.');
+    if (result.redirect_url) {
+      window.location.href = result.redirect_url;
+    }
+  } catch (error) {
+    showNotification(error.message || 'No se pudo finalizar la venta.', 'danger');
+    if (checkoutProcessButton) {
+      checkoutProcessButton.disabled = false;
+      checkoutProcessButton.textContent = 'Finalizar venta';
+    }
+  }
 }
 
 /**
@@ -442,6 +650,11 @@ document.addEventListener('DOMContentLoaded', () => {
   setupCheckoutPaymentBehavior();
   ['checkout-general-discount', 'checkout-surcharge', 'checkout-paid-amount', 'checkout-paid-amount-2'].forEach(id => {
     document.getElementById(id)?.addEventListener('input', updateCheckoutTotals);
+  });
+  window.addEventListener('beforeunload', () => {
+    if (mpQrDraftState.pollTimer) {
+      clearInterval(mpQrDraftState.pollTimer);
+    }
   });
 });
 

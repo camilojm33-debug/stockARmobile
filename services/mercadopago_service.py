@@ -19,23 +19,24 @@ class MercadoPagoService:
     def __init__(self):
         self.config = load_billing_config()
 
-    def _headers(self, *, include_idempotency: bool = False) -> dict[str, str]:
-        if not self.config.access_token:
+    def _headers(self, *, include_idempotency: bool = False, access_token: str | None = None) -> dict[str, str]:
+        token = (access_token or self.config.access_token or "").strip()
+        if not token:
             raise RuntimeError("MP_ACCESS_TOKEN no configurado")
         headers = {
-            "Authorization": f"Bearer {self.config.access_token}",
+            "Authorization": f"Bearer {token}",
             "Content-Type": "application/json",
         }
         if include_idempotency:
             headers["X-Idempotency-Key"] = str(uuid.uuid4())
         return headers
 
-    def _request(self, method: str, path: str, *, payload: dict[str, Any] | None = None) -> dict[str, Any]:
+    def _request(self, method: str, path: str, *, payload: dict[str, Any] | None = None, access_token: str | None = None) -> dict[str, Any]:
         body = json.dumps(payload).encode("utf-8") if payload is not None else None
         req = urlrequest.Request(
             url=f"{self.API_BASE}{path}",
             data=body,
-            headers=self._headers(include_idempotency=method in {"POST", "PUT", "PATCH"}),
+            headers=self._headers(include_idempotency=method in {"POST", "PUT", "PATCH"}, access_token=access_token),
             method=method,
         )
         try:
@@ -92,6 +93,47 @@ class MercadoPagoService:
             "auto_return": "approved",
         }
         return self._request("POST", "/checkout/preferences", payload=payload)
+
+    def create_pos_checkout_preference(
+        self,
+        *,
+        title: str,
+        amount: float,
+        currency: str,
+        external_reference: str,
+        company_id: int,
+        user_id: int,
+        metadata: dict[str, Any] | None = None,
+        access_token: str | None = None,
+    ) -> dict[str, Any]:
+        payload = {
+            "items": [
+                {
+                    "id": external_reference,
+                    "title": title,
+                    "description": "Cobro QR Mercado Pago desde POS",
+                    "quantity": 1,
+                    "currency_id": currency,
+                    "unit_price": float(amount),
+                }
+            ],
+            "external_reference": external_reference,
+            "metadata": {
+                "flow": "pos_sale",
+                "company_id": company_id,
+                "user_id": user_id,
+                **(metadata or {}),
+            },
+            "back_urls": {
+                "success": self.config.success_url,
+                "pending": self.config.pending_url,
+                "failure": self.config.failure_url,
+            },
+            "notification_url": self.config.notification_url,
+            "statement_descriptor": self.config.statement_descriptor,
+            "auto_return": "approved",
+        }
+        return self._request("POST", "/checkout/preferences", payload=payload, access_token=access_token)
 
     def get_payment(self, payment_id: str) -> dict[str, Any]:
         return self._request("GET", f"/v1/payments/{payment_id}")

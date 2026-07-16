@@ -1,8 +1,12 @@
 import os
+import gzip
+import io
+import json
 import re
 from datetime import timedelta
 
 os.environ["DATABASE_URL"] = "sqlite:///:memory:"
+os.environ.setdefault("MP_OAUTH_ENCRYPTION_KEY", "test-oauth-encryption-key")
 
 import pytest
 
@@ -1582,9 +1586,10 @@ def test_landing_and_subscription_use_same_plan_catalog():
     portal = client.get("/admin/portal")
     assert portal.status_code == 200
     portal_html = portal.data.decode("utf-8")
+    assert "Mi Suscripción" in portal_html
     assert "Uso del plan" in portal_html
     assert "Plan contratado" in portal_html
-    assert ("Comenzar suscripción" in portal_html) or ("Suscribirme" in portal_html)
+    assert ("Actualizar plan" in portal_html) or ("Renovar plan" in portal_html)
 
 
 def test_landing_contact_form_endpoint():
@@ -2276,6 +2281,416 @@ def test_webhook_pending_or_rejected_does_not_activate_subscription(monkeypatch)
         payment_row = Payment.query.filter_by(payment_id="mp-pay-pending").first()
         assert payment_row is not None
         assert payment_row.status == "pending"
+
+
+def test_pos_qr_create_generates_qr_and_reuses_pending_draft(monkeypatch):
+    from services.mercadopago_oauth_service import MercadoPagoOAuthService
+    from services.mercadopago_service import MercadoPagoService
+
+    with stock_app.app.app_context():
+        from app import Payment, User
+
+        company = Company.query.filter_by(name="Empresa Demo").first()
+        assert company is not None
+
+        user = User.query.filter_by(username="empresa_admin").first()
+        assert user is not None
+
+        client = stock_app.app.test_client()
+        client.post("/auth/login", data={"username": user.username, "password": "admin123"})
+
+        monkeypatch.setattr(
+            MercadoPagoService,
+            "create_pos_checkout_preference",
+            lambda self, **kwargs: {
+                "id": "pref-pos-1",
+                "init_point": "https://mercadopago.test/checkout/pref-pos-1",
+                "sandbox_init_point": "https://sandbox.mercadopago.test/checkout/pref-pos-1",
+            },
+        )
+        monkeypatch.setattr(MercadoPagoOAuthService, "ensure_access_token", lambda self, *, company_id: "company-access-token")
+
+        payload = {
+            "items": [{"productId": 1, "quantity": 1, "name": "Yerba kilo", "price": 18000, "barcode": "123456789012"}],
+            "client_id": "",
+            "document_type": "venta",
+            "note": "",
+        }
+        headers = {"X-Cart-Tenant": f"{company.id}:{user.id}"}
+
+        first_response = client.post("/ventas/api/mp-qr/create", json=payload, headers=headers)
+        assert first_response.status_code == 200
+        first_data = first_response.get_json()
+        assert first_data["status"] == "created"
+        assert first_data["total"] == 18000.0
+        assert first_data["qr_data_uri"].startswith("data:image/png;base64,")
+
+        status_response = client.get(f"/ventas/api/mp-qr/status?draft_id={first_data['payment_id']}")
+        assert status_response.status_code == 200
+        assert status_response.get_json()["status"] == "pending"
+
+        second_response = client.post("/ventas/api/mp-qr/create", json=payload, headers=headers)
+        assert second_response.status_code == 200
+        second_data = second_response.get_json()
+        assert second_data["status"] == "reused"
+        assert second_data["payment_id"] == first_data["payment_id"]
+
+        assert Payment.query.filter_by(company_id=company.id).count() == 1
+
+
+def test_pos_qr_webhook_approved_updates_single_draft_payment(monkeypatch):
+    from services.webhook_service import WebhookService
+
+    with stock_app.app.app_context():
+        from app import Payment, User, WebhookEvent
+
+        company = Company.query.filter_by(name="Empresa Demo").first()
+        assert company is not None
+
+        user = User.query.filter_by(username="empresa_admin").first()
+        assert user is not None
+
+        draft_payment = Payment(
+            payment_id=None,
+            preference_id="pref-pos-2",
+            external_reference=f"flow:pos_sale|draft_payment_id:1|company_id:{company.id}|user_id:{user.id}|cart_hash:abc123",
+            company_id=company.id,
+            user_id=user.id,
+            amount=18000,
+            currency="ARS",
+            status="pending",
+            payment_method="QR Mercado Pago",
+            provider="mercadopago_pos",
+            reference="pos_draft:1",
+            payload_json='{"flow": "pos_sale", "snapshot": {"cart_hash": "abc123", "items": [{"productId": 1, "quantity": 1}]}}',
+        )
+        db.session.add(draft_payment)
+        db.session.flush()
+
+        draft_payment.external_reference = f"flow:pos_sale|draft_payment_id:{draft_payment.id}|company_id:{company.id}|user_id:{user.id}|cart_hash:abc123"
+        db.session.commit()
+
+        approved_payment = {
+            "id": "mp-pos-1",
+            "status": "approved",
+            "date_last_updated": "2026-07-14T11:00:00Z",
+            "date_approved": "2026-07-14T11:00:00Z",
+            "transaction_amount": 18000,
+            "currency_id": "ARS",
+            "payment_method_id": "qr",
+            "external_reference": draft_payment.external_reference,
+            "metadata": {
+                "flow": "pos_sale",
+                "company_id": company.id,
+                "user_id": user.id,
+                "draft_payment_id": draft_payment.id,
+                "total_amount": 18000,
+            },
+        }
+
+        service = WebhookService()
+        monkeypatch.setattr(service.mp_service, "validate_webhook_signature", lambda **kwargs: True)
+        monkeypatch.setattr(service.mp_service, "get_payment", lambda payment_id: approved_payment)
+
+        result = service.process(
+            db_session=db.session,
+            headers={"x-request-id": "rq-pos-1", "x-signature": "ts=1,v1=abc"},
+            payload={"id": "evt-pos-1", "type": "payment", "data": {"id": "mp-pos-1"}},
+        )
+
+        assert result["status"] == "processed"
+
+        db.session.refresh(draft_payment)
+        assert draft_payment.payment_id == "mp-pos-1"
+        assert draft_payment.status == "approved"
+        assert draft_payment.provider == "mercadopago_pos"
+        assert Payment.query.count() == 1
+        assert WebhookEvent.query.count() == 1
+
+        duplicate = service.process(
+            db_session=db.session,
+            headers={"x-request-id": "rq-pos-1", "x-signature": "ts=1,v1=abc"},
+            payload={"id": "evt-pos-1", "type": "payment", "data": {"id": "mp-pos-1"}},
+        )
+        assert duplicate["status"] == "duplicate"
+
+
+def test_mercado_pago_oauth_connection_lifecycle(monkeypatch):
+    from services.mercadopago_oauth_service import MercadoPagoOAuthService
+
+    with stock_app.app.app_context():
+        from app import MercadoPagoConnection
+
+        company = Company.query.filter_by(name="Empresa Demo").first()
+        assert company is not None
+
+        service = MercadoPagoOAuthService()
+        token_payload = {
+            "access_token": "access-token-1",
+            "refresh_token": "refresh-token-1",
+            "expires_in": 60,
+            "scope": "offline_access read write",
+            "token_type": "bearer",
+        }
+        profile = {
+            "id": "mp-user-1",
+            "first_name": "Juan Pérez",
+            "email": "juan@email.com",
+            "country_id": "AR",
+        }
+
+        connection = service.save_connection(company_id=company.id, token_payload=token_payload, profile=profile)
+        db.session.commit()
+
+        summary = service.summarize_connection(connection)
+        assert summary["connected"] is True
+        assert summary["account_name"] == "Juan Pérez"
+        assert summary["account_email"] == "juan@email.com"
+        assert summary["country"] == "AR"
+
+        assert service.decrypt_value(connection.access_token_encrypted) == "access-token-1"
+        assert service.decrypt_value(connection.refresh_token_encrypted) == "refresh-token-1"
+
+        monkeypatch.setattr(service, "refresh_tokens", lambda *, refresh_token: {
+            "access_token": "access-token-2",
+            "refresh_token": refresh_token,
+            "expires_in": 120,
+            "scope": "offline_access read write",
+            "token_type": "bearer",
+        })
+        monkeypatch.setattr(service, "fetch_user_profile", lambda *, access_token: {
+            "id": "mp-user-1",
+            "first_name": "Juan Pérez",
+            "email": "juan@email.com",
+            "country_id": "AR",
+        })
+
+        connection.token_expires_at = stock_app.utcnow() - timedelta(minutes=1)
+        db.session.commit()
+
+        refreshed = service.refresh_connection(company_id=company.id)
+        assert service.decrypt_value(refreshed.access_token_encrypted) == "access-token-2"
+        assert refreshed.status == "connected"
+
+        disconnected = service.disconnect(company_id=company.id)
+        assert disconnected.status == "disconnected"
+        assert disconnected.access_token_encrypted is None
+        assert disconnected.refresh_token_encrypted is None
+
+        stored = MercadoPagoConnection.query.filter_by(company_id=company.id).first()
+        assert stored is not None
+        assert stored.status == "disconnected"
+
+
+def test_mercado_pago_refresh_failure_disconnects_company(monkeypatch):
+    from services.mercadopago_oauth_service import MercadoPagoOAuthService
+
+    with stock_app.app.app_context():
+        company = Company.query.filter_by(name="Empresa Demo").first()
+        assert company is not None
+
+        service = MercadoPagoOAuthService()
+        connection = service.save_connection(
+            company_id=company.id,
+            token_payload={
+                "access_token": "access-token-expired",
+                "refresh_token": "refresh-token-expired",
+                "expires_in": 1,
+                "token_type": "bearer",
+                "scope": "read write",
+            },
+            profile={"id": "mp-user-expired", "first_name": "Juan", "email": "juan@email.com", "country_id": "AR"},
+        )
+        db.session.commit()
+
+        connection.token_expires_at = stock_app.utcnow() - timedelta(minutes=10)
+        db.session.commit()
+
+        monkeypatch.setattr(service, "refresh_tokens", lambda *, refresh_token: (_ for _ in ()).throw(RuntimeError("refresh denied")))
+        monkeypatch.setattr(service, "fetch_user_profile", lambda *, access_token: {})
+
+        with pytest.raises(RuntimeError, match="Mercado Pago requiere una nueva autorización"):
+            service.ensure_access_token(company_id=company.id)
+
+        refreshed = service.get_connection(company.id)
+        assert refreshed is not None
+        assert refreshed.status == "disconnected"
+        assert refreshed.access_token_encrypted is None
+        assert refreshed.refresh_token_encrypted is None
+
+
+def test_mercado_pago_oauth_route_starts_and_completes(monkeypatch):
+    from services.mercadopago_oauth_service import MercadoPagoOAuthService
+
+    monkeypatch.setenv("MP_CLIENT_ID", "client-id-123")
+    monkeypatch.setenv("MP_CLIENT_SECRET", "client-secret-123")
+
+    with stock_app.app.app_context():
+        from app import MercadoPagoConnection
+
+        client = stock_app.app.test_client()
+        client.post("/auth/login", data={"username": "negocio_admin", "password": "admin123"})
+
+        start_response = client.post("/admin/mercado-pago")
+        assert start_response.status_code in (301, 302)
+        location = start_response.headers.get("Location") or ""
+        assert "auth.mercadopago.com/authorization" in location
+
+        with client.session_transaction() as sess:
+            state = sess.get("mp_oauth_state_1")
+        assert state
+
+        monkeypatch.setattr(MercadoPagoOAuthService, "exchange_code", lambda self, *, code, redirect_uri: {
+            "access_token": "oauth-access-token",
+            "refresh_token": "oauth-refresh-token",
+            "expires_in": 1800,
+            "scope": "offline_access read write",
+            "token_type": "bearer",
+        })
+        monkeypatch.setattr(MercadoPagoOAuthService, "fetch_user_profile", lambda self, *, access_token: {
+            "id": "mp-user-99",
+            "first_name": "Juan Pérez",
+            "email": "juan@email.com",
+            "country_id": "AR",
+        })
+
+        callback_response = client.get(f"/admin/mercado-pago/callback?code=auth-code-123&state={state}", follow_redirects=False)
+        assert callback_response.status_code in (301, 302)
+
+        connection = MercadoPagoConnection.query.filter_by(company_id=1).first()
+        assert connection is not None
+        assert connection.status == "connected"
+        assert connection.mp_user_id == "mp-user-99"
+        assert connection.account_email == "juan@email.com"
+
+
+def test_pos_qr_create_uses_company_connected_token(monkeypatch):
+    from services.mercadopago_oauth_service import MercadoPagoOAuthService
+    from services.mercadopago_service import MercadoPagoService
+
+    with stock_app.app.app_context():
+        from app import User
+
+        company = Company.query.filter_by(name="Empresa Demo").first()
+        assert company is not None
+
+        user = User.query.filter_by(username="empresa_admin").first()
+        assert user is not None
+
+        client = stock_app.app.test_client()
+        client.post("/auth/login", data={"username": user.username, "password": "admin123"})
+
+        monkeypatch.setattr(MercadoPagoOAuthService, "ensure_access_token", lambda self, *, company_id: "company-access-token")
+
+        captured = {}
+
+        def fake_create_pos_checkout_preference(self, **kwargs):
+            captured.update(kwargs)
+            return {
+                "id": "pref-pos-connection",
+                "init_point": "https://mercadopago.test/checkout/pref-pos-connection",
+                "sandbox_init_point": "https://sandbox.mercadopago.test/checkout/pref-pos-connection",
+            }
+
+        monkeypatch.setattr(MercadoPagoService, "create_pos_checkout_preference", fake_create_pos_checkout_preference)
+
+        payload = {
+            "items": [{"productId": 1, "quantity": 1, "name": "Yerba kilo", "price": 18000, "barcode": "123456789012"}],
+            "client_id": "",
+            "document_type": "venta",
+            "note": "",
+        }
+        headers = {"X-Cart-Tenant": f"{company.id}:{user.id}"}
+
+        response = client.post("/ventas/api/mp-qr/create", json=payload, headers=headers)
+        assert response.status_code == 200
+        assert captured["access_token"] == "company-access-token"
+        assert captured["company_id"] == company.id
+        assert captured["user_id"] == user.id
+
+
+def test_backup_service_supports_import_and_selective_restore():
+    from services.backup_service import BackupService
+
+    with stock_app.app.app_context():
+        company = Company.query.filter_by(name="Empresa Demo").first()
+        assert company is not None
+
+        product = Product.query.filter_by(company_id=company.id).first()
+        assert product is not None
+
+        company.name = "Empresa Backup"
+        product.stock = 9.5
+        product.min_stock = 2.0
+        product.category = "Bebidas"
+        db.session.commit()
+
+        backup, plan = BackupService.create_manual_backup(company.id, user_id=1)
+        assert plan["limit"] >= 1
+        assert backup.company_id == company.id
+
+        company.name = "Empresa Modificada"
+        product.stock = 1.0
+        product.min_stock = 0.2
+        product.category = "Otro"
+        db.session.commit()
+
+        restored = BackupService.restore_backup(backup, expected_company_id=company.id, restored_by_user_id=1, sections=["inventory", "categories"])
+        db.session.commit()
+
+        refreshed_company = Company.query.get(company.id)
+        refreshed_product = Product.query.get(product.id)
+        assert restored.status == "restored"
+        assert refreshed_company.name == "Empresa Modificada"
+        assert round(float(refreshed_product.stock or 0), 2) == 9.5
+        assert round(float(refreshed_product.min_stock or 0), 2) == 2.0
+        assert refreshed_product.category == "Bebidas"
+
+
+def test_backup_import_route_rejects_cross_company_file(monkeypatch):
+    from services.backup_service import BackupService
+
+    with stock_app.app.app_context():
+        source_company = Company.query.filter_by(name="Empresa Demo").first()
+        assert source_company is not None
+
+        other_company = Company(name="Otra Empresa", active=True)
+        db.session.add(other_company)
+        db.session.flush()
+
+        backup, _plan = BackupService.create_manual_backup(source_company.id, user_id=1)
+        with open(backup.path, "rb") as file_handle:
+            raw_bytes = file_handle.read()
+
+        with pytest.raises(ValueError, match="no corresponde a la empresa seleccionada"):
+            BackupService.import_backup_file(company_id=other_company.id, file_storage=type("Upload", (), {"filename": "backup.json.gz", "read": lambda self=None: raw_bytes})(), created_by_user_id=1)
+
+
+def test_company_backup_import_route_creates_preview():
+    from services.backup_service import BackupService
+
+    with stock_app.app.app_context():
+        company = Company.query.filter_by(name="Empresa Demo").first()
+        assert company is not None
+
+        backup, _plan = BackupService.create_manual_backup(company.id, user_id=1)
+        with open(backup.path, "rb") as file_handle:
+            raw_bytes = file_handle.read()
+
+        client = stock_app.app.test_client()
+        client.post("/auth/login", data={"username": "negocio_admin", "password": "admin123"})
+        with client.session_transaction() as sess:
+            sess["company_pin_verified_1"] = stock_app.utcnow().timestamp()
+        response = client.post(
+            "/admin/company-settings/backups/import",
+            data={"csrf_token": "", "backup_file": (io.BytesIO(raw_bytes), "backup.json.gz")},
+            content_type="multipart/form-data",
+            follow_redirects=False,
+        )
+        assert response.status_code in (301, 302)
+        location = response.headers.get("Location") or ""
+        assert "panel=backups" in location
+        assert "preview_id=" in location
 
 
 def test_webhook_invalid_signature_is_rejected(monkeypatch):

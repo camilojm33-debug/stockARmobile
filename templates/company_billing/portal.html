@@ -15,6 +15,12 @@
   'in_process': 'En proceso',
   'authorized': 'Autorizada'
 } %}
+{% set backup_limits = {
+  'trial': 1,
+  'entrepreneur': 1,
+  'business': 2,
+  'premium': 3
+} %}
 <div class="app-shell">
   <nav aria-label="breadcrumb" class="mb-2">
     <ol class="breadcrumb mb-1">
@@ -65,6 +71,99 @@
     </div>
   </div>
   {% endif %}
+
+  <div class="row g-3 mb-4">
+    <div class="col-lg-8">
+      <div class="card app-card h-100">
+        <div class="card-body p-4">
+          <div class="d-flex flex-wrap justify-content-between align-items-start gap-3">
+            <div>
+              <div class="page-kicker"><i class="bi bi-credit-card-2-front"></i> Mi Suscripción</div>
+              <h2 class="h3 fw-bold mb-1">{{ usage_snapshot.plan.name if usage_snapshot.plan else 'Prueba' }}</h2>
+              <p class="text-muted mb-0">Panel completo de estado, pagos, facturas y renovación del plan.</p>
+            </div>
+            <div class="text-end">
+              <div class="small text-muted mb-1">Estado</div>
+              <span class="badge {{ status_badge.class }} fs-6">{{ status_badge.label }}</span>
+              <div class="small text-muted mt-2">{{ status_badge.text }}</div>
+            </div>
+          </div>
+
+          {% if managed_by_seller %}
+          <div class="alert alert-info mt-3 mb-0">
+            <div class="fw-semibold">Tu cuenta fue gestionada por:</div>
+            <div>{{ managed_by_seller }}</div>
+          </div>
+          {% endif %}
+
+          {% if days_remaining is not none %}
+          <div class="mt-3 p-3 rounded-3 border {% if days_remaining <= 3 %}border-danger bg-danger-subtle{% elif days_remaining <= 15 %}border-warning bg-warning-subtle{% else %}border-success bg-success-subtle{% endif %}">
+            <div class="fw-semibold">Te quedan {{ days_remaining if days_remaining > 0 else 0 }} días de servicio</div>
+            <div class="small text-muted">
+              {% if subscription.status == 'trial' %}
+              Período de prueba{% if reference_date %}. Finaliza el {{ reference_date.strftime('%Y-%m-%d') }}{% endif %}
+              {% else %}
+              Próximo vencimiento: {{ reference_date.strftime('%Y-%m-%d') if reference_date else '—' }}
+              {% endif %}
+            </div>
+            {% if days_remaining in [30, 15, 7, 3, 1] %}
+            <div class="alert alert-warning mt-3 mb-0">Faltan {{ days_remaining }} días para el vencimiento.</div>
+            {% elif subscription.status == 'trial' and days_remaining <= 7 and days_remaining > 0 %}
+            <div class="alert alert-warning mt-3 mb-0">Tu período de prueba está por terminar.</div>
+            {% endif %}
+          </div>
+          {% endif %}
+
+          {% if days_remaining is not none and days_remaining <= 15 and days_remaining >= 0 %}
+          <div class="alert alert-warning mt-3 mb-0 d-flex flex-wrap justify-content-between align-items-center gap-2">
+            <div><strong>Tu plan vence en {{ days_remaining }} días.</strong> Podés renovarlo ahora para evitar interrupciones.</div>
+            <form method="post" action="{{ url_for('company_billing.reactivate_subscription') }}">
+              <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+              <button class="btn btn-warning" type="submit">Renovar ahora</button>
+            </form>
+          </div>
+          {% endif %}
+
+          <div class="d-flex flex-wrap gap-2 mt-3">
+            <form method="post" action="{{ url_for('company_billing.reactivate_subscription') }}">
+              <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+              <button class="btn btn-outline-primary" type="submit">Renovar plan</button>
+            </form>
+            <a class="btn btn-outline-secondary" href="#planes-disponibles">Cambiar plan</a>
+            <a class="btn btn-outline-secondary" href="#historial-pagos">Ver historial de pagos</a>
+            <a class="btn btn-outline-secondary" href="#historial-facturas">Descargar facturas</a>
+            <a class="btn btn-outline-secondary" href="{{ url_for('support.new_ticket') }}">Contactar soporte</a>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <div class="col-lg-4">
+      <div class="card app-card h-100 border-primary">
+        <div class="card-header bg-white fw-bold">Plan contratado</div>
+        <div class="card-body">
+          <div class="d-flex justify-content-between align-items-start gap-2 mb-2">
+            <h3 class="h4 fw-bold mb-0">{{ usage_snapshot.plan.name if usage_snapshot.plan else 'Prueba' }}</h3>
+            <span class="badge text-bg-primary">{{ usage_snapshot.plan.code|title if usage_snapshot.plan and usage_snapshot.plan.code else 'Trial' }}</span>
+          </div>
+          <div class="h5 mb-2">{{ usage_snapshot.plan.currency if usage_snapshot.plan else 'ARS' }} {{ '{:,.0f}'.format(usage_snapshot.plan.price or 0).replace(',', '.') if usage_snapshot.plan else '0' }}</div>
+          <div class="small text-muted mb-3">Precio mensual</div>
+          <div class="row g-2 mb-3">
+            <div class="col-6"><div class="border rounded p-2 h-100"><div class="small text-muted">Usuarios</div><div class="fw-semibold">{{ usage_snapshot.plan.max_users if usage_snapshot.plan else '-' }}</div></div></div>
+            <div class="col-6"><div class="border rounded p-2 h-100"><div class="small text-muted">Backups</div><div class="fw-semibold">{{ backup_limits.get((usage_snapshot.plan.code or '')|lower, 1) if usage_snapshot.plan else 1 }}</div></div></div>
+          </div>
+          <div class="small fw-semibold mb-2">Funciones incluidas</div>
+          <ul class="small text-muted list-unstyled mb-0">
+            {% for feature in plan_features %}
+            <li><i class="bi bi-check2"></i> {{ feature }}</li>
+            {% else %}
+            <li><i class="bi bi-check2"></i> Suscripción y facturación SaaS</li>
+            {% endfor %}
+          </ul>
+        </div>
+      </div>
+    </div>
+  </div>
 
   <div class="row g-3 mb-4">
     <div class="col-md-3">
@@ -137,34 +236,47 @@
   </div>
   {% endif %}
 
-  <div id="planes-disponibles" class="row g-3">
-    {% for plan in plans %}
-    <div class="col-md-6 col-xl-3">
-      <div class="card app-card h-100 {% if usage_snapshot.plan and usage_snapshot.plan.id == plan.id %}border-primary{% endif %}">
-        <div class="card-body d-flex flex-column">
-          <div class="d-flex justify-content-between align-items-start">
-            <h3 class="h5 mb-1">{{ plan.name }}</h3>
-            {% if usage_snapshot.plan and usage_snapshot.plan.id == plan.id %}
-            <span class="badge text-bg-primary">Plan actual</span>
-            {% endif %}
-          </div>
-          <p class="text-muted mb-2 small">{{ plan.currency }} {{ '{:,.0f}'.format(plan.price or 0).replace(',', '.') }} / {{ 'mes' if (plan.duration_days or 30) >= 30 else (plan.duration_days ~ ' dias') }}</p>
-          <ul class="small text-muted list-unstyled mb-3">
-            <li><i class="bi bi-check2"></i> {{ plan.max_users }} usuarios</li>
-            <li><i class="bi bi-check2"></i> {{ plan.max_products }} productos</li>
-            <li><i class="bi bi-check2"></i> {{ plan.max_clients }} clientes</li>
-          </ul>
-          <form method="post" action="{{ url_for('company_billing.create_checkout') }}" class="mt-auto">
-            <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
-            <input type="hidden" name="plan_id" value="{{ plan.id }}">
-            <button class="btn {{ 'btn-outline-primary' if usage_snapshot.plan and usage_snapshot.plan.id == plan.id else 'btn-primary' }} w-100" type="submit">
-              {% if usage_snapshot.plan and usage_snapshot.plan.id == plan.id %}Plan actual{% else %}Suscribirme{% endif %}
-            </button>
-          </form>
-        </div>
-      </div>
+  <div id="planes-disponibles" class="card app-card mb-4">
+    <div class="card-header bg-white fw-bold d-flex justify-content-between align-items-center">
+      <span>Comparador de planes</span>
+      <span class="text-muted small">El actual queda marcado automáticamente</span>
     </div>
-    {% endfor %}
+    <div class="table-responsive">
+      <table class="table align-middle mb-0">
+        <thead>
+          <tr>
+            <th>Plan</th>
+            <th>Precio</th>
+            <th>Usuarios</th>
+            <th>Backups</th>
+            <th>Funciones</th>
+            <th class="text-end">Acción</th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for plan in plans if plan.code in ['entrepreneur', 'business', 'premium'] %}
+          <tr {% if usage_snapshot.plan and usage_snapshot.plan.id == plan.id %}class="table-primary"{% endif %}>
+            <td class="fw-semibold">{{ plan.name }}{% if usage_snapshot.plan and usage_snapshot.plan.id == plan.id %} <span class="badge text-bg-primary ms-1">Contratado</span>{% endif %}</td>
+            <td>{{ plan.currency }} {{ '{:,.0f}'.format(plan.price or 0).replace(',', '.') }}</td>
+            <td>{{ plan.max_users }}</td>
+            <td>{{ backup_limits.get((plan.code or '')|lower, 1) }}</td>
+            <td class="small text-muted">{{ (plan.features_json or 'suscripcion,checkout,mercado_pago')|replace(',', ', ') }}</td>
+            <td class="text-end">
+              {% if usage_snapshot.plan and usage_snapshot.plan.id == plan.id %}
+              <span class="btn btn-sm btn-outline-secondary disabled">Plan actual</span>
+              {% else %}
+              <form method="post" action="{{ url_for('company_billing.create_checkout') }}" class="d-inline">
+                <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                <input type="hidden" name="plan_id" value="{{ plan.id }}">
+                <button class="btn btn-sm btn-primary" type="submit">Actualizar plan</button>
+              </form>
+              {% endif %}
+            </td>
+          </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
   </div>
 
   <div class="card app-card mt-4">
@@ -183,23 +295,24 @@
 
   <div class="row g-3 mt-1">
     <div class="col-lg-6">
-      <div class="card app-card h-100">
+      <div class="card app-card h-100" id="historial-pagos">
         <div class="card-header bg-white fw-bold">Historial de cobros</div>
         <div class="table-responsive">
           <table class="table table-sm table-hover mb-0">
-            <thead><tr><th>Pago</th><th>Estado</th><th>Fecha</th><th>Importe</th><th>Factura</th><th>Comprobante</th></tr></thead>
+            <thead><tr><th>Fecha</th><th>Plan</th><th>Importe</th><th>Estado</th><th>Método de pago</th><th>Número de operación</th><th>Factura PDF</th></tr></thead>
             <tbody>
               {% for payment in recent_payments %}
               <tr>
-                <td>{{ payment.payment_id or ('#' ~ payment.id) }}</td>
-                <td>{{ status_labels.get(payment.status, payment.status|replace('_', ' ')|title) }}</td>
                 <td>{{ payment.paid_at.strftime('%Y-%m-%d %H:%M') if payment.paid_at else (payment.created_at.strftime('%Y-%m-%d %H:%M') if payment.created_at else '-') }}</td>
+                <td>{{ payment.subscription.plan.name if payment.subscription and payment.subscription.plan else (usage_snapshot.plan.name if usage_snapshot.plan else '-') }}</td>
                 <td>${{ '%.2f'|format(payment.amount or 0) }}</td>
-                <td>{{ payment.invoice.invoice_number if payment.invoice else '-' }}</td>
-                <td>{{ payment.reference or '-' }}</td>
+                <td>{{ status_labels.get(payment.status, payment.status|replace('_', ' ')|title) }}</td>
+                <td>{{ payment.payment_method or '-' }}</td>
+                <td>{{ payment.payment_id or ('#' ~ payment.id) }}</td>
+                <td>{% if payment.invoice %}<a href="{{ url_for('company_billing.subscription_invoice_pdf', invoice_id=payment.invoice.id) }}" target="_blank" rel="noopener noreferrer">{{ payment.invoice.invoice_number or ('#' ~ payment.invoice.id) }}</a>{% else %}-{% endif %}</td>
               </tr>
               {% else %}
-              <tr><td colspan="6" class="text-center text-muted py-3">Sin cobros registrados.</td></tr>
+              <tr><td colspan="7" class="text-center text-muted py-3">Sin cobros registrados.</td></tr>
               {% endfor %}
             </tbody>
           </table>
@@ -207,11 +320,11 @@
       </div>
     </div>
     <div class="col-lg-6">
-      <div class="card app-card h-100">
+      <div class="card app-card h-100" id="historial-facturas">
         <div class="card-header bg-white fw-bold">Historial de facturas</div>
         <div class="table-responsive">
-          <table class="table table-sm table-hover mb-0">
-            <thead><tr><th>Factura</th><th>Estado</th><th>Importe</th><th>Vencimiento</th></tr></thead>
+          <table class="table table-sm table-hover mb-0 align-middle">
+            <thead><tr><th>Factura</th><th>Estado</th><th>Importe</th><th>Vencimiento</th><th class="text-end">PDF</th></tr></thead>
             <tbody>
               {% for invoice in recent_invoices %}
               <tr>
@@ -219,9 +332,10 @@
                 <td>{{ status_labels.get(invoice.status, invoice.status|replace('_', ' ')|title) }}</td>
                 <td>${{ '%.2f'|format(invoice.amount or 0) }}</td>
                 <td>{{ invoice.due_at.strftime('%Y-%m-%d') if invoice.due_at else '-' }}</td>
+                <td class="text-end"><a class="btn btn-sm btn-outline-primary" href="{{ url_for('company_billing.subscription_invoice_pdf', invoice_id=invoice.id) }}" target="_blank" rel="noopener noreferrer">Descargar</a></td>
               </tr>
               {% else %}
-              <tr><td colspan="4" class="text-center text-muted py-3">Sin facturas registradas.</td></tr>
+              <tr><td colspan="5" class="text-center text-muted py-3">Sin facturas registradas.</td></tr>
               {% endfor %}
             </tbody>
           </table>

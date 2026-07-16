@@ -55,21 +55,95 @@
         </div>
       </form>
 
-      <form method="post" action="{{ url_for('saas.backups_create') }}" class="row g-2 align-items-end mb-4">
-        <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
-        <div class="col-md-6 col-lg-4">
-          <label class="form-label">Crear backup manual para empresa</label>
-          <select class="form-select" name="company_id" required>
-            <option value="">Seleccionar empresa</option>
-            {% for company in companies %}
-            <option value="{{ company.id }}">{{ company.name }}</option>
-            {% endfor %}
-          </select>
+      <div class="row g-3 mb-4">
+        <div class="col-lg-6">
+          <form method="post" action="{{ url_for('saas.backups_create') }}" class="row g-2 align-items-end h-100">
+            <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+            <div class="col-md-8">
+              <label class="form-label">Crear backup manual para empresa</label>
+              <select class="form-select" name="company_id" required>
+                <option value="">Seleccionar empresa</option>
+                {% for company in companies %}
+                <option value="{{ company.id }}">{{ company.name }}</option>
+                {% endfor %}
+              </select>
+            </div>
+            <div class="col-md-4 d-grid">
+              <button class="btn btn-primary" type="submit"><i class="bi bi-plus-circle me-1"></i>Crear Backup</button>
+            </div>
+          </form>
         </div>
-        <div class="col-md-3 col-lg-2 d-grid">
-          <button class="btn btn-primary" type="submit"><i class="bi bi-plus-circle me-1"></i>Crear backup</button>
+        <div class="col-lg-6">
+          <form method="post" action="{{ url_for('saas.backups_import') }}" enctype="multipart/form-data" class="row g-2 align-items-end h-100">
+            <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+            <div class="col-md-6">
+              <label class="form-label">Empresa destino</label>
+              <select class="form-select" name="company_id" required>
+                <option value="">Seleccionar empresa</option>
+                {% for company in companies %}
+                <option value="{{ company.id }}" {% if filters.company_id and filters.company_id == company.id %}selected{% endif %}>{{ company.name }}</option>
+                {% endfor %}
+              </select>
+            </div>
+            <div class="col-md-6">
+              <label class="form-label">Importar Backup</label>
+              <input class="form-control" type="file" name="backup_file" accept=".json,.gz,.json.gz" required>
+            </div>
+            <div class="col-12 d-grid">
+              <button class="btn btn-outline-primary" type="submit"><i class="bi bi-upload me-1"></i>Importar Backup</button>
+            </div>
+          </form>
         </div>
-      </form>
+      </div>
+
+      {% if selected_backup and selected_backup_summary %}
+      <div class="card border-primary mb-4">
+        <div class="card-header bg-primary text-white fw-bold d-flex justify-content-between align-items-center">
+          <span>Resumen del Backup seleccionado</span>
+          <span class="badge text-bg-light text-primary">Versión {{ selected_backup_summary.schema_version }}</span>
+        </div>
+        <div class="card-body">
+          <div class="row g-3 mb-3">
+            <div class="col-md-3"><div class="border rounded-3 p-3 h-100"><div class="small text-muted">Empresa</div><div class="fw-semibold">{{ selected_backup.company.name if selected_backup.company else ('Empresa #' ~ selected_backup.company_id) }}</div></div></div>
+            <div class="col-md-3"><div class="border rounded-3 p-3 h-100"><div class="small text-muted">Fecha del Backup</div><div class="fw-semibold">{{ selected_backup_summary.generated_at or '-' }}</div></div></div>
+            <div class="col-md-3"><div class="border rounded-3 p-3 h-100"><div class="small text-muted">Plan</div><div class="fw-semibold">{{ selected_backup.plan_code or '-' }}</div></div></div>
+            <div class="col-md-3"><div class="border rounded-3 p-3 h-100"><div class="small text-muted">Usuario</div><div class="fw-semibold">{{ selected_backup.created_by_user.username if selected_backup.created_by_user else '-' }}</div></div></div>
+            <div class="col-md-3"><div class="border rounded-3 p-3 h-100"><div class="small text-muted">Productos</div><div class="fw-semibold">{{ selected_backup_summary.products }}</div></div></div>
+            <div class="col-md-3"><div class="border rounded-3 p-3 h-100"><div class="small text-muted">Clientes</div><div class="fw-semibold">{{ selected_backup_summary.clients }}</div></div></div>
+            <div class="col-md-3"><div class="border rounded-3 p-3 h-100"><div class="small text-muted">Ventas</div><div class="fw-semibold">{{ selected_backup_summary.sales }}</div></div></div>
+            <div class="col-md-3"><div class="border rounded-3 p-3 h-100"><div class="small text-muted">Inventario</div><div class="fw-semibold">{{ selected_backup_summary.inventory }}</div></div></div>
+            <div class="col-md-3"><div class="border rounded-3 p-3 h-100"><div class="small text-muted">Categorías</div><div class="fw-semibold">{{ selected_backup_summary.categories }}</div></div></div>
+            <div class="col-md-3"><div class="border rounded-3 p-3 h-100"><div class="small text-muted">Empleados</div><div class="fw-semibold">{{ selected_backup_summary.employees }}</div></div></div>
+            <div class="col-md-3"><div class="border rounded-3 p-3 h-100"><div class="small text-muted">Horarios</div><div class="fw-semibold">{{ selected_backup_summary.schedules }}</div></div></div>
+            <div class="col-md-3"><div class="border rounded-3 p-3 h-100"><div class="small text-muted">Tamaño</div><div class="fw-semibold">{{ format_size(selected_backup.file_size_bytes or 0) }}</div></div></div>
+          </div>
+          <div class="alert alert-warning mb-3">Esta operación reemplazará la información actual por la del Backup seleccionado.</div>
+          <form method="post" action="{{ url_for('saas.backups_restore', backup_id=selected_backup.id) }}">
+            <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+            <input type="hidden" name="confirm_restore" value="1">
+            <div class="row g-2 mb-3">
+              {% for option in backup_section_options %}
+              {% if option.key != 'full' %}
+              <div class="col-md-4 col-lg-3">
+                <div class="form-check border rounded-3 p-3 h-100">
+                  <input class="form-check-input" type="checkbox" name="sections" value="{{ option.key }}" id="saas-section-{{ option.key }}" {% if option.key in ['products','inventory','clients','sales','categories','company','employees','schedules','general'] %}checked{% endif %}>
+                  <label class="form-check-label fw-semibold" for="saas-section-{{ option.key }}">{{ option.label }}</label>
+                </div>
+              </div>
+              {% endif %}
+              {% endfor %}
+              <div class="col-12">
+                <div class="form-check border rounded-3 p-3">
+                  <input class="form-check-input" type="checkbox" name="sections" value="full" id="saas-section-full">
+                  <label class="form-check-label fw-semibold" for="saas-section-full">Restauración completa</label>
+                </div>
+              </div>
+            </div>
+            <button class="btn btn-warning" type="submit" onclick="return confirm('Esta operación reemplazará la información actual por la del Backup seleccionado.');"><i class="bi bi-arrow-clockwise me-1"></i>Restaurar Backup</button>
+          </form>
+        </div>
+      </div>
+      {% endif %}
 
       <div class="table-responsive">
         <table class="table table-sm table-hover align-middle mb-0">
@@ -81,6 +155,7 @@
               <th>Estado</th>
               <th>Tipo</th>
               <th>Plan</th>
+              <th>Versión</th>
               <th>Tamaño</th>
               <th>Creado</th>
               <th>Restaurado</th>
@@ -99,16 +174,14 @@
               <td><span class="badge {{ 'text-bg-success' if backup.status == 'ready' else 'text-bg-secondary' }}">{{ backup.status or '-' }}</span></td>
               <td>{{ backup.trigger_type or '-' }}</td>
               <td>{{ backup.plan_code or '-' }}</td>
+              <td>{{ backup_summaries.get(backup.id, {}).get('schema_version', '-') }}</td>
               <td>{{ format_size(backup.file_size_bytes or 0) }}</td>
               <td>{{ backup.created_at.strftime('%Y-%m-%d %H:%M') if backup.created_at else '-' }}</td>
               <td>{{ backup.restored_at.strftime('%Y-%m-%d %H:%M') if backup.restored_at else '-' }}</td>
               <td class="text-end">
                 <div class="d-inline-flex gap-1 flex-wrap justify-content-end">
                   <a class="btn btn-sm btn-outline-primary" href="{{ url_for('saas.backups_download', backup_id=backup.id) }}">Descargar</a>
-                  <form method="post" action="{{ url_for('saas.backups_restore', backup_id=backup.id) }}" onsubmit="return confirm('¿Restaurar este backup para la empresa seleccionada?');">
-                    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
-                    <button class="btn btn-sm btn-outline-warning" type="submit">Restaurar</button>
-                  </form>
+                  <a class="btn btn-sm btn-outline-warning" href="{{ url_for('saas.backups_panel', preview_id=backup.id, company_id=filters.company_id, q=filters.q, status=filters.status, plan=filters.plan) }}">Restaurar</a>
                   <form method="post" action="{{ url_for('saas.backups_delete', backup_id=backup.id) }}" onsubmit="return confirm('¿Eliminar este backup?');">
                     <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
                     <button class="btn btn-sm btn-outline-danger" type="submit">Eliminar</button>
@@ -117,7 +190,7 @@
               </td>
             </tr>
             {% else %}
-            <tr><td colspan="10" class="text-center text-muted py-4">No hay backups para los filtros seleccionados.</td></tr>
+            <tr><td colspan="11" class="text-center text-muted py-4">No hay backups para los filtros seleccionados.</td></tr>
             {% endfor %}
           </tbody>
         </table>
