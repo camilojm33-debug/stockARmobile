@@ -202,6 +202,20 @@
                 <option value="">Consumidor final</option>
                 {% for cliente in clientes %}<option value="{{ cliente.id }}">{{ cliente.name }}</option>{% endfor %}
               </select>
+              <div class="form-text">Elegí cliente si necesita factura a nombre de alguien.</div>
+            </div>
+            <div class="col-md-6">
+              <label class="form-label">Comprobante / Factura</label>
+              <select id="checkout-document-type" class="form-select" name="document_type">
+                <option value="venta" selected>Consumidor final (ticket)</option>
+                <option value="factura_c">Factura C</option>
+                <option value="factura_b">Factura B</option>
+                <option value="factura_a">Factura A</option>
+                <option value="presupuesto">Presupuesto</option>
+                <option value="remito">Remito</option>
+                <option value="apartado">Apartado</option>
+              </select>
+              <div class="form-text">Seleccioná el tipo de comprobante que te pide el cliente.</div>
             </div>
             <div class="col-md-6">
               <label class="form-label">Metodo de pago</label>
@@ -250,21 +264,12 @@
                 </div>
               </div>
             </div>
-            <div class="col-md-3"><label class="form-label">Monto 1</label><input id="checkout-paid-amount" class="form-control" name="monto_pago" type="number" min="0" step="0.01" inputmode="decimal"></div>
-            <div class="col-md-3"><label class="form-label">Monto 2</label><input id="checkout-paid-amount-2" class="form-control" name="monto_pago_2" type="number" min="0" step="0.01" inputmode="decimal"></div>
+            <div class="col-md-3"><label class="form-label">Pago principal</label><input id="checkout-paid-amount" class="form-control" name="monto_pago" type="number" min="0" step="0.01" inputmode="decimal" placeholder="Ej: total en efectivo"></div>
+            <div class="col-md-3"><label class="form-label">Pago secundario</label><input id="checkout-paid-amount-2" class="form-control" name="monto_pago_2" type="number" min="0" step="0.01" inputmode="decimal" placeholder="Solo si hay pago mixto"></div>
+            <div class="col-12"><div class="form-text">Pago principal y secundario permiten dividir el cobro entre dos medios de pago.</div></div>
             <div class="col-md-3"><label class="form-label">Descuento</label><input id="checkout-general-discount" class="form-control" name="descuento_general" type="number" min="0" step="0.01" inputmode="decimal"></div>
             <div class="col-md-3"><label class="form-label">Recargo</label><input id="checkout-surcharge" class="form-control" name="recargo" type="number" min="0" step="0.01" inputmode="decimal"></div>
             <div class="col-md-3"><label class="form-label">Cambio</label><div id="checkout-change" class="form-control bg-body-tertiary fw-bold">$0.00</div></div>
-            <div class="col-md-4">
-              <label class="form-label">Documento</label>
-              <select id="checkout-document-type" class="form-select" name="document_type">
-                <option value="venta">Venta</option>
-                <option value="presupuesto">Presupuesto</option>
-                <option value="remito">Remito</option>
-                <option value="factura">Factura</option>
-                <option value="apartado">Apartado</option>
-              </select>
-            </div>
             <div class="col-12"><label class="form-label">Nota</label><input id="checkout-note" class="form-control" name="note"></div>
           </div>
         </form>
