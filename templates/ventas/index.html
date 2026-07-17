@@ -242,29 +242,6 @@
                 <option value="remito">Remito</option>
                 <option value="apartado">Apartado</option>
               </select>
-              <div class="form-check form-switch border rounded p-2">
-                <input class="form-check-input" type="checkbox" role="switch" id="checkout-requiere-comprobante" name="requiere_comprobante" value="1">
-                <label class="form-check-label fw-semibold" for="checkout-requiere-comprobante">El cliente solicita comprobante</label>
-              </div>
-              <div id="checkout-comprobante-panel" class="mt-2 d-none">
-                <div class="row g-2">
-                  <div class="col-md-6">
-                    <label class="form-label">Tipo de comprobante</label>
-                    <select id="checkout-tipo-comprobante" class="form-select" name="tipo_comprobante">
-                      <option value="factura_a">Factura A</option>
-                      <option value="factura_b">Factura B</option>
-                      <option value="factura_c" selected>Factura C</option>
-                      <option value="ticket_fiscal">Ticket Fiscal</option>
-                      <option value="remito">Remito</option>
-                      <option value="otro">Otro</option>
-                    </select>
-                  </div>
-                  <div class="col-md-6">
-                    <label class="form-label">Observaciones</label>
-                    <input id="checkout-observacion-comprobante" class="form-control" name="observacion_comprobante" maxlength="255" placeholder="Dato adicional (opcional)">
-                  </div>
-                </div>
-              </div>
             </div>
             <div class="col-md-6">
               <label class="form-label">Metodo de pago</label>
@@ -489,7 +466,6 @@
     width: 88px;
     min-width: 76px;
   }
-  body.quick-mode-active .pos-toolbar,
   body.quick-mode-active .pos-category-strip {
     display: none !important;
   }

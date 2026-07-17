@@ -337,9 +337,6 @@ async function processCheckout() {
     descuento_general: discount.amount,
     recargo: document.getElementById('checkout-surcharge')?.value || '',
     document_type: document.getElementById('checkout-document-type')?.value || 'venta',
-    requiere_comprobante: document.getElementById('checkout-requiere-comprobante')?.checked || false,
-    tipo_comprobante: document.getElementById('checkout-tipo-comprobante')?.value || '',
-    observacion_comprobante: document.getElementById('checkout-observacion-comprobante')?.value || '',
     note: document.getElementById('checkout-note')?.value || '',
     checkout_token: ensureCheckoutToken()
   };
@@ -410,11 +407,7 @@ function getDiscountBreakdown(subtotal) {
 
 function requiresIdentifiedClient() {
   const documentType = document.getElementById('checkout-document-type')?.value || 'venta';
-  const toggle = document.getElementById('checkout-requiere-comprobante')?.checked;
-  const tipo = document.getElementById('checkout-tipo-comprobante')?.value || '';
-  const requiresByDocument = ['factura_a', 'factura_b', 'factura_c'].includes(documentType);
-  const requiresByComprobante = Boolean(toggle) && ['factura_a', 'factura_b', 'factura_c'].includes(tipo);
-  return requiresByDocument || requiresByComprobante;
+  return ['factura_a', 'factura_b', 'factura_c'].includes(documentType);
 }
 
 function validateCheckoutClientRequirements() {
@@ -620,9 +613,6 @@ async function processMercadoPagoQrCheckout() {
     client_id: document.getElementById('checkout-client-select')?.value || '',
     note: document.getElementById('checkout-note')?.value || '',
     document_type: document.getElementById('checkout-document-type')?.value || '',
-    requiere_comprobante: document.getElementById('checkout-requiere-comprobante')?.checked || false,
-    tipo_comprobante: document.getElementById('checkout-tipo-comprobante')?.value || '',
-    observacion_comprobante: document.getElementById('checkout-observacion-comprobante')?.value || '',
     checkout_token: ensureCheckoutToken(),
   };
   if (checkoutProcessButton) {
@@ -787,7 +777,6 @@ document.addEventListener('DOMContentLoaded', () => {
   loadCart();
   setupFastScanner();
   setupCheckoutPaymentBehavior();
-  setupComprobanteRequestBehavior();
   ['checkout-general-discount', 'checkout-surcharge', 'checkout-paid-amount', 'checkout-paid-amount-2'].forEach(id => {
     document.getElementById(id)?.addEventListener('input', updateCheckoutTotals);
   });
@@ -859,48 +848,6 @@ async function createQuickClient() {
       actionButton.textContent = 'Crear cliente';
     }
   }
-}
-
-function setupComprobanteRequestBehavior() {
-  const toggle = document.getElementById('checkout-requiere-comprobante');
-  const panel = document.getElementById('checkout-comprobante-panel');
-  const tipo = document.getElementById('checkout-tipo-comprobante');
-  const documentType = document.getElementById('checkout-document-type');
-  if (!toggle || !panel || !tipo) return;
-
-  const mapDocumentToComprobante = {
-    factura_a: 'factura_a',
-    factura_b: 'factura_b',
-    factura_c: 'factura_c',
-    remito: 'remito'
-  };
-
-  const sync = () => {
-    const enabled = Boolean(toggle.checked);
-    panel.classList.toggle('d-none', !enabled);
-    tipo.disabled = !enabled;
-    const obs = document.getElementById('checkout-observacion-comprobante');
-    if (obs) obs.disabled = !enabled;
-    if (!enabled) {
-      tipo.value = 'factura_c';
-      if (obs) obs.value = '';
-    }
-    updateCheckoutTotals();
-  };
-
-  toggle.addEventListener('change', sync);
-  if (documentType) {
-    documentType.addEventListener('change', () => {
-      const inferred = mapDocumentToComprobante[documentType.value || ''];
-      if (inferred) {
-        toggle.checked = true;
-        tipo.value = inferred;
-      }
-      sync();
-    });
-  }
-  tipo.addEventListener('change', () => updateCheckoutTotals());
-  sync();
 }
 
 function setupFastScanner() {
