@@ -662,7 +662,7 @@ def _create_sale_from_items(items, data, json_response=False):
                     return jsonify({"sale_id": existing_sale.id, "redirect_url": url_for("sales.success", sale_id=existing_sale.id)})
                 return redirect(url_for("sales.success", sale_id=existing_sale.id))
 
-        lines = _calculate_lines(items)
+        lines = _calculate_lines(items, lock_for_update=True)
         general_discount = _to_decimal(data.get("descuento_general") or data.get("general_discount"))
         surcharge = _to_decimal(data.get("recargo") or data.get("surcharge"))
         sale_totals = calculate_sale_totals(

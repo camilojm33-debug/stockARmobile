@@ -461,12 +461,18 @@ function renderCheckoutSummary(totals, discountBreakdown) {
   const clientSelect = document.getElementById('checkout-client-select');
   const documentSelect = document.getElementById('checkout-document-type');
   const paymentSelect = document.getElementById('checkout-payment-method');
+  const comprobanteToggle = document.getElementById('checkout-requiere-comprobante');
+  const comprobanteTipoSelect = document.getElementById('checkout-tipo-comprobante');
+
+  const documentLabel = documentSelect?.options?.[documentSelect.selectedIndex]?.text || 'Consumidor final (ticket)';
+  const tipoLabel = comprobanteTipoSelect?.options?.[comprobanteTipoSelect.selectedIndex]?.text || 'Comprobante';
+  const comprobanteLabel = comprobanteToggle?.checked ? `${documentLabel} · Solicita ${tipoLabel}` : documentLabel;
 
   const summaryMap = {
     'summary-products': String(products),
     'summary-units': formatQuantity(units),
     'summary-client': clientSelect?.options?.[clientSelect.selectedIndex]?.text || 'Consumidor final',
-    'summary-document': documentSelect?.options?.[documentSelect.selectedIndex]?.text || 'Consumidor final (ticket)',
+    'summary-document': comprobanteLabel,
     'summary-payment': paymentSelect?.options?.[paymentSelect.selectedIndex]?.text || 'Efectivo',
     'summary-discount': discountBreakdown.label,
     'summary-surcharge': formatPrice(totals.surcharge),
@@ -913,6 +919,7 @@ function setupComprobanteRequestBehavior() {
       tipo.value = 'factura_c';
       if (obs) obs.value = '';
     }
+    updateCheckoutTotals();
   };
 
   toggle.addEventListener('change', sync);
@@ -926,6 +933,7 @@ function setupComprobanteRequestBehavior() {
       sync();
     });
   }
+  tipo.addEventListener('change', () => updateCheckoutTotals());
   sync();
 }
 

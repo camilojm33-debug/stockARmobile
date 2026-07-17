@@ -328,19 +328,23 @@
             <div class="col-md-3"><label class="form-label">Cambio</label><div id="checkout-change" class="form-control bg-body-tertiary fw-bold">$0.00</div></div>
             <div class="col-12"><label class="form-label">Observaciones de la venta</label><input id="checkout-note" class="form-control" name="note" maxlength="255" placeholder="Observaciones internas para consulta e impresión"></div>
             <div class="col-12">
-              <div class="card border-0 bg-body-tertiary">
-                <div class="card-body py-2 px-3">
-                  <div class="small fw-semibold text-uppercase text-muted mb-2">Resumen final</div>
-                  <div class="row g-2 small" id="checkout-summary">
-                    <div class="col-md-4"><span class="text-muted">Productos:</span> <strong id="summary-products">0</strong></div>
-                    <div class="col-md-4"><span class="text-muted">Unidades:</span> <strong id="summary-units">0</strong></div>
-                    <div class="col-md-4"><span class="text-muted">Cliente:</span> <strong id="summary-client">Consumidor final</strong></div>
-                    <div class="col-md-4"><span class="text-muted">Comprobante:</span> <strong id="summary-document">Consumidor final (ticket)</strong></div>
-                    <div class="col-md-4"><span class="text-muted">Pago:</span> <strong id="summary-payment">Efectivo</strong></div>
-                    <div class="col-md-4"><span class="text-muted">Descuento:</span> <strong id="summary-discount">$0.00</strong></div>
-                    <div class="col-md-4"><span class="text-muted">Recargo:</span> <strong id="summary-surcharge">$0.00</strong></div>
-                    <div class="col-md-4"><span class="text-muted">Total final:</span> <strong class="text-primary" id="summary-total">$0.00</strong></div>
-                  </div>
+              <div class="checkout-summary-card" id="checkout-summary">
+                <div class="checkout-summary-header">
+                  <span class="checkout-summary-title">Resumen final</span>
+                  <span class="checkout-summary-badge">En tiempo real</span>
+                </div>
+                <div class="checkout-summary-grid">
+                  <div class="checkout-summary-item"><span>Cliente</span><strong id="summary-client">Consumidor final</strong></div>
+                  <div class="checkout-summary-item"><span>Comprobante</span><strong id="summary-document">Consumidor final (ticket)</strong></div>
+                  <div class="checkout-summary-item"><span>Método de pago</span><strong id="summary-payment">Efectivo</strong></div>
+                  <div class="checkout-summary-item"><span>Productos</span><strong id="summary-products">0</strong></div>
+                  <div class="checkout-summary-item"><span>Unidades</span><strong id="summary-units">0</strong></div>
+                  <div class="checkout-summary-item"><span>Descuento</span><strong id="summary-discount">$0.00</strong></div>
+                  <div class="checkout-summary-item"><span>Recargo</span><strong id="summary-surcharge">$0.00</strong></div>
+                </div>
+                <div class="checkout-summary-total-row">
+                  <span>TOTAL FINAL</span>
+                  <strong id="summary-total">$0.00</strong>
                 </div>
               </div>
             </div>
@@ -466,17 +470,84 @@
   #checkout-form .input-group > .btn {
     white-space: nowrap;
   }
-  #checkout-summary > div {
-    border: 1px solid var(--app-line);
-    border-radius: .55rem;
-    padding: .4rem .55rem;
-    background: rgba(255,255,255,.02);
+  .checkout-summary-card {
+    border: 1px solid rgba(255,255,255,.08);
+    border-radius: .8rem;
+    padding: .65rem .75rem;
+    background: linear-gradient(170deg, rgba(16,27,49,.92), rgba(12,22,40,.92));
   }
-  #checkout-summary strong {
+  .checkout-summary-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: .5rem;
+    margin-bottom: .55rem;
+  }
+  .checkout-summary-title {
+    font-size: .73rem;
     font-weight: 700;
+    letter-spacing: .08em;
+    text-transform: uppercase;
+    color: rgba(255,255,255,.7);
   }
-  #summary-total {
-    font-size: 1.02rem;
+  .checkout-summary-badge {
+    font-size: .68rem;
+    font-weight: 600;
+    color: rgba(255,255,255,.78);
+    border: 1px solid rgba(255,255,255,.18);
+    border-radius: 999px;
+    padding: .12rem .48rem;
+  }
+  .checkout-summary-grid {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: .38rem .48rem;
+    margin-bottom: .52rem;
+  }
+  .checkout-summary-item {
+    border: 1px solid rgba(255,255,255,.08);
+    border-radius: .56rem;
+    padding: .4rem .5rem;
+    background: rgba(255,255,255,.02);
+    min-width: 0;
+  }
+  .checkout-summary-item span {
+    display: block;
+    font-size: .67rem;
+    text-transform: uppercase;
+    letter-spacing: .03em;
+    color: rgba(255,255,255,.63);
+    margin-bottom: .12rem;
+  }
+  .checkout-summary-item strong {
+    display: block;
+    font-size: .88rem;
+    font-weight: 700;
+    color: rgba(255,255,255,.95);
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+  .checkout-summary-total-row {
+    border-top: 1px dashed rgba(255,255,255,.2);
+    padding-top: .45rem;
+    display: flex;
+    justify-content: space-between;
+    align-items: baseline;
+    gap: .75rem;
+  }
+  .checkout-summary-total-row span {
+    font-size: .72rem;
+    font-weight: 700;
+    letter-spacing: .08em;
+    text-transform: uppercase;
+    color: rgba(255,255,255,.74);
+  }
+  .checkout-summary-total-row strong {
+    font-size: 1.42rem;
+    line-height: 1;
+    font-weight: 800;
+    color: var(--bs-primary);
   }
   #quickClientModal .modal-body {
     padding-top: .9rem;
@@ -634,6 +705,12 @@
     #checkout-summary {
       row-gap: .45rem !important;
     }
+    .checkout-summary-grid {
+      grid-template-columns: 1fr 1fr;
+    }
+    .checkout-summary-total-row strong {
+      font-size: 1.28rem;
+    }
   }
   @media (max-width: 575.98px) {
     .pos-grid { grid-template-columns: 1fr; }
@@ -665,6 +742,26 @@
     }
     #checkout-note {
       min-height: 42px;
+    }
+    .checkout-summary-card {
+      padding: .55rem .6rem;
+    }
+    .checkout-summary-grid {
+      grid-template-columns: 1fr;
+      gap: .34rem;
+      margin-bottom: .42rem;
+    }
+    .checkout-summary-item {
+      padding: .34rem .45rem;
+    }
+    .checkout-summary-item strong {
+      font-size: .84rem;
+    }
+    .checkout-summary-total-row {
+      padding-top: .38rem;
+    }
+    .checkout-summary-total-row strong {
+      font-size: 1.18rem;
     }
     .pos-cart-modal-controls {
       width: 100%;
