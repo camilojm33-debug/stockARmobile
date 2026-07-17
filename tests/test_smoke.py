@@ -2646,6 +2646,112 @@ def test_referral_role_isolation_between_seller_and_superadmin():
     assert admin_forbidden_seller.status_code == 403
 
 
+def test_referral_commission_uses_seller_specific_percent():
+    from services.referral_service import ReferralService
+
+    with stock_app.app.app_context():
+        from app import Plan, ReferralSeller, ReferralCommission
+
+        company = Company.query.filter_by(name="Empresa Demo").first()
+        user = User.query.filter_by(username="empresa_admin").first()
+        assert company is not None
+        assert user is not None
+
+        seller_user = User(username="seller_percent", email="seller_percent@test.local", role="seller", active=True)
+        seller_user.set_password("seller123")
+        db.session.add(seller_user)
+        db.session.flush()
+
+        seller = ReferralSeller(
+            user_id=seller_user.id,
+            dni="30999111",
+            referral_code="REFPCT1",
+            referral_url="https://www.stockarmobile.com/?ref=REFPCT1",
+            commission_percent=0.4500,
+            active=True,
+        )
+        db.session.add(seller)
+        db.session.flush()
+
+        db.session.add(
+            ReferralAttribution(
+                seller_id=seller.id,
+                company_id=company.id,
+                user_id=user.id,
+                referral_code="REFPCT1",
+            )
+        )
+
+        plan = Plan(code="plan_ref_45", name="Plan Ref 45", price=10000, currency="ARS", duration_days=30, active=True)
+        db.session.add(plan)
+        db.session.commit()
+
+        commission = ReferralService.create_commission_for_sale(db.session, company_id=company.id, plan=plan)
+        db.session.commit()
+
+        persisted = ReferralCommission.query.filter_by(id=commission.id).first()
+        assert persisted is not None
+        assert float(persisted.commission_percent) == 0.45
+        assert float(persisted.commission_amount) == 4500.00
+
+
+def test_superadmin_can_update_seller_commission_and_seller_cannot():
+    client = stock_app.app.test_client()
+
+    with stock_app.app.app_context():
+        from app import ReferralSeller
+
+        seller_company = Company(name="Empresa Seller Comision", active=True)
+        db.session.add(seller_company)
+        db.session.flush()
+
+        seller_user = User(
+            username="seller_edit_comm",
+            email="seller_edit_comm@test.local",
+            role="seller",
+            company_id=seller_company.id,
+            active=True,
+        )
+        seller_user.set_password("seller123")
+        db.session.add(seller_user)
+        db.session.flush()
+
+        seller = ReferralSeller(
+            user_id=seller_user.id,
+            dni="30111999",
+            referral_code="REFEDIT1",
+            referral_url="https://www.stockarmobile.com/?ref=REFEDIT1",
+            active=True,
+        )
+        db.session.add(seller)
+        db.session.commit()
+        seller_id = seller.id
+
+    client.post("/auth/login", data={"username": "superadmin", "password": "admin123"})
+    response = client.post(
+        f"/superadmin/referrals/sellers/{seller_id}/commission",
+        data={"commission_percent": "42"},
+        follow_redirects=False,
+    )
+    assert response.status_code in (301, 302)
+
+    with stock_app.app.app_context():
+        from app import ReferralSeller
+
+        updated = ReferralSeller.query.filter_by(id=seller_id).first()
+        assert updated is not None
+        assert float(updated.commission_percent) == 0.42
+
+    client.post("/auth/logout")
+    client.post("/auth/login", data={"username": "seller_edit_comm", "password": "seller123"})
+    forbidden = client.post(
+        f"/superadmin/referrals/sellers/{seller_id}/commission",
+        data={"commission_percent": "55"},
+        follow_redirects=False,
+    )
+    assert forbidden.status_code == 403
+
+
 def test_existing_customer_can_activate_referrals_without_duplicate_account():
     client = stock_app.app.test_client()
 

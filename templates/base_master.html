@@ -581,7 +581,6 @@
       <a class="nav-link {% if request.endpoint == 'saas.logs_panel' %}active{% endif %}" href="{{ url_for('saas.logs_panel') }}"><i class="bi bi-journal-text"></i>Registros</a>
       <a class="nav-link {% if request.endpoint == 'saas.server_status' %}active{% endif %}" href="{{ url_for('saas.server_status') }}"><i class="bi bi-hdd-network"></i>Estado servidor</a>
       <a class="nav-link {% if request.endpoint and request.endpoint.startswith('referrals.admin_') %}active{% endif %}" href="{{ url_for('referrals.admin_referrals_dashboard') }}"><i class="bi bi-megaphone"></i>Programa de Referidos</a>
-      <a class="nav-link {% if request.endpoint and request.endpoint.startswith('support.') %}active{% endif %}" href="{{ url_for('support.admin_index') }}"><i class="bi bi-life-preserver"></i>Soporte</a>
       <a class="nav-link {% if request.endpoint == 'saas.global_stats' %}active{% endif %}" href="{{ url_for('saas.global_stats') }}"><i class="bi bi-graph-up"></i>Estadisticas globales</a>
       <a class="nav-link {% if request.endpoint and request.endpoint.startswith('saas.landing_testimonials') %}active{% endif %}" href="{{ url_for('saas.landing_testimonials_panel') }}"><i class="bi bi-chat-left-quote"></i>Testimonios Landing</a>
       <a class="nav-link {% if request.endpoint == 'saas.global_settings' %}active{% endif %}" href="{{ url_for('saas.global_settings') }}"><i class="bi bi-gear"></i>Configuración global</a>
@@ -614,7 +613,9 @@
       <a class="nav-link {% if request.endpoint and request.endpoint.startswith('referrals.') %}active{% endif %}" href="{{ url_for('referrals.seller_dashboard') }}"><i class="bi bi-megaphone"></i>Referidos</a>
       <button class="nav-link text-start border-0 w-100" type="button" data-bs-toggle="modal" data-bs-target="#quickGuideModal"><i class="bi bi-journal-richtext"></i>Guía rápida</button>
       {% endif %}
+      {% if current_user.role != 'superadmin' %}
       <a class="nav-link {% if request.endpoint and request.endpoint.startswith('support.') %}active{% endif %}" href="{{ url_for('support.new_ticket') }}"><i class="bi bi-life-preserver"></i>Ayuda</a>
+      {% endif %}
     </nav>
     <div class="app-sidebar-footer">
       <div class="user-chip mb-3">

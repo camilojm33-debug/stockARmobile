@@ -5,7 +5,7 @@
 <div class="card">
   <div class="table-responsive">
     <table class="table mb-0 align-middle">
-      <thead><tr><th>ID</th><th>Cliente</th><th>Venta</th><th>Comision 30%</th><th>Estado</th><th>Disponible</th><th>Pagada</th></tr></thead>
+      <thead><tr><th>ID</th><th>Cliente</th><th>Venta</th><th>Comision</th><th>%</th><th>Estado</th><th>Disponible</th><th>Pagada</th></tr></thead>
       <tbody>
       {% for row in commissions %}
         <tr>
@@ -13,12 +13,13 @@
           <td>{{ row.company.name if row.company else 'N/A' }}</td>
           <td>${{ '%.2f'|format(row.sold_amount or 0) }}</td>
           <td>${{ '%.2f'|format(row.commission_amount or 0) }}</td>
+          <td>{{ '%.2f'|format((row.commission_percent or 0) * 100) }}%</td>
           <td>{{ row.status }}</td>
           <td>{{ row.available_at.strftime('%Y-%m-%d') if row.available_at else '-' }}</td>
           <td>{{ row.paid_at.strftime('%Y-%m-%d') if row.paid_at else '-' }}</td>
         </tr>
       {% else %}
-        <tr><td colspan="7" class="text-center text-muted">No hay comisiones registradas.</td></tr>
+        <tr><td colspan="8" class="text-center text-muted">No hay comisiones registradas.</td></tr>
       {% endfor %}
       </tbody>
     </table>

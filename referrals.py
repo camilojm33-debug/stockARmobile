@@ -39,6 +39,19 @@ def _parse_transfer_date(value: str | None):
         return None
 
 
+def _parse_commission_percent(value: str | None):
+    raw = (value or "").strip().replace(",", ".")
+    if not raw:
+        return None
+    try:
+        percent = Decimal(raw)
+    except Exception:
+        return None
+    if percent < Decimal("0") or percent > Decimal("100"):
+        return None
+    return (percent / Decimal("100")).quantize(Decimal("0.0001"))
+
+
 def _seller_state(seller) -> tuple[str, str]:
     if not getattr(seller, "active", False):
         return "Suspendido", "danger"
@@ -591,6 +604,24 @@ def admin_referrals_dashboard():
         },
         ranking=ranking,
     )
+
+
+@bp.route("/superadmin/referrals/sellers/<int:seller_id>/commission", methods=["POST"])
+@superadmin_required
+def admin_referrals_update_commission(seller_id):
+    from app import ReferralSeller, db
+
+    seller = ReferralSeller.query.options(joinedload(ReferralSeller.user)).filter_by(id=seller_id).first_or_404()
+    normalized_percent = _parse_commission_percent(request.form.get("commission_percent"))
+    if normalized_percent is None:
+        flash("Porcentaje de comisión inválido. Debe estar entre 0 y 100.", "danger")
+        return redirect(url_for("referrals.admin_referrals_dashboard"))
+
+    seller.commission_percent = normalized_percent
+    db.session.commit()
+    display_name = seller.user.username if seller.user else f"#{seller.id}"
+    flash(f"Comisión actualizada para {display_name}: {float(normalized_percent * 100):.2f}%", "success")
+    return redirect(url_for("referrals.admin_referrals_dashboard"))
 
 
 @bp.route("/superadmin/referrals/sellers")

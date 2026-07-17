@@ -956,6 +956,7 @@ class ReferralSeller(db.Model):
     account_holder = db.Column(db.String(160))
     referral_code = db.Column(db.String(20), nullable=False, unique=True, index=True)
     referral_url = db.Column(db.String(255), nullable=False)
+    commission_percent = db.Column(PERCENT, default=Decimal("0.3000"), nullable=False)
     active = db.Column(db.Boolean, default=True, nullable=False)
     created_at = db.Column(db.DateTime, default=utcnow, index=True)
     updated_at = db.Column(db.DateTime, default=utcnow, onupdate=utcnow)

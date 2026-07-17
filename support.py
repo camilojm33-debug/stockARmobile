@@ -87,15 +87,8 @@ def my_tickets():
 @bp.route("/admin")
 @superadmin_required
 def admin_index():
-    from app import SupportTicket
-
-    status = (request.args.get("status") or "all").strip().lower()
-    query = SupportTicket.query
-    if status in {"pendiente", "resuelto"}:
-        query = query.filter(SupportTicket.status == status)
-
-    tickets = query.order_by(SupportTicket.created_at.desc()).all()
-    return render_template("saas/support.html", tickets=tickets, current_status=status)
+    flash("La pantalla de ayuda para superadmin fue deshabilitada.", "info")
+    return redirect(url_for("saas.index"))
 
 
 @bp.route("/admin/<int:ticket_id>")

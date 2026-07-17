@@ -128,7 +128,10 @@ class ReferralService:
         if existing is not None:
             return existing
 
-        commission_amount = (sold_amount * cls.COMMISSION_PERCENT).quantize(Decimal("0.01"))
+        seller_percent = Decimal(str(getattr(attribution.seller, "commission_percent", cls.COMMISSION_PERCENT) or cls.COMMISSION_PERCENT))
+        if seller_percent <= 0:
+            seller_percent = cls.COMMISSION_PERCENT
+        commission_amount = (sold_amount * seller_percent).quantize(Decimal("0.01"))
         now = cls._now()
         commission = ReferralCommission(
             seller_id=attribution.seller_id,
@@ -138,7 +141,7 @@ class ReferralService:
             payment_id=getattr(payment, "id", None),
             plan_id=getattr(plan, "id", None),
             sold_amount=sold_amount,
-            commission_percent=Decimal("0.3000"),
+            commission_percent=seller_percent,
             commission_amount=commission_amount,
             status="pendiente",
             created_at=now,
