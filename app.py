@@ -248,10 +248,11 @@ def get_company_access_state(company_id):
     if not company.active:
         return {"status": "suspended", "can_access": False, "reason": "La empresa ha sido suspendida."}
 
+    trial_days = 10
     trial_limit = None
     subscription = Subscription.query.filter_by(company_id=company.id).order_by(Subscription.starts_at.desc()).first()
     if subscription is None:
-        trial_limit = company.trial_ends_at
+        trial_limit = company.trial_ends_at or ((company.created_at or utcnow()) + timedelta(days=trial_days))
         if trial_limit and utcnow() <= trial_limit:
             return {"status": "trial", "can_access": True, "reason": "Periodo de prueba activo."}
         if trial_limit and utcnow() > trial_limit:
@@ -259,6 +260,9 @@ def get_company_access_state(company_id):
         return {"status": "trial", "can_access": True, "reason": "Periodo de prueba activo."}
 
     trial_limit = subscription.trial_end or company.trial_ends_at
+    if trial_limit is None and (subscription.status or "").lower() in {"trial", "trialing"}:
+        trial_anchor = subscription.starts_at or subscription.start_date or company.created_at or utcnow()
+        trial_limit = trial_anchor + timedelta(days=trial_days)
     if trial_limit and utcnow() <= trial_limit:
         return {"status": "trial", "can_access": True, "reason": "Periodo de prueba activo."}
     if trial_limit and utcnow() > trial_limit and (subscription.status or "").lower() == "trial":
@@ -269,6 +273,10 @@ def get_company_access_state(company_id):
         return {"status": status, "can_access": False, "reason": "La suscripción no está activa."}
     if status in {"pending", "pending_payment", "in_process", "authorized"}:
         return {"status": status, "can_access": False, "reason": "Pago pendiente de confirmación."}
+    if status in {"active", "activa", "approved"}:
+        paid_limit = subscription.next_billing_date or subscription.ends_at
+        if paid_limit and utcnow() > paid_limit:
+            return {"status": "expired", "can_access": False, "reason": "La suscripción está vencida."}
     if status in {"trial", "active", "activa", "trialing", "approved"}:
         return {"status": status, "can_access": True, "reason": "Suscripción activa."}
     return {"status": status, "can_access": True, "reason": "Estado de suscripción reconocido."}

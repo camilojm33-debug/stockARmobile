@@ -226,6 +226,31 @@ def test_sale_persists_required_comprobante_fields():
         assert sale.comprobante_emitido is False
 
 
+def test_sale_infers_comprobante_request_from_document_type():
+    client = stock_app.app.test_client()
+    client.post("/auth/login", data={"username": "empresa_admin", "password": "admin123"})
+
+    open_cash_session(client)
+
+    response = client.post(
+        "/ventas/api/checkout",
+        json={
+            "items": [{"productId": 1, "quantity": 1}],
+            "metodo_pago": "EFECTIVO",
+            "document_type": "factura_a",
+        },
+        headers={"X-Cart-Tenant": "1:1"},
+    )
+    assert response.status_code == 200
+
+    with stock_app.app.app_context():
+        sale = Sale.query.order_by(Sale.id.desc()).first()
+        assert sale is not None
+        assert sale.document_type == "factura_a"
+        assert sale.requiere_comprobante is True
+        assert sale.tipo_comprobante == "factura_a"
+
+
 def test_cash_page_shows_pending_comprobantes_card():
     client = stock_app.app.test_client()
     client.post("/auth/login", data={"username": "empresa_admin", "password": "admin123"})
@@ -2533,6 +2558,81 @@ def test_expired_trial_allows_subscription_portal_and_blocks_dashboard():
     assert status_page.status_code == 200
     status_html = status_page.data.decode("utf-8")
     assert "Pago pendiente" in status_html or "Tu prueba finalizo" in status_html
+
+
+def test_trial_without_explicit_limit_blocks_after_ten_days():
+    client = stock_app.app.test_client()
+
+    with stock_app.app.app_context():
+        from app import Subscription
+
+        company = Company.query.filter_by(name="Empresa Demo").first()
+        assert company is not None
+        company.created_at = stock_app.utcnow() - timedelta(days=11)
+        company.trial_ends_at = None
+        Subscription.query.filter_by(company_id=company.id).delete(synchronize_session=False)
+        db.session.commit()
+
+    client.post("/auth/login", data={"username": "empresa_admin", "password": "admin123"})
+    blocked_dashboard = client.get("/dashboard/", follow_redirects=False)
+    assert blocked_dashboard.status_code in (301, 302)
+    assert "/access-status" in (blocked_dashboard.headers.get("Location") or "")
+
+
+def test_active_subscription_with_past_billing_date_is_blocked():
+    client = stock_app.app.test_client()
+
+    with stock_app.app.app_context():
+        from app import Plan, Subscription
+        from services.plan_service import PlanService
+
+        PlanService.ensure_defaults(db.session)
+        company = Company.query.filter_by(name="Empresa Demo").first()
+        assert company is not None
+
+        paid_plan = Plan.query.filter_by(code="business").first()
+        assert paid_plan is not None
+
+        subscription = Subscription.query.filter_by(company_id=company.id).first()
+        if subscription is None:
+            subscription = Subscription(company_id=company.id)
+            db.session.add(subscription)
+
+        subscription.plan_id = paid_plan.id
+        subscription.status = "active"
+        subscription.trial_end = None
+        subscription.start_date = stock_app.utcnow() - timedelta(days=45)
+        subscription.starts_at = stock_app.utcnow() - timedelta(days=45)
+        subscription.ends_at = stock_app.utcnow() - timedelta(days=2)
+        subscription.next_billing_date = stock_app.utcnow() - timedelta(days=2)
+        db.session.commit()
+
+    client.post("/auth/login", data={"username": "empresa_admin", "password": "admin123"})
+    blocked_dashboard = client.get("/dashboard/", follow_redirects=False)
+    assert blocked_dashboard.status_code in (301, 302)
+    assert "/access-status" in (blocked_dashboard.headers.get("Location") or "")
+
+
+def test_plan_catalog_sync_updates_existing_plan_values():
+    with stock_app.app.app_context():
+        from app import Plan
+        from services.plan_service import PlanService
+
+        PlanService.ensure_defaults(db.session)
+        plan = Plan.query.filter_by(code="entrepreneur").first()
+        assert plan is not None
+
+        plan.price = 1
+        plan.max_users = 99
+        plan.features_json = "legacy"
+        db.session.commit()
+
+        PlanService.ensure_defaults(db.session)
+        db.session.refresh(plan)
+
+        assert float(plan.price or 0) == 12999.0
+        assert int(plan.max_users or 0) == 3
+        assert plan.features_json == "inventario,ventas,clientes,reportes,excel"
 
 
 def test_referral_capture_and_register_attribution_flow():

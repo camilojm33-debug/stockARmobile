@@ -736,7 +736,15 @@ function setupComprobanteRequestBehavior() {
   const toggle = document.getElementById('checkout-requiere-comprobante');
   const panel = document.getElementById('checkout-comprobante-panel');
   const tipo = document.getElementById('checkout-tipo-comprobante');
+  const documentType = document.getElementById('checkout-document-type');
   if (!toggle || !panel || !tipo) return;
+
+  const mapDocumentToComprobante = {
+    factura_a: 'factura_a',
+    factura_b: 'factura_b',
+    factura_c: 'factura_c',
+    remito: 'remito'
+  };
 
   const sync = () => {
     const enabled = Boolean(toggle.checked);
@@ -751,6 +759,16 @@ function setupComprobanteRequestBehavior() {
   };
 
   toggle.addEventListener('change', sync);
+  if (documentType) {
+    documentType.addEventListener('change', () => {
+      const inferred = mapDocumentToComprobante[documentType.value || ''];
+      if (inferred) {
+        toggle.checked = true;
+        tipo.value = inferred;
+      }
+      sync();
+    });
+  }
   sync();
 }
 

@@ -70,6 +70,27 @@ class PlanService:
             if existing is None:
                 db_session.add(Plan(**plan_payload))
                 changed = True
+                continue
+
+            for field in [
+                "name",
+                "price",
+                "currency",
+                "duration_days",
+                "max_users",
+                "max_products",
+                "max_clients",
+                "features_json",
+                "state",
+            ]:
+                expected = plan_payload[field]
+                if getattr(existing, field) != expected:
+                    setattr(existing, field, expected)
+                    changed = True
+
+            if not getattr(existing, "active", True):
+                existing.active = True
+                changed = True
         if changed:
             db_session.commit()
 

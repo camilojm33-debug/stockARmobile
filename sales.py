@@ -61,6 +61,18 @@ def _clean_comprobante_type(raw_value):
     return value if value in allowed else None
 
 
+def _resolve_comprobante_payload(data):
+    document_type = (data.get("document_type") or "").strip().lower()
+    explicit_requires = _is_truthy(data.get("requiere_comprobante"))
+    explicit_tipo = _clean_comprobante_type(data.get("tipo_comprobante"))
+    inferred_tipo = _clean_comprobante_type(document_type)
+
+    requiere_comprobante = explicit_requires or bool(explicit_tipo) or bool(inferred_tipo)
+    tipo_comprobante = explicit_tipo or inferred_tipo
+    observacion_comprobante = (data.get("observacion_comprobante") or "").strip()[:255] if requiere_comprobante else None
+    return requiere_comprobante, tipo_comprobante, observacion_comprobante
+
+
 def _sanitize_checkout_token(raw_value):
     token = (raw_value or "").strip()
     if not token:
@@ -109,9 +121,7 @@ def _pos_qr_draft_session_key():
 
 def _pos_qr_snapshot(items, payload, *, total_amount, currency):
     normalized_items = []
-    requiere_comprobante = _is_truthy(payload.get("requiere_comprobante"))
-    tipo_comprobante = _clean_comprobante_type(payload.get("tipo_comprobante")) if requiere_comprobante else None
-    observacion_comprobante = (payload.get("observacion_comprobante") or "").strip()[:255] if requiere_comprobante else ""
+    requiere_comprobante, tipo_comprobante, observacion_comprobante = _resolve_comprobante_payload(payload)
     for item in items:
         normalized_items.append(
             {
@@ -680,9 +690,7 @@ def _create_sale_from_items(items, data, json_response=False):
             str(final_total),
         )
         current_app.logger.info("[sales] creando Sale")
-        requiere_comprobante = _is_truthy(data.get("requiere_comprobante"))
-        tipo_comprobante = _clean_comprobante_type(data.get("tipo_comprobante")) if requiere_comprobante else None
-        observacion_comprobante = (data.get("observacion_comprobante") or "").strip()[:255] if requiere_comprobante else None
+        requiere_comprobante, tipo_comprobante, observacion_comprobante = _resolve_comprobante_payload(data)
         sale = Sale(
             customer=client.name if client else current_user.username,
             subtotal=subtotal,
