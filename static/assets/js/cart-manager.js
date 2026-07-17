@@ -432,7 +432,6 @@ function validateCheckoutClientRequirements() {
 
 function updateCheckoutTotals() {
   const totals = getCheckoutTotals();
-  const discountBreakdown = getDiscountBreakdown(totals.subtotal);
   const pairs = {
     'cart-subtotal': totals.subtotal,
     'cart-total': totals.total,
@@ -452,39 +451,6 @@ function updateCheckoutTotals() {
   }
 
   syncPaymentInputsWithMethods(totals.total);
-  renderCheckoutSummary(totals, discountBreakdown);
-}
-
-function renderCheckoutSummary(totals, discountBreakdown) {
-  const products = cart.length;
-  const units = cart.reduce((sum, item) => sum + (parseFloat(item.quantity) || 0), 0);
-  const clientSelect = document.getElementById('checkout-client-select');
-  const documentSelect = document.getElementById('checkout-document-type');
-  const paymentSelect = document.getElementById('checkout-payment-method');
-  const comprobanteToggle = document.getElementById('checkout-requiere-comprobante');
-  const comprobanteTipoSelect = document.getElementById('checkout-tipo-comprobante');
-
-  const documentLabel = documentSelect?.options?.[documentSelect.selectedIndex]?.text || 'Consumidor final (ticket)';
-  const tipoLabel = comprobanteTipoSelect?.options?.[comprobanteTipoSelect.selectedIndex]?.text || 'Comprobante';
-  const comprobanteLabel = comprobanteToggle?.checked ? `${documentLabel} · Solicita ${tipoLabel}` : documentLabel;
-
-  const summaryMap = {
-    'summary-products': String(products),
-    'summary-units': formatQuantity(units),
-    'summary-client': clientSelect?.options?.[clientSelect.selectedIndex]?.text || 'Consumidor final',
-    'summary-document': comprobanteLabel,
-    'summary-payment': paymentSelect?.options?.[paymentSelect.selectedIndex]?.text || 'Efectivo',
-    'summary-discount': discountBreakdown.label,
-    'summary-surcharge': formatPrice(totals.surcharge),
-    'summary-total': formatPrice(totals.total),
-  };
-
-  Object.entries(summaryMap).forEach(([id, value]) => {
-    const node = document.getElementById(id);
-    if (node) {
-      node.textContent = value;
-    }
-  });
 }
 
 function syncPaymentInputsWithMethods(total) {
