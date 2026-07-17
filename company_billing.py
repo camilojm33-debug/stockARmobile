@@ -332,10 +332,11 @@ def _plan_features_label(plan):
     return [mapping.get(item.strip(), item.strip().title()) for item in raw.split(",") if item.strip()]
 
 
-def _subscription_state_badge(subscription, days_remaining):
-    status = (getattr(subscription, "status", None) or "trial").lower()
+def _subscription_state_badge(status, days_remaining):
+    status = (status or "trial").lower()
     label_map = {
-        "trial": "Trial",
+        "trial": "Prueba gratuita",
+        "trial_expired": "Prueba vencida",
         "pending": "Pendiente",
         "authorized": "Pendiente",
         "in_process": "Pendiente",
@@ -348,14 +349,16 @@ def _subscription_state_badge(subscription, days_remaining):
     }
     if status in {"cancelled", "expired", "suspended", "rejected"}:
         return {"label": label_map.get(status, status.title()), "class": "text-bg-danger", "indicator": "danger", "text": "Vencida"}
+    if status == "trial_expired":
+        return {"label": "Prueba vencida", "class": "text-bg-danger", "indicator": "danger", "text": "Vencida"}
     if status == "trial":
         if days_remaining is not None and days_remaining <= 1:
-            return {"label": "Trial", "class": "text-bg-danger", "indicator": "danger", "text": "Vencida"}
+            return {"label": "Prueba gratuita", "class": "text-bg-danger", "indicator": "danger", "text": "Vence hoy"}
         if days_remaining is not None and days_remaining <= 3:
-            return {"label": "Trial", "class": "text-bg-warning", "indicator": "warning", "text": "Quedan pocos días"}
+            return {"label": "Prueba gratuita", "class": "text-bg-warning", "indicator": "warning", "text": "Quedan pocos días"}
         if days_remaining is not None and days_remaining <= 7:
-            return {"label": "Trial", "class": "text-bg-warning", "indicator": "warning", "text": "Próxima a vencer"}
-        return {"label": "Trial", "class": "text-bg-success", "indicator": "success", "text": "Activa"}
+            return {"label": "Prueba gratuita", "class": "text-bg-warning", "indicator": "warning", "text": "Próxima a vencer"}
+        return {"label": "Prueba gratuita", "class": "text-bg-success", "indicator": "success", "text": "Activa"}
     if days_remaining is None:
         return {"label": label_map.get(status, status.title()), "class": "text-bg-info", "indicator": "success", "text": "Activa"}
     if days_remaining <= 0:
@@ -477,6 +480,15 @@ def subscription_portal():
         subscription = SubscriptionService.ensure_company_trial(db.session, company=company, trial_plan=trial_plan)
         db.session.commit()
 
+    effective_state = SubscriptionService.sync_company_subscription_state(
+        db.session,
+        company=company,
+        subscription=subscription,
+    )
+    if effective_state.get("changed"):
+        db.session.commit()
+        subscription = SubscriptionService.active_subscription_for_company(company.id)
+
     usage_snapshot = PlanUsageService.usage_snapshot(company.id)
     recent_payments = (
         Payment.query.filter_by(company_id=company.id)
@@ -492,9 +504,9 @@ def subscription_portal():
     )
     referral_attribution = ReferralAttribution.query.filter_by(company_id=company.id).first()
     managed_by_seller = referral_attribution.seller.user.username if referral_attribution and referral_attribution.seller and referral_attribution.seller.user else None
-    reference_date = _subscription_expiration(subscription, company)
+    reference_date = effective_state.get("reference_date") or _subscription_expiration(subscription, company)
     days_remaining = _days_remaining(reference_date)
-    status_badge = _subscription_state_badge(subscription, days_remaining)
+    status_badge = _subscription_state_badge(effective_state.get("status"), days_remaining)
     plan_features = _plan_features_label(subscription.plan if subscription else None)
     checkout_preview = session.pop("mp_checkout_preview", None)
     checkout_status = (request.args.get("checkout") or "").strip().lower()
@@ -511,6 +523,7 @@ def subscription_portal():
         days_remaining=days_remaining,
         reference_date=reference_date,
         status_badge=status_badge,
+        effective_state=effective_state,
         plan_features=plan_features,
         managed_by_seller=managed_by_seller,
         mp_config=load_billing_config(),

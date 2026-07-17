@@ -277,14 +277,8 @@ def register():
             db.session.flush()
 
             PlanService.ensure_defaults(db.session)
-            selected_plan = PlanService.get_plan(code=selected_plan_code) or PlanService.get_plan(code="trial")
-            if selected_plan is not None and selected_plan.code != "trial":
-                SubscriptionService.start_or_change_plan(
-                    db.session,
-                    company=company,
-                    plan=selected_plan,
-                    user_id=user.id,
-                )
+            trial_plan = PlanService.get_plan(code="trial")
+            SubscriptionService.ensure_company_trial(db.session, company=company, trial_plan=trial_plan)
 
             referral_code = (
                 (request.values.get("ref") or "").strip()

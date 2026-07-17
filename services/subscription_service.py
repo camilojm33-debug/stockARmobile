@@ -6,6 +6,11 @@ from datetime import timedelta
 
 
 class SubscriptionService:
+    TRIAL_STATUSES = {"trial", "trialing"}
+    PENDING_STATUSES = {"pending", "pending_payment", "in_process", "authorized"}
+    ACTIVE_STATUSES = {"active", "activa", "approved"}
+    BLOCKED_STATUSES = {"suspended", "expired", "cancelled", "canceled", "rejected", "charged_back", "trial_expired"}
+
     PAYMENT_STATUS_MAP = {
         "approved": "active",
         "authorized": "pending",
@@ -29,6 +34,181 @@ class SubscriptionService:
         )
 
     @staticmethod
+    def _trial_days() -> int:
+        try:
+            from services.plan_service import PlanService
+
+            return int(getattr(PlanService, "TRIAL_DAYS", 10) or 10)
+        except Exception:
+            return 10
+
+    @staticmethod
+    def trial_end_for_company(company, now=None):
+        from app import utcnow
+
+        current = now or utcnow()
+        trial_days = SubscriptionService._trial_days()
+        return getattr(company, "trial_ends_at", None) or ((getattr(company, "created_at", None) or current) + timedelta(days=trial_days))
+
+    @staticmethod
+    def resolve_company_access_state(company, subscription=None, now=None):
+        from app import utcnow
+
+        current = now or utcnow()
+        trial_end = SubscriptionService.trial_end_for_company(company, now=current)
+        raw_status = ((getattr(subscription, "status", None) or "trial") if subscription is not None else "trial").lower()
+        in_trial_window = bool(trial_end and current <= trial_end)
+
+        if not getattr(company, "active", True):
+            return {
+                "status": "suspended",
+                "subscription_status": raw_status,
+                "can_access": False,
+                "reason": "La empresa ha sido suspendida.",
+                "trial_ends_at": trial_end,
+                "reference_date": trial_end,
+                "next_billing_date": getattr(subscription, "next_billing_date", None) if subscription is not None else None,
+            }
+
+        if subscription is None:
+            if in_trial_window:
+                return {
+                    "status": "trial",
+                    "subscription_status": "trial",
+                    "can_access": True,
+                    "reason": "Periodo de prueba activo.",
+                    "trial_ends_at": trial_end,
+                    "reference_date": trial_end,
+                    "next_billing_date": trial_end,
+                }
+            return {
+                "status": "trial_expired",
+                "subscription_status": "trial_expired",
+                "can_access": False,
+                "reason": "Tu prueba expiró. Suscribite para continuar.",
+                "trial_ends_at": trial_end,
+                "reference_date": trial_end,
+                "next_billing_date": trial_end,
+            }
+
+        if raw_status in SubscriptionService.TRIAL_STATUSES or raw_status in SubscriptionService.PENDING_STATUSES:
+            if in_trial_window:
+                return {
+                    "status": "trial",
+                    "subscription_status": raw_status,
+                    "can_access": True,
+                    "reason": "Periodo de prueba activo.",
+                    "trial_ends_at": trial_end,
+                    "reference_date": trial_end,
+                    "next_billing_date": trial_end,
+                }
+            return {
+                "status": "trial_expired",
+                "subscription_status": raw_status,
+                "can_access": False,
+                "reason": "Tu prueba expiró. Suscribite para continuar.",
+                "trial_ends_at": trial_end,
+                "reference_date": trial_end,
+                "next_billing_date": trial_end,
+            }
+
+        if raw_status in SubscriptionService.BLOCKED_STATUSES:
+            return {
+                "status": raw_status,
+                "subscription_status": raw_status,
+                "can_access": False,
+                "reason": "La suscripción no está activa.",
+                "trial_ends_at": trial_end,
+                "reference_date": getattr(subscription, "next_billing_date", None) or getattr(subscription, "ends_at", None) or trial_end,
+                "next_billing_date": getattr(subscription, "next_billing_date", None),
+            }
+
+        if raw_status in SubscriptionService.ACTIVE_STATUSES:
+            paid_limit = getattr(subscription, "next_billing_date", None) or getattr(subscription, "ends_at", None)
+            if paid_limit and current > paid_limit:
+                return {
+                    "status": "expired",
+                    "subscription_status": raw_status,
+                    "can_access": False,
+                    "reason": "La suscripción está vencida.",
+                    "trial_ends_at": trial_end,
+                    "reference_date": paid_limit,
+                    "next_billing_date": paid_limit,
+                }
+            return {
+                "status": "active",
+                "subscription_status": raw_status,
+                "can_access": True,
+                "reason": "Suscripción activa.",
+                "trial_ends_at": trial_end,
+                "reference_date": paid_limit,
+                "next_billing_date": paid_limit,
+            }
+
+        # Fallback conservador: durante trial permitimos, fuera de trial bloqueamos.
+        if in_trial_window:
+            return {
+                "status": "trial",
+                "subscription_status": raw_status,
+                "can_access": True,
+                "reason": "Periodo de prueba activo.",
+                "trial_ends_at": trial_end,
+                "reference_date": trial_end,
+                "next_billing_date": trial_end,
+            }
+        return {
+            "status": "trial_expired",
+            "subscription_status": raw_status,
+            "can_access": False,
+            "reason": "Tu prueba expiró. Suscribite para continuar.",
+            "trial_ends_at": trial_end,
+            "reference_date": trial_end,
+            "next_billing_date": trial_end,
+        }
+
+    @staticmethod
+    def sync_company_subscription_state(db_session, *, company, subscription=None, now=None):
+        from app import utcnow
+
+        current = now or utcnow()
+        target_subscription = subscription or SubscriptionService.active_subscription_for_company(company.id)
+        state = SubscriptionService.resolve_company_access_state(company, subscription=target_subscription, now=current)
+        changed = False
+
+        trial_end = state.get("trial_ends_at")
+        if trial_end and getattr(company, "trial_ends_at", None) != trial_end:
+            company.trial_ends_at = trial_end
+            changed = True
+
+        if target_subscription is not None:
+            effective_status = state.get("status")
+            raw_status = ((getattr(target_subscription, "status", None) or "trial")).lower()
+            if effective_status == "trial" and raw_status != "trial":
+                target_subscription.status = "trial"
+                changed = True
+            if effective_status == "trial_expired" and raw_status in (SubscriptionService.TRIAL_STATUSES | SubscriptionService.PENDING_STATUSES):
+                target_subscription.status = "trial_expired"
+                target_subscription.renewal_enabled = False
+                target_subscription.auto_renew = False
+                changed = True
+            if effective_status in {"trial", "trial_expired"} and trial_end:
+                if target_subscription.trial_end != trial_end:
+                    target_subscription.trial_end = trial_end
+                    changed = True
+                if target_subscription.next_billing_date != trial_end:
+                    target_subscription.next_billing_date = trial_end
+                    changed = True
+                if target_subscription.ends_at != trial_end:
+                    target_subscription.ends_at = trial_end
+                    changed = True
+
+        state["changed"] = changed
+        state["subscription"] = target_subscription
+        if changed:
+            db_session.flush()
+        return state
+
+    @staticmethod
     def ensure_company_trial(db_session, company, trial_plan):
         from app import Subscription, utcnow
 
@@ -37,7 +217,7 @@ class SubscriptionService:
             return existing
 
         now = utcnow()
-        trial_end = company.trial_ends_at or (now + timedelta(days=10))
+        trial_end = SubscriptionService.trial_end_for_company(company, now=now)
         company.trial_ends_at = trial_end
         subscription = Subscription(
             company_id=company.id,
@@ -65,13 +245,32 @@ class SubscriptionService:
             subscription = Subscription(company_id=company.id)
             db_session.add(subscription)
 
+        trial_end = SubscriptionService.trial_end_for_company(company, now=now)
+        company.trial_ends_at = trial_end
+
         subscription.plan_id = plan.id
-        subscription.status = "pending" if float(plan.price or 0) > 0 else "active"
         subscription.start_date = now
         subscription.starts_at = now
-        subscription.ends_at = now + timedelta(days=int(plan.duration_days or 30))
-        subscription.trial_end = now + timedelta(days=10) if plan.code == "trial" else None
-        subscription.next_billing_date = subscription.ends_at
+
+        if float(plan.price or 0) <= 0 or (plan.code or "").lower() == "trial":
+            subscription.status = "trial"
+            subscription.trial_end = trial_end
+            subscription.ends_at = trial_end
+            subscription.next_billing_date = trial_end
+        else:
+            has_successful_payment = bool(getattr(subscription, "last_payment_date", None))
+            if has_successful_payment:
+                subscription.status = "pending"
+                subscription.trial_end = None
+                subscription.ends_at = now + timedelta(days=int(plan.duration_days or 30))
+                subscription.next_billing_date = subscription.ends_at
+            else:
+                in_trial_window = bool(trial_end and now <= trial_end)
+                subscription.status = "trial" if in_trial_window else "trial_expired"
+                subscription.trial_end = trial_end
+                subscription.ends_at = trial_end
+                subscription.next_billing_date = trial_end
+
         subscription.cancel_at_period_end = False
         subscription.renewal_enabled = True
         subscription.auto_renew = True

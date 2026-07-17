@@ -1634,7 +1634,8 @@ def test_my_company_module_supports_employee_create_and_reset():
         PlanService.ensure_defaults(db.session)
         plan = PlanService.get_plan(code="entrepreneur")
         assert plan is not None
-        SubscriptionService.start_or_change_plan(db.session, company=company, plan=plan, user_id=admin_user.id)
+        subscription = SubscriptionService.start_or_change_plan(db.session, company=company, plan=plan, user_id=admin_user.id)
+        SubscriptionService.apply_payment_status(subscription, "approved")
         db.session.commit()
 
     client.post("/auth/login", data={"username": "negocio_admin", "password": "admin123"})
@@ -2595,12 +2596,12 @@ def test_expired_trial_allows_subscription_portal_and_blocks_dashboard():
     assert portal.status_code == 200
     portal_html = portal.data.decode("utf-8")
     assert "Uso del plan" in portal_html
-    assert "Comenzar suscripcion" in portal_html or "Plan actual" in portal_html
+    assert "Actualizar plan" in portal_html or "Renovar plan" in portal_html
 
     status_page = client.get("/access-status")
     assert status_page.status_code == 200
     status_html = status_page.data.decode("utf-8")
-    assert "Pago pendiente" in status_html or "Tu prueba finalizo" in status_html
+    assert "Tu prueba finalizó" in status_html or "trial_expired" in status_html
 
 
 def test_trial_without_explicit_limit_blocks_after_ten_days():
@@ -2620,6 +2621,90 @@ def test_trial_without_explicit_limit_blocks_after_ten_days():
     blocked_dashboard = client.get("/dashboard/", follow_redirects=False)
     assert blocked_dashboard.status_code in (301, 302)
     assert "/access-status" in (blocked_dashboard.headers.get("Location") or "")
+
+
+def test_register_with_paid_plan_keeps_trial_of_ten_days():
+    client = stock_app.app.test_client()
+
+    response = client.post(
+        "/auth/register",
+        data={
+            "username": "trial_paid_user",
+            "email": "trial_paid_user@test.com",
+            "password": "trial123",
+            "selected_plan": "entrepreneur",
+        },
+        follow_redirects=False,
+    )
+    assert response.status_code in (301, 302)
+
+    with stock_app.app.app_context():
+        from app import Company, Subscription
+
+        company = Company.query.filter_by(name="Empresa trial_paid_user").first()
+        assert company is not None
+        assert company.trial_ends_at is not None
+
+        subscription = Subscription.query.filter_by(company_id=company.id).order_by(Subscription.id.desc()).first()
+        assert subscription is not None
+        assert (subscription.status or "").lower() == "trial"
+        assert subscription.trial_end == company.trial_ends_at
+        assert subscription.next_billing_date == company.trial_ends_at
+        assert subscription.ends_at == company.trial_ends_at
+
+        remaining_days = (company.trial_ends_at - stock_app.utcnow()).total_seconds() / 86400
+        assert remaining_days <= 10.05
+        assert remaining_days >= 9.80
+
+
+def test_checkout_during_trial_does_not_switch_to_pending_or_30_days():
+    client = stock_app.app.test_client()
+
+    with stock_app.app.app_context():
+        from app import Plan, Subscription
+        from services.plan_service import PlanService
+        from services.subscription_service import SubscriptionService
+
+        PlanService.ensure_defaults(db.session)
+        company = Company.query.filter_by(name="Empresa Demo").first()
+        assert company is not None
+
+        trial_plan = Plan.query.filter_by(code="trial").first()
+        paid_plan = Plan.query.filter_by(code="entrepreneur").first()
+        assert trial_plan is not None
+        assert paid_plan is not None
+
+        company.trial_ends_at = stock_app.utcnow() + timedelta(days=10)
+        Subscription.query.filter_by(company_id=company.id).delete(synchronize_session=False)
+        db.session.commit()
+
+        SubscriptionService.ensure_company_trial(db.session, company=company, trial_plan=trial_plan)
+        db.session.commit()
+
+    login = client.post("/auth/login", data={"username": "empresa_admin", "password": "admin123"}, follow_redirects=False)
+    assert login.status_code in (301, 302)
+
+    with stock_app.app.app_context():
+        from app import Plan
+
+        paid_plan = Plan.query.filter_by(code="entrepreneur").first()
+        assert paid_plan is not None
+        plan_id = paid_plan.id
+
+    checkout = client.post("/admin/checkout", data={"plan_id": plan_id}, follow_redirects=False)
+    assert checkout.status_code in (301, 302)
+
+    with stock_app.app.app_context():
+        from app import Subscription
+
+        company = Company.query.filter_by(name="Empresa Demo").first()
+        assert company is not None
+        subscription = Subscription.query.filter_by(company_id=company.id).order_by(Subscription.id.desc()).first()
+        assert subscription is not None
+        assert (subscription.status or "").lower() == "trial"
+        assert subscription.trial_end == company.trial_ends_at
+        assert subscription.next_billing_date == company.trial_ends_at
+        assert subscription.ends_at == company.trial_ends_at
 
 
 def test_active_subscription_with_past_billing_date_is_blocked():

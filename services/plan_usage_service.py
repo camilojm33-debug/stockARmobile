@@ -41,8 +41,17 @@ class PlanUsageService:
 
     @staticmethod
     def _active_plan_for_company(company_id: int):
+        from app import Company
+
         subscription = SubscriptionService.active_subscription_for_company(company_id)
+        company = Company.query.filter_by(id=company_id).first()
+        effective_state = None
+        if company is not None:
+            effective_state = SubscriptionService.resolve_company_access_state(company, subscription=subscription)
+
         plan = getattr(subscription, "plan", None)
+        if effective_state and effective_state.get("status") in {"trial", "trial_expired"}:
+            plan = PlanService.get_plan(code="trial") or plan
         if plan is None:
             plan = PlanService.get_plan(code="trial")
         return subscription, plan

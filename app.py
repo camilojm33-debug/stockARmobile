@@ -238,7 +238,8 @@ def trial_required(func):
 
 
 def get_company_access_state(company_id):
-    from app import Company, Subscription
+    from app import Company
+    from services.subscription_service import SubscriptionService
 
     if company_id is None:
         return {"status": "missing", "can_access": False, "reason": "No hay empresa activa."}
@@ -248,38 +249,19 @@ def get_company_access_state(company_id):
     if not company.active:
         return {"status": "suspended", "can_access": False, "reason": "La empresa ha sido suspendida."}
 
-    trial_days = 10
-    trial_limit = None
-    subscription = Subscription.query.filter_by(company_id=company.id).order_by(Subscription.starts_at.desc()).first()
-    if subscription is None:
-        trial_limit = company.trial_ends_at or ((company.created_at or utcnow()) + timedelta(days=trial_days))
-        if trial_limit and utcnow() <= trial_limit:
-            return {"status": "trial", "can_access": True, "reason": "Periodo de prueba activo."}
-        if trial_limit and utcnow() > trial_limit:
-            return {"status": "trial_expired", "can_access": False, "reason": "El periodo de prueba finalizó."}
-        return {"status": "trial", "can_access": True, "reason": "Periodo de prueba activo."}
-
-    trial_limit = subscription.trial_end or company.trial_ends_at
-    if trial_limit is None and (subscription.status or "").lower() in {"trial", "trialing"}:
-        trial_anchor = subscription.starts_at or subscription.start_date or company.created_at or utcnow()
-        trial_limit = trial_anchor + timedelta(days=trial_days)
-    if trial_limit and utcnow() <= trial_limit:
-        return {"status": "trial", "can_access": True, "reason": "Periodo de prueba activo."}
-    if trial_limit and utcnow() > trial_limit and (subscription.status or "").lower() == "trial":
-        return {"status": "trial_expired", "can_access": False, "reason": "Tu prueba expiró. Suscribite para continuar."}
-
-    status = (subscription.status or "trial").lower()
-    if status in {"suspended", "expired", "cancelled", "canceled", "rejected", "charged_back"}:
-        return {"status": status, "can_access": False, "reason": "La suscripción no está activa."}
-    if status in {"pending", "pending_payment", "in_process", "authorized"}:
-        return {"status": status, "can_access": False, "reason": "Pago pendiente de confirmación."}
-    if status in {"active", "activa", "approved"}:
-        paid_limit = subscription.next_billing_date or subscription.ends_at
-        if paid_limit and utcnow() > paid_limit:
-            return {"status": "expired", "can_access": False, "reason": "La suscripción está vencida."}
-    if status in {"trial", "active", "activa", "trialing", "approved"}:
-        return {"status": status, "can_access": True, "reason": "Suscripción activa."}
-    return {"status": status, "can_access": True, "reason": "Estado de suscripción reconocido."}
+    subscription = SubscriptionService.active_subscription_for_company(company.id)
+    state = SubscriptionService.sync_company_subscription_state(
+        db.session,
+        company=company,
+        subscription=subscription,
+    )
+    if state.get("changed"):
+        db.session.commit()
+    return {
+        "status": state["status"],
+        "can_access": bool(state["can_access"]),
+        "reason": state["reason"],
+    }
 
 
 @app.before_request
@@ -310,6 +292,44 @@ def enforce_password_change_if_required():
     if endpoint in allowed:
         return None
     return redirect(url_for("auth.force_password_change"))
+
+
+@app.before_request
+def enforce_billing_restrictions_for_blocked_tenants():
+    if not current_user.is_authenticated:
+        return None
+    if getattr(current_user, "role", None) == "superadmin":
+        return None
+
+    endpoint = request.endpoint or ""
+    allowed_endpoints = {
+        "static",
+        "access_status",
+        "auth.login",
+        "auth.logout",
+        "auth.force_password_change",
+        "company_billing.subscription_portal",
+        "company_billing.create_checkout",
+        "company_billing.cancel_subscription",
+        "company_billing.reactivate_subscription",
+        "company_billing.subscription_payment_pdf",
+        "company_billing.subscription_invoice_pdf",
+        "company_billing.webhook_mercadopago",
+    }
+    if endpoint in allowed_endpoints:
+        return None
+
+    company_id = get_current_company_id()
+    if company_id is None:
+        return None
+
+    state = get_company_access_state(company_id)
+    if state["can_access"]:
+        return None
+
+    if request.is_json or request.path.startswith("/api"):
+        return jsonify({"error": state["reason"], "status": state["status"]}), 403
+    return redirect(url_for("access_status"))
 
 
 class User(UserMixin, db.Model):

@@ -4,7 +4,8 @@
 
 {% block content %}
 {% set status_labels = {
-  'trial': 'Prueba',
+  'trial': 'Prueba gratuita',
+  'trial_expired': 'Prueba vencida',
   'pending': 'Pago pendiente',
   'approved': 'Aprobada',
   'active': 'Activa',
@@ -98,25 +99,37 @@
 
           {% if days_remaining is not none %}
           <div class="mt-3 p-3 rounded-3 border {% if days_remaining <= 3 %}border-danger bg-danger-subtle{% elif days_remaining <= 15 %}border-warning bg-warning-subtle{% else %}border-success bg-success-subtle{% endif %}">
+            {% if effective_state.status == 'trial' %}
+            <div class="fw-semibold">Te quedan {{ days_remaining if days_remaining > 0 else 0 }} días de prueba gratuita</div>
+            {% else %}
             <div class="fw-semibold">Te quedan {{ days_remaining if days_remaining > 0 else 0 }} días de servicio</div>
+            {% endif %}
             <div class="small text-muted">
-              {% if subscription.status == 'trial' %}
+              {% if effective_state.status == 'trial' %}
               Período de prueba{% if reference_date %}. Finaliza el {{ reference_date.strftime('%Y-%m-%d') }}{% endif %}
+              {% elif effective_state.status == 'trial_expired' %}
+              Tu período de prueba finalizó{% if reference_date %} el {{ reference_date.strftime('%Y-%m-%d') }}{% endif %}
               {% else %}
               Próximo vencimiento: {{ reference_date.strftime('%Y-%m-%d') if reference_date else '—' }}
               {% endif %}
             </div>
-            {% if days_remaining in [30, 15, 7, 3, 1] %}
+            {% if effective_state.status != 'trial' and days_remaining in [30, 15, 7, 3, 1] %}
             <div class="alert alert-warning mt-3 mb-0">Faltan {{ days_remaining }} días para el vencimiento.</div>
-            {% elif subscription.status == 'trial' and days_remaining <= 7 and days_remaining > 0 %}
+            {% elif effective_state.status == 'trial' and days_remaining <= 7 and days_remaining > 0 %}
             <div class="alert alert-warning mt-3 mb-0">Tu período de prueba está por terminar.</div>
+            {% elif effective_state.status == 'trial_expired' %}
+            <div class="alert alert-danger mt-3 mb-0">Tu prueba finalizó. Activá una suscripción para recuperar acceso completo.</div>
             {% endif %}
           </div>
           {% endif %}
 
           {% if days_remaining is not none and days_remaining <= 15 and days_remaining >= 0 %}
           <div class="alert alert-warning mt-3 mb-0 d-flex flex-wrap justify-content-between align-items-center gap-2">
+            {% if effective_state.status == 'trial' %}
+            <div><strong>Tu prueba vence en {{ days_remaining }} días.</strong> Elegí un plan para evitar interrupciones.</div>
+            {% else %}
             <div><strong>Tu plan vence en {{ days_remaining }} días.</strong> Podés renovarlo ahora para evitar interrupciones.</div>
+            {% endif %}
             <form method="post" action="{{ url_for('company_billing.reactivate_subscription') }}">
               <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
               <button class="btn btn-warning" type="submit">Renovar ahora</button>
@@ -175,13 +188,13 @@
     <div class="col-md-3">
       <div class="card app-card metric-card"><div class="card-body">
         <div class="text-muted small fw-semibold text-uppercase">Estado</div>
-        <div class="metric-value fw-bold">{{ status_labels.get(subscription.status, subscription.status|replace('_', ' ')|title) }}</div>
+        <div class="metric-value fw-bold">{{ status_labels.get(effective_state.status, effective_state.status|replace('_', ' ')|title) }}</div>
       </div></div>
     </div>
     <div class="col-md-3">
       <div class="card app-card metric-card"><div class="card-body">
         <div class="text-muted small fw-semibold text-uppercase">Proximo vencimiento</div>
-        <div class="metric-value fw-bold">{{ subscription.next_billing_date.strftime('%Y-%m-%d') if subscription.next_billing_date else '—' }}</div>
+        <div class="metric-value fw-bold">{{ reference_date.strftime('%Y-%m-%d') if reference_date else '—' }}</div>
       </div></div>
     </div>
     <div class="col-md-3">
