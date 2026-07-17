@@ -1,21 +1,44 @@
 {% extends "base_master.html" %}
 {% block title %}Portal de Vendedor{% endblock %}
 {% block content %}
-<div class="d-flex justify-content-between align-items-center mb-3 flex-wrap gap-2">
-  <h1 class="h4 mb-0">Panel de Referidos</h1>
-  <span class="badge text-bg-{{ seller_state_color }}">{{ seller_state_label }}</span>
+<div class="app-shell referrals-shell">
+<section class="referrals-hero card app-card border-0 mb-4">
+  <div class="card-body p-4 p-lg-5">
+    <div class="d-flex flex-column flex-lg-row justify-content-between align-items-lg-center gap-3">
+      <div>
+        <span class="page-kicker"><i class="bi bi-megaphone"></i> Portal comercial</span>
+        <h1 class="h3 fw-bold mb-1">Panel de Referidos</h1>
+        <p class="text-muted mb-0">Comparte tu enlace, segui tus comisiones y administrá tus datos de cobro desde un solo lugar.</p>
+      </div>
+      <div class="d-flex flex-wrap gap-2 align-items-center">
+        <span class="badge text-bg-{{ seller_state_color }} fs-6">{{ seller_state_label }}</span>
+        <a class="btn btn-primary" href="{{ url_for('referrals.seller_resources') }}"><i class="bi bi-folder2-open me-1"></i>Centro de recursos</a>
+      </div>
+    </div>
+  </div>
+</section>
+
+<div class="card app-card mb-4 referrals-quick-guide">
+  <div class="card-body py-3">
+    <div class="d-flex flex-wrap align-items-center gap-3 small">
+      <span class="fw-semibold"><i class="bi bi-lightning-charge me-1"></i>Guia rapida:</span>
+      <span>1) Copia y comparte tu enlace.</span>
+      <span>2) Segui conversiones y comisiones.</span>
+      <span>3) Cargá tus datos de cobro para recibir pagos.</span>
+    </div>
+  </div>
 </div>
 
 <div class="row g-3 mb-4">
   <div class="col-lg-6">
-    <div class="card app-card h-100">
+    <div class="card app-card h-100 referrals-card-elevated">
       <div class="card-header bg-white fw-bold">Perfil de vendedor</div>
       <div class="card-body">
-        <div class="row g-2">
+        <div class="row g-3">
           <div class="col-sm-6"><small class="text-muted d-block">Nombre</small><strong>{{ profile.user.name if profile.user else current_user.name }}</strong></div>
           <div class="col-sm-6"><small class="text-muted d-block">Fecha de alta</small><strong>{{ profile.created_at.strftime('%Y-%m-%d') if profile.created_at else '-' }}</strong></div>
           <div class="col-sm-6"><small class="text-muted d-block">Codigo de referido</small><strong>{{ profile.referral_code }}</strong></div>
-          <div class="col-sm-6"><small class="text-muted d-block">URL personalizada</small><a href="{{ profile.referral_url }}" target="_blank">{{ profile.referral_url }}</a></div>
+          <div class="col-sm-6"><small class="text-muted d-block">URL personalizada</small><a class="text-break" href="{{ profile.referral_url }}" target="_blank">{{ profile.referral_url }}</a></div>
         </div>
         <div class="d-flex flex-wrap gap-2 mt-3">
           <button class="btn btn-outline-primary btn-sm" type="button" data-copy-text="{{ profile.referral_url }}">Copiar enlace</button>
@@ -28,16 +51,16 @@
     </div>
   </div>
   <div class="col-lg-6">
-    <div class="card app-card h-100">
+    <div class="card app-card h-100 referrals-card-elevated">
       <div class="card-header bg-white fw-bold">Estadisticas</div>
       <div class="card-body">
         <div class="row g-2 text-center">
-          <div class="col-6 col-md-4"><div class="border rounded p-2"><small class="text-muted d-block">Clicks</small><strong>{{ stats.clicks }}</strong></div></div>
-          <div class="col-6 col-md-4"><div class="border rounded p-2"><small class="text-muted d-block">Registros</small><strong>{{ stats.registrations }}</strong></div></div>
-          <div class="col-6 col-md-4"><div class="border rounded p-2"><small class="text-muted d-block">Empresas</small><strong>{{ stats.companies_created }}</strong></div></div>
-          <div class="col-6 col-md-4"><div class="border rounded p-2"><small class="text-muted d-block">Pruebas</small><strong>{{ stats.free_trials }}</strong></div></div>
-          <div class="col-6 col-md-4"><div class="border rounded p-2"><small class="text-muted d-block">Activas</small><strong>{{ stats.active_subscriptions }}</strong></div></div>
-          <div class="col-6 col-md-4"><div class="border rounded p-2"><small class="text-muted d-block">Canceladas</small><strong>{{ stats.cancelled_subscriptions }}</strong></div></div>
+          <div class="col-6 col-md-4"><div class="referrals-stat-chip"><small class="text-muted d-block">Clicks</small><strong>{{ stats.clicks }}</strong></div></div>
+          <div class="col-6 col-md-4"><div class="referrals-stat-chip"><small class="text-muted d-block">Registros</small><strong>{{ stats.registrations }}</strong></div></div>
+          <div class="col-6 col-md-4"><div class="referrals-stat-chip"><small class="text-muted d-block">Empresas</small><strong>{{ stats.companies_created }}</strong></div></div>
+          <div class="col-6 col-md-4"><div class="referrals-stat-chip"><small class="text-muted d-block">Pruebas</small><strong>{{ stats.free_trials }}</strong></div></div>
+          <div class="col-6 col-md-4"><div class="referrals-stat-chip"><small class="text-muted d-block">Activas</small><strong>{{ stats.active_subscriptions }}</strong></div></div>
+          <div class="col-6 col-md-4"><div class="referrals-stat-chip"><small class="text-muted d-block">Canceladas</small><strong>{{ stats.cancelled_subscriptions }}</strong></div></div>
         </div>
         <div class="mt-3">
           <small class="text-muted">Conversion</small>
@@ -53,13 +76,13 @@
 </div>
 
 <div class="row g-3 mb-4">
-  <div class="col-md-4 col-xl-2"><div class="card app-card card-body"><small class="text-muted">Pendientes</small><strong>ARS {{ '%.2f'|format(commission_cards.pending) }}</strong></div></div>
-  <div class="col-md-4 col-xl-2"><div class="card app-card card-body"><small class="text-muted">Disponibles</small><strong>ARS {{ '%.2f'|format(commission_cards.available) }}</strong></div></div>
-  <div class="col-md-4 col-xl-2"><div class="card app-card card-body"><small class="text-muted">Pagadas</small><strong>ARS {{ '%.2f'|format(commission_cards.paid) }}</strong></div></div>
-  <div class="col-md-4 col-xl-3"><div class="card app-card card-body"><small class="text-muted">Total historico ganado</small><strong>ARS {{ '%.2f'|format(commission_cards.total_historical) }}</strong></div></div>
-  <div class="col-md-4 col-xl-3"><div class="card app-card card-body"><small class="text-muted">Saldo disponible para cobrar</small><strong>ARS {{ '%.2f'|format(commission_cards.balance_available) }}</strong></div></div>
+  <div class="col-md-4 col-xl-2"><div class="card app-card card-body referrals-kpi"><small class="text-muted">Pendientes</small><strong>ARS {{ '%.2f'|format(commission_cards.pending) }}</strong></div></div>
+  <div class="col-md-4 col-xl-2"><div class="card app-card card-body referrals-kpi"><small class="text-muted">Disponibles</small><strong>ARS {{ '%.2f'|format(commission_cards.available) }}</strong></div></div>
+  <div class="col-md-4 col-xl-2"><div class="card app-card card-body referrals-kpi"><small class="text-muted">Pagadas</small><strong>ARS {{ '%.2f'|format(commission_cards.paid) }}</strong></div></div>
+  <div class="col-md-4 col-xl-3"><div class="card app-card card-body referrals-kpi"><small class="text-muted">Total historico ganado</small><strong>ARS {{ '%.2f'|format(commission_cards.total_historical) }}</strong></div></div>
+  <div class="col-md-4 col-xl-3"><div class="card app-card card-body referrals-kpi"><small class="text-muted">Saldo disponible para cobrar</small><strong>ARS {{ '%.2f'|format(commission_cards.balance_available) }}</strong></div></div>
   <div class="col-md-4 col-xl-6">
-    <div class="card app-card h-100">
+    <div class="card app-card h-100 referrals-card-elevated">
       <div class="card-header bg-white fw-bold">Objetivo del mes</div>
       <div class="card-body">
         <div class="fw-semibold mb-2">Tu objetivo este mes</div>
@@ -72,7 +95,7 @@
     </div>
   </div>
   <div class="col-md-8 col-xl-6">
-    <div class="card app-card h-100">
+    <div class="card app-card h-100 referrals-card-elevated">
       <div class="card-header bg-white fw-bold">Ranking y nivel</div>
       <div class="card-body">
         <div class="d-flex flex-wrap gap-2 mb-2">
@@ -87,7 +110,7 @@
   </div>
 </div>
 
-<div class="card app-card mb-4">
+<div class="card app-card mb-4 referrals-card-elevated">
   <div class="card-header bg-white fw-bold">Clientes referidos</div>
   <div class="table-responsive">
     <table class="table table-hover mb-0 align-middle">
@@ -112,7 +135,7 @@
   </div>
 </div>
 
-<div class="card app-card mb-4">
+<div class="card app-card mb-4 referrals-card-elevated">
   <div class="card-header bg-white fw-bold">Historial de pagos</div>
   <div class="table-responsive">
     <table class="table table-hover mb-0 align-middle">
@@ -136,7 +159,7 @@
 
 <div class="row g-3 mb-4">
   <div class="col-lg-7">
-    <div class="card app-card h-100">
+    <div class="card app-card h-100 referrals-card-elevated">
       <div class="card-header bg-white fw-bold">Datos de cobro</div>
       <div class="card-body">
         <form method="post" action="{{ url_for('referrals.seller_billing_data') }}" class="row g-2">
@@ -156,7 +179,7 @@
     </div>
   </div>
   <div class="col-lg-5">
-    <div class="card app-card h-100">
+    <div class="card app-card h-100 referrals-card-elevated">
       <div class="card-header bg-white fw-bold">Material de venta</div>
       <div class="card-body d-grid gap-2">
         <a class="btn btn-outline-primary" href="{{ url_for('static', filename='images/branding/logo.png') }}" download>Descargar logo</a>
@@ -175,7 +198,7 @@
 
 <div class="row g-3 mb-4">
   <div class="col-lg-6">
-    <div class="card app-card h-100">
+    <div class="card app-card h-100 referrals-card-elevated">
       <div class="card-header bg-white fw-bold">Notificaciones</div>
       <div class="card-body">
         {% for item in notifications %}
@@ -193,7 +216,7 @@
     </div>
   </div>
   <div class="col-lg-6">
-    <div class="card app-card h-100">
+    <div class="card app-card h-100 referrals-card-elevated">
       <div class="card-header bg-white fw-bold">Ayuda</div>
       <div class="card-body">
         <div class="accordion" id="sellerHelpFaq">
@@ -212,7 +235,7 @@
   </div>
 </div>
 
-<div class="card app-card mb-4" id="resource-center">
+<div class="card app-card mb-4 referrals-card-elevated" id="resource-center">
   <div class="card-body p-4">
     <div class="d-flex flex-column flex-lg-row justify-content-between align-items-lg-center gap-3 mb-3">
       <div>
@@ -250,18 +273,62 @@
   </div>
 </div>
 
+</div>
+
+{% block extra_css %}
+<style>
+  .referrals-shell { max-width: 1280px; }
+  .referrals-hero {
+    background:
+      radial-gradient(circle at top right, rgba(56, 189, 248, .18), transparent 38%),
+      linear-gradient(135deg, rgba(37, 99, 235, .16), rgba(16, 185, 129, .12));
+    border: 1px solid rgba(37, 99, 235, .24);
+  }
+  .referrals-quick-guide {
+    border-left: 4px solid var(--app-primary);
+    background: linear-gradient(180deg, rgba(37, 99, 235, .07), rgba(37, 99, 235, .02));
+  }
+  .referrals-card-elevated {
+    box-shadow: 0 14px 32px rgba(15, 23, 42, .12);
+  }
+  .referrals-stat-chip {
+    border: 1px solid var(--app-line);
+    border-radius: 10px;
+    padding: .7rem;
+    background: linear-gradient(180deg, rgba(255,255,255,.56), rgba(255,255,255,.14));
+  }
+  .referrals-kpi strong {
+    font-size: 1.05rem;
+    display: block;
+    margin-top: .15rem;
+  }
+  @media (max-width: 991.98px) {
+    .referrals-hero .btn { width: 100%; }
+  }
+</style>
+{% endblock %}
+
 <script>
   (() => {
     const copyButtons = document.querySelectorAll('[data-copy-text]');
     copyButtons.forEach((button) => {
       button.addEventListener('click', async () => {
         const text = button.getAttribute('data-copy-text') || '';
+        const originalText = button.textContent;
         try {
           await navigator.clipboard.writeText(text);
           button.classList.remove('btn-outline-secondary', 'btn-outline-primary');
           button.classList.add('btn-success');
           button.textContent = 'Copiado';
-          setTimeout(() => window.location.reload(), 700);
+          setTimeout(() => {
+            button.textContent = originalText;
+            button.classList.remove('btn-success');
+            if (button.classList.contains('btn-sm')) {
+              button.classList.add('btn-outline-primary');
+            } else {
+              button.classList.add('btn-outline-secondary');
+            }
+          }, 1200);
         } catch (error) {
           console.error(error);
         }
