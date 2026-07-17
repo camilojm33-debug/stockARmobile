@@ -827,11 +827,21 @@
       document.addEventListener('keydown', function(event) {
         if (event.key === 'Escape') closeSidebar();
       });
+      function hideAppLoading() {
+        const loading = document.getElementById('appLoading');
+        if (loading) loading.classList.remove('show');
+      }
       document.querySelectorAll('form[method="post"]').forEach(function(form) {
         form.addEventListener('submit', function() {
           const loading = document.getElementById('appLoading');
           if (loading) loading.classList.add('show');
         });
+      });
+      window.addEventListener('pageshow', hideAppLoading);
+      window.addEventListener('focus', hideAppLoading);
+      window.addEventListener('afterprint', hideAppLoading);
+      document.addEventListener('visibilitychange', function() {
+        if (!document.hidden) hideAppLoading();
       });
       document.querySelectorAll('table').forEach(function(table) {
         table.classList.add('mobile-card-table');

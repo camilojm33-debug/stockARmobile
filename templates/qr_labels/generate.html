@@ -16,53 +16,86 @@
     </form>
   </div>
 
-  <form method="post" action="{{ url_for('qr_labels.print_all') }}" id="bulkPrintForm" class="row g-2 align-items-end mb-3">
+  <div class="alert alert-info border-0 shadow-sm mb-3" role="alert">
+    <div class="fw-semibold mb-1"><i class="bi bi-info-circle me-1"></i>Guia rapida</div>
+    <div class="small mb-1">1) Elegi formato y alcance. 2) Ajusta tamano/copias. 3) Descarga PDF o imprime por producto.</div>
+    <div class="small text-muted">Tip: usa "Solo seleccionados" para imprimir lotes puntuales sin recorrer toda la lista.</div>
+  </div>
+
+  <form method="post" action="{{ url_for('qr_labels.print_all') }}" id="bulkPrintForm" class="card app-card mb-3">
     <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
-    <div class="col-md-4">
-      <label class="form-label d-block mb-1">Formato de etiqueta</label>
-      <div class="form-check form-check-inline">
-        <input class="form-check-input" type="radio" name="label_format" id="formatCurrent" value="current" checked>
-        <label class="form-check-label" for="formatCurrent">Formato actual</label>
+    <div class="card-body">
+      <div class="row g-3 align-items-end">
+        <div class="col-lg-4">
+          <label class="form-label d-block mb-1">Formato de etiqueta</label>
+          <div class="form-check form-check-inline">
+            <input class="form-check-input" type="radio" name="label_format" id="formatCurrent" value="current" checked>
+            <label class="form-check-label" for="formatCurrent">Formato actual</label>
+          </div>
+          <div class="form-check form-check-inline">
+            <input class="form-check-input" type="radio" name="label_format" id="formatSquare5" value="square_5x5">
+            <label class="form-check-label" for="formatSquare5">Etiqueta cuadrada 5 x 5 cm</label>
+          </div>
+          <div class="form-text">Define el diseno final de la etiqueta antes de generar el PDF.</div>
+        </div>
+
+        <div class="col-lg-4">
+          <label class="form-label">Productos a imprimir</label>
+          <select class="form-select" name="print_scope" id="printScope">
+            <option value="all" selected>Todos los productos</option>
+            <option value="selected">Solo seleccionados</option>
+            <option value="single">Un solo producto repetido</option>
+          </select>
+          <div class="form-text">Controla el alcance: completo, seleccion manual o producto unico repetido.</div>
+        </div>
+
+        <div class="col-lg-4" id="singleProductWrap" style="display:none;">
+          <label class="form-label">Producto unico</label>
+          <select class="form-select" name="single_product_id">
+            <option value="">Seleccionar producto</option>
+            {% for product in products %}
+            <option value="{{ product.id }}">{{ product.name }}</option>
+            {% endfor %}
+          </select>
+          <div class="form-text">Se usa cuando queres imprimir varias copias del mismo item.</div>
+        </div>
+
+        <div class="col-md-3">
+          <label class="form-label">Tamano</label>
+          <select class="form-select" name="size"><option value="small">Chica</option><option value="standard" selected>Normal</option><option value="large">Grande</option></select>
+          <div class="form-text">Normal es la opcion recomendada para lectura rapida.</div>
+        </div>
+
+        <div class="col-md-3">
+          <label class="form-label">Copias por producto</label>
+          <input class="form-control" name="copies" type="number" min="1" max="20" value="1">
+          <div class="form-text">Cantidad de etiquetas por cada producto incluido.</div>
+        </div>
+
+        <div class="col-md-3" id="fillPageWrap" style="display:none;">
+          <div class="form-check mt-3">
+            <input class="form-check-input" type="checkbox" name="fill_page" id="fillPage">
+            <label class="form-check-label" for="fillPage">Completar hoja A4</label>
+          </div>
+          <div class="form-text">Solo aplica para producto unico en formato 5x5.</div>
+        </div>
+
+        <div class="col-md-3">
+          <div class="form-check mt-3">
+            <input class="form-check-input" type="checkbox" name="ordered_a4" id="orderedA4">
+            <label class="form-check-label" for="orderedA4">Imprimir ordenado en hoja A4</label>
+          </div>
+          <div class="form-text">Ordena visualmente la grilla para recorte y control.</div>
+        </div>
+
+        <div class="col-12 col-xl-4 ms-xl-auto d-grid">
+          <button class="btn btn-success btn-lg" {% if not products %}disabled{% endif %}><i class="bi bi-file-earmark-pdf me-1"></i>Descargar PDF</button>
+        </div>
+
+        <div class="col-12" id="selectedHint" style="display:none;">
+          <div class="small text-muted">Selecciona productos desde las tarjetas para imprimir solo esa lista.</div>
+        </div>
       </div>
-      <div class="form-check form-check-inline">
-        <input class="form-check-input" type="radio" name="label_format" id="formatSquare5" value="square_5x5">
-        <label class="form-check-label" for="formatSquare5">Etiqueta cuadrada 5 x 5 cm</label>
-      </div>
-    </div>
-    <div class="col-md-4">
-      <label class="form-label">Productos a imprimir</label>
-      <select class="form-select" name="print_scope" id="printScope">
-        <option value="all" selected>Todos los productos</option>
-        <option value="selected">Solo seleccionados</option>
-        <option value="single">Un solo producto repetido</option>
-      </select>
-    </div>
-    <div class="col-md-4" id="singleProductWrap" style="display:none;">
-      <label class="form-label">Producto unico</label>
-      <select class="form-select" name="single_product_id">
-        <option value="">Seleccionar producto</option>
-        {% for product in products %}
-        <option value="{{ product.id }}">{{ product.name }}</option>
-        {% endfor %}
-      </select>
-    </div>
-    <div class="col-md-3"><label class="form-label">Tamano</label><select class="form-select" name="size"><option value="small">Chica</option><option value="standard" selected>Normal</option><option value="large">Grande</option></select></div>
-    <div class="col-md-3"><label class="form-label">Copias por producto</label><input class="form-control" name="copies" type="number" min="1" max="20" value="1"></div>
-    <div class="col-md-3" id="fillPageWrap" style="display:none;">
-      <div class="form-check mt-4">
-        <input class="form-check-input" type="checkbox" name="fill_page" id="fillPage">
-        <label class="form-check-label" for="fillPage">Completar una hoja A4 (solo producto unico 5x5)</label>
-      </div>
-    </div>
-    <div class="col-md-3">
-      <div class="form-check mt-4">
-        <input class="form-check-input" type="checkbox" name="ordered_a4" id="orderedA4">
-        <label class="form-check-label" for="orderedA4">Imprimir ordenado en hoja A4</label>
-      </div>
-    </div>
-    <div class="col-md-2"><button class="btn btn-success" {% if not products %}disabled{% endif %}><i class="bi bi-file-earmark-pdf me-1"></i>Descargar PDF</button></div>
-    <div class="col-12" id="selectedHint" style="display:none;">
-      <div class="small text-muted">Selecciona productos desde las tarjetas de abajo para imprimir solo esos.</div>
     </div>
   </form>
 
@@ -82,6 +115,7 @@
             <a class="btn btn-sm btn-outline-primary" href="{{ url_for('qr_labels.print_single', id=product.id) }}">Etiqueta</a>
             <a class="btn btn-sm btn-outline-secondary" title="Code128" href="{{ url_for('qr_labels.code128_image', id=product.id) }}"><i class="bi bi-upc"></i></a>
           </div>
+          <p class="small text-muted mt-2 mb-0">Etiqueta abre una vista individual. El icono muestra solo el codigo Code128.</p>
           <form method="post" action="{{ url_for('qr_labels.print_product_sheet', id=product.id) }}" class="border-top mt-3 pt-3 text-start">
             <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
             <div class="row g-2">
@@ -100,6 +134,7 @@
                 <label><input type="checkbox" name="ordered_a4"> Imprimir ordenado en hoja A4</label>
               </div>
               <div class="col-12"><button class="btn btn-sm btn-primary w-100"><i class="bi bi-printer me-1"></i>Imprimir etiquetas</button></div>
+              <div class="col-12"><div class="form-text">Esta accion genera una hoja de impresion solo para este producto.</div></div>
             </div>
           </form>
         </div>

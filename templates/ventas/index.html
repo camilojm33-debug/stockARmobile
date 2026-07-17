@@ -526,6 +526,16 @@
   const quickModeKey = 'stockarmobile_quick_mode';
   const quickModeToggle = document.getElementById('quick-mode-toggle');
   const fullscreenToggle = document.getElementById('fullscreen-toggle');
+  const desktopScannerAutofocus = window.matchMedia('(min-width: 992px) and (pointer: fine)').matches;
+
+  function focusScannerInput() {
+    if (!fastScannerInput || !desktopScannerAutofocus) return;
+    try {
+      fastScannerInput.focus({ preventScroll: true });
+    } catch (_) {
+      fastScannerInput.focus();
+    }
+  }
 
   function setFullscreenToggleUI(enabled) {
     if (!fullscreenToggle) return;
@@ -602,7 +612,7 @@
       );
       if (fastScannerInput) {
         fastScannerInput.value = '';
-        fastScannerInput.focus();
+        focusScannerInput();
       }
       const qtyInput = document.getElementById(`qty-${product.id}`);
       if (qtyInput) qtyInput.value = '1';
@@ -636,13 +646,14 @@
   });
 
   window.addEventListener('load', function() {
-    fastScannerInput?.focus();
+    focusScannerInput();
   });
 
   document.addEventListener('click', function(event) {
+    if (!desktopScannerAutofocus) return;
     if (fastScannerInput && !event.target.closest('#cartModal') && !event.target.closest('#cameraScannerModal')) {
       if (document.activeElement !== fastScannerInput) {
-        fastScannerInput.focus();
+        focusScannerInput();
       }
     }
   });
