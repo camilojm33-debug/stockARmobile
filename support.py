@@ -87,8 +87,20 @@ def my_tickets():
 @bp.route("/admin")
 @superadmin_required
 def admin_index():
-    flash("La pantalla de ayuda para superadmin fue deshabilitada.", "info")
-    return redirect(url_for("saas.index"))
+    from app import SupportTicket
+    from sqlalchemy.orm import selectinload
+
+    current_status = (request.args.get("status") or "all").strip().lower()
+    query = SupportTicket.query.options(
+        selectinload(SupportTicket.company),
+        selectinload(SupportTicket.user),
+    ).order_by(SupportTicket.created_at.desc())
+    if current_status in {"pendiente", "resuelto"}:
+        query = query.filter(SupportTicket.status == current_status)
+    else:
+        current_status = "all"
+    tickets = query.limit(300).all()
+    return render_template("saas/support.html", tickets=tickets, current_status=current_status)
 
 
 @bp.route("/admin/<int:ticket_id>")

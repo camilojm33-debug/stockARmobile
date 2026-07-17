@@ -41,9 +41,6 @@ class PlanUsageService:
 
     @staticmethod
     def _active_plan_for_company(company_id: int):
-        from app import db
-
-        PlanService.ensure_defaults(db.session)
         subscription = SubscriptionService.active_subscription_for_company(company_id)
         plan = getattr(subscription, "plan", None)
         if plan is None:

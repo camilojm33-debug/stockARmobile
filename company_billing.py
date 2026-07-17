@@ -469,7 +469,6 @@ def subscription_portal():
     company_id = getattr(current_user, "company_id", None)
     company = Company.query.filter_by(id=company_id).first_or_404()
 
-    PlanService.ensure_defaults(db.session)
     plans = PlanService.all_commercial_plans()
     subscription = SubscriptionService.active_subscription_for_company(company.id)
 
