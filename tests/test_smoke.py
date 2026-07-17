@@ -209,6 +209,7 @@ def test_sale_persists_required_comprobante_fields():
         json={
             "items": [{"productId": 1, "quantity": 1}],
             "metodo_pago": "EFECTIVO",
+            "client_id": 1,
             "requiere_comprobante": True,
             "tipo_comprobante": "factura_c",
             "observacion_comprobante": "Solicita CUIT en cabecera",
@@ -238,6 +239,7 @@ def test_sale_infers_comprobante_request_from_document_type():
             "items": [{"productId": 1, "quantity": 1}],
             "metodo_pago": "EFECTIVO",
             "document_type": "factura_a",
+            "client_id": 1,
         },
         headers={"X-Cart-Tenant": "1:1"},
     )
@@ -251,6 +253,45 @@ def test_sale_infers_comprobante_request_from_document_type():
         assert sale.tipo_comprobante == "factura_a"
 
 
+def test_sale_blocks_factura_without_client_selection():
+    client = stock_app.app.test_client()
+    client.post("/auth/login", data={"username": "empresa_admin", "password": "admin123"})
+
+    open_cash_session(client)
+
+    response = client.post(
+        "/ventas/api/checkout",
+        json={
+            "items": [{"productId": 1, "quantity": 1}],
+            "metodo_pago": "EFECTIVO",
+            "document_type": "factura_b",
+            "client_id": "",
+        },
+        headers={"X-Cart-Tenant": "1:1"},
+    )
+    assert response.status_code == 400
+    assert "debés seleccionar un cliente" in (response.get_json().get("error") or "")
+
+
+def test_quick_create_client_api_creates_and_returns_client():
+    client = stock_app.app.test_client()
+    client.post("/auth/login", data={"username": "empresa_admin", "password": "admin123"})
+
+    response = client.post(
+        "/clientes/api/quick-create",
+        json={"name": "Cliente Express", "email": "express@test.local", "whatsapp": "549111111111"},
+    )
+    assert response.status_code == 201
+    payload = response.get_json()
+    assert payload
+    assert payload.get("client", {}).get("name") == "Cliente Express"
+
+    with stock_app.app.app_context():
+        created = Client.query.filter_by(email="express@test.local").first()
+        assert created is not None
+        assert created.name == "Cliente Express"
+
+
 def test_cash_page_shows_pending_comprobantes_card():
     client = stock_app.app.test_client()
     client.post("/auth/login", data={"username": "empresa_admin", "password": "admin123"})
@@ -262,6 +303,7 @@ def test_cash_page_shows_pending_comprobantes_card():
         json={
             "items": [{"productId": 1, "quantity": 1}],
             "metodo_pago": "EFECTIVO",
+            "client_id": 1,
             "requiere_comprobante": True,
             "tipo_comprobante": "factura_b",
         },
@@ -289,6 +331,7 @@ def test_mark_sale_comprobante_as_issued():
         json={
             "items": [{"productId": 1, "quantity": 1}],
             "metodo_pago": "EFECTIVO",
+            "client_id": 1,
             "requiere_comprobante": True,
             "tipo_comprobante": "factura_a",
         },

@@ -73,6 +73,15 @@ def _resolve_comprobante_payload(data):
     return requiere_comprobante, tipo_comprobante, observacion_comprobante
 
 
+def _requires_identified_client(data, requiere_comprobante, tipo_comprobante):
+    document_type = (data.get("document_type") or "").strip().lower()
+    if document_type in {"factura_a", "factura_b", "factura_c"}:
+        return True
+    if requiere_comprobante and tipo_comprobante in {"factura_a", "factura_b", "factura_c"}:
+        return True
+    return False
+
+
 def _sanitize_checkout_token(raw_value):
     token = (raw_value or "").strip()
     if not token:
@@ -691,6 +700,8 @@ def _create_sale_from_items(items, data, json_response=False):
         )
         current_app.logger.info("[sales] creando Sale")
         requiere_comprobante, tipo_comprobante, observacion_comprobante = _resolve_comprobante_payload(data)
+        if _requires_identified_client(data, requiere_comprobante, tipo_comprobante) and client is None:
+            raise ValueError("Para ese comprobante debés seleccionar un cliente.")
         sale = Sale(
             customer=client.name if client else current_user.username,
             subtotal=subtotal,
@@ -1028,6 +1039,8 @@ def _ticket_text(sale, ticket_brand=None):
     for item in sale.items:
         name = item.product.name if item.product else f"Producto {item.product_id}"
         lines.append(f"{name}: ${item.price:.2f} x {item.quantity} = ${item.total_amount:.2f}")
+    if sale.note:
+        lines.extend(["-" * 32, f"Obs.: {sale.note}"])
     lines.extend(["-" * 32, f"Subtotal: ${sale.subtotal:.2f}", f"Descuento: -${sale.discount:.2f}", f"Impuestos: ${sale.tax:.2f}", "=" * 32, f"TOTAL: ${sale.total_amount:.2f}", "Gracias por su compra!"])
     return "\n".join(lines)
 

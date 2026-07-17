@@ -222,10 +222,13 @@
           <div class="row g-2">
             <div class="col-md-6">
               <label class="form-label">Cliente</label>
-              <select id="checkout-client-select" class="form-select" name="client_id">
-                <option value="">Consumidor final</option>
-                {% for cliente in clientes %}<option value="{{ cliente.id }}">{{ cliente.name }}</option>{% endfor %}
-              </select>
+              <div class="input-group">
+                <select id="checkout-client-select" class="form-select" name="client_id">
+                  <option value="">Consumidor final</option>
+                  {% for cliente in clientes %}<option value="{{ cliente.id }}">{{ cliente.name }}</option>{% endfor %}
+                </select>
+                <button class="btn btn-outline-primary" type="button" data-bs-toggle="modal" data-bs-target="#quickClientModal"><i class="bi bi-person-plus me-1"></i>Nuevo cliente</button>
+              </div>
               <div class="form-text">Elegí cliente si necesita que el comprobante salga a su nombre.</div>
             </div>
             <div class="col-md-6">
@@ -313,16 +316,72 @@
             <div class="col-md-3"><label class="form-label">Pago principal</label><input id="checkout-paid-amount" class="form-control" name="monto_pago" type="number" min="0" step="0.01" inputmode="decimal" placeholder="Ej: total en efectivo"></div>
             <div class="col-md-3"><label class="form-label">Pago secundario</label><input id="checkout-paid-amount-2" class="form-control" name="monto_pago_2" type="number" min="0" step="0.01" inputmode="decimal" placeholder="Solo si hay pago mixto"></div>
             <div class="col-12"><div class="form-text">Pago principal y secundario permiten dividir el cobro entre dos medios de pago.</div></div>
-            <div class="col-md-3"><label class="form-label">Descuento</label><input id="checkout-general-discount" class="form-control" name="descuento_general" type="number" min="0" step="0.01" inputmode="decimal"></div>
+            <div class="col-md-2">
+              <label class="form-label">Descuento</label>
+              <select id="checkout-discount-mode" class="form-select">
+                <option value="amount" selected>$ Monto</option>
+                <option value="percent">% Porcentaje</option>
+              </select>
+            </div>
+            <div class="col-md-2"><label class="form-label" id="checkout-discount-value-label">Valor descuento</label><input id="checkout-general-discount" class="form-control" name="descuento_general" type="number" min="0" step="0.01" inputmode="decimal" placeholder="0.00"></div>
             <div class="col-md-3"><label class="form-label">Recargo</label><input id="checkout-surcharge" class="form-control" name="recargo" type="number" min="0" step="0.01" inputmode="decimal"></div>
             <div class="col-md-3"><label class="form-label">Cambio</label><div id="checkout-change" class="form-control bg-body-tertiary fw-bold">$0.00</div></div>
-            <div class="col-12"><label class="form-label">Nota</label><input id="checkout-note" class="form-control" name="note"></div>
+            <div class="col-12"><label class="form-label">Observaciones de la venta</label><input id="checkout-note" class="form-control" name="note" maxlength="255" placeholder="Observaciones internas para consulta e impresión"></div>
+            <div class="col-12">
+              <div class="card border-0 bg-body-tertiary">
+                <div class="card-body py-2 px-3">
+                  <div class="small fw-semibold text-uppercase text-muted mb-2">Resumen final</div>
+                  <div class="row g-2 small" id="checkout-summary">
+                    <div class="col-md-4"><span class="text-muted">Productos:</span> <strong id="summary-products">0</strong></div>
+                    <div class="col-md-4"><span class="text-muted">Unidades:</span> <strong id="summary-units">0</strong></div>
+                    <div class="col-md-4"><span class="text-muted">Cliente:</span> <strong id="summary-client">Consumidor final</strong></div>
+                    <div class="col-md-4"><span class="text-muted">Comprobante:</span> <strong id="summary-document">Consumidor final (ticket)</strong></div>
+                    <div class="col-md-4"><span class="text-muted">Pago:</span> <strong id="summary-payment">Efectivo</strong></div>
+                    <div class="col-md-4"><span class="text-muted">Descuento:</span> <strong id="summary-discount">$0.00</strong></div>
+                    <div class="col-md-4"><span class="text-muted">Recargo:</span> <strong id="summary-surcharge">$0.00</strong></div>
+                    <div class="col-md-4"><span class="text-muted">Total final:</span> <strong class="text-primary" id="summary-total">$0.00</strong></div>
+                  </div>
+                </div>
+              </div>
+            </div>
           </div>
         </form>
       </div>
       <div class="modal-footer">
         <button class="btn btn-outline-danger me-auto" onclick="clearCart()">Vaciar</button>
         <button id="checkout-process-button" class="btn btn-success btn-lg" onclick="processCheckout()">Procesar venta</button>
+      </div>
+    </div>
+  </div>
+</div>
+
+<div class="modal fade" id="quickClientModal" tabindex="-1" aria-hidden="true">
+  <div class="modal-dialog modal-dialog-centered">
+    <div class="modal-content border-0 shadow">
+      <div class="modal-header">
+        <h5 class="modal-title"><i class="bi bi-person-plus me-2"></i>Nuevo cliente</h5>
+        <button class="btn-close" data-bs-dismiss="modal" aria-label="Cerrar"></button>
+      </div>
+      <div class="modal-body">
+        <div class="row g-2">
+          <div class="col-12">
+            <label class="form-label">Nombre</label>
+            <input id="quick-client-name" class="form-control" maxlength="120" placeholder="Nombre y apellido">
+          </div>
+          <div class="col-md-6">
+            <label class="form-label">Email</label>
+            <input id="quick-client-email" class="form-control" type="email" maxlength="120" placeholder="opcional">
+          </div>
+          <div class="col-md-6">
+            <label class="form-label">WhatsApp</label>
+            <input id="quick-client-whatsapp" class="form-control" maxlength="30" placeholder="opcional">
+          </div>
+        </div>
+        <div class="small text-muted mt-2">Se crea sin salir de la venta y queda seleccionado automáticamente.</div>
+      </div>
+      <div class="modal-footer">
+        <button class="btn btn-outline-secondary" data-bs-dismiss="modal">Cancelar</button>
+        <button class="btn btn-primary" type="button" id="quick-client-create-btn" onclick="createQuickClient()">Crear cliente</button>
       </div>
     </div>
   </div>
@@ -392,6 +451,35 @@
   #cartModal .modal-body,
   #cartModal .modal-content {
     overflow-x: hidden;
+  }
+  #cartModal .modal-body {
+    padding-top: .85rem;
+    padding-bottom: .85rem;
+  }
+  #checkout-form .form-label {
+    margin-bottom: .35rem;
+    font-weight: 600;
+  }
+  #checkout-form .form-text {
+    margin-top: .35rem;
+  }
+  #checkout-form .input-group > .btn {
+    white-space: nowrap;
+  }
+  #checkout-summary > div {
+    border: 1px solid var(--app-line);
+    border-radius: .55rem;
+    padding: .4rem .55rem;
+    background: rgba(255,255,255,.02);
+  }
+  #checkout-summary strong {
+    font-weight: 700;
+  }
+  #summary-total {
+    font-size: 1.02rem;
+  }
+  #quickClientModal .modal-body {
+    padding-top: .9rem;
   }
   .pos-cart-modal-line {
     display: flex;
@@ -531,6 +619,21 @@
     }
     .pos-quick-toggle { width: 100%; justify-content: center; }
     .pos-quick-toggle-copy { text-align: center; }
+    #cartModal .modal-dialog {
+      margin: .5rem;
+    }
+    #checkout-form .input-group {
+      flex-direction: column;
+      align-items: stretch;
+      gap: .45rem;
+    }
+    #checkout-form .input-group > .btn {
+      width: 100%;
+      border-radius: .5rem !important;
+    }
+    #checkout-summary {
+      row-gap: .45rem !important;
+    }
   }
   @media (max-width: 575.98px) {
     .pos-grid { grid-template-columns: 1fr; }
@@ -547,6 +650,21 @@
     #cartModal .modal-footer .btn {
       flex: 1 1 100%;
       margin: 0 !important;
+    }
+    #checkout-process-button {
+      order: 1;
+    }
+    #cartModal .modal-footer .btn-outline-danger {
+      order: 2;
+    }
+    #checkout-form .row {
+      --bs-gutter-y: .55rem;
+    }
+    #checkout-form .form-label {
+      font-size: .95rem;
+    }
+    #checkout-note {
+      min-height: 42px;
     }
     .pos-cart-modal-controls {
       width: 100%;

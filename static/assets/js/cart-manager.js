@@ -305,6 +305,14 @@ async function processCheckout() {
     checkoutProcessButton.disabled = true;
   }
 
+  if (!validateCheckoutClientRequirements()) {
+    checkoutInFlight = false;
+    if (checkoutProcessButton) {
+      checkoutProcessButton.disabled = false;
+    }
+    return;
+  }
+
   const selectedMethod = document.getElementById('checkout-payment-method')?.value || '';
   if (selectedMethod === 'QR Mercado Pago') {
     if (mpQrDraftState.approved && mpQrDraftState.finalizeUrl && mpQrDraftState.paymentId) {
@@ -318,6 +326,7 @@ async function processCheckout() {
   }
 
   const csrf = getCsrfToken();
+  const discount = getDiscountBreakdown(getCartSubtotal());
   const payload = {
     items: getCartForCheckout(),
     client_id: document.getElementById('checkout-client-select')?.value || '',
@@ -325,7 +334,7 @@ async function processCheckout() {
     metodo_pago_2: document.getElementById('checkout-payment-method-2')?.value || '',
     monto_pago: document.getElementById('checkout-paid-amount')?.value || '',
     monto_pago_2: document.getElementById('checkout-paid-amount-2')?.value || '',
-    descuento_general: document.getElementById('checkout-general-discount')?.value || '',
+    descuento_general: discount.amount,
     recargo: document.getElementById('checkout-surcharge')?.value || '',
     document_type: document.getElementById('checkout-document-type')?.value || 'venta',
     requiere_comprobante: document.getElementById('checkout-requiere-comprobante')?.checked || false,
@@ -369,7 +378,7 @@ function readMoneyInput(id) {
 
 function getCheckoutTotals() {
   const subtotal = getCartSubtotal();
-  const discount = readMoneyInput('checkout-general-discount');
+  const discount = getDiscountBreakdown(subtotal).amount;
   const surcharge = readMoneyInput('checkout-surcharge');
   const taxable = Math.max(subtotal - discount, 0);
   const total = taxable + surcharge;
@@ -377,8 +386,53 @@ function getCheckoutTotals() {
   return { subtotal, discount, surcharge, total, paid, change: Math.max(paid - total, 0) };
 }
 
+function getDiscountBreakdown(subtotal) {
+  const mode = document.getElementById('checkout-discount-mode')?.value || 'amount';
+  const raw = readMoneyInput('checkout-general-discount');
+  if (mode === 'percent') {
+    const percent = Math.min(Math.max(raw, 0), 100);
+    const amount = subtotal * (percent / 100);
+    return {
+      mode,
+      raw: percent,
+      amount,
+      label: `${percent.toFixed(2)}% (${formatPrice(amount)})`
+    };
+  }
+  const amount = Math.max(raw, 0);
+  return {
+    mode,
+    raw: amount,
+    amount,
+    label: formatPrice(amount)
+  };
+}
+
+function requiresIdentifiedClient() {
+  const documentType = document.getElementById('checkout-document-type')?.value || 'venta';
+  const toggle = document.getElementById('checkout-requiere-comprobante')?.checked;
+  const tipo = document.getElementById('checkout-tipo-comprobante')?.value || '';
+  const requiresByDocument = ['factura_a', 'factura_b', 'factura_c'].includes(documentType);
+  const requiresByComprobante = Boolean(toggle) && ['factura_a', 'factura_b', 'factura_c'].includes(tipo);
+  return requiresByDocument || requiresByComprobante;
+}
+
+function validateCheckoutClientRequirements() {
+  if (!requiresIdentifiedClient()) {
+    return true;
+  }
+  const clientId = document.getElementById('checkout-client-select')?.value || '';
+  if (clientId) {
+    return true;
+  }
+  showNotification('Para este comprobante debés seleccionar un cliente (no Consumidor final).', 'warning');
+  document.getElementById('checkout-client-select')?.focus();
+  return false;
+}
+
 function updateCheckoutTotals() {
   const totals = getCheckoutTotals();
+  const discountBreakdown = getDiscountBreakdown(totals.subtotal);
   const pairs = {
     'cart-subtotal': totals.subtotal,
     'cart-total': totals.total,
@@ -398,6 +452,33 @@ function updateCheckoutTotals() {
   }
 
   syncPaymentInputsWithMethods(totals.total);
+  renderCheckoutSummary(totals, discountBreakdown);
+}
+
+function renderCheckoutSummary(totals, discountBreakdown) {
+  const products = cart.length;
+  const units = cart.reduce((sum, item) => sum + (parseFloat(item.quantity) || 0), 0);
+  const clientSelect = document.getElementById('checkout-client-select');
+  const documentSelect = document.getElementById('checkout-document-type');
+  const paymentSelect = document.getElementById('checkout-payment-method');
+
+  const summaryMap = {
+    'summary-products': String(products),
+    'summary-units': formatQuantity(units),
+    'summary-client': clientSelect?.options?.[clientSelect.selectedIndex]?.text || 'Consumidor final',
+    'summary-document': documentSelect?.options?.[documentSelect.selectedIndex]?.text || 'Consumidor final (ticket)',
+    'summary-payment': paymentSelect?.options?.[paymentSelect.selectedIndex]?.text || 'Efectivo',
+    'summary-discount': discountBreakdown.label,
+    'summary-surcharge': formatPrice(totals.surcharge),
+    'summary-total': formatPrice(totals.total),
+  };
+
+  Object.entries(summaryMap).forEach(([id, value]) => {
+    const node = document.getElementById(id);
+    if (node) {
+      node.textContent = value;
+    }
+  });
 }
 
 function syncPaymentInputsWithMethods(total) {
@@ -446,6 +527,16 @@ function setupCheckoutPaymentBehavior() {
   method2.addEventListener('change', refresh);
   paid1.addEventListener('input', refresh);
   paid2.addEventListener('input', refresh);
+  document.getElementById('checkout-client-select')?.addEventListener('change', refresh);
+  document.getElementById('checkout-document-type')?.addEventListener('change', refresh);
+  document.getElementById('checkout-discount-mode')?.addEventListener('change', () => {
+    const mode = document.getElementById('checkout-discount-mode')?.value || 'amount';
+    const label = document.getElementById('checkout-discount-value-label');
+    if (label) {
+      label.textContent = mode === 'percent' ? 'Valor (%)' : 'Valor descuento';
+    }
+    updateCheckoutTotals();
+  });
   refresh();
 }
 
@@ -546,6 +637,9 @@ async function pollMpQrStatus() {
 
 async function processMercadoPagoQrCheckout() {
   const total = getCheckoutTotals();
+  if (!validateCheckoutClientRequirements()) {
+    return;
+  }
   const csrf = getCsrfToken();
   const payload = {
     items: getCartForCheckout(),
@@ -731,6 +825,69 @@ document.addEventListener('DOMContentLoaded', () => {
     }
   });
 });
+
+async function createQuickClient() {
+  const nameInput = document.getElementById('quick-client-name');
+  const emailInput = document.getElementById('quick-client-email');
+  const whatsappInput = document.getElementById('quick-client-whatsapp');
+  const actionButton = document.getElementById('quick-client-create-btn');
+  const name = (nameInput?.value || '').trim();
+
+  if (!name) {
+    showNotification('Ingresá el nombre del cliente.', 'warning');
+    nameInput?.focus();
+    return;
+  }
+
+  if (actionButton) {
+    actionButton.disabled = true;
+    actionButton.textContent = 'Creando...';
+  }
+
+  try {
+    const response = await fetch('/clientes/api/quick-create', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'X-CSRFToken': getCsrfToken(),
+      },
+      body: JSON.stringify({
+        name,
+        email: (emailInput?.value || '').trim(),
+        whatsapp: (whatsappInput?.value || '').trim(),
+      }),
+    });
+    const data = await response.json();
+    if (!response.ok) {
+      throw new Error(data.error || 'No se pudo crear el cliente.');
+    }
+
+    const client = data.client || {};
+    const select = document.getElementById('checkout-client-select');
+    if (select && client.id) {
+      const newOption = document.createElement('option');
+      newOption.value = String(client.id);
+      newOption.textContent = client.name || `Cliente #${client.id}`;
+      select.appendChild(newOption);
+      select.value = String(client.id);
+      select.dispatchEvent(new Event('change'));
+    }
+
+    if (nameInput) nameInput.value = '';
+    if (emailInput) emailInput.value = '';
+    if (whatsappInput) whatsappInput.value = '';
+
+    bootstrap.Modal.getInstance(document.getElementById('quickClientModal'))?.hide();
+    showNotification('Cliente creado y seleccionado.', 'success');
+  } catch (error) {
+    showNotification(error.message || 'No se pudo crear el cliente.', 'danger');
+  } finally {
+    if (actionButton) {
+      actionButton.disabled = false;
+      actionButton.textContent = 'Crear cliente';
+    }
+  }
+}
 
 function setupComprobanteRequestBehavior() {
   const toggle = document.getElementById('checkout-requiere-comprobante');

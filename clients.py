@@ -26,6 +26,13 @@ def _date_form(name):
         return None
 
 
+def _coerce_payload():
+    payload = request.get_json(silent=True)
+    if isinstance(payload, dict):
+        return payload
+    return request.form
+
+
 @bp.route("/")
 @tenant_required
 def index():
@@ -192,3 +199,46 @@ def api_get(client_id):
             "address": c.address or "",
         }
     )
+
+
+@bp.route("/api/quick-create", methods=["POST"])
+@tenant_required
+def api_quick_create():
+    from app import Client, db, scope_query_to_company
+    from services.plan_usage_service import PlanUsageService
+
+    payload = _coerce_payload()
+    name = (payload.get("name") or "").strip()
+    email = (payload.get("email") or "").strip() or None
+    whatsapp = (payload.get("whatsapp") or "").strip() or None
+
+    if not name:
+        return jsonify({"error": "El nombre del cliente es obligatorio."}), 400
+
+    allowed, message = PlanUsageService.can_create(getattr(current_user, "company_id", None), PlanUsageService.RESOURCE_CLIENTS)
+    if not allowed:
+        return jsonify({"error": message}), 403
+
+    if email:
+        exists = scope_query_to_company(Client.query.filter_by(email=email, active=True), Client).first()
+        if exists is not None:
+            return jsonify({"error": "Ya existe un cliente activo con ese email."}), 409
+
+    client = Client(
+        company_id=getattr(current_user, "company_id", None),
+        name=name,
+        email=email,
+        whatsapp=whatsapp,
+        active=True,
+    )
+    db.session.add(client)
+    db.session.commit()
+
+    return jsonify({
+        "client": {
+            "id": client.id,
+            "name": client.name,
+            "email": client.email or "",
+            "whatsapp": client.whatsapp or "",
+        }
+    }), 201
