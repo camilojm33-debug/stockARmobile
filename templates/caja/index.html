@@ -103,6 +103,47 @@
     </div>
   </div>
 
+  {% if open_session %}
+  <div class="card app-card mb-3">
+    <div class="card-body">
+      <div class="d-flex flex-wrap justify-content-between align-items-center gap-2 mb-3">
+        <div>
+          <div class="small text-muted fw-semibold text-uppercase">Comprobantes pendientes</div>
+          <h2 class="h6 fw-bold mb-0">Ventas con comprobante solicitado sin emitir</h2>
+        </div>
+        <div class="d-flex gap-2">
+          <span class="badge text-bg-warning">{{ pending_comprobantes_count }} pendientes</span>
+          <span class="badge text-bg-primary">${{ "%.2f"|format(pending_comprobantes_total) }}</span>
+        </div>
+      </div>
+      {% if pending_comprobantes %}
+      <div class="table-responsive">
+        <table class="table table-sm align-middle mb-0">
+          <thead class="table-light">
+            <tr><th>Hora</th><th>Venta</th><th>Cliente</th><th>Tipo</th><th>Total</th><th>Vendedor</th><th></th></tr>
+          </thead>
+          <tbody>
+            {% for sale in pending_comprobantes %}
+            <tr>
+              <td>{{ sale.date.strftime('%H:%M') if sale.date else '-' }}</td>
+              <td>#{{ sale.id }}</td>
+              <td>{{ sale.customer or 'Consumidor final' }}</td>
+              <td><span class="badge text-bg-info">{{ (sale.tipo_comprobante or 'comprobante')|replace('_',' ')|title }}</span></td>
+              <td>${{ "%.2f"|format(sale.total_amount) }}</td>
+              <td>{{ sale.seller.username if sale.seller else '-' }}</td>
+              <td><a class="btn btn-outline-secondary btn-sm" href="{{ url_for('sales.view_sale', sale_id=sale.id) }}">Ver</a></td>
+            </tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      </div>
+      {% else %}
+      <div class="alert alert-light border mb-0 py-2">No hay comprobantes pendientes en la caja abierta actual.</div>
+      {% endif %}
+    </div>
+  </div>
+  {% endif %}
+
   <div class="row g-3 mb-4">
     <div class="{{ 'col-lg-4' if is_admin else 'col-lg-12' }}">
       <div class="card app-card h-100" id="section-apertura">

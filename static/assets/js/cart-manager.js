@@ -328,6 +328,9 @@ async function processCheckout() {
     descuento_general: document.getElementById('checkout-general-discount')?.value || '',
     recargo: document.getElementById('checkout-surcharge')?.value || '',
     document_type: document.getElementById('checkout-document-type')?.value || 'venta',
+    requiere_comprobante: document.getElementById('checkout-requiere-comprobante')?.checked || false,
+    tipo_comprobante: document.getElementById('checkout-tipo-comprobante')?.value || '',
+    observacion_comprobante: document.getElementById('checkout-observacion-comprobante')?.value || '',
     note: document.getElementById('checkout-note')?.value || '',
     checkout_token: ensureCheckoutToken()
   };
@@ -551,6 +554,9 @@ async function processMercadoPagoQrCheckout() {
     client_id: document.getElementById('checkout-client-select')?.value || '',
     note: document.getElementById('checkout-note')?.value || '',
     document_type: document.getElementById('checkout-document-type')?.value || '',
+    requiere_comprobante: document.getElementById('checkout-requiere-comprobante')?.checked || false,
+    tipo_comprobante: document.getElementById('checkout-tipo-comprobante')?.value || '',
+    observacion_comprobante: document.getElementById('checkout-observacion-comprobante')?.value || '',
     checkout_token: ensureCheckoutToken(),
   };
   if (checkoutProcessButton) {
@@ -715,6 +721,7 @@ document.addEventListener('DOMContentLoaded', () => {
   loadCart();
   setupFastScanner();
   setupCheckoutPaymentBehavior();
+  setupComprobanteRequestBehavior();
   ['checkout-general-discount', 'checkout-surcharge', 'checkout-paid-amount', 'checkout-paid-amount-2'].forEach(id => {
     document.getElementById(id)?.addEventListener('input', updateCheckoutTotals);
   });
@@ -724,6 +731,28 @@ document.addEventListener('DOMContentLoaded', () => {
     }
   });
 });
+
+function setupComprobanteRequestBehavior() {
+  const toggle = document.getElementById('checkout-requiere-comprobante');
+  const panel = document.getElementById('checkout-comprobante-panel');
+  const tipo = document.getElementById('checkout-tipo-comprobante');
+  if (!toggle || !panel || !tipo) return;
+
+  const sync = () => {
+    const enabled = Boolean(toggle.checked);
+    panel.classList.toggle('d-none', !enabled);
+    tipo.disabled = !enabled;
+    const obs = document.getElementById('checkout-observacion-comprobante');
+    if (obs) obs.disabled = !enabled;
+    if (!enabled) {
+      tipo.value = 'factura_c';
+      if (obs) obs.value = '';
+    }
+  };
+
+  toggle.addEventListener('change', sync);
+  sync();
+}
 
 function setupFastScanner() {
   const input = document.getElementById('fast-scanner-input');

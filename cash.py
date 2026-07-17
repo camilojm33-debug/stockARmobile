@@ -213,7 +213,7 @@ def _session_ticket_text(session):
 @bp.route("/", methods=["GET", "POST"])
 @tenant_required
 def index():
-    from app import CashMovement, CashSession, Company, User, db, record_audit, scope_query_to_company, utcnow
+    from app import CashMovement, CashSession, Company, Sale, User, db, record_audit, scope_query_to_company, utcnow
 
     status_filter = (request.args.get("status") or "").strip().lower()
     user_filter = request.args.get("user_id", type=int)
@@ -368,6 +368,22 @@ def index():
 
     session_summary = _session_summary(open_session) if open_session else None
     session_summaries = {session.id: _session_summary(session) for session in sessions}
+    pending_comprobantes = []
+    pending_comprobantes_total = Decimal("0.00")
+    if open_session:
+        pending_query = (
+            scope_query_to_company(Sale.query, Sale)
+            .filter(
+                Sale.cash_session_id == open_session.id,
+                Sale.requiere_comprobante.is_(True),
+                Sale.comprobante_emitido.is_(False),
+            )
+            .order_by(Sale.date.desc())
+        )
+        pending_comprobantes = pending_query.all()
+        for pending_sale in pending_comprobantes:
+            pending_comprobantes_total += _to_decimal(getattr(pending_sale, "total_amount", 0))
+
     employees = []
     if _is_admin():
         employees = scope_query_to_company(User.query.filter_by(active=True), User).order_by(User.username).all()
@@ -387,6 +403,9 @@ def index():
         search_query=request.args.get("q", ""),
         stale_open_session=stale_open_session,
         close_rows=_build_cash_close_rows(open_session) if open_session else [],
+        pending_comprobantes=pending_comprobantes,
+        pending_comprobantes_count=len(pending_comprobantes),
+        pending_comprobantes_total=pending_comprobantes_total,
     )
 
 

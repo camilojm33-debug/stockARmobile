@@ -42,6 +42,25 @@ def _to_decimal(value, default="0.00"):
         return Decimal(default)
 
 
+def _is_truthy(value):
+    if isinstance(value, bool):
+        return value
+    return str(value or "").strip().lower() in {"1", "true", "yes", "si", "on"}
+
+
+def _clean_comprobante_type(raw_value):
+    allowed = {
+        "factura_a",
+        "factura_b",
+        "factura_c",
+        "ticket_fiscal",
+        "remito",
+        "otro",
+    }
+    value = (raw_value or "").strip().lower()
+    return value if value in allowed else None
+
+
 def _sanitize_checkout_token(raw_value):
     token = (raw_value or "").strip()
     if not token:
@@ -90,6 +109,9 @@ def _pos_qr_draft_session_key():
 
 def _pos_qr_snapshot(items, payload, *, total_amount, currency):
     normalized_items = []
+    requiere_comprobante = _is_truthy(payload.get("requiere_comprobante"))
+    tipo_comprobante = _clean_comprobante_type(payload.get("tipo_comprobante")) if requiere_comprobante else None
+    observacion_comprobante = (payload.get("observacion_comprobante") or "").strip()[:255] if requiere_comprobante else ""
     for item in items:
         normalized_items.append(
             {
@@ -107,6 +129,9 @@ def _pos_qr_snapshot(items, payload, *, total_amount, currency):
         "checkout_token": payload.get("checkout_token") or payload.get("checkoutToken") or "",
         "note": payload.get("note") or "",
         "document_type": payload.get("document_type") or payload.get("tipo_comprobante") or "venta",
+        "requiere_comprobante": requiere_comprobante,
+        "tipo_comprobante": tipo_comprobante,
+        "observacion_comprobante": observacion_comprobante,
         "descuento_general": float(payload.get("descuento_general") or payload.get("general_discount") or 0),
         "recargo": float(payload.get("recargo") or payload.get("surcharge") or 0),
         "total_amount": float(total_amount),
@@ -569,6 +594,9 @@ def api_mp_qr_finalize():
         "payment_method": "QR Mercado Pago",
         "monto_pago": payment.amount,
         "document_type": snapshot.get("document_type") or "venta",
+        "requiere_comprobante": snapshot.get("requiere_comprobante"),
+        "tipo_comprobante": snapshot.get("tipo_comprobante"),
+        "observacion_comprobante": snapshot.get("observacion_comprobante"),
         "note": snapshot.get("note") or "",
         "qr_reference": payment.payment_id or payment.preference_id or f"pos-{payment.id}",
         "status": "confirmada",
@@ -652,6 +680,9 @@ def _create_sale_from_items(items, data, json_response=False):
             str(final_total),
         )
         current_app.logger.info("[sales] creando Sale")
+        requiere_comprobante = _is_truthy(data.get("requiere_comprobante"))
+        tipo_comprobante = _clean_comprobante_type(data.get("tipo_comprobante")) if requiere_comprobante else None
+        observacion_comprobante = (data.get("observacion_comprobante") or "").strip()[:255] if requiere_comprobante else None
         sale = Sale(
             customer=client.name if client else current_user.username,
             subtotal=subtotal,
@@ -665,6 +696,10 @@ def _create_sale_from_items(items, data, json_response=False):
             surcharge=surcharge,
             client_txn_id=checkout_token,
             document_type=data.get("document_type") or data.get("tipo_comprobante") or "venta",
+            requiere_comprobante=requiere_comprobante,
+            tipo_comprobante=tipo_comprobante,
+            observacion_comprobante=observacion_comprobante or None,
+            comprobante_emitido=False,
             status=data.get("status") or "confirmada",
             qr_reference=data.get("qr_reference"),
             note=data.get("note"),
@@ -809,6 +844,21 @@ def edit(sale_id):
     return render_template("ventas/edit_sale.html", sale=sale, clients=clients)
 
 
+@bp.route("/<int:sale_id>/comprobante-emitido", methods=["POST"])
+@tenant_required
+def mark_comprobante_issued(sale_id):
+    from app import Sale, db, scope_query_to_company
+
+    sale = scope_query_to_company(Sale.query, Sale).filter(Sale.id == sale_id).first_or_404()
+    if not bool(sale.requiere_comprobante):
+        flash("La venta no tiene comprobante solicitado.", "warning")
+        return redirect(url_for("sales.view_sale", sale_id=sale.id))
+    sale.comprobante_emitido = True
+    db.session.commit()
+    flash("Comprobante marcado como emitido.", "success")
+    return redirect(url_for("sales.view_sale", sale_id=sale.id))
+
+
 @bp.route("/<int:sale_id>/delete", methods=["POST"])
 @tenant_required
 def delete_sale(sale_id):
@@ -927,6 +977,9 @@ def api_recent_sales():
                     "customer": sale.customer or "",
                     "date": sale.date.isoformat() if sale.date else None,
                     "total_amount": float(sale.total_amount or 0),
+                    "requiere_comprobante": bool(getattr(sale, "requiere_comprobante", False)),
+                    "tipo_comprobante": getattr(sale, "tipo_comprobante", None),
+                    "comprobante_emitido": bool(getattr(sale, "comprobante_emitido", False)),
                 }
                 for sale in sales
             ]

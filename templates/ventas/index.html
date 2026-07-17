@@ -142,12 +142,24 @@
         <div class="card-header bg-white fw-bold">Ventas recientes</div>
         <div class="table-responsive">
           <table class="table table-sm mb-0">
-            <thead><tr><th>ID</th><th>Cliente</th><th>Fecha</th><th>Total</th></tr></thead>
+            <thead><tr><th>ID</th><th>Cliente</th><th>Comprobante</th><th>Fecha</th><th>Total</th></tr></thead>
             <tbody>
               {% for sale in sales %}
-              <tr><td><a href="{{ url_for('sales.view_sale', sale_id=sale.id) }}">#{{ sale.id }}</a></td><td>{{ sale.customer or '-' }}</td><td>{{ sale.date.strftime('%Y-%m-%d %H:%M') }}</td><td>${{ "%.2f"|format(sale.total_amount) }}</td></tr>
+              <tr>
+                <td><a href="{{ url_for('sales.view_sale', sale_id=sale.id) }}">#{{ sale.id }}</a></td>
+                <td>{{ sale.customer or '-' }}</td>
+                <td>
+                  {% if sale.requiere_comprobante and sale.tipo_comprobante %}
+                  <span class="badge {{ 'text-bg-success' if sale.comprobante_emitido else 'text-bg-warning' }}">{{ sale.tipo_comprobante|replace('_',' ')|title }}</span>
+                  {% else %}
+                  <span class="text-muted small">-</span>
+                  {% endif %}
+                </td>
+                <td>{{ sale.date.strftime('%Y-%m-%d %H:%M') }}</td>
+                <td>${{ "%.2f"|format(sale.total_amount) }}</td>
+              </tr>
               {% else %}
-              <tr><td colspan="4" class="text-center text-muted py-3">No hay ventas registradas.</td></tr>
+              <tr><td colspan="5" class="text-center text-muted py-3">No hay ventas registradas.</td></tr>
               {% endfor %}
             </tbody>
           </table>
@@ -160,12 +172,24 @@
     <div class="card-header bg-white fw-bold">Ventas recientes</div>
     <div class="table-responsive">
       <table class="table table-sm mb-0">
-        <thead><tr><th>ID</th><th>Cliente</th><th>Fecha</th><th>Total</th></tr></thead>
+        <thead><tr><th>ID</th><th>Cliente</th><th>Comprobante</th><th>Fecha</th><th>Total</th></tr></thead>
         <tbody>
           {% for sale in sales %}
-          <tr><td><a href="{{ url_for('sales.view_sale', sale_id=sale.id) }}">#{{ sale.id }}</a></td><td>{{ sale.customer or '-' }}</td><td>{{ sale.date.strftime('%Y-%m-%d %H:%M') }}</td><td>${{ "%.2f"|format(sale.total_amount) }}</td></tr>
+          <tr>
+            <td><a href="{{ url_for('sales.view_sale', sale_id=sale.id) }}">#{{ sale.id }}</a></td>
+            <td>{{ sale.customer or '-' }}</td>
+            <td>
+              {% if sale.requiere_comprobante and sale.tipo_comprobante %}
+              <span class="badge {{ 'text-bg-success' if sale.comprobante_emitido else 'text-bg-warning' }}">{{ sale.tipo_comprobante|replace('_',' ')|title }}</span>
+              {% else %}
+              <span class="text-muted small">-</span>
+              {% endif %}
+            </td>
+            <td>{{ sale.date.strftime('%Y-%m-%d %H:%M') }}</td>
+            <td>${{ "%.2f"|format(sale.total_amount) }}</td>
+          </tr>
           {% else %}
-          <tr><td colspan="4" class="text-center text-muted py-3">No hay ventas registradas.</td></tr>
+          <tr><td colspan="5" class="text-center text-muted py-3">No hay ventas registradas.</td></tr>
           {% endfor %}
         </tbody>
       </table>
@@ -202,7 +226,7 @@
                 <option value="">Consumidor final</option>
                 {% for cliente in clientes %}<option value="{{ cliente.id }}">{{ cliente.name }}</option>{% endfor %}
               </select>
-              <div class="form-text">Elegí cliente si necesita factura a nombre de alguien.</div>
+              <div class="form-text">Elegí cliente si necesita que el comprobante salga a su nombre.</div>
             </div>
             <div class="col-md-6">
               <label class="form-label">Comprobante / Factura</label>
@@ -215,7 +239,29 @@
                 <option value="remito">Remito</option>
                 <option value="apartado">Apartado</option>
               </select>
-              <div class="form-text">Seleccioná el tipo de comprobante que te pide el cliente.</div>
+              <div class="form-check form-switch border rounded p-2">
+                <input class="form-check-input" type="checkbox" role="switch" id="checkout-requiere-comprobante" name="requiere_comprobante" value="1">
+                <label class="form-check-label fw-semibold" for="checkout-requiere-comprobante">El cliente solicita comprobante</label>
+              </div>
+              <div id="checkout-comprobante-panel" class="mt-2 d-none">
+                <div class="row g-2">
+                  <div class="col-md-6">
+                    <label class="form-label">Tipo de comprobante</label>
+                    <select id="checkout-tipo-comprobante" class="form-select" name="tipo_comprobante">
+                      <option value="factura_a">Factura A</option>
+                      <option value="factura_b">Factura B</option>
+                      <option value="factura_c" selected>Factura C</option>
+                      <option value="ticket_fiscal">Ticket Fiscal</option>
+                      <option value="remito">Remito</option>
+                      <option value="otro">Otro</option>
+                    </select>
+                  </div>
+                  <div class="col-md-6">
+                    <label class="form-label">Observaciones</label>
+                    <input id="checkout-observacion-comprobante" class="form-control" name="observacion_comprobante" maxlength="255" placeholder="Dato adicional (opcional)">
+                  </div>
+                </div>
+              </div>
             </div>
             <div class="col-md-6">
               <label class="form-label">Metodo de pago</label>

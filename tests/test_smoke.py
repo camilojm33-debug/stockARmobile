@@ -198,6 +198,89 @@ def test_cash_close_breakdown_counts_tarjeta_sales():
     assert "$18000.00" in html
 
 
+def test_sale_persists_required_comprobante_fields():
+    client = stock_app.app.test_client()
+    client.post("/auth/login", data={"username": "empresa_admin", "password": "admin123"})
+
+    open_cash_session(client)
+
+    response = client.post(
+        "/ventas/api/checkout",
+        json={
+            "items": [{"productId": 1, "quantity": 1}],
+            "metodo_pago": "EFECTIVO",
+            "requiere_comprobante": True,
+            "tipo_comprobante": "factura_c",
+            "observacion_comprobante": "Solicita CUIT en cabecera",
+        },
+        headers={"X-Cart-Tenant": "1:1"},
+    )
+    assert response.status_code == 200
+
+    with stock_app.app.app_context():
+        sale = Sale.query.order_by(Sale.id.desc()).first()
+        assert sale is not None
+        assert sale.requiere_comprobante is True
+        assert sale.tipo_comprobante == "factura_c"
+        assert sale.observacion_comprobante == "Solicita CUIT en cabecera"
+        assert sale.comprobante_emitido is False
+
+
+def test_cash_page_shows_pending_comprobantes_card():
+    client = stock_app.app.test_client()
+    client.post("/auth/login", data={"username": "empresa_admin", "password": "admin123"})
+
+    open_cash_session(client)
+
+    response = client.post(
+        "/ventas/api/checkout",
+        json={
+            "items": [{"productId": 1, "quantity": 1}],
+            "metodo_pago": "EFECTIVO",
+            "requiere_comprobante": True,
+            "tipo_comprobante": "factura_b",
+        },
+        headers={"X-Cart-Tenant": "1:1"},
+    )
+    assert response.status_code == 200
+
+    cash_page = client.get("/caja/")
+    assert cash_page.status_code == 200
+    html = cash_page.data.decode("utf-8")
+    assert "Comprobantes pendientes" in html
+    assert "#1" in html
+    assert "Factura B" in html
+    assert "$18000.00" in html
+
+
+def test_mark_sale_comprobante_as_issued():
+    client = stock_app.app.test_client()
+    client.post("/auth/login", data={"username": "empresa_admin", "password": "admin123"})
+
+    open_cash_session(client)
+
+    response = client.post(
+        "/ventas/api/checkout",
+        json={
+            "items": [{"productId": 1, "quantity": 1}],
+            "metodo_pago": "EFECTIVO",
+            "requiere_comprobante": True,
+            "tipo_comprobante": "factura_a",
+        },
+        headers={"X-Cart-Tenant": "1:1"},
+    )
+    assert response.status_code == 200
+    sale_id = response.get_json()["sale_id"]
+
+    mark_response = client.post(f"/ventas/{sale_id}/comprobante-emitido", follow_redirects=True)
+    assert mark_response.status_code == 200
+
+    with stock_app.app.app_context():
+        sale = db.session.get(Sale, sale_id)
+        assert sale is not None
+        assert sale.comprobante_emitido is True
+
+
 def test_final_audit_full_sales_flow_consistency():
     client = stock_app.app.test_client()
     client.post("/auth/login", data={"username": "negocio_admin", "password": "admin123"})
