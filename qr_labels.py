@@ -508,6 +508,47 @@ def _label_pixel_size(width_mm, height_mm, px_per_mm=20):
     return max(200, int(width_mm * px_per_mm)), max(120, int(height_mm * px_per_mm))
 
 
+def _resolve_barcode_mode(code_value, include_ean, include_code128, *, width_mm, height_mm):
+    """Resuelve el tipo de codigo mas legible segun flags y tamano fisico de etiqueta.
+
+    - EAN13 requiere mas ancho y altura util para lectura confiable.
+    - Si no hay espacio para EAN13, se usa Code128 como fallback escaneable.
+    """
+    if not (include_ean or include_code128):
+        return None
+
+    clean = str(code_value or "").strip()
+    digits_only = clean.isdigit()
+    # Umbrales practicos para lectura en impresoras termicas y lectores 1D comunes.
+    ean13_supported_size = width_mm >= 38 and height_mm >= 20
+
+    if include_ean and digits_only and ean13_supported_size:
+        return "ean13"
+    if include_code128:
+        return "code128"
+    if include_ean:
+        return "code128"
+    return None
+
+
+def _barcode_box_mm(width_mm, height_mm, mode):
+    # Mantiene tamanos fisicos que priorizan legibilidad de lector.
+    if mode == "ean13":
+        min_w_mm = 31.0
+        min_h_mm = 13.0
+        target_w_mm = max(min_w_mm, width_mm * 0.72)
+        target_h_mm = max(min_h_mm, height_mm * 0.24)
+    else:
+        min_w_mm = 24.0
+        min_h_mm = 11.0
+        target_w_mm = max(min_w_mm, width_mm * 0.62)
+        target_h_mm = max(min_h_mm, height_mm * 0.20)
+
+    safe_w_mm = max(16.0, min(width_mm - 2.5, target_w_mm))
+    safe_h_mm = max(9.0, min(height_mm - 2.0, target_h_mm))
+    return safe_w_mm, safe_h_mm
+
+
 def _build_current_a4_pdf(products, copies, size_key):
     width_mm, height_mm = _bulk_dimensions_mm(size_key)
     label_w = width_mm * mm
@@ -623,13 +664,29 @@ def _create_sheet_label_image(
     if include_ean or include_code128:
         draw = ImageDraw.Draw(label)
         code_value = str(product.barcode or product.id)
+        barcode_mode = _resolve_barcode_mode(
+            code_value,
+            include_ean,
+            include_code128,
+            width_mm=width_mm,
+            height_mm=height_mm,
+        )
         try:
-            code_img = generate_code128_code(code_value) if include_code128 else generate_ean13_code(code_value)
-            code_h = max(28, int(label.height * 0.15))
-            code_w = max(80, int(label.width * 0.42))
+            if barcode_mode == "ean13":
+                code_img = generate_ean13_code(code_value)
+            elif barcode_mode == "code128":
+                code_img = generate_code128_code(code_value)
+            else:
+                code_img = None
+            if code_img is None:
+                raise ValueError("Modo de codigo no disponible")
+
+            code_w_mm, code_h_mm = _barcode_box_mm(width_mm, height_mm, barcode_mode)
+            code_w = max(80, int((code_w_mm / width_mm) * label.width))
+            code_h = max(26, int((code_h_mm / height_mm) * label.height))
             code_img = code_img.resize((code_w, code_h), Image.Resampling.LANCZOS)
-            x = max(2, int(label.width * 0.02))
-            y = label.height - code_h - max(2, int(label.height * 0.02))
+            x = max(2, int((1.2 / width_mm) * label.width))
+            y = label.height - code_h - max(2, int((1.1 / height_mm) * label.height))
             label.paste(code_img, (x, y))
             draw.rectangle((x - 1, y - 1, x + code_w + 1, y + code_h + 1), outline="black", width=1)
         except Exception:
@@ -681,10 +738,26 @@ def _build_custom_sheet_a4_pdf(product, quantity, size_key, *, include_name, inc
 
         if include_ean or include_code128:
             code_value = str(product.barcode or product.id)
+            barcode_mode = _resolve_barcode_mode(
+                code_value,
+                include_ean,
+                include_code128,
+                width_mm=width_mm,
+                height_mm=height_mm,
+            )
             try:
-                code_img = generate_code128_code(code_value) if include_code128 else generate_ean13_code(code_value)
-                code_w = label_w * 0.42
-                code_h = label_h * 0.18
+                if barcode_mode == "ean13":
+                    code_img = generate_ean13_code(code_value)
+                elif barcode_mode == "code128":
+                    code_img = generate_code128_code(code_value)
+                else:
+                    code_img = None
+                if code_img is None:
+                    raise ValueError("Modo de codigo no disponible")
+
+                code_w_mm, code_h_mm = _barcode_box_mm(width_mm, height_mm, barcode_mode)
+                code_w = code_w_mm * mm
+                code_h = code_h_mm * mm
                 code_img = code_img.resize((max(80, int(code_w * 4)), max(26, int(code_h * 4))), Image.Resampling.LANCZOS)
                 code_buffer = BytesIO()
                 code_img.save(code_buffer, "PNG")
