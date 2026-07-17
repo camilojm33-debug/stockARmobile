@@ -1,8 +1,10 @@
 """Modulo de caja: apertura, movimientos, arqueo, cierre y administracion."""
 
 import csv
+from datetime import datetime, timedelta, timezone
 from decimal import Decimal
 from io import BytesIO, StringIO
+from zoneinfo import ZoneInfo
 
 from flask import Blueprint, abort, flash, make_response, redirect, render_template, request, url_for
 from flask_login import current_user
@@ -40,6 +42,29 @@ def _format_decimal(value):
 
 def _is_admin():
     return getattr(current_user, "role", None) == "admin"
+
+
+def _company_timezone_name(company):
+    return (getattr(company, "timezone", None) or "America/Argentina/Buenos_Aires").strip() or "America/Argentina/Buenos_Aires"
+
+
+def _resolve_timezone(tz_name):
+    try:
+        return ZoneInfo(tz_name)
+    except Exception:
+        return timezone(timedelta(hours=-3))
+
+
+def _utc_naive_to_local_date(value, tz_name):
+    if value is None:
+        return None
+    tz = _resolve_timezone(tz_name)
+    return value.replace(tzinfo=timezone.utc).astimezone(tz).date()
+
+
+def _local_today_date(tz_name):
+    tz = _resolve_timezone(tz_name)
+    return datetime.now(timezone.utc).astimezone(tz).date()
 
 
 def _base_session_query():
@@ -204,9 +229,14 @@ def index():
         sessions_query = sessions_query.filter((CashSession.note.ilike(like)) | (CashSession.closing_note.ilike(like)) | (CashSession.void_reason.ilike(like)))
 
     open_session = _current_open_session()
+    company = Company.query.filter_by(id=getattr(current_user, "company_id", None)).first()
+    company_tz = _company_timezone_name(company)
     stale_open_session = None
-    now = utcnow()
-    if open_session and open_session.opened_at and open_session.opened_at.date() < now.date():
+    if (
+        open_session
+        and open_session.opened_at
+        and _utc_naive_to_local_date(open_session.opened_at, company_tz) < _local_today_date(company_tz)
+    ):
         stale_open_session = open_session
 
     if request.method == "POST":
@@ -338,7 +368,6 @@ def index():
 
     session_summary = _session_summary(open_session) if open_session else None
     session_summaries = {session.id: _session_summary(session) for session in sessions}
-    company = Company.query.filter_by(id=getattr(current_user, "company_id", None)).first()
     employees = []
     if _is_admin():
         employees = scope_query_to_company(User.query.filter_by(active=True), User).order_by(User.username).all()
