@@ -25,7 +25,7 @@ def build_dashboard_context():
 
     can_view_economic_metrics = _can_view_economic_metrics()
 
-    confirmed_sales_base = _confirmed_sales_query(Sale.query, Sale)
+    confirmed_sales_base = _confirmed_sales_query(scope_query_to_company(Sale.query, Sale), Sale)
     total_sales_amount = _sum(Sale.total_amount, model=Sale, base_query=confirmed_sales_base) if can_view_economic_metrics else Decimal("0.00")
     sales_today = confirmed_sales_base.filter(Sale.date >= today_start).count()
     sales_week = confirmed_sales_base.filter(Sale.date >= week_start).count()
@@ -102,7 +102,10 @@ def build_dashboard_context():
         Product,
     ).limit(8).all()
     recent_sales = (
-        _confirmed_sales_query(Sale.query.options(selectinload(Sale.client)), Sale).order_by(Sale.date.desc()).limit(5).all()
+        _confirmed_sales_query(scope_query_to_company(Sale.query.options(selectinload(Sale.client)), Sale), Sale)
+        .order_by(Sale.date.desc())
+        .limit(5)
+        .all()
         if can_view_economic_metrics
         else []
     )
@@ -122,7 +125,7 @@ def build_dashboard_context():
             CashSession.query.filter(CashSession.status == "cerrada", CashSession.closed_at >= today_start),
             CashSession,
         ).count()
-        today_sales = _confirmed_sales_query(Sale.query.filter(Sale.date >= today_start), Sale).all()
+        today_sales = _confirmed_sales_query(scope_query_to_company(Sale.query.filter(Sale.date >= today_start), Sale), Sale).all()
         for sale in today_sales:
             breakdown = sale_payment_breakdown(sale)
             cash_stats["sold_cash_today"] += breakdown["efectivo"]

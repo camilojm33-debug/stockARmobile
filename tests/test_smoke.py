@@ -1011,6 +1011,67 @@ def test_cross_tenant_id_url_access_is_blocked():
     assert "Cliente Empresa Dos" not in report_csv.data.decode("utf-8")
 
 
+def test_dashboard_metrics_do_not_leak_between_companies():
+    from services.dashboard_service import build_dashboard_context
+
+    with stock_app.app.app_context():
+        from app import Sale, utcnow
+
+        company_a = Company.query.filter_by(name="Empresa Demo").first()
+        assert company_a is not None
+
+        company_b = Company(name="Empresa B Dashboard", active=True)
+        db.session.add(company_b)
+        db.session.flush()
+
+        user_b = User(
+            username="dashboard_b_admin",
+            email="dashboard_b_admin@test.local",
+            role="admin",
+            company_id=company_b.id,
+            active=True,
+        )
+        user_b.set_password("admin123")
+        db.session.add(user_b)
+
+        for _ in range(5):
+            db.session.add(
+                Sale(
+                    date=utcnow(),
+                    customer="Cliente A",
+                    subtotal=20000,
+                    discount=0,
+                    tax=0,
+                    total_amount=20000,
+                    payment_method="EFECTIVO",
+                    status="confirmada",
+                    company_id=company_a.id,
+                )
+            )
+        db.session.commit()
+
+        admin_a = User.query.filter_by(username="negocio_admin").first()
+        assert admin_a is not None
+
+        with stock_app.app.test_request_context("/dashboard/"):
+            login_user(admin_a)
+            context_a = build_dashboard_context()
+            logout_user()
+
+        with stock_app.app.test_request_context("/dashboard/"):
+            login_user(user_b)
+            context_b = build_dashboard_context()
+            logout_user()
+
+        assert float(context_a["ingresos_mes"] or 0) == 100000.0
+        assert float(context_a["ganancia_mes"] or 0) == 100000.0
+
+        assert float(context_b["ingresos_mes"] or 0) == 0.0
+        assert float(context_b["ganancia_mes"] or 0) == 0.0
+        assert int(context_b["ventas_mes"] or 0) == 0
+        assert all(float(value or 0) == 0.0 for value in context_b["chart_sales"])
+
+
 def test_product_barcode_is_unique_per_company():
     client = stock_app.app.test_client()
 
