@@ -2707,6 +2707,60 @@ def test_checkout_during_trial_does_not_switch_to_pending_or_30_days():
         assert subscription.ends_at == company.trial_ends_at
 
 
+def test_superadmin_create_subscription_keeps_trial_when_company_is_new():
+    client = stock_app.app.test_client()
+
+    with stock_app.app.app_context():
+        from app import Plan, Subscription
+        from services.plan_service import PlanService
+
+        PlanService.ensure_defaults(db.session)
+        company = Company.query.filter_by(name="Empresa Demo").first()
+        assert company is not None
+        company.created_at = stock_app.utcnow()
+        company.trial_ends_at = stock_app.utcnow() + timedelta(days=10)
+
+        Subscription.query.filter_by(company_id=company.id).delete(synchronize_session=False)
+        db.session.commit()
+
+        paid_plan = Plan.query.filter_by(code="entrepreneur").first()
+        assert paid_plan is not None
+        company_id = company.id
+        paid_plan_id = paid_plan.id
+
+    login = client.post("/auth/login", data={"username": "superadmin", "password": "admin123"}, follow_redirects=False)
+    assert login.status_code in (301, 302)
+
+    response = client.post(
+        "/superadmin/subscriptions/create",
+        data={
+            "company_id": company_id,
+            "plan_id": paid_plan_id,
+            "status": "pending",
+            "renewal_enabled": "1",
+        },
+        follow_redirects=False,
+    )
+    assert response.status_code in (301, 302)
+
+    with stock_app.app.app_context():
+        from app import Subscription
+
+        company = Company.query.filter_by(name="Empresa Demo").first()
+        assert company is not None
+
+        subscription = (
+            Subscription.query.filter_by(company_id=company.id)
+            .order_by(Subscription.id.desc())
+            .first()
+        )
+        assert subscription is not None
+        assert (subscription.status or "").lower() == "trial"
+        assert subscription.trial_end == company.trial_ends_at
+        assert subscription.next_billing_date == company.trial_ends_at
+        assert subscription.ends_at == company.trial_ends_at
+
+
 def test_active_subscription_with_past_billing_date_is_blocked():
     client = stock_app.app.test_client()
 

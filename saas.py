@@ -737,6 +737,7 @@ def subscriptions_panel():
 @superadmin_required
 def subscriptions_create():
     from app import AuditLog, Company, Plan, Subscription, db
+    from services.subscription_service import SubscriptionService
 
     _require_superadmin()
     company_id = request.form.get("company_id", type=int)
@@ -753,13 +754,33 @@ def subscriptions_create():
         return _redirect_back("saas.subscriptions_panel")
 
     duration_days = int(plan.duration_days or 30)
-    next_due = next_billing_date or (start_date + timedelta(days=duration_days))
+    trial_end = SubscriptionService.trial_end_for_company(company, now=start_date)
+    if company.trial_ends_at is None and trial_end is not None:
+        company.trial_ends_at = trial_end
+
+    has_successful_payment = (
+        db.session.query(Subscription.id)
+        .filter(Subscription.company_id == company.id, Subscription.last_payment_date.isnot(None))
+        .first()
+        is not None
+    )
+    in_trial_window = bool(trial_end and start_date <= trial_end)
+
+    # Alta manual desde SuperAdmin: para empresas nuevas sin pago aprobado,
+    # mantenemos trial de 10 dias aunque el form venga en pending por defecto.
+    if status == "pending" and float(plan.price or 0) > 0 and in_trial_window and not has_successful_payment:
+        status = "trial"
+        next_due = trial_end
+    else:
+        next_due = next_billing_date or (start_date + timedelta(days=duration_days))
+
     subscription = Subscription(
         company_id=company.id,
         plan_id=plan.id,
         status=status,
         start_date=start_date,
         starts_at=start_date,
+        trial_end=trial_end if status == "trial" else None,
         ends_at=next_due,
         next_billing_date=next_due,
         renewal_enabled=renewal_enabled,

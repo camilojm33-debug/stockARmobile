@@ -504,7 +504,11 @@ def subscription_portal():
     )
     referral_attribution = ReferralAttribution.query.filter_by(company_id=company.id).first()
     managed_by_seller = referral_attribution.seller.user.username if referral_attribution and referral_attribution.seller and referral_attribution.seller.user else None
-    reference_date = effective_state.get("reference_date") or _subscription_expiration(subscription, company)
+    reference_date = (
+        effective_state.get("reference_date")
+        or effective_state.get("next_billing_date")
+        or effective_state.get("trial_ends_at")
+    )
     days_remaining = _days_remaining(reference_date)
     status_badge = _subscription_state_badge(effective_state.get("status"), days_remaining)
     plan_features = _plan_features_label(subscription.plan if subscription else None)
