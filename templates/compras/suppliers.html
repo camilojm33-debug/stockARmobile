@@ -1,0 +1,153 @@
+{% extends "base_master.html" %}
+
+{% block title %}Proveedores - StockArmobile{% endblock %}
+
+{% block content %}
+<div class="app-shell">
+  <nav aria-label="breadcrumb" class="mb-2">
+    <ol class="breadcrumb mb-1">
+      <li class="breadcrumb-item"><a href="{{ url_for('company_billing.company_settings') if current_user.role != 'superadmin' else url_for('saas.index') }}">{{ 'Mi Empresa' if current_user.role != 'superadmin' else 'Panel SaaS' }}</a></li>
+      <li class="breadcrumb-item"><a href="{{ url_for('purchases.index', company_id=selected_company_id) if selected_company_id else url_for('purchases.index') }}">Compras</a></li>
+      <li class="breadcrumb-item active" aria-current="page">Proveedores</li>
+    </ol>
+  </nav>
+
+  <div class="d-flex flex-wrap justify-content-between align-items-center gap-3 mb-4">
+    <div>
+      <span class="page-kicker"><i class="bi bi-people"></i> Abastecimiento</span>
+      <h1 class="h3 fw-bold mb-0">Proveedores</h1>
+      <p class="text-muted mb-0">Alta, edición, estado e historial de compras asociado.</p>
+    </div>
+    <a class="btn btn-outline-secondary" href="{{ url_for('purchases.index', company_id=selected_company_id) if selected_company_id else url_for('purchases.index') }}"><i class="bi bi-arrow-left me-1"></i>Volver a Compras</a>
+  </div>
+
+  {% if current_user.role == 'superadmin' %}
+  <div class="card app-card mb-3">
+    <div class="card-body">
+      <form class="row g-2 align-items-end" method="get" action="{{ url_for('purchases.suppliers_panel') }}">
+        <div class="col-md-8">
+          <label class="form-label">Empresa</label>
+          <select class="form-select" name="company_id" required>
+            <option value="">Seleccionar empresa...</option>
+            {% for company in companies %}
+            <option value="{{ company.id }}" {% if selected_company_id == company.id %}selected{% endif %}>{{ company.name }}</option>
+            {% endfor %}
+          </select>
+        </div>
+        <div class="col-md-4 d-grid">
+          <button class="btn btn-primary" type="submit">Abrir proveedores</button>
+        </div>
+      </form>
+      {% if company_required %}
+      <div class="alert alert-warning mt-3 mb-0">Seleccioná una empresa para gestionar proveedores.</div>
+      {% endif %}
+    </div>
+  </div>
+  {% endif %}
+
+  {% if not company_required %}
+  <div class="row g-3 mb-4">
+    <div class="col-lg-7">
+      <div class="card app-card h-100">
+        <div class="card-header bg-white fw-bold">Listado de proveedores</div>
+        <div class="card-body">
+          <form class="row g-2 mb-3" method="get" action="{{ url_for('purchases.suppliers_panel') }}">
+            {% if selected_company_id %}<input type="hidden" name="company_id" value="{{ selected_company_id }}">{% endif %}
+            <div class="col-md-7"><input class="form-control" name="q" value="{{ search }}" placeholder="Buscar por nombre, email, teléfono o dirección"></div>
+            <div class="col-md-3">
+              <select class="form-select" name="status">
+                <option value="active" {% if status_filter == 'active' %}selected{% endif %}>Activos</option>
+                <option value="inactive" {% if status_filter == 'inactive' %}selected{% endif %}>Inactivos</option>
+                <option value="all" {% if status_filter == 'all' %}selected{% endif %}>Todos</option>
+              </select>
+            </div>
+            <div class="col-md-2 d-grid"><button class="btn btn-outline-primary" type="submit">Filtrar</button></div>
+          </form>
+
+          <div class="table-responsive">
+            <table class="table table-hover align-middle mb-0">
+              <thead>
+                <tr>
+                  <th>Proveedor</th>
+                  <th>Contacto</th>
+                  <th>Compras</th>
+                  <th>Estado</th>
+                  <th class="text-end">Acciones</th>
+                </tr>
+              </thead>
+              <tbody>
+                {% for supplier in suppliers %}
+                {% set stats = supplier_stats.get(supplier.id, {'purchase_count': 0, 'total_amount': 0}) %}
+                <tr>
+                  <td>
+                    <div class="fw-semibold">{{ supplier.name }}</div>
+                    <div class="small text-muted">{{ supplier.address or 'Sin dirección' }}</div>
+                  </td>
+                  <td>
+                    <div class="small">{{ supplier.phone or '—' }}</div>
+                    <div class="small">{{ supplier.whatsapp or '—' }}</div>
+                    <div class="small text-muted">{{ supplier.email or '—' }}</div>
+                  </td>
+                  <td>
+                    <div class="small">{{ stats.purchase_count }} compras</div>
+                    <div class="small text-muted">${{ '%.2f'|format(stats.total_amount or 0) }}</div>
+                  </td>
+                  <td><span class="badge {{ 'text-bg-success' if supplier.active else 'text-bg-secondary' }}">{{ 'Activo' if supplier.active else 'Inactivo' }}</span></td>
+                  <td class="text-end">
+                    <button class="btn btn-sm btn-outline-primary" type="button" data-bs-toggle="collapse" data-bs-target="#editSupplier{{ supplier.id }}">Editar</button>
+                    <form class="d-inline" method="post" action="{{ url_for('purchases.toggle_supplier', supplier_id=supplier.id) }}">
+                      <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                      {% if selected_company_id %}<input type="hidden" name="company_id" value="{{ selected_company_id }}">{% endif %}
+                      <button class="btn btn-sm {{ 'btn-outline-danger' if supplier.active else 'btn-outline-success' }}" type="submit">{{ 'Desactivar' if supplier.active else 'Activar' }}</button>
+                    </form>
+                  </td>
+                </tr>
+                <tr class="collapse" id="editSupplier{{ supplier.id }}">
+                  <td colspan="5" class="bg-light-subtle">
+                    <form method="post" action="{{ url_for('purchases.update_supplier', supplier_id=supplier.id) }}" class="row g-2">
+                      <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                      {% if selected_company_id %}<input type="hidden" name="company_id" value="{{ selected_company_id }}">{% endif %}
+                      <div class="col-md-4"><input class="form-control" name="name" value="{{ supplier.name }}" required></div>
+                      <div class="col-md-2"><input class="form-control" name="phone" value="{{ supplier.phone or '' }}" placeholder="Teléfono"></div>
+                      <div class="col-md-2"><input class="form-control" name="whatsapp" value="{{ supplier.whatsapp or '' }}" placeholder="WhatsApp"></div>
+                      <div class="col-md-4"><input class="form-control" name="email" value="{{ supplier.email or '' }}" placeholder="Email"></div>
+                      <div class="col-md-6"><input class="form-control" name="address" value="{{ supplier.address or '' }}" placeholder="Dirección"></div>
+                      <div class="col-md-6"><input class="form-control" name="notes" value="{{ supplier.notes or '' }}" placeholder="Observaciones"></div>
+                      <div class="col-12 d-grid d-md-flex justify-content-md-end"><button class="btn btn-primary btn-sm" type="submit">Guardar cambios</button></div>
+                    </form>
+                  </td>
+                </tr>
+                {% else %}
+                <tr><td colspan="5" class="text-center text-muted py-4">No hay proveedores para mostrar.</td></tr>
+                {% endfor %}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <div class="col-lg-5">
+      <div class="card app-card h-100">
+        <div class="card-header bg-white fw-bold">Nuevo proveedor</div>
+        <div class="card-body">
+          <form method="post" action="{{ url_for('purchases.suppliers_panel', company_id=selected_company_id) if selected_company_id else url_for('purchases.suppliers_panel') }}">
+            <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+            {% if selected_company_id %}<input type="hidden" name="company_id" value="{{ selected_company_id }}">{% endif %}
+            <div class="row g-2">
+              <div class="col-12"><input class="form-control" name="name" placeholder="Nombre" required></div>
+              <div class="col-md-6"><input class="form-control" name="phone" placeholder="Teléfono"></div>
+              <div class="col-md-6"><input class="form-control" name="whatsapp" placeholder="WhatsApp"></div>
+              <div class="col-md-6"><input class="form-control" name="email" type="email" placeholder="Email"></div>
+              <div class="col-12"><input class="form-control" name="address" placeholder="Dirección"></div>
+              <div class="col-12"><textarea class="form-control" name="notes" rows="3" placeholder="Observaciones"></textarea></div>
+            </div>
+            <button class="btn btn-outline-primary mt-3">Guardar proveedor</button>
+          </form>
+        </div>
+      </div>
+    </div>
+  </div>
+  {% endif %}
+</div>
+{% endblock %}

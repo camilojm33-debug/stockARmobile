@@ -4,13 +4,49 @@
 
 {% block content %}
 <div class="app-shell">
+  <nav aria-label="breadcrumb" class="mb-2">
+    <ol class="breadcrumb mb-1">
+      <li class="breadcrumb-item"><a href="{{ url_for('company_billing.company_settings') if current_user.role != 'superadmin' else url_for('saas.index') }}">{{ 'Mi Empresa' if current_user.role != 'superadmin' else 'Panel SaaS' }}</a></li>
+      <li class="breadcrumb-item active" aria-current="page">Compras</li>
+    </ol>
+  </nav>
+
   <div class="d-flex flex-wrap justify-content-between align-items-center gap-3 mb-4">
     <div>
       <span class="page-kicker"><i class="bi bi-truck"></i> Abastecimiento</span>
       <h1 class="h3 fw-bold mb-0">Compras</h1>
       <p class="text-muted mb-0">Proveedores, ingreso de mercaderia, costo promedio y stock.</p>
     </div>
+    <div class="d-flex gap-2 flex-wrap">
+      <a class="btn btn-outline-primary" href="{{ url_for('purchases.suppliers_panel', company_id=selected_company_id) if selected_company_id else url_for('purchases.suppliers_panel') }}"><i class="bi bi-people me-1"></i>Gestionar proveedores</a>
+    </div>
   </div>
+
+  {% if current_user.role == 'superadmin' %}
+  <div class="card app-card mb-3">
+    <div class="card-body">
+      <form class="row g-2 align-items-end" method="get" action="{{ url_for('purchases.index') }}">
+        <div class="col-md-8">
+          <label class="form-label">Empresa</label>
+          <select class="form-select" name="company_id" required>
+            <option value="">Seleccionar empresa...</option>
+            {% for company in companies %}
+            <option value="{{ company.id }}" {% if selected_company_id == company.id %}selected{% endif %}>{{ company.name }}</option>
+            {% endfor %}
+          </select>
+        </div>
+        <div class="col-md-4 d-grid">
+          <button class="btn btn-primary" type="submit">Abrir compras</button>
+        </div>
+      </form>
+      {% if company_required %}
+      <div class="alert alert-warning mt-3 mb-0">Seleccioná una empresa para gestionar compras y proveedores.</div>
+      {% endif %}
+    </div>
+  </div>
+  {% endif %}
+
+  {% if not company_required %}
 
   <div class="row g-3 mb-4">
     <div class="col-lg-7">
@@ -19,6 +55,9 @@
         <div class="card-body">
           <form method="post">
             <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+            {% if current_user.role == 'superadmin' and selected_company_id %}
+            <input type="hidden" name="company_id" value="{{ selected_company_id }}">
+            {% endif %}
             <div class="row g-3">
               <div class="col-md-6"><label class="form-label">Producto</label><select class="form-select" name="product_id" required>{% for product in products %}<option value="{{ product.id }}">{{ product.name }} · stock {{ "%.3g"|format(product.stock or 0) }}</option>{% endfor %}</select></div>
               <div class="col-md-6"><label class="form-label">Proveedor</label><select class="form-select" name="supplier_id"><option value="">Sin proveedor</option>{% for supplier in suppliers %}<option value="{{ supplier.id }}">{{ supplier.name }}</option>{% endfor %}</select></div>
@@ -35,13 +74,18 @@
       <div class="card app-card h-100">
         <div class="card-header bg-white fw-bold">Nuevo proveedor</div>
         <div class="card-body">
-          <form method="post" action="{{ url_for('purchases.add_supplier') }}">
+          <form method="post" action="{{ url_for('purchases.suppliers_panel', company_id=selected_company_id) if selected_company_id else url_for('purchases.suppliers_panel') }}">
             <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+            {% if current_user.role == 'superadmin' and selected_company_id %}
+            <input type="hidden" name="company_id" value="{{ selected_company_id }}">
+            {% endif %}
             <div class="row g-2">
               <div class="col-12"><input class="form-control" name="name" placeholder="Nombre" required></div>
+              <div class="col-md-6"><input class="form-control" name="phone" placeholder="Teléfono"></div>
               <div class="col-md-6"><input class="form-control" name="email" type="email" placeholder="Email"></div>
               <div class="col-md-6"><input class="form-control" name="whatsapp" placeholder="WhatsApp"></div>
               <div class="col-12"><input class="form-control" name="address" placeholder="Direccion"></div>
+              <div class="col-12"><textarea class="form-control" name="notes" rows="2" placeholder="Observaciones"></textarea></div>
             </div>
             <button class="btn btn-outline-primary mt-3">Guardar proveedor</button>
           </form>
@@ -59,5 +103,6 @@
       </table>
     </div>
   </div>
+  {% endif %}
 </div>
 {% endblock %}

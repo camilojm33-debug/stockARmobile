@@ -724,7 +724,7 @@ def mercado_pago_connect():
     session_key = f"mp_oauth_state_{company.id}"
     session[session_key] = state
     session.modified = True
-    redirect_uri = service.default_oauth_redirect_uri()
+    redirect_uri = service.oauth_redirect_uri(service.default_oauth_redirect_uri())
     session[f"mp_oauth_redirect_uri_{company.id}"] = redirect_uri
     session.modified = True
     auth_url = service.build_authorization_url(state=state, redirect_uri=redirect_uri)
@@ -769,7 +769,7 @@ def mercado_pago_callback():
     session_key = f"mp_oauth_state_{company.id}"
     expected_state = session.get(session_key)
     redirect_uri_session_key = f"mp_oauth_redirect_uri_{company.id}"
-    redirect_uri = session.get(redirect_uri_session_key) or service.default_oauth_redirect_uri()
+    redirect_uri = session.get(redirect_uri_session_key) or service.oauth_redirect_uri(service.default_oauth_redirect_uri())
     current_app.logger.info(
         "Mercado Pago OAuth callback received: company_id=%s code_present=%s state=%s expected_state=%s redirect_uri=%s args=%s",
         company.id,

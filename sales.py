@@ -207,6 +207,8 @@ def _calculate_lines(items, *, lock_for_update=False):
         product = products.get(int(prod_id))
         if not product:
             raise ValueError("Producto no encontrado.")
+        if int(getattr(product, "company_id", 0) or 0) != int(getattr(current_user, "company_id", 0) or -1):
+            raise ValueError("Producto fuera del contexto de empresa.")
         qty = _to_float(qty)
         if qty <= 0:
             raise ValueError("La cantidad debe ser mayor a cero.")
@@ -688,7 +690,20 @@ def _create_sale_from_items(items, data, json_response=False):
         )
 
         client_id = data.get("client_id") or data.get("cliente_id") or None
-        client = scope_query_to_company(Client.query.filter_by(id=int(client_id), active=True), Client).first() if client_id else None
+        parsed_client_id = None
+        if client_id not in (None, ""):
+            try:
+                parsed_client_id = int(client_id)
+            except (TypeError, ValueError):
+                raise ValueError("Cliente inválido para esta empresa.")
+
+        client = (
+            scope_query_to_company(Client.query.filter_by(id=parsed_client_id, active=True), Client).first()
+            if parsed_client_id
+            else None
+        )
+        if parsed_client_id and client is None:
+            raise ValueError("El cliente seleccionado no pertenece a tu empresa.")
         current_app.logger.info("[sales] cliente recibido: client_id=%s resolved_client=%s", client_id, getattr(client, "id", None))
         current_app.logger.info(
             "[sales] total calculado: subtotal=%s descuento_lineas=%s descuento_general=%s recargo=%s total=%s",

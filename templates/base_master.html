@@ -580,6 +580,7 @@
       <a class="nav-link {% if request.endpoint == 'saas.renewals_panel' %}active{% endif %}" href="{{ url_for('saas.renewals_panel') }}"><i class="bi bi-arrow-repeat"></i>Renovaciones</a>
       <a class="nav-link {% if request.endpoint == 'saas.logs_panel' %}active{% endif %}" href="{{ url_for('saas.logs_panel') }}"><i class="bi bi-journal-text"></i>Registros</a>
       <a class="nav-link {% if request.endpoint == 'saas.server_status' %}active{% endif %}" href="{{ url_for('saas.server_status') }}"><i class="bi bi-hdd-network"></i>Estado servidor</a>
+      <a class="nav-link {% if request.endpoint and request.endpoint.startswith('purchases.') %}active{% endif %}" href="{{ url_for('purchases.suppliers_panel') }}"><i class="bi bi-truck"></i>Proveedores</a>
       <a class="nav-link {% if request.endpoint and request.endpoint.startswith('referrals.admin_') %}active{% endif %}" href="{{ url_for('referrals.admin_referrals_dashboard') }}"><i class="bi bi-megaphone"></i>Programa de Referidos</a>
       <a class="nav-link {% if request.endpoint == 'saas.global_stats' %}active{% endif %}" href="{{ url_for('saas.global_stats') }}"><i class="bi bi-graph-up"></i>Estadisticas globales</a>
       <a class="nav-link {% if request.endpoint and request.endpoint.startswith('saas.landing_testimonials') %}active{% endif %}" href="{{ url_for('saas.landing_testimonials_panel') }}"><i class="bi bi-chat-left-quote"></i>Testimonios Landing</a>
@@ -600,6 +601,7 @@
       <a class="nav-link {% if request.endpoint and request.endpoint.startswith('clients.') %}active{% endif %}" href="{{ url_for('clients.index') }}"><i class="bi bi-people"></i>Clientes</a>
       {% if current_user.role == 'admin' %}
       <a class="nav-link {% if request.endpoint and request.endpoint.startswith('purchases.') %}active{% endif %}" href="{{ url_for('purchases.index') }}"><i class="bi bi-truck"></i>Compras</a>
+      <a class="nav-link {% if request.endpoint == 'purchases.suppliers_panel' %}active{% endif %}" href="{{ url_for('purchases.suppliers_panel') }}"><i class="bi bi-people"></i>Proveedores</a>
       {% endif %}
       <a class="nav-link {% if request.endpoint and request.endpoint.startswith('cash.') %}active{% endif %}" href="{{ url_for('cash.index') }}"><i class="bi bi-cash-coin"></i>Caja</a>
       <a class="nav-link {% if request.endpoint and request.endpoint.startswith('expenses.') %}active{% endif %}" href="{{ url_for('expenses.index') }}"><i class="bi bi-receipt"></i>Gastos</a>

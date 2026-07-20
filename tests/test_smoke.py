@@ -1011,6 +1011,132 @@ def test_cross_tenant_id_url_access_is_blocked():
     assert "Cliente Empresa Dos" not in report_csv.data.decode("utf-8")
 
 
+def test_suppliers_module_isolated_by_company():
+    client = stock_app.app.test_client()
+
+    with stock_app.app.app_context():
+        from app import Supplier
+
+        company_one = Company.query.filter_by(name="Empresa Demo").first()
+        assert company_one is not None
+
+        db.session.add_all(
+            [
+                Supplier(company_id=company_one.id, name="Proveedor A1", email="a1@test.local", active=True),
+                Supplier(company_id=company_one.id, name="Proveedor A2", email="a2@test.local", active=True),
+                Supplier(company_id=company_one.id, name="Proveedor A3", email="a3@test.local", active=True),
+            ]
+        )
+
+        company_two = Company(name="Empresa B Proveedores", active=True)
+        db.session.add(company_two)
+        db.session.flush()
+
+        user_two = User(username="empresa_b_admin", email="empresa_b_admin@test.local", role="admin", company_id=company_two.id, active=True)
+        user_two.set_password("admin123")
+        db.session.add(user_two)
+        db.session.commit()
+
+    client.post("/auth/login", data={"username": "empresa_b_admin", "password": "admin123"})
+    suppliers_page = client.get("/compras/proveedores")
+    assert suppliers_page.status_code == 200
+    html = suppliers_page.data.decode("utf-8")
+    assert "Proveedor A1" not in html
+    assert "Proveedor A2" not in html
+    assert "Proveedor A3" not in html
+    assert "No hay proveedores para mostrar." in html
+
+
+def test_suppliers_module_blocks_cross_tenant_url_access():
+    client = stock_app.app.test_client()
+
+    with stock_app.app.app_context():
+        from app import Supplier
+
+        company_one = Company.query.filter_by(name="Empresa Demo").first()
+        assert company_one is not None
+        supplier_one = Supplier(company_id=company_one.id, name="Proveedor Privado A", active=True)
+        db.session.add(supplier_one)
+
+        company_two = Company(name="Empresa B URL", active=True)
+        db.session.add(company_two)
+        db.session.flush()
+
+        user_two = User(username="empresa_b_url_admin", email="empresa_b_url_admin@test.local", role="admin", company_id=company_two.id, active=True)
+        user_two.set_password("admin123")
+        db.session.add(user_two)
+        db.session.commit()
+
+        foreign_supplier_id = supplier_one.id
+
+    client.post("/auth/login", data={"username": "empresa_b_url_admin", "password": "admin123"})
+
+    update_response = client.post(
+        f"/compras/proveedores/{foreign_supplier_id}/update",
+        data={"name": "Intento editar ajeno"},
+        follow_redirects=False,
+    )
+    assert update_response.status_code == 404
+
+    toggle_response = client.post(
+        f"/compras/proveedores/{foreign_supplier_id}/toggle",
+        data={},
+        follow_redirects=False,
+    )
+    assert toggle_response.status_code == 404
+
+
+def test_checkout_rejects_foreign_tenant_product_and_client():
+    client = stock_app.app.test_client()
+
+    with stock_app.app.app_context():
+        company_two = Company(name="Empresa Dos Checkout", active=True)
+        db.session.add(company_two)
+        db.session.flush()
+
+        user_two = User(username="checkout_empresa_dos", email="checkout_empresa_dos@test.local", role="admin", company_id=company_two.id, active=True)
+        user_two.set_password("admin123")
+        db.session.add(user_two)
+
+        product_two = Product(
+            barcode="CHECKOUT-TWO-001",
+            name="Producto Empresa Dos Checkout",
+            price=9500,
+            cost_price=5000,
+            stock=5,
+            min_stock=1,
+            active=True,
+            company_id=company_two.id,
+        )
+        db.session.add(product_two)
+        db.session.commit()
+
+        company_two_id = company_two.id
+        user_two_id = user_two.id
+        product_two_id = product_two.id
+
+    client.post("/auth/login", data={"username": "checkout_empresa_dos", "password": "admin123"})
+    open_cash_session(client)
+
+    # Producto de empresa 1 no debe poder cobrarse desde empresa 2.
+    foreign_product_checkout = client.post(
+        "/ventas/api/checkout",
+        json={"items": [{"productId": 1, "quantity": 1}], "metodo_pago": "EFECTIVO"},
+        headers={"X-Cart-Tenant": f"{company_two_id}:{user_two_id}"},
+    )
+    assert foreign_product_checkout.status_code == 400
+    assert "Producto no encontrado" in (foreign_product_checkout.get_json() or {}).get("error", "")
+
+    # Cliente de empresa 1 no debe poder asociarse a una venta de empresa 2.
+    foreign_client_checkout = client.post(
+        "/ventas/api/checkout",
+        json={"items": [{"productId": product_two_id, "quantity": 1}], "metodo_pago": "EFECTIVO", "client_id": 1},
+        headers={"X-Cart-Tenant": f"{company_two_id}:{user_two_id}"},
+    )
+    assert foreign_client_checkout.status_code == 400
+    assert "no pertenece a tu empresa" in (foreign_client_checkout.get_json() or {}).get("error", "")
+
+
 def test_dashboard_metrics_do_not_leak_between_companies():
     from services.dashboard_service import build_dashboard_context
 
@@ -3694,6 +3820,32 @@ def test_mercado_pago_oauth_route_starts_and_completes(monkeypatch):
         assert connection.status == "connected"
         assert connection.mp_user_id == "mp-user-99"
         assert connection.account_email == "juan@email.com"
+
+
+def test_mercado_pago_oauth_uses_configured_redirect_uri(monkeypatch):
+    from services.mercadopago_oauth_service import MercadoPagoOAuthService
+
+    monkeypatch.setenv("MP_CLIENT_ID", "client-id-123")
+    monkeypatch.setenv("MP_CLIENT_SECRET", "client-secret-123")
+    monkeypatch.setenv("MP_OAUTH_ENCRYPTION_KEY", "oauth-encryption-test-key")
+    monkeypatch.setenv("MP_OAUTH_REDIRECT_URI", "https://www.stockarmobile.com/admin/mercado-pago/callback")
+
+    captured = {}
+
+    def fake_build_authorization_url(self, *, state, redirect_uri):
+        captured["redirect_uri"] = redirect_uri
+        captured["state"] = state
+        return f"https://auth.mercadopago.com.ar/authorization?client_id={self._client_id()}&state={state}&redirect_uri={redirect_uri}"
+
+    monkeypatch.setattr(MercadoPagoOAuthService, "build_authorization_url", fake_build_authorization_url)
+
+    with stock_app.app.app_context():
+        client = stock_app.app.test_client()
+        client.post("/auth/login", data={"username": "negocio_admin", "password": "admin123"})
+
+        start_response = client.post("/admin/mercado-pago")
+        assert start_response.status_code in (301, 302)
+        assert captured["redirect_uri"] == "https://www.stockarmobile.com/admin/mercado-pago/callback"
 
 
 def test_pos_qr_create_uses_company_connected_token(monkeypatch):
