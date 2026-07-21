@@ -11,7 +11,7 @@ from datetime import datetime
 from io import BytesIO, StringIO
 from urllib.parse import quote
 
-from flask import Blueprint, abort, current_app, flash, jsonify, make_response, redirect, render_template, request, session, url_for
+from flask import Blueprint, abort, current_app, flash, g, jsonify, make_response, redirect, render_template, request, session, url_for
 from flask_login import current_user, login_required
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import selectinload
@@ -28,6 +28,19 @@ def _api_error(message, status=400, **extra):
     payload = {"success": False, "error": str(message)}
     payload.update(extra)
     return jsonify(payload), status
+
+
+def _mp_qr_trace_enter(endpoint_name: str):
+    g.mp_qr_endpoint_entered = True
+    current_app.logger.info(
+        "MP QR trace entered endpoint: method=%s path=%s endpoint=%s csrf_header_present=%s company_id=%s user_id=%s",
+        request.method,
+        request.path,
+        endpoint_name,
+        bool(request.headers.get("X-CSRFToken")),
+        getattr(current_user, "company_id", None) if current_user.is_authenticated else None,
+        getattr(current_user, "id", None) if current_user.is_authenticated else None,
+    )
 
 
 def _to_float(value, default=0.0):
@@ -441,6 +454,7 @@ def api_checkout():
 @bp.route("/api/mp-qr/points", methods=["GET"])
 @tenant_required
 def api_mp_qr_points():
+    _mp_qr_trace_enter("sales.api_mp_qr_points")
     company_id = getattr(current_user, "company_id", None)
     user_id = getattr(current_user, "id", None)
     request_url = request.url
@@ -583,6 +597,7 @@ def api_mp_qr_points():
 @bp.route("/api/mp-qr/create", methods=["POST"])
 @tenant_required
 def api_mp_qr_create():
+    _mp_qr_trace_enter("sales.api_mp_qr_create")
     from app import Payment, db, scope_query_to_company
 
     payload = request.get_json(silent=True) or {}
@@ -834,6 +849,7 @@ def api_mp_qr_create():
 @bp.route("/api/mp-qr/status", methods=["GET"])
 @tenant_required
 def api_mp_qr_status():
+    _mp_qr_trace_enter("sales.api_mp_qr_status")
     from app import Payment
 
     draft_id = request.args.get("draft_id", type=int)
@@ -862,6 +878,7 @@ def api_mp_qr_status():
 @bp.route("/api/mp-qr/finalize", methods=["POST"])
 @tenant_required
 def api_mp_qr_finalize():
+    _mp_qr_trace_enter("sales.api_mp_qr_finalize")
     from app import Payment, Sale, db, record_audit, scope_query_to_company
 
     payload = request.get_json(silent=True) or {}

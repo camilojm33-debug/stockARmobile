@@ -293,6 +293,51 @@ def bind_tenant_context():
 
 
 @app.before_request
+def trace_mp_qr_requests():
+    path = request.path or ""
+    if not path.startswith("/ventas/api/mp-qr/"):
+        return None
+    g.mp_qr_trace_started = True
+    g.mp_qr_endpoint_entered = False
+    g.mp_qr_csrf_header_present = bool(request.headers.get("X-CSRFToken"))
+    g.mp_qr_request_method = request.method
+    g.mp_qr_request_path = path
+    g.mp_qr_request_endpoint = request.endpoint or ""
+    g.mp_qr_request_id = request.headers.get("X-Request-ID") or request.headers.get("X-Correlation-ID") or ""
+    app.logger.info(
+        "MP QR trace incoming: method=%s path=%s endpoint=%s csrf_header_present=%s company_id=%s user_id=%s request_id=%s",
+        request.method,
+        path,
+        request.endpoint or "",
+        g.mp_qr_csrf_header_present,
+        getattr(current_user, "company_id", None) if current_user.is_authenticated else None,
+        getattr(current_user, "id", None) if current_user.is_authenticated else None,
+        g.mp_qr_request_id,
+    )
+    return None
+
+
+@app.after_request
+def trace_mp_qr_response(response):
+    path = request.path or ""
+    if path.startswith("/ventas/api/mp-qr/"):
+        app.logger.info(
+            "MP QR trace outgoing: method=%s path=%s endpoint=%s entered=%s status=%s content_type=%s csrf_header_present=%s company_id=%s user_id=%s request_id=%s",
+            request.method,
+            path,
+            request.endpoint or "",
+            bool(getattr(g, "mp_qr_endpoint_entered", False)),
+            response.status_code,
+            response.headers.get("Content-Type", ""),
+            bool(getattr(g, "mp_qr_csrf_header_present", False)),
+            getattr(current_user, "company_id", None) if current_user.is_authenticated else None,
+            getattr(current_user, "id", None) if current_user.is_authenticated else None,
+            getattr(g, "mp_qr_request_id", ""),
+        )
+    return response
+
+
+@app.before_request
 def enforce_password_change_if_required():
     if not current_user.is_authenticated:
         return None
@@ -1519,6 +1564,18 @@ def handle_csrf_error(error):
             getattr(current_user, "id", None) if getattr(current_user, "is_authenticated", False) else None,
             payload.get("mp_pos_id") or payload.get("pos_id"),
             payload.get("qr_id") or payload.get("mp_qr_id"),
+        )
+    if (request.path or "").startswith("/ventas/api/mp-qr/"):
+        app.logger.warning(
+            "MP QR CSRF rejected before endpoint: method=%s path=%s endpoint=%s csrf_header_present=%s company_id=%s user_id=%s request_id=%s error=%s",
+            request.method,
+            request.path,
+            request.endpoint or "",
+            bool(request.headers.get("X-CSRFToken")),
+            getattr(current_user, "company_id", None) if current_user.is_authenticated else None,
+            getattr(current_user, "id", None) if current_user.is_authenticated else None,
+            request.headers.get("X-Request-ID") or request.headers.get("X-Correlation-ID") or "",
+            error.description,
         )
     if is_api_request():
         return jsonify({"success": False, "error": f"CSRF inválido: {error.description}"}), 400

@@ -115,6 +115,26 @@ async function parseApiResponse(response) {
   return { isJson: false, data: null, text: (textPayload || '').trim() };
 }
 
+function logFetchAudit(label, url, method, csrfPresent) {
+  console.info('MP QR fetch outgoing', {
+    label,
+    url,
+    method,
+    csrfTokenSent: !!csrfPresent,
+  });
+}
+
+function logFetchResponseAudit(label, url, method, csrfPresent, response) {
+  console.info('MP QR fetch response', {
+    label,
+    url,
+    method,
+    csrfTokenSent: !!csrfPresent,
+    httpStatus: response?.status ?? null,
+    contentType: response?.headers?.get ? response.headers.get('content-type') : null,
+  });
+}
+
 function getCartTenantKey() {
   const body = document.body;
   const tenantKey = body?.dataset?.cartTenant || '';
@@ -655,12 +675,16 @@ async function loadMercadoPagoPosCatalog(force = false) {
 
   try {
     const pointsEndpoint = '/ventas/api/mp-qr/points';
-    console.info('MP POS catalog request', { url: pointsEndpoint });
+    const pointsMethod = 'GET';
+    const pointsCsrf = getCsrfToken();
+    logFetchAudit('mp-qr-points', pointsEndpoint, pointsMethod, pointsCsrf);
     const response = await fetch(pointsEndpoint, {
       headers: {
         'Accept': 'application/json',
+        'X-CSRFToken': pointsCsrf,
       },
     });
+    logFetchResponseAudit('mp-qr-points', pointsEndpoint, pointsMethod, pointsCsrf, response);
     const parsed = await parseApiResponse(response);
     if (!parsed.isJson) {
       throw new Error(parsed.text || `Respuesta no JSON (${response.status}) al consultar POS.`);
@@ -749,7 +773,12 @@ function updateMpQrPanel(payload) {
 async function pollMpQrStatus() {
   if (!mpQrDraftState.statusUrl) return;
   try {
-    const response = await fetch(mpQrDraftState.statusUrl, { headers: { 'Accept': 'application/json' } });
+    const statusUrl = mpQrDraftState.statusUrl;
+    const statusMethod = 'GET';
+    const statusCsrf = getCsrfToken();
+    logFetchAudit('mp-qr-status', statusUrl, statusMethod, statusCsrf);
+    const response = await fetch(statusUrl, { headers: { 'Accept': 'application/json', 'X-CSRFToken': statusCsrf } });
+    logFetchResponseAudit('mp-qr-status', statusUrl, statusMethod, statusCsrf, response);
     if (!response.ok) return;
     const payload = await response.json();
     updateMpQrPanel(payload);
@@ -804,15 +833,20 @@ async function processMercadoPagoQrCheckout() {
   }
 
   try {
+    const createUrl = '/ventas/api/mp-qr/create';
+    const createMethod = 'POST';
+    const createCsrf = csrf;
+    logFetchAudit('mp-qr-create', createUrl, createMethod, createCsrf);
     const response = await fetch('/ventas/api/mp-qr/create', {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
-        'X-CSRFToken': csrf,
+        'X-CSRFToken': createCsrf,
         'X-Cart-Tenant': getCartTenantKey(),
       },
       body: JSON.stringify(payload),
     });
+    logFetchResponseAudit('mp-qr-create', createUrl, createMethod, createCsrf, response);
     const parsed = await parseApiResponse(response);
     if (!parsed.isJson) {
       const fallbackText = parsed.text || `Error HTTP ${response.status} al generar el cobro.`;
@@ -849,6 +883,10 @@ async function finalizeMercadoPagoQrSale() {
     checkoutProcessButton.textContent = 'Finalizando venta...';
   }
   try {
+    const finalizeUrl = mpQrDraftState.finalizeUrl;
+    const finalizeMethod = 'POST';
+    const finalizeCsrf = csrf;
+    logFetchAudit('mp-qr-finalize', finalizeUrl, finalizeMethod, finalizeCsrf);
     const response = await fetch(mpQrDraftState.finalizeUrl, {
       method: 'POST',
       headers: {
@@ -858,6 +896,7 @@ async function finalizeMercadoPagoQrSale() {
       },
       body: JSON.stringify({ draft_id: mpQrDraftState.paymentId }),
     });
+    logFetchResponseAudit('mp-qr-finalize', finalizeUrl, finalizeMethod, finalizeCsrf, response);
     const result = await response.json();
     if (!response.ok) {
       throw new Error(result.error || 'No se pudo finalizar la venta.');
