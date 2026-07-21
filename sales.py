@@ -620,6 +620,10 @@ def api_mp_qr_create():
     selected_qr_id = str(payload.get("qr_id") or payload.get("mp_qr_id") or "").strip()
     if not selected_pos_id and selected_qr_id:
         selected_pos_id = selected_qr_id
+    collector_id = None
+    external_reference = None
+    final_total = Decimal("0.00")
+    amount = Decimal("0.00")
     current_app.logger.info(
         "MP QR create request received: request_json=%s request_form=%s company_id=%s user_id=%s pos_id=%s qr_id=%s",
         payload,
@@ -663,6 +667,7 @@ def api_mp_qr_create():
             surcharge=surcharge,
         )
         final_total = sale_totals["total"]
+        amount = final_total
         currency = "ARS"
         description = f"StockArmobile POS - {company_id}"
         snapshot = _pos_qr_snapshot(
@@ -717,6 +722,7 @@ def api_mp_qr_create():
         try:
             access_token = oauth_service.ensure_access_token(company_id=company_id)
         except Exception as exc:
+            db.session.rollback()
             current_app.logger.warning(
                 "MP QR create blocked: company_id=%s user_id=%s pos_id=%s qr_id=%s collector_id=%s access_token=%s error=%s",
                 company_id,
@@ -773,8 +779,10 @@ def api_mp_qr_create():
         )
 
         if available_pos_ids and not selected_pos_id:
+            db.session.rollback()
             return _api_error("Debes seleccionar un QR/POS de Mercado Pago para generar el cobro.", status=400)
         if selected_pos_id and available_pos_ids and selected_pos_id not in available_pos_ids:
+            db.session.rollback()
             return _api_error("El QR/POS seleccionado no pertenece a la cuenta conectada.", status=400)
 
         current_app.logger.info(
@@ -809,6 +817,7 @@ def api_mp_qr_create():
             )
         except Exception as exc:
             tb = traceback.format_exc()
+            db.session.rollback()
             current_app.logger.error(
                 "MP QR create failed at MP call: company_id=%s user_id=%s pos_id=%s qr_id=%s collector_id=%s external_reference=%s amount=%s",
                 company_id,
@@ -820,6 +829,16 @@ def api_mp_qr_create():
                 float(final_total),
                 exc_info=True,
             )
+            current_app.logger.error(
+                "MP QR create except response path (inner MP call): about to return JSON error. exception=%s company_id=%s user_id=%s collector_id=%s external_reference=%s amount=%s pos_id=%s",
+                exc.__class__.__name__,
+                company_id,
+                user_id,
+                collector_id,
+                external_reference,
+                float(amount),
+                selected_pos_id,
+            )
             return jsonify({
                 "success": False,
                 "error": str(exc),
@@ -829,14 +848,18 @@ def api_mp_qr_create():
                 "user_id": user_id,
                 "collector_id": collector_id,
                 "external_reference": external_reference,
-                "amount": float(final_total),
+                "amount": float(amount),
                 "pos_id": selected_pos_id,
                 "qr_id": selected_qr_id,
             }), 400
         draft_payment.preference_id = preference.get("id")
         draft_payment.external_reference = external_reference
         draft_payment.reference = f"pos_draft:{draft_payment.id}"
-        db.session.commit()
+        try:
+            db.session.commit()
+        except Exception:
+            db.session.rollback()
+            raise
 
         checkout_url = preference.get("init_point") or preference.get("sandbox_init_point") or ""
         qr_preview = {
@@ -868,13 +891,24 @@ def api_mp_qr_create():
             },
         })
     except Exception as exc:
+        db.session.rollback()
         current_app.logger.error("Error creando QR Mercado Pago POS", exc_info=True)
+        current_app.logger.error(
+            "MP QR create except response path (outer): about to return JSON error. exception=%s company_id=%s user_id=%s collector_id=%s external_reference=%s amount=%s pos_id=%s",
+            exc.__class__.__name__,
+            locals().get("company_id"),
+            locals().get("user_id"),
+            locals().get("collector_id"),
+            locals().get("external_reference"),
+            float(locals().get("amount") or 0),
+            locals().get("selected_pos_id"),
+        )
         return _api_exception("No se pudo generar el QR de Mercado Pago", exc, status=400,
             company_id=company_id,
             user_id=user_id,
             collector_id=collector_id,
             external_reference=locals().get("external_reference"),
-            amount=float(locals().get("final_total") or 0),
+            amount=float(locals().get("amount") or 0),
             pos_id=selected_pos_id,
             qr_id=selected_qr_id,
         )

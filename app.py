@@ -304,14 +304,22 @@ def trace_mp_qr_requests():
     g.mp_qr_request_path = path
     g.mp_qr_request_endpoint = request.endpoint or ""
     g.mp_qr_request_id = request.headers.get("X-Request-ID") or request.headers.get("X-Correlation-ID") or ""
+    g.mp_qr_user_id = None
+    g.mp_qr_company_id = None
+    try:
+        if current_user.is_authenticated:
+            g.mp_qr_user_id = getattr(current_user, "id", None)
+            g.mp_qr_company_id = getattr(current_user, "company_id", None)
+    except Exception as exc:
+        app.logger.warning("MP QR trace incoming user-context capture failed: %s", exc)
     app.logger.info(
         "MP QR trace incoming: method=%s path=%s endpoint=%s csrf_header_present=%s company_id=%s user_id=%s request_id=%s",
         request.method,
         path,
         request.endpoint or "",
         g.mp_qr_csrf_header_present,
-        getattr(current_user, "company_id", None) if current_user.is_authenticated else None,
-        getattr(current_user, "id", None) if current_user.is_authenticated else None,
+        getattr(g, "mp_qr_company_id", None),
+        getattr(g, "mp_qr_user_id", None),
         g.mp_qr_request_id,
     )
     return None
@@ -330,8 +338,8 @@ def trace_mp_qr_response(response):
             response.status_code,
             response.headers.get("Content-Type", ""),
             bool(getattr(g, "mp_qr_csrf_header_present", False)),
-            getattr(current_user, "company_id", None) if current_user.is_authenticated else None,
-            getattr(current_user, "id", None) if current_user.is_authenticated else None,
+            getattr(g, "mp_qr_company_id", None),
+            getattr(g, "mp_qr_user_id", None),
             getattr(g, "mp_qr_request_id", ""),
         )
     return response
@@ -766,7 +774,7 @@ class Payment(db.Model):
     id = db.Column(db.Integer, primary_key=True)
     payment_id = db.Column(db.String(120), unique=True, index=True)
     preference_id = db.Column(db.String(120), index=True)
-    external_reference = db.Column(db.String(120), index=True)
+    external_reference = db.Column(db.String(255), index=True)
     company_id = db.Column(db.Integer, db.ForeignKey("companies.id"), nullable=False)
     subscription_id = db.Column(db.Integer, db.ForeignKey("subscriptions.id"))
     user_id = db.Column(db.Integer, db.ForeignKey("users.id"))
@@ -1584,6 +1592,14 @@ def handle_csrf_error(error):
 
 @app.errorhandler(HTTPException)
 def handle_http_exception(error):
+    app.logger.error(
+        "GLOBAL HTTPException handler entered: method=%s path=%s endpoint=%s code=%s description=%s",
+        request.method,
+        request.path,
+        request.endpoint or "",
+        getattr(error, "code", None),
+        getattr(error, "description", ""),
+    )
     if is_api_request():
         message = getattr(error, "description", None) or "Error HTTP"
         return jsonify({"success": False, "error": str(message)}), error.code or 500
@@ -1592,6 +1608,13 @@ def handle_http_exception(error):
 
 @app.errorhandler(500)
 def internal_error(error):
+    app.logger.error(
+        "GLOBAL 500 handler entered: method=%s path=%s endpoint=%s error_type=%s",
+        request.method,
+        request.path,
+        request.endpoint or "",
+        error.__class__.__name__ if error is not None else "None",
+    )
     app.logger.exception("Error interno no controlado: %s", error)
     if is_api_request():
         return jsonify({"success": False, "error": "Error interno no controlado."}), 500

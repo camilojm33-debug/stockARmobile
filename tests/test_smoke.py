@@ -3573,6 +3573,12 @@ def test_pos_qr_create_generates_qr_and_reuses_pending_draft(monkeypatch):
         assert first_data["total"] == 18000.0
         assert first_data["qr_data_uri"].startswith("data:image/png;base64,")
 
+        payment_row = Payment.query.filter_by(id=first_data["payment_id"], company_id=company.id).first()
+        assert payment_row is not None
+        assert payment_row.preference_id == "pref-pos-1"
+        assert payment_row.external_reference
+        assert str(payment_row.external_reference).startswith("flow:pos_sale|draft_payment_id:")
+
         status_response = client.get(f"/ventas/api/mp-qr/status?draft_id={first_data['payment_id']}")
         assert status_response.status_code == 200
         assert status_response.get_json()["status"] == "pending"
@@ -3749,6 +3755,37 @@ def test_pos_qr_create_returns_real_exception_traceback(monkeypatch):
         assert data["exception"] == "RuntimeError"
         assert "MP preference failed at line test" in data["error"]
         assert "traceback" in data and "create_pos_checkout_preference" in data["traceback"]
+
+
+def test_pos_qr_create_early_exception_breaks_before_json_return():
+    with stock_app.app.app_context():
+        from app import User
+
+        company = Company.query.filter_by(name="Empresa Demo").first()
+        assert company is not None
+
+        user = User.query.filter_by(username="empresa_admin").first()
+        assert user is not None
+
+        client = stock_app.app.test_client()
+        client.post("/auth/login", data={"username": user.username, "password": "admin123"})
+        open_cash_session(client)
+
+        headers = {"X-Cart-Tenant": f"{company.id}:{user.id}"}
+        payload = {
+            "items": [{"productId": 999999, "quantity": 1, "name": "Fantasma", "price": 10, "barcode": "000"}],
+            "client_id": "",
+            "document_type": "venta",
+            "note": "",
+        }
+
+        response = client.post("/ventas/api/mp-qr/create", json=payload, headers=headers)
+        assert response.status_code == 400
+        data = response.get_json()
+        assert data is not None
+        assert data["success"] is False
+        assert data["exception"] == "ValueError"
+        assert "traceback" in data
 
 
 def test_pos_qr_webhook_approved_updates_single_draft_payment(monkeypatch):
