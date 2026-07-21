@@ -6,6 +6,7 @@ import hashlib
 import json
 import re
 import uuid
+import traceback
 from decimal import Decimal, InvalidOperation
 from datetime import datetime
 from io import BytesIO, StringIO
@@ -26,6 +27,17 @@ bp = Blueprint("sales", __name__)
 
 def _api_error(message, status=400, **extra):
     payload = {"success": False, "error": str(message)}
+    payload.update(extra)
+    return jsonify(payload), status
+
+
+def _api_exception(message, exc: Exception, status=400, **extra):
+    payload = {
+        "success": False,
+        "error": str(message),
+        "exception": exc.__class__.__name__,
+        "traceback": traceback.format_exc(),
+    }
     payload.update(extra)
     return jsonify(payload), status
 
@@ -796,7 +808,8 @@ def api_mp_qr_create():
                 },
             )
         except Exception as exc:
-            current_app.logger.exception(
+            tb = traceback.format_exc()
+            current_app.logger.error(
                 "MP QR create failed at MP call: company_id=%s user_id=%s pos_id=%s qr_id=%s collector_id=%s external_reference=%s amount=%s",
                 company_id,
                 user_id,
@@ -805,8 +818,21 @@ def api_mp_qr_create():
                 collector_id,
                 external_reference,
                 float(final_total),
+                exc_info=True,
             )
-            return _api_error(str(exc), status=400)
+            return jsonify({
+                "success": False,
+                "error": str(exc),
+                "exception": exc.__class__.__name__,
+                "traceback": tb,
+                "company_id": company_id,
+                "user_id": user_id,
+                "collector_id": collector_id,
+                "external_reference": external_reference,
+                "amount": float(final_total),
+                "pos_id": selected_pos_id,
+                "qr_id": selected_qr_id,
+            }), 400
         draft_payment.preference_id = preference.get("id")
         draft_payment.external_reference = external_reference
         draft_payment.reference = f"pos_draft:{draft_payment.id}"
@@ -842,8 +868,16 @@ def api_mp_qr_create():
             },
         })
     except Exception as exc:
-        current_app.logger.exception("Error creando QR Mercado Pago POS: %s", exc)
-        return _api_error(f"No se pudo generar el QR de Mercado Pago: {exc}", status=400)
+        current_app.logger.error("Error creando QR Mercado Pago POS", exc_info=True)
+        return _api_exception("No se pudo generar el QR de Mercado Pago", exc, status=400,
+            company_id=company_id,
+            user_id=user_id,
+            collector_id=collector_id,
+            external_reference=locals().get("external_reference"),
+            amount=float(locals().get("final_total") or 0),
+            pos_id=selected_pos_id,
+            qr_id=selected_qr_id,
+        )
 
 
 @bp.route("/api/mp-qr/status", methods=["GET"])

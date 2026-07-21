@@ -3699,6 +3699,58 @@ def test_pos_qr_create_requires_selected_pos_when_catalog_available(monkeypatch)
         assert (with_pos.get_json() or {}).get("status") == "created"
 
 
+def test_pos_qr_create_returns_real_exception_traceback(monkeypatch):
+    from services.mercadopago_oauth_service import MercadoPagoOAuthService
+    from services.mercadopago_service import MercadoPagoService
+
+    with stock_app.app.app_context():
+        from app import User
+
+        company = Company.query.filter_by(name="Empresa Demo").first()
+        assert company is not None
+
+        user = User.query.filter_by(username="empresa_admin".first()) if False else User.query.filter_by(username="empresa_admin").first()
+        assert user is not None
+
+        client = stock_app.app.test_client()
+        client.post("/auth/login", data={"username": user.username, "password": "admin123"})
+        open_cash_session(client)
+
+        monkeypatch.setattr(MercadoPagoOAuthService, "ensure_access_token", lambda self, *, company_id: "company-access-token")
+        monkeypatch.setattr(
+            MercadoPagoService,
+            "debug_fetch_pos_catalog",
+            lambda self, **kwargs: {
+                "path": "/pos?limit=50&offset=0",
+                "status_code": 200,
+                "pos_count": 1,
+                "response": {"results": [{"id": "POS-ERR-1", "name": "Caja principal", "status": "active"}]},
+            },
+        )
+        monkeypatch.setattr(
+            MercadoPagoService,
+            "create_pos_checkout_preference",
+            lambda self, **kwargs: (_ for _ in ()).throw(RuntimeError("MP preference failed at line test")),
+        )
+
+        headers = {"X-Cart-Tenant": f"{company.id}:{user.id}"}
+        payload = {
+            "items": [{"productId": 1, "quantity": 1, "name": "Yerba kilo", "price": 18000, "barcode": "123456789012"}],
+            "client_id": "",
+            "document_type": "venta",
+            "note": "",
+            "mp_pos_id": "POS-ERR-1",
+        }
+
+        response = client.post("/ventas/api/mp-qr/create", json=payload, headers=headers)
+        assert response.status_code == 400
+        data = response.get_json()
+        assert data["success"] is False
+        assert data["exception"] == "RuntimeError"
+        assert "MP preference failed at line test" in data["error"]
+        assert "traceback" in data and "create_pos_checkout_preference" in data["traceback"]
+
+
 def test_pos_qr_webhook_approved_updates_single_draft_payment(monkeypatch):
     from services.webhook_service import WebhookService
 
