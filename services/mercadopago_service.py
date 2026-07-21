@@ -5,10 +5,13 @@ from __future__ import annotations
 import hashlib
 import hmac
 import json
+import logging
 import uuid
 from urllib import request as urlrequest
 from urllib.error import HTTPError
 from typing import Any
+
+from flask import current_app, has_app_context
 
 from config.billing_config import load_billing_config
 
@@ -18,6 +21,11 @@ class MercadoPagoService:
 
     def __init__(self):
         self.config = load_billing_config()
+
+    def _logger(self):
+        if has_app_context():
+            return current_app.logger
+        return logging.getLogger(__name__)
 
     def _headers(self, *, include_idempotency: bool = False, access_token: str | None = None) -> dict[str, str]:
         token = (access_token or self.config.access_token or "").strip()
@@ -133,7 +141,77 @@ class MercadoPagoService:
             "statement_descriptor": self.config.statement_descriptor,
             "auto_return": "approved",
         }
-        return self._request("POST", "/checkout/preferences", payload=payload, access_token=access_token)
+        response = self._request("POST", "/checkout/preferences", payload=payload, access_token=access_token)
+        self._logger().info(
+            "MP POS checkout preference created: path=/checkout/preferences response_keys=%s has_init_point=%s has_sandbox_init_point=%s",
+            sorted(response.keys()) if isinstance(response, dict) else type(response).__name__,
+            bool(isinstance(response, dict) and response.get("init_point")),
+            bool(isinstance(response, dict) and response.get("sandbox_init_point")),
+        )
+        return response
+
+    @staticmethod
+    def _extract_pos_results(payload: Any) -> list[dict[str, Any]]:
+        if isinstance(payload, dict):
+            results = payload.get("results")
+            return results if isinstance(results, list) else []
+        if isinstance(payload, list):
+            return payload
+        return []
+
+    def list_pos_points(self, *, access_token: str | None = None, limit: int = 50, offset: int = 0) -> list[dict[str, Any]]:
+        path = f"/pos?limit={int(limit)}&offset={int(offset)}"
+        payload = self._request("GET", path, access_token=access_token)
+        points: list[dict[str, Any]] = []
+        for row in self._extract_pos_results(payload):
+            if not isinstance(row, dict):
+                continue
+            store = row.get("store") if isinstance(row.get("store"), dict) else {}
+            points.append(
+                {
+                    "id": str(row.get("id") or "").strip(),
+                    "name": str(row.get("name") or row.get("title") or "POS").strip(),
+                    "external_id": str(row.get("external_id") or "").strip(),
+                    "store_id": str(row.get("store_id") or store.get("id") or "").strip(),
+                    "store_name": str(row.get("store_name") or store.get("name") or "").strip(),
+                    "status": str(row.get("status") or "").strip().lower(),
+                }
+            )
+        return points
+
+    def debug_fetch_pos_catalog(self, *, access_token: str | None = None) -> dict[str, Any]:
+        """Diagnóstico temporal: consulta catálogo de POS para auditar respuestas vacías."""
+        path = "/pos?limit=50&offset=0"
+        req = urlrequest.Request(
+            url=f"{self.API_BASE}{path}",
+            headers=self._headers(access_token=access_token),
+            method="GET",
+        )
+        status_code = None
+        raw = ""
+        try:
+            with urlrequest.urlopen(req, timeout=25) as response:
+                status_code = response.getcode()
+                raw = response.read().decode("utf-8")
+        except HTTPError as exc:
+            status_code = exc.code
+            raw = exc.read().decode("utf-8", errors="ignore") if hasattr(exc, "read") else str(exc)
+
+        payload = {}
+        if raw:
+            try:
+                payload = json.loads(raw)
+            except json.JSONDecodeError:
+                payload = {"raw": raw[:1200]}
+
+        pos_count = len(self._extract_pos_results(payload))
+
+        return {
+            "path": path,
+            "status_code": status_code,
+            "pos_count": pos_count,
+            "response": payload,
+        }
 
     def get_payment(self, payment_id: str) -> dict[str, Any]:
         return self._request("GET", f"/v1/payments/{payment_id}")

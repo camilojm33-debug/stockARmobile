@@ -3586,6 +3586,112 @@ def test_pos_qr_create_generates_qr_and_reuses_pending_draft(monkeypatch):
         assert Payment.query.filter_by(company_id=company.id).count() == 1
 
 
+def test_pos_qr_points_lists_company_catalog(monkeypatch):
+    from services.mercadopago_oauth_service import MercadoPagoOAuthService
+    from services.mercadopago_service import MercadoPagoService
+
+    with stock_app.app.app_context():
+        from app import User
+
+        company = Company.query.filter_by(name="Empresa Demo").first()
+        assert company is not None
+
+        user = User.query.filter_by(username="empresa_admin").first()
+        assert user is not None
+
+        client = stock_app.app.test_client()
+        client.post("/auth/login", data={"username": user.username, "password": "admin123"})
+
+        monkeypatch.setattr(MercadoPagoOAuthService, "ensure_access_token", lambda self, *, company_id: "company-access-token")
+        monkeypatch.setattr(
+            MercadoPagoService,
+            "list_pos_points",
+            lambda self, **kwargs: [
+                {
+                    "id": "POS-1",
+                    "name": "Caja principal",
+                    "external_id": "EXT-1",
+                    "store_id": "STORE-1",
+                    "store_name": "Sucursal Centro",
+                    "status": "active",
+                }
+            ],
+        )
+
+        response = client.get("/ventas/api/mp-qr/points")
+        assert response.status_code == 200
+        data = response.get_json()
+        assert data["status"] == "ok"
+        assert data["count"] == 1
+        assert data["points"][0]["id"] == "POS-1"
+
+
+def test_pos_qr_create_requires_selected_pos_when_catalog_available(monkeypatch):
+    from services.mercadopago_oauth_service import MercadoPagoOAuthService
+    from services.mercadopago_service import MercadoPagoService
+
+    with stock_app.app.app_context():
+        from app import User
+
+        company = Company.query.filter_by(name="Empresa Demo").first()
+        assert company is not None
+
+        user = User.query.filter_by(username="empresa_admin").first()
+        assert user is not None
+
+        client = stock_app.app.test_client()
+        client.post("/auth/login", data={"username": user.username, "password": "admin123"})
+        open_cash_session(client)
+
+        monkeypatch.setattr(MercadoPagoOAuthService, "ensure_access_token", lambda self, *, company_id: "company-access-token")
+        monkeypatch.setattr(
+            MercadoPagoService,
+            "debug_fetch_pos_catalog",
+            lambda self, **kwargs: {
+                "path": "/pos?limit=50&offset=0",
+                "status_code": 200,
+                "pos_count": 1,
+                "response": {
+                    "results": [
+                        {
+                            "id": "POS-REQ-1",
+                            "name": "Caja mostrador",
+                        }
+                    ]
+                },
+            },
+        )
+        monkeypatch.setattr(
+            MercadoPagoService,
+            "create_pos_checkout_preference",
+            lambda self, **kwargs: {
+                "id": "pref-pos-req",
+                "init_point": "https://mercadopago.test/checkout/pref-pos-req",
+                "sandbox_init_point": "https://sandbox.mercadopago.test/checkout/pref-pos-req",
+            },
+        )
+
+        headers = {"X-Cart-Tenant": f"{company.id}:{user.id}"}
+        base_payload = {
+            "items": [{"productId": 1, "quantity": 1, "name": "Yerba kilo", "price": 18000, "barcode": "123456789012"}],
+            "client_id": "",
+            "document_type": "venta",
+            "note": "",
+        }
+
+        without_pos = client.post("/ventas/api/mp-qr/create", json=base_payload, headers=headers)
+        assert without_pos.status_code == 400
+        assert "seleccionar" in (without_pos.get_json() or {}).get("error", "").lower()
+
+        with_pos = client.post(
+            "/ventas/api/mp-qr/create",
+            json={**base_payload, "mp_pos_id": "POS-REQ-1"},
+            headers=headers,
+        )
+        assert with_pos.status_code == 200
+        assert (with_pos.get_json() or {}).get("status") == "created"
+
+
 def test_pos_qr_webhook_approved_updates_single_draft_payment(monkeypatch):
     from services.webhook_service import WebhookService
 

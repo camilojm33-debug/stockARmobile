@@ -278,9 +278,21 @@
                     <span class="text-muted ms-2">{{ mp_connection_summary.account_name or 'Sin titular' }}{% if mp_connection_summary.account_email %} · {{ mp_connection_summary.account_email }}{% endif %}</span>
                   </div>
                   {% endif %}
+                  <div class="mb-3 text-start mx-auto" style="max-width: 520px;">
+                    <label class="form-label mb-1" for="checkout-mp-pos-id">QR/POS Mercado Pago</label>
+                    <select id="checkout-mp-pos-id" class="form-select">
+                      <option value="">Cargando QR/POS disponibles...</option>
+                    </select>
+                    <div class="form-text" id="checkout-mp-pos-help">Este listado se obtiene desde tu cuenta conectada de Mercado Pago.</div>
+                    <div class="small mt-2 d-flex flex-wrap align-items-center gap-2" id="checkout-mp-pos-selected-wrap">
+                      <span class="text-muted">Seleccionado:</span>
+                      <span id="checkout-mp-pos-selected-name" class="fw-semibold text-body">Sin seleccionar</span>
+                      <span id="checkout-mp-pos-selected-status" class="badge text-bg-secondary">Sin estado</span>
+                    </div>
+                  </div>
                   <div class="mb-2 fw-semibold" id="mp-qr-panel-amount">Total a cobrar: $0.00</div>
                   <img id="mp-qr-panel-image" class="rounded border bg-white d-none" alt="QR de Mercado Pago" style="width: 190px; height: 190px; object-fit: contain;">
-                  <div class="small text-muted mt-2" id="mp-qr-panel-status">Seleccioná QR Mercado Pago para generar el cobro.</div>
+                  <div class="small text-muted mt-2" id="mp-qr-panel-status">Elegí QR Mercado Pago y presioná Procesar venta para generar el cobro.</div>
                   <div class="d-flex flex-wrap justify-content-center gap-2 mt-3">
                     <a id="mp-qr-panel-open" class="btn btn-primary d-none" href="#" target="_blank" rel="noopener noreferrer">Abrir Mercado Pago</a>
                     <button class="btn btn-outline-primary" type="button" data-bs-toggle="modal" data-bs-target="#paymentQrModal">Ver QR grande</button>

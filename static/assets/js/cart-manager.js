@@ -18,6 +18,10 @@ const mpQrPanelDateTime = document.getElementById('mp-qr-panel-datetime');
 const mpQrPanel = document.getElementById('checkout-qr-panel');
 const mpQrModalImage = document.getElementById('mp-qr-modal-image');
 const mpQrModalStatus = document.getElementById('mp-qr-modal-status');
+const mpQrPosSelect = document.getElementById('checkout-mp-pos-id');
+const mpQrPosHelp = document.getElementById('checkout-mp-pos-help');
+const mpQrPosSelectedName = document.getElementById('checkout-mp-pos-selected-name');
+const mpQrPosSelectedStatus = document.getElementById('checkout-mp-pos-selected-status');
 
 let mpQrDraftState = {
   paymentId: null,
@@ -28,6 +32,52 @@ let mpQrDraftState = {
   pollTimer: null,
   approved: false,
 };
+let mpPosCatalogLoaded = false;
+let mpPosCatalogLoading = false;
+
+function normalizePosStatus(value) {
+  return String(value || '').trim().toLowerCase();
+}
+
+function getSelectedPosMeta() {
+  if (!mpQrPosSelect) return null;
+  const selectedOption = mpQrPosSelect.options[mpQrPosSelect.selectedIndex];
+  if (!selectedOption || !selectedOption.value) return null;
+  return {
+    id: String(selectedOption.value || '').trim(),
+    name: String(selectedOption.dataset.name || selectedOption.textContent || '').trim(),
+    status: normalizePosStatus(selectedOption.dataset.status),
+    storeName: String(selectedOption.dataset.storeName || '').trim(),
+  };
+}
+
+function updateSelectedPosBadge() {
+  if (!mpQrPosSelectedName || !mpQrPosSelectedStatus) return;
+  const selected = getSelectedPosMeta();
+  if (!selected) {
+    mpQrPosSelectedName.textContent = 'Sin seleccionar';
+    mpQrPosSelectedStatus.textContent = 'Sin estado';
+    mpQrPosSelectedStatus.className = 'badge text-bg-secondary';
+    return;
+  }
+
+  mpQrPosSelectedName.textContent = selected.storeName
+    ? `${selected.name} (${selected.storeName})`
+    : selected.name;
+
+  if (selected.status === 'active') {
+    mpQrPosSelectedStatus.textContent = 'Activo';
+    mpQrPosSelectedStatus.className = 'badge text-bg-success';
+    return;
+  }
+  if (selected.status) {
+    mpQrPosSelectedStatus.textContent = selected.status.toUpperCase();
+    mpQrPosSelectedStatus.className = 'badge text-bg-warning';
+    return;
+  }
+  mpQrPosSelectedStatus.textContent = 'Sin estado';
+  mpQrPosSelectedStatus.className = 'badge text-bg-secondary';
+}
 let checkoutInFlight = false;
 let checkoutToken = null;
 
@@ -458,8 +508,12 @@ function syncPaymentInputsWithMethods(total) {
     mpQrPanel.classList.toggle('d-none', !showQr);
   }
 
+  if (showQr) {
+    loadMercadoPagoPosCatalog();
+  }
+
   if (!showQr) {
-    resetMpQrPanel('Seleccioná QR Mercado Pago para generar el cobro.', total);
+    resetMpQrPanel('Elegí QR Mercado Pago y presioná Procesar venta para generar el cobro.', total);
   }
 
   const hasSecondary = Boolean((method2.value || '').trim());
@@ -524,7 +578,7 @@ function resetMpQrPanel(message, totalOverride) {
     mpQrPanelBadge.className = 'badge text-bg-warning';
   }
   if (mpQrPanelAmount) mpQrPanelAmount.textContent = `Total a cobrar: ${formatPrice(totalOverride ?? getCheckoutTotals().total)}`;
-  if (mpQrPanelStatus) mpQrPanelStatus.textContent = message || 'Seleccioná QR Mercado Pago para generar el cobro.';
+  if (mpQrPanelStatus) mpQrPanelStatus.textContent = message || 'Elegí QR Mercado Pago y presioná Procesar venta para generar el cobro.';
   if (mpQrPanelImage) {
     mpQrPanelImage.src = '';
     mpQrPanelImage.classList.add('d-none');
@@ -543,6 +597,78 @@ function resetMpQrPanel(message, totalOverride) {
   if (checkoutProcessButton) {
     checkoutProcessButton.disabled = false;
     checkoutProcessButton.textContent = 'Procesar venta';
+  }
+}
+
+function renderMercadoPagoPosOptions(points) {
+  if (!mpQrPosSelect) return;
+  const currentValue = mpQrPosSelect.value || '';
+  mpQrPosSelect.innerHTML = '';
+
+  const defaultOption = document.createElement('option');
+  defaultOption.value = '';
+  defaultOption.textContent = points.length ? 'Seleccioná un QR/POS...' : 'No hay QR/POS disponibles';
+  mpQrPosSelect.appendChild(defaultOption);
+
+  points.forEach((point) => {
+    const option = document.createElement('option');
+    option.value = String(point.id || '').trim();
+    option.dataset.name = String(point.name || point.id || '').trim();
+    option.dataset.status = normalizePosStatus(point.status);
+    option.dataset.storeName = String(point.store_name || '').trim();
+    const storeName = String(point.store_name || '').trim();
+    option.textContent = storeName
+      ? `${point.name || point.id} (${storeName})`
+      : `${point.name || point.id}`;
+    mpQrPosSelect.appendChild(option);
+  });
+
+  if (currentValue && points.some((point) => String(point.id || '').trim() === currentValue)) {
+    mpQrPosSelect.value = currentValue;
+  }
+  updateSelectedPosBadge();
+}
+
+async function loadMercadoPagoPosCatalog(force = false) {
+  if (!mpQrPosSelect) return;
+  if (!force && (mpPosCatalogLoaded || mpPosCatalogLoading)) return;
+
+  mpPosCatalogLoading = true;
+  mpQrPosSelect.disabled = true;
+  mpQrPosSelect.innerHTML = '<option value="">Cargando QR/POS disponibles...</option>';
+  if (mpQrPosHelp) {
+    mpQrPosHelp.textContent = 'Consultando tu catálogo de QR/POS en Mercado Pago...';
+  }
+
+  try {
+    const response = await fetch('/ventas/api/mp-qr/points', {
+      headers: {
+        'Accept': 'application/json',
+      },
+    });
+    const result = await response.json();
+    if (!response.ok) {
+      throw new Error(result.error || 'No se pudo consultar los QR/POS de Mercado Pago.');
+    }
+
+    const points = Array.isArray(result.points) ? result.points.filter((row) => row && row.id) : [];
+    renderMercadoPagoPosOptions(points);
+    mpPosCatalogLoaded = true;
+    if (mpQrPosHelp) {
+      mpQrPosHelp.textContent = points.length
+        ? `Se encontraron ${points.length} QR/POS en tu cuenta conectada.`
+        : 'No hay QR/POS disponibles en esta cuenta. Verificá la configuración en Mercado Pago.';
+    }
+  } catch (error) {
+    renderMercadoPagoPosOptions([]);
+    if (mpQrPosHelp) {
+      mpQrPosHelp.textContent = error.message || 'No se pudo consultar los QR/POS de Mercado Pago.';
+    }
+    console.error('Error cargando catálogo MP POS:', error);
+  } finally {
+    mpPosCatalogLoading = false;
+    mpQrPosSelect.disabled = false;
+    updateSelectedPosBadge();
   }
 }
 
@@ -611,10 +737,31 @@ async function processMercadoPagoQrCheckout() {
     general_discount: total.discount,
     surcharge: total.surcharge,
     client_id: document.getElementById('checkout-client-select')?.value || '',
+    mp_pos_id: mpQrPosSelect?.value || '',
     note: document.getElementById('checkout-note')?.value || '',
     document_type: document.getElementById('checkout-document-type')?.value || '',
     checkout_token: ensureCheckoutToken(),
   };
+
+  if (mpQrPosSelect && mpQrPosSelect.options.length > 1 && !payload.mp_pos_id) {
+    showNotification('Seleccioná un QR/POS de Mercado Pago antes de generar el cobro.', 'warning');
+    mpQrPosSelect.focus();
+    if (checkoutProcessButton && !mpQrDraftState.approved) {
+      checkoutProcessButton.disabled = false;
+      checkoutProcessButton.textContent = 'Procesar venta';
+    }
+    return;
+  }
+
+  const selectedPosMeta = getSelectedPosMeta();
+  if (selectedPosMeta && selectedPosMeta.status && selectedPosMeta.status !== 'active') {
+    showNotification('El QR/POS seleccionado no está activo en Mercado Pago. Elegí uno activo.', 'warning');
+    if (checkoutProcessButton && !mpQrDraftState.approved) {
+      checkoutProcessButton.disabled = false;
+      checkoutProcessButton.textContent = 'Procesar venta';
+    }
+    return;
+  }
   if (checkoutProcessButton) {
     checkoutProcessButton.disabled = true;
     checkoutProcessButton.textContent = 'Generando QR...';
@@ -631,6 +778,9 @@ async function processMercadoPagoQrCheckout() {
       body: JSON.stringify(payload),
     });
     const result = await response.json();
+    if (result && result.mp_pos_audit) {
+      console.info('MP POS audit', result.mp_pos_audit);
+    }
     if (!response.ok) {
       throw new Error(result.error || 'No se pudo generar el cobro.');
     }
@@ -785,6 +935,8 @@ document.addEventListener('DOMContentLoaded', () => {
       clearInterval(mpQrDraftState.pollTimer);
     }
   });
+  mpQrPosSelect?.addEventListener('change', updateSelectedPosBadge);
+  updateSelectedPosBadge();
 });
 
 async function createQuickClient() {
