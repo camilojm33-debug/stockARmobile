@@ -1085,7 +1085,7 @@ def _create_sale_from_items(items, data, json_response=False):
         if _requires_identified_client(data, requiere_comprobante, tipo_comprobante) and client is None:
             raise ValueError("Para ese comprobante debés seleccionar un cliente.")
         sale = Sale(
-            customer=client.name if client else current_user.username,
+            customer=client.name if client else "Consumidor final",
             subtotal=subtotal,
             discount=discount + general_discount,
             tax=tax_total,
