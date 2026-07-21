@@ -630,6 +630,12 @@ function resetMpQrPanel(message, totalOverride) {
   }
 }
 
+function cancelMercadoPagoQrCheckout() {
+  const total = getCheckoutTotals();
+  resetMpQrPanel('Cobro QR cancelado. Podés generar uno nuevo cuando quieras.', total.total);
+  showNotification('Cobro QR cancelado.', 'info');
+}
+
 function renderMercadoPagoPosOptions(points) {
   if (!mpQrPosSelect) return;
   const currentValue = mpQrPosSelect.value || '';
