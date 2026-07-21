@@ -3605,17 +3605,24 @@ def test_pos_qr_points_lists_company_catalog(monkeypatch):
         monkeypatch.setattr(MercadoPagoOAuthService, "ensure_access_token", lambda self, *, company_id: "company-access-token")
         monkeypatch.setattr(
             MercadoPagoService,
-            "list_pos_points",
-            lambda self, **kwargs: [
-                {
-                    "id": "POS-1",
-                    "name": "Caja principal",
-                    "external_id": "EXT-1",
-                    "store_id": "STORE-1",
-                    "store_name": "Sucursal Centro",
-                    "status": "active",
-                }
-            ],
+            "debug_fetch_pos_catalog",
+            lambda self, **kwargs: {
+                "path": "/pos?limit=50&offset=0",
+                "status_code": 200,
+                "pos_count": 1,
+                "response": {
+                    "results": [
+                        {
+                            "id": "POS-1",
+                            "name": "Caja principal",
+                            "external_id": "EXT-1",
+                            "store_id": "STORE-1",
+                            "store_name": "Sucursal Centro",
+                            "status": "active",
+                        }
+                    ]
+                },
+            },
         )
 
         response = client.get("/ventas/api/mp-qr/points")

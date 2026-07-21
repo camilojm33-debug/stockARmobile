@@ -105,6 +105,16 @@ function getCsrfToken() {
     || '';
 }
 
+async function parseApiResponse(response) {
+  const contentType = (response.headers.get('content-type') || '').toLowerCase();
+  if (contentType.includes('application/json')) {
+    const jsonPayload = await response.json();
+    return { isJson: true, data: jsonPayload, text: '' };
+  }
+  const textPayload = await response.text();
+  return { isJson: false, data: null, text: (textPayload || '').trim() };
+}
+
 function getCartTenantKey() {
   const body = document.body;
   const tenantKey = body?.dataset?.cartTenant || '';
@@ -630,7 +640,10 @@ function renderMercadoPagoPosOptions(points) {
 }
 
 async function loadMercadoPagoPosCatalog(force = false) {
-  if (!mpQrPosSelect) return;
+  if (!mpQrPosSelect) {
+    console.warn('MP POS catalog load skipped: selector checkout-mp-pos-id no existe en el DOM.');
+    return;
+  }
   if (!force && (mpPosCatalogLoaded || mpPosCatalogLoading)) return;
 
   mpPosCatalogLoading = true;
@@ -641,12 +654,28 @@ async function loadMercadoPagoPosCatalog(force = false) {
   }
 
   try {
-    const response = await fetch('/ventas/api/mp-qr/points', {
+    const pointsEndpoint = '/ventas/api/mp-qr/points';
+    console.info('MP POS catalog request', { url: pointsEndpoint });
+    const response = await fetch(pointsEndpoint, {
       headers: {
         'Accept': 'application/json',
       },
     });
-    const result = await response.json();
+    const parsed = await parseApiResponse(response);
+    if (!parsed.isJson) {
+      throw new Error(parsed.text || `Respuesta no JSON (${response.status}) al consultar POS.`);
+    }
+    const result = parsed.data || {};
+    console.info('MP POS catalog response', {
+      url: pointsEndpoint,
+      httpStatus: response.status,
+      json: result,
+      count: Number(result.count || 0),
+      collector_id: result?.audit?.collector_id || null,
+      user_id: result?.audit?.user_id || null,
+      company_id: result?.audit?.company_id || null,
+      access_token: result?.audit?.access_token || null,
+    });
     if (!response.ok) {
       throw new Error(result.error || 'No se pudo consultar los QR/POS de Mercado Pago.');
     }
@@ -657,7 +686,14 @@ async function loadMercadoPagoPosCatalog(force = false) {
     if (mpQrPosHelp) {
       mpQrPosHelp.textContent = points.length
         ? `Se encontraron ${points.length} QR/POS en tu cuenta conectada.`
-        : 'No hay QR/POS disponibles en esta cuenta. Verificá la configuración en Mercado Pago.';
+        : (result.zero_reason || 'No hay QR/POS disponibles en esta cuenta. Verificá la configuración en Mercado Pago.');
+    }
+    if (!points.length) {
+      console.warn('MP POS catalog vacío', {
+        zero_reason: result.zero_reason || null,
+        mp_http_status: result?.audit?.mp_http_status || null,
+        mp_json: result?.audit?.mp_json || null,
+      });
     }
   } catch (error) {
     renderMercadoPagoPosOptions([]);
@@ -777,12 +813,17 @@ async function processMercadoPagoQrCheckout() {
       },
       body: JSON.stringify(payload),
     });
-    const result = await response.json();
+    const parsed = await parseApiResponse(response);
+    if (!parsed.isJson) {
+      const fallbackText = parsed.text || `Error HTTP ${response.status} al generar el cobro.`;
+      throw new Error(fallbackText);
+    }
+    const result = parsed.data || {};
     if (result && result.mp_pos_audit) {
       console.info('MP POS audit', result.mp_pos_audit);
     }
     if (!response.ok) {
-      throw new Error(result.error || 'No se pudo generar el cobro.');
+      throw new Error(result.error || `Error HTTP ${response.status} al generar el cobro.`);
     }
     updateMpQrPanel(result);
     if (mpQrDraftState.pollTimer) clearInterval(mpQrDraftState.pollTimer);

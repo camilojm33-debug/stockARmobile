@@ -24,6 +24,12 @@ import qrcode
 bp = Blueprint("sales", __name__)
 
 
+def _api_error(message, status=400, **extra):
+    payload = {"success": False, "error": str(message)}
+    payload.update(extra)
+    return jsonify(payload), status
+
+
 def _to_float(value, default=0.0):
     try:
         return float(value if value not in (None, "") else default)
@@ -436,21 +442,142 @@ def api_checkout():
 @tenant_required
 def api_mp_qr_points():
     company_id = getattr(current_user, "company_id", None)
+    user_id = getattr(current_user, "id", None)
+    request_url = request.url
     oauth_service = MercadoPagoOAuthService()
+    connection = oauth_service.get_connection(company_id=company_id)
+    collector_id = str(getattr(connection, "mp_user_id", "") or "").strip() or None
     try:
         access_token = oauth_service.ensure_access_token(company_id=company_id)
     except Exception as exc:
-        return jsonify({"error": str(exc), "points": [], "count": 0}), 400
+        current_app.logger.warning(
+            "MP POS list oauth error: url=%s company_id=%s user_id=%s collector_id=%s access_token=%s error=%s",
+            request_url,
+            company_id,
+            user_id,
+            collector_id,
+            "missing",
+            exc,
+        )
+        return jsonify({
+            "success": False,
+            "error": str(exc),
+            "points": [],
+            "count": 0,
+            "audit": {
+                "request_url": request_url,
+                "company_id": company_id,
+                "user_id": user_id,
+                "collector_id": collector_id,
+                "access_token": "missing",
+            },
+        }), 400
+
+    access_token_preview = f"{str(access_token)[:8]}..." if access_token else "missing"
 
     mp_service = MercadoPagoService()
     try:
-        points = mp_service.list_pos_points(access_token=access_token)
+        mp_debug = mp_service.debug_fetch_pos_catalog(access_token=access_token)
     except Exception as exc:
-        current_app.logger.warning("MP POS list failed: company_id=%s error=%s", company_id, exc)
-        return jsonify({"error": str(exc), "points": [], "count": 0}), 400
+        current_app.logger.warning(
+            "MP POS list failed: url=%s company_id=%s user_id=%s collector_id=%s access_token=%s error=%s",
+            request_url,
+            company_id,
+            user_id,
+            collector_id,
+            access_token_preview,
+            exc,
+        )
+        return jsonify({
+            "success": False,
+            "error": str(exc),
+            "points": [],
+            "count": 0,
+            "audit": {
+                "request_url": request_url,
+                "company_id": company_id,
+                "user_id": user_id,
+                "collector_id": collector_id,
+                "access_token": access_token_preview,
+            },
+        }), 400
 
-    normalized_points = [point for point in points if isinstance(point, dict) and point.get("id")]
-    return jsonify({"status": "ok", "points": normalized_points, "count": len(normalized_points)})
+    raw_response = (mp_debug or {}).get("response")
+    raw_rows = []
+    if isinstance(raw_response, dict):
+        maybe_rows = raw_response.get("results")
+        if isinstance(maybe_rows, list):
+            raw_rows = maybe_rows
+    elif isinstance(raw_response, list):
+        raw_rows = raw_response
+
+    normalized_points = []
+    for row in raw_rows:
+        if not isinstance(row, dict):
+            continue
+        store = row.get("store") if isinstance(row.get("store"), dict) else {}
+        pos_id = str(row.get("id") or "").strip()
+        if not pos_id:
+            continue
+        normalized_points.append({
+            "id": pos_id,
+            "name": str(row.get("name") or row.get("title") or "POS").strip(),
+            "external_id": str(row.get("external_id") or "").strip(),
+            "store_id": str(row.get("store_id") or store.get("id") or "").strip(),
+            "store_name": str(row.get("store_name") or store.get("name") or "").strip(),
+            "status": str(row.get("status") or "").strip().lower(),
+        })
+
+    pos_count = len(normalized_points)
+    zero_reason = None
+    mp_status = (mp_debug or {}).get("status_code")
+    if pos_count == 0:
+        if isinstance(mp_status, int) and mp_status >= 400:
+            zero_reason = "Mercado Pago devolvió error HTTP al consultar POS."
+        elif isinstance(raw_response, dict) and "results" not in raw_response:
+            zero_reason = "Mercado Pago respondió JSON sin el campo results para /pos."
+        else:
+            zero_reason = "La cuenta conectada no tiene POS visibles para este collector_id o no hay POS creados."
+
+    current_app.logger.info(
+        "MP POS list audit: url=%s mp_path=%s mp_http_status=%s company_id=%s user_id=%s collector_id=%s access_token=%s pos_count=%s mp_json=%s",
+        request_url,
+        (mp_debug or {}).get("path"),
+        mp_status,
+        company_id,
+        user_id,
+        collector_id,
+        access_token_preview,
+        pos_count,
+        json.dumps(raw_response, ensure_ascii=False)[:4000],
+    )
+
+    if zero_reason:
+        current_app.logger.warning(
+            "MP POS list empty: company_id=%s user_id=%s collector_id=%s reason=%s",
+            company_id,
+            user_id,
+            collector_id,
+            zero_reason,
+        )
+
+    return jsonify({
+        "success": True,
+        "status": "ok",
+        "points": normalized_points,
+        "count": pos_count,
+        "zero_reason": zero_reason,
+        "audit": {
+            "request_url": request_url,
+            "mp_path": (mp_debug or {}).get("path"),
+            "mp_http_status": mp_status,
+            "company_id": company_id,
+            "user_id": user_id,
+            "collector_id": collector_id,
+            "access_token": access_token_preview,
+            "mp_json": raw_response,
+        },
+    })
 
 
 @bp.route("/api/mp-qr/create", methods=["POST"])
@@ -459,10 +586,27 @@ def api_mp_qr_create():
     from app import Payment, db, scope_query_to_company
 
     payload = request.get_json(silent=True) or {}
+    request_form = request.form.to_dict(flat=False)
+    company_id = getattr(current_user, "company_id", None)
+    user_id = getattr(current_user, "id", None)
+    selected_pos_id = str(payload.get("mp_pos_id") or payload.get("pos_id") or "").strip()
+    selected_qr_id = str(payload.get("qr_id") or payload.get("mp_qr_id") or "").strip()
+    if not selected_pos_id and selected_qr_id:
+        selected_pos_id = selected_qr_id
+    current_app.logger.info(
+        "MP QR create request received: request_json=%s request_form=%s company_id=%s user_id=%s pos_id=%s qr_id=%s",
+        payload,
+        request_form,
+        company_id,
+        user_id,
+        selected_pos_id,
+        selected_qr_id,
+    )
+
     incoming_tenant = (request.headers.get("X-Cart-Tenant") or "").strip()
     expected_tenant = _cart_tenant_key()
     if incoming_tenant != expected_tenant:
-        return jsonify({"error": "Carrito fuera de contexto de empresa o usuario."}), 409
+        return _api_error("Carrito fuera de contexto de empresa o usuario.", status=409)
 
     raw_items = payload.get("items", [])
     items = {}
@@ -473,10 +617,10 @@ def api_mp_qr_create():
             if product_id > 0 and quantity > 0:
                 items[str(product_id)] = quantity
     except (TypeError, ValueError):
-        return jsonify({"error": "Datos de carrito invalidos."}), 400
+        return _api_error("Datos de carrito invalidos.", status=400)
 
     if not items:
-        return jsonify({"error": "El carrito esta vacio."}), 400
+        return _api_error("El carrito esta vacio.", status=400)
 
     open_session = _require_open_cash_session(json_response=True)
     if isinstance(open_session, tuple):
@@ -493,8 +637,7 @@ def api_mp_qr_create():
         )
         final_total = sale_totals["total"]
         currency = "ARS"
-        company_id = getattr(current_user, "company_id", None)
-        selected_pos_id = str(payload.get("mp_pos_id") or payload.get("pos_id") or "").strip()
+        description = f"StockArmobile POS - {company_id}"
         snapshot = _pos_qr_snapshot(
             payload.get("items", []),
             payload,
@@ -542,10 +685,34 @@ def api_mp_qr_create():
             f"cart_hash:{snapshot['cart_hash']}"
         )
         oauth_service = MercadoPagoOAuthService()
+        connection = oauth_service.get_connection(company_id=company_id)
+        collector_id = str(getattr(connection, "mp_user_id", "") or "").strip() or None
         try:
             access_token = oauth_service.ensure_access_token(company_id=company_id)
         except Exception as exc:
-            return jsonify({"error": str(exc)}), 400
+            current_app.logger.warning(
+                "MP QR create blocked: company_id=%s user_id=%s pos_id=%s qr_id=%s collector_id=%s access_token=%s error=%s",
+                company_id,
+                user_id,
+                selected_pos_id,
+                selected_qr_id,
+                collector_id,
+                "missing",
+                exc,
+            )
+            return _api_error(str(exc), status=400)
+
+        current_app.logger.info(
+            "MP QR create token resolved: company_id=%s user_id=%s pos_id=%s qr_id=%s collector_id=%s access_token=%s amount=%s description=%s",
+            company_id,
+            user_id,
+            selected_pos_id,
+            selected_qr_id,
+            collector_id,
+            f"{str(access_token)[:8]}..." if access_token else "missing",
+            float(final_total),
+            description,
+        )
         mp_service = MercadoPagoService()
         pos_debug = None
         try:
@@ -562,26 +729,69 @@ def api_mp_qr_create():
             current_app.logger.warning("MP QR audit POS probe failed: company_id=%s error=%s", company_id, exc)
 
         available_pos_ids = _extract_pos_ids_from_debug_response(pos_debug)
-        if available_pos_ids and not selected_pos_id:
-            return jsonify({"error": "Debes seleccionar un QR/POS de Mercado Pago para generar el cobro."}), 400
-        if selected_pos_id and available_pos_ids and selected_pos_id not in available_pos_ids:
-            return jsonify({"error": "El QR/POS seleccionado no pertenece a la cuenta conectada."}), 400
+        if selected_qr_id and not selected_pos_id:
+            selected_pos_id = selected_qr_id
 
-        preference = mp_service.create_pos_checkout_preference(
-            title=f"StockArmobile POS - {company_id}",
-            amount=float(final_total),
-            currency=currency,
-            external_reference=external_reference,
-            company_id=company_id,
-            user_id=current_user.id,
-            access_token=access_token,
-            metadata={
-                "draft_payment_id": draft_payment.id,
-                "cart_hash": snapshot["cart_hash"],
-                "total_amount": float(final_total),
-                "pos_id": selected_pos_id or None,
-            },
+        current_app.logger.info(
+            "MP QR create preflight: company_id=%s user_id=%s pos_id=%s qr_id=%s collector_id=%s pos_exists=%s token_exists=%s mp_probe_status=%s mp_probe_pos_count=%s",
+            company_id,
+            user_id,
+            selected_pos_id,
+            selected_qr_id,
+            collector_id,
+            selected_pos_id in available_pos_ids if selected_pos_id and available_pos_ids else None,
+            bool(access_token),
+            (pos_debug or {}).get("status_code"),
+            (pos_debug or {}).get("pos_count"),
         )
+
+        if available_pos_ids and not selected_pos_id:
+            return _api_error("Debes seleccionar un QR/POS de Mercado Pago para generar el cobro.", status=400)
+        if selected_pos_id and available_pos_ids and selected_pos_id not in available_pos_ids:
+            return _api_error("El QR/POS seleccionado no pertenece a la cuenta conectada.", status=400)
+
+        current_app.logger.info(
+            "MP QR create request to MP: company_id=%s user_id=%s pos_id=%s qr_id=%s collector_id=%s external_reference=%s amount=%s description=%s",
+            company_id,
+            user_id,
+            selected_pos_id,
+            selected_qr_id,
+            collector_id,
+            external_reference,
+            float(final_total),
+            description,
+        )
+
+        try:
+            preference = mp_service.create_pos_checkout_preference(
+                title=description,
+                amount=float(final_total),
+                currency=currency,
+                external_reference=external_reference,
+                company_id=company_id,
+                user_id=current_user.id,
+                access_token=access_token,
+                metadata={
+                    "draft_payment_id": draft_payment.id,
+                    "cart_hash": snapshot["cart_hash"],
+                    "total_amount": float(final_total),
+                    "pos_id": selected_pos_id or None,
+                    "qr_id": selected_qr_id or None,
+                    "collector_id": collector_id,
+                },
+            )
+        except Exception as exc:
+            current_app.logger.exception(
+                "MP QR create failed at MP call: company_id=%s user_id=%s pos_id=%s qr_id=%s collector_id=%s external_reference=%s amount=%s",
+                company_id,
+                user_id,
+                selected_pos_id,
+                selected_qr_id,
+                collector_id,
+                external_reference,
+                float(final_total),
+            )
+            return _api_error(str(exc), status=400)
         draft_payment.preference_id = preference.get("id")
         draft_payment.external_reference = external_reference
         draft_payment.reference = f"pos_draft:{draft_payment.id}"
@@ -599,6 +809,7 @@ def api_mp_qr_create():
             "cart_hash": snapshot["cart_hash"],
         })
         return jsonify({
+            "success": True,
             "status": "created",
             "payment_id": draft_payment.id,
             "status_url": url_for("sales.api_mp_qr_status", draft_id=draft_payment.id),
@@ -617,7 +828,7 @@ def api_mp_qr_create():
         })
     except Exception as exc:
         current_app.logger.exception("Error creando QR Mercado Pago POS: %s", exc)
-        return jsonify({"error": "No se pudo generar el QR de Mercado Pago."}), 400
+        return _api_error(f"No se pudo generar el QR de Mercado Pago: {exc}", status=400)
 
 
 @bp.route("/api/mp-qr/status", methods=["GET"])

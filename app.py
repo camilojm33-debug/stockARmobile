@@ -14,8 +14,10 @@ from flask_login import LoginManager, UserMixin, current_user, login_required
 from flask_migrate import Migrate
 from flask_sqlalchemy import SQLAlchemy
 from flask_wtf import CSRFProtect, FlaskForm
+from flask_wtf.csrf import CSRFError
 from sqlalchemy import Index, false, inspect, text
 from sqlalchemy.exc import IntegrityError, OperationalError, ProgrammingError
+from werkzeug.exceptions import HTTPException
 from werkzeug.security import check_password_hash, generate_password_hash
 from werkzeug.middleware.proxy_fix import ProxyFix
 from wtforms import BooleanField, DateField, DecimalField, PasswordField, SelectField, StringField, SubmitField, TextAreaField
@@ -93,6 +95,18 @@ login_manager.login_message = "Debes iniciar sesion para acceder a esta pagina."
 login_manager.login_message_category = "info"
 
 
+def is_api_request() -> bool:
+    path = request.path or ""
+    return bool(path.startswith("/ventas/api/") or path.startswith("/api/") or request.is_json)
+
+
+@login_manager.unauthorized_handler
+def unauthorized_handler():
+    if is_api_request():
+        return jsonify({"success": False, "error": "Debes iniciar sesión para acceder a este recurso."}), 401
+    return redirect(url_for("auth.login"))
+
+
 def utcnow():
     """Return UTC now without tzinfo for compatibility with current DB columns."""
     return datetime.now(timezone.utc).replace(tzinfo=None)
@@ -161,18 +175,20 @@ def tenant_required(func):
     @login_required
     def decorated(*args, **kwargs):
         if getattr(current_user, "role", None) == "superadmin":
+            if is_api_request():
+                return jsonify({"success": False, "error": "El panel de empresa no está disponible para SuperAdmin."}), 403
             flash("El panel de empresa no está disponible para SuperAdmin.", "warning")
             return redirect(url_for("saas.index"))
         company_id = get_current_company_id()
         if company_id is None:
-            if request.is_json or request.path.startswith("/api"):
-                return jsonify({"error": "No hay contexto de empresa activo."}), 403
+            if is_api_request():
+                return jsonify({"success": False, "error": "No hay contexto de empresa activo."}), 403
             flash("No hay contexto de empresa activo para esta sesión.", "warning")
             return redirect(url_for("auth.login"))
         state = get_company_access_state(company_id)
         if not state["can_access"]:
-            if request.is_json or request.path.startswith("/api"):
-                return jsonify({"error": state["reason"]}), 403
+            if is_api_request():
+                return jsonify({"success": False, "error": state["reason"]}), 403
             return redirect(url_for("access_status"))
         return func(*args, **kwargs)
     return decorated
@@ -211,8 +227,8 @@ def seller_required(func):
             abort(403)
         profile = ReferralSeller.query.filter_by(user_id=current_user.id, active=True).first()
         if profile is None:
-            if request.is_json or request.path.startswith("/api"):
-                abort(403)
+            if is_api_request():
+                return jsonify({"success": False, "error": "Perfil de referido no activo."}), 403
             flash("Activa tu Programa de Referidos para acceder al portal.", "info")
             return redirect(url_for("referrals.activate_seller"))
         return func(*args, **kwargs)
@@ -291,6 +307,8 @@ def enforce_password_change_if_required():
     }
     if endpoint in allowed:
         return None
+    if is_api_request():
+        return jsonify({"success": False, "error": "Debes actualizar tu contraseña para continuar."}), 403
     return redirect(url_for("auth.force_password_change"))
 
 
@@ -327,8 +345,8 @@ def enforce_billing_restrictions_for_blocked_tenants():
     if state["can_access"]:
         return None
 
-    if request.is_json or request.path.startswith("/api"):
-        return jsonify({"error": state["reason"], "status": state["status"]}), 403
+    if is_api_request():
+        return jsonify({"success": False, "error": state["reason"], "status": state["status"]}), 403
     return redirect(url_for("access_status"))
 
 
@@ -1476,17 +1494,50 @@ def access_status():
 
 @app.errorhandler(404)
 def not_found(error):
+    if is_api_request():
+        return jsonify({"success": False, "error": "Recurso no encontrado."}), 404
     return render_template("errors/404.html"), 404
 
 
 @app.errorhandler(403)
 def forbidden(error):
+    if is_api_request():
+        return jsonify({"success": False, "error": "No autorizado para este recurso."}), 403
     return render_template("errors/403.html"), 403
+
+
+@app.errorhandler(CSRFError)
+def handle_csrf_error(error):
+    if (request.path or "") == "/ventas/api/mp-qr/create":
+        payload = request.get_json(silent=True) or {}
+        form_payload = request.form.to_dict(flat=False)
+        app.logger.warning(
+            "MP QR create blocked by CSRF: request_json=%s request_form=%s company_id=%s user_id=%s pos_id=%s qr_id=%s",
+            payload,
+            form_payload,
+            getattr(current_user, "company_id", None) if getattr(current_user, "is_authenticated", False) else None,
+            getattr(current_user, "id", None) if getattr(current_user, "is_authenticated", False) else None,
+            payload.get("mp_pos_id") or payload.get("pos_id"),
+            payload.get("qr_id") or payload.get("mp_qr_id"),
+        )
+    if is_api_request():
+        return jsonify({"success": False, "error": f"CSRF inválido: {error.description}"}), 400
+    return render_template("errors/403.html"), 400
+
+
+@app.errorhandler(HTTPException)
+def handle_http_exception(error):
+    if is_api_request():
+        message = getattr(error, "description", None) or "Error HTTP"
+        return jsonify({"success": False, "error": str(message)}), error.code or 500
+    return error
 
 
 @app.errorhandler(500)
 def internal_error(error):
     app.logger.exception("Error interno no controlado: %s", error)
+    if is_api_request():
+        return jsonify({"success": False, "error": "Error interno no controlado."}), 500
     return render_template("errors/500.html"), 500
 
 
