@@ -126,6 +126,23 @@
       object-position: center;
       display: block;
     }
+    .app-sidebar-toggle {
+      position: absolute;
+      top: 16px;
+      right: 16px;
+      width: 34px;
+      height: 34px;
+      border-radius: 999px;
+      border: 1px solid var(--app-line);
+      background: var(--app-panel);
+      color: var(--app-primary-deep);
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      box-shadow: var(--app-shadow-soft);
+      z-index: 1;
+    }
+    .app-sidebar-toggle:hover { background: #eef4ff; }
     .app-mobile-brand {
       display: inline-flex;
       align-items: center;
@@ -174,6 +191,14 @@
       margin-top: auto;
       padding: 16px;
       border-top: 1px solid var(--app-line);
+    }
+    .nav-section-label {
+      padding: 6px 12px 4px;
+      color: var(--app-muted);
+      font-size: .72rem;
+      font-weight: 800;
+      letter-spacing: .08em;
+      text-transform: uppercase;
     }
     .offline-status-panel {
       border: 1px solid var(--app-line);
@@ -231,8 +256,38 @@
       transition: transform .16s ease, box-shadow .16s ease, border-color .16s ease;
     }
     .app-card:hover { border-color: rgba(37, 99, 235, .18); }
-    .metric-card { min-height: 150px; transition: transform .18s ease, box-shadow .18s ease; overflow: hidden; }
-    .metric-card:hover { transform: translateY(-2px); box-shadow: var(--app-shadow); }
+      body.sidebar-collapsed {
+        --sidebar-width: 86px;
+      }
+      body.sidebar-collapsed .app-sidebar {
+        width: var(--sidebar-width);
+      }
+      body.sidebar-collapsed .app-main {
+        margin-left: var(--sidebar-width);
+      }
+      body.sidebar-collapsed .app-brand,
+      body.sidebar-collapsed .app-sidebar-footer,
+      body.sidebar-collapsed .offline-status-panel,
+      body.sidebar-collapsed .user-chip,
+      body.sidebar-collapsed .app-nav .nav-link span,
+      body.sidebar-collapsed .app-nav .nav-link .nav-text,
+      body.sidebar-collapsed .app-nav .nav-link .nav-badge {
+        display: none !important;
+      }
+      body.sidebar-collapsed .app-brand {
+        justify-content: center;
+        padding: 0;
+      }
+      body.sidebar-collapsed .app-nav {
+        padding: 12px 8px;
+      }
+      body.sidebar-collapsed .app-nav .nav-link {
+        justify-content: center;
+        padding-inline: 0;
+      }
+      body.sidebar-collapsed .app-nav .nav-link i {
+        width: auto;
+      }
     .metric-icon {
       width: 52px;
       height: 52px;
@@ -565,6 +620,7 @@
   {% if current_user.is_authenticated %}
   <div class="app-sidebar-backdrop" id="appSidebarBackdrop" aria-hidden="true"></div>
   <aside class="app-sidebar" id="appSidebar">
+    <button class="app-sidebar-toggle d-none d-lg-inline-flex" type="button" id="appSidebarDesktopToggle" aria-label="Contraer menú"><i class="bi bi-layout-sidebar-inset"></i></button>
     <a class="app-brand" href="{{ url_for('saas.index') if current_user.role == 'superadmin' else url_for('dashboard.index') }}">
       <span class="app-brand-mark">
         <img class="app-brand-logo" src="{{ url_for('static', filename='images/branding/logo.png') }}" alt="StockArmobile logo">
@@ -576,6 +632,7 @@
     </a>
     <nav class="app-nav nav flex-column">
       {% if current_user.role == 'superadmin' %}
+      <div class="nav-section-label">Administración</div>
       <a class="nav-link {% if request.endpoint == 'saas.index' %}active{% endif %}" href="{{ url_for('saas.index') }}"><i class="bi bi-grid-1x2"></i>Panel SaaS</a>
       <a class="nav-link {% if request.endpoint == 'saas.companies_panel' %}active{% endif %}" href="{{ url_for('saas.companies_panel') }}"><i class="bi bi-buildings"></i>Empresas</a>
       <a class="nav-link {% if request.endpoint == 'saas.users_panel' %}active{% endif %}" href="{{ url_for('saas.users_panel') }}"><i class="bi bi-people"></i>Usuarios globales</a>
@@ -590,45 +647,45 @@
       <a class="nav-link {% if request.endpoint == 'saas.renewals_panel' %}active{% endif %}" href="{{ url_for('saas.renewals_panel') }}"><i class="bi bi-arrow-repeat"></i>Renovaciones</a>
       <a class="nav-link {% if request.endpoint == 'saas.logs_panel' %}active{% endif %}" href="{{ url_for('saas.logs_panel') }}"><i class="bi bi-journal-text"></i>Registros</a>
       <a class="nav-link {% if request.endpoint == 'saas.server_status' %}active{% endif %}" href="{{ url_for('saas.server_status') }}"><i class="bi bi-hdd-network"></i>Estado servidor</a>
-      <a class="nav-link {% if request.endpoint and request.endpoint.startswith('purchases.') %}active{% endif %}" href="{{ url_for('purchases.suppliers_panel') }}"><i class="bi bi-truck"></i>Proveedores</a>
       <a class="nav-link {% if request.endpoint and request.endpoint.startswith('referrals.admin_') %}active{% endif %}" href="{{ url_for('referrals.admin_referrals_dashboard') }}"><i class="bi bi-megaphone"></i>Programa de Referidos</a>
       <a class="nav-link {% if request.endpoint == 'saas.global_stats' %}active{% endif %}" href="{{ url_for('saas.global_stats') }}"><i class="bi bi-graph-up"></i>Estadisticas globales</a>
       <a class="nav-link {% if request.endpoint and request.endpoint.startswith('saas.landing_testimonials') %}active{% endif %}" href="{{ url_for('saas.landing_testimonials_panel') }}"><i class="bi bi-chat-left-quote"></i>Testimonios Landing</a>
       <a class="nav-link {% if request.endpoint == 'saas.global_settings' %}active{% endif %}" href="{{ url_for('saas.global_settings') }}"><i class="bi bi-gear"></i>Configuración global</a>
       {% elif current_user.role == 'seller' %}
+      <div class="nav-section-label">Referidos</div>
       <a class="nav-link {% if request.endpoint == 'referrals.seller_dashboard' %}active{% endif %}" href="{{ url_for('referrals.seller_dashboard') }}"><i class="bi bi-speedometer2"></i>Portal de Vendedor</a>
       <a class="nav-link {% if request.endpoint == 'referrals.seller_clients' %}active{% endif %}" href="{{ url_for('referrals.seller_clients') }}"><i class="bi bi-buildings"></i>Mis clientes</a>
       <a class="nav-link {% if request.endpoint == 'referrals.seller_commissions' %}active{% endif %}" href="{{ url_for('referrals.seller_commissions') }}"><i class="bi bi-cash-stack"></i>Mis comisiones</a>
       <a class="nav-link {% if request.endpoint == 'referrals.seller_billing_data' %}active{% endif %}" href="{{ url_for('referrals.seller_billing_data') }}"><i class="bi bi-bank"></i>Mis datos de cobro</a>
       {% else %}
-      <a class="nav-link {% if request.endpoint == 'dashboard.index' %}active{% endif %}" href="{{ url_for('dashboard.index') }}"><i class="bi bi-grid-1x2"></i>Panel principal</a>
-      <a class="nav-link {% if request.endpoint == 'dashboard.quick_start' %}active{% endif %}" href="{{ url_for('dashboard.quick_start') }}"><i class="bi bi-lightning-charge"></i>Inicio rápido</a>
-      <a class="nav-link {% if request.endpoint and request.endpoint.startswith('products.') %}active{% endif %}" href="{{ url_for('products.index') }}"><i class="bi bi-box-seam"></i>Productos</a>
+      <div class="nav-section-label">Operación</div>
+      <a class="nav-link {% if request.endpoint and request.endpoint.startswith('sales.') %}active{% endif %}" href="{{ url_for('sales.index') }}"><i class="bi bi-bag-check"></i><span class="nav-text">Ventas</span></a>
+      <a class="nav-link {% if request.endpoint and request.endpoint.startswith('products.') %}active{% endif %}" href="{{ url_for('products.index') }}"><i class="bi bi-box-seam"></i><span class="nav-text">Productos</span></a>
+      <a class="nav-link {% if request.endpoint and request.endpoint.startswith('cash.') %}active{% endif %}" href="{{ url_for('cash.index') }}"><i class="bi bi-cash-coin"></i><span class="nav-text">Caja</span></a>
+      <a class="nav-link {% if request.endpoint and request.endpoint.startswith('clients.') %}active{% endif %}" href="{{ url_for('clients.index') }}"><i class="bi bi-people"></i><span class="nav-text">Clientes</span></a>
+      <a class="nav-link {% if request.endpoint and request.endpoint.startswith('purchases.') %}active{% endif %}" href="{{ url_for('purchases.index') }}"><i class="bi bi-truck"></i><span class="nav-text">Compras</span></a>
+      <a class="nav-link {% if request.endpoint and request.endpoint.startswith('reports.') %}active{% endif %}" href="{{ url_for('reports.index') }}"><i class="bi bi-file-earmark-bar-graph"></i><span class="nav-text">Reportes</span></a>
+      <a class="nav-link {% if request.endpoint and request.endpoint.startswith('expenses.') %}active{% endif %}" href="{{ url_for('expenses.index') }}"><i class="bi bi-receipt"></i><span class="nav-text">Gastos</span></a>
+      <a class="nav-link {% if request.endpoint and request.endpoint.startswith('qr_labels.') %}active{% endif %}" href="{{ url_for('qr_labels.generate') }}"><i class="bi bi-qr-code"></i><span class="nav-text">QR y etiquetas</span></a>
+      <div class="nav-section-label">Resumen</div>
+      <a class="nav-link {% if request.endpoint == 'dashboard.index' %}active{% endif %}" href="{{ url_for('dashboard.index') }}"><i class="bi bi-grid-1x2"></i><span class="nav-text">Panel principal</span></a>
+      <a class="nav-link {% if request.endpoint == 'dashboard.quick_start' %}active{% endif %}" href="{{ url_for('dashboard.quick_start') }}"><i class="bi bi-lightning-charge"></i><span class="nav-text">Inicio rápido</span></a>
       {% if current_user.role in ['admin', 'user'] %}
-      <a class="nav-link {% if request.endpoint == 'company_billing.company_settings' %}active{% endif %}" href="{{ url_for('company_billing.company_settings') }}"><i class="bi bi-building"></i>Mi empresa</a>
+      <a class="nav-link {% if request.endpoint == 'company_billing.company_settings' %}active{% endif %}" href="{{ url_for('company_billing.company_settings') }}"><i class="bi bi-building"></i><span class="nav-text">Mi empresa</span></a>
       {% endif %}
-      <a class="nav-link {% if request.endpoint and request.endpoint.startswith('sales.') %}active{% endif %}" href="{{ url_for('sales.index') }}"><i class="bi bi-bag-check"></i>Ventas</a>
-      <a class="nav-link {% if request.endpoint and request.endpoint.startswith('clients.') %}active{% endif %}" href="{{ url_for('clients.index') }}"><i class="bi bi-people"></i>Clientes</a>
       {% if current_user.role == 'admin' %}
-      <a class="nav-link {% if request.endpoint and request.endpoint.startswith('purchases.') %}active{% endif %}" href="{{ url_for('purchases.index') }}"><i class="bi bi-truck"></i>Compras</a>
-      <a class="nav-link {% if request.endpoint == 'purchases.suppliers_panel' %}active{% endif %}" href="{{ url_for('purchases.suppliers_panel') }}"><i class="bi bi-people"></i>Proveedores</a>
+      <a class="nav-link {% if request.endpoint == 'purchases.suppliers_panel' %}active{% endif %}" href="{{ url_for('purchases.suppliers_panel') }}"><i class="bi bi-people"></i><span class="nav-text">Proveedores</span></a>
       {% endif %}
-      <a class="nav-link {% if request.endpoint and request.endpoint.startswith('cash.') %}active{% endif %}" href="{{ url_for('cash.index') }}"><i class="bi bi-cash-coin"></i>Caja</a>
-      <a class="nav-link {% if request.endpoint and request.endpoint.startswith('expenses.') %}active{% endif %}" href="{{ url_for('expenses.index') }}"><i class="bi bi-receipt"></i>Gastos</a>
       {% if current_user.role == 'admin' %}
-      <a class="nav-link {% if request.endpoint and request.endpoint.startswith('reports.') %}active{% endif %}" href="{{ url_for('reports.index') }}"><i class="bi bi-file-earmark-bar-graph"></i>Reportes</a>
-      {% endif %}
-      <a class="nav-link {% if request.endpoint and request.endpoint.startswith('qr_labels.') %}active{% endif %}" href="{{ url_for('qr_labels.generate') }}"><i class="bi bi-qr-code"></i>QR y etiquetas</a>
-      {% if current_user.role == 'admin' %}
-      <a class="nav-link {% if request.endpoint and request.endpoint.startswith('company_billing.') %}active{% endif %}" href="{{ url_for('company_billing.subscription_portal') }}"><i class="bi bi-credit-card-2-front"></i>Suscripción</a>
+      <a class="nav-link {% if request.endpoint and request.endpoint.startswith('company_billing.') %}active{% endif %}" href="{{ url_for('company_billing.subscription_portal') }}"><i class="bi bi-credit-card-2-front"></i><span class="nav-text">Suscripción</span></a>
       {% endif %}
       {% endif %}
       {% if current_user.role != 'superadmin' %}
-      <a class="nav-link {% if request.endpoint and request.endpoint.startswith('referrals.') %}active{% endif %}" href="{{ url_for('referrals.seller_dashboard') }}"><i class="bi bi-megaphone"></i>Referidos</a>
-      <button class="nav-link text-start border-0 w-100" type="button" data-bs-toggle="modal" data-bs-target="#quickGuideModal"><i class="bi bi-journal-richtext"></i>Guía rápida</button>
+      <a class="nav-link {% if request.endpoint and request.endpoint.startswith('referrals.') %}active{% endif %}" href="{{ url_for('referrals.seller_dashboard') }}"><i class="bi bi-megaphone"></i><span class="nav-text">Referidos</span></a>
+      <button class="nav-link text-start border-0 w-100" type="button" data-bs-toggle="modal" data-bs-target="#quickGuideModal"><i class="bi bi-journal-richtext"></i><span class="nav-text">Guía rápida</span></button>
       {% endif %}
       {% if current_user.role != 'superadmin' %}
-      <a class="nav-link {% if request.endpoint and request.endpoint.startswith('support.') %}active{% endif %}" href="{{ url_for('support.new_ticket') }}"><i class="bi bi-life-preserver"></i>Ayuda</a>
+      <a class="nav-link {% if request.endpoint and request.endpoint.startswith('support.') %}active{% endif %}" href="{{ url_for('support.new_ticket') }}"><i class="bi bi-life-preserver"></i><span class="nav-text">Ayuda</span></a>
       {% endif %}
     </nav>
     <div class="app-sidebar-footer">

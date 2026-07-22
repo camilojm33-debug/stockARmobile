@@ -4,97 +4,94 @@
 
 {% block content %}
 <div class="app-shell">
-  <div class="d-flex flex-wrap justify-content-between align-items-center gap-3 mb-4">
-    <div>
-      <span class="page-kicker"><i class="bi bi-grid-1x2"></i> Vista general</span>
-      <h1 class="h3 fw-bold page-title mb-1">Panel principal</h1>
-      <p class="text-muted mb-0">Estado general de inventario, ventas y clientes.</p>
-    </div>
-    <div class="d-flex gap-2">
-      {% if current_user.role == 'admin' %}
-      <a href="{{ url_for('company_billing.company_settings') }}" class="btn btn-outline-secondary"><i class="bi bi-grid-1x2 me-1"></i>Panel principal</a>
-      {% endif %}
-      <a href="{{ url_for('dashboard.stats') }}" class="btn btn-outline-primary"><i class="bi bi-bar-chart me-1"></i>Estadisticas</a>
-      <a href="{{ url_for('sales.index') }}" class="btn btn-primary"><i class="bi bi-cart-plus me-1"></i>Nueva venta</a>
+  <div class="hero-surface app-card mb-4">
+    <div class="card-body p-4 p-lg-5">
+      <div class="d-flex flex-wrap justify-content-between align-items-start gap-3">
+        <div class="me-auto">
+          <span class="page-kicker"><i class="bi bi-grid-1x2"></i> Vista general</span>
+          <h1 class="h2 fw-bold page-title mb-2">Panel principal</h1>
+          <p class="text-muted mb-0">Ventas, caja, stock, clientes y sincronización offline en una sola vista.</p>
+        </div>
+        <div class="d-flex gap-2 flex-wrap">
+          {% if current_user.role == 'admin' %}
+          <a href="{{ url_for('company_billing.company_settings') }}" class="btn btn-outline-secondary"><i class="bi bi-building me-1"></i>Mi empresa</a>
+          {% endif %}
+          <a href="{{ url_for('dashboard.stats') }}" class="btn btn-outline-primary"><i class="bi bi-bar-chart me-1"></i>Estadísticas</a>
+          <a href="{{ url_for('sales.index') }}" class="btn btn-primary"><i class="bi bi-cart-plus me-1"></i>Nueva venta</a>
+        </div>
+      </div>
+      <div class="row g-3 mt-3">
+        <div class="col-sm-6 col-xl-3">
+          <div class="summary-pill">
+            <div class="summary-pill-label">Offline</div>
+            <div class="summary-pill-value">{{ 'Activo' if can_view_economic_metrics else 'Restringido' }}</div>
+            <div class="summary-pill-meta">Pendientes: <strong id="offlinePendingCount">0</strong></div>
+          </div>
+        </div>
+        <div class="col-sm-6 col-xl-3">
+          <div class="summary-pill">
+            <div class="summary-pill-label">Caja actual</div>
+            <div class="summary-pill-value">{{ 'Abierta' if cash_stats.open_sessions else 'Cerrada' }}</div>
+            <div class="summary-pill-meta">{{ cash_stats.open_sessions }} sesión activa</div>
+          </div>
+        </div>
+        <div class="col-sm-6 col-xl-3">
+          <div class="summary-pill">
+            <div class="summary-pill-label">Stock bajo</div>
+            <div class="summary-pill-value">{{ productos_bajo_nivel }}</div>
+            <div class="summary-pill-meta">Productos para revisar hoy</div>
+          </div>
+        </div>
+        <div class="col-sm-6 col-xl-3">
+          <div class="summary-pill">
+            <div class="summary-pill-label">Clientes activos</div>
+            <div class="summary-pill-value">{{ total_clients }}</div>
+            <div class="summary-pill-meta">{{ clientes_nuevos }} nuevos este mes</div>
+          </div>
+        </div>
+      </div>
     </div>
   </div>
 
-  <div class="row g-3 mb-4">
+  <div class="row g-3 mb-4 dashboard-kpis">
     {% if can_view_economic_metrics %}
     <div class="col-sm-6 col-xl-3">
-      <div class="card app-card metric-card"><div class="card-body">
-        <div class="d-flex justify-content-between align-items-start"><div><div class="text-muted small fw-semibold text-uppercase">Ingresos hoy</div><div class="metric-value fw-bold">${{ "%.2f"|format(ingresos_hoy) }}</div></div><span class="metric-icon"><i class="bi bi-cash-stack"></i></span></div>
-        <div class="text-muted small mt-2">{{ ventas_hoy }} ventas hoy</div>
+      <div class="card app-card metric-card kpi-accent-primary"><div class="card-body">
+        <div class="d-flex justify-content-between align-items-start gap-3"><div><div class="text-muted small fw-semibold text-uppercase">Ingresos hoy</div><div class="metric-value fw-bold">${{ "%.2f"|format(ingresos_hoy) }}</div></div><span class="metric-icon"><i class="bi bi-cash-stack"></i></span></div>
+        <div class="text-muted small mt-2">{{ ventas_hoy }} ventas registradas</div>
       </div></div>
     </div>
     <div class="col-sm-6 col-xl-3">
-      <div class="card app-card metric-card"><div class="card-body">
-        <div class="d-flex justify-content-between align-items-start"><div><div class="text-muted small fw-semibold text-uppercase">Ingresos mes</div><div class="metric-value fw-bold">${{ "%.2f"|format(ingresos_mes) }}</div></div><span class="metric-icon"><i class="bi bi-graph-up-arrow"></i></span></div>
-        <div class="text-muted small mt-2">{{ ventas_semana }} ventas esta semana · {{ ventas_mes }} mes</div>
-      </div></div>
-    </div>
-    <div class="col-sm-6 col-xl-3">
-      <div class="card app-card metric-card"><div class="card-body">
-        <div class="d-flex justify-content-between align-items-start"><div><div class="text-muted small fw-semibold text-uppercase">Productos</div><div class="metric-value fw-bold">{{ productos_total }}</div></div><span class="metric-icon"><i class="bi bi-box-seam"></i></span></div>
-        <div class="text-muted small mt-2">{{ productos_stock }} con stock disponible</div>
-      </div></div>
-    </div>
-    <div class="col-sm-6 col-xl-3">
-      <div class="card app-card metric-card"><div class="card-body">
-        <div class="d-flex justify-content-between align-items-start"><div><div class="text-muted small fw-semibold text-uppercase">Stock bajo</div><div class="metric-value fw-bold">{{ productos_bajo_nivel }}</div></div><span class="metric-icon"><i class="bi bi-exclamation-triangle"></i></span></div>
-        <div class="text-muted small mt-2">Productos para revisar</div>
-      </div></div>
-    </div>
-    <div class="col-sm-6 col-xl-3">
-      <div class="card app-card metric-card"><div class="card-body">
-        <div class="d-flex justify-content-between align-items-start"><div><div class="text-muted small fw-semibold text-uppercase">Ganancia hoy</div><div class="metric-value fw-bold">${{ "%.2f"|format(ganancia_hoy) }}</div></div><span class="metric-icon"><i class="bi bi-piggy-bank"></i></span></div>
-        <div class="text-muted small mt-2">Despues de costos y gastos</div>
-      </div></div>
-    </div>
-    <div class="col-sm-6 col-xl-3">
-      <div class="card app-card metric-card"><div class="card-body">
-        <div class="d-flex justify-content-between align-items-start"><div><div class="text-muted small fw-semibold text-uppercase">Ganancia mes</div><div class="metric-value fw-bold">${{ "%.2f"|format(ganancia_mes) }}</div></div><span class="metric-icon"><i class="bi bi-graph-up"></i></span></div>
-        <div class="text-muted small mt-2">Rentabilidad {{ "%.1f"|format(rentabilidad) }}%</div>
-      </div></div>
-    </div>
-    <div class="col-sm-6 col-xl-3">
-      <div class="card app-card metric-card"><div class="card-body">
-        <div class="d-flex justify-content-between align-items-start"><div><div class="text-muted small fw-semibold text-uppercase">Cajas abiertas</div><div class="metric-value fw-bold">{{ cash_stats.open_sessions }}</div></div><span class="metric-icon"><i class="bi bi-safe2"></i></span></div>
+      <div class="card app-card metric-card kpi-accent-info"><div class="card-body">
+        <div class="d-flex justify-content-between align-items-start gap-3"><div><div class="text-muted small fw-semibold text-uppercase">Caja actual</div><div class="metric-value fw-bold">{{ cash_stats.open_sessions }}</div></div><span class="metric-icon"><i class="bi bi-safe2"></i></span></div>
         <div class="text-muted small mt-2">{{ cash_stats.closed_today }} cierres hoy</div>
       </div></div>
     </div>
     <div class="col-sm-6 col-xl-3">
-      <div class="card app-card metric-card"><div class="card-body">
-        <div class="d-flex justify-content-between align-items-start"><div><div class="text-muted small fw-semibold text-uppercase">Ventas efectivo hoy</div><div class="metric-value fw-bold">${{ "%.2f"|format(cash_stats.sold_cash_today) }}</div></div><span class="metric-icon"><i class="bi bi-cash"></i></span></div>
-        <div class="text-muted small mt-2">Mercado Pago ${{ "%.2f"|format(cash_stats.sold_mp_today) }}</div>
+      <div class="card app-card metric-card kpi-accent-warning"><div class="card-body">
+        <div class="d-flex justify-content-between align-items-start gap-3"><div><div class="text-muted small fw-semibold text-uppercase">Stock bajo</div><div class="metric-value fw-bold">{{ productos_bajo_nivel }}</div></div><span class="metric-icon"><i class="bi bi-exclamation-triangle"></i></span></div>
+        <div class="text-muted small mt-2">{{ productos_total }} productos activos</div>
       </div></div>
     </div>
     <div class="col-sm-6 col-xl-3">
-      <div class="card app-card metric-card"><div class="card-body">
-        <div class="d-flex justify-content-between align-items-start"><div><div class="text-muted small fw-semibold text-uppercase">Diferencia de caja hoy</div><div class="metric-value fw-bold">${{ "%.2f"|format(cash_stats.difference_today) }}</div></div><span class="metric-icon"><i class="bi bi-calculator"></i></span></div>
-        <div class="text-muted small mt-2">Total vendido ${{ "%.2f"|format(cash_stats.sold_total_today) }}</div>
-      </div></div>
-    </div>
-    {% endif %}
-    <div class="col-sm-6 col-xl-3">
-      <div class="card app-card metric-card"><div class="card-body">
-        <div class="d-flex justify-content-between align-items-start"><div><div class="text-muted small fw-semibold text-uppercase">Productos vendidos</div><div class="metric-value fw-bold">{{ "%.3g"|format(productos_vendidos) }}</div></div><span class="metric-icon"><i class="bi bi-receipt-cutoff"></i></span></div>
+      <div class="card app-card metric-card kpi-accent-success"><div class="card-body">
+        <div class="d-flex justify-content-between align-items-start gap-3"><div><div class="text-muted small fw-semibold text-uppercase">Productos vendidos</div><div class="metric-value fw-bold">{{ "%.3g"|format(productos_vendidos) }}</div></div><span class="metric-icon"><i class="bi bi-receipt-cutoff"></i></span></div>
         <div class="text-muted small mt-2">Unidades vendidas registradas</div>
       </div></div>
     </div>
     <div class="col-sm-6 col-xl-3">
-      <div class="card app-card metric-card"><div class="card-body">
-        <div class="d-flex justify-content-between align-items-start"><div><div class="text-muted small fw-semibold text-uppercase">Clientes nuevos</div><div class="metric-value fw-bold">{{ clientes_nuevos }}</div></div><span class="metric-icon"><i class="bi bi-person-plus"></i></span></div>
+      <div class="card app-card metric-card kpi-accent-dark"><div class="card-body">
+        <div class="d-flex justify-content-between align-items-start gap-3"><div><div class="text-muted small fw-semibold text-uppercase">Clientes nuevos</div><div class="metric-value fw-bold">{{ clientes_nuevos }}</div></div><span class="metric-icon"><i class="bi bi-person-plus"></i></span></div>
         <div class="text-muted small mt-2">{{ total_clients }} clientes activos</div>
       </div></div>
     </div>
     <div class="col-sm-6 col-xl-3">
       <div class="card app-card metric-card"><div class="card-body">
-        <div class="d-flex justify-content-between align-items-start"><div><div class="text-muted small fw-semibold text-uppercase">Stock agotado</div><div class="metric-value fw-bold">{{ stock_agotado }}</div></div><span class="metric-icon"><i class="bi bi-x-octagon"></i></span></div>
-        <div class="text-muted small mt-2">Productos sin unidades</div>
+        <div class="d-flex justify-content-between align-items-start gap-3"><div><div class="text-muted small fw-semibold text-uppercase">Ganancia hoy</div><div class="metric-value fw-bold">${{ "%.2f"|format(ganancia_hoy) }}</div></div><span class="metric-icon"><i class="bi bi-piggy-bank"></i></span></div>
+        <div class="text-muted small mt-2">Rentabilidad {{ "%.1f"|format(rentabilidad) }}%</div>
       </div></div>
     </div>
-    {% if not can_view_economic_metrics %}
+    {% else %}
     <div class="col-12">
       <div class="card app-card border-warning">
         <div class="card-body p-4 d-flex align-items-start gap-3">
@@ -109,30 +106,35 @@
     {% endif %}
   </div>
 
-  <div class="row g-4 mb-4">
+  <div class="row g-4 mb-4 dashboard-panels">
     {% if can_view_economic_metrics %}
     <div class="col-lg-8">
       <div class="card app-card h-100">
-        <div class="card-header bg-white border-0 fw-bold pt-3">Ventas de los ultimos 7 dias</div>
-        <div class="card-body"><canvas id="salesTrendChart" height="110"></canvas></div>
+        <div class="card-header bg-white border-0 fw-bold pt-3 d-flex justify-content-between align-items-center"><span>Ventas de los ultimos 7 dias</span><span class="badge text-bg-primary">{{ ventas_semana }} semana</span></div>
+        <div class="card-body"><canvas id="salesTrendChart" height="120"></canvas></div>
       </div>
     </div>
     <div class="col-lg-4">
-    {% else %}
-    <div class="col-12">
-    {% endif %}
       <div class="card app-card h-100">
-        <div class="card-header bg-white border-0 fw-bold pt-3">Ranking categorias</div>
+        <div class="card-header bg-white border-0 fw-bold pt-3 d-flex justify-content-between align-items-center"><span>Ranking categorias</span><span class="badge text-bg-secondary">{{ chart_categories_labels|length }} categorías</span></div>
         <div class="card-body"><canvas id="categoryChart" height="220"></canvas></div>
       </div>
     </div>
+    {% else %}
+    <div class="col-12">
+      <div class="card app-card h-100">
+        <div class="card-header bg-white border-0 fw-bold pt-3 d-flex justify-content-between align-items-center"><span>Ranking categorias</span><span class="badge text-bg-secondary">{{ chart_categories_labels|length }} categorías</span></div>
+        <div class="card-body"><canvas id="categoryChart" height="220"></canvas></div>
+      </div>
+    </div>
+    {% endif %}
   </div>
 
   {% if can_view_economic_metrics %}
-  <div class="row g-4">
+  <div class="row g-4 dashboard-lists">
     <div class="col-lg-7">
       <div class="card app-card h-100">
-        <div class="card-header bg-white border-0 fw-bold pt-3">Productos mas vendidos</div>
+        <div class="card-header bg-white border-0 fw-bold pt-3 d-flex justify-content-between align-items-center"><span>Productos mas vendidos</span><a class="small text-decoration-none" href="{{ url_for('reports.index') }}">Ver reportes</a></div>
         <div class="card-body pt-0">
           {% if productos_mas_vendidos %}
           <div class="table-responsive">
@@ -153,7 +155,7 @@
     </div>
     <div class="col-lg-5">
       <div class="card app-card h-100">
-        <div class="card-header bg-white border-0 fw-bold pt-3">Ultimas ventas</div>
+        <div class="card-header bg-white border-0 fw-bold pt-3 d-flex justify-content-between align-items-center"><span>Ultimas ventas</span><a class="small text-decoration-none" href="{{ url_for('sales.index') }}">Abrir POS</a></div>
         <div class="card-body pt-0">
           {% if ventas_recientes %}
           <div class="list-group list-group-flush">
@@ -217,7 +219,7 @@
     {% endif %}
     <div class="{{ 'col-lg-6' if can_view_economic_metrics else 'col-lg-12' }}">
       <div class="card app-card h-100">
-        <div class="card-header bg-white border-0 fw-bold pt-3">Stock agotado</div>
+        <div class="card-header bg-white border-0 fw-bold pt-3 d-flex justify-content-between align-items-center"><span>Stock agotado</span><span class="badge text-bg-danger">{{ stock_agotado }}</span></div>
         <div class="card-body pt-0">
           {% if low_stock %}
           <div class="list-group list-group-flush">
