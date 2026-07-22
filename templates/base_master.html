@@ -645,8 +645,14 @@
           <span id="offlineConnectivityBadge" class="badge text-bg-secondary">Verificando...</span>
         </div>
         <div class="small text-muted mb-1">Pendientes: <strong id="offlinePendingCount">0</strong></div>
+        <div class="small text-muted mb-1">Sincronizadas: <strong id="offlineSyncedCount">0</strong> | Errores: <strong id="offlineErrorCount">0</strong></div>
         <div class="small text-muted mb-1">Última sincronización: <span id="offlineLastSync">-</span></div>
         <div id="offlineSyncError" class="small text-danger d-none mb-2"></div>
+        <div class="progress mb-2" style="height: 8px;">
+          <div id="offlineSyncProgressBar" class="progress-bar" role="progressbar" style="width: 0%"></div>
+        </div>
+        <div id="offlineSyncProgressLabel" class="small text-muted mb-1">Sincronización al día</div>
+        <div id="offlineCurrentOperation" class="small text-muted mb-2"></div>
         <button class="btn btn-outline-primary btn-sm w-100" type="button" id="offlineSyncNow"><i class="bi bi-arrow-repeat me-1"></i>Sincronizar ahora</button>
       </div>
       {% if current_user.role == 'admin' and switchable_company_users %}

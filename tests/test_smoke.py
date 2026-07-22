@@ -615,6 +615,32 @@ def test_exports_and_security_methods():
     assert client.get("/productos/delete/1").status_code == 405
 
 
+def test_offline_first_shell_and_critical_forms_are_wired():
+    client = stock_app.app.test_client()
+    client.post("/auth/login", data={"username": "negocio_admin", "password": "admin123"})
+
+    pages = {
+        "/productos/": ["offlineSyncNow", "offlineSyncProgressBar", "offline-manager.js", 'action="/productos/add"'],
+        "/clientes/": ["offlineSyncNow", "Nuevo cliente", "Guardar cliente"],
+        "/compras/": ["Registrar compra", "Guardar proveedor"],
+        "/gastos/": ["Costos operativos", 'name="amount"'],
+        "/caja/": ["Apertura", "Abrir caja"],
+    }
+
+    for path, expected_snippets in pages.items():
+        response = client.get(path)
+        assert response.status_code == 200, path
+        html = response.data.decode("utf-8")
+        for snippet in expected_snippets:
+            assert snippet in html, (path, snippet)
+
+    worker = client.get("/service-worker.js")
+    assert worker.status_code == 200
+    worker_js = worker.data.decode("utf-8")
+    assert "stockarmobile-pwa-v6" in worker_js
+    assert "OFFLINE_QUEUE_STATUS" in worker_js
+
+
 def test_superadmin_subscriptions_actions_visibility_and_flows():
     client = stock_app.app.test_client()
 

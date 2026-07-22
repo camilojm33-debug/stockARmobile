@@ -19,7 +19,28 @@ const STATIC_ASSETS = [
   '/static/images/branding/splash.png'
 ];
 const API_CACHE_PREFIXES = ['/productos/api/products', '/clientes/api/clients', '/ventas/api/recent', '/api/search'];
-const SYNCABLE_POST_PREFIXES = ['/ventas/api/checkout', '/productos/add', '/productos/edit/', '/clientes/add', '/clientes/edit/', '/compras/', '/gastos/', '/caja/'];
+const SYNCABLE_POST_PREFIXES = [
+  '/ventas/checkout',
+  '/ventas/edit/',
+  '/ventas/delete/',
+  '/ventas/view/',
+  '/ventas/api/checkout',
+  '/ventas/api/mp-qr/create',
+  '/ventas/api/mp-qr/finalize',
+  '/productos/add',
+  '/productos/edit/',
+  '/productos/delete/',
+  '/productos/import',
+  '/clientes/add',
+  '/clientes/post',
+  '/clientes/edit/',
+  '/clientes/delete/',
+  '/clientes/api/quick-create',
+  '/compras/',
+  '/compras/proveedores',
+  '/gastos/',
+  '/caja/',
+];
 const DB_NAME = 'stockarmobile-offline';
 const DB_VERSION = 2;
 const REQUEST_STORE = 'requests';
@@ -27,6 +48,8 @@ const SNAPSHOT_STORE = 'snapshots';
 const META_STORE = 'meta';
 const LAST_SYNC_KEY = 'lastSyncAt';
 const LAST_ERROR_KEY = 'lastError';
+const LAST_SYNC_SUMMARY_KEY = 'lastSyncSummary';
+let syncState = null;
 
 function nowIso() {
   return new Date().toISOString();
@@ -123,14 +146,32 @@ async function updateMeta(key, value) {
   await dbPut(META_STORE, { key, value });
 }
 
+async function readMetaValue(key, fallback = null) {
+  const meta = await dbGet(META_STORE, key);
+  return meta ? meta.value : fallback;
+}
+
+async function setSyncSummary(summary) {
+  await updateMeta(LAST_SYNC_SUMMARY_KEY, summary);
+}
+
 async function getQueueStatus() {
   const requests = await dbReadAll(REQUEST_STORE);
   const lastSync = await dbGet(META_STORE, LAST_SYNC_KEY);
   const lastError = await dbGet(META_STORE, LAST_ERROR_KEY);
+  const lastSyncSummary = await dbGet(META_STORE, LAST_SYNC_SUMMARY_KEY);
+  const pendingCount = requests.length;
   return {
-    pendingCount: requests.length,
+    pendingCount,
+    syncedCount: syncState ? syncState.syncedCount : 0,
+    errorCount: syncState ? syncState.errorCount : 0,
+    totalCount: syncState ? syncState.totalCount : pendingCount,
+    progress: syncState ? syncState.progress : (pendingCount === 0 ? 100 : 0),
+    syncing: Boolean(syncState),
+    currentOperation: syncState ? syncState.currentOperation : '',
     lastSyncAt: lastSync ? lastSync.value : null,
     lastError: lastError ? lastError.value : '',
+    lastSyncSummary: lastSyncSummary ? lastSyncSummary.value : null,
     online: self.navigator ? self.navigator.onLine : true,
   };
 }
@@ -142,6 +183,20 @@ async function broadcastQueueStatus(requestId = null) {
     client.postMessage({ type: 'OFFLINE_QUEUE_STATUS', requestId, status });
   }
   return status;
+}
+
+async function broadcastSyncProgress() {
+  await broadcastQueueStatus(syncState ? syncState.requestId : null);
+}
+
+async function findQueuedRequestByUuid(uuid) {
+  if (!uuid) return null;
+  const requests = await dbReadAll(REQUEST_STORE);
+  return requests.find((item) => item.uuid === uuid) || null;
+}
+
+function extractRequestUuid(request) {
+  return request.headers.get('X-Offline-Request-Id') || request.headers.get('X-Request-Id') || null;
 }
 
 async function cacheJsonSnapshot(request, response) {
@@ -301,8 +356,9 @@ async function queueWhenOffline(request) {
     return response;
   } catch (error) {
     const body = await request.clone().text();
-    await dbAdd(REQUEST_STORE, {
-      uuid: generateUuid(),
+    const requestUuid = extractRequestUuid(request) || generateUuid();
+    const queued = {
+      uuid: requestUuid,
       operationType: inferOperationType(new URL(request.url).pathname, request.method),
       url: request.url,
       method: request.method,
@@ -311,7 +367,14 @@ async function queueWhenOffline(request) {
       createdAt: nowIso(),
       attempts: 0,
       status: 'pending',
-    });
+    };
+    const existing = await findQueuedRequestByUuid(requestUuid);
+    if (existing) {
+      queued.id = existing.id;
+      await dbPut(REQUEST_STORE, queued);
+    } else {
+      await dbAdd(REQUEST_STORE, queued);
+    }
     await updateMeta(LAST_ERROR_KEY, 'Operación en cola por falta de conexión.');
     await broadcastQueueStatus();
     if ('sync' in self.registration) {
@@ -326,7 +389,18 @@ async function queueWhenOffline(request) {
 
 async function flushQueue() {
   const queued = await dbReadAll(REQUEST_STORE);
+  syncState = {
+    requestId: generateUuid(),
+    startedAt: nowIso(),
+    totalCount: queued.length,
+    syncedCount: 0,
+    errorCount: 0,
+    currentOperation: '',
+    progress: queued.length === 0 ? 100 : 0,
+  };
+  await broadcastSyncProgress();
   for (const item of queued) {
+    syncState.currentOperation = item.operationType || item.url;
     try {
       const response = await fetch(item.url, {
         method: item.method,
@@ -338,15 +412,27 @@ async function flushQueue() {
         await dbDelete(REQUEST_STORE, item.id);
         await updateMeta(LAST_SYNC_KEY, nowIso());
         await updateMeta(LAST_ERROR_KEY, '');
+        syncState.syncedCount += 1;
       } else {
         await dbPut(REQUEST_STORE, { ...item, attempts: (item.attempts || 0) + 1, status: 'pending' });
         await updateMeta(LAST_ERROR_KEY, `Error sincronizando ${item.operationType || item.url}: HTTP ${response.status}`);
+        syncState.errorCount += 1;
       }
     } catch (error) {
       await dbPut(REQUEST_STORE, { ...item, attempts: (item.attempts || 0) + 1, status: 'error' });
       await updateMeta(LAST_ERROR_KEY, `Error sincronizando ${item.operationType || item.url}: ${error.message || 'sin detalle'}`);
+      syncState.errorCount += 1;
     }
+    syncState.progress = syncState.totalCount > 0 ? Math.round(((syncState.syncedCount + syncState.errorCount) / syncState.totalCount) * 100) : 100;
+    await broadcastSyncProgress();
   }
+  await setSyncSummary({
+    completedAt: nowIso(),
+    totalCount: syncState.totalCount,
+    syncedCount: syncState.syncedCount,
+    errorCount: syncState.errorCount,
+  });
+  syncState = null;
   await broadcastQueueStatus();
 }
 
