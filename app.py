@@ -89,6 +89,61 @@ csrf = CSRFProtect(app)
 MONEY = db.Numeric(18, 2)
 PERCENT = db.Numeric(10, 4)
 
+SALE_UNIT_CHOICES = [
+    ("unidad", "Unidad"),
+    ("kilogramo", "Kilogramo"),
+    ("gramos", "Gramo"),
+    ("litros", "Litro"),
+    ("mililitros", "Mililitro"),
+    ("metros", "Metro"),
+    ("centimetros", "Centímetro"),
+    ("caja", "Caja"),
+    ("pack", "Pack"),
+    ("bolsa", "Bolsa"),
+    ("botella", "Botella"),
+    ("paquete", "Paquete"),
+    ("docena", "Docena"),
+    ("media_docena", "Media docena"),
+]
+
+SALE_UNIT_LABELS = {value: label for value, label in SALE_UNIT_CHOICES}
+
+UNIT_MEASURE_CHOICES = [
+    ("u", "Unidad"),
+    ("kg", "Kilogramo"),
+    ("g", "Gramo"),
+    ("l", "Litro"),
+    ("ml", "Mililitro"),
+    ("m", "Metro"),
+    ("cm", "Centímetro"),
+    ("caja", "Caja"),
+    ("pack", "Pack"),
+    ("bolsa", "Bolsa"),
+    ("botella", "Botella"),
+    ("paquete", "Paquete"),
+    ("docena", "Docena"),
+    ("media_docena", "Media docena"),
+]
+
+PRODUCT_UNIT_CHOICES = UNIT_MEASURE_CHOICES
+
+UNIT_MEASURE_DEFAULTS = {
+    "unidad": "u",
+    "kilogramo": "kg",
+    "gramos": "g",
+    "litros": "l",
+    "mililitros": "ml",
+    "metros": "m",
+    "centimetros": "cm",
+    "caja": "caja",
+    "pack": "pack",
+    "bolsa": "bolsa",
+    "botella": "botella",
+    "paquete": "paq",
+    "docena": "doc",
+    "media_docena": "1/2 doc",
+}
+
 login_manager = LoginManager(app)
 login_manager.login_view = "auth.login"
 login_manager.login_message = "Debes iniciar sesion para acceder a esta pagina."
@@ -972,6 +1027,21 @@ class ProductModification(db.Model):
     product = db.relationship("Product", backref="modifications")
 
 
+class SaleModificationHistory(db.Model):
+    __tablename__ = "sale_modification_history"
+
+    id = db.Column(db.Integer, primary_key=True)
+    sale_id = db.Column(db.Integer, db.ForeignKey("sales.id"), nullable=False, index=True)
+    company_id = db.Column(db.Integer, db.ForeignKey("companies.id"), index=True)
+    user_id = db.Column(db.Integer, db.ForeignKey("users.id"), index=True)
+    reason = db.Column(db.Text, nullable=False)
+    previous_data = db.Column(db.Text, nullable=False)
+    new_data = db.Column(db.Text, nullable=False)
+    created_at = db.Column(db.DateTime, default=utcnow, index=True)
+    sale = db.relationship("Sale", backref=db.backref("modification_history", lazy=True, cascade="all, delete-orphan"))
+    user = db.relationship("User")
+
+
 class AuditLog(db.Model):
     __tablename__ = "audit_logs"
 
@@ -1231,7 +1301,7 @@ class ProductForm(FlaskForm):
         ],
         default="unidad",
     )
-    unit_measure = StringField("Unidad medida", validators=[Optional(), Length(max=20)], default="u")
+    unit_measure = SelectField("Unidad medida", choices=PRODUCT_UNIT_CHOICES, default="u")
     brand = StringField("Marca", validators=[Optional(), Length(max=120)])
     supplier = StringField("Proveedor", validators=[Optional(), Length(max=160)])
     cost_price = DecimalField("Precio costo", validators=[Optional(), NumberRange(min=0)], default=0)

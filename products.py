@@ -10,6 +10,7 @@ from flask import Blueprint, current_app, flash, jsonify, redirect, render_templ
 from flask_login import current_user, login_required
 from sqlalchemy.exc import IntegrityError
 from app import tenant_required, utcnow
+from services.sales_calculation_service import calculate_product_pricing
 
 bp = Blueprint("products", __name__)
 
@@ -82,55 +83,16 @@ def _apply_product_form(product, form):
             elif raw_price and posted_price != current_price:
                 pricing_source = "price"
 
-    if pricing_source == "profit_percent" and raw_profit_percent:
-        margin_percent = float(form.profit_percent.data or 0)
-        if margin_percent < 0:
-            raise ValueError("El margen % no puede ser negativo.")
-        final_price = cost_price * (1 + (margin_percent / 100))
-        gain_amount = final_price - cost_price
-    elif pricing_source == "margin" and raw_margin:
-        gain_amount = float(form.margin.data or 0)
-        if gain_amount < 0:
-            raise ValueError("La ganancia no puede ser negativa.")
-        final_price = cost_price + gain_amount
-        margin_percent = (gain_amount / cost_price * 100) if cost_price > 0 else 0.0
-    elif pricing_source == "price" and raw_price:
-        final_price = float(form.price.data or 0)
-        if final_price < 0:
-            raise ValueError("El precio de venta no puede ser negativo.")
-        gain_amount = final_price - cost_price
-        if gain_amount < 0:
-            raise ValueError("El precio de venta no puede ser menor al costo.")
-        margin_percent = (gain_amount / cost_price * 100) if cost_price > 0 else 0.0
-    elif raw_profit_percent:
-        margin_percent = float(form.profit_percent.data or 0)
-        if margin_percent < 0:
-            raise ValueError("El margen % no puede ser negativo.")
-        final_price = cost_price * (1 + (margin_percent / 100))
-        gain_amount = final_price - cost_price
-    elif raw_margin:
-        gain_amount = float(form.margin.data or 0)
-        if gain_amount < 0:
-            raise ValueError("La ganancia no puede ser negativa.")
-        final_price = cost_price + gain_amount
-        margin_percent = (gain_amount / cost_price * 100) if cost_price > 0 else 0.0
-    elif raw_price:
-        final_price = float(form.price.data or 0)
-        if final_price < 0:
-            raise ValueError("El precio de venta no puede ser negativo.")
-        gain_amount = final_price - cost_price
-        if gain_amount < 0:
-            raise ValueError("El precio de venta no puede ser menor al costo.")
-        margin_percent = (gain_amount / cost_price * 100) if cost_price > 0 else 0.0
-    else:
-        # Compatibilidad con datos existentes y formularios parciales.
-        final_price = float(form.price.data or product.price or 0)
-        if final_price < 0:
-            raise ValueError("El precio de venta no puede ser negativo.")
-        gain_amount = final_price - cost_price
-        if gain_amount < 0:
-            raise ValueError("El precio de venta no puede ser menor al costo.")
-        margin_percent = (gain_amount / cost_price * 100) if cost_price > 0 else 0.0
+    pricing = calculate_product_pricing(
+        cost_price=cost_price,
+        price=form.price.data if raw_price else product.price,
+        margin=form.margin.data if raw_margin else product.margin,
+        profit_percent=form.profit_percent.data if raw_profit_percent else product.profit_percent,
+        pricing_source=pricing_source,
+    )
+    final_price = float(pricing["price"])
+    gain_amount = float(pricing["margin"])
+    margin_percent = float(pricing["profit_percent"])
 
     product.cost_price = cost_price
     product.price = final_price
@@ -151,6 +113,14 @@ def _default_unit(sale_type):
         "litros": "l",
         "mililitros": "ml",
         "metros": "m",
+        "centimetros": "cm",
+        "caja": "caja",
+        "pack": "pack",
+        "bolsa": "bolsa",
+        "botella": "botella",
+        "paquete": "paq",
+        "docena": "doc",
+        "media_docena": "1/2 doc",
     }.get(sale_type or "unidad", "u")
 
 

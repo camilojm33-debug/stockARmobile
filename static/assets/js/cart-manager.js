@@ -670,6 +670,14 @@ async function loadMercadoPagoPosCatalog(force = false) {
     console.warn('MP POS catalog load skipped: selector checkout-mp-pos-id no existe en el DOM.');
     return;
   }
+  if (!navigator.onLine) {
+    renderMercadoPagoPosOptions([]);
+    mpPosCatalogLoaded = false;
+    if (mpQrPosHelp) {
+      mpQrPosHelp.textContent = 'Mercado Pago requiere conexión. Seleccioná otro medio de cobro mientras estás offline.';
+    }
+    return;
+  }
   if (!force && (mpPosCatalogLoaded || mpPosCatalogLoading)) return;
 
   mpPosCatalogLoading = true;
@@ -802,6 +810,15 @@ async function processMercadoPagoQrCheckout() {
   if (!validateCheckoutClientRequirements()) {
     return;
   }
+  if (!navigator.onLine) {
+    resetMpQrPanel('Mercado Pago no está disponible sin conexión. Usá efectivo, transferencia u otro medio manual.', total.total);
+    showNotification('Mercado Pago no está disponible sin conexión. Usá un cobro manual.', 'warning');
+    if (checkoutProcessButton) {
+      checkoutProcessButton.disabled = false;
+      checkoutProcessButton.textContent = 'Procesar venta';
+    }
+    return;
+  }
   const csrf = getCsrfToken();
   const payload = {
     items: getCartForCheckout(),
@@ -883,6 +900,10 @@ async function processMercadoPagoQrCheckout() {
 
 async function finalizeMercadoPagoQrSale() {
   if (!mpQrDraftState.finalizeUrl || !mpQrDraftState.paymentId) return;
+  if (!navigator.onLine) {
+    showNotification('No se puede finalizar una venta de Mercado Pago sin conexión.', 'warning');
+    return;
+  }
   const csrf = getCsrfToken();
   if (checkoutProcessButton) {
     checkoutProcessButton.disabled = true;

@@ -24,6 +24,9 @@
           {% endif %}
         </div>
         <div class="d-flex gap-2">
+          {% if current_user.role in ['admin', 'superadmin'] %}
+          <a class="btn btn-primary" href="{{ url_for('sales.edit', sale_id=sale.id) }}"><i class="bi bi-pencil-square me-1"></i>Editar venta</a>
+          {% endif %}
           {% if sale.requiere_comprobante and not sale.comprobante_emitido %}
           <form method="post" action="{{ url_for('sales.mark_comprobante_issued', sale_id=sale.id) }}">
             <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
@@ -52,8 +55,11 @@
           <tbody>
             {% for item in sale.items %}
             <tr>
-              <td>{{ item.product.name if item.product else 'Producto eliminado' }}</td>
-              <td>{{ item.quantity }}</td>
+              <td>
+                <div class="fw-semibold">{{ item.product.name if item.product else 'Producto eliminado' }}</div>
+                <div class="text-muted small">{{ item.product.unit_measure if item.product else 'u' }}</div>
+              </td>
+              <td>{{ "%.3g"|format(item.quantity or 0) }}</td>
               <td>${{ "%.2f"|format(item.price) }}</td>
               <td class="text-end">${{ "%.2f"|format(item.total_amount) }}</td>
             </tr>
@@ -71,6 +77,37 @@
           <div class="d-flex justify-content-between fs-5"><span>Total</span><strong>${{ "%.2f"|format(sale.total_amount) }}</strong></div>
         </div>
       </div>
+
+      {% if current_user.role in ['admin', 'superadmin'] and modification_history %}
+      <div class="card app-card mt-4">
+        <div class="card-body">
+          <div class="d-flex justify-content-between align-items-center mb-3">
+            <div>
+              <h2 class="h5 fw-bold mb-1">Historial de modificaciones</h2>
+              <p class="text-muted mb-0">Visible solo para administradores y superadministradores.</p>
+            </div>
+          </div>
+          <div class="table-responsive">
+            <table class="table table-sm align-middle">
+              <thead class="table-light">
+                <tr><th>Fecha</th><th>Usuario</th><th>Motivo</th><th>Antes</th><th>Después</th></tr>
+              </thead>
+              <tbody>
+                {% for entry in modification_history %}
+                <tr>
+                  <td>{{ entry.created_at.strftime('%Y-%m-%d %H:%M') if entry.created_at else '-' }}</td>
+                  <td>{{ entry.user.username if entry.user else 'Sistema' }}</td>
+                  <td>{{ entry.reason }}</td>
+                  <td><pre class="small mb-0 text-wrap">{{ entry.previous_data }}</pre></td>
+                  <td><pre class="small mb-0 text-wrap">{{ entry.new_data }}</pre></td>
+                </tr>
+                {% endfor %}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      </div>
+      {% endif %}
     </div>
   </div>
 </div>

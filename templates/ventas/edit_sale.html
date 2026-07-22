@@ -3,62 +3,226 @@
 {% block title %}Editar Venta #{{ sale.id }} - StockArmobile{% endblock %}
 
 {% block content %}
-<div class="container">
-  <div class="card app-card">
-    <div class="card-body p-4">
-      <div class="d-flex justify-content-between align-items-start mb-4">
-        <div>
-          <h1 class="h4 fw-bold mb-1">Editar venta #{{ sale.id }}</h1>
-          <p class="text-muted mb-0">Actualiza datos administrativos sin alterar stock ni items ya vendidos.</p>
-        </div>
-        <a href="{{ url_for('sales.view_sale', sale_id=sale.id) }}" class="btn btn-outline-secondary">Cancelar</a>
-      </div>
+<div class="app-shell">
+  <div class="d-flex flex-wrap justify-content-between align-items-center gap-3 mb-4">
+    <div>
+      <span class="page-kicker"><i class="bi bi-pencil-square"></i> Edición administrativa</span>
+      <h1 class="h3 fw-bold mb-0">Editar venta #{{ sale.id }}</h1>
+      <p class="text-muted mb-0">Ajusta ítems, montos y forma de pago. Cada cambio queda auditado.</p>
+    </div>
+    <a href="{{ url_for('sales.view_sale', sale_id=sale.id) }}" class="btn btn-outline-secondary"><i class="bi bi-arrow-left me-1"></i>Volver</a>
+  </div>
 
-      <form method="post" action="{{ url_for('sales.edit', sale_id=sale.id) }}">
-        <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
-        <div class="row g-3 mb-4">
-          <div class="col-md-6">
-            <label class="form-label">Cliente</label>
+  <form method="post" action="{{ url_for('sales.edit', sale_id=sale.id) }}" id="saleEditForm">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+    <div class="row g-3 mb-4">
+      <div class="col-lg-4">
+        <div class="card app-card h-100">
+          <div class="card-body">
+            <label class="form-label"><i class="bi bi-person me-1"></i>Cliente</label>
             <select name="client_id" class="form-select">
               <option value="">Consumidor final</option>
               {% for client in clients %}
               <option value="{{ client.id }}" {% if sale.client_id == client.id %}selected{% endif %}>{{ client.name }}</option>
               {% endfor %}
             </select>
-          </div>
-          <div class="col-md-6">
-            <label class="form-label">Metodo de pago</label>
-            <select name="payment_method" class="form-select">
-              {% for method in ["EFECTIVO", "TARJETA", "TRANSFERENCIA"] %}
-              <option value="{{ method }}" {% if sale.payment_method == method %}selected{% endif %}>{{ method.title() }}</option>
-              {% endfor %}
-            </select>
-          </div>
-          <div class="col-12">
-            <label class="form-label">Nota</label>
-            <input class="form-control" name="note" value="{{ sale.note or '' }}">
+            <div class="form-text mt-2">Cambiar el cliente actualiza el encabezado y los reportes asociados.</div>
           </div>
         </div>
+      </div>
+      <div class="col-lg-4">
+        <div class="card app-card h-100">
+          <div class="card-body">
+            <label class="form-label"><i class="bi bi-credit-card me-1"></i>Método de pago</label>
+            <select name="payment_method" class="form-select">
+              {% for method, label in payment_methods %}
+              <option value="{{ method }}" {% if sale.payment_method == method %}selected{% endif %}>{{ label }}</option>
+              {% endfor %}
+            </select>
+            <div class="form-text mt-2">Si pasás de efectivo a transferencia o tarjeta, la caja se corrige automáticamente.</div>
+          </div>
+        </div>
+      </div>
+      <div class="col-lg-4">
+        <div class="card app-card h-100">
+          <div class="card-body">
+            <label class="form-label"><i class="bi bi-chat-left-text me-1"></i>Observaciones</label>
+            <textarea class="form-control" name="note" rows="4">{{ sale.note or '' }}</textarea>
+          </div>
+        </div>
+      </div>
+    </div>
 
-        <div class="table-responsive mb-4">
-          <table class="table align-middle">
-            <thead class="table-light"><tr><th>Producto</th><th>Cantidad</th><th>Precio</th><th class="text-end">Subtotal</th></tr></thead>
-            <tbody>
-              {% for item in sale.items %}
+    <div class="card app-card mb-4">
+      <div class="card-body">
+        <div class="d-flex flex-wrap justify-content-between align-items-center gap-2 mb-3">
+          <div>
+            <h2 class="h5 fw-bold mb-1">Productos</h2>
+            <p class="text-muted mb-0">Edita cantidades decimales, precios y descuentos por línea.</p>
+          </div>
+          <button class="btn btn-outline-primary" type="button" id="addSaleLineBtn"><i class="bi bi-plus-lg me-1"></i>Agregar línea</button>
+        </div>
+
+        <div class="table-responsive">
+          <table class="table align-middle" id="saleLinesTable">
+            <thead class="table-light">
               <tr>
-                <td>{{ item.product.name if item.product else 'Producto eliminado' }}</td>
-                <td>{{ item.quantity }}</td>
-                <td>${{ "%.2f"|format(item.price) }}</td>
-                <td class="text-end">${{ "%.2f"|format(item.total_amount) }}</td>
+                <th>Producto</th>
+                <th style="width: 130px;">Cantidad</th>
+                <th style="width: 140px;">Precio</th>
+                <th style="width: 140px;">Descuento</th>
+                <th class="text-end" style="width: 150px;">Subtotal</th>
+                <th class="text-center" style="width: 100px;">Quitar</th>
+              </tr>
+            </thead>
+            <tbody id="saleLinesBody">
+              {% for item in sale.items %}
+              <tr data-sale-line>
+                <td>
+                  <select name="product_id" class="form-select form-select-sm sale-line-product" required>
+                    <option value="">Selecciona un producto</option>
+                    {% for product in products %}
+                    <option value="{{ product.id }}" data-unit="{{ product.unit_measure or 'u' }}" data-stock="{{ product.stock or 0 }}" {% if item.product_id == product.id %}selected{% endif %}>
+                      {{ product.name }} · {{ product.unit_measure or 'u' }} · stock {{ "%.3g"|format(product.stock or 0) }}
+                    </option>
+                    {% endfor %}
+                  </select>
+                </td>
+                <td><input name="quantity" class="form-control form-control-sm sale-line-qty" type="number" min="0.001" step="0.001" value="{{ '%.3f'|format(item.quantity or 0) }}" required></td>
+                <td><input name="price" class="form-control form-control-sm sale-line-price" type="number" min="0" step="0.01" value="{{ '%.2f'|format(item.price or 0) }}" required></td>
+                <td><input name="discount" class="form-control form-control-sm sale-line-discount" type="number" min="0" step="0.01" value="{{ '%.2f'|format(item.discount or 0) }}"></td>
+                <td class="text-end"><strong class="sale-line-total">${{ "%.2f"|format(item.total_amount or 0) }}</strong></td>
+                <td class="text-center"><div class="form-check d-inline-flex align-items-center gap-2"><input class="form-check-input sale-line-remove" type="checkbox" name="remove_item" value="1"><span class="small text-muted">Eliminar</span></div></td>
               </tr>
               {% endfor %}
             </tbody>
           </table>
         </div>
 
-        <button class="btn btn-primary">Guardar cambios</button>
-      </form>
+        <template id="saleLineTemplate">
+          <tr data-sale-line>
+            <td>
+              <select name="product_id" class="form-select form-select-sm sale-line-product" required>
+                <option value="">Selecciona un producto</option>
+                {% for product in products %}
+                <option value="{{ product.id }}" data-unit="{{ product.unit_measure or 'u' }}" data-stock="{{ product.stock or 0 }}">
+                  {{ product.name }} · {{ product.unit_measure or 'u' }} · stock {{ "%.3g"|format(product.stock or 0) }}
+                </option>
+                {% endfor %}
+              </select>
+            </td>
+            <td><input name="quantity" class="form-control form-control-sm sale-line-qty" type="number" min="0.001" step="0.001" value="1"></td>
+            <td><input name="price" class="form-control form-control-sm sale-line-price" type="number" min="0" step="0.01" value="0"></td>
+            <td><input name="discount" class="form-control form-control-sm sale-line-discount" type="number" min="0" step="0.01" value="0"></td>
+            <td class="text-end"><strong class="sale-line-total">$0.00</strong></td>
+            <td class="text-center"><div class="form-check d-inline-flex align-items-center gap-2"><input class="form-check-input sale-line-remove" type="checkbox" name="remove_item" value="1"><span class="small text-muted">Eliminar</span></div></td>
+          </tr>
+        </template>
+
+        <div class="row g-3 mt-3">
+          <div class="col-md-4">
+            <label class="form-label"><i class="bi bi-percent me-1"></i>Descuento general</label>
+            <input class="form-control" type="number" min="0" step="0.01" name="order_discount" id="orderDiscount" value="{{ '%.2f'|format(order_discount_default or 0) }}">
+          </div>
+          <div class="col-md-4">
+            <label class="form-label"><i class="bi bi-shield-check me-1"></i>Motivo del cambio</label>
+            <input class="form-control" name="change_reason" required placeholder="Ej: corrección de método de pago / cantidad">
+          </div>
+          <div class="col-md-4">
+            <div class="card bg-body-tertiary border-0 h-100">
+              <div class="card-body d-flex flex-column justify-content-center">
+                <div class="d-flex justify-content-between"><span class="text-muted">Subtotal estimado</span><strong id="editSubtotal">$0.00</strong></div>
+                <div class="d-flex justify-content-between"><span class="text-muted">Descuento total</span><strong id="editDiscount">$0.00</strong></div>
+                <div class="d-flex justify-content-between fs-5"><span>Total estimado</span><strong id="editTotal">$0.00</strong></div>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <div class="alert alert-warning mt-3 mb-0">
+          <i class="bi bi-exclamation-triangle me-1"></i> Guardar esta pantalla recalcula stock, caja, dashboard, reportes y auditoría histórica.
+        </div>
+      </div>
     </div>
-  </div>
+
+    <div class="d-flex gap-2 justify-content-end">
+      <a href="{{ url_for('sales.view_sale', sale_id=sale.id) }}" class="btn btn-outline-secondary">Cancelar</a>
+      <button class="btn btn-primary" type="submit"><i class="bi bi-check2-circle me-1"></i>Guardar cambios</button>
+    </div>
+  </form>
 </div>
+{% endblock %}
+
+{% block extra_js %}
+<script>
+(() => {
+  const form = document.getElementById('saleEditForm');
+  const body = document.getElementById('saleLinesBody');
+  const template = document.getElementById('saleLineTemplate');
+  const addButton = document.getElementById('addSaleLineBtn');
+  const orderDiscountInput = document.getElementById('orderDiscount');
+  const subtotalEl = document.getElementById('editSubtotal');
+  const discountEl = document.getElementById('editDiscount');
+  const totalEl = document.getElementById('editTotal');
+
+  const parseNumber = (value) => {
+    const normalized = String(value ?? '').replace(',', '.').trim();
+    const parsed = Number.parseFloat(normalized);
+    return Number.isFinite(parsed) ? parsed : 0;
+  };
+
+  const formatMoney = (value) => `$${(Math.round((Number(value) || 0) * 100) / 100).toFixed(2)}`;
+
+  const recalculate = () => {
+    let subtotal = 0;
+    let lineDiscounts = 0;
+    body.querySelectorAll('[data-sale-line]').forEach((row) => {
+      const remove = row.querySelector('.sale-line-remove');
+      const productSelect = row.querySelector('.sale-line-product');
+      const qtyInput = row.querySelector('.sale-line-qty');
+      const priceInput = row.querySelector('.sale-line-price');
+      const discountInput = row.querySelector('.sale-line-discount');
+      const totalCell = row.querySelector('.sale-line-total');
+      const qty = parseNumber(qtyInput?.value);
+      const price = parseNumber(priceInput?.value);
+      const discount = parseNumber(discountInput?.value);
+      const rowTotal = Math.max((qty * price) - discount, 0);
+      if (!remove?.checked && productSelect?.value) {
+        subtotal += qty * price;
+        lineDiscounts += discount;
+      }
+      if (totalCell) totalCell.textContent = formatMoney(rowTotal);
+    });
+    const orderDiscount = Math.max(parseNumber(orderDiscountInput?.value), 0);
+    const totalDiscount = lineDiscounts + orderDiscount;
+    const total = Math.max(subtotal - totalDiscount, 0);
+    if (subtotalEl) subtotalEl.textContent = formatMoney(subtotal);
+    if (discountEl) discountEl.textContent = formatMoney(totalDiscount);
+    if (totalEl) totalEl.textContent = formatMoney(total);
+  };
+
+  const wireRow = (row) => {
+    row.querySelectorAll('input, select').forEach((field) => {
+      field.addEventListener('input', recalculate);
+      field.addEventListener('change', recalculate);
+    });
+    recalculate();
+  };
+
+  body.querySelectorAll('[data-sale-line]').forEach(wireRow);
+  if (addButton && template && body) {
+    addButton.addEventListener('click', () => {
+      const fragment = template.content.cloneNode(true);
+      const row = fragment.querySelector('[data-sale-line]');
+      body.appendChild(fragment);
+      wireRow(row);
+    });
+  }
+  if (orderDiscountInput) {
+    orderDiscountInput.addEventListener('input', recalculate);
+    orderDiscountInput.addEventListener('change', recalculate);
+  }
+  recalculate();
+})();
+</script>
 {% endblock %}

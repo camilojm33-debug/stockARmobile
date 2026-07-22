@@ -276,6 +276,42 @@ def _calculate_lines(items, *, lock_for_update=False):
     return lines
 
 
+def _sale_snapshot(sale, items=None):
+    source_items = items if items is not None else sale.items
+    return {
+        "sale": {
+            "id": sale.id,
+            "customer": sale.customer,
+            "subtotal": float(sale.subtotal or 0),
+            "discount": float(sale.discount or 0),
+            "tax": float(sale.tax or 0),
+            "total_amount": float(sale.total_amount or 0),
+            "payment_method": sale.payment_method,
+            "secondary_payment_method": sale.secondary_payment_method,
+            "paid_amount": float(sale.paid_amount or 0),
+            "secondary_paid_amount": float(sale.secondary_paid_amount or 0),
+            "note": sale.note,
+            "status": sale.status,
+        },
+        "items": [
+            {
+                "product_id": item.product_id,
+                "product_name": item.product.name if item.product else getattr(item, "product_name", None),
+                "unit_measure": item.product.unit_measure if item.product else getattr(item, "unit_measure", None),
+                "quantity": float(item.quantity or 0),
+                "price": float(item.price or 0),
+                "discount": float(item.discount or 0),
+                "total_amount": float(getattr(item, "total_amount", 0) or 0),
+            }
+            for item in source_items
+        ],
+    }
+
+
+def _json_dumps(value):
+    return json.dumps(value, ensure_ascii=False, sort_keys=True, default=str)
+
+
 @bp.route("/")
 @tenant_required
 def index():
@@ -1219,30 +1255,242 @@ def success(sale_id):
 @bp.route("/<int:sale_id>")
 @tenant_required
 def view_sale(sale_id):
-    from app import Sale, SaleItem, scope_query_to_company
+    from app import Sale, SaleItem, SaleModificationHistory, scope_query_to_company
 
     sale = scope_query_to_company(Sale.query.options(selectinload(Sale.items).selectinload(SaleItem.product)), Sale).filter(Sale.id == sale_id).first_or_404()
-    return render_template("ventas/view.html", sale=sale, items=sale.items)
+    modification_history = []
+    if getattr(current_user, "role", None) in {"admin", "superadmin"}:
+        modification_history = scope_query_to_company(
+            SaleModificationHistory.query.options(selectinload(SaleModificationHistory.user)).filter_by(sale_id=sale.id).order_by(SaleModificationHistory.created_at.desc()),
+            SaleModificationHistory,
+        ).all()
+    return render_template("ventas/view.html", sale=sale, items=sale.items, modification_history=modification_history)
 
 
 @bp.route("/<int:sale_id>/edit", methods=["GET", "POST"])
 @tenant_required
 def edit(sale_id):
-    from app import Client, Sale, db, scope_query_to_company
+    from app import CashMovement, Client, Product, Sale, SaleItem, SaleModificationHistory, db, record_audit, scope_query_to_company
 
-    sale = scope_query_to_company(Sale.query, Sale).filter(Sale.id == sale_id).first_or_404()
+    if getattr(current_user, "role", None) not in {"admin", "superadmin"}:
+        abort(403)
+
+    sale = scope_query_to_company(Sale.query.options(selectinload(Sale.items).selectinload(SaleItem.product)), Sale).filter(Sale.id == sale_id).first_or_404()
     clients = scope_query_to_company(Client.query.filter_by(active=True), Client).order_by(Client.name).all()
+    products = scope_query_to_company(Product.query.order_by(Product.name), Product).all()
+    existing_line_discount_total = sum(_to_decimal(item.discount or 0) for item in sale.items)
+    order_discount_default = max(_to_decimal(sale.discount or 0) - existing_line_discount_total, Decimal("0.00"))
+    payment_methods = [
+        ("EFECTIVO", "Efectivo"),
+        ("TRANSFERENCIA", "Transferencia"),
+        ("MERCADO PAGO", "Mercado Pago"),
+        ("DEBITO", "Débito"),
+        ("CREDITO", "Crédito"),
+    ]
     if request.method == "POST":
+        reason = (request.form.get("change_reason") or "").strip()
+        if not reason:
+            flash("Debes indicar el motivo del cambio.", "warning")
+            return render_template(
+                "ventas/edit_sale.html",
+                sale=sale,
+                clients=clients,
+                products=products,
+                payment_methods=payment_methods,
+                order_discount_default=order_discount_default,
+            )
+
+        existing_line_discount_total = sum(_to_decimal(item.discount or 0) for item in sale.items)
+        sale_order_discount_default = max(_to_decimal(sale.discount or 0) - existing_line_discount_total, Decimal("0.00"))
+        previous_snapshot = _sale_snapshot(sale)
+
+        for item in sale.items:
+            product = item.product or scope_query_to_company(db.session.query(Product), Product).filter(Product.id == item.product_id).first()
+            if product is not None:
+                product.stock = float(product.stock or 0) + float(item.quantity or 0)
+
+        product_ids = request.form.getlist("product_id")
+        quantities = request.form.getlist("quantity")
+        prices = request.form.getlist("price")
+        discounts = request.form.getlist("discount")
+        row_deletes = request.form.getlist("remove_item")
+        order_discount = _to_decimal(request.form.get("order_discount") or sale_order_discount_default or 0)
+        note = (request.form.get("note") or sale.note or "").strip() or None
         client_id = request.form.get("client_id") or None
         client = scope_query_to_company(Client.query.filter_by(id=int(client_id), active=True), Client).first() if client_id else None
+
+        product_id_values = []
+        for raw_value in product_ids:
+            raw_value = (raw_value or "").strip()
+            if raw_value:
+                product_id_values.append(int(raw_value))
+
+        products_by_id = {}
+        if product_id_values:
+            products_by_id = {
+                product.id: product
+                for product in scope_query_to_company(db.session.query(Product), Product)
+                .filter(Product.id.in_(product_id_values))
+                .all()
+            }
+
+        new_lines = []
+        row_count = max(len(product_ids), len(quantities), len(prices), len(discounts), len(row_deletes))
+        for index in range(row_count):
+            if index < len(row_deletes) and _is_truthy(row_deletes[index]):
+                continue
+            raw_product_id = product_ids[index] if index < len(product_ids) else ""
+            raw_quantity = quantities[index] if index < len(quantities) else ""
+            raw_price = prices[index] if index < len(prices) else ""
+            raw_discount = discounts[index] if index < len(discounts) else ""
+            if not (raw_product_id or raw_quantity or raw_price or raw_discount):
+                continue
+            if not raw_product_id:
+                raise ValueError("Cada linea debe tener un producto seleccionado.")
+            product = products_by_id.get(int(raw_product_id))
+            if product is None:
+                raise ValueError("Producto inválido para esta empresa.")
+            quantity = _to_decimal(raw_quantity)
+            if quantity <= 0:
+                raise ValueError("La cantidad debe ser mayor a cero.")
+            price = _to_decimal(raw_price)
+            if price < 0:
+                raise ValueError("El precio no puede ser negativo.")
+            line_discount = _to_decimal(raw_discount)
+            if line_discount < 0:
+                raise ValueError("El descuento no puede ser negativo.")
+            gross = price * quantity
+            if line_discount > gross:
+                line_discount = gross
+            if float(product.stock or 0) < float(quantity):
+                raise ValueError(f"Stock insuficiente para {product.name}. Disponible: {product.stock:g} {product.unit_measure or ''}.")
+            product.stock = float(product.stock or 0) - float(quantity)
+            new_lines.append({"product": product, "quantity": quantity, "price": price, "discount": line_discount})
+
+        if not new_lines:
+            raise ValueError("La venta debe conservar al menos un producto.")
+
+        sale_totals = calculate_sale_totals(
+            [{"price": line["price"], "quantity": line["quantity"], "line_discount": line["discount"]} for line in new_lines],
+            general_discount=order_discount,
+            surcharge=sale.surcharge or 0,
+        )
+
+        payment_method = request.form.get("payment_method") or sale.payment_method or "EFECTIVO"
+        sale.payment_method = payment_method
+        sale.secondary_payment_method = None
+        payment_breakdown = sale_payment_breakdown_from_values(total_amount=sale_totals["total"], primary_method=payment_method)
+
+        sale.customer = client.name if client else (sale.customer or "Consumidor final")
         sale.client_id = client.id if client else None
-        sale.customer = client.name if client else (request.form.get("customer") or sale.customer)
-        sale.payment_method = request.form.get("payment_method") or sale.payment_method
-        sale.note = request.form.get("note") or None
+        sale.note = note
+        sale.subtotal = sale_totals["subtotal"]
+        sale.discount = sale_totals["line_discount_total"] + sale_totals["general_discount"]
+        sale.tax = sale_totals["tax"]
+        sale.total_amount = sale_totals["total"]
+        sale.paid_amount = payment_breakdown.get("efectivo", sale_totals["total"])
+        sale.secondary_paid_amount = Decimal("0.00")
+        sale.status = sale.status or "confirmada"
+
+        for item in list(sale.items):
+            db.session.delete(item)
+
+        for line in new_lines:
+            db.session.add(
+                SaleItem(
+                    sale_id=sale.id,
+                    product_id=line["product"].id,
+                    quantity=float(line["quantity"]),
+                    price=line["price"],
+                    cost_price=_to_decimal(line["product"].cost_price),
+                    discount=line["discount"],
+                )
+            )
+
+        cash_movement = CashMovement.query.filter_by(sale_id=sale.id).first()
+        cash_amount = _to_decimal(payment_breakdown.get("efectivo", 0))
+        open_cash_session = _current_open_cash_session()
+        if cash_movement is not None:
+            if cash_amount > 0:
+                cash_movement.amount = cash_amount
+                cash_movement.session_id = sale.cash_session_id or cash_movement.session_id
+                cash_movement.user_id = current_user.id
+                cash_movement.company_id = sale.company_id
+                cash_movement.description = f"Venta #{sale.id} editada"
+            else:
+                db.session.delete(cash_movement)
+        elif cash_amount > 0:
+            if open_cash_session is None and not sale.cash_session_id:
+                raise ValueError("Debes tener una caja abierta para registrar un cobro en efectivo.")
+            db.session.add(
+                CashMovement(
+                    session_id=sale.cash_session_id or (open_cash_session.id if open_cash_session else None),
+                    user_id=current_user.id,
+                    company_id=sale.company_id,
+                    sale_id=sale.id,
+                    movement_type="ingreso",
+                    category="venta",
+                    amount=cash_amount,
+                    description=f"Venta #{sale.id} editada",
+                )
+            )
+
+        new_snapshot = {
+            "sale": {
+                "id": sale.id,
+                "customer": sale.customer,
+                "subtotal": float(sale_totals["subtotal"] or 0),
+                "discount": float((sale_totals["line_discount_total"] + sale_totals["general_discount"]) or 0),
+                "tax": float(sale_totals["tax"] or 0),
+                "total_amount": float(sale_totals["total"] or 0),
+                "payment_method": payment_method,
+                "secondary_payment_method": None,
+                "paid_amount": float(payment_breakdown.get("efectivo", sale_totals["total"]) or 0),
+                "secondary_paid_amount": 0.0,
+                "note": sale.note,
+                "status": sale.status,
+            },
+            "items": [
+                {
+                    "product_id": line["product"].id,
+                    "product_name": line["product"].name,
+                    "unit_measure": line["product"].unit_measure,
+                    "quantity": float(line["quantity"]),
+                    "price": float(line["price"]),
+                    "discount": float(line["discount"]),
+                    "total_amount": float((line["price"] * line["quantity"]) - line["discount"]),
+                }
+                for line in new_lines
+            ],
+        }
+        db.session.add(
+            SaleModificationHistory(
+                sale_id=sale.id,
+                company_id=sale.company_id,
+                user_id=current_user.id,
+                reason=reason,
+                previous_data=_json_dumps(previous_snapshot),
+                new_data=_json_dumps(new_snapshot),
+            )
+        )
+        record_audit(
+            action="sale_update",
+            entity="sale",
+            entity_id=sale.id,
+            detail=f"Venta editada. Motivo: {reason}",
+        )
         db.session.commit()
         flash("Venta actualizada correctamente.", "success")
         return redirect(url_for("sales.view_sale", sale_id=sale.id))
-    return render_template("ventas/edit_sale.html", sale=sale, clients=clients)
+
+    return render_template(
+        "ventas/edit_sale.html",
+        sale=sale,
+        clients=clients,
+        products=products,
+        payment_methods=payment_methods,
+        order_discount_default=order_discount_default,
+    )
 
 
 @bp.route("/<int:sale_id>/comprobante-emitido", methods=["POST"])
@@ -1357,7 +1605,7 @@ def api_sale(sale_id):
             "tax": sale.tax,
             "total_amount": sale.total_amount,
             "items": [
-                {"id": i.id, "product_name": i.product.name if i.product else "", "quantity": i.quantity, "price": i.price, "subtotal": i.total_amount}
+                {"id": i.id, "product_name": i.product.name if i.product else "", "unit_measure": i.product.unit_measure if i.product else "", "quantity": i.quantity, "price": i.price, "subtotal": i.total_amount}
                 for i in sale.items
             ],
         }
@@ -1420,7 +1668,8 @@ def _ticket_text(sale, ticket_brand=None):
     lines.append("-" * 32)
     for item in sale.items:
         name = item.product.name if item.product else f"Producto {item.product_id}"
-        lines.append(f"{name}: ${item.price:.2f} x {item.quantity} = ${item.total_amount:.2f}")
+        unit_measure = item.product.unit_measure if item.product else "u"
+        lines.append(f"{name}: ${item.price:.2f} x {item.quantity:g} {unit_measure} = ${item.total_amount:.2f}")
     if sale.note:
         lines.extend(["-" * 32, f"Obs.: {sale.note}"])
     lines.extend(["-" * 32, f"Subtotal: ${sale.subtotal:.2f}", f"Descuento: -${sale.discount:.2f}", f"Impuestos: ${sale.tax:.2f}", "=" * 32, f"TOTAL: ${sale.total_amount:.2f}", "Gracias por su compra!"])
@@ -1431,6 +1680,7 @@ def _ticket_rows(sale):
     return [
         {
             "name": item.product.name if item.product else f"Producto {item.product_id}",
+            "unit_measure": item.product.unit_measure if item.product else "u",
             "quantity": item.quantity,
             "price": item.price,
             "total": item.total_amount,
@@ -1463,7 +1713,8 @@ def _ticket_text_for_whatsapp(sale):
     lines.append("------------------------------")
     for item in sale.items:
         name = item.product.name if item.product else f"Producto {item.product_id}"
-        lines.append(f"{name}: ${item.price:.2f} x {item.quantity} = ${item.total_amount:.2f}")
+        unit_measure = item.product.unit_measure if item.product else "u"
+        lines.append(f"{name}: ${item.price:.2f} x {item.quantity:g} {unit_measure} = ${item.total_amount:.2f}")
     lines.extend([
         "------------------------------",
         f"Subtotal: ${sale.subtotal:.2f}",

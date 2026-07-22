@@ -652,7 +652,7 @@ def _create_sheet_label_image(
     img_size = _label_pixel_size(width_mm, height_mm, px_per_mm=24)
     label = create_product_label(
         product.barcode or product.id,
-        product.name,
+        f"{product.name} ({product.unit_measure or 'u'})",
         product.price,
         size=img_size,
         include_name=include_name,
@@ -857,7 +857,8 @@ def print_single(id):
     from app import Product, scope_query_to_company
 
     product = scope_query_to_company(Product.query, Product).filter(Product.id == id).first_or_404()
-    img = create_product_label(product.barcode, product.name, product.price)
+    label_name = f"{product.name} ({product.unit_measure or 'u'})"
+    img = create_product_label(product.barcode, label_name, product.price)
     buffer = BytesIO()
     img.save(buffer, "PNG")
     buffer.seek(0)
@@ -971,7 +972,7 @@ def print_all():
     dimensions = {"small": (260, 320), "standard": (300, 400), "large": (380, 480)}.get(label_size, (300, 400))
     for product in products:
         for _ in range(max(copies, 1)):
-            images.append(create_product_label(product.barcode, product.name, product.price, size=dimensions))
+            images.append(create_product_label(product.barcode, f"{product.name} ({product.unit_measure or 'u'})", product.price, size=dimensions))
     buffer = _build_sixup_a4_pdf(images)
     return send_file(buffer, mimetype="application/pdf", as_attachment=True, download_name="etiquetas_productos.pdf")
 

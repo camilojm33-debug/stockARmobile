@@ -175,6 +175,16 @@
       padding: 16px;
       border-top: 1px solid var(--app-line);
     }
+    .offline-status-panel {
+      border: 1px solid var(--app-line);
+      border-radius: 12px;
+      background: linear-gradient(180deg, #ffffff, #f8fbff);
+      padding: 14px;
+      margin-bottom: 14px;
+    }
+    [data-bs-theme="dark"] .offline-status-panel {
+      background: linear-gradient(180deg, #162033, #0f172a);
+    }
     .user-chip {
       display: flex;
       align-items: center;
@@ -629,6 +639,16 @@
           <small class="text-muted">{{ current_user.role or 'user' }}</small>
         </span>
       </div>
+      <div class="offline-status-panel">
+        <div class="d-flex justify-content-between align-items-center gap-2 mb-2">
+          <span class="small fw-semibold text-uppercase text-muted">Conectividad</span>
+          <span id="offlineConnectivityBadge" class="badge text-bg-secondary">Verificando...</span>
+        </div>
+        <div class="small text-muted mb-1">Pendientes: <strong id="offlinePendingCount">0</strong></div>
+        <div class="small text-muted mb-1">Última sincronización: <span id="offlineLastSync">-</span></div>
+        <div id="offlineSyncError" class="small text-danger d-none mb-2"></div>
+        <button class="btn btn-outline-primary btn-sm w-100" type="button" id="offlineSyncNow"><i class="bi bi-arrow-repeat me-1"></i>Sincronizar ahora</button>
+      </div>
       {% if current_user.role == 'admin' and switchable_company_users %}
       <div class="dropdown mb-2">
         <button class="btn btn-outline-info w-100 dropdown-toggle" type="button" data-bs-toggle="dropdown" aria-expanded="false">
@@ -668,7 +688,8 @@
         <img src="{{ url_for('static', filename='images/branding/logo.png') }}" alt="StockArmobile logo">
         <span>StockArmobile</span>
       </span>
-      <div class="d-flex gap-2">
+      <div class="d-flex align-items-center gap-2 ms-auto">
+        <span id="offlineConnectivityBadgeCompact" class="badge text-bg-secondary d-none d-md-inline">Verificando...</span>
         <button class="btn btn-outline-primary btn-sm" type="button" data-bs-toggle="modal" data-bs-target="#spotlightModal"><i class="bi bi-search"></i></button>
         <button class="btn btn-outline-secondary btn-sm position-relative" type="button" data-bs-toggle="offcanvas" data-bs-target="#notificationCenter"><i class="bi bi-bell"></i>{% if notification_count %}<span class="js-notification-badge position-absolute top-0 start-100 translate-middle badge rounded-pill bg-danger">{{ notification_count }}</span>{% endif %}</button>
       </div>
@@ -759,6 +780,7 @@
   {% endif %}
 
   <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/js/bootstrap.bundle.min.js"></script>
+  <script src="{{ url_for('static', filename='assets/js/offline-manager.js') }}" defer></script>
   <script>
     (function() {
       const savedTheme = localStorage.getItem('stockarmobile_theme') || 'light';

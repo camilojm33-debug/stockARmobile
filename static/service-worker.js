@@ -1,10 +1,14 @@
-const CACHE_NAME = 'stockarmobile-pwa-v5';
+const CACHE_NAME = 'stockarmobile-pwa-v6';
 const STATIC_ASSETS = [
   '/',
   '/offline.html',
   '/manifest.json',
   '/static/assets/css/styles.css',
   '/static/assets/js/cart-manager.js',
+  '/static/assets/js/landing.js',
+  '/static/assets/js/edit-sale.js',
+  '/static/assets/js/ventas-new.js',
+  '/static/assets/js/offline-manager.js',
   '/static/images/branding/favicon.ico',
   '/static/images/branding/apple-touch-icon.png',
   '/static/images/branding/icon-192.png',
@@ -14,15 +18,175 @@ const STATIC_ASSETS = [
   '/static/images/branding/icon-maskable-512.png',
   '/static/images/branding/splash.png'
 ];
-const API_CACHE_PREFIXES = ['/productos/api/products', '/clientes/api/clients', '/ventas/api/recent'];
-const SYNCABLE_POST_PREFIXES = ['/ventas/api/checkout'];
+const API_CACHE_PREFIXES = ['/productos/api/products', '/clientes/api/clients', '/ventas/api/recent', '/api/search'];
+const SYNCABLE_POST_PREFIXES = ['/ventas/api/checkout', '/productos/add', '/productos/edit/', '/clientes/add', '/clientes/edit/', '/compras/', '/gastos/', '/caja/'];
+const DB_NAME = 'stockarmobile-offline';
+const DB_VERSION = 2;
+const REQUEST_STORE = 'requests';
+const SNAPSHOT_STORE = 'snapshots';
+const META_STORE = 'meta';
+const LAST_SYNC_KEY = 'lastSyncAt';
+const LAST_ERROR_KEY = 'lastError';
+
+function nowIso() {
+  return new Date().toISOString();
+}
+
+function generateUuid() {
+  if (self.crypto && typeof self.crypto.randomUUID === 'function') {
+    return self.crypto.randomUUID();
+  }
+  return `offline_${Date.now()}_${Math.random().toString(36).slice(2)}`;
+}
+
+function inferOperationType(pathname, method) {
+  if (pathname.startsWith('/ventas/api/checkout')) return 'sale_create';
+  if (pathname.startsWith('/productos/add') || pathname.startsWith('/productos/edit/')) return 'product_write';
+  if (pathname.startsWith('/clientes/add') || pathname.startsWith('/clientes/edit/')) return 'client_write';
+  if (pathname.startsWith('/compras/')) return 'purchase_write';
+  if (pathname.startsWith('/gastos/')) return 'expense_write';
+  if (pathname.startsWith('/caja/')) return 'cash_write';
+  return `${method.toLowerCase()}_${pathname.split('/').filter(Boolean)[0] || 'request'}`;
+}
+
+function openOfflineDB() {
+  return new Promise((resolve, reject) => {
+    const request = indexedDB.open(DB_NAME, DB_VERSION);
+    request.onupgradeneeded = () => {
+      const db = request.result;
+      if (!db.objectStoreNames.contains(REQUEST_STORE)) {
+        db.createObjectStore(REQUEST_STORE, { keyPath: 'id', autoIncrement: true });
+      }
+      if (!db.objectStoreNames.contains(SNAPSHOT_STORE)) {
+        db.createObjectStore(SNAPSHOT_STORE, { keyPath: 'key' });
+      }
+      if (!db.objectStoreNames.contains(META_STORE)) {
+        db.createObjectStore(META_STORE, { keyPath: 'key' });
+      }
+    };
+    request.onsuccess = () => resolve(request.result);
+    request.onerror = () => reject(request.error);
+  });
+}
+
+async function dbGet(storeName, key) {
+  const db = await openOfflineDB();
+  return new Promise((resolve, reject) => {
+    const tx = db.transaction(storeName, 'readonly');
+    const request = tx.objectStore(storeName).get(key);
+    request.onsuccess = () => resolve(request.result || null);
+    request.onerror = () => reject(request.error);
+  });
+}
+
+async function dbPut(storeName, value) {
+  const db = await openOfflineDB();
+  return new Promise((resolve, reject) => {
+    const tx = db.transaction(storeName, 'readwrite');
+    tx.objectStore(storeName).put(value);
+    tx.oncomplete = () => resolve(true);
+    tx.onerror = () => reject(tx.error);
+  });
+}
+
+async function dbAdd(storeName, value) {
+  const db = await openOfflineDB();
+  return new Promise((resolve, reject) => {
+    const tx = db.transaction(storeName, 'readwrite');
+    const request = tx.objectStore(storeName).add(value);
+    request.onsuccess = () => resolve(request.result);
+    request.onerror = () => reject(request.error);
+  });
+}
+
+async function dbReadAll(storeName) {
+  const db = await openOfflineDB();
+  return new Promise((resolve, reject) => {
+    const tx = db.transaction(storeName, 'readonly');
+    const request = tx.objectStore(storeName).getAll();
+    request.onsuccess = () => resolve(request.result || []);
+    request.onerror = () => reject(request.error);
+  });
+}
+
+async function dbDelete(storeName, key) {
+  const db = await openOfflineDB();
+  return new Promise((resolve, reject) => {
+    const tx = db.transaction(storeName, 'readwrite');
+    tx.objectStore(storeName).delete(key);
+    tx.oncomplete = () => resolve(true);
+    tx.onerror = () => reject(tx.error);
+  });
+}
+
+async function updateMeta(key, value) {
+  await dbPut(META_STORE, { key, value });
+}
+
+async function getQueueStatus() {
+  const requests = await dbReadAll(REQUEST_STORE);
+  const lastSync = await dbGet(META_STORE, LAST_SYNC_KEY);
+  const lastError = await dbGet(META_STORE, LAST_ERROR_KEY);
+  return {
+    pendingCount: requests.length,
+    lastSyncAt: lastSync ? lastSync.value : null,
+    lastError: lastError ? lastError.value : '',
+    online: self.navigator ? self.navigator.onLine : true,
+  };
+}
+
+async function broadcastQueueStatus(requestId = null) {
+  const status = await getQueueStatus();
+  const clients = await self.clients.matchAll({ type: 'window', includeUncontrolled: true });
+  for (const client of clients) {
+    client.postMessage({ type: 'OFFLINE_QUEUE_STATUS', requestId, status });
+  }
+  return status;
+}
+
+async function cacheJsonSnapshot(request, response) {
+  if (!response || !response.ok) return;
+  const contentType = (response.headers.get('content-type') || '').toLowerCase();
+  if (!contentType.includes('application/json')) return;
+  try {
+    await dbPut(SNAPSHOT_STORE, {
+      key: request.url,
+      body: await response.clone().text(),
+      headers: Array.from(response.headers.entries()),
+      status: response.status,
+      updatedAt: nowIso(),
+    });
+  } catch (error) {
+    // Snapshot caching is best-effort.
+  }
+}
+
+async function readJsonSnapshot(requestUrl) {
+  const snapshot = await dbGet(SNAPSHOT_STORE, requestUrl);
+  if (!snapshot) return null;
+  return new Response(snapshot.body, {
+    status: snapshot.status || 200,
+    headers: snapshot.headers || [['Content-Type', 'application/json; charset=utf-8']],
+  });
+}
 
 self.addEventListener('install', event => {
-  event.waitUntil(caches.open(CACHE_NAME).then(cache => cache.addAll(STATIC_ASSETS)).then(() => self.skipWaiting()));
+  event.waitUntil((async () => {
+    const cache = await caches.open(CACHE_NAME);
+    await cache.addAll(STATIC_ASSETS);
+    await updateMeta(LAST_SYNC_KEY, nowIso());
+    await updateMeta(LAST_ERROR_KEY, '');
+    await self.skipWaiting();
+  })());
 });
 
 self.addEventListener('activate', event => {
-  event.waitUntil(caches.keys().then(keys => Promise.all(keys.filter(key => key !== CACHE_NAME).map(key => caches.delete(key)))).then(() => self.clients.claim()));
+  event.waitUntil((async () => {
+    const keys = await caches.keys();
+    await Promise.all(keys.filter(key => key !== CACHE_NAME).map(key => caches.delete(key)));
+    await self.clients.claim();
+    await broadcastQueueStatus();
+  })());
 });
 
 self.addEventListener('fetch', event => {
@@ -37,7 +201,7 @@ self.addEventListener('fetch', event => {
     return;
   }
   if (API_CACHE_PREFIXES.some(prefix => url.pathname.startsWith(prefix))) {
-    event.respondWith(networkOnly(request));
+    event.respondWith(networkFirstApi(request));
     return;
   }
   if (request.mode === 'navigate') {
@@ -54,119 +218,147 @@ self.addEventListener('sync', event => {
 });
 
 self.addEventListener('message', event => {
-  if (event.data && event.data.type === 'FLUSH_QUEUE') {
-    event.waitUntil(flushQueue());
+  const data = event.data || {};
+  if (data.type === 'FLUSH_QUEUE') {
+    event.waitUntil(flushQueue().then(() => broadcastQueueStatus(data.requestId || null)));
   }
-  if (event.data && event.data.type === 'CLEAR_OFFLINE_QUEUE') {
-    event.waitUntil(clearQueue());
+  if (data.type === 'CLEAR_OFFLINE_QUEUE') {
+    event.waitUntil(clearQueue().then(() => broadcastQueueStatus(data.requestId || null)));
+  }
+  if (data.type === 'GET_OFFLINE_STATUS') {
+    event.waitUntil((async () => {
+      const status = await broadcastQueueStatus(data.requestId || null);
+      if (event.source) {
+        event.source.postMessage({ type: 'OFFLINE_QUEUE_STATUS', requestId: data.requestId || null, status });
+      }
+    })());
   }
 });
 
 async function cacheFirst(request) {
   const cached = await caches.match(request);
   if (cached) return cached;
-  const response = await fetch(request);
-  if (response.ok) {
-    const cache = await caches.open(CACHE_NAME);
-    cache.put(request, response.clone());
+  try {
+    const response = await fetch(request);
+    if (response.ok) {
+      const cache = await caches.open(CACHE_NAME);
+      await cache.put(request, response.clone());
+    }
+    return response;
+  } catch (error) {
+    return new Response(JSON.stringify({ offline: true, error: 'Sin conexion' }), {
+      status: 503,
+      headers: { 'Content-Type': 'application/json; charset=utf-8' },
+    });
   }
-  return response;
 }
 
 async function networkFirst(request, offlineFallback = false) {
   const cache = await caches.open(CACHE_NAME);
   try {
     const response = await fetch(request);
-    if (response.ok) cache.put(request, response.clone());
+    if (response.ok) {
+      await cache.put(request, response.clone());
+    }
     return response;
   } catch (error) {
     const cached = await cache.match(request);
     if (cached) return cached;
-    if (offlineFallback) return cache.match('/offline.html');
-    return new Response(JSON.stringify({ offline: true, error: 'Sin conexion' }), { status: 503, headers: { 'Content-Type': 'application/json' } });
+    if (offlineFallback) {
+      return (await cache.match('/offline.html')) || new Response('Offline', { status: 503, headers: { 'Content-Type': 'text/plain; charset=utf-8' } });
+    }
+    return new Response(JSON.stringify({ offline: true, error: 'Sin conexion' }), {
+      status: 503,
+      headers: { 'Content-Type': 'application/json; charset=utf-8' },
+    });
   }
 }
 
-async function networkOnly(request) {
+async function networkFirstApi(request) {
   try {
-    return await fetch(request);
+    const response = await fetch(request);
+    if (response.ok) {
+      await cacheJsonSnapshot(request, response);
+    }
+    return response;
   } catch (error) {
-    return new Response(JSON.stringify({ offline: true, error: 'Sin conexion' }), { status: 503, headers: { 'Content-Type': 'application/json' } });
+    const snapshot = await readJsonSnapshot(request.url);
+    if (snapshot) return snapshot;
+    return new Response(JSON.stringify({ offline: true, error: 'Sin conexion' }), {
+      status: 503,
+      headers: { 'Content-Type': 'application/json; charset=utf-8' },
+    });
   }
 }
 
 async function queueWhenOffline(request) {
   try {
-    return await fetch(request.clone());
+    const response = await fetch(request.clone());
+    if (response.ok) {
+      await updateMeta(LAST_SYNC_KEY, nowIso());
+      await updateMeta(LAST_ERROR_KEY, '');
+    }
+    return response;
   } catch (error) {
     const body = await request.clone().text();
-    await queueRequest({ url: request.url, method: request.method, headers: Array.from(request.headers.entries()), body, createdAt: Date.now() });
+    await dbAdd(REQUEST_STORE, {
+      uuid: generateUuid(),
+      operationType: inferOperationType(new URL(request.url).pathname, request.method),
+      url: request.url,
+      method: request.method,
+      headers: Array.from(request.headers.entries()),
+      body,
+      createdAt: nowIso(),
+      attempts: 0,
+      status: 'pending',
+    });
+    await updateMeta(LAST_ERROR_KEY, 'Operación en cola por falta de conexión.');
+    await broadcastQueueStatus();
     if ('sync' in self.registration) {
       await self.registration.sync.register('stockarmobile-sync');
     }
-    return new Response(JSON.stringify({ queued: true }), { status: 202, headers: { 'Content-Type': 'application/json' } });
+    return new Response(JSON.stringify({ queued: true }), {
+      status: 202,
+      headers: { 'Content-Type': 'application/json; charset=utf-8' },
+    });
   }
-}
-
-function openQueueDB() {
-  return new Promise((resolve, reject) => {
-    const request = indexedDB.open('stockarmobile-offline', 1);
-    request.onupgradeneeded = () => request.result.createObjectStore('requests', { keyPath: 'id', autoIncrement: true });
-    request.onsuccess = () => resolve(request.result);
-    request.onerror = () => reject(request.error);
-  });
-}
-
-async function queueRequest(payload) {
-  const db = await openQueueDB();
-  return new Promise((resolve, reject) => {
-    const tx = db.transaction('requests', 'readwrite');
-    tx.objectStore('requests').add(payload);
-    tx.oncomplete = resolve;
-    tx.onerror = () => reject(tx.error);
-  });
-}
-
-async function readQueue() {
-  const db = await openQueueDB();
-  return new Promise((resolve, reject) => {
-    const tx = db.transaction('requests', 'readonly');
-    const request = tx.objectStore('requests').getAll();
-    request.onsuccess = () => resolve(request.result || []);
-    request.onerror = () => reject(request.error);
-  });
-}
-
-async function deleteQueued(id) {
-  const db = await openQueueDB();
-  return new Promise((resolve, reject) => {
-    const tx = db.transaction('requests', 'readwrite');
-    tx.objectStore('requests').delete(id);
-    tx.oncomplete = resolve;
-    tx.onerror = () => reject(tx.error);
-  });
 }
 
 async function flushQueue() {
-  const queued = await readQueue();
+  const queued = await dbReadAll(REQUEST_STORE);
   for (const item of queued) {
     try {
-      const response = await fetch(item.url, { method: item.method, headers: item.headers, body: item.body || undefined });
+      const response = await fetch(item.url, {
+        method: item.method,
+        headers: item.headers,
+        body: item.body || undefined,
+        credentials: 'same-origin',
+      });
       if (response.ok || [401, 403, 409, 412].includes(response.status)) {
-        await deleteQueued(item.id);
+        await dbDelete(REQUEST_STORE, item.id);
+        await updateMeta(LAST_SYNC_KEY, nowIso());
+        await updateMeta(LAST_ERROR_KEY, '');
+      } else {
+        await dbPut(REQUEST_STORE, { ...item, attempts: (item.attempts || 0) + 1, status: 'pending' });
+        await updateMeta(LAST_ERROR_KEY, `Error sincronizando ${item.operationType || item.url}: HTTP ${response.status}`);
       }
     } catch (error) {
-      // Keep queued item for next background sync attempt.
+      await dbPut(REQUEST_STORE, { ...item, attempts: (item.attempts || 0) + 1, status: 'error' });
+      await updateMeta(LAST_ERROR_KEY, `Error sincronizando ${item.operationType || item.url}: ${error.message || 'sin detalle'}`);
     }
   }
+  await broadcastQueueStatus();
 }
 
 async function clearQueue() {
-  const db = await openQueueDB();
+  const db = await openOfflineDB();
   return new Promise((resolve, reject) => {
-    const tx = db.transaction('requests', 'readwrite');
-    tx.objectStore('requests').clear();
+    const tx = db.transaction(REQUEST_STORE, 'readwrite');
+    tx.objectStore(REQUEST_STORE).clear();
     tx.oncomplete = resolve;
     tx.onerror = () => reject(tx.error);
+  }).then(async () => {
+    await updateMeta(LAST_ERROR_KEY, '');
+    await broadcastQueueStatus();
   });
 }

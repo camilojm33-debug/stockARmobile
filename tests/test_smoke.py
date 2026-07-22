@@ -12,7 +12,7 @@ import pytest
 from flask_login import login_user, logout_user
 
 import app as stock_app
-from app import CashMovement, CashSession, Client, Company, Product, ReferralAttribution, Sale, SaleItem, Subscription, User, db
+from app import CashMovement, CashSession, Client, Company, Product, ReferralAttribution, Sale, SaleItem, SaleModificationHistory, Subscription, User, db
 from sqlalchemy.exc import ProgrammingError
 
 try:
@@ -470,6 +470,59 @@ def test_final_audit_full_sales_flow_consistency():
         assert round(float(session.expected_amount or 0), 2) == 23550.00
         assert round(float(session.counted_amount or 0), 2) == 23550.00
         assert round(float(session.difference_amount or 0), 2) == 0.00
+
+
+def test_admin_can_edit_sale_and_track_history():
+    client = stock_app.app.test_client()
+    client.post("/auth/login", data={"username": "negocio_admin", "password": "admin123"})
+
+    open_cash_session(client)
+
+    sale_response = client.post(
+        "/ventas/api/checkout",
+        json={
+            "items": [{"productId": 1, "quantity": 1}],
+            "metodo_pago": "EFECTIVO",
+            "checkout_token": "edit-sale-test-1",
+            "monto_pago": 18000,
+        },
+        headers={"X-Cart-Tenant": "1:2"},
+    )
+    assert sale_response.status_code == 200
+    sale_id = sale_response.get_json()["sale_id"]
+
+    edit_response = client.post(
+        f"/ventas/{sale_id}/edit",
+        data={
+            "product_id": "1",
+            "quantity": "0.5",
+            "price": "18000",
+            "discount": "0",
+            "payment_method": "TRANSFERENCIA",
+            "note": "Correccion manual",
+            "order_discount": "0",
+            "change_reason": "Cambio de metodo y cantidad",
+        },
+        follow_redirects=False,
+    )
+    assert edit_response.status_code in (301, 302)
+
+    with stock_app.app.app_context():
+        sale = db.session.get(Sale, sale_id)
+        assert sale is not None
+        assert sale.payment_method == "TRANSFERENCIA"
+        assert round(float(sale.total_amount or 0), 2) == 9000.00
+        product = db.session.get(Product, 1)
+        assert product is not None
+        assert round(float(product.stock), 3) == 2.0
+        assert CashMovement.query.filter_by(sale_id=sale_id).count() == 0
+        history_rows = SaleModificationHistory.query.filter_by(sale_id=sale_id).all()
+        assert len(history_rows) == 1
+        assert "Cambio de metodo" in history_rows[0].reason
+
+    view_response = client.get(f"/ventas/{sale_id}")
+    assert view_response.status_code == 200
+    assert "Historial de modificaciones" in view_response.data.decode("utf-8")
 
 
 def test_admin_can_switch_to_employee_session_from_sidebar_flow():

@@ -28,6 +28,63 @@ def clamp_non_negative_money(value):
     return amount if amount > Decimal("0.00") else Decimal("0.00")
 
 
+def calculate_product_pricing(*, cost_price, price=None, margin=None, profit_percent=None, pricing_source=None):
+    cost = clamp_non_negative_money(cost_price)
+    source = (pricing_source or "").strip().lower()
+
+    price_value = to_decimal(price)
+    margin_value = to_decimal(margin)
+    profit_value = to_decimal(profit_percent)
+
+    if source == "profit_percent":
+        if profit_value < 0:
+            raise ValueError("El margen % no puede ser negativo.")
+        final_price = quantize_money(cost * (Decimal("1.00") + (profit_value / Decimal("100.00"))))
+        gain_amount = quantize_money(final_price - cost)
+        margin_percent = profit_value
+    elif source == "margin":
+        if margin_value < 0:
+            raise ValueError("La ganancia no puede ser negativa.")
+        gain_amount = quantize_money(margin_value)
+        final_price = quantize_money(cost + gain_amount)
+        margin_percent = quantize_money((gain_amount / cost * Decimal("100.00")) if cost > 0 else Decimal("0.00"))
+    elif source == "price":
+        if price_value < 0:
+            raise ValueError("El precio de venta no puede ser negativo.")
+        final_price = quantize_money(price_value)
+        if final_price < cost:
+            raise ValueError("El precio de venta no puede ser menor al costo.")
+        gain_amount = quantize_money(final_price - cost)
+        margin_percent = quantize_money((gain_amount / cost * Decimal("100.00")) if cost > 0 else Decimal("0.00"))
+    elif profit_value not in (None, Decimal("0"), Decimal("0.0"), Decimal("0.00")):
+        if profit_value < 0:
+            raise ValueError("El margen % no puede ser negativo.")
+        final_price = quantize_money(cost * (Decimal("1.00") + (profit_value / Decimal("100.00"))))
+        gain_amount = quantize_money(final_price - cost)
+        margin_percent = profit_value
+    elif margin_value not in (None, Decimal("0"), Decimal("0.0"), Decimal("0.00")):
+        if margin_value < 0:
+            raise ValueError("La ganancia no puede ser negativa.")
+        gain_amount = quantize_money(margin_value)
+        final_price = quantize_money(cost + gain_amount)
+        margin_percent = quantize_money((gain_amount / cost * Decimal("100.00")) if cost > 0 else Decimal("0.00"))
+    else:
+        if price_value < 0:
+            raise ValueError("El precio de venta no puede ser negativo.")
+        final_price = quantize_money(price_value if price_value > 0 else cost)
+        if final_price < cost:
+            raise ValueError("El precio de venta no puede ser menor al costo.")
+        gain_amount = quantize_money(final_price - cost)
+        margin_percent = quantize_money((gain_amount / cost * Decimal("100.00")) if cost > 0 else Decimal("0.00"))
+
+    return {
+        "cost_price": cost,
+        "price": final_price,
+        "margin": gain_amount,
+        "profit_percent": margin_percent,
+    }
+
+
 def is_confirmed_sale_status(status_value):
     normalized = (status_value or "confirmada").strip().lower()
     if not normalized:

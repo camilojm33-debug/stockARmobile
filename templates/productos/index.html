@@ -24,13 +24,18 @@
             <div class="col-md-5">{{ form.name.label(class_="form-label") }}{{ form.name(class_="form-control") }}</div>
             <div class="col-md-4">{{ form.category.label(class_="form-label") }}{{ form.category(class_="form-control") }}</div>
             <div class="col-md-3">{{ form.sale_type.label(class_="form-label") }}{{ form.sale_type(class_="form-select") }}</div>
-            <div class="col-md-3">{{ form.unit_measure.label(class_="form-label") }}{{ form.unit_measure(class_="form-control") }}</div>
+            <div class="col-md-3">{{ form.unit_measure.label(class_="form-label") }}{{ form.unit_measure(class_="form-select") }}</div>
             <div class="col-md-3">{{ form.brand.label(class_="form-label") }}{{ form.brand(class_="form-control") }}</div>
             <div class="col-md-3">{{ form.supplier.label(class_="form-label") }}{{ form.supplier(class_="form-control") }}</div>
             <div class="col-md-3">{{ form.cost_price.label(class_="form-label") }}{{ form.cost_price(class_="form-control") }}</div>
             <div class="col-md-3">{{ form.price.label(class_="form-label") }}{{ form.price(class_="form-control") }}</div>
             <div class="col-md-3">{{ form.margin.label(class_="form-label") }}{{ form.margin(class_="form-control bg-body-tertiary", readonly=true, tabindex="-1") }}</div>
             <div class="col-md-3">{{ form.profit_percent.label(class_="form-label") }}{{ form.profit_percent(class_="form-control bg-body-tertiary", readonly=true, tabindex="-1") }}</div>
+            <div class="col-md-3">
+              <label class="form-label" for="profitHint">Utilidad obtenida</label>
+              <input id="profitHint" class="form-control bg-body-tertiary" value="$0.00" readonly tabindex="-1">
+              <div class="form-text">Se recalcula automáticamente cuando cambian costo, margen o precio.</div>
+            </div>
             <div class="col-md-2">{{ form.tax.label(class_="form-label") }}{{ form.tax(class_="form-control") }}</div>
             <div class="col-md-2">{{ form.stock.label(class_="form-label") }}{{ form.stock(class_="form-control") }}</div>
             <div class="col-md-2">{{ form.min_stock.label(class_="form-label") }}{{ form.min_stock(class_="form-control") }}</div>
@@ -174,6 +179,7 @@
     const priceInput = document.getElementById('price');
     const marginInput = document.getElementById('margin');
     const profitInput = document.getElementById('profit_percent');
+    const profitHint = document.getElementById('profitHint');
 
     const parseNumber = (value) => {
       if (value === null || value === undefined) return 0;
@@ -218,6 +224,9 @@
       setField(priceInput, price);
       setField(marginInput, margin);
       setField(profitInput, profitPercent);
+      if (profitHint) {
+        profitHint.value = `$${formatNumber(margin)}`;
+      }
     };
 
     const bindPricingSource = (field, source) => {
@@ -229,6 +238,8 @@
     };
 
     bindPricingSource(priceInput, 'price');
+    bindPricingSource(marginInput, 'margin');
+    bindPricingSource(profitInput, 'profit_percent');
 
     if (costInput) {
       costInput.addEventListener('input', () => {
