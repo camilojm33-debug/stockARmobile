@@ -114,10 +114,8 @@
             <p class="lead text-muted mb-4">Ventas, stock, clientes, caja, QR, etiquetas y reportes en una sola plataforma profesional lista para operar y crecer.</p>
             <div class="d-flex flex-wrap gap-3 mb-3">
               <a class="btn btn-primary btn-lg btn-pill" href="{{ url_for('auth.register') }}?selected_plan=trial">Comenzar prueba gratuita</a>
-              <a class="btn btn-outline-primary btn-lg btn-pill" href="#video-demo">Ver demostración</a>
               <a class="btn btn-outline-primary btn-lg btn-pill" href="{{ url_for('auth.demo') }}">Ver demo interactiva</a>
-              <a class="btn btn-outline-success btn-lg btn-pill" href="{{ contact.whatsapp_link }}" target="_blank" rel="noopener">Solicitar demostración</a>
-              <button class="btn btn-outline-primary btn-lg btn-pill" type="button" id="pwaInstallBtn" hidden>
+              <button class="btn btn-primary btn-lg btn-pill shadow-sm" type="button" id="pwaInstallBtn">
                 <i class="bi bi-download me-1"></i> Descargar app (PWA)
               </button>
             </div>
