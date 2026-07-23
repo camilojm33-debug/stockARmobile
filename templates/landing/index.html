@@ -177,7 +177,7 @@
                 </div>
                 {% elif demo_video_file_url %}
                 <div class="video-frame">
-                  <video controls preload="metadata" title="Video demostración StockArmobile">
+                  <video controls preload="metadata" poster="{{ demo_video_poster_url }}" title="Video demostración StockArmobile">
                     <source src="{{ demo_video_file_url }}" type="video/mp4">
                     Tu navegador no soporta reproducción de video.
                   </video>
