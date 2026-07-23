@@ -12,6 +12,7 @@ import string
 from flask import Blueprint, abort, current_app, flash, jsonify, redirect, render_template, request, send_file, session, url_for
 from flask_login import current_user, login_required
 from sqlalchemy import case, func
+from sqlalchemy.exc import IntegrityError
 from reportlab.lib.pagesizes import letter
 from reportlab.pdfgen import canvas
 
@@ -1915,14 +1916,27 @@ def company_settings():
 @csrf.exempt
 def webhook_mercadopago():
     from app import db, record_audit
+    from app import WebhookEvent
 
     payload = request.get_json(silent=True) or {}
     try:
         result = WebhookService().process(db_session=db.session, headers=dict(request.headers), payload=payload)
         record_audit(action="webhook_mercadopago", entity="webhook", detail=f"Webhook procesado: {result.get('status')}")
-        db.session.commit()
+        try:
+            db.session.commit()
+        except IntegrityError:
+            db.session.rollback()
+            event_key = result.get("event_key")
+            if event_key and WebhookEvent.query.filter_by(event_key=event_key).first():
+                current_app.logger.info("Webhook Mercado Pago duplicado ignorado: %s", event_key)
+                return jsonify({"ok": True, "result": {"status": "duplicate", "event_key": event_key}}), 200
+            raise
+        return jsonify({"ok": True, "result": result}), 200
+    except IntegrityError as exc:
+        current_app.logger.exception("Webhook Mercado Pago rechazado por integridad: %s", exc)
+        db.session.rollback()
+        return jsonify({"ok": False, "error": str(exc)}), 400
     except Exception as exc:
         current_app.logger.exception("Webhook Mercado Pago rechazado: %s", exc)
         db.session.rollback()
         return jsonify({"ok": False, "error": str(exc)}), 400
-    return jsonify({"ok": True, "result": result}), 200

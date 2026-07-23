@@ -115,6 +115,8 @@
             <div class="d-flex flex-wrap gap-3 mb-3">
               <a class="btn btn-primary btn-lg btn-pill" href="{{ url_for('auth.register') }}?selected_plan=trial">Comenzar prueba gratuita</a>
               <a class="btn btn-outline-primary btn-lg btn-pill" href="#video-demo">Ver demostración</a>
+              <a class="btn btn-outline-primary btn-lg btn-pill" href="{{ url_for('auth.demo') }}">Ver demo interactiva</a>
+              <a class="btn btn-outline-success btn-lg btn-pill" href="{{ contact.whatsapp_link }}" target="_blank" rel="noopener">Solicitar demostración</a>
               <button class="btn btn-outline-primary btn-lg btn-pill" type="button" id="pwaInstallBtn" hidden>
                 <i class="bi bi-download me-1"></i> Descargar app (PWA)
               </button>
@@ -124,6 +126,12 @@
               <span><i class="bi bi-check2-circle"></i> Sin instalación</span>
               <span><i class="bi bi-phone"></i> Funciona en PC y móvil</span>
               <span><i class="bi bi-shield-check"></i> Gestión por roles y empresa</span>
+            </div>
+            <div class="d-flex flex-wrap gap-2 mt-3">
+              <span class="badge text-bg-light border">Backups automáticos</span>
+              <span class="badge text-bg-light border">Modo offline</span>
+              <span class="badge text-bg-light border">Multiempresa</span>
+              <span class="badge text-bg-light border">Soporte por WhatsApp</span>
             </div>
           </div>
           <div class="col-lg-6 reveal hero-media-col" data-delay="180">
@@ -199,6 +207,21 @@
                 {% endif %}
               </div>
             </div>
+          </div>
+        </div>
+      </section>
+
+      <section class="section" id="confianza">
+        <div class="container">
+          <div class="section-heading text-center reveal" data-delay="40">
+            <span class="eyebrow">Confianza</span>
+            <h2 class="section-title">Señales claras para comprar sin fricción</h2>
+          </div>
+          <div class="row g-3 mt-2">
+            <div class="col-md-6 col-xl-3 reveal" data-delay="70"><div class="feature-card h-100"><h3 class="h5">Privacidad y seguridad</h3><p class="text-muted mb-0">Autenticación, permisos y headers de seguridad para operación diaria.</p></div></div>
+            <div class="col-md-6 col-xl-3 reveal" data-delay="100"><div class="feature-card h-100"><h3 class="h5">Backups automáticos</h3><p class="text-muted mb-0">Copia y restauración pensadas para reducir riesgo operativo.</p></div></div>
+            <div class="col-md-6 col-xl-3 reveal" data-delay="130"><div class="feature-card h-100"><h3 class="h5">Modo offline</h3><p class="text-muted mb-0">Continúa operando y sincroniza luego sin perder trazabilidad.</p></div></div>
+            <div class="col-md-6 col-xl-3 reveal" data-delay="160"><div class="feature-card h-100"><h3 class="h5">Multiempresa</h3><p class="text-muted mb-0">Separación por empresa para evitar cruces de datos y accesos indebidos.</p></div></div>
           </div>
         </div>
       </section>

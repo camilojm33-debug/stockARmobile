@@ -12,6 +12,7 @@
     </div>
     <div class="d-flex gap-2">
       <a class="btn btn-outline-dark" href="{{ url_for('saas.companies_panel') }}"><i class="bi bi-buildings me-1"></i>Empresas</a>
+      <a class="btn btn-outline-primary" href="{{ url_for('saas.crm_panel') }}"><i class="bi bi-diagram-3 me-1"></i>Centro SaaS</a>
       <a class="btn btn-outline-primary" href="{{ url_for('saas.users_panel') }}"><i class="bi bi-people me-1"></i>Empleados</a>
       <a class="btn btn-outline-info" href="{{ url_for('saas.subscriptions_panel') }}"><i class="bi bi-credit-card-2-front me-1"></i>Suscripciones</a>
       <a class="btn btn-outline-warning" href="{{ url_for('saas.mercado_pago_connections') }}"><i class="bi bi-shield-lock me-1"></i>Mercado Pago</a>
@@ -40,6 +41,9 @@
     <div class="col-sm-6 col-lg-4 col-xl-3"><div class="card app-card metric-card"><div class="card-body"><div class="text-muted small fw-semibold text-uppercase">Vendedores referidos</div><div class="metric-value fw-bold">{{ metrics.referral_sellers_count }}</div><div class="text-muted small">Comisiones {{ metrics.referral_commissions_count }}</div></div></div></div>
     <div class="col-sm-6 col-lg-4 col-xl-3"><div class="card app-card metric-card"><div class="card-body"><div class="text-muted small fw-semibold text-uppercase">Referidos pendientes</div><div class="metric-value fw-bold">{{ metrics.referral_pending_count }}</div><div class="text-muted small">Seguimiento comercial</div></div></div></div>
     <div class="col-sm-6 col-lg-4 col-xl-3"><div class="card app-card metric-card"><div class="card-body"><div class="text-muted small fw-semibold text-uppercase">Ventas referidas</div><div class="metric-value fw-bold">${{ "%.2f"|format(metrics.referral_sold_total) }}</div><div class="text-muted small">Comisiones pagadas ${{ "%.2f"|format(metrics.referral_paid_total) }}</div></div></div></div>
+    <div class="col-sm-6 col-lg-4 col-xl-3"><div class="card app-card metric-card"><div class="card-body"><div class="text-muted small fw-semibold text-uppercase">Prospectos CRM</div><div class="metric-value fw-bold">{{ metrics.crm_leads_total }}</div><div class="text-muted small">Abiertos {{ metrics.crm_leads_open }}</div></div></div></div>
+    <div class="col-sm-6 col-lg-4 col-xl-3"><div class="card app-card metric-card"><div class="card-body"><div class="text-muted small fw-semibold text-uppercase">Tareas CRM</div><div class="metric-value fw-bold">{{ metrics.crm_tasks_open }}</div><div class="text-muted small">Atrasadas {{ metrics.crm_tasks_overdue }}</div></div></div></div>
+    <div class="col-sm-6 col-lg-4 col-xl-3"><div class="card app-card metric-card"><div class="card-body"><div class="text-muted small fw-semibold text-uppercase">Alertas CRM</div><div class="metric-value fw-bold">{{ metrics.crm_alerts_open }}</div><div class="text-muted small">Seguimiento operativo</div></div></div></div>
   </div>
 
   <div class="row g-3 mb-4">
@@ -179,6 +183,60 @@
             <input type="hidden" name="active" value="1">
             <div class="col-12"><button class="btn btn-primary">Crear plan</button></div>
           </form>
+        </div>
+      </div>
+    </div>
+    <div class="col-lg-4">
+      <div class="card app-card h-100">
+        <div class="card-header bg-white fw-bold d-flex justify-content-between align-items-center">
+          <span>Prospectos recientes</span>
+          <a class="btn btn-sm btn-outline-primary" href="{{ url_for('saas.crm_panel') }}">Centro SaaS</a>
+        </div>
+        <div class="card-body">
+          {% for lead in latest_crm_leads %}
+            <div class="d-flex justify-content-between border-bottom py-2 small">
+              <span class="fw-semibold">{{ lead.contact_name }}</span>
+              <span class="text-muted">{{ lead.company_name }} · {{ lead.status }}</span>
+            </div>
+          {% else %}
+            <p class="text-muted mb-0">Sin prospectos recientes.</p>
+          {% endfor %}
+        </div>
+      </div>
+    </div>
+    <div class="col-lg-4">
+      <div class="card app-card h-100">
+        <div class="card-header bg-white fw-bold d-flex justify-content-between align-items-center">
+          <span>Tareas recientes</span>
+          <a class="btn btn-sm btn-outline-primary" href="{{ url_for('saas.crm_panel') }}">Centro SaaS</a>
+        </div>
+        <div class="card-body">
+          {% for task in latest_crm_tasks %}
+            <div class="d-flex justify-content-between border-bottom py-2 small">
+              <span class="fw-semibold">{{ task.title }}</span>
+              <span class="text-muted">{{ task.status }}{% if task.due_at %} · {{ task.due_at.strftime('%Y-%m-%d') }}{% endif %}</span>
+            </div>
+          {% else %}
+            <p class="text-muted mb-0">Sin tareas recientes.</p>
+          {% endfor %}
+        </div>
+      </div>
+    </div>
+    <div class="col-lg-4">
+      <div class="card app-card h-100">
+        <div class="card-header bg-white fw-bold d-flex justify-content-between align-items-center">
+          <span>Alertas recientes</span>
+          <a class="btn btn-sm btn-outline-primary" href="{{ url_for('saas.crm_panel') }}">Centro SaaS</a>
+        </div>
+        <div class="card-body">
+          {% for alert in latest_crm_alerts %}
+            <div class="d-flex justify-content-between border-bottom py-2 small">
+              <span class="fw-semibold">{{ alert.title }}</span>
+              <span class="text-muted">{{ alert.status }} · {{ alert.severity }}</span>
+            </div>
+          {% else %}
+            <p class="text-muted mb-0">Sin alertas recientes.</p>
+          {% endfor %}
         </div>
       </div>
     </div>

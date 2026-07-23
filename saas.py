@@ -36,6 +36,11 @@ SUBSCRIPTION_UI_ACTIONS = {
     "rejected": {"renew_now"},
 }
 
+CRM_LEAD_STATUSES = {"nuevo", "contactado", "propuesta", "ganado", "perdido"}
+CRM_TASK_STATUSES = {"pendiente", "en_progreso", "bloqueada", "hecha"}
+CRM_ALERT_STATUSES = {"abierta", "revisada", "resuelta"}
+CRM_PRIORITIES = {"baja", "media", "alta"}
+
 
 def _temporary_password(length: int = 12) -> str:
     alphabet = string.ascii_letters + string.digits
@@ -90,6 +95,11 @@ def _format_size(size_bytes):
     return f"{value:.2f} GB"
 
 
+def _normalize_crm_value(value: str | None, allowed: set[str], default: str) -> str:
+    normalized = (value or default).strip().lower().replace(" ", "_")
+    return normalized if normalized in allowed else default
+
+
 @bp.route("/", methods=["GET", "POST"])
 @superadmin_required
 def index():
@@ -102,6 +112,9 @@ def index():
         Payment,
         Plan,
         Product,
+        SaaSAlert,
+        SaaSLead,
+        SaaSTask,
         ReferralCommission,
         ReferralSeller,
         Sale,
@@ -274,6 +287,19 @@ def index():
     referral_pending_count = ReferralCommission.query.filter(ReferralCommission.status.in_(["pendiente", "disponible"])).count()
     latest_referral_commissions = ReferralCommission.query.order_by(ReferralCommission.created_at.desc()).limit(10).all()
 
+    crm_leads_total = SaaSLead.query.count()
+    crm_leads_open = SaaSLead.query.filter(SaaSLead.status.in_(["nuevo", "contactado", "propuesta"])).count()
+    crm_tasks_open = SaaSTask.query.filter(SaaSTask.status != "hecha").count()
+    crm_tasks_overdue = SaaSTask.query.filter(
+        SaaSTask.status != "hecha",
+        SaaSTask.due_at.isnot(None),
+        SaaSTask.due_at < now,
+    ).count()
+    crm_alerts_open = SaaSAlert.query.filter(SaaSAlert.status == "abierta").count()
+    latest_crm_leads = SaaSLead.query.order_by(SaaSLead.created_at.desc()).limit(8).all()
+    latest_crm_tasks = SaaSTask.query.order_by(SaaSTask.created_at.desc()).limit(8).all()
+    latest_crm_alerts = SaaSAlert.query.order_by(SaaSAlert.created_at.desc()).limit(8).all()
+
     metrics = {
         "companies_total": companies_total,
         "active_companies": active_companies,
@@ -311,6 +337,11 @@ def index():
         "referral_sold_total": referral_sold_total,
         "referral_paid_total": referral_paid_total,
         "referral_pending_count": referral_pending_count,
+        "crm_leads_total": crm_leads_total,
+        "crm_leads_open": crm_leads_open,
+        "crm_tasks_open": crm_tasks_open,
+        "crm_tasks_overdue": crm_tasks_overdue,
+        "crm_alerts_open": crm_alerts_open,
     }
 
     logs = AuditLog.query.order_by(AuditLog.created_at.desc()).limit(20).all()
@@ -327,7 +358,259 @@ def index():
         last_payments=last_payments,
         latest_referral_commissions=latest_referral_commissions,
         last_errors=last_errors,
+        latest_crm_leads=latest_crm_leads,
+        latest_crm_tasks=latest_crm_tasks,
+        latest_crm_alerts=latest_crm_alerts,
     )
+
+
+@bp.route("/crm", methods=["GET", "POST"])
+@superadmin_required
+def crm_panel():
+    from app import Company, SaaSAlert, SaaSLead, SaaSTask, User, db, record_audit
+
+    _require_superadmin()
+    now = utcnow()
+    companies = Company.query.order_by(Company.name.asc()).all()
+    users = User.query.filter(User.active.is_(True)).order_by(User.username.asc()).all()
+
+    if request.method == "POST":
+        entity = (request.form.get("entity") or "").strip().lower()
+        if entity == "lead":
+            company_name = (request.form.get("company_name") or "").strip()
+            contact_name = (request.form.get("contact_name") or "").strip()
+            if not company_name or not contact_name:
+                flash("Empresa y contacto son obligatorios para crear un prospecto.", "danger")
+                return _redirect_back("saas.crm_panel")
+
+            lead = SaaSLead(
+                company_name=company_name[:160],
+                contact_name=contact_name[:160],
+                email=(request.form.get("email") or "").strip().lower()[:160] or None,
+                phone=(request.form.get("phone") or "").strip()[:40] or None,
+                source=(request.form.get("source") or "manual").strip().lower()[:80] or "manual",
+                status=_normalize_crm_value(request.form.get("status"), CRM_LEAD_STATUSES, "nuevo"),
+                priority=_normalize_crm_value(request.form.get("priority"), CRM_PRIORITIES, "media"),
+                next_follow_up_at=_parse_dt(request.form.get("next_follow_up_at")),
+                notes=(request.form.get("notes") or "").strip() or None,
+                company_id=request.form.get("company_id", type=int) or None,
+                assigned_user_id=request.form.get("assigned_user_id", type=int) or None,
+                created_by_user_id=current_user.id,
+            )
+            db.session.add(lead)
+            record_audit(
+                action="saas_lead_create",
+                entity="saas_lead",
+                detail=f"Prospecto creado para {lead.company_name}.",
+                user_id=current_user.id,
+                company_id=lead.company_id,
+            )
+            db.session.commit()
+            flash("Prospecto creado.", "success")
+            return redirect(url_for("saas.crm_panel"))
+
+        if entity == "task":
+            title = (request.form.get("title") or "").strip()
+            if not title:
+                flash("El titulo de la tarea es obligatorio.", "danger")
+                return _redirect_back("saas.crm_panel")
+
+            task = SaaSTask(
+                title=title[:180],
+                description=(request.form.get("description") or "").strip() or None,
+                status=_normalize_crm_value(request.form.get("status"), CRM_TASK_STATUSES, "pendiente"),
+                priority=_normalize_crm_value(request.form.get("priority"), CRM_PRIORITIES, "media"),
+                due_at=_parse_dt(request.form.get("due_at")),
+                completed_at=now if _normalize_crm_value(request.form.get("status"), CRM_TASK_STATUSES, "pendiente") == "hecha" else None,
+                lead_id=request.form.get("lead_id", type=int) or None,
+                company_id=request.form.get("company_id", type=int) or None,
+                assigned_user_id=request.form.get("assigned_user_id", type=int) or None,
+                created_by_user_id=current_user.id,
+            )
+            db.session.add(task)
+            record_audit(
+                action="saas_task_create",
+                entity="saas_task",
+                detail=f"Tarea creada: {task.title}.",
+                user_id=current_user.id,
+                company_id=task.company_id,
+            )
+            db.session.commit()
+            flash("Tarea creada.", "success")
+            return redirect(url_for("saas.crm_panel"))
+
+        if entity == "alert":
+            title = (request.form.get("title") or "").strip()
+            message = (request.form.get("message") or "").strip()
+            if not title or not message:
+                flash("Titulo y mensaje son obligatorios para crear una alerta.", "danger")
+                return _redirect_back("saas.crm_panel")
+
+            alert = SaaSAlert(
+                title=title[:180],
+                message=message,
+                category=(request.form.get("category") or "operativa").strip().lower()[:40] or "operativa",
+                severity=_normalize_crm_value(request.form.get("severity"), {"baja", "media", "alta", "critica"}, "media"),
+                status=_normalize_crm_value(request.form.get("status"), CRM_ALERT_STATUSES, "abierta"),
+                company_id=request.form.get("company_id", type=int) or None,
+                lead_id=request.form.get("lead_id", type=int) or None,
+                task_id=request.form.get("task_id", type=int) or None,
+                assigned_user_id=request.form.get("assigned_user_id", type=int) or None,
+                created_by_user_id=current_user.id,
+            )
+            db.session.add(alert)
+            record_audit(
+                action="saas_alert_create",
+                entity="saas_alert",
+                detail=f"Alerta creada: {alert.title}.",
+                user_id=current_user.id,
+                company_id=alert.company_id,
+            )
+            db.session.commit()
+            flash("Alerta creada.", "success")
+            return redirect(url_for("saas.crm_panel"))
+
+        flash("Entidad CRM invalida.", "danger")
+        return _redirect_back("saas.crm_panel")
+
+    q = (request.args.get("q") or "").strip()
+    lead_status = (request.args.get("lead_status") or "all").strip().lower()
+    task_status = (request.args.get("task_status") or "all").strip().lower()
+    alert_status = (request.args.get("alert_status") or "all").strip().lower()
+
+    lead_query = SaaSLead.query
+    task_query = SaaSTask.query
+    alert_query = SaaSAlert.query
+
+    if q:
+        like = f"%{q}%"
+        lead_query = lead_query.filter(
+            db.or_(
+                SaaSLead.company_name.ilike(like),
+                SaaSLead.contact_name.ilike(like),
+                SaaSLead.email.ilike(like),
+                SaaSLead.phone.ilike(like),
+                SaaSLead.notes.ilike(like),
+            )
+        )
+        task_query = task_query.filter(
+            db.or_(
+                SaaSTask.title.ilike(like),
+                SaaSTask.description.ilike(like),
+            )
+        )
+        alert_query = alert_query.filter(
+            db.or_(
+                SaaSAlert.title.ilike(like),
+                SaaSAlert.message.ilike(like),
+            )
+        )
+
+    if lead_status in CRM_LEAD_STATUSES:
+        lead_query = lead_query.filter(SaaSLead.status == lead_status)
+    if task_status in CRM_TASK_STATUSES:
+        task_query = task_query.filter(SaaSTask.status == task_status)
+    if alert_status in CRM_ALERT_STATUSES:
+        alert_query = alert_query.filter(SaaSAlert.status == alert_status)
+
+    leads = lead_query.order_by(SaaSLead.updated_at.desc(), SaaSLead.id.desc()).limit(20).all()
+    tasks = task_query.order_by(SaaSTask.updated_at.desc(), SaaSTask.id.desc()).limit(20).all()
+    alerts = alert_query.order_by(SaaSAlert.updated_at.desc(), SaaSAlert.id.desc()).limit(20).all()
+
+    lead_counts = {status: SaaSLead.query.filter(SaaSLead.status == status).count() for status in CRM_LEAD_STATUSES}
+    task_counts = {status: SaaSTask.query.filter(SaaSTask.status == status).count() for status in CRM_TASK_STATUSES}
+    alert_counts = {status: SaaSAlert.query.filter(SaaSAlert.status == status).count() for status in CRM_ALERT_STATUSES}
+
+    return render_template(
+        "saas/crm.html",
+        leads=leads,
+        tasks=tasks,
+        alerts=alerts,
+        companies=companies,
+        users=users,
+        filters={"q": q, "lead_status": lead_status, "task_status": task_status, "alert_status": alert_status},
+        lead_counts=lead_counts,
+        task_counts=task_counts,
+        alert_counts=alert_counts,
+        CRM_LEAD_STATUSES=sorted(CRM_LEAD_STATUSES),
+        CRM_TASK_STATUSES=sorted(CRM_TASK_STATUSES),
+        CRM_ALERT_STATUSES=sorted(CRM_ALERT_STATUSES),
+        CRM_PRIORITIES=sorted(CRM_PRIORITIES),
+    )
+
+
+@bp.route("/crm/leads/<int:lead_id>/status", methods=["POST"])
+@superadmin_required
+def crm_lead_status(lead_id):
+    from app import SaaSLead, db, record_audit
+
+    _require_superadmin()
+    lead = SaaSLead.query.filter_by(id=lead_id).first_or_404()
+    status = _normalize_crm_value(request.form.get("status"), CRM_LEAD_STATUSES, lead.status)
+    lead.status = status
+    lead.converted_at = utcnow() if status == "ganado" else None
+    record_audit(
+        action="saas_lead_status_update",
+        entity="saas_lead",
+        entity_id=lead.id,
+        detail=f"Estado actualizado a {status}.",
+        user_id=current_user.id,
+        company_id=lead.company_id,
+    )
+    db.session.commit()
+    flash("Estado del prospecto actualizado.", "success")
+    return _redirect_back("saas.crm_panel")
+
+
+@bp.route("/crm/tasks/<int:task_id>/status", methods=["POST"])
+@superadmin_required
+def crm_task_status(task_id):
+    from app import SaaSTask, db, record_audit
+
+    _require_superadmin()
+    task = SaaSTask.query.filter_by(id=task_id).first_or_404()
+    status = _normalize_crm_value(request.form.get("status"), CRM_TASK_STATUSES, task.status)
+    task.status = status
+    task.completed_at = utcnow() if status == "hecha" else None
+    record_audit(
+        action="saas_task_status_update",
+        entity="saas_task",
+        entity_id=task.id,
+        detail=f"Estado actualizado a {status}.",
+        user_id=current_user.id,
+        company_id=task.company_id,
+    )
+    db.session.commit()
+    flash("Estado de la tarea actualizado.", "success")
+    return _redirect_back("saas.crm_panel")
+
+
+@bp.route("/crm/alerts/<int:alert_id>/status", methods=["POST"])
+@superadmin_required
+def crm_alert_status(alert_id):
+    from app import SaaSAlert, db, record_audit
+
+    _require_superadmin()
+    alert = SaaSAlert.query.filter_by(id=alert_id).first_or_404()
+    status = _normalize_crm_value(request.form.get("status"), CRM_ALERT_STATUSES, alert.status)
+    alert.status = status
+    if status in {"revisada", "resuelta"}:
+        alert.acknowledged_at = alert.acknowledged_at or utcnow()
+    if status == "resuelta":
+        alert.resolved_at = utcnow()
+    else:
+        alert.resolved_at = None if status == "abierta" else alert.resolved_at
+    record_audit(
+        action="saas_alert_status_update",
+        entity="saas_alert",
+        entity_id=alert.id,
+        detail=f"Estado actualizado a {status}.",
+        user_id=current_user.id,
+        company_id=alert.company_id,
+    )
+    db.session.commit()
+    flash("Estado de la alerta actualizado.", "success")
+    return _redirect_back("saas.crm_panel")
 
 
 @bp.route("/mercado-pago")

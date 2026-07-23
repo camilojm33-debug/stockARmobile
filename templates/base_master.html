@@ -634,6 +634,7 @@
       {% if current_user.role == 'superadmin' %}
       <div class="nav-section-label">Administración</div>
       <a class="nav-link {% if request.endpoint == 'saas.index' %}active{% endif %}" href="{{ url_for('saas.index') }}"><i class="bi bi-grid-1x2"></i>Panel SaaS</a>
+      <a class="nav-link {% if request.endpoint == 'saas.crm_panel' or request.endpoint == 'saas.crm_lead_status' or request.endpoint == 'saas.crm_task_status' or request.endpoint == 'saas.crm_alert_status' %}active{% endif %}" href="{{ url_for('saas.crm_panel') }}"><i class="bi bi-diagram-3"></i>Centro SaaS</a>
       <a class="nav-link {% if request.endpoint == 'saas.companies_panel' %}active{% endif %}" href="{{ url_for('saas.companies_panel') }}"><i class="bi bi-buildings"></i>Empresas</a>
       <a class="nav-link {% if request.endpoint == 'saas.users_panel' %}active{% endif %}" href="{{ url_for('saas.users_panel') }}"><i class="bi bi-people"></i>Usuarios globales</a>
       <a class="nav-link {% if request.endpoint and request.endpoint.startswith('saas.password_recovery') %}active{% endif %}" href="{{ url_for('saas.password_recovery_panel') }}"><i class="bi bi-key"></i>Recuperación de contraseñas</a>
@@ -828,11 +829,16 @@
             <li class="mb-2"><strong>Compras y gastos:</strong> registrá ingresos de mercadería y egresos para control real.</li>
             <li class="mb-2"><strong>QR y etiquetas:</strong> imprimí etiquetas para góndola y lectura por scanner.</li>
             <li class="mb-2"><strong>Cierre diario:</strong> cerrá caja y revisá reportes para detectar diferencias.</li>
+            <li class="mb-2"><strong>Reportes:</strong> seguí ventas, stock y clientes para tomar decisiones.</li>
             <li><strong>Soporte:</strong> usá Ayuda para abrir tickets ante dudas o errores.</li>
           </ol>
         </div>
         <div class="modal-footer border-0">
-          <button type="button" class="btn btn-primary" data-bs-dismiss="modal">Entendido</button>
+          <form method="post" action="{{ url_for('dashboard.tour_complete') }}" class="ms-auto">
+            <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+            <input type="hidden" name="next" value="{{ request.path }}">
+            <button type="submit" class="btn btn-primary"><i class="bi bi-check2-circle me-1"></i>Entendido</button>
+          </form>
         </div>
       </div>
     </div>
@@ -846,6 +852,14 @@
   <script src="{{ url_for('static', filename='assets/js/offline-manager.js') }}" defer></script>
   <script>
     (function() {
+      {% if current_user.is_authenticated and session.get('guided_tour_pending') %}
+      window.addEventListener('DOMContentLoaded', function() {
+        const quickGuide = document.getElementById('quickGuideModal');
+        if (quickGuide) {
+          bootstrap.Modal.getOrCreateInstance(quickGuide).show();
+        }
+      });
+      {% endif %}
       const savedTheme = localStorage.getItem('stockarmobile_theme') || 'light';
       document.body.setAttribute('data-bs-theme', savedTheme);
       const button = document.getElementById('themeToggle');

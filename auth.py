@@ -12,8 +12,13 @@ bp = Blueprint("auth", __name__, template_folder="templates")
 
 
 def _login_user_and_bind_company(user, remember=False):
+    preserved_session = {}
+    for key in ("post_register_onboarding_company_id",):
+        if key in session:
+            preserved_session[key] = session.get(key)
     session.clear()
     login_user(user, remember=remember)
+    session.update({key: value for key, value in preserved_session.items() if value is not None})
 
 
 def _post_login_redirect():
@@ -25,6 +30,111 @@ def _is_safe_redirect(target):
         return False
     parsed = urlsplit(target)
     return not parsed.netloc and parsed.path.startswith("/")
+
+
+def _ensure_demo_account():
+    from app import CashSession, Client, Company, Product, Sale, SaleItem, Subscription, User, db, utcnow
+    from services.plan_service import PlanService
+    from services.subscription_service import SubscriptionService
+
+    PlanService.ensure_defaults(db.session)
+
+    company = Company.query.filter(Company.name == "StockArmobile Demo").first()
+    if company is None:
+        company = Company(
+            name="StockArmobile Demo",
+            legal_name="StockArmobile Demo SRL",
+            active=True,
+            trial_ends_at=utcnow() + timedelta(days=30),
+            currency="ARS",
+            timezone="America/Argentina/Buenos_Aires",
+        )
+        db.session.add(company)
+        db.session.flush()
+
+    user = User.query.filter_by(username="demo", company_id=company.id).first()
+    if user is None:
+        user = User(
+            username="demo",
+            email="demo@stockarmobile.local",
+            company_id=company.id,
+            auth_provider="local",
+            active=True,
+            role="admin",
+        )
+        user.set_password("demo123")
+        db.session.add(user)
+        db.session.flush()
+
+    subscription = Subscription.query.filter_by(company_id=company.id).first()
+    if subscription is None:
+        trial_plan = PlanService.get_plan(code="trial")
+        SubscriptionService.ensure_company_trial(db.session, company=company, trial_plan=trial_plan)
+
+    if Product.query.filter_by(company_id=company.id).count() == 0:
+        db.session.add_all(
+            [
+                Product(barcode="DEMO-001", name="Yerba demo", category="Alimentos", price=18500, cost_price=11000, stock=18, min_stock=5, active=True, sale_type="unidad", unit_measure="u", company_id=company.id),
+                Product(barcode="DEMO-002", name="Azucar demo", category="Alimentos", price=2200, cost_price=1350, stock=42, min_stock=10, active=True, sale_type="unidad", unit_measure="u", company_id=company.id),
+                Product(barcode="DEMO-003", name="Cafe demo", category="Bebidas", price=7800, cost_price=4100, stock=12, min_stock=4, active=True, sale_type="unidad", unit_measure="u", company_id=company.id),
+            ]
+        )
+
+    if Client.query.filter_by(company_id=company.id).count() == 0:
+        db.session.add_all(
+            [
+                Client(name="Cliente demo 1", email="cliente1@demo.local", whatsapp="549111111111", active=True, company_id=company.id),
+                Client(name="Cliente demo 2", email="cliente2@demo.local", whatsapp="549111111112", active=True, company_id=company.id),
+            ]
+        )
+
+    if CashSession.query.filter_by(company_id=company.id, status="abierta").first() is None:
+        db.session.add(
+            CashSession(
+                user_id=user.id,
+                company_id=company.id,
+                opened_by_user_id=user.id,
+                opening_amount=0,
+                expected_amount=0,
+                status="abierta",
+                note="Sesión demo",
+            )
+        )
+
+    if Sale.query.filter_by(company_id=company.id).count() == 0:
+        product = Product.query.filter_by(company_id=company.id).first()
+        client = Client.query.filter_by(company_id=company.id).first()
+        cash_session = CashSession.query.filter_by(company_id=company.id, status="abierta").first()
+        if product and client and cash_session:
+            sale = Sale(
+                date=utcnow(),
+                customer=client.name,
+                subtotal=product.price,
+                total_amount=product.price,
+                paid_amount=product.price,
+                payment_method="efectivo",
+                status="confirmada",
+                client_id=client.id,
+                seller_id=user.id,
+                company_id=company.id,
+                cash_session_id=cash_session.id,
+                client_txn_id="demo-sale-1",
+            )
+            db.session.add(sale)
+            db.session.flush()
+            db.session.add(
+                SaleItem(
+                    sale_id=sale.id,
+                    product_id=product.id,
+                    quantity=1,
+                    price=product.price,
+                    cost_price=product.cost_price,
+                )
+            )
+            product.stock = float(product.stock or 0) - 1
+
+    db.session.commit()
+    return user
 
 
 @bp.route("/login", methods=["GET", "POST"])
@@ -55,6 +165,8 @@ def login():
                 if not _is_safe_redirect(next_page):
                     next_page = None
                 flash("Inicio de sesion exitoso", "success")
+                if session.get("post_register_onboarding_company_id") == getattr(user, "company_id", None):
+                    return redirect(url_for("dashboard.onboarding"))
                 return redirect(next_page if next_page else _post_login_redirect())
 
             record_audit(action="login_failed", entity="user", detail=f"Intento de login fallido: {username_or_email}")
@@ -298,11 +410,24 @@ def register():
             record_audit(action="register_success", entity="user", entity_id=user.id, detail="Registro de usuario exitoso")
             db.session.commit()
 
+            session["post_register_onboarding_company_id"] = company.id
+
             flash("Registro exitoso. Puedes iniciar sesion ahora.", "success")
             return redirect(url_for("auth.login"))
 
     form = RegisterForm()
     return render_template("auth/register.html", form=form, selected_plan=selected_plan_code, registration_mode=registration_mode)
+
+
+@bp.route("/demo", methods=["GET"])
+def demo():
+    demo_user = _ensure_demo_account()
+    _login_user_and_bind_company(demo_user, remember=False)
+    session["demo_mode"] = True
+    session["guided_tour_pending"] = True
+    session["guided_tour_seen"] = False
+    flash("Entraste al modo demo con datos ficticios.", "info")
+    return redirect(url_for("dashboard.index"))
 
 
 @bp.route("/logout", methods=["POST"])

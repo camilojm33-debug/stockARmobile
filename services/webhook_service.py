@@ -203,7 +203,6 @@ class WebhookService:
                 if previous_updated_at and incoming_updated_at and incoming_updated_at < previous_updated_at:
                     event_row.status = "stale_ignored"
                     db_session.add(event_row)
-                    db_session.commit()
                     return {"status": "stale_ignored", "event_key": event_key}
 
                 payment.preference_id = str(payment_data.get("order", {}).get("id") or payment.preference_id or "")

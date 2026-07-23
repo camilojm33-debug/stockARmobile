@@ -1,0 +1,58 @@
+{% extends "base_master.html" %}
+
+{% block title %}Onboarding - StockArmobile{% endblock %}
+
+{% block content %}
+<div class="app-shell">
+  <div class="hero-surface app-card mb-4">
+    <div class="card-body p-4 p-lg-5">
+      <div class="d-flex flex-column flex-lg-row justify-content-between align-items-lg-center gap-3">
+        <div>
+          <span class="page-kicker"><i class="bi bi-stars"></i> Primeros pasos</span>
+          <h1 class="h2 fw-bold mb-2">Configurá tu empresa en minutos</h1>
+          <p class="text-muted mb-0">Seguimos un orden simple para que arranques con el sistema listo y sin fricción.</p>
+        </div>
+        <div class="text-lg-end">
+          <div class="small text-muted mb-1">Progreso</div>
+          <div class="progress" style="width: min(320px, 100%); height: 12px;">
+            <div class="progress-bar" role="progressbar" style="width: {{ progress }}%" aria-valuenow="{{ progress }}" aria-valuemin="0" aria-valuemax="100"></div>
+          </div>
+          <div class="small text-muted mt-2">{{ progress }}% completado</div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div class="row g-3">
+    {% for step in steps %}
+    <div class="col-md-6 col-xl-4">
+      <div class="card app-card h-100">
+        <div class="card-body">
+          <div class="d-flex align-items-center gap-3 mb-3">
+            <div class="rounded-circle bg-primary text-white d-inline-flex align-items-center justify-content-center fw-bold" style="width: 44px; height: 44px;">{{ step.step }}</div>
+            <div>
+              <h2 class="h5 fw-bold mb-1">{{ step.title }}</h2>
+              <p class="text-muted mb-0">Paso {{ step.step }} de {{ steps|length }}</p>
+            </div>
+          </div>
+          <p class="text-muted mb-0">{{ step.description }}</p>
+        </div>
+      </div>
+    </div>
+    {% endfor %}
+  </div>
+
+  <div class="card app-card mt-4">
+    <div class="card-body p-4 d-flex flex-column flex-lg-row justify-content-between align-items-lg-center gap-3">
+      <div>
+        <h2 class="h5 fw-bold mb-1">Listo para recorrer el sistema</h2>
+        <p class="text-muted mb-0">Cuando termines, te mostramos el tour guiado para Dashboard, Ventas, Productos, Caja, Clientes, Reportes y Configuración.</p>
+      </div>
+      <form method="post" action="{{ url_for('dashboard.onboarding') }}">
+        <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+        <button class="btn btn-primary btn-lg" type="submit">Continuar al sistema</button>
+      </form>
+    </div>
+  </div>
+</div>
+{% endblock %}

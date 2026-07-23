@@ -8,7 +8,7 @@
   const elements = {
     badge: document.getElementById('offlineConnectivityBadge'),
     badgeCompact: document.getElementById('offlineConnectivityBadgeCompact'),
-    pendingCount: document.getElementById('offlinePendingCount'),
+    pendingCounts: Array.from(document.querySelectorAll('[data-offline-pending-count], #offlinePendingCount')),
     syncedCount: document.getElementById('offlineSyncedCount'),
     errorCount: document.getElementById('offlineErrorCount'),
     lastSync: document.getElementById('offlineLastSync'),
@@ -126,8 +126,10 @@
     }
 
     const pendingCount = Number(status.pendingCount || 0);
-    if (elements.pendingCount) {
-      elements.pendingCount.textContent = String(pendingCount);
+    if (elements.pendingCounts.length) {
+      elements.pendingCounts.forEach((node) => {
+        node.textContent = String(pendingCount);
+      });
     }
     setProgress(status);
     if (elements.lastSync) {
@@ -268,7 +270,7 @@
   }
   renderStatus({
     online: navigator.onLine,
-    pendingCount: Number(elements.pendingCount?.textContent || 0),
+    pendingCount: Number(elements.pendingCounts[0]?.textContent || 0),
     lastSyncAt: null,
     lastError: '',
   });

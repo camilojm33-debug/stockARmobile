@@ -1254,6 +1254,80 @@ class ResourceMessage(db.Model):
     updated_at = db.Column(db.DateTime, default=utcnow, onupdate=utcnow)
 
 
+class SaaSLead(db.Model):
+    __tablename__ = "saas_leads"
+
+    id = db.Column(db.Integer, primary_key=True)
+    company_name = db.Column(db.String(160), nullable=False, index=True)
+    contact_name = db.Column(db.String(160), nullable=False, index=True)
+    email = db.Column(db.String(160), index=True)
+    phone = db.Column(db.String(40))
+    source = db.Column(db.String(80), default="manual", nullable=False, index=True)
+    status = db.Column(db.String(30), default="nuevo", nullable=False, index=True)
+    priority = db.Column(db.String(20), default="media", nullable=False, index=True)
+    next_follow_up_at = db.Column(db.DateTime, index=True)
+    notes = db.Column(db.Text)
+    company_id = db.Column(db.Integer, db.ForeignKey("companies.id"), index=True)
+    assigned_user_id = db.Column(db.Integer, db.ForeignKey("users.id"), index=True)
+    created_by_user_id = db.Column(db.Integer, db.ForeignKey("users.id"), nullable=False, index=True)
+    converted_at = db.Column(db.DateTime, index=True)
+    created_at = db.Column(db.DateTime, default=utcnow, index=True)
+    updated_at = db.Column(db.DateTime, default=utcnow, onupdate=utcnow)
+
+    company = db.relationship("Company", backref="saas_leads")
+    assigned_user = db.relationship("User", foreign_keys=[assigned_user_id], backref="saas_leads_assigned")
+    created_by = db.relationship("User", foreign_keys=[created_by_user_id], backref="saas_leads_created")
+
+
+class SaaSTask(db.Model):
+    __tablename__ = "saas_tasks"
+
+    id = db.Column(db.Integer, primary_key=True)
+    lead_id = db.Column(db.Integer, db.ForeignKey("saas_leads.id"), index=True)
+    company_id = db.Column(db.Integer, db.ForeignKey("companies.id"), index=True)
+    title = db.Column(db.String(180), nullable=False, index=True)
+    description = db.Column(db.Text)
+    status = db.Column(db.String(30), default="pendiente", nullable=False, index=True)
+    priority = db.Column(db.String(20), default="media", nullable=False, index=True)
+    due_at = db.Column(db.DateTime, index=True)
+    completed_at = db.Column(db.DateTime, index=True)
+    assigned_user_id = db.Column(db.Integer, db.ForeignKey("users.id"), index=True)
+    created_by_user_id = db.Column(db.Integer, db.ForeignKey("users.id"), nullable=False, index=True)
+    created_at = db.Column(db.DateTime, default=utcnow, index=True)
+    updated_at = db.Column(db.DateTime, default=utcnow, onupdate=utcnow)
+
+    lead = db.relationship("SaaSLead", backref="tasks")
+    company = db.relationship("Company", backref="saas_tasks")
+    assigned_user = db.relationship("User", foreign_keys=[assigned_user_id], backref="saas_tasks_assigned")
+    created_by = db.relationship("User", foreign_keys=[created_by_user_id], backref="saas_tasks_created")
+
+
+class SaaSAlert(db.Model):
+    __tablename__ = "saas_alerts"
+
+    id = db.Column(db.Integer, primary_key=True)
+    company_id = db.Column(db.Integer, db.ForeignKey("companies.id"), index=True)
+    lead_id = db.Column(db.Integer, db.ForeignKey("saas_leads.id"), index=True)
+    task_id = db.Column(db.Integer, db.ForeignKey("saas_tasks.id"), index=True)
+    title = db.Column(db.String(180), nullable=False, index=True)
+    message = db.Column(db.Text, nullable=False)
+    category = db.Column(db.String(40), default="operativa", nullable=False, index=True)
+    severity = db.Column(db.String(20), default="media", nullable=False, index=True)
+    status = db.Column(db.String(20), default="abierta", nullable=False, index=True)
+    assigned_user_id = db.Column(db.Integer, db.ForeignKey("users.id"), index=True)
+    created_by_user_id = db.Column(db.Integer, db.ForeignKey("users.id"), nullable=False, index=True)
+    acknowledged_at = db.Column(db.DateTime, index=True)
+    resolved_at = db.Column(db.DateTime, index=True)
+    created_at = db.Column(db.DateTime, default=utcnow, index=True)
+    updated_at = db.Column(db.DateTime, default=utcnow, onupdate=utcnow)
+
+    company = db.relationship("Company", backref="saas_alerts")
+    lead = db.relationship("SaaSLead", backref="alerts")
+    task = db.relationship("SaaSTask", backref="alerts")
+    assigned_user = db.relationship("User", foreign_keys=[assigned_user_id], backref="saas_alerts_assigned")
+    created_by = db.relationship("User", foreign_keys=[created_by_user_id], backref="saas_alerts_created")
+
+
 def record_audit(*, action, entity=None, entity_id=None, detail=None, user_id=None, company_id=None):
     try:
         db.session.add(
@@ -1756,6 +1830,37 @@ def api_notifications_mark_seen():
 @app.route("/manifest.json")
 def web_manifest():
     return send_from_directory(app.static_folder, "manifest.json", mimetype="application/manifest+json")
+
+
+@app.route("/robots.txt")
+def robots_txt():
+    sitemap_url = f"{app.config['APP_URL']}/sitemap.xml"
+    body = f"User-agent: *\nAllow: /\nSitemap: {sitemap_url}\n"
+    response = make_response(body)
+    response.mimetype = "text/plain"
+    return response
+
+
+@app.route("/sitemap.xml")
+def sitemap_xml():
+    base_url = app.config["APP_URL"].rstrip("/")
+    urls = [
+        f"{base_url}/",
+        f"{base_url}/auth/login",
+        f"{base_url}/auth/register",
+        f"{base_url}/demo",
+        f"{base_url}/landing/contact",
+    ]
+    xml = [
+        "<?xml version=\"1.0\" encoding=\"UTF-8\"?>",
+        '<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">',
+    ]
+    for url in urls:
+        xml.append(f"  <url><loc>{url}</loc><changefreq>weekly</changefreq><priority>0.8</priority></url>")
+    xml.append("</urlset>")
+    response = make_response("\n".join(xml))
+    response.mimetype = "application/xml"
+    return response
 
 
 @app.route("/favicon.ico")

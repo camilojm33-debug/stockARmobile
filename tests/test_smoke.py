@@ -12,7 +12,7 @@ import pytest
 from flask_login import login_user, logout_user
 
 import app as stock_app
-from app import CashMovement, CashSession, Client, Company, Product, ReferralAttribution, Sale, SaleItem, SaleModificationHistory, Subscription, User, db
+from app import CashMovement, CashSession, Client, Company, Product, ReferralAttribution, SaaSAlert, SaaSLead, SaaSTask, Sale, SaleItem, SaleModificationHistory, Subscription, User, db
 from sqlalchemy.exc import ProgrammingError
 
 try:
@@ -122,8 +122,89 @@ def test_core_routes_and_decimal_checkout():
     client.post("/auth/login", data={"username": "superadmin", "password": "admin123"})
     assert client.get("/superadmin/").status_code == 200
     assert client.get("/superadmin/billing").status_code == 200
+    assert client.get("/superadmin/crm").status_code == 200
     superadmin_dashboard = client.get("/dashboard/", follow_redirects=False)
     assert superadmin_dashboard.status_code in (301, 302)
+
+
+def test_superadmin_crm_center_creates_and_updates_items():
+    client = stock_app.app.test_client()
+    client.post("/auth/login", data={"username": "superadmin", "password": "admin123"})
+
+    crm_page = client.get("/superadmin/crm")
+    assert crm_page.status_code == 200
+
+    lead_response = client.post(
+        "/superadmin/crm",
+        data={
+            "entity": "lead",
+            "company_name": "Nuevo cliente",
+            "contact_name": "Ana Demo",
+            "email": "ana@test.local",
+            "phone": "5491111222233",
+            "source": "whatsapp",
+            "status": "nuevo",
+            "priority": "alta",
+            "notes": "Interesada en demo.",
+        },
+        follow_redirects=False,
+    )
+    assert lead_response.status_code in (302, 303)
+
+    with stock_app.app.app_context():
+        lead = SaaSLead.query.order_by(SaaSLead.id.desc()).first()
+        assert lead is not None
+        assert lead.company_name == "Nuevo cliente"
+        lead_id = lead.id
+
+    update_response = client.post(
+        f"/superadmin/crm/leads/{lead_id}/status",
+        data={"status": "ganado"},
+        follow_redirects=False,
+    )
+    assert update_response.status_code in (302, 303)
+
+    with stock_app.app.app_context():
+        lead = db.session.get(SaaSLead, lead_id)
+        assert lead is not None
+        assert lead.status == "ganado"
+        assert lead.converted_at is not None
+
+    task_response = client.post(
+        "/superadmin/crm",
+        data={
+            "entity": "task",
+            "title": "Llamar al prospecto",
+            "description": "Coordinar demo comercial.",
+            "status": "pendiente",
+            "priority": "media",
+            "lead_id": lead_id,
+        },
+        follow_redirects=False,
+    )
+    assert task_response.status_code in (302, 303)
+
+    alert_response = client.post(
+        "/superadmin/crm",
+        data={
+            "entity": "alert",
+            "title": "Seguimiento comercial",
+            "message": "Pendiente de confirmar demo.",
+            "severity": "media",
+            "status": "abierta",
+            "lead_id": lead_id,
+        },
+        follow_redirects=False,
+    )
+    assert alert_response.status_code in (302, 303)
+
+    with stock_app.app.app_context():
+        task = SaaSTask.query.order_by(SaaSTask.id.desc()).first()
+        alert = SaaSAlert.query.order_by(SaaSAlert.id.desc()).first()
+        assert task is not None
+        assert alert is not None
+        assert task.lead_id == lead_id
+        assert alert.lead_id == lead_id
 
 
 def test_checkout_requires_open_cash_session():
