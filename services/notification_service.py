@@ -6,15 +6,19 @@ import json
 
 from flask_login import current_user
 from sqlalchemy import or_
+from sqlalchemy.exc import OperationalError, ProgrammingError
 from services.sales_calculation_service import CONFIRMED_SALE_STATUSES
 
 
 def build_notifications():
     if not getattr(current_user, "is_authenticated", False):
         return []
-    if getattr(current_user, "role", None) == "superadmin":
-        return _build_superadmin_notifications()
-    return _build_user_notifications()
+    try:
+        if getattr(current_user, "role", None) == "superadmin":
+            return _build_superadmin_notifications()
+        return _build_user_notifications()
+    except (OperationalError, ProgrammingError):
+        return []
 
 
 def get_notification_payload():
@@ -27,10 +31,13 @@ def get_notification_payload():
     if not items:
         return {"items": [], "count": 0, "signature": signature}
 
-    from app import NotificationReadState
+    try:
+        from app import NotificationReadState
 
-    state = NotificationReadState.query.filter_by(user_id=current_user.id).first()
-    is_seen = bool(state and state.last_seen_signature == signature)
+        state = NotificationReadState.query.filter_by(user_id=current_user.id).first()
+        is_seen = bool(state and state.last_seen_signature == signature)
+    except (OperationalError, ProgrammingError):
+        is_seen = False
     return {
         "items": items,
         "count": 0 if is_seen else len(items),

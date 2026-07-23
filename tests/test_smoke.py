@@ -207,6 +207,22 @@ def test_superadmin_crm_center_creates_and_updates_items():
         assert alert.lead_id == lead_id
 
 
+def test_login_and_dashboard_survive_missing_notification_table():
+    client = stock_app.app.test_client()
+
+    with stock_app.app.app_context():
+        db.session.execute(db.text("DROP TABLE notification_read_states"))
+        db.session.commit()
+
+    login_response = client.post(
+        "/auth/login",
+        data={"username": "empresa_admin", "password": "admin123"},
+        follow_redirects=True,
+    )
+    assert login_response.status_code == 200
+    assert "Panel principal" in login_response.data.decode("utf-8")
+
+
 def test_checkout_requires_open_cash_session():
     client = stock_app.app.test_client()
     client.post("/auth/login", data={"username": "empresa_admin", "password": "admin123"})
