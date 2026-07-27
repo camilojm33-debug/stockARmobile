@@ -366,6 +366,7 @@ def _quote_pdf_response(quote):
     buffer = BytesIO()
     pdf = canvas.Canvas(buffer, pagesize=A4)
     width, height = A4
+    top_margin = height - 36
     pdf.setTitle(f"Presupuesto {quote.number or quote.id}")
     logo_path = None
     if company and company.logo:
@@ -380,21 +381,23 @@ def _quote_pdf_response(quote):
             logo_path = fallback_logo
     if logo_path:
         try:
-            pdf.drawImage(ImageReader(logo_path), 40, height - 95, width=70, height=45, preserveAspectRatio=True, mask='auto')
+            # Keep logo near the top edge so it does not look sunken in PDF previews.
+            pdf.drawImage(ImageReader(logo_path), 40, top_margin - 24, width=64, height=40, preserveAspectRatio=True, mask='auto')
         except Exception:
             pass
     pdf.setFont("Helvetica-Bold", 16)
-    pdf.drawString(120, height - 45, (company.name if company else "StockArmobile") + " - Presupuesto")
+    pdf.drawString(118, top_margin, (company.name if company else "StockArmobile") + " - Presupuesto")
     pdf.setFont("Helvetica", 10)
-    pdf.drawString(40, height - 65, f"Numero: {quote.number or f'P-{quote.id:06d}'}")
-    pdf.drawString(40, height - 80, f"Fecha: {quote.date.strftime('%d/%m/%Y %H:%M') if quote.date else ''}")
-    pdf.drawString(40, height - 95, f"Validez: {quote.expires_at.strftime('%d/%m/%Y') if quote.expires_at else ''}")
-    pdf.drawString(40, height - 110, f"Estado: {quote.status}")
-    pdf.drawString(40, height - 125, f"Cliente: {quote.client.name if quote.client else 'Consumidor final'}")
+    pdf.drawString(40, top_margin - 26, f"Numero: {quote.number or f'P-{quote.id:06d}'}")
+    pdf.drawString(40, top_margin - 40, f"Fecha: {quote.date.strftime('%d/%m/%Y %H:%M') if quote.date else ''}")
+    pdf.drawString(40, top_margin - 54, f"Validez: {quote.expires_at.strftime('%d/%m/%Y') if quote.expires_at else ''}")
+    pdf.drawString(40, top_margin - 68, f"Estado: {quote.status}")
+    pdf.drawString(40, top_margin - 82, f"Cliente: {quote.client.name if quote.client else 'Consumidor final'}")
     if quote.commercial_conditions:
-        pdf.drawString(40, height - 140, f"Condiciones: {(quote.commercial_conditions or '')[:90]}")
+        pdf.drawString(40, top_margin - 96, f"Condiciones: {(quote.commercial_conditions or '')[:90]}")
 
-    y = height - 165
+    pdf.line(40, top_margin - 104, width - 40, top_margin - 104)
+    y = top_margin - 122
     pdf.setFont("Helvetica-Bold", 9)
     pdf.drawString(40, y, "Producto")
     pdf.drawString(260, y, "Cant.")

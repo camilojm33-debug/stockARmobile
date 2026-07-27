@@ -2,11 +2,59 @@
 
 {% block title %}{{ 'Editar' if mode == 'edit' else 'Nuevo' }} presupuesto - StockArmobile{% endblock %}
 
+{% block extra_css %}
+<style>
+  .quote-catalog-scroll {
+    max-height: 340px;
+    overflow: auto;
+  }
+
+  .quote-actions {
+    position: sticky;
+    bottom: 0;
+    background: var(--app-panel);
+    border-top: 1px solid var(--app-line);
+    margin: 0 -1rem -1rem;
+    padding: 0.9rem 1rem 1rem;
+    z-index: 2;
+  }
+
+  @media (max-width: 991.98px) {
+    .quote-main-card .card-body,
+    .quote-form-card .card-body {
+      padding: 1rem;
+    }
+
+    .quote-form-card {
+      position: static !important;
+    }
+
+    .quote-catalog-scroll {
+      max-height: none;
+    }
+
+    #quoteCatalogBody td:last-child,
+    #itemsTable td:last-child {
+      width: 100%;
+    }
+
+    #quoteCatalogBody .btn,
+    #itemsTable .btn {
+      width: 100%;
+    }
+
+    .quote-actions {
+      margin-top: 0.75rem;
+    }
+  }
+</style>
+{% endblock %}
+
 {% block content %}
 <div class="app-shell">
   <div class="row g-4">
     <div class="col-xl-7">
-      <div class="card app-card h-100">
+      <div class="card app-card h-100 quote-main-card">
         <div class="card-body p-4">
           <span class="page-kicker"><i class="bi bi-file-earmark-text"></i> Presupuesto</span>
           <h1 class="h4 fw-bold mb-3">{{ 'Editar' if mode == 'edit' else 'Nuevo' }} presupuesto</h1>
@@ -14,19 +62,19 @@
             <label class="form-label">Buscar productos</label>
             <input id="quoteProductSearch" class="form-control" placeholder="Nombre, código o código de barras" oninput="filterProducts()">
           </div>
-          <div class="table-responsive mb-4" style="max-height: 340px; overflow:auto;">
-            <table class="table table-sm table-hover align-middle">
+          <div class="table-responsive mb-4 quote-catalog-scroll">
+            <table class="table table-sm table-hover align-middle mobile-card-table">
               <thead class="table-light sticky-top"><tr><th>Producto</th><th>Código</th><th class="text-end">Precio</th><th class="text-end">Acción</th></tr></thead>
               <tbody id="quoteCatalogBody">
                 {% for product in products %}
                 <tr data-product-row data-search="{{ (product.name ~ ' ' ~ (product.barcode or '') ~ ' ' ~ (product.category or ''))|lower }}">
-                  <td>
+                  <td data-label="Producto">
                     <div class="fw-semibold">{{ product.name }}</div>
                     <div class="small text-muted">{{ product.category or '-' }}</div>
                   </td>
-                  <td>{{ product.barcode or '-' }}</td>
-                  <td class="text-end">${{ "%.2f"|format(product.price or 0) }}</td>
-                  <td class="text-end">
+                  <td data-label="Código">{{ product.barcode or '-' }}</td>
+                  <td class="text-end" data-label="Precio">${{ "%.2f"|format(product.price or 0) }}</td>
+                  <td class="text-end" data-label="Acción">
                     <button type="button" class="btn btn-sm btn-outline-primary" onclick='addProduct({{ {"id": product.id, "name": product.name, "barcode": product.barcode, "price": product.price, "discount": product.discount}|tojson }})'>Agregar</button>
                   </td>
                 </tr>
@@ -39,7 +87,7 @@
     </div>
 
     <div class="col-xl-5">
-      <div class="card app-card sticky-top" style="top: 1.25rem;">
+      <div class="card app-card sticky-top quote-form-card" style="top: 1.25rem;">
         <div class="card-body p-4">
           <form method="post" id="quoteForm">
             <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
@@ -93,7 +141,7 @@
             <hr class="my-4">
 
             <div class="table-responsive mb-3">
-              <table class="table table-sm align-middle" id="itemsTable">
+              <table class="table table-sm align-middle mobile-card-table" id="itemsTable">
                 <thead class="table-light"><tr><th>Prod.</th><th class="text-end">Cant.</th><th class="text-end">Precio</th><th class="text-end">Dcto</th><th class="text-end">Subtotal</th><th></th></tr></thead>
                 <tbody></tbody>
               </table>
@@ -113,7 +161,7 @@
               <div class="d-flex justify-content-between fs-5"><span>Total</span><strong class="text-primary" id="sumTotal">$0.00</strong></div>
             </div>
 
-            <div class="d-flex flex-wrap gap-2 justify-content-between">
+            <div class="d-flex flex-wrap gap-2 justify-content-between quote-actions">
               <div class="d-flex gap-2 flex-wrap">
                 <button type="submit" class="btn btn-primary" onclick="prepareSubmit('save')"><i class="bi bi-save me-1"></i>Guardar borrador</button>
                 <button type="submit" class="btn btn-success" onclick="prepareSubmit('send')"><i class="bi bi-send me-1"></i>Enviar</button>
@@ -189,12 +237,12 @@
       discount += Number(item.discount || 0);
       const row = document.createElement('tr');
       row.innerHTML = `
-        <td><input class="form-control form-control-sm" value="${escapeHtml(item.description || '')}" oninput="updateItem(${index}, 'description', this.value)"></td>
-        <td><input class="form-control form-control-sm text-end" type="number" min="0" step="0.001" value="${Number(item.quantity || 0)}" oninput="updateItem(${index}, 'quantity', this.value)"></td>
-        <td><input class="form-control form-control-sm text-end" type="number" min="0" step="0.01" value="${Number(item.unit_price || 0)}" oninput="updateItem(${index}, 'unit_price', this.value)"></td>
-        <td><input class="form-control form-control-sm text-end" type="number" min="0" step="0.01" value="${Number(item.discount || 0)}" oninput="updateItem(${index}, 'discount', this.value)"></td>
-        <td class="text-end fw-semibold">${money(lineSubtotal)}</td>
-        <td class="text-end"><button type="button" class="btn btn-sm btn-outline-danger" onclick="removeItem(${index})">×</button></td>
+        <td data-label="Producto"><input class="form-control form-control-sm" value="${escapeHtml(item.description || '')}" oninput="updateItem(${index}, 'description', this.value)"></td>
+        <td data-label="Cantidad"><input class="form-control form-control-sm text-end" type="number" min="0" step="0.001" value="${Number(item.quantity || 0)}" oninput="updateItem(${index}, 'quantity', this.value)"></td>
+        <td data-label="Precio"><input class="form-control form-control-sm text-end" type="number" min="0" step="0.01" value="${Number(item.unit_price || 0)}" oninput="updateItem(${index}, 'unit_price', this.value)"></td>
+        <td data-label="Descuento"><input class="form-control form-control-sm text-end" type="number" min="0" step="0.01" value="${Number(item.discount || 0)}" oninput="updateItem(${index}, 'discount', this.value)"></td>
+        <td class="text-end fw-semibold" data-label="Subtotal">${money(lineSubtotal)}</td>
+        <td class="text-end" data-label="Acción"><button type="button" class="btn btn-sm btn-outline-danger" onclick="removeItem(${index})">Quitar</button></td>
       `;
       tbody.appendChild(row);
     });
