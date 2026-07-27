@@ -215,11 +215,37 @@
     renderItems();
   }
 
-  function updateItem(index, field, value) {
+  function parseNumberInput(value) {
+    const raw = String(value ?? '').trim();
+    if (!raw) return 0;
+    const normalized = raw.replace(',', '.');
+    const parsed = Number(normalized);
+    return Number.isFinite(parsed) ? parsed : 0;
+  }
+
+  function focusItemField(index, field, cursorStart, cursorEnd) {
+    const target = document.querySelector(`#itemsTable tbody input[data-index="${index}"][data-field="${field}"]`);
+    if (!target) return;
+    target.focus();
+    try {
+      if (typeof cursorStart === 'number' && typeof cursorEnd === 'number') {
+        target.setSelectionRange(cursorStart, cursorEnd);
+      }
+    } catch (err) {
+      // Some mobile browsers may not support setSelectionRange for number inputs.
+    }
+  }
+
+  function updateItem(index, field, inputEl) {
     const item = items[index];
     if (!item) return;
-    item[field] = field === 'description' ? value : Number(value || 0);
-    renderItems();
+    const value = inputEl ? inputEl.value : '';
+    const selectionStart = inputEl && typeof inputEl.selectionStart === 'number' ? inputEl.selectionStart : null;
+    const selectionEnd = inputEl && typeof inputEl.selectionEnd === 'number' ? inputEl.selectionEnd : null;
+    item[field] = field === 'description' ? value : parseNumberInput(value);
+    renderItems(false);
+    syncJson();
+    focusItemField(index, field, selectionStart, selectionEnd);
   }
 
   function recalculate() {
@@ -237,10 +263,10 @@
       discount += Number(item.discount || 0);
       const row = document.createElement('tr');
       row.innerHTML = `
-        <td data-label="Producto"><input class="form-control form-control-sm" value="${escapeHtml(item.description || '')}" oninput="updateItem(${index}, 'description', this.value)"></td>
-        <td data-label="Cantidad"><input class="form-control form-control-sm text-end" type="number" min="0" step="0.001" value="${Number(item.quantity || 0)}" oninput="updateItem(${index}, 'quantity', this.value)"></td>
-        <td data-label="Precio"><input class="form-control form-control-sm text-end" type="number" min="0" step="0.01" value="${Number(item.unit_price || 0)}" oninput="updateItem(${index}, 'unit_price', this.value)"></td>
-        <td data-label="Descuento"><input class="form-control form-control-sm text-end" type="number" min="0" step="0.01" value="${Number(item.discount || 0)}" oninput="updateItem(${index}, 'discount', this.value)"></td>
+        <td data-label="Producto"><input class="form-control form-control-sm" data-index="${index}" data-field="description" value="${escapeHtml(item.description || '')}" oninput="updateItem(${index}, 'description', this)"></td>
+        <td data-label="Cantidad"><input class="form-control form-control-sm text-end" data-index="${index}" data-field="quantity" type="number" min="0" step="0.001" value="${Number(item.quantity || 0)}" oninput="updateItem(${index}, 'quantity', this)"></td>
+        <td data-label="Precio"><input class="form-control form-control-sm text-end" data-index="${index}" data-field="unit_price" type="number" min="0" step="0.01" value="${Number(item.unit_price || 0)}" oninput="updateItem(${index}, 'unit_price', this)"></td>
+        <td data-label="Descuento"><input class="form-control form-control-sm text-end" data-index="${index}" data-field="discount" type="number" min="0" step="0.01" value="${Number(item.discount || 0)}" oninput="updateItem(${index}, 'discount', this)"></td>
         <td class="text-end fw-semibold" data-label="Subtotal">${money(lineSubtotal)}</td>
         <td class="text-end" data-label="Acción"><button type="button" class="btn btn-sm btn-outline-danger" onclick="removeItem(${index})">Quitar</button></td>
       `;
