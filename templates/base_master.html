@@ -653,6 +653,11 @@
       <a class="nav-link {% if request.endpoint and request.endpoint.startswith('saas.landing_testimonials') %}active{% endif %}" href="{{ url_for('saas.landing_testimonials_panel') }}"><i class="bi bi-chat-left-quote"></i>Testimonios Landing</a>
       <a class="nav-link {% if request.endpoint == 'saas.global_settings' %}active{% endif %}" href="{{ url_for('saas.global_settings') }}"><i class="bi bi-gear"></i>Configuración global</a>
       {% elif current_user.role == 'seller' %}
+      <div class="nav-section-label">Operación</div>
+      <a class="nav-link {% if request.endpoint and request.endpoint.startswith('sales.') %}active{% endif %}" href="{{ url_for('sales.index') }}"><i class="bi bi-bag-check"></i><span class="nav-text">Ventas</span></a>
+      {% if company_feature_enabled('quotes_module_enabled') and current_user_has_permission('quotes_view') %}
+      <a class="nav-link {% if request.endpoint and request.endpoint.startswith('quotes.') %}active{% endif %}" href="{{ url_for('quotes.index') }}"><i class="bi bi-file-earmark-text"></i><span class="nav-text">Presupuestos</span></a>
+      {% endif %}
       <div class="nav-section-label">Referidos</div>
       <a class="nav-link {% if request.endpoint == 'referrals.seller_dashboard' %}active{% endif %}" href="{{ url_for('referrals.seller_dashboard') }}"><i class="bi bi-speedometer2"></i>Portal de Vendedor</a>
       <a class="nav-link {% if request.endpoint == 'referrals.seller_clients' %}active{% endif %}" href="{{ url_for('referrals.seller_clients') }}"><i class="bi bi-buildings"></i>Mis clientes</a>
