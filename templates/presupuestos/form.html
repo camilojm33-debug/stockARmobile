@@ -223,54 +223,30 @@
     return Number.isFinite(parsed) ? parsed : 0;
   }
 
-  function focusItemField(index, field, cursorStart, cursorEnd) {
-    const target = document.querySelector(`#itemsTable tbody input[data-index="${index}"][data-field="${field}"]`);
-    if (!target) return;
-    target.focus();
-    try {
-      if (typeof cursorStart === 'number' && typeof cursorEnd === 'number') {
-        target.setSelectionRange(cursorStart, cursorEnd);
-      }
-    } catch (err) {
-      // Some mobile browsers may not support setSelectionRange for number inputs.
-    }
-  }
-
   function updateItem(index, field, inputEl) {
     const item = items[index];
     if (!item) return;
     const value = inputEl ? inputEl.value : '';
-    const selectionStart = inputEl && typeof inputEl.selectionStart === 'number' ? inputEl.selectionStart : null;
-    const selectionEnd = inputEl && typeof inputEl.selectionEnd === 'number' ? inputEl.selectionEnd : null;
     item[field] = field === 'description' ? value : parseNumberInput(value);
-    renderItems(false);
-    syncJson();
-    focusItemField(index, field, selectionStart, selectionEnd);
+    const lineSubtotal = Math.max((Number(item.quantity || 0) * Number(item.unit_price || 0)) - Number(item.discount || 0), 0);
+    const subtotalCell = document.querySelector(`#itemsTable tbody [data-subtotal-index="${index}"]`);
+    if (subtotalCell) {
+      subtotalCell.textContent = money(lineSubtotal);
+    }
+    updateTotals();
   }
 
   function recalculate() {
-    renderItems();
+    updateTotals();
   }
 
-  function renderItems(updateJson = true) {
-    const tbody = document.querySelector('#itemsTable tbody');
-    tbody.innerHTML = '';
+  function updateTotals(updateJson = true) {
     let subtotal = 0;
     let discount = 0;
     items.forEach((item, index) => {
       const lineSubtotal = Math.max((Number(item.quantity || 0) * Number(item.unit_price || 0)) - Number(item.discount || 0), 0);
       subtotal += Number(item.quantity || 0) * Number(item.unit_price || 0);
       discount += Number(item.discount || 0);
-      const row = document.createElement('tr');
-      row.innerHTML = `
-        <td data-label="Producto"><input class="form-control form-control-sm" data-index="${index}" data-field="description" value="${escapeHtml(item.description || '')}" oninput="updateItem(${index}, 'description', this)"></td>
-        <td data-label="Cantidad"><input class="form-control form-control-sm text-end" data-index="${index}" data-field="quantity" type="number" min="0" step="0.001" value="${Number(item.quantity || 0)}" oninput="updateItem(${index}, 'quantity', this)"></td>
-        <td data-label="Precio"><input class="form-control form-control-sm text-end" data-index="${index}" data-field="unit_price" type="number" min="0" step="0.01" value="${Number(item.unit_price || 0)}" oninput="updateItem(${index}, 'unit_price', this)"></td>
-        <td data-label="Descuento"><input class="form-control form-control-sm text-end" data-index="${index}" data-field="discount" type="number" min="0" step="0.01" value="${Number(item.discount || 0)}" oninput="updateItem(${index}, 'discount', this)"></td>
-        <td class="text-end fw-semibold" data-label="Subtotal">${money(lineSubtotal)}</td>
-        <td class="text-end" data-label="Acción"><button type="button" class="btn btn-sm btn-outline-danger" onclick="removeItem(${index})">Quitar</button></td>
-      `;
-      tbody.appendChild(row);
     });
 
     const surcharge = Number(document.getElementById('generalSurcharge').value || 0);
@@ -283,6 +259,25 @@
     document.getElementById('sumTax').textContent = money(0);
     document.getElementById('sumTotal').textContent = money(total);
     if (updateJson) syncJson();
+  }
+
+  function renderItems(updateJson = true) {
+    const tbody = document.querySelector('#itemsTable tbody');
+    tbody.innerHTML = '';
+    items.forEach((item, index) => {
+      const lineSubtotal = Math.max((Number(item.quantity || 0) * Number(item.unit_price || 0)) - Number(item.discount || 0), 0);
+      const row = document.createElement('tr');
+      row.innerHTML = `
+        <td data-label="Producto"><input class="form-control form-control-sm" data-index="${index}" data-field="description" value="${escapeHtml(item.description || '')}" oninput="updateItem(${index}, 'description', this)"></td>
+        <td data-label="Cantidad"><input class="form-control form-control-sm text-end" data-index="${index}" data-field="quantity" type="text" inputmode="decimal" value="${Number(item.quantity || 0)}" oninput="updateItem(${index}, 'quantity', this)"></td>
+        <td data-label="Precio"><input class="form-control form-control-sm text-end" data-index="${index}" data-field="unit_price" type="text" inputmode="decimal" value="${Number(item.unit_price || 0)}" oninput="updateItem(${index}, 'unit_price', this)"></td>
+        <td data-label="Descuento"><input class="form-control form-control-sm text-end" data-index="${index}" data-field="discount" type="text" inputmode="decimal" value="${Number(item.discount || 0)}" oninput="updateItem(${index}, 'discount', this)"></td>
+        <td class="text-end fw-semibold" data-label="Subtotal" data-subtotal-index="${index}">${money(lineSubtotal)}</td>
+        <td class="text-end" data-label="Acción"><button type="button" class="btn btn-sm btn-outline-danger" onclick="removeItem(${index})">Quitar</button></td>
+      `;
+      tbody.appendChild(row);
+    });
+    updateTotals(updateJson);
   }
 
   function syncJson() {
