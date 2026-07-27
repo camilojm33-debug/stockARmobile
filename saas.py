@@ -95,7 +95,6 @@ def _hard_delete_company(company):
         CashMovement,
         CashSession,
         Client,
-        Company,
         Expense,
         Invoice,
         MercadoPagoConnection,
@@ -162,6 +161,8 @@ def _hard_delete_company(company):
 
     user_ids = _safe_ids_by_company(User)
     product_ids = _safe_ids_by_company(Product)
+    client_ids = _safe_ids_by_company(Client)
+    supplier_ids = _safe_ids_by_company(Supplier)
     quote_ids = _safe_ids_by_company(Quote)
     sale_ids = _safe_ids_by_company(Sale)
     purchase_order_ids = _safe_ids_by_company(PurchaseOrder)
@@ -258,7 +259,41 @@ def _hard_delete_company(company):
     ]:
         _raw_delete_company_rows(table_name)
 
-    db.session.delete(company)
+    def _raw_delete_where_in(table_name, column_name, values):
+        if not values or table_name not in table_names:
+            return
+        if table_name not in columns_cache:
+            columns_cache[table_name] = {column.get("name") for column in inspector.get_columns(table_name)}
+        if column_name not in columns_cache[table_name]:
+            return
+        statement = sa.text(f"DELETE FROM {table_name} WHERE {column_name} IN :ids").bindparams(sa.bindparam("ids", expanding=True))
+        db.session.execute(statement, {"ids": list(values)})
+
+    # Final defensive pass for legacy/optional tables that may reference tenant entities without company_id.
+    fk_value_sets = {
+        "users": set(user_ids),
+        "products": set(product_ids),
+        "clients": set(client_ids),
+        "suppliers": set(supplier_ids),
+        "sales": set(sale_ids),
+        "quotes": set(quote_ids),
+        "purchase_orders": set(purchase_order_ids),
+        "referral_sellers": set(seller_ids),
+        "referral_payouts": set(payout_ids),
+    }
+    for table_name in table_names:
+        if table_name == "companies":
+            continue
+        foreign_keys = inspector.get_foreign_keys(table_name) or []
+        for fk in foreign_keys:
+            referred_table = fk.get("referred_table")
+            constrained_cols = fk.get("constrained_columns") or []
+            values = fk_value_sets.get(referred_table)
+            if not values or len(constrained_cols) != 1:
+                continue
+            _raw_delete_where_in(table_name, constrained_cols[0], values)
+
+        db.session.execute(sa.text("DELETE FROM companies WHERE id = :company_id"), {"company_id": company_id})
 
 
 def _action_allowed_for_status(status: str | None, action: str) -> bool:
@@ -1045,7 +1080,7 @@ def company_generate_pin(company_id):
 @bp.route("/companies/<int:company_id>/delete", methods=["POST"])
 @superadmin_required
 def company_delete(company_id):
-    from app import AuditLog, Company, db
+    from app import AuditLog, Client, Company, Product, User, db
 
     _require_superadmin()
     company = Company.query.filter_by(id=company_id).first_or_404()
@@ -1060,29 +1095,39 @@ def company_delete(company_id):
         flash("Solo se pueden eliminar definitivamente empresas sin suscripción activa o en estados terminales.", "warning")
         return _redirect_back("saas.companies_panel")
 
-    db.session.add(
-        AuditLog(
-            user_id=current_user.id,
-            company_id=None,
-            action="company_hard_delete",
-            entity="company",
-            entity_id=company.id,
-            detail=f"Empresa eliminada definitivamente: {company.name}. ip={request.remote_addr or 'unknown'} resultado=ok",
+    company_name = company.name
+    try:
+        db.session.add(
+            AuditLog(
+                user_id=current_user.id,
+                company_id=None,
+                action="company_hard_delete",
+                entity="company",
+                entity_id=company.id,
+                detail=f"Empresa eliminada definitivamente: {company_name}. ip={request.remote_addr or 'unknown'} resultado=ok",
+            )
         )
-    )
-    _hard_delete_company(company)
-    db.session.add(
-        AuditLog(
-            user_id=current_user.id,
-            company_id=None,
-            action="company_hard_delete_complete",
-            entity="company",
-            entity_id=company.id,
-            detail=f"Empresa purgada definitivamente: {company.name}. ip={request.remote_addr or 'unknown'} resultado=ok",
+        _hard_delete_company(company)
+        db.session.add(
+            AuditLog(
+                user_id=current_user.id,
+                company_id=None,
+                action="company_hard_delete_complete",
+                entity="company",
+                entity_id=company.id,
+                detail=f"Empresa purgada definitivamente: {company_name}. ip={request.remote_addr or 'unknown'} resultado=ok",
+            )
         )
-    )
-    db.session.commit()
-    flash("Empresa eliminada definitivamente.", "success")
+        # Defensive final pass for primary tenant entities in case of ORM/session edge cases.
+        db.session.query(User).filter(User.company_id == company_id).delete(synchronize_session=False)
+        db.session.query(Product).filter(Product.company_id == company_id).delete(synchronize_session=False)
+        db.session.query(Client).filter(Client.company_id == company_id).delete(synchronize_session=False)
+        db.session.commit()
+        flash("Empresa eliminada definitivamente.", "success")
+    except Exception as exc:
+        db.session.rollback()
+        current_app.logger.exception("Error al eliminar definitivamente company_id=%s (%s): %s", company_id, company_name, exc)
+        flash("No se pudo eliminar definitivamente la empresa. Revisá los logs del servidor para el detalle técnico.", "danger")
     return _redirect_back("saas.companies_panel")
 
 
