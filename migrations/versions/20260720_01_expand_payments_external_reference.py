@@ -30,22 +30,22 @@ def _has_column(bind, table_name, column_name):
 def upgrade():
     bind = op.get_bind()
     if _has_table(bind, "payments") and _has_column(bind, "payments", "external_reference"):
-        op.alter_column(
-            "payments",
-            "external_reference",
-            existing_type=sa.String(length=120),
-            type_=sa.String(length=255),
-            existing_nullable=True,
-        )
+        with op.batch_alter_table("payments", recreate="auto") as batch_op:
+            batch_op.alter_column(
+                "external_reference",
+                existing_type=sa.String(length=120),
+                type_=sa.String(length=255),
+                existing_nullable=True,
+            )
 
 
 def downgrade():
     bind = op.get_bind()
     if _has_table(bind, "payments") and _has_column(bind, "payments", "external_reference"):
-        op.alter_column(
-            "payments",
-            "external_reference",
-            existing_type=sa.String(length=255),
-            type_=sa.String(length=120),
-            existing_nullable=True,
-        )
+        with op.batch_alter_table("payments", recreate="auto") as batch_op:
+            batch_op.alter_column(
+                "external_reference",
+                existing_type=sa.String(length=255),
+                type_=sa.String(length=120),
+                existing_nullable=True,
+            )
