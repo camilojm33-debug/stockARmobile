@@ -18,10 +18,17 @@ from reportlab.pdfgen import canvas
 from sqlalchemy import case, or_
 from sqlalchemy.orm import joinedload
 
-from app import seller_required, superadmin_required
+from app import model_table_exists, seller_required, superadmin_required
 from services.referral_service import ReferralService
 
 bp = Blueprint("referrals", __name__)
+
+
+def _referrals_module_ready():
+    from app import ReferralAttribution, ReferralCommission, ReferralPayout, ReferralSeller
+
+    required_models = [ReferralSeller, ReferralAttribution, ReferralCommission, ReferralPayout]
+    return all(model_table_exists(model) for model in required_models)
 
 
 def _normalize_digits(value: str | None) -> str:
@@ -471,6 +478,16 @@ def _build_resource_center_context(profile, search_term: str = ""):
 def seller_resources():
     from app import ResourceMessage, db
 
+    if not _referrals_module_ready():
+        flash("El programa de referidos todavía no está disponible porque faltan migraciones.", "warning")
+        return redirect(url_for("dashboard.index"))
+
+    from app import ResourceMessage
+
+    if not model_table_exists(ResourceMessage):
+        flash("El centro de recursos todavía no está disponible porque faltan migraciones.", "warning")
+        return redirect(url_for("dashboard.index"))
+
     profile = ReferralSeller.query.filter_by(user_id=current_user.id).first_or_404()
     _seed_default_resource_messages(db.session)
     panel = (request.args.get("panel") or "hub").strip().lower()
@@ -491,6 +508,16 @@ def seller_resources():
 @superadmin_required
 def admin_resource_messages():
     from app import ResourceMessage, db
+
+    if not _referrals_module_ready():
+        flash("El programa de referidos todavía no está disponible porque faltan migraciones.", "warning")
+        return redirect(url_for("saas.index"))
+
+    from app import ResourceMessage
+
+    if not model_table_exists(ResourceMessage):
+        flash("Los mensajes comerciales todavía no están disponibles porque faltan migraciones.", "warning")
+        return redirect(url_for("saas.index"))
 
     _seed_default_resource_messages(db.session)
     edit_id = request.args.get("edit_id", type=int)
@@ -550,6 +577,10 @@ def admin_resource_messages():
 def admin_resource_message_delete(message_id):
     from app import ResourceMessage, db
 
+    if not model_table_exists(ResourceMessage):
+        flash("El centro de recursos todavía no está disponible porque faltan migraciones.", "warning")
+        return redirect(url_for("referrals.admin_referrals_dashboard"))
+
     message = ResourceMessage.query.filter_by(id=message_id).first_or_404()
     db.session.delete(message)
     db.session.commit()
@@ -561,6 +592,15 @@ def admin_resource_message_delete(message_id):
 @superadmin_required
 def admin_referrals_dashboard():
     from app import Company, ReferralCommission, ReferralSeller, db
+
+    if not _referrals_module_ready():
+        return render_template(
+            "saas/referrals_dashboard.html",
+            sellers=[],
+            commissions=[],
+            stats={"sellers_count": 0, "pending_count": 0, "paid_count": 0, "total_sold": 0, "total_paid": 0, "best_seller": None},
+            ranking=[],
+        )
 
     ReferralService.refresh_commission_states(db.session)
     db.session.commit()
@@ -611,6 +651,10 @@ def admin_referrals_dashboard():
 def admin_referrals_update_commission(seller_id):
     from app import ReferralSeller, db
 
+    if not _referrals_module_ready():
+        flash("El programa de referidos todavía no está disponible porque faltan migraciones.", "warning")
+        return redirect(url_for("referrals.admin_referrals_dashboard"))
+
     seller = ReferralSeller.query.options(joinedload(ReferralSeller.user)).filter_by(id=seller_id).first_or_404()
     normalized_percent = _parse_commission_percent(request.form.get("commission_percent"))
     if normalized_percent is None:
@@ -629,6 +673,10 @@ def admin_referrals_update_commission(seller_id):
 def admin_referrals_sellers():
     from app import db
 
+    if not _referrals_module_ready():
+        flash("El programa de referidos todavía no está disponible porque faltan migraciones.", "warning")
+        return redirect(url_for("referrals.admin_referrals_dashboard"))
+
     summary = _seller_management_summary(db.session)
     return render_template("saas/referrals_sellers.html", summary=summary)
 
@@ -637,6 +685,10 @@ def admin_referrals_sellers():
 @superadmin_required
 def admin_referrals_sellers_list():
     from app import ReferralSeller
+
+    if not _referrals_module_ready():
+        flash("El programa de referidos todavía no está disponible porque faltan migraciones.", "warning")
+        return redirect(url_for("referrals.admin_referrals_dashboard"))
 
     sellers = (
         ReferralSeller.query.options(joinedload(ReferralSeller.user)).order_by(ReferralSeller.created_at.desc(), ReferralSeller.id.desc()).all()
@@ -649,6 +701,10 @@ def admin_referrals_sellers_list():
 @superadmin_required
 def admin_referrals_sellers_create():
     from app import User, db
+
+    if not _referrals_module_ready():
+        flash("El programa de referidos todavía no está disponible porque faltan migraciones.", "warning")
+        return redirect(url_for("referrals.admin_referrals_dashboard"))
 
     if request.method == "POST":
         username = (request.form.get("username") or "").strip()
@@ -712,6 +768,10 @@ def admin_referrals_sellers_create():
 @superadmin_required
 def admin_referrals_sellers_edit(seller_id):
     from app import ReferralSeller, User, db
+
+    if not _referrals_module_ready():
+        flash("El programa de referidos todavía no está disponible porque faltan migraciones.", "warning")
+        return redirect(url_for("referrals.admin_referrals_dashboard"))
 
     profile = ReferralSeller.query.options(joinedload(ReferralSeller.user)).filter_by(id=seller_id).first_or_404()
     user = db.session.get(User, profile.user_id)
@@ -777,6 +837,10 @@ def admin_referrals_sellers_edit(seller_id):
 @superadmin_required
 def admin_referrals_seller_detail(seller_id):
     from app import AuditLog, Company, ReferralAttribution, ReferralCommission, ReferralPayout, ReferralSeller, Subscription, db
+
+    if not _referrals_module_ready():
+        flash("El programa de referidos todavía no está disponible porque faltan migraciones.", "warning")
+        return redirect(url_for("referrals.admin_referrals_dashboard"))
 
     profile = ReferralSeller.query.options(joinedload(ReferralSeller.user)).filter_by(id=seller_id).first_or_404()
     user = profile.user
@@ -871,6 +935,10 @@ def admin_referrals_seller_detail(seller_id):
 def admin_referrals_seller_delete(seller_id):
     from app import ReferralSeller, User, db
 
+    if not _referrals_module_ready():
+        flash("El programa de referidos todavía no está disponible porque faltan migraciones.", "warning")
+        return redirect(url_for("referrals.admin_referrals_dashboard"))
+
     profile = ReferralSeller.query.filter_by(id=seller_id).first_or_404()
     user = db.session.get(User, profile.user_id)
     if user is None:
@@ -890,6 +958,10 @@ def admin_referrals_seller_delete(seller_id):
 def admin_referrals_seller_toggle(seller_id):
     from app import ReferralSeller, User, db
 
+    if not _referrals_module_ready():
+        flash("El programa de referidos todavía no está disponible porque faltan migraciones.", "warning")
+        return redirect(url_for("referrals.admin_referrals_dashboard"))
+
     profile = ReferralSeller.query.filter_by(id=seller_id).first_or_404()
     user = db.session.get(User, profile.user_id)
     if user is None:
@@ -907,6 +979,10 @@ def admin_referrals_seller_toggle(seller_id):
 def admin_referrals_commissions():
     from app import ReferralCommission, db
 
+    if not _referrals_module_ready():
+        flash("El programa de referidos todavía no está disponible porque faltan migraciones.", "warning")
+        return redirect(url_for("referrals.admin_referrals_dashboard"))
+
     ReferralService.refresh_commission_states(db.session)
     db.session.commit()
 
@@ -922,6 +998,10 @@ def admin_referrals_commissions():
 @superadmin_required
 def admin_referrals_register_payout():
     from app import db
+
+    if not _referrals_module_ready():
+        flash("El programa de referidos todavía no está disponible porque faltan migraciones.", "warning")
+        return redirect(url_for("referrals.admin_referrals_dashboard"))
 
     seller_id = request.form.get("seller_id", type=int)
     commission_ids = request.form.getlist("commission_ids")
@@ -951,6 +1031,9 @@ def admin_referrals_register_payout():
 @superadmin_required
 def admin_referrals_export():
     from app import ReferralCommission
+
+    if not _referrals_module_ready():
+        return make_response("seller_id,company_id,sold_amount,commission_amount,status\n", 200, {"Content-Type": "text/csv; charset=utf-8"})
 
     output = StringIO()
     writer = csv.writer(output)

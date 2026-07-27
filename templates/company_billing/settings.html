@@ -1144,6 +1144,10 @@
             <label class="form-check-label" for="pref_quick_mode_default">Abrir POS en modo rápido</label>
           </div>
           <div class="form-check">
+            <input class="form-check-input" type="checkbox" id="pref_quotes_module_enabled" name="quotes_module_enabled" {% if company_preferences.get('quotes_module_enabled') %}checked{% endif %}>
+            <label class="form-check-label" for="pref_quotes_module_enabled">Habilitar módulo Presupuestos</label>
+          </div>
+          <div class="form-check">
             <input class="form-check-input" type="checkbox" id="pref_cashdrawer_enabled" name="cashdrawer_enabled" {% if printer_settings.get('cashdrawer_enabled') %}checked{% endif %}>
             <label class="form-check-label" for="pref_cashdrawer_enabled">Abrir cajón en ticket térmico</label>
           </div>

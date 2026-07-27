@@ -32,6 +32,20 @@ bp = Blueprint("company_billing", __name__)
 EMPLOYEE_PERMISSIONS = [
     ("inventory", "Inventario"),
     ("sales", "Ventas"),
+    ("quotes_view", "Ver presupuestos"),
+    ("quotes_create", "Crear presupuestos"),
+    ("quotes_edit", "Editar presupuestos"),
+    ("quotes_delete", "Eliminar presupuestos"),
+    ("quotes_duplicate", "Duplicar presupuestos"),
+    ("quotes_share_whatsapp", "Compartir presupuestos por WhatsApp"),
+    ("quotes_email", "Enviar presupuestos por email"),
+    ("quotes_convert", "Convertir presupuestos"),
+    ("quotes_print", "Imprimir presupuestos"),
+    ("quotes_download_pdf", "Descargar PDF de presupuestos"),
+    ("quotes_view_other_sellers", "Ver presupuestos de otros vendedores"),
+    ("quotes_modify_prices", "Modificar precios en presupuestos"),
+    ("quotes_apply_discounts", "Aplicar descuentos en presupuestos"),
+    ("quotes_anulate", "Anular presupuestos"),
     ("clients", "Clientes"),
     ("reports", "Reportes"),
     ("cash", "Caja"),
@@ -1403,6 +1417,7 @@ def company_settings_general_save():
         "show_costs": bool(request.form.get("show_costs")),
         "compact_print": bool(request.form.get("compact_print")),
         "quick_mode_default": bool(request.form.get("quick_mode_default")),
+        "quotes_module_enabled": bool(request.form.get("quotes_module_enabled")),
     }
     try:
         printer_port = int(request.form.get("printer_port") or 9100)

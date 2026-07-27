@@ -661,6 +661,9 @@
       {% else %}
       <div class="nav-section-label">Operación</div>
       <a class="nav-link {% if request.endpoint and request.endpoint.startswith('sales.') %}active{% endif %}" href="{{ url_for('sales.index') }}"><i class="bi bi-bag-check"></i><span class="nav-text">Ventas</span></a>
+      {% if company_feature_enabled('quotes_module_enabled') and current_user_has_permission('quotes_view') %}
+      <a class="nav-link {% if request.endpoint and request.endpoint.startswith('quotes.') %}active{% endif %}" href="{{ url_for('quotes.index') }}"><i class="bi bi-file-earmark-text"></i><span class="nav-text">Presupuestos</span></a>
+      {% endif %}
       <a class="nav-link {% if request.endpoint and request.endpoint.startswith('products.') %}active{% endif %}" href="{{ url_for('products.index') }}"><i class="bi bi-box-seam"></i><span class="nav-text">Productos</span></a>
       <a class="nav-link {% if request.endpoint and request.endpoint.startswith('cash.') %}active{% endif %}" href="{{ url_for('cash.index') }}"><i class="bi bi-cash-coin"></i><span class="nav-text">Caja</span></a>
       <a class="nav-link {% if request.endpoint and request.endpoint.startswith('clients.') %}active{% endif %}" href="{{ url_for('clients.index') }}"><i class="bi bi-people"></i><span class="nav-text">Clientes</span></a>

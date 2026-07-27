@@ -1,0 +1,93 @@
+{% extends "base_master.html" %}
+
+{% block title %}Presupuesto {{ quote.number or quote.id }} - StockArmobile{% endblock %}
+
+{% block content %}
+<div class="container py-4">
+  <div class="d-flex justify-content-between align-items-start flex-wrap gap-3 mb-4">
+    <div>
+      <span class="page-kicker"><i class="bi bi-file-earmark-text"></i> Presupuesto</span>
+      <h1 class="h4 fw-bold mb-1">{{ quote.number or ('P-' ~ '%06d'|format(quote.id)) }}</h1>
+      <p class="text-muted mb-0">{{ quote.client.name if quote.client else 'Consumidor final' }} · {{ quote.status }}</p>
+    </div>
+    <div class="d-flex flex-wrap gap-2 justify-content-end">
+      {% if current_user_has_permission('quotes_download_pdf') or current_user_has_permission('quotes_print') %}
+      <a class="btn btn-outline-primary" href="{{ url_for('quotes.quote_pdf', quote_id=quote.id) }}" target="_blank"><i class="bi bi-filetype-pdf me-1"></i>Descargar PDF</a>
+      {% endif %}
+      {% if current_user_has_permission('quotes_print') %}
+      <a class="btn btn-outline-dark" href="{{ url_for('quotes.quote_print', quote_id=quote.id) }}" target="_blank"><i class="bi bi-printer me-1"></i>Imprimir</a>
+      {% endif %}
+      {% if current_user_has_permission('quotes_share_whatsapp') %}
+      <a class="btn btn-outline-success" href="{{ url_for('quotes.share_whatsapp', quote_id=quote.id) }}"><i class="bi bi-whatsapp me-1"></i>Compartir</a>
+      {% endif %}
+      {% if quote.status != 'CONVERTIDO' %}
+      {% if current_user_has_permission('quotes_convert') %}
+      <form method="post" action="{{ url_for('quotes.convert_to_sale', quote_id=quote.id) }}"><input type="hidden" name="csrf_token" value="{{ csrf_token() }}"><button class="btn btn-success" type="submit"><i class="bi bi-bag-check me-1"></i>Convertir en venta</button></form>
+      {% endif %}
+      {% endif %}
+      {% if current_user_has_permission('quotes_edit') %}
+      <a class="btn btn-primary" href="{{ url_for('quotes.edit_quote', quote_id=quote.id) }}"><i class="bi bi-pencil-square me-1"></i>Editar</a>
+      {% endif %}
+      {% if current_user_has_permission('quotes_anulate') and quote.status != 'CONVERTIDO' %}
+      <form method="post" action="{{ url_for('quotes.annul_quote', quote_id=quote.id) }}" onsubmit="return confirm('¿Anular este presupuesto?');"><input type="hidden" name="csrf_token" value="{{ csrf_token() }}"><button class="btn btn-outline-warning" type="submit">Anular</button></form>
+      {% endif %}
+      {% if current_user_has_permission('quotes_delete') %}
+      <form method="post" action="{{ url_for('quotes.delete_quote', quote_id=quote.id) }}" onsubmit="return confirm('¿Eliminar este presupuesto?');"><input type="hidden" name="csrf_token" value="{{ csrf_token() }}"><button class="btn btn-outline-danger" type="submit">Eliminar</button></form>
+      {% endif %}
+      <a class="btn btn-outline-secondary" href="{{ url_for('quotes.index') }}">Volver</a>
+    </div>
+  </div>
+
+  <div class="row g-3 mb-4">
+    <div class="col-md-3"><div class="card app-card"><div class="card-body"><div class="small text-muted">Fecha</div><div class="fw-semibold">{{ quote.date.strftime('%d/%m/%Y %H:%M') if quote.date else '-' }}</div></div></div></div>
+    <div class="col-md-3"><div class="card app-card"><div class="card-body"><div class="small text-muted">Vence</div><div class="fw-semibold">{{ quote.expires_at.strftime('%d/%m/%Y') if quote.expires_at else '-' }}</div></div></div></div>
+    <div class="col-md-3"><div class="card app-card"><div class="card-body"><div class="small text-muted">Vendedor</div><div class="fw-semibold">{{ quote.seller.name if quote.seller else '-' }}</div></div></div></div>
+    <div class="col-md-3"><div class="card app-card"><div class="card-body"><div class="small text-muted">Creado por</div><div class="fw-semibold">{{ quote.created_by_user.name if quote.created_by_user else '-' }}</div></div></div></div>
+    <div class="col-md-3"><div class="card app-card"><div class="card-body"><div class="small text-muted">Moneda</div><div class="fw-semibold">{{ quote.currency or 'ARS' }}</div></div></div></div>
+    <div class="col-md-3"><div class="card app-card"><div class="card-body"><div class="small text-muted">Sucursal</div><div class="fw-semibold">{{ quote.branch_id or '-' }}</div></div></div></div>
+    <div class="col-md-3"><div class="card app-card"><div class="card-body"><div class="small text-muted">Estado</div><div class="fw-semibold">{{ quote.status }}</div></div></div></div>
+  </div>
+
+  <div class="card app-card mb-4">
+    <div class="table-responsive">
+      <table class="table align-middle mb-0">
+        <thead class="table-light"><tr><th>Producto</th><th class="text-end">Cant.</th><th class="text-end">Precio</th><th class="text-end">Desc.</th><th class="text-end">Subtotal</th></tr></thead>
+        <tbody>
+          {% for item in rows %}
+          <tr>
+            <td>{{ item.name }}</td>
+            <td class="text-end">{{ "%.3g"|format(item.quantity or 0) }}</td>
+            <td class="text-end">${{ "%.2f"|format(item.price or 0) }}</td>
+            <td class="text-end">${{ "%.2f"|format(item.discount or 0) }}</td>
+            <td class="text-end fw-semibold">${{ "%.2f"|format(item.total or 0) }}</td>
+          </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+  </div>
+
+  <div class="row justify-content-end">
+    <div class="col-md-4">
+      <div class="card app-card">
+        <div class="card-body">
+          <div class="d-flex justify-content-between"><span>Subtotal</span><strong>${{ "%.2f"|format(quote.subtotal or 0) }}</strong></div>
+          <div class="d-flex justify-content-between"><span>Descuento</span><strong>-${{ "%.2f"|format(quote.discount or 0) }}</strong></div>
+          <div class="d-flex justify-content-between"><span>Recargo</span><strong>${{ "%.2f"|format(quote.surcharge or 0) }}</strong></div>
+          <div class="d-flex justify-content-between"><span>Impuestos</span><strong>${{ "%.2f"|format(quote.tax or 0) }}</strong></div>
+          <hr>
+          <div class="d-flex justify-content-between fs-5"><span>Total</span><strong class="text-primary">${{ "%.2f"|format(quote.total_amount or 0) }}</strong></div>
+          {% if quote.observations %}
+          <hr>
+          <div class="small text-muted"><strong>Observaciones:</strong> {{ quote.observations }}</div>
+          {% endif %}
+          {% if quote.commercial_conditions %}
+          <hr>
+          <div class="small text-muted"><strong>Condiciones comerciales:</strong> {{ quote.commercial_conditions }}</div>
+          {% endif %}
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+{% endblock %}

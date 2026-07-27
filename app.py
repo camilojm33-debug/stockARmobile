@@ -4,6 +4,7 @@ Compatible con SQLite local, PostgreSQL/Render y Flask-Login.
 """
 
 import os
+import json
 import sys
 from datetime import datetime, timedelta, timezone
 from functools import wraps
@@ -217,6 +218,16 @@ def scope_query_to_company(query, model):
     return query.filter(model.company_id == company_id)
 
 
+def model_table_exists(model):
+    table_name = getattr(model, "__tablename__", None)
+    if not table_name:
+        return False
+    try:
+        return inspect(db.engine).has_table(table_name)
+    except Exception:
+        return False
+
+
 def is_control_panel_owner(user):
     owner_username = (os.environ.get("ADMIN_USERNAME") or "admin").strip().lower()
     owner_email = (os.environ.get("ADMIN_EMAIL") or "admin@stockarmobile.local").strip().lower()
@@ -276,6 +287,9 @@ def seller_required(func):
     @wraps(func)
     @login_required
     def decorated(*args, **kwargs):
+        if not model_table_exists(ReferralSeller):
+            flash("El programa de referidos todavía no está disponible porque faltan migraciones.", "warning")
+            return redirect(url_for("dashboard.index"))
         if getattr(current_user, "role", None) == "seller":
             return func(*args, **kwargs)
         if getattr(current_user, "role", None) == "superadmin":
@@ -678,6 +692,62 @@ class SaleItem(db.Model):
         return max(gross - discount, Decimal("0.00"))
 
 
+class Quote(db.Model):
+    __tablename__ = "quotes"
+    __table_args__ = (
+        Index("ix_quotes_company_status_date", "company_id", "status", "date"),
+        Index("ix_quotes_company_number", "company_id", "number", unique=True),
+    )
+
+    id = db.Column(db.Integer, primary_key=True)
+    number = db.Column(db.String(40), index=True)
+    date = db.Column(db.DateTime, default=utcnow, index=True)
+    expires_at = db.Column(db.DateTime, index=True)
+    subtotal = db.Column(MONEY, default=Decimal("0.00"))
+    discount = db.Column(MONEY, default=Decimal("0.00"))
+    surcharge = db.Column(MONEY, default=Decimal("0.00"))
+    tax = db.Column(MONEY, default=Decimal("0.00"))
+    total_amount = db.Column(MONEY, default=Decimal("0.00"))
+    observations = db.Column(db.Text)
+    commercial_conditions = db.Column(db.Text)
+    status = db.Column(db.String(30), default="BORRADOR", index=True)
+    currency = db.Column(db.String(10), default="ARS")
+    client_id = db.Column(db.Integer, db.ForeignKey("clients.id"))
+    created_by_user_id = db.Column(db.Integer, db.ForeignKey("users.id"), nullable=False)
+    seller_id = db.Column(db.Integer, db.ForeignKey("users.id"))
+    company_id = db.Column(db.Integer, db.ForeignKey("companies.id"), index=True)
+    branch_id = db.Column(db.Integer, index=True)
+    converted_sale_id = db.Column(db.Integer, db.ForeignKey("sales.id"), index=True)
+    created_at = db.Column(db.DateTime, default=utcnow)
+    updated_at = db.Column(db.DateTime, default=utcnow, onupdate=utcnow)
+
+    client = db.relationship("Client", backref="quotes")
+    created_by_user = db.relationship("User", foreign_keys=[created_by_user_id], backref="quotes_created")
+    seller = db.relationship("User", foreign_keys=[seller_id], backref="quotes_sold")
+    converted_sale = db.relationship("Sale", foreign_keys=[converted_sale_id], backref=db.backref("quote_origin", uselist=False))
+    items = db.relationship("QuoteItem", backref="quote", lazy=True, cascade="all, delete-orphan")
+
+
+class QuoteItem(db.Model):
+    __tablename__ = "quote_items"
+
+    id = db.Column(db.Integer, primary_key=True)
+    quote_id = db.Column(db.Integer, db.ForeignKey("quotes.id"), nullable=False, index=True)
+    product_id = db.Column(db.Integer, db.ForeignKey("products.id"))
+    description = db.Column(db.String(255), nullable=False)
+    quantity = db.Column(db.Float, nullable=False)
+    unit_price = db.Column(MONEY, nullable=False)
+    discount = db.Column(MONEY, default=Decimal("0.00"))
+    subtotal = db.Column(MONEY, default=Decimal("0.00"))
+    sort_order = db.Column(db.Integer, default=0, nullable=False)
+
+    product = db.relationship("Product")
+
+    @property
+    def total_amount(self):
+        return self.subtotal or Decimal("0.00")
+
+
 class Company(db.Model):
     __tablename__ = "companies"
 
@@ -1052,6 +1122,7 @@ class AuditLog(db.Model):
     entity = db.Column(db.String(80))
     entity_id = db.Column(db.Integer)
     detail = db.Column(db.Text)
+    ip_address = db.Column(db.String(45))
     created_at = db.Column(db.DateTime, default=utcnow, index=True)
 
 
@@ -1328,7 +1399,7 @@ class SaaSAlert(db.Model):
     created_by = db.relationship("User", foreign_keys=[created_by_user_id], backref="saas_alerts_created")
 
 
-def record_audit(*, action, entity=None, entity_id=None, detail=None, user_id=None, company_id=None):
+def record_audit(*, action, entity=None, entity_id=None, detail=None, user_id=None, company_id=None, ip_address=None):
     try:
         db.session.add(
             AuditLog(
@@ -1338,6 +1409,7 @@ def record_audit(*, action, entity=None, entity_id=None, detail=None, user_id=No
                 entity=entity,
                 entity_id=entity_id,
                 detail=detail,
+                ip_address=ip_address if ip_address is not None else (request.remote_addr if request else None),
             )
         )
     except Exception:
@@ -1443,6 +1515,7 @@ import saas  # noqa: E402
 import company_billing  # noqa: E402
 import referrals  # noqa: E402
 import sales  # noqa: E402
+import quotes  # noqa: E402
 import support  # noqa: E402
 
 auth_bp = auth.bp
@@ -1450,6 +1523,7 @@ dashboard_bp = dashboard.bp
 products_bp = products.bp
 clients_bp = clients.bp
 sales_bp = sales.bp
+quotes_bp = quotes.bp
 qr_labels_bp = qr_labels.bp
 purchases_bp = purchases.bp
 cash_bp = cash.bp
@@ -1465,6 +1539,7 @@ app.register_blueprint(dashboard_bp, url_prefix="/dashboard")
 app.register_blueprint(products_bp, url_prefix="/productos")
 app.register_blueprint(clients_bp, url_prefix="/clientes")
 app.register_blueprint(sales_bp, url_prefix="/ventas")
+app.register_blueprint(quotes_bp, url_prefix="/presupuestos")
 app.register_blueprint(qr_labels_bp, url_prefix="/qr")
 app.register_blueprint(purchases_bp, url_prefix="/compras")
 app.register_blueprint(cash_bp, url_prefix="/caja")
@@ -1772,6 +1847,7 @@ def internal_error(error):
 def inject_notifications():
     has_active_seller_profile = False
     switchable_company_users = []
+    current_company_preferences = {}
     support_contact = {
         "email": app.config.get("SUPPORT_EMAIL", "stockarmobile@gmail.com"),
         "whatsapp_display": app.config.get("SUPPORT_WHATSAPP_DISPLAY", "+54 9 3624 22-8296"),
@@ -1781,6 +1857,12 @@ def inject_notifications():
     }
     if current_user.is_authenticated:
         notification_payload = get_notification_payload()
+        company = Company.query.filter_by(id=getattr(current_user, "company_id", None)).first() if getattr(current_user, "company_id", None) else None
+        if company is not None:
+            try:
+                current_company_preferences = json.loads(company.preferences_json or "{}") if company.preferences_json else {}
+            except json.JSONDecodeError:
+                current_company_preferences = {}
         if getattr(current_user, "role", None) != "superadmin":
             has_active_seller_profile = ReferralSeller.query.filter_by(user_id=current_user.id, active=True).first() is not None
         if getattr(current_user, "role", None) == "admin" and getattr(current_user, "company_id", None):
@@ -1800,6 +1882,9 @@ def inject_notifications():
             "has_active_seller_profile": has_active_seller_profile,
             "support_contact": support_contact,
             "switchable_company_users": switchable_company_users,
+            "company_preferences": current_company_preferences,
+            "company_feature_enabled": lambda key, default=False: bool(current_company_preferences.get(key, default)),
+            "current_user_has_permission": lambda key: _user_has_permission(current_user, key),
         }
     return {
         "notification_items": [],
@@ -1807,7 +1892,27 @@ def inject_notifications():
         "has_active_seller_profile": False,
         "support_contact": support_contact,
         "switchable_company_users": [],
+        "company_preferences": {},
+        "company_feature_enabled": lambda key, default=False: bool(default),
+        "current_user_has_permission": lambda key: _user_has_permission(current_user, key),
     }
+
+
+def _user_has_permission(user, permission_key):
+    role = (getattr(user, "role", None) or "").strip().lower()
+    if role in {"admin", "superadmin"}:
+        return True
+    raw_permissions = (getattr(user, "permissions_json", None) or "").strip()
+    if not raw_permissions:
+        return False
+    try:
+        payload = json.loads(raw_permissions)
+    except json.JSONDecodeError:
+        return False
+    if not isinstance(payload, list):
+        return False
+    normalized = {str(item).strip().lower() for item in payload if str(item).strip()}
+    return (permission_key or "").strip().lower() in normalized
 
 
 @app.route("/api/search")

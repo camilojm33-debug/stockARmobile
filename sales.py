@@ -155,6 +155,18 @@ def _require_open_cash_session(json_response=False):
     return None
 
 
+def _sale_accessible_query(query, model):
+    from app import scope_query_to_company
+
+    scoped_query = scope_query_to_company(query, model)
+    if getattr(current_user, "role", None) in {"admin", "superadmin"}:
+        return scoped_query
+    seller_id = getattr(current_user, "id", None)
+    if hasattr(model, "seller_id"):
+        return scoped_query.filter(model.seller_id == seller_id)
+    return scoped_query
+
+
 def _pos_qr_draft_session_key():
     return f"pos_qr_draft_{_cart_tenant_key()}"
 
@@ -246,7 +258,7 @@ def _save_cart(cart):
     session.modified = True
 
 
-def _calculate_lines(items, *, lock_for_update=False):
+def _calculate_lines(items, *, lock_for_update=False, discount_overrides=None):
     from app import Product, db, scope_query_to_company
 
     lines = []
@@ -270,6 +282,12 @@ def _calculate_lines(items, *, lock_for_update=False):
         quantity_dec = _to_decimal(qty)
         unit_price = _to_decimal(product.price)
         unit_discount = _to_decimal(product.discount)
+        if discount_overrides:
+            override_value = discount_overrides.get(str(prod_id))
+            if override_value is None:
+                override_value = discount_overrides.get(int(prod_id))
+            if override_value is not None:
+                unit_discount = _to_decimal(override_value)
         line_subtotal = unit_price * quantity_dec
         line_discount = min(unit_discount * quantity_dec, line_subtotal)
         lines.append({"product": product, "quantity": qty, "price": unit_price, "discount": line_discount})
@@ -354,8 +372,8 @@ def index():
         )
     mp_connection_summary = MercadoPagoOAuthService().summarize_connection(getattr(company, "mercadopago_connection", None)) if company else MercadoPagoOAuthService().summarize_connection(None)
     cash_session_open = _current_open_cash_session() is not None
-    total_sales_amount = scope_query_to_company(db.session.query(db.func.coalesce(db.func.sum(Sale.total_amount), 0)), Sale).scalar() or 0
-    sales = scope_query_to_company(Sale.query.options(selectinload(Sale.client)), Sale).order_by(Sale.date.desc()).limit(20).all()
+    total_sales_amount = _sale_accessible_query(db.session.query(db.func.coalesce(db.func.sum(Sale.total_amount), 0)), Sale).scalar() or 0
+    sales = _sale_accessible_query(Sale.query.options(selectinload(Sale.client)), Sale).order_by(Sale.date.desc()).limit(20).all()
     return render_template(
         "ventas/index.html",
         products=products,
@@ -694,7 +712,7 @@ def api_mp_qr_create():
         return open_session
 
     try:
-        lines = _calculate_lines(items, lock_for_update=True)
+        lines = _calculate_lines(items, lock_for_update=True, discount_overrides=(payload.get("line_discounts") or payload.get("line_discount_overrides") or {}))
         general_discount = _to_decimal(payload.get("descuento_general") or payload.get("general_discount"))
         surcharge = _to_decimal(payload.get("recargo") or payload.get("surcharge"))
         sale_totals = calculate_sale_totals(
@@ -1067,7 +1085,7 @@ def _create_sale_from_items(items, data, json_response=False):
                     return jsonify({"sale_id": existing_sale.id, "redirect_url": url_for("sales.success", sale_id=existing_sale.id)})
                 return redirect(url_for("sales.success", sale_id=existing_sale.id))
 
-        lines = _calculate_lines(items, lock_for_update=True)
+        lines = _calculate_lines(items, lock_for_update=True, discount_overrides=(data.get("line_discounts") or data.get("line_discount_overrides") or {}))
         general_discount = _to_decimal(data.get("descuento_general") or data.get("general_discount"))
         surcharge = _to_decimal(data.get("recargo") or data.get("surcharge"))
         sale_totals = calculate_sale_totals(
@@ -1247,7 +1265,7 @@ def _create_sale_from_items(items, data, json_response=False):
 def success(sale_id):
     from app import Sale, SaleItem, scope_query_to_company
 
-    sale = scope_query_to_company(Sale.query.options(selectinload(Sale.items).selectinload(SaleItem.product)), Sale).filter(Sale.id == sale_id).first_or_404()
+    sale = _sale_accessible_query(Sale.query.options(selectinload(Sale.items).selectinload(SaleItem.product)), Sale).filter(Sale.id == sale_id).first_or_404()
     ticket_html = _ticket_text(sale)
     return render_template("ventas/success.html", sale=sale, ticket_html=ticket_html, pdf_url=url_for("qr_labels.generate_pdf_ticket", sale_id=sale.id))
 
@@ -1257,7 +1275,7 @@ def success(sale_id):
 def view_sale(sale_id):
     from app import Sale, SaleItem, SaleModificationHistory, scope_query_to_company
 
-    sale = scope_query_to_company(Sale.query.options(selectinload(Sale.items).selectinload(SaleItem.product)), Sale).filter(Sale.id == sale_id).first_or_404()
+    sale = _sale_accessible_query(Sale.query.options(selectinload(Sale.items).selectinload(SaleItem.product)), Sale).filter(Sale.id == sale_id).first_or_404()
     modification_history = []
     if getattr(current_user, "role", None) in {"admin", "superadmin"}:
         modification_history = scope_query_to_company(
@@ -1275,7 +1293,7 @@ def edit(sale_id):
     if getattr(current_user, "role", None) not in {"admin", "superadmin"}:
         abort(403)
 
-    sale = scope_query_to_company(Sale.query.options(selectinload(Sale.items).selectinload(SaleItem.product)), Sale).filter(Sale.id == sale_id).first_or_404()
+    sale = _sale_accessible_query(Sale.query.options(selectinload(Sale.items).selectinload(SaleItem.product)), Sale).filter(Sale.id == sale_id).first_or_404()
     clients = scope_query_to_company(Client.query.filter_by(active=True), Client).order_by(Client.name).all()
     products = scope_query_to_company(Product.query.order_by(Product.name), Product).all()
     existing_line_discount_total = sum(_to_decimal(item.discount or 0) for item in sale.items)
@@ -1496,9 +1514,9 @@ def edit(sale_id):
 @bp.route("/<int:sale_id>/comprobante-emitido", methods=["POST"])
 @tenant_required
 def mark_comprobante_issued(sale_id):
-    from app import Sale, db, scope_query_to_company
+    from app import Sale, db
 
-    sale = scope_query_to_company(Sale.query, Sale).filter(Sale.id == sale_id).first_or_404()
+    sale = _sale_accessible_query(Sale.query, Sale).filter(Sale.id == sale_id).first_or_404()
     if not bool(sale.requiere_comprobante):
         flash("La venta no tiene comprobante solicitado.", "warning")
         return redirect(url_for("sales.view_sale", sale_id=sale.id))
@@ -1539,9 +1557,9 @@ def delete_sale(sale_id):
 @bp.route("/<int:sale_id>/imprimir-ticket")
 @tenant_required
 def print_ticket(sale_id):
-    from app import Sale, SaleItem, scope_query_to_company
+    from app import Sale, SaleItem
 
-    sale = scope_query_to_company(Sale.query.options(selectinload(Sale.items).selectinload(SaleItem.product)), Sale).filter(Sale.id == sale_id).first_or_404()
+    sale = _sale_accessible_query(Sale.query.options(selectinload(Sale.items).selectinload(SaleItem.product)), Sale).filter(Sale.id == sale_id).first_or_404()
     response = make_response(_ticket_text(sale))
     response.headers["Content-Type"] = "text/plain; charset=utf-8"
     return response
@@ -1550,9 +1568,9 @@ def print_ticket(sale_id):
 @bp.route("/<int:sale_id>/ticket")
 @tenant_required
 def thermal_ticket(sale_id):
-    from app import Sale, SaleItem, scope_query_to_company
+    from app import Sale, SaleItem
 
-    sale = scope_query_to_company(Sale.query.options(selectinload(Sale.items).selectinload(SaleItem.product)), Sale).filter(Sale.id == sale_id).first_or_404()
+    sale = _sale_accessible_query(Sale.query.options(selectinload(Sale.items).selectinload(SaleItem.product)), Sale).filter(Sale.id == sale_id).first_or_404()
     ticket_brand = _ticket_brand_name()
     return render_template("ventas/ticket.html", sale=sale, rows=_ticket_rows(sale), ticket_text=_ticket_text(sale, ticket_brand=ticket_brand), ticket_brand=ticket_brand)
 
@@ -1560,11 +1578,11 @@ def thermal_ticket(sale_id):
 @bp.route("/<int:sale_id>/print-thermal", methods=["POST"])
 @tenant_required
 def print_thermal_ticket(sale_id):
-    from app import Company, Sale, SaleItem, scope_query_to_company
+    from app import Company, Sale, SaleItem
     from services.thermal_printer_service import ThermalPrinterService
 
     company = Company.query.filter_by(id=getattr(current_user, "company_id", None)).first_or_404()
-    sale = scope_query_to_company(Sale.query.options(selectinload(Sale.items).selectinload(SaleItem.product)), Sale).filter(Sale.id == sale_id).first_or_404()
+    sale = _sale_accessible_query(Sale.query.options(selectinload(Sale.items).selectinload(SaleItem.product)), Sale).filter(Sale.id == sale_id).first_or_404()
     result = ThermalPrinterService().print_sale_ticket(company, sale)
     if result.printed:
         flash("Ticket enviado a la impresora térmica.", "success")
@@ -1581,7 +1599,7 @@ def export_sales_csv():
     output = StringIO()
     writer = csv.writer(output)
     writer.writerow(["ID", "Cliente", "Subtotal", "Descuento", "Total", "Iva", "Fecha"])
-    for sale in scope_query_to_company(Sale.query, Sale).order_by(Sale.date.desc()).all():
+    for sale in _sale_accessible_query(Sale.query, Sale).order_by(Sale.date.desc()).all():
         writer.writerow([sale.id, sale.customer or "", f"{sale.subtotal:.2f}", f"{sale.discount:.2f}", f"{sale.total_amount:.2f}", f"{sale.tax:.2f}", f"{sale.date:%Y-%m-%d}"])
     response = make_response(output.getvalue())
     response.headers["Content-Type"] = "text/csv; charset=utf-8"
@@ -1592,9 +1610,9 @@ def export_sales_csv():
 @bp.route("/api/ventas/<int:sale_id>")
 @tenant_required
 def api_sale(sale_id):
-    from app import Sale, SaleItem, scope_query_to_company
+    from app import Sale, SaleItem
 
-    sale = scope_query_to_company(Sale.query.options(selectinload(Sale.items).selectinload(SaleItem.product)), Sale).filter(Sale.id == sale_id).first_or_404()
+    sale = _sale_accessible_query(Sale.query.options(selectinload(Sale.items).selectinload(SaleItem.product)), Sale).filter(Sale.id == sale_id).first_or_404()
     return jsonify(
         {
             "id": sale.id,
@@ -1615,9 +1633,9 @@ def api_sale(sale_id):
 @bp.route("/api/recent")
 @tenant_required
 def api_recent_sales():
-    from app import Sale, scope_query_to_company
+    from app import Sale
 
-    sales = scope_query_to_company(Sale.query, Sale).order_by(Sale.date.desc()).limit(20).all()
+    sales = _sale_accessible_query(Sale.query, Sale).order_by(Sale.date.desc()).limit(20).all()
     return jsonify(
         {
             "sales": [
@@ -1729,9 +1747,9 @@ def _ticket_text_for_whatsapp(sale):
 @bp.route("/<int:sale_id>/share-whatsapp", methods=["GET", "POST"])
 @tenant_required
 def share_whatsapp(sale_id):
-    from app import Sale, SaleItem, db, scope_query_to_company
+    from app import Sale, SaleItem, db
 
-    sale = scope_query_to_company(Sale.query.options(selectinload(Sale.items).selectinload(SaleItem.product), selectinload(Sale.client)), Sale).filter(Sale.id == sale_id).first_or_404()
+    sale = _sale_accessible_query(Sale.query.options(selectinload(Sale.items).selectinload(SaleItem.product), selectinload(Sale.client)), Sale).filter(Sale.id == sale_id).first_or_404()
     raw_phone = (sale.client.whatsapp if getattr(sale, "client", None) else "") or (sale.client.phone if getattr(sale, "client", None) else "")
     phone = _normalize_phone(raw_phone)
 

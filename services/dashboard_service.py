@@ -10,7 +10,7 @@ from services.sales_calculation_service import sale_payment_breakdown, to_decima
 
 
 def build_dashboard_context():
-    from app import CashSession, Client, Expense, Product, Sale, SaleItem, db, scope_query_to_company, utcnow
+    from app import CashSession, Client, Expense, Product, Quote, Sale, SaleItem, db, model_table_exists, scope_query_to_company, utcnow
 
     now = utcnow()
     today_start = datetime.combine(now.date(), time.min)
@@ -101,6 +101,29 @@ def build_dashboard_context():
         .order_by(db.desc("sold")),
         Product,
     ).limit(8).all()
+
+    quotes_created = 0
+    quotes_pending = 0
+    quotes_sent = 0
+    quotes_approved = 0
+    quotes_rejected = 0
+    quotes_expired = 0
+    quotes_converted = 0
+    quotes_amount = Decimal("0.00")
+    quotes_conversion_rate = 0.0
+    recent_quotes = []
+    if model_table_exists(Quote):
+        quotes_base = scope_query_to_company(Quote.query, Quote)
+        quotes_created = quotes_base.count()
+        quotes_pending = quotes_base.filter(Quote.status.in_(["BORRADOR", "ENVIADO"])).count()
+        quotes_sent = quotes_base.filter(Quote.status == "ENVIADO").count()
+        quotes_approved = quotes_base.filter(Quote.status == "APROBADO").count()
+        quotes_rejected = quotes_base.filter(Quote.status == "RECHAZADO").count()
+        quotes_expired = quotes_base.filter(Quote.status == "VENCIDO").count()
+        quotes_converted = quotes_base.filter(Quote.status == "CONVERTIDO").count()
+        quotes_amount = _sum(Quote.total_amount, model=Quote, base_query=quotes_base)
+        quotes_conversion_rate = (float(quotes_converted) / float(quotes_created) * 100.0) if quotes_created else 0.0
+        recent_quotes = quotes_base.options(selectinload(Quote.client)).order_by(Quote.date.desc()).limit(5).all()
     recent_sales = (
         _confirmed_sales_query(scope_query_to_company(Sale.query.options(selectinload(Sale.client)), Sale), Sale)
         .order_by(Sale.date.desc())
@@ -181,6 +204,18 @@ def build_dashboard_context():
         "chart_categories_labels": [item.category or "Sin categoria" for item in ranking_categories],
         "chart_categories_data": [item.sold or 0 for item in ranking_categories],
         "cash_stats": cash_stats,
+        "quote_stats": {
+            "created": quotes_created,
+            "pending": quotes_pending,
+            "sent": quotes_sent,
+            "approved": quotes_approved,
+            "rejected": quotes_rejected,
+            "expired": quotes_expired,
+            "converted": quotes_converted,
+            "amount": quotes_amount,
+            "conversion_rate": quotes_conversion_rate,
+            "recent_quotes": recent_quotes,
+        },
     }
 
 

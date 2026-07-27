@@ -15,7 +15,7 @@ from flask_login import current_user, login_required
 from openpyxl import Workbook
 from sqlalchemy import text
 
-from app import superadmin_required, utcnow
+from app import model_table_exists, superadmin_required, utcnow
 from config.billing_config import load_billing_config
 from services.backup_service import BackupService
 from services.plan_service import PlanService
@@ -40,6 +40,7 @@ CRM_LEAD_STATUSES = {"nuevo", "contactado", "propuesta", "ganado", "perdido"}
 CRM_TASK_STATUSES = {"pendiente", "en_progreso", "bloqueada", "hecha"}
 CRM_ALERT_STATUSES = {"abierta", "revisada", "resuelta"}
 CRM_PRIORITIES = {"baja", "media", "alta"}
+TERMINAL_BILLING_STATUSES = {"cancelled", "suspended", "expired", "rejected", "charged_back"}
 
 
 def _temporary_password(length: int = 12) -> str:
@@ -77,6 +78,116 @@ def _normalized_subscription_status(value: str | None) -> str:
 def _allowed_ui_actions_for_status(status: str | None):
     normalized = _normalized_subscription_status(status)
     return SUBSCRIPTION_UI_ACTIONS.get(normalized, {"modify"})
+
+
+def _company_can_be_hard_deleted(subscription) -> bool:
+    if subscription is None:
+        return True
+    return (subscription.status or "").strip().lower() in TERMINAL_BILLING_STATUSES
+
+
+def _hard_delete_company(company):
+    from app import (
+        AuditLog,
+        BackupLog,
+        CashMovement,
+        CashSession,
+        Client,
+        Company,
+        Expense,
+        Invoice,
+        MercadoPagoConnection,
+        NotificationReadState,
+        Payment,
+        PaymentHistory,
+        PasswordRecoveryRequest,
+        PasswordResetToken,
+        Product,
+        ProductModification,
+        ProductPriceHistory,
+        PurchaseItem,
+        PurchaseOrder,
+        Quote,
+        QuoteItem,
+        ReferralAttribution,
+        ReferralCommission,
+        ReferralPayout,
+        ReferralPayoutItem,
+        ReferralSeller,
+        SaaSAlert,
+        SaaSLead,
+        SaaSTask,
+        Sale,
+        SaleItem,
+        SaleModificationHistory,
+        Subscription,
+        Supplier,
+        SupportTicket,
+        User,
+        db,
+    )
+
+    company_id = company.id
+    user_ids = [row[0] for row in db.session.query(User.id).filter(User.company_id == company_id).all()]
+
+    quote_ids = [row[0] for row in db.session.query(Quote.id).filter(Quote.company_id == company_id).all()]
+    sale_ids = [row[0] for row in db.session.query(Sale.id).filter(Sale.company_id == company_id).all()]
+    purchase_order_ids = [row[0] for row in db.session.query(PurchaseOrder.id).filter(PurchaseOrder.company_id == company_id).all()]
+
+    seller_ids = [row[0] for row in db.session.query(ReferralSeller.id).filter(ReferralSeller.user_id.in_(user_ids)).all()] if user_ids else []
+    payout_ids = [row[0] for row in db.session.query(ReferralPayout.id).filter(ReferralPayout.seller_id.in_(seller_ids)).all()] if seller_ids else []
+
+    def delete_company_rows(model):
+        db.session.query(model).filter(model.company_id == company_id).delete(synchronize_session=False)
+
+    if payout_ids:
+        db.session.query(ReferralPayoutItem).filter(ReferralPayoutItem.payout_id.in_(payout_ids)).delete(synchronize_session=False)
+    if sale_ids:
+        db.session.query(SaleItem).filter(SaleItem.sale_id.in_(sale_ids)).delete(synchronize_session=False)
+    if quote_ids:
+        db.session.query(QuoteItem).filter(QuoteItem.quote_id.in_(quote_ids)).delete(synchronize_session=False)
+    if purchase_order_ids:
+        db.session.query(PurchaseItem).filter(PurchaseItem.purchase_order_id.in_(purchase_order_ids)).delete(synchronize_session=False)
+
+    delete_company_rows(SaleModificationHistory)
+    delete_company_rows(AuditLog)
+    delete_company_rows(CashMovement)
+    delete_company_rows(PaymentHistory)
+    delete_company_rows(ProductModification)
+    delete_company_rows(ProductPriceHistory)
+    delete_company_rows(BackupLog)
+    delete_company_rows(Expense)
+    delete_company_rows(SupportTicket)
+    delete_company_rows(PasswordRecoveryRequest)
+    delete_company_rows(SaaSAlert)
+    delete_company_rows(SaaSTask)
+    delete_company_rows(SaaSLead)
+    delete_company_rows(ReferralCommission)
+    delete_company_rows(ReferralAttribution)
+
+    if payout_ids:
+        db.session.query(ReferralPayout).filter(ReferralPayout.id.in_(payout_ids)).delete(synchronize_session=False)
+    if seller_ids:
+        db.session.query(ReferralSeller).filter(ReferralSeller.id.in_(seller_ids)).delete(synchronize_session=False)
+
+    delete_company_rows(Payment)
+    delete_company_rows(Invoice)
+    delete_company_rows(Subscription)
+    delete_company_rows(MercadoPagoConnection)
+    delete_company_rows(CashSession)
+    delete_company_rows(Sale)
+    delete_company_rows(Quote)
+    delete_company_rows(PurchaseOrder)
+    delete_company_rows(Product)
+    delete_company_rows(Client)
+    delete_company_rows(Supplier)
+
+    if user_ids:
+        db.session.query(NotificationReadState).filter(NotificationReadState.user_id.in_(user_ids)).delete(synchronize_session=False)
+        db.session.query(PasswordResetToken).filter(PasswordResetToken.user_id.in_(user_ids)).delete(synchronize_session=False)
+        db.session.query(User).filter(User.id.in_(user_ids)).delete(synchronize_session=False)
+
+    db.session.delete(company)
 
 
 def _action_allowed_for_status(status: str | None, action: str) -> bool:
@@ -280,12 +391,19 @@ def index():
     plan_state_labels = [row[0] or "Sin plan" for row in plan_state_rows]
     plan_state_data = [int(row[1] or 0) for row in plan_state_rows]
 
-    referral_sellers_count = ReferralSeller.query.count()
-    referral_commissions_count = ReferralCommission.query.count()
-    referral_sold_total = float(db.session.query(db.func.coalesce(db.func.sum(ReferralCommission.sold_amount), 0)).scalar() or 0)
-    referral_paid_total = float(db.session.query(db.func.coalesce(db.func.sum(ReferralCommission.commission_amount), 0)).filter(ReferralCommission.status == "pagada").scalar() or 0)
-    referral_pending_count = ReferralCommission.query.filter(ReferralCommission.status.in_(["pendiente", "disponible"])).count()
-    latest_referral_commissions = ReferralCommission.query.order_by(ReferralCommission.created_at.desc()).limit(10).all()
+    referral_sellers_count = 0
+    referral_commissions_count = 0
+    referral_sold_total = 0.0
+    referral_paid_total = 0.0
+    referral_pending_count = 0
+    latest_referral_commissions = []
+    if model_table_exists(ReferralSeller) and model_table_exists(ReferralCommission):
+        referral_sellers_count = ReferralSeller.query.count()
+        referral_commissions_count = ReferralCommission.query.count()
+        referral_sold_total = float(db.session.query(db.func.coalesce(db.func.sum(ReferralCommission.sold_amount), 0)).scalar() or 0)
+        referral_paid_total = float(db.session.query(db.func.coalesce(db.func.sum(ReferralCommission.commission_amount), 0)).filter(ReferralCommission.status == "pagada").scalar() or 0)
+        referral_pending_count = ReferralCommission.query.filter(ReferralCommission.status.in_(["pendiente", "disponible"])).count()
+        latest_referral_commissions = ReferralCommission.query.order_by(ReferralCommission.created_at.desc()).limit(10).all()
 
     crm_leads_total = SaaSLead.query.count()
     crm_leads_open = SaaSLead.query.filter(SaaSLead.status.in_(["nuevo", "contactado", "propuesta"])).count()
@@ -856,32 +974,44 @@ def company_generate_pin(company_id):
 @bp.route("/companies/<int:company_id>/delete", methods=["POST"])
 @superadmin_required
 def company_delete(company_id):
-    from app import AuditLog, Company, Subscription, User, db
+    from app import AuditLog, Company, db
 
     _require_superadmin()
     company = Company.query.filter_by(id=company_id).first_or_404()
-    company.active = False
-    User.query.filter_by(company_id=company.id).update({User.active: False}, synchronize_session=False)
-    Subscription.query.filter_by(company_id=company.id).update(
-        {
-            Subscription.status: "cancelled",
-            Subscription.renewal_enabled: False,
-            Subscription.auto_renew: False,
-        },
-        synchronize_session=False,
-    )
+    subscription = None
+    if company.subscriptions:
+        subscription = sorted(
+            company.subscriptions,
+            key=lambda item: ((item.start_date or item.created_at) or utcnow(), item.id),
+            reverse=True,
+        )[0]
+    if not _company_can_be_hard_deleted(subscription):
+        flash("Solo se pueden eliminar definitivamente empresas sin suscripción activa o en estados terminales.", "warning")
+        return _redirect_back("saas.companies_panel")
+
     db.session.add(
         AuditLog(
             user_id=current_user.id,
-            company_id=company.id,
-            action="company_soft_delete",
+            company_id=None,
+            action="company_hard_delete",
             entity="company",
             entity_id=company.id,
-            detail=f"Empresa marcada como eliminada logicamente. ip={request.remote_addr or 'unknown'} resultado=ok",
+            detail=f"Empresa eliminada definitivamente: {company.name}. ip={request.remote_addr or 'unknown'} resultado=ok",
+        )
+    )
+    _hard_delete_company(company)
+    db.session.add(
+        AuditLog(
+            user_id=current_user.id,
+            company_id=None,
+            action="company_hard_delete_complete",
+            entity="company",
+            entity_id=company.id,
+            detail=f"Empresa purgada definitivamente: {company.name}. ip={request.remote_addr or 'unknown'} resultado=ok",
         )
     )
     db.session.commit()
-    flash("Empresa eliminada de forma lógica (desactivada).", "warning")
+    flash("Empresa eliminada definitivamente.", "success")
     return _redirect_back("saas.companies_panel")
 
 

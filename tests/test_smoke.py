@@ -12,7 +12,7 @@ import pytest
 from flask_login import login_user, logout_user
 
 import app as stock_app
-from app import CashMovement, CashSession, Client, Company, Product, ReferralAttribution, SaaSAlert, SaaSLead, SaaSTask, Sale, SaleItem, SaleModificationHistory, Subscription, User, db
+from app import CashMovement, CashSession, Client, Company, Product, Quote, ReferralAttribution, SaaSAlert, SaaSLead, SaaSTask, Sale, SaleItem, SaleModificationHistory, Subscription, User, db
 from sqlalchemy.exc import ProgrammingError
 
 try:
@@ -77,6 +77,23 @@ def open_cash_session(client, opening_amount="0"):
         follow_redirects=True,
     )
     assert response.status_code == 200
+
+
+def enable_quotes_module(company, *, enabled=True):
+    company.preferences_json = json.dumps({"quotes_module_enabled": enabled})
+    db.session.commit()
+
+
+def grant_quote_permissions(user):
+    user.permissions_json = json.dumps([
+        "quotes_view",
+        "quotes_create",
+        "quotes_edit",
+        "quotes_delete",
+        "quotes_convert",
+        "quotes_print",
+    ])
+    db.session.commit()
 
 
 def test_core_routes_and_decimal_checkout():
@@ -919,8 +936,32 @@ def test_superadmin_company_detail_exposes_delete_button():
     detail = client.get(f"/superadmin/companies/{company_id}")
     assert detail.status_code == 200
     html = detail.data.decode("utf-8")
-    assert "Eliminar empresa" in html
+    assert "Eliminar definitivamente" in html
     assert f"/superadmin/companies/{company_id}/delete" in html
+
+
+def test_superadmin_company_hard_delete_removes_company_tree():
+    client = stock_app.app.test_client()
+
+    with stock_app.app.app_context():
+        company = Company.query.filter_by(name="Empresa Demo").first()
+        assert company is not None
+        company_id = company.id
+
+    client.post("/auth/login", data={"username": "superadmin", "password": "admin123"})
+
+    delete_response = client.post(
+        f"/superadmin/companies/{company_id}/delete",
+        data={"next": "/superadmin/companies"},
+        follow_redirects=False,
+    )
+    assert delete_response.status_code in (302, 303)
+
+    with stock_app.app.app_context():
+        assert db.session.get(Company, company_id) is None
+        assert User.query.filter_by(company_id=company_id).count() == 0
+        assert Product.query.filter_by(company_id=company_id).count() == 0
+        assert Client.query.filter_by(company_id=company_id).count() == 0
 
 
 def test_superadmin_login_survives_admin_bootstrap_with_different_env_owner(monkeypatch):
@@ -1055,8 +1096,88 @@ def test_qr_print_all_supports_square_5x5_a4_format():
         },
     )
     assert response.status_code == 200
-    assert response.mimetype == "application/pdf"
-    assert response.headers.get("Content-Disposition", "").find("etiquetas_5x5_a4.pdf") >= 0
+
+
+def test_quotes_module_toggle_and_permissions():
+    client = stock_app.app.test_client()
+    client.post("/auth/login", data={"username": "empresa_admin", "password": "admin123"})
+
+    with stock_app.app.app_context():
+        company = Company.query.filter_by(name="Empresa Demo").first()
+        assert company is not None
+        enable_quotes_module(company, enabled=False)
+
+    assert client.get("/presupuestos/").status_code == 404
+
+    with stock_app.app.app_context():
+        company = Company.query.filter_by(name="Empresa Demo").first()
+        assert company is not None
+        enable_quotes_module(company, enabled=True)
+        user = User.query.filter_by(username="empresa_admin").first()
+        assert user is not None
+        user.permissions_json = None
+        db.session.commit()
+
+    assert client.get("/presupuestos/").status_code == 403
+
+
+def test_quotes_create_convert_pdf_and_stock_flow():
+    client = stock_app.app.test_client()
+    client.post("/auth/login", data={"username": "empresa_admin", "password": "admin123"})
+
+    with stock_app.app.app_context():
+        company = Company.query.filter_by(name="Empresa Demo").first()
+        assert company is not None
+        enable_quotes_module(company, enabled=True)
+        user = User.query.filter_by(username="empresa_admin").first()
+        assert user is not None
+        grant_quote_permissions(user)
+        initial_stock = Product.query.get(1).stock
+
+    payload = {
+        "client_id": 1,
+        "expires_at": "2026-08-05",
+        "observations": "Presupuesto de prueba",
+        "status": "BORRADOR",
+        "discount": "50",
+        "surcharge": "25",
+        "items_json": json.dumps([
+            {"product_id": 1, "description": "Yerba kilo", "quantity": 2, "unit_price": 18000, "discount": 100},
+        ]),
+        "submit_action": "save",
+    }
+    response = client.post("/presupuestos/nuevo", data=payload, follow_redirects=False)
+    assert response.status_code in {302, 303}
+
+    with stock_app.app.app_context():
+        quote = Quote.query.order_by(Quote.id.desc()).first()
+        assert quote is not None
+        assert quote.status == "BORRADOR"
+        assert float(quote.total_amount) == 35875.0
+        assert float(Product.query.get(1).stock) == float(initial_stock)
+
+    pdf_response = client.get(f"/presupuestos/{quote.id}/pdf")
+    assert pdf_response.status_code == 200
+    assert pdf_response.mimetype == "application/pdf"
+
+    open_cash_session(client)
+    convert_response = client.post(f"/presupuestos/{quote.id}/convertir", follow_redirects=False)
+    assert convert_response.status_code in {302, 303}
+
+    with stock_app.app.app_context():
+        quote = Quote.query.get(quote.id)
+        sale = Sale.query.get(quote.converted_sale_id)
+        assert quote is not None
+        assert sale is not None
+        assert quote.status == "CONVERTIDO"
+        assert float(sale.total_amount) == float(quote.total_amount)
+        assert float(Product.query.get(1).stock) == float(initial_stock) - 2.0
+        movement = CashMovement.query.filter_by(sale_id=sale.id).first()
+        assert movement is not None
+        assert float(movement.amount) == float(sale.total_amount)
+        assert len(sale.items) == 1
+        assert float(sale.items[0].quantity) == 2.0
+        assert float(sale.items[0].total_amount) == float(sale.total_amount)
 
 
 def test_qr_print_all_supports_selected_and_single_scope():

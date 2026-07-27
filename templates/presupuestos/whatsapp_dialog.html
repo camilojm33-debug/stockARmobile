@@ -1,0 +1,30 @@
+{% extends "base_master.html" %}
+
+{% block title %}Compartir presupuesto - StockArmobile{% endblock %}
+
+{% block content %}
+<div class="app-shell">
+  <div class="row justify-content-center">
+    <div class="col-lg-7 col-xl-6">
+      <div class="card app-card">
+        <div class="card-body p-4">
+          <span class="page-kicker"><i class="bi bi-whatsapp"></i> WhatsApp</span>
+          <h1 class="h5 fw-bold mb-3">Compartir presupuesto</h1>
+          <p class="text-muted">Se abrirá WhatsApp con el mensaje preparado y el enlace al PDF del presupuesto.</p>
+          <form method="post" action="{{ url_for('quotes.share_whatsapp_post', quote_id=quote.id) }}">
+            <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+            <div class="mb-3">
+              <label class="form-label">Número de WhatsApp</label>
+              <input class="form-control" name="whatsapp_phone" value="{{ entered_phone }}" placeholder="54911..." required>
+            </div>
+            <div class="d-flex justify-content-end gap-2">
+              <a class="btn btn-outline-secondary" href="{{ url_for('quotes.view_quote', quote_id=quote.id) }}">Cancelar</a>
+              <button class="btn btn-success" type="submit"><i class="bi bi-whatsapp me-1"></i>Abrir WhatsApp</button>
+            </div>
+          </form>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+{% endblock %}

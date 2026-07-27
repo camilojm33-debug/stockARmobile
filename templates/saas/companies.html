@@ -120,11 +120,14 @@
                   <input type="hidden" name="next" value="{{ request.full_path }}">
                   <button class="btn btn-sm {{ 'btn-outline-danger' if company.active else 'btn-outline-success' }}" type="submit">{{ 'Suspender' if company.active else 'Reactivar' }}</button>
                 </form>
-                <form method="post" action="{{ url_for('saas.company_delete', company_id=company.id) }}" onsubmit="return confirm('Confirmar eliminacion logica de la empresa?');">
+                {% set can_hard_delete = (not sub) or (sub.status in ['cancelled', 'suspended', 'expired', 'rejected', 'charged_back']) %}
+                {% if can_hard_delete %}
+                <form method="post" action="{{ url_for('saas.company_delete', company_id=company.id) }}" onsubmit="return confirm('Esta accion eliminara definitivamente la empresa y todos sus datos asociados. Continuar?');">
                   <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
                   <input type="hidden" name="next" value="{{ request.full_path }}">
-                  <button class="btn btn-sm btn-outline-danger" type="submit">Eliminar</button>
+                  <button class="btn btn-sm btn-danger" type="submit">Eliminar definitivamente</button>
                 </form>
+                {% endif %}
               </div>
             </td>
           </tr>

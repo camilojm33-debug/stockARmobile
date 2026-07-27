@@ -36,7 +36,7 @@ def _coerce_payload():
 @bp.route("/")
 @tenant_required
 def index():
-    from app import Client, Sale, db, scope_query_to_company
+    from app import Client, Quote, Sale, db, scope_query_to_company
 
     query = scope_query_to_company(Client.query.filter_by(active=True), Client)
     search = request.args.get("search")
@@ -58,6 +58,23 @@ def index():
         .all()
     )
     client_stats = {row.client_id: {"purchase_count": row.purchase_count, "total_spent": float(row.total_spent or 0)} for row in stats_rows}
+    quote_rows = (
+        scope_query_to_company(
+            db.session.query(
+                Quote.client_id,
+                db.func.count(Quote.id).label("quote_count"),
+                db.func.coalesce(db.func.sum(Quote.total_amount), 0).label("total_quoted"),
+                db.func.max(Quote.date).label("last_quote_at"),
+            ),
+            Quote,
+        )
+        .filter(Quote.client_id.isnot(None))
+        .group_by(Quote.client_id)
+        .all()
+    )
+    for row in quote_rows:
+        client_stats.setdefault(row.client_id, {})
+        client_stats[row.client_id].update({"quote_count": row.quote_count, "total_quoted": float(row.total_quoted or 0), "last_quote_at": row.last_quote_at})
     return render_template("clientes/index.html", clients=clients, client_stats=client_stats)
 
 
@@ -136,10 +153,26 @@ def edit(client_id=None, id=None):
 @bp.route("/show/<int:id>")
 @tenant_required
 def show(id):
-    from app import Client, scope_query_to_company
+    from app import Client, Quote, Sale, db, scope_query_to_company
 
     client = scope_query_to_company(Client.query, Client).filter(Client.id == id).first_or_404()
-    return render_template("clientes/form.html", client=client, readonly=True)
+    sales_stats = scope_query_to_company(
+        db.session.query(db.func.count(Sale.id).label("sales_count"), db.func.coalesce(db.func.sum(Sale.total_amount), 0).label("total_spent")),
+        Sale,
+    ).filter(Sale.client_id == client.id).first()
+    quote_stats = scope_query_to_company(
+        db.session.query(db.func.count(Quote.id).label("quote_count"), db.func.coalesce(db.func.sum(Quote.total_amount), 0).label("total_quoted"), db.func.max(Quote.date).label("last_quote_at")),
+        Quote,
+    ).filter(Quote.client_id == client.id).first()
+    last_quote = scope_query_to_company(Quote.query, Quote).filter(Quote.client_id == client.id).order_by(Quote.date.desc()).first()
+    return render_template(
+        "clientes/form.html",
+        client=client,
+        readonly=True,
+        sales_stats=sales_stats,
+        quote_stats=quote_stats,
+        last_quote=last_quote,
+    )
 
 
 @bp.route("/delete/<int:client_id>", methods=["POST"])

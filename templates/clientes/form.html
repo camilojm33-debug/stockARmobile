@@ -7,6 +7,20 @@
   <div class="card border-0 shadow-sm">
     <div class="card-body">
       <h1 class="h4 fw-bold mb-3">{{ 'Editar cliente' if client else 'Nuevo cliente' }}</h1>
+        {% if readonly %}
+        <div class="row g-3 mb-4">
+          <div class="col-md-3"><div class="border rounded-3 p-3 h-100"><div class="small text-muted">Ventas</div><div class="fw-semibold">{{ sales_stats.sales_count if sales_stats else 0 }}</div></div></div>
+          <div class="col-md-3"><div class="border rounded-3 p-3 h-100"><div class="small text-muted">Total comprado</div><div class="fw-semibold">${{ "%.2f"|format(sales_stats.total_spent if sales_stats else 0) }}</div></div></div>
+          <div class="col-md-3"><div class="border rounded-3 p-3 h-100"><div class="small text-muted">Presupuestos</div><div class="fw-semibold">{{ quote_stats.quote_count if quote_stats else 0 }}</div></div></div>
+          <div class="col-md-3"><div class="border rounded-3 p-3 h-100"><div class="small text-muted">Total presupuestado</div><div class="fw-semibold">${{ "%.2f"|format(quote_stats.total_quoted if quote_stats else 0) }}</div></div></div>
+        </div>
+        {% if last_quote %}
+        <div class="alert alert-light border mb-4">
+          <div class="fw-semibold">Último presupuesto</div>
+          <div class="small text-muted">#{{ last_quote.number or ('P-' ~ '%06d'|format(last_quote.id)) }} · {{ last_quote.date.strftime('%d/%m/%Y %H:%M') if last_quote.date else '' }} · {{ last_quote.status }}</div>
+        </div>
+        {% endif %}
+        {% endif %}
       <form method="post" action="{{ url_for('clients.edit', id=client.id) if client else url_for('clients.post') }}">
         <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
         <div class="row g-3">

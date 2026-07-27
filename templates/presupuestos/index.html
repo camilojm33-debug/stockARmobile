@@ -1,0 +1,100 @@
+{% extends "base_master.html" %}
+
+{% block title %}Presupuestos - StockArmobile{% endblock %}
+
+{% block content %}
+<div class="app-shell">
+  <div class="d-flex justify-content-between align-items-center flex-wrap gap-3 mb-4">
+    <div>
+      <span class="page-kicker"><i class="bi bi-file-earmark-text"></i> Presupuestos</span>
+      <h1 class="h3 fw-bold mb-0">Listado</h1>
+      <p class="text-muted mb-0">Cotizaciones, historial y conversión a venta.</p>
+    </div>
+    <a class="btn btn-primary" href="{{ url_for('quotes.new_quote') }}"><i class="bi bi-plus-lg me-1"></i>Nuevo presupuesto</a>
+  </div>
+
+  <div class="row g-3 mb-4">
+    <div class="col-6 col-lg-2"><div class="card app-card"><div class="card-body"><div class="small text-muted">Creados</div><div class="h4 mb-0">{{ quotes|length }}</div></div></div></div>
+    <div class="col-6 col-lg-2"><div class="card app-card"><div class="card-body"><div class="small text-muted">Pendientes</div><div class="h4 mb-0">{{ (quotes|selectattr('status', 'equalto', 'BORRADOR')|list|length) + (quotes|selectattr('status', 'equalto', 'ENVIADO')|list|length) }}</div></div></div></div>
+    <div class="col-6 col-lg-2"><div class="card app-card"><div class="card-body"><div class="small text-muted">Convertidos</div><div class="h4 mb-0">{{ quotes|selectattr('status', 'equalto', 'CONVERTIDO')|list|length }}</div></div></div></div>
+    <div class="col-6 col-lg-3"><div class="card app-card"><div class="card-body"><div class="small text-muted">Monto presupuestado</div><div class="h4 mb-0">${{ "%.2f"|format(quotes|sum(attribute='total_amount')) }}</div></div></div></div>
+    <div class="col-6 col-lg-3"><div class="card app-card"><div class="card-body"><div class="small text-muted">Tasa de conversión</div><div class="h4 mb-0">{{ ((quotes|selectattr('status', 'equalto', 'CONVERTIDO')|list|length) * 100 / (quotes|length or 1))|round(1) }}%</div></div></div></div>
+  </div>
+
+  <div class="d-flex flex-wrap gap-2 mb-3">
+    <a class="btn btn-sm {% if selected_quick == 'today' %}btn-primary{% else %}btn-outline-primary{% endif %}" href="{{ url_for('quotes.index', quick='today') }}">Hoy</a>
+    <a class="btn btn-sm {% if selected_quick == 'week' %}btn-primary{% else %}btn-outline-primary{% endif %}" href="{{ url_for('quotes.index', quick='week') }}">Semana</a>
+    <a class="btn btn-sm {% if selected_quick == 'month' %}btn-primary{% else %}btn-outline-primary{% endif %}" href="{{ url_for('quotes.index', quick='month') }}">Mes</a>
+    <a class="btn btn-sm {% if selected_quick == 'year' %}btn-primary{% else %}btn-outline-primary{% endif %}" href="{{ url_for('quotes.index', quick='year') }}">Año</a>
+    <a class="btn btn-sm {% if selected_quick == 'pending' %}btn-primary{% else %}btn-outline-primary{% endif %}" href="{{ url_for('quotes.index', quick='pending') }}">Pendientes</a>
+    <a class="btn btn-sm {% if selected_quick == 'sent' %}btn-primary{% else %}btn-outline-primary{% endif %}" href="{{ url_for('quotes.index', quick='sent') }}">Enviados</a>
+    <a class="btn btn-sm {% if selected_quick == 'approved' %}btn-primary{% else %}btn-outline-primary{% endif %}" href="{{ url_for('quotes.index', quick='approved') }}">Aprobados</a>
+    <a class="btn btn-sm {% if selected_quick == 'rejected' %}btn-primary{% else %}btn-outline-primary{% endif %}" href="{{ url_for('quotes.index', quick='rejected') }}">Rechazados</a>
+    <a class="btn btn-sm {% if selected_quick == 'converted' %}btn-primary{% else %}btn-outline-primary{% endif %}" href="{{ url_for('quotes.index', quick='converted') }}">Convertidos</a>
+    <a class="btn btn-sm {% if selected_quick == 'expired' %}btn-primary{% else %}btn-outline-primary{% endif %}" href="{{ url_for('quotes.index', quick='expired') }}">Vencidos</a>
+  </div>
+
+  <div class="card app-card toolbar-card mb-3">
+    <form class="row g-2 align-items-end" method="get">
+      <div class="col-lg-3">
+        <label class="form-label">Buscar</label>
+        <input class="form-control" name="q" value="{{ search }}" placeholder="Número, observación o estado" oninput="this.form.submit()">
+      </div>
+      <div class="col-lg-3">
+        <label class="form-label">Producto</label>
+        <input class="form-control" name="product" value="{{ product_search }}" placeholder="Nombre, código o barra" oninput="this.form.submit()">
+      </div>
+      <div class="col-lg-2">
+        <label class="form-label">Estado</label>
+        <select class="form-select" name="status" onchange="this.form.submit()">
+          <option value="">Todos</option>
+          {% for item in statuses %}
+          <option value="{{ item }}" {% if selected_status == item %}selected{% endif %}>{{ item }}</option>
+          {% endfor %}
+        </select>
+      </div>
+      <div class="col-lg-2"><label class="form-label">Cliente</label><select class="form-select" name="client_id" onchange="this.form.submit()"><option value="">Todos</option>{% for client in clients %}<option value="{{ client.id }}" {% if selected_client_id == client.id %}selected{% endif %}>{{ client.name }}</option>{% endfor %}</select></div>
+      <div class="col-lg-2"><label class="form-label">Vendedor</label><select class="form-select" name="seller_id" onchange="this.form.submit()"><option value="">Todos</option>{% for seller in sellers %}<option value="{{ seller.id }}" {% if selected_seller_id == seller.id %}selected{% endif %}>{{ seller.name }}</option>{% endfor %}</select></div>
+      <div class="col-lg-1"><label class="form-label">Desde</label><input class="form-control" type="date" name="from" value="{{ date_from }}" onchange="this.form.submit()"></div>
+      <div class="col-lg-1"><label class="form-label">Hasta</label><input class="form-control" type="date" name="to" value="{{ date_to }}" onchange="this.form.submit()"></div>
+      <div class="col-lg-1 d-grid"><button class="btn btn-outline-primary">Filtrar</button></div>
+    </form>
+  </div>
+
+  <div class="card app-card">
+    <div class="table-responsive">
+      <table class="table table-hover align-middle mb-0">
+        <thead class="table-light">
+          <tr>
+            <th>Número</th><th>Cliente</th><th>Vendedor</th><th>Fecha</th><th>Vence</th><th>Estado</th><th class="text-end">Total</th><th class="text-end">Acciones</th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for quote in quotes %}
+          <tr>
+            <td class="fw-semibold">{{ quote.number or ('P-' ~ '%06d'|format(quote.id)) }}</td>
+            <td>{{ quote.client.name if quote.client else 'Consumidor final' }}</td>
+            <td>{{ quote.seller.name if quote.seller else '-' }}</td>
+            <td>{{ quote.date.strftime('%d/%m/%Y %H:%M') if quote.date else '-' }}</td>
+            <td>{{ quote.expires_at.strftime('%d/%m/%Y') if quote.expires_at else '-' }}</td>
+            <td><span class="badge {% if quote.status == 'CONVERTIDO' %}text-bg-success{% elif quote.status in ['APROBADO','ENVIADO'] %}text-bg-primary{% elif quote.status == 'RECHAZADO' %}text-bg-danger{% elif quote.status == 'VENCIDO' %}text-bg-warning{% elif quote.status == 'ANULADO' %}text-bg-dark{% else %}text-bg-secondary{% endif %}">{{ quote.status }}</span></td>
+            <td class="text-end fw-semibold">${{ "%.2f"|format(quote.total_amount or 0) }}</td>
+            <td class="text-end">
+              <div class="d-inline-flex flex-wrap gap-1 justify-content-end">
+                <a class="btn btn-sm btn-outline-secondary" href="{{ url_for('quotes.view_quote', quote_id=quote.id) }}">Ver</a>
+                <a class="btn btn-sm btn-outline-primary" href="{{ url_for('quotes.edit_quote', quote_id=quote.id) }}">Editar</a>
+                {% if current_user_has_permission('quotes_duplicate') %}
+                <form method="post" action="{{ url_for('quotes.duplicate_quote', quote_id=quote.id) }}"><input type="hidden" name="csrf_token" value="{{ csrf_token() }}"><button class="btn btn-sm btn-outline-dark" type="submit">Duplicar</button></form>
+                {% endif %}
+              </div>
+            </td>
+          </tr>
+          {% else %}
+          <tr><td colspan="8" class="text-center text-muted py-5"><i class="bi bi-file-earmark-text display-6 d-block mb-2"></i>No hay presupuestos registrados.</td></tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+  </div>
+</div>
+{% endblock %}

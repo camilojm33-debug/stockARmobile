@@ -1,0 +1,242 @@
+{% extends "base_master.html" %}
+
+{% block title %}{{ 'Editar' if mode == 'edit' else 'Nuevo' }} presupuesto - StockArmobile{% endblock %}
+
+{% block content %}
+<div class="app-shell">
+  <div class="row g-4">
+    <div class="col-xl-7">
+      <div class="card app-card h-100">
+        <div class="card-body p-4">
+          <span class="page-kicker"><i class="bi bi-file-earmark-text"></i> Presupuesto</span>
+          <h1 class="h4 fw-bold mb-3">{{ 'Editar' if mode == 'edit' else 'Nuevo' }} presupuesto</h1>
+          <div class="mb-3">
+            <label class="form-label">Buscar productos</label>
+            <input id="quoteProductSearch" class="form-control" placeholder="Nombre, código o código de barras" oninput="filterProducts()">
+          </div>
+          <div class="table-responsive mb-4" style="max-height: 340px; overflow:auto;">
+            <table class="table table-sm table-hover align-middle">
+              <thead class="table-light sticky-top"><tr><th>Producto</th><th>Código</th><th class="text-end">Precio</th><th class="text-end">Acción</th></tr></thead>
+              <tbody id="quoteCatalogBody">
+                {% for product in products %}
+                <tr data-product-row data-search="{{ (product.name ~ ' ' ~ (product.barcode or '') ~ ' ' ~ (product.category or ''))|lower }}">
+                  <td>
+                    <div class="fw-semibold">{{ product.name }}</div>
+                    <div class="small text-muted">{{ product.category or '-' }}</div>
+                  </td>
+                  <td>{{ product.barcode or '-' }}</td>
+                  <td class="text-end">${{ "%.2f"|format(product.price or 0) }}</td>
+                  <td class="text-end">
+                    <button type="button" class="btn btn-sm btn-outline-primary" onclick='addProduct({{ {"id": product.id, "name": product.name, "barcode": product.barcode, "price": product.price, "discount": product.discount}|tojson }})'>Agregar</button>
+                  </td>
+                </tr>
+                {% endfor %}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <div class="col-xl-5">
+      <div class="card app-card sticky-top" style="top: 1.25rem;">
+        <div class="card-body p-4">
+          <form method="post" id="quoteForm">
+            <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+            <input type="hidden" name="items_json" id="itemsJson">
+            <input type="hidden" name="submit_action" id="submitAction" value="save">
+
+            <div class="row g-3">
+              <div class="col-12">
+                <label class="form-label">Cliente</label>
+                <select name="client_id" class="form-select">
+                  <option value="">Consumidor final</option>
+                  {% for client in clients %}
+                  <option value="{{ client.id }}" {% if quote and quote.client_id == client.id %}selected{% endif %}>{{ client.name }}</option>
+                  {% endfor %}
+                </select>
+              </div>
+              <div class="col-md-6">
+                <label class="form-label">Vendedor</label>
+                <select name="seller_id" class="form-select">
+                  {% for seller in sellers %}
+                  <option value="{{ seller.id }}" {% if quote and quote.seller_id == seller.id %}selected{% elif not quote and seller.id == current_user.id %}selected{% endif %}>{{ seller.name }}</option>
+                  {% endfor %}
+                </select>
+              </div>
+              <div class="col-md-6">
+                <label class="form-label">Vencimiento</label>
+                <input type="date" class="form-control" name="expires_at" value="{{ quote.expires_at.strftime('%Y-%m-%d') if quote and quote.expires_at else '' }}">
+              </div>
+              <div class="col-md-6">
+                <label class="form-label">Estado</label>
+                <select class="form-select" name="status">
+                  {% for item in statuses %}
+                  <option value="{{ item }}" {% if quote and quote.status == item %}selected{% elif not quote and item == 'BORRADOR' %}selected{% endif %}>{{ item }}</option>
+                  {% endfor %}
+                </select>
+              </div>
+              <div class="col-12">
+                <label class="form-label">Observaciones</label>
+                <textarea class="form-control" name="observations" rows="3">{{ quote.observations if quote else '' }}</textarea>
+              </div>
+              <div class="col-12">
+                <label class="form-label">Condiciones comerciales</label>
+                <textarea class="form-control" name="commercial_conditions" rows="3">{{ quote.commercial_conditions if quote else '' }}</textarea>
+              </div>
+              <div class="col-md-6">
+                <label class="form-label">Moneda</label>
+                <input class="form-control" type="text" name="currency" value="{{ quote.currency if quote else 'ARS' }}" maxlength="10">
+              </div>
+            </div>
+
+            <hr class="my-4">
+
+            <div class="table-responsive mb-3">
+              <table class="table table-sm align-middle" id="itemsTable">
+                <thead class="table-light"><tr><th>Prod.</th><th class="text-end">Cant.</th><th class="text-end">Precio</th><th class="text-end">Dcto</th><th class="text-end">Subtotal</th><th></th></tr></thead>
+                <tbody></tbody>
+              </table>
+            </div>
+
+            <div class="row g-2 mb-3">
+              <div class="col-6"><label class="form-label">Descuento</label><input class="form-control" type="number" step="0.01" min="0" id="generalDiscount" name="discount" value="{{ general_discount_value if general_discount_value is not none else 0 }}" oninput="recalculate()"></div>
+              <div class="col-6"><label class="form-label">Recargo</label><input class="form-control" type="number" step="0.01" min="0" id="generalSurcharge" name="surcharge" value="{{ quote.surcharge if quote else 0 }}" oninput="recalculate()"></div>
+            </div>
+
+            <div class="summary-panel mb-4">
+              <div class="d-flex justify-content-between"><span>Subtotal</span><strong id="sumSubtotal">$0.00</strong></div>
+              <div class="d-flex justify-content-between"><span>Descuento</span><strong id="sumDiscount">$0.00</strong></div>
+              <div class="d-flex justify-content-between"><span>Recargo</span><strong id="sumSurcharge">$0.00</strong></div>
+              <div class="d-flex justify-content-between"><span>Impuestos</span><strong id="sumTax">$0.00</strong></div>
+              <hr>
+              <div class="d-flex justify-content-between fs-5"><span>Total</span><strong class="text-primary" id="sumTotal">$0.00</strong></div>
+            </div>
+
+            <div class="d-flex flex-wrap gap-2 justify-content-between">
+              <div class="d-flex gap-2 flex-wrap">
+                <button type="submit" class="btn btn-primary" onclick="prepareSubmit('save')"><i class="bi bi-save me-1"></i>Guardar borrador</button>
+                <button type="submit" class="btn btn-success" onclick="prepareSubmit('send')"><i class="bi bi-send me-1"></i>Enviar</button>
+              </div>
+              <div class="d-flex gap-2 flex-wrap">
+                <a class="btn btn-outline-secondary" href="{{ url_for('quotes.index') }}">Volver</a>
+              </div>
+            </div>
+          </form>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+{% endblock %}
+
+{% block extra_js %}
+<script>
+  const initialItems = {{ initial_items|tojson }};
+  const items = [];
+
+  function money(value) {
+    return '$' + Number(value || 0).toFixed(2);
+  }
+
+  function filterProducts() {
+    const query = (document.getElementById('quoteProductSearch').value || '').toLowerCase();
+    document.querySelectorAll('[data-product-row]').forEach((row) => {
+      row.style.display = row.dataset.search.includes(query) ? '' : 'none';
+    });
+  }
+
+  function addProduct(product) {
+    const existing = items.find((item) => String(item.product_id) === String(product.id));
+    if (existing) {
+      existing.quantity = Number(existing.quantity || 0) + 1;
+    } else {
+      items.push({
+        product_id: product.id,
+        description: product.name,
+        quantity: 1,
+        unit_price: Number(product.price || 0),
+        discount: Number(product.discount || 0),
+      });
+    }
+    renderItems();
+  }
+
+  function removeItem(index) {
+    items.splice(index, 1);
+    renderItems();
+  }
+
+  function updateItem(index, field, value) {
+    const item = items[index];
+    if (!item) return;
+    item[field] = field === 'description' ? value : Number(value || 0);
+    renderItems();
+  }
+
+  function recalculate() {
+    renderItems();
+  }
+
+  function renderItems(updateJson = true) {
+    const tbody = document.querySelector('#itemsTable tbody');
+    tbody.innerHTML = '';
+    let subtotal = 0;
+    let discount = 0;
+    items.forEach((item, index) => {
+      const lineSubtotal = Math.max((Number(item.quantity || 0) * Number(item.unit_price || 0)) - Number(item.discount || 0), 0);
+      subtotal += Number(item.quantity || 0) * Number(item.unit_price || 0);
+      discount += Number(item.discount || 0);
+      const row = document.createElement('tr');
+      row.innerHTML = `
+        <td><input class="form-control form-control-sm" value="${escapeHtml(item.description || '')}" oninput="updateItem(${index}, 'description', this.value)"></td>
+        <td><input class="form-control form-control-sm text-end" type="number" min="0" step="0.001" value="${Number(item.quantity || 0)}" oninput="updateItem(${index}, 'quantity', this.value)"></td>
+        <td><input class="form-control form-control-sm text-end" type="number" min="0" step="0.01" value="${Number(item.unit_price || 0)}" oninput="updateItem(${index}, 'unit_price', this.value)"></td>
+        <td><input class="form-control form-control-sm text-end" type="number" min="0" step="0.01" value="${Number(item.discount || 0)}" oninput="updateItem(${index}, 'discount', this.value)"></td>
+        <td class="text-end fw-semibold">${money(lineSubtotal)}</td>
+        <td class="text-end"><button type="button" class="btn btn-sm btn-outline-danger" onclick="removeItem(${index})">×</button></td>
+      `;
+      tbody.appendChild(row);
+    });
+
+    const surcharge = Number(document.getElementById('generalSurcharge').value || 0);
+    const generalDiscount = Number(document.getElementById('generalDiscount').value || 0);
+    const total = Math.max(subtotal - discount - generalDiscount + surcharge, 0);
+
+    document.getElementById('sumSubtotal').textContent = money(subtotal);
+    document.getElementById('sumDiscount').textContent = money(discount + generalDiscount);
+    document.getElementById('sumSurcharge').textContent = money(surcharge);
+    document.getElementById('sumTax').textContent = money(0);
+    document.getElementById('sumTotal').textContent = money(total);
+    if (updateJson) syncJson();
+  }
+
+  function syncJson() {
+    document.getElementById('itemsJson').value = JSON.stringify(items);
+  }
+
+  function prepareSubmit(action) {
+    document.getElementById('submitAction').value = action;
+    syncJson();
+  }
+
+  function escapeHtml(value) {
+    return String(value || '')
+      .replaceAll('&', '&amp;')
+      .replaceAll('<', '&lt;')
+      .replaceAll('>', '&gt;')
+      .replaceAll('"', '&quot;')
+      .replaceAll("'", '&#39;');
+  }
+
+  initialItems.forEach((item) => items.push({
+    product_id: item.product_id,
+    description: item.description,
+    quantity: Number(item.quantity || 0),
+    unit_price: Number(item.unit_price || 0),
+    discount: Number(item.discount || 0),
+  }));
+
+  renderItems();
+</script>
+{% endblock %}
