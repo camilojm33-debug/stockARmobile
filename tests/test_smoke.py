@@ -2,6 +2,7 @@ import os
 import gzip
 import io
 import json
+from urllib.parse import unquote
 import re
 from datetime import timedelta
 
@@ -1180,6 +1181,74 @@ def test_quotes_create_convert_pdf_and_stock_flow():
         assert float(sale.items[0].total_amount) == float(sale.total_amount)
 
 
+def test_quotes_convert_requires_open_cash_session_redirects_to_cash():
+    client = stock_app.app.test_client()
+    client.post("/auth/login", data={"username": "empresa_admin", "password": "admin123"})
+
+    with stock_app.app.app_context():
+        company = Company.query.filter_by(name="Empresa Demo").first()
+        assert company is not None
+        enable_quotes_module(company, enabled=True)
+        user = User.query.filter_by(username="empresa_admin").first()
+        assert user is not None
+        grant_quote_permissions(user)
+
+    payload = {
+        "client_id": 1,
+        "expires_at": "2026-08-05",
+        "status": "BORRADOR",
+        "items_json": json.dumps([
+            {"product_id": 1, "description": "Yerba kilo", "quantity": 1, "unit_price": 18000, "discount": 0},
+        ]),
+        "submit_action": "save",
+    }
+    create_response = client.post("/presupuestos/nuevo", data=payload, follow_redirects=False)
+    assert create_response.status_code in {302, 303}
+
+    with stock_app.app.app_context():
+        quote = Quote.query.order_by(Quote.id.desc()).first()
+        assert quote is not None
+
+    convert_response = client.post(f"/presupuestos/{quote.id}/convertir", follow_redirects=False)
+    assert convert_response.status_code in {302, 303}
+    assert "/caja/" in (convert_response.headers.get("Location") or "")
+
+
+def test_quotes_convert_shows_specific_stock_error():
+    client = stock_app.app.test_client()
+    client.post("/auth/login", data={"username": "empresa_admin", "password": "admin123"})
+
+    with stock_app.app.app_context():
+        company = Company.query.filter_by(name="Empresa Demo").first()
+        assert company is not None
+        enable_quotes_module(company, enabled=True)
+        user = User.query.filter_by(username="empresa_admin").first()
+        assert user is not None
+        grant_quote_permissions(user)
+
+    payload = {
+        "client_id": 1,
+        "expires_at": "2026-08-05",
+        "status": "BORRADOR",
+        "items_json": json.dumps([
+            {"product_id": 1, "description": "Yerba kilo", "quantity": 999, "unit_price": 18000, "discount": 0},
+        ]),
+        "submit_action": "save",
+    }
+    create_response = client.post("/presupuestos/nuevo", data=payload, follow_redirects=False)
+    assert create_response.status_code in {302, 303}
+
+    with stock_app.app.app_context():
+        quote = Quote.query.order_by(Quote.id.desc()).first()
+        assert quote is not None
+
+    open_cash_session(client)
+    convert_response = client.post(f"/presupuestos/{quote.id}/convertir", follow_redirects=True)
+    assert convert_response.status_code == 200
+    html = convert_response.data.decode("utf-8")
+    assert "Stock insuficiente" in html
+
+
 def test_quotes_whatsapp_allows_empty_or_custom_number():
     client = stock_app.app.test_client()
     client.post("/auth/login", data={"username": "empresa_admin", "password": "admin123"})
@@ -1219,11 +1288,15 @@ def test_quotes_whatsapp_allows_empty_or_custom_number():
 
     empty_phone = client.post(f"/presupuestos/{quote_id}/whatsapp", data={"whatsapp_phone": ""}, follow_redirects=False)
     assert empty_phone.status_code in (301, 302)
-    assert empty_phone.headers.get("Location", "").startswith("https://wa.me/?text=")
+    empty_location = empty_phone.headers.get("Location", "")
+    assert empty_location.startswith("https://wa.me/?text=")
+    assert "/presupuestos/publico/" in unquote(empty_location)
 
     custom_phone = client.post(f"/presupuestos/{quote_id}/whatsapp", data={"whatsapp_phone": "+54 9 11 2222 3333"}, follow_redirects=False)
     assert custom_phone.status_code in (301, 302)
-    assert custom_phone.headers.get("Location", "").startswith("https://wa.me/5491122223333")
+    custom_location = custom_phone.headers.get("Location", "")
+    assert custom_location.startswith("https://wa.me/5491122223333")
+    assert "/presupuestos/publico/" in unquote(custom_location)
 
 
 def test_quotes_allows_manual_consumer_name_without_client():
@@ -2629,7 +2702,9 @@ def test_share_whatsapp_shows_dialog_and_allows_send_once_without_saving():
         follow_redirects=False,
     )
     assert send_without_phone.status_code in (301, 302)
-    assert send_without_phone.headers.get("Location", "").startswith("https://wa.me/?text=")
+    send_without_phone_location = send_without_phone.headers.get("Location", "")
+    assert send_without_phone_location.startswith("https://wa.me/?text=")
+    assert "/ventas/publico/" in unquote(send_without_phone_location)
 
     send_once = client.post(
         f"/ventas/{sale_id}/share-whatsapp",
@@ -2637,7 +2712,9 @@ def test_share_whatsapp_shows_dialog_and_allows_send_once_without_saving():
         follow_redirects=False,
     )
     assert send_once.status_code in (301, 302)
-    assert send_once.headers.get("Location", "").startswith("https://wa.me/5491122233344")
+    send_once_location = send_once.headers.get("Location", "")
+    assert send_once_location.startswith("https://wa.me/5491122233344")
+    assert "/ventas/publico/" in unquote(send_once_location)
 
     with stock_app.app.app_context():
         unchanged_client = db.session.get(Client, client_id)
@@ -2684,7 +2761,9 @@ def test_share_whatsapp_accepts_phone_with_symbols_without_blocking():
         follow_redirects=False,
     )
     assert send_custom.status_code in (301, 302)
-    assert send_custom.headers.get("Location", "").startswith("https://wa.me/5491155566677")
+    send_custom_location = send_custom.headers.get("Location", "")
+    assert send_custom_location.startswith("https://wa.me/5491155566677")
+    assert "/ventas/publico/" in unquote(send_custom_location)
 
 
 def test_login_has_no_google_button_and_has_forgot_password_link():

@@ -10,6 +10,7 @@ from io import BytesIO
 
 from flask import Blueprint, abort, current_app, flash, jsonify, redirect, render_template, request, send_file, url_for
 from flask_login import current_user, login_required
+from itsdangerous import BadSignature, SignatureExpired, URLSafeTimedSerializer
 from reportlab.lib.utils import ImageReader
 from reportlab.lib.pagesizes import A4
 from reportlab.pdfgen import canvas
@@ -23,6 +24,8 @@ from services.whatsapp_share_service import build_whatsapp_share_url
 bp = Blueprint("quotes", __name__)
 
 QUOTE_STATUS_OPTIONS = ["BORRADOR", "ENVIADO", "PENDIENTE", "APROBADO", "RECHAZADO", "VENCIDO", "CONVERTIDO", "ANULADO"]
+QUOTE_PUBLIC_TOKEN_SALT = "quotes-public-share-v1"
+QUOTE_PUBLIC_TOKEN_MAX_AGE_SECONDS = 60 * 60 * 24 * 30
 
 
 def _json_dict(raw_value):
@@ -216,6 +219,33 @@ def _quote_customer_name(quote):
         return quote.client.name
     raw_name = (getattr(quote, "consumer_name", None) or "").strip()
     return raw_name or "Consumidor final"
+
+
+def _public_share_serializer():
+    return URLSafeTimedSerializer(current_app.config.get("SECRET_KEY", "stockarmobile-dev-secret"))
+
+
+def _build_public_quote_pdf_url(quote_id: int) -> str:
+    token = _public_share_serializer().dumps({"quote_id": int(quote_id)}, salt=QUOTE_PUBLIC_TOKEN_SALT)
+    return url_for("quotes.quote_public_pdf", token=token, _external=True)
+
+
+def _quote_id_from_public_token(token: str) -> int | None:
+    try:
+        payload = _public_share_serializer().loads(
+            token,
+            salt=QUOTE_PUBLIC_TOKEN_SALT,
+            max_age=QUOTE_PUBLIC_TOKEN_MAX_AGE_SECONDS,
+        )
+    except (BadSignature, SignatureExpired):
+        return None
+    if not isinstance(payload, dict):
+        return None
+    quote_id = payload.get("quote_id")
+    try:
+        return int(quote_id)
+    except (TypeError, ValueError):
+        return None
 
 
 def _quote_from_form(*, quote=None):
@@ -817,6 +847,29 @@ def quote_print(quote_id):
     return _quote_pdf_response(quote, as_attachment=False)
 
 
+@bp.route("/publico/<token>/pdf")
+def quote_public_pdf(token):
+    from app import Quote, QuoteItem
+
+    quote_id = _quote_id_from_public_token(token)
+    if not quote_id:
+        abort(404)
+
+    quote = (
+        Quote.query.options(
+            selectinload(Quote.client),
+            selectinload(Quote.seller),
+            selectinload(Quote.items).selectinload(QuoteItem.product),
+            selectinload(Quote.converted_sale),
+        )
+        .filter(Quote.id == quote_id)
+        .first()
+    )
+    if quote is None:
+        abort(404)
+    return _quote_pdf_response(quote, as_attachment=False)
+
+
 @bp.route("/<int:quote_id>/whatsapp")
 @tenant_required
 @login_required
@@ -831,7 +884,7 @@ def share_whatsapp(quote_id):
         "Quedamos a disposición para cualquier consulta.\n\n"
         "Muchas gracias."
     )
-    pdf_url = url_for("quotes.quote_pdf", quote_id=quote.id, _external=True)
+    pdf_url = _build_public_quote_pdf_url(quote.id)
     return render_template("presupuestos/whatsapp_dialog.html", quote=quote, entered_phone=phone, message=message, pdf_url=pdf_url)
 
 
@@ -849,7 +902,7 @@ def share_whatsapp_post(quote_id):
         "Quedamos a disposición para cualquier consulta.\n\n"
         "Muchas gracias."
     )
-    pdf_url = url_for("quotes.quote_pdf", quote_id=quote.id, _external=True)
+    pdf_url = _build_public_quote_pdf_url(quote.id)
     from app import record_audit
     record_audit(action="quote_share_whatsapp", entity="quote", entity_id=quote.id, detail=f"Compartido por WhatsApp {quote.number or quote.id}", ip_address=request.remote_addr)
     return redirect(build_whatsapp_share_url(phone=phone, message=message, document_url=pdf_url, document_label="PDF"))
@@ -887,6 +940,11 @@ def convert_to_sale(quote_id):
 
     import sales as sales_blueprint
 
+    # La conversión reutiliza la creación de ventas, por lo que requiere caja abierta.
+    if sales_blueprint._current_open_cash_session() is None:
+        flash("Debes abrir una caja antes de convertir el presupuesto en venta.", "warning")
+        return redirect(url_for("cash.index"))
+
     conversion_token = f"quote-{quote.id}"
     result = sales_blueprint._create_sale_from_items(
         items,
@@ -905,8 +963,9 @@ def convert_to_sale(quote_id):
         },
         json_response=True,
     )
-    if hasattr(result, "get_json"):
-        payload = result.get_json(silent=True) or {}
+    response_obj = result[0] if isinstance(result, tuple) else result
+    if hasattr(response_obj, "get_json"):
+        payload = response_obj.get_json(silent=True) or {}
         sale_id = payload.get("sale_id")
         if sale_id:
             quote.status = "CONVERTIDO"
@@ -916,6 +975,11 @@ def convert_to_sale(quote_id):
             record_audit(action="quote_convert", entity="quote", entity_id=quote.id, detail=f"Convertido a venta {sale_id}", ip_address=request.remote_addr)
             flash("Presupuesto convertido en venta.", "success")
             return redirect(url_for("sales.view_sale", sale_id=sale_id))
+
+        error_message = (payload.get("error") or "").strip() if isinstance(payload, dict) else ""
+        if error_message:
+            flash(error_message, "warning")
+            return redirect(url_for("quotes.view_quote", quote_id=quote.id))
     flash("No se pudo convertir el presupuesto.", "danger")
     return redirect(url_for("quotes.view_quote", quote_id=quote.id))
 

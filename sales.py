@@ -13,6 +13,7 @@ from io import BytesIO, StringIO
 
 from flask import Blueprint, abort, current_app, flash, g, jsonify, make_response, redirect, render_template, request, session, url_for
 from flask_login import current_user, login_required
+from itsdangerous import BadSignature, SignatureExpired, URLSafeTimedSerializer
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import selectinload
 from app import tenant_required, utcnow
@@ -23,6 +24,8 @@ from services.whatsapp_share_service import build_whatsapp_share_url
 import qrcode
 
 bp = Blueprint("sales", __name__)
+SALE_PUBLIC_TOKEN_SALT = "sales-public-share-v1"
+SALE_PUBLIC_TOKEN_MAX_AGE_SECONDS = 60 * 60 * 24 * 30
 
 
 def _api_error(message, status=400, **extra):
@@ -1707,8 +1710,42 @@ def _ticket_rows(sale):
     ]
 
 
+def _public_share_serializer():
+    return URLSafeTimedSerializer(current_app.config.get("SECRET_KEY", "stockarmobile-dev-secret"))
+
+
+def _build_public_sale_ticket_url(sale_id: int) -> str:
+    token = _public_share_serializer().dumps({"sale_id": int(sale_id)}, salt=SALE_PUBLIC_TOKEN_SALT)
+    return url_for("sales.public_ticket", token=token, _external=True)
+
+
+def _sale_id_from_public_token(token: str) -> int | None:
+    try:
+        payload = _public_share_serializer().loads(
+            token,
+            salt=SALE_PUBLIC_TOKEN_SALT,
+            max_age=SALE_PUBLIC_TOKEN_MAX_AGE_SECONDS,
+        )
+    except (BadSignature, SignatureExpired):
+        return None
+    if not isinstance(payload, dict):
+        return None
+    sale_id = payload.get("sale_id")
+    try:
+        return int(sale_id)
+    except (TypeError, ValueError):
+        return None
+
+
 def _build_whatsapp_link(sale, phone=None):
-    return build_whatsapp_share_url(phone=phone, message=_ticket_text_for_whatsapp(sale))
+    public_url = _build_public_sale_ticket_url(sale.id)
+    document_label = "Comprobante" if bool(getattr(sale, "requiere_comprobante", False)) else "Ticket"
+    return build_whatsapp_share_url(
+        phone=phone,
+        message=_ticket_text_for_whatsapp(sale),
+        document_url=public_url,
+        document_label=document_label,
+    )
 
 
 def _ticket_text_for_whatsapp(sale):
@@ -1749,3 +1786,19 @@ def share_whatsapp(sale_id):
         sale=sale,
         entered_phone=phone,
     )
+
+
+@bp.route("/publico/<token>/ticket")
+def public_ticket(token):
+    from app import Sale, SaleItem
+
+    sale_id = _sale_id_from_public_token(token)
+    if not sale_id:
+        abort(404)
+
+    sale = Sale.query.options(selectinload(Sale.items).selectinload(SaleItem.product)).filter(Sale.id == sale_id).first()
+    if sale is None:
+        abort(404)
+
+    ticket_brand = sale.company.name if getattr(sale, "company", None) and getattr(sale.company, "name", None) else "STOCK ARMOBILE"
+    return render_template("ventas/ticket.html", sale=sale, rows=_ticket_rows(sale), ticket_text=_ticket_text(sale, ticket_brand=ticket_brand), ticket_brand=ticket_brand)
