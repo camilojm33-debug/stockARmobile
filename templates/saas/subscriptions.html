@@ -37,7 +37,7 @@
           <select class="form-select" name="company_id" required>
             <option value="">Empresa...</option>
             {% for company in companies %}
-            <option value="{{ company.id }}">{{ company.name }}</option>
+             <option value="{{ company.id }}" {% if selected_company and selected_company.id == company.id %}selected{% endif %}>{{ company.name }}</option>
             {% endfor %}
           </select>
         </div>
@@ -73,7 +73,18 @@
 
   <div class="card app-card mb-4">
     <div class="card-body">
+       {% if selected_company and not selected_company_has_subscription %}
+       <div class="alert alert-info mb-3">
+         La empresa <strong>{{ selected_company.name }}</strong> no tiene suscripciones registradas. Puedes crearla desde el formulario superior para renovarla manualmente.
+        <form class="mt-2" method="post" action="{{ url_for('saas.subscriptions_quick_renew_company') }}" onsubmit="return confirm('Crear y renovar ahora la suscripción para esta empresa?');">
+          <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+          <input type="hidden" name="company_id" value="{{ selected_company.id }}">
+          <button class="btn btn-sm btn-success" type="submit">Crear y renovar ahora</button>
+        </form>
+       </div>
+       {% endif %}
       <form class="row g-2" method="get" action="{{ url_for('saas.subscriptions_panel') }}">
+         <input type="hidden" name="company_id" value="{{ filters.company_id or '' }}">
         <div class="col-md-4"><input class="form-control" name="q" value="{{ filters.q }}" placeholder="Buscar por empresa, plan o estado"></div>
         <div class="col-md-3">
           <select class="form-select" name="status">

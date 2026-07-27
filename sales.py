@@ -10,7 +10,6 @@ import traceback
 from decimal import Decimal, InvalidOperation
 from datetime import datetime
 from io import BytesIO, StringIO
-from urllib.parse import quote
 
 from flask import Blueprint, abort, current_app, flash, g, jsonify, make_response, redirect, render_template, request, session, url_for
 from flask_login import current_user, login_required
@@ -20,6 +19,7 @@ from app import tenant_required, utcnow
 from services.mercadopago_oauth_service import MercadoPagoOAuthService
 from services.mercadopago_service import MercadoPagoService
 from services.sales_calculation_service import calculate_sale_totals, normalize_payment_split, sale_payment_breakdown_from_values, to_decimal
+from services.whatsapp_share_service import build_whatsapp_share_url
 import qrcode
 
 bp = Blueprint("sales", __name__)
@@ -1707,20 +1707,8 @@ def _ticket_rows(sale):
     ]
 
 
-def _normalize_phone(value):
-    if not value:
-        return ""
-    return "".join(ch for ch in str(value) if ch.isdigit())
-
-
-def _is_valid_whatsapp_phone(value):
-    normalized = _normalize_phone(value)
-    return 8 <= len(normalized) <= 15
-
-
-def _build_whatsapp_link(sale, phone):
-    text = quote(_ticket_text_for_whatsapp(sale))
-    return f"https://wa.me/{phone}?text={text}"
+def _build_whatsapp_link(sale, phone=None):
+    return build_whatsapp_share_url(phone=phone, message=_ticket_text_for_whatsapp(sale))
 
 
 def _ticket_text_for_whatsapp(sale):
@@ -1747,49 +1735,17 @@ def _ticket_text_for_whatsapp(sale):
 @bp.route("/<int:sale_id>/share-whatsapp", methods=["GET", "POST"])
 @tenant_required
 def share_whatsapp(sale_id):
-    from app import Sale, SaleItem, db
+    from app import Sale, SaleItem
 
     sale = _sale_accessible_query(Sale.query.options(selectinload(Sale.items).selectinload(SaleItem.product), selectinload(Sale.client)), Sale).filter(Sale.id == sale_id).first_or_404()
-    raw_phone = (sale.client.whatsapp if getattr(sale, "client", None) else "") or (sale.client.phone if getattr(sale, "client", None) else "")
-    phone = _normalize_phone(raw_phone)
+    phone = (sale.client.whatsapp if getattr(sale, "client", None) else "") or (sale.client.phone if getattr(sale, "client", None) else "")
 
     if request.method == "POST":
         phone_input = (request.form.get("whatsapp_phone") or "").strip()
-        action = (request.form.get("phone_action") or "send_once").strip()
-        normalized_phone = _normalize_phone(phone_input)
-
-        if not _is_valid_whatsapp_phone(normalized_phone):
-            flash("Numero de WhatsApp invalido. Ingresa entre 8 y 15 digitos.", "danger")
-            return render_template(
-                "ventas/whatsapp_dialog.html",
-                sale=sale,
-                entered_phone=phone_input,
-                selected_action=action,
-                can_save_phone=bool(getattr(sale, "client", None)),
-            )
-
-        if action == "save_and_send":
-            if not getattr(sale, "client", None):
-                flash("No se puede guardar el numero porque esta venta no tiene cliente asociado.", "warning")
-                return render_template(
-                    "ventas/whatsapp_dialog.html",
-                    sale=sale,
-                    entered_phone=phone_input,
-                    selected_action=action,
-                    can_save_phone=False,
-                )
-            sale.client.whatsapp = normalized_phone
-            db.session.commit()
-
-        return redirect(_build_whatsapp_link(sale, normalized_phone))
-
-    if _is_valid_whatsapp_phone(phone):
-        return redirect(_build_whatsapp_link(sale, phone))
+        return redirect(_build_whatsapp_link(sale, phone_input))
 
     return render_template(
         "ventas/whatsapp_dialog.html",
         sale=sale,
-        entered_phone="",
-        selected_action="send_once",
-        can_save_phone=bool(getattr(sale, "client", None)),
+        entered_phone=phone,
     )

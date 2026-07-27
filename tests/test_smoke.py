@@ -1180,6 +1180,52 @@ def test_quotes_create_convert_pdf_and_stock_flow():
         assert float(sale.items[0].total_amount) == float(sale.total_amount)
 
 
+def test_quotes_whatsapp_allows_empty_or_custom_number():
+    client = stock_app.app.test_client()
+    client.post("/auth/login", data={"username": "empresa_admin", "password": "admin123"})
+
+    with stock_app.app.app_context():
+        company = Company.query.filter_by(name="Empresa Demo").first()
+        assert company is not None
+        enable_quotes_module(company, enabled=True)
+        user = User.query.filter_by(username="empresa_admin").first()
+        assert user is not None
+        grant_quote_permissions(user)
+
+    payload = {
+        "client_id": "",
+        "consumer_name": "Comprador Mostrador",
+        "expires_at": "2026-08-05",
+        "status": "BORRADOR",
+        "discount": "0",
+        "surcharge": "0",
+        "items_json": json.dumps([
+            {"product_id": 1, "description": "Yerba kilo", "quantity": 1, "unit_price": 18000, "discount": 0},
+        ]),
+        "submit_action": "save",
+    }
+    response = client.post("/presupuestos/nuevo", data=payload, follow_redirects=False)
+    assert response.status_code in {302, 303}
+
+    with stock_app.app.app_context():
+        quote = Quote.query.order_by(Quote.id.desc()).first()
+        assert quote is not None
+        quote_id = quote.id
+
+    dialog = client.get(f"/presupuestos/{quote_id}/whatsapp")
+    assert dialog.status_code == 200
+    html = dialog.data.decode("utf-8")
+    assert "Número de WhatsApp (opcional)" in html
+
+    empty_phone = client.post(f"/presupuestos/{quote_id}/whatsapp", data={"whatsapp_phone": ""}, follow_redirects=False)
+    assert empty_phone.status_code in (301, 302)
+    assert empty_phone.headers.get("Location", "").startswith("https://wa.me/?text=")
+
+    custom_phone = client.post(f"/presupuestos/{quote_id}/whatsapp", data={"whatsapp_phone": "+54 9 11 2222 3333"}, follow_redirects=False)
+    assert custom_phone.status_code in (301, 302)
+    assert custom_phone.headers.get("Location", "").startswith("https://wa.me/5491122223333")
+
+
 def test_quotes_allows_manual_consumer_name_without_client():
     client = stock_app.app.test_client()
     client.post("/auth/login", data={"username": "empresa_admin", "password": "admin123"})
@@ -2530,10 +2576,10 @@ def test_share_whatsapp_keeps_existing_phone_flow():
 
     client.post("/auth/login", data={"username": "empresa_admin", "password": "admin123"})
     response = client.get(f"/ventas/{sale_id}/share-whatsapp", follow_redirects=False)
-    assert response.status_code in (301, 302)
-    location = response.headers.get("Location", "")
-    assert location.startswith("https://wa.me/")
-    assert "text=" in location
+    assert response.status_code == 200
+    html = response.data.decode("utf-8")
+    assert "Número de WhatsApp (opcional)" in html
+    assert "549111111111" in html
 
 
 def test_share_whatsapp_shows_dialog_and_allows_send_once_without_saving():
@@ -2575,18 +2621,19 @@ def test_share_whatsapp_shows_dialog_and_allows_send_once_without_saving():
     dialog = client.get(f"/ventas/{sale_id}/share-whatsapp")
     assert dialog.status_code == 200
     html = dialog.data.decode("utf-8")
-    assert "No existe un numero de WhatsApp asociado a esta venta." in html
+    assert "Número de WhatsApp (opcional)" in html
 
-    invalid = client.post(
+    send_without_phone = client.post(
         f"/ventas/{sale_id}/share-whatsapp",
-        data={"whatsapp_phone": "123", "phone_action": "send_once"},
+        data={"whatsapp_phone": ""},
+        follow_redirects=False,
     )
-    assert invalid.status_code == 200
-    assert "Numero de WhatsApp invalido" in invalid.data.decode("utf-8")
+    assert send_without_phone.status_code in (301, 302)
+    assert send_without_phone.headers.get("Location", "").startswith("https://wa.me/?text=")
 
     send_once = client.post(
         f"/ventas/{sale_id}/share-whatsapp",
-        data={"whatsapp_phone": "5491122233344", "phone_action": "send_once"},
+        data={"whatsapp_phone": "5491122233344"},
         follow_redirects=False,
     )
     assert send_once.status_code in (301, 302)
@@ -2598,7 +2645,7 @@ def test_share_whatsapp_shows_dialog_and_allows_send_once_without_saving():
         assert not (unchanged_client.whatsapp or "").strip()
 
 
-def test_share_whatsapp_allows_save_and_send():
+def test_share_whatsapp_accepts_phone_with_symbols_without_blocking():
     client = stock_app.app.test_client()
 
     with stock_app.app.app_context():
@@ -2629,21 +2676,15 @@ def test_share_whatsapp_allows_save_and_send():
         db.session.add(SaleItem(sale_id=sale.id, product_id=prod.id, quantity=1, price=100, cost_price=70, discount=0))
         db.session.commit()
         sale_id = sale.id
-        client_id = cli.id
 
     client.post("/auth/login", data={"username": "empresa_admin", "password": "admin123"})
-    save_and_send = client.post(
+    send_custom = client.post(
         f"/ventas/{sale_id}/share-whatsapp",
-        data={"whatsapp_phone": "5491155566677", "phone_action": "save_and_send"},
+        data={"whatsapp_phone": "+54 9 11 5556-6677"},
         follow_redirects=False,
     )
-    assert save_and_send.status_code in (301, 302)
-    assert save_and_send.headers.get("Location", "").startswith("https://wa.me/5491155566677")
-
-    with stock_app.app.app_context():
-        saved_client = db.session.get(Client, client_id)
-        assert saved_client is not None
-        assert saved_client.whatsapp == "5491155566677"
+    assert send_custom.status_code in (301, 302)
+    assert send_custom.headers.get("Location", "").startswith("https://wa.me/5491155566677")
 
 
 def test_login_has_no_google_button_and_has_forgot_password_link():

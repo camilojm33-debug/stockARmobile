@@ -7,7 +7,6 @@ import os
 from datetime import datetime, timedelta
 from decimal import Decimal
 from io import BytesIO
-from urllib.parse import quote as url_quote
 
 from flask import Blueprint, abort, current_app, flash, jsonify, redirect, render_template, request, send_file, url_for
 from flask_login import current_user, login_required
@@ -19,6 +18,7 @@ import qrcode
 
 from app import tenant_required, utcnow
 from services.sales_calculation_service import calculate_sale_totals, to_decimal
+from services.whatsapp_share_service import build_whatsapp_share_url
 
 bp = Blueprint("quotes", __name__)
 
@@ -832,12 +832,7 @@ def share_whatsapp(quote_id):
         "Muchas gracias."
     )
     pdf_url = url_for("quotes.quote_pdf", quote_id=quote.id, _external=True)
-    full_message = f"{message}\n\nPDF: {pdf_url}"
-    if not phone:
-        return render_template("presupuestos/whatsapp_dialog.html", quote=quote, entered_phone="", message=full_message)
-    from app import record_audit
-    record_audit(action="quote_share_whatsapp", entity="quote", entity_id=quote.id, detail=f"Compartido por WhatsApp {quote.number or quote.id}", ip_address=request.remote_addr)
-    return redirect(f"https://wa.me/{phone}?text={url_quote(full_message)}")
+    return render_template("presupuestos/whatsapp_dialog.html", quote=quote, entered_phone=phone, message=message, pdf_url=pdf_url)
 
 
 @bp.route("/<int:quote_id>/whatsapp", methods=["POST"])
@@ -857,7 +852,7 @@ def share_whatsapp_post(quote_id):
     pdf_url = url_for("quotes.quote_pdf", quote_id=quote.id, _external=True)
     from app import record_audit
     record_audit(action="quote_share_whatsapp", entity="quote", entity_id=quote.id, detail=f"Compartido por WhatsApp {quote.number or quote.id}", ip_address=request.remote_addr)
-    return redirect(f"https://wa.me/{phone}?text={url_quote(message + '\n\nPDF: ' + pdf_url)}")
+    return redirect(build_whatsapp_share_url(phone=phone, message=message, document_url=pdf_url, document_label="PDF"))
 
 
 @bp.route("/<int:quote_id>/convertir", methods=["POST"])

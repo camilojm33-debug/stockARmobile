@@ -87,6 +87,8 @@ def _company_can_be_hard_deleted(subscription) -> bool:
 
 
 def _hard_delete_company(company):
+    import sqlalchemy as sa
+
     from app import (
         AuditLog,
         BackupLog,
@@ -128,64 +130,133 @@ def _hard_delete_company(company):
     )
 
     company_id = company.id
-    user_ids = [row[0] for row in db.session.query(User.id).filter(User.company_id == company_id).all()]
+    inspector = sa.inspect(db.session.get_bind())
+    table_names = set(inspector.get_table_names())
+    columns_cache = {}
 
-    quote_ids = [row[0] for row in db.session.query(Quote.id).filter(Quote.company_id == company_id).all()]
-    sale_ids = [row[0] for row in db.session.query(Sale.id).filter(Sale.company_id == company_id).all()]
-    purchase_order_ids = [row[0] for row in db.session.query(PurchaseOrder.id).filter(PurchaseOrder.company_id == company_id).all()]
+    def _has_table(model):
+        table = getattr(model, "__tablename__", "")
+        return bool(table) and table in table_names and model_table_exists(model)
 
-    seller_ids = [row[0] for row in db.session.query(ReferralSeller.id).filter(ReferralSeller.user_id.in_(user_ids)).all()] if user_ids else []
-    payout_ids = [row[0] for row in db.session.query(ReferralPayout.id).filter(ReferralPayout.seller_id.in_(seller_ids)).all()] if seller_ids else []
+    def _has_column(model, column_name):
+        if not _has_table(model):
+            return False
+        table = model.__tablename__
+        if table not in columns_cache:
+            columns_cache[table] = {column.get("name") for column in inspector.get_columns(table)}
+        return column_name in columns_cache[table]
 
-    def delete_company_rows(model):
-        db.session.query(model).filter(model.company_id == company_id).delete(synchronize_session=False)
+    def _safe_ids_by_company(model):
+        if not (_has_column(model, "id") and _has_column(model, "company_id")):
+            return []
+        return [row[0] for row in db.session.query(model.id).filter(model.company_id == company_id).all()]
 
-    if payout_ids:
-        db.session.query(ReferralPayoutItem).filter(ReferralPayoutItem.payout_id.in_(payout_ids)).delete(synchronize_session=False)
-    if sale_ids:
-        db.session.query(SaleItem).filter(SaleItem.sale_id.in_(sale_ids)).delete(synchronize_session=False)
-    if quote_ids:
-        db.session.query(QuoteItem).filter(QuoteItem.quote_id.in_(quote_ids)).delete(synchronize_session=False)
-    if purchase_order_ids:
-        db.session.query(PurchaseItem).filter(PurchaseItem.purchase_order_id.in_(purchase_order_ids)).delete(synchronize_session=False)
+    def _safe_delete_company_rows(model):
+        if _has_column(model, "company_id"):
+            db.session.query(model).filter(model.company_id == company_id).delete(synchronize_session=False)
 
-    delete_company_rows(SaleModificationHistory)
-    delete_company_rows(AuditLog)
-    delete_company_rows(CashMovement)
-    delete_company_rows(PaymentHistory)
-    delete_company_rows(ProductModification)
-    delete_company_rows(ProductPriceHistory)
-    delete_company_rows(BackupLog)
-    delete_company_rows(Expense)
-    delete_company_rows(SupportTicket)
-    delete_company_rows(PasswordRecoveryRequest)
-    delete_company_rows(SaaSAlert)
-    delete_company_rows(SaaSTask)
-    delete_company_rows(SaaSLead)
-    delete_company_rows(ReferralCommission)
-    delete_company_rows(ReferralAttribution)
+    def _safe_delete_in(model, column_name, values):
+        if not values or not _has_column(model, column_name):
+            return
+        db.session.query(model).filter(getattr(model, column_name).in_(values)).delete(synchronize_session=False)
 
-    if payout_ids:
-        db.session.query(ReferralPayout).filter(ReferralPayout.id.in_(payout_ids)).delete(synchronize_session=False)
-    if seller_ids:
-        db.session.query(ReferralSeller).filter(ReferralSeller.id.in_(seller_ids)).delete(synchronize_session=False)
+    user_ids = _safe_ids_by_company(User)
+    product_ids = _safe_ids_by_company(Product)
+    quote_ids = _safe_ids_by_company(Quote)
+    sale_ids = _safe_ids_by_company(Sale)
+    purchase_order_ids = _safe_ids_by_company(PurchaseOrder)
 
-    delete_company_rows(Payment)
-    delete_company_rows(Invoice)
-    delete_company_rows(Subscription)
-    delete_company_rows(MercadoPagoConnection)
-    delete_company_rows(CashSession)
-    delete_company_rows(Sale)
-    delete_company_rows(Quote)
-    delete_company_rows(PurchaseOrder)
-    delete_company_rows(Product)
-    delete_company_rows(Client)
-    delete_company_rows(Supplier)
+    seller_ids = []
+    if user_ids and _has_column(ReferralSeller, "id") and _has_column(ReferralSeller, "user_id"):
+        seller_ids = [row[0] for row in db.session.query(ReferralSeller.id).filter(ReferralSeller.user_id.in_(user_ids)).all()]
 
-    if user_ids:
-        db.session.query(NotificationReadState).filter(NotificationReadState.user_id.in_(user_ids)).delete(synchronize_session=False)
-        db.session.query(PasswordResetToken).filter(PasswordResetToken.user_id.in_(user_ids)).delete(synchronize_session=False)
-        db.session.query(User).filter(User.id.in_(user_ids)).delete(synchronize_session=False)
+    payout_ids = []
+    if seller_ids and _has_column(ReferralPayout, "id") and _has_column(ReferralPayout, "seller_id"):
+        payout_ids = [row[0] for row in db.session.query(ReferralPayout.id).filter(ReferralPayout.seller_id.in_(seller_ids)).all()]
+
+    _safe_delete_in(ReferralPayoutItem, "payout_id", payout_ids)
+    _safe_delete_in(SaleItem, "sale_id", sale_ids)
+    _safe_delete_in(SaleItem, "product_id", product_ids)
+    _safe_delete_in(QuoteItem, "quote_id", quote_ids)
+    _safe_delete_in(QuoteItem, "product_id", product_ids)
+    _safe_delete_in(PurchaseItem, "purchase_order_id", purchase_order_ids)
+    _safe_delete_in(PurchaseItem, "product_id", product_ids)
+
+    _safe_delete_company_rows(SaleModificationHistory)
+    _safe_delete_company_rows(AuditLog)
+    _safe_delete_company_rows(CashMovement)
+    _safe_delete_company_rows(PaymentHistory)
+    _safe_delete_company_rows(ProductModification)
+    _safe_delete_company_rows(ProductPriceHistory)
+    _safe_delete_company_rows(BackupLog)
+    _safe_delete_company_rows(Expense)
+    _safe_delete_company_rows(SupportTicket)
+    _safe_delete_company_rows(PasswordRecoveryRequest)
+    _safe_delete_company_rows(SaaSAlert)
+    _safe_delete_company_rows(SaaSTask)
+    _safe_delete_company_rows(SaaSLead)
+    _safe_delete_company_rows(ReferralCommission)
+    _safe_delete_company_rows(ReferralAttribution)
+
+    _safe_delete_in(ReferralPayout, "id", payout_ids)
+    _safe_delete_in(ReferralSeller, "id", seller_ids)
+
+    _safe_delete_company_rows(Payment)
+    _safe_delete_company_rows(Invoice)
+    _safe_delete_company_rows(Subscription)
+    _safe_delete_company_rows(MercadoPagoConnection)
+    _safe_delete_company_rows(CashSession)
+    _safe_delete_company_rows(Sale)
+    _safe_delete_company_rows(Quote)
+    _safe_delete_company_rows(PurchaseOrder)
+    _safe_delete_company_rows(Product)
+    _safe_delete_company_rows(Client)
+    _safe_delete_company_rows(Supplier)
+
+    _safe_delete_in(NotificationReadState, "user_id", user_ids)
+    _safe_delete_in(PasswordResetToken, "user_id", user_ids)
+    _safe_delete_in(User, "id", user_ids)
+
+    def _raw_delete_company_rows(table_name):
+        if table_name not in table_names:
+            return
+        if table_name not in columns_cache:
+            columns_cache[table_name] = {column.get("name") for column in inspector.get_columns(table_name)}
+        if "company_id" not in columns_cache[table_name]:
+            return
+        db.session.execute(sa.text(f"DELETE FROM {table_name} WHERE company_id = :company_id"), {"company_id": company_id})
+
+    # Defensive second pass to avoid leftovers when ORM bulk-delete skips rows due mapper/session edge cases.
+    for table_name in [
+        "sale_modification_history",
+        "audit_logs",
+        "cash_movements",
+        "payment_history",
+        "product_modifications",
+        "product_price_history",
+        "backup_logs",
+        "expenses",
+        "support_tickets",
+        "password_recovery_requests",
+        "saas_alerts",
+        "saas_tasks",
+        "saas_leads",
+        "referral_commissions",
+        "referral_attributions",
+        "payments",
+        "invoices",
+        "subscriptions",
+        "mercadopago_connections",
+        "cash_sessions",
+        "sales",
+        "quotes",
+        "purchase_orders",
+        "products",
+        "clients",
+        "suppliers",
+        "users",
+    ]:
+        _raw_delete_company_rows(table_name)
 
     db.session.delete(company)
 
@@ -1101,12 +1172,13 @@ def billing():
 @bp.route("/subscriptions")
 @superadmin_required
 def subscriptions_panel():
-    from app import Company, Plan, Subscription
+    from app import Company, Plan, Subscription, db
 
     _require_superadmin()
     q = (request.args.get("q") or "").strip()
     status = (request.args.get("status") or "all").strip().lower()
     plan_code = (request.args.get("plan") or "all").strip().lower()
+    company_id_filter = request.args.get("company_id", type=int)
     page = request.args.get("page", default=1, type=int)
     per_page = request.args.get("per_page", default=12, type=int)
     per_page = min(max(per_page, 5), 100)
@@ -1125,10 +1197,16 @@ def subscriptions_panel():
         query = query.filter(Subscription.status == status)
     if plan_code != "all":
         query = query.filter(Plan.code == plan_code)
+    if company_id_filter:
+        query = query.filter(Subscription.company_id == company_id_filter)
 
     pagination = query.order_by(Subscription.start_date.desc().nullslast(), Subscription.id.desc()).paginate(page=page, per_page=per_page, error_out=False)
     subscriptions = pagination.items
     companies = Company.query.order_by(Company.name.asc()).all()
+    selected_company = next((company for company in companies if company.id == company_id_filter), None) if company_id_filter else None
+    selected_company_has_subscription = False
+    if selected_company is not None:
+        selected_company_has_subscription = Subscription.query.filter_by(company_id=selected_company.id).first() is not None
     plans = Plan.query.filter(Plan.active.is_(True)).order_by(Plan.price.asc()).all()
     subscription_actions = {
         sub.id: _allowed_ui_actions_for_status(sub.status)
@@ -1140,10 +1218,110 @@ def subscriptions_panel():
         subscription_actions=subscription_actions,
         pagination=pagination,
         companies=companies,
+        selected_company=selected_company,
+        selected_company_has_subscription=selected_company_has_subscription,
         plans=plans,
-        filters={"q": q, "status": status, "plan": plan_code, "per_page": per_page},
+        filters={"q": q, "status": status, "plan": plan_code, "per_page": per_page, "company_id": company_id_filter},
         status_options=SUBSCRIPTION_STATUS_OPTIONS,
     )
+
+
+@bp.route("/subscriptions/quick-renew-company", methods=["POST"])
+@superadmin_required
+def subscriptions_quick_renew_company():
+    from app import AuditLog, Company, Plan, Subscription, db
+
+    _require_superadmin()
+    company_id = request.form.get("company_id", type=int)
+    if not company_id:
+        flash("Empresa inválida.", "danger")
+        return _redirect_back("saas.subscriptions_panel")
+
+    company = Company.query.filter_by(id=company_id).first()
+    if company is None:
+        flash("Empresa inválida.", "danger")
+        return _redirect_back("saas.subscriptions_panel")
+
+    latest_subscription = (
+        Subscription.query.filter_by(company_id=company.id)
+        .order_by(Subscription.start_date.desc().nullslast(), Subscription.id.desc())
+        .first()
+    )
+
+    now = utcnow()
+    try:
+        if latest_subscription is not None:
+            duration_days = int(latest_subscription.plan.duration_days if latest_subscription.plan else 30)
+            base = latest_subscription.next_billing_date or now
+            latest_subscription.last_payment_date = now
+            latest_subscription.next_billing_date = base + timedelta(days=duration_days)
+            latest_subscription.ends_at = latest_subscription.next_billing_date
+            latest_subscription.status = "active"
+            latest_subscription.renewal_enabled = True
+            latest_subscription.auto_renew = True
+            latest_subscription.cancel_at_period_end = False
+
+            db.session.add(
+                AuditLog(
+                    user_id=current_user.id,
+                    company_id=company.id,
+                    action="subscription_quick_renew",
+                    entity="subscription",
+                    entity_id=latest_subscription.id,
+                    detail=f"Renovación manual rápida. ip={request.remote_addr or 'unknown'} resultado=ok",
+                )
+            )
+            db.session.commit()
+            flash("Suscripción renovada correctamente.", "success")
+            return redirect(url_for("saas.subscriptions_panel", company_id=company.id))
+
+        plan = (
+            Plan.query.filter(Plan.active.is_(True), Plan.code == "emprendedor")
+            .order_by(Plan.price.asc(), Plan.id.asc())
+            .first()
+        )
+        if plan is None:
+            plan = Plan.query.filter(Plan.active.is_(True)).order_by(Plan.price.asc(), Plan.id.asc()).first()
+        if plan is None:
+            flash("No hay planes activos para crear una suscripción.", "danger")
+            return redirect(url_for("saas.subscriptions_panel", company_id=company.id))
+
+        duration_days = int(plan.duration_days or 30)
+        next_due = now + timedelta(days=duration_days)
+        subscription = Subscription(
+            company_id=company.id,
+            plan_id=plan.id,
+            status="active",
+            start_date=now,
+            starts_at=now,
+            trial_end=None,
+            last_payment_date=now,
+            ends_at=next_due,
+            next_billing_date=next_due,
+            renewal_enabled=True,
+            auto_renew=True,
+            cancel_at_period_end=False,
+        )
+        db.session.add(subscription)
+        db.session.flush()
+        db.session.add(
+            AuditLog(
+                user_id=current_user.id,
+                company_id=company.id,
+                action="subscription_quick_create_and_renew",
+                entity="subscription",
+                entity_id=subscription.id,
+                detail=f"Alta y renovación manual rápida plan={plan.code}. ip={request.remote_addr or 'unknown'} resultado=ok",
+            )
+        )
+        db.session.commit()
+        flash("Suscripción creada y renovada correctamente.", "success")
+    except Exception as exc:
+        db.session.rollback()
+        current_app.logger.exception("Error en renovación rápida company_id=%s: %s", company_id, exc)
+        flash("No se pudo procesar la renovación rápida.", "danger")
+
+    return redirect(url_for("saas.subscriptions_panel", company_id=company.id))
 
 
 @bp.route("/subscriptions/create", methods=["POST"])
