@@ -713,6 +713,7 @@ class Quote(db.Model):
     status = db.Column(db.String(30), default="BORRADOR", index=True)
     currency = db.Column(db.String(10), default="ARS")
     client_id = db.Column(db.Integer, db.ForeignKey("clients.id"))
+    consumer_name = db.Column(db.String(160))
     created_by_user_id = db.Column(db.Integer, db.ForeignKey("users.id"), nullable=False)
     seller_id = db.Column(db.Integer, db.ForeignKey("users.id"))
     company_id = db.Column(db.Integer, db.ForeignKey("companies.id"), index=True)

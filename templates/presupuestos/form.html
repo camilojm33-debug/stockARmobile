@@ -97,12 +97,17 @@
             <div class="row g-3">
               <div class="col-12">
                 <label class="form-label">Cliente</label>
-                <select name="client_id" class="form-select">
+                <select name="client_id" id="quoteClientSelect" class="form-select" onchange="toggleConsumerNameField()">
                   <option value="">Consumidor final</option>
                   {% for client in clients %}
                   <option value="{{ client.id }}" {% if quote and quote.client_id == client.id %}selected{% endif %}>{{ client.name }}</option>
                   {% endfor %}
                 </select>
+              </div>
+              <div class="col-12" id="quoteConsumerNameWrap">
+                <label class="form-label">Nombre consumidor final</label>
+                <input class="form-control" type="text" name="consumer_name" id="quoteConsumerName" maxlength="160" value="{{ quote.consumer_name if quote and quote.consumer_name else '' }}" placeholder="Ej: Juan Perez">
+                <div class="form-text">Si elegís un cliente registrado, este campo se ignora.</div>
               </div>
               <div class="col-md-6">
                 <label class="form-label">Vendedor</label>
@@ -114,7 +119,7 @@
               </div>
               <div class="col-md-6">
                 <label class="form-label">Vencimiento</label>
-                <input type="date" class="form-control" name="expires_at" value="{{ quote.expires_at.strftime('%Y-%m-%d') if quote and quote.expires_at else '' }}">
+                <input type="date" class="form-control" name="expires_at" value="{{ quote.expires_at.strftime('%Y-%m-%d') if quote and quote.expires_at else default_expires_at }}">
               </div>
               <div class="col-md-6">
                 <label class="form-label">Estado</label>
@@ -289,6 +294,18 @@
     syncJson();
   }
 
+  function toggleConsumerNameField() {
+    const select = document.getElementById('quoteClientSelect');
+    const wrap = document.getElementById('quoteConsumerNameWrap');
+    const input = document.getElementById('quoteConsumerName');
+    if (!select || !wrap || !input) return;
+    const usingFinalConsumer = !select.value;
+    wrap.style.display = usingFinalConsumer ? '' : 'none';
+    if (!usingFinalConsumer) {
+      input.value = '';
+    }
+  }
+
   function escapeHtml(value) {
     return String(value || '')
       .replaceAll('&', '&amp;')
@@ -307,5 +324,6 @@
   }));
 
   renderItems();
+  toggleConsumerNameField();
 </script>
 {% endblock %}

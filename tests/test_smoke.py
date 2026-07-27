@@ -1180,6 +1180,32 @@ def test_quotes_create_convert_pdf_and_stock_flow():
         assert float(sale.items[0].total_amount) == float(sale.total_amount)
 
 
+def test_quotes_allows_manual_consumer_name_without_client():
+    client = stock_app.app.test_client()
+    client.post("/auth/login", data={"username": "empresa_admin", "password": "admin123"})
+
+    payload = {
+        "client_id": "",
+        "consumer_name": "Juan Perez",
+        "expires_at": "2026-08-05",
+        "status": "BORRADOR",
+        "discount": "0",
+        "surcharge": "0",
+        "items_json": json.dumps([
+            {"product_id": 1, "description": "Yerba kilo", "quantity": 1, "unit_price": 18000, "discount": 0},
+        ]),
+        "submit_action": "save",
+    }
+    response = client.post("/presupuestos/nuevo", data=payload, follow_redirects=False)
+    assert response.status_code in {302, 303}
+
+    with stock_app.app.app_context():
+        quote = Quote.query.order_by(Quote.id.desc()).first()
+        assert quote is not None
+        assert quote.client_id is None
+        assert quote.consumer_name == "Juan Perez"
+
+
 def test_qr_print_all_supports_selected_and_single_scope():
     client = stock_app.app.test_client()
     client.post("/auth/login", data={"username": "empresa_admin", "password": "admin123"})

@@ -73,7 +73,7 @@
           {% for quote in quotes %}
           <tr>
             <td class="fw-semibold">{{ quote.number or ('P-' ~ '%06d'|format(quote.id)) }}</td>
-            <td>{{ quote.client.name if quote.client else 'Consumidor final' }}</td>
+            <td>{{ quote.client.name if quote.client else (quote.consumer_name or 'Consumidor final') }}</td>
             <td>{{ quote.seller.name if quote.seller else '-' }}</td>
             <td>{{ quote.date.strftime('%d/%m/%Y %H:%M') if quote.date else '-' }}</td>
             <td>{{ quote.expires_at.strftime('%d/%m/%Y') if quote.expires_at else '-' }}</td>

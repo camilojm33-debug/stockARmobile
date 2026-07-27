@@ -211,6 +211,13 @@ def _quote_totals(items, *, general_discount=0, surcharge=0):
     return totals
 
 
+def _quote_customer_name(quote):
+    if getattr(quote, "client", None) is not None:
+        return quote.client.name
+    raw_name = (getattr(quote, "consumer_name", None) or "").strip()
+    return raw_name or "Consumidor final"
+
+
 def _quote_from_form(*, quote=None):
     from app import Company, Quote, QuoteItem, Client, db, scope_query_to_company
 
@@ -225,6 +232,7 @@ def _quote_from_form(*, quote=None):
         raise ValueError("Debes agregar al menos un producto al presupuesto.")
 
     client_id = payload.get("client_id") or None
+    consumer_name = (payload.get("consumer_name") or "").strip()
     selected_client = None
     if client_id not in (None, ""):
         try:
@@ -235,6 +243,11 @@ def _quote_from_form(*, quote=None):
         if selected_client is None:
             raise ValueError("El cliente seleccionado no pertenece a tu empresa.")
 
+    if selected_client is None:
+        consumer_name = consumer_name[:160]
+    else:
+        consumer_name = None
+
     company = Company.query.filter_by(id=getattr(current_user, "company_id", None)).first()
     requested_seller_id = payload.get("seller_id") or getattr(current_user, "id", None)
     if _can_view_other_quotes() or getattr(current_user, "role", None) in {"admin", "superadmin"}:
@@ -244,7 +257,7 @@ def _quote_from_form(*, quote=None):
     branch_id = payload.get("branch_id") or None
     expires_at = _parse_date(payload.get("expires_at") or payload.get("fecha_vencimiento"))
     if expires_at is None:
-        expires_at = utcnow().replace(hour=23, minute=59, second=59, microsecond=0)
+        expires_at = (utcnow() + timedelta(days=5)).replace(hour=23, minute=59, second=59, microsecond=0)
 
     general_discount = to_decimal(payload.get("discount") or payload.get("descuento") or 0)
     surcharge = to_decimal(payload.get("surcharge") or payload.get("recargo") or 0)
@@ -256,6 +269,7 @@ def _quote_from_form(*, quote=None):
     if quote is None:
         quote = Quote(
             client_id=selected_client.id if selected_client else None,
+            consumer_name=consumer_name,
             seller_id=int(seller_id) if seller_id not in (None, "") else getattr(current_user, "id", None),
             created_by_user_id=getattr(current_user, "id", None),
             company_id=getattr(current_user, "company_id", None),
@@ -268,6 +282,7 @@ def _quote_from_form(*, quote=None):
         quote.number = quote.number or _next_quote_number(quote.company_id)
 
     quote.client_id = selected_client.id if selected_client else None
+    quote.consumer_name = consumer_name
     quote.seller_id = int(seller_id) if seller_id not in (None, "") else getattr(current_user, "id", None)
     quote.branch_id = int(branch_id) if branch_id not in (None, "") else quote.branch_id
     quote.expires_at = expires_at
@@ -316,6 +331,7 @@ def _quote_snapshot(quote):
             "observations": quote.observations,
             "status": quote.status,
             "converted_sale_id": quote.converted_sale_id,
+            "consumer_name": quote.consumer_name,
         },
         "items": [
             {
@@ -392,7 +408,7 @@ def _quote_pdf_response(quote, *, as_attachment=False):
     pdf.drawString(40, top_margin - 40, f"Fecha: {quote.date.strftime('%d/%m/%Y %H:%M') if quote.date else ''}")
     pdf.drawString(40, top_margin - 54, f"Validez: {quote.expires_at.strftime('%d/%m/%Y') if quote.expires_at else ''}")
     pdf.drawString(40, top_margin - 68, f"Estado: {quote.status}")
-    pdf.drawString(40, top_margin - 82, f"Cliente: {quote.client.name if quote.client else 'Consumidor final'}")
+    pdf.drawString(40, top_margin - 82, f"Cliente: {_quote_customer_name(quote)}")
     if quote.commercial_conditions:
         pdf.drawString(40, top_margin - 96, f"Condiciones: {(quote.commercial_conditions or '')[:90]}")
 
@@ -633,6 +649,7 @@ def new_quote():
     products = scope_query_to_company(Product.query.filter_by(active=True), Product).order_by(Product.favorite.desc(), Product.name).all()
     clients = scope_query_to_company(Client.query.filter_by(active=True), Client).order_by(Client.name).all()
     sellers = scope_query_to_company(User.query.filter(User.active.is_(True)), User).order_by(User.first_name.asc(), User.last_name.asc(), User.username.asc()).all()
+    default_expires_at = (utcnow() + timedelta(days=5)).strftime("%Y-%m-%d")
     return render_template(
         "presupuestos/form.html",
         quote=None,
@@ -643,6 +660,7 @@ def new_quote():
         mode="new",
         initial_items=[],
         general_discount_value=0,
+        default_expires_at=default_expires_at,
     )
 
 
@@ -685,6 +703,7 @@ def edit_quote(quote_id):
         mode="edit",
         initial_items=_quote_form_items(quote),
         general_discount_value=max(float(quote.discount or 0) - sum(float(item.discount or 0) for item in quote.items), 0.0),
+        default_expires_at="",
     )
 
 
@@ -699,6 +718,7 @@ def duplicate_quote(quote_id):
 
     duplicate = Quote(
         client_id=original.client_id,
+        consumer_name=original.consumer_name,
         seller_id=original.seller_id,
         company_id=original.company_id,
         expires_at=original.expires_at,
