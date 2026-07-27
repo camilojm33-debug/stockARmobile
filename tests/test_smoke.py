@@ -1133,6 +1133,7 @@ def test_quotes_create_convert_pdf_and_stock_flow():
         user = User.query.filter_by(username="empresa_admin").first()
         assert user is not None
         grant_quote_permissions(user)
+        tenant_header = f"{user.company_id}:{user.id}"
         initial_stock = Product.query.get(1).stock
 
     payload = {
@@ -1161,16 +1162,44 @@ def test_quotes_create_convert_pdf_and_stock_flow():
     assert pdf_response.status_code == 200
     assert pdf_response.mimetype == "application/pdf"
 
-    open_cash_session(client)
     convert_response = client.post(f"/presupuestos/{quote.id}/convertir", follow_redirects=False)
     assert convert_response.status_code in {302, 303}
+    assert "/ventas/" in (convert_response.headers.get("Location") or "")
+
+    with client.session_transaction() as session_payload:
+        prefill_key = f"quote_cart_prefill_{tenant_header}"
+        prefill = session_payload.get(prefill_key)
+        assert isinstance(prefill, dict)
+        assert prefill.get("quote_id") == quote.id
+        assert prefill.get("checkout_token") == f"quote-cart-{quote.id}"
+        assert isinstance(prefill.get("items"), list)
+        assert len(prefill["items"]) == 1
+
+    open_cash_session(client)
+    checkout_response = client.post(
+        "/ventas/api/checkout",
+        json={
+            "items": prefill["items"],
+            "metodo_pago": "EFECTIVO",
+            "checkout_token": prefill["checkout_token"],
+            "client_id": prefill.get("client_id") or "",
+            "note": prefill.get("note") or "",
+            "descuento_general": prefill.get("general_discount") or 0,
+            "recargo": prefill.get("surcharge") or 0,
+            "monto_pago": 40000,
+        },
+        headers={"X-Cart-Tenant": tenant_header},
+    )
+    assert checkout_response.status_code == 200
+    sale_id = checkout_response.get_json()["sale_id"]
 
     with stock_app.app.app_context():
         quote = Quote.query.get(quote.id)
-        sale = Sale.query.get(quote.converted_sale_id)
+        sale = Sale.query.get(sale_id)
         assert quote is not None
         assert sale is not None
         assert quote.status == "CONVERTIDO"
+        assert quote.converted_sale_id == sale.id
         assert float(sale.total_amount) == float(quote.total_amount)
         assert float(Product.query.get(1).stock) == float(initial_stock) - 2.0
         movement = CashMovement.query.filter_by(sale_id=sale.id).first()
@@ -1181,7 +1210,7 @@ def test_quotes_create_convert_pdf_and_stock_flow():
         assert float(sale.items[0].total_amount) == float(sale.total_amount)
 
 
-def test_quotes_convert_requires_open_cash_session_redirects_to_cash():
+def test_quotes_convert_redirects_to_sales_and_prefills_cart_without_open_cash():
     client = stock_app.app.test_client()
     client.post("/auth/login", data={"username": "empresa_admin", "password": "admin123"})
 
@@ -1192,6 +1221,7 @@ def test_quotes_convert_requires_open_cash_session_redirects_to_cash():
         user = User.query.filter_by(username="empresa_admin").first()
         assert user is not None
         grant_quote_permissions(user)
+        tenant_header = f"{user.company_id}:{user.id}"
 
     payload = {
         "client_id": 1,
@@ -1211,10 +1241,17 @@ def test_quotes_convert_requires_open_cash_session_redirects_to_cash():
 
     convert_response = client.post(f"/presupuestos/{quote.id}/convertir", follow_redirects=False)
     assert convert_response.status_code in {302, 303}
-    assert "/caja/" in (convert_response.headers.get("Location") or "")
+    assert "/ventas/" in (convert_response.headers.get("Location") or "")
+
+    with client.session_transaction() as session_payload:
+        prefill_key = f"quote_cart_prefill_{tenant_header}"
+        prefill = session_payload.get(prefill_key)
+        assert isinstance(prefill, dict)
+        assert prefill.get("quote_id") == quote.id
+        assert len(prefill.get("items") or []) == 1
 
 
-def test_quotes_convert_shows_specific_stock_error():
+def test_quotes_convert_rejects_when_no_stock_available_for_all_lines():
     client = stock_app.app.test_client()
     client.post("/auth/login", data={"username": "empresa_admin", "password": "admin123"})
 
@@ -1225,13 +1262,17 @@ def test_quotes_convert_shows_specific_stock_error():
         user = User.query.filter_by(username="empresa_admin").first()
         assert user is not None
         grant_quote_permissions(user)
+        product = Product.query.get(1)
+        assert product is not None
+        product.stock = 0
+        db.session.commit()
 
     payload = {
         "client_id": 1,
         "expires_at": "2026-08-05",
         "status": "BORRADOR",
         "items_json": json.dumps([
-            {"product_id": 1, "description": "Yerba kilo", "quantity": 999, "unit_price": 18000, "discount": 0},
+            {"product_id": 1, "description": "Yerba kilo", "quantity": 1, "unit_price": 18000, "discount": 0},
         ]),
         "submit_action": "save",
     }
@@ -1242,11 +1283,10 @@ def test_quotes_convert_shows_specific_stock_error():
         quote = Quote.query.order_by(Quote.id.desc()).first()
         assert quote is not None
 
-    open_cash_session(client)
     convert_response = client.post(f"/presupuestos/{quote.id}/convertir", follow_redirects=True)
     assert convert_response.status_code == 200
     html = convert_response.data.decode("utf-8")
-    assert "Stock insuficiente" in html
+    assert "no hay stock disponible" in html.lower()
 
 
 def test_quotes_whatsapp_allows_empty_or_custom_number():

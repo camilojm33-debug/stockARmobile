@@ -23,25 +23,25 @@
             {% endfor %}
           </div>
 
-          <div class="d-grid gap-2 d-md-flex justify-content-md-between align-items-center">
-            <a href="{{ pdf_url }}" target="_blank" class="btn btn-outline-primary">
+          <div class="d-flex flex-wrap gap-2 justify-content-md-between align-items-stretch">
+            <a href="{{ pdf_url }}" target="_blank" class="btn btn-outline-primary w-100 w-md-auto">
               <i class="bi bi-filetype-pdf me-2"></i>Ver PDF
             </a>
-            <div class="d-flex gap-2">
-              <form method="post" action="{{ url_for('sales.print_thermal_ticket', sale_id=sale.id) }}">
+            <div class="action-wrap">
+              <form class="w-100 w-md-auto" method="post" action="{{ url_for('sales.print_thermal_ticket', sale_id=sale.id) }}">
                 <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
-                <button class="btn btn-outline-dark" type="submit"><i class="bi bi-printer me-1"></i>Imprimir térmico</button>
+                <button class="btn btn-outline-dark w-100" type="submit"><i class="bi bi-printer me-1"></i>Imprimir térmico</button>
               </form>
-              <a href="{{ url_for('sales.thermal_ticket', sale_id=sale.id) }}" target="_blank" class="btn btn-outline-dark">
+              <a href="{{ url_for('sales.thermal_ticket', sale_id=sale.id) }}" target="_blank" class="btn btn-outline-dark w-100 w-md-auto">
                 <i class="bi bi-printer me-1"></i>Ticket térmico
               </a>
-              <a href="{{ url_for('sales.share_whatsapp', sale_id=sale.id) }}" class="btn btn-outline-success">
+              <a href="{{ url_for('sales.share_whatsapp', sale_id=sale.id) }}" class="btn btn-outline-success w-100 w-md-auto">
                 <i class="bi bi-whatsapp me-1"></i>Enviar por WhatsApp
               </a>
-              <a href="{{ url_for('sales.new_sale') }}" class="btn btn-primary">
+              <a href="{{ url_for('sales.new_sale') }}" class="btn btn-primary w-100 w-md-auto">
                 <i class="bi bi-plus-lg me-1"></i>Nueva venta
               </a>
-              <a href="{{ url_for('sales.index') }}" class="btn btn-outline-secondary">
+              <a href="{{ url_for('sales.index') }}" class="btn btn-outline-secondary w-100 w-md-auto">
                 <i class="bi bi-list-ul me-1"></i>Ventas
               </a>
             </div>

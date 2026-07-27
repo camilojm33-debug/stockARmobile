@@ -62,7 +62,11 @@
       --bs-dark-text-emphasis: #edf4ff;
       --bs-secondary-color-rgb: 183, 196, 214;
     }
-    html { background: var(--app-bg); }
+    html {
+      background: var(--app-bg);
+      max-width: 100%;
+      overflow-x: hidden;
+    }
     body {
       min-height: 100vh;
       background:
@@ -70,6 +74,7 @@
         var(--app-bg);
       color: var(--app-ink);
       letter-spacing: 0;
+      max-width: 100%;
       overflow-x: hidden;
     }
     [data-bs-theme="dark"] body {
@@ -79,7 +84,53 @@
         var(--app-bg);
     }
     .app-layout { min-height: 100vh; }
-    .app-shell { max-width: 1240px; margin: 0 auto; }
+    .app-shell {
+      max-width: 1240px;
+      margin: 0 auto;
+      width: 100%;
+      min-width: 0;
+    }
+    .app-shell .row,
+    .app-shell [class*="col-"] {
+      min-width: 0;
+    }
+    .app-shell .table-responsive {
+      max-width: 100%;
+      overflow-x: auto;
+      overflow-y: visible;
+      -webkit-overflow-scrolling: touch;
+    }
+    .app-shell .form-control,
+    .app-shell .form-select,
+    .app-shell .input-group,
+    .app-shell .btn,
+    .app-shell .card,
+    .app-shell .modal-content {
+      max-width: 100%;
+    }
+    .app-shell .modal-body,
+    .app-shell .modal-footer,
+    .app-shell .card-body {
+      min-width: 0;
+    }
+    .w-md-auto {
+      width: 100%;
+    }
+    .action-wrap {
+      display: flex;
+      flex-wrap: wrap;
+      gap: .5rem;
+      width: 100%;
+    }
+    .action-wrap > .btn,
+    .action-wrap > form,
+    .action-wrap > a {
+      width: 100%;
+      max-width: 100%;
+    }
+    .action-wrap > form > .btn {
+      width: 100%;
+    }
     .app-sidebar {
       position: fixed;
       inset: 0 auto 0 0;
@@ -609,6 +660,22 @@
         font-size: .78rem;
         font-weight: 700;
         text-transform: uppercase;
+      }
+    }
+    @media (min-width: 768px) {
+      .w-md-auto {
+        width: auto !important;
+      }
+      .action-wrap {
+        width: auto;
+      }
+      .action-wrap > .btn,
+      .action-wrap > form,
+      .action-wrap > a {
+        width: auto;
+      }
+      .action-wrap > form > .btn {
+        width: auto;
       }
     }
 

@@ -140,6 +140,47 @@ def _cart_tenant_key():
     return f"{company_id}:{current_user.id}"
 
 
+def _quote_cart_prefill_session_key():
+    return f"quote_cart_prefill_{_cart_tenant_key()}"
+
+
+def _set_quote_cart_prefill(payload):
+    if payload is None:
+        session.pop(_quote_cart_prefill_session_key(), None)
+    else:
+        session[_quote_cart_prefill_session_key()] = payload
+    session.modified = True
+
+
+def _pop_quote_cart_prefill():
+    payload = session.pop(_quote_cart_prefill_session_key(), None)
+    session.modified = True
+    return payload
+
+
+def _quote_id_from_checkout_token(token):
+    raw = (token or "").strip()
+    if not raw.startswith("quote-cart-"):
+        return None
+    suffix = raw[len("quote-cart-"):]
+    if not suffix.isdigit():
+        return None
+    return int(suffix)
+
+
+def _mark_quote_as_converted_from_checkout_token(checkout_token, sale_id):
+    from app import Quote, db, scope_query_to_company
+
+    quote_id = _quote_id_from_checkout_token(checkout_token)
+    if not quote_id:
+        return
+    quote = scope_query_to_company(db.session.query(Quote), Quote).filter(Quote.id == quote_id).first()
+    if quote is None:
+        return
+    quote.status = "CONVERTIDO"
+    quote.converted_sale_id = sale_id
+
+
 def _current_open_cash_session():
     from app import CashSession, scope_query_to_company
 
@@ -375,6 +416,7 @@ def index():
         )
     mp_connection_summary = MercadoPagoOAuthService().summarize_connection(getattr(company, "mercadopago_connection", None)) if company else MercadoPagoOAuthService().summarize_connection(None)
     cash_session_open = _current_open_cash_session() is not None
+    quote_cart_prefill = _pop_quote_cart_prefill()
     total_sales_amount = _sale_accessible_query(db.session.query(db.func.coalesce(db.func.sum(Sale.total_amount), 0)), Sale).scalar() or 0
     sales = _sale_accessible_query(Sale.query.options(selectinload(Sale.client)), Sale).order_by(Sale.date.desc()).limit(20).all()
     return render_template(
@@ -389,6 +431,7 @@ def index():
         has_qr_payment_data=has_qr_data,
         mp_connection_summary=mp_connection_summary,
         cash_session_open=cash_session_open,
+        quote_cart_prefill=quote_cart_prefill,
     )
 
 
@@ -1214,6 +1257,8 @@ def _create_sale_from_items(items, data, json_response=False):
                     discount=calculated_line["final_discount"],
                 )
             )
+
+        _mark_quote_as_converted_from_checkout_token(checkout_token, sale.id)
 
         current_app.logger.info("[sales] commit de transaccion de venta: sale_id=%s", sale.id)
         db.session.commit()

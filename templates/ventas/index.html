@@ -10,9 +10,9 @@
       <h1 class="h3 fw-bold mb-1">Ventas</h1>
       <p class="text-muted mb-0">Venta rapida con scanner, carrito inteligente y pago mixto.</p>
     </div>
-    <div class="d-flex flex-wrap gap-2">
-      <button class="btn btn-outline-primary" data-bs-toggle="modal" data-bs-target="#cameraScannerModal" onclick="startCameraScanner()"><i class="bi bi-camera me-1"></i>Camara</button>
-      <button class="btn btn-success" {% if not cash_session_open %}disabled title="Abrí una caja para cobrar"{% endif %} onclick="openCartModal()"><i class="bi bi-credit-card me-1"></i>Cobrar <span class="cart-count badge text-bg-light">0</span></button>
+    <div class="d-flex flex-wrap gap-2 w-100 w-md-auto">
+      <button class="btn btn-outline-primary w-100 w-md-auto" data-bs-toggle="modal" data-bs-target="#cameraScannerModal" onclick="startCameraScanner()"><i class="bi bi-camera me-1"></i>Camara</button>
+      <button class="btn btn-success w-100 w-md-auto" {% if not cash_session_open %}disabled title="Abrí una caja para cobrar"{% endif %} onclick="openCartModal()"><i class="bi bi-credit-card me-1"></i>Cobrar <span class="cart-count badge text-bg-light">0</span></button>
     </div>
   </div>
 
@@ -23,6 +23,16 @@
     <a class="btn btn-warning btn-sm mt-2" href="{{ url_for('cash.index') }}">Abrir caja</a>
   </div>
   {% endif %}
+
+  <div id="quote-prefill-banner" class="alert alert-info border-0 shadow-sm d-none mb-3" role="status" aria-live="polite">
+    <div class="d-flex flex-wrap justify-content-between align-items-center gap-2">
+      <div>
+        <div class="fw-semibold"><i class="bi bi-file-earmark-check me-1"></i>Carrito cargado desde presupuesto</div>
+        <div class="small" id="quote-prefill-banner-text">Revisa los productos y confirma la venta desde el carrito.</div>
+      </div>
+      <button type="button" class="btn btn-sm btn-outline-primary" onclick="openCartModal()">Ver carrito</button>
+    </div>
+  </div>
 
   <div class="pos-toolbar app-card mb-3">
     <div class="row g-2 align-items-center">
@@ -320,9 +330,9 @@
           </div>
         </form>
       </div>
-      <div class="modal-footer">
-        <button class="btn btn-outline-danger me-auto" onclick="clearCart()">Vaciar</button>
-        <button id="checkout-process-button" class="btn btn-success btn-lg" onclick="processCheckout()">Procesar venta</button>
+      <div class="modal-footer d-flex flex-wrap gap-2">
+        <button class="btn btn-outline-danger w-100 w-md-auto me-md-auto" onclick="clearCart()">Vaciar</button>
+        <button id="checkout-process-button" class="btn btn-success btn-lg w-100 w-md-auto" onclick="processCheckout()">Procesar venta</button>
       </div>
     </div>
   </div>
@@ -352,9 +362,9 @@
         </div>
         <div class="small text-muted mt-2">Se crea sin salir de la venta y queda seleccionado automáticamente.</div>
       </div>
-      <div class="modal-footer">
-        <button class="btn btn-outline-secondary" data-bs-dismiss="modal">Cancelar</button>
-        <button class="btn btn-primary" type="button" id="quick-client-create-btn" onclick="createQuickClient()">Crear cliente</button>
+      <div class="modal-footer d-flex flex-wrap gap-2">
+        <button class="btn btn-outline-secondary w-100 w-md-auto" data-bs-dismiss="modal">Cancelar</button>
+        <button class="btn btn-primary w-100 w-md-auto" type="button" id="quick-client-create-btn" onclick="createQuickClient()">Crear cliente</button>
       </div>
     </div>
   </div>
@@ -377,8 +387,8 @@
         >
         <div class="small text-muted" id="mp-qr-modal-status">Generá primero el cobro QR desde el carrito.</div>
       </div>
-      <div class="modal-footer">
-        <button class="btn btn-outline-secondary" data-bs-dismiss="modal">Cerrar</button>
+      <div class="modal-footer d-flex flex-wrap gap-2">
+        <button class="btn btn-outline-secondary w-100 w-md-auto" data-bs-dismiss="modal">Cerrar</button>
       </div>
     </div>
   </div>
@@ -406,6 +416,10 @@
   .pos-shell { overflow-x: clip; }
   .pos-hero { display: flex; align-items: center; justify-content: space-between; gap: 1rem; flex-wrap: wrap; }
   .pos-toolbar { padding: 14px; }
+  .pos-shell .row,
+  .pos-shell [class*="col-"] {
+    min-width: 0;
+  }
   .pos-category-strip { display: flex; gap: .5rem; overflow-x: auto; padding-bottom: .25rem; }
   .pos-category-strip .btn { min-width: max-content; }
   .pos-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(min(210px, 100%), 1fr)); gap: 1rem; }
@@ -424,6 +438,12 @@
   #cartModal .modal-body,
   #cartModal .modal-content {
     overflow-x: hidden;
+  }
+  #cartModal .modal-dialog,
+  #quickClientModal .modal-dialog,
+  #paymentQrModal .modal-dialog,
+  #cameraScannerModal .modal-dialog {
+    max-width: calc(100vw - 1rem);
   }
   #cartModal .modal-body {
     padding-top: .85rem;
@@ -447,6 +467,9 @@
   }
   #checkout-form .form-text {
     margin-top: .35rem;
+  }
+  #checkout-form .row > [class*="col-"] {
+    min-width: 0;
   }
   #checkout-form .input-group > .btn {
     white-space: nowrap;
@@ -593,6 +616,7 @@
     .pos-quick-toggle-copy { text-align: center; }
     #cartModal .modal-dialog {
       margin: .5rem;
+      max-width: calc(100vw - 1rem);
     }
     #checkout-form .input-group {
       flex-direction: column;
@@ -606,11 +630,15 @@
   }
   @media (max-width: 575.98px) {
     .pos-grid { grid-template-columns: 1fr; }
-    .pos-hero .btn { flex: 1 1 auto; }
+    .pos-hero .btn {
+      flex: 1 1 auto;
+      width: 100%;
+    }
     .pos-quick-controls { grid-template-columns: 1fr; }
     .pos-cart-fab { bottom: calc(72px + env(safe-area-inset-bottom)); }
     #cartModal .modal-dialog {
       margin: .35rem;
+      max-width: calc(100vw - .7rem);
     }
     #cartModal .modal-footer {
       flex-wrap: wrap;
@@ -640,6 +668,9 @@
       justify-content: space-between;
       gap: .4rem;
     }
+    .pos-cart-modal-controls .btn-outline-danger {
+      flex: 1 1 100%;
+    }
     .pos-cart-modal-controls .btn {
       padding-left: .55rem;
       padding-right: .55rem;
@@ -655,6 +686,11 @@
 {% endblock %}
 
 {% block extra_js %}
+{% if quote_cart_prefill %}
+<script>
+  window.__quoteCartPrefill = {{ quote_cart_prefill|tojson }};
+</script>
+{% endif %}
 <script src="https://unpkg.com/html5-qrcode"></script>
 <script src="{{ url_for('static', filename='assets/js/cart-manager.js') }}"></script>
 <script>

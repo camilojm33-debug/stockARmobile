@@ -75,7 +75,11 @@
   .ticket-line-total { font-weight: 700; }
   .ticket-totals > div { display: flex; justify-content: space-between; margin: 3px 0; }
   .ticket-total-final { font-size: 15px; font-weight: 800; padding-top: 6px; border-top: 1px solid #222; }
-  .ticket-actions { display: flex; gap: 8px; margin-top: 14px; }
+  .ticket-actions { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 14px; }
+  .ticket-actions .btn { flex: 1 1 auto; }
+  @media (max-width: 575.98px) {
+    .ticket-actions .btn { width: 100%; }
+  }
   @media print {
     body { background: #fff !important; }
     .no-print, .app-sidebar, .app-mobilebar, .app-navbar, .toast-container { display: none !important; }

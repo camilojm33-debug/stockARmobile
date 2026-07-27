@@ -3,7 +3,7 @@
 {% block title %}Nueva Venta - StockArmobile{% endblock %}
 
 {% block content %}
-<div class="container py-4">
+<div class="app-shell py-4">
     <div class="row">
         <!-- Sidebar con productos -->
         <div class="col-lg-8 mb-3">
@@ -25,7 +25,7 @@
                 
                 <!-- Lista de productos -->
                 <div class="table-responsive">
-                    <table class="table table-hover mb-0 align-middle">
+                    <table class="table table-hover mb-0 align-middle mobile-card-table">
                         <thead class="bg-light sticky-top">
                             <tr>
                                 <th class="ps-4 py-3">Producto</th>
@@ -38,7 +38,7 @@
                         <tbody>
                             {% for product in products %}
                             <tr>
-                                <td class="ps-4 py-3">
+                                <td class="ps-4 py-3" data-label="Producto">
                                     <div class="d-flex align-items-center">
                                         <i class="bi bi-box text-primary me-2"></i>
                                         <div>
@@ -49,27 +49,27 @@
                                         </div>
                                     </div>
                                 </td>
-                                <td class="py-3">${{ '%.2f' | format(product.price) }}</td>
-                                <td class="py-3">
+                                <td class="py-3" data-label="Precio">${{ '%.2f' | format(product.price) }}</td>
+                                <td class="py-3" data-label="Stock">
                                     {% if product.stock > 0 %}
                                     <span class="badge bg-success">{{ product.stock }}</span>
                                     {% else %}
                                     <span class="badge bg-danger">Sin stock</span>
                                     {% endif %}
                                 </td>
-                                <td class="py-3">
+                                <td class="py-3" data-label="Dcto">
                                     {% if product.discount > 0 %}
                                     <span class="badge bg-info">{{ '%.1f' | format(product.discount) }}%</span>
                                     {% else %}
                                     -{% endif %}
                                 </td>
-                                <td class="text-end pe-4 py-3">
+                                <td class="text-end pe-4 py-3" data-label="Acción">
                                     <form method="post" action="{{ url_for('sales.add_to_cart', product_id=product.id) }}" 
                                           class="d-inline">
                                         <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
                                         <input type="hidden" name="qty" value="1">
                                         <button type="submit" 
-                                                class="btn btn-sm btn-primary {% if product.stock == 0 %}disabled{% endif %}"
+                                            class="btn btn-sm btn-primary w-100 w-md-auto {% if product.stock == 0 %}disabled{% endif %}"
                                                 {% if product.stock == 0 %}disabled{% endif %}>
                                             <i class="bi bi-cart-plus me-1"></i> Agregar
                                         </button>
@@ -95,7 +95,7 @@
 
         <!-- Sidebar de carrito -->
         <div class="col-lg-4">
-            <div class="card shadow-sm border-0 sticky-top" style="top: 2rem; z-index: 1;">
+            <div class="card shadow-sm border-0 sticky-top" style="top: 2rem; z-index: 1; max-width: 100%;">
                 <div class="card-header bg-primary text-white pt-3 px-4 border-0">
                     <div class="small opacity-75 mb-1">{{ company_name or 'Mi comercio' }}</div>
                     <h5 class="mb-0"><i class="bi bi-cart3 me-2"></i>Carrito</h5>

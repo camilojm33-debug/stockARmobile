@@ -191,6 +191,98 @@ function saveCart() {
   }
 }
 
+function applyQuoteCartPrefillFromServer() {
+  const payload = window.__quoteCartPrefill;
+  if (!payload || !Array.isArray(payload.items) || !payload.items.length) {
+    return;
+  }
+
+  let addedCount = 0;
+  payload.items.forEach(rawItem => {
+    const productId = parseInt(rawItem?.productId, 10) || 0;
+    const stock = parseFloat(rawItem?.stock || 0);
+    const quantity = parseFloat(rawItem?.quantity || 0);
+    const price = parseFloat(rawItem?.price || 0);
+    if (!productId || !Number.isFinite(stock) || stock <= 0 || !Number.isFinite(quantity) || quantity <= 0 || !Number.isFinite(price) || price < 0) {
+      return;
+    }
+    const sanitizedItem = {
+      productId,
+      name: String(rawItem?.name || 'Producto'),
+      price,
+      stock,
+      barcode: String(rawItem?.barcode || ''),
+      unitMeasure: String(rawItem?.unitMeasure || 'u'),
+      quantity: Math.min(quantity, stock),
+    };
+    const existing = cart.find(item => item.productId === productId);
+    if (existing) {
+      existing.quantity = Math.min((parseFloat(existing.quantity) || 0) + sanitizedItem.quantity, stock);
+    } else {
+      cart.push(sanitizedItem);
+    }
+    addedCount += 1;
+  });
+
+  if (!addedCount) {
+    return;
+  }
+
+  const clientSelect = document.getElementById('checkout-client-select');
+  if (clientSelect && payload.client_id !== undefined && payload.client_id !== null && String(payload.client_id) !== '') {
+    clientSelect.value = String(payload.client_id);
+  }
+
+  const noteInput = document.getElementById('checkout-note');
+  if (noteInput && payload.note && !noteInput.value) {
+    noteInput.value = String(payload.note);
+  }
+
+  const discountModeSelect = document.getElementById('checkout-discount-mode');
+  if (discountModeSelect) {
+    discountModeSelect.value = 'amount';
+  }
+
+  const generalDiscountInput = document.getElementById('checkout-general-discount');
+  if (generalDiscountInput && Number.isFinite(parseFloat(payload.general_discount))) {
+    generalDiscountInput.value = String(parseFloat(payload.general_discount));
+  }
+
+  const surchargeInput = document.getElementById('checkout-surcharge');
+  if (surchargeInput && Number.isFinite(parseFloat(payload.surcharge))) {
+    surchargeInput.value = String(parseFloat(payload.surcharge));
+  }
+
+  const documentTypeSelect = document.getElementById('checkout-document-type');
+  if (documentTypeSelect && payload.document_type) {
+    documentTypeSelect.value = String(payload.document_type);
+  }
+
+  if (payload.checkout_token) {
+    checkoutToken = String(payload.checkout_token);
+  }
+
+  const prefillBanner = document.getElementById('quote-prefill-banner');
+  const prefillBannerText = document.getElementById('quote-prefill-banner-text');
+  if (prefillBanner) {
+    prefillBanner.classList.remove('d-none');
+    if (prefillBannerText) {
+      const quoteLabel = payload.quote_number || `#${payload.quote_id || ''}`;
+      prefillBannerText.textContent = `Origen: presupuesto ${quoteLabel}. Revisa los productos y confirma la venta.`;
+    }
+  }
+
+  saveCart();
+  updateCheckoutTotals();
+  showNotification(`Presupuesto ${payload.quote_number || ''} cargado al carrito`, 'info');
+
+  if (payload.auto_open_cart) {
+    setTimeout(() => {
+      openCartModal();
+    }, 150);
+  }
+}
+
 /**
  * Agregar producto al carrito
  * @param {number} productId - ID del producto
@@ -1032,6 +1124,7 @@ function showNotification(message, type = 'success') {
  */
 document.addEventListener('DOMContentLoaded', () => {
   loadCart();
+  applyQuoteCartPrefillFromServer();
   setupFastScanner();
   setupCheckoutPaymentBehavior();
   ['checkout-general-discount', 'checkout-surcharge', 'checkout-paid-amount', 'checkout-paid-amount-2'].forEach(id => {

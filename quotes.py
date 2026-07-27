@@ -912,7 +912,7 @@ def share_whatsapp_post(quote_id):
 @tenant_required
 @login_required
 def convert_to_sale(quote_id):
-    from app import Quote, db, scope_query_to_company
+    from app import Product, Quote, db, record_audit, scope_query_to_company
 
     _require_quote_permission("quotes_convert")
     quote = scope_query_to_company(db.session.query(Quote).options(selectinload(Quote.items)), Quote).filter(Quote.id == quote_id).first_or_404()
@@ -920,15 +920,13 @@ def convert_to_sale(quote_id):
     if quote.status == "CONVERTIDO" and quote.converted_sale_id:
         return redirect(url_for("sales.view_sale", sale_id=quote.converted_sale_id))
 
-    items = {}
-    line_discounts = {}
     payload_items = []
+    product_ids = []
     for item in quote.items:
         product_id = int(item.product_id or 0)
         if product_id <= 0:
             raise ValueError("Solo se pueden convertir presupuestos con productos asociados.")
-        items[str(product_id)] = float(item.quantity or 0)
-        line_discounts[str(product_id)] = float(item.discount or 0) / float(item.quantity or 1)
+        product_ids.append(product_id)
         payload_items.append(
             {
                 "productId": product_id,
@@ -938,50 +936,78 @@ def convert_to_sale(quote_id):
             }
         )
 
+    if not payload_items:
+        flash("El presupuesto no tiene productos para convertir.", "warning")
+        return redirect(url_for("quotes.view_quote", quote_id=quote.id))
+
+    products = {
+        product.id: product
+        for product in scope_query_to_company(db.session.query(Product), Product)
+        .filter(Product.id.in_(sorted(set(product_ids))))
+        .all()
+    }
+    cart_items = []
+    skipped_lines = 0
+    for row in payload_items:
+        product = products.get(int(row["productId"]))
+        if product is None:
+            skipped_lines += 1
+            continue
+        max_stock = max(float(product.stock or 0), 0.0)
+        requested_qty = max(float(row["quantity"] or 0), 0.0)
+        final_qty = min(requested_qty, max_stock)
+        if final_qty <= 0:
+            skipped_lines += 1
+            continue
+        cart_items.append(
+            {
+                "productId": int(product.id),
+                "name": row["name"],
+                "price": float(row["price"]),
+                "quantity": final_qty,
+                "stock": max_stock,
+                "barcode": (product.barcode or "")[:80],
+                "unitMeasure": (product.unit_measure or "u")[:20],
+            }
+        )
+
+    if not cart_items:
+        flash("No se pudo cargar el presupuesto al carrito porque no hay stock disponible.", "warning")
+        return redirect(url_for("quotes.view_quote", quote_id=quote.id))
+
     import sales as sales_blueprint
 
-    # La conversión reutiliza la creación de ventas, por lo que requiere caja abierta.
-    if sales_blueprint._current_open_cash_session() is None:
-        flash("Debes abrir una caja antes de convertir el presupuesto en venta.", "warning")
-        return redirect(url_for("cash.index"))
-
-    conversion_token = f"quote-{quote.id}"
-    result = sales_blueprint._create_sale_from_items(
-        items,
+    sales_blueprint._set_quote_cart_prefill(
         {
-            "checkout_token": conversion_token,
-            "items": payload_items,
-            "metodo_pago": request.form.get("metodo_pago") or "EFECTIVO",
-            "client_id": quote.client_id,
-            "note": quote.observations or "",
+            "source": "quote",
+            "quote_id": quote.id,
+            "quote_number": quote.number or f"P-{quote.id:06d}",
+            "checkout_token": f"quote-cart-{quote.id}",
+            "client_id": quote.client_id or "",
+            "note": (quote.observations or "")[:255],
             "document_type": "venta",
-            "status": "confirmada",
-            "descuento_general": max(float(quote.discount or 0) - sum(float(item.discount or 0) for item in quote.items), 0.0),
-            "recargo": float(quote.surcharge or 0),
-            "line_discounts": line_discounts,
-            "currency": quote.currency,
-        },
-        json_response=True,
+            "general_discount": float(quote.discount or 0),
+            "surcharge": float(quote.surcharge or 0),
+            "auto_open_cart": True,
+            "items": cart_items,
+        }
     )
-    response_obj = result[0] if isinstance(result, tuple) else result
-    if hasattr(response_obj, "get_json"):
-        payload = response_obj.get_json(silent=True) or {}
-        sale_id = payload.get("sale_id")
-        if sale_id:
-            quote.status = "CONVERTIDO"
-            quote.converted_sale_id = sale_id
-            db.session.commit()
-            from app import record_audit
-            record_audit(action="quote_convert", entity="quote", entity_id=quote.id, detail=f"Convertido a venta {sale_id}", ip_address=request.remote_addr)
-            flash("Presupuesto convertido en venta.", "success")
-            return redirect(url_for("sales.view_sale", sale_id=sale_id))
 
-        error_message = (payload.get("error") or "").strip() if isinstance(payload, dict) else ""
-        if error_message:
-            flash(error_message, "warning")
-            return redirect(url_for("quotes.view_quote", quote_id=quote.id))
-    flash("No se pudo convertir el presupuesto.", "danger")
-    return redirect(url_for("quotes.view_quote", quote_id=quote.id))
+    record_audit(
+        action="quote_convert_prepare",
+        entity="quote",
+        entity_id=quote.id,
+        detail=f"Presupuesto preparado para carrito POS ({len(cart_items)} líneas)",
+        ip_address=request.remote_addr,
+    )
+    if skipped_lines:
+        flash(
+            f"Presupuesto cargado al carrito. {skipped_lines} línea(s) no se agregaron por falta de stock/producto.",
+            "warning",
+        )
+    else:
+        flash("Presupuesto cargado al carrito. Ahora puedes revisar y procesar la venta.", "success")
+    return redirect(url_for("sales.index"))
 
 
 @bp.route("/<int:quote_id>/email", methods=["POST"])

@@ -9,11 +9,11 @@
       <span class="page-kicker"><i class="bi bi-credit-card"></i> Checkout</span>
       <h1 class="h4 fw-bold mb-4">Finalizar venta</h1>
       <div class="table-responsive mb-3">
-        <table class="table align-middle">
+        <table class="table align-middle mobile-card-table">
           <thead class="table-light"><tr><th>Producto</th><th>Cantidad</th><th>Precio</th><th class="text-end">Subtotal</th></tr></thead>
           <tbody>
             {% for line in products %}
-            <tr><td>{{ line.product.name }}</td><td>{{ line.quantity }}</td><td>${{ "%.2f"|format(line.price) }}</td><td class="text-end">${{ "%.2f"|format(line.price * line.quantity) }}</td></tr>
+            <tr><td data-label="Producto">{{ line.product.name }}</td><td data-label="Cantidad">{{ line.quantity }}</td><td data-label="Precio">${{ "%.2f"|format(line.price) }}</td><td class="text-end" data-label="Subtotal">${{ "%.2f"|format(line.price * line.quantity) }}</td></tr>
             {% endfor %}
           </tbody>
         </table>
@@ -46,8 +46,10 @@
           <hr>
           <div class="d-flex justify-content-between fs-5"><span>Total</span><strong class="text-primary">${{ "%.2f"|format(total) }}</strong></div>
         </div>
-        <button class="btn btn-success"><i class="bi bi-check2-circle me-1"></i>Confirmar venta</button>
-        <a class="btn btn-outline-secondary" href="{{ url_for('sales.new_sale') }}">Volver</a>
+        <div class="action-wrap">
+          <button class="btn btn-success w-100 w-md-auto"><i class="bi bi-check2-circle me-1"></i>Confirmar venta</button>
+          <a class="btn btn-outline-secondary w-100 w-md-auto" href="{{ url_for('sales.new_sale') }}">Volver</a>
+        </div>
       </form>
     </div>
   </div>

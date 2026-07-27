@@ -3,10 +3,10 @@
 {% block title %}Venta #{{ sale.id }} - StockArmobile{% endblock %}
 
 {% block content %}
-<div class="container">
+<div class="app-shell">
   <div class="card border-0 shadow-sm">
     <div class="card-body">
-      <div class="d-flex justify-content-between align-items-start mb-4">
+      <div class="d-flex flex-wrap justify-content-between align-items-start gap-3 mb-4">
         <div>
           <h1 class="h4 fw-bold mb-1">Venta #{{ sale.id }}</h1>
           <p class="text-muted mb-0">{{ sale.date.strftime('%Y-%m-%d %H:%M') if sale.date else '' }} - {{ sale.customer or 'Consumidor final' }}</p>
@@ -23,45 +23,45 @@
           <div class="mt-2 small text-muted"><strong>Observaciones:</strong> {{ sale.note }}</div>
           {% endif %}
         </div>
-        <div class="d-flex gap-2">
+        <div class="action-wrap ms-lg-auto">
           {% if current_user.role in ['admin', 'superadmin'] %}
-          <a class="btn btn-primary" href="{{ url_for('sales.edit', sale_id=sale.id) }}"><i class="bi bi-pencil-square me-1"></i>Editar venta</a>
+          <a class="btn btn-primary w-100 w-md-auto" href="{{ url_for('sales.edit', sale_id=sale.id) }}"><i class="bi bi-pencil-square me-1"></i>Editar venta</a>
           {% endif %}
           {% if sale.requiere_comprobante and not sale.comprobante_emitido %}
-          <form method="post" action="{{ url_for('sales.mark_comprobante_issued', sale_id=sale.id) }}">
+          <form class="w-100 w-md-auto" method="post" action="{{ url_for('sales.mark_comprobante_issued', sale_id=sale.id) }}">
             <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
-            <button class="btn btn-success" type="submit"><i class="bi bi-check2-circle me-1"></i>Marcar como comprobante emitido</button>
+            <button class="btn btn-success w-100" type="submit"><i class="bi bi-check2-circle me-1"></i>Marcar como comprobante emitido</button>
           </form>
           {% endif %}
-          <a class="btn btn-outline-primary" href="{{ url_for('qr_labels.generate_pdf_ticket', sale_id=sale.id) }}" target="_blank">PDF</a>
-          <form method="post" action="{{ url_for('sales.print_thermal_ticket', sale_id=sale.id) }}">
+          <a class="btn btn-outline-primary w-100 w-md-auto" href="{{ url_for('qr_labels.generate_pdf_ticket', sale_id=sale.id) }}" target="_blank">PDF</a>
+          <form class="w-100 w-md-auto" method="post" action="{{ url_for('sales.print_thermal_ticket', sale_id=sale.id) }}">
             <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
-            <button class="btn btn-outline-dark" type="submit"><i class="bi bi-printer me-1"></i>Imprimir térmico</button>
+            <button class="btn btn-outline-dark w-100" type="submit"><i class="bi bi-printer me-1"></i>Imprimir térmico</button>
           </form>
-          <a class="btn btn-outline-dark" href="{{ url_for('sales.thermal_ticket', sale_id=sale.id) }}" target="_blank"><i class="bi bi-printer me-1"></i>Ticket térmico</a>
+          <a class="btn btn-outline-dark w-100 w-md-auto" href="{{ url_for('sales.thermal_ticket', sale_id=sale.id) }}" target="_blank"><i class="bi bi-printer me-1"></i>Ticket térmico</a>
           {% if current_user.role == 'admin' %}
-          <form method="post" action="{{ url_for('sales.delete_sale', sale_id=sale.id) }}" onsubmit="return confirm('Eliminar la venta #{{ sale.id }}? Se restituirá el stock.');">
+          <form class="w-100 w-md-auto" method="post" action="{{ url_for('sales.delete_sale', sale_id=sale.id) }}" onsubmit="return confirm('Eliminar la venta #{{ sale.id }}? Se restituirá el stock.');">
             <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
-            <button class="btn btn-outline-danger" type="submit">Eliminar</button>
+            <button class="btn btn-outline-danger w-100" type="submit">Eliminar</button>
           </form>
           {% endif %}
-          <a class="btn btn-outline-secondary" href="{{ url_for('sales.index') }}">Volver</a>
+          <a class="btn btn-outline-secondary w-100 w-md-auto" href="{{ url_for('sales.index') }}">Volver</a>
         </div>
       </div>
 
       <div class="table-responsive">
-        <table class="table align-middle">
+        <table class="table align-middle mobile-card-table">
           <thead class="table-light"><tr><th>Producto</th><th>Cantidad</th><th>Precio</th><th class="text-end">Subtotal</th></tr></thead>
           <tbody>
             {% for item in sale.items %}
             <tr>
-              <td>
+              <td data-label="Producto">
                 <div class="fw-semibold">{{ item.product.name if item.product else 'Producto eliminado' }}</div>
                 <div class="text-muted small">{{ item.product.unit_measure if item.product else 'u' }}</div>
               </td>
-              <td>{{ "%.3g"|format(item.quantity or 0) }}</td>
-              <td>${{ "%.2f"|format(item.price) }}</td>
-              <td class="text-end">${{ "%.2f"|format(item.total_amount) }}</td>
+              <td data-label="Cantidad">{{ "%.3g"|format(item.quantity or 0) }}</td>
+              <td data-label="Precio">${{ "%.2f"|format(item.price) }}</td>
+              <td class="text-end" data-label="Subtotal">${{ "%.2f"|format(item.total_amount) }}</td>
             </tr>
             {% endfor %}
           </tbody>
@@ -69,7 +69,7 @@
       </div>
 
       <div class="row justify-content-end">
-        <div class="col-md-4">
+        <div class="col-12 col-md-7 col-lg-4">
           <div class="d-flex justify-content-between"><span>Subtotal</span><strong>${{ "%.2f"|format(sale.subtotal) }}</strong></div>
           <div class="d-flex justify-content-between"><span>Descuento</span><strong>${{ "%.2f"|format(sale.discount) }}</strong></div>
           <div class="d-flex justify-content-between"><span>Impuestos</span><strong>${{ "%.2f"|format(sale.tax) }}</strong></div>
@@ -98,8 +98,8 @@
                   <td>{{ entry.created_at.strftime('%Y-%m-%d %H:%M') if entry.created_at else '-' }}</td>
                   <td>{{ entry.user.username if entry.user else 'Sistema' }}</td>
                   <td>{{ entry.reason }}</td>
-                  <td><pre class="small mb-0 text-wrap">{{ entry.previous_data }}</pre></td>
-                  <td><pre class="small mb-0 text-wrap">{{ entry.new_data }}</pre></td>
+                  <td><pre class="small mb-0 text-wrap sale-json-cell">{{ entry.previous_data }}</pre></td>
+                  <td><pre class="small mb-0 text-wrap sale-json-cell">{{ entry.new_data }}</pre></td>
                 </tr>
                 {% endfor %}
               </tbody>
@@ -111,4 +111,15 @@
     </div>
   </div>
 </div>
+{% endblock %}
+
+{% block extra_css %}
+<style>
+  .sale-json-cell {
+    white-space: pre-wrap;
+    overflow-wrap: anywhere;
+    word-break: break-word;
+    max-width: 100%;
+  }
+</style>
 {% endblock %}

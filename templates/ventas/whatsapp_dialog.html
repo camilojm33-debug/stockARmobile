@@ -28,9 +28,9 @@
               <div class="form-text">Si lo dejás vacío, WhatsApp se abrirá para que selecciones el destinatario.</div>
             </div>
 
-            <div class="d-flex justify-content-end gap-2">
-              <a class="btn btn-outline-secondary" href="{{ url_for('sales.success', sale_id=sale.id) }}">Cancelar</a>
-              <button class="btn btn-success" type="submit"><i class="bi bi-whatsapp me-1"></i>Enviar WhatsApp</button>
+            <div class="action-wrap justify-content-end">
+              <a class="btn btn-outline-secondary w-100 w-md-auto" href="{{ url_for('sales.success', sale_id=sale.id) }}">Cancelar</a>
+              <button class="btn btn-success w-100 w-md-auto" type="submit"><i class="bi bi-whatsapp me-1"></i>Enviar WhatsApp</button>
             </div>
           </form>
         </div>
