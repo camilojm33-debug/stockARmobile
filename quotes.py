@@ -359,7 +359,7 @@ def _quote_form_items(quote):
     ]
 
 
-def _quote_pdf_response(quote):
+def _quote_pdf_response(quote, *, as_attachment=False):
     from app import Company
 
     company = Company.query.filter_by(id=quote.company_id).first()
@@ -385,9 +385,9 @@ def _quote_pdf_response(quote):
             pdf.drawImage(ImageReader(logo_path), 40, top_margin - 24, width=64, height=40, preserveAspectRatio=True, mask='auto')
         except Exception:
             pass
-    pdf.setFont("Helvetica-Bold", 16)
+    pdf.setFont("Helvetica-Bold", 18)
     pdf.drawString(118, top_margin, (company.name if company else "StockArmobile") + " - Presupuesto")
-    pdf.setFont("Helvetica", 10)
+    pdf.setFont("Helvetica", 11)
     pdf.drawString(40, top_margin - 26, f"Numero: {quote.number or f'P-{quote.id:06d}'}")
     pdf.drawString(40, top_margin - 40, f"Fecha: {quote.date.strftime('%d/%m/%Y %H:%M') if quote.date else ''}")
     pdf.drawString(40, top_margin - 54, f"Validez: {quote.expires_at.strftime('%d/%m/%Y') if quote.expires_at else ''}")
@@ -398,13 +398,13 @@ def _quote_pdf_response(quote):
 
     pdf.line(40, top_margin - 104, width - 40, top_margin - 104)
     y = top_margin - 122
-    pdf.setFont("Helvetica-Bold", 9)
+    pdf.setFont("Helvetica-Bold", 10)
     pdf.drawString(40, y, "Producto")
     pdf.drawString(260, y, "Cant.")
     pdf.drawString(310, y, "Precio")
     pdf.drawString(380, y, "Subtotal")
     y -= 12
-    pdf.setFont("Helvetica", 9)
+    pdf.setFont("Helvetica", 10)
     for item in quote.items:
         if y < 100:
             pdf.showPage()
@@ -417,7 +417,7 @@ def _quote_pdf_response(quote):
         y -= 14
 
     y -= 8
-    pdf.setFont("Helvetica-Bold", 10)
+    pdf.setFont("Helvetica-Bold", 11)
     pdf.drawRightString(470, y, f"Subtotal: ${float(quote.subtotal or 0):.2f}")
     y -= 14
     pdf.drawRightString(470, y, f"Descuento: -${float(quote.discount or 0):.2f}")
@@ -429,7 +429,7 @@ def _quote_pdf_response(quote):
     pdf.setFont("Helvetica-Bold", 12)
     pdf.drawRightString(470, y, f"Total: ${float(quote.total_amount or 0):.2f}")
     y -= 22
-    pdf.setFont("Helvetica", 9)
+    pdf.setFont("Helvetica", 10)
     pdf.drawString(40, y, f"Moneda: {quote.currency or getattr(company, 'currency', 'ARS')}")
     y -= 18
     pdf.drawString(40, y, f"Creado por: {quote.created_by_user.name if quote.created_by_user else ''}")
@@ -437,7 +437,7 @@ def _quote_pdf_response(quote):
     pdf.drawString(40, y, f"Vendedor: {quote.seller.name if quote.seller else ''}")
     if quote.observations:
         y -= 28
-        pdf.setFont("Helvetica", 9)
+        pdf.setFont("Helvetica", 10)
         pdf.drawString(40, y, "Observaciones:")
         text = pdf.beginText(40, y - 12)
         for line in (quote.observations or "").splitlines():
@@ -445,7 +445,7 @@ def _quote_pdf_response(quote):
         pdf.drawText(text)
     if quote.commercial_conditions:
         y -= 52
-        pdf.setFont("Helvetica", 9)
+        pdf.setFont("Helvetica", 10)
         pdf.drawString(40, y, "Condiciones comerciales:")
         text = pdf.beginText(40, y - 12)
         for line in (quote.commercial_conditions or "").splitlines():
@@ -465,11 +465,11 @@ def _quote_pdf_response(quote):
         pdf.drawString(width - 110, 28, "Escaneá para ver el presupuesto")
     except Exception:
         pass
-    pdf.setFont("Helvetica", 9)
+    pdf.setFont("Helvetica", 10)
     pdf.drawString(40, 35, "Firma: ______________________________")
     pdf.save()
     buffer.seek(0)
-    return send_file(buffer, mimetype="application/pdf", as_attachment=False, download_name=f"presupuesto_{quote.id}.pdf")
+    return send_file(buffer, mimetype="application/pdf", as_attachment=as_attachment, download_name=f"presupuesto_{quote.id}.pdf")
 
 
 def _quote_lookup(quote_id):
@@ -784,7 +784,7 @@ def quote_pdf(quote_id):
         abort(403)
     quote = _quote_lookup(quote_id)
     _require_owned_or_authorized(quote)
-    return _quote_pdf_response(quote)
+    return _quote_pdf_response(quote, as_attachment=True)
 
 
 @bp.route("/<int:quote_id>/imprimir")
@@ -794,7 +794,7 @@ def quote_print(quote_id):
     _require_quote_permission("quotes_print")
     quote = _quote_lookup(quote_id)
     _require_owned_or_authorized(quote)
-    return _quote_pdf_response(quote)
+    return _quote_pdf_response(quote, as_attachment=False)
 
 
 @bp.route("/<int:quote_id>/whatsapp")
