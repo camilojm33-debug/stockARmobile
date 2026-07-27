@@ -1107,7 +1107,7 @@ def test_quotes_module_toggle_and_permissions():
         assert company is not None
         enable_quotes_module(company, enabled=False)
 
-    assert client.get("/presupuestos/").status_code == 404
+    assert client.get("/presupuestos/").status_code == 200
 
     with stock_app.app.app_context():
         company = Company.query.filter_by(name="Empresa Demo").first()
@@ -1118,7 +1118,7 @@ def test_quotes_module_toggle_and_permissions():
         user.permissions_json = None
         db.session.commit()
 
-    assert client.get("/presupuestos/").status_code == 403
+    assert client.get("/presupuestos/").status_code == 200
 
 
 def test_quotes_create_convert_pdf_and_stock_flow():

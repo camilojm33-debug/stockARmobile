@@ -78,14 +78,12 @@ def _require_quotes_module():
     from app import Company
 
     company = Company.query.filter_by(id=getattr(current_user, "company_id", None)).first()
-    if not _company_quotes_enabled(company):
-        abort(404)
     return company
 
 
 def _require_quote_permission(permission_key: str):
-    if not _quote_permission(permission_key):
-        abort(403)
+    # Presupuestos queda habilitado para todos los usuarios autenticados de empresa.
+    return None
 
 
 def _can_view_other_quotes():
