@@ -851,7 +851,7 @@
   <div class="app-loading" id="appLoading">
     <div class="spinner-border text-primary" role="status"><span class="visually-hidden">Cargando</span></div>
   </div>
-  {% if current_user.is_authenticated and not (request.endpoint and request.endpoint.startswith('sales.')) %}
+  {% if current_user.is_authenticated %}
   <button class="btn btn-primary rounded-circle position-fixed d-lg-none" style="right:16px;bottom:18px;width:56px;height:56px;z-index:1010" type="button" data-bs-toggle="modal" data-bs-target="#spotlightModal" aria-label="Buscar"><i class="bi bi-search"></i></button>
   <div class="offcanvas offcanvas-end" tabindex="-1" id="notificationCenter">
     <div class="offcanvas-header">

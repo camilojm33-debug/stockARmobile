@@ -241,6 +241,18 @@ def test_login_and_dashboard_survive_missing_notification_table():
     assert "Panel principal" in login_response.data.decode("utf-8")
 
 
+def test_sales_pages_render_search_and_notifications_components():
+    client = stock_app.app.test_client()
+    client.post("/auth/login", data={"username": "empresa_admin", "password": "admin123"})
+
+    response = client.get("/ventas/")
+    assert response.status_code == 200
+
+    html = response.get_data(as_text=True)
+    assert 'id="spotlightModal"' in html
+    assert 'id="notificationCenter"' in html
+
+
 def test_checkout_requires_open_cash_session():
     client = stock_app.app.test_client()
     client.post("/auth/login", data={"username": "empresa_admin", "password": "admin123"})
