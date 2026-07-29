@@ -1425,7 +1425,7 @@ class RegisterForm(FlaskForm):
 
 
 class LoginForm(FlaskForm):
-    username = StringField("Usuario / Email", validators=[DataRequired()])
+    username = StringField("Empresa / Negocio", validators=[DataRequired()])
     password = PasswordField("Contrasena", validators=[DataRequired()])
     remember = BooleanField("Recordarme")
     submit = SubmitField("Iniciar sesion")
