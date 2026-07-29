@@ -52,6 +52,173 @@ EMPLOYEE_PERMISSIONS = [
     ("economic_stats", "Puede visualizar estadísticas económicas"),
 ]
 
+BILLING_DOCUMENT_TYPES = [
+    ("factura_a", "Factura A"),
+    ("factura_b", "Factura B"),
+    ("factura_c", "Factura C"),
+    ("nota_credito", "Nota de Credito"),
+    ("nota_debito", "Nota de Debito"),
+    ("remito", "Remito"),
+    ("presupuesto", "Presupuesto"),
+    ("recibo", "Recibo"),
+]
+
+
+def _normalize_pos_number(raw_value):
+    digits = "".join(ch for ch in str(raw_value or "") if ch.isdigit())
+    if not digits:
+        return "00001"
+    return digits[-5:].zfill(5)
+
+
+def _default_billing_config(company):
+    enabled_docs = {key: key in {"factura_b", "factura_c", "presupuesto", "recibo"} for key, _ in BILLING_DOCUMENT_TYPES}
+    return {
+        "fiscal": {
+            "tax_id": (getattr(company, "tax_id", None) or "").strip(),
+            "legal_name": (getattr(company, "legal_name", None) or getattr(company, "name", None) or "").strip(),
+            "iva_condition": "Consumidor Final",
+            "activity_start": "",
+            "tax_profile": "Monotributo",
+            "gross_income": "",
+            "jurisdiction": "",
+        },
+        "documents_enabled": enabled_docs,
+        "points_of_sale": [
+            {
+                "number": "00001",
+                "description": "Casa central",
+                "active": True,
+            }
+        ],
+        "active_pos": "00001",
+        "numbering": {
+            "factura_a": "00001-00000001",
+            "factura_b": "00001-00000001",
+            "factura_c": "00001-00000001",
+            "nota_credito": "00001-00000001",
+            "nota_debito": "00001-00000001",
+            "remito": "00001-00000001",
+            "presupuesto": "00001-00000001",
+            "recibo": "00001-00000001",
+        },
+        "print_template": {
+            "logo": (getattr(company, "logo", None) or "").strip(),
+            "footer": "Gracias por su compra.",
+            "commercial_terms": "Pago contado.",
+            "observations": "",
+            "show_qr": True,
+            "show_barcode": False,
+            "format_a4": True,
+            "format_ticket_58": False,
+            "format_ticket_80": True,
+        },
+        "electronic": {
+            "status": "coming_soon",
+            "connected": False,
+            "certificate": "",
+            "certificate_expires_at": "",
+            "environment": "homologacion",
+        },
+    }
+
+
+def _load_company_billing_config(company, company_preferences):
+    defaults = _default_billing_config(company)
+    stored = company_preferences.get("billing_business") if isinstance(company_preferences, dict) else None
+    if not isinstance(stored, dict):
+        stored = {}
+
+    fiscal = defaults["fiscal"].copy()
+    fiscal.update(stored.get("fiscal") or {})
+
+    docs = defaults["documents_enabled"].copy()
+    docs.update(stored.get("documents_enabled") or {})
+    docs = {key: bool(docs.get(key)) for key, _ in BILLING_DOCUMENT_TYPES}
+
+    points_raw = stored.get("points_of_sale")
+    points_of_sale = []
+    if isinstance(points_raw, list):
+        for row in points_raw:
+            if not isinstance(row, dict):
+                continue
+            number = _normalize_pos_number(row.get("number"))
+            description = (str(row.get("description") or "").strip() or f"Punto de venta {number}")[:80]
+            points_of_sale.append({"number": number, "description": description, "active": bool(row.get("active", True))})
+    if not points_of_sale:
+        points_of_sale = defaults["points_of_sale"]
+
+    active_pos = _normalize_pos_number(stored.get("active_pos") or points_of_sale[0].get("number"))
+    if not any(item.get("number") == active_pos for item in points_of_sale):
+        active_pos = points_of_sale[0].get("number")
+
+    numbering = defaults["numbering"].copy()
+    numbering.update(stored.get("numbering") or {})
+    for key, _ in BILLING_DOCUMENT_TYPES:
+        current = str(numbering.get(key) or "").strip()
+        numbering[key] = current if current else f"{active_pos}-00000001"
+
+    print_template = defaults["print_template"].copy()
+    print_template.update(stored.get("print_template") or {})
+    print_template["show_qr"] = bool(print_template.get("show_qr"))
+    print_template["show_barcode"] = bool(print_template.get("show_barcode"))
+    print_template["format_a4"] = bool(print_template.get("format_a4", True))
+    print_template["format_ticket_58"] = bool(print_template.get("format_ticket_58"))
+    print_template["format_ticket_80"] = bool(print_template.get("format_ticket_80", True))
+
+    electronic = defaults["electronic"].copy()
+    electronic.update(stored.get("electronic") or {})
+    electronic["connected"] = bool(electronic.get("connected"))
+    electronic["status"] = str(electronic.get("status") or "coming_soon")
+    electronic["environment"] = str(electronic.get("environment") or "homologacion")
+
+    return {
+        "fiscal": fiscal,
+        "documents_enabled": docs,
+        "points_of_sale": points_of_sale,
+        "active_pos": active_pos,
+        "numbering": numbering,
+        "print_template": print_template,
+        "electronic": electronic,
+    }
+
+
+def _business_billing_status(config):
+    fiscal = config.get("fiscal") or {}
+    required_fields = [
+        (fiscal.get("tax_id") or "").strip(),
+        (fiscal.get("legal_name") or "").strip(),
+        (fiscal.get("iva_condition") or "").strip(),
+    ]
+    filled = sum(1 for item in required_fields if item)
+    if filled == len(required_fields):
+        return {"label": "Configurada", "class": "text-bg-success"}
+    if filled == 0:
+        return {"label": "Requiere configuración", "class": "text-bg-danger"}
+    return {"label": "Pendiente", "class": "text-bg-warning"}
+
+
+def _format_document_type_label(raw_value):
+    normalized = (raw_value or "").strip().lower()
+    mapping = {key: label for key, label in BILLING_DOCUMENT_TYPES}
+    if normalized in mapping:
+        return mapping[normalized]
+    if normalized.startswith("factura"):
+        suffix = normalized.replace("factura", "").replace("_", " ").strip().upper()
+        return f"Factura {suffix}" if suffix else "Factura"
+    return normalized.replace("_", " ").title() or "Comprobante"
+
+
+def _sale_business_status_badge(sale):
+    if bool(getattr(sale, "comprobante_emitido", False)):
+        return {"label": "Emitido", "class": "text-bg-success"}
+    status = (getattr(sale, "status", "") or "").strip().lower()
+    if status in {"anulada", "cancelada", "rechazada"}:
+        return {"label": "Anulado", "class": "text-bg-danger"}
+    if status in {"borrador", "pendiente"}:
+        return {"label": "Pendiente", "class": "text-bg-warning"}
+    return {"label": "En proceso", "class": "text-bg-primary"}
+
 
 def company_member_required(func):
     @wraps(func)
@@ -1611,6 +1778,143 @@ def company_settings_general_save():
     return redirect(url_for("company_billing.company_settings", panel="general"))
 
 
+@bp.route("/company-settings/billing", methods=["POST"])
+@company_admin_required
+def company_settings_billing_save():
+    from app import db, record_audit
+
+    company_id = getattr(current_user, "company_id", None)
+    company = _load_company(company_id)
+    blocked = _pin_guard(company)
+    if blocked is not None:
+        return blocked
+
+    company.tax_id = (request.form.get("tax_id") or "").strip()[:50] or None
+    company.legal_name = (request.form.get("legal_name") or "").strip()[:160] or None
+
+    company_preferences = _json_company_dict(company.preferences_json)
+    billing = _load_company_billing_config(company, company_preferences)
+
+    fiscal = billing.get("fiscal") or {}
+    fiscal["tax_id"] = (request.form.get("tax_id") or "").strip()[:50]
+    fiscal["legal_name"] = (request.form.get("legal_name") or "").strip()[:160]
+    fiscal["iva_condition"] = (request.form.get("iva_condition") or "Consumidor Final").strip()[:80]
+    fiscal["activity_start"] = (request.form.get("activity_start") or "").strip()[:20]
+    fiscal["tax_profile"] = (request.form.get("tax_profile") or "Monotributo").strip()[:60]
+    fiscal["gross_income"] = (request.form.get("gross_income") or "").strip()[:80]
+    fiscal["jurisdiction"] = (request.form.get("jurisdiction") or "").strip()[:120]
+    billing["fiscal"] = fiscal
+
+    documents_enabled = billing.get("documents_enabled") or {}
+    for key, _ in BILLING_DOCUMENT_TYPES:
+        documents_enabled[key] = bool(request.form.get(f"doc_{key}"))
+    billing["documents_enabled"] = documents_enabled
+
+    points = billing.get("points_of_sale") or []
+    active_pos = _normalize_pos_number(request.form.get("active_pos") or billing.get("active_pos") or "00001")
+    for row in points:
+        row["active"] = row.get("number") == active_pos
+    if not any(row.get("number") == active_pos for row in points):
+        points.append({"number": active_pos, "description": f"Punto de venta {active_pos}", "active": True})
+    billing["points_of_sale"] = points
+    billing["active_pos"] = active_pos
+
+    numbering = billing.get("numbering") or {}
+    for key, _ in BILLING_DOCUMENT_TYPES:
+        raw = (request.form.get(f"numbering_{key}") or "").strip()[:20]
+        if raw:
+            numbering[key] = raw
+    billing["numbering"] = numbering
+
+    print_template = billing.get("print_template") or {}
+    print_template["logo"] = (request.form.get("tpl_logo") or company.logo or "").strip()[:255]
+    print_template["footer"] = (request.form.get("tpl_footer") or "").strip()[:400]
+    print_template["commercial_terms"] = (request.form.get("tpl_commercial_terms") or "").strip()[:600]
+    print_template["observations"] = (request.form.get("tpl_observations") or "").strip()[:600]
+    print_template["show_qr"] = bool(request.form.get("tpl_show_qr"))
+    print_template["show_barcode"] = bool(request.form.get("tpl_show_barcode"))
+    print_template["format_a4"] = bool(request.form.get("tpl_format_a4"))
+    print_template["format_ticket_58"] = bool(request.form.get("tpl_format_ticket_58"))
+    print_template["format_ticket_80"] = bool(request.form.get("tpl_format_ticket_80"))
+    billing["print_template"] = print_template
+
+    electronic = billing.get("electronic") or {}
+    electronic["environment"] = (request.form.get("electronic_environment") or "homologacion").strip().lower()[:30]
+    billing["electronic"] = electronic
+
+    company_preferences["billing_business"] = billing
+    company.preferences_json = json.dumps(company_preferences)
+
+    record_audit(action="company_billing_business_update", entity="company", entity_id=company.id, detail="Configuración de facturación del negocio actualizada")
+    db.session.commit()
+    flash("Facturación del negocio guardada correctamente.", "success")
+    return redirect(url_for("company_billing.company_settings", panel="billing"))
+
+
+@bp.route("/company-settings/billing/pos/add", methods=["POST"])
+@company_admin_required
+def company_settings_billing_pos_add():
+    from app import db, record_audit
+
+    company_id = getattr(current_user, "company_id", None)
+    company = _load_company(company_id)
+    blocked = _pin_guard(company)
+    if blocked is not None:
+        return blocked
+
+    company_preferences = _json_company_dict(company.preferences_json)
+    billing = _load_company_billing_config(company, company_preferences)
+
+    number = _normalize_pos_number(request.form.get("pos_number") or "")
+    description = (request.form.get("pos_description") or "").strip()[:80] or f"Punto de venta {number}"
+
+    points = billing.get("points_of_sale") or []
+    if any(row.get("number") == number for row in points):
+        flash("Ese punto de venta ya existe.", "warning")
+        return redirect(url_for("company_billing.company_settings", panel="billing"))
+
+    points.append({"number": number, "description": description, "active": False})
+    billing["points_of_sale"] = sorted(points, key=lambda item: item.get("number") or "00000")
+
+    company_preferences["billing_business"] = billing
+    company.preferences_json = json.dumps(company_preferences)
+    record_audit(action="company_billing_pos_add", entity="company", entity_id=company.id, detail=f"Punto de venta agregado {number}")
+    db.session.commit()
+    flash("Punto de venta agregado correctamente.", "success")
+    return redirect(url_for("company_billing.company_settings", panel="billing"))
+
+
+@bp.route("/company-settings/billing/numbering/reset", methods=["POST"])
+@company_admin_required
+def company_settings_billing_numbering_reset():
+    from app import db, record_audit
+
+    company_id = getattr(current_user, "company_id", None)
+    company = _load_company(company_id)
+    blocked = _pin_guard(company)
+    if blocked is not None:
+        return blocked
+
+    if getattr(current_user, "role", None) != "admin":
+        flash("Solo el administrador puede reiniciar la numeración.", "warning")
+        return redirect(url_for("company_billing.company_settings", panel="billing"))
+
+    company_preferences = _json_company_dict(company.preferences_json)
+    billing = _load_company_billing_config(company, company_preferences)
+    active_pos = billing.get("active_pos") or "00001"
+    numbering = billing.get("numbering") or {}
+    for key, _ in BILLING_DOCUMENT_TYPES:
+        numbering[key] = f"{active_pos}-00000001"
+    billing["numbering"] = numbering
+    company_preferences["billing_business"] = billing
+    company.preferences_json = json.dumps(company_preferences)
+
+    record_audit(action="company_billing_numbering_reset", entity="company", entity_id=company.id, detail="Numeración de comprobantes reiniciada")
+    db.session.commit()
+    flash("Numeración reiniciada correctamente.", "success")
+    return redirect(url_for("company_billing.company_settings", panel="billing"))
+
+
 @bp.route("/company-settings/schedules", methods=["POST"])
 @company_admin_required
 def company_settings_schedules_save():
@@ -1928,13 +2232,11 @@ def company_settings():
     from flask import session
     from sqlalchemy.orm import selectinload
 
-    from app import AuditLog, CashSession, Sale, SaleItem, User
+    from app import AuditLog, CashSession, Quote, Sale, SaleItem, User
 
     company_id = getattr(current_user, "company_id", None)
     company = _load_company(company_id)
     settings_panel = (request.args.get("panel") or "").strip().lower()
-    if settings_panel == "billing":
-        return redirect(url_for("company_billing.subscription_portal"))
 
     pin_verified = _is_pin_verified(company.id)
     date_from_raw = request.args.get("from") or ""
@@ -1959,6 +2261,7 @@ def company_settings():
     cash_sessions_recent = []
     open_cash_session = None
     company_preferences = _json_company_dict(company.preferences_json)
+    billing_config = _load_company_billing_config(company, company_preferences)
     printer_settings = _json_company_dict(company.printer_settings_json)
     schedules_settings = _company_schedules_payload(company)
     schedule_assignments = schedules_settings.get("employee_assignments", [])
@@ -1974,6 +2277,15 @@ def company_settings():
     selected_backup_summary = None
     preview_backup_id = request.args.get("preview_id", type=int)
     company_dashboard = {}
+    billing_status = _business_billing_status(billing_config)
+    billing_document_labels = {key: label for key, label in BILLING_DOCUMENT_TYPES}
+    billing_enabled_documents = [
+        billing_document_labels[key]
+        for key, _label in BILLING_DOCUMENT_TYPES
+        if (billing_config.get("documents_enabled") or {}).get(key)
+    ]
+    billing_last_receipt = None
+    billing_history_rows = []
     if pin_verified:
         users, cash_rows = _build_user_and_cash_rows(
             company.id,
@@ -2026,6 +2338,72 @@ def company_settings():
             from services.dashboard_service import build_dashboard_context
 
             company_dashboard = build_dashboard_context()
+        if settings_panel == "billing":
+            recent_sales_docs = (
+                Sale.query.filter_by(company_id=company.id)
+                .filter((Sale.requiere_comprobante.is_(True)) | (Sale.comprobante_emitido.is_(True)))
+                .order_by(Sale.date.desc(), Sale.id.desc())
+                .limit(50)
+                .all()
+            )
+            recent_quotes_docs = (
+                Quote.query.options(selectinload(Quote.client))
+                .filter_by(company_id=company.id)
+                .order_by(Quote.date.desc(), Quote.id.desc())
+                .limit(30)
+                .all()
+            )
+
+            for sale in recent_sales_docs:
+                doc_label = _format_document_type_label(sale.tipo_comprobante or "factura_b")
+                number = f"{billing_config.get('active_pos', '00001')}-{sale.id:08d}"
+                row = {
+                    "origin": "sale",
+                    "date": sale.date,
+                    "number": number,
+                    "client": sale.customer or "Consumidor final",
+                    "doc_type": doc_label,
+                    "amount": float(sale.total_amount or 0),
+                    "status": _sale_business_status_badge(sale),
+                    "sale_id": sale.id,
+                    "quote_id": None,
+                    "can_email": False,
+                    "can_duplicate": False,
+                    "can_annul": False,
+                }
+                billing_history_rows.append(row)
+
+            for quote in recent_quotes_docs:
+                quote_status = (quote.status or "BORRADOR").strip().upper()
+                if quote_status in {"APROBADO", "CONVERTIDO"}:
+                    badge = {"label": "Emitido", "class": "text-bg-success"}
+                elif quote_status in {"ANULADO", "RECHAZADO", "VENCIDO"}:
+                    badge = {"label": "Anulado", "class": "text-bg-danger"}
+                elif quote_status in {"PENDIENTE", "ENVIADO"}:
+                    badge = {"label": "Pendiente", "class": "text-bg-warning"}
+                else:
+                    badge = {"label": "En proceso", "class": "text-bg-primary"}
+                billing_history_rows.append(
+                    {
+                        "origin": "quote",
+                        "date": quote.date,
+                        "number": quote.number or f"P-{quote.id:06d}",
+                        "client": quote.client.name if quote.client else (quote.consumer_name or "Consumidor final"),
+                        "doc_type": "Presupuesto",
+                        "amount": float(quote.total_amount or 0),
+                        "status": badge,
+                        "sale_id": None,
+                        "quote_id": quote.id,
+                        "can_email": True,
+                        "can_duplicate": True,
+                        "can_annul": quote_status != "CONVERTIDO",
+                    }
+                )
+
+            billing_history_rows.sort(key=lambda item: item.get("date") or datetime.min, reverse=True)
+            billing_last_receipt = next((item for item in billing_history_rows if item.get("status", {}).get("label") == "Emitido"), None)
+            if billing_last_receipt is None:
+                billing_last_receipt = billing_history_rows[0] if billing_history_rows else None
 
     return render_template(
         "company_billing/settings.html",
@@ -2071,6 +2449,12 @@ def company_settings():
         preview_backup_id=preview_backup_id,
         format_size=_format_size,
         company_dashboard=company_dashboard,
+        billing_config=billing_config,
+        billing_status=billing_status,
+        billing_document_types=BILLING_DOCUMENT_TYPES,
+        billing_enabled_documents=billing_enabled_documents,
+        billing_last_receipt=billing_last_receipt,
+        billing_history_rows=billing_history_rows,
     )
 
 

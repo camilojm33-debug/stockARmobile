@@ -42,6 +42,7 @@
     <a href="{{ url_for('company_billing.company_settings', panel='company') }}">panel=company</a>
     <a href="{{ url_for('company_billing.company_settings', panel='employees') }}">panel=employees</a>
     <a href="{{ url_for('company_billing.company_settings', panel='schedules') }}">panel=schedules</a>
+    <a href="{{ url_for('company_billing.company_settings', panel='billing') }}">panel=billing</a>
     <a href="{{ url_for('company_billing.company_settings', panel='branches') }}">panel=branches</a>
     <a href="{{ url_for('company_billing.company_settings', panel='security') }}">panel=security</a>
     <a href="{{ url_for('company_billing.company_settings', panel='general') }}">panel=general</a>
@@ -91,6 +92,7 @@
     'mercado-pago': {'title': 'Mercado Pago', 'subtitle': 'Conectá la cuenta oficial de la empresa mediante OAuth y revisá su estado.'},
     'employees': {'title': 'Empleados', 'subtitle': 'Alta, edición, permisos y estado operativo del personal.'},
     'schedules': {'title': 'Horarios de Atención', 'subtitle': 'Configurá calendario semanal, turnos especiales y ausencias.'},
+    'billing': {'title': 'Facturación', 'subtitle': 'Configuración fiscal, comprobantes y numeración del negocio.'},
     'branches': {'title': 'Sucursales', 'subtitle': 'Administrá sedes y puntos de atención de la empresa.'},
     'backups': {'title': 'Backups', 'subtitle': 'Creá, descargá, restaurá y eliminá copias de seguridad del negocio.'},
     'security': {'title': 'Seguridad', 'subtitle': 'Controlá PIN, contraseña, sesiones y accesos recientes.'},
@@ -898,6 +900,196 @@
   </div>
   
   </div>
+  {% elif panel == 'billing' %}
+  <div class="card app-card mb-4">
+    <div class="card-header bg-white fw-bold d-flex justify-content-between align-items-center">
+      <span>Facturación del negocio</span>
+      <a class="btn btn-sm btn-outline-secondary" href="{{ url_for('company_billing.company_settings') }}"><i class="bi bi-grid me-1"></i>Volver a Mi Empresa</a>
+    </div>
+    <div class="card-body p-4">
+      <div class="row g-3 mb-4">
+        <div class="col-md-6 col-xl-4"><div class="rounded-3 border p-3 h-100"><div class="small text-muted">Estado de facturación</div><span class="badge {{ billing_status.class }} mt-1">{{ billing_status.label }}</span></div></div>
+        <div class="col-md-6 col-xl-4"><div class="rounded-3 border p-3 h-100"><div class="small text-muted">Comprobantes habilitados</div><div class="fw-semibold">{{ billing_enabled_documents|join(', ') if billing_enabled_documents else 'Ninguno configurado' }}</div></div></div>
+        <div class="col-md-6 col-xl-4"><div class="rounded-3 border p-3 h-100"><div class="small text-muted">Punto de venta activo</div><div class="fw-semibold">{{ billing_config.active_pos or '00001' }}</div></div></div>
+        <div class="col-md-6 col-xl-4"><div class="rounded-3 border p-3 h-100"><div class="small text-muted">Último comprobante emitido</div><div class="fw-semibold">{{ billing_last_receipt.number if billing_last_receipt else '-' }}</div></div></div>
+        <div class="col-md-6 col-xl-4"><div class="rounded-3 border p-3 h-100"><div class="small text-muted">Numeración actual</div><div class="fw-semibold">{{ (billing_config.numbering.factura_a if billing_config.numbering and billing_config.numbering.factura_a else '-') }}</div></div></div>
+      </div>
+
+      <form method="post" action="{{ url_for('company_billing.company_settings_billing_save') }}" class="row g-4">
+        <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+        {% if current_user.role != 'admin' %}
+        <div class="col-12"><div class="alert alert-warning mb-0">Solo el administrador puede modificar la configuración de facturación.</div></div>
+        {% endif %}
+        <fieldset class="row g-4 m-0 p-0 border-0" {% if current_user.role != 'admin' %}disabled{% endif %}>
+
+        <div class="col-12">
+          <div class="border rounded-3 p-3">
+            <div class="d-flex justify-content-between align-items-center mb-3 gap-2 flex-wrap">
+              <h2 class="h6 fw-bold mb-0">Configuración fiscal</h2>
+              <button class="btn btn-sm btn-outline-primary" type="button" onclick="document.getElementById('tax_id_field').focus();">Editar datos fiscales</button>
+            </div>
+            <div class="row g-3">
+              <div class="col-md-4"><label class="form-label">CUIT</label><input id="tax_id_field" class="form-control" name="tax_id" value="{{ billing_config.fiscal.tax_id or company.tax_id or '' }}"></div>
+              <div class="col-md-4"><label class="form-label">Razón social</label><input class="form-control" name="legal_name" value="{{ billing_config.fiscal.legal_name or company.legal_name or company.name or '' }}"></div>
+              <div class="col-md-4"><label class="form-label">Condición frente al IVA</label><input class="form-control" name="iva_condition" value="{{ billing_config.fiscal.iva_condition or '' }}" placeholder="Responsable Inscripto / Monotributo / Exento"></div>
+              <div class="col-md-3"><label class="form-label">Inicio de actividades</label><input class="form-control" type="date" name="activity_start" value="{{ billing_config.fiscal.activity_start or '' }}"></div>
+              <div class="col-md-3"><label class="form-label">Perfil fiscal</label><select class="form-select" name="tax_profile"><option value="Monotributo" {% if (billing_config.fiscal.tax_profile or '') == 'Monotributo' %}selected{% endif %}>Monotributo</option><option value="Responsable Inscripto" {% if (billing_config.fiscal.tax_profile or '') == 'Responsable Inscripto' %}selected{% endif %}>Responsable Inscripto</option><option value="Exento" {% if (billing_config.fiscal.tax_profile or '') == 'Exento' %}selected{% endif %}>Exento</option></select></div>
+              <div class="col-md-3"><label class="form-label">Ingresos Brutos</label><input class="form-control" name="gross_income" value="{{ billing_config.fiscal.gross_income or '' }}"></div>
+              <div class="col-md-3"><label class="form-label">Jurisdicción</label><input class="form-control" name="jurisdiction" value="{{ billing_config.fiscal.jurisdiction or '' }}"></div>
+            </div>
+          </div>
+        </div>
+
+        <div class="col-12">
+          <div class="border rounded-3 p-3">
+            <h2 class="h6 fw-bold mb-3">Comprobantes</h2>
+            <div class="row g-2">
+              {% for key, label in billing_document_types %}
+              <div class="col-md-3 col-sm-6"><div class="form-check border rounded-3 p-2 h-100"><input class="form-check-input" type="checkbox" name="doc_{{ key }}" id="doc_{{ key }}" {% if billing_config.documents_enabled.get(key) %}checked{% endif %}><label class="form-check-label" for="doc_{{ key }}">{{ label }}</label></div></div>
+              {% endfor %}
+            </div>
+          </div>
+        </div>
+
+        <div class="col-12">
+          <div class="border rounded-3 p-3">
+            <div class="d-flex justify-content-between align-items-center mb-3 gap-2 flex-wrap">
+              <h2 class="h6 fw-bold mb-0">Puntos de venta</h2>
+            </div>
+            <div class="table-responsive mb-3">
+              <table class="table table-sm table-hover align-middle mb-0">
+                <thead><tr><th>Número</th><th>Descripción</th><th>Estado</th></tr></thead>
+                <tbody>
+                  {% for pos in billing_config.points_of_sale %}
+                  <tr>
+                    <td>{{ pos.number }}</td>
+                    <td>{{ pos.description }}</td>
+                    <td><span class="badge {{ 'text-bg-success' if pos.number == billing_config.active_pos else 'text-bg-secondary' }}">{{ 'Activo' if pos.number == billing_config.active_pos else 'Inactivo' }}</span></td>
+                  </tr>
+                  {% else %}
+                  <tr><td colspan="3" class="text-center text-muted py-3">Sin puntos de venta configurados.</td></tr>
+                  {% endfor %}
+                </tbody>
+              </table>
+            </div>
+            <div class="row g-2 align-items-end">
+              <div class="col-md-4"><label class="form-label">Punto de venta activo</label><select class="form-select" name="active_pos">{% for pos in billing_config.points_of_sale %}<option value="{{ pos.number }}" {% if pos.number == billing_config.active_pos %}selected{% endif %}>{{ pos.number }} · {{ pos.description }}</option>{% endfor %}</select></div>
+              <div class="col-md-8">
+                <div class="row g-2">
+                  <div class="col-md-4"><label class="form-label">Número</label><input class="form-control" name="pos_number" placeholder="00002"></div>
+                  <div class="col-md-6"><label class="form-label">Descripción</label><input class="form-control" name="pos_description" placeholder="Sucursal Centro"></div>
+                  <div class="col-md-2 d-grid"><label class="form-label d-none d-md-block">&nbsp;</label><button class="btn btn-outline-primary" type="submit" formaction="{{ url_for('company_billing.company_settings_billing_pos_add') }}" formmethod="post">Agregar punto de venta</button></div>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <div class="col-12">
+          <div class="border rounded-3 p-3">
+            <div class="d-flex justify-content-between align-items-center gap-2 mb-3 flex-wrap">
+              <h2 class="h6 fw-bold mb-0">Numeración</h2>
+              {% if current_user.role == 'admin' %}
+              <form method="post" action="{{ url_for('company_billing.company_settings_billing_numbering_reset') }}" onsubmit="return confirm('¿Reiniciar la numeración de comprobantes?');">
+                <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                <button class="btn btn-sm btn-outline-danger" type="submit">Reiniciar numeración</button>
+              </form>
+              {% endif %}
+            </div>
+            <div class="row g-3">
+              {% for key, label in billing_document_types %}
+              <div class="col-md-3"><label class="form-label">{{ label }}</label><input class="form-control" name="numbering_{{ key }}" value="{{ billing_config.numbering.get(key, '') }}"></div>
+              {% endfor %}
+            </div>
+          </div>
+        </div>
+
+        <div class="col-12">
+          <div class="border rounded-3 p-3">
+            <h2 class="h6 fw-bold mb-3">Plantilla de impresión</h2>
+            <div class="row g-3">
+              <div class="col-md-6"><label class="form-label">Logo</label><input class="form-control" name="tpl_logo" value="{{ billing_config.print_template.logo or company.logo or '' }}" placeholder="images/logo.png"></div>
+              <div class="col-md-6"><label class="form-label">Pie de página</label><input class="form-control" name="tpl_footer" value="{{ billing_config.print_template.footer or '' }}"></div>
+              <div class="col-md-6"><label class="form-label">Condiciones comerciales</label><textarea class="form-control" rows="2" name="tpl_commercial_terms">{{ billing_config.print_template.commercial_terms or '' }}</textarea></div>
+              <div class="col-md-6"><label class="form-label">Observaciones</label><textarea class="form-control" rows="2" name="tpl_observations">{{ billing_config.print_template.observations or '' }}</textarea></div>
+              <div class="col-md-12 d-flex flex-wrap gap-3 align-items-center">
+                <div class="form-check"><input class="form-check-input" type="checkbox" id="tpl_show_qr" name="tpl_show_qr" {% if billing_config.print_template.show_qr %}checked{% endif %}><label class="form-check-label" for="tpl_show_qr">QR</label></div>
+                <div class="form-check"><input class="form-check-input" type="checkbox" id="tpl_show_barcode" name="tpl_show_barcode" {% if billing_config.print_template.show_barcode %}checked{% endif %}><label class="form-check-label" for="tpl_show_barcode">Código de barras</label></div>
+                <div class="form-check"><input class="form-check-input" type="checkbox" id="tpl_format_a4" name="tpl_format_a4" {% if billing_config.print_template.format_a4 %}checked{% endif %}><label class="form-check-label" for="tpl_format_a4">Formato A4</label></div>
+                <div class="form-check"><input class="form-check-input" type="checkbox" id="tpl_format_ticket_58" name="tpl_format_ticket_58" {% if billing_config.print_template.format_ticket_58 %}checked{% endif %}><label class="form-check-label" for="tpl_format_ticket_58">Formato Ticket 58 mm</label></div>
+                <div class="form-check"><input class="form-check-input" type="checkbox" id="tpl_format_ticket_80" name="tpl_format_ticket_80" {% if billing_config.print_template.format_ticket_80 %}checked{% endif %}><label class="form-check-label" for="tpl_format_ticket_80">Formato Ticket 80 mm</label></div>
+              </div>
+            </div>
+            <div class="mt-3 border rounded-3 p-3 bg-light">
+              <div class="small text-muted mb-1">Vista previa</div>
+              <div class="fw-semibold">{{ billing_config.fiscal.legal_name or company.name }}</div>
+              <div class="small">CUIT: {{ billing_config.fiscal.tax_id or '-' }} · IVA: {{ billing_config.fiscal.iva_condition or '-' }}</div>
+              <hr class="my-2">
+              <div class="small">{{ billing_config.print_template.commercial_terms or 'Condiciones comerciales' }}</div>
+              <div class="small text-muted">{{ billing_config.print_template.footer or '' }}</div>
+            </div>
+          </div>
+        </div>
+
+        <div class="col-12">
+          <div class="border rounded-3 p-3">
+            <h2 class="h6 fw-bold mb-3">Configuración electrónica</h2>
+            <div class="row g-3 mb-3">
+              <div class="col-md-3"><div class="small text-muted">Estado de conexión</div><span class="badge text-bg-secondary">Próximamente disponible.</span></div>
+              <div class="col-md-3"><div class="small text-muted">Certificado</div><div class="fw-semibold">{{ billing_config.electronic.certificate or '-' }}</div></div>
+              <div class="col-md-3"><div class="small text-muted">Fecha de vencimiento</div><div class="fw-semibold">{{ billing_config.electronic.certificate_expires_at or '-' }}</div></div>
+              <div class="col-md-3"><label class="form-label">Ambiente</label><select class="form-select" name="electronic_environment"><option value="homologacion" {% if (billing_config.electronic.environment or 'homologacion') == 'homologacion' %}selected{% endif %}>Homologación</option><option value="produccion" {% if (billing_config.electronic.environment or '') == 'produccion' %}selected{% endif %}>Producción</option></select></div>
+            </div>
+          </div>
+        </div>
+
+        <div class="col-12 d-flex gap-2">
+          <button class="btn btn-primary" type="submit"><i class="bi bi-save me-1"></i>Guardar facturación</button>
+          <a class="btn btn-outline-secondary" href="{{ url_for('company_billing.company_settings') }}"><i class="bi bi-arrow-left me-1"></i>Volver</a>
+        </div>
+        </fieldset>
+      </form>
+
+      <div class="border rounded-3 p-3 mt-4">
+        <h2 class="h6 fw-bold mb-3">Historial de comprobantes</h2>
+        <div class="table-responsive">
+          <table class="table table-hover align-middle mb-0">
+            <thead><tr><th>Fecha</th><th>Número</th><th>Cliente</th><th>Tipo</th><th>Importe</th><th>Estado</th><th class="text-end">Acciones</th></tr></thead>
+            <tbody>
+              {% for row in billing_history_rows %}
+              <tr>
+                <td>{{ row.date.strftime('%Y-%m-%d %H:%M') if row.date else '-' }}</td>
+                <td>{{ row.number }}</td>
+                <td>{{ row.client }}</td>
+                <td>{{ row.doc_type }}</td>
+                <td>${{ '%.2f'|format(row.amount or 0) }}</td>
+                <td><span class="badge {{ row.status.class }}">{{ row.status.label }}</span></td>
+                <td class="text-end">
+                  <div class="d-inline-flex gap-1 flex-wrap justify-content-end">
+                    {% if row.origin == 'sale' %}
+                    <a class="btn btn-sm btn-outline-secondary" href="{{ url_for('sales.view_sale', sale_id=row.sale_id) }}">Ver</a>
+                    <a class="btn btn-sm btn-outline-primary" href="{{ url_for('qr_labels.generate_pdf_ticket', sale_id=row.sale_id) }}" target="_blank">Descargar PDF</a>
+                    {% else %}
+                    <a class="btn btn-sm btn-outline-secondary" href="{{ url_for('quotes.view_quote', quote_id=row.quote_id) }}">Ver</a>
+                    <a class="btn btn-sm btn-outline-primary" href="{{ url_for('quotes.quote_pdf', quote_id=row.quote_id) }}" target="_blank">Descargar PDF</a>
+                    <form method="post" action="{{ url_for('quotes.email_quote', quote_id=row.quote_id) }}"><input type="hidden" name="csrf_token" value="{{ csrf_token() }}"><button class="btn btn-sm btn-outline-info" type="submit">Enviar por Email</button></form>
+                    <form method="post" action="{{ url_for('quotes.duplicate_quote', quote_id=row.quote_id) }}"><input type="hidden" name="csrf_token" value="{{ csrf_token() }}"><button class="btn btn-sm btn-outline-dark" type="submit">Duplicar</button></form>
+                    {% if row.can_annul %}
+                    <form method="post" action="{{ url_for('quotes.annul_quote', quote_id=row.quote_id) }}" onsubmit="return confirm('¿Anular este comprobante?');"><input type="hidden" name="csrf_token" value="{{ csrf_token() }}"><button class="btn btn-sm btn-outline-danger" type="submit">Anular</button></form>
+                    {% endif %}
+                    {% endif %}
+                  </div>
+                </td>
+              </tr>
+              {% else %}
+              <tr><td colspan="7" class="text-center text-muted py-4">Todavía no hay comprobantes registrados.</td></tr>
+              {% endfor %}
+            </tbody>
+          </table>
+        </div>
+      </div>
+    </div>
+  </div>
   {% elif panel == 'branches' %}
   <div class="card app-card mb-4">
     <div class="card-header bg-white fw-bold d-flex justify-content-between align-items-center">
@@ -1251,6 +1443,7 @@
         {'panel': 'company', 'title': 'Datos de la empresa', 'icon': 'bi-building', 'tone': 'primary', 'description': 'Perfil, contacto y datos comerciales.'},
         {'panel': 'employees', 'title': 'Empleados', 'icon': 'bi-people', 'tone': 'info', 'description': 'Usuarios, permisos y accesos.'},
         {'panel': 'schedules', 'title': 'Horarios', 'icon': 'bi-calendar-week', 'tone': 'success', 'description': 'Turnos, días y asignaciones.'},
+        {'panel': 'billing', 'title': 'Facturación', 'icon': 'bi-receipt-cutoff', 'tone': 'danger', 'description': 'Fiscal, comprobantes, numeración y emisión.'},
         {'panel': 'security', 'title': 'Seguridad', 'icon': 'bi-shield-lock', 'tone': 'warning', 'description': 'PIN, sesiones y bloqueo.'},
         {'panel': 'backups', 'title': 'Backups', 'icon': 'bi-hdd-stack', 'tone': 'dark', 'description': 'Copias, importación y restore.'},
         {'panel': 'mercado-pago', 'title': 'Mercado Pago', 'icon': 'bi-wallet2', 'tone': 'mp', 'description': 'Conectar cuenta y revisar estado.'},
