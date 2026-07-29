@@ -710,11 +710,11 @@ def admin_referrals_sellers_create():
         username = (request.form.get("username") or "").strip()
         email = (request.form.get("email") or "").strip().lower()
         if not username or not email:
-            flash("Usuario y email son obligatorios.", "danger")
+            flash("Empresa/negocio y email son obligatorios.", "danger")
             return redirect(url_for("referrals.admin_referrals_sellers_create"))
 
         if User.query.filter_by(username=username).first() is not None:
-            flash("El usuario ya existe.", "danger")
+            flash("La empresa/negocio ya existe.", "danger")
             return redirect(url_for("referrals.admin_referrals_sellers_create"))
         if User.query.filter_by(email=email).first() is not None:
             flash("El email ya existe.", "danger")
@@ -782,12 +782,12 @@ def admin_referrals_sellers_edit(seller_id):
         username = (request.form.get("username") or "").strip()
         email = (request.form.get("email") or "").strip().lower()
         if not username or not email:
-            flash("Usuario y email son obligatorios.", "danger")
+            flash("Empresa/negocio y email son obligatorios.", "danger")
             return redirect(url_for("referrals.admin_referrals_sellers_edit", seller_id=seller_id))
 
         existing_username = User.query.filter(User.username == username, User.id != user.id).first()
         if existing_username is not None:
-            flash("El usuario ya existe.", "danger")
+            flash("La empresa/negocio ya existe.", "danger")
             return redirect(url_for("referrals.admin_referrals_sellers_edit", seller_id=seller_id))
 
         existing_email = User.query.filter(User.email == email, User.id != user.id).first()

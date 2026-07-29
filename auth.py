@@ -171,7 +171,7 @@ def login():
 
             record_audit(action="login_failed", entity="user", detail=f"Intento de login fallido: {username_or_email}")
             db.session.commit()
-            flash("Usuario o contrasena incorrectos.", "danger")
+            flash("Empresa / Negocio o contrasena incorrectos.", "danger")
 
     form = LoginForm()
     return render_template("auth/login.html", form=form)
@@ -335,7 +335,7 @@ def register():
                     return redirect(url_for("auth.login", next=url_for("referrals.activate_seller")))
         if form.validate_on_submit():
             if User.query.filter_by(username=form.username.data).first():
-                flash("El nombre de usuario ya esta en uso.", "danger")
+                flash("La empresa/negocio ya esta en uso.", "danger")
                 return redirect(url_for("auth.register", selected_plan=selected_plan_code, mode=registration_mode))
 
             existing_user = User.query.filter_by(email=form.email.data).first()

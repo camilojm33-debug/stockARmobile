@@ -1,259 +1,209 @@
 {% extends "base_master.html" %}
 
-{% block title %}Mi suscripción - StockArmobile{% endblock %}
+{% block title %}Suscripción - StockArmobile{% endblock %}
 
 {% block content %}
-{% set status_labels = {
-  'trial': 'Prueba gratuita',
-  'trial_expired': 'Prueba vencida',
-  'pending': 'Pago pendiente',
-  'approved': 'Aprobada',
-  'active': 'Activa',
-  'cancelled': 'Cancelada',
-  'suspended': 'Suspendida',
-  'expired': 'Vencida',
-  'rejected': 'Rechazada',
-  'in_process': 'En proceso',
-  'authorized': 'Autorizada'
-} %}
-{% set backup_limits = {
-  'trial': 1,
-  'entrepreneur': 1,
-  'business': 2,
-  'premium': 3
-} %}
-<div class="app-shell">
-  <nav aria-label="breadcrumb" class="mb-2">
-    <ol class="breadcrumb mb-1">
-      <li class="breadcrumb-item"><a href="{{ url_for('company_billing.company_settings') }}">Mi Empresa</a></li>
-      <li class="breadcrumb-item active" aria-current="page">Suscripción</li>
-    </ol>
-  </nav>
+<div class="app-shell subscription-shell">
   <div class="d-flex flex-wrap justify-content-between align-items-center gap-3 mb-4">
     <div>
       <span class="page-kicker"><i class="bi bi-credit-card-2-front"></i> Suscripción</span>
-      <h1 class="h3 fw-bold mb-0">Plan y facturación</h1>
-      <p class="text-muted mb-0">Gestioná tu plan actual, trial, renovación y facturación.</p>
+      <h1 class="h3 fw-bold mb-0">Gestión de suscripción</h1>
+      <p class="text-muted mb-0">Administrá tu plan, pagos y facturas de StockArMobile en un solo lugar.</p>
     </div>
-    <a class="btn btn-outline-secondary" href="{{ url_for('company_billing.company_settings') }}"><i class="bi bi-arrow-left me-1"></i>Volver a Mi Empresa</a>
+    <a class="btn btn-outline-secondary" href="{{ url_for('company_billing.company_settings', panel='company') }}"><i class="bi bi-building me-1"></i>Mi Empresa</a>
   </div>
 
   {% if checkout_status == 'success' %}
   <div class="alert alert-success">Pago aprobado. Estamos confirmando tu suscripción automáticamente.</div>
   {% elif checkout_status == 'pending' %}
-  <div class="alert alert-warning">Tu pago quedó pendiente. Se activará automáticamente cuando Mercado Pago lo confirme.</div>
+  <div class="alert alert-warning">Tu pago está pendiente. Se actualizará de forma automática cuando se confirme.</div>
   {% elif checkout_status == 'failure' %}
   <div class="alert alert-danger">No se pudo completar el pago. Podés reintentar desde esta pantalla.</div>
   {% endif %}
 
+  {% if managed_by_seller %}
+  <div class="alert alert-info mb-4">
+    <strong>Cuenta gestionada por:</strong> {{ managed_by_seller }}
+  </div>
+  {% endif %}
+
+  <div class="row g-3 mb-4">
+    <div class="col-md-6 col-xl-4">
+      <div class="card app-card h-100 subscription-summary-card">
+        <div class="card-body">
+          <div class="small text-muted text-uppercase fw-semibold">Plan actual</div>
+          <div class="h5 fw-bold mb-0">{{ usage_snapshot.plan.name if usage_snapshot.plan else 'Sin plan definido' }}</div>
+        </div>
+      </div>
+    </div>
+    <div class="col-md-6 col-xl-4">
+      <div class="card app-card h-100 subscription-summary-card">
+        <div class="card-body">
+          <div class="small text-muted text-uppercase fw-semibold">Estado de la suscripción</div>
+          <span class="badge {{ status_badge.class }} fs-6">{{ status_badge.label }}</span>
+        </div>
+      </div>
+    </div>
+    <div class="col-md-6 col-xl-4">
+      <div class="card app-card h-100 subscription-summary-card">
+        <div class="card-body">
+          <div class="small text-muted text-uppercase fw-semibold">Próximo vencimiento</div>
+          <div class="h5 fw-bold mb-0">{{ reference_date.strftime('%Y-%m-%d') if reference_date else 'Sin fecha' }}</div>
+        </div>
+      </div>
+    </div>
+    <div class="col-md-6 col-xl-4">
+      <div class="card app-card h-100 subscription-summary-card">
+        <div class="card-body">
+          <div class="small text-muted text-uppercase fw-semibold">Próximo importe</div>
+          <div class="h5 fw-bold mb-0">{{ currency }} {{ '{:,.2f}'.format(next_amount or 0).replace(',', 'X').replace('.', ',').replace('X', '.') }}</div>
+        </div>
+      </div>
+    </div>
+    <div class="col-md-6 col-xl-4">
+      <div class="card app-card h-100 subscription-summary-card">
+        <div class="card-body">
+          <div class="small text-muted text-uppercase fw-semibold">Frecuencia</div>
+          <div class="h5 fw-bold mb-0">{{ frequency_label }}</div>
+        </div>
+      </div>
+    </div>
+    <div class="col-md-6 col-xl-4">
+      <div class="card app-card h-100 subscription-summary-card">
+        <div class="card-body">
+          <div class="small text-muted text-uppercase fw-semibold">Método de pago</div>
+          <div class="h5 fw-bold mb-0">{{ payment_method_label }}</div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div class="card app-card mb-4">
+    <div class="card-header bg-white fw-bold">Acciones de suscripción</div>
+    <div class="card-body d-flex flex-wrap gap-2">
+      <a class="btn btn-primary" href="#planes-disponibles"><i class="bi bi-arrow-repeat me-1"></i>Cambiar plan</a>
+      <a class="btn btn-outline-secondary" href="#actividad-suscripcion"><i class="bi bi-clock-history me-1"></i>Administrar suscripción</a>
+      {% if usage_snapshot.plan %}
+      <form method="post" action="{{ url_for('company_billing.create_checkout') }}">
+        <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+        <input type="hidden" name="plan_id" value="{{ usage_snapshot.plan.id }}">
+        <button class="btn btn-outline-primary" type="submit"><i class="bi bi-credit-card me-1"></i>Actualizar método de pago</button>
+      </form>
+      {% else %}
+      <button class="btn btn-outline-primary" type="button" disabled><i class="bi bi-credit-card me-1"></i>Actualizar método de pago</button>
+      {% endif %}
+
+      {% if subscription and (subscription.renewal_enabled or subscription.auto_renew) %}
+      <form method="post" action="{{ url_for('company_billing.cancel_subscription') }}" onsubmit="return confirm('¿Querés cancelar la suscripción al finalizar el período actual?');">
+        <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+        <button class="btn btn-outline-danger" type="submit"><i class="bi bi-slash-circle me-1"></i>Cancelar suscripción</button>
+      </form>
+      {% else %}
+      <form method="post" action="{{ url_for('company_billing.reactivate_subscription') }}">
+        <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+        <button class="btn btn-outline-success" type="submit"><i class="bi bi-play-circle me-1"></i>Reactivar suscripción</button>
+      </form>
+      {% endif %}
+    </div>
+  </div>
+
   {% if checkout_preview and checkout_preview.checkout_url %}
   <div class="card app-card mb-4 border-primary">
     <div class="card-header bg-white fw-bold d-flex justify-content-between align-items-center">
-      <span>Checkout Mercado Pago listo</span>
+      <span>Checkout listo para continuar</span>
       <span class="badge text-bg-primary">{{ checkout_preview.plan_name }}</span>
     </div>
     <div class="card-body">
       <div class="row g-3 align-items-center">
         <div class="col-md-4 text-center">
           {% if checkout_preview.qr_data_uri %}
-          <img src="{{ checkout_preview.qr_data_uri }}" alt="QR Mercado Pago" style="max-width: 220px; width: 100%; border: 1px solid var(--app-line); border-radius: 12px; padding: 8px; background: #fff;">
+          <img src="{{ checkout_preview.qr_data_uri }}" alt="QR Mercado Pago" class="subscription-qr-image">
           {% endif %}
         </div>
         <div class="col-md-8">
           <div class="h5 mb-2">{{ checkout_preview.currency }} {{ '{:,.0f}'.format(checkout_preview.amount or 0).replace(',', '.') }}</div>
-          <p class="text-muted mb-3">Escaneá el QR dinámico o continuá desde el checkout oficial para completar la suscripción.</p>
+          <p class="text-muted mb-3">Escaneá el QR o abrí el checkout para terminar la operación.</p>
           <div class="d-flex gap-2 flex-wrap">
-            <a class="btn btn-primary" href="{{ checkout_preview.checkout_url }}" target="_blank" rel="noopener noreferrer">Pagar con Mercado Pago</a>
+            <a class="btn btn-primary" href="{{ checkout_preview.checkout_url }}" target="_blank" rel="noopener noreferrer">Pagar ahora</a>
             <a class="btn btn-outline-secondary" href="{{ checkout_preview.checkout_url }}" target="_blank" rel="noopener noreferrer">Abrir checkout</a>
           </div>
-          <div class="small text-muted mt-2">Operación: {{ checkout_preview.preference_id or '-' }}</div>
         </div>
       </div>
     </div>
   </div>
   {% endif %}
 
-  <div class="row g-3 mb-4">
-    <div class="col-lg-8">
-      <div class="card app-card h-100">
-        <div class="card-body p-4">
-          <div class="d-flex flex-wrap justify-content-between align-items-start gap-3">
-            <div>
-              <div class="page-kicker"><i class="bi bi-credit-card-2-front"></i> Mi Suscripción</div>
-              <h2 class="h3 fw-bold mb-1">{{ usage_snapshot.plan.name if usage_snapshot.plan else 'Prueba' }}</h2>
-              <p class="text-muted mb-0">Panel completo de estado, pagos, facturas y renovación del plan.</p>
-            </div>
-            <div class="text-end">
-              <div class="small text-muted mb-1">Estado</div>
-              <span class="badge {{ status_badge.class }} fs-6">{{ status_badge.label }}</span>
-              <div class="small text-muted mt-2">{{ status_badge.text }}</div>
-            </div>
-          </div>
-
-          {% if managed_by_seller %}
-          <div class="alert alert-info mt-3 mb-0">
-            <div class="fw-semibold">Tu cuenta fue gestionada por:</div>
-            <div>{{ managed_by_seller }}</div>
-          </div>
-          {% endif %}
-
-          {% if days_remaining is not none %}
-          <div class="mt-3 p-3 rounded-3 border {% if days_remaining <= 3 %}border-danger bg-danger-subtle{% elif days_remaining <= 15 %}border-warning bg-warning-subtle{% else %}border-success bg-success-subtle{% endif %}">
-            {% if effective_state.status == 'trial' %}
-            <div class="fw-semibold">Te quedan {{ days_remaining if days_remaining > 0 else 0 }} días de prueba gratuita</div>
-            {% else %}
-            <div class="fw-semibold">Te quedan {{ days_remaining if days_remaining > 0 else 0 }} días de servicio</div>
-            {% endif %}
-            <div class="small text-muted">
-              {% if effective_state.status == 'trial' %}
-              Período de prueba{% if reference_date %}. Finaliza el {{ reference_date.strftime('%Y-%m-%d') }}{% endif %}
-              {% elif effective_state.status == 'trial_expired' %}
-              Tu período de prueba finalizó{% if reference_date %} el {{ reference_date.strftime('%Y-%m-%d') }}{% endif %}
-              {% else %}
-              Próximo vencimiento: {{ reference_date.strftime('%Y-%m-%d') if reference_date else '—' }}
-              {% endif %}
-            </div>
-            {% if effective_state.status != 'trial' and days_remaining in [30, 15, 7, 3, 1] %}
-            <div class="alert alert-warning mt-3 mb-0">Faltan {{ days_remaining }} días para el vencimiento.</div>
-            {% elif effective_state.status == 'trial' and days_remaining <= 7 and days_remaining > 0 %}
-            <div class="alert alert-warning mt-3 mb-0">Tu período de prueba está por terminar.</div>
-            {% elif effective_state.status == 'trial_expired' %}
-            <div class="alert alert-danger mt-3 mb-0">Tu prueba finalizó. Activá una suscripción para recuperar acceso completo.</div>
-            {% endif %}
-          </div>
-          {% endif %}
-
-          {% if days_remaining is not none and days_remaining <= 15 and days_remaining >= 0 %}
-          <div class="alert alert-warning mt-3 mb-0 d-flex flex-wrap justify-content-between align-items-center gap-2">
-            {% if effective_state.status == 'trial' %}
-            <div><strong>Tu prueba vence en {{ days_remaining }} días.</strong> Elegí un plan para evitar interrupciones.</div>
-            {% else %}
-            <div><strong>Tu plan vence en {{ days_remaining }} días.</strong> Podés renovarlo ahora para evitar interrupciones.</div>
-            {% endif %}
-            <form method="post" action="{{ url_for('company_billing.reactivate_subscription') }}">
-              <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
-              <button class="btn btn-warning" type="submit">Renovar ahora</button>
-            </form>
-          </div>
-          {% endif %}
-
-          <div class="d-flex flex-wrap gap-2 mt-3">
-            <form method="post" action="{{ url_for('company_billing.reactivate_subscription') }}">
-              <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
-              <button class="btn btn-outline-primary" type="submit">Renovar plan</button>
-            </form>
-            <a class="btn btn-outline-secondary" href="#planes-disponibles">Cambiar plan</a>
-            <a class="btn btn-outline-secondary" href="#historial-pagos">Ver historial de pagos</a>
-            <a class="btn btn-outline-secondary" href="#historial-facturas">Descargar facturas</a>
-            <a class="btn btn-outline-secondary" href="{{ url_for('support.new_ticket') }}">Contactar soporte</a>
-          </div>
-        </div>
-      </div>
-    </div>
-
-    <div class="col-lg-4">
-      <div class="card app-card h-100 border-primary">
-        <div class="card-header bg-white fw-bold">Plan contratado</div>
-        <div class="card-body">
-          <div class="d-flex justify-content-between align-items-start gap-2 mb-2">
-            <h3 class="h4 fw-bold mb-0">{{ usage_snapshot.plan.name if usage_snapshot.plan else 'Prueba' }}</h3>
-            <span class="badge text-bg-primary">{{ usage_snapshot.plan.code|title if usage_snapshot.plan and usage_snapshot.plan.code else 'Trial' }}</span>
-          </div>
-          <div class="h5 mb-2">{{ usage_snapshot.plan.currency if usage_snapshot.plan else 'ARS' }} {{ '{:,.0f}'.format(usage_snapshot.plan.price or 0).replace(',', '.') if usage_snapshot.plan else '0' }}</div>
-          <div class="small text-muted mb-3">Precio mensual</div>
-          <div class="row g-2 mb-3">
-            <div class="col-6"><div class="border rounded p-2 h-100"><div class="small text-muted">Usuarios</div><div class="fw-semibold">{{ usage_snapshot.plan.max_users if usage_snapshot.plan else '-' }}</div></div></div>
-            <div class="col-6"><div class="border rounded p-2 h-100"><div class="small text-muted">Backups</div><div class="fw-semibold">{{ backup_limits.get((usage_snapshot.plan.code or '')|lower, 1) if usage_snapshot.plan else 1 }}</div></div></div>
-          </div>
-          <div class="small fw-semibold mb-2">Funciones incluidas</div>
-          <ul class="small text-muted list-unstyled mb-0">
-            {% for feature in plan_features %}
-            <li><i class="bi bi-check2"></i> {{ feature }}</li>
-            {% else %}
-            <li><i class="bi bi-check2"></i> Suscripción y facturación SaaS</li>
-            {% endfor %}
-          </ul>
-        </div>
-      </div>
+  <div id="historial-pagos" class="card app-card mb-4">
+    <div class="card-header bg-white fw-bold">Historial de pagos</div>
+    <div class="table-responsive">
+      <table class="table table-hover align-middle mb-0">
+        <thead>
+          <tr>
+            <th>Fecha</th>
+            <th>Concepto</th>
+            <th>Estado</th>
+            <th>Importe</th>
+            <th>Método de pago</th>
+            <th>Comprobante</th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for row in payment_rows %}
+          <tr>
+            <td>{{ row.date.strftime('%Y-%m-%d %H:%M') if row.date else '-' }}</td>
+            <td>{{ row.concept }}</td>
+            <td><span class="badge {{ row.status.class }}">{{ row.status.label }}</span></td>
+            <td>{{ row.currency }} {{ '{:,.2f}'.format(row.amount or 0).replace(',', 'X').replace('.', ',').replace('X', '.') }}</td>
+            <td>{{ row.method }}</td>
+            <td>
+              <a class="btn btn-sm btn-outline-primary" href="{{ url_for('company_billing.subscription_payment_pdf', payment_id=row.payment_id) }}" target="_blank" rel="noopener noreferrer">{{ row.receipt }}</a>
+            </td>
+          </tr>
+          {% else %}
+          <tr><td colspan="6" class="text-center text-muted py-4">No hay pagos registrados todavía.</td></tr>
+          {% endfor %}
+        </tbody>
+      </table>
     </div>
   </div>
 
-  <div class="row g-3 mb-4">
-    <div class="col-md-3">
-      <div class="card app-card metric-card"><div class="card-body">
-        <div class="text-muted small fw-semibold text-uppercase">Empresa</div>
-        <div class="metric-value fw-bold">{{ company.name }}</div>
-      </div></div>
-    </div>
-    <div class="col-md-3">
-      <div class="card app-card metric-card"><div class="card-body">
-        <div class="text-muted small fw-semibold text-uppercase">Estado</div>
-        <div class="metric-value fw-bold">{{ status_labels.get(effective_state.status, effective_state.status|replace('_', ' ')|title) }}</div>
-      </div></div>
-    </div>
-    <div class="col-md-3">
-      <div class="card app-card metric-card"><div class="card-body">
-        <div class="text-muted small fw-semibold text-uppercase">Proximo vencimiento</div>
-        <div class="metric-value fw-bold">{{ reference_date.strftime('%Y-%m-%d') if reference_date else '—' }}</div>
-      </div></div>
-    </div>
-    <div class="col-md-3">
-      <div class="card app-card metric-card"><div class="card-body">
-        <div class="text-muted small fw-semibold text-uppercase">Plan contratado</div>
-        <div class="metric-value fw-bold">{{ usage_snapshot.plan.name if usage_snapshot.plan else 'Prueba' }}</div>
-      </div></div>
-    </div>
-  </div>
-
-  <div class="card app-card mb-4">
-    <div class="card-header bg-white fw-bold d-flex justify-content-between align-items-center">
-      <span>Uso del plan</span>
-      <a class="btn btn-sm btn-outline-primary" href="#planes-disponibles">Actualizar mi plan</a>
-    </div>
-    <div class="card-body">
-      {% if usage_snapshot.warning_90 %}
-      <div class="alert alert-warning">Está próximo a alcanzar el límite de su plan.</div>
-      {% endif %}
-
-      <div class="row g-3 mb-3">
-        {% for metric in usage_snapshot.metrics %}
-        <div class="col-lg-3 col-md-6">
-          <div class="border rounded p-3 h-100">
-            <div class="fw-semibold mb-1">{{ metric.label }}</div>
-            <div class="small text-muted mb-2">{{ metric.used }} / {{ metric.limit }} utilizados</div>
-            <div class="progress" role="progressbar" aria-valuenow="{{ metric.percent }}" aria-valuemin="0" aria-valuemax="100" style="height: 10px;">
-              <div class="progress-bar {{ metric.bar_class }}" style="width: {{ metric.percent }}%"></div>
-            </div>
-            <div class="small mt-2 fw-semibold">{{ metric.percent }}%</div>
-          </div>
-        </div>
-        {% endfor %}
-      </div>
-
-      {% set products_metric = usage_snapshot.metrics | selectattr('key', 'equalto', 'products') | first %}
-      <div class="border rounded p-3 mb-3">
-        <div class="fw-semibold">Espacio disponible</div>
-        <div class="text-muted small">{{ products_metric.remaining if products_metric else 0 }} productos restantes</div>
-      </div>
-
-      {% if usage_snapshot.estimated_days is not none %}
-      <div class="alert alert-info mb-0">Con el ritmo actual alcanzara el limite aproximadamente en {{ usage_snapshot.estimated_days }} dias.</div>
-      {% endif %}
+  <div id="historial-facturas" class="card app-card mb-4">
+    <div class="card-header bg-white fw-bold">Facturas del servicio</div>
+    <div class="table-responsive">
+      <table class="table table-hover align-middle mb-0">
+        <thead>
+          <tr>
+            <th>Fecha</th>
+            <th>Comprobante</th>
+            <th>Estado</th>
+            <th>Importe</th>
+            <th class="text-end">Acciones</th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for invoice in invoice_rows %}
+          <tr>
+            <td>{{ invoice.issued_at.strftime('%Y-%m-%d') if invoice.issued_at else '-' }}</td>
+            <td>{{ invoice.number }}</td>
+            <td><span class="badge {{ invoice.status.class }}">{{ invoice.status.label }}</span></td>
+            <td>{{ invoice.currency }} {{ '{:,.2f}'.format(invoice.amount or 0).replace(',', 'X').replace('.', ',').replace('X', '.') }}</td>
+            <td class="text-end">
+              <div class="d-inline-flex gap-1">
+                <a class="btn btn-sm btn-outline-primary" href="{{ url_for('company_billing.subscription_invoice_pdf', invoice_id=invoice.id) }}" target="_blank" rel="noopener noreferrer">Descargar PDF</a>
+                <a class="btn btn-sm btn-outline-secondary" href="{{ url_for('company_billing.subscription_invoice_detail', invoice_id=invoice.id) }}">Ver detalle</a>
+              </div>
+            </td>
+          </tr>
+          {% else %}
+          <tr><td colspan="5" class="text-center text-muted py-4">No existen facturas emitidas.</td></tr>
+          {% endfor %}
+        </tbody>
+      </table>
     </div>
   </div>
-
-  {% if usage_snapshot.recommendation_plan %}
-  <div class="alert alert-primary d-flex justify-content-between align-items-center mb-4">
-    <span>Por el crecimiento de su negocio le recomendamos actualizar al Plan {{ usage_snapshot.recommendation_plan.name }}.</span>
-    <a class="btn btn-sm btn-primary" href="#planes-disponibles">Ver planes</a>
-  </div>
-  {% endif %}
 
   <div id="planes-disponibles" class="card app-card mb-4">
-    <div class="card-header bg-white fw-bold d-flex justify-content-between align-items-center">
-      <span>Comparador de planes</span>
-      <span class="text-muted small">El actual queda marcado automáticamente</span>
-    </div>
+    <div class="card-header bg-white fw-bold">Cambiar plan</div>
     <div class="table-responsive">
       <table class="table align-middle mb-0">
         <thead>
@@ -261,7 +211,6 @@
             <th>Plan</th>
             <th>Precio</th>
             <th>Usuarios</th>
-            <th>Backups</th>
             <th>Funciones</th>
             <th class="text-end">Acción</th>
           </tr>
@@ -269,10 +218,9 @@
         <tbody>
           {% for plan in plans if plan.code in ['entrepreneur', 'business', 'premium'] %}
           <tr {% if usage_snapshot.plan and usage_snapshot.plan.id == plan.id %}class="table-primary"{% endif %}>
-            <td class="fw-semibold">{{ plan.name }}{% if usage_snapshot.plan and usage_snapshot.plan.id == plan.id %} <span class="badge text-bg-primary ms-1">Contratado</span>{% endif %}</td>
+            <td class="fw-semibold">{{ plan.name }}{% if usage_snapshot.plan and usage_snapshot.plan.id == plan.id %} <span class="badge text-bg-primary ms-1">Actual</span>{% endif %}</td>
             <td>{{ plan.currency }} {{ '{:,.0f}'.format(plan.price or 0).replace(',', '.') }}</td>
             <td>{{ plan.max_users }}</td>
-            <td>{{ backup_limits.get((plan.code or '')|lower, 1) }}</td>
             <td class="small text-muted">{{ (plan.features_json or 'suscripcion,checkout,mercado_pago')|replace(',', ', ') }}</td>
             <td class="text-end">
               {% if usage_snapshot.plan and usage_snapshot.plan.id == plan.id %}
@@ -281,7 +229,7 @@
               <form method="post" action="{{ url_for('company_billing.create_checkout') }}" class="d-inline">
                 <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
                 <input type="hidden" name="plan_id" value="{{ plan.id }}">
-                <button class="btn btn-sm btn-primary" type="submit">Actualizar plan</button>
+                <button class="btn btn-sm btn-primary" type="submit">Cambiar a este plan</button>
               </form>
               {% endif %}
             </td>
@@ -292,70 +240,69 @@
     </div>
   </div>
 
-  <div class="card app-card mt-4">
-    <div class="card-body d-flex flex-wrap gap-2">
-      <form method="post" action="{{ url_for('company_billing.cancel_subscription') }}">
-        <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
-        <button class="btn btn-outline-danger" type="submit">Cancelar suscripción</button>
-      </form>
-      <form method="post" action="{{ url_for('company_billing.reactivate_subscription') }}">
-        <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
-        <button class="btn btn-outline-success" type="submit">Renovar</button>
-      </form>
-      <span class="text-muted small ms-auto align-self-center">Clave pública: {{ mp_config.public_key or 'no configurada' }}</span>
+  <div id="actividad-suscripcion" class="card app-card">
+    <div class="card-header bg-white fw-bold">Actividad de la suscripción</div>
+    <div class="card-body">
+      {% if timeline_items %}
+      <div class="subscription-timeline">
+        {% for item in timeline_items %}
+        <div class="subscription-timeline-item">
+          <div class="subscription-timeline-icon"><i class="bi {{ item.icon }}"></i></div>
+          <div>
+            <div class="fw-semibold">{{ item.label }}</div>
+            <div class="small text-muted">{{ item.created_at.strftime('%Y-%m-%d %H:%M') if item.created_at else '-' }}</div>
+            <div class="small mt-1">{{ item.detail }}</div>
+          </div>
+        </div>
+        {% endfor %}
+      </div>
+      {% else %}
+      <div class="text-muted">Todavía no hay actividad registrada.</div>
+      {% endif %}
     </div>
   </div>
-
-  <div class="row g-3 mt-1">
-    <div class="col-lg-6">
-      <div class="card app-card h-100" id="historial-pagos">
-        <div class="card-header bg-white fw-bold">Historial de cobros</div>
-        <div class="table-responsive">
-          <table class="table table-sm table-hover mb-0">
-            <thead><tr><th>Fecha</th><th>Plan</th><th>Importe</th><th>Estado</th><th>Método de pago</th><th>Número de operación</th><th>Factura PDF</th></tr></thead>
-            <tbody>
-              {% for payment in recent_payments %}
-              <tr>
-                <td>{{ payment.paid_at.strftime('%Y-%m-%d %H:%M') if payment.paid_at else (payment.created_at.strftime('%Y-%m-%d %H:%M') if payment.created_at else '-') }}</td>
-                <td>{{ payment.subscription.plan.name if payment.subscription and payment.subscription.plan else (usage_snapshot.plan.name if usage_snapshot.plan else '-') }}</td>
-                <td>${{ '%.2f'|format(payment.amount or 0) }}</td>
-                <td>{{ status_labels.get(payment.status, payment.status|replace('_', ' ')|title) }}</td>
-                <td>{{ payment.payment_method or '-' }}</td>
-                <td>{{ payment.payment_id or ('#' ~ payment.id) }}</td>
-                <td>{% if payment.invoice %}<a href="{{ url_for('company_billing.subscription_invoice_pdf', invoice_id=payment.invoice.id) }}" target="_blank" rel="noopener noreferrer">{{ payment.invoice.invoice_number or ('#' ~ payment.invoice.id) }}</a>{% else %}-{% endif %}</td>
-              </tr>
-              {% else %}
-              <tr><td colspan="7" class="text-center text-muted py-3">Sin cobros registrados.</td></tr>
-              {% endfor %}
-            </tbody>
-          </table>
-        </div>
-      </div>
-    </div>
-    <div class="col-lg-6">
-      <div class="card app-card h-100" id="historial-facturas">
-        <div class="card-header bg-white fw-bold">Historial de facturas</div>
-        <div class="table-responsive">
-          <table class="table table-sm table-hover mb-0 align-middle">
-            <thead><tr><th>Factura</th><th>Estado</th><th>Importe</th><th>Vencimiento</th><th class="text-end">PDF</th></tr></thead>
-            <tbody>
-              {% for invoice in recent_invoices %}
-              <tr>
-                <td>{{ invoice.invoice_number or ('#' ~ invoice.id) }}</td>
-                <td>{{ status_labels.get(invoice.status, invoice.status|replace('_', ' ')|title) }}</td>
-                <td>${{ '%.2f'|format(invoice.amount or 0) }}</td>
-                <td>{{ invoice.due_at.strftime('%Y-%m-%d') if invoice.due_at else '-' }}</td>
-                <td class="text-end"><a class="btn btn-sm btn-outline-primary" href="{{ url_for('company_billing.subscription_invoice_pdf', invoice_id=invoice.id) }}" target="_blank" rel="noopener noreferrer">Descargar</a></td>
-              </tr>
-              {% else %}
-              <tr><td colspan="5" class="text-center text-muted py-3">Sin facturas registradas.</td></tr>
-              {% endfor %}
-            </tbody>
-          </table>
-        </div>
-      </div>
-    </div>
-  </div>
-
 </div>
+{% endblock %}
+
+{% block extra_css %}
+<style>
+  .subscription-shell .subscription-summary-card {
+    border-radius: 16px;
+    border: 1px solid color-mix(in srgb, var(--app-line) 80%, #2563eb 20%);
+    background: linear-gradient(180deg, #ffffff, #f8fbff);
+  }
+  .subscription-shell .subscription-qr-image {
+    max-width: 220px;
+    width: 100%;
+    border: 1px solid var(--app-line);
+    border-radius: 12px;
+    padding: 8px;
+    background: #fff;
+  }
+  .subscription-timeline {
+    display: grid;
+    gap: 1rem;
+  }
+  .subscription-timeline-item {
+    display: grid;
+    grid-template-columns: 44px 1fr;
+    gap: .75rem;
+    align-items: start;
+    padding: .75rem;
+    border: 1px solid var(--app-line);
+    border-radius: 12px;
+    background: #fff;
+  }
+  .subscription-timeline-icon {
+    width: 44px;
+    height: 44px;
+    border-radius: 50%;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    background: #eff6ff;
+    color: #1d4ed8;
+    font-size: 1.1rem;
+  }
+</style>
 {% endblock %}

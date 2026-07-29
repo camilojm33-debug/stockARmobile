@@ -385,6 +385,92 @@ def _subscription_state_badge(status, days_remaining):
     return {"label": label_map.get(status, status.title()), "class": "text-bg-success", "indicator": "success", "text": "Activa"}
 
 
+def _payment_status_badge(status):
+    normalized = (status or "pending").strip().lower()
+    mapping = {
+        "approved": {"label": "Pagado", "class": "text-bg-success"},
+        "active": {"label": "Pagado", "class": "text-bg-success"},
+        "paid": {"label": "Pagado", "class": "text-bg-success"},
+        "pending": {"label": "Pendiente", "class": "text-bg-warning"},
+        "authorized": {"label": "Pendiente", "class": "text-bg-warning"},
+        "in_process": {"label": "En proceso", "class": "text-bg-primary"},
+        "processing": {"label": "En proceso", "class": "text-bg-primary"},
+        "rejected": {"label": "Rechazado", "class": "text-bg-danger"},
+        "cancelled": {"label": "Rechazado", "class": "text-bg-danger"},
+        "failed": {"label": "Rechazado", "class": "text-bg-danger"},
+    }
+    return mapping.get(normalized, {"label": normalized.replace("_", " ").title(), "class": "text-bg-secondary"})
+
+
+def _subscription_frequency_label(subscription):
+    duration_days = int(getattr(getattr(subscription, "plan", None), "duration_days", 30) or 30)
+    return "Anual" if duration_days >= 365 else "Mensual"
+
+
+def _human_payment_method(value):
+    raw = (value or "").strip().lower()
+    if not raw:
+        return "Sin método registrado"
+    aliases = {
+        "credit_card": "Tarjeta de crédito",
+        "debit_card": "Tarjeta de débito",
+        "account_money": "Dinero en cuenta",
+        "pix": "PIX",
+        "ticket": "Pago en efectivo",
+        "bank_transfer": "Transferencia bancaria",
+    }
+    return aliases.get(raw, raw.replace("_", " ").title())
+
+
+def _timeline_event_label(event_name):
+    normalized = (event_name or "").strip().lower()
+    label_map = {
+        "subscription_created": "Suscripción creada",
+        "subscription_change": "Cambio de plan",
+        "subscription_plan_changed": "Cambio de plan",
+        "subscription_renewed": "Renovación automática",
+        "subscription_reactivated": "Reactivación",
+        "subscription_cancel": "Cancelación",
+        "subscription_cancel_requested": "Cancelación",
+        "payment_approved": "Pago aprobado",
+        "payment_rejected": "Pago rechazado",
+        "payment_pending": "Pago en proceso",
+        "payment_in_process": "Pago en proceso",
+        "payment_method_updated": "Método de pago actualizado",
+    }
+    if normalized in label_map:
+        return label_map[normalized]
+    if "approved" in normalized:
+        return "Pago aprobado"
+    if "rejected" in normalized:
+        return "Pago rechazado"
+    if "cancel" in normalized:
+        return "Cancelación"
+    if "reactivat" in normalized:
+        return "Reactivación"
+    if "renew" in normalized:
+        return "Renovación automática"
+    if "plan" in normalized:
+        return "Cambio de plan"
+    return "Actualización de suscripción"
+
+
+def _timeline_event_icon(label):
+    icon_map = {
+        "Suscripción creada": "bi-rocket-takeoff",
+        "Cambio de plan": "bi-arrow-repeat",
+        "Renovación automática": "bi-arrow-clockwise",
+        "Pago aprobado": "bi-check2-circle",
+        "Pago rechazado": "bi-x-circle",
+        "Pago en proceso": "bi-hourglass-split",
+        "Método de pago actualizado": "bi-credit-card-2-front",
+        "Cancelación": "bi-slash-circle",
+        "Reactivación": "bi-play-circle",
+        "Actualización de suscripción": "bi-dot",
+    }
+    return icon_map.get(label, "bi-dot")
+
+
 def _pin_guard(company):
     if _is_pin_verified(company.id):
         return None
@@ -482,7 +568,7 @@ def _build_user_and_cash_rows(company_id, date_from=None, date_to=None, search_t
 def subscription_portal():
     from flask import session
 
-    from app import Company, Invoice, Payment, ReferralAttribution, db
+    from app import Company, Invoice, Payment, PaymentHistory, ReferralAttribution, db
 
     company_id = getattr(current_user, "company_id", None)
     company = Company.query.filter_by(id=company_id).first_or_404()
@@ -517,6 +603,12 @@ def subscription_portal():
         .limit(20)
         .all()
     )
+    recent_events = (
+        PaymentHistory.query.filter_by(company_id=company.id)
+        .order_by(PaymentHistory.created_at.desc(), PaymentHistory.id.desc())
+        .limit(40)
+        .all()
+    )
     referral_attribution = ReferralAttribution.query.filter_by(company_id=company.id).first()
     managed_by_seller = referral_attribution.seller.user.username if referral_attribution and referral_attribution.seller and referral_attribution.seller.user else None
     reference_date = (
@@ -527,6 +619,65 @@ def subscription_portal():
     days_remaining = _days_remaining(reference_date)
     status_badge = _subscription_state_badge(effective_state.get("status"), days_remaining)
     plan_features = _plan_features_label(subscription.plan if subscription else None)
+    next_amount = float(getattr(getattr(subscription, "plan", None), "price", 0) or 0)
+    currency = getattr(getattr(subscription, "plan", None), "currency", None) or "ARS"
+    frequency_label = _subscription_frequency_label(subscription)
+    last_payment_with_method = next((item for item in recent_payments if (item.payment_method or "").strip()), None)
+    payment_method_label = _human_payment_method(last_payment_with_method.payment_method if last_payment_with_method else None)
+    payment_rows = []
+    for payment in recent_payments:
+        status = _payment_status_badge(payment.status)
+        concept = f"Plan {payment.subscription.plan.name}" if payment.subscription and payment.subscription.plan else "Suscripción StockArMobile"
+        payment_rows.append(
+            {
+                "date": payment.paid_at or payment.created_at,
+                "concept": concept,
+                "status": status,
+                "amount": float(payment.amount or 0),
+                "currency": payment.currency or currency,
+                "method": _human_payment_method(payment.payment_method),
+                "receipt": payment.payment_id or f"#{payment.id}",
+                "payment_id": payment.id,
+            }
+        )
+    invoice_rows = []
+    for invoice in recent_invoices:
+        status = _payment_status_badge(invoice.status)
+        invoice_rows.append(
+            {
+                "id": invoice.id,
+                "number": invoice.invoice_number or f"#{invoice.id}",
+                "issued_at": invoice.issued_at,
+                "due_at": invoice.due_at,
+                "amount": float(invoice.amount or 0),
+                "currency": invoice.currency or currency,
+                "status": status,
+                "detail": (invoice.detail or "").strip(),
+            }
+        )
+
+    timeline_items = []
+    if subscription and subscription.created_at:
+        timeline_items.append(
+            {
+                "created_at": subscription.created_at,
+                "label": "Suscripción creada",
+                "icon": _timeline_event_icon("Suscripción creada"),
+                "detail": "Se inició la relación comercial con StockArMobile.",
+            }
+        )
+    for event in recent_events:
+        label = _timeline_event_label(event.event)
+        timeline_items.append(
+            {
+                "created_at": event.created_at,
+                "label": label,
+                "icon": _timeline_event_icon(label),
+                "detail": (event.detail or "").strip() or "Actualización registrada automáticamente.",
+            }
+        )
+    timeline_items.sort(key=lambda item: item.get("created_at") or datetime.min, reverse=True)
+
     checkout_preview = session.pop("mp_checkout_preview", None)
     checkout_status = (request.args.get("checkout") or "").strip().lower()
     return render_template(
@@ -546,7 +697,25 @@ def subscription_portal():
         plan_features=plan_features,
         managed_by_seller=managed_by_seller,
         mp_config=load_billing_config(),
+        next_amount=next_amount,
+        currency=currency,
+        frequency_label=frequency_label,
+        payment_method_label=payment_method_label,
+        payment_rows=payment_rows,
+        invoice_rows=invoice_rows,
+        timeline_items=timeline_items,
     )
+
+
+@bp.route("/subscription/invoices/<int:invoice_id>")
+@company_member_required
+def subscription_invoice_detail(invoice_id):
+    from app import Company, Invoice
+
+    company_id = getattr(current_user, "company_id", None)
+    company = Company.query.filter_by(id=company_id).first_or_404()
+    invoice = Invoice.query.filter_by(id=invoice_id, company_id=company.id).first_or_404()
+    return render_template("company_billing/subscription_invoice_detail.html", company=company, invoice=invoice)
 
 
 @bp.route("/subscription/invoices/<int:invoice_id>/pdf")
@@ -1270,10 +1439,10 @@ def company_settings_user_create():
     role = _normalize_company_role(request.form.get("role"))
 
     if not username or not email:
-        flash("Debes completar usuario y email.", "danger")
+        flash("Debes completar empresa/negocio y email.", "danger")
         return redirect(url_for("company_billing.company_settings"))
     if User.query.filter_by(username=username).first() is not None:
-        flash("Ese nombre de usuario ya existe.", "danger")
+        flash("Esa empresa/negocio ya existe.", "danger")
         return redirect(url_for("company_billing.company_settings"))
     if User.query.filter_by(email=email).first() is not None:
         flash("Ese email ya existe.", "danger")
@@ -1759,11 +1928,13 @@ def company_settings():
     from flask import session
     from sqlalchemy.orm import selectinload
 
-    from app import AuditLog, CashSession, Invoice, Payment, PaymentHistory, Sale, SaleItem, User
+    from app import AuditLog, CashSession, Sale, SaleItem, User
 
     company_id = getattr(current_user, "company_id", None)
     company = _load_company(company_id)
     settings_panel = (request.args.get("panel") or "").strip().lower()
+    if settings_panel == "billing":
+        return redirect(url_for("company_billing.subscription_portal"))
 
     pin_verified = _is_pin_verified(company.id)
     date_from_raw = request.args.get("from") or ""
@@ -1787,9 +1958,6 @@ def company_settings():
     cash_summary = {"total_sold": 0.0, "total_sales": 0, "average_ticket": 0.0}
     cash_sessions_recent = []
     open_cash_session = None
-    billing_invoices = []
-    billing_payments = []
-    billing_history = []
     company_preferences = _json_company_dict(company.preferences_json)
     printer_settings = _json_company_dict(company.printer_settings_json)
     schedules_settings = _company_schedules_payload(company)
@@ -1821,24 +1989,6 @@ def company_settings():
             .filter_by(company_id=company.id)
             .order_by(Sale.date.desc())
             .limit(12)
-            .all()
-        )
-        billing_invoices = (
-            Invoice.query.filter_by(company_id=company.id)
-            .order_by(Invoice.issued_at.desc(), Invoice.id.desc())
-            .limit(30)
-            .all()
-        )
-        billing_payments = (
-            Payment.query.filter_by(company_id=company.id)
-            .order_by(Payment.created_at.desc(), Payment.id.desc())
-            .limit(30)
-            .all()
-        )
-        billing_history = (
-            PaymentHistory.query.filter_by(company_id=company.id)
-            .order_by(PaymentHistory.created_at.desc(), PaymentHistory.id.desc())
-            .limit(30)
             .all()
         )
         active_employees = (
@@ -1897,9 +2047,6 @@ def company_settings():
         date_from=date_from_raw,
         date_to=date_to_raw,
         pin_block_seconds=CompanySecurityService.remaining_block_seconds(company),
-        billing_invoices=billing_invoices,
-        billing_payments=billing_payments,
-        billing_history=billing_history,
         employee_search=employee_search,
         employee_role=employee_role,
         employee_status=employee_status,

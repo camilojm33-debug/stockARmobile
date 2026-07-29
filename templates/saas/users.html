@@ -14,7 +14,7 @@
     <div class="card-body">
       <form method="get" action="{{ url_for('saas.users_panel') }}" class="row g-2">
         <div class="col-md-4">
-          <input class="form-control" name="q" value="{{ filters.q }}" placeholder="Buscar por usuario, email o nombre">
+          <input class="form-control" name="q" value="{{ filters.q }}" placeholder="Buscar por empresa/negocio, email o nombre">
         </div>
         <div class="col-md-3">
           <select class="form-select" name="company_id">
@@ -42,10 +42,10 @@
 
   <div class="card app-card">
     <div class="card-header bg-white fw-bold d-flex justify-content-between align-items-center">
-      <span>Empleados y usuarios</span>
+      <span>Empleados y empresas/negocios</span>
       <small class="text-muted">{{ users|length }} registros</small>
     </div>
-    <div class="table-responsive"><table class="table mb-0 table-hover align-middle"><thead><tr><th>ID</th><th>Usuario</th><th>Email</th><th>Rol actual</th><th>Empresa</th><th>Estado</th><th class="text-end">Acciones</th></tr></thead><tbody>
+    <div class="table-responsive"><table class="table mb-0 table-hover align-middle"><thead><tr><th>ID</th><th>Empresa / Negocio</th><th>Email</th><th>Rol actual</th><th>Empresa</th><th>Estado</th><th class="text-end">Acciones</th></tr></thead><tbody>
       {% for user in users %}
       {% set company = companies_by_id.get(user.company_id) if user.company_id else None %}
       <tr>
