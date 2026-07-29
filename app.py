@@ -16,7 +16,7 @@ from flask_migrate import Migrate
 from flask_sqlalchemy import SQLAlchemy
 from flask_wtf import CSRFProtect, FlaskForm
 from flask_wtf.csrf import CSRFError
-from sqlalchemy import Index, false, inspect, text
+from sqlalchemy import CheckConstraint, Index, false, inspect, text
 from sqlalchemy.exc import IntegrityError, OperationalError, ProgrammingError
 from werkzeug.exceptions import HTTPException
 from werkzeug.security import check_password_hash, generate_password_hash
@@ -335,13 +335,7 @@ def get_company_access_state(company_id):
         return {"status": "suspended", "can_access": False, "reason": "La empresa ha sido suspendida."}
 
     subscription = SubscriptionService.active_subscription_for_company(company.id)
-    state = SubscriptionService.sync_company_subscription_state(
-        db.session,
-        company=company,
-        subscription=subscription,
-    )
-    if state.get("changed"):
-        db.session.commit()
+    state = SubscriptionService.resolve_company_access_state(company, subscription=subscription)
     return {
         "status": state["status"],
         "can_access": bool(state["can_access"]),
@@ -839,6 +833,25 @@ class Subscription(db.Model):
     __tablename__ = "subscriptions"
     __table_args__ = (
         Index("ix_subscriptions_company_status", "company_id", "status"),
+        Index(
+            "uq_subscriptions_single_active_company",
+            "company_id",
+            unique=True,
+            sqlite_where=text("status = 'active'"),
+            postgresql_where=text("status = 'active'"),
+        ),
+        CheckConstraint(
+            "status IN ('draft','pending','pending_payment','pending_confirmation','trial','trial_expired','active','scheduled','expired','cancelled','suspended')",
+            name="ck_subscriptions_status",
+        ),
+        CheckConstraint(
+            "(ends_at IS NULL OR starts_at IS NULL OR ends_at >= starts_at)",
+            name="ck_subscriptions_dates_order",
+        ),
+        CheckConstraint(
+            "(next_billing_date IS NULL OR start_date IS NULL OR next_billing_date >= start_date)",
+            name="ck_subscriptions_next_billing_order",
+        ),
     )
 
     id = db.Column(db.Integer, primary_key=True)
@@ -945,6 +958,30 @@ class PaymentHistory(db.Model):
     subscription = db.relationship("Subscription")
     invoice = db.relationship("Invoice")
     company = db.relationship("Company", backref="payment_history")
+
+
+class SubscriptionCommandExecution(db.Model):
+    __tablename__ = "subscription_command_executions"
+    __table_args__ = (
+        Index("ix_subscription_command_company_created", "company_id", "created_at"),
+    )
+
+    id = db.Column(db.Integer, primary_key=True)
+    command_name = db.Column(db.String(80), nullable=False, index=True)
+    command_key = db.Column(db.String(180), nullable=False, unique=True, index=True)
+    command_status = db.Column(db.String(30), nullable=False, default="completed", index=True)
+    company_id = db.Column(db.Integer, db.ForeignKey("companies.id"), nullable=False)
+    subscription_id = db.Column(db.Integer, db.ForeignKey("subscriptions.id"))
+    actor_user_id = db.Column(db.Integer, db.ForeignKey("users.id"))
+    origin = db.Column(db.String(40), default="system", index=True)
+    ip_address = db.Column(db.String(120))
+    payload_json = db.Column(db.Text)
+    result_json = db.Column(db.Text)
+    created_at = db.Column(db.DateTime, default=utcnow, index=True)
+
+    company = db.relationship("Company")
+    subscription = db.relationship("Subscription")
+    actor_user = db.relationship("User")
 
 
 class WebhookEvent(db.Model):
@@ -2028,6 +2065,7 @@ def offline_page():
 
 def create_admin_user():
     from services.plan_service import PlanService
+    from services.subscription_service import SubscriptionService
 
     admin_created = False
     admin_updated = False
@@ -2090,19 +2128,7 @@ def create_admin_user():
 
     if Subscription.query.filter_by(company_id=company.id).first() is None:
         trial_plan = Plan.query.filter_by(code="trial").first() or Plan.query.order_by(Plan.id.asc()).first()
-        subscription = Subscription(
-            company_id=company.id,
-            plan_id=trial_plan.id if trial_plan else None,
-            status="trial",
-            trial_end=company.trial_ends_at,
-            start_date=utcnow(),
-            starts_at=utcnow(),
-            ends_at=company.trial_ends_at,
-            next_billing_date=company.trial_ends_at,
-            renewal_enabled=True,
-            auto_renew=True,
-        )
-        db.session.add(subscription)
+        SubscriptionService.ensure_company_trial(db.session, company=company, trial_plan=trial_plan)
     db.session.commit()
     if admin_created:
         app.logger.info("Admin creado")

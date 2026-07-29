@@ -735,27 +735,14 @@ def _build_user_and_cash_rows(company_id, date_from=None, date_to=None, search_t
 def subscription_portal():
     from flask import session
 
-    from app import Company, Invoice, Payment, PaymentHistory, ReferralAttribution, db
+    from app import Company, Invoice, Payment, PaymentHistory, ReferralAttribution
 
     company_id = getattr(current_user, "company_id", None)
     company = Company.query.filter_by(id=company_id).first_or_404()
 
     plans = PlanService.all_commercial_plans()
     subscription = SubscriptionService.active_subscription_for_company(company.id)
-
-    if subscription is None:
-        trial_plan = PlanService.get_plan(code="trial")
-        subscription = SubscriptionService.ensure_company_trial(db.session, company=company, trial_plan=trial_plan)
-        db.session.commit()
-
-    effective_state = SubscriptionService.sync_company_subscription_state(
-        db.session,
-        company=company,
-        subscription=subscription,
-    )
-    if effective_state.get("changed"):
-        db.session.commit()
-        subscription = SubscriptionService.active_subscription_for_company(company.id)
+    effective_state = SubscriptionService.resolve_company_access_state(company, subscription=subscription)
 
     usage_snapshot = PlanUsageService.usage_snapshot(company.id)
     recent_payments = (
@@ -847,6 +834,8 @@ def subscription_portal():
 
     checkout_preview = session.pop("mp_checkout_preview", None)
     checkout_status = (request.args.get("checkout") or "").strip().lower()
+    selected_plan_id = request.args.get("selected_plan_id", type=int)
+    selected_plan = next((p for p in plans if p.id == selected_plan_id), None)
     return render_template(
         "company_billing/portal.html",
         company=company,
@@ -871,6 +860,7 @@ def subscription_portal():
         payment_rows=payment_rows,
         invoice_rows=invoice_rows,
         timeline_items=timeline_items,
+        selected_plan=selected_plan,
     )
 
 
@@ -928,9 +918,26 @@ def subscription_payment_pdf(payment_id):
 @bp.route("/checkout", methods=["POST"])
 @company_member_required
 def create_checkout():
+    from app import Company
+
+    company_id = getattr(current_user, "company_id", None)
+    company = Company.query.filter_by(id=company_id).first_or_404()
+
+    plan_id = request.form.get("plan_id", type=int)
+    plan = PlanService.get_plan(plan_id=plan_id)
+    if plan is None:
+        flash("Plan no encontrado.", "danger")
+        return redirect(url_for("company_billing.subscription_portal"))
+    _ = company  # explicitamente mantenemos validación de empresa/tenant antes del redirect
+    return redirect(url_for("company_billing.subscription_portal", selected_plan_id=plan.id))
+
+
+@bp.route("/subscription/change", methods=["POST"])
+@company_member_required
+def subscription_change_confirm():
     from flask import session
 
-    from app import Company, db, record_audit
+    from app import Company, Subscription, db, record_audit
 
     company_id = getattr(current_user, "company_id", None)
     company = Company.query.filter_by(id=company_id).first_or_404()
@@ -941,38 +948,76 @@ def create_checkout():
         flash("Plan no encontrado.", "danger")
         return redirect(url_for("company_billing.subscription_portal"))
 
-    if float(plan.price or 0) <= 0:
-        subscription = SubscriptionService.start_or_change_plan(db.session, company=company, plan=plan, user_id=current_user.id)
-        ReferralService.create_commission_for_sale(
-            db.session,
-            company_id=company.id,
-            subscription=subscription,
-            payment=None,
-            plan=plan,
-        )
-        record_audit(action="subscription_change", entity="subscription", detail=f"Plan actualizado a {plan.code or plan.name}")
+    try:
+        with db.session.begin_nested():
+            current_subscription = SubscriptionService.active_subscription_for_company(company.id)
+            command_result = SubscriptionService.run_command(
+                db.session,
+                SubscriptionService.ChangePlanCommand(
+                    company_id=company.id,
+                    plan_id=plan.id,
+                    actor_user_id=current_user.id,
+                    actor_role=getattr(current_user, "role", None),
+                    origin="portal_confirm",
+                    ip_address=request.remote_addr,
+                    idempotency_key=(
+                        request.form.get("idempotency_key")
+                        or f"portal-change:{company.id}:{getattr(current_subscription, 'id', 0)}:{plan.id}:{current_user.id}"
+                    ),
+                ),
+            )
+            subscription = Subscription.query.filter_by(id=command_result.subscription_id).first()
+            if subscription is None:
+                raise RuntimeError("No se pudo recuperar la suscripción creada por el comando.")
+
+            if float(plan.price or 0) <= 0:
+                ReferralService.create_commission_for_sale(
+                    db.session,
+                    company_id=company.id,
+                    subscription=subscription,
+                    payment=None,
+                    plan=plan,
+                )
+            else:
+                payload = BillingService().create_checkout_for_plan(
+                    db_session=db.session,
+                    company=company,
+                    plan=plan,
+                    user=current_user,
+                    subscription=subscription,
+                )
+                preference = payload["preference"]
+                checkout_url = preference.get("init_point") or preference.get("sandbox_init_point")
+                if not checkout_url:
+                    raise RuntimeError("Mercado Pago no devolvió URL de checkout.")
+                session["mp_checkout_preview"] = BillingService.checkout_preview_payload(
+                    preference=preference,
+                    plan=plan,
+                    company=company,
+                )
+
+            record_audit(
+                action="subscription_change_confirmed",
+                entity="subscription",
+                entity_id=subscription.id,
+                detail=f"Cambio confirmado a plan {plan.code or plan.name}",
+            )
+
         db.session.commit()
+    except ValueError as exc:
+        db.session.rollback()
+        flash(str(exc), "warning")
+        return redirect(url_for("company_billing.subscription_portal"))
+    except Exception as exc:
+        db.session.rollback()
+        current_app.logger.exception("Error confirmando cambio de plan: %s", exc)
+        flash("No se pudo confirmar el cambio de plan. No se aplicaron cambios.", "danger")
+        return redirect(url_for("company_billing.subscription_portal"))
+
+    if float(plan.price or 0) <= 0:
         flash("Plan actualizado correctamente.", "success")
         return redirect(url_for("company_billing.subscription_portal"))
 
-    try:
-        payload = BillingService().create_checkout_for_plan(db_session=db.session, company=company, plan=plan, user=current_user)
-        preference = payload["preference"]
-    except Exception as exc:
-        current_app.logger.exception("Error creando checkout Mercado Pago: %s", exc)
-        flash("No se pudo iniciar el checkout. Revisá la configuración de Mercado Pago.", "danger")
-        return redirect(url_for("company_billing.subscription_portal"))
-
-    checkout_url = preference.get("init_point") or preference.get("sandbox_init_point")
-    if not checkout_url:
-        flash("Mercado Pago no devolvió URL de checkout.", "danger")
-        return redirect(url_for("company_billing.subscription_portal"))
-
-    session["mp_checkout_preview"] = BillingService.checkout_preview_payload(
-        preference=preference,
-        plan=plan,
-        company=company,
-    )
     flash("Checkout generado correctamente. Escaneá el QR o continuá con el botón de pago.", "info")
     return redirect(url_for("company_billing.subscription_portal", checkout="created"))
 

@@ -4,9 +4,14 @@
 
 {% block content %}
 {% set status_labels = {
+  'draft': 'Borrador',
+  'pending': 'Pendiente',
+  'pending_payment': 'Pago pendiente',
+  'pending_confirmation': 'Pendiente confirmación',
   'trial': 'Prueba',
-  'pending': 'Pago pendiente',
+  'trial_expired': 'Prueba vencida',
   'active': 'Activa',
+  'scheduled': 'Programada',
   'approved': 'Aprobada',
   'cancelled': 'Cancelada',
   'suspended': 'Suspendida',

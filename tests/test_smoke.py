@@ -3389,6 +3389,224 @@ def test_checkout_during_trial_does_not_switch_to_pending_or_30_days():
         assert subscription.ends_at == company.trial_ends_at
 
 
+def test_subscription_portal_get_does_not_create_or_mutate_subscription():
+    client = stock_app.app.test_client()
+
+    with stock_app.app.app_context():
+        from app import Subscription
+
+        company = Company.query.filter_by(name="Empresa Demo").first()
+        assert company is not None
+        company.trial_ends_at = stock_app.utcnow() + timedelta(days=5)
+        Subscription.query.filter_by(company_id=company.id).delete(synchronize_session=False)
+        db.session.commit()
+
+        before_count = Subscription.query.filter_by(company_id=company.id).count()
+        assert before_count == 0
+
+    login = client.post("/auth/login", data={"username": "empresa_admin", "password": "admin123"}, follow_redirects=False)
+    assert login.status_code in (301, 302)
+
+    portal = client.get("/admin/portal", follow_redirects=False)
+    assert portal.status_code == 200
+
+    with stock_app.app.app_context():
+        from app import Subscription
+
+        company = Company.query.filter_by(name="Empresa Demo").first()
+        assert company is not None
+        after_count = Subscription.query.filter_by(company_id=company.id).count()
+        assert after_count == 0
+
+
+def test_select_plan_does_not_mutate_until_confirm():
+    client = stock_app.app.test_client()
+
+    with stock_app.app.app_context():
+        from app import Plan
+        from services.plan_service import PlanService
+        from services.subscription_service import SubscriptionService
+
+        PlanService.ensure_defaults(db.session)
+        company = Company.query.filter_by(name="Empresa Demo").first()
+        assert company is not None
+        company.trial_ends_at = stock_app.utcnow() + timedelta(days=10)
+
+        trial_plan = Plan.query.filter_by(code="trial").first()
+        paid_plan = Plan.query.filter_by(code="entrepreneur").first()
+        assert trial_plan is not None
+        assert paid_plan is not None
+
+        Subscription.query.filter_by(company_id=company.id).delete(synchronize_session=False)
+        db.session.commit()
+        subscription = SubscriptionService.ensure_company_trial(db.session, company=company, trial_plan=trial_plan)
+        db.session.commit()
+
+        previous_id = subscription.id
+        previous_plan_id = subscription.plan_id
+        previous_status = (subscription.status or "").lower()
+        paid_plan_id = paid_plan.id
+
+    login = client.post("/auth/login", data={"username": "empresa_admin", "password": "admin123"}, follow_redirects=False)
+    assert login.status_code in (301, 302)
+
+    select_response = client.post("/admin/checkout", data={"plan_id": paid_plan_id}, follow_redirects=False)
+    assert select_response.status_code in (301, 302)
+
+    with stock_app.app.app_context():
+        company = Company.query.filter_by(name="Empresa Demo").first()
+        assert company is not None
+        rows = Subscription.query.filter_by(company_id=company.id).order_by(Subscription.id.asc()).all()
+        assert len(rows) == 1
+        assert rows[0].id == previous_id
+        assert rows[0].plan_id == previous_plan_id
+        assert (rows[0].status or "").lower() == previous_status
+
+
+def test_subscription_change_confirm_rolls_back_on_error(monkeypatch):
+    client = stock_app.app.test_client()
+
+    with stock_app.app.app_context():
+        from app import Plan
+        from services.plan_service import PlanService
+        from services.subscription_service import SubscriptionService
+
+        PlanService.ensure_defaults(db.session)
+        company = Company.query.filter_by(name="Empresa Demo").first()
+        assert company is not None
+        company.trial_ends_at = stock_app.utcnow() + timedelta(days=10)
+
+        trial_plan = Plan.query.filter_by(code="trial").first()
+        assert trial_plan is not None
+
+        backup_free_plan = Plan.query.filter_by(code="trial_alt").first()
+        if backup_free_plan is None:
+            backup_free_plan = Plan(
+                code="trial_alt",
+                name="Trial alternativo",
+                price=0,
+                currency="ARS",
+                duration_days=10,
+                max_users=1,
+                max_products=50,
+                max_clients=100,
+                active=True,
+            )
+            db.session.add(backup_free_plan)
+            db.session.flush()
+
+        Subscription.query.filter_by(company_id=company.id).delete(synchronize_session=False)
+        db.session.commit()
+        previous = SubscriptionService.ensure_company_trial(db.session, company=company, trial_plan=trial_plan)
+        db.session.commit()
+        previous_id = previous.id
+        backup_free_plan_id = backup_free_plan.id
+
+    def _raise_commission_error(*args, **kwargs):
+        raise RuntimeError("forced commission failure")
+
+    monkeypatch.setattr("company_billing.ReferralService.create_commission_for_sale", _raise_commission_error)
+
+    login = client.post("/auth/login", data={"username": "empresa_admin", "password": "admin123"}, follow_redirects=False)
+    assert login.status_code in (301, 302)
+
+    response = client.post("/admin/subscription/change", data={"plan_id": backup_free_plan_id}, follow_redirects=False)
+    assert response.status_code in (301, 302)
+
+    with stock_app.app.app_context():
+        company = Company.query.filter_by(name="Empresa Demo").first()
+        assert company is not None
+        rows = Subscription.query.filter_by(company_id=company.id).order_by(Subscription.id.asc()).all()
+        assert len(rows) == 1
+        assert rows[0].id == previous_id
+        assert (rows[0].status or "").lower() == "trial"
+
+
+def test_subscription_change_confirm_double_post_is_idempotent():
+    client = stock_app.app.test_client()
+
+    with stock_app.app.app_context():
+        from app import Plan
+        from services.plan_service import PlanService
+        from services.subscription_service import SubscriptionService
+
+        PlanService.ensure_defaults(db.session)
+        company = Company.query.filter_by(name="Empresa Demo").first()
+        assert company is not None
+        company.trial_ends_at = stock_app.utcnow() + timedelta(days=10)
+
+        trial_plan = Plan.query.filter_by(code="trial").first()
+        assert trial_plan is not None
+
+        free_plan = Plan.query.filter_by(code="trial_alt_idempotent").first()
+        if free_plan is None:
+            free_plan = Plan(
+                code="trial_alt_idempotent",
+                name="Plan idempotente",
+                price=0,
+                currency="ARS",
+                duration_days=10,
+                max_users=1,
+                max_products=50,
+                max_clients=100,
+                active=True,
+            )
+            db.session.add(free_plan)
+            db.session.flush()
+
+        Subscription.query.filter_by(company_id=company.id).delete(synchronize_session=False)
+        db.session.commit()
+        SubscriptionService.ensure_company_trial(db.session, company=company, trial_plan=trial_plan)
+        db.session.commit()
+        free_plan_id = free_plan.id
+
+    login = client.post("/auth/login", data={"username": "empresa_admin", "password": "admin123"}, follow_redirects=False)
+    assert login.status_code in (301, 302)
+
+    first = client.post("/admin/subscription/change", data={"plan_id": free_plan_id}, follow_redirects=False)
+    assert first.status_code in (301, 302)
+    second = client.post("/admin/subscription/change", data={"plan_id": free_plan_id}, follow_redirects=False)
+    assert second.status_code in (301, 302)
+
+    with stock_app.app.app_context():
+        company = Company.query.filter_by(name="Empresa Demo").first()
+        assert company is not None
+        rows = Subscription.query.filter_by(company_id=company.id).order_by(Subscription.id.asc()).all()
+        assert len(rows) == 2
+        assert rows[-1].plan_id == free_plan_id
+
+
+def test_subscription_commands_create_execution_log_row():
+    with stock_app.app.app_context():
+        from app import Plan, SubscriptionCommandExecution
+        from services.plan_service import PlanService
+        from services.subscription_service import SubscriptionService
+
+        PlanService.ensure_defaults(db.session)
+        company = Company.query.filter_by(name="Empresa Demo").first()
+        assert company is not None
+
+        paid_plan = Plan.query.filter_by(code="entrepreneur").first()
+        assert paid_plan is not None
+
+        command = SubscriptionService.ChangePlanCommand(
+            company_id=company.id,
+            plan_id=paid_plan.id,
+            actor_user_id=1,
+            actor_role="admin",
+            origin="test",
+            idempotency_key=f"test-command-log:{company.id}:{paid_plan.id}",
+        )
+
+        SubscriptionService.run_command(db.session, command)
+        db.session.commit()
+
+        row = SubscriptionCommandExecution.query.filter_by(command_key=f"test-command-log:{company.id}:{paid_plan.id}").first()
+        assert row is not None
+        assert row.command_name == "ChangePlanCommand"
+        assert row.company_id == company.id
+
+
 def test_superadmin_create_subscription_keeps_trial_when_company_is_new():
     client = stock_app.app.test_client()
 
@@ -4018,7 +4236,7 @@ def test_webhook_pending_or_rejected_does_not_activate_subscription(monkeypatch)
         assert pending_result["status"] == "processed"
 
         db.session.refresh(subscription)
-        assert subscription.status == "pending"
+        assert subscription.status == "pending_payment"
 
         payment_row = Payment.query.filter_by(payment_id="mp-pay-pending").first()
         assert payment_row is not None
@@ -4744,7 +4962,7 @@ def test_webhook_approved_amount_mismatch_does_not_activate_subscription(monkeyp
         assert result["status"] == "processed"
 
         db.session.refresh(subscription)
-        assert subscription.status == "rejected"
+        assert subscription.status == "expired"
 
         payment_row = Payment.query.filter_by(payment_id="mp-pay-mismatch").first()
         assert payment_row is not None

@@ -22,18 +22,32 @@ from services.plan_service import PlanService
 
 bp = Blueprint("saas", __name__)
 
-SUBSCRIPTION_STATUS_OPTIONS = ["trial", "pending", "active", "approved", "cancelled", "suspended", "expired", "rejected"]
+SUBSCRIPTION_STATUS_OPTIONS = [
+    "draft",
+    "pending",
+    "pending_payment",
+    "pending_confirmation",
+    "trial",
+    "trial_expired",
+    "active",
+    "scheduled",
+    "expired",
+    "cancelled",
+    "suspended",
+]
 
 # Acciones de UI permitidas por estado para evitar botones invalidos.
 SUBSCRIPTION_UI_ACTIONS = {
     "active": {"modify", "suspend", "cancel"},
-    "approved": {"modify", "suspend", "cancel"},
+    "scheduled": {"modify", "suspend", "cancel"},
     "trial": {"modify", "suspend", "cancel"},
     "pending": {"modify", "suspend", "cancel"},
+    "pending_payment": {"modify", "cancel"},
+    "pending_confirmation": {"modify", "cancel"},
     "suspended": {"reactivate"},
     "expired": {"renew_now"},
     "cancelled": {"reactivate", "renew_now"},
-    "rejected": {"renew_now"},
+    "trial_expired": {"renew_now"},
 }
 
 CRM_LEAD_STATUSES = {"nuevo", "contactado", "propuesta", "ganado", "perdido"}
@@ -72,7 +86,15 @@ def _parse_dt(value: str | None):
 
 def _normalized_subscription_status(value: str | None) -> str:
     status = (value or "pending").strip().lower()
-    return status if status in SUBSCRIPTION_STATUS_OPTIONS else "pending"
+    legacy_map = {
+        "approved": "active",
+        "activa": "active",
+        "rejected": "expired",
+        "in_process": "pending_payment",
+        "authorized": "pending_confirmation",
+    }
+    normalized = legacy_map.get(status, status)
+    return normalized if normalized in SUBSCRIPTION_STATUS_OPTIONS else "pending"
 
 
 def _allowed_ui_actions_for_status(status: str | None):
@@ -1274,7 +1296,8 @@ def subscriptions_panel():
 @bp.route("/subscriptions/quick-renew-company", methods=["POST"])
 @superadmin_required
 def subscriptions_quick_renew_company():
-    from app import AuditLog, Company, Plan, Subscription, db
+    from app import Company, Plan, Subscription, db
+    from services.subscription_service import SubscriptionCommandError, SubscriptionService
 
     _require_superadmin()
     company_id = request.form.get("company_id", type=int)
@@ -1287,34 +1310,21 @@ def subscriptions_quick_renew_company():
         flash("Empresa inválida.", "danger")
         return _redirect_back("saas.subscriptions_panel")
 
-    latest_subscription = (
-        Subscription.query.filter_by(company_id=company.id)
-        .order_by(Subscription.start_date.desc().nullslast(), Subscription.id.desc())
-        .first()
-    )
-
-    now = utcnow()
     try:
+        latest_subscription = SubscriptionService.active_subscription_for_company(company.id)
         if latest_subscription is not None:
-            duration_days = int(latest_subscription.plan.duration_days if latest_subscription.plan else 30)
-            base = latest_subscription.next_billing_date or now
-            latest_subscription.last_payment_date = now
-            latest_subscription.next_billing_date = base + timedelta(days=duration_days)
-            latest_subscription.ends_at = latest_subscription.next_billing_date
-            latest_subscription.status = "active"
-            latest_subscription.renewal_enabled = True
-            latest_subscription.auto_renew = True
-            latest_subscription.cancel_at_period_end = False
-
-            db.session.add(
-                AuditLog(
-                    user_id=current_user.id,
+            renew_snapshot = f"{latest_subscription.status}:{latest_subscription.next_billing_date.isoformat() if latest_subscription.next_billing_date else 'none'}"
+            SubscriptionService.run_command(
+                db.session,
+                SubscriptionService.RenewSubscriptionCommand(
                     company_id=company.id,
-                    action="subscription_quick_renew",
-                    entity="subscription",
-                    entity_id=latest_subscription.id,
-                    detail=f"Renovación manual rápida. ip={request.remote_addr or 'unknown'} resultado=ok",
-                )
+                    subscription_id=latest_subscription.id,
+                    actor_user_id=current_user.id,
+                    actor_role=current_user.role,
+                    origin="superadmin",
+                    ip_address=request.remote_addr,
+                    idempotency_key=f"saas-quick-renew:{company.id}:{latest_subscription.id}:{renew_snapshot}",
+                ),
             )
             db.session.commit()
             flash("Suscripción renovada correctamente.", "success")
@@ -1331,36 +1341,25 @@ def subscriptions_quick_renew_company():
             flash("No hay planes activos para crear una suscripción.", "danger")
             return redirect(url_for("saas.subscriptions_panel", company_id=company.id))
 
-        duration_days = int(plan.duration_days or 30)
-        next_due = now + timedelta(days=duration_days)
-        subscription = Subscription(
-            company_id=company.id,
-            plan_id=plan.id,
-            status="active",
-            start_date=now,
-            starts_at=now,
-            trial_end=None,
-            last_payment_date=now,
-            ends_at=next_due,
-            next_billing_date=next_due,
-            renewal_enabled=True,
-            auto_renew=True,
-            cancel_at_period_end=False,
-        )
-        db.session.add(subscription)
-        db.session.flush()
-        db.session.add(
-            AuditLog(
-                user_id=current_user.id,
+        SubscriptionService.run_command(
+            db.session,
+            SubscriptionService.AssignManualSubscriptionCommand(
                 company_id=company.id,
-                action="subscription_quick_create_and_renew",
-                entity="subscription",
-                entity_id=subscription.id,
-                detail=f"Alta y renovación manual rápida plan={plan.code}. ip={request.remote_addr or 'unknown'} resultado=ok",
-            )
+                plan_id=plan.id,
+                manual_reason="Renovación rápida desde SuperAdmin",
+                created_by_admin=current_user.id,
+                actor_user_id=current_user.id,
+                actor_role=current_user.role,
+                origin="superadmin",
+                ip_address=request.remote_addr,
+                idempotency_key=f"saas-quick-create:{company.id}:{plan.id}",
+            ),
         )
         db.session.commit()
         flash("Suscripción creada y renovada correctamente.", "success")
+    except SubscriptionCommandError as exc:
+        db.session.rollback()
+        flash(str(exc), "warning")
     except Exception as exc:
         db.session.rollback()
         current_app.logger.exception("Error en renovación rápida company_id=%s: %s", company_id, exc)
@@ -1372,8 +1371,8 @@ def subscriptions_quick_renew_company():
 @bp.route("/subscriptions/create", methods=["POST"])
 @superadmin_required
 def subscriptions_create():
-    from app import AuditLog, Company, Plan, Subscription, db
-    from services.subscription_service import SubscriptionService
+    from app import Company, Plan, db
+    from services.subscription_service import SubscriptionCommandError, SubscriptionService
 
     _require_superadmin()
     company_id = request.form.get("company_id", type=int)
@@ -1389,55 +1388,31 @@ def subscriptions_create():
         flash("Empresa o plan inválido.", "danger")
         return _redirect_back("saas.subscriptions_panel")
 
-    duration_days = int(plan.duration_days or 30)
-    trial_end = SubscriptionService.trial_end_for_company(company, now=start_date)
-    if company.trial_ends_at is None and trial_end is not None:
-        company.trial_ends_at = trial_end
-
-    has_successful_payment = (
-        db.session.query(Subscription.id)
-        .filter(Subscription.company_id == company.id, Subscription.last_payment_date.isnot(None))
-        .first()
-        is not None
-    )
-    in_trial_window = bool(trial_end and start_date <= trial_end)
-
-    # Alta manual desde SuperAdmin: para empresas nuevas sin pago aprobado,
-    # mantenemos trial de 10 dias aunque el form venga en pending por defecto.
-    if status == "pending" and float(plan.price or 0) > 0 and in_trial_window and not has_successful_payment:
-        status = "trial"
-        next_due = trial_end
-    else:
-        next_due = next_billing_date or (start_date + timedelta(days=duration_days))
-
-    subscription = Subscription(
-        company_id=company.id,
-        plan_id=plan.id,
-        status=status,
-        start_date=start_date,
-        starts_at=start_date,
-        trial_end=trial_end if status == "trial" else None,
-        ends_at=next_due,
-        next_billing_date=next_due,
-        renewal_enabled=renewal_enabled,
-        auto_renew=renewal_enabled,
-        cancel_at_period_end=not renewal_enabled,
-    )
     try:
-        db.session.add(subscription)
-        db.session.flush()
-        db.session.add(
-            AuditLog(
-                user_id=current_user.id,
+        SubscriptionService.run_command(
+            db.session,
+            SubscriptionService.CreateSubscriptionCommand(
                 company_id=company.id,
-                action="subscription_create",
-                entity="subscription",
-                entity_id=subscription.id,
-                detail=f"Suscripción creada plan={plan.code} status={status}. ip={request.remote_addr or 'unknown'} resultado=ok",
-            )
+                plan_id=plan.id,
+                status=status,
+                start_date=start_date,
+                next_billing_date=next_billing_date,
+                renewal_enabled=renewal_enabled,
+                actor_user_id=current_user.id,
+                actor_role=current_user.role,
+                origin="superadmin",
+                ip_address=request.remote_addr,
+                idempotency_key=(
+                    request.form.get("idempotency_key")
+                    or f"saas-create:{company.id}:{plan.id}:{status}:{int(bool(renewal_enabled))}"
+                ),
+            ),
         )
         db.session.commit()
         flash("Suscripción creada correctamente.", "success")
+    except SubscriptionCommandError as exc:
+        db.session.rollback()
+        flash(str(exc), "warning")
     except Exception as exc:
         db.session.rollback()
         current_app.logger.exception("Error al crear suscripción company_id=%s plan_id=%s: %s", company_id, plan_id, exc)
@@ -1448,7 +1423,8 @@ def subscriptions_create():
 @bp.route("/subscriptions/<int:subscription_id>/update", methods=["POST"])
 @superadmin_required
 def subscriptions_update(subscription_id):
-    from app import AuditLog, Plan, Subscription, db
+    from app import Plan, Subscription, db
+    from services.subscription_service import SubscriptionCommandError, SubscriptionService
 
     _require_superadmin()
     subscription = Subscription.query.filter_by(id=subscription_id).first_or_404()
@@ -1462,39 +1438,57 @@ def subscriptions_update(subscription_id):
         flash("No se puede modificar esta suscripción en su estado actual.", "warning")
         return _redirect_back("saas.subscriptions_panel")
 
-    if plan:
-        subscription.plan_id = plan.id
-    subscription.status = _normalized_subscription_status(request.form.get("status") or subscription.status)
-    start_date = _parse_dt(request.form.get("start_date"))
-    next_billing_date = _parse_dt(request.form.get("next_billing_date"))
-    last_payment_date = _parse_dt(request.form.get("last_payment_date"))
-    if start_date:
-        subscription.start_date = start_date
-        subscription.starts_at = start_date
-    if next_billing_date:
-        subscription.next_billing_date = next_billing_date
-        subscription.ends_at = next_billing_date
-    if last_payment_date:
-        subscription.last_payment_date = last_payment_date
-
-    renewal_enabled = (request.form.get("renewal_enabled") or "1") == "1"
-    subscription.renewal_enabled = renewal_enabled
-    subscription.auto_renew = renewal_enabled
-    subscription.cancel_at_period_end = not renewal_enabled
-
     try:
-        db.session.add(
-            AuditLog(
-                user_id=current_user.id,
-                company_id=subscription.company_id,
-                action="subscription_update",
-                entity="subscription",
-                entity_id=subscription.id,
-                detail=f"Suscripción actualizada status={subscription.status}. ip={request.remote_addr or 'unknown'} resultado=ok",
+        if plan is not None and plan.id != subscription.plan_id:
+            SubscriptionService.run_command(
+                db.session,
+                SubscriptionService.ChangePlanCommand(
+                    company_id=subscription.company_id,
+                    plan_id=plan.id,
+                    actor_user_id=current_user.id,
+                    actor_role=current_user.role,
+                    origin="superadmin",
+                    ip_address=request.remote_addr,
+                    idempotency_key=f"saas-update-plan:{subscription.company_id}:{subscription.id}:{plan.id}",
+                ),
             )
-        )
+
+        target_status = _normalized_subscription_status(request.form.get("status") or subscription.status)
+        if target_status in {"cancelled", "suspended", "expired"}:
+            if target_status == "cancelled":
+                SubscriptionService.run_command(
+                    db.session,
+                    SubscriptionService.CancelSubscriptionCommand(
+                        company_id=subscription.company_id,
+                        subscription_id=subscription.id,
+                        actor_user_id=current_user.id,
+                        actor_role=current_user.role,
+                        origin="superadmin",
+                        ip_address=request.remote_addr,
+                        idempotency_key=f"saas-update-cancel:{subscription.company_id}:{subscription.id}",
+                        cancel_at_period_end=False,
+                    ),
+                )
+            elif target_status == "expired":
+                SubscriptionService.run_command(
+                    db.session,
+                    SubscriptionService.ExpireSubscriptionCommand(
+                        company_id=subscription.company_id,
+                        subscription_id=subscription.id,
+                        actor_user_id=current_user.id,
+                        actor_role=current_user.role,
+                        origin="superadmin",
+                        ip_address=request.remote_addr,
+                        idempotency_key=f"saas-update-expire:{subscription.company_id}:{subscription.id}",
+                        reason="superadmin_update",
+                    ),
+                )
+
         db.session.commit()
         flash("Suscripción modificada correctamente.", "success")
+    except SubscriptionCommandError as exc:
+        db.session.rollback()
+        flash(str(exc), "warning")
     except Exception as exc:
         db.session.rollback()
         current_app.logger.exception("Error al modificar suscripción id=%s: %s", subscription_id, exc)
@@ -1505,92 +1499,129 @@ def subscriptions_update(subscription_id):
 @bp.route("/subscriptions/<int:subscription_id>/action", methods=["POST"])
 @superadmin_required
 def subscriptions_action(subscription_id):
-    from app import AuditLog, PaymentHistory, Subscription, db
+    from app import Subscription, db
+    from services.subscription_service import SubscriptionCommandError, SubscriptionService
 
     _require_superadmin()
     subscription = Subscription.query.filter_by(id=subscription_id).first_or_404()
     action = (request.form.get("action") or "").strip().lower()
-    detail = ""
     status_before = _normalized_subscription_status(subscription.status)
 
     if not _action_allowed_for_status(status_before, action):
         flash("La acción no está permitida para el estado actual de la suscripción.", "warning")
         return _redirect_back("saas.subscriptions_panel")
 
-    if action == "cancel":
-        subscription.status = "cancelled"
-        subscription.renewal_enabled = False
-        subscription.auto_renew = False
-        subscription.cancel_at_period_end = True
-        detail = "Suscripción cancelada"
-    elif action == "reactivate":
-        subscription.status = "active"
-        subscription.renewal_enabled = True
-        subscription.auto_renew = True
-        subscription.cancel_at_period_end = False
-        detail = "Suscripción reactivada"
-    elif action == "suspend":
-        subscription.status = "suspended"
-        subscription.renewal_enabled = False
-        subscription.auto_renew = False
-        detail = "Suscripción suspendida"
-    elif action == "extend":
-        days = request.form.get("days", type=int) or 7
-        days = min(max(days, 1), 365)
-        base = subscription.next_billing_date or utcnow()
-        subscription.next_billing_date = base + timedelta(days=days)
-        subscription.ends_at = subscription.next_billing_date
-        detail = f"Suscripción extendida {days} días"
-    elif action == "renew_now":
-        duration_days = int(subscription.plan.duration_days if subscription.plan else 30)
-        base = subscription.next_billing_date or utcnow()
-        subscription.last_payment_date = utcnow()
-        subscription.next_billing_date = base + timedelta(days=duration_days)
-        subscription.ends_at = subscription.next_billing_date
-        subscription.status = "active"
-        subscription.renewal_enabled = True
-        subscription.auto_renew = True
-        detail = "Suscripción renovada"
-    elif action == "delete":
-        subscription.status = "cancelled"
-        subscription.renewal_enabled = False
-        subscription.auto_renew = False
-        subscription.cancel_at_period_end = True
-        metadata = json.loads(subscription.metadata_json) if subscription.metadata_json else {}
-        metadata["deleted_by_superadmin"] = True
-        metadata["deleted_at"] = utcnow().isoformat()
-        subscription.metadata_json = json.dumps(metadata, ensure_ascii=False)
-        detail = "Suscripción eliminada lógicamente"
-    else:
-        flash("Acción de suscripción inválida.", "danger")
-        return _redirect_back("saas.subscriptions_panel")
-
     try:
-        db.session.add(
-            AuditLog(
-                user_id=current_user.id,
-                company_id=subscription.company_id,
-                action=f"subscription_{action}",
-                entity="subscription",
-                entity_id=subscription.id,
-                detail=(
-                    f"{detail}. from_status={status_before} to_status={subscription.status}. "
-                    f"ip={request.remote_addr or 'unknown'} resultado=ok"
+        if action == "cancel":
+            SubscriptionService.run_command(
+                db.session,
+                SubscriptionService.CancelSubscriptionCommand(
+                    company_id=subscription.company_id,
+                    subscription_id=subscription.id,
+                    actor_user_id=current_user.id,
+                    actor_role=current_user.role,
+                    origin="superadmin",
+                    ip_address=request.remote_addr,
+                    idempotency_key=(
+                        f"saas-action-cancel:{subscription.company_id}:{subscription.id}:"
+                        f"{subscription.status}:{subscription.next_billing_date.isoformat() if subscription.next_billing_date else 'none'}"
+                    ),
+                    cancel_at_period_end=False,
                 ),
             )
-        )
-        db.session.add(
-            PaymentHistory(
-                company_id=subscription.company_id,
-                subscription_id=subscription.id,
-                event=f"subscription_{action}",
-                detail=detail,
-                source="superadmin",
-                status=subscription.status,
-                payload_json=json.dumps({"action": action, "user_id": current_user.id}, ensure_ascii=False),
+        elif action == "reactivate":
+            SubscriptionService.run_command(
+                db.session,
+                SubscriptionService.ReactivateSubscriptionCommand(
+                    company_id=subscription.company_id,
+                    subscription_id=subscription.id,
+                    actor_user_id=current_user.id,
+                    actor_role=current_user.role,
+                    origin="superadmin",
+                    ip_address=request.remote_addr,
+                    idempotency_key=(
+                        f"saas-action-reactivate:{subscription.company_id}:{subscription.id}:"
+                        f"{subscription.status}:{subscription.next_billing_date.isoformat() if subscription.next_billing_date else 'none'}"
+                    ),
+                ),
             )
-        )
+        elif action == "suspend":
+            SubscriptionService.run_command(
+                db.session,
+                SubscriptionService.ExpireSubscriptionCommand(
+                    company_id=subscription.company_id,
+                    subscription_id=subscription.id,
+                    actor_user_id=current_user.id,
+                    actor_role=current_user.role,
+                    origin="superadmin",
+                    ip_address=request.remote_addr,
+                    idempotency_key=(
+                        f"saas-action-suspend:{subscription.company_id}:{subscription.id}:"
+                        f"{subscription.status}:{subscription.next_billing_date.isoformat() if subscription.next_billing_date else 'none'}"
+                    ),
+                    reason="superadmin_suspend",
+                ),
+            )
+        elif action == "extend":
+            days = request.form.get("days", type=int) or 7
+            SubscriptionService.run_command(
+                db.session,
+                SubscriptionService.ExtendSubscriptionCommand(
+                    company_id=subscription.company_id,
+                    subscription_id=subscription.id,
+                    actor_user_id=current_user.id,
+                    actor_role=current_user.role,
+                    origin="superadmin",
+                    ip_address=request.remote_addr,
+                    idempotency_key=(
+                        f"saas-action-extend:{subscription.company_id}:{subscription.id}:{days}:"
+                        f"{subscription.next_billing_date.isoformat() if subscription.next_billing_date else 'none'}"
+                    ),
+                    days=days,
+                ),
+            )
+        elif action == "renew_now":
+            SubscriptionService.run_command(
+                db.session,
+                SubscriptionService.RenewSubscriptionCommand(
+                    company_id=subscription.company_id,
+                    subscription_id=subscription.id,
+                    actor_user_id=current_user.id,
+                    actor_role=current_user.role,
+                    origin="superadmin",
+                    ip_address=request.remote_addr,
+                    idempotency_key=(
+                        f"saas-action-renew:{subscription.company_id}:{subscription.id}:"
+                        f"{subscription.status}:{subscription.next_billing_date.isoformat() if subscription.next_billing_date else 'none'}"
+                    ),
+                ),
+            )
+        elif action == "delete":
+            SubscriptionService.run_command(
+                db.session,
+                SubscriptionService.CancelSubscriptionCommand(
+                    company_id=subscription.company_id,
+                    subscription_id=subscription.id,
+                    actor_user_id=current_user.id,
+                    actor_role=current_user.role,
+                    origin="superadmin",
+                    ip_address=request.remote_addr,
+                    idempotency_key=(
+                        f"saas-action-delete:{subscription.company_id}:{subscription.id}:"
+                        f"{subscription.status}:{subscription.next_billing_date.isoformat() if subscription.next_billing_date else 'none'}"
+                    ),
+                    cancel_at_period_end=False,
+                ),
+            )
+        else:
+            flash("Acción de suscripción inválida.", "danger")
+            return _redirect_back("saas.subscriptions_panel")
+
         db.session.commit()
+    except SubscriptionCommandError as exc:
+        db.session.rollback()
+        flash(str(exc), "warning")
+        return _redirect_back("saas.subscriptions_panel")
     except Exception as exc:
         db.session.rollback()
         current_app.logger.exception(
@@ -1612,7 +1643,7 @@ def subscriptions_action(subscription_id):
     elif action == "renew_now":
         flash("Suscripción renovada.", "success")
     else:
-        flash(f"{detail}.", "success")
+        flash("Acción ejecutada correctamente.", "success")
     return _redirect_back("saas.subscriptions_panel")
 
 

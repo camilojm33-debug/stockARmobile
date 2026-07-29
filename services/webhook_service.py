@@ -307,7 +307,60 @@ class WebhookService:
 
                 should_apply_status_transition = previous_payment_status != payment_status
                 if should_apply_status_transition:
-                    SubscriptionService.apply_payment_status(subscription, payment_status)
+                    normalized_status = (payment_status or "pending").lower()
+                    if normalized_status in {"approved", "refunded"}:
+                        SubscriptionService.run_command(
+                            db_session,
+                            SubscriptionService.RenewSubscriptionCommand(
+                                company_id=company.id,
+                                subscription_id=subscription.id,
+                                actor_user_id=payment.user_id,
+                                actor_role="system",
+                                origin="webhook",
+                                idempotency_key=f"webhook-renew:{event_key}:{subscription.id}",
+                            ),
+                        )
+                    elif normalized_status == "cancelled":
+                        SubscriptionService.run_command(
+                            db_session,
+                            SubscriptionService.CancelSubscriptionCommand(
+                                company_id=company.id,
+                                subscription_id=subscription.id,
+                                actor_user_id=payment.user_id,
+                                actor_role="system",
+                                origin="webhook",
+                                idempotency_key=f"webhook-cancel:{event_key}:{subscription.id}",
+                                cancel_at_period_end=False,
+                            ),
+                        )
+                    elif normalized_status in {"expired", "rejected"}:
+                        SubscriptionService.run_command(
+                            db_session,
+                            SubscriptionService.ExpireSubscriptionCommand(
+                                company_id=company.id,
+                                subscription_id=subscription.id,
+                                actor_user_id=payment.user_id,
+                                actor_role="system",
+                                origin="webhook",
+                                idempotency_key=f"webhook-expire:{event_key}:{subscription.id}",
+                                reason=f"webhook_{normalized_status}",
+                            ),
+                        )
+                    elif normalized_status == "charged_back":
+                        SubscriptionService.run_command(
+                            db_session,
+                            SubscriptionService.ExpireSubscriptionCommand(
+                                company_id=company.id,
+                                subscription_id=subscription.id,
+                                actor_user_id=payment.user_id,
+                                actor_role="system",
+                                origin="webhook",
+                                idempotency_key=f"webhook-suspend:{event_key}:{subscription.id}",
+                                reason="webhook_suspend",
+                            ),
+                        )
+                    else:
+                        SubscriptionService.apply_payment_status(subscription, payment_status)
                 company.active = subscription.status in {"active", "approved", "trial"}
                 if subscription.status in {"active", "approved"}:
                     if payment.invoice_id is None:
@@ -354,14 +407,50 @@ class WebhookService:
             if subscription_id and str(subscription_id).isdigit():
                 subscription = Subscription.query.filter_by(id=int(subscription_id)).first()
             if subscription:
-                subscription.mercadopago_subscription_id = str(preapproval_data.get("id") or subscription.mercadopago_subscription_id or "")
                 status = (preapproval_data.get("status") or "pending").lower()
-                subscription.status = SubscriptionService.PAYMENT_STATUS_MAP.get(status, status)
-                subscription.renewal_enabled = subscription.status in {"active", "approved", "trial", "pending"}
+                SubscriptionService.run_command(
+                    db_session,
+                    SubscriptionService.ChangePaymentMethodCommand(
+                        company_id=subscription.company_id,
+                        subscription_id=subscription.id,
+                        actor_user_id=None,
+                        actor_role="system",
+                        origin="webhook",
+                        idempotency_key=f"webhook-preapproval-meta:{event_key}:{subscription.id}",
+                        payment_method="mercadopago_subscription",
+                        metadata={"mercadopago_subscription_id": str(preapproval_data.get("id") or "")},
+                    ),
+                )
+                if status in {"authorized", "pending", "in_process"}:
+                    SubscriptionService.apply_payment_status(subscription, status)
+                elif status in {"approved"}:
+                    SubscriptionService.run_command(
+                        db_session,
+                        SubscriptionService.ReactivateSubscriptionCommand(
+                            company_id=subscription.company_id,
+                            subscription_id=subscription.id,
+                            actor_user_id=None,
+                            actor_role="system",
+                            origin="webhook",
+                            idempotency_key=f"webhook-preapproval-reactivate:{event_key}:{subscription.id}",
+                        ),
+                    )
+                elif status in {"cancelled", "paused"}:
+                    SubscriptionService.run_command(
+                        db_session,
+                        SubscriptionService.CancelSubscriptionCommand(
+                            company_id=subscription.company_id,
+                            subscription_id=subscription.id,
+                            actor_user_id=None,
+                            actor_role="system",
+                            origin="webhook",
+                            idempotency_key=f"webhook-preapproval-cancel:{event_key}:{subscription.id}",
+                            cancel_at_period_end=False,
+                        ),
+                    )
             result = {"status": "processed_preapproval", "event_key": event_key}
 
         event_row.status = result.get("status")
         ReferralService.refresh_commission_states(db_session)
         db_session.add(event_row)
-        db_session.commit()
         return result

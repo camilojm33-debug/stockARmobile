@@ -16,23 +16,39 @@ class BillingService:
     def __init__(self):
         self.mp_service = MercadoPagoService()
 
-    def create_checkout_for_plan(self, *, db_session, company, plan, user):
+    def create_checkout_for_plan(self, *, db_session, company, plan, user, subscription=None):
         from app import utcnow
 
-        subscription = SubscriptionService.start_or_change_plan(
-            db_session,
-            company=company,
-            plan=plan,
-            user_id=user.id,
-            external_reference=None,
-        )
+        target_subscription = subscription
+        if target_subscription is None:
+            result = SubscriptionService.change_plan_transaction(
+                db_session,
+                company=company,
+                plan=plan,
+                actor_user_id=user.id,
+                origin="billing_checkout",
+                managed_by="system",
+            )
+            target_subscription = result["subscription"]
         db_session.flush()
 
         external_reference = (
-            f"company_id:{company.id}|plan_id:{plan.id}|subscription_id:{subscription.id}|"
+            f"company_id:{company.id}|plan_id:{plan.id}|subscription_id:{target_subscription.id}|"
             f"user_id:{user.id}|ts:{int(utcnow().timestamp())}"
         )
-        subscription.external_reference = external_reference
+        SubscriptionService.run_command(
+            db_session,
+            SubscriptionService.ChangePaymentMethodCommand(
+                company_id=company.id,
+                subscription_id=target_subscription.id,
+                actor_user_id=user.id,
+                actor_role=getattr(user, "role", None),
+                origin="checkout",
+                idempotency_key=f"payment-method:{company.id}:{target_subscription.id}:{external_reference}",
+                payment_method="mercadopago",
+                external_reference=external_reference,
+            ),
+        )
 
         preference = self.mp_service.create_checkout_preference(
             title=f"StockArmobile - {plan.name}",
@@ -41,14 +57,14 @@ class BillingService:
             external_reference=external_reference,
             company_id=company.id,
             plan_id=plan.id,
-            subscription_id=subscription.id,
+            subscription_id=target_subscription.id,
             user_id=user.id,
         )
 
         NotificationService.record_event(
             db_session,
             company_id=company.id,
-            subscription_id=subscription.id,
+            subscription_id=target_subscription.id,
             event="checkout_preference_created",
             detail=f"Preference {preference.get('id')} para plan {plan.name}",
             source="mercadopago",
@@ -57,8 +73,7 @@ class BillingService:
             payload=preference,
             user_id=user.id,
         )
-        db_session.commit()
-        return {"subscription": subscription, "preference": preference}
+        return {"subscription": target_subscription, "preference": preference}
 
     @staticmethod
     def checkout_preview_payload(*, preference: dict, plan, company) -> dict:
@@ -86,9 +101,17 @@ class BillingService:
 
     @staticmethod
     def cancel_subscription(db_session, *, subscription, user_id: int | None = None):
-        subscription.cancel_at_period_end = True
-        subscription.renewal_enabled = False
-        subscription.auto_renew = False
+        SubscriptionService.run_command(
+            db_session,
+            SubscriptionService.CancelSubscriptionCommand(
+                company_id=subscription.company_id,
+                subscription_id=subscription.id,
+                actor_user_id=user_id,
+                origin="portal",
+                idempotency_key=f"cancel:{subscription.company_id}:{subscription.id}:{user_id or 0}",
+                cancel_at_period_end=True,
+            ),
+        )
         NotificationService.record_event(
             db_session,
             company_id=subscription.company_id,
@@ -99,16 +122,20 @@ class BillingService:
             status="cancelled",
             user_id=user_id,
         )
-        db_session.commit()
         return subscription
 
     @staticmethod
     def reactivate_subscription(db_session, *, subscription, user_id: int | None = None):
-        subscription.cancel_at_period_end = False
-        subscription.renewal_enabled = True
-        subscription.auto_renew = True
-        if subscription.status in {"cancelled", "expired", "suspended"}:
-            subscription.status = "pending"
+        SubscriptionService.run_command(
+            db_session,
+            SubscriptionService.ReactivateSubscriptionCommand(
+                company_id=subscription.company_id,
+                subscription_id=subscription.id,
+                actor_user_id=user_id,
+                origin="portal",
+                idempotency_key=f"reactivate:{subscription.company_id}:{subscription.id}:{user_id or 0}",
+            ),
+        )
         NotificationService.record_event(
             db_session,
             company_id=subscription.company_id,
@@ -116,8 +143,7 @@ class BillingService:
             event="subscription_reactivated",
             detail="El usuario reactivo renovacion automatica.",
             source="portal",
-            status=subscription.status,
+            status=SubscriptionService.active_subscription_for_company(subscription.company_id).status,
             user_id=user_id,
         )
-        db_session.commit()
         return subscription
