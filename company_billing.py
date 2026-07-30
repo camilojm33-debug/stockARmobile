@@ -20,6 +20,7 @@ from app import company_admin_required, csrf, tenant_required
 from config.billing_config import load_billing_config
 from services.billing_service import BillingService
 from services.backup_service import BackupService
+from services.business_billing_service import BusinessBillingService
 from services.company_security_service import CompanySecurityService
 from services.plan_service import PlanService
 from services.plan_usage_service import PlanUsageService
@@ -227,6 +228,38 @@ def company_member_required(func):
         if getattr(current_user, "role", None) not in {"admin", "user"}:
             abort(403)
         if getattr(current_user, "company_id", None) is None:
+            abort(403)
+        return func(*args, **kwargs)
+
+    return decorated
+
+
+def _can_view_business_billing(user):
+    role = (getattr(user, "role", None) or "").strip().lower()
+    if role == "admin":
+        return True
+    if role != "user":
+        return False
+    user_permissions = set(_user_permissions(user))
+    return bool(user_permissions.intersection({"reports", "sales", "quotes_view", "cash", "economic_stats"}))
+
+
+def business_billing_view_required(func):
+    @wraps(func)
+    @tenant_required
+    def decorated(*args, **kwargs):
+        if not _can_view_business_billing(current_user):
+            abort(403)
+        return func(*args, **kwargs)
+
+    return decorated
+
+
+def business_billing_admin_required(func):
+    @wraps(func)
+    @tenant_required
+    def decorated(*args, **kwargs):
+        if (getattr(current_user, "role", None) or "").strip().lower() != "admin":
             abort(403)
         return func(*args, **kwargs)
 
@@ -2501,6 +2534,579 @@ def company_settings():
         billing_last_receipt=billing_last_receipt,
         billing_history_rows=billing_history_rows,
     )
+
+
+def _billing_business_config(company):
+    return BusinessBillingService.load_config(company)
+
+
+def _billing_collect_filters():
+    return BusinessBillingService.parse_filter_values(request.args)
+
+
+@bp.route("/facturacion")
+@business_billing_view_required
+def business_billing_hub():
+    from app import Company, User
+
+    company_id = getattr(current_user, "company_id", None)
+    company = Company.query.filter_by(id=company_id).first_or_404()
+    config = _billing_business_config(company)
+    filters = _billing_collect_filters()
+    rows = BusinessBillingService.list_documents(company.id, config, filters)
+    dashboard = BusinessBillingService.build_dashboard(company.id, config)
+    reports = BusinessBillingService.report_summary(rows)
+
+    users = (
+        User.query.filter_by(company_id=company.id, active=True)
+        .order_by(User.username.asc())
+        .all()
+    )
+    selected_tab = (request.args.get("tab") or "dashboard").strip().lower()
+    if selected_tab not in {
+        "dashboard",
+        "fiscal",
+        "comprobantes",
+        "numeracion",
+        "puntos-venta",
+        "plantillas",
+        "emision",
+        "electronica",
+        "reportes",
+    }:
+        selected_tab = "dashboard"
+
+    return render_template(
+        "company_billing/business_billing.html",
+        company=company,
+        config=config,
+        dashboard=dashboard,
+        rows=rows,
+        reports=reports,
+        filters=filters,
+        users=users,
+        selected_tab=selected_tab,
+        document_types=BusinessBillingService.DOCUMENT_TYPES,
+        is_admin=((getattr(current_user, "role", None) or "").strip().lower() == "admin"),
+        has_view_access=_can_view_business_billing(current_user),
+        next_number_preview=BusinessBillingService.next_number_preview,
+    )
+
+
+@bp.route("/facturacion/fiscal", methods=["POST"])
+@business_billing_admin_required
+def business_billing_save_fiscal():
+    from app import Company, db, record_audit
+
+    company_id = getattr(current_user, "company_id", None)
+    company = Company.query.filter_by(id=company_id).first_or_404()
+    config = _billing_business_config(company)
+
+    fiscal = config.get("fiscal") or {}
+    fiscal["tax_id"] = (request.form.get("tax_id") or "").strip()[:50]
+    fiscal["legal_name"] = (request.form.get("legal_name") or "").strip()[:160]
+    fiscal["iva_condition"] = (request.form.get("iva_condition") or "").strip()[:80]
+    fiscal["gross_income"] = (request.form.get("gross_income") or "").strip()[:80]
+    fiscal["jurisdiction"] = (request.form.get("jurisdiction") or "").strip()[:120]
+    fiscal["activity_start"] = (request.form.get("activity_start") or "").strip()[:20]
+    fiscal["fiscal_address"] = (request.form.get("fiscal_address") or "").strip()[:255]
+    fiscal["branch_name"] = (request.form.get("branch_name") or "").strip()[:80] or "Casa central"
+    config["fiscal"] = fiscal
+
+    company.tax_id = fiscal["tax_id"] or None
+    company.legal_name = fiscal["legal_name"] or None
+    if fiscal["fiscal_address"]:
+        company.address = fiscal["fiscal_address"]
+
+    BusinessBillingService.save_config(company, config)
+    record_audit(
+        action="business_billing_fiscal_update",
+        entity="company",
+        entity_id=company.id,
+        detail="Configuracion fiscal del negocio actualizada.",
+        ip_address=request.remote_addr,
+    )
+    db.session.commit()
+    flash("Configuración fiscal actualizada.", "success")
+    return redirect(url_for("company_billing.business_billing_hub", tab="fiscal"))
+
+
+@bp.route("/facturacion/documentos", methods=["POST"])
+@business_billing_admin_required
+def business_billing_save_documents():
+    from app import Company, db, record_audit
+
+    company_id = getattr(current_user, "company_id", None)
+    company = Company.query.filter_by(id=company_id).first_or_404()
+    config = _billing_business_config(company)
+
+    docs = config.get("documents_enabled") or {}
+    for key, _label in BusinessBillingService.DOCUMENT_TYPES:
+        docs[key] = bool(request.form.get(f"doc_{key}"))
+    config["documents_enabled"] = docs
+
+    BusinessBillingService.save_config(company, config)
+    record_audit(
+        action="business_billing_documents_update",
+        entity="company",
+        entity_id=company.id,
+        detail="Tipos de comprobantes actualizados.",
+        ip_address=request.remote_addr,
+    )
+    db.session.commit()
+    flash("Tipos de comprobantes guardados.", "success")
+    return redirect(url_for("company_billing.business_billing_hub", tab="comprobantes"))
+
+
+@bp.route("/facturacion/numeracion", methods=["POST"])
+@business_billing_admin_required
+def business_billing_save_numbering():
+    from app import Company, db, record_audit
+
+    company_id = getattr(current_user, "company_id", None)
+    company = Company.query.filter_by(id=company_id).first_or_404()
+    config = _billing_business_config(company)
+
+    active_pos = BusinessBillingService._normalize_pos_number(request.form.get("active_pos") or config.get("active_pos"))
+    config["active_pos"] = active_pos
+    points = config.get("points_of_sale") or []
+    for point in points:
+        point["active"] = point.get("number") == active_pos
+    if not any(point.get("number") == active_pos for point in points):
+        points.append({
+            "number": active_pos,
+            "description": f"Punto de venta {active_pos}",
+            "branch": (config.get("fiscal") or {}).get("branch_name") or "Casa central",
+            "active": True,
+        })
+    config["points_of_sale"] = points
+
+    numbering = config.get("numbering") or {}
+    for key, _label in BusinessBillingService.DOCUMENT_TYPES:
+        current = (request.form.get(f"numbering_{key}") or "").strip()[:20]
+        if current:
+            numbering[key] = current
+    config["numbering"] = numbering
+
+    BusinessBillingService.save_config(company, config)
+    record_audit(
+        action="business_billing_numbering_update",
+        entity="company",
+        entity_id=company.id,
+        detail="Numeracion de comprobantes actualizada.",
+        ip_address=request.remote_addr,
+    )
+    db.session.commit()
+    flash("Numeración actualizada.", "success")
+    return redirect(url_for("company_billing.business_billing_hub", tab="numeracion"))
+
+
+@bp.route("/facturacion/numeracion/reset", methods=["POST"])
+@business_billing_admin_required
+def business_billing_reset_numbering():
+    from app import Company, db, record_audit
+
+    company_id = getattr(current_user, "company_id", None)
+    company = Company.query.filter_by(id=company_id).first_or_404()
+    config = _billing_business_config(company)
+    active_pos = config.get("active_pos") or "00001"
+
+    target_doc_type = (request.form.get("doc_type") or "").strip().lower()
+    numbering = config.get("numbering") or {}
+    all_types = {key for key, _label in BusinessBillingService.DOCUMENT_TYPES}
+    if target_doc_type and target_doc_type in all_types:
+        numbering[target_doc_type] = f"{active_pos}-00000001"
+        detail = f"Numeracion reiniciada para {target_doc_type}."
+    else:
+        for key in all_types:
+            numbering[key] = f"{active_pos}-00000001"
+        detail = "Numeracion reiniciada para todos los comprobantes."
+    config["numbering"] = numbering
+
+    BusinessBillingService.save_config(company, config)
+    record_audit(
+        action="business_billing_numbering_reset",
+        entity="company",
+        entity_id=company.id,
+        detail=detail,
+        ip_address=request.remote_addr,
+    )
+    db.session.commit()
+    flash("Numeración reiniciada correctamente.", "success")
+    return redirect(url_for("company_billing.business_billing_hub", tab="numeracion"))
+
+
+@bp.route("/facturacion/puntos-venta/add", methods=["POST"])
+@business_billing_admin_required
+def business_billing_pos_add():
+    from app import Company, db, record_audit
+
+    company_id = getattr(current_user, "company_id", None)
+    company = Company.query.filter_by(id=company_id).first_or_404()
+    config = _billing_business_config(company)
+    points = config.get("points_of_sale") or []
+
+    number = BusinessBillingService._normalize_pos_number(request.form.get("number") or "")
+    if any(item.get("number") == number for item in points):
+        flash("Ese punto de venta ya existe.", "warning")
+        return redirect(url_for("company_billing.business_billing_hub", tab="puntos-venta"))
+
+    points.append(
+        {
+            "number": number,
+            "description": (request.form.get("description") or "").strip()[:80] or f"Punto de venta {number}",
+            "branch": (request.form.get("branch") or "").strip()[:80] or "Casa central",
+            "active": False,
+        }
+    )
+    points.sort(key=lambda item: item.get("number") or "00000")
+    config["points_of_sale"] = points
+
+    BusinessBillingService.save_config(company, config)
+    record_audit(
+        action="business_billing_pos_add",
+        entity="company",
+        entity_id=company.id,
+        detail=f"Punto de venta agregado {number}.",
+        ip_address=request.remote_addr,
+    )
+    db.session.commit()
+    flash("Punto de venta agregado.", "success")
+    return redirect(url_for("company_billing.business_billing_hub", tab="puntos-venta"))
+
+
+@bp.route("/facturacion/puntos-venta/update", methods=["POST"])
+@business_billing_admin_required
+def business_billing_pos_update():
+    from app import Company, db, record_audit
+
+    company_id = getattr(current_user, "company_id", None)
+    company = Company.query.filter_by(id=company_id).first_or_404()
+    config = _billing_business_config(company)
+    points = config.get("points_of_sale") or []
+
+    number = BusinessBillingService._normalize_pos_number(request.form.get("number") or "")
+    target = next((item for item in points if item.get("number") == number), None)
+    if target is None:
+        flash("No se encontró el punto de venta.", "warning")
+        return redirect(url_for("company_billing.business_billing_hub", tab="puntos-venta"))
+
+    target["description"] = (request.form.get("description") or target.get("description") or "").strip()[:80]
+    target["branch"] = (request.form.get("branch") or target.get("branch") or "Casa central").strip()[:80]
+    target["active"] = bool(request.form.get("active"))
+    if target["active"]:
+        config["active_pos"] = number
+        for item in points:
+            item["active"] = item.get("number") == number
+
+    config["points_of_sale"] = points
+    BusinessBillingService.save_config(company, config)
+    record_audit(
+        action="business_billing_pos_update",
+        entity="company",
+        entity_id=company.id,
+        detail=f"Punto de venta actualizado {number}.",
+        ip_address=request.remote_addr,
+    )
+    db.session.commit()
+    flash("Punto de venta actualizado.", "success")
+    return redirect(url_for("company_billing.business_billing_hub", tab="puntos-venta"))
+
+
+@bp.route("/facturacion/puntos-venta/toggle", methods=["POST"])
+@business_billing_admin_required
+def business_billing_pos_toggle():
+    from app import Company, db, record_audit
+
+    company_id = getattr(current_user, "company_id", None)
+    company = Company.query.filter_by(id=company_id).first_or_404()
+    config = _billing_business_config(company)
+    points = config.get("points_of_sale") or []
+
+    number = BusinessBillingService._normalize_pos_number(request.form.get("number") or "")
+    target = next((item for item in points if item.get("number") == number), None)
+    if target is None:
+        flash("No se encontró el punto de venta.", "warning")
+        return redirect(url_for("company_billing.business_billing_hub", tab="puntos-venta"))
+
+    target["active"] = not bool(target.get("active"))
+    if target["active"]:
+        config["active_pos"] = number
+        for item in points:
+            item["active"] = item.get("number") == number
+    elif config.get("active_pos") == number:
+        target["active"] = True
+        flash("Debe quedar al menos un punto de venta activo.", "warning")
+        return redirect(url_for("company_billing.business_billing_hub", tab="puntos-venta"))
+
+    config["points_of_sale"] = points
+    BusinessBillingService.save_config(company, config)
+    record_audit(
+        action="business_billing_pos_toggle",
+        entity="company",
+        entity_id=company.id,
+        detail=f"Punto de venta {'activado' if target['active'] else 'desactivado'} {number}.",
+        ip_address=request.remote_addr,
+    )
+    db.session.commit()
+    flash("Estado del punto de venta actualizado.", "success")
+    return redirect(url_for("company_billing.business_billing_hub", tab="puntos-venta"))
+
+
+@bp.route("/facturacion/plantillas", methods=["POST"])
+@business_billing_admin_required
+def business_billing_save_templates():
+    from app import Company, db, record_audit
+
+    company_id = getattr(current_user, "company_id", None)
+    company = Company.query.filter_by(id=company_id).first_or_404()
+    config = _billing_business_config(company)
+
+    tpl = config.get("template") or {}
+    tpl["logo"] = (request.form.get("logo") or "").strip()[:255]
+    tpl["footer"] = (request.form.get("footer") or "").strip()[:500]
+    tpl["commercial_terms"] = (request.form.get("commercial_terms") or "").strip()[:1000]
+    tpl["observations"] = (request.form.get("observations") or "").strip()[:1000]
+    tpl["show_qr"] = bool(request.form.get("show_qr"))
+    tpl["show_barcode"] = bool(request.form.get("show_barcode"))
+    tpl["format_a4"] = bool(request.form.get("format_a4"))
+    tpl["format_ticket_58"] = bool(request.form.get("format_ticket_58"))
+    tpl["format_ticket_80"] = bool(request.form.get("format_ticket_80"))
+    config["template"] = tpl
+
+    BusinessBillingService.save_config(company, config)
+    record_audit(
+        action="business_billing_template_update",
+        entity="company",
+        entity_id=company.id,
+        detail="Plantillas de comprobante actualizadas.",
+        ip_address=request.remote_addr,
+    )
+    db.session.commit()
+    flash("Plantilla guardada correctamente.", "success")
+    return redirect(url_for("company_billing.business_billing_hub", tab="plantillas"))
+
+
+@bp.route("/facturacion/emision", methods=["POST"])
+@business_billing_admin_required
+def business_billing_save_emission():
+    from app import Company, db, record_audit
+
+    company_id = getattr(current_user, "company_id", None)
+    company = Company.query.filter_by(id=company_id).first_or_404()
+    config = _billing_business_config(company)
+
+    emission = config.get("emission") or {}
+    emission["auto_numbering"] = bool(request.form.get("auto_numbering"))
+    emission["auto_print"] = bool(request.form.get("auto_print"))
+    emission["send_pdf_email"] = bool(request.form.get("send_pdf_email"))
+    emission["send_whatsapp_prepared"] = bool(request.form.get("send_whatsapp_prepared"))
+    emission["copies"] = max(1, int(request.form.get("copies", 1) or 1))
+    emission["currency"] = (request.form.get("currency") or "ARS").strip()[:10]
+    emission["decimals"] = max(0, min(4, int(request.form.get("decimals", 2) or 2)))
+    emission["default_format"] = (request.form.get("default_format") or "a4").strip()[:20]
+    emission["default_template"] = (request.form.get("default_template") or "estandar").strip()[:60]
+    config["emission"] = emission
+
+    BusinessBillingService.save_config(company, config)
+    record_audit(
+        action="business_billing_emission_update",
+        entity="company",
+        entity_id=company.id,
+        detail="Configuracion de emision actualizada.",
+        ip_address=request.remote_addr,
+    )
+    db.session.commit()
+    flash("Configuración de emisión actualizada.", "success")
+    return redirect(url_for("company_billing.business_billing_hub", tab="emision"))
+
+
+@bp.route("/facturacion/electronica", methods=["POST"])
+@business_billing_admin_required
+def business_billing_save_electronic():
+    from app import Company, db, record_audit
+
+    company_id = getattr(current_user, "company_id", None)
+    company = Company.query.filter_by(id=company_id).first_or_404()
+    config = _billing_business_config(company)
+
+    electronic = config.get("electronic") or {}
+    electronic["environment"] = (request.form.get("environment") or "homologacion").strip().lower()[:20]
+    electronic["certificate"] = (request.form.get("certificate") or "").strip()[:160]
+    electronic["certificate_expires_at"] = (request.form.get("certificate_expires_at") or "").strip()[:20]
+    electronic["cae"] = (request.form.get("cae") or "").strip()[:60]
+    electronic["caea"] = (request.form.get("caea") or "").strip()[:60]
+    raw_enabled_points = (request.form.get("enabled_points") or "").strip()
+    electronic["enabled_points"] = [
+        point.strip() for point in raw_enabled_points.split(",") if point.strip()
+    ]
+    electronic["status"] = "coming_soon"
+    electronic["connected"] = False
+    config["electronic"] = electronic
+
+    BusinessBillingService.save_config(company, config)
+    record_audit(
+        action="business_billing_electronic_update",
+        entity="company",
+        entity_id=company.id,
+        detail="Configuracion de facturacion electronica actualizada (modo preparado).",
+        ip_address=request.remote_addr,
+    )
+    db.session.commit()
+    flash("Configuración electrónica guardada. Integración ARCA próximamente disponible.", "info")
+    return redirect(url_for("company_billing.business_billing_hub", tab="electronica"))
+
+
+@bp.route("/facturacion/reportes/export")
+@business_billing_view_required
+def business_billing_export_reports():
+    from app import Company
+
+    company_id = getattr(current_user, "company_id", None)
+    company = Company.query.filter_by(id=company_id).first_or_404()
+    config = _billing_business_config(company)
+    filters = _billing_collect_filters()
+    rows = BusinessBillingService.list_documents(company.id, config, filters)
+    export_format = (request.args.get("format") or "csv").strip().lower()
+    base_name = f"comprobantes_{company.id}_{datetime.now().strftime('%Y%m%d_%H%M%S')}"
+
+    if export_format == "excel":
+        buffer = BusinessBillingService.export_excel(rows)
+        return send_file(
+            buffer,
+            mimetype="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+            as_attachment=True,
+            download_name=f"{base_name}.xlsx",
+        )
+    if export_format == "pdf":
+        buffer = BusinessBillingService.export_pdf(rows)
+        return send_file(
+            buffer,
+            mimetype="application/pdf",
+            as_attachment=True,
+            download_name=f"{base_name}.pdf",
+        )
+
+    buffer = BusinessBillingService.export_csv(rows)
+    return send_file(
+        buffer,
+        mimetype="text/csv",
+        as_attachment=True,
+        download_name=f"{base_name}.csv",
+    )
+
+
+@bp.route("/facturacion/comprobantes/venta/<int:sale_id>/anular", methods=["POST"])
+@business_billing_admin_required
+def business_billing_annul_sale(sale_id):
+    from app import Company, Sale, db, record_audit
+
+    company_id = getattr(current_user, "company_id", None)
+    company = Company.query.filter_by(id=company_id).first_or_404()
+    sale = Sale.query.filter_by(id=sale_id, company_id=company_id).first_or_404()
+
+    if (sale.status or "").strip().lower() in {"anulada", "cancelada", "rechazada"}:
+        flash("La venta ya estaba anulada.", "warning")
+        return redirect(url_for("company_billing.business_billing_hub", tab="dashboard"))
+
+    sale.status = "anulada"
+    BusinessBillingService.mark_sale_document_annulled(db.session, company_id=company.id, sale_id=sale.id)
+    record_audit(
+        action="business_billing_sale_annul",
+        entity="sale",
+        entity_id=sale.id,
+        detail=f"Comprobante de venta anulado desde Facturacion. venta_id={sale.id}",
+        ip_address=request.remote_addr,
+    )
+    db.session.commit()
+    flash("Comprobante anulado correctamente.", "success")
+    return redirect(url_for("company_billing.business_billing_hub", tab="dashboard"))
+
+
+@bp.route("/facturacion/comprobantes/venta/<int:sale_id>/emitir", methods=["POST"])
+@business_billing_admin_required
+def business_billing_issue_sale_document(sale_id):
+    from app import Company, Sale, db, record_audit
+
+    company_id = getattr(current_user, "company_id", None)
+    company = Company.query.filter_by(id=company_id).first_or_404()
+    sale = Sale.query.filter_by(id=sale_id, company_id=company.id).first_or_404()
+
+    config = _billing_business_config(company)
+    doc_type = ((getattr(sale, "tipo_comprobante", None) or "factura_b") or "factura_b").strip().lower()
+    enabled = bool((config.get("documents_enabled") or {}).get(doc_type, False))
+    if not enabled:
+        flash("El tipo de comprobante no está habilitado en configuración.", "warning")
+        return redirect(url_for("company_billing.business_billing_hub", tab="dashboard"))
+
+    try:
+        BusinessBillingService.issue_sale_document(
+            db.session,
+            company=company,
+            sale=sale,
+            config=config,
+            emitted_by_user_id=current_user.id,
+            metadata={"origin": "business_billing_issue_sale_document", "ip": request.remote_addr},
+        )
+        BusinessBillingService.save_config(company, config)
+        record_audit(
+            action="business_billing_sale_issue",
+            entity="sale",
+            entity_id=sale.id,
+            detail=f"Comprobante emitido para venta {sale.id}.",
+            ip_address=request.remote_addr,
+        )
+        db.session.commit()
+    except IntegrityError:
+        db.session.rollback()
+        flash("No se pudo emitir el comprobante por conflicto de numeración. Reintenta.", "danger")
+        return redirect(url_for("company_billing.business_billing_hub", tab="dashboard"))
+
+    flash("Comprobante emitido correctamente.", "success")
+    return redirect(url_for("company_billing.business_billing_hub", tab="dashboard"))
+
+
+@bp.route("/facturacion/comprobantes/venta/<int:sale_id>/email", methods=["POST"])
+@business_billing_view_required
+def business_billing_sale_email_ready(sale_id):
+    from app import Sale, db, record_audit
+
+    company_id = getattr(current_user, "company_id", None)
+    sale = Sale.query.filter_by(id=sale_id, company_id=company_id).first_or_404()
+
+    client_email = getattr(getattr(sale, "client", None), "email", None)
+    if not client_email:
+        flash("La venta no tiene cliente con email registrado.", "warning")
+        return redirect(url_for("company_billing.business_billing_hub", tab="dashboard"))
+
+    record_audit(
+        action="business_billing_sale_email_ready",
+        entity="sale",
+        entity_id=sale.id,
+        detail=f"Envio por email preparado para venta {sale.id}.",
+        ip_address=request.remote_addr,
+    )
+    db.session.commit()
+    flash("Estructura de envío por email preparada para este comprobante.", "info")
+    return redirect(url_for("company_billing.business_billing_hub", tab="dashboard"))
+
+
+@bp.route("/facturacion/comprobantes/venta/<int:sale_id>/whatsapp", methods=["POST"])
+@business_billing_view_required
+def business_billing_sale_whatsapp(sale_id):
+    return redirect(url_for("sales.share_whatsapp", sale_id=sale_id))
+
+
+@bp.route("/facturacion/comprobantes/presupuesto/<int:quote_id>/whatsapp", methods=["POST"])
+@business_billing_view_required
+def business_billing_quote_whatsapp(quote_id):
+    return redirect(url_for("quotes.share_whatsapp", quote_id=quote_id))
+
+
+@bp.route("/facturacion/comprobantes/presupuesto/<int:quote_id>/email", methods=["POST"])
+@business_billing_view_required
+def business_billing_quote_email(quote_id):
+    return redirect(url_for("quotes.email_quote", quote_id=quote_id))
 
 
 @bp.route("/webhooks/mercadopago", methods=["POST"])

@@ -3685,14 +3685,189 @@ def test_active_subscription_with_past_billing_date_is_blocked():
         subscription.trial_end = None
         subscription.start_date = stock_app.utcnow() - timedelta(days=45)
         subscription.starts_at = stock_app.utcnow() - timedelta(days=45)
-        subscription.ends_at = stock_app.utcnow() - timedelta(days=2)
-        subscription.next_billing_date = stock_app.utcnow() - timedelta(days=2)
+        subscription.ends_at = stock_app.utcnow() - timedelta(days=6)
+        subscription.next_billing_date = stock_app.utcnow() - timedelta(days=6)
         db.session.commit()
 
     client.post("/auth/login", data={"username": "empresa_admin", "password": "admin123"})
     blocked_dashboard = client.get("/dashboard/", follow_redirects=False)
     assert blocked_dashboard.status_code in (301, 302)
     assert "/access-status" in (blocked_dashboard.headers.get("Location") or "")
+
+
+def test_active_subscription_within_grace_period_keeps_access():
+    client = stock_app.app.test_client()
+
+    with stock_app.app.app_context():
+        from app import Plan, Subscription
+        from services.plan_service import PlanService
+
+        PlanService.ensure_defaults(db.session)
+        company = Company.query.filter_by(name="Empresa Demo").first()
+        assert company is not None
+
+        paid_plan = Plan.query.filter_by(code="business").first()
+        assert paid_plan is not None
+
+        subscription = Subscription.query.filter_by(company_id=company.id).first()
+        if subscription is None:
+            subscription = Subscription(company_id=company.id)
+            db.session.add(subscription)
+
+        subscription.plan_id = paid_plan.id
+        subscription.status = "active"
+        subscription.trial_end = None
+        subscription.start_date = stock_app.utcnow() - timedelta(days=45)
+        subscription.starts_at = stock_app.utcnow() - timedelta(days=45)
+        subscription.ends_at = stock_app.utcnow() - timedelta(days=2)
+        subscription.next_billing_date = stock_app.utcnow() - timedelta(days=2)
+        db.session.commit()
+
+    client.post("/auth/login", data={"username": "empresa_admin", "password": "admin123"})
+    dashboard = client.get("/dashboard/", follow_redirects=False)
+    assert dashboard.status_code == 200
+
+
+def test_active_subscription_blocks_at_exact_five_day_overdue_cutoff():
+    with stock_app.app.app_context():
+        from app import Plan, Subscription
+        from services.plan_service import PlanService
+        from services.subscription_service import SubscriptionService
+
+        PlanService.ensure_defaults(db.session)
+        company = Company.query.filter_by(name="Empresa Demo").first()
+        assert company is not None
+
+        paid_plan = Plan.query.filter_by(code="business").first()
+        assert paid_plan is not None
+
+        now_ref = stock_app.utcnow()
+        paid_limit = now_ref - timedelta(days=5)
+
+        subscription = Subscription.query.filter_by(company_id=company.id).first()
+        if subscription is None:
+            subscription = Subscription(company_id=company.id)
+            db.session.add(subscription)
+
+        subscription.plan_id = paid_plan.id
+        subscription.status = "active"
+        subscription.trial_end = None
+        subscription.start_date = now_ref - timedelta(days=45)
+        subscription.starts_at = now_ref - timedelta(days=45)
+        subscription.ends_at = paid_limit
+        subscription.next_billing_date = paid_limit
+        db.session.commit()
+
+        access = SubscriptionService.resolve_company_access_state(company, subscription=subscription, now=now_ref)
+        assert access["can_access"] is False
+        assert access["status"] == SubscriptionService.STATE_EXPIRED
+
+
+def test_business_billing_hub_allows_admin_and_shows_core_sections():
+    client = stock_app.app.test_client()
+    client.post("/auth/login", data={"username": "negocio_admin", "password": "admin123"})
+
+    response = client.get("/admin/facturacion")
+    assert response.status_code == 200
+    html = response.get_data(as_text=True)
+    assert "Administración profesional de comprobantes" in html
+    assert "Configuración fiscal" in html
+    assert "Facturación electrónica" in html
+
+
+def test_business_billing_hub_denies_user_without_billing_permissions():
+    client = stock_app.app.test_client()
+    client.post("/auth/login", data={"username": "empresa_admin", "password": "admin123"})
+
+    response = client.get("/admin/facturacion", follow_redirects=False)
+    assert response.status_code == 403
+
+
+def test_business_billing_sale_annul_marks_sale_status_for_admin():
+    client = stock_app.app.test_client()
+    client.post("/auth/login", data={"username": "negocio_admin", "password": "admin123"})
+    open_cash_session(client)
+
+    checkout = client.post(
+        "/ventas/api/checkout",
+        json={"items": [{"productId": 1, "quantity": 1}], "metodo_pago": "EFECTIVO"},
+        headers={"X-Cart-Tenant": "1:2"},
+    )
+    assert checkout.status_code == 200
+    sale_id = int(checkout.get_json()["sale_id"])
+
+    response = client.post(f"/admin/facturacion/comprobantes/venta/{sale_id}/anular", follow_redirects=False)
+    assert response.status_code in (301, 302)
+
+    with stock_app.app.app_context():
+        sale = db.session.get(Sale, sale_id)
+        assert sale is not None
+        assert (sale.status or "").lower() == "anulada"
+
+
+def test_business_billing_sale_annul_denies_non_admin():
+    client = stock_app.app.test_client()
+    client.post("/auth/login", data={"username": "empresa_admin", "password": "admin123"})
+
+    with stock_app.app.app_context():
+        sale = Sale(
+            customer="Cliente demo",
+            subtotal=10,
+            discount=0,
+            tax=0,
+            total_amount=10,
+            payment_method="EFECTIVO",
+            company_id=1,
+            seller_id=1,
+            status="confirmada",
+        )
+        db.session.add(sale)
+        db.session.commit()
+        sale_id = sale.id
+
+    response = client.post(f"/admin/facturacion/comprobantes/venta/{sale_id}/anular", follow_redirects=False)
+    assert response.status_code == 403
+
+
+def test_business_billing_issue_sale_document_persists_numbering_sequence():
+    client = stock_app.app.test_client()
+    client.post("/auth/login", data={"username": "negocio_admin", "password": "admin123"})
+    open_cash_session(client)
+
+    response_a = client.post(
+        "/ventas/api/checkout",
+        json={"items": [{"productId": 1, "quantity": 1}], "metodo_pago": "EFECTIVO"},
+        headers={"X-Cart-Tenant": "1:2"},
+    )
+    assert response_a.status_code == 200
+    sale_id_a = int(response_a.get_json()["sale_id"])
+
+    response_b = client.post(
+        "/ventas/api/checkout",
+        json={"items": [{"productId": 1, "quantity": 0.5}], "metodo_pago": "EFECTIVO"},
+        headers={"X-Cart-Tenant": "1:2"},
+    )
+    assert response_b.status_code == 200
+    sale_id_b = int(response_b.get_json()["sale_id"])
+
+    issue_a = client.post(f"/admin/facturacion/comprobantes/venta/{sale_id_a}/emitir", follow_redirects=False)
+    issue_b = client.post(f"/admin/facturacion/comprobantes/venta/{sale_id_b}/emitir", follow_redirects=False)
+    assert issue_a.status_code in (301, 302)
+    assert issue_b.status_code in (301, 302)
+
+    with stock_app.app.app_context():
+        from app import BusinessDocument
+
+        docs = (
+            BusinessDocument.query.filter_by(company_id=1, source_type="sale")
+            .order_by(BusinessDocument.seq_number.asc())
+            .all()
+        )
+        assert len(docs) == 2
+        assert docs[0].document_number == "00001-00000001"
+        assert docs[1].document_number == "00001-00000002"
+        assert docs[0].source_id == sale_id_a
+        assert docs[1].source_id == sale_id_b
 
 
 def test_plan_catalog_sync_updates_existing_plan_values():

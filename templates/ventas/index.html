@@ -9,10 +9,17 @@
       <span class="page-kicker"><i class="bi bi-lightning-charge"></i> POS Premium</span>
       <h1 class="h3 fw-bold mb-1">Ventas</h1>
       <p class="text-muted mb-0">Venta rapida con scanner, carrito inteligente y pago mixto.</p>
+      <div class="d-flex flex-wrap gap-2 mt-2 pos-top-status" aria-live="polite">
+        <span class="badge text-bg-light"><i class="bi bi-search me-1"></i><span id="pos-found-count">0</span> productos</span>
+        <span class="badge" id="pos-online-badge"><i class="bi bi-wifi me-1"></i>Online</span>
+        <span class="badge text-bg-light"><i class="bi bi-person-circle me-1"></i>{{ pos_user_name or 'Usuario' }}</span>
+        <span class="badge text-bg-light"><i class="bi bi-shop me-1"></i>{{ active_branch or 'Casa central' }}</span>
+        <span class="badge {{ 'text-bg-success' if cash_session_open else 'text-bg-danger' }}"><i class="bi bi-safe2 me-1"></i>{{ 'Caja abierta' if cash_session_open else 'Caja cerrada' }}</span>
+      </div>
     </div>
     <div class="d-flex flex-wrap gap-2 w-100 w-md-auto">
       <button class="btn btn-outline-primary w-100 w-md-auto" data-bs-toggle="modal" data-bs-target="#cameraScannerModal" onclick="startCameraScanner()"><i class="bi bi-camera me-1"></i>Camara</button>
-      <button class="btn btn-success w-100 w-md-auto" {% if not cash_session_open %}disabled title="Abrí una caja para cobrar"{% endif %} onclick="openCartModal()"><i class="bi bi-credit-card me-1"></i>Cobrar <span class="cart-count badge text-bg-light">0</span></button>
+      <button class="btn btn-success w-100 w-md-auto" id="pos-charge-button" {% if not cash_session_open %}disabled title="Abrí una caja para cobrar"{% endif %} onclick="openCartModal()"><i class="bi bi-credit-card me-1"></i>Cobrar ($0.00)</button>
     </div>
   </div>
 
@@ -37,25 +44,44 @@
   <div class="pos-toolbar app-card mb-3">
     <div class="row g-2 align-items-center">
       <div class="col-lg-7">
-        <div class="input-group input-group-lg">
+        <div class="input-group input-group-lg pos-search-wrap">
           <span class="input-group-text bg-white"><i class="bi bi-search text-primary"></i></span>
-          <input id="pos-search-input" class="form-control" value="{{ request.args.get('q','') }}" autocomplete="off" placeholder="Buscar por producto, codigo, marca o categoria">
+          <input id="pos-search-input" class="form-control" value="{{ request.args.get('q','') }}" autocomplete="off" placeholder="Buscar por nombre, codigo, barra, QR, marca, categoria o descripcion">
+        </div>
+        <div id="pos-smart-search-panel" class="card shadow-sm d-none" role="listbox" aria-label="Sugerencias de búsqueda POS">
+          <div class="card-body p-2">
+            <div id="pos-search-suggestions" class="mb-2"></div>
+            <div class="pos-search-hints-grid">
+              <div>
+                <div class="small text-uppercase text-muted fw-semibold mb-1">Recientes</div>
+                <div id="pos-search-recent"></div>
+              </div>
+              <div>
+                <div class="small text-uppercase text-muted fw-semibold mb-1">Más vendidos</div>
+                <div id="pos-search-top"></div>
+              </div>
+            </div>
+          </div>
         </div>
       </div>
       <div class="col-lg-5">
         <div class="input-group input-group-lg">
           <span class="input-group-text bg-white"><i class="bi bi-upc-scan text-primary"></i></span>
           <input id="fast-scanner-input" class="form-control" inputmode="none" autocomplete="off" placeholder="Escanear QR, EAN13, Code128 o interno">
-          <button class="btn btn-outline-primary" type="button" onclick="document.getElementById('fast-scanner-input').focus()">Activar</button>
+          <button class="btn btn-outline-primary" id="scanner-toggle-btn" type="button" onclick="toggleScannerMode()">Activar</button>
+        </div>
+        <div class="small mt-1 d-flex align-items-center gap-2">
+          <span class="pos-scanner-dot" id="scanner-dot" aria-hidden="true"></span>
+          <span id="scanner-status-text">Escáner inactivo</span>
         </div>
       </div>
     </div>
   </div>
 
   <div class="pos-category-strip mb-3" aria-label="Categorias">
-    <a class="btn {{ 'btn-primary' if not request.args.get('category') else 'btn-outline-primary' }}" href="{{ url_for('sales.index') }}">Todas</a>
+    <a class="btn {{ 'btn-primary' if not request.args.get('category') else 'btn-outline-primary' }}" href="{{ url_for('sales.index') }}" data-category-btn="all">Todas <span class="badge text-bg-light ms-1" id="cat-count-all">0</span></a>
     {% for categoria in categorias %}
-    <a class="btn {{ 'btn-primary' if request.args.get('category') == categoria else 'btn-outline-primary' }}" href="{{ url_for('sales.index', category=categoria) }}">{{ categoria }}</a>
+    <a class="btn {{ 'btn-primary' if request.args.get('category') == categoria else 'btn-outline-primary' }}" href="{{ url_for('sales.index', category=categoria) }}" data-category-btn="{{ categoria|lower|trim }}" data-category-value="{{ categoria }}">{{ categoria }} <span class="badge text-bg-light ms-1" id="cat-count-{{ loop.index0 }}">0</span></a>
     {% endfor %}
   </div>
 
@@ -90,18 +116,29 @@
     <div class="col-xl-8 col-xxl-9">
       <div class="pos-grid" id="pos-product-grid">
         {% for product in products %}
-        <article class="card app-card pos-product-card" data-product-card data-search="{{ (product.name ~ ' ' ~ product.barcode ~ ' ' ~ (product.brand or '') ~ ' ' ~ (product.category or ''))|lower }}" data-category="{{ product.category or '' }}">
+        {% set has_offer = (product.discount or 0) > 0 %}
+        {% set critical_stock = (product.stock or 0) <= (product.min_stock or 0) %}
+        <article class="card app-card pos-product-card" data-product-card data-product-id="{{ product.id }}" data-product-name="{{ product.name|e }}" data-product-price="{{ product.price or 0 }}" data-product-stock="{{ product.stock or 0 }}" data-product-barcode="{{ product.barcode|e }}" data-product-unit="{{ (product.unit_measure or 'u')|e }}" data-product-photo="{{ (product.photo or '')|e }}" data-product-category="{{ (product.category or '')|e }}" data-product-description="{{ (product.description or '')|e }}" data-product-brand="{{ (product.brand or '')|e }}" data-search="{{ (product.name ~ ' ' ~ product.barcode ~ ' ' ~ (product.brand or '') ~ ' ' ~ (product.category or '') ~ ' ' ~ (product.description or ''))|lower }}" data-category="{{ product.category or '' }}">
           <div class="card-body d-flex flex-column">
-            <div class="d-flex justify-content-between align-items-start gap-2 mb-3">
-              <span class="metric-icon"><i class="bi bi-box"></i></span>
-              <div class="text-end">
-                {% if product.favorite %}<span class="badge text-bg-warning mb-1"><i class="bi bi-star-fill"></i></span>{% endif %}
+            <div class="d-flex justify-content-between align-items-start gap-2 mb-2">
+              <span class="pos-product-thumb" aria-hidden="true">
+                {% if product.photo %}
+                <img src="{{ product.photo }}" alt="{{ product.name }}" loading="lazy">
+                {% else %}
+                <i class="bi bi-box-seam"></i>
+                {% endif %}
+              </span>
+              <div class="text-end d-flex flex-column gap-1 align-items-end">
+                {% if product.favorite %}<span class="badge text-bg-warning"><i class="bi bi-star-fill me-1"></i>Favorito</span>{% endif %}
+                {% if has_offer %}<span class="badge text-bg-info">Oferta</span>{% endif %}
+                {% if critical_stock and product.stock > 0 %}<span class="badge text-bg-warning">Stock crítico</span>{% endif %}
                 <span class="badge {{ 'text-bg-danger' if product.stock <= 0 else ('text-bg-warning' if product.stock <= product.min_stock else 'text-bg-success') }} d-block">Stock {{ "%.3g"|format(product.stock or 0) }}</span>
               </div>
             </div>
             <h2 class="h6 fw-bold mb-1 text-truncate" title="{{ product.name }}">{{ product.name }}</h2>
-            <div class="small text-muted mb-3"><code class="bg-light px-2 py-1 rounded">{{ product.barcode }}</code> / {{ product.unit_measure or 'u' }}</div>
-            <div class="d-flex justify-content-between align-items-center mb-3 mt-auto">
+            <div class="small text-muted mb-2"><code class="bg-light px-2 py-1 rounded">{{ product.barcode }}</code></div>
+            <div class="small text-muted mb-2">{{ product.brand or 'Sin marca' }} · {{ product.category or 'Sin categoría' }} · {{ product.unit_measure or 'u' }}</div>
+            <div class="d-flex justify-content-between align-items-center mb-2 mt-auto">
               <span class="text-muted small">Precio</span>
               <strong class="fs-5">${{ "%.2f"|format(product.price) }}</strong>
             </div>
@@ -117,6 +154,7 @@
               data-product-stock="{{ product.stock or 0 }}"
               data-product-barcode="{{ product.barcode|e }}"
               data-product-unit="{{ (product.unit_measure or 'u')|e }}"
+              data-product-photo="{{ (product.photo or '')|e }}"
               onclick="handleAddToCartClick(this)">
               <i class="bi bi-plus-lg me-1"></i>Agregar
             </button>
@@ -416,6 +454,79 @@
   .pos-shell { overflow-x: clip; }
   .pos-hero { display: flex; align-items: center; justify-content: space-between; gap: 1rem; flex-wrap: wrap; }
   .pos-toolbar { padding: 14px; }
+  .pos-top-status .badge {
+    border: 1px solid rgba(13,110,253,.08);
+    font-weight: 500;
+  }
+  #pos-online-badge {
+    background: rgba(25,135,84,.14);
+    color: #0f5132;
+  }
+  #pos-online-badge.offline {
+    background: rgba(220,53,69,.14);
+    color: #842029;
+  }
+  .pos-search-wrap {
+    position: relative;
+  }
+  #pos-smart-search-panel {
+    margin-top: .45rem;
+    border: 1px solid rgba(13,110,253,.12);
+  }
+  .pos-search-hints-grid {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: .6rem;
+  }
+  .pos-suggestion-item {
+    width: 100%;
+    border: 0;
+    border-radius: .55rem;
+    background: transparent;
+    text-align: left;
+    padding: .5rem .55rem;
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    gap: .45rem;
+  }
+  .pos-suggestion-item:hover,
+  .pos-suggestion-item.active {
+    background: rgba(13,110,253,.1);
+  }
+  .pos-hint-pills {
+    display: flex;
+    flex-wrap: wrap;
+    gap: .35rem;
+  }
+  .pos-hint-pill {
+    border: 1px solid rgba(13,110,253,.16);
+    border-radius: 999px;
+    background: #fff;
+    color: #0d6efd;
+    padding: .28rem .55rem;
+    font-size: .8rem;
+    line-height: 1.2;
+  }
+  .pos-hint-pill:hover {
+    background: rgba(13,110,253,.08);
+  }
+  .pos-scanner-dot {
+    width: .6rem;
+    height: .6rem;
+    border-radius: 50%;
+    background: #adb5bd;
+    box-shadow: 0 0 0 0 rgba(108,117,125,.35);
+  }
+  .pos-scanner-dot.active {
+    background: #20c997;
+    animation: scannerPulse 1.25s infinite;
+  }
+  @keyframes scannerPulse {
+    0% { box-shadow: 0 0 0 0 rgba(32,201,151,.35); }
+    70% { box-shadow: 0 0 0 9px rgba(32,201,151,0); }
+    100% { box-shadow: 0 0 0 0 rgba(32,201,151,0); }
+  }
   .pos-shell .row,
   .pos-shell [class*="col-"] {
     min-width: 0;
@@ -424,6 +535,31 @@
   .pos-category-strip .btn { min-width: max-content; }
   .pos-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(min(210px, 100%), 1fr)); gap: 1rem; }
   .pos-product-card { min-height: 100%; }
+  .pos-product-card.pulse-added {
+    animation: productPulse .55s ease;
+  }
+  @keyframes productPulse {
+    0% { transform: scale(1); box-shadow: 0 0 0 rgba(25,135,84,0); }
+    40% { transform: scale(1.01); box-shadow: 0 0 0 6px rgba(25,135,84,.12); }
+    100% { transform: scale(1); box-shadow: 0 0 0 rgba(25,135,84,0); }
+  }
+  .pos-product-thumb {
+    width: 44px;
+    height: 44px;
+    border-radius: 12px;
+    background: rgba(13,110,253,.09);
+    color: #0d6efd;
+    display: grid;
+    place-items: center;
+    font-size: 1.2rem;
+    overflow: hidden;
+    flex: 0 0 auto;
+  }
+  .pos-product-thumb img {
+    width: 100%;
+    height: 100%;
+    object-fit: cover;
+  }
   .pos-cart-panel { top: 1rem; }
   .pos-cart-items { max-height: 48vh; overflow: auto; }
   .pos-cart-line { display: flex; justify-content: space-between; align-items: center; gap: .75rem; padding: .75rem 0; border-bottom: 1px solid var(--app-line); }
@@ -627,6 +763,9 @@
       width: 100%;
       border-radius: .5rem !important;
     }
+    .pos-search-hints-grid {
+      grid-template-columns: 1fr;
+    }
   }
   @media (max-width: 575.98px) {
     .pos-grid { grid-template-columns: 1fr; }
@@ -695,20 +834,90 @@
 <script src="{{ url_for('static', filename='assets/js/cart-manager.js') }}"></script>
 <script>
   const posSearch = document.getElementById('pos-search-input');
+  const posFoundCount = document.getElementById('pos-found-count');
+  const posOnlineBadge = document.getElementById('pos-online-badge');
+  const searchPanel = document.getElementById('pos-smart-search-panel');
+  const suggestionsEl = document.getElementById('pos-search-suggestions');
+  const recentEl = document.getElementById('pos-search-recent');
+  const topEl = document.getElementById('pos-search-top');
+  const chargeButton = document.getElementById('pos-charge-button');
   const fastScannerInput = document.getElementById('fast-scanner-input');
+  const scannerToggleBtn = document.getElementById('scanner-toggle-btn');
+  const scannerDot = document.getElementById('scanner-dot');
+  const scannerStatusText = document.getElementById('scanner-status-text');
   const posCards = Array.from(document.querySelectorAll('[data-product-card]'));
   const quickModeKey = 'stockarmobile_quick_mode';
+  const scannerModeKey = 'stockarmobile_scanner_mode';
   const quickModeToggle = document.getElementById('quick-mode-toggle');
   const fullscreenToggle = document.getElementById('fullscreen-toggle');
   const desktopScannerAutofocus = window.matchMedia('(min-width: 992px) and (pointer: fine)').matches;
+  let scannerModeActive = localStorage.getItem(scannerModeKey) !== '0';
+  let suggestions = [];
+  let suggestionIndex = -1;
+  let searchPanelPinned = false;
+  let hintsLoaded = false;
+  let searchFetchController = null;
 
   function focusScannerInput() {
-    if (!fastScannerInput || !desktopScannerAutofocus) return;
+    if (!fastScannerInput || !desktopScannerAutofocus || !scannerModeActive) return;
     try {
       fastScannerInput.focus({ preventScroll: true });
     } catch (_) {
       fastScannerInput.focus();
     }
+  }
+
+  function parseMoney(text) {
+    const value = String(text || '').replace(/[^0-9.-]/g, '');
+    const num = Number(value);
+    return Number.isFinite(num) ? num : 0;
+  }
+
+  function formatMoney(amount) {
+    const safe = Number(amount) || 0;
+    return `$${safe.toFixed(2)}`;
+  }
+
+  function syncChargeButton(total) {
+    if (!chargeButton) return;
+    const currentTotal = Number.isFinite(Number(total)) ? Number(total) : parseMoney(document.getElementById('pos-total')?.textContent);
+    chargeButton.innerHTML = `<i class="bi bi-credit-card me-1"></i>Cobrar (${formatMoney(currentTotal)})`;
+  }
+
+  function setOnlineBadge() {
+    if (!posOnlineBadge) return;
+    const online = navigator.onLine;
+    posOnlineBadge.classList.toggle('offline', !online);
+    posOnlineBadge.innerHTML = online ? '<i class="bi bi-wifi me-1"></i>Online' : '<i class="bi bi-wifi-off me-1"></i>Offline';
+  }
+
+  function setScannerState(active) {
+    scannerModeActive = Boolean(active);
+    if (fastScannerInput) {
+      fastScannerInput.disabled = !scannerModeActive;
+      fastScannerInput.placeholder = scannerModeActive
+        ? 'Escanear QR, EAN13, Code128 o interno'
+        : 'Escáner pausado. Toca Activar';
+    }
+    if (scannerToggleBtn) {
+      scannerToggleBtn.textContent = scannerModeActive ? 'Desactivar' : 'Activar';
+      scannerToggleBtn.classList.toggle('btn-outline-primary', !scannerModeActive);
+      scannerToggleBtn.classList.toggle('btn-outline-danger', scannerModeActive);
+    }
+    if (scannerDot) {
+      scannerDot.classList.toggle('active', scannerModeActive);
+    }
+    if (scannerStatusText) {
+      scannerStatusText.textContent = scannerModeActive ? 'Escáner activo · esperando código' : 'Escáner inactivo';
+    }
+    localStorage.setItem(scannerModeKey, scannerModeActive ? '1' : '0');
+    if (scannerModeActive) {
+      focusScannerInput();
+    }
+  }
+
+  function toggleScannerMode() {
+    setScannerState(!scannerModeActive);
   }
 
   function setFullscreenToggleUI(enabled) {
@@ -786,6 +995,7 @@
       );
       if (fastScannerInput) {
         fastScannerInput.value = '';
+        if (scannerStatusText) scannerStatusText.textContent = 'Escáner activo · código agregado';
         focusScannerInput();
       }
       const qtyInput = document.getElementById(`qty-${product.id}`);
@@ -807,20 +1017,347 @@
     const qty = qtyInput ? qtyInput.value : '1';
 
     addToCart(id, name, price, stock, barcode, qty, unit);
+    const card = button.closest('[data-product-card]');
+    if (card) {
+      card.classList.add('pulse-added');
+      window.setTimeout(() => card.classList.remove('pulse-added'), 600);
+    }
+  }
+
+  function productFromCard(card) {
+    return {
+      id: Number(card.dataset.productId || 0),
+      name: card.dataset.productName || '',
+      price: Number(card.dataset.productPrice || 0),
+      stock: Number(card.dataset.productStock || 0),
+      barcode: card.dataset.productBarcode || '',
+      unit: card.dataset.productUnit || 'u',
+      category: card.dataset.productCategory || '',
+      brand: card.dataset.productBrand || '',
+    };
+  }
+
+  function addSuggestionProduct(product) {
+    if (!product || !product.id) return;
+    addToCart(
+      Number(product.id),
+      product.name || 'Producto',
+      Number(product.price || 0),
+      Number(product.stock || 0),
+      product.barcode || '',
+      1,
+      product.unit_measure || product.unit || 'u'
+    );
+    const qtyInput = document.getElementById(`qty-${product.id}`);
+    if (qtyInput) qtyInput.value = '1';
+    const card = document.querySelector(`[data-product-card][data-product-id="${product.id}"]`);
+    if (card) {
+      card.classList.add('pulse-added');
+      window.setTimeout(() => card.classList.remove('pulse-added'), 600);
+    }
+  }
+
+  function hideSearchPanel() {
+    searchPanel?.classList.add('d-none');
+    suggestionIndex = -1;
+  }
+
+  function showSearchPanel() {
+    searchPanel?.classList.remove('d-none');
+  }
+
+  function setSuggestionActive(nextIndex) {
+    const items = Array.from(suggestionsEl?.querySelectorAll('.pos-suggestion-item') || []);
+    if (!items.length) {
+      suggestionIndex = -1;
+      return;
+    }
+    suggestionIndex = Math.max(0, Math.min(nextIndex, items.length - 1));
+    items.forEach((item, index) => item.classList.toggle('active', index === suggestionIndex));
+  }
+
+  function renderSuggestionRows(products) {
+    suggestions = Array.isArray(products) ? products : [];
+    if (!suggestionsEl) return;
+    if (!suggestions.length) {
+      suggestionsEl.innerHTML = '<div class="small text-muted px-2 py-1">No se encontraron sugerencias.</div>';
+      suggestionIndex = -1;
+      return;
+    }
+    suggestionsEl.innerHTML = suggestions.map((product, index) => {
+      const stock = Number(product.stock || 0);
+      const disabled = stock <= 0;
+      return `
+        <button type="button" class="pos-suggestion-item${index === 0 ? ' active' : ''}" data-suggestion-index="${index}" ${disabled ? 'disabled' : ''}>
+          <span class="min-w-0">
+            <strong class="d-block text-truncate">${product.name || 'Producto'}</strong>
+            <small class="text-muted">${product.barcode || 'Sin código'} · ${product.category || 'Sin categoría'} · ${product.brand || 'Sin marca'}</small>
+          </span>
+          <span class="text-end">
+            <strong class="d-block">${formatMoney(product.price || 0)}</strong>
+            <small class="${stock <= 0 ? 'text-danger' : 'text-muted'}">Stock ${stock.toFixed(3).replace(/0+$/, '').replace(/\.$/, '')}</small>
+          </span>
+        </button>
+      `;
+    }).join('');
+    suggestionIndex = 0;
+    suggestionsEl.querySelectorAll('.pos-suggestion-item').forEach(button => {
+      button.addEventListener('click', () => {
+        const idx = Number(button.dataset.suggestionIndex || -1);
+        if (idx >= 0 && suggestions[idx]) {
+          addSuggestionProduct(suggestions[idx]);
+          posSearch.value = '';
+          filterPosProducts();
+          hideSearchPanel();
+        }
+      });
+    });
+  }
+
+  function renderHintPills(container, products) {
+    if (!container) return;
+    const rows = Array.isArray(products) ? products : [];
+    if (!rows.length) {
+      container.innerHTML = '<div class="small text-muted">Sin datos.</div>';
+      return;
+    }
+    const unique = [];
+    const seen = new Set();
+    rows.forEach((product) => {
+      const id = Number(product.id || 0);
+      if (!id || seen.has(id)) return;
+      seen.add(id);
+      unique.push(product);
+    });
+    container.innerHTML = `<div class="pos-hint-pills">${unique.slice(0, 8).map((product) => `<button type="button" class="pos-hint-pill" data-hint-product-id="${product.id}">${product.name}</button>`).join('')}</div>`;
+    container.querySelectorAll('[data-hint-product-id]').forEach(button => {
+      button.addEventListener('click', () => {
+        const id = Number(button.dataset.hintProductId || 0);
+        const product = unique.find(item => Number(item.id) === id);
+        if (!product) return;
+        addSuggestionProduct(product);
+      });
+    });
+  }
+
+  async function ensureHintsLoaded() {
+    if (hintsLoaded) return;
+    try {
+      const response = await fetch('/ventas/api/pos/hints', { headers: { 'Accept': 'application/json' } });
+      const data = await response.json();
+      renderHintPills(recentEl, data.recent || []);
+      renderHintPills(topEl, data.top || []);
+      hintsLoaded = true;
+    } catch (_) {
+      renderHintPills(recentEl, []);
+      renderHintPills(topEl, []);
+    }
+  }
+
+  async function fetchSuggestions(query) {
+    if (!query || query.length < 2) {
+      renderSuggestionRows([]);
+      return;
+    }
+    if (searchFetchController) {
+      searchFetchController.abort();
+    }
+    searchFetchController = new AbortController();
+    try {
+      const response = await fetch(`/ventas/api/pos/search?q=${encodeURIComponent(query)}&limit=10`, {
+        headers: { 'Accept': 'application/json' },
+        signal: searchFetchController.signal,
+      });
+      if (!response.ok) {
+        throw new Error('search_failed');
+      }
+      const data = await response.json();
+      renderSuggestionRows(data.products || []);
+    } catch (error) {
+      if (error.name !== 'AbortError') {
+        renderSuggestionRows([]);
+      }
+    }
+  }
+
+  function updateCategoryCounters(visibleCards) {
+    const cards = Array.isArray(visibleCards) ? visibleCards : [];
+    const allBadge = document.querySelector('[data-category-btn="all"] .badge');
+    if (allBadge) {
+      allBadge.textContent = String(cards.length);
+    }
+    const counts = new Map();
+    cards.forEach(card => {
+      const key = String(card.dataset.category || '').trim().toLowerCase();
+      counts.set(key, (counts.get(key) || 0) + 1);
+    });
+    document.querySelectorAll('[data-category-value]').forEach(button => {
+      const categoryKey = String(button.dataset.categoryValue || '').trim().toLowerCase();
+      const badge = button.querySelector('.badge');
+      if (!badge) return;
+      badge.textContent = String(counts.get(categoryKey) || 0);
+    });
+  }
+
+  function filterPosProducts() {
+    const q = (posSearch?.value || '').trim().toLowerCase();
+    const visible = [];
+    posCards.forEach(card => {
+      const isVisible = !q || card.dataset.search.includes(q);
+      card.classList.toggle('d-none', !isVisible);
+      if (isVisible) {
+        visible.push(card);
+      }
+    });
+    if (posFoundCount) {
+      posFoundCount.textContent = String(visible.length);
+    }
+    updateCategoryCounters(visible);
+    if (q) {
+      showSearchPanel();
+      fetchSuggestions(q);
+      ensureHintsLoaded();
+      return;
+    }
+    renderSuggestionRows([]);
   }
 
   window.handleAddToCartClick = handleAddToCartClick;
   window.toggleQuickMode = toggleQuickMode;
   window.toggleSalesFullscreen = toggleSalesFullscreen;
+  window.toggleScannerMode = toggleScannerMode;
 
   fastScannerInput?.addEventListener('keydown', function(event) {
     if (event.key !== 'Enter') return;
+    if (!scannerModeActive) return;
     event.preventDefault();
+    if (scannerStatusText) scannerStatusText.textContent = 'Escáner activo · procesando código';
     addScannedBarcodeToCart(this.value);
   });
 
+  fastScannerInput?.addEventListener('focus', function() {
+    if (scannerModeActive && scannerStatusText) {
+      scannerStatusText.textContent = 'Escáner activo · esperando código';
+    }
+  });
+
+  posSearch?.addEventListener('focus', function() {
+    showSearchPanel();
+    ensureHintsLoaded();
+    if ((this.value || '').trim().length >= 2) {
+      fetchSuggestions((this.value || '').trim());
+    }
+  });
+
+  posSearch?.addEventListener('blur', function() {
+    window.setTimeout(() => {
+      if (!searchPanelPinned) {
+        hideSearchPanel();
+      }
+    }, 120);
+  });
+
+  searchPanel?.addEventListener('mouseenter', () => {
+    searchPanelPinned = true;
+  });
+
+  searchPanel?.addEventListener('mouseleave', () => {
+    searchPanelPinned = false;
+  });
+
+  posSearch?.addEventListener('keydown', function(event) {
+    const hasSuggestions = suggestions.length > 0;
+    if (event.key === 'ArrowDown' && hasSuggestions) {
+      event.preventDefault();
+      setSuggestionActive(suggestionIndex + 1);
+      return;
+    }
+    if (event.key === 'ArrowUp' && hasSuggestions) {
+      event.preventDefault();
+      setSuggestionActive(suggestionIndex - 1);
+      return;
+    }
+    if (event.key === 'Enter' && hasSuggestions) {
+      event.preventDefault();
+      const product = suggestions[Math.max(0, suggestionIndex)];
+      if (product) {
+        addSuggestionProduct(product);
+        this.value = '';
+        filterPosProducts();
+        hideSearchPanel();
+      }
+      return;
+    }
+    if (event.key === 'Escape') {
+      hideSearchPanel();
+    }
+  });
+
+  posSearch?.addEventListener('input', filterPosProducts);
+
+  window.addEventListener('online', setOnlineBadge);
+  window.addEventListener('offline', setOnlineBadge);
+
+  window.addEventListener('pos:cart-updated', function(event) {
+    syncChargeButton(event?.detail?.total);
+  });
+
+  window.addEventListener('pos:product-added', function(event) {
+    const productId = Number(event?.detail?.productId || 0);
+    if (!productId) return;
+    const card = document.querySelector(`[data-product-card][data-product-id="${productId}"]`);
+    if (!card) return;
+    card.classList.add('pulse-added');
+    window.setTimeout(() => card.classList.remove('pulse-added'), 600);
+  });
+
+  document.addEventListener('keydown', function(event) {
+    if (event.key === 'F2') {
+      event.preventDefault();
+      posSearch?.focus();
+      return;
+    }
+    if (event.key === 'F3') {
+      event.preventDefault();
+      if (!scannerModeActive) setScannerState(true);
+      focusScannerInput();
+      return;
+    }
+    if (event.key === 'F4') {
+      event.preventDefault();
+      openCartModal();
+      return;
+    }
+    if (event.key === 'F5') {
+      event.preventDefault();
+      toggleQuickMode();
+      return;
+    }
+    if (event.key === 'F6') {
+      event.preventDefault();
+      toggleSalesFullscreen();
+      return;
+    }
+    if (event.key === 'F7') {
+      event.preventDefault();
+      if (posSearch) {
+        posSearch.value = '';
+        filterPosProducts();
+      }
+      return;
+    }
+    if (event.key === 'Escape') {
+      hideSearchPanel();
+    }
+  });
+
   window.addEventListener('load', function() {
+    setScannerState(scannerModeActive);
+    setOnlineBadge();
+    syncChargeButton(parseMoney(document.getElementById('pos-total')?.textContent));
+    ensureHintsLoaded();
     focusScannerInput();
+    filterPosProducts();
   });
 
   document.addEventListener('click', function(event) {
@@ -831,14 +1368,5 @@
       }
     }
   });
-
-  function filterPosProducts() {
-    const q = (posSearch?.value || '').trim().toLowerCase();
-    posCards.forEach(card => {
-      card.classList.toggle('d-none', q && !card.dataset.search.includes(q));
-    });
-  }
-  posSearch?.addEventListener('input', filterPosProducts);
-  filterPosProducts();
 </script>
 {% endblock %}

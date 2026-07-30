@@ -117,6 +117,7 @@ class SubscriptionService:
     STATE_SUSPENDED = "suspended"
     STATE_TRIAL = "trial"
     STATE_TRIAL_EXPIRED = "trial_expired"
+    OVERDUE_GRACE_DAYS = 5
 
     VALID_STATES = {
         STATE_DRAFT,
@@ -979,11 +980,25 @@ class SubscriptionService:
                     "next_billing_date": paid_limit,
                 }
             if paid_limit and current > paid_limit:
+                grace_limit = paid_limit + timedelta(days=SubscriptionService.OVERDUE_GRACE_DAYS)
+                if current < grace_limit:
+                    return {
+                        "status": SubscriptionService.STATE_PENDING_PAYMENT,
+                        "subscription_status": raw_status,
+                        "can_access": True,
+                        "reason": (
+                            "La suscripción está vencida y en período de gracia "
+                            f"({SubscriptionService.OVERDUE_GRACE_DAYS} días). Registrá el pago para evitar bloqueo."
+                        ),
+                        "trial_ends_at": trial_end,
+                        "reference_date": grace_limit,
+                        "next_billing_date": paid_limit,
+                    }
                 return {
                     "status": SubscriptionService.STATE_EXPIRED,
                     "subscription_status": raw_status,
                     "can_access": False,
-                    "reason": "La suscripción está vencida.",
+                    "reason": "La suscripción está vencida y superó el período de gracia.",
                     "trial_ends_at": trial_end,
                     "reference_date": paid_limit,
                     "next_billing_date": paid_limit,

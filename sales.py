@@ -416,9 +416,20 @@ def index():
         )
     mp_connection_summary = MercadoPagoOAuthService().summarize_connection(getattr(company, "mercadopago_connection", None)) if company else MercadoPagoOAuthService().summarize_connection(None)
     cash_session_open = _current_open_cash_session() is not None
+    current_cash_session = _current_open_cash_session()
     quote_cart_prefill = _pop_quote_cart_prefill()
     total_sales_amount = _sale_accessible_query(db.session.query(db.func.coalesce(db.func.sum(Sale.total_amount), 0)), Sale).scalar() or 0
     sales = _sale_accessible_query(Sale.query.options(selectinload(Sale.client)), Sale).order_by(Sale.date.desc()).limit(20).all()
+    company_preferences = {}
+    try:
+        company_preferences = json.loads(getattr(company, "preferences_json", None) or "{}") if company else {}
+    except Exception:
+        company_preferences = {}
+    active_branch = (
+        (company_preferences.get("billing_business", {}).get("fiscal", {}) or {}).get("branch_name")
+        or getattr(company, "city", None)
+        or "Casa central"
+    )
     return render_template(
         "ventas/index.html",
         products=products,
@@ -431,8 +442,125 @@ def index():
         has_qr_payment_data=has_qr_data,
         mp_connection_summary=mp_connection_summary,
         cash_session_open=cash_session_open,
+        current_cash_session=current_cash_session,
+        active_branch=active_branch,
+        pos_user_name=getattr(current_user, "username", ""),
         quote_cart_prefill=quote_cart_prefill,
     )
+
+
+@bp.route("/api/pos/search")
+@tenant_required
+def api_pos_search_products():
+    from app import Product, scope_query_to_company
+
+    term = (request.args.get("q") or "").strip()
+    limit = min(max(int(request.args.get("limit", 12) or 12), 1), 30)
+    query = scope_query_to_company(Product.query.filter(Product.active.is_(True)), Product)
+
+    if term:
+        like = f"%{term}%"
+        query = query.filter(
+            (Product.name.ilike(like))
+            | (Product.barcode.ilike(like))
+            | (Product.brand.ilike(like))
+            | (Product.category.ilike(like))
+            | (Product.description.ilike(like))
+        )
+
+    products = query.order_by(Product.favorite.desc(), Product.name.asc()).limit(limit).all()
+    rows = [
+        {
+            "id": product.id,
+            "name": product.name,
+            "barcode": product.barcode,
+            "brand": product.brand or "",
+            "category": product.category or "",
+            "description": product.description or "",
+            "price": float(product.price or 0),
+            "stock": float(product.stock or 0),
+            "min_stock": float(product.min_stock or 0),
+            "favorite": bool(product.favorite),
+            "discount": float(product.discount or 0),
+            "unit_measure": product.unit_measure or "u",
+            "photo": product.photo or "",
+        }
+        for product in products
+    ]
+    return jsonify({"query": term, "count": len(rows), "products": rows})
+
+
+@bp.route("/api/pos/hints")
+@tenant_required
+def api_pos_hints():
+    from app import Product, Sale, SaleItem, db, scope_query_to_company
+
+    company_id = getattr(current_user, "company_id", None)
+    if company_id is None:
+        return jsonify({"recent": [], "top": []})
+
+    recent_rows = (
+        scope_query_to_company(
+            db.session.query(SaleItem.product_id, Sale.date)
+            .join(Sale, SaleItem.sale_id == Sale.id)
+            .filter(SaleItem.product_id.isnot(None)),
+            Sale,
+        )
+        .order_by(Sale.date.desc(), Sale.id.desc())
+        .limit(120)
+        .all()
+    )
+    recent_ids = []
+    seen_recent = set()
+    for row in recent_rows:
+        product_id = int(getattr(row, "product_id", 0) or 0)
+        if product_id <= 0 or product_id in seen_recent:
+            continue
+        seen_recent.add(product_id)
+        recent_ids.append(product_id)
+        if len(recent_ids) >= 10:
+            break
+
+    top_rows = (
+        db.session.query(SaleItem.product_id, db.func.coalesce(db.func.sum(SaleItem.quantity), 0).label("qty"))
+        .join(Sale, SaleItem.sale_id == Sale.id)
+        .filter(Sale.company_id == company_id, SaleItem.product_id.isnot(None))
+        .group_by(SaleItem.product_id)
+        .order_by(db.func.coalesce(db.func.sum(SaleItem.quantity), 0).desc())
+        .limit(12)
+        .all()
+    )
+    top_ids = [int(getattr(row, "product_id", 0) or 0) for row in top_rows if int(getattr(row, "product_id", 0) or 0) > 0]
+
+    product_ids = list(dict.fromkeys(recent_ids + top_ids))
+    products = []
+    if product_ids:
+        products = (
+            scope_query_to_company(Product.query.filter(Product.id.in_(product_ids), Product.active.is_(True)), Product)
+            .order_by(Product.name.asc())
+            .all()
+        )
+    by_id = {product.id: product for product in products}
+
+    def _serialize(product):
+        return {
+            "id": product.id,
+            "name": product.name,
+            "barcode": product.barcode,
+            "brand": product.brand or "",
+            "category": product.category or "",
+            "price": float(product.price or 0),
+            "stock": float(product.stock or 0),
+            "min_stock": float(product.min_stock or 0),
+            "favorite": bool(product.favorite),
+            "discount": float(product.discount or 0),
+            "unit_measure": product.unit_measure or "u",
+            "photo": product.photo or "",
+        }
+
+    recent = [_serialize(by_id[pid]) for pid in recent_ids if pid in by_id]
+    top = [_serialize(by_id[pid]) for pid in top_ids if pid in by_id]
+    return jsonify({"recent": recent, "top": top})
 
 
 @bp.route("/nueva-venta")

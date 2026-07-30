@@ -81,6 +81,14 @@ function updateSelectedPosBadge() {
 let checkoutInFlight = false;
 let checkoutToken = null;
 
+function emitPosUiEvent(name, detail = {}) {
+  try {
+    window.dispatchEvent(new CustomEvent(name, { detail }));
+  } catch (_) {
+    // No-op when CustomEvent is unavailable.
+  }
+}
+
 function generateCheckoutToken() {
   if (window.crypto && typeof window.crypto.randomUUID === 'function') {
     return window.crypto.randomUUID();
@@ -319,6 +327,7 @@ function addToCart(productId, name, price, stock, barcode = '', quantity = 1, un
     }
 
     saveCart();
+    emitPosUiEvent('pos:product-added', { productId });
 
     showNotification(name + ' agregado al carrito', 'success');
   } catch (error) {
@@ -385,6 +394,14 @@ function updateCartUI() {
         cartBtn.classList.add('d-none');
       }
     }
+    const totals = getCheckoutTotals();
+    emitPosUiEvent('pos:cart-updated', {
+      count: getCartItemCount(),
+      total: totals.total,
+      subtotal: totals.subtotal,
+      discount: totals.discount,
+      surcharge: totals.surcharge,
+    });
   } catch (error) {
     console.error('Excepcion en updateCartUI():', error);
     throw error;
@@ -610,6 +627,10 @@ function updateCheckoutTotals() {
     const el = document.getElementById(id);
     if (el) el.textContent = formatPrice(value);
   });
+  const chargeButton = document.getElementById('pos-charge-button');
+  if (chargeButton) {
+    chargeButton.innerHTML = `<i class="bi bi-credit-card me-1"></i>Cobrar (${formatPrice(totals.total)})`;
+  }
   const paidInput = document.getElementById('checkout-paid-amount');
   if (paidInput && !paidInput.value && totals.total > 0) {
     paidInput.placeholder = totals.total.toFixed(2);

@@ -743,6 +743,56 @@ class QuoteItem(db.Model):
         return self.subtotal or Decimal("0.00")
 
 
+class BusinessDocumentSequence(db.Model):
+    __tablename__ = "business_document_sequences"
+    __table_args__ = (
+        Index("ix_bd_sequences_company_doctype_pos", "company_id", "doc_type", "pos_number", unique=True),
+    )
+
+    id = db.Column(db.Integer, primary_key=True)
+    company_id = db.Column(db.Integer, db.ForeignKey("companies.id"), nullable=False, index=True)
+    doc_type = db.Column(db.String(40), nullable=False, index=True)
+    pos_number = db.Column(db.String(5), nullable=False, index=True)
+    current_number = db.Column(db.Integer, nullable=False, default=0)
+    updated_at = db.Column(db.DateTime, default=utcnow, onupdate=utcnow)
+    created_at = db.Column(db.DateTime, default=utcnow)
+
+
+class BusinessDocument(db.Model):
+    __tablename__ = "business_documents"
+    __table_args__ = (
+        Index("ix_bd_company_date", "company_id", "issued_at"),
+        Index("ix_bd_company_status", "company_id", "status"),
+        Index("ix_bd_company_source", "company_id", "source_type", "source_id"),
+        Index("ix_bd_company_number", "company_id", "document_number", unique=True),
+        Index("ix_bd_company_doctype_pos_seq", "company_id", "doc_type", "pos_number", "seq_number", unique=True),
+    )
+
+    id = db.Column(db.Integer, primary_key=True)
+    company_id = db.Column(db.Integer, db.ForeignKey("companies.id"), nullable=False, index=True)
+    source_type = db.Column(db.String(20), nullable=False, default="sale")
+    source_id = db.Column(db.Integer, nullable=False, index=True)
+    doc_type = db.Column(db.String(40), nullable=False, index=True)
+    pos_number = db.Column(db.String(5), nullable=False)
+    seq_number = db.Column(db.Integer, nullable=False)
+    document_number = db.Column(db.String(20), nullable=False)
+    status = db.Column(db.String(20), nullable=False, default="emitido", index=True)
+    client_name = db.Column(db.String(200))
+    client_tax_id = db.Column(db.String(50))
+    total_amount = db.Column(MONEY, default=Decimal("0.00"))
+    currency = db.Column(db.String(10), default="ARS")
+    branch_label = db.Column(db.String(120))
+    emitted_by_user_id = db.Column(db.Integer, db.ForeignKey("users.id"), index=True)
+    metadata_json = db.Column(db.Text)
+    issued_at = db.Column(db.DateTime, default=utcnow, index=True)
+    annulled_at = db.Column(db.DateTime)
+    created_at = db.Column(db.DateTime, default=utcnow)
+    updated_at = db.Column(db.DateTime, default=utcnow, onupdate=utcnow)
+
+    company = db.relationship("Company", backref="business_documents")
+    emitted_by_user = db.relationship("User")
+
+
 class Company(db.Model):
     __tablename__ = "companies"
 

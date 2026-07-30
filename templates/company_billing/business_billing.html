@@ -1,0 +1,398 @@
+{% extends "base_master.html" %}
+
+{% block title %}Facturación - StockArmobile{% endblock %}
+
+{% block content %}
+<div class="app-shell">
+  <div class="d-flex flex-wrap justify-content-between align-items-center gap-3 mb-4">
+    <div>
+      <span class="page-kicker"><i class="bi bi-receipt-cutoff"></i> Facturación del negocio</span>
+      <h1 class="h3 fw-bold mb-0">Administración profesional de comprobantes</h1>
+      <p class="text-muted mb-0">Módulo exclusivo del negocio para administración de comprobantes y configuración fiscal.</p>
+    </div>
+    <div class="d-flex gap-2 flex-wrap">
+      <a class="btn btn-outline-secondary" href="{{ url_for('company_billing.company_settings') }}"><i class="bi bi-arrow-left me-1"></i>Mi Empresa</a>
+    </div>
+  </div>
+
+  <ul class="nav nav-pills flex-wrap gap-2 mb-4">
+    {% set tabs = [
+      ('dashboard', 'Dashboard'),
+      ('fiscal', 'Configuración fiscal'),
+      ('comprobantes', 'Tipos de comprobantes'),
+      ('numeracion', 'Numeración'),
+      ('puntos-venta', 'Puntos de venta'),
+      ('plantillas', 'Plantillas'),
+      ('emision', 'Configuración de emisión'),
+      ('electronica', 'Facturación electrónica'),
+      ('reportes', 'Reportes')
+    ] %}
+    {% for tab_key, tab_label in tabs %}
+    <li class="nav-item">
+      <a class="nav-link {{ 'active' if selected_tab == tab_key else '' }}" href="{{ url_for('company_billing.business_billing_hub', tab=tab_key) }}">{{ tab_label }}</a>
+    </li>
+    {% endfor %}
+  </ul>
+
+  {% if selected_tab == 'dashboard' %}
+  <div class="row g-3 mb-4">
+    <div class="col-sm-6 col-xl-3"><div class="card app-card h-100"><div class="card-body"><div class="small text-muted">Total facturado del mes</div><div class="h4 mb-0">${{ '%.2f'|format(dashboard.total_billed_month or 0) }}</div></div></div></div>
+    <div class="col-sm-6 col-xl-3"><div class="card app-card h-100"><div class="card-body"><div class="small text-muted">Comprobantes emitidos</div><div class="h4 mb-0">{{ dashboard.issued_count or 0 }}</div></div></div></div>
+    <div class="col-sm-6 col-xl-3"><div class="card app-card h-100"><div class="card-body"><div class="small text-muted">Último comprobante</div><div class="fw-semibold">{{ dashboard.last_document or 'Aún no hay comprobantes emitidos' }}</div></div></div></div>
+    <div class="col-sm-6 col-xl-3"><div class="card app-card h-100"><div class="card-body"><div class="small text-muted">Facturación electrónica</div><div class="fw-semibold">{{ dashboard.electronic_status }}</div></div></div></div>
+    <div class="col-sm-6 col-xl-3"><div class="card app-card h-100"><div class="card-body"><div class="small text-muted">Punto de venta activo</div><div class="h5 mb-0">{{ dashboard.active_pos or '00001' }}</div></div></div></div>
+    <div class="col-sm-6 col-xl-3"><div class="card app-card h-100"><div class="card-body"><div class="small text-muted">Numeración actual</div><div class="h5 mb-0">{{ dashboard.current_number or '-' }}</div></div></div></div>
+    <div class="col-sm-6 col-xl-3"><div class="card app-card h-100"><div class="card-body"><div class="small text-muted">Comprobantes pendientes</div><div class="h4 mb-0">{{ dashboard.pending_documents or 0 }}</div></div></div></div>
+    <div class="col-sm-6 col-xl-3"><div class="card app-card h-100"><div class="card-body"><div class="small text-muted">Presupuestos por convertir</div><div class="h4 mb-0">{{ dashboard.pending_quotes or 0 }}</div></div></div></div>
+  </div>
+
+  <div class="card app-card">
+    <div class="card-header bg-white fw-bold">Centro de comprobantes</div>
+    <div class="card-body">
+      <form method="get" class="row g-2 mb-3">
+        <input type="hidden" name="tab" value="dashboard">
+        <div class="col-md-2"><input class="form-control" name="number" value="{{ request.args.get('number', '') }}" placeholder="Número"></div>
+        <div class="col-md-2"><input class="form-control" name="client" value="{{ request.args.get('client', '') }}" placeholder="Cliente"></div>
+        <div class="col-md-2"><input class="form-control" name="cuit" value="{{ request.args.get('cuit', '') }}" placeholder="CUIT"></div>
+        <div class="col-md-2"><input class="form-control" type="date" name="date_from" value="{{ request.args.get('date_from', '') }}"></div>
+        <div class="col-md-2"><input class="form-control" type="date" name="date_to" value="{{ request.args.get('date_to', '') }}"></div>
+        <div class="col-md-2 d-grid"><button class="btn btn-outline-primary" type="submit"><i class="bi bi-search me-1"></i>Buscar</button></div>
+        <div class="col-md-2"><select class="form-select" name="doc_type"><option value="">Tipo</option>{% for key, label in document_types %}<option value="{{ key }}" {% if request.args.get('doc_type') == key %}selected{% endif %}>{{ label }}</option>{% endfor %}</select></div>
+        <div class="col-md-2"><select class="form-select" name="status"><option value="">Estado</option><option value="emitido" {% if request.args.get('status') == 'emitido' %}selected{% endif %}>Emitido</option><option value="pendiente" {% if request.args.get('status') == 'pendiente' %}selected{% endif %}>Pendiente</option><option value="pagado" {% if request.args.get('status') == 'pagado' %}selected{% endif %}>Pagado</option><option value="anulado" {% if request.args.get('status') == 'anulado' %}selected{% endif %}>Anulado</option><option value="borrador" {% if request.args.get('status') == 'borrador' %}selected{% endif %}>Borrador</option><option value="enviado" {% if request.args.get('status') == 'enviado' %}selected{% endif %}>Enviado</option><option value="vencido" {% if request.args.get('status') == 'vencido' %}selected{% endif %}>Vencido</option></select></div>
+        <div class="col-md-2"><input class="form-control" name="branch" value="{{ request.args.get('branch', '') }}" placeholder="Sucursal"></div>
+        <div class="col-md-2"><select class="form-select" name="user_id"><option value="">Usuario</option>{% for user in users %}<option value="{{ user.id }}" {% if request.args.get('user_id') == (user.id|string) %}selected{% endif %}>{{ user.username }}</option>{% endfor %}</select></div>
+        <div class="col-md-2"><input class="form-control" name="payment_method" value="{{ request.args.get('payment_method', '') }}" placeholder="Método pago"></div>
+        <div class="col-md-1"><input class="form-control" name="amount_min" value="{{ request.args.get('amount_min', '') }}" placeholder="Min"></div>
+        <div class="col-md-1"><input class="form-control" name="amount_max" value="{{ request.args.get('amount_max', '') }}" placeholder="Max"></div>
+      </form>
+
+      <div class="d-flex justify-content-end gap-2 mb-3">
+        <a class="btn btn-sm btn-outline-secondary" href="{{ url_for('company_billing.business_billing_export_reports', format='csv', **request.args) }}">CSV</a>
+        <a class="btn btn-sm btn-outline-secondary" href="{{ url_for('company_billing.business_billing_export_reports', format='excel', **request.args) }}">Excel</a>
+        <a class="btn btn-sm btn-outline-secondary" href="{{ url_for('company_billing.business_billing_export_reports', format='pdf', **request.args) }}">PDF</a>
+      </div>
+
+      <div class="table-responsive">
+        <table class="table table-hover align-middle mb-0">
+          <thead>
+            <tr>
+              <th>Fecha</th>
+              <th>Número</th>
+              <th>Cliente</th>
+              <th>Tipo</th>
+              <th>Importe</th>
+              <th>Estado</th>
+              <th>Sucursal</th>
+              <th>Usuario</th>
+              <th>Acciones</th>
+            </tr>
+          </thead>
+          <tbody>
+            {% for row in rows %}
+            <tr>
+              <td>{{ row.date.strftime('%Y-%m-%d %H:%M') if row.date else '-' }}</td>
+              <td>{{ row.number }}</td>
+              <td>{{ row.client }}</td>
+              <td>{{ row.doc_type }}</td>
+              <td>${{ '%.2f'|format(row.amount or 0) }}</td>
+              <td><span class="badge {{ row.status_badge.css_class }}">{{ row.status_badge.label }}</span></td>
+              <td>{{ row.branch }}</td>
+              <td>{{ row.user_name }}</td>
+              <td class="text-nowrap">
+                {% if row.source == 'sale' %}
+                <a class="btn btn-sm btn-outline-primary" href="{{ url_for('sales.view_sale', sale_id=row.id) }}">Ver</a>
+                <a class="btn btn-sm btn-outline-secondary" href="{{ url_for('sales.thermal_ticket', sale_id=row.id) }}">Reimprimir</a>
+                {% if row.can_emit and is_admin %}
+                <form method="post" action="{{ url_for('company_billing.business_billing_issue_sale_document', sale_id=row.id) }}" class="d-inline">
+                  <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                  <button class="btn btn-sm btn-outline-success" type="submit">Emitir</button>
+                </form>
+                {% endif %}
+                {% if row.can_email %}
+                <form method="post" action="{{ url_for('company_billing.business_billing_sale_email_ready', sale_id=row.id) }}" class="d-inline">
+                  <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                  <button class="btn btn-sm btn-outline-secondary" type="submit">Email</button>
+                </form>
+                {% endif %}
+                {% if row.can_whatsapp %}
+                <form method="post" action="{{ url_for('company_billing.business_billing_sale_whatsapp', sale_id=row.id) }}" class="d-inline">
+                  <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                  <button class="btn btn-sm btn-outline-secondary" type="submit">WhatsApp</button>
+                </form>
+                {% endif %}
+                {% if is_admin and row.can_annul %}
+                <form method="post" action="{{ url_for('company_billing.business_billing_annul_sale', sale_id=row.id) }}" class="d-inline" onsubmit="return confirm('¿Anular este comprobante?');">
+                  <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                  <button class="btn btn-sm btn-outline-danger" type="submit">Anular</button>
+                </form>
+                {% endif %}
+                {% else %}
+                <a class="btn btn-sm btn-outline-primary" href="{{ url_for('quotes.view_quote', quote_id=row.id) }}">Ver</a>
+                <a class="btn btn-sm btn-outline-secondary" href="{{ url_for('quotes.quote_pdf', quote_id=row.id) }}">PDF</a>
+                <a class="btn btn-sm btn-outline-secondary" href="{{ url_for('quotes.quote_print', quote_id=row.id) }}" target="_blank" rel="noopener">Reimprimir</a>
+                {% if row.can_email %}
+                <form method="post" action="{{ url_for('company_billing.business_billing_quote_email', quote_id=row.id) }}" class="d-inline">
+                  <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                  <button class="btn btn-sm btn-outline-secondary" type="submit">Email</button>
+                </form>
+                {% endif %}
+                {% if row.can_whatsapp %}
+                <form method="post" action="{{ url_for('company_billing.business_billing_quote_whatsapp', quote_id=row.id) }}" class="d-inline">
+                  <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                  <button class="btn btn-sm btn-outline-secondary" type="submit">WhatsApp</button>
+                </form>
+                {% endif %}
+                {% if row.can_duplicate %}
+                <form method="post" action="{{ url_for('quotes.duplicate_quote', quote_id=row.id) }}" class="d-inline">
+                  <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                  <button class="btn btn-sm btn-outline-secondary" type="submit">Duplicar</button>
+                </form>
+                {% endif %}
+                {% if current_user_has_permission('quotes_anulate') and row.can_annul %}
+                <form method="post" action="{{ url_for('quotes.annul_quote', quote_id=row.id) }}" class="d-inline" onsubmit="return confirm('¿Anular este presupuesto?');">
+                  <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                  <button class="btn btn-sm btn-outline-danger" type="submit">Anular</button>
+                </form>
+                {% endif %}
+                {% if current_user_has_permission('quotes_convert') and row.can_convert %}
+                <form method="post" action="{{ url_for('quotes.convert_to_sale', quote_id=row.id) }}" class="d-inline">
+                  <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                  <button class="btn btn-sm btn-outline-success" type="submit">Convertir</button>
+                </form>
+                {% endif %}
+                {% endif %}
+              </td>
+            </tr>
+            {% else %}
+            <tr><td colspan="9" class="text-center text-muted py-4">No hay comprobantes para los filtros seleccionados.</td></tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      </div>
+    </div>
+  </div>
+  {% endif %}
+
+  {% if selected_tab == 'fiscal' %}
+  <div class="card app-card">
+    <div class="card-header bg-white fw-bold">Configuración fiscal</div>
+    <div class="card-body">
+      {% if not is_admin %}<div class="alert alert-warning">Solo administradores pueden modificar esta sección.</div>{% endif %}
+      <form method="post" action="{{ url_for('company_billing.business_billing_save_fiscal') }}" class="row g-3">
+        <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+        <fieldset {% if not is_admin %}disabled{% endif %}>
+          <div class="row g-3">
+            <div class="col-md-3"><label class="form-label">CUIT</label><input class="form-control" name="tax_id" value="{{ config.fiscal.tax_id or '' }}"></div>
+            <div class="col-md-3"><label class="form-label">Razón Social</label><input class="form-control" name="legal_name" value="{{ config.fiscal.legal_name or '' }}"></div>
+            <div class="col-md-3"><label class="form-label">Condición IVA</label><input class="form-control" name="iva_condition" value="{{ config.fiscal.iva_condition or '' }}"></div>
+            <div class="col-md-3"><label class="form-label">Ingresos Brutos</label><input class="form-control" name="gross_income" value="{{ config.fiscal.gross_income or '' }}"></div>
+            <div class="col-md-3"><label class="form-label">Jurisdicción</label><input class="form-control" name="jurisdiction" value="{{ config.fiscal.jurisdiction or '' }}"></div>
+            <div class="col-md-3"><label class="form-label">Inicio actividades</label><input class="form-control" type="date" name="activity_start" value="{{ config.fiscal.activity_start or '' }}"></div>
+            <div class="col-md-3"><label class="form-label">Domicilio fiscal</label><input class="form-control" name="fiscal_address" value="{{ config.fiscal.fiscal_address or '' }}"></div>
+            <div class="col-md-3"><label class="form-label">Sucursal</label><input class="form-control" name="branch_name" value="{{ config.fiscal.branch_name or '' }}"></div>
+            <div class="col-12 d-flex justify-content-end"><button class="btn btn-primary" type="submit">Editar configuración fiscal</button></div>
+          </div>
+        </fieldset>
+      </form>
+    </div>
+  </div>
+  {% endif %}
+
+  {% if selected_tab == 'comprobantes' %}
+  <div class="card app-card">
+    <div class="card-header bg-white fw-bold">Tipos de comprobantes habilitados</div>
+    <div class="card-body">
+      {% if not is_admin %}<div class="alert alert-warning">Solo administradores pueden modificar esta sección.</div>{% endif %}
+      <form method="post" action="{{ url_for('company_billing.business_billing_save_documents') }}">
+        <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+        <fieldset {% if not is_admin %}disabled{% endif %}>
+          <div class="row g-2">
+            {% for key, label in document_types %}
+            <div class="col-md-3 col-sm-6">
+              <label class="border rounded-3 p-2 w-100 d-flex align-items-center gap-2">
+                <input class="form-check-input" type="checkbox" name="doc_{{ key }}" {% if config.documents_enabled.get(key) %}checked{% endif %}>
+                <span>{{ label }}</span>
+              </label>
+            </div>
+            {% endfor %}
+          </div>
+          <div class="d-flex justify-content-end mt-3"><button class="btn btn-primary" type="submit">Guardar tipos habilitados</button></div>
+        </fieldset>
+      </form>
+    </div>
+  </div>
+  {% endif %}
+
+  {% if selected_tab == 'numeracion' %}
+  <div class="card app-card">
+    <div class="card-header bg-white fw-bold">Numeración independiente por comprobante</div>
+    <div class="card-body">
+      {% if not is_admin %}<div class="alert alert-warning">Solo administradores pueden modificar esta sección.</div>{% endif %}
+      <form method="post" action="{{ url_for('company_billing.business_billing_save_numbering') }}" class="row g-3">
+        <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+        <fieldset {% if not is_admin %}disabled{% endif %}>
+          <div class="col-md-4">
+            <label class="form-label">Punto de venta activo</label>
+            <select class="form-select" name="active_pos">
+              {% for point in config.points_of_sale %}
+              <option value="{{ point.number }}" {% if point.number == config.active_pos %}selected{% endif %}>{{ point.number }} · {{ point.description }}</option>
+              {% endfor %}
+            </select>
+          </div>
+          <div class="col-md-8 d-flex align-items-end justify-content-end gap-2">
+            <button class="btn btn-outline-danger" type="submit" formaction="{{ url_for('company_billing.business_billing_reset_numbering') }}" formmethod="post" onclick="return confirm('¿Reiniciar TODA la numeración?');">Reiniciar toda la numeración</button>
+          </div>
+          {% for key, label in document_types %}
+          <div class="col-md-4">
+            <label class="form-label">{{ label }}</label>
+            <input class="form-control" name="numbering_{{ key }}" value="{{ config.numbering.get(key, '') }}">
+            <div class="form-text">Próximo: {{ next_number_preview(config.numbering.get(key, '')) }}</div>
+          </div>
+          {% endfor %}
+          <div class="col-12 d-flex justify-content-end"><button class="btn btn-primary" type="submit">Guardar numeración</button></div>
+        </fieldset>
+      </form>
+    </div>
+  </div>
+  {% endif %}
+
+  {% if selected_tab == 'puntos-venta' %}
+  <div class="card app-card mb-3">
+    <div class="card-header bg-white fw-bold">Puntos de venta</div>
+    <div class="card-body">
+      <div class="table-responsive mb-3">
+        <table class="table table-hover align-middle mb-0">
+          <thead><tr><th>Número</th><th>Descripción</th><th>Sucursal</th><th>Estado</th><th>Acciones</th></tr></thead>
+          <tbody>
+            {% for point in config.points_of_sale %}
+            <tr>
+              <td>{{ point.number }}</td>
+              <td>{{ point.description }}</td>
+              <td>{{ point.branch }}</td>
+              <td><span class="badge {{ 'text-bg-success' if point.active else 'text-bg-secondary' }}">{{ 'Activo' if point.active else 'Inactivo' }}</span></td>
+              <td>
+                {% if is_admin %}
+                <form method="post" action="{{ url_for('company_billing.business_billing_pos_toggle') }}" class="d-inline">
+                  <input type="hidden" name="csrf_token" value="{{ csrf_token() }}"><input type="hidden" name="number" value="{{ point.number }}">
+                  <button class="btn btn-sm btn-outline-secondary" type="submit">{{ 'Desactivar' if point.active else 'Activar' }}</button>
+                </form>
+                {% endif %}
+              </td>
+            </tr>
+            {% else %}
+            <tr><td colspan="5" class="text-center text-muted py-4">No hay puntos de venta configurados.</td></tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      </div>
+      {% if is_admin %}
+      <form method="post" action="{{ url_for('company_billing.business_billing_pos_add') }}" class="row g-2">
+        <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+        <div class="col-md-2"><input class="form-control" name="number" placeholder="00002" required></div>
+        <div class="col-md-5"><input class="form-control" name="description" placeholder="Descripción" required></div>
+        <div class="col-md-3"><input class="form-control" name="branch" placeholder="Sucursal" required></div>
+        <div class="col-md-2 d-grid"><button class="btn btn-primary" type="submit">Agregar</button></div>
+      </form>
+      {% endif %}
+    </div>
+  </div>
+  {% endif %}
+
+  {% if selected_tab == 'plantillas' %}
+  <div class="card app-card">
+    <div class="card-header bg-white fw-bold">Plantillas de comprobante</div>
+    <div class="card-body">
+      {% if not is_admin %}<div class="alert alert-warning">Solo administradores pueden modificar esta sección.</div>{% endif %}
+      <form method="post" action="{{ url_for('company_billing.business_billing_save_templates') }}" class="row g-3">
+        <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+        <fieldset {% if not is_admin %}disabled{% endif %}>
+          <div class="col-md-6"><label class="form-label">Logo</label><input class="form-control" name="logo" value="{{ config.template.logo or '' }}"></div>
+          <div class="col-md-6"><label class="form-label">Pie de página</label><input class="form-control" name="footer" value="{{ config.template.footer or '' }}"></div>
+          <div class="col-md-6"><label class="form-label">Condiciones comerciales</label><textarea class="form-control" rows="3" name="commercial_terms">{{ config.template.commercial_terms or '' }}</textarea></div>
+          <div class="col-md-6"><label class="form-label">Observaciones</label><textarea class="form-control" rows="3" name="observations">{{ config.template.observations or '' }}</textarea></div>
+          <div class="col-12 d-flex flex-wrap gap-3">
+            <label class="form-check"><input class="form-check-input" type="checkbox" name="show_qr" {% if config.template.show_qr %}checked{% endif %}><span class="form-check-label ms-1">QR</span></label>
+            <label class="form-check"><input class="form-check-input" type="checkbox" name="show_barcode" {% if config.template.show_barcode %}checked{% endif %}><span class="form-check-label ms-1">Código de barras</span></label>
+            <label class="form-check"><input class="form-check-input" type="checkbox" name="format_a4" {% if config.template.format_a4 %}checked{% endif %}><span class="form-check-label ms-1">A4</span></label>
+            <label class="form-check"><input class="form-check-input" type="checkbox" name="format_ticket_58" {% if config.template.format_ticket_58 %}checked{% endif %}><span class="form-check-label ms-1">Ticket 58mm</span></label>
+            <label class="form-check"><input class="form-check-input" type="checkbox" name="format_ticket_80" {% if config.template.format_ticket_80 %}checked{% endif %}><span class="form-check-label ms-1">Ticket 80mm</span></label>
+          </div>
+          <div class="col-12 d-flex justify-content-end"><button class="btn btn-primary" type="submit">Guardar plantilla</button></div>
+        </fieldset>
+      </form>
+    </div>
+  </div>
+  {% endif %}
+
+  {% if selected_tab == 'emision' %}
+  <div class="card app-card">
+    <div class="card-header bg-white fw-bold">Configuración de emisión</div>
+    <div class="card-body">
+      {% if not is_admin %}<div class="alert alert-warning">Solo administradores pueden modificar esta sección.</div>{% endif %}
+      <form method="post" action="{{ url_for('company_billing.business_billing_save_emission') }}" class="row g-3">
+        <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+        <fieldset {% if not is_admin %}disabled{% endif %}>
+          <div class="col-12 d-flex flex-wrap gap-3">
+            <label class="form-check"><input class="form-check-input" type="checkbox" name="auto_numbering" {% if config.emission.auto_numbering %}checked{% endif %}><span class="form-check-label ms-1">Numeración automática</span></label>
+            <label class="form-check"><input class="form-check-input" type="checkbox" name="auto_print" {% if config.emission.auto_print %}checked{% endif %}><span class="form-check-label ms-1">Impresión automática</span></label>
+            <label class="form-check"><input class="form-check-input" type="checkbox" name="send_pdf_email" {% if config.emission.send_pdf_email %}checked{% endif %}><span class="form-check-label ms-1">Enviar PDF por email</span></label>
+            <label class="form-check"><input class="form-check-input" type="checkbox" name="send_whatsapp_prepared" {% if config.emission.send_whatsapp_prepared %}checked{% endif %}><span class="form-check-label ms-1">Enviar por WhatsApp (preparado)</span></label>
+          </div>
+          <div class="col-md-2"><label class="form-label">Copias</label><input class="form-control" type="number" min="1" max="10" name="copies" value="{{ config.emission.copies or 1 }}"></div>
+          <div class="col-md-2"><label class="form-label">Moneda</label><input class="form-control" name="currency" value="{{ config.emission.currency or 'ARS' }}"></div>
+          <div class="col-md-2"><label class="form-label">Decimales</label><input class="form-control" type="number" min="0" max="4" name="decimals" value="{{ config.emission.decimals or 2 }}"></div>
+          <div class="col-md-3"><label class="form-label">Formato predeterminado</label><select class="form-select" name="default_format"><option value="a4" {% if config.emission.default_format == 'a4' %}selected{% endif %}>A4</option><option value="ticket58" {% if config.emission.default_format == 'ticket58' %}selected{% endif %}>Ticket 58mm</option><option value="ticket80" {% if config.emission.default_format == 'ticket80' %}selected{% endif %}>Ticket 80mm</option></select></div>
+          <div class="col-md-3"><label class="form-label">Plantilla predeterminada</label><input class="form-control" name="default_template" value="{{ config.emission.default_template or 'estandar' }}"></div>
+          <div class="col-12 d-flex justify-content-end"><button class="btn btn-primary" type="submit">Guardar configuración de emisión</button></div>
+        </fieldset>
+      </form>
+    </div>
+  </div>
+  {% endif %}
+
+  {% if selected_tab == 'electronica' %}
+  <div class="card app-card">
+    <div class="card-header bg-white fw-bold">Facturación electrónica (ARCA)</div>
+    <div class="card-body">
+      <div class="alert alert-info mb-3">Próximamente disponible. Esta arquitectura ya está preparada para integrar CAE/CAEA, homologación y producción sin rediseño.</div>
+      {% if not is_admin %}<div class="alert alert-warning">Solo administradores pueden modificar esta sección.</div>{% endif %}
+      <form method="post" action="{{ url_for('company_billing.business_billing_save_electronic') }}" class="row g-3">
+        <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+        <fieldset {% if not is_admin %}disabled{% endif %}>
+          <div class="col-md-3"><label class="form-label">Ambiente</label><select class="form-select" name="environment"><option value="homologacion" {% if config.electronic.environment == 'homologacion' %}selected{% endif %}>Homologación</option><option value="produccion" {% if config.electronic.environment == 'produccion' %}selected{% endif %}>Producción</option></select></div>
+          <div class="col-md-3"><label class="form-label">Certificado</label><input class="form-control" name="certificate" value="{{ config.electronic.certificate or '' }}"></div>
+          <div class="col-md-3"><label class="form-label">Vencimiento certificado</label><input class="form-control" type="date" name="certificate_expires_at" value="{{ config.electronic.certificate_expires_at or '' }}"></div>
+          <div class="col-md-3"><label class="form-label">Puntos habilitados</label><input class="form-control" name="enabled_points" value="{{ (config.electronic.enabled_points or [])|join(', ') }}" placeholder="00001,00002"></div>
+          <div class="col-md-3"><label class="form-label">CAE</label><input class="form-control" name="cae" value="{{ config.electronic.cae or '' }}"></div>
+          <div class="col-md-3"><label class="form-label">CAEA</label><input class="form-control" name="caea" value="{{ config.electronic.caea or '' }}"></div>
+          <div class="col-12 d-flex justify-content-end"><button class="btn btn-primary" type="submit">Guardar configuración electrónica</button></div>
+        </fieldset>
+      </form>
+    </div>
+  </div>
+  {% endif %}
+
+  {% if selected_tab == 'reportes' %}
+  <div class="row g-3 mb-4">
+    <div class="col-md-3"><div class="card app-card"><div class="card-body"><div class="small text-muted">Total facturado</div><div class="h4 mb-0">${{ '%.2f'|format(reports.total or 0) }}</div></div></div></div>
+    <div class="col-md-3"><div class="card app-card"><div class="card-body"><div class="small text-muted">Comprobantes</div><div class="h4 mb-0">{{ rows|length }}</div></div></div></div>
+    <div class="col-md-6"><div class="card app-card"><div class="card-body d-flex justify-content-end gap-2"><a class="btn btn-outline-secondary" href="{{ url_for('company_billing.business_billing_export_reports', format='csv', **request.args) }}">Exportar CSV</a><a class="btn btn-outline-secondary" href="{{ url_for('company_billing.business_billing_export_reports', format='excel', **request.args) }}">Exportar Excel</a><a class="btn btn-outline-secondary" href="{{ url_for('company_billing.business_billing_export_reports', format='pdf', **request.args) }}">Exportar PDF</a></div></div></div>
+  </div>
+
+  <div class="row g-3">
+    <div class="col-lg-6">
+      <div class="card app-card h-100"><div class="card-header bg-white fw-bold">Facturación por tipo</div><div class="card-body"><ul class="list-group list-group-flush">{% for label, amount in reports.by_type %}<li class="list-group-item d-flex justify-content-between"><span>{{ label }}</span><strong>${{ '%.2f'|format(amount) }}</strong></li>{% else %}<li class="list-group-item text-muted">Sin datos.</li>{% endfor %}</ul></div></div>
+    </div>
+    <div class="col-lg-6">
+      <div class="card app-card h-100"><div class="card-header bg-white fw-bold">Facturación por cliente</div><div class="card-body"><ul class="list-group list-group-flush">{% for label, amount in reports.by_client[:10] %}<li class="list-group-item d-flex justify-content-between"><span>{{ label }}</span><strong>${{ '%.2f'|format(amount) }}</strong></li>{% else %}<li class="list-group-item text-muted">Sin datos.</li>{% endfor %}</ul></div></div>
+    </div>
+    <div class="col-lg-6">
+      <div class="card app-card h-100"><div class="card-header bg-white fw-bold">Facturación por vendedor</div><div class="card-body"><ul class="list-group list-group-flush">{% for label, amount in reports.by_user[:10] %}<li class="list-group-item d-flex justify-content-between"><span>{{ label }}</span><strong>${{ '%.2f'|format(amount) }}</strong></li>{% else %}<li class="list-group-item text-muted">Sin datos.</li>{% endfor %}</ul></div></div>
+    </div>
+    <div class="col-lg-6">
+      <div class="card app-card h-100"><div class="card-header bg-white fw-bold">Facturación por sucursal</div><div class="card-body"><ul class="list-group list-group-flush">{% for label, amount in reports.by_branch[:10] %}<li class="list-group-item d-flex justify-content-between"><span>{{ label }}</span><strong>${{ '%.2f'|format(amount) }}</strong></li>{% else %}<li class="list-group-item text-muted">Sin datos.</li>{% endfor %}</ul></div></div>
+    </div>
+  </div>
+  {% endif %}
+</div>
+{% endblock %}
