@@ -1720,11 +1720,9 @@ def index():
                     video_id = (parse_qs(parsed_demo_url.query).get("v") or [""])[0]
 
             if video_id:
-                # Mobile-friendly embed + direct watch URL fallback.
-                demo_video_url = f"https://www.youtube-nocookie.com/embed/{video_id}?playsinline=1&rel=0&modestbranding=1"
+                # Keep configured embed URL untouched; only compute a direct-open fallback link.
                 demo_video_open_url = f"https://www.youtube.com/watch?v={video_id}"
         except Exception:
-            demo_video_url = raw_demo_video_url
             demo_video_open_url = raw_demo_video_url
 
     local_demo_video_path = os.path.join(app.static_folder, "assets", "videos", "landing-demo.mp4")
