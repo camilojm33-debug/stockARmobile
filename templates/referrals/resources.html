@@ -90,7 +90,15 @@
         {% endfor %}
         {% endif %}
         {% if show_images %}
-        {% for item in images %}
+        <div class="col-12"><hr class="my-1"></div>
+        {% for group in image_groups %}
+        <div class="col-12">
+          <div class="d-flex justify-content-between align-items-center gap-2 mb-2 mt-2">
+            <h2 class="h6 fw-bold mb-0">{{ group.title }}</h2>
+            <span class="badge text-bg-light border">{{ group.badge }}</span>
+          </div>
+        </div>
+        {% for item in group.items %}
         <div class="col-md-6 col-xl-4">
           <div class="card h-100 resource-card">
             <img src="{{ item.thumbnail }}" class="card-img-top" alt="{{ item.title }}">
@@ -108,6 +116,7 @@
             </div>
           </div>
         </div>
+        {% endfor %}
         {% endfor %}
         {% endif %}
       </div>

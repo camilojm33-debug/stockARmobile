@@ -23,6 +23,150 @@ from services.referral_service import ReferralService
 
 bp = Blueprint("referrals", __name__)
 
+RESOURCE_IMAGE_EXTENSIONS = {".png", ".jpg", ".jpeg", ".webp", ".svg"}
+
+
+def _resource_image_title(path: Path) -> str:
+    slug = path.stem.replace("_", "-").lower()
+    explicit_titles = {
+        "logo": "Logo oficial",
+        "logo-light": "Logo claro",
+        "logo-dark": "Logo oscuro",
+        "logo-pdf": "Logo para PDF",
+        "logo-email": "Logo para email",
+        "isotipo": "Isotipo oficial",
+        "isotipo-light": "Isotipo claro",
+        "isotipo-dark": "Isotipo oscuro",
+        "facebook-post": "Post Facebook",
+        "instagram-post": "Post Instagram",
+        "linkedin-post": "Post LinkedIn",
+        "story-post": "Historia para redes",
+        "whatsapp-status": "Estado de WhatsApp",
+    }
+    if slug in explicit_titles:
+        return explicit_titles[slug]
+    return " ".join(part.capitalize() for part in slug.split("-") if part).strip() or "Pieza comercial"
+
+
+def _resource_image_description(path: Path) -> str:
+    slug = path.stem.replace("_", "-").lower()
+    if "referido" in slug or "referidos" in slug:
+        return "Pieza promocional para difundir el programa de referidos."
+    if "presupuesto" in slug:
+        return "Creativo comercial enfocado en presupuestos y cierres por WhatsApp."
+    if "venta" in slug or "pos" in slug:
+        return "Pieza comercial enfocada en ventas rápidas y punto de venta."
+    if "stock" in slug:
+        return "Pieza comercial enfocada en control de stock e inventario."
+    if "mercado" in slug or "pago" in slug:
+        return "Pieza comercial sobre cobros e integración con Mercado Pago."
+    if "caja" in slug or "reporte" in slug:
+        return "Pieza comercial sobre caja, arqueos y reportes."
+    if "logo" in slug or "isotipo" in slug:
+        return "Recurso de branding para redes, presentaciones y material comercial."
+    return "Pieza visual lista para compartir en redes, presentaciones y conversaciones comerciales."
+
+
+def _resource_image_group(path: Path) -> tuple[str, str, str]:
+    slug = path.stem.replace("_", "-").lower()
+    if "logo" in slug or "isotipo" in slug:
+        return ("branding", "Logos y Marca", "Branding")
+    if "referido" in slug or "referidos" in slug:
+        return ("referrals", "Programa de Referidos", "Referidos")
+    if "presupuesto" in slug:
+        return ("quotes", "Presupuestos y Cierre", "Presupuestos")
+    if "venta" in slug or "pos" in slug:
+        return ("sales", "Ventas y Punto de Venta", "Ventas")
+    if "stock" in slug or "inventario" in slug:
+        return ("stock", "Stock e Inventario", "Stock")
+    if "mercado" in slug or "pago" in slug:
+        return ("payments", "Cobros y Mercado Pago", "Cobros")
+    if "caja" in slug or "reporte" in slug:
+        return ("cash", "Caja y Reportes", "Caja")
+    return ("general", "Piezas Comerciales Generales", "General")
+
+
+def _group_resource_images(items: list[dict[str, str]]) -> list[dict[str, object]]:
+    grouped: dict[str, dict[str, object]] = {}
+    order = ["branding", "general", "sales", "stock", "quotes", "cash", "payments", "referrals"]
+
+    for item in items:
+        key = str(item.get("group_key") or "general")
+        group = grouped.setdefault(
+            key,
+            {
+                "key": key,
+                "title": item.get("group_title") or "Piezas Comerciales Generales",
+                "badge": item.get("group_badge") or "General",
+                "items": [],
+            },
+        )
+        group["items"].append(item)
+
+    def sort_key(group: dict[str, object]) -> tuple[int, str]:
+        key = str(group.get("key") or "general")
+        try:
+            index = order.index(key)
+        except ValueError:
+            index = len(order)
+        return (index, str(group.get("title") or ""))
+
+    return sorted(grouped.values(), key=sort_key)
+
+
+def _discover_resource_images(profile) -> list[dict[str, str]]:
+    static_root = Path(current_app.static_folder or "")
+    if not static_root.exists():
+        return []
+
+    candidate_dirs = [
+        static_root / "images" / "branding",
+        static_root / "images" / "banners",
+        static_root / "assets" / "social",
+    ]
+    preferred_branding = {
+        "logo.png",
+        "logo-light.png",
+        "logo-dark.png",
+        "logo-pdf.png",
+        "logo-email.png",
+        "isotipo.png",
+        "isotipo-light.png",
+        "isotipo-dark.png",
+    }
+    items: list[dict[str, str]] = []
+
+    for folder in candidate_dirs:
+        if not folder.exists():
+            continue
+        for asset_path in sorted(folder.iterdir()):
+            if not asset_path.is_file() or asset_path.suffix.lower() not in RESOURCE_IMAGE_EXTENSIONS:
+                continue
+            if folder.name == "branding" and asset_path.name not in preferred_branding:
+                continue
+
+            relative_path = asset_path.relative_to(static_root).as_posix()
+            direct_url = url_for("static", filename=relative_path)
+            external_url = url_for("static", filename=relative_path, _external=True)
+            title = _resource_image_title(asset_path)
+            share_copy = f"{title} de StockArmobile: {external_url}"
+            group_key, group_title, group_badge = _resource_image_group(asset_path)
+            items.append(
+                {
+                    "title": title,
+                    "description": _resource_image_description(asset_path),
+                    "thumbnail": direct_url,
+                    "download_url": direct_url,
+                    "share_url": f"https://api.whatsapp.com/send?text={quote_plus(share_copy)}",
+                    "share_text": share_copy,
+                    "group_key": group_key,
+                    "group_title": group_title,
+                    "group_badge": group_badge,
+                }
+            )
+
+    return items
+
 
 def _referrals_module_ready():
     from app import ReferralAttribution, ReferralCommission, ReferralPayout, ReferralSeller
@@ -364,32 +508,8 @@ def _build_resource_center_context(profile, search_term: str = ""):
         },
     ]
 
-    images = [
-        {
-            "title": "Logo oficial",
-            "description": "Uso en redes, presentaciones y material comercial.",
-            "thumbnail": url_for("static", filename="images/branding/logo.png"),
-            "download_url": url_for("static", filename="images/branding/logo.png"),
-            "share_url": f"https://wa.me/?text={quote_plus('Logo oficial de StockArmobile: ' + profile.referral_url)}",
-            "share_text": f"Descargá el logo oficial de StockArmobile: {profile.referral_url}",
-        },
-        {
-            "title": "Post Facebook",
-            "description": "Pieza lista para compartir en redes sociales.",
-            "thumbnail": url_for("static", filename="assets/social/facebook-post.svg"),
-            "download_url": url_for("static", filename="assets/social/facebook-post.svg"),
-            "share_url": f"https://wa.me/?text={quote_plus('Post para Facebook de StockArmobile: ' + profile.referral_url)}",
-            "share_text": f"Controlá stock, ventas y caja con StockArmobile: {profile.referral_url}",
-        },
-        {
-            "title": "Post Instagram",
-            "description": "Formato pensado para publicar en Instagram.",
-            "thumbnail": url_for("static", filename="assets/social/instagram-post.svg"),
-            "download_url": url_for("static", filename="assets/social/instagram-post.svg"),
-            "share_url": f"https://wa.me/?text={quote_plus('Post para Instagram de StockArmobile: ' + profile.referral_url)}",
-            "share_text": f"Tu negocio en la palma de tu mano con StockArmobile: {profile.referral_url}",
-        },
-    ]
+    images = _discover_resource_images(profile)
+    image_groups = _group_resource_images(images)
 
     guide_steps = [
         "Paso 1: Pregunta cómo controla hoy stock, ventas y caja.",
@@ -463,6 +583,7 @@ def _build_resource_center_context(profile, search_term: str = ""):
         "videos": videos,
         "available_videos": [video for video in videos if video.get("available")],
         "images": images,
+        "image_groups": image_groups,
         "guide_steps": guide_steps,
         "faq_items": faq_items,
         "tips": tips,
