@@ -126,6 +126,7 @@
                 <form method="post" action="{{ url_for('saas.company_delete', company_id=company.id) }}" onsubmit="return confirm('Esta accion eliminara definitivamente la empresa y todos sus datos asociados. Continuar?');">
                   <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
                   <input type="hidden" name="next" value="{{ request.full_path }}">
+                  <input type="hidden" name="confirm_company_name" value="{{ company.name }}">
                   <button class="btn btn-sm btn-danger" type="submit">Eliminar definitivamente</button>
                 </form>
                 {% endif %}

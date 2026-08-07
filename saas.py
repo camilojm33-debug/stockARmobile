@@ -1106,6 +1106,10 @@ def company_delete(company_id):
 
     _require_superadmin()
     company = Company.query.filter_by(id=company_id).first_or_404()
+    confirm_company_name = (request.form.get("confirm_company_name") or "").strip()
+    if confirm_company_name != (company.name or ""):
+        flash("Para eliminar definitivamente, escribí el nombre exacto de la empresa.", "warning")
+        return _redirect_back("saas.companies_panel")
     subscription = None
     if company.subscriptions:
         subscription = sorted(
@@ -2057,6 +2061,10 @@ def backups_delete(backup_id):
 
     _require_superadmin()
     backup = BackupLog.query.filter_by(id=backup_id).first_or_404()
+    confirm_delete = (request.form.get("confirm_delete") or "").strip() == "1"
+    if not confirm_delete:
+        flash("Confirmá la eliminación del backup para continuar.", "warning")
+        return _redirect_back("saas.backups_panel")
     company_id = backup.company_id
     BackupService.delete_backup(backup)
     record_audit(

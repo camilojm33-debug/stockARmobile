@@ -3,7 +3,9 @@
 from __future__ import annotations
 
 import gzip
+import io
 import json
+import os
 from datetime import date, datetime
 from decimal import Decimal
 from pathlib import Path
@@ -15,6 +17,8 @@ from flask import current_app
 class BackupService:
     CURRENT_SCHEMA_VERSION = 2
     SUPPORTED_SCHEMA_VERSIONS = {1, 2}
+    DEFAULT_MAX_COMPRESSED_BYTES = 5 * 1024 * 1024
+    DEFAULT_MAX_UNCOMPRESSED_BYTES = 20 * 1024 * 1024
     PLAN_LIMITS = {
         "entrepreneur": 1,
         "business": 2,
@@ -152,6 +156,11 @@ class BackupService:
     def _backup_root() -> Path:
         root = Path(current_app.instance_path) / "backups"
         root.mkdir(parents=True, exist_ok=True)
+        if os.name != "nt":
+            try:
+                root.chmod(0o700)
+            except Exception:
+                current_app.logger.debug("No se pudo ajustar permisos de %s", root)
         return root
 
     @staticmethod
@@ -195,13 +204,29 @@ class BackupService:
     def _load_payload_from_bytes(raw_bytes: bytes):
         if not raw_bytes:
             raise ValueError("Archivo de backup vacio.")
+        max_compressed = int(current_app.config.get("BACKUP_MAX_COMPRESSED_BYTES", BackupService.DEFAULT_MAX_COMPRESSED_BYTES) or BackupService.DEFAULT_MAX_COMPRESSED_BYTES)
+        max_uncompressed = int(current_app.config.get("BACKUP_MAX_UNCOMPRESSED_BYTES", BackupService.DEFAULT_MAX_UNCOMPRESSED_BYTES) or BackupService.DEFAULT_MAX_UNCOMPRESSED_BYTES)
+        if len(raw_bytes) > max_compressed:
+            raise ValueError("El archivo de backup excede el tamaño permitido.")
         try:
-            decoded = gzip.decompress(raw_bytes).decode("utf-8")
-        except Exception:
+            with gzip.GzipFile(fileobj=io.BytesIO(raw_bytes)) as gz_file:
+                decoded_bytes = gz_file.read(max_uncompressed + 1)
+            if len(decoded_bytes) > max_uncompressed:
+                raise ValueError("El backup descomprimido excede el tamaño permitido.")
+            decoded = decoded_bytes.decode("utf-8")
+        except ValueError:
+            raise
+        except (OSError, EOFError):
             try:
+                if len(raw_bytes) > max_uncompressed:
+                    raise ValueError("El archivo de backup excede el tamaño permitido.")
                 decoded = raw_bytes.decode("utf-8")
+            except ValueError:
+                raise
             except Exception as exc:
                 raise ValueError("No se pudo leer el archivo de backup.") from exc
+        except Exception as exc:
+            raise ValueError("No se pudo leer el archivo de backup.") from exc
         try:
             return BackupService._normalize_backup_payload(json.loads(decoded))
         except Exception as exc:
@@ -531,6 +556,9 @@ class BackupService:
         from app import BackupLog, db
 
         raw_bytes = file_storage.read()
+        max_compressed = int(current_app.config.get("BACKUP_MAX_COMPRESSED_BYTES", BackupService.DEFAULT_MAX_COMPRESSED_BYTES) or BackupService.DEFAULT_MAX_COMPRESSED_BYTES)
+        if len(raw_bytes) > max_compressed:
+            raise ValueError("El archivo de backup excede el tamaño permitido.")
         payload = BackupService._load_payload_from_bytes(raw_bytes)
         if int(payload.get("company_id") or 0) != int(company_id):
             raise ValueError("El backup no corresponde a la empresa seleccionada.")
@@ -583,7 +611,7 @@ class BackupService:
 
     @staticmethod
     def _load_payload(backup_log):
-        backup_path = Path(backup_log.path or "")
+        backup_path = BackupService.backup_download_path(backup_log)
         if not backup_path.exists():
             raise FileNotFoundError("No existe el archivo de backup.")
         with backup_path.open("rb") as file_handle:
@@ -726,13 +754,17 @@ class BackupService:
         path = Path(backup_log.path or "")
         if not path.exists():
             raise FileNotFoundError("No existe el archivo de backup.")
-        return path
+        backup_root = BackupService._backup_root().resolve()
+        candidate = path.resolve()
+        if backup_root not in candidate.parents:
+            raise PermissionError("Ruta de backup fuera de alcance.")
+        return candidate
 
     @staticmethod
     def delete_backup(backup_log):
         from app import db
 
-        backup_path = Path(backup_log.path or "")
+        backup_path = BackupService.backup_download_path(backup_log)
         if backup_path.exists():
             backup_path.unlink()
         db.session.delete(backup_log)

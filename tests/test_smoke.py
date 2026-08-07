@@ -2,6 +2,7 @@ import os
 import gzip
 import io
 import json
+from decimal import Decimal
 from urllib.parse import unquote
 import re
 from datetime import timedelta
@@ -965,7 +966,7 @@ def test_superadmin_company_hard_delete_removes_company_tree():
 
     delete_response = client.post(
         f"/superadmin/companies/{company_id}/delete",
-        data={"next": "/superadmin/companies"},
+        data={"next": "/superadmin/companies", "confirm_company_name": "Empresa Demo"},
         follow_redirects=False,
     )
     assert delete_response.status_code in (302, 303)
@@ -5144,6 +5145,274 @@ def test_webhook_approved_amount_mismatch_does_not_activate_subscription(monkeyp
         assert payment_row.status == "rejected"
 
 
+def test_public_rate_limit_blocks_excessive_login_attempts():
+    client = stock_app.app.test_client()
+    stock_app.app.config["ENABLE_RATE_LIMITS_IN_TESTS"] = True
+    stock_app._PUBLIC_RATE_LIMIT_BUCKETS.clear()
+
+    try:
+        last_response = None
+        for _ in range(11):
+            last_response = client.post(
+                "/auth/login",
+                data={"username": "empresa_admin", "password": "incorrecta"},
+                follow_redirects=False,
+            )
+        assert last_response is not None
+        assert last_response.status_code == 429
+        assert last_response.headers.get("Retry-After")
+    finally:
+        stock_app.app.config["ENABLE_RATE_LIMITS_IN_TESTS"] = False
+        stock_app._PUBLIC_RATE_LIMIT_BUCKETS.clear()
+
+
+def test_public_rate_limit_blocks_excessive_landing_contact_posts():
+    client = stock_app.app.test_client()
+    stock_app.app.config["ENABLE_RATE_LIMITS_IN_TESTS"] = True
+    stock_app._PUBLIC_RATE_LIMIT_BUCKETS.clear()
+
+    payload = {
+        "name": "Contacto Demo",
+        "email": "contacto@test.local",
+        "message": "Hola, necesito informacion comercial detallada.",
+    }
+    try:
+        last_response = None
+        for _ in range(6):
+            last_response = client.post("/landing/contact", data=payload, follow_redirects=False)
+        assert last_response is not None
+        assert last_response.status_code == 429
+    finally:
+        stock_app.app.config["ENABLE_RATE_LIMITS_IN_TESTS"] = False
+        stock_app._PUBLIC_RATE_LIMIT_BUCKETS.clear()
+
+
+def test_company_user_cannot_create_backup_even_with_pin_session():
+    client = stock_app.app.test_client()
+    client.post("/auth/login", data={"username": "empresa_admin", "password": "admin123"})
+    with client.session_transaction() as sess:
+        sess["company_pin_verified_1"] = stock_app.utcnow().timestamp()
+
+    response = client.post("/admin/company-settings/backups/create", data={"csrf_token": ""}, follow_redirects=False)
+    assert response.status_code == 403
+
+
+def test_company_backup_delete_requires_explicit_confirmation():
+    from services.backup_service import BackupService
+
+    with stock_app.app.app_context():
+        company = Company.query.filter_by(name="Empresa Demo").first()
+        assert company is not None
+        backup, _plan = BackupService.create_manual_backup(company.id, user_id=1)
+        backup_id = backup.id
+        db.session.commit()
+
+    client = stock_app.app.test_client()
+    client.post("/auth/login", data={"username": "negocio_admin", "password": "admin123"})
+    with client.session_transaction() as sess:
+        sess["company_pin_verified_1"] = stock_app.utcnow().timestamp()
+
+    response = client.post(
+        f"/admin/company-settings/backups/{backup_id}/delete",
+        data={"csrf_token": ""},
+        follow_redirects=False,
+    )
+    assert response.status_code in (301, 302)
+
+    with stock_app.app.app_context():
+        from app import BackupLog
+
+        still_exists = BackupLog.query.filter_by(id=backup_id).first()
+        assert still_exists is not None
+
+
+def test_superadmin_company_hard_delete_requires_company_name_confirmation():
+    client = stock_app.app.test_client()
+    client.post("/auth/login", data={"username": "superadmin", "password": "admin123"})
+
+    response = client.post(
+        "/superadmin/companies/1/delete",
+        data={"csrf_token": "", "next": "/superadmin/companies"},
+        follow_redirects=False,
+    )
+    assert response.status_code in (301, 302)
+
+    with stock_app.app.app_context():
+        company = Company.query.filter_by(id=1).first()
+        assert company is not None
+
+
+def test_backup_import_rejects_oversized_file():
+    from services.backup_service import BackupService
+
+    with stock_app.app.app_context():
+        stock_app.app.config["BACKUP_MAX_COMPRESSED_BYTES"] = 32
+        try:
+            payload = {
+                "schema_version": 2,
+                "company_id": 1,
+                "company": {"name": "Empresa Demo"},
+                "products": [],
+                "clients": [],
+                "sales": [],
+                "users": [],
+            }
+            compressed = io.BytesIO()
+            with gzip.GzipFile(fileobj=compressed, mode="wb") as gz_file:
+                gz_file.write(json.dumps(payload).encode("utf-8"))
+
+            oversized = compressed.getvalue() + (b"A" * 64)
+            with pytest.raises(ValueError, match="excede el tamaño permitido"):
+                BackupService.import_backup_file(
+                    company_id=1,
+                    file_storage=type("Upload", (), {"filename": "backup.json.gz", "read": lambda self=None: oversized})(),
+                    created_by_user_id=1,
+                )
+        finally:
+            stock_app.app.config.pop("BACKUP_MAX_COMPRESSED_BYTES", None)
+
+
+def test_purchases_fail_closed_when_admin_has_no_company_context():
+    client = stock_app.app.test_client()
+
+    with stock_app.app.app_context():
+        admin = User.query.filter_by(username="negocio_admin").first()
+        assert admin is not None
+        admin.company_id = None
+        db.session.commit()
+
+    client.post("/auth/login", data={"username": "negocio_admin", "password": "admin123"})
+
+    purchases_response = client.get("/compras/")
+    suppliers_response = client.get("/compras/proveedores")
+    assert purchases_response.status_code == 403
+    assert suppliers_response.status_code == 403
+
+
+def test_dashboard_stats_ignores_cross_tenant_saleitem_links():
+    client = stock_app.app.test_client()
+
+    with stock_app.app.app_context():
+        company_a = Company.query.filter_by(name="Empresa Demo").first()
+        assert company_a is not None
+
+        company_b = Company(name="Empresa B", active=True)
+        db.session.add(company_b)
+        db.session.flush()
+
+        seller_b = User(
+            username="empresa_b_admin",
+            email="empresa_b_admin@test.local",
+            role="admin",
+            company_id=company_b.id,
+            active=True,
+        )
+        seller_b.set_password("admin123")
+        db.session.add(seller_b)
+        db.session.flush()
+
+        leak_product = Product(
+            barcode="LEAK-001",
+            name="Producto Leak",
+            category="CAT_LEAK_TEST",
+            price=100,
+            cost_price=50,
+            stock=20,
+            min_stock=1,
+            active=True,
+            sale_type="unidad",
+            unit_measure="u",
+            company_id=company_a.id,
+        )
+        db.session.add(leak_product)
+        db.session.flush()
+
+        cross_sale = Sale(
+            date=stock_app.utcnow(),
+            customer="Cliente B",
+            subtotal=700,
+            total_amount=700,
+            paid_amount=700,
+            payment_method="efectivo",
+            status="confirmada",
+            seller_id=seller_b.id,
+            company_id=company_b.id,
+        )
+        db.session.add(cross_sale)
+        db.session.flush()
+
+        db.session.add(
+            SaleItem(
+                sale_id=cross_sale.id,
+                product_id=leak_product.id,
+                quantity=7,
+                price=100,
+                cost_price=50,
+            )
+        )
+        db.session.commit()
+
+    client.post("/auth/login", data={"username": "empresa_admin", "password": "admin123"})
+    response = client.get("/dashboard/stats")
+    assert response.status_code == 200
+    html = response.get_data(as_text=True)
+    assert "CAT_LEAK_TEST" not in html
+
+
+def test_webhook_pos_existing_payment_rejects_company_mismatch(monkeypatch):
+    from services.webhook_service import WebhookService
+
+    with stock_app.app.app_context():
+        company = Company.query.filter_by(name="Empresa Demo").first()
+        user = User.query.filter_by(username="empresa_admin").first()
+        assert company is not None
+        assert user is not None
+
+        payment = stock_app.Payment(
+            payment_id="mp-pos-existing-1",
+            company_id=company.id,
+            user_id=user.id,
+            amount=100,
+            currency="ARS",
+            status="pending",
+            payment_method="QR Mercado Pago",
+            provider="mercadopago_pos",
+            reference="pos_draft",
+            payload_json=json.dumps({"flow": "pos_sale"}),
+        )
+        db.session.add(payment)
+        db.session.commit()
+
+        service = WebhookService()
+        monkeypatch.setattr(service.mp_service, "validate_webhook_signature", lambda **kwargs: True)
+        monkeypatch.setattr(
+            service.mp_service,
+            "get_payment",
+            lambda _payment_id: {
+                "id": "mp-pos-existing-1",
+                "status": "approved",
+                "date_last_updated": "2026-08-06T10:00:00Z",
+                "date_approved": "2026-08-06T10:00:00Z",
+                "transaction_amount": 100,
+                "currency_id": "ARS",
+                "payment_method_id": "account_money",
+                "external_reference": f"flow:pos_sale|company_id:{company.id + 1}|draft_payment_id:{payment.id}",
+                "metadata": {
+                    "flow": "pos_sale",
+                    "company_id": company.id + 1,
+                    "draft_payment_id": payment.id,
+                },
+            },
+        )
+
+        with pytest.raises(RuntimeError, match="company_id inconsistente"):
+            service.process(
+                db_session=db.session,
+                headers={"x-request-id": "rq-pos-mismatch", "x-signature": "ts=1,v1=ok"},
+                payload={"id": "evt-pos-mismatch", "type": "payment", "data": {"id": "mp-pos-existing-1"}},
+            )
+
+
 def test_webhook_cancelled_marks_subscription_cancelled(monkeypatch):
     from services.subscription_service import SubscriptionService
     from services.webhook_service import WebhookService
@@ -5199,3 +5468,119 @@ def test_webhook_cancelled_marks_subscription_cancelled(monkeypatch):
 
         db.session.refresh(subscription)
         assert subscription.status == "cancelled"
+
+
+def test_sales_edit_delete_lifecycle_preserves_audit_stock_and_views():
+    client = stock_app.app.test_client()
+    client.post("/auth/login", data={"username": "negocio_admin", "password": "admin123"})
+    open_cash_session(client)
+
+    sale_response = client.post(
+        "/ventas/api/checkout",
+        json={
+            "items": [{"productId": 1, "quantity": 1}],
+            "metodo_pago": "EFECTIVO",
+            "checkout_token": "lifecycle-refactor-1",
+            "monto_pago": 18000,
+        },
+        headers={"X-Cart-Tenant": "1:2"},
+    )
+    assert sale_response.status_code == 200
+    sale_id = int(sale_response.get_json()["sale_id"])
+
+    edit_response = client.post(
+        f"/ventas/{sale_id}/edit",
+        data={
+            "product_id": "1",
+            "quantity": "0.5",
+            "price": "18000",
+            "discount": "0",
+            "payment_method": "TRANSFERENCIA",
+            "note": "Ajuste integración",
+            "order_discount": "0",
+            "change_reason": "Ajuste integración",
+        },
+        follow_redirects=False,
+    )
+    assert edit_response.status_code in (301, 302)
+
+    with stock_app.app.app_context():
+        from app import AuditLog
+
+        sale = db.session.get(Sale, sale_id)
+        assert sale is not None
+        assert sale.payment_method == "TRANSFERENCIA"
+        assert round(float(sale.total_amount or 0), 2) == 9000.00
+
+        product = db.session.get(Product, 1)
+        assert product is not None
+        assert round(float(product.stock or 0), 3) == 2.0
+
+        update_log = AuditLog.query.filter_by(action="sale_update", entity_id=sale_id).first()
+        assert update_log is not None
+
+    delete_response = client.post(f"/ventas/{sale_id}/delete", follow_redirects=False)
+    assert delete_response.status_code in (301, 302)
+
+    with stock_app.app.app_context():
+        from app import AuditLog
+
+        deleted_sale = db.session.get(Sale, sale_id)
+        assert deleted_sale is None
+
+        product = db.session.get(Product, 1)
+        assert product is not None
+        assert round(float(product.stock or 0), 3) == 2.5
+
+        delete_log = AuditLog.query.filter_by(action="sale_delete", entity_id=sale_id).first()
+        assert delete_log is not None
+
+    dashboard = client.get("/dashboard/")
+    reports = client.get("/reportes/")
+    assert dashboard.status_code == 200
+    assert reports.status_code == 200
+
+
+def test_sale_service_cancel_sale_sets_anulada_and_audits():
+    from services.sales import SaleService
+
+    with stock_app.app.app_context():
+        from app import AuditLog
+
+        user = User.query.filter_by(username="negocio_admin").first()
+        company = Company.query.filter_by(name="Empresa Demo").first()
+        assert user is not None
+        assert company is not None
+
+        sale = Sale(
+            customer="Cancel test",
+            subtotal=100,
+            discount=0,
+            tax=0,
+            total_amount=100,
+            paid_amount=100,
+            payment_method="EFECTIVO",
+            company_id=company.id,
+            seller_id=user.id,
+            status="confirmada",
+        )
+        db.session.add(sale)
+        db.session.commit()
+
+        service = SaleService(
+            require_open_cash_session=lambda json_response=False: None,
+            calculate_lines=lambda items, lock_for_update=False, discount_overrides=None: [],
+            mark_quote_as_converted=lambda checkout_token, sale_id: None,
+            cart_key=lambda: "cart_test",
+            to_decimal=lambda value: Decimal("0.00"),
+        )
+        with stock_app.app.test_request_context("/"):
+            login_user(user)
+            service.cancel_sale(sale=sale, detail="Anulación de prueba")
+            logout_user()
+
+        db.session.refresh(sale)
+        assert (sale.status or "").lower() == "anulada"
+
+        log = AuditLog.query.filter_by(action="sale_cancel", entity_id=sale.id).first()
+        assert log is not None

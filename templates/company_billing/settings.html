@@ -189,7 +189,7 @@
                   <div class="d-inline-flex gap-1 flex-wrap justify-content-end">
                     <a class="btn btn-sm btn-outline-primary" href="{{ url_for('company_billing.company_settings_backups_download', backup_id=backup.id) }}">Descargar</a>
                     <a class="btn btn-sm btn-outline-warning" href="{{ url_for('company_billing.company_settings', panel='backups', preview_id=backup.id) }}">Restaurar</a>
-                    <form method="post" action="{{ url_for('company_billing.company_settings_backups_delete', backup_id=backup.id) }}" onsubmit="return confirm('¿Eliminar este backup?');"><input type="hidden" name="csrf_token" value="{{ csrf_token() }}"><button class="btn btn-sm btn-outline-danger" type="submit">Eliminar</button></form>
+                    <form method="post" action="{{ url_for('company_billing.company_settings_backups_delete', backup_id=backup.id) }}" onsubmit="return confirm('¿Eliminar este backup?');"><input type="hidden" name="csrf_token" value="{{ csrf_token() }}"><input type="hidden" name="confirm_delete" value="1"><button class="btn btn-sm btn-outline-danger" type="submit">Eliminar</button></form>
                   </div>
                 </td>
               </tr>
@@ -786,6 +786,7 @@
                   <a class="btn btn-sm btn-outline-warning" href="{{ url_for('company_billing.company_settings', panel='backups', preview_id=backup.id) }}">Restaurar</a>
                   <form method="post" action="{{ url_for('company_billing.company_settings_backups_delete', backup_id=backup.id) }}" onsubmit="return confirm('¿Eliminar este backup?');">
                     <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                    <input type="hidden" name="confirm_delete" value="1">
                     <button class="btn btn-sm btn-outline-danger" type="submit">Eliminar</button>
                   </form>
                 </div>

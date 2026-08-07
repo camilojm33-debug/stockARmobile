@@ -1076,6 +1076,12 @@
     items.forEach((item, index) => item.classList.toggle('active', index === suggestionIndex));
   }
 
+  function posEscapeHtml(value) {
+    const div = document.createElement('div');
+    div.textContent = value ?? '';
+    return div.innerHTML;
+  }
+
   function renderSuggestionRows(products) {
     suggestions = Array.isArray(products) ? products : [];
     if (!suggestionsEl) return;
@@ -1087,11 +1093,15 @@
     suggestionsEl.innerHTML = suggestions.map((product, index) => {
       const stock = Number(product.stock || 0);
       const disabled = stock <= 0;
+      const productName = posEscapeHtml(product.name || 'Producto');
+      const productBarcode = posEscapeHtml(product.barcode || 'Sin código');
+      const productCategory = posEscapeHtml(product.category || 'Sin categoría');
+      const productBrand = posEscapeHtml(product.brand || 'Sin marca');
       return `
         <button type="button" class="pos-suggestion-item${index === 0 ? ' active' : ''}" data-suggestion-index="${index}" ${disabled ? 'disabled' : ''}>
           <span class="min-w-0">
-            <strong class="d-block text-truncate">${product.name || 'Producto'}</strong>
-            <small class="text-muted">${product.barcode || 'Sin código'} · ${product.category || 'Sin categoría'} · ${product.brand || 'Sin marca'}</small>
+            <strong class="d-block text-truncate">${productName}</strong>
+            <small class="text-muted">${productBarcode} · ${productCategory} · ${productBrand}</small>
           </span>
           <span class="text-end">
             <strong class="d-block">${formatMoney(product.price || 0)}</strong>
@@ -1129,7 +1139,7 @@
       seen.add(id);
       unique.push(product);
     });
-    container.innerHTML = `<div class="pos-hint-pills">${unique.slice(0, 8).map((product) => `<button type="button" class="pos-hint-pill" data-hint-product-id="${product.id}">${product.name}</button>`).join('')}</div>`;
+    container.innerHTML = `<div class="pos-hint-pills">${unique.slice(0, 8).map((product) => `<button type="button" class="pos-hint-pill" data-hint-product-id="${product.id}">${posEscapeHtml(product.name || 'Producto')}</button>`).join('')}</div>`;
     container.querySelectorAll('[data-hint-product-id]').forEach(button => {
       button.addEventListener('click', () => {
         const id = Number(button.dataset.hintProductId || 0);

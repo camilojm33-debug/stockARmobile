@@ -1089,6 +1089,12 @@
       div.textContent = value ?? '';
       return div.innerHTML;
     }
+    function appSafeUrl(value) {
+      const raw = String(value || '').trim();
+      if (!raw.startsWith('/')) return '#';
+      if (raw.startsWith('//')) return '#';
+      return raw;
+    }
     document.addEventListener('keydown', function(event) {
       if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === 'k') {
         event.preventDefault();
@@ -1103,7 +1109,7 @@
       const response = await fetch('/api/search?q=' + encodeURIComponent(q));
       const data = await response.json();
       spotlightResults.innerHTML = (data.results || []).map(item => `
-        <a class="list-group-item list-group-item-action d-flex justify-content-between align-items-center" href="${appEscapeHtml(item.url || '#')}">
+        <a class="list-group-item list-group-item-action d-flex justify-content-between align-items-center" href="${appEscapeHtml(appSafeUrl(item.url || '#'))}">
           <span><strong>${appEscapeHtml(item.title)}</strong><br><small class="text-muted">${appEscapeHtml(item.subtitle || '')}</small></span>
           <span class="badge text-bg-primary">${appEscapeHtml(item.type)}</span>
         </a>

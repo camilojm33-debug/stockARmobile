@@ -19,11 +19,13 @@ def index():
 def stats():
     from app import Product, Sale, SaleItem, db, scope_query_to_company
 
+    company_id = getattr(current_user, "company_id", None)
     categories_result = (
         scope_query_to_company(
             db.session.query(Product.category.label("category"), db.func.sum(SaleItem.quantity).label("total_sold"))
             .join(Product, SaleItem.product_id == Product.id)
             .join(Sale, SaleItem.sale_id == Sale.id)
+            .filter(Sale.company_id == company_id)
             .group_by(Product.category),
             Product,
         ).all()

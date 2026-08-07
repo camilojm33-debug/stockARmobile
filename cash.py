@@ -14,26 +14,18 @@ from reportlab.pdfgen import canvas
 
 from app import tenant_required
 from services.sales_calculation_service import is_confirmed_sale_status, sale_payment_breakdown
+from stockarmobile.helpers.money import safe_decimal
+from stockarmobile.helpers.numbers import safe_float
 
 bp = Blueprint("cash", __name__)
 
 
 def _to_float(value, default=0.0):
-    try:
-        return float(value if value not in (None, "") else default)
-    except (TypeError, ValueError):
-        return default
+    return safe_float(value, default)
 
 
 def _to_decimal(value, default="0.00"):
-    try:
-        if value in (None, ""):
-            return Decimal(default)
-        if isinstance(value, Decimal):
-            return value
-        return Decimal(str(value))
-    except (TypeError, ValueError):
-        return Decimal(default)
+    return safe_decimal(value, default)
 
 
 def _format_decimal(value):

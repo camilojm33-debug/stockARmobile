@@ -27,6 +27,8 @@ from services.plan_usage_service import PlanUsageService
 from services.referral_service import ReferralService
 from services.subscription_service import SubscriptionService
 from services.webhook_service import WebhookService
+from stockarmobile.helpers.dates import parse_date_yyyy_mm_dd
+from stockarmobile.helpers.numbers import safe_float
 
 bp = Blueprint("company_billing", __name__)
 
@@ -267,20 +269,11 @@ def business_billing_admin_required(func):
 
 
 def _parse_date(value):
-    raw = (value or "").strip()
-    if not raw:
-        return None
-    try:
-        return datetime.strptime(raw, "%Y-%m-%d")
-    except ValueError:
-        return None
+    return parse_date_yyyy_mm_dd(value)
 
 
 def _to_float(value, default=0.0):
-    try:
-        return float(value if value not in (None, "") else default)
-    except (TypeError, ValueError):
-        return default
+    return safe_float(value, default)
 
 
 def _pin_session_key(company_id):
@@ -676,6 +669,11 @@ def _pin_guard(company):
         return None
     flash("Debes validar PIN para gestionar Mi Empresa.", "warning")
     return redirect(url_for("company_billing.company_settings"))
+
+
+def _require_company_admin_or_forbid():
+    if (getattr(current_user, "role", None) or "").strip().lower() != "admin":
+        abort(403)
 
 
 def _build_user_and_cash_rows(company_id, date_from=None, date_to=None, search_text="", role_filter="", status_filter=""):
@@ -2169,6 +2167,7 @@ def company_settings_backups_create():
 
     company_id = getattr(current_user, "company_id", None)
     company = _load_company(company_id)
+    _require_company_admin_or_forbid()
     blocked = _pin_guard(company)
     if blocked is not None:
         return blocked
@@ -2195,6 +2194,7 @@ def company_settings_backups_import():
 
     company_id = getattr(current_user, "company_id", None)
     company = _load_company(company_id)
+    _require_company_admin_or_forbid()
     blocked = _pin_guard(company)
     if blocked is not None:
         return blocked
@@ -2230,6 +2230,7 @@ def company_settings_backups_download(backup_id):
 
     company_id = getattr(current_user, "company_id", None)
     company = _load_company(company_id)
+    _require_company_admin_or_forbid()
     blocked = _pin_guard(company)
     if blocked is not None:
         return blocked
@@ -2251,6 +2252,7 @@ def company_settings_backups_restore(backup_id):
 
     company_id = getattr(current_user, "company_id", None)
     company = _load_company(company_id)
+    _require_company_admin_or_forbid()
     blocked = _pin_guard(company)
     if blocked is not None:
         return blocked
@@ -2286,9 +2288,14 @@ def company_settings_backups_delete(backup_id):
 
     company_id = getattr(current_user, "company_id", None)
     company = _load_company(company_id)
+    _require_company_admin_or_forbid()
     blocked = _pin_guard(company)
     if blocked is not None:
         return blocked
+    confirm_delete = (request.form.get("confirm_delete") or "").strip() == "1"
+    if not confirm_delete:
+        flash("Confirmá la eliminación del backup para continuar.", "warning")
+        return redirect(url_for("company_billing.company_settings", panel="backups"))
 
     backup = BackupLog.query.filter_by(id=backup_id, company_id=company_id).first_or_404()
     BackupService.delete_backup(backup)

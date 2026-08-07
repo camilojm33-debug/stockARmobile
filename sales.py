@@ -4,10 +4,8 @@ import csv
 import base64
 import hashlib
 import json
-import re
-import uuid
 import traceback
-from decimal import Decimal, InvalidOperation
+from decimal import Decimal
 from datetime import datetime
 from io import BytesIO, StringIO
 
@@ -17,10 +15,15 @@ from itsdangerous import BadSignature, SignatureExpired, URLSafeTimedSerializer
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import selectinload
 from app import tenant_required, utcnow
+from stockarmobile.constants import HEADER_CSRF_TOKEN, SALE_STATUS_CONFIRMED
+from services.sales import InventoryService, ReceiptService, SaleService, ValidationService
 from services.mercadopago_oauth_service import MercadoPagoOAuthService
 from services.mercadopago_service import MercadoPagoService
-from services.sales_calculation_service import calculate_sale_totals, normalize_payment_split, sale_payment_breakdown_from_values, to_decimal
+from services.sales_calculation_service import calculate_sale_totals, to_decimal
 from services.whatsapp_share_service import build_whatsapp_share_url
+from stockarmobile.helpers.money import safe_decimal
+from stockarmobile.helpers.numbers import safe_float
+from stockarmobile.responses import api_error
 import qrcode
 
 bp = Blueprint("sales", __name__)
@@ -29,9 +32,7 @@ SALE_PUBLIC_TOKEN_MAX_AGE_SECONDS = 60 * 60 * 24 * 30
 
 
 def _api_error(message, status=400, **extra):
-    payload = {"success": False, "error": str(message)}
-    payload.update(extra)
-    return jsonify(payload), status
+    return api_error(message, status, **extra)
 
 
 def _api_exception(message, exc: Exception, status=400, **extra):
@@ -52,82 +53,42 @@ def _mp_qr_trace_enter(endpoint_name: str):
         request.method,
         request.path,
         endpoint_name,
-        bool(request.headers.get("X-CSRFToken")),
+        bool(request.headers.get(HEADER_CSRF_TOKEN)),
         getattr(current_user, "company_id", None) if current_user.is_authenticated else None,
         getattr(current_user, "id", None) if current_user.is_authenticated else None,
     )
 
 
 def _to_float(value, default=0.0):
-    try:
-        return float(value if value not in (None, "") else default)
-    except (TypeError, ValueError):
-        return default
+    return safe_float(value, default)
 
 
 def _to_decimal(value, default="0.00"):
-    try:
-        if value in (None, ""):
-            return Decimal(default)
-        if isinstance(value, Decimal):
-            return value
-        return Decimal(str(value))
-    except (InvalidOperation, TypeError, ValueError):
-        return Decimal(default)
+    return safe_decimal(value, default)
 
 
 def _is_truthy(value):
-    if isinstance(value, bool):
-        return value
-    return str(value or "").strip().lower() in {"1", "true", "yes", "si", "on"}
+    return ValidationService.is_truthy(value)
 
 
 def _clean_comprobante_type(raw_value):
-    allowed = {
-        "factura_a",
-        "factura_b",
-        "factura_c",
-        "ticket_fiscal",
-        "remito",
-        "otro",
-    }
-    value = (raw_value or "").strip().lower()
-    return value if value in allowed else None
+    return ValidationService.clean_comprobante_type(raw_value)
 
 
 def _resolve_comprobante_payload(data):
-    document_type = (data.get("document_type") or "").strip().lower()
-    explicit_requires = _is_truthy(data.get("requiere_comprobante"))
-    explicit_tipo = _clean_comprobante_type(data.get("tipo_comprobante"))
-    inferred_tipo = _clean_comprobante_type(document_type)
-
-    requiere_comprobante = explicit_requires or bool(explicit_tipo) or bool(inferred_tipo)
-    tipo_comprobante = explicit_tipo or inferred_tipo
-    observacion_comprobante = (data.get("observacion_comprobante") or "").strip()[:255] if requiere_comprobante else None
-    return requiere_comprobante, tipo_comprobante, observacion_comprobante
+    return ValidationService.resolve_comprobante_payload(data)
 
 
 def _requires_identified_client(data, requiere_comprobante, tipo_comprobante):
-    document_type = (data.get("document_type") or "").strip().lower()
-    if document_type in {"factura_a", "factura_b", "factura_c"}:
-        return True
-    if requiere_comprobante and tipo_comprobante in {"factura_a", "factura_b", "factura_c"}:
-        return True
-    return False
+    return ValidationService.requires_identified_client(data, requiere_comprobante, tipo_comprobante)
 
 
 def _sanitize_checkout_token(raw_value):
-    token = (raw_value or "").strip()
-    if not token:
-        return None
-    token = token[:64]
-    if not re.fullmatch(r"[A-Za-z0-9_.:-]+", token):
-        raise ValueError("Token de checkout inválido.")
-    return token
+    return ValidationService.sanitize_checkout_token(raw_value)
 
 
 def _new_checkout_token():
-    return f"chk_{uuid.uuid4()}"
+    return ValidationService.new_checkout_token()
 
 
 def _cart_key():
@@ -305,37 +266,22 @@ def _save_cart(cart):
 def _calculate_lines(items, *, lock_for_update=False, discount_overrides=None):
     from app import Product, db, scope_query_to_company
 
-    lines = []
     product_ids = sorted(int(prod_id) for prod_id in items.keys())
-    product_query = scope_query_to_company(db.session.query(Product), Product).filter(Product.id.in_(product_ids), Product.active.is_(True)).order_by(Product.id.asc())
-    if lock_for_update:
-        product_query = product_query.with_for_update()
-    products = {product.id: product for product in product_query.all()}
-    current_app.logger.info("[sales] productos recibidos para calcular lineas: product_ids=%s encontrados=%s", product_ids, len(products))
-    for prod_id, qty in items.items():
-        product = products.get(int(prod_id))
-        if not product:
-            raise ValueError("Producto no encontrado.")
-        if int(getattr(product, "company_id", 0) or 0) != int(getattr(current_user, "company_id", 0) or -1):
-            raise ValueError("Producto fuera del contexto de empresa.")
-        qty = _to_float(qty)
-        if qty <= 0:
-            raise ValueError("La cantidad debe ser mayor a cero.")
-        if float(product.stock or 0) < qty:
-            raise ValueError(f"Stock insuficiente para {product.name}. Disponible: {product.stock:g} {product.unit_measure or ''}.")
-        quantity_dec = _to_decimal(qty)
-        unit_price = _to_decimal(product.price)
-        unit_discount = _to_decimal(product.discount)
-        if discount_overrides:
-            override_value = discount_overrides.get(str(prod_id))
-            if override_value is None:
-                override_value = discount_overrides.get(int(prod_id))
-            if override_value is not None:
-                unit_discount = _to_decimal(override_value)
-        line_subtotal = unit_price * quantity_dec
-        line_discount = min(unit_discount * quantity_dec, line_subtotal)
-        lines.append({"product": product, "quantity": qty, "price": unit_price, "discount": line_discount})
-    return lines
+
+    def _fetch_products(candidate_ids):
+        product_query = scope_query_to_company(db.session.query(Product), Product).filter(Product.id.in_(candidate_ids), Product.active.is_(True)).order_by(Product.id.asc())
+        if lock_for_update:
+            product_query = product_query.with_for_update()
+        products = {product.id: product for product in product_query.all()}
+        current_app.logger.info("[sales] productos recibidos para calcular lineas: product_ids=%s encontrados=%s", candidate_ids, len(products))
+        return products
+
+    return InventoryService.calculate_lines(
+        items=items,
+        current_user=current_user,
+        fetch_products_func=_fetch_products,
+        discount_overrides=discount_overrides,
+    )
 
 
 def _sale_snapshot(sale, items=None):
@@ -1215,7 +1161,7 @@ def api_mp_qr_finalize():
         "observacion_comprobante": snapshot.get("observacion_comprobante"),
         "note": snapshot.get("note") or "",
         "qr_reference": payment.payment_id or payment.preference_id or f"pos-{payment.id}",
-        "status": "confirmada",
+        "status": SALE_STATUS_CONFIRMED,
         "general_discount": snapshot.get("descuento_general") or 0,
         "surcharge": snapshot.get("recargo") or 0,
     }
@@ -1238,202 +1184,14 @@ def api_mp_qr_finalize():
 
 
 def _create_sale_from_items(items, data, json_response=False):
-    from app import CashMovement, Client, Sale, SaleItem, db, record_audit, scope_query_to_company
-
-    sale = None
-    final_total = Decimal("0.00")
-    try:
-        current_app.logger.info("[sales] carrito recibido (_create_sale_from_items): items=%s json_response=%s", items, json_response)
-        cash_session = _require_open_cash_session(json_response=json_response)
-        if cash_session is None:
-            return redirect(url_for("cash.index"))
-        if isinstance(cash_session, tuple):
-            return cash_session
-
-        checkout_token = _sanitize_checkout_token(data.get("checkout_token") or data.get("checkoutToken"))
-        company_id = getattr(current_user, "company_id", None)
-        if checkout_token:
-            existing_sale = scope_query_to_company(Sale.query, Sale).filter(Sale.client_txn_id == checkout_token).first()
-            if existing_sale is not None:
-                if json_response:
-                    return jsonify({"sale_id": existing_sale.id, "redirect_url": url_for("sales.success", sale_id=existing_sale.id)})
-                return redirect(url_for("sales.success", sale_id=existing_sale.id))
-
-        lines = _calculate_lines(items, lock_for_update=True, discount_overrides=(data.get("line_discounts") or data.get("line_discount_overrides") or {}))
-        general_discount = _to_decimal(data.get("descuento_general") or data.get("general_discount"))
-        surcharge = _to_decimal(data.get("recargo") or data.get("surcharge"))
-        sale_totals = calculate_sale_totals(
-            [{"price": line["price"], "quantity": line["quantity"], "line_discount": line["discount"]} for line in lines],
-            general_discount=general_discount,
-            surcharge=surcharge,
-        )
-        general_discount = sale_totals["general_discount"]
-        surcharge = sale_totals["surcharge"]
-        subtotal = sale_totals["subtotal"]
-        discount = sale_totals["line_discount_total"]
-        tax_total = sale_totals["tax"]
-        final_total = sale_totals["total"]
-
-        payment_primary_method = data.get("metodo_pago") or data.get("payment_method") or "EFECTIVO"
-        payment_secondary_method = data.get("metodo_pago_2") or data.get("secondary_payment_method") or ""
-        payment_split = normalize_payment_split(
-            total_amount=final_total,
-            primary_method=payment_primary_method,
-            secondary_method=payment_secondary_method,
-            primary_amount=(data.get("monto_pago") or data.get("paid_amount")),
-            secondary_amount=(data.get("monto_pago_2") or data.get("secondary_paid_amount")),
-        )
-
-        client_id = data.get("client_id") or data.get("cliente_id") or None
-        parsed_client_id = None
-        if client_id not in (None, ""):
-            try:
-                parsed_client_id = int(client_id)
-            except (TypeError, ValueError):
-                raise ValueError("Cliente inválido para esta empresa.")
-
-        client = (
-            scope_query_to_company(Client.query.filter_by(id=parsed_client_id, active=True), Client).first()
-            if parsed_client_id
-            else None
-        )
-        if parsed_client_id and client is None:
-            raise ValueError("El cliente seleccionado no pertenece a tu empresa.")
-        current_app.logger.info("[sales] cliente recibido: client_id=%s resolved_client=%s", client_id, getattr(client, "id", None))
-        current_app.logger.info(
-            "[sales] total calculado: subtotal=%s descuento_lineas=%s descuento_general=%s recargo=%s total=%s",
-            str(subtotal),
-            str(discount),
-            str(general_discount),
-            str(surcharge),
-            str(final_total),
-        )
-        current_app.logger.info("[sales] creando Sale")
-        requiere_comprobante, tipo_comprobante, observacion_comprobante = _resolve_comprobante_payload(data)
-        if _requires_identified_client(data, requiere_comprobante, tipo_comprobante) and client is None:
-            raise ValueError("Para ese comprobante debés seleccionar un cliente.")
-        sale = Sale(
-            customer=client.name if client else "Consumidor final",
-            subtotal=subtotal,
-            discount=discount + general_discount,
-            tax=tax_total,
-            total_amount=final_total,
-            payment_method=payment_split["primary_method"],
-            secondary_payment_method=payment_split["secondary_method"],
-            paid_amount=payment_split["primary_amount"],
-            secondary_paid_amount=payment_split["secondary_amount"],
-            surcharge=surcharge,
-            client_txn_id=checkout_token,
-            document_type=data.get("document_type") or data.get("tipo_comprobante") or "venta",
-            requiere_comprobante=requiere_comprobante,
-            tipo_comprobante=tipo_comprobante,
-            observacion_comprobante=observacion_comprobante or None,
-            comprobante_emitido=False,
-            status=data.get("status") or "confirmada",
-            qr_reference=data.get("qr_reference"),
-            note=data.get("note"),
-            client_id=client.id if client else None,
-            seller_id=current_user.id,
-            company_id=company_id,
-            cash_session_id=cash_session.id,
-            date=utcnow(),
-        )
-        payment_breakdown = sale_payment_breakdown_from_values(
-            total_amount=final_total,
-            primary_method=payment_split["primary_method"],
-            secondary_method=payment_split["secondary_method"],
-            primary_amount=payment_split["primary_amount"],
-            secondary_amount=payment_split["secondary_amount"],
-        )
-        db.session.add(sale)
-        db.session.flush()
-        current_app.logger.info("[sales] Sale creada en flush: sale_id=%s", sale.id)
-
-        cash_amount = to_decimal(payment_breakdown.get("efectivo", 0))
-        if cash_amount > 0:
-            db.session.add(
-                CashMovement(
-                    session_id=cash_session.id,
-                    user_id=current_user.id,
-                    company_id=company_id,
-                    sale_id=sale.id,
-                    movement_type="ingreso",
-                    category="venta",
-                    amount=cash_amount,
-                    description=f"Venta #{sale.id}",
-                )
-            )
-
-        for idx, line in enumerate(lines):
-            product = line["product"]
-            calculated_line = sale_totals["lines"][idx]
-            current_app.logger.info(
-                "[sales] actualizando stock: product_id=%s stock_actual=%s cantidad=%s",
-                product.id,
-                str(product.stock),
-                str(line["quantity"]),
-            )
-            product.stock -= line["quantity"]
-            current_app.logger.info("[sales] creando SaleItem: sale_id=%s product_id=%s", sale.id, product.id)
-            db.session.add(
-                SaleItem(
-                    sale_id=sale.id,
-                    product_id=product.id,
-                    quantity=line["quantity"],
-                    price=line["price"],
-                    cost_price=_to_decimal(product.cost_price),
-                    discount=calculated_line["final_discount"],
-                )
-            )
-
-        _mark_quote_as_converted_from_checkout_token(checkout_token, sale.id)
-
-        current_app.logger.info("[sales] commit de transaccion de venta: sale_id=%s", sale.id)
-        db.session.commit()
-        current_app.logger.info("[sales] commit exitoso: sale_id=%s", sale.id)
-        try:
-            record_audit(action="sale_create", entity="sale", entity_id=sale.id, detail=f"Venta registrada total={final_total}")
-            db.session.commit()
-        except Exception:
-            db.session.rollback()
-            current_app.logger.exception("[sales] no se pudo persistir auditoria post-venta: sale_id=%s", sale.id)
-        session.pop(_cart_key(), None)
-    except IntegrityError as exc:
-        db.session.rollback()
-        current_app.logger.exception("[sales] integridad al crear venta")
-        token = _sanitize_checkout_token(data.get("checkout_token") or data.get("checkoutToken"))
-        if token:
-            from app import Sale, scope_query_to_company
-
-            existing_sale = scope_query_to_company(Sale.query, Sale).filter(Sale.client_txn_id == token).first()
-            if existing_sale is not None:
-                if json_response:
-                    return jsonify({"sale_id": existing_sale.id, "redirect_url": url_for("sales.success", sale_id=existing_sale.id)})
-                return redirect(url_for("sales.success", sale_id=existing_sale.id))
-        if json_response:
-            return jsonify({"error": "No se pudo completar la venta. Revisa los datos e intenta nuevamente."}), 400
-        flash("No se pudo completar la venta por un conflicto de concurrencia.", "danger")
-        return redirect(url_for("sales.new_sale"))
-    except Exception as exc:
-        db.session.rollback()
-        current_app.logger.exception("[sales] error creando venta")
-        try:
-            record_audit(action="sale_error", entity="sale", detail=f"Error al crear venta: {exc}")
-            db.session.commit()
-        except Exception:
-            db.session.rollback()
-            current_app.logger.exception("[sales] no se pudo persistir auditoria de error")
-        if json_response:
-            message = str(exc)
-            safe_message = message if isinstance(exc, ValueError) else "No se pudo completar la venta. Revisa los datos e intenta nuevamente."
-            return jsonify({"error": safe_message}), 400
-        flash(f"No se pudo completar la venta: {exc}", "danger")
-        return redirect(url_for("sales.new_sale"))
-
-    if json_response:
-        return jsonify({"sale_id": sale.id, "redirect_url": url_for("sales.success", sale_id=sale.id)})
-    flash(f"Venta #{sale.id} realizada con exito. Total: ${final_total:.2f}", "success")
-    return redirect(url_for("sales.success", sale_id=sale.id))
+    service = SaleService(
+        require_open_cash_session=_require_open_cash_session,
+        calculate_lines=_calculate_lines,
+        mark_quote_as_converted=_mark_quote_as_converted_from_checkout_token,
+        cart_key=_cart_key,
+        to_decimal=to_decimal,
+    )
+    return service.create_sale_from_items(items=items, data=data, json_response=json_response)
 
 
 @bp.route("/success/<int:sale_id>")
@@ -1464,7 +1222,7 @@ def view_sale(sale_id):
 @bp.route("/<int:sale_id>/edit", methods=["GET", "POST"])
 @tenant_required
 def edit(sale_id):
-    from app import CashMovement, Client, Product, Sale, SaleItem, SaleModificationHistory, db, record_audit, scope_query_to_company
+    from app import Client, Product, Sale, SaleItem, scope_query_to_company
 
     if getattr(current_user, "role", None) not in {"admin", "superadmin"}:
         abort(403)
@@ -1493,187 +1251,21 @@ def edit(sale_id):
                 payment_methods=payment_methods,
                 order_discount_default=order_discount_default,
             )
-
-        existing_line_discount_total = sum(_to_decimal(item.discount or 0) for item in sale.items)
-        sale_order_discount_default = max(_to_decimal(sale.discount or 0) - existing_line_discount_total, Decimal("0.00"))
-        previous_snapshot = _sale_snapshot(sale)
-
-        for item in sale.items:
-            product = item.product or scope_query_to_company(db.session.query(Product), Product).filter(Product.id == item.product_id).first()
-            if product is not None:
-                product.stock = float(product.stock or 0) + float(item.quantity or 0)
-
-        product_ids = request.form.getlist("product_id")
-        quantities = request.form.getlist("quantity")
-        prices = request.form.getlist("price")
-        discounts = request.form.getlist("discount")
-        row_deletes = request.form.getlist("remove_item")
-        order_discount = _to_decimal(request.form.get("order_discount") or sale_order_discount_default or 0)
-        note = (request.form.get("note") or sale.note or "").strip() or None
-        client_id = request.form.get("client_id") or None
-        client = scope_query_to_company(Client.query.filter_by(id=int(client_id), active=True), Client).first() if client_id else None
-
-        product_id_values = []
-        for raw_value in product_ids:
-            raw_value = (raw_value or "").strip()
-            if raw_value:
-                product_id_values.append(int(raw_value))
-
-        products_by_id = {}
-        if product_id_values:
-            products_by_id = {
-                product.id: product
-                for product in scope_query_to_company(db.session.query(Product), Product)
-                .filter(Product.id.in_(product_id_values))
-                .all()
-            }
-
-        new_lines = []
-        row_count = max(len(product_ids), len(quantities), len(prices), len(discounts), len(row_deletes))
-        for index in range(row_count):
-            if index < len(row_deletes) and _is_truthy(row_deletes[index]):
-                continue
-            raw_product_id = product_ids[index] if index < len(product_ids) else ""
-            raw_quantity = quantities[index] if index < len(quantities) else ""
-            raw_price = prices[index] if index < len(prices) else ""
-            raw_discount = discounts[index] if index < len(discounts) else ""
-            if not (raw_product_id or raw_quantity or raw_price or raw_discount):
-                continue
-            if not raw_product_id:
-                raise ValueError("Cada linea debe tener un producto seleccionado.")
-            product = products_by_id.get(int(raw_product_id))
-            if product is None:
-                raise ValueError("Producto inválido para esta empresa.")
-            quantity = _to_decimal(raw_quantity)
-            if quantity <= 0:
-                raise ValueError("La cantidad debe ser mayor a cero.")
-            price = _to_decimal(raw_price)
-            if price < 0:
-                raise ValueError("El precio no puede ser negativo.")
-            line_discount = _to_decimal(raw_discount)
-            if line_discount < 0:
-                raise ValueError("El descuento no puede ser negativo.")
-            gross = price * quantity
-            if line_discount > gross:
-                line_discount = gross
-            if float(product.stock or 0) < float(quantity):
-                raise ValueError(f"Stock insuficiente para {product.name}. Disponible: {product.stock:g} {product.unit_measure or ''}.")
-            product.stock = float(product.stock or 0) - float(quantity)
-            new_lines.append({"product": product, "quantity": quantity, "price": price, "discount": line_discount})
-
-        if not new_lines:
-            raise ValueError("La venta debe conservar al menos un producto.")
-
-        sale_totals = calculate_sale_totals(
-            [{"price": line["price"], "quantity": line["quantity"], "line_discount": line["discount"]} for line in new_lines],
-            general_discount=order_discount,
-            surcharge=sale.surcharge or 0,
+        service = SaleService(
+            require_open_cash_session=_require_open_cash_session,
+            calculate_lines=_calculate_lines,
+            mark_quote_as_converted=_mark_quote_as_converted_from_checkout_token,
+            cart_key=_cart_key,
+            to_decimal=to_decimal,
         )
-
-        payment_method = request.form.get("payment_method") or sale.payment_method or "EFECTIVO"
-        sale.payment_method = payment_method
-        sale.secondary_payment_method = None
-        payment_breakdown = sale_payment_breakdown_from_values(total_amount=sale_totals["total"], primary_method=payment_method)
-
-        sale.customer = client.name if client else (sale.customer or "Consumidor final")
-        sale.client_id = client.id if client else None
-        sale.note = note
-        sale.subtotal = sale_totals["subtotal"]
-        sale.discount = sale_totals["line_discount_total"] + sale_totals["general_discount"]
-        sale.tax = sale_totals["tax"]
-        sale.total_amount = sale_totals["total"]
-        sale.paid_amount = payment_breakdown.get("efectivo", sale_totals["total"])
-        sale.secondary_paid_amount = Decimal("0.00")
-        sale.status = sale.status or "confirmada"
-
-        for item in list(sale.items):
-            db.session.delete(item)
-
-        for line in new_lines:
-            db.session.add(
-                SaleItem(
-                    sale_id=sale.id,
-                    product_id=line["product"].id,
-                    quantity=float(line["quantity"]),
-                    price=line["price"],
-                    cost_price=_to_decimal(line["product"].cost_price),
-                    discount=line["discount"],
-                )
-            )
-
-        cash_movement = CashMovement.query.filter_by(sale_id=sale.id).first()
-        cash_amount = _to_decimal(payment_breakdown.get("efectivo", 0))
-        open_cash_session = _current_open_cash_session()
-        if cash_movement is not None:
-            if cash_amount > 0:
-                cash_movement.amount = cash_amount
-                cash_movement.session_id = sale.cash_session_id or cash_movement.session_id
-                cash_movement.user_id = current_user.id
-                cash_movement.company_id = sale.company_id
-                cash_movement.description = f"Venta #{sale.id} editada"
-            else:
-                db.session.delete(cash_movement)
-        elif cash_amount > 0:
-            if open_cash_session is None and not sale.cash_session_id:
-                raise ValueError("Debes tener una caja abierta para registrar un cobro en efectivo.")
-            db.session.add(
-                CashMovement(
-                    session_id=sale.cash_session_id or (open_cash_session.id if open_cash_session else None),
-                    user_id=current_user.id,
-                    company_id=sale.company_id,
-                    sale_id=sale.id,
-                    movement_type="ingreso",
-                    category="venta",
-                    amount=cash_amount,
-                    description=f"Venta #{sale.id} editada",
-                )
-            )
-
-        new_snapshot = {
-            "sale": {
-                "id": sale.id,
-                "customer": sale.customer,
-                "subtotal": float(sale_totals["subtotal"] or 0),
-                "discount": float((sale_totals["line_discount_total"] + sale_totals["general_discount"]) or 0),
-                "tax": float(sale_totals["tax"] or 0),
-                "total_amount": float(sale_totals["total"] or 0),
-                "payment_method": payment_method,
-                "secondary_payment_method": None,
-                "paid_amount": float(payment_breakdown.get("efectivo", sale_totals["total"]) or 0),
-                "secondary_paid_amount": 0.0,
-                "note": sale.note,
-                "status": sale.status,
-            },
-            "items": [
-                {
-                    "product_id": line["product"].id,
-                    "product_name": line["product"].name,
-                    "unit_measure": line["product"].unit_measure,
-                    "quantity": float(line["quantity"]),
-                    "price": float(line["price"]),
-                    "discount": float(line["discount"]),
-                    "total_amount": float((line["price"] * line["quantity"]) - line["discount"]),
-                }
-                for line in new_lines
-            ],
-        }
-        db.session.add(
-            SaleModificationHistory(
-                sale_id=sale.id,
-                company_id=sale.company_id,
-                user_id=current_user.id,
-                reason=reason,
-                previous_data=_json_dumps(previous_snapshot),
-                new_data=_json_dumps(new_snapshot),
-            )
+        service.update_sale(
+            sale=sale,
+            form=request.form,
+            reason=reason,
+            current_open_cash_session=_current_open_cash_session,
+            sale_snapshot=_sale_snapshot,
+            json_dumps=_json_dumps,
         )
-        record_audit(
-            action="sale_update",
-            entity="sale",
-            entity_id=sale.id,
-            detail=f"Venta editada. Motivo: {reason}",
-        )
-        db.session.commit()
         flash("Venta actualizada correctamente.", "success")
         return redirect(url_for("sales.view_sale", sale_id=sale.id))
 
@@ -1705,27 +1297,25 @@ def mark_comprobante_issued(sale_id):
 @bp.route("/<int:sale_id>/delete", methods=["POST"])
 @tenant_required
 def delete_sale(sale_id):
-    from app import CashMovement, Product, Sale, SaleItem, db, record_audit, scope_query_to_company
+    from app import Product, Sale, SaleItem, db, scope_query_to_company
 
     if getattr(current_user, "role", None) != "admin":
         abort(403)
 
     sale = scope_query_to_company(Sale.query.options(selectinload(Sale.items).selectinload(SaleItem.product)), Sale).filter(Sale.id == sale_id).first_or_404()
 
-    CashMovement.query.filter_by(sale_id=sale.id).delete(synchronize_session=False)
-    for item in sale.items:
-        product = item.product or scope_query_to_company(db.session.query(Product), Product).filter(Product.id == item.product_id).first()
-        if product is not None:
-            product.stock = (product.stock or 0) + (item.quantity or 0)
-
-    record_audit(
-        action="sale_delete",
-        entity="sale",
-        entity_id=sale.id,
-        detail=f"Venta eliminada y stock restituido. Total={sale.total_amount}",
+    service = SaleService(
+        require_open_cash_session=_require_open_cash_session,
+        calculate_lines=_calculate_lines,
+        mark_quote_as_converted=_mark_quote_as_converted_from_checkout_token,
+        cart_key=_cart_key,
+        to_decimal=to_decimal,
     )
-    db.session.delete(sale)
-    db.session.commit()
+    service.delete_sale(
+        sale=sale,
+        resolve_product_for_item=lambda item: item.product
+        or scope_query_to_company(db.session.query(Product), Product).filter(Product.id == item.product_id).first(),
+    )
     flash("Venta eliminada correctamente y stock restaurado.", "success")
     return redirect(request.referrer or url_for("company_billing.company_settings", panel="stats"))
 
@@ -1833,54 +1423,20 @@ def api_recent_sales():
 def _ticket_brand_name():
     from app import Company
 
-    fallback = "STOCK ARMOBILE"
     company_id = getattr(current_user, "company_id", None)
     if not company_id:
-        return fallback
+        return ReceiptService.ticket_brand_name(company=None)
 
     company = Company.query.filter_by(id=company_id).first()
-    if company is None:
-        return fallback
-
-    settings = {}
-    raw = getattr(company, "printer_settings_json", None)
-    if raw:
-        try:
-            settings = json.loads(raw)
-        except Exception:
-            settings = {}
-
-    name = (settings.get("ticket_name") or settings.get("printer_name") or getattr(company, "name", "") or fallback).strip()
-    return name[:120] or fallback
+    return ReceiptService.ticket_brand_name(company=company)
 
 
 def _ticket_text(sale, ticket_brand=None):
-    brand = (ticket_brand or _ticket_brand_name() or "STOCK ARMOBILE").strip()
-    lines = [f"{brand} - TICKET DE VENTA", "-" * 32, f"Venta: #{sale.id}", f"Fecha: {sale.date:%Y-%m-%d %H:%M}"]
-    if sale.customer:
-        lines.append(f"Cliente: {sale.customer}")
-    lines.append("-" * 32)
-    for item in sale.items:
-        name = item.product.name if item.product else f"Producto {item.product_id}"
-        unit_measure = item.product.unit_measure if item.product else "u"
-        lines.append(f"{name}: ${item.price:.2f} x {item.quantity:g} {unit_measure} = ${item.total_amount:.2f}")
-    if sale.note:
-        lines.extend(["-" * 32, f"Obs.: {sale.note}"])
-    lines.extend(["-" * 32, f"Subtotal: ${sale.subtotal:.2f}", f"Descuento: -${sale.discount:.2f}", f"Impuestos: ${sale.tax:.2f}", "=" * 32, f"TOTAL: ${sale.total_amount:.2f}", "Gracias por su compra!"])
-    return "\n".join(lines)
+    return ReceiptService.ticket_text(sale, ticket_brand=(ticket_brand or _ticket_brand_name() or "STOCK ARMOBILE"))
 
 
 def _ticket_rows(sale):
-    return [
-        {
-            "name": item.product.name if item.product else f"Producto {item.product_id}",
-            "unit_measure": item.product.unit_measure if item.product else "u",
-            "quantity": item.quantity,
-            "price": item.price,
-            "total": item.total_amount,
-        }
-        for item in sale.items
-    ]
+    return ReceiptService.ticket_rows(sale)
 
 
 def _public_share_serializer():
@@ -1922,24 +1478,7 @@ def _build_whatsapp_link(sale, phone=None):
 
 
 def _ticket_text_for_whatsapp(sale):
-    brand = _ticket_brand_name()
-    lines = [f"{brand} - Ticket de compra", f"Venta #{sale.id}", f"Fecha: {sale.date:%Y-%m-%d %H:%M}"]
-    if sale.customer:
-        lines.append(f"Cliente: {sale.customer}")
-    lines.append("------------------------------")
-    for item in sale.items:
-        name = item.product.name if item.product else f"Producto {item.product_id}"
-        unit_measure = item.product.unit_measure if item.product else "u"
-        lines.append(f"{name}: ${item.price:.2f} x {item.quantity:g} {unit_measure} = ${item.total_amount:.2f}")
-    lines.extend([
-        "------------------------------",
-        f"Subtotal: ${sale.subtotal:.2f}",
-        f"Descuento: -${sale.discount:.2f}",
-        f"Impuestos: ${sale.tax:.2f}",
-        f"Total: ${sale.total_amount:.2f}",
-        "Gracias por su compra!",
-    ])
-    return "\n".join(lines)
+    return ReceiptService.whatsapp_text(sale, _ticket_brand_name())
 
 
 @bp.route("/<int:sale_id>/share-whatsapp", methods=["GET", "POST"])

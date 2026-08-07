@@ -107,6 +107,8 @@ class WebhookService:
             metadata = payment_data.get("metadata") or {}
             ref_parts = self._external_reference_parts(external_reference)
             flow = str(metadata.get("flow") or ref_parts.get("flow") or "").strip().lower()
+            metadata_company_id = int(metadata.get("company_id") or 0)
+            ref_company_id = int(ref_parts.get("company_id") or 0) if str(ref_parts.get("company_id") or "").isdigit() else 0
 
             payment = Payment.query.filter_by(payment_id=str(payment_data.get("id"))).first()
             previous_payment_status = (payment.status or "").lower() if payment is not None else ""
@@ -198,6 +200,13 @@ class WebhookService:
                     db_session.add(payment)
                     db_session.flush()
             else:
+                if flow == "pos_sale":
+                    expected_company_id = int(payment.company_id or 0)
+                    if metadata_company_id and metadata_company_id != expected_company_id:
+                        raise RuntimeError("Webhook Mercado Pago con company_id inconsistente en metadata para POS")
+                    if ref_company_id and ref_company_id != expected_company_id:
+                        raise RuntimeError("Webhook Mercado Pago con company_id inconsistente en external_reference para POS")
+
                 previous_payload = json.loads(payment.payload_json) if payment.payload_json else {}
                 previous_updated_at = self._event_updated_at(previous_payload)
                 if previous_updated_at and incoming_updated_at and incoming_updated_at < previous_updated_at:
@@ -226,6 +235,9 @@ class WebhookService:
                         payment.company_id = subscription.company_id
                         if not payment.user_id and str(ref_parts.get("user_id") or "").isdigit():
                             payment.user_id = int(ref_parts.get("user_id"))
+
+            if subscription is not None and int(subscription.company_id or 0) != int(payment.company_id or 0):
+                raise RuntimeError("Webhook Mercado Pago con suscripcion fuera de la empresa del pago")
 
             company = subscription.company if subscription and subscription.company else None
             if flow == "pos_sale":

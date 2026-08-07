@@ -6,26 +6,45 @@ Compatible con SQLite local, PostgreSQL/Render y Flask-Login.
 import os
 import json
 import sys
+import threading
+import time
 from datetime import datetime, timedelta, timezone
-from functools import wraps
 from decimal import Decimal
 
-from flask import Flask, abort, flash, g, jsonify, make_response, redirect, render_template, request, send_from_directory, session, url_for
-from flask_login import LoginManager, UserMixin, current_user, login_required
-from flask_migrate import Migrate
-from flask_sqlalchemy import SQLAlchemy
-from flask_wtf import CSRFProtect, FlaskForm
+from flask import abort, flash, g, jsonify, make_response, redirect, render_template, request, send_from_directory, session, url_for
+from flask_login import UserMixin, current_user, login_required
+from flask_wtf import FlaskForm
 from flask_wtf.csrf import CSRFError
-from sqlalchemy import CheckConstraint, Index, false, inspect, text
+from sqlalchemy import CheckConstraint, Index, inspect, text
 from sqlalchemy.exc import IntegrityError, OperationalError, ProgrammingError
 from werkzeug.exceptions import HTTPException
 from werkzeug.security import check_password_hash, generate_password_hash
-from werkzeug.middleware.proxy_fix import ProxyFix
 from wtforms import BooleanField, DateField, DecimalField, PasswordField, SelectField, StringField, SubmitField, TextAreaField
 from wtforms.validators import DataRequired, Email, Length, NumberRange, Optional
 from config.logging_config import configure_logging
 from services.notification_service import get_notification_payload, mark_notifications_seen
 from services.search_service import global_search
+from stockarmobile import create_app
+from stockarmobile.audit import record_audit_entry
+from stockarmobile.constants import (
+    HEADER_CORRELATION_ID,
+    HEADER_CSRF_TOKEN,
+    HEADER_REQUEST_ID,
+    SESSION_REFERRAL_CODE,
+    SESSION_REFERRAL_COOKIE,
+)
+from stockarmobile.context import bind_current_tenant_context
+from stockarmobile.decorators import company_admin_required, seller_required, superadmin_required, tenant_required, trial_required
+from stockarmobile.extensions import csrf, db, login_manager, migrate
+from stockarmobile.helpers.dates import utcnow_naive
+from stockarmobile.helpers.validators import is_valid_email
+from stockarmobile.responses import api_error
+from stockarmobile.tenant import (
+    get_current_company_id as _shared_get_current_company_id,
+    is_control_panel_owner,
+    model_table_exists as _shared_model_table_exists,
+    scope_query_to_company as _shared_scope_query_to_company,
+)
 
 try:
     from psycopg2.errors import UndefinedTable as PGUndefinedTable
@@ -41,51 +60,10 @@ UndefinedTableError = PGUndefinedTable or _NeverUndefinedTableError
 
 
 configure_logging()
-app = Flask(__name__, template_folder="templates", static_folder="static")
+app = create_app(__name__, template_folder="templates", static_folder="static")
 sys.modules.setdefault("app", sys.modules[__name__])
-is_production_env = os.environ.get("FLASK_ENV") == "production" or bool(os.environ.get("RENDER"))
-is_pytest_context = "pytest" in sys.modules or bool(os.environ.get("PYTEST_CURRENT_TEST"))
-secret_key = os.environ.get("SECRET_KEY")
-if is_production_env and not is_pytest_context and not secret_key:
-    raise RuntimeError("SECRET_KEY es obligatorio en produccion.")
-app.config["SECRET_KEY"] = secret_key or "stockarmobile-dev-secret"
-app.config["SESSION_COOKIE_HTTPONLY"] = True
-app.config["SESSION_COOKIE_SAMESITE"] = "Lax"
-app.config["REMEMBER_COOKIE_HTTPONLY"] = True
-app.config["WTF_CSRF_TIME_LIMIT"] = None
-if is_production_env:
-    app.config["SESSION_COOKIE_SECURE"] = True
-    app.config["REMEMBER_COOKIE_SECURE"] = True
-    app.config["PREFERRED_URL_SCHEME"] = "https"
-
-database_url = os.environ.get("DATABASE_URL", "sqlite:///stock_armobile.db")
-if database_url.startswith("postgres://"):
-    database_url = database_url.replace("postgres://", "postgresql://", 1)
-app.config["SQLALCHEMY_DATABASE_URI"] = database_url
-app.config["SQLALCHEMY_TRACK_MODIFICATIONS"] = False
-
-# Official support contact channels centralized for full-platform reuse.
-app.config["SUPPORT_EMAIL"] = (os.environ.get("SUPPORT_EMAIL") or os.environ.get("LANDING_EMAIL") or "stockarmobile@gmail.com").strip()
-app.config["SUPPORT_WHATSAPP_DISPLAY"] = (os.environ.get("SUPPORT_WHATSAPP_DISPLAY") or os.environ.get("LANDING_WHATSAPP") or "+54 9 3624 22-8296").strip()
-app.config["SUPPORT_WHATSAPP_NUMBER"] = (
-    os.environ.get("SUPPORT_WHATSAPP_NUMBER")
-    or "".join(ch for ch in app.config["SUPPORT_WHATSAPP_DISPLAY"] if ch.isdigit())
-    or "5493624228296"
-).strip()
-app.config["PASSWORD_RESET_TOKEN_TTL_MINUTES"] = int(os.environ.get("PASSWORD_RESET_TOKEN_TTL_MINUTES", "60"))
-app.config["SMTP_HOST"] = (os.environ.get("SMTP_HOST") or "").strip()
-app.config["SMTP_PORT"] = int(os.environ.get("SMTP_PORT") or "587")
-app.config["SMTP_USE_TLS"] = (os.environ.get("SMTP_USE_TLS") or "1").strip().lower() in {"1", "true", "yes", "on"}
-app.config["SMTP_USER"] = (os.environ.get("SMTP_USER") or "").strip()
-app.config["SMTP_PASSWORD"] = (os.environ.get("SMTP_PASSWORD") or "").strip()
-app.config["SMTP_FROM_EMAIL"] = (os.environ.get("SMTP_FROM_EMAIL") or app.config["SUPPORT_EMAIL"] or "no-reply@stockarmobile.com").strip()
-app.config["APP_URL"] = (os.environ.get("APP_URL") or "https://www.stockarmobile.com").strip().rstrip("/")
-app.config["COMPANY_PIN_SESSION_TTL_MINUTES"] = int(os.environ.get("COMPANY_PIN_SESSION_TTL_MINUTES", "30"))
-app.wsgi_app = ProxyFix(app.wsgi_app, x_proto=1, x_host=1)
-
-db = SQLAlchemy(app)
-migrate = Migrate(app, db)
-csrf = CSRFProtect(app)
+is_production_env = bool(app.config.get("IS_PRODUCTION_ENV", False))
+is_pytest_context = bool(app.config.get("IS_PYTEST_CONTEXT", False))
 
 MONEY = db.Numeric(18, 2)
 PERCENT = db.Numeric(10, 4)
@@ -145,15 +123,99 @@ UNIT_MEASURE_DEFAULTS = {
     "media_docena": "1/2 doc",
 }
 
-login_manager = LoginManager(app)
 login_manager.login_view = "auth.login"
 login_manager.login_message = "Debes iniciar sesion para acceder a esta pagina."
 login_manager.login_message_category = "info"
+
+_PUBLIC_RATE_LIMIT_BUCKETS = {}
+_PUBLIC_RATE_LIMIT_LOCK = threading.Lock()
+_PUBLIC_RATE_LIMIT_RULES = [
+    {"method": "POST", "path": "/auth/login", "limit": 10, "window": 60},
+    {"method": "POST", "path": "/auth/register", "limit": 5, "window": 300},
+    {"method": "POST", "path": "/auth/forgot-password", "limit": 5, "window": 300},
+    {"method": "POST", "path_prefix": "/auth/reset-password/", "limit": 8, "window": 600},
+    {"method": "POST", "path": "/landing/contact", "limit": 5, "window": 300},
+]
 
 
 def is_api_request() -> bool:
     path = request.path or ""
     return bool(path.startswith("/ventas/api/") or path.startswith("/api/") or request.is_json)
+
+
+def _request_client_ip() -> str:
+    forwarded_for = (request.headers.get("X-Forwarded-For") or "").split(",")
+    if forwarded_for and forwarded_for[0].strip():
+        return forwarded_for[0].strip()
+    return (request.remote_addr or "unknown").strip()
+
+
+def _find_rate_limit_rule(method: str, path: str):
+    normalized_method = (method or "").upper()
+    normalized_path = (path or "").strip()
+    for rule in _PUBLIC_RATE_LIMIT_RULES:
+        if normalized_method != rule["method"]:
+            continue
+        exact_path = rule.get("path")
+        if exact_path and normalized_path == exact_path:
+            return rule
+        path_prefix = rule.get("path_prefix")
+        if path_prefix and normalized_path.startswith(path_prefix):
+            return rule
+    return None
+
+
+def _is_rate_limited(rule, scope_key: str) -> tuple[bool, int]:
+    now_ts = time.time()
+    window = int(rule["window"])
+    limit = int(rule["limit"])
+    bucket_key = f"{scope_key}:{rule.get('path') or rule.get('path_prefix')}"
+    with _PUBLIC_RATE_LIMIT_LOCK:
+        max_window = max(item["window"] for item in _PUBLIC_RATE_LIMIT_RULES)
+        for key, timestamps in list(_PUBLIC_RATE_LIMIT_BUCKETS.items()):
+            recent = [ts for ts in timestamps if now_ts - ts <= max_window]
+            if recent:
+                _PUBLIC_RATE_LIMIT_BUCKETS[key] = recent
+            else:
+                _PUBLIC_RATE_LIMIT_BUCKETS.pop(key, None)
+
+        timestamps = [ts for ts in _PUBLIC_RATE_LIMIT_BUCKETS.get(bucket_key, []) if now_ts - ts <= window]
+        if len(timestamps) >= limit:
+            oldest_in_window = timestamps[0]
+            retry_after = max(1, int(window - (now_ts - oldest_in_window)))
+            _PUBLIC_RATE_LIMIT_BUCKETS[bucket_key] = timestamps
+            return True, retry_after
+
+        timestamps.append(now_ts)
+        _PUBLIC_RATE_LIMIT_BUCKETS[bucket_key] = timestamps
+    return False, 0
+
+
+@app.before_request
+def enforce_public_rate_limits():
+    if app.config.get("TESTING") and not app.config.get("ENABLE_RATE_LIMITS_IN_TESTS", False):
+        return None
+    rule = _find_rate_limit_rule(request.method, request.path)
+    if rule is None:
+        return None
+
+    scope_key = _request_client_ip()
+    limited, retry_after = _is_rate_limited(rule, scope_key)
+    if not limited:
+        return None
+
+    message = "Demasiados intentos. Esperá unos segundos e intentá nuevamente."
+    response = None
+    if is_api_request():
+        response = jsonify({"success": False, "error": message})
+        response.status_code = 429
+    else:
+        flash(message, "warning")
+        redirect_target = request.referrer or request.path or url_for("auth.login")
+        response = redirect(redirect_target)
+        response.status_code = 429
+    response.headers["Retry-After"] = str(retry_after)
+    return response
 
 
 @login_manager.unauthorized_handler
@@ -164,8 +226,7 @@ def unauthorized_handler():
 
 
 def utcnow():
-    """Return UTC now without tzinfo for compatibility with current DB columns."""
-    return datetime.now(timezone.utc).replace(tzinfo=None)
+    return utcnow_naive()
 
 
 @app.after_request
@@ -183,11 +244,17 @@ def add_security_headers(response):
         "img-src 'self' data: blob: https:; "
         "connect-src 'self' https: wss:; "
         "worker-src 'self' blob:; "
+        "object-src 'none'; "
+        "base-uri 'self'; "
+        "form-action 'self'; "
         "frame-src 'self' https://*.mercadopago.com; "
         "frame-ancestors 'self';",
     )
     if is_production_env:
         response.headers.setdefault("Strict-Transport-Security", "max-age=31536000; includeSubDomains")
+        csp_value = response.headers.get("Content-Security-Policy", "")
+        if "upgrade-insecure-requests" not in csp_value:
+            response.headers["Content-Security-Policy"] = (csp_value + " upgrade-insecure-requests;").strip()
     return response
 
 
@@ -197,129 +264,15 @@ def load_user(user_id):
 
 
 def get_current_company_id():
-    if not current_user.is_authenticated:
-        return None
-    if getattr(current_user, "role", None) == "superadmin":
-        return None
-    return getattr(current_user, "company_id", None)
+    return _shared_get_current_company_id(current_user)
 
 
 def scope_query_to_company(query, model):
-    if not current_user.is_authenticated:
-        return query
-    if getattr(current_user, "role", None) == "superadmin":
-        return query
-    company_id = get_current_company_id()
-    if not hasattr(model, "company_id"):
-        return query
-    if company_id is None:
-        # Fail-closed: authenticated tenant users without company context must never read cross-tenant data.
-        return query.filter(false())
-    return query.filter(model.company_id == company_id)
+    return _shared_scope_query_to_company(query, model, current_user_obj=current_user)
 
 
 def model_table_exists(model):
-    table_name = getattr(model, "__tablename__", None)
-    if not table_name:
-        return False
-    try:
-        return inspect(db.engine).has_table(table_name)
-    except Exception:
-        return False
-
-
-def is_control_panel_owner(user):
-    owner_username = (os.environ.get("ADMIN_USERNAME") or "admin").strip().lower()
-    owner_email = (os.environ.get("ADMIN_EMAIL") or "admin@stockarmobile.local").strip().lower()
-    username = (getattr(user, "username", None) or "").strip().lower()
-    email = (getattr(user, "email", None) or "").strip().lower()
-    return username == owner_username or email == owner_email
-
-
-def tenant_required(func):
-    @wraps(func)
-    @login_required
-    def decorated(*args, **kwargs):
-        if getattr(current_user, "role", None) == "superadmin":
-            if is_api_request():
-                return jsonify({"success": False, "error": "El panel de empresa no está disponible para SuperAdmin."}), 403
-            flash("El panel de empresa no está disponible para SuperAdmin.", "warning")
-            return redirect(url_for("saas.index"))
-        company_id = get_current_company_id()
-        if company_id is None:
-            if is_api_request():
-                return jsonify({"success": False, "error": "No hay contexto de empresa activo."}), 403
-            flash("No hay contexto de empresa activo para esta sesión.", "warning")
-            return redirect(url_for("auth.login"))
-        state = get_company_access_state(company_id)
-        if not state["can_access"]:
-            if is_api_request():
-                return jsonify({"success": False, "error": state["reason"]}), 403
-            return redirect(url_for("access_status"))
-        return func(*args, **kwargs)
-    return decorated
-
-
-def superadmin_required(func):
-    @wraps(func)
-    @login_required
-    def decorated(*args, **kwargs):
-        if getattr(current_user, "role", None) != "superadmin":
-            abort(403)
-        return func(*args, **kwargs)
-    return decorated
-
-
-def company_admin_required(func):
-    @wraps(func)
-    @login_required
-    def decorated(*args, **kwargs):
-        if getattr(current_user, "role", None) != "admin":
-            abort(403)
-        if get_current_company_id() is None:
-            abort(403)
-        return func(*args, **kwargs)
-
-    return decorated
-
-
-def seller_required(func):
-    @wraps(func)
-    @login_required
-    def decorated(*args, **kwargs):
-        if not model_table_exists(ReferralSeller):
-            flash("El programa de referidos todavía no está disponible porque faltan migraciones.", "warning")
-            return redirect(url_for("dashboard.index"))
-        if getattr(current_user, "role", None) == "seller":
-            return func(*args, **kwargs)
-        if getattr(current_user, "role", None) == "superadmin":
-            abort(403)
-        profile = ReferralSeller.query.filter_by(user_id=current_user.id, active=True).first()
-        if profile is None:
-            if is_api_request():
-                return jsonify({"success": False, "error": "Perfil de referido no activo."}), 403
-            flash("Activa tu Programa de Referidos para acceder al portal.", "info")
-            return redirect(url_for("referrals.activate_seller"))
-        return func(*args, **kwargs)
-
-    return decorated
-
-
-def trial_required(func):
-    @wraps(func)
-    @login_required
-    def decorated(*args, **kwargs):
-        if getattr(current_user, "role", None) == "superadmin":
-            flash("El panel de empresa no está disponible para SuperAdmin.", "warning")
-            return redirect(url_for("saas.index"))
-        company_id = get_current_company_id()
-        if company_id is None:
-            return redirect(url_for("auth.login"))
-        state = get_company_access_state(company_id)
-        if not state["can_access"]:
-            abort(403)
-        return func(*args, **kwargs)
-    return decorated
+    return _shared_model_table_exists(db.engine, model)
 
 
 def get_company_access_state(company_id):
@@ -345,14 +298,7 @@ def get_company_access_state(company_id):
 
 @app.before_request
 def bind_tenant_context():
-    if current_user.is_authenticated:
-        if getattr(current_user, "role", None) == "superadmin":
-            company_id = None
-        else:
-            company_id = getattr(current_user, "company_id", None)
-        g.current_company_id = company_id
-    else:
-        g.current_company_id = None
+    bind_current_tenant_context(current_user)
 
 
 @app.before_request
@@ -362,11 +308,11 @@ def trace_mp_qr_requests():
         return None
     g.mp_qr_trace_started = True
     g.mp_qr_endpoint_entered = False
-    g.mp_qr_csrf_header_present = bool(request.headers.get("X-CSRFToken"))
+    g.mp_qr_csrf_header_present = bool(request.headers.get(HEADER_CSRF_TOKEN))
     g.mp_qr_request_method = request.method
     g.mp_qr_request_path = path
     g.mp_qr_request_endpoint = request.endpoint or ""
-    g.mp_qr_request_id = request.headers.get("X-Request-ID") or request.headers.get("X-Correlation-ID") or ""
+    g.mp_qr_request_id = request.headers.get(HEADER_REQUEST_ID) or request.headers.get(HEADER_CORRELATION_ID) or ""
     g.mp_qr_user_id = None
     g.mp_qr_company_id = None
     try:
@@ -424,7 +370,7 @@ def enforce_password_change_if_required():
     if endpoint in allowed:
         return None
     if is_api_request():
-        return jsonify({"success": False, "error": "Debes actualizar tu contraseña para continuar."}), 403
+        return api_error("Debes actualizar tu contraseña para continuar.", 403)
     return redirect(url_for("auth.force_password_change"))
 
 
@@ -462,7 +408,7 @@ def enforce_billing_restrictions_for_blocked_tenants():
         return None
 
     if is_api_request():
-        return jsonify({"success": False, "error": state["reason"], "status": state["status"]}), 403
+        return api_error(state["reason"], 403, status=state["status"])
     return redirect(url_for("access_status"))
 
 
@@ -1057,7 +1003,7 @@ class Supplier(db.Model):
     address = db.Column(db.Text)
     notes = db.Column(db.Text)
     active = db.Column(db.Boolean, default=True, nullable=False)
-    company_id = db.Column(db.Integer, db.ForeignKey("companies.id"))
+    company_id = db.Column(db.Integer, db.ForeignKey("companies.id"), nullable=False, index=True)
     created_at = db.Column(db.DateTime, default=utcnow)
     updated_at = db.Column(db.DateTime, default=utcnow, onupdate=utcnow)
 
@@ -1067,7 +1013,7 @@ class PurchaseOrder(db.Model):
 
     id = db.Column(db.Integer, primary_key=True)
     supplier_id = db.Column(db.Integer, db.ForeignKey("suppliers.id"))
-    company_id = db.Column(db.Integer, db.ForeignKey("companies.id"))
+    company_id = db.Column(db.Integer, db.ForeignKey("companies.id"), nullable=False, index=True)
     date = db.Column(db.DateTime, default=utcnow, index=True)
     status = db.Column(db.String(30), default="recibida", index=True)
     subtotal = db.Column(MONEY, default=Decimal("0.00"))
@@ -1489,16 +1435,17 @@ class SaaSAlert(db.Model):
 
 def record_audit(*, action, entity=None, entity_id=None, detail=None, user_id=None, company_id=None, ip_address=None):
     try:
-        db.session.add(
-            AuditLog(
-                user_id=user_id if user_id is not None else (current_user.id if current_user.is_authenticated else None),
-                company_id=company_id if company_id is not None else get_current_company_id(),
-                action=action,
-                entity=entity,
-                entity_id=entity_id,
-                detail=detail,
-                ip_address=ip_address if ip_address is not None else (request.remote_addr if request else None),
-            )
+        record_audit_entry(
+            db.session,
+            AuditLog,
+            get_current_company_id,
+            action=action,
+            entity=entity,
+            entity_id=entity_id,
+            detail=detail,
+            user_id=user_id,
+            company_id=company_id,
+            ip_address=ip_address,
         )
     except Exception:
         app.logger.exception("No se pudo registrar auditoria: %s", action)
@@ -1814,19 +1761,28 @@ def index():
                 company_id=getattr(getattr(seller, "user", None), "company_id", None),
             )
             db.session.commit()
-        session["referral_code"] = referral_code
-        response.set_cookie("stockarmobile_ref", referral_code, max_age=60 * 60 * 24 * 90, samesite="Lax")
+        session[SESSION_REFERRAL_CODE] = referral_code
+        response.set_cookie(SESSION_REFERRAL_COOKIE, referral_code, max_age=60 * 60 * 24 * 90, samesite="Lax")
     return response
 
 
 @app.route("/landing/contact", methods=["POST"])
 def landing_contact():
     name = (request.form.get("name") or "").strip()
-    email = (request.form.get("email") or "").strip()
+    email = (request.form.get("email") or "").strip().lower()
     message = (request.form.get("message") or "").strip()
 
     if not name or not email or not message:
         flash("Completa nombre, email y mensaje para enviarnos tu consulta.", "warning")
+        return redirect(url_for("index", _anchor="contacto"))
+    if len(name) > 120:
+        flash("El nombre es demasiado largo.", "warning")
+        return redirect(url_for("index", _anchor="contacto"))
+    if len(message) < 10 or len(message) > 2000:
+        flash("El mensaje debe tener entre 10 y 2000 caracteres.", "warning")
+        return redirect(url_for("index", _anchor="contacto"))
+    if not is_valid_email(email):
+        flash("Ingresá un correo electrónico válido.", "warning")
         return redirect(url_for("index", _anchor="contacto"))
 
     support_email = app.config.get("SUPPORT_EMAIL", "stockarmobile@gmail.com")
@@ -1889,10 +1845,10 @@ def handle_csrf_error(error):
             request.method,
             request.path,
             request.endpoint or "",
-            bool(request.headers.get("X-CSRFToken")),
+            bool(request.headers.get(HEADER_CSRF_TOKEN)),
             getattr(current_user, "company_id", None) if current_user.is_authenticated else None,
             getattr(current_user, "id", None) if current_user.is_authenticated else None,
-            request.headers.get("X-Request-ID") or request.headers.get("X-Correlation-ID") or "",
+            request.headers.get(HEADER_REQUEST_ID) or request.headers.get(HEADER_CORRELATION_ID) or "",
             error.description,
         )
     if is_api_request():

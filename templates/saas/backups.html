@@ -184,6 +184,7 @@
                   <a class="btn btn-sm btn-outline-warning" href="{{ url_for('saas.backups_panel', preview_id=backup.id, company_id=filters.company_id, q=filters.q, status=filters.status, plan=filters.plan) }}">Restaurar</a>
                   <form method="post" action="{{ url_for('saas.backups_delete', backup_id=backup.id) }}" onsubmit="return confirm('¿Eliminar este backup?');">
                     <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                    <input type="hidden" name="confirm_delete" value="1">
                     <button class="btn btn-sm btn-outline-danger" type="submit">Eliminar</button>
                   </form>
                 </div>

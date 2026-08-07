@@ -18,12 +18,23 @@ from sqlalchemy.orm import selectinload
 import qrcode
 
 from app import tenant_required, utcnow
+from stockarmobile.enums import QuoteStatus
+from stockarmobile.helpers.dates import parse_date_yyyy_mm_dd
 from services.sales_calculation_service import calculate_sale_totals, to_decimal
 from services.whatsapp_share_service import build_whatsapp_share_url
 
 bp = Blueprint("quotes", __name__)
 
-QUOTE_STATUS_OPTIONS = ["BORRADOR", "ENVIADO", "PENDIENTE", "APROBADO", "RECHAZADO", "VENCIDO", "CONVERTIDO", "ANULADO"]
+QUOTE_STATUS_OPTIONS = [
+    QuoteStatus.BORRADOR.value,
+    QuoteStatus.ENVIADO.value,
+    QuoteStatus.PENDIENTE.value,
+    QuoteStatus.APROBADO.value,
+    QuoteStatus.RECHAZADO.value,
+    QuoteStatus.VENCIDO.value,
+    QuoteStatus.CONVERTIDO.value,
+    QuoteStatus.ANULADO.value,
+]
 QUOTE_PUBLIC_TOKEN_SALT = "quotes-public-share-v1"
 QUOTE_PUBLIC_TOKEN_MAX_AGE_SECONDS = 60 * 60 * 24 * 30
 
@@ -127,13 +138,7 @@ def _normalize_status(raw_status):
 
 
 def _parse_date(value):
-    raw = (value or "").strip()
-    if not raw:
-        return None
-    try:
-        return datetime.strptime(raw, "%Y-%m-%d")
-    except ValueError:
-        return None
+    return parse_date_yyyy_mm_dd(value)
 
 
 def _parse_items(payload):

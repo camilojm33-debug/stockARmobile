@@ -1,19 +1,20 @@
 """Blueprint de autenticacion: login, registro y recuperacion de contrasena."""
 
 from datetime import timedelta
-from urllib.parse import urlsplit
 
 from flask import Blueprint, abort, flash, redirect, render_template, request, session, url_for
 from flask_login import current_user, login_required, login_user, logout_user
 from sqlalchemy.exc import OperationalError, ProgrammingError
 from services.password_recovery_service import PasswordRecoveryService
+from stockarmobile.constants import SESSION_POST_REGISTER_ONBOARDING_COMPANY_ID
+from stockarmobile.helpers.strings import is_safe_relative_redirect
 
 bp = Blueprint("auth", __name__, template_folder="templates")
 
 
 def _login_user_and_bind_company(user, remember=False):
     preserved_session = {}
-    for key in ("post_register_onboarding_company_id",):
+    for key in (SESSION_POST_REGISTER_ONBOARDING_COMPANY_ID,):
         if key in session:
             preserved_session[key] = session.get(key)
     session.clear()
@@ -26,10 +27,7 @@ def _post_login_redirect():
 
 
 def _is_safe_redirect(target):
-    if not target:
-        return False
-    parsed = urlsplit(target)
-    return not parsed.netloc and parsed.path.startswith("/")
+    return is_safe_relative_redirect(target)
 
 
 def _ensure_demo_account():
@@ -165,7 +163,7 @@ def login():
                 if not _is_safe_redirect(next_page):
                     next_page = None
                 flash("Inicio de sesion exitoso", "success")
-                if session.get("post_register_onboarding_company_id") == getattr(user, "company_id", None):
+                if session.get(SESSION_POST_REGISTER_ONBOARDING_COMPANY_ID) == getattr(user, "company_id", None):
                     return redirect(url_for("dashboard.onboarding"))
                 return redirect(next_page if next_page else _post_login_redirect())
 

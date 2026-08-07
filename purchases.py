@@ -4,16 +4,14 @@ from datetime import datetime
 
 from flask import Blueprint, abort, flash, redirect, render_template, request, url_for
 from flask_login import current_user, login_required
-from sqlalchemy import or_
+from sqlalchemy import false, or_
+from stockarmobile.helpers.numbers import safe_float
 
 bp = Blueprint("purchases", __name__)
 
 
 def _to_float(value, default=0.0):
-    try:
-        return float(value if value not in (None, "") else default)
-    except (TypeError, ValueError):
-        return default
+    return safe_float(value, default)
 
 
 def _can_manage_purchases():
@@ -39,9 +37,21 @@ def _resolve_company_id(required=False):
 
 
 def _company_scope(query, model, company_id):
-    if company_id is None or not hasattr(model, "company_id"):
+    if not hasattr(model, "company_id"):
+        return query
+    if company_id is None:
+        # Fail-closed for tenant users without company context.
+        if getattr(current_user, "role", None) != "superadmin":
+            return query.filter(false())
         return query
     return query.filter(model.company_id == company_id)
+
+
+def _require_company_context_or_forbid(company_id):
+    if getattr(current_user, "role", None) == "superadmin":
+        return
+    if company_id is None:
+        abort(403)
 
 
 def _superadmin_companies():
@@ -66,6 +76,7 @@ def index():
         return blocked
 
     company_id = _resolve_company_id(required=False)
+    _require_company_context_or_forbid(company_id)
     if getattr(current_user, "role", None) == "superadmin" and company_id is None:
         return render_template(
             "compras/index.html",
@@ -157,6 +168,7 @@ def suppliers_panel():
         return blocked
 
     company_id = _resolve_company_id(required=False)
+    _require_company_context_or_forbid(company_id)
     if getattr(current_user, "role", None) == "superadmin" and company_id is None:
         return render_template(
             "compras/suppliers.html",

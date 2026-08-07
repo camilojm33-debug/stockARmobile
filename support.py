@@ -7,6 +7,7 @@ from flask import Blueprint, abort, flash, redirect, render_template, request, s
 from flask_login import current_user, login_required
 
 from app import superadmin_required, tenant_required, utcnow
+from stockarmobile.constants import SUPPORT_TICKET_STATUS_PENDING
 
 bp = Blueprint("support", __name__)
 
@@ -51,7 +52,7 @@ def new_ticket():
             email=email,
             reason=reason,
             description=description,
-            status="pendiente",
+            status=SUPPORT_TICKET_STATUS_PENDING,
             created_at=utcnow(),
         )
         db.session.add(ticket)

@@ -3,15 +3,13 @@
 from flask import Blueprint, flash, redirect, render_template, request, url_for
 from flask_login import current_user, login_required
 from app import tenant_required
+from stockarmobile.helpers.numbers import safe_float
 
 bp = Blueprint("expenses", __name__)
 
 
 def _to_float(value, default=0.0):
-    try:
-        return float(value if value not in (None, "") else default)
-    except (TypeError, ValueError):
-        return default
+    return safe_float(value, default)
 
 
 @bp.route("/", methods=["GET", "POST"])
