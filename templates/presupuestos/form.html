@@ -46,11 +46,12 @@
   .catalog-results {
     max-height: calc(100vh - 320px);
     overflow: auto;
+    overflow-x: hidden;
   }
 
   .catalog-card {
     display: grid;
-    grid-template-columns: 52px 1fr auto;
+    grid-template-columns: 52px minmax(0, 1fr) auto;
     gap: 0.7rem;
     align-items: center;
     border: 1px solid var(--app-line);
@@ -72,6 +73,37 @@
     object-fit: cover;
     border: 1px solid var(--app-line);
     background: #f8fafc;
+  }
+
+  .catalog-main {
+    min-width: 0;
+  }
+
+  .catalog-title {
+    font-weight: 600;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+
+  .catalog-meta {
+    font-size: 0.82rem;
+    color: #64748b;
+    line-height: 1.25;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+
+  .catalog-side {
+    min-width: 88px;
+    text-align: right;
+  }
+
+  .catalog-price {
+    font-weight: 600;
+    margin-bottom: 0.3rem;
+    white-space: nowrap;
   }
 
   .quote-lines-wrap {
@@ -147,6 +179,37 @@
   }
 
   @media (max-width: 768px) {
+    .catalog-card {
+      grid-template-columns: 44px minmax(0, 1fr);
+      align-items: start;
+    }
+
+    .catalog-thumb {
+      width: 44px;
+      height: 44px;
+      border-radius: 8px;
+    }
+
+    .catalog-side {
+      min-width: 0;
+      grid-column: 2;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 0.5rem;
+      text-align: left;
+      margin-top: 0.2rem;
+    }
+
+    .catalog-price {
+      margin-bottom: 0;
+    }
+
+    .catalog-side .btn {
+      flex: 0 0 auto;
+      white-space: nowrap;
+    }
+
     .quote-line-grid {
       grid-template-columns: 1fr 1fr;
     }
@@ -370,12 +433,26 @@
     return '$' + Number(value || 0).toFixed(2);
   }
 
+  function formatStock(value) {
+    const number = Number(value || 0);
+    if (!Number.isFinite(number)) return '0';
+    if (Math.abs(number % 1) < 0.000001) return String(Math.round(number));
+    return number.toFixed(2).replace(/\.00$/, '');
+  }
+
   function parseNumberInput(value) {
     const raw = String(value ?? '').trim();
     if (!raw) return 0;
     const normalized = raw.replace(',', '.');
     const parsed = Number(normalized);
     return Number.isFinite(parsed) ? parsed : 0;
+  }
+
+  function formatEditableNumber(value, decimals = 2) {
+    const number = Number(value || 0);
+    if (!Number.isFinite(number)) return '0';
+    if (decimals <= 0) return String(Math.round(number));
+    return number.toFixed(decimals).replace(/\.00$/, '');
   }
 
   function escapeHtml(value) {
@@ -462,8 +539,62 @@
       line[field] = field === 'description' ? value : parseNumberInput(value);
     }
 
-    renderLines(false);
+    updateLinePreview(index, field);
     updateTotals();
+  }
+
+  function normalizeLineInput(index, field, element) {
+    const line = items[index];
+    if (!line || !element) return;
+
+    const numeric = parseNumberInput(element.value);
+    if (field === 'discount_pct') {
+      const qty = parseNumberInput(line.quantity);
+      const price = parseNumberInput(line.unit_price);
+      const gross = Math.max(qty * price, 0);
+      const pct = Math.max(numeric, 0);
+      line.discount = Math.min(gross, gross * (pct / 100));
+      element.value = formatEditableNumber(pct, 2);
+    } else if (field === 'discount') {
+      line.discount = Math.max(numeric, 0);
+      element.value = formatEditableNumber(line.discount, 2);
+    } else if (field === 'unit_price') {
+      line.unit_price = Math.max(numeric, 0);
+      element.value = formatEditableNumber(line.unit_price, 2);
+    } else if (field === 'quantity') {
+      line.quantity = Math.max(numeric, 0);
+      element.value = formatEditableNumber(line.quantity, 2);
+    }
+
+    updateLinePreview(index, field);
+    updateTotals();
+  }
+
+  function updateLinePreview(index, changedField) {
+    const item = items[index];
+    if (!item) return;
+
+    const line = computeLine(item);
+    item.quantity = line.quantity;
+    item.unit_price = line.unitPrice;
+    item.discount = line.discountValue;
+
+    const subtotalEl = document.getElementById(`lineSubtotal-${index}`);
+    if (subtotalEl) {
+      subtotalEl.textContent = money(line.subtotal);
+    }
+
+    const discountPctEl = document.getElementById(`lineDiscountPct-${index}`);
+    const discountAbsEl = document.getElementById(`lineDiscountAbs-${index}`);
+    const activeId = document.activeElement ? document.activeElement.id : '';
+
+    if (discountPctEl && changedField !== 'discount_pct' && activeId !== discountPctEl.id) {
+      discountPctEl.value = line.discountPct.toFixed(2);
+    }
+
+    if (discountAbsEl && changedField !== 'discount' && activeId !== discountAbsEl.id) {
+      discountAbsEl.value = line.discountValue.toFixed(2);
+    }
   }
 
   function buildCategoryOptions() {
@@ -505,13 +636,13 @@
       return `
         <article class="catalog-card ${alreadyAdded ? 'added' : ''}" role="listitem" aria-label="Producto ${escapeHtml(product.name)}">
           ${image}
-          <div>
-            <div class="fw-semibold">${escapeHtml(product.name)}</div>
-            <div class="small text-muted">${escapeHtml(product.category || 'Sin categoría')} · ${escapeHtml(product.barcode || '-')}</div>
-            <div class="small text-muted">Stock: ${Number(product.stock || 0)} · ${escapeHtml(product.brand || '-')} · ${escapeHtml(product.supplier || '-')}</div>
+          <div class="catalog-main">
+            <div class="catalog-title" title="${escapeHtml(product.name)}">${escapeHtml(product.name)}</div>
+            <div class="catalog-meta" title="${escapeHtml(product.category || 'Sin categoría')} · ${escapeHtml(product.barcode || '-')}">${escapeHtml(product.category || 'Sin categoría')} · ${escapeHtml(product.barcode || '-')}</div>
+            <div class="catalog-meta" title="Stock: ${formatStock(product.stock)} · ${escapeHtml(product.brand || '-')} · ${escapeHtml(product.supplier || '-')}">Stock: ${formatStock(product.stock)} · ${escapeHtml(product.brand || '-')} · ${escapeHtml(product.supplier || '-')}</div>
           </div>
-          <div class="text-end">
-            <div class="fw-semibold mb-1">${money(product.price || 0)}</div>
+          <div class="catalog-side">
+            <div class="catalog-price">${money(product.price || 0)}</div>
             <button type="button" class="btn btn-sm ${alreadyAdded ? 'btn-success' : 'btn-outline-primary'} focus-ring" onclick="addProductById(${Number(product.id)})" aria-label="Agregar ${escapeHtml(product.name)}">${alreadyAdded ? 'Agregado +' : 'Agregar'}</button>
           </div>
         </article>
@@ -550,23 +681,23 @@
             </div>
             <div>
               <label class="form-label small mb-1">Cant.</label>
-              <input class="form-control form-control-sm text-end focus-ring" type="number" min="0" step="0.01" value="${line.quantity}" oninput="updateLine(${index}, 'quantity', this.value)">
+              <input id="lineQty-${index}" class="form-control form-control-sm text-end focus-ring" type="text" inputmode="decimal" value="${formatEditableNumber(line.quantity, 2)}" oninput="updateLine(${index}, 'quantity', this.value)" onblur="normalizeLineInput(${index}, 'quantity', this)">
             </div>
             <div>
               <label class="form-label small mb-1">Precio</label>
-              <input class="form-control form-control-sm text-end focus-ring" type="number" min="0" step="0.01" value="${line.unitPrice}" oninput="updateLine(${index}, 'unit_price', this.value)" ${disablePrice}>
+              <input id="linePrice-${index}" class="form-control form-control-sm text-end focus-ring" type="text" inputmode="decimal" value="${formatEditableNumber(line.unitPrice, 2)}" oninput="updateLine(${index}, 'unit_price', this.value)" onblur="normalizeLineInput(${index}, 'unit_price', this)" ${disablePrice}>
             </div>
             <div>
               <label class="form-label small mb-1">% Desc</label>
-              <input class="form-control form-control-sm text-end focus-ring" type="number" min="0" step="0.01" value="${line.discountPct.toFixed(2)}" oninput="updateLine(${index}, 'discount_pct', this.value)" ${disableDiscount}>
+              <input id="lineDiscountPct-${index}" class="form-control form-control-sm text-end focus-ring" type="text" inputmode="decimal" value="${formatEditableNumber(line.discountPct, 2)}" oninput="updateLine(${index}, 'discount_pct', this.value)" onblur="normalizeLineInput(${index}, 'discount_pct', this)" ${disableDiscount}>
             </div>
             <div>
               <label class="form-label small mb-1">$ Desc</label>
-              <input class="form-control form-control-sm text-end focus-ring" type="number" min="0" step="0.01" value="${line.discountValue.toFixed(2)}" oninput="updateLine(${index}, 'discount', this.value)" ${disableDiscount}>
+              <input id="lineDiscountAbs-${index}" class="form-control form-control-sm text-end focus-ring" type="text" inputmode="decimal" value="${formatEditableNumber(line.discountValue, 2)}" oninput="updateLine(${index}, 'discount', this.value)" onblur="normalizeLineInput(${index}, 'discount', this)" ${disableDiscount}>
             </div>
             <div>
               <label class="form-label small mb-1">Subtotal</label>
-              <div class="form-control form-control-sm text-end fw-semibold">${money(line.subtotal)}</div>
+              <div id="lineSubtotal-${index}" class="form-control form-control-sm text-end fw-semibold">${money(line.subtotal)}</div>
             </div>
             <div class="d-flex flex-column gap-1">
               <button type="button" class="btn btn-sm btn-outline-secondary focus-ring" onclick="moveLine(${index}, -1)" aria-label="Mover arriba">↑</button>
