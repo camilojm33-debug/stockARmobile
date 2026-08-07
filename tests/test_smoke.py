@@ -1408,6 +1408,39 @@ def test_qr_print_all_supports_selected_and_single_scope():
     assert single_response.mimetype == "application/pdf"
 
 
+def test_qr_ordered_a4_flows_render_without_overlap_errors():
+    client = stock_app.app.test_client()
+    client.post("/auth/login", data={"username": "empresa_admin", "password": "admin123"})
+
+    bulk_ordered = client.post(
+        "/qr/print-all",
+        data={
+            "label_format": "current",
+            "ordered_a4": "1",
+            "size": "standard",
+            "copies": 2,
+        },
+    )
+    assert bulk_ordered.status_code == 200
+    assert bulk_ordered.mimetype == "application/pdf"
+
+    single_ordered = client.post(
+        "/qr/label-sheet/1",
+        data={
+            "label_size": "50x25",
+            "quantity": 5,
+            "include_name": "1",
+            "include_price": "1",
+            "include_code": "1",
+            "include_qr": "1",
+            "include_code128": "1",
+            "ordered_a4": "1",
+        },
+    )
+    assert single_ordered.status_code == 200
+    assert single_ordered.mimetype == "application/pdf"
+
+
 def test_subscription_state_guard():
     with stock_app.app.app_context():
         company = Company(name="Test company")
@@ -5584,3 +5617,98 @@ def test_sale_service_cancel_sale_sets_anulada_and_audits():
 
         log = AuditLog.query.filter_by(action="sale_cancel", entity_id=sale.id).first()
         assert log is not None
+
+
+def test_superadmin_home_renders_ops_sections_and_health_checks():
+    client = stock_app.app.test_client()
+    client.post("/auth/login", data={"username": "superadmin", "password": "admin123"})
+
+    response = client.get("/superadmin/", follow_redirects=True)
+    assert response.status_code == 200
+    html = response.get_data(as_text=True)
+    assert "Centro de Operaciones SaaS" in html
+    assert "Salud del sistema" in html
+    assert "Empresas que necesitan atención" in html
+    assert "Embudo de ventas SaaS" in html
+    assert "Métricas SaaS" in html
+    assert "Actividad en tiempo real" in html
+
+
+def test_register_creates_automatic_saas_ops_records():
+    client = stock_app.app.test_client()
+
+    register = client.post(
+        "/auth/register",
+        data={
+            "username": "empresa_auto_ops",
+            "email": "empresa_auto_ops@test.com",
+            "password": "admin123",
+        },
+        follow_redirects=False,
+    )
+    assert register.status_code in (301, 302)
+
+    with stock_app.app.app_context():
+        lead = SaaSLead.query.filter_by(email="empresa_auto_ops@test.com").first()
+        assert lead is not None
+        assert lead.source == "registro"
+
+        task = SaaSTask.query.filter(SaaSTask.title.ilike("Onboarding inicial -%"))\
+            .order_by(SaaSTask.id.desc()).first()
+        assert task is not None
+
+        alert = SaaSAlert.query.filter(SaaSAlert.title.ilike("Nueva empresa registrada:%"))\
+            .order_by(SaaSAlert.id.desc()).first()
+        assert alert is not None
+
+
+def test_landing_contact_creates_automatic_lead_task_alert():
+    client = stock_app.app.test_client()
+
+    response = client.post(
+        "/landing/contact",
+        data={
+            "name": "Lead Landing Auto",
+            "email": "lead_landing_auto@test.local",
+            "message": "Necesito una demo guiada de la plataforma para evaluar compra.",
+        },
+        follow_redirects=False,
+    )
+    assert response.status_code in (301, 302)
+
+    with stock_app.app.app_context():
+        lead = SaaSLead.query.filter_by(email="lead_landing_auto@test.local").first()
+        assert lead is not None
+        assert lead.source == "landing_form"
+
+        task = SaaSTask.query.filter(SaaSTask.title.ilike("Responder lead landing:%"))\
+            .order_by(SaaSTask.id.desc()).first()
+        assert task is not None
+
+        alert = SaaSAlert.query.filter_by(title="Nuevo lead desde landing").order_by(SaaSAlert.id.desc()).first()
+        assert alert is not None
+
+
+def test_support_ticket_creates_automatic_saas_ops_records():
+    client = stock_app.app.test_client()
+    client.post("/auth/login", data={"username": "empresa_admin", "password": "admin123"})
+
+    response = client.post(
+        "/soporte/nuevo",
+        data={
+            "reason": "Problemas con suscripcion",
+            "description": "No puedo finalizar el pago de renovación.",
+            "email": "empresa_admin@test.local",
+        },
+        follow_redirects=False,
+    )
+    assert response.status_code in (301, 302)
+
+    with stock_app.app.app_context():
+        task = SaaSTask.query.filter(SaaSTask.title.ilike("Atender ticket soporte #%"))\
+            .order_by(SaaSTask.id.desc()).first()
+        assert task is not None
+
+        alert = SaaSAlert.query.filter(SaaSAlert.title.ilike("Soporte abierto:%"))\
+            .order_by(SaaSAlert.id.desc()).first()
+        assert alert is not None

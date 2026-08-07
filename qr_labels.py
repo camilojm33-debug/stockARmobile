@@ -261,7 +261,7 @@ def create_square_label_5x5(product):
     return img
 
 
-def _compute_a4_grid(label_w_pt, label_h_pt, *, min_margin_mm=1.5, gap_mm=0.8):
+def _compute_a4_grid(label_w_pt, label_h_pt, *, min_margin_mm=2.8, gap_mm=2.0):
     page_w, page_h = A4
     min_margin = min_margin_mm * mm
     gap = gap_mm * mm
@@ -349,6 +349,15 @@ def _fit_canvas_wrapped_text(pdf, text, max_w, *, max_lines=2, max_size=12, min_
 
 
 def _draw_label_on_canvas(pdf, product, x, y, label_w_pt, label_h_pt, *, include_name=True, include_price=True, include_code=True, include_qr=True):
+    # Encapsula cada etiqueta en su propia caja para evitar que el contenido
+    # exceda el bloque y se superponga con etiquetas vecinas.
+    pdf.saveState()
+    clip_path = pdf.beginPath()
+    clip_path.rect(x, y, label_w_pt, label_h_pt)
+    pdf.clipPath(clip_path, stroke=0, fill=0)
+    pdf.setFillColorRGB(1, 1, 1)
+    pdf.rect(x, y, label_w_pt, label_h_pt, stroke=0, fill=1)
+
     padding = 0.9 * mm
     inner_x = x + padding
     inner_y = y + padding
@@ -461,6 +470,12 @@ def _draw_label_on_canvas(pdf, product, x, y, label_w_pt, label_h_pt, *, include
         )
         pdf.setFont("Helvetica", sku_size)
         pdf.drawCentredString(center_x, sku_y_center - (sku_size * 0.35), sku_value)
+
+    # Borde fino para facilitar recorte y lectura visual del orden de grilla.
+    pdf.setStrokeColorRGB(0.88, 0.88, 0.88)
+    pdf.setLineWidth(0.25)
+    pdf.rect(x, y, label_w_pt, label_h_pt, stroke=1, fill=0)
+    pdf.restoreState()
 
 
 def _build_square_5x5_a4_pdf(products, copies):
@@ -593,10 +608,10 @@ def _build_current_a4_pdf(products, copies, size_key):
 def _build_sixup_a4_pdf(label_images):
     page_w, page_h = A4
     cols, rows = 2, 3
-    margin_x = 5 * mm
-    margin_y = 6 * mm
-    gap_x = 3 * mm
-    gap_y = 3 * mm
+    margin_x = 7 * mm
+    margin_y = 8 * mm
+    gap_x = 4 * mm
+    gap_y = 4 * mm
     cell_w = (page_w - (2 * margin_x) - ((cols - 1) * gap_x)) / cols
     cell_h = (page_h - (2 * margin_y) - ((rows - 1) * gap_y)) / rows
     per_page = cols * rows

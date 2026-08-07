@@ -317,6 +317,7 @@ def register():
     from app import Company, RegisterForm, User, db, record_audit, utcnow
     from services.plan_service import PlanService
     from services.referral_service import ReferralService
+    from services.saas_ops_service import SaaSOpsService
     from services.subscription_service import SubscriptionService
 
     selected_plan_code = (request.values.get("selected_plan") or "trial").strip().lower()
@@ -406,6 +407,7 @@ def register():
                 )
 
             record_audit(action="register_success", entity="user", entity_id=user.id, detail="Registro de usuario exitoso")
+            SaaSOpsService.register_signup(db.session, company=company, user=user)
             db.session.commit()
 
             session["post_register_onboarding_company_id"] = company.id

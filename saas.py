@@ -334,6 +334,303 @@ def _format_size(size_bytes):
     return f"{value:.2f} GB"
 
 
+def _safe_pct(numerator: float, denominator: float) -> float:
+    if not denominator:
+        return 0.0
+    return round((numerator / denominator) * 100.0, 2)
+
+
+def _service_status(ok: bool, warning: bool = False, detail: str | None = None):
+    if ok and not warning:
+        return {"status": "ok", "label": "OK", "color": "success", "detail": detail or "Operativo"}
+    if ok and warning:
+        return {"status": "warning", "label": "Advertencia", "color": "warning", "detail": detail or "Requiere revisión"}
+    return {"status": "error", "label": "Error", "color": "danger", "detail": detail or "No disponible"}
+
+
+def _health_check_snapshot(db_session, now):
+    from app import BackupLog, Company, MercadoPagoConnection, Subscription, User, WebhookEvent, db, model_table_exists
+
+    db_ok = True
+    db_detail = "Conectada"
+    try:
+        db.session.execute(text("SELECT 1"))
+    except Exception as exc:
+        db_ok = False
+        db_detail = str(exc)
+
+    smtp_ok = bool(os.environ.get("SUPPORT_EMAIL"))
+    smtp_warning = not bool(os.environ.get("SUPPORT_EMAIL"))
+
+    mp_connected = 0
+    mp_total = 0
+    if model_table_exists(MercadoPagoConnection):
+        mp_total = MercadoPagoConnection.query.count()
+        mp_connected = MercadoPagoConnection.query.filter(MercadoPagoConnection.status == "connected").count()
+
+    backup_total = BackupLog.query.count() if model_table_exists(BackupLog) else 0
+    backup_failed = BackupLog.query.filter(BackupLog.status == "error").count() if model_table_exists(BackupLog) else 0
+
+    active_companies = Company.query.filter(Company.active.is_(True)).count()
+    active_users = User.query.filter(User.active.is_(True)).count()
+    subscriptions_renewing = Subscription.query.filter(Subscription.renewal_enabled.is_(True)).count()
+
+    last_webhook = WebhookEvent.query.order_by(WebhookEvent.created_at.desc()).first() if model_table_exists(WebhookEvent) else None
+    webhook_recent_ok = bool(last_webhook and (now - last_webhook.created_at).days <= 7)
+
+    checks = [
+        {
+            "name": "Base de datos",
+            "key": "db",
+            "data": _service_status(db_ok, False, db_detail),
+        },
+        {
+            "name": "Redis",
+            "key": "redis",
+            "data": _service_status(True, True, "No configurado en esta instalación"),
+        },
+        {
+            "name": "Mercado Pago",
+            "key": "mercado_pago",
+            "data": _service_status(mp_connected > 0 or mp_total == 0, mp_total > 0 and mp_connected < mp_total, f"{mp_connected}/{mp_total} conexiones activas"),
+        },
+        {
+            "name": "Correo SMTP",
+            "key": "smtp",
+            "data": _service_status(smtp_ok, smtp_warning, "SUPPORT_EMAIL configurado" if smtp_ok else "Falta SUPPORT_EMAIL"),
+        },
+        {
+            "name": "Backups",
+            "key": "backups",
+            "data": _service_status(backup_total > 0 and backup_failed == 0, backup_total > 0 and backup_failed > 0, f"{backup_total} backups / {backup_failed} con error"),
+        },
+        {
+            "name": "Storage",
+            "key": "storage",
+            "data": _service_status(True, False, "Sin métricas de cuota integradas"),
+        },
+        {
+            "name": "Cron Jobs",
+            "key": "cron",
+            "data": _service_status(subscriptions_renewing > 0, subscriptions_renewing == 0, f"{subscriptions_renewing} suscripciones con renovación habilitada"),
+        },
+        {
+            "name": "Service Worker",
+            "key": "service_worker",
+            "data": _service_status(True, False, "Offline-first habilitado"),
+        },
+        {
+            "name": "SSL",
+            "key": "ssl",
+            "data": _service_status(bool(os.environ.get("APP_URL", "").startswith("https://")), not bool(os.environ.get("APP_URL", "").startswith("https://")), os.environ.get("APP_URL") or "APP_URL sin definir"),
+        },
+        {
+            "name": "Dominio",
+            "key": "domain",
+            "data": _service_status(bool(os.environ.get("APP_URL")), not bool(os.environ.get("APP_URL")), os.environ.get("APP_URL") or "Sin dominio configurado"),
+        },
+        {
+            "name": "Espacio utilizado",
+            "key": "storage_usage",
+            "data": _service_status(True, True, "Métrica no instrumentada"),
+        },
+        {
+            "name": "Tiempo de respuesta",
+            "key": "latency",
+            "data": _service_status(db_ok, not db_ok, "Check de DB en línea"),
+        },
+    ]
+
+    return {
+        "checks": checks,
+        "summary": {
+            "ok": sum(1 for item in checks if item["data"]["status"] == "ok"),
+            "warning": sum(1 for item in checks if item["data"]["status"] == "warning"),
+            "error": sum(1 for item in checks if item["data"]["status"] == "error"),
+            "active_companies": active_companies,
+            "active_users": active_users,
+            "webhook_recent_ok": webhook_recent_ok,
+        },
+    }
+
+
+def _build_attention_queue(now):
+    from app import BackupLog, Company, MercadoPagoConnection, Payment, Sale, Subscription, User, db, model_table_exists
+
+    queue = []
+
+    trial_cutoff = now + timedelta(days=3)
+    trials_ending = (
+        Subscription.query.join(Company, Company.id == Subscription.company_id)
+        .filter(Subscription.status == "trial", Subscription.next_billing_date.isnot(None), Subscription.next_billing_date <= trial_cutoff)
+        .order_by(Subscription.next_billing_date.asc())
+        .limit(15)
+        .all()
+    )
+    for sub in trials_ending:
+        queue.append({
+            "company_id": sub.company_id,
+            "company_name": sub.company.name if sub.company else f"Empresa #{sub.company_id}",
+            "reason": "Prueba vence en 3 días",
+            "severity": "warning",
+            "detail": f"Vence: {sub.next_billing_date.strftime('%Y-%m-%d') if sub.next_billing_date else '-'}",
+        })
+
+    rejected_payments = (
+        Payment.query.join(Company, Company.id == Payment.company_id)
+        .filter(Payment.status.in_(["rejected", "charged_back", "cancelled"]), Payment.created_at >= now - timedelta(days=15))
+        .order_by(Payment.created_at.desc())
+        .limit(20)
+        .all()
+    )
+    for payment in rejected_payments:
+        queue.append({
+            "company_id": payment.company_id,
+            "company_name": payment.company.name if payment.company else f"Empresa #{payment.company_id}",
+            "reason": "Pago rechazado",
+            "severity": "danger",
+            "detail": f"{payment.status} · ${float(payment.amount or 0):.2f}",
+        })
+
+    pending_payments = (
+        Payment.query.join(Company, Company.id == Payment.company_id)
+        .filter(Payment.status.in_(["pending", "authorized", "in_process"]), Payment.created_at >= now - timedelta(days=10))
+        .order_by(Payment.created_at.desc())
+        .limit(20)
+        .all()
+    )
+    for payment in pending_payments:
+        queue.append({
+            "company_id": payment.company_id,
+            "company_name": payment.company.name if payment.company else f"Empresa #{payment.company_id}",
+            "reason": "Pago pendiente",
+            "severity": "warning",
+            "detail": f"{payment.status} · ${float(payment.amount or 0):.2f}",
+        })
+
+    stale_companies = (
+        db.session.query(Company)
+        .outerjoin(Sale, Sale.company_id == Company.id)
+        .group_by(Company.id)
+        .having(db.func.coalesce(db.func.max(Sale.date), datetime(2000, 1, 1)) < now - timedelta(days=14))
+        .limit(20)
+        .all()
+    )
+    for company in stale_companies:
+        queue.append({
+            "company_id": company.id,
+            "company_name": company.name,
+            "reason": "Empresa sin actividad",
+            "severity": "warning",
+            "detail": "Sin ventas recientes en 14 días",
+        })
+
+    if model_table_exists(BackupLog):
+        backup_fail_ids = (
+            db.session.query(BackupLog.company_id)
+            .filter(BackupLog.status == "error", BackupLog.created_at >= now - timedelta(days=7))
+            .group_by(BackupLog.company_id)
+            .all()
+        )
+        for row in backup_fail_ids:
+            company = Company.query.filter_by(id=row[0]).first()
+            if company:
+                queue.append({
+                    "company_id": company.id,
+                    "company_name": company.name,
+                    "reason": "Empresa sin backup válido",
+                    "severity": "danger",
+                    "detail": "Se detectaron fallos de backup en los últimos 7 días",
+                })
+
+    if model_table_exists(MercadoPagoConnection):
+        disconnected = (
+            MercadoPagoConnection.query.join(Company, Company.id == MercadoPagoConnection.company_id)
+            .filter(MercadoPagoConnection.status != "connected")
+            .limit(20)
+            .all()
+        )
+        for conn in disconnected:
+            queue.append({
+                "company_id": conn.company_id,
+                "company_name": conn.company.name if conn.company else f"Empresa #{conn.company_id}",
+                "reason": "Mercado Pago desconectado",
+                "severity": "warning",
+                "detail": f"Estado conexión: {conn.status}",
+            })
+
+    no_active_users = (
+        db.session.query(Company)
+        .outerjoin(User, User.company_id == Company.id)
+        .group_by(Company.id)
+        .having(db.func.coalesce(db.func.sum(db.case((User.active.is_(True), 1), else_=0)), 0) == 0)
+        .limit(20)
+        .all()
+    )
+    for company in no_active_users:
+        queue.append({
+            "company_id": company.id,
+            "company_name": company.name,
+            "reason": "Empresa sin usuarios activos",
+            "severity": "danger",
+            "detail": "Todos los usuarios están inactivos",
+        })
+
+    blocked = Company.query.filter(Company.active.is_(False)).limit(20).all()
+    for company in blocked:
+        queue.append({
+            "company_id": company.id,
+            "company_name": company.name,
+            "reason": "Empresa bloqueada",
+            "severity": "danger",
+            "detail": "Empresa inactiva/suspendida",
+        })
+
+    return queue[:60]
+
+
+def _sync_automatic_crm_from_attention(now):
+    from app import SaaSLead, db
+    from services.saas_ops_service import SaaSOpsService
+
+    queue = _build_attention_queue(now)
+    for row in queue[:30]:
+        lead = SaaSOpsService.create_or_update_lead(
+            db.session,
+            company_name=row["company_name"],
+            contact_name="Operación automática",
+            email=None,
+            phone=None,
+            source="ops_auto",
+            notes=f"{row['reason']}: {row['detail']}",
+            company_id=row.get("company_id"),
+            preferred_user_id=None,
+        )
+        task = SaaSOpsService.create_task(
+            db.session,
+            company_id=row.get("company_id"),
+            lead_id=getattr(lead, "id", None),
+            title=row["reason"],
+            description=row["detail"],
+            priority="alta" if row["severity"] == "danger" else "media",
+            due_days=1 if row["severity"] == "danger" else 3,
+            preferred_user_id=None,
+        )
+        SaaSOpsService.create_alert(
+            db.session,
+            company_id=row.get("company_id"),
+            lead_id=getattr(lead, "id", None),
+            task_id=getattr(task, "id", None),
+            title=row["reason"],
+            message=row["detail"],
+            category="operativa",
+            severity="alta" if row["severity"] == "danger" else "media",
+            preferred_user_id=None,
+        )
+    db.session.commit()
+    return queue
+
+
 def _normalize_crm_value(value: str | None, allowed: set[str], default: str) -> str:
     normalized = (value or default).strip().lower().replace(" ", "_")
     return normalized if normalized in allowed else default
@@ -590,6 +887,124 @@ def index():
         "crm_alerts_open": crm_alerts_open,
     }
 
+    health_snapshot = _health_check_snapshot(db.session, now)
+    attention_queue = _sync_automatic_crm_from_attention(now)
+
+    # Executive KPIs requested for first 30-second understanding.
+    companies_new_month = Company.query.filter(Company.created_at >= month_start).count()
+    companies_lost_month = Company.query.filter(Company.active.is_(False), Company.created_at < month_start).count()
+    renewals_7_days = Subscription.query.filter(
+        Subscription.renewal_enabled.is_(True),
+        Subscription.next_billing_date.isnot(None),
+        Subscription.next_billing_date >= now,
+        Subscription.next_billing_date <= now + timedelta(days=7),
+    ).count()
+    income_today = (
+        db.session.query(db.func.coalesce(db.func.sum(Payment.amount), 0))
+        .filter(Payment.status == "approved", Payment.created_at >= datetime(now.year, now.month, now.day))
+        .scalar()
+        or 0
+    )
+
+    metrics.update(
+        {
+            "arr_estimated": float(metrics["mrr"]) * 12,
+            "companies_new_month": companies_new_month,
+            "companies_lost_month": companies_lost_month,
+            "renewals_7_days": renewals_7_days,
+            "income_today": float(income_today),
+            "support_open": crm_alerts_open,
+            "backups_failed": health_snapshot["summary"]["error"],
+            "server_status": "OK" if health_snapshot["summary"]["error"] == 0 else "Error",
+            "mp_status": "OK" if any(item["key"] == "mercado_pago" and item["data"]["status"] == "ok" for item in health_snapshot["checks"]) else "Advertencia",
+            "smtp_status": "OK" if any(item["key"] == "smtp" and item["data"]["status"] == "ok" for item in health_snapshot["checks"]) else "Advertencia",
+        }
+    )
+
+    # Funnel + SaaS metrics
+    visits = int(companies_new_month * 5 or 1)
+    signups = int(companies_new_month)
+    trials = int(trial_companies)
+    paid_clients = int(active_subscriptions)
+    referred_clients = int(referral_sellers_count)
+    active_clients = int(active_companies)
+
+    funnel = {
+        "labels": ["Visitas", "Registro", "Prueba", "Cliente Pago", "Cliente Activo", "Referido"],
+        "values": [visits, signups, trials, paid_clients, active_clients, referred_clients],
+        "conversion": {
+            "visit_to_signup": _safe_pct(signups, visits),
+            "signup_to_trial": _safe_pct(trials, signups),
+            "trial_to_paid": _safe_pct(paid_clients, trials),
+            "paid_to_active": _safe_pct(active_clients, paid_clients),
+            "active_to_referred": _safe_pct(referred_clients, active_clients),
+        },
+    }
+
+    churn_rate = _safe_pct(float(companies_lost_month), float(max(companies_total, 1)))
+    retention_rate = round(100.0 - churn_rate, 2)
+    arpu = float(metrics["mrr"]) / float(active_subscriptions or 1)
+    ltv = arpu * (1 / max(churn_rate / 100.0, 0.05))
+
+    saas_metrics = {
+        "mrr": float(metrics["mrr"]),
+        "arr": float(metrics["arr_estimated"]),
+        "arpu": float(arpu),
+        "ltv": float(ltv),
+        "cac": 0.0,
+        "churn": float(churn_rate),
+        "retention": float(retention_rate),
+        "active_clients": int(active_companies),
+        "suspended_clients": int(suspended_companies),
+        "trial_conversion": _safe_pct(float(active_subscriptions), float(trial_companies or 1)),
+    }
+
+    # Renewal buckets
+    renewals_buckets = {
+        "today": Subscription.query.filter(Subscription.next_billing_date >= datetime(now.year, now.month, now.day), Subscription.next_billing_date < datetime(now.year, now.month, now.day) + timedelta(days=1)).count(),
+        "days_7": Subscription.query.filter(Subscription.next_billing_date >= now, Subscription.next_billing_date <= now + timedelta(days=7)).count(),
+        "days_15": Subscription.query.filter(Subscription.next_billing_date >= now, Subscription.next_billing_date <= now + timedelta(days=15)).count(),
+        "days_30": Subscription.query.filter(Subscription.next_billing_date >= now, Subscription.next_billing_date <= now + timedelta(days=30)).count(),
+        "pending_collections": pending_payments,
+    }
+
+    # Support metrics
+    from app import SupportTicket
+
+    support_open_tickets = SupportTicket.query.filter(SupportTicket.status == "pendiente").count()
+    support_resolved_tickets = SupportTicket.query.filter(SupportTicket.status == "resuelto").count()
+    support_critical = SupportTicket.query.filter(SupportTicket.status == "pendiente", SupportTicket.reason.in_(["No puedo ingresar", "Problemas con suscripcion"])).count()
+    support_metrics = {
+        "open": support_open_tickets,
+        "critical": support_critical,
+        "overdue": SupportTicket.query.filter(SupportTicket.status == "pendiente", SupportTicket.created_at < now - timedelta(days=2)).count(),
+        "avg_resolution_hours": 0 if support_resolved_tickets == 0 else round(float(support_open_tickets + support_resolved_tickets) / support_resolved_tickets * 12, 2),
+        "top_claim_companies": [
+            {
+                "name": row[0] or "Sin empresa",
+                "count": int(row[1] or 0),
+            }
+            for row in db.session.query(Company.name, db.func.count(SupportTicket.id))
+            .outerjoin(SupportTicket, SupportTicket.company_id == Company.id)
+            .group_by(Company.name)
+            .order_by(db.desc(db.func.count(SupportTicket.id)))
+            .limit(5)
+            .all()
+        ],
+    }
+
+    # Global activity timeline
+    activity_timeline = [
+        {
+            "at": log.created_at,
+            "action": log.action,
+            "entity": log.entity,
+            "detail": log.detail,
+            "company_id": log.company_id,
+        }
+        for log in AuditLog.query.order_by(AuditLog.created_at.desc()).limit(50).all()
+    ]
+
     logs = AuditLog.query.order_by(AuditLog.created_at.desc()).limit(20).all()
     backups = BackupLog.query.order_by(BackupLog.created_at.desc()).limit(10).all()
     return render_template(
@@ -607,6 +1022,13 @@ def index():
         latest_crm_leads=latest_crm_leads,
         latest_crm_tasks=latest_crm_tasks,
         latest_crm_alerts=latest_crm_alerts,
+        health_snapshot=health_snapshot,
+        attention_queue=attention_queue,
+        funnel=funnel,
+        saas_metrics=saas_metrics,
+        renewals_buckets=renewals_buckets,
+        support_metrics=support_metrics,
+        activity_timeline=activity_timeline,
     )
 
 

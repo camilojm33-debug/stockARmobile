@@ -36,6 +36,7 @@ def _temporary_password(length: int = 12) -> str:
 @login_required
 def new_ticket():
     from app import SupportTicket, db, record_audit
+    from services.saas_ops_service import SaaSOpsService
 
     if request.method == "POST":
         reason = _normalize_reason(request.form.get("reason"))
@@ -63,6 +64,7 @@ def new_ticket():
             entity_id=ticket.id,
             detail=f"Ticket soporte creado. motivo={reason}",
         )
+        SaaSOpsService.register_support_ticket(db.session, ticket=ticket, user=current_user)
         db.session.commit()
         flash("Solicitud de soporte enviada correctamente.", "success")
         if getattr(current_user, "role", None) == "superadmin":

@@ -1791,6 +1791,8 @@ def index():
 
 @app.route("/landing/contact", methods=["POST"])
 def landing_contact():
+    from services.saas_ops_service import SaaSOpsService
+
     name = (request.form.get("name") or "").strip()
     email = (request.form.get("email") or "").strip().lower()
     message = (request.form.get("message") or "").strip()
@@ -1816,6 +1818,8 @@ def landing_contact():
         email,
         len(message),
     )
+    SaaSOpsService.register_landing_contact(db.session, name=name, email=email, message=message)
+    db.session.commit()
     flash(
         "Gracias por comunicarte con StockArmobile. Nuestro equipo respondera tu consulta a la brevedad.",
         "success",

@@ -1,257 +1,181 @@
-﻿{% extends "base_master.html" %}
+{% extends "base_master.html" %}
 
-{% block title %}Superadmin - StockArmobile{% endblock %}
+{% block title %}Centro SaaS - Operaciones StockArmobile{% endblock %}
 
 {% block content %}
 <div class="app-shell">
   <div class="d-flex flex-wrap justify-content-between align-items-center gap-3 mb-4">
     <div>
-      <span class="page-kicker"><i class="bi bi-shield-check"></i> Superadmin</span>
-      <h1 class="h3 fw-bold mb-0">Centro de Control Total</h1>
-      <p class="text-muted mb-0">Vista ejecutiva en tiempo real de empresas, suscripciones, facturación y operación.</p>
+      <span class="page-kicker"><i class="bi bi-speedometer2"></i> SuperAdmin</span>
+      <h1 class="h3 fw-bold mb-0">Centro de Operaciones SaaS</h1>
+      <p class="text-muted mb-0">Vista ejecutiva de facturación, clientes, salud técnica y operaciones automáticas.</p>
     </div>
-    <div class="d-flex gap-2">
-      <a class="btn btn-outline-dark" href="{{ url_for('saas.companies_panel') }}"><i class="bi bi-buildings me-1"></i>Empresas</a>
-      <a class="btn btn-outline-primary" href="{{ url_for('saas.crm_panel') }}"><i class="bi bi-diagram-3 me-1"></i>Centro SaaS</a>
-      <a class="btn btn-outline-primary" href="{{ url_for('saas.users_panel') }}"><i class="bi bi-people me-1"></i>Empleados</a>
-      <a class="btn btn-outline-info" href="{{ url_for('saas.subscriptions_panel') }}"><i class="bi bi-credit-card-2-front me-1"></i>Suscripciones</a>
-      <a class="btn btn-outline-warning" href="{{ url_for('saas.mercado_pago_connections') }}"><i class="bi bi-shield-lock me-1"></i>Mercado Pago</a>
-      <a class="btn btn-outline-secondary" href="{{ url_for('saas.backups_panel') }}"><i class="bi bi-hdd-stack me-1"></i>Backups</a>
-      <a class="btn btn-outline-success" href="{{ url_for('saas.export_metrics') }}"><i class="bi bi-file-earmark-excel me-1"></i>Exportar metricas</a>
-      <a class="btn btn-outline-primary" href="{{ url_for('saas.billing') }}"><i class="bi bi-currency-dollar me-1"></i>Facturación</a>
+    <div class="d-flex flex-wrap gap-2">
+      <a class="btn btn-outline-primary" href="{{ url_for('saas.crm_panel') }}">CRM</a>
+      <a class="btn btn-outline-primary" href="{{ url_for('saas.companies_panel') }}">Empresas</a>
+      <a class="btn btn-outline-primary" href="{{ url_for('saas.subscriptions_panel') }}">Suscripciones</a>
+      <a class="btn btn-outline-primary" href="{{ url_for('saas.backups_panel') }}">Backups</a>
+      <a class="btn btn-outline-primary" href="{{ url_for('support.admin_index') }}">Soporte</a>
     </div>
   </div>
 
   <div class="row g-3 mb-4">
-    <div class="col-sm-6 col-lg-4 col-xl-3"><div class="card app-card metric-card"><div class="card-body"><div class="text-muted small fw-semibold text-uppercase">Empresas registradas</div><div class="metric-value fw-bold">{{ metrics.companies_total }}</div><div class="text-muted small">Activas {{ metrics.active_companies }}</div></div></div></div>
-    <div class="col-sm-6 col-lg-4 col-xl-3"><div class="card app-card metric-card"><div class="card-body"><div class="text-muted small fw-semibold text-uppercase">Empresas suspendidas</div><div class="metric-value fw-bold">{{ metrics.suspended_companies }}</div><div class="text-muted small">Inactivas {{ metrics.inactive_companies }}</div></div></div></div>
-    <div class="col-sm-6 col-lg-4 col-xl-3"><div class="card app-card metric-card"><div class="card-body"><div class="text-muted small fw-semibold text-uppercase">Prueba</div><div class="metric-value fw-bold">{{ metrics.trial_companies }}</div><div class="text-muted small">Premium {{ metrics.premium_companies }}</div></div></div></div>
-    <div class="col-sm-6 col-lg-4 col-xl-3"><div class="card app-card metric-card"><div class="card-body"><div class="text-muted small fw-semibold text-uppercase">Empresas vencidas</div><div class="metric-value fw-bold">{{ metrics.expired_companies }}</div><div class="text-muted small">Suscripciones {{ metrics.subscriptions_count }}</div></div></div></div>
+    <div class="col-sm-6 col-xl-3"><div class="card app-card h-100"><div class="card-body"><div class="small text-muted text-uppercase fw-semibold">MRR</div><div class="fs-4 fw-bold">${{ '%.2f'|format(metrics.mrr) }}</div></div></div></div>
+    <div class="col-sm-6 col-xl-3"><div class="card app-card h-100"><div class="card-body"><div class="small text-muted text-uppercase fw-semibold">ARR estimado</div><div class="fs-4 fw-bold">${{ '%.2f'|format(metrics.arr_estimated) }}</div></div></div></div>
+    <div class="col-sm-6 col-xl-3"><div class="card app-card h-100"><div class="card-body"><div class="small text-muted text-uppercase fw-semibold">Empresas activas</div><div class="fs-4 fw-bold">{{ metrics.active_companies }}</div><div class="small text-muted">Trial: {{ metrics.trial_companies }} · Suspendidas: {{ metrics.suspended_companies }}</div></div></div></div>
+    <div class="col-sm-6 col-xl-3"><div class="card app-card h-100"><div class="card-body"><div class="small text-muted text-uppercase fw-semibold">Pagos pendientes</div><div class="fs-4 fw-bold">{{ metrics.pending_payments }}</div><div class="small text-muted">Rechazados: {{ metrics.rejected_payments }}</div></div></div></div>
 
-    <div class="col-sm-6 col-lg-4 col-xl-3"><div class="card app-card metric-card"><div class="card-body"><div class="text-muted small fw-semibold text-uppercase">Usuarios totales</div><div class="metric-value fw-bold">{{ metrics.users_count }}</div><div class="text-muted small">Activos {{ metrics.active_users_count }}</div></div></div></div>
-    <div class="col-sm-6 col-lg-4 col-xl-3"><div class="card app-card metric-card"><div class="card-body"><div class="text-muted small fw-semibold text-uppercase">Ventas totales</div><div class="metric-value fw-bold">{{ metrics.sales_count }}</div><div class="text-muted small">Monto ${{ "%.2f"|format(metrics.sales_total_amount) }}</div></div></div></div>
-    <div class="col-sm-6 col-lg-4 col-xl-3"><div class="card app-card metric-card"><div class="card-body"><div class="text-muted small fw-semibold text-uppercase">Productos</div><div class="metric-value fw-bold">{{ metrics.products_count }}</div><div class="text-muted small">Clientes {{ metrics.clients_count }}</div></div></div></div>
-    <div class="col-sm-6 col-lg-4 col-xl-3"><div class="card app-card metric-card"><div class="card-body"><div class="text-muted small fw-semibold text-uppercase">Pagos en riesgo</div><div class="metric-value fw-bold">{{ metrics.pending_payments }}</div><div class="text-muted small">Rechazados {{ metrics.rejected_payments }}</div></div></div></div>
+    <div class="col-sm-6 col-xl-3"><div class="card app-card h-100"><div class="card-body"><div class="small text-muted text-uppercase fw-semibold">Ingresos de hoy</div><div class="fs-4 fw-bold">${{ '%.2f'|format(metrics.income_today) }}</div></div></div></div>
+    <div class="col-sm-6 col-xl-3"><div class="card app-card h-100"><div class="card-body"><div class="small text-muted text-uppercase fw-semibold">Ingresos del mes</div><div class="fs-4 fw-bold">${{ '%.2f'|format(metrics.income_month) }}</div></div></div></div>
+    <div class="col-sm-6 col-xl-3"><div class="card app-card h-100"><div class="card-body"><div class="small text-muted text-uppercase fw-semibold">Renovaciones próximas</div><div class="fs-4 fw-bold">{{ metrics.renewals_7_days }}</div><div class="small text-muted">7 días</div></div></div></div>
+    <div class="col-sm-6 col-xl-3"><div class="card app-card h-100"><div class="card-body"><div class="small text-muted text-uppercase fw-semibold">Referidos activos</div><div class="fs-4 fw-bold">{{ metrics.referral_sellers_count }}</div><div class="small text-muted">Comisiones pendientes: {{ metrics.referral_pending_count }}</div></div></div></div>
 
-    <div class="col-sm-6 col-lg-4 col-xl-3"><div class="card app-card metric-card"><div class="card-body"><div class="text-muted small fw-semibold text-uppercase">MRR</div><div class="metric-value fw-bold">${{ "%.2f"|format(metrics.mrr) }}</div><div class="text-muted small">ARR ${{ "%.2f"|format(metrics.arr) }}</div></div></div></div>
-    <div class="col-sm-6 col-lg-4 col-xl-3"><div class="card app-card metric-card"><div class="card-body"><div class="text-muted small fw-semibold text-uppercase">Facturación mensual</div><div class="metric-value fw-bold">${{ "%.2f"|format(metrics.monthly_billing) }}</div><div class="text-muted small">Anual ${{ "%.2f"|format(metrics.annual_billing) }}</div></div></div></div>
-    <div class="col-sm-6 col-lg-4 col-xl-3"><div class="card app-card metric-card"><div class="card-body"><div class="text-muted small fw-semibold text-uppercase">Ingresos cobrados</div><div class="metric-value fw-bold">${{ "%.2f"|format(metrics.income_month) }}</div><div class="text-muted small">Año ${{ "%.2f"|format(metrics.income_year) }}</div></div></div></div>
-    <div class="col-sm-6 col-lg-4 col-xl-3"><div class="card app-card metric-card"><div class="card-body"><div class="text-muted small fw-semibold text-uppercase">Planes activos</div><div class="metric-value fw-bold">{{ plans|length }}</div><div class="text-muted small">Suscripciones activas {{ metrics.active_subscriptions }}</div></div></div></div>
+    <div class="col-sm-6 col-xl-3"><div class="card app-card h-100"><div class="card-body"><div class="small text-muted text-uppercase fw-semibold">Soporte abierto</div><div class="fs-4 fw-bold">{{ support_metrics.open }}</div><div class="small text-muted">Críticos: {{ support_metrics.critical }}</div></div></div></div>
+    <div class="col-sm-6 col-xl-3"><div class="card app-card h-100"><div class="card-body"><div class="small text-muted text-uppercase fw-semibold">Backups fallidos</div><div class="fs-4 fw-bold">{{ health_snapshot.summary.error }}</div><div class="small text-muted">Estado backups en health check</div></div></div></div>
+    <div class="col-sm-6 col-xl-3"><div class="card app-card h-100"><div class="card-body"><div class="small text-muted text-uppercase fw-semibold">Servidor</div><div class="fs-5 fw-bold text-{{ 'success' if metrics.server_status == 'OK' else 'danger' }}">{{ metrics.server_status }}</div></div></div></div>
+    <div class="col-sm-6 col-xl-3"><div class="card app-card h-100"><div class="card-body"><div class="small text-muted text-uppercase fw-semibold">Mercado Pago / SMTP</div><div class="small"><span class="badge text-bg-{{ 'success' if metrics.mp_status == 'OK' else 'warning' }}">MP {{ metrics.mp_status }}</span> <span class="badge text-bg-{{ 'success' if metrics.smtp_status == 'OK' else 'warning' }}">SMTP {{ metrics.smtp_status }}</span></div></div></div></div>
+  </div>
 
-    <div class="col-sm-6 col-lg-4 col-xl-3"><div class="card app-card metric-card"><div class="card-body"><div class="text-muted small fw-semibold text-uppercase">Vendedores referidos</div><div class="metric-value fw-bold">{{ metrics.referral_sellers_count }}</div><div class="text-muted small">Comisiones {{ metrics.referral_commissions_count }}</div></div></div></div>
-    <div class="col-sm-6 col-lg-4 col-xl-3"><div class="card app-card metric-card"><div class="card-body"><div class="text-muted small fw-semibold text-uppercase">Referidos pendientes</div><div class="metric-value fw-bold">{{ metrics.referral_pending_count }}</div><div class="text-muted small">Seguimiento comercial</div></div></div></div>
-    <div class="col-sm-6 col-lg-4 col-xl-3"><div class="card app-card metric-card"><div class="card-body"><div class="text-muted small fw-semibold text-uppercase">Ventas referidas</div><div class="metric-value fw-bold">${{ "%.2f"|format(metrics.referral_sold_total) }}</div><div class="text-muted small">Comisiones pagadas ${{ "%.2f"|format(metrics.referral_paid_total) }}</div></div></div></div>
-    <div class="col-sm-6 col-lg-4 col-xl-3"><div class="card app-card metric-card"><div class="card-body"><div class="text-muted small fw-semibold text-uppercase">Prospectos CRM</div><div class="metric-value fw-bold">{{ metrics.crm_leads_total }}</div><div class="text-muted small">Abiertos {{ metrics.crm_leads_open }}</div></div></div></div>
-    <div class="col-sm-6 col-lg-4 col-xl-3"><div class="card app-card metric-card"><div class="card-body"><div class="text-muted small fw-semibold text-uppercase">Tareas CRM</div><div class="metric-value fw-bold">{{ metrics.crm_tasks_open }}</div><div class="text-muted small">Atrasadas {{ metrics.crm_tasks_overdue }}</div></div></div></div>
-    <div class="col-sm-6 col-lg-4 col-xl-3"><div class="card app-card metric-card"><div class="card-body"><div class="text-muted small fw-semibold text-uppercase">Alertas CRM</div><div class="metric-value fw-bold">{{ metrics.crm_alerts_open }}</div><div class="text-muted small">Seguimiento operativo</div></div></div></div>
+  <div class="row g-3 mb-4">
+    <div class="col-xl-8">
+      <div class="card app-card h-100">
+        <div class="card-header bg-white fw-bold">Salud del sistema</div>
+        <div class="table-responsive">
+          <table class="table mb-0 align-middle">
+            <thead><tr><th>Servicio</th><th>Estado</th><th>Detalle</th></tr></thead>
+            <tbody>
+              {% for item in health_snapshot.checks %}
+              <tr>
+                <td class="fw-semibold">{{ item.name }}</td>
+                <td><span class="badge text-bg-{{ item.data.color }}">{{ item.data.label }}</span></td>
+                <td class="small text-muted">{{ item.data.detail }}</td>
+              </tr>
+              {% endfor %}
+            </tbody>
+          </table>
+        </div>
+      </div>
+    </div>
+    <div class="col-xl-4">
+      <div class="card app-card h-100">
+        <div class="card-header bg-white fw-bold">Empresas que necesitan atención</div>
+        <div class="card-body">
+          {% for item in attention_queue[:12] %}
+          <div class="border-bottom py-2">
+            <div class="d-flex justify-content-between align-items-start gap-2">
+              <div>
+                <div class="fw-semibold">{{ item.company_name }}</div>
+                <div class="small text-muted">{{ item.reason }}</div>
+              </div>
+              <span class="badge text-bg-{{ 'danger' if item.severity == 'danger' else 'warning' }}">{{ 'Alta' if item.severity == 'danger' else 'Media' }}</span>
+            </div>
+            <div class="small text-muted mt-1">{{ item.detail }}</div>
+          </div>
+          {% else %}
+          <p class="text-muted mb-0">Sin alertas de atención inmediata.</p>
+          {% endfor %}
+        </div>
+      </div>
+    </div>
   </div>
 
   <div class="row g-3 mb-4">
     <div class="col-xl-6">
       <div class="card app-card h-100">
-        <div class="card-header bg-white fw-bold">Crecimiento de empresas</div>
-        <div class="card-body"><canvas id="companiesGrowthChart" height="160"></canvas></div>
+        <div class="card-header bg-white fw-bold">Embudo de ventas SaaS</div>
+        <div class="card-body">
+          <canvas id="saasFunnelChart" height="170"></canvas>
+          <div class="row g-2 mt-2 small text-muted">
+            <div class="col-6">Visita → Registro: {{ funnel.conversion.visit_to_signup }}%</div>
+            <div class="col-6">Registro → Trial: {{ funnel.conversion.signup_to_trial }}%</div>
+            <div class="col-6">Trial → Pago: {{ funnel.conversion.trial_to_paid }}%</div>
+            <div class="col-6">Pago → Activo: {{ funnel.conversion.paid_to_active }}%</div>
+          </div>
+        </div>
       </div>
     </div>
     <div class="col-xl-6">
       <div class="card app-card h-100">
-        <div class="card-header bg-white fw-bold">Ventas por mes</div>
-        <div class="card-body"><canvas id="salesByMonthChart" height="160"></canvas></div>
+        <div class="card-header bg-white fw-bold">Métricas SaaS</div>
+        <div class="table-responsive">
+          <table class="table mb-0">
+            <tbody>
+              <tr><th>MRR</th><td>${{ '%.2f'|format(saas_metrics.mrr) }}</td><th>ARR</th><td>${{ '%.2f'|format(saas_metrics.arr) }}</td></tr>
+              <tr><th>ARPU</th><td>${{ '%.2f'|format(saas_metrics.arpu) }}</td><th>LTV</th><td>${{ '%.2f'|format(saas_metrics.ltv) }}</td></tr>
+              <tr><th>CAC</th><td>${{ '%.2f'|format(saas_metrics.cac) }}</td><th>Churn</th><td>{{ '%.2f'|format(saas_metrics.churn) }}%</td></tr>
+              <tr><th>Retención</th><td>{{ '%.2f'|format(saas_metrics.retention) }}%</td><th>Trial conversion</th><td>{{ '%.2f'|format(saas_metrics.trial_conversion) }}%</td></tr>
+              <tr><th>Clientes activos</th><td>{{ saas_metrics.active_clients }}</td><th>Suspendidos</th><td>{{ saas_metrics.suspended_clients }}</td></tr>
+            </tbody>
+          </table>
+        </div>
       </div>
     </div>
-    <div class="col-xl-4">
-      <div class="card app-card h-100">
-        <div class="card-header bg-white fw-bold">Nuevas suscripciones</div>
-        <div class="card-body"><canvas id="newSubscriptionsChart" height="180"></canvas></div>
-      </div>
-    </div>
-    <div class="col-xl-4">
+  </div>
+
+  <div class="row g-3 mb-4">
+    <div class="col-xl-6">
       <div class="card app-card h-100">
         <div class="card-header bg-white fw-bold">Renovaciones</div>
-        <div class="card-body"><canvas id="renewalsChart" height="180"></canvas></div>
-      </div>
-    </div>
-    <div class="col-xl-4">
-      <div class="card app-card h-100">
-        <div class="card-header bg-white fw-bold">Estado de planes</div>
-        <div class="card-body"><canvas id="planStateChart" height="180"></canvas></div>
-      </div>
-    </div>
-  </div>
-
-  <div class="row g-3 mb-4">
-    <div class="col-lg-4">
-      <div class="card app-card h-100">
-        <div class="card-header bg-white fw-bold">Ultimos registros</div>
         <div class="card-body">
-          {% for company in last_registrations %}
-            <div class="d-flex justify-content-between border-bottom py-2 small">
-              <span class="fw-semibold">{{ company.name }}</span>
-              <span class="text-muted">{{ company.created_at.strftime('%Y-%m-%d') if company.created_at else '—' }}</span>
-            </div>
-          {% else %}
-            <p class="text-muted mb-0">Sin registros recientes.</p>
-          {% endfor %}
+          <div class="row g-2">
+            <div class="col-6"><div class="border rounded p-2"><div class="small text-muted">Vence hoy</div><div class="fs-5 fw-bold">{{ renewals_buckets.today }}</div></div></div>
+            <div class="col-6"><div class="border rounded p-2"><div class="small text-muted">7 días</div><div class="fs-5 fw-bold">{{ renewals_buckets.days_7 }}</div></div></div>
+            <div class="col-6"><div class="border rounded p-2"><div class="small text-muted">15 días</div><div class="fs-5 fw-bold">{{ renewals_buckets.days_15 }}</div></div></div>
+            <div class="col-6"><div class="border rounded p-2"><div class="small text-muted">30 días</div><div class="fs-5 fw-bold">{{ renewals_buckets.days_30 }}</div></div></div>
+            <div class="col-12"><div class="border rounded p-2"><div class="small text-muted">Cobros pendientes</div><div class="fs-5 fw-bold">{{ renewals_buckets.pending_collections }}</div></div></div>
+          </div>
         </div>
       </div>
     </div>
-    <div class="col-lg-4">
+    <div class="col-xl-6">
       <div class="card app-card h-100">
-        <div class="card-header bg-white fw-bold">Ultimos pagos</div>
+        <div class="card-header bg-white fw-bold">Soporte</div>
         <div class="card-body">
-          {% for payment in last_payments %}
-            <div class="d-flex justify-content-between border-bottom py-2 small">
-              <span class="fw-semibold">{{ payment.payment_id or payment.reference or 'Pago' }}</span>
-              <span class="text-muted">${{ "%.2f"|format(payment.amount or 0) }} · {{ payment.status }}</span>
-            </div>
+          <div class="row g-2 mb-2">
+            <div class="col-6"><div class="border rounded p-2"><div class="small text-muted">Tickets abiertos</div><div class="fs-5 fw-bold">{{ support_metrics.open }}</div></div></div>
+            <div class="col-6"><div class="border rounded p-2"><div class="small text-muted">Tickets críticos</div><div class="fs-5 fw-bold">{{ support_metrics.critical }}</div></div></div>
+            <div class="col-6"><div class="border rounded p-2"><div class="small text-muted">Vencidos</div><div class="fs-5 fw-bold">{{ support_metrics.overdue }}</div></div></div>
+            <div class="col-6"><div class="border rounded p-2"><div class="small text-muted">Tiempo promedio</div><div class="fs-5 fw-bold">{{ support_metrics.avg_resolution_hours }}h</div></div></div>
+          </div>
+          <div class="small text-muted fw-semibold mb-1">Empresas con más reclamos</div>
+          {% for row in support_metrics.top_claim_companies %}
+          <div class="d-flex justify-content-between border-bottom py-1"><span>{{ row.name }}</span><span class="fw-semibold">{{ row.count }}</span></div>
           {% else %}
-            <p class="text-muted mb-0">Sin pagos recientes.</p>
-          {% endfor %}
-        </div>
-      </div>
-    </div>
-    <div class="col-lg-4">
-      <div class="card app-card h-100">
-        <div class="card-header bg-white fw-bold">Ultimos errores</div>
-        <div class="card-body">
-          {% for error in last_errors %}
-            <div class="border-bottom py-2 small">
-              <div class="fw-semibold">{{ error.action }}</div>
-              <div class="text-muted">{{ error.detail or 'Sin detalle' }}</div>
-            </div>
-          {% else %}
-            <p class="text-muted mb-0">Sin errores recientes.</p>
-          {% endfor %}
-        </div>
-      </div>
-    </div>
-    <div class="col-lg-4">
-      <div class="card app-card h-100">
-        <div class="card-header bg-white fw-bold d-flex justify-content-between align-items-center">
-          <span>Ultimos usuarios</span>
-          <a class="btn btn-sm btn-outline-primary" href="{{ url_for('saas.users_panel') }}">Ver todos</a>
-        </div>
-        <div class="card-body">
-          {% for user in last_users %}
-            <div class="d-flex justify-content-between border-bottom py-2 small">
-              <span class="fw-semibold">{{ user.username }}</span>
-              <span class="text-muted">{{ user.role }} · {{ 'activo' if user.active else 'inactivo' }}</span>
-            </div>
-          {% else %}
-            <p class="text-muted mb-0">Sin usuarios recientes.</p>
-          {% endfor %}
-        </div>
-      </div>
-    </div>
-    <div class="col-lg-4">
-      <div class="card app-card h-100">
-        <div class="card-header bg-white fw-bold d-flex justify-content-between align-items-center">
-          <span>Ultimos referidos</span>
-          <a class="btn btn-sm btn-outline-primary" href="{{ url_for('referrals.admin_referrals_dashboard') }}">Ver panel</a>
-        </div>
-        <div class="card-body">
-          {% for row in latest_referral_commissions %}
-            <div class="d-flex justify-content-between border-bottom py-2 small">
-              <span class="fw-semibold">{{ row.seller.user.username if row.seller and row.seller.user else 'N/A' }}</span>
-              <span class="text-muted">${{ '%.2f'|format(row.commission_amount or 0) }} · {{ row.status }}</span>
-            </div>
-          {% else %}
-            <p class="text-muted mb-0">Sin actividad de referidos.</p>
+          <p class="text-muted mb-0">Sin métricas de reclamos.</p>
           {% endfor %}
         </div>
       </div>
     </div>
   </div>
 
-  <div class="row g-3 mb-4">
-    <div class="col-lg-5">
-      <div class="card app-card h-100">
-        <div class="card-header bg-white fw-bold">Nuevo plan</div>
-        <div class="card-body">
-          <form method="post" class="row g-2">
-            <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
-            <div class="col-12"><input class="form-control" name="name" placeholder="Nombre del plan" required></div>
-            <div class="col-md-4"><input class="form-control" name="code" placeholder="Codigo (ej: business)"></div>
-            <div class="col-md-4"><input class="form-control" name="price" type="number" step="0.01" min="0" placeholder="Precio"></div>
-            <div class="col-md-4"><input class="form-control" name="currency" value="ARS" placeholder="Moneda"></div>
-            <div class="col-md-4"><input class="form-control" name="duration_days" type="number" min="1" value="30" placeholder="Duracion"></div>
-            <div class="col-md-4"><input class="form-control" name="max_users" type="number" min="1" value="1" placeholder="Usuarios"></div>
-            <div class="col-md-4"><input class="form-control" name="max_products" type="number" min="1" value="1000" placeholder="Productos"></div>
-            <div class="col-md-6"><input class="form-control" name="max_clients" type="number" min="1" value="1000" placeholder="Clientes"></div>
-            <div class="col-md-6"><input class="form-control" name="state" value="active" placeholder="Estado"></div>
-            <div class="col-12"><textarea class="form-control" name="features_json" rows="2" placeholder="Funciones (CSV)"></textarea></div>
-            <input type="hidden" name="active" value="1">
-            <div class="col-12"><button class="btn btn-primary">Crear plan</button></div>
-          </form>
+  <div class="card app-card mb-4">
+    <div class="card-header bg-white fw-bold">Actividad en tiempo real</div>
+    <div class="card-body">
+      {% for item in activity_timeline %}
+      <div class="border-bottom py-2 small">
+        <div class="d-flex justify-content-between align-items-start gap-2">
+          <div>
+            <div class="fw-semibold">{{ item.action }}</div>
+            <div class="text-muted">{{ item.entity or 'n/a' }} · {{ item.detail or 'Sin detalle' }}</div>
+          </div>
+          <span class="text-muted">{{ item.at.strftime('%Y-%m-%d %H:%M') if item.at else '-' }}</span>
         </div>
       </div>
-    </div>
-    <div class="col-lg-4">
-      <div class="card app-card h-100">
-        <div class="card-header bg-white fw-bold d-flex justify-content-between align-items-center">
-          <span>Prospectos recientes</span>
-          <a class="btn btn-sm btn-outline-primary" href="{{ url_for('saas.crm_panel') }}">Centro SaaS</a>
-        </div>
-        <div class="card-body">
-          {% for lead in latest_crm_leads %}
-            <div class="d-flex justify-content-between border-bottom py-2 small">
-              <span class="fw-semibold">{{ lead.contact_name }}</span>
-              <span class="text-muted">{{ lead.company_name }} · {{ lead.status }}</span>
-            </div>
-          {% else %}
-            <p class="text-muted mb-0">Sin prospectos recientes.</p>
-          {% endfor %}
-        </div>
-      </div>
-    </div>
-    <div class="col-lg-4">
-      <div class="card app-card h-100">
-        <div class="card-header bg-white fw-bold d-flex justify-content-between align-items-center">
-          <span>Tareas recientes</span>
-          <a class="btn btn-sm btn-outline-primary" href="{{ url_for('saas.crm_panel') }}">Centro SaaS</a>
-        </div>
-        <div class="card-body">
-          {% for task in latest_crm_tasks %}
-            <div class="d-flex justify-content-between border-bottom py-2 small">
-              <span class="fw-semibold">{{ task.title }}</span>
-              <span class="text-muted">{{ task.status }}{% if task.due_at %} · {{ task.due_at.strftime('%Y-%m-%d') }}{% endif %}</span>
-            </div>
-          {% else %}
-            <p class="text-muted mb-0">Sin tareas recientes.</p>
-          {% endfor %}
-        </div>
-      </div>
-    </div>
-    <div class="col-lg-4">
-      <div class="card app-card h-100">
-        <div class="card-header bg-white fw-bold d-flex justify-content-between align-items-center">
-          <span>Alertas recientes</span>
-          <a class="btn btn-sm btn-outline-primary" href="{{ url_for('saas.crm_panel') }}">Centro SaaS</a>
-        </div>
-        <div class="card-body">
-          {% for alert in latest_crm_alerts %}
-            <div class="d-flex justify-content-between border-bottom py-2 small">
-              <span class="fw-semibold">{{ alert.title }}</span>
-              <span class="text-muted">{{ alert.status }} · {{ alert.severity }}</span>
-            </div>
-          {% else %}
-            <p class="text-muted mb-0">Sin alertas recientes.</p>
-          {% endfor %}
-        </div>
-      </div>
-    </div>
-    <div class="col-lg-7">
-      <div class="card app-card h-100">
-        <div class="card-header bg-white fw-bold">Planes comerciales</div>
-        <div class="table-responsive"><table class="table mb-0"><thead><tr><th>Plan</th><th>Duracion</th><th>Capacidad</th><th class="text-end">Precio</th></tr></thead><tbody>{% for plan in plans %}<tr><td class="fw-semibold">{{ plan.name }}<br><small class="text-muted">{{ plan.code or '-' }} · {{ plan.currency or 'ARS' }}</small></td><td>{{ plan.duration_days or 30 }} dias</td><td>{{ plan.max_users }} users / {{ plan.max_products }} prod / {{ plan.max_clients }} cli</td><td class="text-end">${{ "%.2f"|format(plan.price or 0) }}</td></tr>{% else %}<tr><td colspan="4" class="text-center text-muted py-4">Sin planes configurados.</td></tr>{% endfor %}</tbody></table></div>
-      </div>
+      {% else %}
+      <p class="text-muted mb-0">Sin actividad registrada.</p>
+      {% endfor %}
     </div>
   </div>
 
-  <div class="row g-3">
-    <div class="col-lg-6"><div class="card app-card h-100"><div class="card-header bg-white fw-bold">Empresas</div><div class="card-body">{% for company in companies %}<div class="d-flex justify-content-between align-items-center border-bottom py-2 gap-2"><span>{{ company.name }}</span><div class="d-flex align-items-center gap-2"><span class="badge {{ 'text-bg-success' if company.active else 'text-bg-danger' }}">{{ 'activa' if company.active else 'suspendida' }}</span><form method="post" action="{{ url_for('saas.toggle_company', company_id=company.id) }}"><input type="hidden" name="csrf_token" value="{{ csrf_token() }}"><button class="btn btn-sm {{ 'btn-outline-danger' if company.active else 'btn-outline-success' }}" onclick="return confirm('Confirmar cambio de estado de la empresa?')">{{ 'Suspender' if company.active else 'Reactivar' }}</button></form></div></div>{% else %}<p class="text-muted mb-0">La empresa base se creara al inicializar datos.</p>{% endfor %}</div></div></div>
-    <div class="col-lg-3"><div class="card app-card h-100"><div class="card-header bg-white fw-bold">Registros recientes</div><div class="card-body">{% for log in logs %}<div class="small border-bottom py-2">{{ log.created_at.strftime('%Y-%m-%d %H:%M') }} / {{ log.action }}</div>{% else %}<p class="text-muted mb-0">Sin registros.</p>{% endfor %}</div></div></div>
-    <div class="col-lg-3"><div class="card app-card h-100"><div class="card-header bg-white fw-bold">Backups</div><div class="card-body">{% for backup in backups %}<div class="small border-bottom py-2"><span class="badge text-bg-secondary">{{ backup.status }}</span> {{ backup.created_at.strftime('%Y-%m-%d') }}</div>{% else %}<p class="text-muted mb-0">Sin backups.</p>{% endfor %}</div></div></div>
+  <div class="d-flex flex-wrap gap-2 mb-2">
+    <a class="btn btn-outline-dark" href="{{ url_for('saas.crm_panel') }}">Prospectos / Tareas / Alertas</a>
+    <a class="btn btn-outline-dark" href="{{ url_for('saas.companies_panel') }}">Empresas</a>
+    <a class="btn btn-outline-dark" href="{{ url_for('saas.subscriptions_panel') }}">Renovaciones</a>
+    <a class="btn btn-outline-dark" href="{{ url_for('saas.billing') }}">Facturación</a>
+    <a class="btn btn-outline-dark" href="{{ url_for('saas.backups_panel') }}">Backups</a>
+    <a class="btn btn-outline-dark" href="{{ url_for('saas.mercado_pago_connections') }}">Mercado Pago</a>
+    <a class="btn btn-outline-dark" href="{{ url_for('support.admin_index') }}">Soporte</a>
+    <a class="btn btn-outline-dark" href="{{ url_for('saas.logs_panel') }}">Actividad / Logs</a>
   </div>
 </div>
 {% endblock %}
@@ -260,98 +184,26 @@
 <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.3/dist/chart.umd.min.js"></script>
 <script>
   (() => {
-    const labels = {{ metrics.growth_labels|tojson }};
-    const companiesGrowth = {{ metrics.growth_companies_data|tojson }};
-    const salesByMonth = {{ metrics.sales_month_data|tojson }};
-    const newSubscriptions = {{ metrics.new_subscriptions_data|tojson }};
-    const renewals = {{ metrics.renewals_data|tojson }};
-    const planStateLabels = {{ metrics.plan_state_labels|tojson }};
-    const planStateData = {{ metrics.plan_state_data|tojson }};
-
-    const palette = {
-      blue: "#0f62fe",
-      green: "#12b981",
-      orange: "#f59e0b",
-      red: "#ef4444",
-      violet: "#7c3aed",
-    };
-
-    const baseOptions = {
-      responsive: true,
-      maintainAspectRatio: false,
-      plugins: { legend: { display: false } },
-      scales: { y: { beginAtZero: true } },
-    };
-
-    new Chart(document.getElementById("companiesGrowthChart"), {
-      type: "line",
+    const labels = {{ funnel.labels|tojson }};
+    const values = {{ funnel["values"]|tojson }};
+    const ctx = document.getElementById('saasFunnelChart');
+    if (!ctx) return;
+    new Chart(ctx, {
+      type: 'bar',
       data: {
         labels,
         datasets: [{
-          data: companiesGrowth,
-          borderColor: palette.blue,
-          backgroundColor: "rgba(15,98,254,.18)",
-          fill: true,
-          tension: 0.35,
-        }],
-      },
-      options: baseOptions,
-    });
-
-    new Chart(document.getElementById("salesByMonthChart"), {
-      type: "bar",
-      data: {
-        labels,
-        datasets: [{
-          data: salesByMonth,
-          backgroundColor: "rgba(18,185,129,.7)",
+          label: 'Embudo SaaS',
+          data: values,
+          backgroundColor: ['#0f62fe', '#12b981', '#8b5cf6', '#f59e0b', '#10b981', '#64748b'],
           borderRadius: 8,
-        }],
-      },
-      options: baseOptions,
-    });
-
-    new Chart(document.getElementById("newSubscriptionsChart"), {
-      type: "line",
-      data: {
-        labels,
-        datasets: [{
-          data: newSubscriptions,
-          borderColor: palette.violet,
-          backgroundColor: "rgba(124,58,237,.15)",
-          fill: true,
-          tension: 0.35,
-        }],
-      },
-      options: baseOptions,
-    });
-
-    new Chart(document.getElementById("renewalsChart"), {
-      type: "bar",
-      data: {
-        labels,
-        datasets: [{
-          data: renewals,
-          backgroundColor: "rgba(245,158,11,.7)",
-          borderRadius: 8,
-        }],
-      },
-      options: baseOptions,
-    });
-
-    new Chart(document.getElementById("planStateChart"), {
-      type: "doughnut",
-      data: {
-        labels: planStateLabels,
-        datasets: [{
-          data: planStateData,
-          backgroundColor: [palette.blue, palette.green, palette.orange, palette.red, palette.violet, "#64748b"],
         }],
       },
       options: {
         responsive: true,
-        maintainAspectRatio: false,
-        plugins: { legend: { position: "bottom" } },
+        plugins: {
+          legend: { display: false },
+        },
       },
     });
   })();
