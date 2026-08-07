@@ -11,7 +11,7 @@ from pathlib import Path
 from urllib.parse import quote_plus
 import zipfile
 
-from flask import Blueprint, abort, flash, make_response, redirect, render_template, request, send_file, url_for
+from flask import Blueprint, abort, current_app, flash, make_response, redirect, render_template, request, send_file, url_for
 from flask_login import current_user, login_required
 from reportlab.lib.pagesizes import A4
 from reportlab.pdfgen import canvas
@@ -203,12 +203,13 @@ def _parse_commission_percent(value: str | None):
     return (percent / Decimal("100")).quantize(Decimal("0.0001"))
 
 
+def _seller_billing_ready(seller) -> bool:
+    return bool(seller.alias and seller.cbu and seller.bank and seller.account_holder)
+
+
 def _seller_state(seller) -> tuple[str, str]:
     if not getattr(seller, "active", False):
         return "Suspendido", "danger"
-    has_billing_data = bool(seller.alias and seller.cbu and seller.bank and seller.account_holder)
-    if not has_billing_data:
-        return "Pendiente", "warning"
     return "Activo", "success"
 
 
@@ -1308,6 +1309,7 @@ def seller_dashboard():
     notifications = notifications[:8]
 
     seller_state_label, seller_state_color = _seller_state(profile)
+    seller_billing_ready = _seller_billing_ready(profile)
 
     wa_text = f"Hola! Te comparto StockArmobile para gestionar ventas, stock y clientes: {profile.referral_url}"
     share_links = {
@@ -1605,6 +1607,7 @@ def seller_dashboard():
         medals=medals,
         seller_state_label=seller_state_label,
         seller_state_color=seller_state_color,
+        seller_billing_ready=seller_billing_ready,
         share_links=share_links,
         copy_templates=copy_templates,
         stats={

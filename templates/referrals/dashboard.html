@@ -29,6 +29,13 @@
   </div>
 </div>
 
+{% if not seller_billing_ready %}
+<div class="alert alert-warning border-0 shadow-sm mb-4">
+  <div class="fw-semibold mb-1"><i class="bi bi-exclamation-triangle me-1"></i>Faltan datos de cobro</div>
+  <div class="small">Tu perfil de vendedor está activo, pero todavía no completaste CBU, alias, banco y titular de cuenta para recibir pagos.</div>
+</div>
+{% endif %}
+
 <div class="row g-3 mb-4">
   <div class="col-lg-6">
     <div class="card app-card h-100 referrals-card-elevated">
