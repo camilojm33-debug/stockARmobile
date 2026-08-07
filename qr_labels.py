@@ -312,7 +312,10 @@ def _iter_ordered_a4_positions(total, label_w, label_h, grid):
         page_items = min(per_page, total - emitted)
         rows_used = max(1, (page_items + grid["cols"] - 1) // grid["cols"])
 
-        if rows_used == 1:
+        if not grid.get("distribute_rows", True):
+            dynamic_gap_y = grid["gap_y"]
+            row_y_top = grid["page_h"] - grid["margin_y"]
+        elif rows_used == 1:
             dynamic_gap_y = grid["gap_y"]
             row_y_top = (grid["page_h"] + label_h) / 2
         else:
@@ -340,6 +343,67 @@ def _iter_ordered_a4_positions(total, label_w, label_h, grid):
         emitted += page_items
         if emitted < total:
             yield None, None, None, None
+
+
+def _compute_adaptive_a4_layout(total, base_label_w, base_label_h, *, min_margin_mm=6.0, gap_mm=3.0):
+    """Scale label cells to better use A4 for partial quantities."""
+    page_w, page_h = A4
+    gap = gap_mm * mm
+    min_margin = min_margin_mm * mm
+    items = max(int(total or 0), 1)
+
+    best = None
+    for cols in range(1, items + 1):
+        rows = (items + cols - 1) // cols
+        avail_w = page_w - (2 * min_margin) - ((cols - 1) * gap)
+        avail_h = page_h - (2 * min_margin) - ((rows - 1) * gap)
+        if avail_w <= 0 or avail_h <= 0:
+            continue
+
+        scale_w = avail_w / max(1e-6, cols * base_label_w)
+        scale_h = avail_h / max(1e-6, rows * base_label_h)
+        scale = min(scale_w, scale_h)
+        if scale <= 0:
+            continue
+
+        if best is None or scale > best["scale"]:
+            best = {"cols": cols, "rows": rows, "scale": scale}
+
+    if best is None:
+        return {
+            "page_w": page_w,
+            "page_h": page_h,
+            "cols": 1,
+            "rows": 1,
+            "gap_x": gap,
+            "gap_y": gap,
+            "margin_x": min_margin,
+            "margin_y": min_margin,
+            "label_w": base_label_w,
+            "label_h": base_label_h,
+            "distribute_rows": False,
+        }
+
+    label_w = base_label_w * best["scale"]
+    label_h = base_label_h * best["scale"]
+    used_w = (best["cols"] * label_w) + ((best["cols"] - 1) * gap)
+    used_h = (best["rows"] * label_h) + ((best["rows"] - 1) * gap)
+
+    margin_x = max(min_margin, (page_w - used_w) / 2)
+    margin_y = max(min_margin, (page_h - used_h) / 2)
+    return {
+        "page_w": page_w,
+        "page_h": page_h,
+        "cols": best["cols"],
+        "rows": best["rows"],
+        "gap_x": gap,
+        "gap_y": gap,
+        "margin_x": margin_x,
+        "margin_y": margin_y,
+        "label_w": label_w,
+        "label_h": label_h,
+        "distribute_rows": False,
+    }
 
 
 def _fit_canvas_text(pdf, text, max_w, max_size, min_size=6, font_name="Helvetica"):
@@ -844,12 +908,14 @@ def _build_custom_sheet_a4_pdf(product, quantity, size_key, *, include_name, inc
         effective_include_qr = False
         effective_include_code = False
 
-    label_w = width_mm * mm
-    label_h = height_mm * mm
-    grid = _compute_a4_grid(label_w, label_h)
+    base_label_w = width_mm * mm
+    base_label_h = height_mm * mm
+    total = max(quantity, 1)
+    grid = _compute_adaptive_a4_layout(total, base_label_w, base_label_h)
+    label_w = grid["label_w"]
+    label_h = grid["label_h"]
     buffer = BytesIO()
     pdf = canvas.Canvas(buffer, pagesize=A4)
-    total = max(quantity, 1)
     for x, y, _, _ in _iter_ordered_a4_positions(total, label_w, label_h, grid):
         if x is None:
             pdf.showPage()

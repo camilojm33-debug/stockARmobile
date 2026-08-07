@@ -10,6 +10,11 @@ from datetime import datetime, timedelta
 from io import BytesIO
 from time import monotonic
 
+try:
+    import redis
+except Exception:  # pragma: no cover - optional dependency fallback
+    redis = None
+
 from flask import Blueprint, abort, current_app, flash, jsonify, redirect, render_template, request, session, url_for
 from flask import send_file
 from flask_login import current_user, login_required
@@ -385,7 +390,7 @@ def _health_action_for_check(check_key: str):
     action_map = {
         "smtp": {"label": "Configurar", "url": url_for("saas.global_settings")},
         "backups": {"label": "Crear backup", "url": url_for("saas.backups_panel")},
-        "redis": {"label": "Documentación", "url": "https://flask.palletsprojects.com/"},
+        "redis": {"label": "Configurar", "url": url_for("saas.global_settings")},
         "mercado_pago": {"label": "Conexiones", "url": url_for("saas.mercado_pago_connections")},
         "db": {"label": "Estado servidor", "url": url_for("saas.server_status")},
         "cron": {"label": "Renovaciones", "url": url_for("saas.renewals_panel")},
@@ -429,6 +434,23 @@ def _service_status(ok: bool, warning: bool = False, detail: str | None = None):
     return {"status": "error", "label": "Error", "color": "danger", "detail": detail or "No disponible"}
 
 
+def _redis_service_status():
+    redis_url = (os.environ.get("REDIS_URL") or "").strip()
+    if not redis_url:
+        return _service_status(True, True, "No configurado (faltante REDIS_URL)")
+
+    if redis is None:
+        return _service_status(False, False, "Paquete redis no instalado")
+
+    try:
+        client = redis.Redis.from_url(redis_url, socket_connect_timeout=1.5, socket_timeout=1.5, decode_responses=True)
+        if client.ping():
+            return _service_status(True, False, "Conectado")
+        return _service_status(False, False, "Sin respuesta de Redis")
+    except Exception as exc:
+        return _service_status(False, False, f"No conecta: {exc.__class__.__name__}")
+
+
 def _health_check_snapshot(db_session, now):
     from app import BackupLog, Company, MercadoPagoConnection, Subscription, User, WebhookEvent, db, model_table_exists
 
@@ -459,6 +481,8 @@ def _health_check_snapshot(db_session, now):
     last_webhook = WebhookEvent.query.order_by(WebhookEvent.created_at.desc()).first() if model_table_exists(WebhookEvent) else None
     webhook_recent_ok = bool(last_webhook and (now - last_webhook.created_at).days <= 7)
 
+    redis_status = _redis_service_status()
+
     checks = [
         {
             "name": "Base de datos",
@@ -468,7 +492,7 @@ def _health_check_snapshot(db_session, now):
         {
             "name": "Redis",
             "key": "redis",
-            "data": _service_status(True, True, "No configurado en esta instalación"),
+            "data": redis_status,
         },
         {
             "name": "Mercado Pago",
@@ -2613,12 +2637,18 @@ def server_status():
     except Exception as exc:
         db_ok = False
         db_error = str(exc)
+
+    redis_state = _redis_service_status()
     context = {
         "db_ok": db_ok,
         "db_error": db_error,
+        "redis_status": redis_state["label"],
+        "redis_detail": redis_state["detail"],
+        "redis_color": redis_state["color"],
         "flask_env": os.environ.get("FLASK_ENV", "development"),
         "render": bool(os.environ.get("RENDER")),
         "database_url_configured": bool(os.environ.get("DATABASE_URL")),
+        "redis_url_configured": bool(os.environ.get("REDIS_URL")),
     }
     return render_template("saas/server_status.html", status=context)
 
