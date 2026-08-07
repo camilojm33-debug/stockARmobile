@@ -5,6 +5,7 @@
   --accent-dark: #069669;
   --text: #111827;
   --muted: #5f6b7a;
+  --text-muted: #5f6b7a;
   --surface: #f7fafc;
   --surface-strong: #ffffff;
   --surface-muted: rgba(255, 255, 255, 0.86);
@@ -16,8 +17,10 @@
 }
 
 [data-theme="dark"] {
-  --text: #e5eef9;
-  --muted: #9aaec6;
+  /* +25% perceived brightness for dark-mode typography */
+  --text: #f3f7ff;
+  --muted: #c2d2e6;
+  --text-muted: #c2d2e6;
   --surface: #071120;
   --surface-strong: #0f172a;
   --surface-muted: rgba(15, 23, 42, 0.84);
@@ -26,6 +29,10 @@
   --shadow: 0 24px 74px rgba(2, 8, 23, 0.52);
   --bg: radial-gradient(circle at 0% 0%, #020817 0%, #04101f 36%, #07172e 72%, #091c33 100%);
   --hero-bg: linear-gradient(145deg, rgba(14, 116, 144, 0.2) 0%, rgba(15, 98, 254, 0.16) 45%, rgba(18, 185, 129, 0.1) 100%);
+}
+
+[data-theme="dark"] .text-muted {
+  color: var(--muted) !important;
 }
 
 * { box-sizing: border-box; }
