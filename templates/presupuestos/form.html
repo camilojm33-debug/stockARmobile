@@ -4,47 +4,155 @@
 
 {% block extra_css %}
 <style>
-  .quote-catalog-scroll {
-    max-height: 340px;
+  .quote-builder-layout {
+    display: grid;
+    grid-template-columns: 320px minmax(420px, 1.2fr) 380px;
+    gap: 1rem;
+  }
+
+  .quote-panel {
+    border: 1px solid var(--app-line);
+    border-radius: 14px;
+    background: var(--app-panel);
+    box-shadow: 0 12px 28px rgba(15, 23, 42, 0.06);
+    overflow: hidden;
+  }
+
+  .quote-panel-header {
+    padding: 0.9rem 1rem;
+    border-bottom: 1px solid var(--app-line);
+    background: linear-gradient(180deg, rgba(15, 23, 42, 0.02), rgba(15, 23, 42, 0));
+  }
+
+  .quote-panel-body {
+    padding: 0.9rem 1rem;
+  }
+
+  .quick-chip {
+    border: 1px solid var(--app-line);
+    border-radius: 999px;
+    background: #fff;
+    padding: 0.3rem 0.65rem;
+    font-size: 0.85rem;
+    cursor: pointer;
+  }
+
+  .quick-chip.active {
+    border-color: #0f62fe;
+    color: #0f62fe;
+    background: rgba(15, 98, 254, 0.08);
+  }
+
+  .catalog-results {
+    max-height: calc(100vh - 320px);
     overflow: auto;
   }
 
-  .quote-actions {
-    position: sticky;
-    bottom: 0;
-    background: var(--app-panel);
-    border-top: 1px solid var(--app-line);
-    margin: 0 -1rem -1rem;
-    padding: 0.9rem 1rem 1rem;
-    z-index: 2;
+  .catalog-card {
+    display: grid;
+    grid-template-columns: 52px 1fr auto;
+    gap: 0.7rem;
+    align-items: center;
+    border: 1px solid var(--app-line);
+    border-radius: 12px;
+    padding: 0.55rem;
+    margin-bottom: 0.55rem;
+    background: #fff;
   }
 
-  @media (max-width: 991.98px) {
-    .quote-main-card .card-body,
-    .quote-form-card .card-body {
-      padding: 1rem;
+  .catalog-card.added {
+    border-color: #10b981;
+    box-shadow: 0 0 0 2px rgba(16, 185, 129, 0.16) inset;
+  }
+
+  .catalog-thumb {
+    width: 52px;
+    height: 52px;
+    border-radius: 10px;
+    object-fit: cover;
+    border: 1px solid var(--app-line);
+    background: #f8fafc;
+  }
+
+  .quote-lines-wrap {
+    max-height: calc(100vh - 360px);
+    overflow: auto;
+  }
+
+  .quote-line {
+    border: 1px solid var(--app-line);
+    border-radius: 12px;
+    padding: 0.65rem;
+    margin-bottom: 0.55rem;
+    background: #fff;
+  }
+
+  .quote-line-grid {
+    display: grid;
+    grid-template-columns: 1.4fr 0.7fr 0.8fr 0.6fr 0.8fr 0.9fr auto;
+    gap: 0.45rem;
+    align-items: end;
+  }
+
+  .quote-actions-grid {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 0.45rem;
+  }
+
+  .focus-ring:focus,
+  .focus-ring:focus-visible {
+    outline: 2px solid #0f62fe;
+    outline-offset: 2px;
+  }
+
+  .totals-sticky {
+    position: sticky;
+    top: 1rem;
+  }
+
+  .mobile-section {
+    display: none;
+  }
+
+  .panel-toggle {
+    border: 1px solid var(--app-line);
+    border-radius: 8px;
+    background: #fff;
+    padding: 0.1rem 0.5rem;
+    font-size: 0.8rem;
+  }
+
+  @media (max-width: 1200px) {
+    .quote-builder-layout {
+      grid-template-columns: 1fr;
     }
 
-    .quote-form-card {
-      position: static !important;
+    .totals-sticky {
+      position: static;
     }
 
-    .quote-catalog-scroll {
+    .catalog-results,
+    .quote-lines-wrap {
       max-height: none;
     }
 
-    #quoteCatalogBody td:last-child,
-    #itemsTable td:last-child {
-      width: 100%;
+    .mobile-section {
+      display: block;
     }
 
-    #quoteCatalogBody .btn,
-    #itemsTable .btn {
-      width: 100%;
+    .quote-panel.collapsed .quote-panel-body {
+      display: none;
+    }
+  }
+
+  @media (max-width: 768px) {
+    .quote-line-grid {
+      grid-template-columns: 1fr 1fr;
     }
 
-    .quote-actions {
-      margin-top: 0.75rem;
+    .quote-actions-grid {
+      grid-template-columns: 1fr;
     }
   }
 </style>
@@ -52,172 +160,214 @@
 
 {% block content %}
 <div class="app-shell">
-  <div class="row g-4">
-    <div class="col-xl-7">
-      <div class="card app-card h-100 quote-main-card">
-        <div class="card-body p-4">
-          <span class="page-kicker"><i class="bi bi-file-earmark-text"></i> Presupuesto</span>
-          <h1 class="h4 fw-bold mb-3">{{ 'Editar' if mode == 'edit' else 'Nuevo' }} presupuesto</h1>
-          <div class="mb-3">
-            <label class="form-label">Buscar productos</label>
-            <input id="quoteProductSearch" class="form-control" placeholder="Nombre, código o código de barras" oninput="filterProducts()">
-          </div>
-          <div class="table-responsive mb-4 quote-catalog-scroll">
-            <table class="table table-sm table-hover align-middle mobile-card-table">
-              <thead class="table-light sticky-top"><tr><th>Producto</th><th>Código</th><th class="text-end">Precio</th><th class="text-end">Acción</th></tr></thead>
-              <tbody id="quoteCatalogBody">
-                {% for product in products %}
-                <tr data-product-row data-search="{{ (product.name ~ ' ' ~ (product.barcode or '') ~ ' ' ~ (product.category or ''))|lower }}">
-                  <td data-label="Producto">
-                    <div class="fw-semibold">{{ product.name }}</div>
-                    <div class="small text-muted">{{ product.category or '-' }}</div>
-                  </td>
-                  <td data-label="Código">{{ product.barcode or '-' }}</td>
-                  <td class="text-end" data-label="Precio">${{ "%.2f"|format(product.price or 0) }}</td>
-                  <td class="text-end" data-label="Acción">
-                    <button type="button" class="btn btn-sm btn-outline-primary" onclick='addProduct({{ {"id": product.id, "name": product.name, "barcode": product.barcode, "price": product.price, "discount": product.discount}|tojson }})'>Agregar</button>
-                  </td>
-                </tr>
-                {% endfor %}
-              </tbody>
-            </table>
-          </div>
-        </div>
-      </div>
+  <div class="d-flex flex-wrap justify-content-between align-items-start gap-3 mb-3">
+    <div>
+      <span class="page-kicker"><i class="bi bi-lightning-charge"></i> Presupuestos</span>
+      <h1 class="h4 fw-bold mb-1">Constructor de presupuesto</h1>
+      <p class="text-muted mb-0">Flujo rápido tipo POS para crear presupuestos en menos de 60 segundos.</p>
     </div>
-
-    <div class="col-xl-5">
-      <div class="card app-card sticky-top quote-form-card" style="top: 1.25rem;">
-        <div class="card-body p-4">
-          <form method="post" id="quoteForm">
-            <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
-            <input type="hidden" name="items_json" id="itemsJson">
-            <input type="hidden" name="submit_action" id="submitAction" value="save">
-
-            <div class="row g-3">
-              <div class="col-12">
-                <label class="form-label">Cliente</label>
-                <select name="client_id" id="quoteClientSelect" class="form-select" onchange="toggleConsumerNameField()">
-                  <option value="">Consumidor final</option>
-                  {% for client in clients %}
-                  <option value="{{ client.id }}" {% if quote and quote.client_id == client.id %}selected{% endif %}>{{ client.name }}</option>
-                  {% endfor %}
-                </select>
-              </div>
-              <div class="col-12" id="quoteConsumerNameWrap">
-                <label class="form-label">Nombre consumidor final</label>
-                <input class="form-control" type="text" name="consumer_name" id="quoteConsumerName" maxlength="160" value="{{ quote.consumer_name if quote and quote.consumer_name else '' }}" placeholder="Ej: Juan Perez">
-                <div class="form-text">Si elegís un cliente registrado, este campo se ignora.</div>
-              </div>
-              <div class="col-md-6">
-                <label class="form-label">Vendedor</label>
-                <select name="seller_id" class="form-select">
-                  {% for seller in sellers %}
-                  <option value="{{ seller.id }}" {% if quote and quote.seller_id == seller.id %}selected{% elif not quote and seller.id == current_user.id %}selected{% endif %}>{{ seller.name }}</option>
-                  {% endfor %}
-                </select>
-              </div>
-              <div class="col-md-6">
-                <label class="form-label">Vencimiento</label>
-                <input type="date" class="form-control" name="expires_at" value="{{ quote.expires_at.strftime('%Y-%m-%d') if quote and quote.expires_at else default_expires_at }}">
-              </div>
-              <div class="col-md-6">
-                <label class="form-label">Estado</label>
-                <select class="form-select" name="status">
-                  {% for item in statuses %}
-                  <option value="{{ item }}" {% if quote and quote.status == item %}selected{% elif not quote and item == 'BORRADOR' %}selected{% endif %}>{{ item }}</option>
-                  {% endfor %}
-                </select>
-              </div>
-              <div class="col-12">
-                <label class="form-label">Observaciones</label>
-                <textarea class="form-control" name="observations" rows="3">{{ quote.observations if quote else '' }}</textarea>
-              </div>
-              <div class="col-12">
-                <label class="form-label">Condiciones comerciales</label>
-                <textarea class="form-control" name="commercial_conditions" rows="3">{{ quote.commercial_conditions if quote else '' }}</textarea>
-              </div>
-              <div class="col-md-6">
-                <label class="form-label">Moneda</label>
-                <input class="form-control" type="text" name="currency" value="{{ quote.currency if quote else 'ARS' }}" maxlength="10">
-              </div>
-            </div>
-
-            <hr class="my-4">
-
-            <div class="table-responsive mb-3">
-              <table class="table table-sm align-middle mobile-card-table" id="itemsTable">
-                <thead class="table-light"><tr><th>Prod.</th><th class="text-end">Cant.</th><th class="text-end">Precio</th><th class="text-end">Dcto</th><th class="text-end">Subtotal</th><th></th></tr></thead>
-                <tbody></tbody>
-              </table>
-            </div>
-
-            <div class="row g-2 mb-3">
-              <div class="col-6"><label class="form-label">Descuento</label><input class="form-control" type="number" step="0.01" min="0" id="generalDiscount" name="discount" value="{{ general_discount_value if general_discount_value is not none else 0 }}" oninput="recalculate()"></div>
-              <div class="col-6"><label class="form-label">Recargo</label><input class="form-control" type="number" step="0.01" min="0" id="generalSurcharge" name="surcharge" value="{{ quote.surcharge if quote else 0 }}" oninput="recalculate()"></div>
-            </div>
-
-            <div class="summary-panel mb-4">
-              <div class="d-flex justify-content-between"><span>Subtotal</span><strong id="sumSubtotal">$0.00</strong></div>
-              <div class="d-flex justify-content-between"><span>Descuento</span><strong id="sumDiscount">$0.00</strong></div>
-              <div class="d-flex justify-content-between"><span>Recargo</span><strong id="sumSurcharge">$0.00</strong></div>
-              <div class="d-flex justify-content-between"><span>Impuestos</span><strong id="sumTax">$0.00</strong></div>
-              <hr>
-              <div class="d-flex justify-content-between fs-5"><span>Total</span><strong class="text-primary" id="sumTotal">$0.00</strong></div>
-            </div>
-
-            <div class="d-flex flex-wrap gap-2 justify-content-between quote-actions">
-              <div class="d-flex gap-2 flex-wrap">
-                <button type="submit" class="btn btn-primary" onclick="prepareSubmit('save')"><i class="bi bi-save me-1"></i>Guardar borrador</button>
-                <button type="submit" class="btn btn-success" onclick="prepareSubmit('send')"><i class="bi bi-send me-1"></i>Enviar</button>
-              </div>
-              <div class="d-flex gap-2 flex-wrap">
-                <a class="btn btn-outline-secondary" href="{{ url_for('quotes.index') }}">Volver</a>
-              </div>
-            </div>
-          </form>
-        </div>
-      </div>
+    <div class="small text-muted">
+      Atajos: <strong>F2</strong> buscar, <strong>F3</strong> cliente, <strong>F4</strong> guardar, <strong>F5</strong> PDF, <strong>F6</strong> convertir, <strong>ESC</strong> limpiar, <strong>ENTER</strong> agregar.
     </div>
   </div>
+
+  <form method="post" id="quoteForm" novalidate>
+    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+    <input type="hidden" name="items_json" id="itemsJson">
+    <input type="hidden" name="submit_action" id="submitAction" value="save">
+
+    <div class="quote-builder-layout" role="region" aria-label="Constructor de presupuesto">
+      <section class="quote-panel" id="panelCatalog" aria-label="Catálogo de productos">
+        <div class="quote-panel-header">
+          <div class="d-flex justify-content-between align-items-center mb-2">
+            <strong>1. Catálogo</strong>
+            <div class="d-flex align-items-center gap-2">
+              <span class="badge text-bg-light" id="resultCounter">0 resultados</span>
+              <button type="button" class="panel-toggle d-xl-none focus-ring" data-panel-toggle="#panelCatalog" aria-label="Plegar catálogo">Plegar</button>
+            </div>
+          </div>
+          <label class="form-label mb-1" for="quoteProductSearch">Buscar producto</label>
+          <input id="quoteProductSearch" class="form-control focus-ring" aria-label="Buscar por nombre, código, categoría, marca, proveedor o descripción" placeholder="Nombre, código, barra, categoría, marca, proveedor" autocomplete="off">
+          <div class="d-flex gap-2 mt-2">
+            <select id="categoryFilter" class="form-select form-select-sm focus-ring" aria-label="Filtrar por categoría"></select>
+            <div class="form-check form-switch mt-1">
+              <input class="form-check-input" type="checkbox" id="hideAddedSwitch" aria-label="Ocultar productos ya agregados">
+              <label class="form-check-label small" for="hideAddedSwitch">Ocultar agregados</label>
+            </div>
+          </div>
+        </div>
+        <div class="quote-panel-body">
+          <div class="catalog-results" id="catalogResults" role="list" aria-live="polite"></div>
+          <button type="button" id="loadMoreProducts" class="btn btn-outline-secondary btn-sm w-100 mt-2 focus-ring">Cargar más</button>
+        </div>
+      </section>
+
+      <section class="quote-panel" id="panelLines" aria-label="Líneas del presupuesto">
+        <div class="quote-panel-header d-flex justify-content-between align-items-center">
+          <strong>2. Productos del presupuesto</strong>
+          <div class="d-flex align-items-center gap-2">
+            <span class="small text-muted" id="lineCount">0 líneas</span>
+            <button type="button" class="panel-toggle d-xl-none focus-ring" data-panel-toggle="#panelLines" aria-label="Plegar líneas">Plegar</button>
+          </div>
+        </div>
+        <div class="quote-panel-body">
+          <div class="quote-lines-wrap" id="quoteLinesWrap"></div>
+          <div class="small text-muted" id="emptyLinesHint">Todavía no agregaste productos.</div>
+        </div>
+      </section>
+
+      <section class="quote-panel totals-sticky" id="panelContext" aria-label="Datos y acciones">
+        <div class="quote-panel-header">
+          <div class="d-flex justify-content-between align-items-center">
+            <strong>3. Cliente, condiciones y acciones</strong>
+            <button type="button" class="panel-toggle d-xl-none focus-ring" data-panel-toggle="#panelContext" aria-label="Plegar datos y acciones">Plegar</button>
+          </div>
+        </div>
+        <div class="quote-panel-body">
+          <div class="mb-2">
+            <label class="form-label" for="quoteClientSelect">Cliente</label>
+            <select name="client_id" id="quoteClientSelect" class="form-select focus-ring" aria-label="Seleccionar cliente">
+              <option value="">Consumidor final</option>
+              {% for client in clients %}
+              <option value="{{ client.id }}" {% if quote and quote.client_id == client.id %}selected{% endif %}>{{ client.name }}</option>
+              {% endfor %}
+            </select>
+          </div>
+
+          <div id="quoteConsumerNameWrap" class="mb-2">
+            <label class="form-label" for="quoteConsumerName">Nombre consumidor final</label>
+            <input class="form-control focus-ring" type="text" name="consumer_name" id="quoteConsumerName" maxlength="160" value="{{ quote.consumer_name if quote and quote.consumer_name else '' }}" placeholder="Ej: Juan Perez">
+          </div>
+
+          <div class="border rounded p-2 mb-2 bg-light-subtle small">
+            <div class="fw-semibold mb-1">Ficha de cliente</div>
+            <div><strong>Condición:</strong> <span id="clientCondition">-</span></div>
+            <div><strong>Lista de precios:</strong> <span id="clientPriceList">-</span></div>
+            <div><strong>Descuento habitual:</strong> <span id="clientDiscount">0%</span></div>
+            <div><strong>Dirección:</strong> <span id="clientAddress">-</span></div>
+            <div><strong>Observaciones:</strong> <span id="clientObservations">-</span></div>
+            <div class="mt-1"><strong>Historial:</strong> <span id="clientHistory">Sin datos</span></div>
+          </div>
+
+          <div class="row g-2 mb-2">
+            <div class="col-6">
+              <label class="form-label" for="quoteSellerSelect">Vendedor</label>
+              <select name="seller_id" id="quoteSellerSelect" class="form-select focus-ring" aria-label="Seleccionar vendedor">
+                {% for seller in sellers %}
+                <option value="{{ seller.id }}" {% if quote and quote.seller_id == seller.id %}selected{% elif not quote and seller.id == current_user.id %}selected{% endif %}>{{ seller.name }}</option>
+                {% endfor %}
+              </select>
+            </div>
+            <div class="col-6">
+              <label class="form-label" for="quoteExpiresAt">Fecha</label>
+              <input type="date" class="form-control focus-ring" id="quoteExpiresAt" name="expires_at" value="{{ quote.expires_at.strftime('%Y-%m-%d') if quote and quote.expires_at else default_expires_at }}">
+            </div>
+            <div class="col-6">
+              <label class="form-label" for="quoteStatusSelect">Estado</label>
+              <select class="form-select focus-ring" id="quoteStatusSelect" name="status">
+                {% for item in statuses %}
+                <option value="{{ item }}" {% if quote and quote.status == item %}selected{% elif not quote and item == 'BORRADOR' %}selected{% endif %}>{{ item }}</option>
+                {% endfor %}
+              </select>
+            </div>
+            <div class="col-6">
+              <label class="form-label" for="quoteCurrency">Moneda</label>
+              <input class="form-control focus-ring" id="quoteCurrency" type="text" name="currency" value="{{ quote.currency if quote else 'ARS' }}" maxlength="10">
+            </div>
+          </div>
+
+          <div class="mb-2">
+            <label class="form-label" for="commercialConditions">Condiciones comerciales</label>
+            <div class="d-flex gap-2 flex-wrap mb-2" id="conditionChips">
+              {% for preset in ['Contado', '15 días', '30 días', '60 días', '90 días', 'Personalizado'] %}
+              <button type="button" class="quick-chip focus-ring" data-condition-value="{{ preset }}">{{ preset }}</button>
+              {% endfor %}
+            </div>
+            <textarea class="form-control focus-ring" id="commercialConditions" name="commercial_conditions" rows="2">{{ quote.commercial_conditions if quote else '' }}</textarea>
+          </div>
+
+          <div class="mb-2">
+            <label class="form-label" for="observationsInput">Observaciones</label>
+            <textarea class="form-control focus-ring" id="observationsInput" name="observations" rows="2">{{ quote.observations if quote else '' }}</textarea>
+          </div>
+
+          <div class="row g-2 mb-2">
+            <div class="col-6"><label class="form-label" for="generalDiscount">Descuento general</label><input class="form-control focus-ring" type="number" step="0.01" min="0" id="generalDiscount" name="discount" value="{{ general_discount_value if general_discount_value is not none else 0 }}"></div>
+            <div class="col-6"><label class="form-label" for="generalSurcharge">Recargo</label><input class="form-control focus-ring" type="number" step="0.01" min="0" id="generalSurcharge" name="surcharge" value="{{ quote.surcharge if quote else 0 }}"></div>
+          </div>
+
+          <div class="border rounded p-2 mb-3">
+            <div class="d-flex justify-content-between"><span>Subtotal</span><strong id="sumSubtotal">$0.00</strong></div>
+            <div class="d-flex justify-content-between"><span>Descuento</span><strong id="sumDiscount">$0.00</strong></div>
+            <div class="d-flex justify-content-between"><span>Recargos</span><strong id="sumSurcharge">$0.00</strong></div>
+            <div class="d-flex justify-content-between"><span>IVA</span><strong id="sumVat">$0.00</strong></div>
+            <div class="d-flex justify-content-between"><span>Impuestos</span><strong id="sumTax">$0.00</strong></div>
+            <div class="d-flex justify-content-between"><span>Margen</span><strong id="sumMargin">$0.00</strong></div>
+            <div class="d-flex justify-content-between"><span>Rentabilidad</span><strong id="sumProfitability">0.00%</strong></div>
+            <hr class="my-2">
+            <div class="d-flex justify-content-between fs-5"><span>Total</span><strong class="text-primary" id="sumTotal">$0.00</strong></div>
+          </div>
+
+          <div class="quote-actions-grid mb-2">
+            <button type="button" class="btn btn-primary btn-lg focus-ring" id="actionSave"><i class="bi bi-save me-1"></i>Guardar</button>
+            <button type="button" class="btn btn-success btn-lg focus-ring" id="actionSend"><i class="bi bi-send me-1"></i>Enviar</button>
+            {% if quote %}
+            <form method="post" action="{{ url_for('quotes.duplicate_quote', quote_id=quote.id) }}">
+              <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+              <button type="submit" class="btn btn-outline-dark w-100 focus-ring"><i class="bi bi-copy me-1"></i>Duplicar</button>
+            </form>
+            <a class="btn btn-outline-danger focus-ring" href="{{ url_for('quotes.quote_pdf', quote_id=quote.id) }}" target="_blank"><i class="bi bi-filetype-pdf me-1"></i>PDF</a>
+            <a class="btn btn-outline-secondary focus-ring" href="{{ url_for('quotes.quote_print', quote_id=quote.id) }}" target="_blank"><i class="bi bi-printer me-1"></i>Imprimir</a>
+            <a class="btn btn-outline-success focus-ring" href="{{ url_for('quotes.share_whatsapp', quote_id=quote.id) }}"><i class="bi bi-whatsapp me-1"></i>WhatsApp</a>
+            <form method="post" action="{{ url_for('quotes.email_quote', quote_id=quote.id) }}">
+              <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+              <button type="submit" class="btn btn-outline-primary w-100 focus-ring"><i class="bi bi-envelope me-1"></i>Email</button>
+            </form>
+            <form method="post" action="{{ url_for('quotes.convert_to_sale', quote_id=quote.id) }}">
+              <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+              <button type="submit" class="btn btn-warning w-100 focus-ring" id="actionConvert"><i class="bi bi-bag-check me-1"></i>Convertir en venta</button>
+            </form>
+            <button type="button" class="btn btn-outline-info focus-ring" id="copyShareLink"><i class="bi bi-link-45deg me-1"></i>Compartir enlace</button>
+            {% else %}
+            <button type="button" class="btn btn-outline-dark focus-ring" disabled>Duplicar</button>
+            <button type="button" class="btn btn-outline-danger focus-ring" disabled>PDF</button>
+            <button type="button" class="btn btn-outline-secondary focus-ring" disabled>Imprimir</button>
+            <button type="button" class="btn btn-outline-success focus-ring" disabled>WhatsApp</button>
+            <button type="button" class="btn btn-outline-primary focus-ring" disabled>Email</button>
+            <button type="button" class="btn btn-warning focus-ring" disabled id="actionConvert">Convertir en venta</button>
+            <button type="button" class="btn btn-outline-info focus-ring" disabled>Compartir enlace</button>
+            {% endif %}
+          </div>
+
+          <div class="d-grid gap-2">
+            <button type="button" class="btn btn-dark focus-ring" id="smartQuoteButton"><i class="bi bi-stars me-1"></i>Presupuesto Inteligente</button>
+            <a class="btn btn-outline-secondary focus-ring" href="{{ url_for('quotes.index') }}">Volver</a>
+          </div>
+        </div>
+      </section>
+    </div>
+  </form>
 </div>
 {% endblock %}
 
 {% block extra_js %}
 <script>
+  const productCatalog = {{ product_catalog|tojson }};
+  const clientCatalog = {{ client_catalog|tojson }};
   const initialItems = {{ initial_items|tojson }};
+  const canModifyPrices = {{ can_modify_prices|tojson }};
+  const canApplyDiscounts = {{ can_apply_discounts|tojson }};
+  const quoteId = {{ quote.id if quote else 'null' }};
+  const editShareUrl = {{ (url_for('quotes.view_quote', quote_id=quote.id, _external=True) if quote else '')|tojson }};
+
   const items = [];
+  let resultLimit = 60;
+  let currentResults = [];
+
+  const draftKey = `quote_draft_${quoteId || 'new'}`;
 
   function money(value) {
     return '$' + Number(value || 0).toFixed(2);
-  }
-
-  function filterProducts() {
-    const query = (document.getElementById('quoteProductSearch').value || '').toLowerCase();
-    document.querySelectorAll('[data-product-row]').forEach((row) => {
-      row.style.display = row.dataset.search.includes(query) ? '' : 'none';
-    });
-  }
-
-  function addProduct(product) {
-    const existing = items.find((item) => String(item.product_id) === String(product.id));
-    if (existing) {
-      existing.quantity = Number(existing.quantity || 0) + 1;
-    } else {
-      items.push({
-        product_id: product.id,
-        description: product.name,
-        quantity: 1,
-        unit_price: Number(product.price || 0),
-        discount: Number(product.discount || 0),
-      });
-    }
-    renderItems();
-  }
-
-  function removeItem(index) {
-    items.splice(index, 1);
-    renderItems();
   }
 
   function parseNumberInput(value) {
@@ -228,102 +378,481 @@
     return Number.isFinite(parsed) ? parsed : 0;
   }
 
-  function updateItem(index, field, inputEl) {
-    const item = items[index];
-    if (!item) return;
-    const value = inputEl ? inputEl.value : '';
-    item[field] = field === 'description' ? value : parseNumberInput(value);
-    const lineSubtotal = Math.max((Number(item.quantity || 0) * Number(item.unit_price || 0)) - Number(item.discount || 0), 0);
-    const subtotalCell = document.querySelector(`#itemsTable tbody [data-subtotal-index="${index}"]`);
-    if (subtotalCell) {
-      subtotalCell.textContent = money(lineSubtotal);
-    }
-    updateTotals();
-  }
-
-  function recalculate() {
-    updateTotals();
-  }
-
-  function updateTotals(updateJson = true) {
-    let subtotal = 0;
-    let discount = 0;
-    items.forEach((item, index) => {
-      const lineSubtotal = Math.max((Number(item.quantity || 0) * Number(item.unit_price || 0)) - Number(item.discount || 0), 0);
-      subtotal += Number(item.quantity || 0) * Number(item.unit_price || 0);
-      discount += Number(item.discount || 0);
-    });
-
-    const surcharge = Number(document.getElementById('generalSurcharge').value || 0);
-    const generalDiscount = Number(document.getElementById('generalDiscount').value || 0);
-    const total = Math.max(subtotal - discount - generalDiscount + surcharge, 0);
-
-    document.getElementById('sumSubtotal').textContent = money(subtotal);
-    document.getElementById('sumDiscount').textContent = money(discount + generalDiscount);
-    document.getElementById('sumSurcharge').textContent = money(surcharge);
-    document.getElementById('sumTax').textContent = money(0);
-    document.getElementById('sumTotal').textContent = money(total);
-    if (updateJson) syncJson();
-  }
-
-  function renderItems(updateJson = true) {
-    const tbody = document.querySelector('#itemsTable tbody');
-    tbody.innerHTML = '';
-    items.forEach((item, index) => {
-      const lineSubtotal = Math.max((Number(item.quantity || 0) * Number(item.unit_price || 0)) - Number(item.discount || 0), 0);
-      const row = document.createElement('tr');
-      row.innerHTML = `
-        <td data-label="Producto"><input class="form-control form-control-sm" data-index="${index}" data-field="description" value="${escapeHtml(item.description || '')}" oninput="updateItem(${index}, 'description', this)"></td>
-        <td data-label="Cantidad"><input class="form-control form-control-sm text-end" data-index="${index}" data-field="quantity" type="text" inputmode="decimal" value="${Number(item.quantity || 0)}" oninput="updateItem(${index}, 'quantity', this)"></td>
-        <td data-label="Precio"><input class="form-control form-control-sm text-end" data-index="${index}" data-field="unit_price" type="text" inputmode="decimal" value="${Number(item.unit_price || 0)}" oninput="updateItem(${index}, 'unit_price', this)"></td>
-        <td data-label="Descuento"><input class="form-control form-control-sm text-end" data-index="${index}" data-field="discount" type="text" inputmode="decimal" value="${Number(item.discount || 0)}" oninput="updateItem(${index}, 'discount', this)"></td>
-        <td class="text-end fw-semibold" data-label="Subtotal" data-subtotal-index="${index}">${money(lineSubtotal)}</td>
-        <td class="text-end" data-label="Acción"><button type="button" class="btn btn-sm btn-outline-danger" onclick="removeItem(${index})">Quitar</button></td>
-      `;
-      tbody.appendChild(row);
-    });
-    updateTotals(updateJson);
+  function escapeHtml(value) {
+    return String(value || '')
+      .replace(/&/g, '&amp;')
+      .replace(/</g, '&lt;')
+      .replace(/>/g, '&gt;')
+      .replace(/"/g, '&quot;')
+      .replace(/'/g, '&#39;');
   }
 
   function syncJson() {
-    document.getElementById('itemsJson').value = JSON.stringify(items);
+    document.getElementById('itemsJson').value = JSON.stringify(items.map((item) => ({
+      product_id: item.product_id,
+      description: item.description,
+      quantity: Number(item.quantity || 0),
+      unit_price: Number(item.unit_price || 0),
+      discount: Number(item.discount || 0),
+    })));
   }
 
-  function prepareSubmit(action) {
-    document.getElementById('submitAction').value = action;
+  function computeLine(item) {
+    const quantity = Math.max(parseNumberInput(item.quantity), 0);
+    const unitPrice = Math.max(parseNumberInput(item.unit_price), 0);
+    const gross = quantity * unitPrice;
+    const discountValue = Math.max(parseNumberInput(item.discount), 0);
+    const safeDiscount = Math.min(discountValue, gross);
+    const discountPct = gross > 0 ? (safeDiscount * 100) / gross : 0;
+    const subtotal = Math.max(gross - safeDiscount, 0);
+    return { quantity, unitPrice, gross, discountValue: safeDiscount, discountPct, subtotal };
+  }
+
+  function addProduct(product) {
+    const existing = items.find((line) => String(line.product_id) === String(product.id));
+    if (existing) {
+      existing.quantity = Number(existing.quantity || 0) + 1;
+    } else {
+      items.push({
+        product_id: product.id,
+        description: product.name,
+        quantity: 1,
+        unit_price: Number(product.price || 0),
+        discount: Number(product.discount || 0),
+        cost: Number(product.cost || 0),
+      });
+    }
+    renderLines();
+    renderCatalog();
+  }
+
+  function duplicateLine(index) {
+    const source = items[index];
+    if (!source) return;
+    items.splice(index + 1, 0, { ...source });
+    renderLines();
+  }
+
+  function moveLine(index, direction) {
+    const next = index + direction;
+    if (next < 0 || next >= items.length) return;
+    const temp = items[index];
+    items[index] = items[next];
+    items[next] = temp;
+    renderLines();
+  }
+
+  function removeLine(index) {
+    items.splice(index, 1);
+    renderLines();
+    renderCatalog();
+  }
+
+  function updateLine(index, field, value) {
+    const line = items[index];
+    if (!line) return;
+
+    if (field === 'discount_pct') {
+      const qty = parseNumberInput(line.quantity);
+      const price = parseNumberInput(line.unit_price);
+      const gross = Math.max(qty * price, 0);
+      const pct = Math.max(parseNumberInput(value), 0);
+      line.discount = Math.min(gross, gross * (pct / 100));
+    } else {
+      line[field] = field === 'description' ? value : parseNumberInput(value);
+    }
+
+    renderLines(false);
+    updateTotals();
+  }
+
+  function buildCategoryOptions() {
+    const select = document.getElementById('categoryFilter');
+    const categories = Array.from(new Set(productCatalog.map((p) => p.category || 'Sin categoría'))).sort();
+    select.innerHTML = `<option value="">Todas las categorías</option>` + categories.map((category) => `<option value="${escapeHtml(category)}">${escapeHtml(category)}</option>`).join('');
+  }
+
+  function getFilteredCatalog() {
+    const query = (document.getElementById('quoteProductSearch').value || '').trim().toLowerCase();
+    const category = document.getElementById('categoryFilter').value || '';
+    const hideAdded = document.getElementById('hideAddedSwitch').checked;
+    const selectedIds = new Set(items.map((line) => Number(line.product_id)));
+    return productCatalog.filter((product) => {
+      if (query && !String(product.search || '').includes(query)) return false;
+      if (category && String(product.category || '') !== category) return false;
+      if (hideAdded && selectedIds.has(Number(product.id))) return false;
+      return true;
+    });
+  }
+
+  function renderCatalog() {
+    const container = document.getElementById('catalogResults');
+    currentResults = getFilteredCatalog();
+    const visible = currentResults.slice(0, resultLimit);
+    const selectedIds = new Set(items.map((line) => Number(line.product_id)));
+
+    document.getElementById('resultCounter').textContent = `${currentResults.length} resultados`;
+    document.getElementById('loadMoreProducts').style.display = currentResults.length > visible.length ? '' : 'none';
+
+    if (!visible.length) {
+      container.innerHTML = '<div class="text-muted small p-2">No hay productos para ese filtro.</div>';
+      return;
+    }
+
+    container.innerHTML = visible.map((product) => {
+      const alreadyAdded = selectedIds.has(Number(product.id));
+      const image = product.image ? `<img class="catalog-thumb" src="${escapeHtml(product.image)}" alt="${escapeHtml(product.name)}">` : '<div class="catalog-thumb d-flex align-items-center justify-content-center text-muted small">IMG</div>';
+      return `
+        <article class="catalog-card ${alreadyAdded ? 'added' : ''}" role="listitem" aria-label="Producto ${escapeHtml(product.name)}">
+          ${image}
+          <div>
+            <div class="fw-semibold">${escapeHtml(product.name)}</div>
+            <div class="small text-muted">${escapeHtml(product.category || 'Sin categoría')} · ${escapeHtml(product.barcode || '-')}</div>
+            <div class="small text-muted">Stock: ${Number(product.stock || 0)} · ${escapeHtml(product.brand || '-')} · ${escapeHtml(product.supplier || '-')}</div>
+          </div>
+          <div class="text-end">
+            <div class="fw-semibold mb-1">${money(product.price || 0)}</div>
+            <button type="button" class="btn btn-sm ${alreadyAdded ? 'btn-success' : 'btn-outline-primary'} focus-ring" onclick="addProductById(${Number(product.id)})" aria-label="Agregar ${escapeHtml(product.name)}">${alreadyAdded ? 'Agregado +' : 'Agregar'}</button>
+          </div>
+        </article>
+      `;
+    }).join('');
+  }
+
+  function addProductById(productId) {
+    const product = productCatalog.find((row) => Number(row.id) === Number(productId));
+    if (!product) return;
+    addProduct(product);
+  }
+
+  function renderLines(syncAfter = true) {
+    const wrap = document.getElementById('quoteLinesWrap');
+    const emptyHint = document.getElementById('emptyLinesHint');
+    document.getElementById('lineCount').textContent = `${items.length} líneas`;
+    emptyHint.style.display = items.length ? 'none' : '';
+
+    if (!items.length) {
+      wrap.innerHTML = '';
+      updateTotals();
+      return;
+    }
+
+    wrap.innerHTML = items.map((item, index) => {
+      const line = computeLine(item);
+      const disablePrice = !canModifyPrices ? 'disabled' : '';
+      const disableDiscount = !canApplyDiscounts ? 'disabled' : '';
+      return `
+        <div class="quote-line" role="group" aria-label="Línea ${index + 1}">
+          <div class="quote-line-grid">
+            <div>
+              <label class="form-label small mb-1">Producto</label>
+              <input class="form-control form-control-sm focus-ring" value="${escapeHtml(item.description || '')}" oninput="updateLine(${index}, 'description', this.value)">
+            </div>
+            <div>
+              <label class="form-label small mb-1">Cant.</label>
+              <input class="form-control form-control-sm text-end focus-ring" type="number" min="0" step="0.01" value="${line.quantity}" oninput="updateLine(${index}, 'quantity', this.value)">
+            </div>
+            <div>
+              <label class="form-label small mb-1">Precio</label>
+              <input class="form-control form-control-sm text-end focus-ring" type="number" min="0" step="0.01" value="${line.unitPrice}" oninput="updateLine(${index}, 'unit_price', this.value)" ${disablePrice}>
+            </div>
+            <div>
+              <label class="form-label small mb-1">% Desc</label>
+              <input class="form-control form-control-sm text-end focus-ring" type="number" min="0" step="0.01" value="${line.discountPct.toFixed(2)}" oninput="updateLine(${index}, 'discount_pct', this.value)" ${disableDiscount}>
+            </div>
+            <div>
+              <label class="form-label small mb-1">$ Desc</label>
+              <input class="form-control form-control-sm text-end focus-ring" type="number" min="0" step="0.01" value="${line.discountValue.toFixed(2)}" oninput="updateLine(${index}, 'discount', this.value)" ${disableDiscount}>
+            </div>
+            <div>
+              <label class="form-label small mb-1">Subtotal</label>
+              <div class="form-control form-control-sm text-end fw-semibold">${money(line.subtotal)}</div>
+            </div>
+            <div class="d-flex flex-column gap-1">
+              <button type="button" class="btn btn-sm btn-outline-secondary focus-ring" onclick="moveLine(${index}, -1)" aria-label="Mover arriba">↑</button>
+              <button type="button" class="btn btn-sm btn-outline-secondary focus-ring" onclick="moveLine(${index}, 1)" aria-label="Mover abajo">↓</button>
+              <button type="button" class="btn btn-sm btn-outline-dark focus-ring" onclick="duplicateLine(${index})" aria-label="Duplicar línea">⧉</button>
+              <button type="button" class="btn btn-sm btn-outline-danger focus-ring" onclick="removeLine(${index})" aria-label="Eliminar línea">✕</button>
+            </div>
+          </div>
+        </div>
+      `;
+    }).join('');
+
+    updateTotals();
+    if (syncAfter) persistDraft();
+  }
+
+  function updateTotals() {
+    let subtotalGross = 0;
+    let lineDiscount = 0;
+    let margin = 0;
+
+    items.forEach((item) => {
+      const line = computeLine(item);
+      subtotalGross += line.gross;
+      lineDiscount += line.discountValue;
+      const cost = parseNumberInput(item.cost);
+      margin += Math.max((line.unitPrice - cost) * line.quantity - line.discountValue, 0);
+      item.quantity = line.quantity;
+      item.unit_price = line.unitPrice;
+      item.discount = line.discountValue;
+    });
+
+    const generalDiscount = Math.max(parseNumberInput(document.getElementById('generalDiscount').value), 0);
+    const surcharge = Math.max(parseNumberInput(document.getElementById('generalSurcharge').value), 0);
+    const tax = 0;
+    const vat = 0;
+    const total = Math.max(subtotalGross - lineDiscount - generalDiscount + surcharge + tax, 0);
+    const finalMargin = Math.max(margin - generalDiscount + surcharge, 0);
+    const profitability = total > 0 ? (finalMargin * 100) / total : 0;
+
+    document.getElementById('sumSubtotal').textContent = money(subtotalGross);
+    document.getElementById('sumDiscount').textContent = money(lineDiscount + generalDiscount);
+    document.getElementById('sumSurcharge').textContent = money(surcharge);
+    document.getElementById('sumVat').textContent = money(vat);
+    document.getElementById('sumTax').textContent = money(tax);
+    document.getElementById('sumTotal').textContent = money(total);
+    document.getElementById('sumMargin').textContent = money(finalMargin);
+    document.getElementById('sumProfitability').textContent = `${profitability.toFixed(2)}%`;
+
     syncJson();
+    persistDraft();
   }
 
   function toggleConsumerNameField() {
     const select = document.getElementById('quoteClientSelect');
     const wrap = document.getElementById('quoteConsumerNameWrap');
-    const input = document.getElementById('quoteConsumerName');
-    if (!select || !wrap || !input) return;
-    const usingFinalConsumer = !select.value;
-    wrap.style.display = usingFinalConsumer ? '' : 'none';
-    if (!usingFinalConsumer) {
-      input.value = '';
+    const isFinal = !select.value;
+    wrap.style.display = isFinal ? '' : 'none';
+    if (!isFinal) {
+      document.getElementById('quoteConsumerName').value = '';
     }
   }
 
-  function escapeHtml(value) {
-    return String(value || '')
-      .replaceAll('&', '&amp;')
-      .replaceAll('<', '&lt;')
-      .replaceAll('>', '&gt;')
-      .replaceAll('"', '&quot;')
-      .replaceAll("'", '&#39;');
+  function hydrateClientSummary() {
+    const select = document.getElementById('quoteClientSelect');
+    const clientId = Number(select.value || 0);
+    const data = clientCatalog.find((client) => Number(client.id) === clientId);
+
+    document.getElementById('clientCondition').textContent = data?.commercial_condition || '-';
+    document.getElementById('clientPriceList').textContent = data?.price_list || '-';
+    document.getElementById('clientDiscount').textContent = `${Number(data?.usual_discount || 0).toFixed(2)}%`;
+    document.getElementById('clientAddress').textContent = data?.address || '-';
+    document.getElementById('clientObservations').textContent = data?.observations || '-';
+    document.getElementById('clientHistory').textContent = data
+      ? `${data.purchase_count} compras · ${money(data.purchase_total)} · Última: ${data.last_purchase || '-'}`
+      : 'Sin datos';
   }
 
-  initialItems.forEach((item) => items.push({
-    product_id: item.product_id,
-    description: item.description,
-    quantity: Number(item.quantity || 0),
-    unit_price: Number(item.unit_price || 0),
-    discount: Number(item.discount || 0),
-  }));
+  function applyCommercialCondition(value) {
+    const input = document.getElementById('commercialConditions');
+    if (value === 'Personalizado') {
+      input.focus();
+      return;
+    }
+    input.value = value;
+    persistDraft();
+  }
 
-  renderItems();
-  toggleConsumerNameField();
+  function persistDraft() {
+    try {
+      const payload = {
+        at: new Date().toISOString(),
+        items,
+        client_id: document.getElementById('quoteClientSelect').value,
+        consumer_name: document.getElementById('quoteConsumerName').value,
+        seller_id: document.getElementById('quoteSellerSelect').value,
+        expires_at: document.getElementById('quoteExpiresAt').value,
+        status: document.getElementById('quoteStatusSelect').value,
+        observations: document.getElementById('observationsInput').value,
+        commercial_conditions: document.getElementById('commercialConditions').value,
+        discount: document.getElementById('generalDiscount').value,
+        surcharge: document.getElementById('generalSurcharge').value,
+        currency: document.getElementById('quoteCurrency').value,
+      };
+      localStorage.setItem(draftKey, JSON.stringify(payload));
+    } catch (error) {
+      console.warn('No se pudo guardar borrador', error);
+    }
+  }
+
+  function restoreDraftIfNeeded() {
+    try {
+      const raw = localStorage.getItem(draftKey);
+      if (!raw) return;
+      const payload = JSON.parse(raw);
+      if (!payload || typeof payload !== 'object') return;
+      if (initialItems.length > 0 || quoteId) return;
+      if (!window.confirm('Se encontró un borrador automático. ¿Querés recuperarlo?')) return;
+
+      items.splice(0, items.length, ...(payload.items || []));
+      document.getElementById('quoteClientSelect').value = payload.client_id || '';
+      document.getElementById('quoteConsumerName').value = payload.consumer_name || '';
+      document.getElementById('quoteSellerSelect').value = payload.seller_id || document.getElementById('quoteSellerSelect').value;
+      document.getElementById('quoteExpiresAt').value = payload.expires_at || document.getElementById('quoteExpiresAt').value;
+      document.getElementById('quoteStatusSelect').value = payload.status || document.getElementById('quoteStatusSelect').value;
+      document.getElementById('observationsInput').value = payload.observations || '';
+      document.getElementById('commercialConditions').value = payload.commercial_conditions || '';
+      document.getElementById('generalDiscount').value = payload.discount || 0;
+      document.getElementById('generalSurcharge').value = payload.surcharge || 0;
+      document.getElementById('quoteCurrency').value = payload.currency || document.getElementById('quoteCurrency').value;
+    } catch (error) {
+      console.warn('No se pudo recuperar borrador', error);
+    }
+  }
+
+  function clearDraft() {
+    try {
+      localStorage.removeItem(draftKey);
+    } catch (error) {
+      console.warn('No se pudo limpiar borrador', error);
+    }
+  }
+
+  function submitQuote(action) {
+    document.getElementById('submitAction').value = action;
+    syncJson();
+    clearDraft();
+    document.getElementById('quoteForm').submit();
+  }
+
+  function installShortcuts() {
+    document.addEventListener('keydown', (event) => {
+      const key = event.key;
+      if (key === 'F2') {
+        event.preventDefault();
+        document.getElementById('quoteProductSearch').focus();
+      } else if (key === 'F3') {
+        event.preventDefault();
+        document.getElementById('quoteClientSelect').focus();
+      } else if (key === 'F4') {
+        event.preventDefault();
+        submitQuote('save');
+      } else if (key === 'F5') {
+        if (quoteId) {
+          event.preventDefault();
+          window.open(`{{ url_for('quotes.quote_pdf', quote_id=quote.id if quote else 0) if quote else '' }}`, '_blank');
+        }
+      } else if (key === 'F6') {
+        const convertBtn = document.getElementById('actionConvert');
+        if (convertBtn && !convertBtn.disabled) {
+          event.preventDefault();
+          convertBtn.click();
+        }
+      } else if (key === 'Escape') {
+        if (items.length && window.confirm('¿Limpiar líneas del presupuesto?')) {
+          items.splice(0, items.length);
+          renderLines();
+          renderCatalog();
+        }
+      } else if (key === 'Enter' && document.activeElement?.id === 'quoteProductSearch') {
+        event.preventDefault();
+        const first = currentResults[0];
+        if (first) addProduct(first);
+      }
+    });
+  }
+
+  function bootstrap() {
+    initialItems.forEach((item) => {
+      items.push({
+        product_id: item.product_id,
+        description: item.description,
+        quantity: Number(item.quantity || 0),
+        unit_price: Number(item.unit_price || 0),
+        discount: Number(item.discount || 0),
+        cost: 0,
+      });
+    });
+
+    buildCategoryOptions();
+    restoreDraftIfNeeded();
+    renderCatalog();
+    renderLines(false);
+    toggleConsumerNameField();
+    hydrateClientSummary();
+    syncJson();
+
+    document.getElementById('quoteProductSearch').addEventListener('input', () => {
+      resultLimit = 60;
+      renderCatalog();
+    });
+    document.getElementById('categoryFilter').addEventListener('change', () => {
+      resultLimit = 60;
+      renderCatalog();
+    });
+    document.getElementById('hideAddedSwitch').addEventListener('change', renderCatalog);
+    document.getElementById('loadMoreProducts').addEventListener('click', () => {
+      resultLimit += 60;
+      renderCatalog();
+    });
+
+    document.getElementById('quoteClientSelect').addEventListener('change', () => {
+      toggleConsumerNameField();
+      hydrateClientSummary();
+      persistDraft();
+    });
+
+    ['generalDiscount', 'generalSurcharge', 'quoteExpiresAt', 'quoteStatusSelect', 'quoteCurrency', 'observationsInput', 'commercialConditions', 'quoteConsumerName', 'quoteSellerSelect']
+      .forEach((id) => {
+        const element = document.getElementById(id);
+        if (!element) return;
+        element.addEventListener('input', updateTotals);
+        element.addEventListener('change', updateTotals);
+      });
+
+    document.getElementById('actionSave').addEventListener('click', () => submitQuote('save'));
+    document.getElementById('actionSend').addEventListener('click', () => submitQuote('send'));
+
+    document.querySelectorAll('[data-condition-value]').forEach((chip) => {
+      chip.addEventListener('click', () => {
+        document.querySelectorAll('[data-condition-value]').forEach((row) => row.classList.remove('active'));
+        chip.classList.add('active');
+        applyCommercialCondition(chip.dataset.conditionValue);
+      });
+    });
+
+    document.getElementById('smartQuoteButton').addEventListener('click', () => {
+      window.alert('Presupuesto Inteligente: flujo preparado. Próximamente podrás generar propuestas por tipo de negocio.');
+    });
+
+    const copyShare = document.getElementById('copyShareLink');
+    if (copyShare) {
+      copyShare.addEventListener('click', async () => {
+        if (!editShareUrl) return;
+        try {
+          await navigator.clipboard.writeText(editShareUrl);
+          copyShare.textContent = 'Enlace copiado';
+          setTimeout(() => {
+            copyShare.innerHTML = '<i class="bi bi-link-45deg me-1"></i>Compartir enlace';
+          }, 1200);
+        } catch (error) {
+          window.prompt('Copiá este enlace:', editShareUrl);
+        }
+      });
+    }
+
+    document.querySelectorAll('[data-panel-toggle]').forEach((button) => {
+      button.addEventListener('click', () => {
+        const selector = button.getAttribute('data-panel-toggle');
+        const panel = selector ? document.querySelector(selector) : null;
+        if (!panel) return;
+        panel.classList.toggle('collapsed');
+        button.textContent = panel.classList.contains('collapsed') ? 'Expandir' : 'Plegar';
+      });
+    });
+
+    if (window.matchMedia('(max-width: 1200px)').matches) {
+      const linesPanel = document.getElementById('panelLines');
+      const contextPanel = document.getElementById('panelContext');
+      if (linesPanel) linesPanel.classList.add('collapsed');
+      if (contextPanel) contextPanel.classList.add('collapsed');
+    }
+
+    installShortcuts();
+  }
+
+  bootstrap();
 </script>
 {% endblock %}

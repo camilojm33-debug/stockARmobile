@@ -1123,6 +1123,20 @@ def test_quotes_module_toggle_and_permissions():
 
     assert client.get("/presupuestos/").status_code == 200
 
+
+def test_quotes_builder_form_renders_productive_layout():
+    client = stock_app.app.test_client()
+    client.post("/auth/login", data={"username": "empresa_admin", "password": "admin123"})
+
+    response = client.get("/presupuestos/nuevo")
+    assert response.status_code == 200
+    html = response.get_data(as_text=True)
+    assert "Constructor de presupuesto" in html
+    assert "Presupuesto Inteligente" in html
+    assert "quoteProductSearch" in html
+    assert "items_json" in html
+    assert "Convertir en venta" in html
+
     with stock_app.app.app_context():
         company = Company.query.filter_by(name="Empresa Demo").first()
         assert company is not None

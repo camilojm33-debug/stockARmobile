@@ -410,6 +410,99 @@ def _quote_form_items(quote):
     ]
 
 
+def _product_image_url(product):
+    candidate = (
+        getattr(product, "image", None)
+        or getattr(product, "image_url", None)
+        or getattr(product, "photo", None)
+        or getattr(product, "photo_url", None)
+        or ""
+    )
+    raw = str(candidate or "").strip()
+    if not raw:
+        return ""
+    if raw.startswith("http://") or raw.startswith("https://") or raw.startswith("/"):
+        return raw
+    return url_for("static", filename=raw.lstrip("/"))
+
+
+def _product_category_name(product):
+    category_value = getattr(product, "category", None)
+    if isinstance(category_value, str):
+        return category_value
+    return getattr(category_value, "name", None) or "Sin categoría"
+
+
+def _build_product_catalog(products):
+    catalog = []
+    for product in products:
+        category = _product_category_name(product)
+        brand = str(getattr(product, "brand", None) or getattr(product, "brand_name", None) or "").strip()
+        supplier = str(
+            getattr(product, "supplier_name", None)
+            or getattr(getattr(product, "supplier", None), "name", None)
+            or ""
+        ).strip()
+        description = str(getattr(product, "description", None) or "").strip()
+        code = str(getattr(product, "barcode", None) or getattr(product, "sku", None) or "").strip()
+        name = str(getattr(product, "name", None) or "Producto").strip()
+
+        search_blob = " ".join(
+            [
+                name,
+                code,
+                category,
+                brand,
+                supplier,
+                description,
+            ]
+        ).lower()
+
+        catalog.append(
+            {
+                "id": int(product.id),
+                "name": name,
+                "category": category,
+                "barcode": code,
+                "stock": float(getattr(product, "stock", 0) or 0),
+                "price": float(getattr(product, "price", 0) or 0),
+                "discount": float(getattr(product, "discount", 0) or 0),
+                "brand": brand,
+                "supplier": supplier,
+                "description": description,
+                "image": _product_image_url(product),
+                "cost": float(getattr(product, "cost_price", 0) or getattr(product, "cost", 0) or 0),
+                "search": search_blob,
+            }
+        )
+    return catalog
+
+
+def _build_client_catalog(clients, *, sales_history):
+    payload = []
+    for client in clients:
+        history = sales_history.get(int(client.id), {"count": 0, "total": 0.0, "last": ""})
+        payload.append(
+            {
+                "id": int(client.id),
+                "name": str(getattr(client, "name", None) or "").strip(),
+                "commercial_condition": str(
+                    getattr(client, "commercial_condition", None)
+                    or getattr(client, "payment_terms", None)
+                    or ""
+                ).strip(),
+                "price_list": str(getattr(client, "price_list", None) or "").strip(),
+                "usual_discount": float(getattr(client, "usual_discount", 0) or 0),
+                "address": str(getattr(client, "address", None) or "").strip(),
+                "observations": str(getattr(client, "notes", None) or getattr(client, "observations", None) or "").strip(),
+                "purchase_count": int(history.get("count", 0) or 0),
+                "purchase_total": float(history.get("total", 0) or 0),
+                "last_purchase": str(history.get("last", "") or ""),
+            }
+        )
+    return payload
+
+
 def _quote_pdf_response(quote, *, as_attachment=False):
     from app import Company
 
@@ -670,7 +763,7 @@ def index():
 @tenant_required
 @login_required
 def new_quote():
-    from app import Client, Product, User, db, scope_query_to_company
+    from app import Client, Product, Sale, User, db, scope_query_to_company
 
     _require_quote_permission("quotes_create")
     if request.method == "POST":
@@ -684,6 +777,24 @@ def new_quote():
     products = scope_query_to_company(Product.query.filter_by(active=True), Product).order_by(Product.favorite.desc(), Product.name).all()
     clients = scope_query_to_company(Client.query.filter_by(active=True), Client).order_by(Client.name).all()
     sellers = scope_query_to_company(User.query.filter(User.active.is_(True)), User).order_by(User.first_name.asc(), User.last_name.asc(), User.username.asc()).all()
+    client_ids = [client.id for client in clients]
+    sales_history = {}
+    if client_ids:
+        rows = (
+            scope_query_to_company(db.session.query(Sale.client_id, db.func.count(Sale.id), db.func.coalesce(db.func.sum(Sale.total_amount), 0), db.func.max(Sale.date)), Sale)
+            .filter(Sale.client_id.in_(client_ids))
+            .group_by(Sale.client_id)
+            .all()
+        )
+        for client_id, count, total_amount, last_date in rows:
+            sales_history[int(client_id)] = {
+                "count": int(count or 0),
+                "total": float(total_amount or 0),
+                "last": last_date.strftime("%Y-%m-%d") if last_date else "",
+            }
+
+    product_catalog = _build_product_catalog(products)
+    client_catalog = _build_client_catalog(clients, sales_history=sales_history)
     default_expires_at = (utcnow() + timedelta(days=5)).strftime("%Y-%m-%d")
     return render_template(
         "presupuestos/form.html",
@@ -696,6 +807,10 @@ def new_quote():
         initial_items=[],
         general_discount_value=0,
         default_expires_at=default_expires_at,
+        product_catalog=product_catalog,
+        client_catalog=client_catalog,
+        can_modify_prices=_can_modify_prices(),
+        can_apply_discounts=_can_apply_discounts(),
     )
 
 
@@ -713,7 +828,7 @@ def view_quote(quote_id):
 @tenant_required
 @login_required
 def edit_quote(quote_id):
-    from app import Client, Product, User, db, scope_query_to_company
+    from app import Client, Product, Sale, User, db, scope_query_to_company
 
     _require_quote_permission("quotes_edit")
     quote = _quote_lookup(quote_id)
@@ -728,6 +843,24 @@ def edit_quote(quote_id):
     products = scope_query_to_company(Product.query.filter_by(active=True), Product).order_by(Product.favorite.desc(), Product.name).all()
     clients = scope_query_to_company(Client.query.filter_by(active=True), Client).order_by(Client.name).all()
     sellers = scope_query_to_company(User.query.filter(User.active.is_(True)), User).order_by(User.first_name.asc(), User.last_name.asc(), User.username.asc()).all()
+    client_ids = [client.id for client in clients]
+    sales_history = {}
+    if client_ids:
+        rows = (
+            scope_query_to_company(db.session.query(Sale.client_id, db.func.count(Sale.id), db.func.coalesce(db.func.sum(Sale.total_amount), 0), db.func.max(Sale.date)), Sale)
+            .filter(Sale.client_id.in_(client_ids))
+            .group_by(Sale.client_id)
+            .all()
+        )
+        for client_id, count, total_amount, last_date in rows:
+            sales_history[int(client_id)] = {
+                "count": int(count or 0),
+                "total": float(total_amount or 0),
+                "last": last_date.strftime("%Y-%m-%d") if last_date else "",
+            }
+
+    product_catalog = _build_product_catalog(products)
+    client_catalog = _build_client_catalog(clients, sales_history=sales_history)
     return render_template(
         "presupuestos/form.html",
         quote=quote,
@@ -739,6 +872,10 @@ def edit_quote(quote_id):
         initial_items=_quote_form_items(quote),
         general_discount_value=max(float(quote.discount or 0) - sum(float(item.discount or 0) for item in quote.items), 0.0),
         default_expires_at="",
+        product_catalog=product_catalog,
+        client_catalog=client_catalog,
+        can_modify_prices=_can_modify_prices(),
+        can_apply_discounts=_can_apply_discounts(),
     )
 
 
