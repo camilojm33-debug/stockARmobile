@@ -598,7 +598,7 @@ def _build_resource_center_context(profile, search_term: str = ""):
 @bp.route("/referidos/recursos")
 @seller_required
 def seller_resources():
-    from app import ResourceMessage, db
+    from app import ReferralSeller, ResourceMessage, db
 
     if not _referrals_module_ready():
         flash("El programa de referidos todavía no está disponible porque faltan migraciones.", "warning")
