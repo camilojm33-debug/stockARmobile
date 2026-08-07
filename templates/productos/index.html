@@ -2,6 +2,46 @@
 {% block title %}
   Productos
 {% endblock %}
+{% block extra_css %}
+<style>
+  .product-row-thumb {
+    width: 40px;
+    height: 40px;
+    border-radius: 10px;
+    overflow: hidden;
+    background: #f8fafc;
+    border: 1px solid var(--app-line);
+    flex: 0 0 auto;
+  }
+
+  .product-row-thumb img {
+    width: 100%;
+    height: 100%;
+    object-fit: cover;
+  }
+
+  .product-row-thumb.product-icon-fallback {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    color: #475569;
+    font-size: 1rem;
+    line-height: 1;
+  }
+
+  .product-catalog-visual {
+    min-height: 150px;
+    background: #f8fafc;
+  }
+
+  .product-catalog-visual.product-icon-fallback {
+    border-radius: 0;
+    color: #475569;
+    font-size: 2rem;
+    line-height: 1;
+  }
+</style>
+{% endblock %}
 {% block content %}
 <div class="app-shell">
   <div class="d-flex flex-wrap justify-content-between align-items-center gap-2 mb-4">
@@ -92,7 +132,19 @@
           {% for producto in productos %}
           <tr>
             <td><code class="bg-light px-2 py-1 rounded">{{ producto.barcode }}</code></td>
-            <td class="fw-semibold">{{ producto.name }}</td>
+            <td>
+              <div class="d-flex align-items-center gap-2 min-w-0">
+                {% if producto.photo %}
+                <img src="{{ producto.photo }}" alt="{{ producto.name }}" class="product-row-thumb" loading="lazy" data-product-image data-category="{{ (producto.category or '')|e }}" data-product-name="{{ producto.name|e }}" data-fallback-class="product-row-thumb" data-fallback-extra-class="d-flex align-items-center justify-content-center">
+                {% else %}
+                <div class="product-row-thumb d-flex align-items-center justify-content-center" data-category-icon data-category="{{ (producto.category or '')|e }}" data-product-name="{{ producto.name|e }}" aria-label="Sin imagen de {{ producto.name }}"></div>
+                {% endif %}
+                <div class="min-w-0">
+                  <div class="fw-semibold text-truncate" title="{{ producto.name }}">{{ producto.name }}</div>
+                  <div class="small text-muted text-truncate">{{ producto.category or 'General' }}</div>
+                </div>
+              </div>
+            </td>
             <td>{{ producto.brand or producto.category or '-' }}</td>
             <td>{{ producto.sale_type|capitalize }} / {{ producto.unit_measure or 'u' }}</td>
             <td>${{ "%.2f"|format(producto.cost_price or 0) }}</td>
@@ -132,9 +184,9 @@
       <div class="col-sm-6 col-lg-4 col-xl-3">
         <div class="card app-card h-100 overflow-hidden">
           {% if producto.photo %}
-          <img src="{{ producto.photo }}" class="card-img-top" alt="{{ producto.name }}" style="aspect-ratio: 4/3; object-fit: cover;">
+          <img src="{{ producto.photo }}" class="card-img-top" alt="{{ producto.name }}" style="aspect-ratio: 4/3; object-fit: cover;" loading="lazy" data-product-image data-category="{{ (producto.category or '')|e }}" data-product-name="{{ producto.name|e }}" data-fallback-class="product-catalog-visual" data-fallback-extra-class="d-flex align-items-center justify-content-center">
           {% else %}
-          <div class="empty-state bg-body-tertiary" style="min-height: 150px;"><i class="bi bi-image display-6"></i></div>
+          <div class="product-catalog-visual d-flex align-items-center justify-content-center" data-category-icon data-category="{{ (producto.category or '')|e }}" data-product-name="{{ producto.name|e }}" aria-label="Sin imagen de {{ producto.name }}"></div>
           {% endif %}
           <div class="card-body">
             <div class="d-flex justify-content-between gap-2 mb-2">
@@ -170,6 +222,7 @@
 {% endblock %}
 
 {% block extra_js %}
+<script src="{{ url_for('static', filename='assets/js/category-visuals.js') }}"></script>
 <script>
   (() => {
     const input = document.getElementById('photoFileInput');
@@ -249,6 +302,10 @@
     }
 
     syncPricing((pricingSourceInput && pricingSourceInput.value) || 'price');
+
+    if (window.StockArProductVisual) {
+      window.StockArProductVisual.init(document);
+    }
 
     if (!input || !preview) return;
 

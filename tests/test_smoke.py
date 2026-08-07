@@ -1132,7 +1132,6 @@ def test_quotes_builder_form_renders_productive_layout():
     assert response.status_code == 200
     html = response.get_data(as_text=True)
     assert "Constructor de presupuesto" in html
-    assert "Presupuesto Inteligente" in html
     assert "quoteProductSearch" in html
     assert "items_json" in html
     assert "Convertir en venta" in html

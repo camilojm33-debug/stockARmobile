@@ -2,6 +2,42 @@
 
 {% block title %}Compras - StockArmobile{% endblock %}
 
+{% block extra_css %}
+<style>
+  .purchase-product-preview {
+    border: 1px solid var(--app-line);
+    border-radius: 14px;
+    background: #fff;
+    padding: .9rem;
+  }
+
+  .purchase-product-preview-thumb {
+    width: 68px;
+    height: 68px;
+    border-radius: 14px;
+    overflow: hidden;
+    background: #f8fafc;
+    border: 1px solid var(--app-line);
+    flex: 0 0 auto;
+  }
+
+  .purchase-product-preview-thumb img {
+    width: 100%;
+    height: 100%;
+    object-fit: cover;
+  }
+
+  .purchase-product-preview-thumb.product-icon-fallback {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    color: #475569;
+    font-size: 1.55rem;
+    line-height: 1;
+  }
+</style>
+{% endblock %}
+
 {% block content %}
 <div class="app-shell">
   <nav aria-label="breadcrumb" class="mb-2">
@@ -59,7 +95,15 @@
             <input type="hidden" name="company_id" value="{{ selected_company_id }}">
             {% endif %}
             <div class="row g-3">
-              <div class="col-md-6"><label class="form-label">Producto</label><select class="form-select" name="product_id" required>{% for product in products %}<option value="{{ product.id }}">{{ product.name }} · stock {{ "%.3g"|format(product.stock or 0) }}</option>{% endfor %}</select></div>
+              <div class="col-md-6">
+                <label class="form-label" for="purchaseProductSelect">Producto</label>
+                <select class="form-select" id="purchaseProductSelect" name="product_id" required>
+                  {% for product in products %}
+                  <option value="{{ product.id }}" data-name="{{ product.name|e }}" data-category="{{ (product.category or '')|e }}" data-photo="{{ (product.photo or '')|e }}" data-stock="{{ "%.3g"|format(product.stock or 0) }}" data-brand="{{ (product.brand or '')|e }}">{{ product.name }} · stock {{ "%.3g"|format(product.stock or 0) }}</option>
+                  {% endfor %}
+                </select>
+                <div class="purchase-product-preview mt-2" id="purchaseProductPreview" aria-live="polite"></div>
+              </div>
               <div class="col-md-6"><label class="form-label">Proveedor</label><select class="form-select" name="supplier_id"><option value="">Sin proveedor</option>{% for supplier in suppliers %}<option value="{{ supplier.id }}">{{ supplier.name }}</option>{% endfor %}</select></div>
               <div class="col-md-4"><label class="form-label">Cantidad</label><input class="form-control" name="quantity" type="number" min="0.001" step="0.001" required></div>
               <div class="col-md-4"><label class="form-label">Costo unitario</label><input class="form-control" name="unit_cost" type="number" min="0" step="0.01" required></div>
@@ -105,4 +149,64 @@
   </div>
   {% endif %}
 </div>
+{% endblock %}
+
+{% block extra_js %}
+<script src="{{ url_for('static', filename='assets/js/category-visuals.js') }}"></script>
+<script>
+  (() => {
+    const productSelect = document.getElementById('purchaseProductSelect');
+    const preview = document.getElementById('purchaseProductPreview');
+
+    function escapeHtml(value) {
+      const div = document.createElement('div');
+      div.textContent = value ?? '';
+      return div.innerHTML;
+    }
+
+    function renderPreview() {
+      if (!productSelect || !preview) return;
+      const option = productSelect.selectedOptions[0];
+      if (!option) {
+        preview.innerHTML = '<div class="small text-muted">Seleccioná un producto para ver su referencia visual.</div>';
+        return;
+      }
+
+      const product = {
+        name: option.dataset.name || option.textContent || 'Producto',
+        category: option.dataset.category || '',
+        photo: option.dataset.photo || '',
+        stock: option.dataset.stock || '0',
+        brand: option.dataset.brand || '',
+      };
+
+      const visual = product.photo
+        ? `<img src="${escapeHtml(product.photo)}" alt="${escapeHtml(product.name)}" data-product-image data-category="${escapeHtml(product.category)}" data-product-name="${escapeHtml(product.name)}" data-fallback-class="purchase-product-preview-thumb" data-fallback-extra-class="d-flex align-items-center justify-content-center">`
+        : window.StockArProductVisual.buildFallbackHtml({
+            className: 'purchase-product-preview-thumb',
+            extraClass: 'd-flex align-items-center justify-content-center',
+            category: product.category,
+            name: product.name,
+          });
+
+      preview.innerHTML = `
+        <div class="d-flex align-items-center gap-3">
+          ${visual}
+          <div class="min-w-0">
+            <div class="fw-semibold text-truncate" title="${escapeHtml(product.name)}">${escapeHtml(product.name)}</div>
+            <div class="small text-muted text-truncate">${escapeHtml(product.category || 'General')} · ${escapeHtml(product.brand || 'Sin marca')}</div>
+            <div class="small text-muted">Stock actual: ${escapeHtml(product.stock)}</div>
+          </div>
+        </div>
+      `;
+
+      window.StockArProductVisual.init(preview);
+    }
+
+    if (window.StockArProductVisual) {
+      renderPreview();
+      productSelect?.addEventListener('change', renderPreview);
+    }
+  })();
+</script>
 {% endblock %}

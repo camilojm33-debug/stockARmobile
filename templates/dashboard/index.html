@@ -234,7 +234,14 @@
           <div class="list-group list-group-flush">
             {% for product in low_stock %}
             <a class="list-group-item list-group-item-action d-flex justify-content-between px-0" href="{{ url_for('products.index', low_stock=1) }}">
-              <span>{{ product.name }}</span>
+              <span class="d-flex align-items-center gap-2 min-w-0">
+                {% if product.photo %}
+                <img src="{{ product.photo }}" alt="{{ product.name }}" class="dashboard-product-thumb" loading="lazy" data-product-image data-category="{{ (product.category or '')|e }}" data-product-name="{{ product.name|e }}" data-fallback-class="dashboard-product-thumb" data-fallback-extra-class="d-flex align-items-center justify-content-center">
+                {% else %}
+                <span class="dashboard-product-thumb d-flex align-items-center justify-content-center" data-category-icon data-category="{{ (product.category or '')|e }}" data-product-name="{{ product.name|e }}" aria-label="Sin imagen de {{ product.name }}"></span>
+                {% endif %}
+                <span class="text-truncate">{{ product.name }}</span>
+              </span>
               <span class="badge {{ 'text-bg-danger' if product.stock <= 0 else 'text-bg-warning' }}">{{ "%.3g"|format(product.stock or 0) }} {{ product.unit_measure or '' }}</span>
             </a>
             {% endfor %}
@@ -251,11 +258,39 @@
 
 {% block extra_css %}
 <link rel="stylesheet" href="{{ url_for('static', filename='assets/css/dashboard.css') }}">
+<style>
+  .dashboard-product-thumb {
+    width: 36px;
+    height: 36px;
+    border-radius: 10px;
+    overflow: hidden;
+    background: #f8fafc;
+    border: 1px solid var(--app-line);
+    flex: 0 0 auto;
+  }
+
+  .dashboard-product-thumb img {
+    width: 100%;
+    height: 100%;
+    object-fit: cover;
+  }
+
+  .dashboard-product-thumb.product-icon-fallback {
+    color: #475569;
+    font-size: 1rem;
+    line-height: 1;
+  }
+</style>
 {% endblock %}
 
 {% block extra_js %}
 <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.7/dist/chart.umd.min.js"></script>
+<script src="{{ url_for('static', filename='assets/js/category-visuals.js') }}"></script>
 <script>
+  if (window.StockArProductVisual) {
+    window.StockArProductVisual.init(document);
+  }
+
   {% if can_view_economic_metrics %}
   const salesTrendCanvas = document.getElementById('salesTrendChart');
   if (salesTrendCanvas) {

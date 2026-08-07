@@ -40,7 +40,11 @@
                             <tr>
                                 <td class="ps-4 py-3" data-label="Producto">
                                     <div class="d-flex align-items-center">
-                                        <i class="bi bi-box text-primary me-2"></i>
+                                        {% if product.photo %}
+                                        <img src="{{ product.photo }}" alt="{{ product.name }}" class="sale-new-product-thumb me-2" loading="lazy" data-product-image data-category="{{ (product.category or '')|e }}" data-product-name="{{ product.name|e }}" data-fallback-class="sale-new-product-thumb" data-fallback-extra-class="d-flex align-items-center justify-content-center">
+                                        {% else %}
+                                        <div class="sale-new-product-thumb d-flex align-items-center justify-content-center me-2" data-category-icon data-category="{{ (product.category or '')|e }}" data-product-name="{{ product.name|e }}" aria-label="Sin imagen de {{ product.name }}"></div>
+                                        {% endif %}
                                         <div>
                                             <div>{{ product.name }}</div>
                                             {% if product.sku %}
@@ -166,5 +170,36 @@
 <style>
 .xxsmall { font-size: 0.75rem; }
 .table > :not(caption) > * > * { vertical-align: middle; }
+.sale-new-product-thumb {
+        width: 40px;
+        height: 40px;
+        border-radius: 10px;
+        overflow: hidden;
+        background: #f8fafc;
+        border: 1px solid var(--app-line);
+        flex: 0 0 auto;
+}
+.sale-new-product-thumb img {
+        width: 100%;
+        height: 100%;
+        object-fit: cover;
+}
+.sale-new-product-thumb.product-icon-fallback {
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        color: #475569;
+        font-size: 1rem;
+        line-height: 1;
+}
 </style>
+{% endblock %}
+
+{% block extra_js %}
+<script src="{{ url_for('static', filename='assets/js/category-visuals.js') }}"></script>
+<script>
+    if (window.StockArProductVisual) {
+        window.StockArProductVisual.init(document);
+    }
+</script>
 {% endblock %}

@@ -75,6 +75,11 @@
     background: #f8fafc;
   }
 
+  .catalog-thumb.product-icon-fallback {
+    color: #475569;
+    font-size: 1.2rem;
+  }
+
   .catalog-main {
     min-width: 0;
   }
@@ -403,7 +408,6 @@
           </div>
 
           <div class="d-grid gap-2">
-            <button type="button" class="btn btn-dark focus-ring" id="smartQuoteButton"><i class="bi bi-stars me-1"></i>Presupuesto Inteligente</button>
             <a class="btn btn-outline-secondary focus-ring" href="{{ url_for('quotes.index') }}">Volver</a>
           </div>
         </div>
@@ -414,6 +418,7 @@
 {% endblock %}
 
 {% block extra_js %}
+<script src="{{ url_for('static', filename='assets/js/category-visuals.js') }}"></script>
 <script>
   const productCatalog = {{ product_catalog|tojson }};
   const clientCatalog = {{ client_catalog|tojson }};
@@ -632,7 +637,14 @@
 
     container.innerHTML = visible.map((product) => {
       const alreadyAdded = selectedIds.has(Number(product.id));
-      const image = product.image ? `<img class="catalog-thumb" src="${escapeHtml(product.image)}" alt="${escapeHtml(product.name)}">` : '<div class="catalog-thumb d-flex align-items-center justify-content-center text-muted small">IMG</div>';
+      const image = product.image
+        ? `<img class="catalog-thumb" src="${escapeHtml(product.image)}" alt="${escapeHtml(product.name)}" loading="lazy" data-product-image data-category="${escapeHtml(product.category || '')}" data-product-name="${escapeHtml(product.name)}" data-fallback-class="catalog-thumb" data-fallback-extra-class="d-flex align-items-center justify-content-center">`
+        : window.StockArProductVisual.buildFallbackHtml({
+            className: 'catalog-thumb',
+            extraClass: 'd-flex align-items-center justify-content-center',
+            category: product.category || '',
+            name: product.name || 'producto',
+          });
       return `
         <article class="catalog-card ${alreadyAdded ? 'added' : ''}" role="listitem" aria-label="Producto ${escapeHtml(product.name)}">
           ${image}
@@ -648,6 +660,8 @@
         </article>
       `;
     }).join('');
+
+    window.StockArProductVisual.attachImageFallbacks(container);
   }
 
   function addProductById(productId) {
@@ -942,10 +956,6 @@
         chip.classList.add('active');
         applyCommercialCondition(chip.dataset.conditionValue);
       });
-    });
-
-    document.getElementById('smartQuoteButton').addEventListener('click', () => {
-      window.alert('Presupuesto Inteligente: flujo preparado. Próximamente podrás generar propuestas por tipo de negocio.');
     });
 
     const copyShare = document.getElementById('copyShareLink');
