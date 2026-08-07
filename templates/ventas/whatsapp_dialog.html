@@ -13,7 +13,7 @@
         <div class="card-body p-4">
           <p class="text-muted mb-3">Se abrirá WhatsApp con el ticket preparado para compartir.</p>
 
-          <form method="post" action="{{ url_for('sales.share_whatsapp', sale_id=sale.id) }}" target="_blank" rel="noopener" id="saleWhatsappShareForm">
+          <form method="post" action="{{ url_for('sales.share_whatsapp', sale_id=sale.id) }}" id="saleWhatsappShareForm">
             <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
 
             <div class="mb-3">
@@ -34,7 +34,7 @@
             <div class="action-wrap justify-content-end">
               <a class="btn btn-outline-secondary w-100 w-md-auto" href="{{ url_for('sales.success', sale_id=sale.id) }}">Cancelar</a>
               <button class="btn btn-outline-success w-100 w-md-auto" type="button" id="saleWhatsappDesktop"><i class="bi bi-whatsapp me-1"></i>Abrir app</button>
-              <button class="btn btn-success w-100 w-md-auto" type="submit"><i class="bi bi-globe2 me-1"></i>Abrir Web</button>
+              <button class="btn btn-success w-100 w-md-auto" type="button" id="saleWhatsappWeb"><i class="bi bi-globe2 me-1"></i>Abrir Web</button>
             </div>
           </form>
         </div>
@@ -48,6 +48,7 @@
 <script>
   (() => {
     const desktopButton = document.getElementById('saleWhatsappDesktop');
+    const webButton = document.getElementById('saleWhatsappWeb');
     const phoneInput = document.getElementById('saleWhatsappPhone');
     const baseMessage = {{ message|tojson }};
     const ticketUrl = {{ pdf_url|tojson }};
@@ -98,6 +99,10 @@
       window.addEventListener('blur', cancelFallback, { once: true });
       document.addEventListener('visibilitychange', handleVisibilityChange);
       window.location.href = buildDesktopUrl();
+    });
+
+    webButton?.addEventListener('click', () => {
+      window.open(buildWebUrl(), '_blank', 'noopener');
     });
   })();
 </script>
