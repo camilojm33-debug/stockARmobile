@@ -1058,6 +1058,10 @@ a { text-decoration: none; }
   object-fit: contain;
 }
 
+#video-demo .section-heading .text-muted {
+  color: rgba(226, 236, 255, 0.72) !important;
+}
+
 .video-fallback i {
   font-size: 2.5rem;
   color: var(--primary);
@@ -1149,6 +1153,9 @@ a { text-decoration: none; }
     border-radius: 12px;
     margin-top: 0.75rem;
     margin-bottom: 1rem;
+  }
+  #video-demo .section-heading .text-muted {
+    color: rgba(233, 241, 255, 0.82) !important;
   }
 }
 
