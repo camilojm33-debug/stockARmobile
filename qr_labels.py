@@ -448,15 +448,24 @@ def _draw_label_on_canvas(pdf, product, x, y, label_w_pt, label_h_pt, *, include
             min_size=min_price_size,
             font_name="Helvetica-Bold",
         )
-        band_h = max(price_h * 0.92, price_size * 1.45)
-        band_y = cursor_top - band_h
-        pdf.setFillColorRGB(0, 0, 0)
-        pdf.rect(inner_x, band_y, inner_w, band_h, stroke=0, fill=1)
-        pdf.setFillColorRGB(1, 1, 1)
-        pdf.setFont("Helvetica-Bold", price_size)
-        pdf.drawCentredString(center_x, band_y + ((band_h - price_size) / 2) + (price_size * 0.18), price_value)
-        pdf.setFillColorRGB(0, 0, 0)
-        cursor_top = band_y - row_gap
+        # En etiquetas bajas (ej: 50x25) evita la banda negra completa,
+        # que puede cruzarse visualmente con el codigo lineal opcional.
+        if label_h_mm < 30:
+            pdf.setFillColorRGB(0, 0, 0)
+            pdf.setFont("Helvetica-Bold", max(8, min(price_size, 13)))
+            text_y = cursor_top - max(2.0 * mm, price_h * 0.65)
+            pdf.drawCentredString(center_x, text_y, price_value)
+            cursor_top = text_y - row_gap
+        else:
+            band_h = max(price_h * 0.92, price_size * 1.45)
+            band_y = cursor_top - band_h
+            pdf.setFillColorRGB(0, 0, 0)
+            pdf.rect(inner_x, band_y, inner_w, band_h, stroke=0, fill=1)
+            pdf.setFillColorRGB(1, 1, 1)
+            pdf.setFont("Helvetica-Bold", price_size)
+            pdf.drawCentredString(center_x, band_y + ((band_h - price_size) / 2) + (price_size * 0.18), price_value)
+            pdf.setFillColorRGB(0, 0, 0)
+            cursor_top = band_y - row_gap
 
     if include_code:
         sku_y_center = max(inner_y + (sku_h / 2), cursor_top - (sku_h / 2))
@@ -715,6 +724,15 @@ def _create_sheet_label_image(
 
 def _build_custom_sheet_a4_pdf(product, quantity, size_key, *, include_name, include_price, include_code, include_qr, include_ean, include_code128, include_date):
     width_mm, height_mm = _label_dimensions_mm(size_key)
+    use_linear_barcode = bool(include_ean or include_code128)
+
+    # En formatos compactos, prioriza legibilidad de 1D y evita sobrecargar.
+    effective_include_qr = include_qr
+    effective_include_code = include_code
+    if height_mm <= 30 and use_linear_barcode:
+        effective_include_qr = False
+        effective_include_code = False
+
     label_w = width_mm * mm
     label_h = height_mm * mm
     grid = _compute_a4_grid(label_w, label_h)
@@ -742,8 +760,8 @@ def _build_custom_sheet_a4_pdf(product, quantity, size_key, *, include_name, inc
             label_h,
             include_name=include_name,
             include_price=include_price,
-            include_code=include_code,
-            include_qr=include_qr,
+            include_code=effective_include_code,
+            include_qr=effective_include_qr,
         )
 
         # Opcionales de codigos/date sobre la misma etiqueta A4 (sin miniaturizar QR).
