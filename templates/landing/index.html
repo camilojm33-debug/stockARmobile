@@ -173,7 +173,7 @@
               <div class="feature-card p-3 p-md-4">
                 {% if demo_video_url %}
                 <div class="video-frame">
-                  <iframe src="{{ demo_video_url }}" title="Video demostración StockArmobile" allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture" allowfullscreen loading="lazy"></iframe>
+                  <iframe src="{{ demo_video_url }}{{ '&' if '?' in demo_video_url else '?' }}autoplay=1&mute=1&playsinline=1&rel=0" title="Video demostración StockArmobile" allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture" allowfullscreen loading="lazy"></iframe>
                 </div>
                 {% if demo_video_open_url %}
                 <div class="text-center mt-2">
@@ -182,7 +182,7 @@
                 {% endif %}
                 {% elif demo_video_file_url %}
                 <div class="video-frame">
-                  <video controls preload="metadata" playsinline webkit-playsinline poster="{{ demo_video_poster_url }}" title="Video demostración StockArmobile">
+                  <video controls autoplay muted playsinline webkit-playsinline preload="metadata" poster="{{ demo_video_poster_url }}" title="Video demostración StockArmobile">
                     <source src="{{ demo_video_file_url }}" type="video/mp4">
                     Tu navegador no soporta reproducción de video.
                   </video>
