@@ -660,6 +660,63 @@ def _build_sixup_a4_pdf(label_images):
     return buffer
 
 
+def _create_compact_linear_label_image(product, width_mm, height_mm, *, include_name, include_price, include_code, include_date, include_ean, include_code128):
+    """Render compacto para etiquetas bajas con codigo lineal (ej. 50x25).
+
+    Prioriza legibilidad de barras y evita superposiciones internas.
+    """
+    img_size = _label_pixel_size(width_mm, height_mm, px_per_mm=26)
+    label = Image.new("RGB", img_size, color="white")
+    draw = ImageDraw.Draw(label)
+    w, h = label.size
+
+    pad_x = max(6, int(w * 0.03))
+    top_h = max(24, int(h * 0.28))
+    bottom_h = max(18, int(h * 0.18))
+    barcode_zone_h = max(36, h - top_h - bottom_h - 6)
+
+    code_value = str(product.barcode or product.id)
+    barcode_mode = _resolve_barcode_mode(
+        code_value,
+        include_ean,
+        include_code128,
+        width_mm=width_mm,
+        height_mm=height_mm,
+    )
+
+    if include_date:
+        date_font = _font(max(9, int(h * 0.08)))
+        draw.text((pad_x, max(3, int(h * 0.04))), utcnow().strftime("%Y-%m-%d"), fill="black", font=date_font)
+
+    if include_name:
+        name_text = f"{product.name} ({product.unit_measure or 'u'})"
+        name_font = _fit_font_for_text(draw, name_text, max(30, w - (2 * pad_x)), max_size=max(16, int(h * 0.12)), min_size=9, bold=True)
+        draw.text((w // 2, max(4, int(h * 0.05))), name_text, fill="black", anchor="ma", font=name_font)
+
+    if include_price:
+        price_text = f"$ {float(product.price or 0):.2f}"
+        price_font = _fit_font_for_text(draw, price_text, max(26, int(w * 0.32)), max_size=max(13, int(h * 0.12)), min_size=9, bold=True)
+        draw.text((w - pad_x, max(4, int(h * 0.05))), price_text, fill="black", anchor="ra", font=price_font)
+
+    if barcode_mode:
+        try:
+            code_img = generate_ean13_code(code_value) if barcode_mode == "ean13" else generate_code128_code(code_value)
+            target_w = max(int(w * 0.78), int(w * 0.68))
+            target_h = max(28, int(barcode_zone_h * 0.88))
+            code_img = code_img.resize((target_w, target_h), Image.Resampling.LANCZOS)
+            bx = (w - target_w) // 2
+            by = top_h + max(1, (barcode_zone_h - target_h) // 2)
+            label.paste(code_img, (bx, by))
+        except Exception:
+            pass
+
+    if include_code:
+        code_font = _fit_font_for_text(draw, code_value, max(20, w - (2 * pad_x)), max_size=max(10, int(h * 0.10)), min_size=7)
+        draw.text((w // 2, h - max(2, int(h * 0.05))), code_value, fill="black", anchor="ms", font=code_font)
+
+    return label
+
+
 def _create_sheet_label_image(
     product,
     width_mm,
@@ -673,6 +730,20 @@ def _create_sheet_label_image(
     include_code128,
     include_date,
 ):
+    compact_linear = height_mm <= 30 and bool(include_ean or include_code128)
+    if compact_linear:
+        return _create_compact_linear_label_image(
+            product,
+            width_mm,
+            height_mm,
+            include_name=include_name,
+            include_price=include_price,
+            include_code=include_code,
+            include_date=include_date,
+            include_ean=include_ean,
+            include_code128=include_code128,
+        )
+
     img_size = _label_pixel_size(width_mm, height_mm, px_per_mm=24)
     label = create_product_label(
         product.barcode or product.id,

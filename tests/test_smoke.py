@@ -1441,6 +1441,27 @@ def test_qr_ordered_a4_flows_render_without_overlap_errors():
     assert single_ordered.mimetype == "application/pdf"
 
 
+def test_qr_label_sheet_compact_non_ordered_with_code128_renders_pdf():
+    client = stock_app.app.test_client()
+    client.post("/auth/login", data={"username": "empresa_admin", "password": "admin123"})
+
+    response = client.post(
+        "/qr/label-sheet/1",
+        data={
+            "label_size": "50x25",
+            "quantity": 4,
+            "include_name": "1",
+            "include_price": "1",
+            "include_code": "1",
+            "include_qr": "1",
+            "include_code128": "1",
+            "include_date": "1",
+        },
+    )
+    assert response.status_code == 200
+    assert response.mimetype == "application/pdf"
+
+
 def test_subscription_state_guard():
     with stock_app.app.app_context():
         company = Company(name="Test company")
