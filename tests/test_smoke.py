@@ -5653,6 +5653,10 @@ def test_superadmin_home_renders_ops_sections_and_health_checks():
     assert "Embudo de ventas SaaS" in html
     assert "Métricas SaaS" in html
     assert "Actividad en tiempo real" in html
+    assert "Acciones rápidas" in html
+    assert "Preparación para Copilot" in html
+    assert "Prioridad alta" in html
+    assert "Acción" in html
 
 
 def test_register_creates_automatic_saas_ops_records():

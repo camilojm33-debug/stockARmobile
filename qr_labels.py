@@ -299,6 +299,49 @@ def _iter_products_with_copies(products, copies):
             yield product
 
 
+def _iter_ordered_a4_positions(total, label_w, label_h, grid):
+    """Yield (x, y) positions for ordered labels on A4.
+
+    When a page is partially filled, rows are vertically distributed and
+    incomplete rows are centered to better use the sheet area.
+    """
+    per_page = max(1, grid["cols"] * grid["rows"])
+    emitted = 0
+
+    while emitted < max(total, 0):
+        page_items = min(per_page, total - emitted)
+        rows_used = max(1, (page_items + grid["cols"] - 1) // grid["cols"])
+
+        if rows_used == 1:
+            dynamic_gap_y = grid["gap_y"]
+            row_y_top = (grid["page_h"] + label_h) / 2
+        else:
+            available_h = max(0, grid["page_h"] - (2 * grid["margin_y"]))
+            dynamic_gap_y = (available_h - (rows_used * label_h)) / (rows_used - 1)
+            dynamic_gap_y = max(grid["gap_y"], dynamic_gap_y)
+            row_y_top = grid["page_h"] - grid["margin_y"]
+
+        for local_idx in range(page_items):
+            row = local_idx // grid["cols"]
+            col = local_idx % grid["cols"]
+            items_in_row = min(grid["cols"], page_items - (row * grid["cols"]))
+
+            if items_in_row < grid["cols"]:
+                row_w = (items_in_row * label_w) + ((items_in_row - 1) * grid["gap_x"])
+                row_x_start = max(grid["margin_x"], (grid["page_w"] - row_w) / 2)
+            else:
+                row_x_start = grid["margin_x"]
+
+            x = row_x_start + (col * (label_w + grid["gap_x"]))
+            y_top = row_y_top - (row * (label_h + dynamic_gap_y))
+            y = y_top - label_h
+            yield x, y, local_idx, page_items
+
+        emitted += page_items
+        if emitted < total:
+            yield None, None, None, None
+
+
 def _fit_canvas_text(pdf, text, max_w, max_size, min_size=6, font_name="Helvetica"):
     content = str(text or "")
     for size in range(max_size, min_size - 1, -1):
@@ -578,20 +621,17 @@ def _build_current_a4_pdf(products, copies, size_key):
     label_w = width_mm * mm
     label_h = height_mm * mm
     grid = _compute_a4_grid(label_w, label_h)
-    per_page = grid["cols"] * grid["rows"]
-
     buffer = BytesIO()
     pdf = canvas.Canvas(buffer, pagesize=A4)
+    products_with_copies = list(_iter_products_with_copies(products, copies))
+
     index = 0
-    for product in _iter_products_with_copies(products, copies):
-        slot = index % per_page
-        if index > 0 and slot == 0:
+    for x, y, _, _ in _iter_ordered_a4_positions(len(products_with_copies), label_w, label_h, grid):
+        if x is None:
             pdf.showPage()
-        row = slot // grid["cols"]
-        col = slot % grid["cols"]
-        x = grid["margin_x"] + (col * (label_w + grid["gap_x"]))
-        y_top = grid["page_h"] - grid["margin_y"] - (row * (label_h + grid["gap_y"]))
-        y = y_top - label_h
+            continue
+
+        product = products_with_copies[index]
 
         _draw_label_on_canvas(
             pdf,
@@ -807,20 +847,13 @@ def _build_custom_sheet_a4_pdf(product, quantity, size_key, *, include_name, inc
     label_w = width_mm * mm
     label_h = height_mm * mm
     grid = _compute_a4_grid(label_w, label_h)
-    per_page = grid["cols"] * grid["rows"]
-
     buffer = BytesIO()
     pdf = canvas.Canvas(buffer, pagesize=A4)
     total = max(quantity, 1)
-    for index in range(total):
-        slot = index % per_page
-        if index > 0 and slot == 0:
+    for x, y, _, _ in _iter_ordered_a4_positions(total, label_w, label_h, grid):
+        if x is None:
             pdf.showPage()
-        row = slot // grid["cols"]
-        col = slot % grid["cols"]
-        x = grid["margin_x"] + (col * (label_w + grid["gap_x"]))
-        y_top = grid["page_h"] - grid["margin_y"] - (row * (label_h + grid["gap_y"]))
-        y = y_top - label_h
+            continue
 
         _draw_label_on_canvas(
             pdf,

@@ -88,3 +88,32 @@ python -m pytest tests/test_smoke.py -k "superadmin_home_renders_ops_sections_an
 ## Resultado
 
 Se implemento el Centro de Operaciones SaaS solicitado, con automatizacion operativa y pruebas de regresion focalizadas, manteniendo compatibilidad con rutas, permisos y estructura existente.
+
+---
+
+## Incremento 1 - Evolucion Centro de Operaciones (sin romper compatibilidad)
+
+Fecha: 2026-08-07
+
+Se evoluciono el home de SuperAdmin en `saas.py` + `templates/saas/index.html` por incrementos pequenos, preservando rutas/permisos/aislamiento:
+
+- KPIs ejecutivos con comparacion de periodo, flecha y color de tendencia.
+- Panel de acciones rapidas: Nueva Empresa, Nuevo Prospecto, Crear Plan, Crear Cupon, Enviar Email, Crear Backup, Estado Servidor, Logs.
+- Tabla de salud con nueva columna de accion contextual por servicio.
+- Cola de atencion agrupada por prioridad (alta/media), con accion rapida por item.
+- Timeline enriquecido con estado de resultado (OK/Error).
+- Barra de preparacion de consulta operativa para Copilot (solo UI, sin logica AI).
+- Graficos adicionales en Chart.js: evolucion operativa y mix de planes.
+- Capa de cache corta en memoria para datasets agregados del dashboard (TTL 120s) para reducir costo de consultas repetidas.
+
+### Compatibilidad
+
+- No se removieron rutas existentes.
+- Se reutilizaron endpoints actuales de `saas.*` y `support.admin_index`.
+- No se altero el modelo de permisos ni el aislamiento multi-tenant.
+
+### Validacion
+
+- Smoke especifico actualizado: `test_superadmin_home_renders_ops_sections_and_health_checks`.
+- Suite completa ejecutada tras el incremento:
+	- `155 passed, 20 warnings`.

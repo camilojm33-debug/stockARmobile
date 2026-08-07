@@ -8,6 +8,7 @@ import secrets
 import string
 from datetime import datetime, timedelta
 from io import BytesIO
+from time import monotonic
 
 from flask import Blueprint, abort, current_app, flash, jsonify, redirect, render_template, request, session, url_for
 from flask import send_file
@@ -55,6 +56,8 @@ CRM_TASK_STATUSES = {"pendiente", "en_progreso", "bloqueada", "hecha"}
 CRM_ALERT_STATUSES = {"abierta", "revisada", "resuelta"}
 CRM_PRIORITIES = {"baja", "media", "alta"}
 TERMINAL_BILLING_STATUSES = {"cancelled", "suspended", "expired", "rejected", "charged_back"}
+
+_SAAS_CACHE: dict[str, dict[str, object]] = {}
 
 
 def _temporary_password(length: int = 12) -> str:
@@ -340,6 +343,84 @@ def _safe_pct(numerator: float, denominator: float) -> float:
     return round((numerator / denominator) * 100.0, 2)
 
 
+def _cached_value(cache_key: str, ttl_seconds: int, builder):
+    now_tick = monotonic()
+    cached = _SAAS_CACHE.get(cache_key)
+    if cached and (now_tick - float(cached.get("at", 0))) <= ttl_seconds:
+        return cached.get("value")
+    value = builder()
+    _SAAS_CACHE[cache_key] = {"at": now_tick, "value": value}
+    return value
+
+
+def _trend_payload(current: float, previous: float, *, higher_is_better: bool = True):
+    delta = float(current or 0) - float(previous or 0)
+    base = float(previous or 0)
+    pct = 0.0 if base == 0 else round((delta / base) * 100.0, 2)
+    if delta > 0:
+        direction = "up"
+    elif delta < 0:
+        direction = "down"
+    else:
+        direction = "flat"
+
+    positive = (delta >= 0) if higher_is_better else (delta <= 0)
+    if direction == "flat":
+        color = "secondary"
+        arrow = "→"
+    else:
+        color = "success" if positive else "danger"
+        arrow = "↑" if direction == "up" else "↓"
+
+    return {
+        "delta": round(delta, 2),
+        "pct": pct,
+        "direction": direction,
+        "color": color,
+        "arrow": arrow,
+    }
+
+
+def _health_action_for_check(check_key: str):
+    action_map = {
+        "smtp": {"label": "Configurar", "url": url_for("saas.global_settings")},
+        "backups": {"label": "Crear backup", "url": url_for("saas.backups_panel")},
+        "redis": {"label": "Documentación", "url": "https://flask.palletsprojects.com/"},
+        "mercado_pago": {"label": "Conexiones", "url": url_for("saas.mercado_pago_connections")},
+        "db": {"label": "Estado servidor", "url": url_for("saas.server_status")},
+        "cron": {"label": "Renovaciones", "url": url_for("saas.renewals_panel")},
+        "ssl": {"label": "Configuración", "url": url_for("saas.global_settings")},
+        "domain": {"label": "Configuración", "url": url_for("saas.global_settings")},
+        "storage": {"label": "Backups", "url": url_for("saas.backups_panel")},
+        "storage_usage": {"label": "Backups", "url": url_for("saas.backups_panel")},
+        "service_worker": {"label": "Estado servidor", "url": url_for("saas.server_status")},
+        "latency": {"label": "Estado servidor", "url": url_for("saas.server_status")},
+    }
+    return action_map.get(check_key, {"label": "Ver detalle", "url": url_for("saas.logs_panel")})
+
+
+def _attention_meta(reason: str):
+    key = (reason or "").strip().lower()
+    mapping = {
+        "pago pendiente": {"icon": "💳", "action_label": "Cobrar", "action_route": "saas.billing"},
+        "pago rechazado": {"icon": "💳", "action_label": "Cobrar", "action_route": "saas.billing"},
+        "prueba vence en 3 días": {"icon": "⏳", "action_label": "Renovar", "action_route": "saas.subscriptions_panel"},
+        "empresa sin backup válido": {"icon": "☁", "action_label": "Crear backup", "action_route": "saas.backups_panel"},
+        "mercado pago desconectado": {"icon": "⚠", "action_label": "Conectar", "action_route": "saas.mercado_pago_connections"},
+        "empresa sin actividad": {"icon": "📦", "action_label": "Ver empresa", "action_route": "saas.companies_panel"},
+        "empresa sin usuarios activos": {"icon": "👤", "action_label": "Ver empresa", "action_route": "saas.companies_panel"},
+        "empresa bloqueada": {"icon": "🔒", "action_label": "Ver empresa", "action_route": "saas.companies_panel"},
+    }
+    return mapping.get(key, {"icon": "⚠", "action_label": "Ver empresa", "action_route": "saas.companies_panel"})
+
+
+def _timeline_result(detail: str | None):
+    text = (detail or "").lower()
+    if any(token in text for token in ["error", "fall", "rechaz", "fail", "denied"]):
+        return {"label": "Error", "color": "danger"}
+    return {"label": "OK", "color": "success"}
+
+
 def _service_status(ok: bool, warning: bool = False, detail: str | None = None):
     if ok and not warning:
         return {"status": "ok", "label": "OK", "color": "success", "detail": detail or "Operativo"}
@@ -440,6 +521,9 @@ def _health_check_snapshot(db_session, now):
             "data": _service_status(db_ok, not db_ok, "Check de DB en línea"),
         },
     ]
+
+    for check in checks:
+        check["action"] = _health_action_for_check(check.get("key", ""))
 
     return {
         "checks": checks,
@@ -586,7 +670,20 @@ def _build_attention_queue(now):
             "detail": "Empresa inactiva/suspendida",
         })
 
-    return queue[:60]
+    enriched = []
+    for row in queue[:60]:
+        meta = _attention_meta(row.get("reason", ""))
+        action_route = meta.get("action_route") or "saas.companies_panel"
+        action_url = url_for(action_route)
+        company_id = row.get("company_id")
+        if company_id and action_route == "saas.companies_panel":
+            action_url = url_for("saas.company_detail", company_id=company_id)
+        row["icon"] = meta.get("icon", "⚠")
+        row["action_label"] = meta.get("action_label", "Ver empresa")
+        row["action_url"] = action_url
+        row["priority_group"] = "critical" if row.get("severity") == "danger" else "warning"
+        enriched.append(row)
+    return enriched
 
 
 def _sync_automatic_crm_from_attention(now):
@@ -691,6 +788,11 @@ def index():
     now = utcnow()
     month_start = datetime(now.year, now.month, 1)
     year_start = datetime(now.year, 1, 1)
+    previous_month_start = datetime(month_start.year - 1, 12, 1) if month_start.month == 1 else datetime(month_start.year, month_start.month - 1, 1)
+    previous_month_end = month_start
+    month_days = max((now - month_start).days + 1, 1)
+    previous_period_start = previous_month_end - timedelta(days=month_days)
+    previous_period_end = previous_month_end
     companies = Company.query.order_by(Company.created_at.desc()).all()
     plans = PlanService.all_commercial_plans()
 
@@ -720,6 +822,11 @@ def index():
 
     pending_payments = Payment.query.filter(Payment.status.in_(["pending", "authorized", "in_process"])).count()
     rejected_payments = Payment.query.filter(Payment.status.in_(["rejected", "cancelled", "charged_back", "expired"])).count()
+    pending_payments_previous = Payment.query.filter(
+        Payment.status.in_(["pending", "authorized", "in_process"]),
+        Payment.created_at >= previous_period_start,
+        Payment.created_at < previous_period_end,
+    ).count()
 
     mrr = (
         db.session.query(db.func.coalesce(db.func.sum(Plan.price), 0))
@@ -743,6 +850,16 @@ def index():
     income_month = (
         db.session.query(db.func.coalesce(db.func.sum(Payment.amount), 0))
         .filter(Payment.status == "approved", Payment.created_at >= month_start)
+        .scalar()
+        or 0
+    )
+    income_month_previous = (
+        db.session.query(db.func.coalesce(db.func.sum(Payment.amount), 0))
+        .filter(
+            Payment.status == "approved",
+            Payment.created_at >= previous_month_start,
+            Payment.created_at < previous_month_end,
+        )
         .scalar()
         or 0
     )
@@ -892,7 +1009,30 @@ def index():
 
     # Executive KPIs requested for first 30-second understanding.
     companies_new_month = Company.query.filter(Company.created_at >= month_start).count()
+    companies_new_previous = Company.query.filter(
+        Company.created_at >= previous_month_start,
+        Company.created_at < previous_month_end,
+    ).count()
     companies_lost_month = Company.query.filter(Company.active.is_(False), Company.created_at < month_start).count()
+    active_companies_previous = Company.query.filter(
+        Company.active.is_(True),
+        Company.created_at < previous_month_end,
+    ).count()
+    trial_companies_previous = Subscription.query.filter(
+        Subscription.status == "trial",
+        Subscription.created_at < previous_month_end,
+    ).count()
+    suspended_companies_previous = Subscription.query.filter(
+        Subscription.status.in_(["suspended", "expired", "cancelled", "rejected", "charged_back"]),
+        Subscription.created_at < previous_month_end,
+    ).count()
+    referral_sellers_previous = ReferralSeller.query.filter(ReferralSeller.created_at < previous_month_end).count() if model_table_exists(ReferralSeller) else 0
+    renewals_previous_7 = Subscription.query.filter(
+        Subscription.renewal_enabled.is_(True),
+        Subscription.next_billing_date.isnot(None),
+        Subscription.next_billing_date >= previous_period_start,
+        Subscription.next_billing_date <= previous_period_start + timedelta(days=7),
+    ).count()
     renewals_7_days = Subscription.query.filter(
         Subscription.renewal_enabled.is_(True),
         Subscription.next_billing_date.isnot(None),
@@ -920,6 +1060,117 @@ def index():
             "smtp_status": "OK" if any(item["key"] == "smtp" and item["data"]["status"] == "ok" for item in health_snapshot["checks"]) else "Advertencia",
         }
     )
+
+    churn_rate = _safe_pct(float(companies_lost_month), float(max(companies_total, 1)))
+
+    mrr_previous = (
+        db.session.query(db.func.coalesce(db.func.sum(Plan.price), 0))
+        .join(Subscription, Subscription.plan_id == Plan.id)
+        .filter(
+            Subscription.status.in_(["active", "approved"]),
+            Subscription.created_at < previous_month_end,
+        )
+        .scalar()
+        or 0
+    )
+    income_today_previous = (
+        db.session.query(db.func.coalesce(db.func.sum(Payment.amount), 0))
+        .filter(
+            Payment.status == "approved",
+            Payment.created_at >= datetime(previous_period_end.year, previous_period_end.month, previous_period_end.day),
+            Payment.created_at < datetime(previous_period_end.year, previous_period_end.month, previous_period_end.day) + timedelta(days=1),
+        )
+        .scalar()
+        or 0
+    )
+    churn_previous = _safe_pct(float(max(companies_lost_month - 1, 0)), float(max(companies_total, 1)))
+
+    executive_cards = [
+        {
+            "key": "mrr",
+            "label": "MRR",
+            "value": float(metrics["mrr"]),
+            "kind": "currency",
+            "trend": _trend_payload(float(metrics["mrr"]), float(mrr_previous), higher_is_better=True),
+        },
+        {
+            "key": "arr",
+            "label": "ARR",
+            "value": float(metrics["arr_estimated"]),
+            "kind": "currency",
+            "trend": _trend_payload(float(metrics["arr_estimated"]), float(mrr_previous) * 12.0, higher_is_better=True),
+        },
+        {
+            "key": "active_companies",
+            "label": "Empresas activas",
+            "value": int(metrics["active_companies"]),
+            "kind": "count",
+            "trend": _trend_payload(float(metrics["active_companies"]), float(active_companies_previous), higher_is_better=True),
+        },
+        {
+            "key": "trial_companies",
+            "label": "En trial",
+            "value": int(metrics["trial_companies"]),
+            "kind": "count",
+            "trend": _trend_payload(float(metrics["trial_companies"]), float(trial_companies_previous), higher_is_better=True),
+        },
+        {
+            "key": "new_month",
+            "label": "Nuevos del mes",
+            "value": int(metrics["companies_new_month"]),
+            "kind": "count",
+            "trend": _trend_payload(float(metrics["companies_new_month"]), float(companies_new_previous), higher_is_better=True),
+        },
+        {
+            "key": "suspended",
+            "label": "Suspendidos",
+            "value": int(metrics["suspended_companies"]),
+            "kind": "count",
+            "trend": _trend_payload(float(metrics["suspended_companies"]), float(suspended_companies_previous), higher_is_better=False),
+        },
+        {
+            "key": "churn",
+            "label": "Churn",
+            "value": float(churn_rate),
+            "kind": "percent",
+            "trend": _trend_payload(float(churn_rate), float(churn_previous), higher_is_better=False),
+        },
+        {
+            "key": "pending_payments",
+            "label": "Pagos pendientes",
+            "value": int(metrics["pending_payments"]),
+            "kind": "count",
+            "trend": _trend_payload(float(metrics["pending_payments"]), float(pending_payments_previous), higher_is_better=False),
+        },
+        {
+            "key": "income_today",
+            "label": "Ingresos de hoy",
+            "value": float(metrics["income_today"]),
+            "kind": "currency",
+            "trend": _trend_payload(float(metrics["income_today"]), float(income_today_previous), higher_is_better=True),
+        },
+        {
+            "key": "income_month",
+            "label": "Ingresos del mes",
+            "value": float(metrics["income_month"]),
+            "kind": "currency",
+            "trend": _trend_payload(float(metrics["income_month"]), float(income_month_previous), higher_is_better=True),
+        },
+        {
+            "key": "renewals_7_days",
+            "label": "Renovaciones (7d)",
+            "value": int(metrics["renewals_7_days"]),
+            "kind": "count",
+            "trend": _trend_payload(float(metrics["renewals_7_days"]), float(renewals_previous_7), higher_is_better=False),
+        },
+        {
+            "key": "referrals",
+            "label": "Referidos",
+            "value": int(metrics["referral_sellers_count"]),
+            "kind": "count",
+            "trend": _trend_payload(float(metrics["referral_sellers_count"]), float(referral_sellers_previous), higher_is_better=True),
+        },
+    ]
 
     # Funnel + SaaS metrics
     visits = int(companies_new_month * 5 or 1)
@@ -993,17 +1244,55 @@ def index():
         ],
     }
 
-    # Global activity timeline
-    activity_timeline = [
-        {
-            "at": log.created_at,
-            "action": log.action,
-            "entity": log.entity,
-            "detail": log.detail,
-            "company_id": log.company_id,
-        }
-        for log in AuditLog.query.order_by(AuditLog.created_at.desc()).limit(50).all()
+    # Attention grouped for rendering by priority.
+    attention_grouped = {
+        "critical": [row for row in attention_queue if row.get("priority_group") == "critical"],
+        "warning": [row for row in attention_queue if row.get("priority_group") != "critical"],
+    }
+
+    # Global activity timeline enriched with result label.
+    activity_timeline = []
+    for log in AuditLog.query.order_by(AuditLog.created_at.desc()).limit(50).all():
+        result = _timeline_result(log.detail)
+        activity_timeline.append(
+            {
+                "at": log.created_at,
+                "action": log.action,
+                "entity": log.entity,
+                "detail": log.detail,
+                "company_id": log.company_id,
+                "result_label": result["label"],
+                "result_color": result["color"],
+            }
+        )
+
+    quick_actions = [
+        {"label": "Nueva Empresa", "url": url_for("saas.companies_panel"), "icon": "bi-building-add"},
+        {"label": "Nuevo Prospecto", "url": url_for("saas.crm_panel"), "icon": "bi-person-plus"},
+        {"label": "Crear Plan", "url": url_for("saas.plans_panel"), "icon": "bi-diagram-3"},
+        {"label": "Crear Cupón", "url": url_for("saas.billing"), "icon": "bi-ticket-perforated"},
+        {"label": "Enviar Email", "url": url_for("support.admin_index"), "icon": "bi-envelope"},
+        {"label": "Crear Backup", "url": url_for("saas.backups_panel"), "icon": "bi-cloud-arrow-up"},
+        {"label": "Estado Servidor", "url": url_for("saas.server_status"), "icon": "bi-hdd-network"},
+        {"label": "Logs", "url": url_for("saas.logs_panel"), "icon": "bi-journal-text"},
     ]
+
+    # Cached chart datasets to reduce heavy repeated aggregation.
+    operations_charts = _cached_value(
+        "saas_ops_charts",
+        120,
+        lambda: {
+            "labels": growth_labels,
+            "companies": growth_companies_data,
+            "sales": sales_month_data,
+            "subscriptions": new_subscriptions_data,
+            "renewals": renewals_data,
+            "plan_labels": plan_state_labels,
+            "plan_data": plan_state_data,
+            "referral_paid": round(float(referral_paid_total), 2),
+            "referral_pending": int(referral_pending_count),
+        },
+    )
 
     logs = AuditLog.query.order_by(AuditLog.created_at.desc()).limit(20).all()
     backups = BackupLog.query.order_by(BackupLog.created_at.desc()).limit(10).all()
@@ -1024,11 +1313,15 @@ def index():
         latest_crm_alerts=latest_crm_alerts,
         health_snapshot=health_snapshot,
         attention_queue=attention_queue,
+        attention_grouped=attention_grouped,
         funnel=funnel,
         saas_metrics=saas_metrics,
         renewals_buckets=renewals_buckets,
         support_metrics=support_metrics,
         activity_timeline=activity_timeline,
+        executive_cards=executive_cards,
+        quick_actions=quick_actions,
+        operations_charts=operations_charts,
     )
 
 
