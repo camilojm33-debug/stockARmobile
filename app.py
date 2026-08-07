@@ -10,6 +10,7 @@ import threading
 import time
 from datetime import datetime, timedelta, timezone
 from decimal import Decimal
+from urllib.parse import parse_qs, urlparse
 
 from flask import abort, flash, g, jsonify, make_response, redirect, render_template, request, send_from_directory, session, url_for
 from flask_login import UserMixin, current_user, login_required
@@ -1702,7 +1703,30 @@ def index():
         "whatsapp_link": f"https://wa.me/{whatsapp_digits}" if whatsapp_digits else "https://wa.me/",
         "email": app.config.get("SUPPORT_EMAIL", "stockarmobile@gmail.com"),
     }
-    demo_video_url = (os.environ.get("LANDING_DEMO_VIDEO_URL") or "").strip()
+    raw_demo_video_url = (os.environ.get("LANDING_DEMO_VIDEO_URL") or "").strip()
+    demo_video_url = raw_demo_video_url
+    demo_video_open_url = raw_demo_video_url
+    if raw_demo_video_url:
+        try:
+            parsed_demo_url = urlparse(raw_demo_video_url)
+            host = (parsed_demo_url.netloc or "").lower()
+            video_id = ""
+            if "youtu.be" in host:
+                video_id = (parsed_demo_url.path or "").strip("/").split("/")[0]
+            elif "youtube.com" in host:
+                if "/embed/" in (parsed_demo_url.path or ""):
+                    video_id = (parsed_demo_url.path or "").split("/embed/", 1)[1].split("/")[0]
+                else:
+                    video_id = (parse_qs(parsed_demo_url.query).get("v") or [""])[0]
+
+            if video_id:
+                # Mobile-friendly embed + direct watch URL fallback.
+                demo_video_url = f"https://www.youtube-nocookie.com/embed/{video_id}?playsinline=1&rel=0&modestbranding=1"
+                demo_video_open_url = f"https://www.youtube.com/watch?v={video_id}"
+        except Exception:
+            demo_video_url = raw_demo_video_url
+            demo_video_open_url = raw_demo_video_url
+
     local_demo_video_path = os.path.join(app.static_folder, "assets", "videos", "landing-demo.mp4")
     demo_video_file_url = url_for("static", filename="assets/videos/landing-demo.mp4") if os.path.exists(local_demo_video_path) else ""
     local_demo_poster_path = os.path.join(app.static_folder, "assets", "images", "landing-demo-poster.jpg")
@@ -1744,6 +1768,7 @@ def index():
             seo=seo,
             contact=contact,
             demo_video_url=demo_video_url,
+            demo_video_open_url=demo_video_open_url,
             demo_video_file_url=demo_video_file_url,
             demo_video_poster_url=demo_video_poster_url,
             demo_audio_file_url=demo_audio_file_url,
