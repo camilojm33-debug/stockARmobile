@@ -19,7 +19,7 @@
     </div>
     <div class="d-flex flex-wrap gap-2 w-100 w-md-auto">
       <button class="btn btn-outline-primary w-100 w-md-auto" data-bs-toggle="modal" data-bs-target="#cameraScannerModal" onclick="startCameraScanner()"><i class="bi bi-camera me-1"></i>Camara</button>
-      <button class="btn btn-success w-100 w-md-auto" id="pos-charge-button" {% if not cash_session_open %}disabled title="Abrí una caja para cobrar"{% endif %} onclick="openCartModal()"><i class="bi bi-credit-card me-1"></i>Cobrar ($0.00)</button>
+      <button class="btn btn-success w-100 w-md-auto" id="pos-charge-button" data-charge-button {% if not cash_session_open %}disabled title="Abrí una caja para cobrar"{% endif %} onclick="openCartModal()"><i class="bi bi-credit-card me-1"></i><span class="pos-charge-label">Cobrar</span> <span class="pos-charge-total">($0.00)</span></button>
     </div>
   </div>
 
@@ -245,8 +245,8 @@
   </div>
 </div>
 
-<button class="btn btn-success position-fixed d-xl-none pos-cart-fab" {% if not cash_session_open %}disabled title="Abrí una caja para cobrar"{% endif %} onclick="openCartModal()" aria-label="Cobrar">
-  <i class="bi bi-credit-card"></i> <span class="cart-count badge text-bg-light">0</span>
+<button class="btn btn-success position-fixed d-xl-none pos-cart-fab" data-charge-button {% if not cash_session_open %}disabled title="Abrí una caja para cobrar"{% endif %} onclick="openCartModal()" aria-label="Cobrar">
+  <i class="bi bi-credit-card"></i> <span class="pos-charge-label">Cobrar</span> <span class="pos-charge-total">($0.00)</span> <span class="cart-count badge text-bg-light">0</span>
 </button>
 
 <div class="modal fade" id="cartModal" tabindex="-1">

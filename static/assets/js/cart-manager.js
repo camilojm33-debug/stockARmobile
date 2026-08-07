@@ -377,7 +377,7 @@ function clearCart() {
  */
 function updateCartUI() {
   try {
-    const cartBtn = document.querySelector('.cart-float-btn');
+    const cartBtn = document.querySelector('.pos-cart-fab');
     document.querySelectorAll('.cart-count').forEach(el => {
       el.textContent = getCartItemCount();
     });
@@ -395,6 +395,7 @@ function updateCartUI() {
       }
     }
     const totals = getCheckoutTotals();
+    syncChargeButtons(totals.total);
     emitPosUiEvent('pos:cart-updated', {
       count: getCartItemCount(),
       total: totals.total,
@@ -627,16 +628,27 @@ function updateCheckoutTotals() {
     const el = document.getElementById(id);
     if (el) el.textContent = formatPrice(value);
   });
-  const chargeButton = document.getElementById('pos-charge-button');
-  if (chargeButton) {
-    chargeButton.innerHTML = `<i class="bi bi-credit-card me-1"></i>Cobrar (${formatPrice(totals.total)})`;
-  }
+  syncChargeButtons(totals.total);
   const paidInput = document.getElementById('checkout-paid-amount');
   if (paidInput && !paidInput.value && totals.total > 0) {
     paidInput.placeholder = totals.total.toFixed(2);
   }
 
   syncPaymentInputsWithMethods(totals.total);
+}
+
+function syncChargeButtons(total) {
+  const totalText = `(${formatPrice(total)})`;
+  document.querySelectorAll('[data-charge-button]').forEach(button => {
+    const totalLabel = button.querySelector('.pos-charge-total');
+    if (totalLabel) {
+      totalLabel.textContent = totalText;
+      return;
+    }
+    if (button.id === 'pos-charge-button') {
+      button.innerHTML = `<i class="bi bi-credit-card me-1"></i><span class="pos-charge-label">Cobrar</span> <span class="pos-charge-total">${totalText}</span>`;
+    }
+  });
 }
 
 function syncPaymentInputsWithMethods(total) {
