@@ -205,16 +205,18 @@ function applyQuoteCartPrefillFromServer() {
     return;
   }
 
+  const preseeded = window.__quoteCartPrefillSeeded === true;
+
   let addedCount = 0;
-  payload.items.forEach(rawItem => {
+  const normalizedItems = payload.items.map(rawItem => {
     const productId = parseInt(rawItem?.productId, 10) || 0;
     const stock = parseFloat(rawItem?.stock || 0);
     const quantity = parseFloat(rawItem?.quantity || 0);
     const price = parseFloat(rawItem?.price || 0);
     if (!productId || !Number.isFinite(stock) || stock <= 0 || !Number.isFinite(quantity) || quantity <= 0 || !Number.isFinite(price) || price < 0) {
-      return;
+      return null;
     }
-    const sanitizedItem = {
+    return {
       productId,
       name: String(rawItem?.name || 'Producto'),
       price,
@@ -223,14 +225,22 @@ function applyQuoteCartPrefillFromServer() {
       unitMeasure: String(rawItem?.unitMeasure || 'u'),
       quantity: Math.min(quantity, stock),
     };
-    const existing = cart.find(item => item.productId === productId);
-    if (existing) {
-      existing.quantity = Math.min((parseFloat(existing.quantity) || 0) + sanitizedItem.quantity, stock);
-    } else {
-      cart.push(sanitizedItem);
-    }
-    addedCount += 1;
-  });
+  }).filter(Boolean);
+
+  if (preseeded) {
+    cart = normalizedItems;
+    addedCount = normalizedItems.length;
+  } else {
+    normalizedItems.forEach(sanitizedItem => {
+      const existing = cart.find(item => item.productId === sanitizedItem.productId);
+      if (existing) {
+        existing.quantity = Math.min((parseFloat(existing.quantity) || 0) + sanitizedItem.quantity, sanitizedItem.stock);
+      } else {
+        cart.push(sanitizedItem);
+      }
+      addedCount += 1;
+    });
+  }
 
   if (!addedCount) {
     return;

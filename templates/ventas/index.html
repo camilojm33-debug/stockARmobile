@@ -896,6 +896,33 @@
 {% if quote_cart_prefill %}
 <script>
   window.__quoteCartPrefill = {{ quote_cart_prefill|tojson }};
+  window.__quoteCartPrefillSeeded = false;
+  (function seedQuoteCartPrefill() {
+    try {
+      const payload = window.__quoteCartPrefill;
+      if (!payload || !Array.isArray(payload.items) || !payload.items.length) return;
+      const body = document.body;
+      const tenantKey = body?.dataset?.cartTenant || `${body?.dataset?.companyId || 'global'}:${body?.dataset?.userId || 'anonymous'}`;
+      const storageKey = `stockarmobile_cart_${tenantKey}`;
+      const seededItems = payload.items
+        .map((item) => ({
+          productId: parseInt(item?.productId, 10) || 0,
+          name: String(item?.name || 'Producto'),
+          price: parseFloat(item?.price || 0) || 0,
+          stock: parseFloat(item?.stock || 0) || 0,
+          barcode: String(item?.barcode || ''),
+          unitMeasure: String(item?.unitMeasure || 'u'),
+          quantity: Math.min(parseFloat(item?.quantity || 0) || 0, parseFloat(item?.stock || 0) || 0),
+        }))
+        .filter((item) => item.productId > 0 && item.stock > 0 && item.quantity > 0 && item.price >= 0);
+
+      if (!seededItems.length) return;
+      localStorage.setItem(storageKey, JSON.stringify(seededItems));
+      window.__quoteCartPrefillSeeded = true;
+    } catch (error) {
+      console.warn('No se pudo prehidratar el carrito desde presupuesto', error);
+    }
+  })();
 </script>
 {% endif %}
 <script src="https://unpkg.com/html5-qrcode"></script>
