@@ -1136,6 +1136,28 @@ def test_quotes_builder_form_renders_productive_layout():
     assert "items_json" in html
     assert "Convertir en venta" in html
 
+    payload = {
+        "client_id": 1,
+        "expires_at": "2026-08-05",
+        "status": "BORRADOR",
+        "items_json": json.dumps([
+            {"product_id": 1, "description": "Yerba kilo", "quantity": 1, "unit_price": 18000, "discount": 0},
+        ]),
+        "submit_action": "save",
+    }
+    create_response = client.post("/presupuestos/nuevo", data=payload, follow_redirects=False)
+    assert create_response.status_code in {302, 303}
+
+    with stock_app.app.app_context():
+        quote = Quote.query.order_by(Quote.id.desc()).first()
+        assert quote is not None
+
+    edit_response = client.get(f"/presupuestos/{quote.id}/editar")
+    assert edit_response.status_code == 200
+    edit_html = edit_response.get_data(as_text=True)
+    assert f'formaction="/presupuestos/{quote.id}/convertir"' in edit_html
+    assert 'formmethod="post"' in edit_html
+
     with stock_app.app.app_context():
         company = Company.query.filter_by(name="Empresa Demo").first()
         assert company is not None
@@ -1355,13 +1377,13 @@ def test_quotes_whatsapp_allows_empty_or_custom_number():
     empty_phone = client.post(f"/presupuestos/{quote_id}/whatsapp", data={"whatsapp_phone": ""}, follow_redirects=False)
     assert empty_phone.status_code in (301, 302)
     empty_location = empty_phone.headers.get("Location", "")
-    assert empty_location.startswith("https://wa.me/?text=")
+    assert empty_location.startswith("https://api.whatsapp.com/send?text=")
     assert "/presupuestos/publico/" in unquote(empty_location)
 
     custom_phone = client.post(f"/presupuestos/{quote_id}/whatsapp", data={"whatsapp_phone": "+54 9 11 2222 3333"}, follow_redirects=False)
     assert custom_phone.status_code in (301, 302)
     custom_location = custom_phone.headers.get("Location", "")
-    assert custom_location.startswith("https://wa.me/5491122223333")
+    assert custom_location.startswith("https://api.whatsapp.com/send?phone=5491122223333")
     assert "/presupuestos/publico/" in unquote(custom_location)
 
 
@@ -2823,7 +2845,7 @@ def test_share_whatsapp_shows_dialog_and_allows_send_once_without_saving():
     )
     assert send_without_phone.status_code in (301, 302)
     send_without_phone_location = send_without_phone.headers.get("Location", "")
-    assert send_without_phone_location.startswith("https://wa.me/?text=")
+    assert send_without_phone_location.startswith("https://api.whatsapp.com/send?text=")
     assert "/ventas/publico/" in unquote(send_without_phone_location)
 
     send_once = client.post(
@@ -2833,7 +2855,7 @@ def test_share_whatsapp_shows_dialog_and_allows_send_once_without_saving():
     )
     assert send_once.status_code in (301, 302)
     send_once_location = send_once.headers.get("Location", "")
-    assert send_once_location.startswith("https://wa.me/5491122233344")
+    assert send_once_location.startswith("https://api.whatsapp.com/send?phone=5491122233344")
     assert "/ventas/publico/" in unquote(send_once_location)
 
     with stock_app.app.app_context():
@@ -2882,7 +2904,7 @@ def test_share_whatsapp_accepts_phone_with_symbols_without_blocking():
     )
     assert send_custom.status_code in (301, 302)
     send_custom_location = send_custom.headers.get("Location", "")
-    assert send_custom_location.startswith("https://wa.me/5491155566677")
+    assert send_custom_location.startswith("https://api.whatsapp.com/send?phone=5491155566677")
     assert "/ventas/publico/" in unquote(send_custom_location)
 
 

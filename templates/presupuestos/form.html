@@ -380,21 +380,12 @@
             <button type="button" class="btn btn-primary btn-lg focus-ring" id="actionSave"><i class="bi bi-save me-1"></i>Guardar</button>
             <button type="button" class="btn btn-success btn-lg focus-ring" id="actionSend"><i class="bi bi-send me-1"></i>Enviar</button>
             {% if quote %}
-            <form method="post" action="{{ url_for('quotes.duplicate_quote', quote_id=quote.id) }}">
-              <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
-              <button type="submit" class="btn btn-outline-dark w-100 focus-ring"><i class="bi bi-copy me-1"></i>Duplicar</button>
-            </form>
+            <button type="submit" class="btn btn-outline-dark w-100 focus-ring" formaction="{{ url_for('quotes.duplicate_quote', quote_id=quote.id) }}" formmethod="post"><i class="bi bi-copy me-1"></i>Duplicar</button>
             <a class="btn btn-outline-danger focus-ring" href="{{ url_for('quotes.quote_pdf', quote_id=quote.id) }}" target="_blank"><i class="bi bi-filetype-pdf me-1"></i>PDF</a>
             <a class="btn btn-outline-secondary focus-ring" href="{{ url_for('quotes.quote_print', quote_id=quote.id) }}" target="_blank"><i class="bi bi-printer me-1"></i>Imprimir</a>
             <a class="btn btn-outline-success focus-ring" href="{{ url_for('quotes.share_whatsapp', quote_id=quote.id) }}"><i class="bi bi-whatsapp me-1"></i>WhatsApp</a>
-            <form method="post" action="{{ url_for('quotes.email_quote', quote_id=quote.id) }}">
-              <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
-              <button type="submit" class="btn btn-outline-primary w-100 focus-ring"><i class="bi bi-envelope me-1"></i>Email</button>
-            </form>
-            <form method="post" action="{{ url_for('quotes.convert_to_sale', quote_id=quote.id) }}">
-              <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
-              <button type="submit" class="btn btn-warning w-100 focus-ring" id="actionConvert"><i class="bi bi-bag-check me-1"></i>Convertir en venta</button>
-            </form>
+            <button type="submit" class="btn btn-outline-primary w-100 focus-ring" formaction="{{ url_for('quotes.email_quote', quote_id=quote.id) }}" formmethod="post"><i class="bi bi-envelope me-1"></i>Email</button>
+            <button type="submit" class="btn btn-warning w-100 focus-ring" id="actionConvert" formaction="{{ url_for('quotes.convert_to_sale', quote_id=quote.id) }}" formmethod="post"><i class="bi bi-bag-check me-1"></i>Convertir en venta</button>
             <button type="button" class="btn btn-outline-info focus-ring" id="copyShareLink"><i class="bi bi-link-45deg me-1"></i>Compartir enlace</button>
             {% else %}
             <button type="button" class="btn btn-outline-dark focus-ring" disabled>Duplicar</button>

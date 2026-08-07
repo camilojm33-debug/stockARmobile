@@ -22,5 +22,5 @@ def build_whatsapp_share_url(*, phone: str | None, message: str, document_url: s
 
     text = quote(full_message)
     if normalized_phone:
-        return f"https://wa.me/{normalized_phone}?text={text}"
-    return f"https://wa.me/?text={text}"
+        return f"https://api.whatsapp.com/send?phone={normalized_phone}&text={text}"
+    return f"https://api.whatsapp.com/send?text={text}"

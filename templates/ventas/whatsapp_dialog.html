@@ -13,7 +13,7 @@
         <div class="card-body p-4">
           <p class="text-muted mb-3">Se abrirá WhatsApp con el ticket preparado para compartir.</p>
 
-          <form method="post" action="{{ url_for('sales.share_whatsapp', sale_id=sale.id) }}">
+          <form method="post" action="{{ url_for('sales.share_whatsapp', sale_id=sale.id) }}" target="_blank" rel="noopener" id="saleWhatsappShareForm">
             <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
 
             <div class="mb-3">
@@ -21,6 +21,7 @@
               <input
                 type="text"
                 class="form-control"
+                id="saleWhatsappPhone"
                 name="whatsapp_phone"
                 value="{{ entered_phone }}"
                 placeholder="Ej: 5491122334455"
@@ -28,9 +29,12 @@
               <div class="form-text">Si lo dejás vacío, WhatsApp se abrirá para que selecciones el destinatario.</div>
             </div>
 
+            <div class="form-text mb-3">Si tenés WhatsApp instalado en la PC, usá "Abrir app". Si preferís navegador, usá "Abrir Web".</div>
+
             <div class="action-wrap justify-content-end">
               <a class="btn btn-outline-secondary w-100 w-md-auto" href="{{ url_for('sales.success', sale_id=sale.id) }}">Cancelar</a>
-              <button class="btn btn-success w-100 w-md-auto" type="submit"><i class="bi bi-whatsapp me-1"></i>Enviar WhatsApp</button>
+              <button class="btn btn-outline-success w-100 w-md-auto" type="button" id="saleWhatsappDesktop"><i class="bi bi-whatsapp me-1"></i>Abrir app</button>
+              <button class="btn btn-success w-100 w-md-auto" type="submit"><i class="bi bi-globe2 me-1"></i>Abrir Web</button>
             </div>
           </form>
         </div>
@@ -38,4 +42,63 @@
     </div>
   </div>
 </div>
+{% endblock %}
+
+{% block extra_js %}
+<script>
+  (() => {
+    const desktopButton = document.getElementById('saleWhatsappDesktop');
+    const phoneInput = document.getElementById('saleWhatsappPhone');
+    const baseMessage = {{ message|tojson }};
+    const ticketUrl = {{ pdf_url|tojson }};
+
+    function normalizePhone(value) {
+      return String(value || '').replace(/\D+/g, '');
+    }
+
+    function buildDesktopUrl() {
+      const phone = normalizePhone(phoneInput?.value || '');
+      const text = [baseMessage, `PDF: ${ticketUrl}`].filter(Boolean).join('\n\n');
+      const query = new URLSearchParams();
+      if (phone) {
+        query.set('phone', phone);
+      }
+      query.set('text', text);
+      return `whatsapp://send?${query.toString()}`;
+    }
+
+    function buildWebUrl() {
+      const phone = normalizePhone(phoneInput?.value || '');
+      const text = [baseMessage, `PDF: ${ticketUrl}`].filter(Boolean).join('\n\n');
+      const query = new URLSearchParams();
+      if (phone) {
+        query.set('phone', phone);
+      }
+      query.set('text', text);
+      return `https://api.whatsapp.com/send?${query.toString()}`;
+    }
+
+    desktopButton?.addEventListener('click', () => {
+      const fallbackTimer = window.setTimeout(() => {
+        window.open(buildWebUrl(), '_blank', 'noopener');
+      }, 900);
+
+      const cancelFallback = () => {
+        window.clearTimeout(fallbackTimer);
+        window.removeEventListener('blur', cancelFallback);
+        document.removeEventListener('visibilitychange', handleVisibilityChange);
+      };
+
+      const handleVisibilityChange = () => {
+        if (document.visibilityState === 'hidden') {
+          cancelFallback();
+        }
+      };
+
+      window.addEventListener('blur', cancelFallback, { once: true });
+      document.addEventListener('visibilitychange', handleVisibilityChange);
+      window.location.href = buildDesktopUrl();
+    });
+  })();
+</script>
 {% endblock %}
