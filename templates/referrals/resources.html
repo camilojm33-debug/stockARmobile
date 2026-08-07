@@ -98,7 +98,7 @@
             <span class="badge text-bg-light border">{{ group.badge }}</span>
           </div>
         </div>
-        {% for item in group.items %}
+        {% for item in group["items"] %}
         <div class="col-md-6 col-xl-4">
           <div class="card h-100 resource-card">
             <img src="{{ item.thumbnail }}" class="card-img-top" alt="{{ item.title }}">
