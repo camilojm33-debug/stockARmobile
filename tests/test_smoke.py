@@ -3818,6 +3818,94 @@ def test_active_subscription_within_grace_period_keeps_access():
     assert dashboard.status_code == 200
 
 
+def test_manual_subscription_with_past_billing_date_is_blocked():
+    client = stock_app.app.test_client()
+
+    with stock_app.app.app_context():
+        from app import Plan, Subscription
+        from services.plan_service import PlanService
+
+        PlanService.ensure_defaults(db.session)
+        company = Company.query.filter_by(name="Empresa Demo").first()
+        assert company is not None
+
+        paid_plan = Plan.query.filter_by(code="business").first()
+        assert paid_plan is not None
+
+        subscription = Subscription.query.filter_by(company_id=company.id).first()
+        if subscription is None:
+            subscription = Subscription(company_id=company.id)
+            db.session.add(subscription)
+
+        subscription.plan_id = paid_plan.id
+        subscription.status = "active"
+        subscription.trial_end = None
+        subscription.start_date = stock_app.utcnow() - timedelta(days=45)
+        subscription.starts_at = stock_app.utcnow() - timedelta(days=45)
+        subscription.ends_at = stock_app.utcnow() - timedelta(days=1)
+        subscription.next_billing_date = stock_app.utcnow() - timedelta(days=1)
+        subscription.metadata_json = '{"is_manual": true, "managed_by": "admin"}'
+        db.session.commit()
+
+    client.post("/auth/login", data={"username": "empresa_admin", "password": "admin123"})
+    blocked_dashboard = client.get("/dashboard/", follow_redirects=False)
+    assert blocked_dashboard.status_code in (301, 302)
+    assert "/access-status" in (blocked_dashboard.headers.get("Location") or "")
+
+
+def test_manual_subscription_is_unblocked_after_approved_payment_webhook():
+    with stock_app.app.app_context():
+        from app import Plan, Subscription
+        from services.plan_service import PlanService
+        from services.subscription_service import SubscriptionService
+
+        PlanService.ensure_defaults(db.session)
+        company = Company.query.filter_by(name="Empresa Demo").first()
+        assert company is not None
+
+        paid_plan = Plan.query.filter_by(code="business").first()
+        assert paid_plan is not None
+
+        subscription = Subscription.query.filter_by(company_id=company.id).first()
+        if subscription is None:
+            subscription = Subscription(company_id=company.id)
+            db.session.add(subscription)
+
+        now_ref = stock_app.utcnow()
+        subscription.plan_id = paid_plan.id
+        subscription.status = "active"
+        subscription.start_date = now_ref - timedelta(days=45)
+        subscription.starts_at = now_ref - timedelta(days=45)
+        subscription.next_billing_date = now_ref - timedelta(days=1)
+        subscription.ends_at = now_ref - timedelta(days=1)
+        subscription.metadata_json = '{"is_manual": true, "managed_by": "admin"}'
+        db.session.commit()
+
+        state_before = SubscriptionService.resolve_company_access_state(company, subscription=subscription, now=now_ref)
+        assert state_before["can_access"] is False
+
+        SubscriptionService.run_command(
+            db.session,
+            SubscriptionService.RenewSubscriptionCommand(
+                company_id=company.id,
+                subscription_id=subscription.id,
+                payment_status="approved",
+                origin="webhook",
+                actor_role="system",
+                idempotency_key=f"test-manual-webhook-approved:{company.id}:{subscription.id}",
+            ),
+        )
+        db.session.commit()
+
+        refreshed = Subscription.query.filter_by(id=subscription.id).first()
+        assert refreshed is not None
+        state_after = SubscriptionService.resolve_company_access_state(company, subscription=refreshed, now=stock_app.utcnow())
+        assert state_after["can_access"] is True
+        assert state_after["status"] == SubscriptionService.STATE_ACTIVE
+        assert refreshed.next_billing_date is not None
+        assert refreshed.next_billing_date > now_ref
+
+
 def test_active_subscription_blocks_at_exact_five_day_overdue_cutoff():
     with stock_app.app.app_context():
         from app import Plan, Subscription

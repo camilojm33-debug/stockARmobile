@@ -699,8 +699,14 @@ class SubscriptionService:
         if subscription is None:
             raise SubscriptionCommandError("No hay suscripción para renovar.")
 
-        if SubscriptionService.is_manual_subscription(subscription) and (command.origin or "").lower() in {"webhook", "cron", "checkout"}:
-            raise SubscriptionCommandError("Suscripción manual: renovación automática no permitida.")
+        if SubscriptionService.is_manual_subscription(subscription):
+            origin = (command.origin or "").lower()
+            normalized_payment_status = (command.payment_status or "").strip().lower()
+            payment_unlock_statuses = {"approved", "refunded"}
+            if origin in {"webhook", "checkout"} and normalized_payment_status in payment_unlock_statuses:
+                pass
+            elif origin in {"webhook", "cron", "checkout"}:
+                raise SubscriptionCommandError("Suscripción manual: renovación automática no permitida.")
 
         now = command.paid_at or utcnow()
         status_before = subscription.status
@@ -968,8 +974,19 @@ class SubscriptionService:
 
         if raw_status in SubscriptionService.ACTIVE_STATUSES:
             paid_limit = getattr(subscription, "next_billing_date", None) or getattr(subscription, "ends_at", None)
-            # Suscripciones manuales no se vencen por lógica automática de lectura.
+            # Suscripciones manuales pueden quedar abiertas sin fecha límite,
+            # pero si tienen fecha configurada deben bloquearse al vencer.
             if is_manual:
+                if paid_limit and current > paid_limit:
+                    return {
+                        "status": SubscriptionService.STATE_EXPIRED,
+                        "subscription_status": raw_status,
+                        "can_access": False,
+                        "reason": "La suscripción manual venció en la fecha configurada.",
+                        "trial_ends_at": trial_end,
+                        "reference_date": paid_limit,
+                        "next_billing_date": paid_limit,
+                    }
                 return {
                     "status": SubscriptionService.STATE_ACTIVE,
                     "subscription_status": raw_status,

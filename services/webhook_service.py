@@ -326,6 +326,7 @@ class WebhookService:
                             SubscriptionService.RenewSubscriptionCommand(
                                 company_id=company.id,
                                 subscription_id=subscription.id,
+                                payment_status=normalized_status,
                                 actor_user_id=payment.user_id,
                                 actor_role="system",
                                 origin="webhook",
