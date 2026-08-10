@@ -99,7 +99,11 @@
             </td>
             <td>{{ company.contact_email or '—' }}</td>
             <td>
+              {% if effective_state %}
+              <span class="badge {{ 'text-bg-success' if effective_state.can_access else 'text-bg-danger' }}">{{ 'Activa' if effective_state.can_access else 'Bloqueada' }}</span>
+              {% else %}
               <span class="badge {{ 'text-bg-success' if company.active else 'text-bg-danger' }}">{{ 'Activa' if company.active else 'Suspendida' }}</span>
+              {% endif %}
             </td>
             <td>
               {% if sub and sub.plan %}

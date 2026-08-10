@@ -974,6 +974,11 @@ class SubscriptionService:
 
         if raw_status in SubscriptionService.ACTIVE_STATUSES:
             paid_limit = getattr(subscription, "next_billing_date", None) or getattr(subscription, "ends_at", None)
+            if paid_limit is None and subscription is not None:
+                plan_duration_days = int(getattr(getattr(subscription, "plan", None), "duration_days", 30) or 30)
+                start_ref = getattr(subscription, "start_date", None) or getattr(subscription, "starts_at", None)
+                if start_ref is not None:
+                    paid_limit = start_ref + timedelta(days=plan_duration_days)
             # Suscripciones manuales pueden quedar abiertas sin fecha límite,
             # pero si tienen fecha configurada deben bloquearse al vencer.
             if is_manual:

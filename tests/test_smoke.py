@@ -3941,6 +3941,42 @@ def test_active_subscription_blocks_at_exact_five_day_overdue_cutoff():
         assert access["status"] == SubscriptionService.STATE_EXPIRED
 
 
+def test_active_subscription_without_due_dates_uses_derived_plan_limit():
+    with stock_app.app.app_context():
+        from app import Plan, Subscription
+        from services.plan_service import PlanService
+        from services.subscription_service import SubscriptionService
+
+        PlanService.ensure_defaults(db.session)
+        company = Company.query.filter_by(name="Empresa Demo").first()
+        assert company is not None
+
+        paid_plan = Plan.query.filter_by(code="business").first()
+        assert paid_plan is not None
+
+        now_ref = stock_app.utcnow()
+        overdue_days = int(paid_plan.duration_days or 30) + 6
+        start_ref = now_ref - timedelta(days=overdue_days)
+
+        subscription = Subscription.query.filter_by(company_id=company.id).first()
+        if subscription is None:
+            subscription = Subscription(company_id=company.id)
+            db.session.add(subscription)
+
+        subscription.plan_id = paid_plan.id
+        subscription.status = "active"
+        subscription.trial_end = None
+        subscription.start_date = start_ref
+        subscription.starts_at = start_ref
+        subscription.ends_at = None
+        subscription.next_billing_date = None
+        db.session.commit()
+
+        access = SubscriptionService.resolve_company_access_state(company, subscription=subscription, now=now_ref)
+        assert access["can_access"] is False
+        assert access["status"] == SubscriptionService.STATE_EXPIRED
+
+
 def test_business_billing_hub_allows_admin_and_shows_core_sections():
     client = stock_app.app.test_client()
     client.post("/auth/login", data={"username": "negocio_admin", "password": "admin123"})
