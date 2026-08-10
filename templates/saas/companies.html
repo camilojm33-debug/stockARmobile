@@ -5,6 +5,11 @@
 {% block content %}
 {% set status_labels = {
   'trial': 'Prueba',
+  'trial_expired': 'Prueba vencida',
+  'pending': 'Pendiente',
+  'pending_payment': 'Pendiente de pago',
+  'pending_confirmation': 'Pendiente de confirmacion',
+  'scheduled': 'Programada',
   'expired': 'Vencida',
   'active': 'Activa',
   'inactive': 'Inactiva',
@@ -86,6 +91,7 @@
         <tbody>
           {% for company in companies %}
           {% set sub = latest_subscriptions.get(company.id) %}
+          {% set effective_state = effective_states.get(company.id) %}
           <tr>
             <td>
               <div class="fw-semibold">{{ company.name }}</div>
@@ -98,7 +104,11 @@
             <td>
               {% if sub and sub.plan %}
                 <div class="fw-semibold">{{ sub.plan.name }}</div>
+                {% if effective_state %}
+                <div class="small text-muted">{{ status_labels.get(effective_state.status, effective_state.status|replace('_', ' ')|title) }}</div>
+                {% else %}
                 <div class="small text-muted">{{ status_labels.get(sub.status, sub.status|replace('_', ' ')|title) }}</div>
+                {% endif %}
               {% else %}
                 <span class="text-muted">Sin suscripcion</span>
               {% endif %}

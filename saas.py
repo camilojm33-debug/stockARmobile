@@ -1644,6 +1644,7 @@ def toggle_company(company_id):
 @superadmin_required
 def companies_panel():
     from app import Client, Company, Plan, Product, Sale, Subscription, User, db
+    from services.subscription_service import SubscriptionService
 
     _require_superadmin()
     q = (request.args.get("q") or "").strip()
@@ -1688,6 +1689,7 @@ def companies_panel():
     client_counts = {}
     sale_counts = {}
     latest_subscriptions = {}
+    effective_states = {}
 
     if company_ids:
         user_counts = {row[0]: int(row[1] or 0) for row in db.session.query(User.company_id, db.func.count(User.id)).filter(User.company_id.in_(company_ids)).group_by(User.company_id).all()}
@@ -1703,6 +1705,10 @@ def companies_panel():
             if subscription.company_id not in latest_subscriptions:
                 latest_subscriptions[subscription.company_id] = subscription
 
+        for company in companies:
+            sub = latest_subscriptions.get(company.id)
+            effective_states[company.id] = SubscriptionService.resolve_company_access_state(company, subscription=sub)
+
     return render_template(
         "saas/companies.html",
         companies=companies,
@@ -1712,6 +1718,7 @@ def companies_panel():
         client_counts=client_counts,
         sale_counts=sale_counts,
         latest_subscriptions=latest_subscriptions,
+        effective_states=effective_states,
         plans=Plan.query.filter(Plan.active.is_(True)).order_by(Plan.price.asc()).all(),
         filters={"q": q, "status": status, "plan": plan_code, "per_page": per_page},
     )
@@ -1721,6 +1728,7 @@ def companies_panel():
 @superadmin_required
 def company_detail(company_id):
     from app import AuditLog, Client, Company, Payment, Product, Sale, Subscription, User, db
+    from services.subscription_service import SubscriptionService
 
     _require_superadmin()
     company = Company.query.filter_by(id=company_id).first_or_404()
@@ -1729,6 +1737,7 @@ def company_detail(company_id):
         .order_by(Subscription.start_date.desc().nullslast(), Subscription.id.desc())
         .first()
     )
+    effective_state = SubscriptionService.resolve_company_access_state(company, subscription=subscription)
     stats = {
         "users": User.query.filter_by(company_id=company.id).count(),
         "active_users": User.query.filter_by(company_id=company.id, active=True).count(),
@@ -1745,6 +1754,7 @@ def company_detail(company_id):
         "saas/company_detail.html",
         company=company,
         subscription=subscription,
+        effective_state=effective_state,
         stats=stats,
         last_payments=last_payments,
         audit=audit,

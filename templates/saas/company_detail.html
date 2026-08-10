@@ -3,6 +3,18 @@
 {% block title %}Empresa {{ company.name }} - SuperAdmin{% endblock %}
 
 {% block content %}
+{% set effective_status_labels = {
+  'trial': 'Prueba',
+  'trial_expired': 'Prueba vencida',
+  'pending': 'Pendiente',
+  'pending_payment': 'Pendiente de pago',
+  'pending_confirmation': 'Pendiente de confirmacion',
+  'active': 'Activa',
+  'scheduled': 'Programada',
+  'expired': 'Vencida',
+  'cancelled': 'Cancelada',
+  'suspended': 'Suspendida'
+} %}
 <div class="app-shell">
   <div class="d-flex flex-wrap justify-content-between align-items-center gap-3 mb-4">
     <div>
@@ -115,11 +127,18 @@
           </div>
           <div class="small text-muted">
             Estado empresa: <span class="badge {{ 'text-bg-success' if company.active else 'text-bg-danger' }}">{{ 'Activa' if company.active else 'Suspendida' }}</span>
+            {% if effective_state %}
+            {% set effective_status = (effective_state.status or 'pending') %}
+            {% set effective_badge = 'text-bg-success' if effective_state.can_access else 'text-bg-danger' %}
+            · Suscripcion efectiva: <span class="badge {{ effective_badge }}">{{ effective_status_labels.get(effective_status, effective_status|replace('_', ' ')|title) }}</span>
+            {% endif %}
             {% if subscription %}
-            · Suscripcion: <strong>{{ subscription.status }}</strong>
-            {% if subscription.plan %} ({{ subscription.plan.name }}){% endif %}
+            · Estado guardado: <strong>{{ subscription.status }}</strong>{% if subscription.plan %} ({{ subscription.plan.name }}){% endif %}
             {% endif %}
           </div>
+          {% if effective_state and effective_state.reason %}
+          <div class="small text-muted mt-1">Motivo: {{ effective_state.reason }}</div>
+          {% endif %}
         </div>
       </div>
     </div>
