@@ -6,9 +6,11 @@ import json
 import os
 import secrets
 import string
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from io import BytesIO
+from math import ceil
 from time import monotonic
+from zoneinfo import ZoneInfo
 
 try:
     import redis
@@ -63,6 +65,59 @@ CRM_PRIORITIES = {"baja", "media", "alta"}
 TERMINAL_BILLING_STATUSES = {"cancelled", "suspended", "expired", "rejected", "charged_back"}
 
 _SAAS_CACHE: dict[str, dict[str, object]] = {}
+_ADMIN_TZ_NAME = "America/Argentina/Buenos_Aires"
+
+
+class _SimplePagination:
+    def __init__(self, *, page: int, per_page: int, total: int):
+        self.page = max(1, int(page or 1))
+        self.per_page = max(1, int(per_page or 1))
+        self.total = max(0, int(total or 0))
+        self.pages = max(1, int(ceil(self.total / self.per_page))) if self.total else 1
+
+    @property
+    def has_prev(self) -> bool:
+        return self.page > 1
+
+    @property
+    def has_next(self) -> bool:
+        return self.page < self.pages
+
+    @property
+    def prev_num(self) -> int:
+        return max(1, self.page - 1)
+
+    @property
+    def next_num(self) -> int:
+        return min(self.pages, self.page + 1)
+
+
+def _admin_timezone():
+    try:
+        return ZoneInfo(_ADMIN_TZ_NAME)
+    except Exception:
+        return timezone(timedelta(hours=-3))
+
+
+def _parse_admin_datetime_local(value: str | None):
+    raw = (value or "").strip()
+    if not raw:
+        return None
+    try:
+        parsed = datetime.fromisoformat(raw)
+    except ValueError:
+        return None
+
+    if parsed.tzinfo is None:
+        parsed = parsed.replace(tzinfo=_admin_timezone())
+    return parsed.astimezone(timezone.utc).replace(tzinfo=None)
+
+
+def _format_admin_datetime_local(value, fmt: str):
+    if value is None:
+        return ""
+    aware_utc = value.replace(tzinfo=timezone.utc) if value.tzinfo is None else value.astimezone(timezone.utc)
+    return aware_utc.astimezone(_admin_timezone()).strftime(fmt)
 
 
 def _temporary_password(length: int = 12) -> str:
@@ -83,13 +138,7 @@ def _redirect_back(default_endpoint: str = "saas.companies_panel"):
 
 
 def _parse_dt(value: str | None):
-    raw = (value or "").strip()
-    if not raw:
-        return None
-    try:
-        return datetime.fromisoformat(raw)
-    except ValueError:
-        return None
+    return _parse_admin_datetime_local(value)
 
 
 def _normalized_subscription_status(value: str | None) -> str:
@@ -1992,7 +2041,8 @@ def billing():
 @bp.route("/subscriptions")
 @superadmin_required
 def subscriptions_panel():
-    from app import Company, Plan, Subscription, db
+    from app import Company, Payment, Plan, Subscription, db
+    from services.subscription_service import SubscriptionService
 
     _require_superadmin()
     q = (request.args.get("q") or "").strip()
@@ -2013,15 +2063,72 @@ def subscriptions_panel():
                 Subscription.status.ilike(like),
             )
         )
-    if status != "all":
-        query = query.filter(Subscription.status == status)
     if plan_code != "all":
         query = query.filter(Plan.code == plan_code)
     if company_id_filter:
         query = query.filter(Subscription.company_id == company_id_filter)
 
-    pagination = query.order_by(Subscription.start_date.desc().nullslast(), Subscription.id.desc()).paginate(page=page, per_page=per_page, error_out=False)
-    subscriptions = pagination.items
+    now_ref = utcnow()
+    rows = query.order_by(Subscription.start_date.desc().nullslast(), Subscription.id.desc()).all()
+    effective_state_by_id = {}
+    effective_status_by_id = {}
+    filtered_rows = []
+    for sub in rows:
+        company = getattr(sub, "company", None) or db.session.get(Company, sub.company_id)
+        effective_state = SubscriptionService.resolve_company_access_state(company, subscription=sub, now=now_ref)
+        effective_status = SubscriptionService.get_effective_subscription_status(sub, company=company, now=now_ref)
+        effective_state_by_id[sub.id] = effective_state
+        effective_status_by_id[sub.id] = effective_status
+        if status != "all" and effective_status != status:
+            continue
+        filtered_rows.append(sub)
+
+    total = len(filtered_rows)
+    pagination = _SimplePagination(page=page, per_page=per_page, total=total)
+    start = (pagination.page - 1) * pagination.per_page
+    end = start + pagination.per_page
+    subscriptions = filtered_rows[start:end]
+
+    confirmed_payment_statuses = ["approved", "paid", "active", "refunded"]
+    last_payment_by_subscription_id = {}
+    last_payment_by_company_id = {}
+    sub_ids = [sub.id for sub in subscriptions]
+    company_ids = [sub.company_id for sub in subscriptions]
+    if sub_ids:
+        for row in (
+            db.session.query(Payment.subscription_id, db.func.max(Payment.paid_at).label("last_paid_at"))
+            .filter(Payment.subscription_id.in_(sub_ids), Payment.status.in_(confirmed_payment_statuses), Payment.paid_at.isnot(None))
+            .group_by(Payment.subscription_id)
+            .all()
+        ):
+            last_payment_by_subscription_id[int(row.subscription_id)] = row.last_paid_at
+    if company_ids:
+        for row in (
+            db.session.query(Payment.company_id, db.func.max(Payment.paid_at).label("last_paid_at"))
+            .filter(Payment.company_id.in_(company_ids), Payment.status.in_(confirmed_payment_statuses), Payment.paid_at.isnot(None))
+            .group_by(Payment.company_id)
+            .all()
+        ):
+            last_payment_by_company_id[int(row.company_id)] = row.last_paid_at
+
+    start_display_by_id = {}
+    start_input_by_id = {}
+    next_due_display_by_id = {}
+    next_due_input_by_id = {}
+    last_payment_display_by_id = {}
+    last_payment_input_by_id = {}
+    for sub in subscriptions:
+        effective_state = effective_state_by_id.get(sub.id, {})
+        effective_next_due = effective_state.get("next_billing_date") or sub.next_billing_date
+        real_last_payment = last_payment_by_subscription_id.get(sub.id) or last_payment_by_company_id.get(sub.company_id) or sub.last_payment_date
+
+        start_display_by_id[sub.id] = _format_admin_datetime_local(sub.start_date, "%Y-%m-%d %H:%M") if sub.start_date else "—"
+        start_input_by_id[sub.id] = _format_admin_datetime_local(sub.start_date, "%Y-%m-%dT%H:%M") if sub.start_date else ""
+        next_due_display_by_id[sub.id] = _format_admin_datetime_local(effective_next_due, "%Y-%m-%d %H:%M") if effective_next_due else "—"
+        next_due_input_by_id[sub.id] = _format_admin_datetime_local(sub.next_billing_date, "%Y-%m-%dT%H:%M") if sub.next_billing_date else ""
+        last_payment_display_by_id[sub.id] = _format_admin_datetime_local(real_last_payment, "%Y-%m-%d %H:%M") if real_last_payment else "—"
+        last_payment_input_by_id[sub.id] = _format_admin_datetime_local(sub.last_payment_date, "%Y-%m-%dT%H:%M") if sub.last_payment_date else ""
+
     companies = Company.query.order_by(Company.name.asc()).all()
     selected_company = next((company for company in companies if company.id == company_id_filter), None) if company_id_filter else None
     selected_company_has_subscription = False
@@ -2029,13 +2136,20 @@ def subscriptions_panel():
         selected_company_has_subscription = Subscription.query.filter_by(company_id=selected_company.id).first() is not None
     plans = Plan.query.filter(Plan.active.is_(True)).order_by(Plan.price.asc()).all()
     subscription_actions = {
-        sub.id: _allowed_ui_actions_for_status(sub.status)
+        sub.id: _allowed_ui_actions_for_status(effective_status_by_id.get(sub.id, sub.status))
         for sub in subscriptions
     }
     return render_template(
         "saas/subscriptions.html",
         subscriptions=subscriptions,
         subscription_actions=subscription_actions,
+        effective_status_by_id=effective_status_by_id,
+        start_display_by_id=start_display_by_id,
+        start_input_by_id=start_input_by_id,
+        next_due_display_by_id=next_due_display_by_id,
+        next_due_input_by_id=next_due_input_by_id,
+        last_payment_display_by_id=last_payment_display_by_id,
+        last_payment_input_by_id=last_payment_input_by_id,
         pagination=pagination,
         companies=companies,
         selected_company=selected_company,
@@ -2176,7 +2290,7 @@ def subscriptions_create():
 @bp.route("/subscriptions/<int:subscription_id>/update", methods=["POST"])
 @superadmin_required
 def subscriptions_update(subscription_id):
-    from app import Plan, Subscription, db
+    from app import AuditLog, PaymentHistory, Plan, Subscription, db
     from services.subscription_service import SubscriptionCommandError, SubscriptionService
 
     _require_superadmin()
@@ -2187,11 +2301,18 @@ def subscriptions_update(subscription_id):
         flash("Plan inválido.", "danger")
         return _redirect_back("saas.subscriptions_panel")
 
-    if not _action_allowed_for_status(subscription.status, "modify"):
+    effective_status = SubscriptionService.get_effective_subscription_status(subscription, company=subscription.company)
+    if not _action_allowed_for_status(effective_status, "modify"):
         flash("No se puede modificar esta suscripción en su estado actual.", "warning")
         return _redirect_back("saas.subscriptions_panel")
 
+    start_date = _parse_dt(request.form.get("start_date"))
+    next_billing_date = _parse_dt(request.form.get("next_billing_date"))
+    last_payment_date = _parse_dt(request.form.get("last_payment_date"))
+    renewal_enabled = (request.form.get("renewal_enabled") or "1") == "1"
+
     try:
+        target_subscription = subscription
         if plan is not None and plan.id != subscription.plan_id:
             SubscriptionService.run_command(
                 db.session,
@@ -2205,37 +2326,126 @@ def subscriptions_update(subscription_id):
                     idempotency_key=f"saas-update-plan:{subscription.company_id}:{subscription.id}:{plan.id}",
                 ),
             )
+            target_subscription = SubscriptionService.active_subscription_for_company(subscription.company_id)
 
-        target_status = _normalized_subscription_status(request.form.get("status") or subscription.status)
+        if target_subscription is None:
+            raise SubscriptionCommandError("No se pudo determinar la suscripción objetivo para actualizar.")
+
+        if start_date is not None:
+            target_subscription.start_date = start_date
+            target_subscription.starts_at = start_date
+        if next_billing_date is not None:
+            target_subscription.next_billing_date = next_billing_date
+            target_subscription.ends_at = next_billing_date
+        if last_payment_date is not None:
+            target_subscription.last_payment_date = last_payment_date
+
+        target_subscription.renewal_enabled = renewal_enabled
+        target_subscription.auto_renew = renewal_enabled
+        if renewal_enabled:
+            target_subscription.cancel_at_period_end = False
+
+        if target_subscription.start_date and target_subscription.next_billing_date and target_subscription.next_billing_date < target_subscription.start_date:
+            raise SubscriptionCommandError("Fechas inválidas: la fecha de vencimiento no puede ser menor a la de inicio.")
+        if target_subscription.starts_at and target_subscription.ends_at and target_subscription.ends_at < target_subscription.starts_at:
+            raise SubscriptionCommandError("Fechas inválidas: el vencimiento no puede ser menor al inicio.")
+
+        target_status = _normalized_subscription_status(request.form.get("status") or target_subscription.status)
         if target_status in {"cancelled", "suspended", "expired"}:
             if target_status == "cancelled":
                 SubscriptionService.run_command(
                     db.session,
                     SubscriptionService.CancelSubscriptionCommand(
-                        company_id=subscription.company_id,
-                        subscription_id=subscription.id,
+                        company_id=target_subscription.company_id,
+                        subscription_id=target_subscription.id,
                         actor_user_id=current_user.id,
                         actor_role=current_user.role,
                         origin="superadmin",
                         ip_address=request.remote_addr,
-                        idempotency_key=f"saas-update-cancel:{subscription.company_id}:{subscription.id}",
+                        idempotency_key=f"saas-update-cancel:{target_subscription.company_id}:{target_subscription.id}",
                         cancel_at_period_end=False,
+                    ),
+                )
+            elif target_status == "suspended":
+                SubscriptionService.run_command(
+                    db.session,
+                    SubscriptionService.ExpireSubscriptionCommand(
+                        company_id=target_subscription.company_id,
+                        subscription_id=target_subscription.id,
+                        actor_user_id=current_user.id,
+                        actor_role=current_user.role,
+                        origin="superadmin",
+                        ip_address=request.remote_addr,
+                        idempotency_key=f"saas-update-suspend:{target_subscription.company_id}:{target_subscription.id}",
+                        reason="superadmin_suspend",
                     ),
                 )
             elif target_status == "expired":
                 SubscriptionService.run_command(
                     db.session,
                     SubscriptionService.ExpireSubscriptionCommand(
-                        company_id=subscription.company_id,
-                        subscription_id=subscription.id,
+                        company_id=target_subscription.company_id,
+                        subscription_id=target_subscription.id,
                         actor_user_id=current_user.id,
                         actor_role=current_user.role,
                         origin="superadmin",
                         ip_address=request.remote_addr,
-                        idempotency_key=f"saas-update-expire:{subscription.company_id}:{subscription.id}",
+                        idempotency_key=f"saas-update-expire:{target_subscription.company_id}:{target_subscription.id}",
                         reason="superadmin_update",
                     ),
                 )
+        elif target_status == "active":
+            SubscriptionService.run_command(
+                db.session,
+                SubscriptionService.ReactivateSubscriptionCommand(
+                    company_id=target_subscription.company_id,
+                    subscription_id=target_subscription.id,
+                    actor_user_id=current_user.id,
+                    actor_role=current_user.role,
+                    origin="superadmin",
+                    ip_address=request.remote_addr,
+                    idempotency_key=f"saas-update-reactivate:{target_subscription.company_id}:{target_subscription.id}",
+                ),
+            )
+        else:
+            target_subscription.status = target_status
+
+        db.session.add(
+            AuditLog(
+                user_id=current_user.id,
+                company_id=target_subscription.company_id,
+                action="subscription_admin_update",
+                entity="subscription",
+                entity_id=target_subscription.id,
+                detail=(
+                    f"Update superadmin status={target_status} start_date={target_subscription.start_date} "
+                    f"next_billing_date={target_subscription.next_billing_date} last_payment_date={target_subscription.last_payment_date} "
+                    f"renewal_enabled={target_subscription.renewal_enabled} ip={request.remote_addr or 'unknown'}"
+                ),
+            )
+        )
+        db.session.add(
+            PaymentHistory(
+                company_id=target_subscription.company_id,
+                subscription_id=target_subscription.id,
+                event="subscription_admin_update",
+                detail="Actualización administrativa de suscripción",
+                source="superadmin",
+                status=target_subscription.status,
+                payload_json=json.dumps(
+                    {
+                        "subscription_id": target_subscription.id,
+                        "status": target_subscription.status,
+                        "start_date": target_subscription.start_date.isoformat() if target_subscription.start_date else None,
+                        "next_billing_date": target_subscription.next_billing_date.isoformat() if target_subscription.next_billing_date else None,
+                        "last_payment_date": target_subscription.last_payment_date.isoformat() if target_subscription.last_payment_date else None,
+                        "renewal_enabled": bool(target_subscription.renewal_enabled),
+                        "actor_user_id": current_user.id,
+                    },
+                    ensure_ascii=False,
+                ),
+            )
+        )
 
         db.session.commit()
         flash("Suscripción modificada correctamente.", "success")
@@ -2258,7 +2468,7 @@ def subscriptions_action(subscription_id):
     _require_superadmin()
     subscription = Subscription.query.filter_by(id=subscription_id).first_or_404()
     action = (request.form.get("action") or "").strip().lower()
-    status_before = _normalized_subscription_status(subscription.status)
+    status_before = SubscriptionService.get_effective_subscription_status(subscription, company=subscription.company)
 
     if not _action_allowed_for_status(status_before, action):
         flash("La acción no está permitida para el estado actual de la suscripción.", "warning")

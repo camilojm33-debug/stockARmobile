@@ -899,13 +899,46 @@ class SubscriptionService:
         return getattr(company, "trial_ends_at", None) or ((getattr(company, "created_at", None) or current) + timedelta(days=trial_days))
 
     @staticmethod
+    def get_effective_subscription_status(subscription, now=None, company=None):
+        from app import utcnow
+
+        current = now or utcnow()
+        if subscription is None:
+            if company is None:
+                return SubscriptionService.STATE_TRIAL_EXPIRED
+            return SubscriptionService.resolve_company_access_state(company, subscription=None, now=current)["status"]
+
+        resolved_company = company or getattr(subscription, "company", None)
+        if resolved_company is not None:
+            return SubscriptionService.resolve_company_access_state(
+                resolved_company,
+                subscription=subscription,
+                now=current,
+            )["status"]
+
+        raw_status = SubscriptionService._normalize_state(getattr(subscription, "status", None), default=SubscriptionService.STATE_PENDING)
+        if raw_status in SubscriptionService.ACTIVE_STATUSES:
+            paid_limit = getattr(subscription, "next_billing_date", None) or getattr(subscription, "ends_at", None)
+            if paid_limit and current >= paid_limit:
+                return SubscriptionService.STATE_EXPIRED
+            return SubscriptionService.STATE_ACTIVE
+
+        if raw_status in SubscriptionService.TRIAL_STATUSES:
+            trial_end = getattr(subscription, "trial_end", None) or getattr(subscription, "next_billing_date", None)
+            if trial_end and current >= trial_end:
+                return SubscriptionService.STATE_TRIAL_EXPIRED
+            return SubscriptionService.STATE_TRIAL
+
+        return raw_status
+
+    @staticmethod
     def resolve_company_access_state(company, subscription=None, now=None):
         from app import utcnow
 
         current = now or utcnow()
         trial_end = SubscriptionService.trial_end_for_company(company, now=current)
         raw_status = ((getattr(subscription, "status", None) or SubscriptionService.STATE_TRIAL) if subscription is not None else SubscriptionService.STATE_TRIAL).lower()
-        in_trial_window = bool(trial_end and current <= trial_end)
+        in_trial_window = bool(trial_end and current < trial_end)
         is_manual = bool(subscription is not None and SubscriptionService.is_manual_subscription(subscription))
 
         if not getattr(company, "active", True):
@@ -982,7 +1015,7 @@ class SubscriptionService:
             # Suscripciones manuales pueden quedar abiertas sin fecha límite,
             # pero si tienen fecha configurada deben bloquearse al vencer.
             if is_manual:
-                if paid_limit and current > paid_limit:
+                if paid_limit and current >= paid_limit:
                     return {
                         "status": SubscriptionService.STATE_EXPIRED,
                         "subscription_status": raw_status,
@@ -1001,7 +1034,7 @@ class SubscriptionService:
                     "reference_date": paid_limit,
                     "next_billing_date": paid_limit,
                 }
-            if paid_limit and current > paid_limit:
+            if paid_limit and current >= paid_limit:
                 grace_limit = paid_limit + timedelta(days=SubscriptionService.OVERDUE_GRACE_DAYS)
                 if current < grace_limit:
                     return {

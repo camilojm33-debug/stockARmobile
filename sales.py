@@ -1493,10 +1493,13 @@ def share_whatsapp(sale_id):
         phone_input = (request.form.get("whatsapp_phone") or "").strip()
         return redirect(_build_whatsapp_link(sale, phone_input))
 
+    ticket_url = _build_public_sale_ticket_url(sale.id)
     return render_template(
         "ventas/whatsapp_dialog.html",
         sale=sale,
         entered_phone=phone,
+        message=_ticket_text_for_whatsapp(sale),
+        pdf_url=ticket_url,
     )
 
 

@@ -3977,6 +3977,246 @@ def test_active_subscription_without_due_dates_uses_derived_plan_limit():
         assert access["status"] == SubscriptionService.STATE_EXPIRED
 
 
+def test_effective_status_active_with_future_due_date_is_active():
+    with stock_app.app.app_context():
+        from app import Plan, Subscription
+        from services.plan_service import PlanService
+        from services.subscription_service import SubscriptionService
+
+        PlanService.ensure_defaults(db.session)
+        company = Company.query.filter_by(name="Empresa Demo").first()
+        assert company is not None
+        plan = Plan.query.filter_by(code="business").first()
+        assert plan is not None
+
+        now_ref = stock_app.utcnow()
+        subscription = Subscription.query.filter_by(company_id=company.id).first()
+        if subscription is None:
+            subscription = Subscription(company_id=company.id)
+            db.session.add(subscription)
+
+        subscription.plan_id = plan.id
+        subscription.status = "active"
+        subscription.start_date = now_ref - timedelta(days=2)
+        subscription.starts_at = now_ref - timedelta(days=2)
+        subscription.next_billing_date = now_ref + timedelta(days=2)
+        subscription.ends_at = now_ref + timedelta(days=2)
+        subscription.metadata_json = '{"is_manual": true, "managed_by": "admin"}'
+        db.session.commit()
+
+        effective = SubscriptionService.get_effective_subscription_status(subscription, company=company, now=now_ref)
+        assert effective == SubscriptionService.STATE_ACTIVE
+
+
+def test_effective_status_manual_subscription_expires_exactly_now():
+    with stock_app.app.app_context():
+        from app import Plan, Subscription
+        from services.plan_service import PlanService
+        from services.subscription_service import SubscriptionService
+
+        PlanService.ensure_defaults(db.session)
+        company = Company.query.filter_by(name="Empresa Demo").first()
+        assert company is not None
+        plan = Plan.query.filter_by(code="business").first()
+        assert plan is not None
+
+        now_ref = stock_app.utcnow()
+        subscription = Subscription.query.filter_by(company_id=company.id).first()
+        if subscription is None:
+            subscription = Subscription(company_id=company.id)
+            db.session.add(subscription)
+
+        subscription.plan_id = plan.id
+        subscription.status = "active"
+        subscription.start_date = now_ref - timedelta(days=30)
+        subscription.starts_at = now_ref - timedelta(days=30)
+        subscription.next_billing_date = now_ref
+        subscription.ends_at = now_ref
+        subscription.metadata_json = '{"is_manual": true, "managed_by": "admin"}'
+        db.session.commit()
+
+        effective = SubscriptionService.get_effective_subscription_status(subscription, company=company, now=now_ref)
+        assert effective == SubscriptionService.STATE_EXPIRED
+
+
+def test_effective_status_trial_expires_exactly_now():
+    with stock_app.app.app_context():
+        from app import Plan, Subscription
+        from services.plan_service import PlanService
+        from services.subscription_service import SubscriptionService
+
+        PlanService.ensure_defaults(db.session)
+        company = Company.query.filter_by(name="Empresa Demo").first()
+        assert company is not None
+        plan = Plan.query.filter_by(code="trial").first()
+        assert plan is not None
+
+        now_ref = stock_app.utcnow()
+        company.trial_ends_at = now_ref
+        subscription = Subscription.query.filter_by(company_id=company.id).first()
+        if subscription is None:
+            subscription = Subscription(company_id=company.id)
+            db.session.add(subscription)
+
+        subscription.plan_id = plan.id
+        subscription.status = "trial"
+        subscription.trial_end = now_ref
+        subscription.start_date = now_ref - timedelta(days=10)
+        subscription.starts_at = now_ref - timedelta(days=10)
+        subscription.next_billing_date = now_ref
+        subscription.ends_at = now_ref
+        db.session.commit()
+
+        effective = SubscriptionService.get_effective_subscription_status(subscription, company=company, now=now_ref)
+        assert effective == SubscriptionService.STATE_TRIAL_EXPIRED
+
+
+def test_superadmin_update_subscription_date_to_future_keeps_effective_active():
+    client = stock_app.app.test_client()
+
+    with stock_app.app.app_context():
+        from app import Plan, Subscription
+        from services.plan_service import PlanService
+
+        PlanService.ensure_defaults(db.session)
+        company = Company.query.filter_by(name="Empresa Demo").first()
+        assert company is not None
+        plan = Plan.query.filter_by(code="business").first()
+        assert plan is not None
+
+        subscription = Subscription.query.filter_by(company_id=company.id).first()
+        if subscription is None:
+            subscription = Subscription(company_id=company.id)
+            db.session.add(subscription)
+        subscription.plan_id = plan.id
+        subscription.status = "active"
+        subscription.metadata_json = '{"is_manual": true, "managed_by": "admin"}'
+        db.session.commit()
+
+        subscription_id = subscription.id
+        plan_id = plan.id
+
+    login = client.post("/auth/login", data={"username": "superadmin", "password": "admin123"}, follow_redirects=False)
+    assert login.status_code in (301, 302)
+
+    future_local = (stock_app.utcnow() + timedelta(days=2)).strftime("%Y-%m-%dT%H:%M")
+    response = client.post(
+        f"/superadmin/subscriptions/{subscription_id}/update",
+        data={
+            "plan_id": plan_id,
+            "status": "active",
+            "next_billing_date": future_local,
+            "renewal_enabled": "1",
+        },
+        follow_redirects=False,
+    )
+    assert response.status_code in (301, 302)
+
+    with stock_app.app.app_context():
+        from app import Subscription
+        from services.subscription_service import SubscriptionService
+
+        refreshed = Subscription.query.filter_by(id=subscription_id).first()
+        company = Company.query.filter_by(id=refreshed.company_id).first()
+        assert refreshed is not None
+        assert company is not None
+        effective = SubscriptionService.get_effective_subscription_status(refreshed, company=company, now=stock_app.utcnow())
+        assert effective == SubscriptionService.STATE_ACTIVE
+
+
+def test_superadmin_update_subscription_date_to_past_sets_effective_expired():
+    client = stock_app.app.test_client()
+
+    with stock_app.app.app_context():
+        from app import Plan, Subscription
+        from services.plan_service import PlanService
+
+        PlanService.ensure_defaults(db.session)
+        company = Company.query.filter_by(name="Empresa Demo").first()
+        assert company is not None
+        plan = Plan.query.filter_by(code="business").first()
+        assert plan is not None
+
+        subscription = Subscription.query.filter_by(company_id=company.id).first()
+        if subscription is None:
+            subscription = Subscription(company_id=company.id)
+            db.session.add(subscription)
+        subscription.plan_id = plan.id
+        subscription.status = "active"
+        subscription.metadata_json = '{"is_manual": true, "managed_by": "admin"}'
+        db.session.commit()
+
+        subscription_id = subscription.id
+        plan_id = plan.id
+
+    login = client.post("/auth/login", data={"username": "superadmin", "password": "admin123"}, follow_redirects=False)
+    assert login.status_code in (301, 302)
+
+    past_local = (stock_app.utcnow() - timedelta(days=1)).strftime("%Y-%m-%dT%H:%M")
+    start_local = (stock_app.utcnow() - timedelta(days=10)).strftime("%Y-%m-%dT%H:%M")
+    response = client.post(
+        f"/superadmin/subscriptions/{subscription_id}/update",
+        data={
+            "plan_id": plan_id,
+            "status": "active",
+            "start_date": start_local,
+            "next_billing_date": past_local,
+            "renewal_enabled": "1",
+        },
+        follow_redirects=False,
+    )
+    assert response.status_code in (301, 302)
+
+    with stock_app.app.app_context():
+        from app import Subscription
+        from services.subscription_service import SubscriptionService
+
+        refreshed = Subscription.query.filter_by(id=subscription_id).first()
+        company = Company.query.filter_by(id=refreshed.company_id).first()
+        assert refreshed is not None
+        assert company is not None
+        effective = SubscriptionService.get_effective_subscription_status(refreshed, company=company, now=stock_app.utcnow())
+        assert effective == SubscriptionService.STATE_EXPIRED
+
+
+def test_superadmin_subscriptions_filter_uses_effective_status():
+    client = stock_app.app.test_client()
+
+    with stock_app.app.app_context():
+        from app import Plan, Subscription
+        from services.plan_service import PlanService
+
+        PlanService.ensure_defaults(db.session)
+        company = Company.query.filter_by(name="Empresa Demo").first()
+        assert company is not None
+        plan = Plan.query.filter_by(code="business").first()
+        assert plan is not None
+
+        subscription = Subscription.query.filter_by(company_id=company.id).first()
+        if subscription is None:
+            subscription = Subscription(company_id=company.id)
+            db.session.add(subscription)
+
+        now_ref = stock_app.utcnow()
+        subscription.plan_id = plan.id
+        subscription.status = "active"
+        subscription.start_date = now_ref - timedelta(days=15)
+        subscription.starts_at = now_ref - timedelta(days=15)
+        subscription.next_billing_date = now_ref - timedelta(days=1)
+        subscription.ends_at = now_ref - timedelta(days=1)
+        subscription.metadata_json = '{"is_manual": true, "managed_by": "admin"}'
+        db.session.commit()
+
+    login = client.post("/auth/login", data={"username": "superadmin", "password": "admin123"}, follow_redirects=False)
+    assert login.status_code in (301, 302)
+
+    response = client.get("/superadmin/subscriptions?status=expired&q=Empresa%20Demo", follow_redirects=False)
+    assert response.status_code == 200
+    html = response.data.decode("utf-8")
+    assert "Empresa Demo" in html
+    assert "Vencida" in html
+
+
 def test_business_billing_hub_allows_admin_and_shows_core_sections():
     client = stock_app.app.test_client()
     client.post("/auth/login", data={"username": "negocio_admin", "password": "admin123"})
