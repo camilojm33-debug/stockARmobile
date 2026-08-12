@@ -1696,8 +1696,8 @@ def index():
         "site_name": "StockArmobile",
     }
 
-    whatsapp_value = app.config.get("SUPPORT_WHATSAPP_DISPLAY", "3624228396")
-    whatsapp_digits = app.config.get("SUPPORT_WHATSAPP_NUMBER", "3624228396")
+    whatsapp_value = app.config.get("SUPPORT_WHATSAPP_DISPLAY", "3624-228396")
+    whatsapp_digits = app.config.get("SUPPORT_WHATSAPP_NUMBER", "5493624228396")
     contact = {
         "whatsapp": whatsapp_value,
         "whatsapp_link": f"https://wa.me/{whatsapp_digits}" if whatsapp_digits else "https://wa.me/",

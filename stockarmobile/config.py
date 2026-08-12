@@ -6,6 +6,17 @@ import sys
 from werkzeug.middleware.proxy_fix import ProxyFix
 
 
+def normalize_whatsapp_number(value: str | None) -> str:
+    if not value:
+        return ""
+    digits = "".join(ch for ch in str(value) if ch.isdigit())
+    if not digits:
+        return ""
+    if digits.startswith("54"):
+        return digits
+    return f"549{digits}"
+
+
 def runtime_flags():
     is_production_env = os.environ.get("FLASK_ENV") == "production" or bool(os.environ.get("RENDER"))
     is_pytest_context = "pytest" in sys.modules or bool(os.environ.get("PYTEST_CURRENT_TEST"))
@@ -39,11 +50,11 @@ def configure_app(app):
     app.config["SQLALCHEMY_TRACK_MODIFICATIONS"] = False
 
     app.config["SUPPORT_EMAIL"] = (os.environ.get("SUPPORT_EMAIL") or os.environ.get("LANDING_EMAIL") or "stockarmobile@gmail.com").strip()
-    app.config["SUPPORT_WHATSAPP_DISPLAY"] = (os.environ.get("SUPPORT_WHATSAPP_DISPLAY") or os.environ.get("LANDING_WHATSAPP") or "3624228396").strip()
+    app.config["SUPPORT_WHATSAPP_DISPLAY"] = (os.environ.get("SUPPORT_WHATSAPP_DISPLAY") or os.environ.get("LANDING_WHATSAPP") or "3624-228396").strip()
     app.config["SUPPORT_WHATSAPP_NUMBER"] = (
         os.environ.get("SUPPORT_WHATSAPP_NUMBER")
-        or "".join(ch for ch in app.config["SUPPORT_WHATSAPP_DISPLAY"] if ch.isdigit())
-        or "3624228396"
+        or normalize_whatsapp_number(app.config["SUPPORT_WHATSAPP_DISPLAY"])
+        or "5493624228396"
     ).strip()
     app.config["PASSWORD_RESET_TOKEN_TTL_MINUTES"] = int(os.environ.get("PASSWORD_RESET_TOKEN_TTL_MINUTES", "60"))
     app.config["SMTP_HOST"] = (os.environ.get("SMTP_HOST") or "").strip()
