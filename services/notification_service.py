@@ -90,6 +90,7 @@ def _signature_for_items(items):
 
 def _build_superadmin_notifications():
     from app import BackupLog, Company, Payment, PaymentHistory, ReferralCommission, WebhookEvent, utcnow
+    from app import SupportTicket
 
     now = utcnow()
     today_start = datetime.combine(now.date(), time.min)
@@ -123,6 +124,18 @@ def _build_superadmin_notifications():
         items.append({"type": "warning", "title": "Backups", "body": f"{backup_alerts} respaldo(s) con error requieren revision.", "href": "/superadmin"})
     if system_events:
         items.append({"type": "secondary", "title": "Eventos del sistema", "body": f"{system_events} webhook(s) procesados en las ultimas 24h.", "href": "/superadmin"})
+    # Support tickets pending
+    try:
+        support_pending = SupportTicket.query.filter(SupportTicket.status == "pendiente").count()
+    except Exception:
+        support_pending = 0
+    if support_pending:
+        items.append({
+            "type": "info",
+            "title": "Pedidos de ayuda",
+            "body": f"{support_pending} pendiente(s)",
+            "href": "/soporte/admin",
+        })
     return items
 
 
