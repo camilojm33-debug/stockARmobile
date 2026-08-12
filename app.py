@@ -1696,8 +1696,8 @@ def index():
         "site_name": "StockArmobile",
     }
 
-    whatsapp_value = app.config.get("SUPPORT_WHATSAPP_DISPLAY", "+54 9 3624 22-8296")
-    whatsapp_digits = app.config.get("SUPPORT_WHATSAPP_NUMBER", "5493624228296")
+    whatsapp_value = app.config.get("SUPPORT_WHATSAPP_DISPLAY", "3624228396")
+    whatsapp_digits = app.config.get("SUPPORT_WHATSAPP_NUMBER", "3624228396")
     contact = {
         "whatsapp": whatsapp_value,
         "whatsapp_link": f"https://wa.me/{whatsapp_digits}" if whatsapp_digits else "https://wa.me/",
@@ -1921,9 +1921,9 @@ def inject_notifications():
     current_company_preferences = {}
     support_contact = {
         "email": app.config.get("SUPPORT_EMAIL", "stockarmobile@gmail.com"),
-        "whatsapp_display": app.config.get("SUPPORT_WHATSAPP_DISPLAY", "+54 9 3624 22-8296"),
-        "whatsapp_number": app.config.get("SUPPORT_WHATSAPP_NUMBER", "5493624228296"),
-        "whatsapp_link": f"https://wa.me/{app.config.get('SUPPORT_WHATSAPP_NUMBER', '5493624228296')}",
+        "whatsapp_display": app.config.get("SUPPORT_WHATSAPP_DISPLAY", "3624228396"),
+        "whatsapp_number": app.config.get("SUPPORT_WHATSAPP_NUMBER", "3624228396"),
+        "whatsapp_link": f"https://wa.me/{app.config.get('SUPPORT_WHATSAPP_NUMBER', '3624228396')}",
         "email_link": f"mailto:{app.config.get('SUPPORT_EMAIL', 'stockarmobile@gmail.com')}",
     }
     if current_user.is_authenticated:

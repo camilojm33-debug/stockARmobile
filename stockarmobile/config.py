@@ -39,11 +39,11 @@ def configure_app(app):
     app.config["SQLALCHEMY_TRACK_MODIFICATIONS"] = False
 
     app.config["SUPPORT_EMAIL"] = (os.environ.get("SUPPORT_EMAIL") or os.environ.get("LANDING_EMAIL") or "stockarmobile@gmail.com").strip()
-    app.config["SUPPORT_WHATSAPP_DISPLAY"] = (os.environ.get("SUPPORT_WHATSAPP_DISPLAY") or os.environ.get("LANDING_WHATSAPP") or "+54 9 3624 22-8296").strip()
+    app.config["SUPPORT_WHATSAPP_DISPLAY"] = (os.environ.get("SUPPORT_WHATSAPP_DISPLAY") or os.environ.get("LANDING_WHATSAPP") or "3624228396").strip()
     app.config["SUPPORT_WHATSAPP_NUMBER"] = (
         os.environ.get("SUPPORT_WHATSAPP_NUMBER")
         or "".join(ch for ch in app.config["SUPPORT_WHATSAPP_DISPLAY"] if ch.isdigit())
-        or "5493624228296"
+        or "3624228396"
     ).strip()
     app.config["PASSWORD_RESET_TOKEN_TTL_MINUTES"] = int(os.environ.get("PASSWORD_RESET_TOKEN_TTL_MINUTES", "60"))
     app.config["SMTP_HOST"] = (os.environ.get("SMTP_HOST") or "").strip()
