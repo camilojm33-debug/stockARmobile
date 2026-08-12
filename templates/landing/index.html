@@ -604,6 +604,20 @@
         <div class="footer-bottom">© 2026 StockArmobile. Todos los derechos reservados.</div>
       </div>
     </footer>
+
+    <a
+      class="landing-whatsapp-float"
+      href="{{ contact.whatsapp_link }}?text={{ 'Hola, quiero probar StockArmobile para mi negocio.'|urlencode }}"
+      target="_blank"
+      rel="noopener"
+      aria-label="Abrir WhatsApp comercial"
+    >
+      <span class="landing-whatsapp-float__icon" aria-hidden="true"><i class="bi bi-whatsapp"></i></span>
+      <span class="landing-whatsapp-float__copy">
+        <strong>WhatsApp</strong>
+        <small>{{ contact.whatsapp }}</small>
+      </span>
+    </a>
   </div>
 
   <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/js/bootstrap.bundle.min.js"></script>
