@@ -5,6 +5,17 @@ const CART_KEY_PREFIX = 'stockarmobile_cart';
 let scannerStream = null;
 let scannerLoopActive = false;
 let html5QrScanner = null;
+let scannerDevices = [];
+let scannerSelectedDeviceId = '';
+let scannerReadLock = false;
+let scannerLastCode = '';
+let scannerLastCodeAt = 0;
+let scannerFeedbackTimer = null;
+let scannerStageTimer = null;
+let scannerAudioContext = null;
+
+const SCANNER_DUPLICATE_WINDOW_MS = 1400;
+const SCANNER_READ_LOCK_MS = 900;
 
 const checkoutProcessButton = document.getElementById('checkout-process-button');
 const mpQrPanelTitle = document.getElementById('mp-qr-panel-title');
@@ -1250,6 +1261,26 @@ function setupFastScanner() {
   if (!input) return;
   let scanTimer = null;
   input.focus();
+  const scannerModal = document.getElementById('cameraScannerModal');
+  const cameraSelect = document.getElementById('camera-scanner-device');
+  const cameraRefreshButton = document.getElementById('camera-scanner-refresh');
+  const scannerModeInputs = document.querySelectorAll('input[name="camera-scanner-mode"]');
+  cameraSelect?.addEventListener('change', event => {
+    scannerSelectedDeviceId = String(event.target?.value || '').trim();
+  });
+  cameraRefreshButton?.addEventListener('click', () => {
+    refreshScannerDevices(true);
+  });
+  scannerModeInputs.forEach(inputEl => {
+    inputEl.addEventListener('change', () => {
+      updateScannerModeHint();
+    });
+  });
+  scannerModal?.addEventListener('hidden.bs.modal', () => {
+    stopCameraScanner();
+    resetScannerFeedbackUi();
+  });
+  updateScannerModeHint();
   document.addEventListener('click', () => {
     const activeTag = document.activeElement?.tagName;
     const cartModalOpen = document.getElementById('cartModal')?.classList.contains('show');
@@ -1275,14 +1306,32 @@ async function startCameraScanner() {
   const video = document.getElementById('camera-scanner-video');
   const container = document.getElementById('camera-scanner-container');
   const status = document.getElementById('camera-scanner-status');
+  const cameraSelect = document.getElementById('camera-scanner-device');
   if (!video && !container) return;
   const useNativeDetector = 'BarcodeDetector' in window && navigator.mediaDevices?.getUserMedia;
   try {
     stopCameraScanner();
+    if (!window.isSecureContext) {
+      if (status) status.textContent = 'La camara solo funciona en un contexto seguro (HTTPS o localhost).';
+      return;
+    }
+
+    if (!navigator.mediaDevices?.getUserMedia) {
+      if (status) status.textContent = 'Este navegador no permite acceder a la camara desde esta pagina.';
+      return;
+    }
+
+    if (status) status.textContent = 'Buscando camaras disponibles...';
+    await loadScannerDevices(cameraSelect, { requestAccess: false });
+    resetScannerFeedbackUi();
+    scannerReadLock = false;
+    scannerLastCode = '';
+    scannerLastCodeAt = 0;
+
     if (useNativeDetector && video) {
       video.classList.remove('d-none');
       if (container) container.classList.add('d-none');
-      scannerStream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: 'environment' }, audio: false });
+      scannerStream = await openScannerStream();
       video.srcObject = scannerStream;
       await video.play();
       scannerLoopActive = true;
@@ -1307,22 +1356,336 @@ async function startCameraScanner() {
         { facingMode: 'environment' },
         { fps: 12, qrbox: { width: 240, height: 240 }, aspectRatio: 1 },
         async decodedText => {
-          if (!scannerLoopActive) return;
-          if (status) status.textContent = 'Código detectado: ' + decodedText;
-          await processScan(decodedText);
-          stopCameraScanner();
-          const modal = bootstrap.Modal.getInstance(document.getElementById('cameraScannerModal'));
-          modal?.hide();
+          await handleDetectedCameraCode(decodedText);
         },
         () => {
-          if (status) status.textContent = 'Esperando código...';
+          if (!scannerReadLock && status) status.textContent = getScannerIdleMessage();
         }
       );
       scannerLoopActive = true;
+      if (status) status.textContent = getScannerIdleMessage();
     }
   } catch (error) {
-    if (status) status.textContent = 'No se pudo acceder a la cámara.';
+    if (status) status.textContent = getCameraScannerErrorMessage(error);
+    emitScannerFeedback(getCameraScannerErrorMessage(error), 'danger');
   }
+}
+
+async function handleDetectedCameraCode(code) {
+  const status = document.getElementById('camera-scanner-status');
+  const normalizedCode = String(code || '').trim();
+  if (!scannerLoopActive || !normalizedCode || scannerReadLock || shouldIgnoreScannerCode(normalizedCode)) {
+    return;
+  }
+
+  scannerReadLock = true;
+  scannerLastCode = normalizedCode;
+  scannerLastCodeAt = Date.now();
+
+  if (status) status.textContent = 'Procesando codigo...';
+
+  try {
+    const result = await processScan(normalizedCode, { source: 'camera' });
+    if (!result.ok) {
+      emitScannerFeedback(result.message || 'No se pudo procesar el codigo.', 'danger', normalizedCode);
+      if (status) status.textContent = 'Codigo rechazado. Ajusta el encuadre y reintenta.';
+      return;
+    }
+
+    emitScannerFeedback(`Agregado: ${result.product?.name || normalizedCode}`, 'success', normalizedCode);
+    if (status) status.textContent = shouldKeepScannerOpen()
+      ? 'Producto agregado. Escanea el siguiente.'
+      : 'Producto agregado. Cerrando scanner...';
+
+    if (!shouldKeepScannerOpen()) {
+      stopCameraScanner();
+      const modal = bootstrap.Modal.getInstance(document.getElementById('cameraScannerModal'));
+      modal?.hide();
+    }
+  } finally {
+    window.setTimeout(() => {
+      scannerReadLock = false;
+      if (scannerLoopActive) {
+        const liveStatus = document.getElementById('camera-scanner-status');
+        if (liveStatus && !shouldKeepScannerOpen()) {
+          liveStatus.textContent = 'Producto agregado. Cerrando scanner...';
+        } else if (liveStatus && !document.getElementById('camera-scanner-feedback')?.classList.contains('alert-danger')) {
+          liveStatus.textContent = getScannerIdleMessage();
+        }
+      }
+    }, SCANNER_READ_LOCK_MS);
+  }
+}
+
+function shouldIgnoreScannerCode(code) {
+  const normalizedCode = String(code || '').trim();
+  if (!normalizedCode) return true;
+  return normalizedCode === scannerLastCode && (Date.now() - scannerLastCodeAt) < SCANNER_DUPLICATE_WINDOW_MS;
+}
+
+function getScannerMode() {
+  return document.querySelector('input[name="camera-scanner-mode"]:checked')?.value === 'continuous'
+    ? 'continuous'
+    : 'single';
+}
+
+function shouldKeepScannerOpen() {
+  return getScannerMode() === 'continuous';
+}
+
+function getScannerIdleMessage() {
+  return shouldKeepScannerOpen()
+    ? 'Modo continuo activo. Escanea varios productos sin cerrar la camara.'
+    : 'Apunta al QR, EAN13, Code128 o codigo interno.';
+}
+
+function updateScannerModeHint() {
+  const hint = document.getElementById('camera-scanner-mode-hint');
+  const status = document.getElementById('camera-scanner-status');
+  if (hint) {
+    hint.textContent = shouldKeepScannerOpen()
+      ? 'La camara queda abierta despues de cada lectura.'
+      : 'Cada lectura agrega el producto y cierra la camara.';
+  }
+  if (status && scannerLoopActive && !scannerReadLock) {
+    status.textContent = getScannerIdleMessage();
+  }
+}
+
+async function openScannerStream() {
+  const selectedDeviceId = getSelectedScannerDeviceId();
+  if (selectedDeviceId) {
+    return navigator.mediaDevices.getUserMedia({
+      video: { deviceId: { exact: selectedDeviceId } },
+      audio: false,
+    });
+  }
+
+  try {
+    return await navigator.mediaDevices.getUserMedia({ video: { facingMode: 'environment' }, audio: false });
+  } catch (error) {
+    if (!shouldRetryScannerWithoutFacingMode(error)) {
+      throw error;
+    }
+  }
+
+  return navigator.mediaDevices.getUserMedia({ video: true, audio: false });
+}
+
+function getSelectedScannerDeviceId() {
+  return String(scannerSelectedDeviceId || '').trim();
+}
+
+async function refreshScannerDevices(requestAccess = false) {
+  const cameraSelect = document.getElementById('camera-scanner-device');
+  const status = document.getElementById('camera-scanner-status');
+  const cameraRefreshButton = document.getElementById('camera-scanner-refresh');
+  if (!cameraSelect) return;
+
+  if (cameraRefreshButton) {
+    cameraRefreshButton.disabled = true;
+    cameraRefreshButton.textContent = 'Recargando...';
+  }
+
+  try {
+    if (status) status.textContent = 'Actualizando lista de camaras...';
+    await loadScannerDevices(cameraSelect, { requestAccess });
+    if (status) status.textContent = scannerDevices.length
+      ? 'Lista de camaras actualizada. Ya podes reintentar.'
+      : 'No se detectaron camaras. Revisa permisos o conecta un dispositivo.';
+  } catch (error) {
+    if (status) status.textContent = getCameraScannerErrorMessage(error);
+  } finally {
+    if (cameraRefreshButton) {
+      cameraRefreshButton.disabled = false;
+      cameraRefreshButton.textContent = 'Recargar camaras';
+    }
+  }
+}
+
+async function loadScannerDevices(cameraSelect, options = {}) {
+  if (!cameraSelect || typeof navigator.mediaDevices?.enumerateDevices !== 'function') {
+    return;
+  }
+
+  if (options.requestAccess) {
+    await requestScannerDeviceAccess();
+  }
+
+  try {
+    const devices = await navigator.mediaDevices.enumerateDevices();
+    scannerDevices = devices.filter(device => device.kind === 'videoinput');
+    renderScannerDeviceOptions(cameraSelect);
+  } catch (_) {
+    scannerDevices = [];
+    renderScannerDeviceOptions(cameraSelect);
+  }
+}
+
+async function requestScannerDeviceAccess() {
+  if (!navigator.mediaDevices?.getUserMedia) return;
+  const stream = await navigator.mediaDevices.getUserMedia({ video: true, audio: false });
+  stream.getTracks().forEach(track => track.stop());
+}
+
+function renderScannerDeviceOptions(cameraSelect) {
+  if (!cameraSelect) return;
+
+  const previousValue = getSelectedScannerDeviceId();
+  cameraSelect.innerHTML = '';
+
+  const autoOption = document.createElement('option');
+  autoOption.value = '';
+  autoOption.textContent = 'Automatica (recomendada)';
+  cameraSelect.appendChild(autoOption);
+
+  scannerDevices.forEach((device, index) => {
+    const option = document.createElement('option');
+    option.value = device.deviceId || '';
+    option.textContent = getScannerDeviceLabel(device, index);
+    cameraSelect.appendChild(option);
+  });
+
+  if (scannerDevices.some(device => device.deviceId === previousValue)) {
+    cameraSelect.value = previousValue;
+  } else {
+    cameraSelect.value = '';
+  }
+
+  scannerSelectedDeviceId = String(cameraSelect.value || '').trim();
+  cameraSelect.disabled = scannerDevices.length === 0;
+}
+
+function getScannerDeviceLabel(device, index) {
+  const label = String(device?.label || '').trim();
+  if (label) return label;
+  return `Camara ${index + 1}`;
+}
+
+function emitScannerFeedback(message, tone = 'info', code = '') {
+  const feedback = document.getElementById('camera-scanner-feedback');
+  const lastHit = document.getElementById('camera-scanner-last-hit');
+  if (feedback) {
+    feedback.className = `alert py-2 small mt-2 mb-0 ${tone === 'success' ? 'alert-success' : tone === 'danger' ? 'alert-danger' : 'alert-secondary'}`;
+    feedback.textContent = message;
+    feedback.classList.remove('d-none');
+  }
+  if (lastHit) {
+    lastHit.textContent = code ? `Ultimo codigo: ${code}` : message;
+    lastHit.classList.remove('d-none');
+  }
+
+  flashScannerStage(tone);
+  if (tone === 'success') {
+    vibrateScanner();
+    playScannerTone();
+  }
+
+  window.clearTimeout(scannerFeedbackTimer);
+  scannerFeedbackTimer = window.setTimeout(() => {
+    if (feedback && tone !== 'danger') {
+      feedback.classList.add('d-none');
+    }
+    if (lastHit && tone !== 'danger') {
+      lastHit.classList.add('d-none');
+    }
+  }, tone === 'danger' ? 2600 : 1800);
+}
+
+function resetScannerFeedbackUi() {
+  const feedback = document.getElementById('camera-scanner-feedback');
+  const lastHit = document.getElementById('camera-scanner-last-hit');
+  const stage = document.getElementById('camera-scanner-stage');
+  window.clearTimeout(scannerFeedbackTimer);
+  window.clearTimeout(scannerStageTimer);
+  if (feedback) {
+    feedback.className = 'alert alert-secondary py-2 small mt-2 mb-0 d-none';
+    feedback.textContent = '';
+  }
+  if (lastHit) {
+    lastHit.classList.add('d-none');
+    lastHit.textContent = '';
+  }
+  stage?.classList.remove('camera-scanner-stage-success', 'camera-scanner-stage-danger');
+}
+
+function flashScannerStage(tone) {
+  const stage = document.getElementById('camera-scanner-stage');
+  if (!stage) return;
+  const successClass = 'camera-scanner-stage-success';
+  const dangerClass = 'camera-scanner-stage-danger';
+  stage.classList.remove(successClass, dangerClass);
+  void stage.offsetWidth;
+  stage.classList.add(tone === 'success' ? successClass : dangerClass);
+  window.clearTimeout(scannerStageTimer);
+  scannerStageTimer = window.setTimeout(() => {
+    stage.classList.remove(successClass, dangerClass);
+  }, 520);
+}
+
+function vibrateScanner() {
+  if (typeof navigator.vibrate === 'function') {
+    navigator.vibrate([80, 40, 80]);
+  }
+}
+
+function playScannerTone() {
+  const AudioContextClass = window.AudioContext || window.webkitAudioContext;
+  if (!AudioContextClass) return;
+
+  try {
+    if (!scannerAudioContext) {
+      scannerAudioContext = new AudioContextClass();
+    }
+    if (scannerAudioContext.state === 'suspended') {
+      scannerAudioContext.resume().catch(() => {});
+    }
+
+    const oscillator = scannerAudioContext.createOscillator();
+    const gainNode = scannerAudioContext.createGain();
+    const now = scannerAudioContext.currentTime;
+
+    oscillator.type = 'sine';
+    oscillator.frequency.setValueAtTime(880, now);
+    gainNode.gain.setValueAtTime(0.0001, now);
+    gainNode.gain.exponentialRampToValueAtTime(0.06, now + 0.02);
+    gainNode.gain.exponentialRampToValueAtTime(0.0001, now + 0.14);
+
+    oscillator.connect(gainNode);
+    gainNode.connect(scannerAudioContext.destination);
+    oscillator.start(now);
+    oscillator.stop(now + 0.15);
+  } catch (_) {
+    // El sonido es opcional; si falla no bloquea el scanner.
+  }
+}
+
+function shouldRetryScannerWithoutFacingMode(error) {
+  if (!error || typeof error.name !== 'string') return false;
+  return ['OverconstrainedError', 'NotFoundError', 'ConstraintNotSatisfiedError'].includes(error.name);
+}
+
+function getCameraScannerErrorMessage(error) {
+  const errorName = error?.name || '';
+  if (errorName === 'NotAllowedError' || errorName === 'PermissionDeniedError') {
+    return 'Permiso de camara bloqueado. Habilitalo en el navegador y volve a intentar.';
+  }
+  if (errorName === 'NotReadableError' || errorName === 'TrackStartError') {
+    return 'La camara esta siendo usada por otra aplicacion o pestaña.';
+  }
+  if (errorName === 'NotFoundError' || errorName === 'DevicesNotFoundError') {
+    return 'No se encontro una camara disponible en este dispositivo.';
+  }
+  if (errorName === 'OverconstrainedError' || errorName === 'ConstraintNotSatisfiedError') {
+    return 'La camara disponible no acepta el modo solicitado. Proba con otra camara o navegador.';
+  }
+  if (errorName === 'AbortError') {
+    return 'Se interrumpio el acceso a la camara. Intenta nuevamente.';
+  }
+  if (errorName === 'SecurityError') {
+    return 'El navegador bloqueo la camara por seguridad. Usa HTTPS o localhost.';
+  }
+  return 'No se pudo acceder a la camara.';
 }
 
 async function scanCameraFrame(detector, video, status) {
@@ -1331,21 +1694,18 @@ async function scanCameraFrame(detector, video, status) {
     const codes = await detector.detect(video);
     if (codes.length) {
       const code = codes[0].rawValue;
-      if (status) status.textContent = 'Codigo detectado: ' + code;
-      await processScan(code);
-      stopCameraScanner();
-      const modal = bootstrap.Modal.getInstance(document.getElementById('cameraScannerModal'));
-      modal?.hide();
-      return;
+      await handleDetectedCameraCode(code);
+      if (!scannerLoopActive) return;
     }
   } catch (error) {
-    if (status) status.textContent = 'Esperando codigo...';
+    if (!scannerReadLock && status) status.textContent = getScannerIdleMessage();
   }
   requestAnimationFrame(() => scanCameraFrame(detector, video, status));
 }
 
 function stopCameraScanner() {
   scannerLoopActive = false;
+  scannerReadLock = false;
   if (scannerStream) {
     scannerStream.getTracks().forEach(track => track.stop());
     scannerStream = null;
@@ -1362,22 +1722,26 @@ function stopCameraScanner() {
   if (video) video.classList.remove('d-none');
 }
 
-async function processScan(code) {
+async function processScan(code, options = {}) {
   const input = document.getElementById('fast-scanner-input');
   if (!code) return;
   try {
     const response = await fetch('/productos/api/' + encodeURIComponent(code));
     const product = await response.json();
     if (!response.ok) {
-      showNotification(product.error || 'Producto no encontrado', 'danger');
-      return;
+      const message = product.error || 'Producto no encontrado';
+      showNotification(message, 'danger');
+      return { ok: false, message };
     }
     addToCart(product.id, product.name, product.price, product.stock, product.barcode, 1, product.unit_measure || 'u');
     renderCartModal();
+    return { ok: true, product };
   } catch (error) {
-    showNotification('No se pudo leer el codigo escaneado', 'danger');
+    const message = 'No se pudo leer el codigo escaneado';
+    showNotification(message, 'danger');
+    return { ok: false, message };
   } finally {
-    if (input) {
+    if (input && options.source !== 'camera') {
       input.value = '';
       input.focus();
     }

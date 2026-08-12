@@ -449,9 +449,35 @@
         <button class="btn-close" data-bs-dismiss="modal" onclick="stopCameraScanner()"></button>
       </div>
       <div class="modal-body">
-        <video id="camera-scanner-video" class="w-100 rounded bg-dark" playsinline muted style="aspect-ratio: 4/3; object-fit: cover;"></video>
-        <div id="camera-scanner-container" class="d-none w-100"></div>
+        <div class="mb-3">
+          <label for="camera-scanner-device" class="form-label small text-muted mb-1">Camara</label>
+          <div class="d-flex gap-2 align-items-center">
+            <select id="camera-scanner-device" class="form-select form-select-sm">
+              <option value="">Automatica (recomendada)</option>
+            </select>
+            <button type="button" class="btn btn-outline-secondary btn-sm text-nowrap" id="camera-scanner-refresh">Recargar camaras</button>
+          </div>
+        </div>
+        <div class="mb-3">
+          <label class="form-label small text-muted mb-1">Modo de lectura</label>
+          <div class="btn-group w-100" role="group" aria-label="Modo de lectura de camara">
+            <input type="radio" class="btn-check" name="camera-scanner-mode" id="camera-scanner-mode-single" value="single" checked>
+            <label class="btn btn-outline-primary btn-sm" for="camera-scanner-mode-single">Escanear y cerrar</label>
+            <input type="radio" class="btn-check" name="camera-scanner-mode" id="camera-scanner-mode-continuous" value="continuous">
+            <label class="btn btn-outline-primary btn-sm" for="camera-scanner-mode-continuous">Escaneo continuo</label>
+          </div>
+          <div id="camera-scanner-mode-hint" class="form-text">Cada lectura agrega el producto y cierra la camara.</div>
+        </div>
+        <div id="camera-scanner-stage" class="camera-scanner-stage rounded overflow-hidden bg-dark">
+          <div id="camera-scanner-last-hit" class="camera-scanner-last-hit badge text-bg-dark d-none"></div>
+          <video id="camera-scanner-video" class="w-100 rounded bg-dark" playsinline muted style="aspect-ratio: 4/3; object-fit: cover;"></video>
+          <div id="camera-scanner-container" class="d-none w-100"></div>
+        </div>
         <p id="camera-scanner-status" class="text-muted small mt-2 mb-0">Apunta al QR, EAN13, Code128 o codigo interno.</p>
+        <div id="camera-scanner-feedback" class="alert alert-secondary py-2 small mt-2 mb-0 d-none" role="status" aria-live="polite"></div>
+        <div class="alert alert-light border small mt-3 mb-0">
+          Si no abre la camara, revisa permisos del navegador, uso por otra app y que la pagina este en HTTPS o localhost.
+        </div>
       </div>
     </div>
   </div>
@@ -648,6 +674,30 @@
   #paymentQrModal .modal-dialog,
   #cameraScannerModal .modal-dialog {
     max-width: calc(100vw - 1rem);
+  }
+  .camera-scanner-stage {
+    position: relative;
+    border: 1px solid rgba(15, 23, 42, .12);
+    transition: box-shadow .2s ease, border-color .2s ease, transform .2s ease;
+  }
+  .camera-scanner-stage.camera-scanner-stage-success {
+    border-color: rgba(25, 135, 84, .65);
+    box-shadow: 0 0 0 .22rem rgba(25, 135, 84, .18);
+    transform: scale(1.01);
+  }
+  .camera-scanner-stage.camera-scanner-stage-danger {
+    border-color: rgba(220, 53, 69, .65);
+    box-shadow: 0 0 0 .22rem rgba(220, 53, 69, .16);
+  }
+  .camera-scanner-last-hit {
+    position: absolute;
+    top: .65rem;
+    left: .65rem;
+    z-index: 3;
+    background: rgba(15, 23, 42, .82) !important;
+    max-width: calc(100% - 1.3rem);
+    overflow: hidden;
+    text-overflow: ellipsis;
   }
   #cartModal .modal-body {
     padding-top: .85rem;
