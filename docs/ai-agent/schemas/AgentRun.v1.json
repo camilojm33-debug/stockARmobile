@@ -1,0 +1,29 @@
+{
+  "$id": "urn:stockarmobile:AgentRun:v1",
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "AgentRun.v1",
+  "type": "object",
+  "required": ["agent_run_id","agent_id","company_id","conversation_id","status","created_at","trace_id"],
+  "properties": {
+    "agent_run_id": { "type": "integer" },
+    "agent_id": { "type": "integer" },
+    "company_id": { "type": "integer" },
+    "conversation_id": { "type": "integer" },
+    "model": { "type": "string" },
+    "system_prompt_hash": { "type": ["string", "null"] },
+    "prompt_tokens": { "type": "integer" },
+    "completion_tokens": { "type": "integer" },
+    "tool_calls": {
+      "type": "array",
+      "items": { "type": "object" }
+    },
+    "estimated_cost": { "type": "number" },
+    "latency_ms": { "type": "integer" },
+    "status": { "type": "string", "enum": ["pending","success","failed","confirmation_required"] },
+    "error_code": { "type": ["string", "null"] },
+    "error_message": { "type": ["string", "null"] },
+    "created_at": { "type": "string", "format": "date-time" },
+    "trace_id": { "type": "string" }
+  },
+  "additionalProperties": false
+}

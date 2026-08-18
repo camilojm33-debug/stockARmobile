@@ -1,0 +1,17 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "tool.execution.requested.v1",
+  "type": "object",
+  "required": ["event_id","event_type","version","company_id","timestamp","trace_id","payload"],
+  "properties": {
+    "event_id": { "type": "string" },
+    "event_type": { "type": "string", "const": "tool.execution.requested" },
+    "version": { "type": "string", "const": "1" },
+    "company_id": { "type": "integer" },
+    "timestamp": { "type": "string", "format": "date-time" },
+    "trace_id": { "type": "string" },
+    "idempotency_key": { "type": "string" },
+    "payload": { "type": "object", "required":["tool_run_id","tool_name","company_id"], "properties": { "tool_run_id": { "type": "integer" }, "tool_name": { "type": "string" }, "company_id": { "type": "integer" }, "parameters": { "type": "object" } } }
+  },
+  "additionalProperties": false
+}

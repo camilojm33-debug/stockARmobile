@@ -1,0 +1,21 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "handoff_to_human Tool Descriptor",
+  "type": "object",
+  "required": ["name","version","description","parameters_schema","returns_schema","permissions_required","tenant_scoped","read_write","idempotent","audit_level","timeout_seconds"],
+  "properties": {
+    "name": { "const": "handoff_to_human" },
+    "version": { "type": "string", "const": "v1" },
+    "description": { "type": "string", "const": "Request human handoff; creates handoff request only (no business changes)." },
+    "parameters_schema": { "type": "object", "required":["conversation_id","reason"], "properties": { "conversation_id": { "type": "integer" }, "reason": { "type": "string" }, "priority": { "type": "string","enum":["low","medium","high"] }, "suggested_user_id": { "type": ["integer","null"] } } },
+    "returns_schema": { "type": "object", "properties": { "handoff_id": { "type": "integer" }, "status": { "type": "string" } } },
+    "permissions_required": ["handoff:create"],
+    "tenant_scoped": true,
+    "read_write": "write",
+    "requires_confirmation": false,
+    "idempotent": true,
+    "audit_level": "full",
+    "timeout_seconds": 5,
+    "rate_limit": { "per_minute": 30, "per_company": 300 }
+  }
+}

@@ -1,0 +1,16 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "agent.run.failed.v1",
+  "type": "object",
+  "required": ["event_id","event_type","version","company_id","timestamp","trace_id","payload"],
+  "properties": {
+    "event_id": { "type": "string" },
+    "event_type": { "type": "string", "const": "agent.run.failed" },
+    "version": { "type": "string", "const": "1" },
+    "company_id": { "type": "integer" },
+    "timestamp": { "type": "string", "format": "date-time" },
+    "trace_id": { "type": "string" },
+    "payload": { "type": "object", "required": ["agent_run_id","error_code"], "properties": { "agent_run_id": { "type": "integer" }, "error_code": { "type": "string" }, "error_message": { "type": "string" } } }
+  },
+  "additionalProperties": false
+}

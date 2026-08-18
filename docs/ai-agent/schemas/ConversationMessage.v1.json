@@ -1,0 +1,51 @@
+{
+  "$id": "urn:stockarmobile:ConversationMessage:v1",
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "ConversationMessage.v1",
+  "type": "object",
+  "required": ["company_id", "channel", "direction", "message_type", "timestamp", "external_message_id"],
+  "properties": {
+    "company_id": { "type": "integer", "minimum": 1 },
+    "conversation_id": { "type": ["integer", "null"] },
+    "external_message_id": { "type": "string" },
+    "channel": { "type": "string", "enum": ["whatsapp", "webchat", "telegram", "instagram", "sms", "email"] },
+    "direction": { "type": "string", "enum": ["in", "out"] },
+    "sender": {
+      "type": "object",
+      "required": ["type"],
+      "properties": {
+        "type": { "type": "string", "enum": ["user", "client", "agent", "system", "external"] },
+        "id": { "type": ["integer", "null"] },
+        "display_name": { "type": ["string", "null"] }
+      },
+      "additionalProperties": false
+    },
+    "recipient": { "type": "object" },
+    "message_type": { "type": "string", "enum": ["text", "image", "audio", "document", "location", "interactive", "event"] },
+    "content": {
+      "type": "object",
+      "properties": {
+        "text": { "type": ["string", "null"] },
+        "media_url": { "type": ["string", "null"], "format": "uri" },
+        "media_mime": { "type": ["string", "null"] },
+        "document_name": { "type": ["string", "null"] },
+        "location": {
+          "type": ["object", "null"],
+          "properties": {
+            "lat": { "type": "number" },
+            "lon": { "type": "number" }
+          },
+          "additionalProperties": false
+        },
+        "interactive_payload": { "type": ["object", "null"] },
+        "attachments": { "type": "array", "items": { "type": "object" } }
+      },
+      "additionalProperties": false
+    },
+    "metadata": { "type": "object" },
+    "timestamp": { "type": "string", "format": "date-time" },
+    "idempotency_key": { "type": "string" },
+    "trace_id": { "type": "string" }
+  },
+  "additionalProperties": false
+}

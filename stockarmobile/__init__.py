@@ -11,4 +11,5 @@ def create_app(import_name=__name__, **flask_kwargs):
     app = Flask(import_name, **flask_kwargs)
     configure_app(app)
     init_extensions(app)
+    import stockarmobile.models  # noqa: E402,F401
     return app

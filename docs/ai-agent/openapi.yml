@@ -1,0 +1,155 @@
+openapi: 3.0.3
+info:
+  title: StockArMobile AI Agent API (fragment)
+  version: 'v1'
+paths:
+  /api/agents/{agent_id}/conversations:
+    post:
+      summary: Create or resume a conversation for an agent
+      parameters:
+        - in: path
+          name: agent_id
+          required: true
+          schema:
+            type: integer
+        - in: header
+          name: Idempotency-Key
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: './schemas/ConversationCreate.v1.json#'
+      responses:
+        '201':
+          description: Conversation created
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                  conversation:
+                    type: object
+                  trace_id:
+                    type: string
+        '204':
+          description: Feature disabled (AI_AGENT_ENABLED=false)
+        '400':
+          description: Bad Request
+        '401':
+          description: Unauthorized
+        '403':
+          description: Forbidden
+        '409':
+          description: Conflict / Duplicate
+        default:
+          description: Error
+  /api/conversations/{conversation_id}/messages:
+    post:
+      summary: Ingest a conversation message (idempotent)
+      parameters:
+        - in: path
+          name: conversation_id
+          required: true
+          schema:
+            type: integer
+        - in: header
+          name: Idempotency-Key
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+              schema:
+                $ref: './schemas/ConversationMessage.v1.json#'
+      responses:
+        '200':
+          description: Message processed
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                  message_id:
+                    type: integer
+                  conversation_id:
+                    type: integer
+                  trace_id:
+                    type: string
+        '202':
+          description: Accepted and queued
+        '409':
+          description: Duplicate message
+  /api/conversations/{conversation_id}:
+    get:
+      summary: Get conversation summary and messages
+      parameters:
+        - in: path
+          name: conversation_id
+          required: true
+          schema:
+            type: integer
+      responses:
+        '200':
+          description: Conversation
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                  conversation:
+                    type: object
+                  messages:
+                    type: array
+                  trace_id:
+                    type: string
+  /api/conversations/{conversation_id}/handoff:
+    post:
+      summary: Request human handoff for a conversation
+      parameters:
+        - in: path
+          name: conversation_id
+          required: true
+          schema:
+            type: integer
+        - in: header
+          name: Idempotency-Key
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+              schema:
+                $ref: './schemas/HandoffRequest.v1.json#'
+      responses:
+        '201':
+          description: Handoff created
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                  handoff:
+                    type: object
+                  trace_id:
+                    type: string
+components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+security:
+  - bearerAuth: []

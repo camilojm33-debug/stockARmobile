@@ -6,6 +6,19 @@ import sys
 from werkzeug.middleware.proxy_fix import ProxyFix
 
 
+def _sqlite_engine_options(database_url: str):
+    """Ensure in-memory SQLite databases are shared across connections in tests."""
+    if not database_url.startswith("sqlite"):
+        return {}
+
+    options = {"connect_args": {"check_same_thread": False}}
+    if database_url == "sqlite:///:memory:":
+        from sqlalchemy.pool import StaticPool
+
+        options["poolclass"] = StaticPool
+    return options
+
+
 def normalize_whatsapp_number(value: str | None) -> str:
     if not value:
         return ""
@@ -48,6 +61,7 @@ def configure_app(app):
         database_url = database_url.replace("postgres://", "postgresql://", 1)
     app.config["SQLALCHEMY_DATABASE_URI"] = database_url
     app.config["SQLALCHEMY_TRACK_MODIFICATIONS"] = False
+    app.config["SQLALCHEMY_ENGINE_OPTIONS"] = _sqlite_engine_options(database_url)
 
     app.config["SUPPORT_EMAIL"] = (os.environ.get("SUPPORT_EMAIL") or os.environ.get("LANDING_EMAIL") or "stockarmobile@gmail.com").strip()
     app.config["SUPPORT_WHATSAPP_DISPLAY"] = (os.environ.get("SUPPORT_WHATSAPP_DISPLAY") or os.environ.get("LANDING_WHATSAPP") or "3624-228396").strip()

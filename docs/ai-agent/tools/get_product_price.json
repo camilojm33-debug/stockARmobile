@@ -1,0 +1,21 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "get_product_price Tool Descriptor",
+  "type": "object",
+  "required": ["name","version","description","parameters_schema","returns_schema","permissions_required","tenant_scoped","read_write","idempotent","audit_level","timeout_seconds"],
+  "properties": {
+    "name": { "const": "get_product_price" },
+    "version": { "type": "string", "const": "v1" },
+    "description": { "type": "string", "const": "Get current price for a product (read-only)." },
+    "parameters_schema": { "type": "object", "required": ["product_id"], "properties": { "product_id": { "type": "integer" }, "price_list_id": { "type": ["integer","null"] }, "apply_discounts": { "type": "boolean", "default": true } } },
+    "returns_schema": { "type": "object", "required": ["product_id","price"], "properties": { "product_id": { "type": "integer" }, "price": { "type": "number" }, "currency": { "type": "string" } } },
+    "permissions_required": ["products:read"],
+    "tenant_scoped": true,
+    "read_write": "read",
+    "requires_confirmation": false,
+    "idempotent": true,
+    "audit_level": "basic",
+    "timeout_seconds": 5,
+    "rate_limit": { "per_minute": 120, "per_company": 1200 }
+  }
+}

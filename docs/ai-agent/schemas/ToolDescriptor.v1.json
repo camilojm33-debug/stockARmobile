@@ -1,0 +1,29 @@
+{
+  "$id": "urn:stockarmobile:ToolDescriptor:v1",
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "ToolDescriptor.v1",
+  "type": "object",
+  "required": ["name", "version", "description", "parameters_schema", "returns_schema", "permissions_required", "tenant_scoped", "read_write", "idempotent", "audit_level", "timeout_seconds", "rate_limit"],
+  "properties": {
+    "name": { "type": "string" },
+    "version": { "type": "string" },
+    "description": { "type": "string" },
+    "parameters_schema": { "type": "object" },
+    "returns_schema": { "type": "object" },
+    "permissions_required": { "type": "array", "items": { "type": "string" } },
+    "tenant_scoped": { "type": "boolean" },
+    "read_write": { "type": "string", "enum": ["read", "write"] },
+    "requires_confirmation": { "type": "boolean" },
+    "idempotent": { "type": "boolean" },
+    "audit_level": { "type": "string", "enum": ["none", "basic", "full"] },
+    "timeout_seconds": { "type": "integer", "minimum": 1 },
+    "rate_limit": {
+      "type": "object",
+      "properties": {
+        "per_minute": { "type": "integer" },
+        "per_company": { "type": "integer" }
+      }
+    }
+  },
+  "additionalProperties": false
+}

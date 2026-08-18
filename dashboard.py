@@ -1,7 +1,12 @@
 """Blueprint de dashboard: metricas, onboarding y tour guiado."""
 
-from flask import Blueprint, flash, redirect, render_template, request, session, url_for
+import uuid
+
+from flask import Blueprint, flash, jsonify, redirect, render_template, request, session, url_for
 from flask_login import current_user, login_required
+from stockarmobile.extensions import db
+from stockarmobile.models.conversations import Conversation
+from services.ai_agent.orchestrator import AgentOrchestrator
 from services.dashboard_service import build_dashboard_context
 from app import tenant_required
 
@@ -78,3 +83,66 @@ def tour_complete():
     if next_url.startswith("/"):
         return redirect(next_url)
     return redirect(url_for("dashboard.index"))
+
+
+@bp.route("/ai-agent/chat", methods=["POST"])
+@tenant_required
+def ai_agent_chat():
+    payload = request.get_json(silent=True) or {}
+    message = payload.get("message")
+    conversation_id = payload.get("conversation_id")
+
+    if not isinstance(message, str) or not message.strip():
+        return jsonify({"success": False, "error": "El mensaje es obligatorio."}), 400
+
+    company_id = getattr(current_user, "company_id", None)
+    if company_id in (None, ""):
+        return jsonify({"success": False, "error": "No hay empresa activa para esta sesión."}), 403
+
+    if conversation_id not in (None, ""):
+        try:
+            conversation_id = int(conversation_id)
+        except (TypeError, ValueError):
+            return jsonify({"success": False, "error": "Identificador de conversación inválido."}), 400
+
+        conversation = (
+            db.session.query(Conversation)
+            .filter(Conversation.id == conversation_id, Conversation.company_id == company_id)
+            .first()
+        )
+        if conversation is None:
+            return jsonify({"success": False, "error": "La conversación no pertenece a tu empresa."}), 403
+    else:
+        conversation = Conversation(
+            company_id=company_id,
+            agent_id=None,
+            channel="web",
+        )
+        db.session.add(conversation)
+        db.session.flush()
+
+    try:
+        result = AgentOrchestrator.handle_message(
+            company_id=company_id,
+            conversation_id=conversation.id,
+            message=message.strip(),
+            channel="web",
+            sender_id=current_user.id,
+            metadata={"idempotency_key": str(uuid.uuid4())},
+        )
+    except ValueError as exc:
+        db.session.rollback()
+        return jsonify({"success": False, "error": str(exc)}), 400
+    except Exception:
+        db.session.rollback()
+        return jsonify({"success": False, "error": "No se pudo procesar tu solicitud."}), 500
+
+    return jsonify(
+        {
+            "success": True,
+            "conversation_id": result.get("conversation_id"),
+            "message_id": result.get("message_id"),
+            "assistant_message_id": result.get("assistant_message_id"),
+            "content": result.get("content"),
+        }
+    )

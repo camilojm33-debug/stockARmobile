@@ -253,6 +253,26 @@
       </div>
     </div>
   </div>
+
+  <div class="row g-4 mt-1">
+    <div class="col-12">
+      <div class="card app-card h-100">
+        <div class="card-header bg-white border-0 fw-bold pt-3">Asistente IA</div>
+        <div class="card-body">
+          <p class="text-muted mb-3">Consultá productos, stock y clientes.</p>
+          <div id="ai-chat-messages" class="chat-messages mb-3" aria-live="polite" style="max-height: 300px; overflow-y: auto; border: 1px solid rgba(0,0,0,.08); border-radius: .75rem; padding: .75rem; background: rgba(13,110,253,.02);">
+            <div class="text-muted small">Hola, ¿en qué puedo ayudarte?</div>
+          </div>
+          <div id="ai-chat-error" class="alert alert-danger d-none mb-3" role="alert"></div>
+          <div class="input-group">
+            <input id="ai-chat-input" type="text" class="form-control" placeholder="Escribí tu consulta..." maxlength="500" />
+            <button id="ai-chat-submit" class="btn btn-primary" type="button">Enviar</button>
+          </div>
+          <div id="ai-chat-status" class="small text-muted mt-2">Listo.</div>
+        </div>
+      </div>
+    </div>
+  </div>
 </div>
 {% endblock %}
 
@@ -284,6 +304,91 @@
 {% endblock %}
 
 {% block extra_js %}
+<script>
+  (function () {
+    const messagesEl = document.getElementById('ai-chat-messages');
+    const inputEl = document.getElementById('ai-chat-input');
+    const buttonEl = document.getElementById('ai-chat-submit');
+    const statusEl = document.getElementById('ai-chat-status');
+    const errorEl = document.getElementById('ai-chat-error');
+    let conversationId = null;
+
+    function appendMessage(role, text) {
+      const row = document.createElement('div');
+      const label = role === 'user' ? 'Tú' : 'Asistente';
+      row.className = 'mb-2';
+      row.innerHTML = '<div class="small fw-semibold text-uppercase text-muted">' + label + '</div><div class="rounded-3 px-3 py-2 bg-white border" style="white-space: pre-wrap;">' + (text || '') + '</div>';
+      messagesEl.appendChild(row);
+      messagesEl.scrollTop = messagesEl.scrollHeight;
+    }
+
+    function setLoading(loading) {
+      buttonEl.disabled = loading;
+      statusEl.textContent = loading ? 'Pensando...' : 'Listo.';
+      inputEl.disabled = loading;
+    }
+
+    function setError(message) {
+      if (!message) {
+        errorEl.classList.add('d-none');
+        errorEl.textContent = '';
+        return;
+      }
+      errorEl.textContent = message;
+      errorEl.classList.remove('d-none');
+    }
+
+    async function sendMessage() {
+      const message = (inputEl.value || '').trim();
+      if (!message) {
+        setError('Ingresá un mensaje para consultar al asistente.');
+        return;
+      }
+
+      setError('');
+      appendMessage('user', message);
+      inputEl.value = '';
+      setLoading(true);
+
+      try {
+        const payload = {
+          message: message,
+          ...(conversationId ? { conversation_id: conversationId } : {})
+        };
+
+        const response = await fetch('{{ url_for("dashboard.ai_agent_chat") }}', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            'X-CSRFToken': '{{ csrf_token() }}'
+          },
+          body: JSON.stringify(payload)
+        });
+
+        const data = await response.json();
+        if (!response.ok || !data.success) {
+          throw new Error(data.error || 'No se pudo procesar la consulta.');
+        }
+
+        conversationId = data.conversation_id;
+        appendMessage('assistant', data.content || '');
+        setError('');
+      } catch (error) {
+        setError(error.message || 'No se pudo procesar la solicitud.');
+      } finally {
+        setLoading(false);
+      }
+    }
+
+    buttonEl.addEventListener('click', sendMessage);
+    inputEl.addEventListener('keydown', function (event) {
+      if (event.key === 'Enter') {
+        event.preventDefault();
+        sendMessage();
+      }
+    });
+  })();
+</script>
 <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.7/dist/chart.umd.min.js"></script>
 <script src="{{ url_for('static', filename='assets/js/category-visuals.js') }}"></script>
 <script>

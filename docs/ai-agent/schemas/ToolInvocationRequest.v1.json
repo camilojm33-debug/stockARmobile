@@ -1,0 +1,21 @@
+{
+  "$id": "urn:stockarmobile:ToolInvocationRequest:v1",
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "ToolInvocationRequest.v1",
+  "type": "object",
+  "required": ["company_id", "agent_id", "conversation_id", "tool_name", "parameters", "idempotency_key", "trace_id", "actor_type"],
+  "properties": {
+    "company_id": { "type": "integer" },
+    "actor_id": { "type": ["integer", "null"] },
+    "actor_type": { "type": "string", "enum": ["user","system","agent"] , "description": "Type of actor initiating the tool: 'user' (authenticated user), 'system' (internal), 'agent' (AI agent). If 'system' or 'agent', actor_id may be null."},
+    "agent_id": { "type": "integer" },
+    "conversation_id": { "type": "integer" },
+    "tool_name": { "type": "string" },
+    "tool_version": { "type": "string" },
+    "parameters": { "type": "object" },
+    "idempotency_key": { "type": "string" },
+    "trace_id": { "type": "string" },
+    "requested_at": { "type": "string", "format": "date-time" }
+  },
+  "additionalProperties": false
+}

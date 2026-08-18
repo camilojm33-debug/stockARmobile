@@ -1,0 +1,27 @@
+{
+  "$id": "urn:stockarmobile:ConversationCreate:v1",
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "ConversationCreate.v1",
+  "type": "object",
+  "required": ["company_id","agent_id","channel","starter","idempotency_key","trace_id"],
+  "properties": {
+    "company_id": { "type": "integer", "minimum": 1 },
+    "agent_id": { "type": "integer" },
+    "external_channel_id": { "type": ["string", "null"] },
+    "channel": { "type": "string", "enum": ["whatsapp", "webchat", "telegram", "instagram", "sms", "email"] },
+    "starter": {
+      "type": "object",
+      "required": ["actor_type"],
+      "properties": {
+        "actor_type": { "type": "string", "enum": ["user","external","system"] },
+        "actor_id": { "type": ["integer", "null"] },
+        "display_name": { "type": ["string", "null"] }
+      },
+      "additionalProperties": false
+    },
+    "metadata": { "type": "object" },
+    "idempotency_key": { "type": "string" },
+    "trace_id": { "type": "string" }
+  },
+  "additionalProperties": false
+}
