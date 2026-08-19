@@ -374,7 +374,11 @@ class WebhookService:
                         )
                     else:
                         SubscriptionService.apply_payment_status(subscription, payment_status)
-                company.active = subscription.status in {"active", "approved", "trial"}
+                is_pending_plan_change = bool(
+                    SubscriptionService._metadata_dict(subscription).get("pending_plan_change")
+                )
+                if not is_pending_plan_change:
+                    company.active = subscription.status in {"active", "approved", "trial"}
                 if subscription.status in {"active", "approved"}:
                     if payment.invoice_id is None:
                         invoice = InvoiceService.create_invoice(

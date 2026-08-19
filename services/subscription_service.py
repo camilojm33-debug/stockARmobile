@@ -307,6 +307,10 @@ class SubscriptionService:
             .all()
         )
         for row in rows:
+            normalized = SubscriptionService._normalize_state(row.status)
+            if normalized in SubscriptionService.ACTIVE_STATUSES or normalized in SubscriptionService.TRIAL_STATUSES:
+                return row
+        for row in rows:
             if SubscriptionService._is_open_status(row.status):
                 return row
         return rows[0] if rows else None
@@ -573,7 +577,13 @@ class SubscriptionService:
             raise SubscriptionCommandError("Plan inválido para cambio de plan.")
 
         current = SubscriptionService.active_subscription_for_company(company.id)
-        if current is not None and current.plan_id == plan.id and SubscriptionService._normalize_state(current.status) in SubscriptionService.OPEN_STATUSES:
+        is_paid = float(getattr(plan, "price", 0) or 0) > 0 and (plan.code or "").strip().lower() != "trial"
+        if (
+            not is_paid
+            and current is not None
+            and current.plan_id == plan.id
+            and SubscriptionService._normalize_state(current.status) in SubscriptionService.OPEN_STATUSES
+        ):
             return CommandResult(
                 command_name="ChangePlanCommand",
                 subscription_id=current.id,
@@ -586,13 +596,12 @@ class SubscriptionService:
             )
 
         now = utcnow()
-        if current is not None:
+        trial_end = SubscriptionService.trial_end_for_company(company, now=now)
+        if current is not None and not is_paid:
             if SubscriptionService.is_manual_subscription(current) and (command.origin or "").lower() not in {"superadmin", "portal_confirm", "admin"}:
                 raise SubscriptionCommandError("La suscripción manual sólo puede modificarse por acción administrativa o confirmación explícita.")
             SubscriptionService._close_for_change(current, now=now, actor_user_id=command.actor_user_id, origin=command.origin)
 
-        trial_end = SubscriptionService.trial_end_for_company(company, now=now)
-        is_paid = float(getattr(plan, "price", 0) or 0) > 0 and (plan.code or "").strip().lower() != "trial"
         if is_paid:
             new_status = SubscriptionService.STATE_PENDING_PAYMENT
             next_due = now
@@ -617,6 +626,8 @@ class SubscriptionService:
                 "is_manual": False,
                 "origin": command.origin,
                 "changed_by_user_id": command.actor_user_id,
+                "pending_plan_change": is_paid,
+                "previous_subscription_id": getattr(current, "id", None) if is_paid else None,
             },
             last_payment_date=last_payment_date,
             trial_end=trial_end_value,
@@ -711,6 +722,30 @@ class SubscriptionService:
         now = command.paid_at or utcnow()
         status_before = subscription.status
         normalized = SubscriptionService._normalize_state(subscription.status)
+        metadata = SubscriptionService._metadata_dict(subscription)
+        if (
+            metadata.get("pending_plan_change")
+            and (command.payment_status or "").strip().lower() in {"approved", "refunded"}
+        ):
+            current = SubscriptionService.active_subscription_for_company(company.id)
+            current_state = SubscriptionService._normalize_state(getattr(current, "status", None)) if current is not None else None
+            if current is not None and current.id != subscription.id and (
+                current_state in SubscriptionService.ACTIVE_STATUSES or current_state in SubscriptionService.TRIAL_STATUSES
+            ):
+                SubscriptionService._close_for_change(
+                    current,
+                    now=now,
+                    actor_user_id=command.actor_user_id,
+                    origin=command.origin,
+                )
+            SubscriptionService._set_metadata(
+                subscription,
+                {
+                    "pending_plan_change": False,
+                    "plan_change_applied_at": now.isoformat(),
+                    "replaced_subscription_id": current.id if current is not None and current.id != subscription.id else None,
+                },
+            )
         if normalized in {SubscriptionService.STATE_PENDING, SubscriptionService.STATE_PENDING_PAYMENT, SubscriptionService.STATE_PENDING_CONFIRMATION, SubscriptionService.STATE_TRIAL, SubscriptionService.STATE_TRIAL_EXPIRED, SubscriptionService.STATE_EXPIRED, SubscriptionService.STATE_CANCELLED, SubscriptionService.STATE_SUSPENDED}:
             SubscriptionService._transition(subscription, SubscriptionService.STATE_ACTIVE, reason="renew")
 
