@@ -120,11 +120,16 @@
         </template>
 
         <div class="row g-3 mt-3">
-          <div class="col-md-4">
+          <div class="col-md-3">
             <label class="form-label"><i class="bi bi-percent me-1"></i>Descuento general</label>
-            <input class="form-control" type="number" min="0" step="0.01" name="order_discount" id="orderDiscount" value="{{ '%.2f'|format(order_discount_default or 0) }}">
+            <input class="form-control" type="number" min="0" step="0.01" name="discount_value" id="orderDiscount" value="{{ '%.2f'|format(sale.discount_value if sale.discount_value is not none else (order_discount_default or 0)) }}">
           </div>
-          <div class="col-md-4">
+          <div class="col-md-3"><label class="form-label">Tipo descuento</label><select class="form-select" name="discount_type"><option value="fixed" {% if sale.discount_type == 'fixed' %}selected{% endif %}>Importe fijo</option><option value="percentage" {% if sale.discount_type == 'percentage' %}selected{% endif %}>Porcentaje</option></select></div>
+          <div class="col-md-3"><label class="form-label">Motivo descuento</label><input class="form-control" name="discount_reason" value="{{ sale.discount_reason or '' }}"></div>
+          <div class="col-md-3"><label class="form-label">Recargo</label><input class="form-control" type="number" min="0" step="0.01" name="surcharge_value" value="{{ '%.2f'|format(sale.surcharge_value if sale.surcharge_value is not none else (sale.surcharge or 0)) }}"></div>
+          <div class="col-md-3"><label class="form-label">Tipo recargo</label><select class="form-select" name="surcharge_type"><option value="fixed" {% if sale.surcharge_type == 'fixed' %}selected{% endif %}>Importe fijo</option><option value="percentage" {% if sale.surcharge_type == 'percentage' %}selected{% endif %}>Porcentaje</option></select></div>
+          <div class="col-md-3"><label class="form-label">Motivo recargo</label><input class="form-control" name="surcharge_reason" value="{{ sale.surcharge_reason or '' }}"></div>
+          <div class="col-md-3">
             <label class="form-label"><i class="bi bi-shield-check me-1"></i>Motivo del cambio</label>
             <input class="form-control" name="change_reason" required placeholder="Ej: corrección de método de pago / cantidad">
           </div>

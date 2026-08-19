@@ -5,6 +5,18 @@ import json
 
 class ReceiptService:
     @staticmethod
+    def _adjustment_lines(label, adjustment_type, value, amount, reason, sign=""):
+        if adjustment_type == "percentage" and value is not None:
+            lines = [f"{label}: {value:.2f}%", f"{label} aplicado: {sign}${amount:.2f}"]
+        elif adjustment_type == "fixed" and value is not None:
+            lines = [f"{label}: {sign}${value:.2f}"]
+        else:
+            lines = [f"{label}: {sign}${amount:.2f}"]
+        if reason:
+            lines.append(f"Motivo {label.lower()}: {reason}")
+        return lines
+
+    @staticmethod
     def ticket_brand_name(*, company):
         fallback = "STOCK ARMOBILE"
         if company is None:
@@ -34,7 +46,11 @@ class ReceiptService:
             lines.append(f"{name}: ${item.price:.2f} x {item.quantity:g} {unit_measure} = ${item.total_amount:.2f}")
         if sale.note:
             lines.extend(["-" * 32, f"Obs.: {sale.note}"])
-        lines.extend(["-" * 32, f"Subtotal: ${sale.subtotal:.2f}", f"Descuento: -${sale.discount:.2f}", f"Impuestos: ${sale.tax:.2f}", "=" * 32, f"TOTAL: ${sale.total_amount:.2f}", "Gracias por su compra!"])
+        lines.extend(["-" * 32, f"Subtotal: ${sale.subtotal:.2f}"])
+        lines.extend(ReceiptService._adjustment_lines("Descuento", sale.discount_type, sale.discount_value, sale.discount, sale.discount_reason, "-"))
+        if sale.surcharge:
+            lines.extend(ReceiptService._adjustment_lines("Recargo", sale.surcharge_type, sale.surcharge_value, sale.surcharge, sale.surcharge_reason))
+        lines.extend([f"Impuestos: ${sale.tax:.2f}", "=" * 32, f"TOTAL: ${sale.total_amount:.2f}", "Gracias por su compra!"])
         return "\n".join(lines)
 
     @staticmethod
@@ -63,7 +79,8 @@ class ReceiptService:
         lines.extend([
             "------------------------------",
             f"Subtotal: ${sale.subtotal:.2f}",
-            f"Descuento: -${sale.discount:.2f}",
+            *ReceiptService._adjustment_lines("Descuento", sale.discount_type, sale.discount_value, sale.discount, sale.discount_reason, "-"),
+            *(ReceiptService._adjustment_lines("Recargo", sale.surcharge_type, sale.surcharge_value, sale.surcharge, sale.surcharge_reason) if sale.surcharge else []),
             f"Impuestos: ${sale.tax:.2f}",
             f"Total: ${sale.total_amount:.2f}",
             "Gracias por su compra!",

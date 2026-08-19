@@ -267,20 +267,31 @@ function applyQuoteCartPrefillFromServer() {
     noteInput.value = String(payload.note);
   }
 
+  window.__quoteLineDiscounts = payload.line_discounts || {};
+
   const discountModeSelect = document.getElementById('checkout-discount-mode');
   if (discountModeSelect) {
-    discountModeSelect.value = 'amount';
+    discountModeSelect.value = payload.discount_type === 'percentage' ? 'percent' : 'amount';
   }
 
   const generalDiscountInput = document.getElementById('checkout-general-discount');
   if (generalDiscountInput && Number.isFinite(parseFloat(payload.general_discount))) {
-    generalDiscountInput.value = String(parseFloat(payload.general_discount));
+    generalDiscountInput.value = String(parseFloat(payload.discount_value ?? payload.general_discount));
   }
+
+  const discountReasonInput = document.getElementById('checkout-discount-reason');
+  if (discountReasonInput && payload.discount_reason) discountReasonInput.value = String(payload.discount_reason);
+
+  const surchargeModeSelect = document.getElementById('checkout-surcharge-mode');
+  if (surchargeModeSelect) surchargeModeSelect.value = payload.surcharge_type || 'fixed';
 
   const surchargeInput = document.getElementById('checkout-surcharge');
   if (surchargeInput && Number.isFinite(parseFloat(payload.surcharge))) {
-    surchargeInput.value = String(parseFloat(payload.surcharge));
+    surchargeInput.value = String(parseFloat(payload.surcharge_value ?? payload.surcharge));
   }
+
+  const surchargeReasonInput = document.getElementById('checkout-surcharge-reason');
+  if (surchargeReasonInput && payload.surcharge_reason) surchargeReasonInput.value = String(payload.surcharge_reason);
 
   const documentTypeSelect = document.getElementById('checkout-document-type');
   if (documentTypeSelect && payload.document_type) {
@@ -538,6 +549,7 @@ async function processCheckout() {
 
   const csrf = getCsrfToken();
   const discount = getDiscountBreakdown(getCartSubtotal());
+  const surcharge = getSurchargeBreakdown(getCartSubtotal() - discount.amount);
   const payload = {
     items: getCartForCheckout(),
     client_id: document.getElementById('checkout-client-select')?.value || '',
@@ -546,7 +558,14 @@ async function processCheckout() {
     monto_pago: document.getElementById('checkout-paid-amount')?.value || '',
     monto_pago_2: document.getElementById('checkout-paid-amount-2')?.value || '',
     descuento_general: discount.amount,
-    recargo: document.getElementById('checkout-surcharge')?.value || '',
+    recargo: surcharge.amount,
+    discount_type: discount.mode === 'percent' ? 'percentage' : 'fixed',
+    discount_value: discount.raw,
+    discount_reason: document.getElementById('checkout-discount-reason')?.value || '',
+    surcharge_type: surcharge.mode,
+    surcharge_value: surcharge.raw,
+    surcharge_reason: document.getElementById('checkout-surcharge-reason')?.value || '',
+    line_discounts: window.__quoteLineDiscounts || {},
     document_type: document.getElementById('checkout-document-type')?.value || 'venta',
     note: document.getElementById('checkout-note')?.value || '',
     checkout_token: ensureCheckoutToken()
@@ -587,11 +606,18 @@ function readMoneyInput(id) {
 function getCheckoutTotals() {
   const subtotal = getCartSubtotal();
   const discount = getDiscountBreakdown(subtotal).amount;
-  const surcharge = readMoneyInput('checkout-surcharge');
+  const surcharge = getSurchargeBreakdown(subtotal - discount).amount;
   const taxable = Math.max(subtotal - discount, 0);
   const total = taxable + surcharge;
   const paid = readMoneyInput('checkout-paid-amount') + readMoneyInput('checkout-paid-amount-2');
   return { subtotal, discount, surcharge, total, paid, change: Math.max(paid - total, 0) };
+}
+
+function getSurchargeBreakdown(baseAmount) {
+  const mode = document.getElementById('checkout-surcharge-mode')?.value || 'fixed';
+  const raw = Math.max(readMoneyInput('checkout-surcharge'), 0);
+  const amount = mode === 'percentage' ? baseAmount * (raw / 100) : raw;
+  return { mode, raw, amount };
 }
 
 function getDiscountBreakdown(subtotal) {
@@ -731,6 +757,12 @@ function setupCheckoutPaymentBehavior() {
       label.textContent = mode === 'percent' ? 'Valor (%)' : 'Valor descuento';
     }
     updateCheckoutTotals();
+  });
+  document.getElementById('checkout-surcharge-mode')?.addEventListener('change', () => {
+    const mode = document.getElementById('checkout-surcharge-mode')?.value || 'fixed';
+    const label = document.getElementById('checkout-surcharge-value-label');
+    if (label) label.textContent = mode === 'percentage' ? 'Porcentaje recargo' : 'Valor recargo';
+    renderCart();
   });
   refresh();
 }

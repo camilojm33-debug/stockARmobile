@@ -81,6 +81,34 @@ def test_totals_and_pricing_services_keep_shapes():
     assert totals2["total"] == Decimal("235.00")
 
 
+def test_totals_support_structured_percentage_and_fixed_adjustments():
+    lines = [{"price": Decimal("100000.00"), "quantity": 1, "line_discount": Decimal("0.00")}]
+
+    percentage = TotalsService.calculate(
+        lines,
+        discount_type="percentage",
+        discount_value=Decimal("30.00"),
+        discount_reason="Cliente mayorista",
+        surcharge_type="percentage",
+        surcharge_value=Decimal("15.00"),
+        surcharge_reason="Pago con tarjeta",
+    )
+    assert percentage["general_discount"] == Decimal("30000.00")
+    assert percentage["surcharge"] == Decimal("10500.00")
+    assert percentage["total"] == Decimal("80500.00")
+    assert percentage["discount_adjustment"]["reason"] == "Cliente mayorista"
+    assert percentage["surcharge_adjustment"]["reason"] == "Pago con tarjeta"
+
+    fixed = TotalsService.calculate(
+        lines,
+        surcharge_type="fixed",
+        surcharge_value=Decimal("5000.00"),
+        surcharge_reason="Envío",
+    )
+    assert fixed["surcharge"] == Decimal("5000.00")
+    assert fixed["total"] == Decimal("105000.00")
+
+
 def test_sale_service_init_signature_stable():
     service = SaleService(
         require_open_cash_session=lambda json_response=False: None,

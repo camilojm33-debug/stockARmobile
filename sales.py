@@ -119,6 +119,10 @@ def _pop_quote_cart_prefill():
     return payload
 
 
+def _get_quote_cart_prefill():
+    return session.get(_quote_cart_prefill_session_key())
+
+
 def _quote_id_from_checkout_token(token):
     raw = (token or "").strip()
     if not raw.startswith("quote-cart-"):
@@ -619,6 +623,25 @@ def api_checkout():
         current_app.logger.warning("[sales] tenant key invalido en checkout: incoming=%s expected=%s", incoming_tenant, expected_tenant)
         return jsonify({"error": "Carrito fuera de contexto de empresa o usuario."}), 409
     raw_items = payload.get("items", [])
+    quote_prefill = _get_quote_cart_prefill()
+    if (
+        quote_prefill
+        and payload.get("checkout_token")
+        and payload.get("checkout_token") == quote_prefill.get("checkout_token")
+    ):
+        for key in (
+            "line_discounts",
+            "discount_type",
+            "discount_value",
+            "discount_reason",
+            "discount_applied_amount",
+            "surcharge_type",
+            "surcharge_value",
+            "surcharge_reason",
+            "surcharge_applied_amount",
+        ):
+            if key not in payload and quote_prefill.get(key) is not None:
+                payload[key] = quote_prefill[key]
     items = {}
     try:
         for item in raw_items:

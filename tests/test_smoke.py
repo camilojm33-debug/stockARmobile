@@ -12,6 +12,7 @@ os.environ.setdefault("MP_OAUTH_ENCRYPTION_KEY", "test-oauth-encryption-key")
 
 import pytest
 from flask_login import login_user, logout_user
+from sqlite_test_db import clear_test_data
 
 import app as stock_app
 from app import CashMovement, CashSession, Client, Company, Product, Quote, ReferralAttribution, SaaSAlert, SaaSLead, SaaSTask, Sale, SaleItem, SaleModificationHistory, Subscription, User, db
@@ -28,17 +29,23 @@ def clean_database():
     stock_app.app.config["TESTING"] = True
     stock_app.app.config["WTF_CSRF_ENABLED"] = False
     with stock_app.app.app_context():
-        db.drop_all()
-        seed()
-    yield
-    with stock_app.app.app_context():
+        db.session.rollback()
         db.session.remove()
-        db.drop_all()
+        clear_test_data(db)
+        seed()
+        yield
+        db.session.rollback()
+        db.session.remove()
+        clear_test_data(db)
+        db.session.remove()
 
 
 def seed():
-    db.create_all()
-    company = Company(name="Empresa Demo", active=True)
+    company = Company(
+        name="Empresa Demo",
+        active=True,
+        trial_ends_at=stock_app.utcnow() + timedelta(days=10),
+    )
     db.session.add(company)
     db.session.flush()
 
@@ -1004,8 +1011,7 @@ def test_superadmin_login_survives_admin_bootstrap_with_different_env_owner(monk
 
 def test_default_superadmin_bootstrap_creates_missing_account():
     with stock_app.app.app_context():
-        db.drop_all()
-        db.create_all()
+        clear_test_data(db)
 
         created = stock_app.ensure_default_superadmin_user()
 
@@ -1021,8 +1027,7 @@ def test_default_superadmin_bootstrap_creates_missing_account():
 
 def test_default_superadmin_bootstrap_skips_duplicates_when_username_or_email_exists():
     with stock_app.app.app_context():
-        db.drop_all()
-        db.create_all()
+        clear_test_data(db)
 
         conflict = User(username="superadmin", email="otro_correo@test.local", role="admin", active=True)
         conflict.set_password("otra123")
@@ -1039,8 +1044,7 @@ def test_default_superadmin_bootstrap_skips_duplicates_when_username_or_email_ex
 
 def test_scope_query_to_company_fails_closed_without_company_context():
     with stock_app.app.app_context():
-        db.drop_all()
-        db.create_all()
+        clear_test_data(db)
 
         company_a = Company(name="Empresa A", active=True)
         company_b = Company(name="Empresa B", active=True)
@@ -1066,8 +1070,7 @@ def test_referral_attribute_blocks_self_referral_by_same_user():
     from services.referral_service import ReferralService
 
     with stock_app.app.app_context():
-        db.drop_all()
-        db.create_all()
+        clear_test_data(db)
 
         seller_user = User(username="seller_self", email="same@test.local", role="seller", active=True)
         seller_user.set_password("seller123")
@@ -1256,6 +1259,74 @@ def test_quotes_create_convert_pdf_and_stock_flow():
         assert len(sale.items) == 1
         assert float(sale.items[0].quantity) == 2.0
         assert float(sale.items[0].total_amount) == float(sale.total_amount)
+
+
+def test_quote_conversion_preserves_structured_adjustments_without_double_discount():
+    client = stock_app.app.test_client()
+    client.post("/auth/login", data={"username": "empresa_admin", "password": "admin123"})
+
+    with stock_app.app.app_context():
+        company = Company.query.filter_by(name="Empresa Demo").first()
+        user = User.query.filter_by(username="empresa_admin").first()
+        assert company is not None
+        assert user is not None
+        enable_quotes_module(company, enabled=True)
+        grant_quote_permissions(user)
+        tenant_header = f"{user.company_id}:{user.id}"
+
+    response = client.post(
+        "/presupuestos/nuevo",
+        data={
+            "client_id": 1,
+            "expires_at": "2026-08-05",
+            "discount_type": "percentage",
+            "discount_value": "10",
+            "discount_reason": "Mayorista",
+            "surcharge_type": "fixed",
+            "surcharge_value": "25",
+            "surcharge_reason": "Envío",
+            "items_json": json.dumps([
+                {"product_id": 1, "description": "Yerba kilo", "quantity": 2, "unit_price": 18000, "discount": 100},
+            ]),
+            "submit_action": "save",
+        },
+        follow_redirects=False,
+    )
+    assert response.status_code in {302, 303}
+
+    with stock_app.app.app_context():
+        quote = Quote.query.order_by(Quote.id.desc()).first()
+        assert quote is not None
+        quote_id = quote.id
+        quote_total = float(quote.total_amount)
+
+    client.post(f"/presupuestos/{quote_id}/convertir", follow_redirects=False)
+    with client.session_transaction() as session_payload:
+        prefill = session_payload[f"quote_cart_prefill_{tenant_header}"]
+
+    open_cash_session(client)
+    checkout = client.post(
+        "/ventas/api/checkout",
+        json={
+            "items": prefill["items"],
+            "metodo_pago": "EFECTIVO",
+            "checkout_token": prefill["checkout_token"],
+            "monto_pago": 40000,
+        },
+        headers={"X-Cart-Tenant": tenant_header},
+    )
+    assert checkout.status_code == 200
+
+    with stock_app.app.app_context():
+        sale = Sale.query.get(checkout.get_json()["sale_id"])
+        assert sale is not None
+        assert float(sale.total_amount) == quote_total
+        assert sale.discount_type == "percentage"
+        assert float(sale.discount_value) == 10.0
+        assert sale.discount_reason == "Mayorista"
+        assert sale.surcharge_type == "fixed"
+        assert float(sale.surcharge_value) == 25.0
+        assert sale.surcharge_reason == "Envío"
 
 
 def test_quotes_convert_redirects_to_sales_and_prefills_cart_without_open_cash():
@@ -3006,6 +3077,57 @@ def test_password_recovery_request_and_superadmin_reset_flow():
         req = db.session.get(PasswordRecoveryRequest, request_id)
         assert req is not None
         assert req.status == "cerrada"
+
+
+def test_password_recovery_request_reopens_attended_request_for_superadmin():
+    client = stock_app.app.test_client()
+
+    first_request = client.post(
+        "/auth/forgot-password",
+        data={"email": "admin@test.local"},
+        follow_redirects=True,
+    )
+    assert first_request.status_code == 200
+    first_token = stock_app.app.config.get("_LAST_PASSWORD_RESET_TOKEN")
+    assert first_token
+    assert first_token not in first_request.data.decode("utf-8")
+
+    with stock_app.app.app_context():
+        from app import PasswordRecoveryRequest
+
+        item = PasswordRecoveryRequest.query.filter_by(email="admin@test.local").one()
+        item.status = "atendida"
+        item.processed_at = stock_app.utcnow()
+        item.processed_by_user_id = User.query.filter_by(username="superadmin").one().id
+        db.session.commit()
+        request_id = item.id
+
+    repeated_request = client.post(
+        "/auth/forgot-password",
+        data={"email": "admin@test.local"},
+        follow_redirects=True,
+    )
+    assert repeated_request.status_code == 200
+    repeated_token = stock_app.app.config.get("_LAST_PASSWORD_RESET_TOKEN")
+    assert repeated_token
+    assert repeated_token not in repeated_request.data.decode("utf-8")
+
+    client.post("/auth/login", data={"username": "empresa_admin", "password": "admin123"})
+    assert client.get("/superadmin/password-recovery").status_code == 403
+    client.post("/auth/logout")
+    client.post("/auth/login", data={"username": "superadmin", "password": "admin123"})
+    panel = client.get("/superadmin/password-recovery?status=pendiente")
+    assert panel.status_code == 200
+    assert "admin@test.local" in panel.data.decode("utf-8")
+
+    with stock_app.app.app_context():
+        from app import PasswordRecoveryRequest
+
+        item = db.session.get(PasswordRecoveryRequest, request_id)
+        assert item is not None
+        assert item.status == "pendiente"
+        assert item.processed_at is None
+        assert item.processed_by_user_id is None
 
 
 def test_referral_user_password_reset_token_flow():
@@ -4870,6 +4992,101 @@ def test_webhook_pending_or_rejected_does_not_activate_subscription(monkeypatch)
         payment_row = Payment.query.filter_by(payment_id="mp-pay-pending").first()
         assert payment_row is not None
         assert payment_row.status == "pending"
+
+
+def test_paid_plan_change_keeps_current_subscription_until_payment_is_approved():
+    from services.subscription_service import SubscriptionService
+
+    with stock_app.app.app_context():
+        from app import Plan, Subscription, User
+
+        company = Company.query.filter_by(name="Empresa Demo").first()
+        user = User.query.filter_by(username="empresa_admin").first()
+        assert company is not None
+        assert user is not None
+
+        current_plan = Plan(code="current_paid_plan", name="Plan actual", price=10000, currency="ARS", duration_days=30, active=True)
+        next_plan = Plan(code="next_paid_plan", name="Plan nuevo", price=20000, currency="ARS", duration_days=30, active=True)
+        db.session.add_all([current_plan, next_plan])
+        db.session.flush()
+
+        current = Subscription(
+            company_id=company.id,
+            plan_id=current_plan.id,
+            status="active",
+            start_date=stock_app.utcnow(),
+            starts_at=stock_app.utcnow(),
+            next_billing_date=stock_app.utcnow() + timedelta(days=30),
+            ends_at=stock_app.utcnow() + timedelta(days=30),
+            renewal_enabled=True,
+            auto_renew=True,
+        )
+        db.session.add(current)
+        db.session.flush()
+        original_end = current.ends_at
+
+        command = SubscriptionService.ChangePlanCommand(
+            company_id=company.id,
+            plan_id=next_plan.id,
+            actor_user_id=user.id,
+            actor_role="user",
+            origin="test",
+            idempotency_key=f"pending-plan-change:{company.id}:{next_plan.id}",
+        )
+        result = SubscriptionService.run_command(db.session, command)
+        candidate = db.session.get(Subscription, result.subscription_id)
+        db.session.flush()
+
+        assert candidate is not None
+        assert candidate.status == "pending_payment"
+        assert SubscriptionService._metadata_dict(candidate)["pending_plan_change"] is True
+        assert current.status == "active"
+        assert current.plan_id == current_plan.id
+        assert current.ends_at == original_end
+        assert SubscriptionService.active_subscription_for_company(company.id).id == current.id
+
+        SubscriptionService.run_command(
+            db.session,
+            SubscriptionService.ExpireSubscriptionCommand(
+                company_id=company.id,
+                subscription_id=candidate.id,
+                actor_user_id=user.id,
+                origin="webhook",
+                reason="webhook_rejected",
+                idempotency_key=f"reject-plan-change:{candidate.id}",
+            ),
+        )
+        assert current.status == "active"
+        assert SubscriptionService.active_subscription_for_company(company.id).id == current.id
+
+        approved_candidate = SubscriptionService.run_command(
+            db.session,
+            SubscriptionService.ChangePlanCommand(
+                company_id=company.id,
+                plan_id=next_plan.id,
+                actor_user_id=user.id,
+                actor_role="user",
+                origin="test",
+                idempotency_key=f"approved-plan-change:{company.id}:{next_plan.id}",
+            ),
+        )
+        replacement = db.session.get(Subscription, approved_candidate.subscription_id)
+        SubscriptionService.run_command(
+            db.session,
+            SubscriptionService.RenewSubscriptionCommand(
+                company_id=company.id,
+                subscription_id=replacement.id,
+                payment_status="approved",
+                actor_user_id=user.id,
+                origin="webhook",
+                idempotency_key=f"approve-plan-change:{replacement.id}",
+            ),
+        )
+
+        assert current.status == "cancelled"
+        assert replacement.status == "active"
+        assert replacement.plan_id == next_plan.id
+        assert SubscriptionService.active_subscription_for_company(company.id).id == replacement.id
 
 
 def test_pos_qr_create_generates_qr_and_reuses_pending_draft(monkeypatch):

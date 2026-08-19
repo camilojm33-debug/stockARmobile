@@ -58,17 +58,9 @@ def _company_quotes_enabled(company):
 
 
 def _next_quote_number(company_id):
-    from app import Quote, db, scope_query_to_company
+    from services.ai_agent.quote_creation_service import next_quote_number
 
-    query = scope_query_to_company(db.session.query(Quote.number), Quote).filter(Quote.company_id == company_id)
-    max_sequence = 0
-    for (number,) in query.all():
-        raw = str(number or "").strip().upper()
-        if raw.startswith("P-"):
-            raw = raw[2:]
-        if raw.isdigit():
-            max_sequence = max(max_sequence, int(raw))
-    return f"P-{max_sequence + 1:08d}"
+    return next_quote_number(company_id=company_id)
 
 
 def _quote_permission(permission_key: str):
@@ -296,7 +288,24 @@ def _quote_from_form(*, quote=None):
 
     general_discount = to_decimal(payload.get("discount") or payload.get("descuento") or 0)
     surcharge = to_decimal(payload.get("surcharge") or payload.get("recargo") or 0)
-    totals = _quote_totals(parsed_items, general_discount=general_discount, surcharge=surcharge)
+    discount_type = payload.get("discount_type")
+    discount_value = payload.get("discount_value")
+    discount_reason = payload.get("discount_reason")
+    surcharge_type = payload.get("surcharge_type")
+    surcharge_value = payload.get("surcharge_value")
+    surcharge_reason = payload.get("surcharge_reason")
+    line_payload = [{"price": item["unit_price"], "quantity": item["quantity"], "line_discount": item["discount"]} for item in parsed_items]
+    totals = calculate_sale_totals(
+        line_payload,
+        general_discount=general_discount,
+        surcharge=surcharge,
+        discount_type=discount_type,
+        discount_value=discount_value,
+        discount_reason=discount_reason,
+        surcharge_type=surcharge_type,
+        surcharge_value=surcharge_value,
+        surcharge_reason=surcharge_reason,
+    )
     status = _normalize_status(payload.get("status") or (quote.status if quote else "BORRADOR"))
     if payload.get("submit_action") == "send":
         status = "ENVIADO"
@@ -324,6 +333,12 @@ def _quote_from_form(*, quote=None):
     quote.subtotal = totals["subtotal"]
     quote.discount = totals["line_discount_total"] + totals["general_discount"]
     quote.surcharge = totals["surcharge"]
+    quote.discount_type = totals["discount_adjustment"]["type"]
+    quote.discount_value = totals["discount_adjustment"]["value"]
+    quote.discount_reason = totals["discount_adjustment"]["reason"]
+    quote.surcharge_type = totals["surcharge_adjustment"]["type"]
+    quote.surcharge_value = totals["surcharge_adjustment"]["value"]
+    quote.surcharge_reason = totals["surcharge_adjustment"]["reason"]
     quote.tax = totals["tax"]
     quote.total_amount = totals["total"]
     quote.observations = (payload.get("observations") or payload.get("note") or "").strip() or None
@@ -384,6 +399,7 @@ def _quote_snapshot(quote):
 
 def _quote_rows(quote):
     rows = []
+    line_discounts = {}
     for item in quote.items:
         rows.append(
             {
@@ -564,10 +580,24 @@ def _quote_pdf_response(quote, *, as_attachment=False):
     pdf.setFont("Helvetica-Bold", 11)
     pdf.drawRightString(470, y, f"Subtotal: ${float(quote.subtotal or 0):.2f}")
     y -= 14
-    pdf.drawRightString(470, y, f"Descuento: -${float(quote.discount or 0):.2f}")
+    discount_label = f"{float(quote.discount_value):.2f}%" if quote.discount_type == "percentage" and quote.discount_value is not None else f"-${float(quote.discount or 0):.2f}"
+    pdf.drawRightString(470, y, f"Descuento: {discount_label}")
     y -= 14
-    pdf.drawRightString(470, y, f"Recargo: ${float(quote.surcharge or 0):.2f}")
+    if quote.discount_type == "percentage":
+        pdf.drawRightString(470, y, f"Descuento aplicado: -${float(quote.discount or 0):.2f}")
+        y -= 14
+    if quote.discount_reason:
+        pdf.drawRightString(470, y, f"Motivo descuento: {quote.discount_reason[:80]}")
+        y -= 14
+    surcharge_label = f"{float(quote.surcharge_value):.2f}%" if quote.surcharge_type == "percentage" and quote.surcharge_value is not None else f"${float(quote.surcharge or 0):.2f}"
+    pdf.drawRightString(470, y, f"Recargo: {surcharge_label}")
     y -= 14
+    if quote.surcharge_type == "percentage":
+        pdf.drawRightString(470, y, f"Recargo aplicado: ${float(quote.surcharge or 0):.2f}")
+        y -= 14
+    if quote.surcharge_reason:
+        pdf.drawRightString(470, y, f"Motivo recargo: {quote.surcharge_reason[:80]}")
+        y -= 14
     pdf.drawRightString(470, y, f"Impuestos: ${float(quote.tax or 0):.2f}")
     y -= 18
     pdf.setFont("Helvetica-Bold", 12)
@@ -1064,6 +1094,7 @@ def convert_to_sale(quote_id):
 
     payload_items = []
     product_ids = []
+    line_discounts = {}
     for item in quote.items:
         product_id = int(item.product_id or 0)
         if product_id <= 0:
@@ -1077,6 +1108,8 @@ def convert_to_sale(quote_id):
                 "quantity": float(item.quantity or 0),
             }
         )
+        quantity = float(item.quantity or 0)
+        line_discounts[str(product_id)] = float(item.discount or 0) / quantity if quantity > 0 else 0.0
 
     if not payload_items:
         flash("El presupuesto no tiene productos para convertir.", "warning")
@@ -1128,8 +1161,17 @@ def convert_to_sale(quote_id):
             "client_id": quote.client_id or "",
             "note": (quote.observations or "")[:255],
             "document_type": "venta",
-            "general_discount": float(quote.discount or 0),
+            "general_discount": float(max((quote.discount or 0) - sum((item.discount or 0) for item in quote.items), 0)),
             "surcharge": float(quote.surcharge or 0),
+            "discount_applied_amount": float(max((quote.discount or 0) - sum((item.discount or 0) for item in quote.items), 0)),
+            "surcharge_applied_amount": float(quote.surcharge or 0),
+            "discount_type": quote.discount_type,
+            "discount_value": float(quote.discount_value) if quote.discount_value is not None else None,
+            "discount_reason": quote.discount_reason,
+            "surcharge_type": quote.surcharge_type,
+            "surcharge_value": float(quote.surcharge_value) if quote.surcharge_value is not None else None,
+            "surcharge_reason": quote.surcharge_reason,
+            "line_discounts": line_discounts,
             "auto_open_cart": True,
             "items": cart_items,
         }

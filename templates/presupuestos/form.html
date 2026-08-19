@@ -360,8 +360,12 @@
           </div>
 
           <div class="row g-2 mb-2">
-            <div class="col-6"><label class="form-label" for="generalDiscount">Descuento general</label><input class="form-control focus-ring" type="number" step="0.01" min="0" id="generalDiscount" name="discount" value="{{ general_discount_value if general_discount_value is not none else 0 }}"></div>
-            <div class="col-6"><label class="form-label" for="generalSurcharge">Recargo</label><input class="form-control focus-ring" type="number" step="0.01" min="0" id="generalSurcharge" name="surcharge" value="{{ quote.surcharge if quote else 0 }}"></div>
+            <div class="col-md-3"><label class="form-label" for="generalDiscount">Descuento</label><input class="form-control focus-ring" type="number" step="0.01" min="0" id="generalDiscount" name="discount_value" value="{{ quote.discount_value if quote and quote.discount_value is not none else (general_discount_value if general_discount_value is not none else 0) }}"></div>
+            <div class="col-md-3"><label class="form-label">Tipo descuento</label><select class="form-select" name="discount_type"><option value="fixed" {% if quote and quote.discount_type == 'fixed' %}selected{% endif %}>Importe fijo</option><option value="percentage" {% if quote and quote.discount_type == 'percentage' %}selected{% endif %}>Porcentaje</option></select></div>
+            <div class="col-md-3"><label class="form-label">Motivo descuento</label><input class="form-control" name="discount_reason" maxlength="255" value="{{ quote.discount_reason if quote else '' }}"></div>
+            <div class="col-md-3"><label class="form-label" for="generalSurcharge">Recargo</label><input class="form-control focus-ring" type="number" step="0.01" min="0" id="generalSurcharge" name="surcharge_value" value="{{ quote.surcharge_value if quote and quote.surcharge_value is not none else (quote.surcharge if quote else 0) }}"></div>
+            <div class="col-md-3"><label class="form-label">Tipo recargo</label><select class="form-select" name="surcharge_type"><option value="fixed" {% if quote and quote.surcharge_type == 'fixed' %}selected{% endif %}>Importe fijo</option><option value="percentage" {% if quote and quote.surcharge_type == 'percentage' %}selected{% endif %}>Porcentaje</option></select></div>
+            <div class="col-md-3"><label class="form-label">Motivo recargo</label><input class="form-control" name="surcharge_reason" maxlength="255" value="{{ quote.surcharge_reason if quote else '' }}"></div>
           </div>
 
           <div class="border rounded p-2 mb-3">
@@ -735,8 +739,12 @@
       item.discount = line.discountValue;
     });
 
-    const generalDiscount = Math.max(parseNumberInput(document.getElementById('generalDiscount').value), 0);
-    const surcharge = Math.max(parseNumberInput(document.getElementById('generalSurcharge').value), 0);
+    const discountValue = Math.max(parseNumberInput(document.getElementById('generalDiscount').value), 0);
+    const surchargeValue = Math.max(parseNumberInput(document.getElementById('generalSurcharge').value), 0);
+    const discountType = document.querySelector('[name="discount_type"]')?.value || 'fixed';
+    const surchargeType = document.querySelector('[name="surcharge_type"]')?.value || 'fixed';
+    const generalDiscount = discountType === 'percentage' ? subtotalGross * discountValue / 100 : discountValue;
+    const surcharge = surchargeType === 'percentage' ? Math.max(subtotalGross - lineDiscount - generalDiscount, 0) * surchargeValue / 100 : surchargeValue;
     const tax = 0;
     const vat = 0;
     const total = Math.max(subtotalGross - lineDiscount - generalDiscount + surcharge + tax, 0);
@@ -803,8 +811,12 @@
         status: document.getElementById('quoteStatusSelect').value,
         observations: document.getElementById('observationsInput').value,
         commercial_conditions: document.getElementById('commercialConditions').value,
-        discount: document.getElementById('generalDiscount').value,
-        surcharge: document.getElementById('generalSurcharge').value,
+        discount_value: document.getElementById('generalDiscount').value,
+        discount_type: document.querySelector('[name="discount_type"]')?.value || 'fixed',
+        discount_reason: document.querySelector('[name="discount_reason"]')?.value || '',
+        surcharge_value: document.getElementById('generalSurcharge').value,
+        surcharge_type: document.querySelector('[name="surcharge_type"]')?.value || 'fixed',
+        surcharge_reason: document.querySelector('[name="surcharge_reason"]')?.value || '',
         currency: document.getElementById('quoteCurrency').value,
       };
       localStorage.setItem(draftKey, JSON.stringify(payload));
@@ -830,8 +842,8 @@
       document.getElementById('quoteStatusSelect').value = payload.status || document.getElementById('quoteStatusSelect').value;
       document.getElementById('observationsInput').value = payload.observations || '';
       document.getElementById('commercialConditions').value = payload.commercial_conditions || '';
-      document.getElementById('generalDiscount').value = payload.discount || 0;
-      document.getElementById('generalSurcharge').value = payload.surcharge || 0;
+      document.getElementById('generalDiscount').value = payload.discount_value || 0;
+      document.getElementById('generalSurcharge').value = payload.surcharge_value || 0;
       document.getElementById('quoteCurrency').value = payload.currency || document.getElementById('quoteCurrency').value;
     } catch (error) {
       console.warn('No se pudo recuperar borrador', error);

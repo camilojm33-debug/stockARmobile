@@ -96,6 +96,12 @@ class SaleService:
                 paid_amount=payment_split["primary_amount"],
                 secondary_paid_amount=payment_split["secondary_amount"],
                 surcharge=surcharge,
+                discount_type=sale_totals["discount_adjustment"]["type"],
+                discount_value=sale_totals["discount_adjustment"]["value"],
+                discount_reason=sale_totals["discount_adjustment"]["reason"],
+                surcharge_type=sale_totals["surcharge_adjustment"]["type"],
+                surcharge_value=sale_totals["surcharge_adjustment"]["value"],
+                surcharge_reason=sale_totals["surcharge_adjustment"]["reason"],
                 client_txn_id=checkout_token,
                 document_type=data.get("document_type") or data.get("tipo_comprobante") or "venta",
                 requiere_comprobante=requiere_comprobante,
@@ -217,6 +223,12 @@ class SaleService:
         discounts = form.getlist("discount")
         row_deletes = form.getlist("remove_item")
         order_discount = self._to_decimal(form.get("order_discount") or sale_order_discount_default or 0)
+        discount_type = form.get("discount_type") or sale.discount_type
+        discount_value = form.get("discount_value") or (order_discount if discount_type else None)
+        discount_reason = (form.get("discount_reason") or sale.discount_reason or "").strip() or None
+        surcharge_type = form.get("surcharge_type") or sale.surcharge_type
+        surcharge_value = form.get("surcharge_value") or (sale.surcharge if surcharge_type else None)
+        surcharge_reason = (form.get("surcharge_reason") or sale.surcharge_reason or "").strip() or None
         note = (form.get("note") or sale.note or "").strip() or None
         client_id = form.get("client_id") or None
         client = scope_query_to_company(Client.query.filter_by(id=int(client_id), active=True), Client).first() if client_id else None
@@ -252,6 +264,12 @@ class SaleService:
             [{"price": line["price"], "quantity": line["quantity"], "line_discount": line["discount"]} for line in new_lines],
             general_discount=order_discount,
             surcharge=sale.surcharge or 0,
+            discount_type=discount_type,
+            discount_value=discount_value,
+            discount_reason=discount_reason,
+            surcharge_type=surcharge_type,
+            surcharge_value=surcharge_value,
+            surcharge_reason=surcharge_reason,
         )
 
         payment_method = form.get("payment_method") or sale.payment_method or "EFECTIVO"
@@ -272,6 +290,13 @@ class SaleService:
         sale.note = note
         sale.subtotal = sale_totals["subtotal"]
         sale.discount = sale_totals["line_discount_total"] + sale_totals["general_discount"]
+        sale.surcharge = sale_totals["surcharge"]
+        sale.discount_type = sale_totals["discount_adjustment"]["type"]
+        sale.discount_value = sale_totals["discount_adjustment"]["value"]
+        sale.discount_reason = sale_totals["discount_adjustment"]["reason"]
+        sale.surcharge_type = sale_totals["surcharge_adjustment"]["type"]
+        sale.surcharge_value = sale_totals["surcharge_adjustment"]["value"]
+        sale.surcharge_reason = sale_totals["surcharge_adjustment"]["reason"]
         sale.tax = sale_totals["tax"]
         sale.total_amount = sale_totals["total"]
         sale.paid_amount = payment_breakdown.get("efectivo", sale_totals["total"])

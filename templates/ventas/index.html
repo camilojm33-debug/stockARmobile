@@ -371,7 +371,10 @@
               </select>
             </div>
             <div class="col-md-2"><label class="form-label" id="checkout-discount-value-label">Valor descuento</label><input id="checkout-general-discount" class="form-control" name="descuento_general" type="number" min="0" step="0.01" inputmode="decimal" placeholder="0.00"></div>
-            <div class="col-md-3"><label class="form-label">Recargo</label><input id="checkout-surcharge" class="form-control" name="recargo" type="number" min="0" step="0.01" inputmode="decimal"></div>
+            <div class="col-md-2"><label class="form-label">Motivo descuento</label><input id="checkout-discount-reason" class="form-control" maxlength="255" placeholder="Opcional"></div>
+            <div class="col-md-2"><label class="form-label">Tipo recargo</label><select id="checkout-surcharge-mode" class="form-select"><option value="fixed" selected>$ Importe</option><option value="percentage">% Porcentaje</option></select></div>
+            <div class="col-md-2"><label class="form-label" id="checkout-surcharge-value-label">Valor recargo</label><input id="checkout-surcharge" class="form-control" name="recargo" type="number" min="0" step="0.01" inputmode="decimal"></div>
+            <div class="col-md-2"><label class="form-label">Motivo recargo</label><input id="checkout-surcharge-reason" class="form-control" maxlength="255" placeholder="Opcional"></div>
             <div class="col-md-3"><label class="form-label">Cambio</label><div id="checkout-change" class="form-control bg-body-tertiary fw-bold">$0.00</div></div>
             <div class="col-12"><label class="form-label">Observaciones de la venta</label><input id="checkout-note" class="form-control" name="note" maxlength="255" placeholder="Observaciones internas para consulta e impresión"></div>
           </div>

@@ -194,7 +194,51 @@ def sale_payment_breakdown(sale):
     )
 
 
-def calculate_sale_totals(line_items, *, general_discount=0, surcharge=0):
+ADJUSTMENT_TYPES = {"percentage", "fixed"}
+
+
+def normalize_order_adjustment(*, value=None, adjustment_type=None, reason=None, legacy_amount=0, applied_amount=None):
+    normalized_type = (adjustment_type or "").strip().lower()
+    normalized_reason = (reason or "").strip() or None
+    if value in (None, "") and not normalized_type:
+        return {"type": None, "value": None, "reason": normalized_reason, "amount": clamp_non_negative_money(legacy_amount)}
+    if normalized_type not in ADJUSTMENT_TYPES:
+        raise ValueError("adjustment_type must be percentage or fixed")
+    normalized_value = to_decimal(value)
+    if normalized_value < Decimal("0.00"):
+        raise ValueError("adjustment value cannot be negative")
+    return {
+        "type": normalized_type,
+        "value": quantize_money(normalized_value),
+        "reason": normalized_reason,
+        "amount": clamp_non_negative_money(applied_amount) if applied_amount not in (None, "") else None,
+    }
+
+
+def adjustment_amount(base_amount, adjustment):
+    base = clamp_non_negative_money(base_amount)
+    if adjustment.get("amount") is not None:
+        return clamp_non_negative_money(adjustment["amount"])
+    value = adjustment.get("value") or Decimal("0.00")
+    if adjustment.get("type") == "percentage":
+        return quantize_money(base * value / Decimal("100.00"))
+    return clamp_non_negative_money(value)
+
+
+def calculate_sale_totals(
+    line_items,
+    *,
+    general_discount=0,
+    surcharge=0,
+    discount_type=None,
+    discount_value=None,
+    discount_reason=None,
+    surcharge_type=None,
+    surcharge_value=None,
+    surcharge_reason=None,
+    discount_applied_amount=None,
+    surcharge_applied_amount=None,
+):
     normalized_lines = []
     subtotal = Decimal("0.00")
     line_discount_total = Decimal("0.00")
@@ -221,8 +265,22 @@ def calculate_sale_totals(line_items, *, general_discount=0, surcharge=0):
 
     subtotal = quantize_money(subtotal)
     line_discount_total = quantize_money(line_discount_total)
-    safe_general_discount = clamp_non_negative_money(general_discount)
-    safe_surcharge = clamp_non_negative_money(surcharge)
+    discount_adjustment = normalize_order_adjustment(
+        value=discount_value,
+        adjustment_type=discount_type,
+        reason=discount_reason,
+        legacy_amount=general_discount,
+        applied_amount=discount_applied_amount,
+    )
+    surcharge_adjustment = normalize_order_adjustment(
+        value=surcharge_value,
+        adjustment_type=surcharge_type,
+        reason=surcharge_reason,
+        legacy_amount=surcharge,
+        applied_amount=surcharge_applied_amount,
+    )
+    safe_general_discount = adjustment_amount(subtotal - line_discount_total, discount_adjustment)
+    safe_surcharge = adjustment_amount(subtotal - line_discount_total - safe_general_discount, surcharge_adjustment)
 
     taxable = subtotal - line_discount_total - safe_general_discount
     if taxable < Decimal("0.00"):
@@ -262,6 +320,8 @@ def calculate_sale_totals(line_items, *, general_discount=0, surcharge=0):
         "line_discount_total": line_discount_total,
         "general_discount": safe_general_discount,
         "surcharge": safe_surcharge,
+        "discount_adjustment": discount_adjustment,
+        "surcharge_adjustment": surcharge_adjustment,
         "tax": Decimal("0.00"),
         "total": final_total,
         "lines": normalized_lines,
