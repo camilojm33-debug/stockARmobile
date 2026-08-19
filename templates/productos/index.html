@@ -60,7 +60,14 @@
           {{ form.hidden_tag() }}
           <input type="hidden" name="pricing_source" id="pricingSource" value="price">
           <div class="row g-3">
-            <div class="col-md-3">{{ form.barcode.label(class_="form-label") }}{{ form.barcode(class_="form-control") }}</div>
+            <div class="col-md-3">
+              {{ form.barcode.label(class_="form-label") }}
+              <div class="input-group">
+                {{ form.barcode(class_="form-control") }}
+                <button class="btn btn-outline-primary" id="product-barcode-scan" type="button"><i class="bi bi-camera me-1"></i>Escanear</button>
+              </div>
+              <div class="form-text" id="product-barcode-scan-status"></div>
+            </div>
             <div class="col-md-5">{{ form.name.label(class_="form-label") }}{{ form.name(class_="form-control") }}</div>
             <div class="col-md-4">{{ form.category.label(class_="form-label") }}{{ form.category(class_="form-control") }}</div>
             <div class="col-md-3">{{ form.sale_type.label(class_="form-label") }}{{ form.sale_type(class_="form-select") }}</div>
@@ -223,6 +230,7 @@
 
 {% block extra_js %}
 <script src="{{ url_for('static', filename='assets/js/category-visuals.js') }}"></script>
+<script src="{{ url_for('static', filename='assets/js/barcode-scanner.js') }}"></script>
 <script>
   (() => {
     const input = document.getElementById('photoFileInput');
@@ -233,6 +241,34 @@
     const marginInput = document.getElementById('margin');
     const profitInput = document.getElementById('profit_percent');
     const profitHint = document.getElementById('profitHint');
+    const barcodeInput = document.getElementById('barcode');
+    const barcodeScanButton = document.getElementById('product-barcode-scan');
+    const barcodeScanStatus = document.getElementById('product-barcode-scan-status');
+
+    if (barcodeScanButton && barcodeInput) {
+      barcodeScanButton.addEventListener('click', () => {
+        if (!window.StockArBarcodeScanner) {
+          if (barcodeScanStatus) barcodeScanStatus.textContent = 'No se pudo cargar el scanner.';
+          return;
+        }
+        if (barcodeScanStatus) barcodeScanStatus.textContent = 'Solicitando acceso a la camara...';
+        window.StockArBarcodeScanner.openScanner({
+          onDetected: (barcode) => {
+            barcodeInput.value = String(barcode);
+            barcodeInput.dispatchEvent(new Event('input', { bubbles: true }));
+            barcodeInput.dispatchEvent(new Event('change', { bubbles: true }));
+            barcodeInput.focus();
+            if (barcodeScanStatus) barcodeScanStatus.textContent = 'Codigo detectado. Podes editarlo antes de guardar.';
+          },
+          onError: () => {
+            if (barcodeScanStatus) barcodeScanStatus.textContent = 'No se pudo acceder a la camara. Verifica los permisos del navegador.';
+          },
+          onCancel: () => {
+            if (barcodeScanStatus) barcodeScanStatus.textContent = '';
+          }
+        });
+      });
+    }
 
     const parseNumber = (value) => {
       if (value === null || value === undefined) return 0;

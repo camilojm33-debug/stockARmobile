@@ -18,7 +18,7 @@
       </div>
     </div>
     <div class="d-flex flex-wrap gap-2 w-100 w-md-auto">
-      <button class="btn btn-outline-primary w-100 w-md-auto" data-bs-toggle="modal" data-bs-target="#cameraScannerModal" onclick="startCameraScanner()"><i class="bi bi-camera me-1"></i>Camara</button>
+      <button class="btn btn-outline-primary w-100 w-md-auto" id="pos-barcode-camera-button" type="button"><i class="bi bi-camera me-1"></i>Escanear producto</button>
       <button class="btn btn-success w-100 w-md-auto" id="pos-charge-button" data-charge-button {% if not cash_session_open %}disabled title="Abrí una caja para cobrar"{% endif %} onclick="openCartModal()"><i class="bi bi-credit-card me-1"></i><span class="pos-charge-label">Cobrar</span> <span class="pos-charge-total">($0.00)</span></button>
     </div>
   </div>
@@ -978,8 +978,8 @@
   })();
 </script>
 {% endif %}
-<script src="https://unpkg.com/html5-qrcode"></script>
 <script src="{{ url_for('static', filename='assets/js/category-visuals.js') }}"></script>
+<script src="{{ url_for('static', filename='assets/js/barcode-scanner.js') }}"></script>
 <script src="{{ url_for('static', filename='assets/js/cart-manager.js') }}"></script>
 <script>
   const posSearch = document.getElementById('pos-search-input');
@@ -993,6 +993,7 @@
   const fastScannerInput = document.getElementById('fast-scanner-input');
   const scannerToggleBtn = document.getElementById('scanner-toggle-btn');
   const scannerDot = document.getElementById('scanner-dot');
+  const barcodeCameraButton = document.getElementById('pos-barcode-camera-button');
   const scannerStatusText = document.getElementById('scanner-status-text');
   const posCards = Array.from(document.querySelectorAll('[data-product-card]'));
   const posGrid = document.getElementById('pos-product-grid');
@@ -1158,6 +1159,36 @@
       console.error('[sales] error leyendo código de barras:', error);
       showNotification('No se pudo leer el código de barras', 'danger');
     }
+  }
+
+  function scanPosProductWithCamera() {
+    if (!window.StockArBarcodeScanner) {
+      showNotification('No se pudo cargar el scanner de camara.', 'danger');
+      return;
+    }
+
+    if (barcodeCameraButton) barcodeCameraButton.disabled = true;
+    const finish = () => {
+      if (barcodeCameraButton) barcodeCameraButton.disabled = false;
+    };
+
+    window.StockArBarcodeScanner.openScanner({
+      onDetected: async (barcode) => {
+        try {
+          const result = await processScan(String(barcode), { source: 'camera' });
+          if (!result.ok) {
+            showNotification(result.message || 'Producto no encontrado', 'danger');
+          }
+        } finally {
+          finish();
+        }
+      },
+      onError: (error) => {
+        showNotification(error?.message || 'No se pudo acceder a la camara. Verifica los permisos del navegador.', 'danger');
+        finish();
+      },
+      onCancel: finish
+    });
   }
 
   function handleAddToCartClick(button) {
@@ -1415,6 +1446,7 @@
   window.toggleQuickMode = toggleQuickMode;
   window.toggleSalesFullscreen = toggleSalesFullscreen;
   window.toggleScannerMode = toggleScannerMode;
+  barcodeCameraButton?.addEventListener('click', scanPosProductWithCamera);
 
   fastScannerInput?.addEventListener('keydown', function(event) {
     if (event.key !== 'Enter') return;

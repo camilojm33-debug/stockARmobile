@@ -1929,6 +1929,136 @@ def test_product_barcode_is_unique_per_company():
     assert products_response.status_code == 200
 
 
+def test_product_barcode_preserves_leading_zeroes_on_create():
+    client = stock_app.app.test_client()
+    client.post("/auth/login", data={"username": "empresa_admin", "password": "admin123"})
+
+    response = client.post(
+        "/productos/add",
+        data={
+            "barcode": "0012345678905",
+            "name": "Producto codigo escaneado",
+            "sale_type": "unidad",
+            "unit_measure": "u",
+            "price": "100",
+            "cost_price": "50",
+            "stock": "2",
+            "min_stock": "1",
+        },
+        follow_redirects=False,
+    )
+    assert response.status_code in (301, 302)
+
+    with stock_app.app.app_context():
+        product = Product.query.filter_by(barcode="0012345678905").first()
+        assert product is not None
+        assert product.barcode == "0012345678905"
+
+
+def test_product_edit_keeps_own_barcode_and_rejects_tenant_duplicate():
+    client = stock_app.app.test_client()
+    client.post("/auth/login", data={"username": "negocio_admin", "password": "admin123"})
+
+    with stock_app.app.app_context():
+        company = Company.query.filter_by(name="Empresa Demo").first()
+        target = Product.query.filter_by(company_id=company.id, barcode="123456789012").first()
+        assert target is not None
+        duplicate = Product(
+            barcode="EDIT-DUPLICATE-001",
+            name="Producto duplicado",
+            price=100,
+            cost_price=50,
+            stock=1,
+            min_stock=0,
+            active=True,
+            company_id=company.id,
+        )
+        db.session.add(duplicate)
+        db.session.commit()
+        target_id = target.id
+
+    base_form = {
+        "name": "Yerba kilo",
+        "sale_type": "unidad",
+        "unit_measure": "u",
+        "cost_price": "100",
+        "price": "18000",
+        "margin": "17900",
+        "profit_percent": "17900",
+        "pricing_source": "price",
+        "stock": "2.5",
+        "min_stock": "0.5",
+    }
+    same_code = client.post(
+        f"/productos/edit/{target_id}",
+        data={**base_form, "barcode": "123456789012"},
+        follow_redirects=False,
+    )
+    assert same_code.status_code in (301, 302)
+
+    changed_code = client.post(
+        f"/productos/edit/{target_id}",
+        data={**base_form, "barcode": "0012345678905"},
+        follow_redirects=False,
+    )
+    assert changed_code.status_code in (301, 302)
+
+    duplicate_code = client.post(
+        f"/productos/edit/{target_id}",
+        data={**base_form, "barcode": "EDIT-DUPLICATE-001"},
+        follow_redirects=False,
+    )
+    assert duplicate_code.status_code in (301, 302)
+
+    with stock_app.app.app_context():
+        target = db.session.get(Product, target_id)
+        assert target is not None
+        assert target.barcode == "0012345678905"
+
+
+def test_pos_barcode_lookup_is_tenant_scoped_and_preserves_string_code():
+    client = stock_app.app.test_client()
+
+    with stock_app.app.app_context():
+        company_a = Company.query.filter_by(name="Empresa Demo").first()
+        assert company_a is not None
+        company_b = Company(name="Empresa Scanner B", active=True)
+        db.session.add(company_b)
+        db.session.flush()
+        user_b = User(username="scanner_tenant_b", email="scanner_tenant_b@test.local", role="admin", company_id=company_b.id, active=True)
+        user_b.set_password("admin123")
+        db.session.add_all([
+            user_b,
+            Product(barcode="0012345678905", name="Producto Scanner A", price=100, cost_price=50, stock=3, min_stock=0, active=True, company_id=company_a.id),
+            Product(barcode="0012345678905", name="Producto Scanner B", price=200, cost_price=100, stock=3, min_stock=0, active=True, company_id=company_b.id),
+        ])
+        db.session.commit()
+
+    client.post("/auth/login", data={"username": "empresa_admin", "password": "admin123"})
+    first = client.get("/productos/api/0012345678905")
+    assert first.status_code == 200
+    assert first.get_json()["name"] == "Producto Scanner A"
+    assert client.get("/productos/api/CODIGO-INEXISTENTE").status_code == 404
+
+    client.post("/auth/logout")
+    client.post("/auth/login", data={"username": "scanner_tenant_b", "password": "admin123"})
+    second = client.get("/productos/api/0012345678905")
+    assert second.status_code == 200
+    assert second.get_json()["name"] == "Producto Scanner B"
+
+
+def test_pos_loads_reusable_barcode_scanner_component():
+    client = stock_app.app.test_client()
+    client.post("/auth/login", data={"username": "empresa_admin", "password": "admin123"})
+
+    response = client.get("/ventas/")
+    assert response.status_code == 200
+    html = response.data.decode("utf-8")
+    assert "pos-barcode-camera-button" in html
+    assert "assets/js/barcode-scanner.js" in html
+    assert "StockArBarcodeScanner.openScanner" in html
+
+
 def test_checkout_does_not_apply_automatic_tax():
     client = stock_app.app.test_client()
     client.post("/auth/login", data={"username": "empresa_admin", "password": "admin123"})

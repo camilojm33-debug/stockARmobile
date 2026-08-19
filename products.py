@@ -263,6 +263,15 @@ def edit(product_id=None, id=None):
 
     form = ProductForm(obj=product)
     if form.validate_on_submit():
+        barcode = (form.barcode.data or product.barcode or "").strip()
+        duplicate = (
+            scope_query_to_company(Product.query.filter_by(barcode=barcode), Product)
+            .filter(Product.id != product.id)
+            .first()
+        )
+        if duplicate is not None:
+            flash("Este codigo de barras ya esta registrado.", "danger")
+            return redirect(url_for("products.edit", product_id=product.id))
         old_price = float(product.price or 0)
         old_cost = float(product.cost_price or 0)
         try:
