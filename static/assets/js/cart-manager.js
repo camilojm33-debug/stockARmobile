@@ -998,10 +998,18 @@ async function processMercadoPagoQrCheckout() {
     return;
   }
   const csrf = getCsrfToken();
+  const discount = getDiscountBreakdown(getCartSubtotal());
+  const surcharge = getSurchargeBreakdown(getCartSubtotal() - discount.amount);
   const payload = {
     items: getCartForCheckout(),
-    general_discount: total.discount,
-    surcharge: total.surcharge,
+    general_discount: discount.amount,
+    surcharge: surcharge.amount,
+    discount_type: discount.mode === 'percent' ? 'percentage' : 'fixed',
+    discount_value: discount.raw,
+    discount_reason: document.getElementById('checkout-discount-reason')?.value || '',
+    surcharge_type: surcharge.mode,
+    surcharge_value: surcharge.raw,
+    surcharge_reason: document.getElementById('checkout-surcharge-reason')?.value || '',
     client_id: document.getElementById('checkout-client-select')?.value || '',
     mp_pos_id: mpQrPosSelect?.value || '',
     note: document.getElementById('checkout-note')?.value || '',

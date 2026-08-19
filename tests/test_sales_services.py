@@ -109,6 +109,43 @@ def test_totals_support_structured_percentage_and_fixed_adjustments():
     assert fixed["total"] == Decimal("105000.00")
 
 
+def test_totals_calculate_percentage_and_fixed_surcharge_from_structured_values():
+    lines = [{"price": Decimal("29498.00"), "quantity": 1, "line_discount": Decimal("0.00")}]
+
+    percentage = PricingService.calculate(
+        lines,
+        {
+            "surcharge_type": "percentage",
+            "surcharge_value": "30",
+            "surcharge_reason": "Pago con tarjeta",
+            "recargo": "8849.40",
+        },
+    )
+    assert percentage["surcharge"] == Decimal("8849.40")
+    assert percentage["total"] == Decimal("38347.40")
+    assert percentage["surcharge_adjustment"]["reason"] == "Pago con tarjeta"
+
+    fixed = PricingService.calculate(
+        lines,
+        {"surcharge_type": "fixed", "surcharge_value": "5000", "recargo": "5000"},
+    )
+    assert fixed["surcharge"] == Decimal("5000.00")
+    assert fixed["total"] == Decimal("34498.00")
+
+    discounted = PricingService.calculate(
+        lines,
+        {
+            "discount_type": "percentage",
+            "discount_value": "10",
+            "surcharge_type": "percentage",
+            "surcharge_value": "30",
+        },
+    )
+    assert discounted["general_discount"] == Decimal("2949.80")
+    assert discounted["surcharge"] == Decimal("7964.46")
+    assert discounted["total"] == Decimal("34512.66")
+
+
 def test_sale_service_init_signature_stable():
     service = SaleService(
         require_open_cash_session=lambda json_response=False: None,

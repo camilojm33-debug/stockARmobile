@@ -16,7 +16,7 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import selectinload
 from app import tenant_required, utcnow
 from stockarmobile.constants import HEADER_CSRF_TOKEN, SALE_STATUS_CONFIRMED
-from services.sales import InventoryService, ReceiptService, SaleService, ValidationService
+from services.sales import InventoryService, PricingService, ReceiptService, SaleService, ValidationService
 from services.mercadopago_oauth_service import MercadoPagoOAuthService
 from services.mercadopago_service import MercadoPagoService
 from services.sales_calculation_service import calculate_sale_totals, to_decimal
@@ -205,6 +205,12 @@ def _pos_qr_snapshot(items, payload, *, total_amount, currency):
         "observacion_comprobante": observacion_comprobante,
         "descuento_general": float(payload.get("descuento_general") or payload.get("general_discount") or 0),
         "recargo": float(payload.get("recargo") or payload.get("surcharge") or 0),
+        "discount_type": payload.get("discount_type"),
+        "discount_value": payload.get("discount_value"),
+        "discount_reason": payload.get("discount_reason"),
+        "surcharge_type": payload.get("surcharge_type"),
+        "surcharge_value": payload.get("surcharge_value"),
+        "surcharge_reason": payload.get("surcharge_reason"),
         "total_amount": float(total_amount),
         "currency": currency,
         "cart_hash": cart_hash,
@@ -856,12 +862,9 @@ def api_mp_qr_create():
 
     try:
         lines = _calculate_lines(items, lock_for_update=True, discount_overrides=(payload.get("line_discounts") or payload.get("line_discount_overrides") or {}))
-        general_discount = _to_decimal(payload.get("descuento_general") or payload.get("general_discount"))
-        surcharge = _to_decimal(payload.get("recargo") or payload.get("surcharge"))
-        sale_totals = calculate_sale_totals(
+        sale_totals = PricingService.calculate(
             [{"price": line["price"], "quantity": line["quantity"], "line_discount": line["discount"]} for line in lines],
-            general_discount=general_discount,
-            surcharge=surcharge,
+            payload,
         )
         final_total = sale_totals["total"]
         amount = final_total
@@ -1187,6 +1190,12 @@ def api_mp_qr_finalize():
         "status": SALE_STATUS_CONFIRMED,
         "general_discount": snapshot.get("descuento_general") or 0,
         "surcharge": snapshot.get("recargo") or 0,
+        "discount_type": snapshot.get("discount_type"),
+        "discount_value": snapshot.get("discount_value"),
+        "discount_reason": snapshot.get("discount_reason"),
+        "surcharge_type": snapshot.get("surcharge_type"),
+        "surcharge_value": snapshot.get("surcharge_value"),
+        "surcharge_reason": snapshot.get("surcharge_reason"),
     }
 
     result = _create_sale_from_items({str(item["productId"]): item["quantity"] for item in items}, sale_payload, json_response=True)
