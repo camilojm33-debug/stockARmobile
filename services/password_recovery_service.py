@@ -79,6 +79,11 @@ class PasswordRecoveryService:
             )
             db_session.add(existing)
             db_session.flush()
+        elif existing.status == "atendida":
+            existing.status = "pendiente"
+            existing.requested_at = cls._now()
+            existing.processed_at = None
+            existing.processed_by_user_id = None
 
         token_row, raw_token = cls.create_reset_token(db_session, user=user)
         reset_url = url_for("auth.reset_password", token=raw_token, _external=True)
@@ -132,7 +137,7 @@ Si no solicitaste este cambio, puedes ignorar este correo.
         smtp_use_tls = bool(current_app.config.get("SMTP_USE_TLS", True))
 
         if not smtp_host:
-            current_app.logger.info("Password reset email fallback to logs. to=%s reset_url=%s", to_email, reset_url)
+            current_app.logger.info("Password reset email not sent because SMTP is not configured. to=%s", to_email)
             return False
 
         try:

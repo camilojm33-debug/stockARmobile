@@ -177,7 +177,7 @@ def login():
 
 @bp.route("/forgot-password", methods=["GET", "POST"])
 def forgot_password():
-    from app import PasswordRecoveryRequest, User, db, record_audit
+    from app import PasswordRecoveryRequest, User, db, record_audit, utcnow
 
     if request.method == "POST":
         email = (request.form.get("email") or "").strip().lower()
@@ -215,6 +215,12 @@ def forgot_password():
                         company_id=user.company_id,
                         detail="Solicitud de recuperacion creada desde login (fallback sin tabla de tokens).",
                     )
+                    db.session.commit()
+                elif existing.status == "atendida":
+                    existing.status = "pendiente"
+                    existing.requested_at = utcnow()
+                    existing.processed_at = None
+                    existing.processed_by_user_id = None
                     db.session.commit()
 
         # Mensaje neutro para no revelar si el correo existe o no.
