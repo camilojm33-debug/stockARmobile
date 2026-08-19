@@ -146,6 +146,17 @@ def test_totals_calculate_percentage_and_fixed_surcharge_from_structured_values(
     assert discounted["total"] == Decimal("34512.66")
 
 
+def test_totals_match_pos_percentage_surcharge_preview_case():
+    totals = PricingService.calculate(
+        [{"price": Decimal("15999.00"), "quantity": 1, "line_discount": Decimal("0.00")}],
+        {"surcharge_type": "percentage", "surcharge_value": "30"},
+    )
+
+    assert totals["subtotal"] == Decimal("15999.00")
+    assert totals["surcharge"] == Decimal("4799.70")
+    assert totals["total"] == Decimal("20798.70")
+
+
 def test_sale_service_init_signature_stable():
     service = SaleService(
         require_open_cash_session=lambda json_response=False: None,

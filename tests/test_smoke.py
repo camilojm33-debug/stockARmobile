@@ -772,7 +772,7 @@ def test_offline_first_shell_and_critical_forms_are_wired():
     worker = client.get("/service-worker.js")
     assert worker.status_code == 200
     worker_js = worker.data.decode("utf-8")
-    assert "stockarmobile-pwa-v6" in worker_js
+    assert "stockarmobile-pwa-v7" in worker_js
     assert "OFFLINE_QUEUE_STATUS" in worker_js
 
 
