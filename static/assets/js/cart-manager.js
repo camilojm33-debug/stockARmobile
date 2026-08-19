@@ -509,6 +509,7 @@ function renderCartSidebar() {
 
 function openCartModal() {
   renderCartModal();
+  syncPaymentInputsWithMethods(getCheckoutTotals().total, true);
   const modal = new bootstrap.Modal(document.getElementById('cartModal'));
   modal.show();
 }
@@ -698,7 +699,7 @@ function syncChargeButtons(total) {
   });
 }
 
-function syncPaymentInputsWithMethods(total) {
+function syncPaymentInputsWithMethods(total, forcePrimarySync = false) {
   const method2 = document.getElementById('checkout-payment-method-2');
   const method1 = document.getElementById('checkout-payment-method');
   const paid1 = document.getElementById('checkout-paid-amount');
@@ -723,11 +724,14 @@ function syncPaymentInputsWithMethods(total) {
 
   if (!hasSecondary) {
     paid2.value = '';
-    if (!paid1.value && total > 0) {
+    if (forcePrimarySync || paid1.dataset.autoSynced === 'true' || !paid1.value) {
       paid1.value = total.toFixed(2);
+      paid1.dataset.autoSynced = 'true';
     }
     return;
   }
+
+  paid1.dataset.autoSynced = 'false';
 
   if (!paid1.value && !paid2.value && total > 0) {
     const half = total / 2;
@@ -745,8 +749,14 @@ function setupCheckoutPaymentBehavior() {
 
   const refresh = () => updateCheckoutTotals();
   method1.addEventListener('change', refresh);
-  method2.addEventListener('change', refresh);
-  paid1.addEventListener('input', refresh);
+  method2.addEventListener('change', () => {
+    syncPaymentInputsWithMethods(getCheckoutTotals().total, !(method2.value || '').trim());
+    updateCheckoutTotals();
+  });
+  paid1.addEventListener('input', () => {
+    paid1.dataset.autoSynced = 'false';
+    refresh();
+  });
   paid2.addEventListener('input', refresh);
   document.getElementById('checkout-client-select')?.addEventListener('change', refresh);
   document.getElementById('checkout-document-type')?.addEventListener('change', refresh);
@@ -762,7 +772,7 @@ function setupCheckoutPaymentBehavior() {
     const mode = document.getElementById('checkout-surcharge-mode')?.value || 'fixed';
     const label = document.getElementById('checkout-surcharge-value-label');
     if (label) label.textContent = mode === 'percentage' ? 'Porcentaje recargo' : 'Valor recargo';
-    renderCart();
+    updateCheckoutTotals();
   });
   refresh();
 }
