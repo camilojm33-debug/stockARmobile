@@ -26,12 +26,9 @@
       <a class="btn btn-outline-secondary" href="{{ url_for('saas.companies_panel') }}"><i class="bi bi-arrow-left me-1"></i>Volver a empresas</a>
       {% set can_hard_delete = (not subscription) or (subscription.status in ['cancelled', 'suspended', 'expired', 'rejected', 'charged_back']) %}
       {% if can_hard_delete %}
-      <form method="post" action="{{ url_for('saas.company_delete', company_id=company.id) }}" onsubmit="return confirm('Esta accion eliminara definitivamente la empresa y todos sus datos asociados. Continuar?');">
-        <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
-        <input type="hidden" name="next" value="{{ request.full_path }}">
-        <input type="hidden" name="confirm_company_name" value="{{ company.name }}">
-        <button class="btn btn-danger" type="submit"><i class="bi bi-trash me-1"></i>Eliminar definitivamente</button>
-      </form>
+      <button class="btn btn-danger" type="button" data-bs-toggle="modal" data-bs-target="#hardDeleteModal{{ company.id }}">
+        <i class="bi bi-exclamation-triangle me-1"></i>Eliminar empresa definitivamente
+      </button>
       {% endif %}
     </div>
   </div>
@@ -177,4 +174,50 @@
     </div>
   </div>
 </div>
+
+{% set can_hard_delete = (not subscription) or (subscription.status in ['cancelled', 'suspended', 'expired', 'rejected', 'charged_back']) %}
+{% if can_hard_delete %}
+<div class="modal fade" id="hardDeleteModal{{ company.id }}" tabindex="-1" aria-hidden="true">
+  <div class="modal-dialog">
+    <div class="modal-content">
+      <div class="modal-header bg-danger text-white">
+        <h5 class="modal-title">⚠️ ELIMINACIÓN DEFINITIVA</h5>
+        <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal" aria-label="Close"></button>
+      </div>
+      <form method="post" action="{{ url_for('saas.company_delete', company_id=company.id) }}" class="hard-delete-form">
+        <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+        <input type="hidden" name="next" value="{{ request.full_path }}">
+        <div class="modal-body">
+          <p class="fw-semibold">Esta acción eliminará permanentemente la empresa <strong>{{ company.name }}</strong> y los datos asociados (usuarios, productos, clientes, ventas, cajas, suscripciones, pagos, etc.). No podrá deshacerse desde el panel.</p>
+          <p class="mb-1">Para confirmar, escriba exactamente el nombre de la empresa:</p>
+          <p class="fw-bold text-danger mb-2">{{ company.name }}</p>
+          <input type="text" class="form-control hard-delete-confirm-input" name="confirm_company_name" autocomplete="off" placeholder="Escriba el nombre de la empresa" data-expected="{{ company.name }}" required>
+        </div>
+        <div class="modal-footer">
+          <button type="button" class="btn btn-outline-secondary" data-bs-dismiss="modal">Cancelar</button>
+          <button type="submit" class="btn btn-danger hard-delete-submit" disabled>Eliminar empresa definitivamente</button>
+        </div>
+      </form>
+    </div>
+  </div>
+</div>
+<script>
+document.addEventListener('input', function (event) {
+  if (event.target.classList.contains('hard-delete-confirm-input')) {
+    var input = event.target;
+    var form = input.closest('form');
+    var submitBtn = form.querySelector('.hard-delete-submit');
+    submitBtn.disabled = input.value !== input.dataset.expected;
+  }
+});
+if (window.location.hash === '#hardDeleteModal{{ company.id }}') {
+  document.addEventListener('DOMContentLoaded', function () {
+    var modalEl = document.getElementById('hardDeleteModal{{ company.id }}');
+    if (modalEl && window.bootstrap) {
+      new bootstrap.Modal(modalEl).show();
+    }
+  });
+}
+</script>
+{% endif %}
 {% endblock %}

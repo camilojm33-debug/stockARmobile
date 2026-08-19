@@ -2312,24 +2312,22 @@ def subscriptions_update(subscription_id):
     renewal_enabled = (request.form.get("renewal_enabled") or "1") == "1"
 
     try:
+        # IMPORTANTE: "Modificar" siempre debe hacer UPDATE sobre esta misma fila de Subscription
+        # (identificada por subscription_id). NUNCA reutilizar ChangePlanCommand/CreateSubscriptionCommand
+        # aquí: esos comandos son para el flujo de autogestión del tenant y crean una fila NUEVA de
+        # Subscription (cerrando la anterior), lo cual duplicaba suscripciones cuando el SuperAdmin
+        # sólo quería editar el plan de un registro existente.
         target_subscription = subscription
-        if plan is not None and plan.id != subscription.plan_id:
-            SubscriptionService.run_command(
-                db.session,
-                SubscriptionService.ChangePlanCommand(
-                    company_id=subscription.company_id,
-                    plan_id=plan.id,
-                    actor_user_id=current_user.id,
-                    actor_role=current_user.role,
-                    origin="superadmin",
-                    ip_address=request.remote_addr,
-                    idempotency_key=f"saas-update-plan:{subscription.company_id}:{subscription.id}:{plan.id}",
-                ),
-            )
-            target_subscription = SubscriptionService.active_subscription_for_company(subscription.company_id)
-
-        if target_subscription is None:
-            raise SubscriptionCommandError("No se pudo determinar la suscripción objetivo para actualizar.")
+        plan_before_id = target_subscription.plan_id
+        current_app.logger.info(
+            "subscriptions_update ANTES: company_id=%s subscription_id=%s plan_id=%s status=%s",
+            target_subscription.company_id,
+            target_subscription.id,
+            plan_before_id,
+            target_subscription.status,
+        )
+        if plan is not None and plan.id != target_subscription.plan_id:
+            target_subscription.plan_id = plan.id
 
         if start_date is not None:
             target_subscription.start_date = start_date
@@ -2410,6 +2408,12 @@ def subscriptions_update(subscription_id):
         else:
             target_subscription.status = target_status
 
+        # Protección contra duplicados: "Modificar" nunca debe crear una segunda
+        # Subscription para la misma empresa. Verificamos que el id siga siendo el mismo
+        # y que la fila continúe existiendo antes de confirmar los cambios.
+        if target_subscription.id != subscription_id:
+            raise SubscriptionCommandError("Operación inválida: el id de la suscripción cambió durante la modificación.")
+
         db.session.add(
             AuditLog(
                 user_id=current_user.id,
@@ -2448,6 +2452,13 @@ def subscriptions_update(subscription_id):
         )
 
         db.session.commit()
+        current_app.logger.info(
+            "subscriptions_update DESPUÉS: company_id=%s subscription_id=%s plan_id=%s status=%s",
+            target_subscription.company_id,
+            target_subscription.id,
+            target_subscription.plan_id,
+            target_subscription.status,
+        )
         flash("Suscripción modificada correctamente.", "success")
     except SubscriptionCommandError as exc:
         db.session.rollback()

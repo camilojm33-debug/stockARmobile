@@ -902,6 +902,9 @@ def test_superadmin_subscriptions_actions_visibility_and_flows():
     assert create_resp.status_code == 200
     assert "Suscripción creada correctamente." in create_resp.data.decode("utf-8")
 
+    with stock_app.app.app_context():
+        subscriptions_before_update = Subscription.query.filter_by(company_id=company_id).count()
+
     update_resp = client.post(
         f"/superadmin/subscriptions/{active_id}/update",
         data={
@@ -913,6 +916,15 @@ def test_superadmin_subscriptions_actions_visibility_and_flows():
     )
     assert update_resp.status_code == 200
     assert "Suscripción modificada correctamente." in update_resp.data.decode("utf-8")
+
+    with stock_app.app.app_context():
+        # Regression guard: "Modificar" debe hacer UPDATE in-place, nunca crear una
+        # Subscription nueva (ver test dedicado test_subscription_modify_never_duplicates_records).
+        subscriptions_after_update = Subscription.query.filter_by(company_id=company_id).count()
+        assert subscriptions_after_update == subscriptions_before_update
+        refreshed_active = db.session.get(Subscription, active_id)
+        assert refreshed_active is not None
+        assert refreshed_active.plan_id == plan_pro_id
 
     suspend_resp = client.post(
         f"/superadmin/subscriptions/{active_id}/action",
@@ -973,8 +985,9 @@ def test_superadmin_company_detail_exposes_delete_button():
     detail = client.get(f"/superadmin/companies/{company_id}")
     assert detail.status_code == 200
     html = detail.data.decode("utf-8")
-    assert "Eliminar definitivamente" in html
+    assert "Eliminar empresa definitivamente" in html
     assert f"/superadmin/companies/{company_id}/delete" in html
+    assert "hard-delete-confirm-input" in html
 
 
 def test_superadmin_company_hard_delete_removes_company_tree():
@@ -999,6 +1012,159 @@ def test_superadmin_company_hard_delete_removes_company_tree():
         assert User.query.filter_by(company_id=company_id).count() == 0
         assert Product.query.filter_by(company_id=company_id).count() == 0
         assert Client.query.filter_by(company_id=company_id).count() == 0
+
+
+def test_superadmin_company_hard_delete_requires_exact_name_match():
+    client = stock_app.app.test_client()
+
+    with stock_app.app.app_context():
+        company = Company.query.filter_by(name="Empresa Demo").first()
+        assert company is not None
+        company_id = company.id
+
+    client.post("/auth/login", data={"username": "superadmin", "password": "admin123"})
+
+    wrong_name_resp = client.post(
+        f"/superadmin/companies/{company_id}/delete",
+        data={"next": "/superadmin/companies", "confirm_company_name": "Nombre Incorrecto"},
+        follow_redirects=True,
+    )
+    assert wrong_name_resp.status_code == 200
+    assert "escribí el nombre exacto de la empresa" in wrong_name_resp.data.decode("utf-8")
+
+    with stock_app.app.app_context():
+        # La empresa debe seguir existiendo: no se ejecuta el DELETE sin confirmación exacta.
+        assert db.session.get(Company, company_id) is not None
+
+
+def test_superadmin_company_hard_delete_rejected_for_non_superadmin():
+    client = stock_app.app.test_client()
+
+    with stock_app.app.app_context():
+        company = Company.query.filter_by(name="Empresa Demo").first()
+        assert company is not None
+        company_id = company.id
+
+    client.post("/auth/login", data={"username": "negocio_admin", "password": "admin123"})
+
+    resp = client.post(
+        f"/superadmin/companies/{company_id}/delete",
+        data={"next": "/superadmin/companies", "confirm_company_name": "Empresa Demo"},
+        follow_redirects=False,
+    )
+    assert resp.status_code == 403
+
+    with stock_app.app.app_context():
+        assert db.session.get(Company, company_id) is not None
+
+
+def test_subscription_modify_never_duplicates_records():
+    """Regresión del bug: 'Modificar' debe hacer UPDATE in-place y jamás crear
+    una Company/Subscription/User adicional, sin importar cuántas veces se repita."""
+    client = stock_app.app.test_client()
+
+    with stock_app.app.app_context():
+        from app import Plan
+
+        company = Company.query.filter_by(name="Empresa Demo").first()
+        assert company is not None
+
+        plan_a = Plan(code="plan_a_dup_test", name="Plan A", price=1500, currency="ARS", duration_days=30, active=True)
+        plan_b = Plan(code="plan_b_dup_test", name="Plan B", price=3000, currency="ARS", duration_days=30, active=True)
+        db.session.add_all([plan_a, plan_b])
+        db.session.flush()
+
+        subscription = Subscription(
+            company_id=company.id,
+            plan_id=plan_a.id,
+            status="active",
+            renewal_enabled=True,
+            auto_renew=True,
+            cancel_at_period_end=False,
+        )
+        db.session.add(subscription)
+        db.session.commit()
+
+        company_id = company.id
+        subscription_id = subscription.id
+        plan_a_id = plan_a.id
+        plan_b_id = plan_b.id
+
+        company_count_before = Company.query.count()
+        subscription_count_before = Subscription.query.count()
+        user_count_before = User.query.filter_by(company_id=company_id).count()
+
+    client.post("/auth/login", data={"username": "superadmin", "password": "admin123"})
+
+    # Test 2/3: modificar el plan (incluso a uno pago) varias veces no debe crear registros nuevos.
+    for target_plan_id in (plan_b_id, plan_a_id, plan_b_id):
+        resp = client.post(
+            f"/superadmin/subscriptions/{subscription_id}/update",
+            data={"plan_id": target_plan_id, "status": "active", "renewal_enabled": "1"},
+            follow_redirects=True,
+        )
+        assert resp.status_code == 200
+        assert "Suscripción modificada correctamente." in resp.data.decode("utf-8")
+
+        with stock_app.app.app_context():
+            assert Company.query.count() == company_count_before
+            assert Subscription.query.count() == subscription_count_before
+            assert User.query.filter_by(company_id=company_id).count() == user_count_before
+            refreshed = db.session.get(Subscription, subscription_id)
+            assert refreshed is not None
+            assert refreshed.company_id == company_id
+            assert refreshed.plan_id == target_plan_id
+
+    # Test 9: doble-submit (mismos datos dos veces seguidas) tampoco debe duplicar.
+    resp_again = client.post(
+        f"/superadmin/subscriptions/{subscription_id}/update",
+        data={"plan_id": plan_b_id, "status": "active", "renewal_enabled": "1"},
+        follow_redirects=True,
+    )
+    assert resp_again.status_code == 200
+    with stock_app.app.app_context():
+        assert Subscription.query.count() == subscription_count_before
+
+
+def test_subscription_lifecycle_actions_never_delete_company():
+    """Cancelar/Suspender/Reactivar solo afectan la Subscription, jamás la Company."""
+    client = stock_app.app.test_client()
+
+    with stock_app.app.app_context():
+        company = Company.query.filter_by(name="Empresa Demo").first()
+        assert company is not None
+        other_company = Company(name="Empresa Aislada Otra", active=True)
+        db.session.add(other_company)
+        db.session.flush()
+
+        subscription = Subscription(company_id=company.id, plan_id=None, status="active", renewal_enabled=True, auto_renew=True)
+        other_subscription = Subscription(company_id=other_company.id, plan_id=None, status="active", renewal_enabled=True, auto_renew=True)
+        db.session.add_all([subscription, other_subscription])
+        db.session.commit()
+
+        company_id = company.id
+        other_company_id = other_company.id
+        subscription_id = subscription.id
+        other_subscription_id = other_subscription.id
+
+    client.post("/auth/login", data={"username": "superadmin", "password": "admin123"})
+
+    for action in ("cancel", "suspend"):
+        resp = client.post(
+            f"/superadmin/subscriptions/{subscription_id}/action",
+            data={"action": "reactivate" if action == "cancel" else action},
+            follow_redirects=True,
+        )
+        assert resp.status_code == 200
+
+    with stock_app.app.app_context():
+        # La empresa objetivo sigue existiendo pese a las transiciones de estado de su suscripción.
+        assert db.session.get(Company, company_id) is not None
+        # Otra empresa no debe verse afectada por operaciones sobre subscription_id ajeno.
+        assert db.session.get(Company, other_company_id) is not None
+        other_refreshed = db.session.get(Subscription, other_subscription_id)
+        assert other_refreshed is not None
+        assert other_refreshed.status == "active"
 
 
 def test_superadmin_login_survives_admin_bootstrap_with_different_env_owner(monkeypatch):
