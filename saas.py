@@ -2700,7 +2700,7 @@ def users_update_role(user_id):
 @bp.route("/password-recovery")
 @superadmin_required
 def password_recovery_panel():
-    from app import PasswordRecoveryRequest
+    from app import Company, PasswordRecoveryRequest, User, db
 
     _require_superadmin()
     status = (request.args.get("status") or "all").strip().lower()
@@ -2708,15 +2708,72 @@ def password_recovery_panel():
     if status in {"pendiente", "atendida", "cerrada"}:
         query = query.filter(PasswordRecoveryRequest.status == status)
     items = query.order_by(PasswordRecoveryRequest.requested_at.desc()).all()
+    company_users = (
+        db.session.query(User, Company.name)
+        .join(Company, Company.id == User.company_id)
+        .filter(
+            User.company_id.isnot(None),
+            User.role != "superadmin",
+            User.active.is_(True),
+        )
+        .order_by(User.company_id.asc(), User.username.asc())
+        .all()
+    )
     temp_password = session.pop("password_recovery_temp_password", None)
     temp_password_user = session.pop("password_recovery_temp_password_user", None)
     return render_template(
         "saas/password_recovery.html",
         items=items,
+        company_users=company_users,
         current_status=status,
         temp_password=temp_password,
         temp_password_user=temp_password_user,
     )
+
+
+@bp.route("/password-recovery/company-user/reset", methods=["POST"])
+@superadmin_required
+def password_recovery_company_user_reset():
+    from app import User, db, record_audit
+
+    _require_superadmin()
+    raw_user_id = request.form.get("user_id")
+    try:
+        user_id = int(raw_user_id)
+    except (TypeError, ValueError):
+        flash("Selecciona un usuario de empresa válido.", "danger")
+        return _redirect_back("saas.password_recovery_panel")
+
+    user = (
+        User.query.filter(
+            User.id == user_id,
+            User.company_id.isnot(None),
+            User.role != "superadmin",
+            User.active.is_(True),
+        )
+        .first()
+    )
+    if user is None:
+        flash("El usuario de empresa no está disponible para restablecer su contraseña.", "danger")
+        return _redirect_back("saas.password_recovery_panel")
+
+    temp_password = _temporary_password()
+    user.set_password(temp_password)
+    user.must_change_password = True
+    record_audit(
+        action="superadmin_company_user_password_reset",
+        entity="user",
+        entity_id=user.id,
+        user_id=current_user.id,
+        company_id=user.company_id,
+        detail="Contraseña temporal generada desde recuperación de contraseñas.",
+    )
+    db.session.commit()
+
+    session["password_recovery_temp_password"] = temp_password
+    session["password_recovery_temp_password_user"] = user.username
+    flash("Contraseña temporal generada. Copiala ahora; se mostrará una sola vez.", "warning")
+    return _redirect_back("saas.password_recovery_panel")
 
 
 @bp.route("/password-recovery/<int:request_id>/status", methods=["POST"])
