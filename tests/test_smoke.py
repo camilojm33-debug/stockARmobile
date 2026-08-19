@@ -333,6 +333,22 @@ def test_cash_close_breakdown_counts_tarjeta_sales():
     assert "$18000.00" in html
 
 
+def test_device_clock_and_cash_midnight_reminder_are_rendered():
+    client = stock_app.app.test_client()
+    client.post("/auth/login", data={"username": "empresa_admin", "password": "admin123"})
+    open_cash_session(client)
+
+    products_page = client.get("/productos/")
+    assert products_page.status_code == 200
+    assert "data-device-clock" in products_page.data.decode("utf-8")
+
+    cash_page = client.get("/caja/")
+    assert cash_page.status_code == 200
+    html = cash_page.data.decode("utf-8")
+    assert "cash-midnight-reminder" in html
+    assert "stockarmobile:device-clock" in html
+
+
 def test_sale_persists_required_comprobante_fields():
     client = stock_app.app.test_client()
     client.post("/auth/login", data={"username": "empresa_admin", "password": "admin123"})
@@ -2548,6 +2564,8 @@ def test_my_company_module_requires_pin_and_shows_tenant_admin_features():
     assert "panel=general" in html
     assert "panel=stats" in html
     assert "panel=billing" in html
+    assert "company-day-calendar" in html
+    assert "company-settings/day-activity" in html
 
     for panel_name in ["company", "employees", "schedules", "branches", "billing", "security", "general", "stats"]:
         panel_response = client.get(f"/admin/company-settings?panel={panel_name}")
@@ -2587,6 +2605,52 @@ def test_my_company_module_requires_pin_and_shows_tenant_admin_features():
     user_access = client.get("/admin/company-settings")
     assert user_access.status_code == 200
     assert "Validar PIN" in user_access.data.decode("utf-8")
+
+
+def test_my_company_day_activity_is_pin_protected_and_tenant_scoped():
+    from services.company_security_service import CompanySecurityService
+
+    client = stock_app.app.test_client()
+    with stock_app.app.app_context():
+        from app import CashMovement, Company, Expense, Sale, utcnow
+
+        company_a = Company.query.filter_by(name="Empresa Demo").first()
+        admin_a = User.query.filter_by(username="negocio_admin").first()
+        assert company_a is not None
+        assert admin_a is not None
+        company_b = Company(name="Empresa Calendario B", active=True)
+        db.session.add(company_b)
+        db.session.flush()
+        admin_b = User(username="calendar_admin_b", email="calendar_admin_b@test.local", role="admin", company_id=company_b.id, active=True)
+        admin_b.set_password("admin123")
+        db.session.add(admin_b)
+        CompanySecurityService.set_pin(company_a, "1234")
+
+        db.session.add_all(
+            [
+                Sale(customer="Cliente A", subtotal=100, discount=0, tax=0, total_amount=100, payment_method="EFECTIVO", seller_id=admin_a.id, company_id=company_a.id, date=utcnow()),
+                Expense(category="Servicios", description="Gasto A", amount=20, company_id=company_a.id, user_id=admin_a.id, date=utcnow()),
+                CashMovement(user_id=admin_a.id, company_id=company_a.id, movement_type="ingreso", category="manual", amount=15, description="Ingreso A", created_at=utcnow()),
+                Sale(customer="Cliente B", subtotal=999, discount=0, tax=0, total_amount=999, payment_method="EFECTIVO", seller_id=admin_b.id, company_id=company_b.id, date=utcnow()),
+            ]
+        )
+        db.session.commit()
+        selected_date = utcnow().date().isoformat()
+
+    client.post("/auth/login", data={"username": "negocio_admin", "password": "admin123"})
+    locked = client.get(f"/admin/company-settings/day-activity?date={selected_date}")
+    assert locked.status_code == 403
+
+    client.post("/admin/company-settings/pin/verify", data={"access_pin": "1234"})
+    response = client.get(f"/admin/company-settings/day-activity?date={selected_date}")
+    assert response.status_code == 200
+    payload = response.get_json()
+    assert payload["success"] is True
+    assert payload["summary"]["sales_count"] == 1
+    assert payload["summary"]["sales_total"] == 100.0
+    assert payload["summary"]["expenses_total"] == 20.0
+    assert payload["summary"]["cash_movements_total"] == 15.0
+    assert all("Cliente B" not in row["detail"] for row in payload["activities"])
 
 
 def test_my_company_module_supports_employee_create_and_reset():

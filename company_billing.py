@@ -2543,6 +2543,167 @@ def company_settings():
     )
 
 
+@bp.route("/company-settings/day-activity")
+@company_member_required
+def company_settings_day_activity():
+    from app import CashMovement, CashSession, Company, Expense, PurchaseOrder, Quote, Sale
+    from services.sales_calculation_service import is_confirmed_sale_status
+
+    company_id = getattr(current_user, "company_id", None)
+    company = _load_company(company_id)
+    blocked = _pin_guard(company)
+    if blocked is not None:
+        return jsonify({"success": False, "error": "Debes validar PIN para consultar la actividad diaria."}), 403
+
+    selected_date = parse_date_yyyy_mm_dd(request.args.get("date"))
+    if selected_date is None:
+        return jsonify({"success": False, "error": "Fecha inválida."}), 400
+
+    selected_day = selected_date.date()
+    day_start = datetime.combine(selected_day, datetime.min.time())
+    day_end = day_start + timedelta(days=1)
+    activities = []
+
+    sales = (
+        Sale.query.filter(Sale.company_id == company.id, Sale.date >= day_start, Sale.date < day_end)
+        .order_by(Sale.date.asc(), Sale.id.asc())
+        .all()
+    )
+    confirmed_sales = [sale for sale in sales if is_confirmed_sale_status(sale.status)]
+    for sale in sales:
+        activities.append(
+            {
+                "time": sale.date.strftime("%H:%M") if sale.date else "--:--",
+                "kind": "sale",
+                "title": f"Venta #{sale.id}",
+                "detail": sale.customer or "Consumidor final",
+                "amount": float(sale.total_amount or 0),
+                "status": sale.status or "confirmada",
+            }
+        )
+
+    purchases = (
+        PurchaseOrder.query.filter(PurchaseOrder.company_id == company.id, PurchaseOrder.date >= day_start, PurchaseOrder.date < day_end)
+        .order_by(PurchaseOrder.date.asc(), PurchaseOrder.id.asc())
+        .all()
+    )
+    for purchase in purchases:
+        activities.append(
+            {
+                "time": purchase.date.strftime("%H:%M") if purchase.date else "--:--",
+                "kind": "purchase",
+                "title": f"Compra #{purchase.id}",
+                "detail": purchase.supplier.name if purchase.supplier else "Sin proveedor",
+                "amount": float(purchase.total_amount or 0),
+                "status": purchase.status or "recibida",
+            }
+        )
+
+    expenses = (
+        Expense.query.filter(Expense.company_id == company.id, Expense.date >= day_start, Expense.date < day_end)
+        .order_by(Expense.date.asc(), Expense.id.asc())
+        .all()
+    )
+    for expense in expenses:
+        activities.append(
+            {
+                "time": expense.date.strftime("%H:%M") if expense.date else "--:--",
+                "kind": "expense",
+                "title": expense.category or "Gasto",
+                "detail": expense.description or "Sin descripción",
+                "amount": float(expense.amount or 0),
+                "status": expense.payment_method or "registrado",
+            }
+        )
+
+    movements = (
+        CashMovement.query.filter(CashMovement.company_id == company.id, CashMovement.created_at >= day_start, CashMovement.created_at < day_end)
+        .order_by(CashMovement.created_at.asc(), CashMovement.id.asc())
+        .all()
+    )
+    for movement in movements:
+        if movement.sale_id:
+            continue
+        activities.append(
+            {
+                "time": movement.created_at.strftime("%H:%M") if movement.created_at else "--:--",
+                "kind": "cash",
+                "title": f"Caja: {(movement.movement_type or 'movimiento').title()}",
+                "detail": movement.description or movement.category or "Movimiento manual",
+                "amount": float(movement.amount or 0),
+                "status": movement.category or "caja",
+            }
+        )
+
+    quotes = (
+        Quote.query.filter(Quote.company_id == company.id, Quote.date >= day_start, Quote.date < day_end)
+        .order_by(Quote.date.asc(), Quote.id.asc())
+        .all()
+    )
+    for quote in quotes:
+        activities.append(
+            {
+                "time": quote.date.strftime("%H:%M") if quote.date else "--:--",
+                "kind": "quote",
+                "title": f"Presupuesto {quote.number or ('P-' + str(quote.id))}",
+                "detail": quote.consumer_name or (quote.client.name if quote.client else "Consumidor final"),
+                "amount": float(quote.total_amount or 0),
+                "status": quote.status or "BORRADOR",
+            }
+        )
+
+    sessions = (
+        CashSession.query.filter(
+            CashSession.company_id == company.id,
+            ((CashSession.opened_at >= day_start) & (CashSession.opened_at < day_end))
+            | ((CashSession.closed_at >= day_start) & (CashSession.closed_at < day_end)),
+        )
+        .order_by(CashSession.opened_at.asc(), CashSession.id.asc())
+        .all()
+    )
+    for cash_session in sessions:
+        if cash_session.opened_at and day_start <= cash_session.opened_at < day_end:
+            activities.append(
+                {
+                    "time": cash_session.opened_at.strftime("%H:%M"),
+                    "kind": "cash-session",
+                    "title": f"Caja #{cash_session.id} abierta",
+                    "detail": cash_session.user.name if cash_session.user else "Usuario",
+                    "amount": float(cash_session.opening_amount or 0),
+                    "status": "abierta",
+                }
+            )
+        if cash_session.closed_at and day_start <= cash_session.closed_at < day_end:
+            activities.append(
+                {
+                    "time": cash_session.closed_at.strftime("%H:%M"),
+                    "kind": "cash-session",
+                    "title": f"Caja #{cash_session.id} cerrada",
+                    "detail": cash_session.closing_note or "Arqueo de caja",
+                    "amount": float(cash_session.closing_amount or 0),
+                    "status": "cerrada",
+                }
+            )
+
+    activities.sort(key=lambda item: item["time"])
+    return jsonify(
+        {
+            "success": True,
+            "date": selected_day.isoformat(),
+            "summary": {
+                "sales_count": len(confirmed_sales),
+                "sales_total": float(sum((sale.total_amount or 0) for sale in confirmed_sales)),
+                "purchases_total": float(sum((purchase.total_amount or 0) for purchase in purchases)),
+                "expenses_total": float(sum((expense.amount or 0) for expense in expenses)),
+                "cash_movements_total": float(sum((movement.amount or 0) for movement in movements if not movement.sale_id)),
+                "quotes_count": len(quotes),
+                "cash_sessions_count": len(sessions),
+            },
+            "activities": activities,
+        }
+    )
+
+
 def _billing_business_config(company):
     return BusinessBillingService.load_config(company)
 

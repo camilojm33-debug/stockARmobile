@@ -768,6 +768,16 @@
           <small class="text-muted">{{ current_user.role or 'user' }}</small>
         </span>
       </div>
+      .device-clock {
+        display: inline-flex;
+        align-items: center;
+        gap: .35rem;
+        color: var(--app-muted);
+        font-size: .78rem;
+        font-variant-numeric: tabular-nums;
+        white-space: nowrap;
+      }
+      .device-clock time { color: var(--app-ink); font-weight: 600; }
       <div class="offline-status-panel">
         <div class="d-flex justify-content-between align-items-center gap-2 mb-2">
           <span class="small fw-semibold text-uppercase text-muted">Conectividad</span>
@@ -814,6 +824,7 @@
           <button class="btn btn-outline-secondary w-100" type="submit"><i class="bi bi-box-arrow-right me-1"></i>Salir</button>
         </form>
       </div>
+      <div class="device-clock mt-3" aria-live="polite"><i class="bi bi-clock"></i><time data-device-clock>--:--:--</time></div>
     </div>
   </aside>
   <div class="app-main">
@@ -824,6 +835,7 @@
         <span>StockArmobile</span>
       </span>
       <div class="d-flex align-items-center gap-2 ms-auto">
+        <span class="device-clock d-none d-sm-inline"><i class="bi bi-clock"></i><time data-device-clock>--:--:--</time></span>
         <span id="offlineConnectivityBadgeCompact" class="badge text-bg-secondary d-none d-md-inline">Verificando...</span>
         <button class="btn btn-outline-primary btn-sm" type="button" data-bs-toggle="modal" data-bs-target="#spotlightModal"><i class="bi bi-search"></i></button>
         <button class="btn btn-outline-secondary btn-sm position-relative" type="button" data-bs-toggle="offcanvas" data-bs-target="#notificationCenter"><i class="bi bi-bell"></i>{% if notification_count %}<span class="js-notification-badge position-absolute top-0 start-100 translate-middle badge rounded-pill bg-danger">{{ notification_count }}</span>{% endif %}</button>
@@ -1055,6 +1067,19 @@
           });
         });
       });
+      function updateDeviceClock() {
+        const now = new Date();
+        const value = new Intl.DateTimeFormat(undefined, {
+          hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: false
+        }).format(now);
+        document.querySelectorAll('[data-device-clock]').forEach(function(clock) {
+          clock.textContent = value;
+          clock.dateTime = now.toISOString();
+        });
+        window.dispatchEvent(new CustomEvent('stockarmobile:device-clock', { detail: { now: now } }));
+      }
+      updateDeviceClock();
+      window.setInterval(updateDeviceClock, 1000);
       if ('serviceWorker' in navigator) {
         navigator.serviceWorker.register('/service-worker.js').then(function() {
           ['/productos/api/products', '/clientes/api/clients', '/ventas/api/recent'].forEach(function(url) {

@@ -1471,6 +1471,42 @@
     </div>
   </div>
 
+  <section class="company-day-calendar app-card mb-4" id="company-day-calendar" data-activity-url="{{ url_for('company_billing.company_settings_day_activity') }}">
+    <div class="card-body p-4">
+      <div class="d-flex flex-column flex-lg-row justify-content-between align-items-lg-center gap-3 mb-4">
+        <div>
+          <span class="page-kicker"><i class="bi bi-calendar3"></i> Operación diaria</span>
+          <h2 class="h5 fw-bold mb-1">Calendario de actividad</h2>
+          <p class="text-muted mb-0">Seleccioná un día para revisar ventas, compras, gastos, caja y presupuestos.</p>
+        </div>
+        <div class="d-flex align-items-center gap-2">
+          <button class="btn btn-outline-secondary btn-sm" id="company-calendar-prev" type="button" aria-label="Mes anterior"><i class="bi bi-chevron-left"></i></button>
+          <div class="fw-semibold text-center" id="company-calendar-month" style="min-width: 170px;"></div>
+          <button class="btn btn-outline-secondary btn-sm" id="company-calendar-next" type="button" aria-label="Mes siguiente"><i class="bi bi-chevron-right"></i></button>
+        </div>
+      </div>
+      <div class="row g-4">
+        <div class="col-lg-7">
+          <div class="company-calendar-weekdays" aria-hidden="true"><span>Lun</span><span>Mar</span><span>Mié</span><span>Jue</span><span>Vie</span><span>Sáb</span><span>Dom</span></div>
+          <div class="company-calendar-grid" id="company-calendar-grid" aria-label="Calendario de actividad"></div>
+        </div>
+        <div class="col-lg-5">
+          <div class="company-day-detail h-100">
+            <div class="d-flex justify-content-between align-items-center gap-2 mb-3">
+              <div>
+                <div class="small text-muted text-uppercase fw-semibold">Fecha seleccionada</div>
+                <div class="h6 mb-0" id="company-day-title">Cargando...</div>
+              </div>
+              <span class="badge text-bg-primary" id="company-day-status">Actualizando</span>
+            </div>
+            <div class="company-day-summary" id="company-day-summary"></div>
+            <div class="company-day-timeline mt-3" id="company-day-timeline" aria-live="polite"></div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </section>
+
   {% set dashboard = company_dashboard or {} %}
   <div class="card app-card mb-4 company-dashboard-shell">
     <div class="card-body p-4 p-lg-5">
@@ -1693,6 +1729,49 @@
   .company-chart-card {
     border-radius: 20px;
   }
+  .company-day-calendar {
+    border-radius: 22px;
+    background: linear-gradient(135deg, rgba(16,185,129,.08), rgba(37,99,235,.06) 48%, rgba(255,255,255,.98));
+  }
+  .company-calendar-weekdays,
+  .company-calendar-grid {
+    display: grid;
+    grid-template-columns: repeat(7, minmax(0, 1fr));
+    gap: .42rem;
+  }
+  .company-calendar-weekdays { margin-bottom: .5rem; }
+  .company-calendar-weekdays span {
+    color: var(--app-muted);
+    font-size: .73rem;
+    font-weight: 700;
+    text-align: center;
+    text-transform: uppercase;
+  }
+  .company-calendar-day {
+    min-height: 52px;
+    border: 1px solid var(--app-line);
+    border-radius: 8px;
+    background: var(--app-panel);
+    color: var(--app-ink);
+    font: inherit;
+    font-variant-numeric: tabular-nums;
+    transition: background .16s ease, border-color .16s ease, transform .16s ease;
+  }
+  .company-calendar-day:hover { border-color: #60a5fa; background: #eff6ff; transform: translateY(-1px); }
+  .company-calendar-day.is-muted { color: var(--app-muted); opacity: .48; }
+  .company-calendar-day.is-today { box-shadow: inset 0 0 0 1px #2563eb; }
+  .company-calendar-day.is-selected { background: #2563eb; border-color: #2563eb; color: #fff; box-shadow: 0 8px 18px rgba(37,99,235,.24); }
+  .company-day-detail { border-left: 1px solid var(--app-line); padding-left: 1.5rem; }
+  .company-day-summary { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: .6rem; }
+  .company-day-metric { border: 1px solid var(--app-line); border-radius: 8px; background: var(--app-panel); padding: .7rem; }
+  .company-day-metric small { display: block; color: var(--app-muted); margin-bottom: .15rem; }
+  .company-day-timeline { max-height: 340px; overflow-y: auto; }
+  .company-day-event { display: grid; grid-template-columns: 46px 1fr auto; gap: .65rem; align-items: start; padding: .65rem 0; border-top: 1px solid var(--app-line); }
+  .company-day-event-time { color: var(--app-muted); font-size: .8rem; font-variant-numeric: tabular-nums; }
+  .company-day-event-title { font-weight: 700; font-size: .9rem; }
+  .company-day-event-detail { color: var(--app-muted); font-size: .8rem; }
+  .company-day-event-amount { font-size: .85rem; font-weight: 700; white-space: nowrap; }
+  @media (max-width: 991.98px) { .company-day-detail { border-left: 0; border-top: 1px solid var(--app-line); padding: 1.25rem 0 0; } }
   .company-module-grid { margin-top: .25rem; }
   @media (max-width: 575.98px) {
     .company-module-card .card-body { padding: 1rem !important; }
@@ -1759,6 +1838,98 @@
   })();
 </script>
 {% endif %}
+<script>
+  (() => {
+    const root = document.getElementById('company-day-calendar');
+    if (!root) return;
+
+    const endpoint = root.dataset.activityUrl;
+    const grid = document.getElementById('company-calendar-grid');
+    const monthLabel = document.getElementById('company-calendar-month');
+    const title = document.getElementById('company-day-title');
+    const status = document.getElementById('company-day-status');
+    const summary = document.getElementById('company-day-summary');
+    const timeline = document.getElementById('company-day-timeline');
+    const today = new Date();
+    let cursor = new Date(today.getFullYear(), today.getMonth(), 1);
+    let selected = new Date(today.getFullYear(), today.getMonth(), today.getDate());
+
+    const formatMoney = value => new Intl.NumberFormat(undefined, { style: 'currency', currency: {{ (company.currency or 'ARS')|tojson }}, minimumFractionDigits: 2 }).format(Number(value || 0));
+    const isoDate = value => [value.getFullYear(), String(value.getMonth() + 1).padStart(2, '0'), String(value.getDate()).padStart(2, '0')].join('-');
+    const sameDay = (left, right) => isoDate(left) === isoDate(right);
+    const escapeHtml = value => { const node = document.createElement('div'); node.textContent = value == null ? '' : String(value); return node.innerHTML; };
+
+    function renderCalendar() {
+      monthLabel.textContent = new Intl.DateTimeFormat(undefined, { month: 'long', year: 'numeric' }).format(cursor);
+      grid.innerHTML = '';
+      const firstWeekday = (cursor.getDay() + 6) % 7;
+      const daysInMonth = new Date(cursor.getFullYear(), cursor.getMonth() + 1, 0).getDate();
+      const previousMonthDays = new Date(cursor.getFullYear(), cursor.getMonth(), 0).getDate();
+      for (let index = 0; index < 42; index += 1) {
+        const dayOffset = index - firstWeekday + 1;
+        const day = dayOffset < 1
+          ? new Date(cursor.getFullYear(), cursor.getMonth() - 1, previousMonthDays + dayOffset)
+          : dayOffset > daysInMonth
+            ? new Date(cursor.getFullYear(), cursor.getMonth() + 1, dayOffset - daysInMonth)
+            : new Date(cursor.getFullYear(), cursor.getMonth(), dayOffset);
+        const button = document.createElement('button');
+        button.type = 'button';
+        button.className = 'company-calendar-day' + (day.getMonth() !== cursor.getMonth() ? ' is-muted' : '') + (sameDay(day, today) ? ' is-today' : '') + (sameDay(day, selected) ? ' is-selected' : '');
+        button.textContent = String(day.getDate());
+        button.setAttribute('aria-label', new Intl.DateTimeFormat(undefined, { dateStyle: 'full' }).format(day));
+        button.addEventListener('click', () => {
+          selected = day;
+          cursor = new Date(day.getFullYear(), day.getMonth(), 1);
+          renderCalendar();
+          loadDay();
+        });
+        grid.appendChild(button);
+      }
+    }
+
+    function renderDay(payload) {
+      const selectedDate = new Date(payload.date + 'T12:00:00');
+      title.textContent = new Intl.DateTimeFormat(undefined, { dateStyle: 'full' }).format(selectedDate);
+      status.textContent = payload.activities.length ? payload.activities.length + ' eventos' : 'Sin eventos';
+      status.className = 'badge ' + (payload.activities.length ? 'text-bg-primary' : 'text-bg-secondary');
+      const metrics = [
+        ['Ventas', payload.summary.sales_count + ' · ' + formatMoney(payload.summary.sales_total)],
+        ['Compras', formatMoney(payload.summary.purchases_total)],
+        ['Gastos', formatMoney(payload.summary.expenses_total)],
+        ['Caja manual', formatMoney(payload.summary.cash_movements_total)],
+        ['Presupuestos', String(payload.summary.quotes_count)],
+        ['Sesiones de caja', String(payload.summary.cash_sessions_count)]
+      ];
+      summary.innerHTML = metrics.map(metric => '<div class="company-day-metric"><small>' + metric[0] + '</small><strong>' + metric[1] + '</strong></div>').join('');
+      timeline.innerHTML = payload.activities.length
+        ? payload.activities.map(activity => '<div class="company-day-event"><span class="company-day-event-time">' + escapeHtml(activity.time) + '</span><div><div class="company-day-event-title">' + escapeHtml(activity.title) + '</div><div class="company-day-event-detail">' + escapeHtml(activity.detail) + ' · ' + escapeHtml(activity.status) + '</div></div><span class="company-day-event-amount">' + formatMoney(activity.amount) + '</span></div>').join('')
+        : '<div class="text-muted small py-3">No hay actividad registrada para esta fecha.</div>';
+    }
+
+    async function loadDay() {
+      status.textContent = 'Actualizando';
+      status.className = 'badge text-bg-secondary';
+      timeline.innerHTML = '<div class="text-muted small py-3">Cargando actividad...</div>';
+      try {
+        const response = await fetch(endpoint + '?date=' + encodeURIComponent(isoDate(selected)), { credentials: 'same-origin', headers: { Accept: 'application/json' } });
+        const payload = await response.json();
+        if (!response.ok || !payload.success) throw new Error(payload.error || 'No se pudo cargar la actividad.');
+        renderDay(payload);
+      } catch (error) {
+        title.textContent = new Intl.DateTimeFormat(undefined, { dateStyle: 'full' }).format(selected);
+        status.textContent = 'Sin acceso';
+        status.className = 'badge text-bg-warning';
+        summary.innerHTML = '';
+        timeline.innerHTML = '<div class="text-danger small py-3">' + escapeHtml(error.message) + '</div>';
+      }
+    }
+
+    document.getElementById('company-calendar-prev').addEventListener('click', () => { cursor = new Date(cursor.getFullYear(), cursor.getMonth() - 1, 1); renderCalendar(); });
+    document.getElementById('company-calendar-next').addEventListener('click', () => { cursor = new Date(cursor.getFullYear(), cursor.getMonth() + 1, 1); renderCalendar(); });
+    renderCalendar();
+    loadDay();
+  })();
+</script>
 {% if panel == 'general' %}
 <script>
   (() => {

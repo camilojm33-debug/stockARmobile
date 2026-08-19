@@ -104,6 +104,11 @@
   </div>
 
   {% if open_session %}
+  <div class="alert alert-warning border-0 shadow-sm mb-3 d-none" id="cash-midnight-reminder" role="alert">
+    <div class="fw-semibold mb-1"><i class="bi bi-clock-history me-1"></i>La jornada ya cambió según la hora de este dispositivo.</div>
+    <div class="small">Recomendamos realizar el arqueo y cerrar la caja abierta para evitar que el cierre quede desfasado.</div>
+    <a class="btn btn-sm btn-warning mt-2" href="#section-arqueo">Ir al cierre de caja</a>
+  </div>
   <div class="card app-card mb-3">
     <div class="card-body">
       <div class="d-flex flex-wrap justify-content-between align-items-center gap-2 mb-3">
@@ -356,6 +361,25 @@
       </div>
     </div>
   </div>
+{% endblock %}
+
+{% block extra_js %}
+<script>
+  (() => {
+    const reminder = document.getElementById('cash-midnight-reminder');
+    if (!reminder) return;
+    let reminderDate = null;
+    function updateCashMidnightReminder(now) {
+      const today = [now.getFullYear(), now.getMonth(), now.getDate()].join('-');
+      if (reminderDate === null) reminderDate = today;
+      if (today !== reminderDate || now.getHours() === 0) reminder.classList.remove('d-none');
+    }
+    window.addEventListener('stockarmobile:device-clock', function(event) {
+      updateCashMidnightReminder(event.detail.now);
+    });
+    updateCashMidnightReminder(new Date());
+  })();
+</script>
 {% endblock %}
 
 {% block extra_scripts_inline %}
