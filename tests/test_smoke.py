@@ -3740,6 +3740,26 @@ SEO_NICHE_PAGES = [
         "h1": "Sistema para supermercados: stock, ventas y compras en un solo lugar",
         "must_contain": ["códigos de barras", "proveedores", "Reportes"],
     },
+    {
+        "endpoint": "/sistema-de-presupuestos",
+        "title": "Sistema de presupuestos para comercios en Argentina | StockArmobile",
+        "description": (
+            "Creá presupuestos para tus clientes, generá PDF, compartilos por WhatsApp o email "
+            "y convertí presupuestos en ventas con StockArmobile."
+        ),
+        "h1": "Sistema de presupuestos para comercios: creá, enviá y convertí presupuestos en ventas",
+        "must_contain": ["PDF", "WhatsApp", "email", "convert"],
+    },
+    {
+        "endpoint": "/control-de-stock",
+        "title": "Sistema de control de stock para comercios en Argentina | StockArmobile",
+        "description": (
+            "Controlá el stock de tu comercio, configurá mínimos, detectá productos con bajo "
+            "stock y consultá reportes para tomar mejores decisiones."
+        ),
+        "h1": "Sistema de control de stock para comercios: productos, alertas y existencias bajo control",
+        "must_contain": ["stock mínimo", "reporte", "códigos de barras"],
+    },
 ]
 
 FORBIDDEN_CLAIMS = [
@@ -3756,6 +3776,18 @@ FORBIDDEN_CLAIMS = [
     "módulo de corralones",
     "módulo de kioscos",
     "módulo de supermercados",
+    "firma digital",
+    "aprobación online",
+    "portal del cliente",
+    "seguimiento automático",
+    "vencimiento del presupuesto",
+    "pago desde el presupuesto",
+    "predicción de demanda",
+    "inteligencia artificial",
+    "reposición automática",
+    "compras automáticas",
+    "inventario por sucursal",
+    "multi-sucursal",
 ]
 
 
@@ -3831,6 +3863,31 @@ def test_landing_links_to_seo_niche_pages():
     assert 'href="/software-para-corralones"' in html
     assert 'href="/sistema-para-kioscos"' in html
     assert 'href="/sistema-para-supermercados"' in html
+    assert 'href="/sistema-de-presupuestos"' in html
+    assert 'href="/control-de-stock"' in html
+
+
+def test_seo_function_pages_have_contextual_internal_links():
+    client = stock_app.app.test_client()
+
+    for endpoint in [
+        "/software-para-ferreterias",
+        "/software-para-corralones",
+        "/sistema-para-kioscos",
+        "/sistema-para-supermercados",
+    ]:
+        html = client.get(endpoint).data.decode("utf-8")
+        assert 'href="/control-de-stock"' in html, f"{endpoint} no enlaza a control-de-stock"
+
+    for endpoint in ["/software-para-ferreterias", "/software-para-corralones"]:
+        html = client.get(endpoint).data.decode("utf-8")
+        assert 'href="/sistema-de-presupuestos"' in html, f"{endpoint} no enlaza a sistema-de-presupuestos"
+
+    presupuestos_html = client.get("/sistema-de-presupuestos").data.decode("utf-8")
+    assert 'href="/control-de-stock"' in presupuestos_html
+
+    stock_html = client.get("/control-de-stock").data.decode("utf-8")
+    assert 'href="/sistema-de-presupuestos"' in stock_html
 
 
 def test_seo_phase1_phase2_and_auth_noindex_still_intact_after_phase3():

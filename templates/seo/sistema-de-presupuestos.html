@@ -81,9 +81,9 @@
       <div class="container py-5 py-lg-6">
         <div class="row align-items-center g-5">
           <div class="col-lg-8 mx-auto text-center reveal" data-delay="80">
-            <span class="eyebrow"><i class="bi bi-bricks"></i> Software para corralones</span>
-            <h1 class="display-4 fw-bold mb-3">Software para corralones: stock, presupuestos y ventas organizados</h1>
-            <p class="lead text-muted mb-4">Para corralones que manejan materiales de construcción: controlá el stock disponible, armá presupuestos para tus clientes y organizá tus compras a proveedores en una sola plataforma.</p>
+            <span class="eyebrow"><i class="bi bi-file-earmark-text"></i> Sistema de presupuestos</span>
+            <h1 class="display-4 fw-bold mb-3">Sistema de presupuestos para comercios: creá, enviá y convertí presupuestos en ventas</h1>
+            <p class="lead text-muted mb-4">Armá presupuestos para tus clientes con los productos de tu catálogo, compartilos por WhatsApp o email, y convertilos en venta en el momento en que el cliente confirma, sin volver a cargar nada.</p>
             <div class="d-flex flex-wrap justify-content-center gap-3">
               <a class="btn btn-primary btn-lg btn-pill" href="{{ url_for('auth.register') }}?selected_plan=trial">Comenzar prueba gratuita</a>
               <a class="btn btn-outline-primary btn-lg btn-pill" href="{{ url_for('auth.demo') }}">Ver demo interactiva</a>
@@ -94,77 +94,93 @@
     </header>
 
     <main>
-      <section class="section" id="stock-materiales">
+      <section class="section" id="crear-presupuestos">
         <div class="container">
           <div class="section-heading text-center reveal" data-delay="40">
-            <span class="eyebrow">Stock</span>
-            <h2 class="section-title">Stock de materiales bajo control</h2>
+            <span class="eyebrow">Creación</span>
+            <h2 class="section-title">Creá presupuestos para tus clientes</h2>
           </div>
           <div class="row justify-content-center mt-3">
             <div class="col-lg-9">
               <div class="feature-card p-4">
-                <p class="text-muted mb-0">Cargá tus materiales con su código de barras o QR y llevá el control de existencias de cada uno. El sistema te avisa cuando un material llega a su stock mínimo configurado, para que puedas planificar la reposición a tiempo. Conocé en detalle el <a href="{{ url_for('seo_pages.control_de_stock') }}">sistema de control de stock</a>.</p>
+                <p class="text-muted mb-0">Elegí un cliente de tu cartera y agregá los productos de tu catálogo para armar el presupuesto. Podés editarlo después si cambian las cantidades o los precios, antes de compartirlo con tu cliente.</p>
               </div>
             </div>
           </div>
         </div>
       </section>
 
-      <section class="section section-soft" id="presupuestos">
+      <section class="section section-soft" id="generar-pdf">
         <div class="container">
           <div class="section-heading text-center reveal" data-delay="40">
-            <span class="eyebrow">Presupuestos</span>
-            <h2 class="section-title">Presupuestos para tus clientes</h2>
+            <span class="eyebrow">PDF</span>
+            <h2 class="section-title">Generá y compartí presupuestos en PDF</h2>
           </div>
           <div class="row justify-content-center mt-3">
             <div class="col-lg-9">
               <div class="feature-card p-4">
-                <p class="text-muted mb-0">Armá presupuestos con los materiales que necesita cada cliente, enviálos por WhatsApp o email, y convertilos en venta cuando el cliente confirma. Queda todo registrado junto al resto de tu operación comercial. Conocé en detalle el <a href="{{ url_for('seo_pages.presupuestos') }}">sistema de presupuestos</a>.</p>
+                <p class="text-muted mb-0">Cada presupuesto se puede generar como PDF listo para imprimir o compartir, con el detalle de los productos y el total calculado.</p>
               </div>
             </div>
           </div>
         </div>
       </section>
 
-      <section class="section" id="ventas-caja">
+      <section class="section" id="whatsapp-email">
         <div class="container">
           <div class="section-heading text-center reveal" data-delay="40">
-            <span class="eyebrow">Ventas y caja</span>
-            <h2 class="section-title">Ventas y caja del día a día</h2>
+            <span class="eyebrow">Envío</span>
+            <h2 class="section-title">Enviá presupuestos por WhatsApp o email</h2>
           </div>
           <div class="row justify-content-center mt-3">
             <div class="col-lg-9">
               <div class="feature-card p-4">
-                <p class="text-muted mb-0">Registrá tus ventas con checkout rápido y control de comprobantes, y mantené la caja ordenada por usuario. Podés cobrar en efectivo, tarjeta, transferencia o con la integración disponible con Mercado Pago.</p>
+                <p class="text-muted mb-0">Compartí el presupuesto directamente por WhatsApp o por email, sin tener que exportar el archivo manualmente para después subirlo a otra aplicación.</p>
               </div>
             </div>
           </div>
         </div>
       </section>
 
-      <section class="section section-soft" id="compras-proveedores">
+      <section class="section section-soft" id="convertir-en-venta">
         <div class="container">
           <div class="section-heading text-center reveal" data-delay="40">
-            <span class="eyebrow">Compras</span>
-            <h2 class="section-title">Compras y proveedores</h2>
+            <span class="eyebrow">Conversión</span>
+            <h2 class="section-title">Convertí un presupuesto en una venta</h2>
           </div>
           <div class="row justify-content-center mt-3">
             <div class="col-lg-9">
               <div class="feature-card p-4">
-                <p class="text-muted mb-0">Registrá tus proveedores y las compras que les hacés, con reportes que te ayudan a decidir cuándo reponer materiales. Todo queda vinculado al stock de tu corralón para mantener las existencias al día.</p>
+                <p class="text-muted mb-0">Cuando tu cliente confirma, convertís el presupuesto directamente en una venta, sin tener que volver a cargar los productos ni recalcular los totales.</p>
               </div>
             </div>
           </div>
         </div>
       </section>
 
-      <section class="section" id="cta-final">
+      <section class="section" id="gestion-comercial">
+        <div class="container">
+          <div class="section-heading text-center reveal" data-delay="40">
+            <span class="eyebrow">Organización</span>
+            <h2 class="section-title">Organizá tu gestión comercial</h2>
+          </div>
+          <div class="row justify-content-center mt-3">
+            <div class="col-lg-9">
+              <div class="feature-card p-4">
+                <p class="text-muted mb-0">Tus presupuestos quedan junto al resto de tu operación: clientes, productos y ventas, en la misma plataforma. También podés controlar el <a href="{{ url_for('seo_pages.control_de_stock') }}">stock de tus productos</a> mientras armás cada presupuesto.</p>
+              </div>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <section class="section section-soft" id="cta-final">
         <div class="container">
           <div class="cta-block reveal" data-delay="40">
             <div class="row align-items-center g-3">
               <div class="col-lg-8">
-                <h2 class="mb-2">Probá StockArmobile gratis en tu corralón</h2>
-                <p class="mb-0">Sumá control de stock, presupuestos, ventas y caja en una sola plataforma. Sin tarjeta de crédito.</p>
+                <h2 class="mb-2">Probá el sistema de presupuestos de StockArmobile gratis</h2>
+                <p class="mb-0">Armá, enviá y convertí presupuestos en ventas en una sola plataforma. Sin tarjeta de crédito.</p>
               </div>
               <div class="col-lg-4 text-lg-end">
                 <a class="btn btn-light btn-lg btn-pill cta-strong" href="{{ url_for('auth.register') }}?selected_plan=trial">Comenzar prueba gratuita</a>
@@ -190,8 +206,9 @@
           <div class="col-md-3">
             <h3>Producto</h3>
             <ul>
-              <li><a href="{{ url_for('index') }}">Inicio</a></li>
+              <li><a href="{{ url_for('index') }}">Sistema de gestión para comercios</a></li>
               <li><a href="{{ url_for('index') }}#planes">Planes</a></li>
+              <li><a href="{{ url_for('seo_pages.control_de_stock') }}">Control de stock</a></li>
             </ul>
           </div>
           <div class="col-md-3">

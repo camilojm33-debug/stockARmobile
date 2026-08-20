@@ -81,9 +81,9 @@
       <div class="container py-5 py-lg-6">
         <div class="row align-items-center g-5">
           <div class="col-lg-8 mx-auto text-center reveal" data-delay="80">
-            <span class="eyebrow"><i class="bi bi-bricks"></i> Software para corralones</span>
-            <h1 class="display-4 fw-bold mb-3">Software para corralones: stock, presupuestos y ventas organizados</h1>
-            <p class="lead text-muted mb-4">Para corralones que manejan materiales de construcción: controlá el stock disponible, armá presupuestos para tus clientes y organizá tus compras a proveedores en una sola plataforma.</p>
+            <span class="eyebrow"><i class="bi bi-box-seam"></i> Control de stock</span>
+            <h1 class="display-4 fw-bold mb-3">Sistema de control de stock para comercios: productos, alertas y existencias bajo control</h1>
+            <p class="lead text-muted mb-4">Cargá tus productos, configurá el stock mínimo de cada uno y detectá a tiempo lo que se está por agotar, con reportes que te ayudan a decidir qué reponer.</p>
             <div class="d-flex flex-wrap justify-content-center gap-3">
               <a class="btn btn-primary btn-lg btn-pill" href="{{ url_for('auth.register') }}?selected_plan=trial">Comenzar prueba gratuita</a>
               <a class="btn btn-outline-primary btn-lg btn-pill" href="{{ url_for('auth.demo') }}">Ver demo interactiva</a>
@@ -94,77 +94,93 @@
     </header>
 
     <main>
-      <section class="section" id="stock-materiales">
+      <section class="section" id="control-productos">
         <div class="container">
           <div class="section-heading text-center reveal" data-delay="40">
-            <span class="eyebrow">Stock</span>
-            <h2 class="section-title">Stock de materiales bajo control</h2>
+            <span class="eyebrow">Productos</span>
+            <h2 class="section-title">Controlá el stock de tus productos</h2>
           </div>
           <div class="row justify-content-center mt-3">
             <div class="col-lg-9">
               <div class="feature-card p-4">
-                <p class="text-muted mb-0">Cargá tus materiales con su código de barras o QR y llevá el control de existencias de cada uno. El sistema te avisa cuando un material llega a su stock mínimo configurado, para que puedas planificar la reposición a tiempo. Conocé en detalle el <a href="{{ url_for('seo_pages.control_de_stock') }}">sistema de control de stock</a>.</p>
+                <p class="text-muted mb-0">Cada producto de tu catálogo tiene su cantidad de stock disponible. El stock se descuenta automáticamente con cada venta, y las compras que registrás actualizan las existencias disponibles.</p>
               </div>
             </div>
           </div>
         </div>
       </section>
 
-      <section class="section section-soft" id="presupuestos">
+      <section class="section section-soft" id="stock-bajo">
         <div class="container">
           <div class="section-heading text-center reveal" data-delay="40">
-            <span class="eyebrow">Presupuestos</span>
-            <h2 class="section-title">Presupuestos para tus clientes</h2>
+            <span class="eyebrow">Alertas</span>
+            <h2 class="section-title">Detectá productos con stock bajo</h2>
           </div>
           <div class="row justify-content-center mt-3">
             <div class="col-lg-9">
               <div class="feature-card p-4">
-                <p class="text-muted mb-0">Armá presupuestos con los materiales que necesita cada cliente, enviálos por WhatsApp o email, y convertilos en venta cuando el cliente confirma. Queda todo registrado junto al resto de tu operación comercial. Conocé en detalle el <a href="{{ url_for('seo_pages.presupuestos') }}">sistema de presupuestos</a>.</p>
+                <p class="text-muted mb-0">Filtrá tu catálogo para ver únicamente los productos con stock bajo, y recibí un aviso cuando un producto está en el mínimo o agotado, para no quedarte sin lo que más vendés.</p>
               </div>
             </div>
           </div>
         </div>
       </section>
 
-      <section class="section" id="ventas-caja">
+      <section class="section" id="minimos">
         <div class="container">
           <div class="section-heading text-center reveal" data-delay="40">
-            <span class="eyebrow">Ventas y caja</span>
-            <h2 class="section-title">Ventas y caja del día a día</h2>
+            <span class="eyebrow">Configuración</span>
+            <h2 class="section-title">Configurá mínimos y recibí alertas</h2>
           </div>
           <div class="row justify-content-center mt-3">
             <div class="col-lg-9">
               <div class="feature-card p-4">
-                <p class="text-muted mb-0">Registrá tus ventas con checkout rápido y control de comprobantes, y mantené la caja ordenada por usuario. Podés cobrar en efectivo, tarjeta, transferencia o con la integración disponible con Mercado Pago.</p>
+                <p class="text-muted mb-0">Definí el stock mínimo de cada producto según tu propio criterio de reposición. El sistema compara el stock actual contra ese mínimo para avisarte a tiempo.</p>
               </div>
             </div>
           </div>
         </div>
       </section>
 
-      <section class="section section-soft" id="compras-proveedores">
+      <section class="section section-soft" id="reportes-stock">
         <div class="container">
           <div class="section-heading text-center reveal" data-delay="40">
-            <span class="eyebrow">Compras</span>
-            <h2 class="section-title">Compras y proveedores</h2>
+            <span class="eyebrow">Reportes</span>
+            <h2 class="section-title">Consultá el stock crítico en reportes</h2>
           </div>
           <div class="row justify-content-center mt-3">
             <div class="col-lg-9">
               <div class="feature-card p-4">
-                <p class="text-muted mb-0">Registrá tus proveedores y las compras que les hacés, con reportes que te ayudan a decidir cuándo reponer materiales. Todo queda vinculado al stock de tu corralón para mantener las existencias al día.</p>
+                <p class="text-muted mb-0">Accedé a un reporte específico de stock crítico, con el listado de productos que están en su mínimo o por debajo, para priorizar tus próximas compras.</p>
               </div>
             </div>
           </div>
         </div>
       </section>
 
-      <section class="section" id="cta-final">
+      <section class="section" id="codigos-barras">
+        <div class="container">
+          <div class="section-heading text-center reveal" data-delay="40">
+            <span class="eyebrow">Identificación</span>
+            <h2 class="section-title">Complementá el stock con códigos de barras</h2>
+          </div>
+          <div class="row justify-content-center mt-3">
+            <div class="col-lg-9">
+              <div class="feature-card p-4">
+                <p class="text-muted mb-0">Identificá cada producto con su código de barras (EAN13 o Code128) o con QR, para agilizar la carga y la venta, y reducir errores al controlar tus existencias. También podés armar <a href="{{ url_for('seo_pages.presupuestos') }}">presupuestos</a> con los mismos productos que tenés en stock.</p>
+              </div>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <section class="section section-soft" id="cta-final">
         <div class="container">
           <div class="cta-block reveal" data-delay="40">
             <div class="row align-items-center g-3">
               <div class="col-lg-8">
-                <h2 class="mb-2">Probá StockArmobile gratis en tu corralón</h2>
-                <p class="mb-0">Sumá control de stock, presupuestos, ventas y caja en una sola plataforma. Sin tarjeta de crédito.</p>
+                <h2 class="mb-2">Probá el control de stock de StockArmobile gratis</h2>
+                <p class="mb-0">Sumá productos, alertas de mínimo y reportes de stock crítico en una sola plataforma. Sin tarjeta de crédito.</p>
               </div>
               <div class="col-lg-4 text-lg-end">
                 <a class="btn btn-light btn-lg btn-pill cta-strong" href="{{ url_for('auth.register') }}?selected_plan=trial">Comenzar prueba gratuita</a>
@@ -190,8 +206,9 @@
           <div class="col-md-3">
             <h3>Producto</h3>
             <ul>
-              <li><a href="{{ url_for('index') }}">Inicio</a></li>
+              <li><a href="{{ url_for('index') }}">Sistema de gestión para comercios</a></li>
               <li><a href="{{ url_for('index') }}#planes">Planes</a></li>
+              <li><a href="{{ url_for('seo_pages.presupuestos') }}">Sistema de presupuestos</a></li>
             </ul>
           </div>
           <div class="col-md-3">

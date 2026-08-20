@@ -2040,12 +2040,15 @@ def sitemap_xml():
     base_url = app.config["APP_URL"].rstrip("/")
     # Fase 1 SEO: solo URLs GET publicas y realmente indexables (sin login/registro/demo/POST).
     # Fase 3 SEO: paginas comerciales por tipo de comercio, publicas y sin autenticacion.
+    # Fase 4A SEO: paginas de funcionalidad (presupuestos, control de stock).
     urls = [
         {"loc": f"{base_url}/", "priority": "1.0"},
         {"loc": f"{base_url}/software-para-ferreterias", "priority": "0.8"},
         {"loc": f"{base_url}/software-para-corralones", "priority": "0.8"},
         {"loc": f"{base_url}/sistema-para-kioscos", "priority": "0.8"},
         {"loc": f"{base_url}/sistema-para-supermercados", "priority": "0.8"},
+        {"loc": f"{base_url}/sistema-de-presupuestos", "priority": "0.8"},
+        {"loc": f"{base_url}/control-de-stock", "priority": "0.8"},
     ]
     xml = [
         "<?xml version=\"1.0\" encoding=\"UTF-8\"?>",

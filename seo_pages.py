@@ -68,3 +68,29 @@ def supermercados():
         ),
     )
     return render_template("seo/sistema-supermercados.html", seo=seo)
+
+
+@bp.route("/sistema-de-presupuestos")
+def presupuestos():
+    seo = _seo_context(
+        slug="sistema-de-presupuestos",
+        title="Sistema de presupuestos para comercios en Argentina | StockArmobile",
+        description=(
+            "Creá presupuestos para tus clientes, generá PDF, compartilos por WhatsApp o email "
+            "y convertí presupuestos en ventas con StockArmobile."
+        ),
+    )
+    return render_template("seo/sistema-de-presupuestos.html", seo=seo)
+
+
+@bp.route("/control-de-stock")
+def control_de_stock():
+    seo = _seo_context(
+        slug="control-de-stock",
+        title="Sistema de control de stock para comercios en Argentina | StockArmobile",
+        description=(
+            "Controlá el stock de tu comercio, configurá mínimos, detectá productos con bajo "
+            "stock y consultá reportes para tomar mejores decisiones."
+        ),
+    )
+    return render_template("seo/control-de-stock.html", seo=seo)
