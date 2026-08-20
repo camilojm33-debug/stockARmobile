@@ -3782,13 +3782,22 @@ def test_seo_niche_pages_return_200_with_full_seo_metadata():
         assert '"@type": "FAQPage"' not in html
         assert "priceCurrency" not in html
 
+        # Regresion: el contenido principal usa la clase .reveal (oculta por CSS hasta que
+        # landing.js agrega .is-visible via IntersectionObserver). Sin este script, la pagina
+        # muestra el navbar pero el resto del contenido queda invisible para el usuario.
+        assert 'assets/js/landing.js' in html
+
+        # El contenido especifico del nicho debe estar dentro de <main>, no solo en el head/nav.
+        assert "<main>" in html
+        main_html = html[html.index("<main>"):]
+
         # CTA obligatorios, sin rutas nuevas.
         assert 'href="/auth/register?selected_plan=trial"' in html
         assert 'href="/auth/demo"' in html
 
         # Contenido especifico del nicho.
         for fragment in page["must_contain"]:
-            assert fragment in html, f"{page['endpoint']} falta mencionar: {fragment}"
+            assert fragment in main_html, f"{page['endpoint']} falta mencionar en <main>: {fragment}"
 
         # Nada de sucursales ni claims no confirmados.
         for forbidden in FORBIDDEN_CLAIMS:
