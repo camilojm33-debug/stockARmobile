@@ -140,6 +140,11 @@ def login():
     """Login de usuario local."""
     from app import LoginForm, User, db, record_audit
 
+    # Evita que una sesion ya autenticada vea el formulario de login envuelto en el shell
+    # del panel (sidebar/data-user-id/data-company-id): se redirige antes de renderizar.
+    if request.method == "GET" and current_user.is_authenticated:
+        return redirect(_post_login_redirect())
+
     if request.method == "POST":
         form = LoginForm()
         if "email" in request.form and "username" not in request.form:

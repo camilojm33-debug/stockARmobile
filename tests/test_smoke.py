@@ -3348,6 +3348,23 @@ def test_login_has_no_google_button_and_has_forgot_password_link():
     assert "/auth/google" not in html
     assert "auth.google_login" not in html
     assert "¿Olvidaste tu contrasena?" in html
+    # Visita anonima: no debe exponer atributos ni shell del panel autenticado.
+    assert "data-user-id" not in html
+    assert "data-company-id" not in html
+
+
+def test_authenticated_login_visit_redirects_and_hides_dashboard_shell():
+    client = stock_app.app.test_client()
+    client.post("/auth/login", data={"username": "negocio_admin", "password": "admin123"})
+
+    # Con sesion activa, /auth/login no debe renderizar el formulario ni el shell del panel:
+    # debe redirigir de inmediato, sin mezclar contenido de login con el dashboard autenticado.
+    response = client.get("/auth/login", follow_redirects=False)
+    assert response.status_code in (301, 302, 303)
+    assert response.headers["Location"].rstrip("/").endswith("/dashboard")
+    redirect_body = response.data.decode("utf-8")
+    assert "data-user-id" not in redirect_body
+    assert 'name="username"' not in redirect_body
 
 
 def test_password_recovery_request_and_superadmin_reset_flow():
