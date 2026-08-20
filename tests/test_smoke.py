@@ -3580,7 +3580,7 @@ def test_landing_and_subscription_use_same_plan_catalog():
         "12.999",
         "29.999",
         "54.999",
-        "Controla tu negocio desde cualquier lugar",
+        "Sistema de gestión para comercios: stock, ventas y caja en un solo lugar",
         "Comparación comercial completa",
         "Gana dinero recomendando StockArmobile",
         "Comisión configurada",
@@ -3599,6 +3599,42 @@ def test_landing_and_subscription_use_same_plan_catalog():
     assert "Uso del plan" in portal_html
     assert "Plan contratado" in portal_html
     assert ("Actualizar plan" in portal_html) or ("Renovar plan" in portal_html)
+
+
+def test_landing_seo_phase2_copy_and_single_h1():
+    client = stock_app.app.test_client()
+    response = client.get("/")
+    assert response.status_code == 200
+    html = response.data.decode("utf-8")
+
+    assert "<title>StockArmobile | Sistema de gestión para comercios en Argentina</title>" in html
+    assert (
+        'name="description" content="Sistema de gestión para comercios en Argentina: control de stock, ventas, caja y clientes '
+        'en una sola plataforma. Funciona desde el celular, con modo offline y prueba gratuita de 10 días."' in html
+    )
+    assert html.count("<h1") == 1
+    assert "Sistema de gestión para comercios: stock, ventas y caja en un solo lugar" in html
+    assert (
+        "Controlá tu negocio desde la PC o el celular: ventas, stock, clientes, caja, QR, etiquetas y reportes "
+        "en una sola plataforma pensada para comercios argentinos." in html
+    )
+    assert "Beneficios para el control de stock y ventas de tu comercio" in html
+    assert "Pensado para comercios, ferreterías, kioscos y negocios en crecimiento" in html
+    assert "Mercado Pago" in html
+    assert "presupuestos" in html.lower()
+    assert "códigos de barras" in html.lower()
+
+    # Fase 1 no debe romperse: canonical unico, robots ausente (indexable), lang y JSON-LD intactos.
+    assert html.count('<link rel="canonical"') == 1
+    assert 'lang="es-AR"' in html
+    assert html.count("application/ld+json") == 3
+    assert '"@type": "SoftwareApplication"' in html
+    assert '"@type": "Organization"' in html
+    assert '"@type": "WebSite"' in html
+    assert "priceCurrency" not in html
+    assert '"@type": "FAQPage"' not in html
+    assert 'property="og:title" content="StockArmobile | Sistema de gestión para comercios en Argentina"' in html
+    assert 'name="twitter:title" content="StockArmobile | Sistema de gestión para comercios en Argentina"' in html
 
 
 def test_landing_contact_form_endpoint():

@@ -1700,8 +1700,8 @@ def index():
 
     app_base_url = (os.environ.get("APP_URL") or request.url_root.rstrip("/")).rstrip("/")
     seo = {
-        "title": "StockArmobile | Controla tu negocio desde cualquier lugar",
-        "description": "Ventas, Stock, Clientes, Caja, QR, Etiquetas y Reportes en una sola plataforma con prueba gratuita y programa profesional de referidos.",
+        "title": "StockArmobile | Sistema de gestión para comercios en Argentina",
+        "description": "Sistema de gestión para comercios en Argentina: control de stock, ventas, caja y clientes en una sola plataforma. Funciona desde el celular, con modo offline y prueba gratuita de 10 días.",
         "url": f"{app_base_url}/",
         # Branding centralizado: esta ruta quedara estable para futuros reemplazos de identidad visual.
         "image": f"{app_base_url}{url_for('static', filename='images/branding/logo.png')}",
