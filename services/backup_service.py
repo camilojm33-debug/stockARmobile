@@ -764,7 +764,11 @@ class BackupService:
     def delete_backup(backup_log):
         from app import db
 
-        backup_path = BackupService.backup_download_path(backup_log)
+        raw_path = Path(backup_log.path or "")
+        backup_root = BackupService._backup_root().resolve()
+        backup_path = raw_path.resolve()
+        if backup_root not in backup_path.parents:
+            raise PermissionError("Ruta de backup fuera de alcance.")
         if backup_path.exists():
             backup_path.unlink()
         db.session.delete(backup_log)

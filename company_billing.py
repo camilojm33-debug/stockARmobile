@@ -2419,16 +2419,21 @@ def company_settings_backups_delete(backup_id):
         return redirect(url_for("company_billing.company_settings", panel="backups"))
 
     backup = BackupLog.query.filter_by(id=backup_id, company_id=company_id).first_or_404()
-    BackupService.delete_backup(backup)
-    record_audit(
-        action="backup_delete",
-        entity="backup",
-        entity_id=backup_id,
-        company_id=company_id,
-        detail="Backup eliminado desde Mi Empresa.",
-    )
-    db.session.commit()
-    flash("Backup eliminado correctamente.", "success")
+    try:
+        BackupService.delete_backup(backup)
+        record_audit(
+            action="backup_delete",
+            entity="backup",
+            entity_id=backup_id,
+            company_id=company_id,
+            detail="Backup eliminado desde Mi Empresa.",
+        )
+        db.session.commit()
+        flash("Backup eliminado correctamente.", "success")
+    except Exception as exc:
+        db.session.rollback()
+        current_app.logger.exception("No se pudo eliminar el backup de empresa id=%s: %s", backup_id, exc)
+        flash("No se pudo eliminar el backup.", "danger")
     return redirect(url_for("company_billing.company_settings", panel="backups"))
 
 

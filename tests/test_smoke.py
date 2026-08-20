@@ -6946,6 +6946,38 @@ def test_company_backup_delete_requires_explicit_confirmation():
         assert still_exists is not None
 
 
+def test_superadmin_backup_delete_tolerates_missing_file():
+    from pathlib import Path
+
+    from services.backup_service import BackupService
+
+    with stock_app.app.app_context():
+        company = Company.query.filter_by(name="Empresa Demo").first()
+        assert company is not None
+        backup, _plan = BackupService.create_manual_backup(company.id, user_id=1)
+        backup_id = backup.id
+        backup_path = Path(backup.path)
+        db.session.commit()
+        assert backup_path.exists()
+        backup_path.unlink()
+
+    client = stock_app.app.test_client()
+    client.post("/auth/login", data={"username": "superadmin", "password": "admin123"})
+    response = client.post(
+        f"/superadmin/backups/{backup_id}/delete",
+        data={"csrf_token": "", "confirm_delete": "1"},
+        follow_redirects=True,
+    )
+    assert response.status_code == 200
+    assert "Backup eliminado correctamente." in response.data.decode("utf-8")
+    assert "Algo salió mal" not in response.data.decode("utf-8")
+
+    with stock_app.app.app_context():
+        from app import BackupLog
+
+        assert db.session.get(BackupLog, backup_id) is None
+
+
 def test_superadmin_company_hard_delete_requires_company_name_confirmation():
     client = stock_app.app.test_client()
     client.post("/auth/login", data={"username": "superadmin", "password": "admin123"})

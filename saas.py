@@ -3116,18 +3116,23 @@ def backups_delete(backup_id):
     if not confirm_delete:
         flash("Confirmá la eliminación del backup para continuar.", "warning")
         return _redirect_back("saas.backups_panel")
-    company_id = backup.company_id
-    BackupService.delete_backup(backup)
-    record_audit(
-        action="backup_delete_superadmin",
-        entity="backup",
-        entity_id=backup_id,
-        company_id=company_id,
-        detail="Backup eliminado por superadmin.",
-        user_id=current_user.id,
-    )
-    db.session.commit()
-    flash("Backup eliminado correctamente.", "success")
+    try:
+        company_id = backup.company_id
+        BackupService.delete_backup(backup)
+        record_audit(
+            action="backup_delete_superadmin",
+            entity="backup",
+            entity_id=backup_id,
+            company_id=company_id,
+            detail="Backup eliminado por superadmin.",
+            user_id=current_user.id,
+        )
+        db.session.commit()
+        flash("Backup eliminado correctamente.", "success")
+    except Exception as exc:
+        db.session.rollback()
+        current_app.logger.exception("No se pudo eliminar el backup global id=%s: %s", backup_id, exc)
+        flash("No se pudo eliminar el backup.", "danger")
     return _redirect_back("saas.backups_panel")
 
 
