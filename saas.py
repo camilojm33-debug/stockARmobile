@@ -62,7 +62,6 @@ CRM_LEAD_STATUSES = {"nuevo", "contactado", "propuesta", "ganado", "perdido"}
 CRM_TASK_STATUSES = {"pendiente", "en_progreso", "bloqueada", "hecha"}
 CRM_ALERT_STATUSES = {"abierta", "revisada", "resuelta"}
 CRM_PRIORITIES = {"baja", "media", "alta"}
-TERMINAL_BILLING_STATUSES = {"cancelled", "suspended", "expired", "rejected", "charged_back"}
 
 _SAAS_CACHE: dict[str, dict[str, object]] = {}
 _ADMIN_TZ_NAME = "America/Argentina/Buenos_Aires"
@@ -157,12 +156,6 @@ def _normalized_subscription_status(value: str | None) -> str:
 def _allowed_ui_actions_for_status(status: str | None):
     normalized = _normalized_subscription_status(status)
     return SUBSCRIPTION_UI_ACTIONS.get(normalized, {"modify"})
-
-
-def _company_can_be_hard_deleted(subscription) -> bool:
-    if subscription is None:
-        return True
-    return (subscription.status or "").strip().lower() in TERMINAL_BILLING_STATUSES
 
 
 def _hard_delete_company(company):
@@ -1908,17 +1901,9 @@ def company_delete(company_id):
     if confirm_company_name != (company.name or ""):
         flash("Para eliminar definitivamente, escribí el nombre exacto de la empresa.", "warning")
         return _redirect_back("saas.companies_panel")
-    subscription = None
-    if company.subscriptions:
-        subscription = sorted(
-            company.subscriptions,
-            key=lambda item: ((item.start_date or item.created_at) or utcnow(), item.id),
-            reverse=True,
-        )[0]
-    if not _company_can_be_hard_deleted(subscription):
-        flash("Solo se pueden eliminar definitivamente empresas sin suscripción activa o en estados terminales.", "warning")
-        return _redirect_back("saas.companies_panel")
 
+    # SuperAdmin tiene autoridad total: la eliminación definitiva no se restringe por
+    # el estado de la suscripción (ya está protegida por rol + confirmación exacta del nombre).
     company_name = company.name
     try:
         db.session.add(
