@@ -3637,6 +3637,68 @@ def test_landing_seo_phase2_copy_and_single_h1():
     assert 'name="twitter:title" content="StockArmobile | Sistema de gestión para comercios en Argentina"' in html
 
 
+def test_landing_public_ranking_no_longer_exposes_referrer_identity():
+    """Regresión Fase 2.5: la landing publica no debe exponer nombres/emails/metricas
+    individuales de referidores, pero el programa de referidos debe seguir presente."""
+    with stock_app.app.app_context():
+        from app import Company, ReferralSeller, User, db, utcnow
+
+        company = Company.query.filter_by(name="Empresa Demo").first()
+        assert company is not None
+
+        distinctive_username = "referidor_publico_test"
+        distinctive_email = "referidor_publico_test@test.local"
+        seller_user = User(
+            username=distinctive_username,
+            email=distinctive_email,
+            first_name="Referidor",
+            last_name="Publico",
+            role="seller",
+            company_id=company.id,
+            active=True,
+        )
+        seller_user.set_password("seller123")
+        db.session.add(seller_user)
+        db.session.flush()
+
+        db.session.add(
+            ReferralSeller(
+                user_id=seller_user.id,
+                dni="30999888",
+                referral_code="REFPUB1",
+                referral_url="https://www.stockarmobile.com/?ref=REFPUB1",
+                active=True,
+                created_at=utcnow(),
+            )
+        )
+        db.session.commit()
+
+    client = stock_app.app.test_client()
+    response = client.get("/")
+    assert response.status_code == 200
+    html = response.data.decode("utf-8")
+
+    # No debe exponer identidad ni metricas individuales del referidor.
+    assert "referidor_publico_test" not in html
+    assert "Referidor Publico" not in html
+    assert "REFPUB1" not in html
+    assert "Top referidores" not in html
+    assert "Ventas referidas:" not in html
+    assert "Clientes:" not in html
+
+    # El programa de referidos sigue presente, en forma generica.
+    assert "Programa de Referidos" in html
+    assert "mensual recomendando StockArmobile" in html
+    assert "Ya sos cliente? Iniciar sesion y activar Referidos" in html
+    assert "No sos cliente? Crear cuenta de vendedor" in html
+
+    # SEO de Fase 1/2 intacto.
+    assert html.count("<h1") == 1
+    assert "<title>StockArmobile | Sistema de gestión para comercios en Argentina</title>" in html
+    assert html.count('<link rel="canonical"') == 1
+    assert html.count("application/ld+json") == 3
+
+
 def test_landing_contact_form_endpoint():
     client = stock_app.app.test_client()
 
@@ -3741,8 +3803,8 @@ def test_landing_survives_optional_referral_ranking_table_missing(monkeypatch):
     response = client.get("/")
     assert response.status_code == 200
     html = response.data.decode("utf-8")
-    assert "Top referidores" in html
-    assert "Aún no hay datos suficientes para mostrar ranking" in html
+    assert "Programa de Referidos" in html
+    assert "mensual recomendando StockArmobile" in html
 
 
 @pytest.mark.skipif(PGUndefinedTable is None, reason="psycopg2 UndefinedTable no disponible")

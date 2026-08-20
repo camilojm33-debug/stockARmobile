@@ -423,7 +423,7 @@
                     </div>
                   </div>
                   <div class="mt-3 referral-mini-cta">
-                    <a class="btn btn-dark btn-pill w-100" href="#ranking-referidos">Ver ranking y medallas</a>
+                    <a class="btn btn-dark btn-pill w-100" href="#ranking-referidos">Ver Programa de Referidos</a>
                   </div>
                 </div>
               </div>
@@ -470,28 +470,22 @@
       <section class="section" id="ranking-referidos">
         <div class="container">
           <div class="section-heading text-center reveal" data-delay="40">
-            <span class="eyebrow">Referidos</span>
-            <h2 class="section-title">Top referidores</h2>
+            <span class="eyebrow">Programa de Referidos</span>
+            <h2 class="section-title">Ganá el {{ (referral_percent * 100)|round(0)|int }}% mensual recomendando StockArmobile</h2>
           </div>
-          <div class="row g-3 mt-2">
-            {% if ranking_rows %}
-              {% for row in ranking_rows %}
-              <div class="col-md-4 reveal" data-delay="{{ 70 + loop.index0 * 40 }}">
-                <div class="feature-card h-100 text-center">
-                  <div class="fs-2">{% if loop.index == 1 %}1{% elif loop.index == 2 %}2{% else %}3{% endif %}</div>
-                  <h3 class="h5 mt-2 mb-1">{{ row[0].user.name if row[0] and row[0].user else 'Referidor' }}</h3>
-                  <p class="mb-1 text-muted">Ventas referidas: ARS {{ '{:,.0f}'.format(row[1] or 0).replace(',', '.') }}</p>
-                  <p class="mb-0 text-muted">Clientes: {{ row[2] or 0 }}</p>
+          <div class="row justify-content-center mt-2">
+            <div class="col-lg-8 reveal" data-delay="70">
+              <div class="feature-card text-center">
+                <p class="mb-3">Recomendá StockArmobile a comercios y obtené una comisión del {{ (referral_percent * 100)|round(0)|int }}% mensual por cada cliente referido mientras mantenga activa su suscripción.</p>
+                <div class="referral-benefits justify-content-center mb-0">
+                  <span><i class="bi bi-check2-circle"></i> Alta sin costo</span>
+                  <span><i class="bi bi-check2-circle"></i> Panel privado para gestionar referidos</span>
+                  <span><i class="bi bi-check2-circle"></i> Métricas y seguimiento</span>
+                  <span><i class="bi bi-check2-circle"></i> Material comercial</span>
+                  <span><i class="bi bi-check2-circle"></i> Soporte para vendedores</span>
                 </div>
               </div>
-              {% endfor %}
-            {% else %}
-              <div class="col-12 reveal" data-delay="70">
-                <div class="feature-card text-center">
-                  <p class="mb-0">Aún no hay datos suficientes para mostrar ranking.</p>
-                </div>
-              </div>
-            {% endif %}
+            </div>
           </div>
         </div>
       </section>
