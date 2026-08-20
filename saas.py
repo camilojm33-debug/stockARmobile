@@ -2069,6 +2069,34 @@ def subscriptions_panel():
         filtered_rows.append(sub)
 
     total = len(filtered_rows)
+    current_subscription_id_by_company = {}
+    for company_id in {sub.company_id for sub in rows}:
+        current = SubscriptionService.active_subscription_for_company(company_id)
+        if current is None:
+            continue
+        current_company = db.session.get(Company, company_id)
+        current_effective_status = SubscriptionService.get_effective_subscription_status(
+            current,
+            company=current_company,
+            now=now_ref,
+        )
+        if current_effective_status not in {
+            SubscriptionService.STATE_EXPIRED,
+            SubscriptionService.STATE_TRIAL_EXPIRED,
+            SubscriptionService.STATE_CANCELLED,
+            SubscriptionService.STATE_SUSPENDED,
+        }:
+            current_subscription_id_by_company[company_id] = current.id
+
+    filtered_rows.sort(
+        key=lambda sub: (
+            0 if current_subscription_id_by_company.get(sub.company_id) == sub.id else 1,
+            (getattr(sub.company, "name", "") or "").lower(),
+            sub.start_date or datetime.min,
+            sub.id,
+        ),
+        reverse=False,
+    )
     pagination = _SimplePagination(page=page, per_page=per_page, total=total)
     start = (pagination.page - 1) * pagination.per_page
     end = start + pagination.per_page
@@ -2121,7 +2149,11 @@ def subscriptions_panel():
         selected_company_has_subscription = Subscription.query.filter_by(company_id=selected_company.id).first() is not None
     plans = Plan.query.filter(Plan.active.is_(True)).order_by(Plan.price.asc()).all()
     subscription_actions = {
-        sub.id: _allowed_ui_actions_for_status(effective_status_by_id.get(sub.id, sub.status))
+        sub.id: (
+            _allowed_ui_actions_for_status(effective_status_by_id.get(sub.id, sub.status))
+            if current_subscription_id_by_company.get(sub.company_id) in {None, sub.id}
+            else set()
+        )
         for sub in subscriptions
     }
     return render_template(
@@ -2129,6 +2161,7 @@ def subscriptions_panel():
         subscriptions=subscriptions,
         subscription_actions=subscription_actions,
         effective_status_by_id=effective_status_by_id,
+        current_subscription_id_by_company=current_subscription_id_by_company,
         start_display_by_id=start_display_by_id,
         start_input_by_id=start_input_by_id,
         next_due_display_by_id=next_due_display_by_id,

@@ -5,12 +5,16 @@ from __future__ import annotations
 from datetime import datetime, timedelta, timezone
 from functools import wraps
 from io import BytesIO
+from pathlib import Path
 import json
+import os
 import secrets
 import string
+import uuid
 
 from flask import Blueprint, abort, current_app, flash, jsonify, redirect, render_template, request, send_file, session, url_for
 from flask_login import current_user, login_required
+from PIL import Image
 from sqlalchemy import case, func
 from sqlalchemy.exc import IntegrityError
 from reportlab.lib.pagesizes import letter
@@ -31,6 +35,70 @@ from stockarmobile.helpers.dates import parse_date_yyyy_mm_dd
 from stockarmobile.helpers.numbers import safe_float
 
 bp = Blueprint("company_billing", __name__)
+
+ALLOWED_LOGO_EXTENSIONS = {".png", ".jpg", ".jpeg", ".webp"}
+MAX_LOGO_SIZE_BYTES = 3 * 1024 * 1024
+MAX_LOGO_DIMENSION_PX = 600
+
+
+def _save_company_logo(upload, company_id):
+    """Valida y guarda el logo de una empresa de forma aislada por company_id."""
+    filename = (upload.filename or "").strip()
+    if not filename:
+        raise ValueError("Selecciona un archivo de logo para subir.")
+
+    extension = Path(filename).suffix.lower()
+    if extension not in ALLOWED_LOGO_EXTENSIONS:
+        raise ValueError("Formato no permitido. Usa PNG, JPG, JPEG o WEBP.")
+
+    upload.stream.seek(0, os.SEEK_END)
+    size = upload.stream.tell()
+    upload.stream.seek(0)
+    if size <= 0:
+        raise ValueError("El archivo está vacío.")
+    if size > MAX_LOGO_SIZE_BYTES:
+        raise ValueError("El logo supera el tamaño máximo de 3 MB.")
+
+    # No confiar solo en la extension: validar que el contenido sea una imagen
+    # real y volver a codificarla descarta payloads/metadatos maliciosos.
+    try:
+        probe = Image.open(upload.stream)
+        probe.verify()
+        upload.stream.seek(0)
+        image = Image.open(upload.stream)
+        image.load()
+    except Exception as exc:
+        raise ValueError("El archivo no es una imagen válida.") from exc
+
+    has_alpha = image.mode in ("RGBA", "LA") or (image.mode == "P" and "transparency" in image.info)
+    image = image.convert("RGBA" if has_alpha else "RGB")
+    image.thumbnail((MAX_LOGO_DIMENSION_PX, MAX_LOGO_DIMENSION_PX), Image.LANCZOS)
+
+    save_format = "PNG" if has_alpha else "JPEG"
+    save_extension = ".png" if save_format == "PNG" else ".jpg"
+
+    upload_dir = Path(current_app.static_folder) / "uploads" / "companies" / str(company_id)
+    upload_dir.mkdir(parents=True, exist_ok=True)
+    unique_name = f"logo_{uuid.uuid4().hex[:12]}{save_extension}"
+    destination = upload_dir / unique_name
+    image.save(destination, format=save_format, optimize=True)
+    return f"/static/uploads/companies/{company_id}/{unique_name}"
+
+
+def _delete_company_logo_file(logo_path, company_id):
+    if not logo_path:
+        return
+    # Defensa en profundidad: nunca borrar nada fuera del directorio de esta empresa.
+    expected_prefix = f"/static/uploads/companies/{company_id}/"
+    if not logo_path.startswith(expected_prefix):
+        return
+    relative = logo_path[len("/static/"):]
+    absolute = Path(current_app.static_folder) / relative
+    try:
+        if absolute.is_file():
+            absolute.unlink()
+    except OSError:
+        pass
 
 EMPLOYEE_PERMISSIONS = [
     ("inventory", "Inventario"),
@@ -1130,6 +1198,59 @@ def payment_qr_settings():
         flash("Datos de cobro QR guardados correctamente.", "success")
     db.session.commit()
     return redirect(url_for("company_billing.company_settings"))
+
+
+@bp.route("/company-logo/upload", methods=["POST"])
+@company_admin_required
+def company_logo_upload():
+    from app import db, record_audit
+
+    # El company_id se obtiene siempre del tenant autenticado, nunca del formulario/frontend.
+    company_id = getattr(current_user, "company_id", None)
+    company = _load_company(company_id)
+
+    upload = request.files.get("logo_file")
+    if upload is None or not (upload.filename or "").strip():
+        flash("Selecciona un archivo de logo para subir.", "warning")
+        return redirect(url_for("company_billing.company_settings", panel="company"))
+
+    try:
+        new_logo_path = _save_company_logo(upload, company.id)
+    except ValueError as exc:
+        flash(str(exc), "danger")
+        return redirect(url_for("company_billing.company_settings", panel="company"))
+
+    old_logo_path = company.logo
+    company.logo = new_logo_path
+    record_audit(action="company_logo_upload", entity="company", entity_id=company.id, detail="Logo de la empresa actualizado.")
+    db.session.commit()
+    _delete_company_logo_file(old_logo_path, company.id)
+
+    flash("Logo actualizado correctamente.", "success")
+    return redirect(url_for("company_billing.company_settings", panel="company"))
+
+
+@bp.route("/company-logo/delete", methods=["POST"])
+@company_admin_required
+def company_logo_delete():
+    from app import db, record_audit
+
+    company_id = getattr(current_user, "company_id", None)
+    company = _load_company(company_id)
+
+    old_logo_path = company.logo
+    company.logo = None
+    record_audit(
+        action="company_logo_delete",
+        entity="company",
+        entity_id=company.id,
+        detail="Logo de la empresa eliminado (no afecta el logo de StockArmobile).",
+    )
+    db.session.commit()
+    _delete_company_logo_file(old_logo_path, company.id)
+
+    flash("Logo eliminado. Podés subir uno nuevo cuando quieras.", "success")
+    return redirect(url_for("company_billing.company_settings", panel="company"))
 
 
 @bp.route("/mercado-pago", methods=["POST"])

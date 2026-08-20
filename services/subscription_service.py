@@ -6,7 +6,7 @@ import hashlib
 import json
 import logging
 from dataclasses import asdict, dataclass, field
-from datetime import timedelta
+from datetime import datetime, timedelta
 from time import perf_counter
 from typing import Any
 
@@ -299,20 +299,38 @@ class SubscriptionService:
 
     @staticmethod
     def active_subscription_for_company(company_id: int):
-        from app import Subscription
+        from app import Company, Subscription, utcnow
 
         rows = (
             Subscription.query.filter_by(company_id=company_id)
             .order_by(Subscription.start_date.desc().nullslast(), Subscription.id.desc())
             .all()
         )
+        company = Company.query.filter_by(id=company_id).first()
+        ranked = []
+        now = utcnow()
         for row in rows:
-            normalized = SubscriptionService._normalize_state(row.status)
-            if normalized in SubscriptionService.ACTIVE_STATUSES or normalized in SubscriptionService.TRIAL_STATUSES:
-                return row
-        for row in rows:
-            if SubscriptionService._is_open_status(row.status):
-                return row
+            raw_status = SubscriptionService._normalize_state(row.status)
+            effective_status = SubscriptionService.get_effective_subscription_status(
+                row,
+                company=company,
+            )
+            paid_limit = row.next_billing_date or row.ends_at
+            raw_active_current = raw_status in SubscriptionService.ACTIVE_STATUSES and (
+                paid_limit is None or paid_limit > now
+            )
+            if raw_active_current:
+                ranked.append((0, row))
+            elif raw_status in SubscriptionService.TRIAL_STATUSES or effective_status in SubscriptionService.TRIAL_STATUSES:
+                ranked.append((1, row))
+            elif effective_status in SubscriptionService.PENDING_STATUSES or SubscriptionService._is_open_status(row.status):
+                ranked.append((2, row))
+        if ranked:
+            # Within the same state, the newest row is canonical. The explicit
+            # company scope above prevents a subscription from another tenant.
+            best_rank = min(rank for rank, _ in ranked)
+            candidates = [row for rank, row in ranked if rank == best_rank]
+            return max(candidates, key=lambda row: (row.start_date or datetime.min, row.id))
         return rows[0] if rows else None
 
     @staticmethod
@@ -525,6 +543,15 @@ class SubscriptionService:
         if plan is None:
             raise SubscriptionCommandError("Plan inválido para crear suscripción.")
 
+        current = SubscriptionService.active_subscription_for_company(company.id)
+        if current is not None:
+            current_effective_status = SubscriptionService.get_effective_subscription_status(current, company=company)
+            if current_effective_status in SubscriptionService.OPEN_STATUSES:
+                raise SubscriptionCommandError(
+                    f"La empresa ya tiene una suscripción operativa (ID {current.id}). "
+                    "Usá Modificar, Renovar o Reactivar sobre esa suscripción."
+                )
+
         now = command.start_date or utcnow()
         status = SubscriptionService._normalize_state(command.status, default=SubscriptionService.STATE_PENDING)
         has_successful_payment = (
@@ -684,6 +711,25 @@ class SubscriptionService:
         if subscription is None:
             raise SubscriptionCommandError("No hay suscripción para reactivar.")
 
+        current = SubscriptionService.active_subscription_for_company(company.id)
+        if current is not None and current.id != subscription.id:
+            current_effective_status = SubscriptionService.get_effective_subscription_status(current, company=company)
+            current_is_operational = (
+                SubscriptionService._normalize_state(current.status) in SubscriptionService.OPEN_STATUSES
+                and current_effective_status not in {
+                    SubscriptionService.STATE_EXPIRED,
+                    SubscriptionService.STATE_TRIAL_EXPIRED,
+                    SubscriptionService.STATE_CANCELLED,
+                    SubscriptionService.STATE_SUSPENDED,
+                }
+            )
+            if current_is_operational:
+                raise SubscriptionCommandError(
+                    f"La empresa ya tiene una suscripción operativa vigente (ID {current.id}). "
+                    "No se puede reactivar la suscripción histórica ID "
+                    f"{subscription.id}."
+                )
+
         status_before = subscription.status
         normalized = SubscriptionService._normalize_state(subscription.status)
         if normalized in {SubscriptionService.STATE_CANCELLED, SubscriptionService.STATE_SUSPENDED, SubscriptionService.STATE_EXPIRED, SubscriptionService.STATE_TRIAL_EXPIRED}:
@@ -710,6 +756,29 @@ class SubscriptionService:
         if subscription is None:
             raise SubscriptionCommandError("No hay suscripción para renovar.")
 
+        metadata = SubscriptionService._metadata_dict(subscription)
+        is_paid_plan_change = (
+            metadata.get("pending_plan_change")
+            and (command.payment_status or "").strip().lower() in {"approved", "refunded"}
+        )
+        current = SubscriptionService.active_subscription_for_company(company.id)
+        if current is not None and current.id != subscription.id and not is_paid_plan_change:
+            current_effective_status = SubscriptionService.get_effective_subscription_status(current, company=company)
+            current_is_operational = (
+                SubscriptionService._normalize_state(current.status) in SubscriptionService.OPEN_STATUSES
+                and current_effective_status not in {
+                    SubscriptionService.STATE_EXPIRED,
+                    SubscriptionService.STATE_TRIAL_EXPIRED,
+                    SubscriptionService.STATE_CANCELLED,
+                    SubscriptionService.STATE_SUSPENDED,
+                }
+            )
+            if current_is_operational:
+                raise SubscriptionCommandError(
+                    f"La empresa ya tiene una suscripción operativa vigente (ID {current.id}). "
+                    "La renovación debe ejecutarse sobre la suscripción actual."
+                )
+
         if SubscriptionService.is_manual_subscription(subscription):
             origin = (command.origin or "").lower()
             normalized_payment_status = (command.payment_status or "").strip().lower()
@@ -722,10 +791,8 @@ class SubscriptionService:
         now = command.paid_at or utcnow()
         status_before = subscription.status
         normalized = SubscriptionService._normalize_state(subscription.status)
-        metadata = SubscriptionService._metadata_dict(subscription)
         if (
-            metadata.get("pending_plan_change")
-            and (command.payment_status or "").strip().lower() in {"approved", "refunded"}
+            is_paid_plan_change
         ):
             current = SubscriptionService.active_subscription_for_company(company.id)
             current_state = SubscriptionService._normalize_state(getattr(current, "status", None)) if current is not None else None

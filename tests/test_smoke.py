@@ -866,7 +866,8 @@ def test_superadmin_subscriptions_actions_visibility_and_flows():
 
     suspended_block = re.search(rf'id="subActions{suspended_id}".*?</div>', html, re.DOTALL)
     assert suspended_block is not None
-    assert 'data-action="reactivate"' in suspended_block.group(0)
+    assert 'Sin acciones operativas' in suspended_block.group(0)
+    assert 'data-action="reactivate"' not in suspended_block.group(0)
     assert 'data-action="modify"' not in suspended_block.group(0)
     assert 'data-action="suspend"' not in suspended_block.group(0)
     assert 'data-action="cancel"' not in suspended_block.group(0)
@@ -874,15 +875,17 @@ def test_superadmin_subscriptions_actions_visibility_and_flows():
 
     expired_block = re.search(rf'id="subActions{expired_id}".*?</div>', html, re.DOTALL)
     assert expired_block is not None
-    assert 'data-action="renew_now"' in expired_block.group(0)
+    assert 'Sin acciones operativas' in expired_block.group(0)
+    assert 'data-action="renew_now"' not in expired_block.group(0)
     assert 'data-action="modify"' not in expired_block.group(0)
     assert 'data-action="suspend"' not in expired_block.group(0)
     assert 'data-action="cancel"' not in expired_block.group(0)
 
     cancelled_block = re.search(rf'id="subActions{cancelled_id}".*?</div>', html, re.DOTALL)
     assert cancelled_block is not None
-    assert 'data-action="reactivate"' in cancelled_block.group(0)
-    assert 'data-action="renew_now"' in cancelled_block.group(0)
+    assert 'Sin acciones operativas' in cancelled_block.group(0)
+    assert 'data-action="reactivate"' not in cancelled_block.group(0)
+    assert 'data-action="renew_now"' not in cancelled_block.group(0)
     assert 'data-action="modify"' not in cancelled_block.group(0)
     assert 'data-action="suspend"' not in cancelled_block.group(0)
 
@@ -900,10 +903,11 @@ def test_superadmin_subscriptions_actions_visibility_and_flows():
         follow_redirects=True,
     )
     assert create_resp.status_code == 200
-    assert "Suscripción creada correctamente." in create_resp.data.decode("utf-8")
+    assert "ya tiene una suscripción operativa" in create_resp.data.decode("utf-8")
 
     with stock_app.app.app_context():
         subscriptions_before_update = Subscription.query.filter_by(company_id=company_id).count()
+        assert subscriptions_before_update == 4
 
     update_resp = client.post(
         f"/superadmin/subscriptions/{active_id}/update",
@@ -1124,6 +1128,149 @@ def test_subscription_modify_never_duplicates_records():
     assert resp_again.status_code == 200
     with stock_app.app.app_context():
         assert Subscription.query.count() == subscription_count_before
+
+
+def test_superadmin_panel_marks_historical_subscription_and_prioritizes_current():
+    client = stock_app.app.test_client()
+
+    with stock_app.app.app_context():
+        from app import Plan
+        from services.plan_service import PlanService
+
+        PlanService.ensure_defaults(db.session)
+        company = Company.query.filter_by(name="Empresa Demo").first()
+        plan = Plan.query.filter_by(code="business").first()
+        assert company is not None
+        assert plan is not None
+        now_ref = stock_app.utcnow()
+
+        historical = Subscription(
+            company_id=company.id,
+            plan_id=plan.id,
+            status="trial_expired",
+            start_date=now_ref - timedelta(days=40),
+            starts_at=now_ref - timedelta(days=40),
+            trial_end=now_ref - timedelta(days=10),
+            next_billing_date=now_ref - timedelta(days=10),
+            ends_at=now_ref - timedelta(days=10),
+            renewal_enabled=False,
+            auto_renew=False,
+        )
+        current = Subscription(
+            company_id=company.id,
+            plan_id=plan.id,
+            status="active",
+            start_date=now_ref - timedelta(days=2),
+            starts_at=now_ref - timedelta(days=2),
+            next_billing_date=now_ref + timedelta(days=28),
+            ends_at=now_ref + timedelta(days=28),
+            renewal_enabled=True,
+            auto_renew=True,
+        )
+        db.session.add_all([historical, current])
+        db.session.commit()
+        company_id = company.id
+        historical_id = historical.id
+        current_id = current.id
+
+    client.post("/auth/login", data={"username": "superadmin", "password": "admin123"})
+    response = client.get(f"/superadmin/subscriptions?company_id={company_id}")
+    assert response.status_code == 200
+    html = response.data.decode("utf-8")
+
+    current_block = re.search(rf'id="subActions{current_id}".*?</div>', html, re.DOTALL)
+    historical_block = re.search(rf'id="subActions{historical_id}".*?</div>', html, re.DOTALL)
+    assert current_block is not None
+    assert historical_block is not None
+    assert "Suscripción actual" in html
+    assert "Histórica / Prueba vencida" in html
+    assert 'data-action="modify"' in current_block.group(0)
+    assert 'data-action="cancel"' in current_block.group(0)
+    assert 'data-action="renew_now"' not in current_block.group(0)
+    assert "Sin acciones operativas" in historical_block.group(0)
+    assert 'data-action="renew_now"' not in historical_block.group(0)
+
+    with stock_app.app.app_context():
+        from services.subscription_service import SubscriptionService
+
+        assert SubscriptionService.active_subscription_for_company(company_id).id == current_id
+        assert Subscription.query.filter_by(company_id=company_id).count() == 2
+
+
+def test_renewal_reuses_single_expired_subscription_and_rejects_historical_target():
+    from services.subscription_service import SubscriptionCommandError, SubscriptionService
+
+    with stock_app.app.app_context():
+        from app import Plan
+        from services.plan_service import PlanService
+
+        PlanService.ensure_defaults(db.session)
+        plan = Plan.query.filter_by(code="business").first()
+        company = Company(name="Empresa Renovación Única", active=True)
+        db.session.add(company)
+        db.session.flush()
+        now_ref = stock_app.utcnow()
+        expired = Subscription(
+            company_id=company.id,
+            plan_id=plan.id,
+            status="expired",
+            start_date=now_ref - timedelta(days=40),
+            starts_at=now_ref - timedelta(days=40),
+            next_billing_date=now_ref - timedelta(days=1),
+            ends_at=now_ref - timedelta(days=1),
+            renewal_enabled=False,
+            auto_renew=False,
+        )
+        db.session.add(expired)
+        db.session.commit()
+        company_id = company.id
+        expired_id = expired.id
+
+        result = SubscriptionService.run_command(
+            db.session,
+            SubscriptionService.RenewSubscriptionCommand(
+                company_id=company_id,
+                subscription_id=expired_id,
+                actor_role="superadmin",
+                origin="superadmin",
+                idempotency_key=f"test-renew-single:{company_id}:{expired_id}",
+            ),
+        )
+        db.session.commit()
+        refreshed = db.session.get(Subscription, expired_id)
+        assert result.subscription_id == expired_id
+        assert refreshed.status == "active"
+        assert refreshed.next_billing_date > now_ref
+        assert Subscription.query.filter_by(company_id=company_id).count() == 1
+
+        historical = Subscription(
+            company_id=company_id,
+            plan_id=plan.id,
+            status="expired",
+            start_date=now_ref - timedelta(days=80),
+            starts_at=now_ref - timedelta(days=80),
+            next_billing_date=now_ref - timedelta(days=40),
+            ends_at=now_ref - timedelta(days=40),
+            renewal_enabled=False,
+            auto_renew=False,
+        )
+        db.session.add(historical)
+        db.session.commit()
+        historical_id = historical.id
+
+        with pytest.raises(SubscriptionCommandError, match="suscripción operativa vigente"):
+            SubscriptionService.run_command(
+                db.session,
+                SubscriptionService.RenewSubscriptionCommand(
+                    company_id=company_id,
+                    subscription_id=historical_id,
+                    actor_role="superadmin",
+                    origin="superadmin",
+                    idempotency_key=f"test-renew-historical:{company_id}:{historical_id}",
+                ),
+            )
+        db.session.rollback()
+        assert db.session.get(Subscription, historical_id).status == "expired"
 
 
 def test_subscription_lifecycle_actions_never_delete_company():
@@ -1441,6 +1588,218 @@ def test_quotes_create_convert_pdf_and_stock_flow():
         assert len(sale.items) == 1
         assert float(sale.items[0].quantity) == 2.0
         assert float(sale.items[0].total_amount) == float(sale.total_amount)
+
+
+def _fake_png_bytes(color=(255, 0, 0)):
+    from PIL import Image as PILImage
+
+    buffer = io.BytesIO()
+    PILImage.new("RGB", (20, 20), color=color).save(buffer, format="PNG")
+    buffer.seek(0)
+    return buffer.read()
+
+
+def test_company_logo_upload_preview_and_delete_does_not_affect_stockarmobile_logo():
+    client = stock_app.app.test_client()
+    client.post("/auth/login", data={"username": "negocio_admin", "password": "admin123"})
+
+    upload_resp = client.post(
+        "/admin/company-logo/upload",
+        data={"csrf_token": "", "logo_file": (io.BytesIO(_fake_png_bytes()), "logo.png")},
+        content_type="multipart/form-data",
+        follow_redirects=True,
+    )
+    assert upload_resp.status_code == 200
+    assert "Logo actualizado correctamente." in upload_resp.data.decode("utf-8")
+
+    with stock_app.app.app_context():
+        company = Company.query.filter_by(name="Empresa Demo").first()
+        assert company.logo is not None
+        assert company.logo.startswith(f"/static/uploads/companies/{company.id}/")
+        logo_disk_path = os.path.join(stock_app.app.static_folder, company.logo[len("/static/"):])
+        assert os.path.isfile(logo_disk_path)
+
+    settings_resp = client.get("/admin/company-settings?panel=company")
+    assert settings_resp.status_code == 200
+    settings_html = settings_resp.data.decode("utf-8")
+    assert "Identidad del negocio" in settings_html
+
+    stockarmobile_logo_path = os.path.join(stock_app.app.static_folder, "images", "branding", "logo.png")
+    assert os.path.isfile(stockarmobile_logo_path)
+
+    delete_resp = client.post(
+        "/admin/company-logo/delete",
+        data={"csrf_token": ""},
+        follow_redirects=True,
+    )
+    assert delete_resp.status_code == 200
+    assert "Logo eliminado." in delete_resp.data.decode("utf-8")
+
+    with stock_app.app.app_context():
+        company = Company.query.filter_by(name="Empresa Demo").first()
+        assert company.logo is None
+        # Eliminar el logo de la empresa nunca debe borrar el logo de StockArmobile.
+        assert os.path.isfile(stockarmobile_logo_path)
+        assert not os.path.isfile(logo_disk_path)
+
+
+def test_company_logo_rejects_invalid_content_and_bad_extension():
+    client = stock_app.app.test_client()
+    client.post("/auth/login", data={"username": "negocio_admin", "password": "admin123"})
+
+    fake_image_resp = client.post(
+        "/admin/company-logo/upload",
+        data={"csrf_token": "", "logo_file": (io.BytesIO(b"not a real image, just bytes"), "malicious.png")},
+        content_type="multipart/form-data",
+        follow_redirects=True,
+    )
+    assert fake_image_resp.status_code == 200
+    assert "El archivo no es una imagen válida." in fake_image_resp.data.decode("utf-8")
+
+    bad_extension_resp = client.post(
+        "/admin/company-logo/upload",
+        data={"csrf_token": "", "logo_file": (io.BytesIO(_fake_png_bytes()), "logo.exe")},
+        content_type="multipart/form-data",
+        follow_redirects=True,
+    )
+    assert bad_extension_resp.status_code == 200
+    assert "Formato no permitido" in bad_extension_resp.data.decode("utf-8")
+
+    with stock_app.app.app_context():
+        company = Company.query.filter_by(name="Empresa Demo").first()
+        assert company.logo is None
+
+
+def test_company_logo_oversized_file_is_rejected():
+    client = stock_app.app.test_client()
+    client.post("/auth/login", data={"username": "negocio_admin", "password": "admin123"})
+
+    from PIL import Image as PILImage
+
+    huge_buffer = io.BytesIO()
+    PILImage.new("RGB", (4000, 4000), color=(0, 0, 255)).save(huge_buffer, format="BMP")
+    huge_bytes = huge_buffer.getvalue()
+    assert len(huge_bytes) > 3 * 1024 * 1024
+
+    resp = client.post(
+        "/admin/company-logo/upload",
+        data={"csrf_token": "", "logo_file": (io.BytesIO(huge_bytes), "logo.png")},
+        content_type="multipart/form-data",
+        follow_redirects=True,
+    )
+    assert resp.status_code == 200
+    assert "tamaño máximo" in resp.data.decode("utf-8")
+
+
+def test_company_logo_non_admin_cannot_upload_or_delete():
+    client = stock_app.app.test_client()
+    client.post("/auth/login", data={"username": "empresa_admin", "password": "admin123"})
+
+    upload_resp = client.post(
+        "/admin/company-logo/upload",
+        data={"csrf_token": "", "logo_file": (io.BytesIO(_fake_png_bytes()), "logo.png")},
+        content_type="multipart/form-data",
+    )
+    assert upload_resp.status_code == 403
+
+    delete_resp = client.post("/admin/company-logo/delete", data={"csrf_token": ""})
+    assert delete_resp.status_code == 403
+
+
+def test_company_logo_isolated_between_tenants():
+    with stock_app.app.app_context():
+        company_a = Company.query.filter_by(name="Empresa Demo").first()
+        company_b = Company(name="Empresa Logo B", active=True)
+        db.session.add(company_b)
+        db.session.flush()
+        admin_b = User(username="logo_admin_b", email="logo_admin_b@test.local", role="admin", company_id=company_b.id, active=True)
+        admin_b.set_password("admin123")
+        db.session.add(admin_b)
+        db.session.commit()
+        company_a_id = company_a.id
+        company_b_id = company_b.id
+
+    # Un unico cliente, logueado secuencialmente como cada empresa (mismo patron
+    # que el resto de la suite para evitar mezclar cookies entre clientes de test).
+    client = stock_app.app.test_client()
+
+    client.post("/auth/login", data={"username": "negocio_admin", "password": "admin123"})
+    client.post(
+        "/admin/company-logo/upload",
+        data={"csrf_token": "", "logo_file": (io.BytesIO(_fake_png_bytes((255, 0, 0))), "logo.png")},
+        content_type="multipart/form-data",
+    )
+    settings_a = client.get("/admin/company-settings?panel=company").data.decode("utf-8")
+    client.post("/auth/logout", data={"csrf_token": ""})
+
+    client.post("/auth/login", data={"username": "logo_admin_b", "password": "admin123"})
+    client.post(
+        "/admin/company-logo/upload",
+        data={"csrf_token": "", "logo_file": (io.BytesIO(_fake_png_bytes((0, 255, 0))), "logo.png")},
+        content_type="multipart/form-data",
+    )
+    settings_b = client.get("/admin/company-settings?panel=company").data.decode("utf-8")
+
+    with stock_app.app.app_context():
+        refreshed_a = db.session.get(Company, company_a_id)
+        refreshed_b = db.session.get(Company, company_b_id)
+        assert refreshed_a.logo.startswith(f"/static/uploads/companies/{company_a_id}/")
+        assert refreshed_b.logo.startswith(f"/static/uploads/companies/{company_b_id}/")
+        assert refreshed_a.logo != refreshed_b.logo
+        assert refreshed_a.logo in settings_a
+        assert refreshed_b.logo not in settings_a
+        assert refreshed_b.logo in settings_b
+        assert refreshed_a.logo not in settings_b
+
+
+def test_quote_pdf_and_preview_show_company_and_stockarmobile_branding():
+    # Un solo cliente/usuario admin: alcanza permiso para logo y presupuestos, evitando
+    # mezclar sesiones de dos test clients distintos.
+    client = stock_app.app.test_client()
+    client.post("/auth/login", data={"username": "negocio_admin", "password": "admin123"})
+
+    with stock_app.app.app_context():
+        company = Company.query.filter_by(name="Empresa Demo").first()
+        enable_quotes_module(company, enabled=True)
+
+    client.post(
+        "/admin/company-logo/upload",
+        data={"csrf_token": "", "logo_file": (io.BytesIO(_fake_png_bytes()), "logo.png")},
+        content_type="multipart/form-data",
+    )
+
+    payload = {
+        "client_id": 1,
+        "expires_at": "2026-08-05",
+        "status": "BORRADOR",
+        "items_json": json.dumps([
+            {"product_id": 1, "description": "Yerba kilo", "quantity": 1, "unit_price": 18000, "discount": 0},
+        ]),
+        "submit_action": "save",
+    }
+    client.post("/presupuestos/nuevo", data=payload, follow_redirects=False)
+
+    with stock_app.app.app_context():
+        quote = Quote.query.order_by(Quote.id.desc()).first()
+        quote_id = quote.id
+        company_logo = Company.query.filter_by(name="Empresa Demo").first().logo
+
+    pdf_response = client.get(f"/presupuestos/{quote_id}/pdf")
+    assert pdf_response.status_code == 200
+    assert pdf_response.mimetype == "application/pdf"
+
+    view_html = client.get(f"/presupuestos/{quote_id}").data.decode("utf-8")
+    assert company_logo in view_html
+    assert "Powered by StockArmobile" in view_html
+
+    # Ahora sin logo de empresa: el PDF y la vista previa deben seguir funcionando,
+    # mostrando el nombre de la empresa y la marca StockArmobile.
+    client.post("/admin/company-logo/delete", data={"csrf_token": ""})
+    pdf_response_no_logo = client.get(f"/presupuestos/{quote_id}/pdf")
+    assert pdf_response_no_logo.status_code == 200
+    view_html_no_logo = client.get(f"/presupuestos/{quote_id}").data.decode("utf-8")
+    assert "Empresa Demo" in view_html_no_logo
+    assert "Powered by StockArmobile" in view_html_no_logo
 
 
 def test_quote_conversion_preserves_structured_adjustments_without_double_discount():

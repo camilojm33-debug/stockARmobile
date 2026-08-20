@@ -519,6 +519,19 @@ def _build_client_catalog(clients, *, sales_history):
     return payload
 
 
+def _resolve_static_image_path(raw_path):
+    """Resuelve un path de imagen (relativo a /static/, relativo al static_folder,
+    o absoluto) a una ruta de archivo real en disco, sin tocar URLs externas."""
+    candidate = (raw_path or "").strip()
+    if not candidate or candidate.startswith(("http://", "https://")):
+        return None
+    if candidate.startswith("/static/"):
+        candidate = os.path.join(current_app.static_folder or "", candidate[len("/static/"):])
+    elif not os.path.isabs(candidate):
+        candidate = os.path.join(current_app.static_folder or "", candidate)
+    return candidate if os.path.exists(candidate) else None
+
+
 def _quote_pdf_response(quote, *, as_attachment=False):
     from app import Company
 
@@ -528,21 +541,14 @@ def _quote_pdf_response(quote, *, as_attachment=False):
     width, height = A4
     top_margin = height - 36
     pdf.setTitle(f"Presupuesto {quote.number or quote.id}")
-    logo_path = None
-    if company and company.logo:
-        candidate = company.logo
-        if not os.path.isabs(candidate):
-            candidate = os.path.join(current_app.static_folder or "", candidate)
-        if os.path.exists(candidate):
-            logo_path = candidate
-    if not logo_path:
-        fallback_logo = os.path.join(current_app.static_folder or "", "images", "branding", "logo.png")
-        if os.path.exists(fallback_logo):
-            logo_path = fallback_logo
-    if logo_path:
+
+    # Logo propio de la empresa (si lo cargó). NO se reemplaza por el de StockArmobile:
+    # si la empresa no tiene logo, el encabezado simplemente usa su nombre como texto.
+    company_logo_path = _resolve_static_image_path(getattr(company, "logo", None))
+    if company_logo_path:
         try:
             # Keep logo near the top edge so it does not look sunken in PDF previews.
-            pdf.drawImage(ImageReader(logo_path), 40, top_margin - 24, width=64, height=40, preserveAspectRatio=True, mask='auto')
+            pdf.drawImage(ImageReader(company_logo_path), 40, top_margin - 24, width=64, height=40, preserveAspectRatio=True, mask='auto')
         except Exception:
             pass
     pdf.setFont("Helvetica-Bold", 18)
@@ -639,6 +645,19 @@ def _quote_pdf_response(quote, *, as_attachment=False):
         pdf.drawString(width - 110, 28, "Escaneá para ver el presupuesto")
     except Exception:
         pass
+
+    # Marca de plataforma: siempre visible, sin importar si la empresa tiene logo propio.
+    stockarmobile_logo_path = _resolve_static_image_path(
+        os.path.join("images", "branding", "logo.png")
+    )
+    if stockarmobile_logo_path:
+        try:
+            pdf.drawImage(ImageReader(stockarmobile_logo_path), 40, 46, width=20, height=14, preserveAspectRatio=True, mask='auto')
+        except Exception:
+            pass
+    pdf.setFont("Helvetica", 8)
+    pdf.drawString(64, 50, "Powered by StockArmobile")
+
     pdf.setFont("Helvetica", 10)
     pdf.drawString(40, 35, "Firma: ______________________________")
     pdf.save()
@@ -848,10 +867,13 @@ def new_quote():
 @tenant_required
 @login_required
 def view_quote(quote_id):
+    from app import Company
+
     _require_quote_permission("quotes_view")
     quote = _quote_lookup(quote_id)
     _require_owned_or_authorized(quote)
-    return render_template("presupuestos/view.html", quote=quote, rows=_quote_rows(quote), statuses=QUOTE_STATUS_OPTIONS)
+    company = Company.query.filter_by(id=quote.company_id).first()
+    return render_template("presupuestos/view.html", quote=quote, rows=_quote_rows(quote), statuses=QUOTE_STATUS_OPTIONS, company=company)
 
 
 @bp.route("/<int:quote_id>/editar", methods=["GET", "POST"])

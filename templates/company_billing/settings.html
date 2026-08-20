@@ -330,6 +330,49 @@
       </form>
     </div>
   </div>
+
+  <div class="card app-card mb-4">
+    <div class="card-header bg-white fw-bold">Identidad del negocio</div>
+    <div class="card-body">
+      <div class="row g-4 align-items-center">
+        <div class="col-md-4 text-center">
+          <div class="small text-muted text-uppercase fw-semibold mb-2">Vista previa</div>
+          {% if company.logo %}
+          <img src="{{ company.logo }}" alt="Logo de {{ company.name }}" style="max-width: 160px; max-height: 160px; object-fit: contain; border: 1px solid var(--app-line); border-radius: 12px; padding: 8px;">
+          {% else %}
+          <div class="d-flex align-items-center justify-content-center border rounded-3 text-muted mx-auto" style="width: 160px; height: 160px;">
+            <i class="bi bi-building fs-1"></i>
+          </div>
+          <div class="small text-muted mt-2">Sin logo cargado. Tus presupuestos mostrarán el nombre de tu negocio.</div>
+          {% endif %}
+        </div>
+        <div class="col-md-8">
+          {% if current_user.role == 'admin' %}
+          <form method="post" action="{{ url_for('company_billing.company_logo_upload') }}" enctype="multipart/form-data" class="row g-2 align-items-end">
+            <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+            <div class="col-md-8">
+              <label class="form-label">Logo de la empresa</label>
+              <input class="form-control" type="file" name="logo_file" accept=".png,.jpg,.jpeg,.webp" required>
+              <div class="form-text">PNG, JPG o WEBP. Máximo 3 MB.</div>
+            </div>
+            <div class="col-md-4 d-grid">
+              <button class="btn btn-primary" type="submit"><i class="bi bi-upload me-1"></i>Subir logo</button>
+            </div>
+          </form>
+          {% if company.logo %}
+          <form method="post" action="{{ url_for('company_billing.company_logo_delete') }}" class="mt-2" onsubmit="return confirm('¿Eliminar el logo de tu empresa? Esto no afecta el logo de StockArmobile.');">
+            <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+            <button class="btn btn-outline-danger btn-sm" type="submit"><i class="bi bi-trash me-1"></i>Eliminar logo</button>
+          </form>
+          {% endif %}
+          {% else %}
+          <p class="text-muted mb-0">Solo el administrador puede modificar el logo de la empresa.</p>
+          {% endif %}
+          <p class="small text-muted mt-3 mb-0">Este logo aparece en tus presupuestos junto a la marca StockArmobile como plataforma.</p>
+        </div>
+      </div>
+    </div>
+  </div>
   {% elif panel == 'mercado-pago' %}
   {% set mp = mercado_pago_connection_summary or {} %}
   <div class="card app-card mb-4">
