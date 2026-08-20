@@ -1565,6 +1565,7 @@ import referrals  # noqa: E402
 import sales  # noqa: E402
 import quotes  # noqa: E402
 import support  # noqa: E402
+import seo_pages  # noqa: E402
 
 auth_bp = auth.bp
 dashboard_bp = dashboard.bp
@@ -1581,6 +1582,7 @@ saas_bp = saas.bp
 company_billing_bp = company_billing.bp
 referrals_bp = referrals.bp
 support_bp = support.bp
+seo_pages_bp = seo_pages.bp
 
 app.register_blueprint(auth_bp, url_prefix="/auth")
 app.register_blueprint(dashboard_bp, url_prefix="/dashboard")
@@ -1597,6 +1599,7 @@ app.register_blueprint(saas_bp, url_prefix="/superadmin")
 app.register_blueprint(company_billing_bp, url_prefix="/admin")
 app.register_blueprint(referrals_bp)
 app.register_blueprint(support_bp, url_prefix="/soporte")
+app.register_blueprint(seo_pages_bp)
 
 
 def _plan_feature_flags(plan):
@@ -2036,8 +2039,13 @@ def robots_txt():
 def sitemap_xml():
     base_url = app.config["APP_URL"].rstrip("/")
     # Fase 1 SEO: solo URLs GET publicas y realmente indexables (sin login/registro/demo/POST).
+    # Fase 3 SEO: paginas comerciales por tipo de comercio, publicas y sin autenticacion.
     urls = [
         {"loc": f"{base_url}/", "priority": "1.0"},
+        {"loc": f"{base_url}/software-para-ferreterias", "priority": "0.8"},
+        {"loc": f"{base_url}/software-para-corralones", "priority": "0.8"},
+        {"loc": f"{base_url}/sistema-para-kioscos", "priority": "0.8"},
+        {"loc": f"{base_url}/sistema-para-supermercados", "priority": "0.8"},
     ]
     xml = [
         "<?xml version=\"1.0\" encoding=\"UTF-8\"?>",

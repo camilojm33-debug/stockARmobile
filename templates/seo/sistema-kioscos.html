@@ -1,0 +1,212 @@
+<!doctype html>
+<html lang="es-AR">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>{{ seo.title }}</title>
+  <meta name="description" content="{{ seo.description }}">
+  <link rel="canonical" href="{{ seo.url }}">
+  <meta name="robots" content="index, follow">
+  <meta name="theme-color" content="#0f62fe">
+
+  <meta property="og:type" content="website">
+  <meta property="og:title" content="{{ seo.title }}">
+  <meta property="og:description" content="{{ seo.description }}">
+  <meta property="og:url" content="{{ seo.url }}">
+  <meta property="og:site_name" content="{{ seo.site_name }}">
+  <meta property="og:image" content="{{ seo.image }}">
+
+  <meta name="twitter:card" content="summary_large_image">
+  <meta name="twitter:title" content="{{ seo.title }}">
+  <meta name="twitter:description" content="{{ seo.description }}">
+  <meta name="twitter:image" content="{{ seo.image }}">
+
+  <link rel="icon" type="image/x-icon" href="{{ url_for('static', filename='images/branding/favicon.ico') }}">
+  <link rel="apple-touch-icon" href="{{ url_for('static', filename='images/branding/apple-touch-icon.png') }}">
+
+  <script type="application/ld+json">
+  {
+    "@context": "https://schema.org",
+    "@type": "Organization",
+    "name": "{{ seo.site_name }}",
+    "url": "{{ seo.url }}",
+    "logo": "{{ seo.image }}"
+  }
+  </script>
+
+  <script type="application/ld+json">
+  {
+    "@context": "https://schema.org",
+    "@type": "WebSite",
+    "name": "{{ seo.site_name }}",
+    "url": "{{ seo.url }}"
+  }
+  </script>
+
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Poppins:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+  <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/css/bootstrap.min.css" rel="stylesheet">
+  <link href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.11.3/font/bootstrap-icons.min.css" rel="stylesheet">
+  <link href="{{ url_for('static', filename='assets/css/landing.css') }}" rel="stylesheet">
+</head>
+<body>
+  <div class="page-shell">
+    <header class="hero-section">
+      <div class="bg-orb orb-one"></div>
+      <div class="bg-orb orb-two"></div>
+      <div class="bg-grid" aria-hidden="true"></div>
+
+      <nav class="navbar navbar-expand-lg py-3">
+        <div class="container">
+          <a class="navbar-brand d-flex align-items-center gap-2 fw-bold" href="{{ url_for('index') }}">
+            <span class="brand-mark">
+              <img class="brand-logo" src="{{ url_for('static', filename='images/branding/logo.png') }}" alt="StockArmobile logo">
+            </span>
+            <span>StockArmobile</span>
+          </a>
+          <div class="navbar-actions">
+            <a class="btn btn-outline-primary btn-pill btn-cta-login fw-semibold" href="{{ url_for('auth.login') }}">
+              <i class="bi bi-box-arrow-in-right"></i>
+              <span class="btn-cta-text">Iniciar sesión</span>
+            </a>
+            <a class="btn btn-primary btn-pill btn-cta-register fw-bold shadow-sm" href="{{ url_for('auth.register') }}?selected_plan=trial">
+              <i class="bi bi-rocket-takeoff"></i>
+              <span class="btn-cta-text">Prueba Gratis 10 días</span>
+            </a>
+          </div>
+        </div>
+      </nav>
+
+      <div class="container py-5 py-lg-6">
+        <div class="row align-items-center g-5">
+          <div class="col-lg-8 mx-auto text-center reveal" data-delay="80">
+            <span class="eyebrow"><i class="bi bi-shop"></i> Sistema para kioscos</span>
+            <h1 class="display-4 fw-bold mb-3">Sistema para kioscos: ventas rápidas y stock bajo control</h1>
+            <p class="lead text-muted mb-4">Para kioscos con mucho movimiento de mostrador: vendé rápido, encontrá productos al instante con código de barras y llevá la caja simple y clara.</p>
+            <div class="d-flex flex-wrap justify-content-center gap-3">
+              <a class="btn btn-primary btn-lg btn-pill" href="{{ url_for('auth.register') }}?selected_plan=trial">Comenzar prueba gratuita</a>
+              <a class="btn btn-outline-primary btn-lg btn-pill" href="{{ url_for('auth.demo') }}">Ver demo interactiva</a>
+            </div>
+          </div>
+        </div>
+      </div>
+    </header>
+
+    <main>
+      <section class="section" id="ventas-rapidas">
+        <div class="container">
+          <div class="section-heading text-center reveal" data-delay="40">
+            <span class="eyebrow">Ventas</span>
+            <h2 class="section-title">Ventas rápidas en el mostrador</h2>
+          </div>
+          <div class="row justify-content-center mt-3">
+            <div class="col-lg-9">
+              <div class="feature-card p-4">
+                <p class="text-muted mb-0">Buscá productos al instante durante la venta y cerrá el ticket en segundos. Pensado para el ritmo de un kiosco, donde cada minuto de mostrador cuenta.</p>
+              </div>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <section class="section section-soft" id="stock-codigos">
+        <div class="container">
+          <div class="section-heading text-center reveal" data-delay="40">
+            <span class="eyebrow">Stock</span>
+            <h2 class="section-title">Stock con códigos de barras</h2>
+          </div>
+          <div class="row justify-content-center mt-3">
+            <div class="col-lg-9">
+              <div class="feature-card p-4">
+                <p class="text-muted mb-0">Cada producto queda identificado con su código de barras (EAN13 o Code128), lo que agiliza la venta y el control de existencias. El sistema avisa cuando un producto llega a su stock mínimo configurado.</p>
+              </div>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <section class="section" id="caja">
+        <div class="container">
+          <div class="section-heading text-center reveal" data-delay="40">
+            <span class="eyebrow">Caja</span>
+            <h2 class="section-title">Caja simple y clara</h2>
+          </div>
+          <div class="row justify-content-center mt-3">
+            <div class="col-lg-9">
+              <div class="feature-card p-4">
+                <p class="text-muted mb-0">Abrí y cerrá tu caja por usuario, con el detalle de lo vendido en el día. Todo queda ordenado sin planillas manuales.</p>
+              </div>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <section class="section section-soft" id="mercadopago">
+        <div class="container">
+          <div class="section-heading text-center reveal" data-delay="40">
+            <span class="eyebrow">Cobros</span>
+            <h2 class="section-title">Cobrá también con Mercado Pago</h2>
+          </div>
+          <div class="row justify-content-center mt-3">
+            <div class="col-lg-9">
+              <div class="feature-card p-4">
+                <p class="text-muted mb-0">Sumá la integración disponible con Mercado Pago para cobrar con QR, además de efectivo, tarjeta o transferencia.</p>
+              </div>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <section class="section" id="cta-final">
+        <div class="container">
+          <div class="cta-block reveal" data-delay="40">
+            <div class="row align-items-center g-3">
+              <div class="col-lg-8">
+                <h2 class="mb-2">Probá StockArmobile gratis en tu kiosco</h2>
+                <p class="mb-0">Sumá ventas rápidas, stock con códigos de barras y caja simple en una sola plataforma. Sin tarjeta de crédito.</p>
+              </div>
+              <div class="col-lg-4 text-lg-end">
+                <a class="btn btn-light btn-lg btn-pill cta-strong" href="{{ url_for('auth.register') }}?selected_plan=trial">Comenzar prueba gratuita</a>
+              </div>
+            </div>
+          </div>
+        </div>
+      </section>
+    </main>
+
+    <footer class="footer">
+      <div class="container">
+        <div class="row g-4 align-items-start">
+          <div class="col-md-6">
+            <a class="navbar-brand d-flex align-items-center gap-2 fw-bold mb-3" href="{{ url_for('index') }}">
+              <span class="brand-mark">
+                <img class="brand-logo" src="{{ url_for('static', filename='images/branding/logo.png') }}" alt="StockArmobile logo">
+              </span>
+              <span>StockArmobile</span>
+            </a>
+            <p class="text-muted">Sistema de gestión para comercios en Argentina: ventas, stock, clientes y caja en una sola plataforma.</p>
+          </div>
+          <div class="col-md-3">
+            <h3>Producto</h3>
+            <ul>
+              <li><a href="{{ url_for('index') }}">Inicio</a></li>
+              <li><a href="{{ url_for('index') }}#planes">Planes</a></li>
+            </ul>
+          </div>
+          <div class="col-md-3">
+            <h3>Acceso</h3>
+            <ul>
+              <li><a href="{{ url_for('auth.login') }}">Iniciar sesión</a></li>
+              <li><a href="{{ url_for('auth.register') }}">Crear cuenta</a></li>
+            </ul>
+          </div>
+        </div>
+        <div class="footer-bottom">© 2026 StockArmobile. Todos los derechos reservados.</div>
+      </div>
+    </footer>
+  </div>
+
+  <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/js/bootstrap.bundle.min.js"></script>
+</body>
+</html>

@@ -3699,6 +3699,156 @@ def test_landing_public_ranking_no_longer_exposes_referrer_identity():
     assert html.count("application/ld+json") == 3
 
 
+SEO_NICHE_PAGES = [
+    {
+        "endpoint": "/software-para-ferreterias",
+        "title": "Software para ferreterías en Argentina | StockArmobile",
+        "description": (
+            "Sistema de gestión para ferreterías: control de stock, códigos de barras, ventas, "
+            "caja y presupuestos para tus clientes en una sola plataforma."
+        ),
+        "h1": "Software para ferreterías: stock, ventas y presupuestos en un solo sistema",
+        "must_contain": ["códigos de barras", "presupuestos", "Mercado Pago", "proveedores"],
+    },
+    {
+        "endpoint": "/software-para-corralones",
+        "title": "Software para corralones en Argentina | StockArmobile",
+        "description": (
+            "Sistema de gestión para corralones: stock de materiales, presupuestos, ventas, "
+            "caja y control de proveedores en una sola plataforma."
+        ),
+        "h1": "Software para corralones: stock, presupuestos y ventas organizados",
+        "must_contain": ["materiales", "presupuestos", "proveedores"],
+    },
+    {
+        "endpoint": "/sistema-para-kioscos",
+        "title": "Sistema para kioscos en Argentina | StockArmobile",
+        "description": (
+            "Sistema de gestión para kioscos: ventas rápidas, control de stock, códigos de barras, "
+            "caja y cobros con Mercado Pago en una sola plataforma."
+        ),
+        "h1": "Sistema para kioscos: ventas rápidas y stock bajo control",
+        "must_contain": ["ventas rápidas", "códigos de barras", "Mercado Pago"],
+    },
+    {
+        "endpoint": "/sistema-para-supermercados",
+        "title": "Sistema para supermercados en Argentina | StockArmobile",
+        "description": (
+            "Sistema de gestión para supermercados: control de stock, códigos de barras, ventas, "
+            "caja, compras a proveedores y reportes en una sola plataforma."
+        ),
+        "h1": "Sistema para supermercados: stock, ventas y compras en un solo lugar",
+        "must_contain": ["códigos de barras", "proveedores", "Reportes"],
+    },
+]
+
+FORBIDDEN_CLAIMS = [
+    "sucursal",
+    "Sucursal",
+    "múltiples tiendas",
+    "varias tiendas",
+    "balanza",
+    "facturación electrónica",
+    "integración fiscal",
+    "logística",
+    "POS avanzado",
+    "módulo de ferreterías",
+    "módulo de corralones",
+    "módulo de kioscos",
+    "módulo de supermercados",
+]
+
+
+def test_seo_niche_pages_return_200_with_full_seo_metadata():
+    client = stock_app.app.test_client()
+
+    for page in SEO_NICHE_PAGES:
+        response = client.get(page["endpoint"])
+        assert response.status_code == 200, page["endpoint"]
+        html = response.data.decode("utf-8")
+
+        assert f"<title>{page['title']}</title>" in html
+        assert f'name="description" content="{page["description"]}"' in html
+        assert html.count("<h1") == 1
+        assert page["h1"] in html
+        assert f'<link rel="canonical" href="https://www.stockarmobile.com{page["endpoint"]}">' in html
+        assert 'meta name="robots" content="index, follow"' in html
+        assert 'lang="es-AR"' in html
+        assert f'property="og:title" content="{page["title"]}"' in html
+        assert f'name="twitter:title" content="{page["title"]}"' in html
+        assert html.count("application/ld+json") == 2
+        assert '"@type": "Organization"' in html
+        assert '"@type": "WebSite"' in html
+        assert '"@type": "FAQPage"' not in html
+        assert "priceCurrency" not in html
+
+        # CTA obligatorios, sin rutas nuevas.
+        assert 'href="/auth/register?selected_plan=trial"' in html
+        assert 'href="/auth/demo"' in html
+
+        # Contenido especifico del nicho.
+        for fragment in page["must_contain"]:
+            assert fragment in html, f"{page['endpoint']} falta mencionar: {fragment}"
+
+        # Nada de sucursales ni claims no confirmados.
+        for forbidden in FORBIDDEN_CLAIMS:
+            assert forbidden not in html, f"{page['endpoint']} contiene claim prohibido: {forbidden}"
+
+
+def test_seo_niche_pages_are_in_sitemap_with_correct_priority():
+    client = stock_app.app.test_client()
+    response = client.get("/sitemap.xml")
+    assert response.status_code == 200
+    xml = response.data.decode("utf-8")
+
+    assert "<url><loc>https://www.stockarmobile.com/</loc><changefreq>weekly</changefreq><priority>1.0</priority></url>" in xml
+    for page in SEO_NICHE_PAGES:
+        assert (
+            f"<url><loc>https://www.stockarmobile.com{page['endpoint']}</loc>"
+            f"<changefreq>weekly</changefreq><priority>0.8</priority></url>"
+        ) in xml
+    assert "/auth/login" not in xml
+    assert "/auth/register" not in xml
+    assert "/auth/demo" not in xml
+    assert "/landing/contact" not in xml
+
+
+def test_landing_links_to_seo_niche_pages():
+    client = stock_app.app.test_client()
+    response = client.get("/")
+    assert response.status_code == 200
+    html = response.data.decode("utf-8")
+    assert 'href="/software-para-ferreterias"' in html
+    assert 'href="/software-para-corralones"' in html
+    assert 'href="/sistema-para-kioscos"' in html
+    assert 'href="/sistema-para-supermercados"' in html
+
+
+def test_seo_phase1_phase2_and_auth_noindex_still_intact_after_phase3():
+    client = stock_app.app.test_client()
+
+    home = client.get("/")
+    assert home.status_code == 200
+    home_html = home.data.decode("utf-8")
+    assert "<title>StockArmobile | Sistema de gestión para comercios en Argentina</title>" in home_html
+    assert home_html.count("<h1") == 1
+
+    login = client.get("/auth/login")
+    assert login.status_code == 200
+    assert "noindex, follow" in login.data.decode("utf-8")
+
+    register = client.get("/auth/register")
+    assert register.status_code == 200
+    assert "noindex, follow" in register.data.decode("utf-8")
+
+    robots = client.get("/robots.txt")
+    assert robots.status_code == 200
+    robots_txt = robots.data.decode("utf-8")
+    assert "Allow: /" in robots_txt
+    assert "Sitemap: https://www.stockarmobile.com/sitemap.xml" in robots_txt
+    assert "Disallow" not in robots_txt
+
+
 def test_landing_contact_form_endpoint():
     client = stock_app.app.test_client()
 
