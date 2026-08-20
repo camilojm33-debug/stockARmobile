@@ -152,6 +152,9 @@
                 <td>
                   <div class="fw-semibold">{{ lead.contact_name }}</div>
                   <div class="small text-muted">{{ lead.email or 'Sin email' }}{% if lead.phone %} · {{ lead.phone }}{% endif %}</div>
+                  {% if lead.notes %}
+                  <button type="button" class="btn btn-sm btn-link p-0" data-bs-toggle="modal" data-bs-target="#leadMsg{{ lead.id }}"><i class="bi bi-chat-left-text me-1"></i>Ver qué necesita</button>
+                  {% endif %}
                 </td>
                 <td><span class="badge text-bg-secondary">{{ lead.status|replace('_', ' ') }}</span></td>
                 <td><span class="badge {{ 'text-bg-danger' if lead.priority == 'alta' else ('text-bg-warning' if lead.priority == 'media' else 'text-bg-secondary') }}">{{ lead.priority }}</span></td>
@@ -200,6 +203,9 @@
                   {% endif %}
                   {% if task.lead %}
                   <div class="small text-muted">{{ task.lead.company_name }} · {{ task.lead.contact_name }}</div>
+                  {% if task.lead.notes %}
+                  <button type="button" class="btn btn-sm btn-link p-0" data-bs-toggle="modal" data-bs-target="#taskLeadMsg{{ task.id }}"><i class="bi bi-chat-left-text me-1"></i>Ver qué necesita</button>
+                  {% endif %}
                   {% else %}
                   <span class="text-muted small">Sin prospecto</span>
                   {% endif %}
@@ -276,4 +282,50 @@
     </div>
   </div>
 </div>
+
+{% for lead in leads %}
+{% if lead.notes %}
+<div class="modal fade" id="leadMsg{{ lead.id }}" tabindex="-1" aria-hidden="true">
+  <div class="modal-dialog">
+    <div class="modal-content">
+      <div class="modal-header">
+        <h5 class="modal-title">Qué necesita: {{ lead.contact_name }}</h5>
+        <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+      </div>
+      <div class="modal-body">
+        <p class="small text-muted mb-2">Empresa: {{ lead.company_name }} · Origen: {{ lead.source }}</p>
+        <p class="small text-muted mb-3">Contacto: {{ lead.email or 'Sin email' }}{% if lead.phone %} · {{ lead.phone }}{% endif %}</p>
+        <p class="mb-0" style="white-space: pre-wrap;">{{ lead.notes }}</p>
+      </div>
+      <div class="modal-footer">
+        <button type="button" class="btn btn-outline-secondary" data-bs-dismiss="modal">Cerrar</button>
+      </div>
+    </div>
+  </div>
+</div>
+{% endif %}
+{% endfor %}
+
+{% for task in tasks %}
+{% if task.lead and task.lead.notes %}
+<div class="modal fade" id="taskLeadMsg{{ task.id }}" tabindex="-1" aria-hidden="true">
+  <div class="modal-dialog">
+    <div class="modal-content">
+      <div class="modal-header">
+        <h5 class="modal-title">Qué necesita: {{ task.lead.contact_name }}</h5>
+        <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+      </div>
+      <div class="modal-body">
+        <p class="small text-muted mb-2">Empresa: {{ task.lead.company_name }} · Origen: {{ task.lead.source }}</p>
+        <p class="small text-muted mb-3">Contacto: {{ task.lead.email or 'Sin email' }}{% if task.lead.phone %} · {{ task.lead.phone }}{% endif %}</p>
+        <p class="mb-0" style="white-space: pre-wrap;">{{ task.lead.notes }}</p>
+      </div>
+      <div class="modal-footer">
+        <button type="button" class="btn btn-outline-secondary" data-bs-dismiss="modal">Cerrar</button>
+      </div>
+    </div>
+  </div>
+</div>
+{% endif %}
+{% endfor %}
 {% endblock %}
