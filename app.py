@@ -2035,19 +2035,16 @@ def robots_txt():
 @app.route("/sitemap.xml")
 def sitemap_xml():
     base_url = app.config["APP_URL"].rstrip("/")
+    # Fase 1 SEO: solo URLs GET publicas y realmente indexables (sin login/registro/demo/POST).
     urls = [
-        f"{base_url}/",
-        f"{base_url}/auth/login",
-        f"{base_url}/auth/register",
-        f"{base_url}/demo",
-        f"{base_url}/landing/contact",
+        {"loc": f"{base_url}/", "priority": "1.0"},
     ]
     xml = [
         "<?xml version=\"1.0\" encoding=\"UTF-8\"?>",
         '<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">',
     ]
-    for url in urls:
-        xml.append(f"  <url><loc>{url}</loc><changefreq>weekly</changefreq><priority>0.8</priority></url>")
+    for entry in urls:
+        xml.append(f"  <url><loc>{entry['loc']}</loc><changefreq>weekly</changefreq><priority>{entry['priority']}</priority></url>")
     xml.append("</urlset>")
     response = make_response("\n".join(xml))
     response.mimetype = "application/xml"
