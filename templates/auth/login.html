@@ -19,12 +19,15 @@
           {{ form.hidden_tag() }}
           <input type="hidden" name="next" value="{{ request.args.get('next', '') }}">
           <div class="mb-3">
-            {{ form.username.label(class_="form-label fw-semibold") }}
-            {{ form.username(class_="form-control form-control-lg", autofocus=True, autocomplete="username", placeholder="Empresa / Negocio") }}
+            <label class="form-label fw-semibold" for="username">Usuario o email</label>
+            {{ form.username(class_="form-control form-control-lg", autofocus=True, autocomplete="username", placeholder="Usuario o email") }}
           </div>
           <div class="mb-4">
             {{ form.password.label(class_="form-label fw-semibold") }}
-            {{ form.password(class_="form-control form-control-lg", autocomplete="current-password", placeholder="Contrasena") }}
+            <div class="input-group input-group-lg">
+              {{ form.password(id="loginPassword", class_="form-control", autocomplete="current-password", placeholder="Contrasena") }}
+              <button class="btn btn-outline-secondary" type="button" id="toggleLoginPassword" aria-label="Mostrar contrasena" title="Mostrar contrasena"><i class="bi bi-eye"></i></button>
+            </div>
           </div>
           <div class="d-flex align-items-center justify-content-between mb-4 small text-muted">
             <div class="form-check mb-0">
@@ -41,4 +44,23 @@
     </div>
   </div>
 </div>
+{% endblock %}
+
+{% block extra_scripts_inline %}
+<script>
+  document.addEventListener('DOMContentLoaded', function () {
+    const passwordInput = document.getElementById('loginPassword');
+    const toggleButton = document.getElementById('toggleLoginPassword');
+    if (!passwordInput || !toggleButton) return;
+
+    toggleButton.addEventListener('click', function () {
+      const shouldShow = passwordInput.type === 'password';
+      passwordInput.type = shouldShow ? 'text' : 'password';
+      toggleButton.setAttribute('aria-label', shouldShow ? 'Ocultar contrasena' : 'Mostrar contrasena');
+      toggleButton.setAttribute('title', shouldShow ? 'Ocultar contrasena' : 'Mostrar contrasena');
+      const icon = toggleButton.querySelector('i');
+      if (icon) icon.className = shouldShow ? 'bi bi-eye-slash' : 'bi bi-eye';
+    });
+  });
+</script>
 {% endblock %}

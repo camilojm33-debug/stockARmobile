@@ -23,7 +23,12 @@ def _login_user_and_bind_company(user, remember=False):
 
 
 def _post_login_redirect():
-    return url_for("saas.index") if getattr(current_user, "role", None) == "superadmin" else url_for("dashboard.index")
+    role = getattr(current_user, "role", None)
+    if role == "superadmin":
+        return url_for("saas.index")
+    if role == "seller":
+        return url_for("referrals.seller_dashboard")
+    return url_for("dashboard.index")
 
 
 def _is_safe_redirect(target):
@@ -168,7 +173,8 @@ def login():
                 if not _is_safe_redirect(next_page):
                     next_page = None
                 flash("Inicio de sesion exitoso", "success")
-                if session.get(SESSION_POST_REGISTER_ONBOARDING_COMPANY_ID) == getattr(user, "company_id", None):
+                onboarding_company_id = session.get(SESSION_POST_REGISTER_ONBOARDING_COMPANY_ID)
+                if onboarding_company_id is not None and onboarding_company_id == getattr(user, "company_id", None):
                     return redirect(url_for("dashboard.onboarding"))
                 return redirect(next_page if next_page else _post_login_redirect())
 

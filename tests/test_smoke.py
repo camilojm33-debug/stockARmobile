@@ -3803,12 +3803,17 @@ def test_password_recovery_request_and_superadmin_reset_flow():
     assert blocked_dashboard.status_code in (301, 302)
     assert "/auth/force-password-change" in (blocked_dashboard.headers.get("Location") or "")
 
+    change_page = client.get("/auth/force-password-change")
+    assert change_page.status_code == 200
+    assert "password-toggle-btn" in change_page.data.decode("utf-8")
+
     change_password = client.post(
         "/auth/force-password-change",
         data={"new_password": "nueva123", "confirm_password": "nueva123"},
         follow_redirects=False,
     )
     assert change_password.status_code in (301, 302)
+    assert "/dashboard" in (change_password.headers.get("Location") or "")
 
     with stock_app.app.app_context():
         from app import PasswordRecoveryRequest
@@ -5885,6 +5890,12 @@ def test_existing_customer_can_activate_referrals_without_duplicate_account():
 def test_seller_registration_requires_dni_and_creates_seller_profile():
     client = stock_app.app.test_client()
 
+    login_page = client.get("/auth/login")
+    assert login_page.status_code == 200
+    login_html = login_page.data.decode("utf-8")
+    assert "Usuario o email" in login_html
+    assert "toggleLoginPassword" in login_html
+
     page = client.get("/auth/register?mode=seller")
     assert page.status_code == 200
     html = page.data.decode("utf-8")
@@ -5931,6 +5942,18 @@ def test_seller_registration_requires_dni_and_creates_seller_profile():
         seller_profile = ReferralSeller.query.filter_by(user_id=seller_user.id).first()
         assert seller_profile is not None
         assert seller_profile.dni == "32123456"
+
+    login = client.post(
+        "/auth/login",
+        data={"username": "vendedor_dni_ok", "password": "seller123"},
+        follow_redirects=False,
+    )
+    assert login.status_code in (301, 302)
+    assert "/referidos" in (login.headers.get("Location") or "")
+
+    panel = client.get("/referidos")
+    assert panel.status_code == 200
+    assert "Panel de Referidos" in panel.data.decode("utf-8")
 
 
 def test_superadmin_can_create_change_and_recover_seller_password():
