@@ -5973,7 +5973,8 @@ def test_seller_registration_requires_dni_and_creates_seller_profile():
     login_page = client.get("/auth/login")
     assert login_page.status_code == 200
     login_html = login_page.data.decode("utf-8")
-    assert "Usuario o email" in login_html
+    assert "Usuario" in login_html
+    assert "Usuario o email" not in login_html
     assert "toggleLoginPassword" in login_html
 
     page = client.get("/auth/register?mode=seller")
@@ -6117,7 +6118,26 @@ def test_superadmin_can_create_change_and_recover_seller_password():
 
     detail_again = client.get(f"/superadmin/referrals/sellers/{seller_id}")
     assert detail_again.status_code == 200
-    assert "Contraseña temporal" not in detail_again.data.decode("utf-8")
+    detail_html = detail_again.data.decode("utf-8")
+    assert "Contraseña temporal" not in detail_html
+    assert "Eliminar vendedor" in detail_html
+
+    deleted = client.post(
+        f"/superadmin/referrals/sellers/{seller_id}/delete",
+        follow_redirects=True,
+    )
+    assert deleted.status_code == 200
+    assert "Vendedor eliminado del panel" in deleted.data.decode("utf-8")
+
+    with stock_app.app.app_context():
+        from app import ReferralSeller
+
+        seller_user = User.query.filter_by(username="seller_admin_abm").first()
+        seller_profile = ReferralSeller.query.filter_by(id=seller_id).first()
+        assert seller_user is not None
+        assert seller_profile is not None
+        assert seller_user.active is False
+        assert seller_profile.active is False
 
 
 def test_webhook_approved_activates_subscription_and_creates_commission_automatically(monkeypatch):

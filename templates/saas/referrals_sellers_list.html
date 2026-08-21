@@ -60,7 +60,7 @@
               </form>
               <form method="post" action="{{ url_for('referrals.admin_referrals_seller_delete', seller_id=row.id) }}" onsubmit="return confirm('Se desactivara el vendedor para preservar su historial. Continuar?');">
                 <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
-                <button class="btn btn-outline-danger" type="submit"><i class="bi bi-trash me-1"></i>Eliminar</button>
+                <button class="btn btn-outline-danger" type="submit"><i class="bi bi-trash me-1"></i>Eliminar vendedor</button>
               </form>
             </div>
           </td>
