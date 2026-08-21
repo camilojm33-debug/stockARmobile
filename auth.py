@@ -35,6 +35,18 @@ def _is_safe_redirect(target):
     return is_safe_relative_redirect(target)
 
 
+def _login_mode_from_request():
+    mode = (request.values.get("mode") or "").strip().lower()
+    next_page = (request.values.get("next") or "").strip()
+    if mode == "seller" or next_page.startswith("/referidos"):
+        return "seller"
+    return "company"
+
+
+def _registered_company_name(raw_name):
+    return f"Empresa {(raw_name or '').strip()}"
+
+
 def _ensure_demo_account():
     from app import CashSession, Client, Company, Product, Sale, SaleItem, Subscription, User, db, utcnow
     from services.plan_service import PlanService
@@ -145,6 +157,8 @@ def login():
     """Login de usuario local."""
     from app import LoginForm, User, db, record_audit
 
+    login_mode = _login_mode_from_request()
+
     # Evita que una sesion ya autenticada vea el formulario de login envuelto en el shell
     # del panel (sidebar/data-user-id/data-company-id): se redirige antes de renderizar.
     if request.method == "GET" and current_user.is_authenticated:
@@ -180,10 +194,13 @@ def login():
 
             record_audit(action="login_failed", entity="user", detail=f"Intento de login fallido: {username_or_email}")
             db.session.commit()
-            flash("Empresa / Negocio o contrasena incorrectos.", "danger")
+            if login_mode == "seller":
+                flash("Vendedor o contrasena incorrectos.", "danger")
+            else:
+                flash("Empresa / Negocio o contrasena incorrectos.", "danger")
 
     form = LoginForm()
-    return render_template("auth/login.html", form=form)
+    return render_template("auth/login.html", form=form, login_mode=login_mode)
 
 
 @bp.route("/forgot-password", methods=["GET", "POST"])
@@ -357,19 +374,77 @@ def register():
                 flash("Este DNI ya tiene una cuenta de vendedor registrada.", "danger")
                 return redirect(url_for("auth.register", selected_plan=selected_plan_code, mode=registration_mode))
         if form.validate_on_submit():
+            company_name = _registered_company_name(form.username.data)
+            existing_company = Company.query.filter(db.func.lower(Company.name) == company_name.lower()).first()
+            if existing_company is not None and registration_mode != "seller":
+                flash("Ya existe una empresa con ese nombre.", "danger")
+                return redirect(url_for("auth.register", selected_plan=selected_plan_code, mode=registration_mode))
+
+            existing_user = User.query.filter(db.func.lower(User.email) == form.email.data.strip().lower()).first()
+
+            if registration_mode != "seller" and existing_user is not None:
+                if existing_user.company_id is None and (existing_user.role or "") != "superadmin":
+                    if not existing_user.active:
+                        flash("Este usuario no esta activo. Contacta a soporte para continuar.", "danger")
+                        return redirect(url_for("auth.register", selected_plan=selected_plan_code, mode=registration_mode))
+                    if not existing_user.check_password(form.password.data):
+                        flash("La contrasena no coincide con el usuario existente.", "danger")
+                        return redirect(url_for("auth.register", selected_plan=selected_plan_code, mode=registration_mode))
+
+                    PlanService.ensure_defaults(db.session)
+                    trial_plan = PlanService.get_plan(code="trial")
+                    try:
+                        company = Company(name=company_name, active=True, trial_ends_at=utcnow() + timedelta(days=10))
+                        db.session.add(company)
+                        db.session.flush()
+
+                        existing_user.company_id = company.id
+                        existing_user.role = "admin"
+                        existing_user.auth_provider = existing_user.auth_provider or "local"
+
+                        SubscriptionService.ensure_company_trial(db.session, company=company, trial_plan=trial_plan)
+
+                        referral_code = (
+                            (request.values.get("ref") or "").strip()
+                            or (session.get("referral_code") or "").strip()
+                            or (request.cookies.get("stockarmobile_ref") or "").strip()
+                        )
+                        seller = ReferralService.find_seller_by_code(referral_code)
+                        if seller is not None:
+                            ReferralService.attribute_company(
+                                db.session,
+                                seller=seller,
+                                company=company,
+                                user=existing_user,
+                                referral_code=referral_code,
+                            )
+
+                        record_audit(action="register_existing_user_company_success", entity="user", entity_id=existing_user.id, detail="Usuario existente convertido en propietario de empresa")
+                        SaaSOpsService.register_signup(db.session, company=company, user=existing_user)
+                        db.session.commit()
+                    except Exception:
+                        db.session.rollback()
+                        raise
+
+                    session["post_register_onboarding_company_id"] = company.id
+                    flash("Registro exitoso. Puedes iniciar sesion ahora.", "success")
+                    return redirect(url_for("auth.login"))
+
+                flash("Este usuario ya tiene una empresa registrada.", "danger")
+                return redirect(url_for("auth.register", selected_plan=selected_plan_code, mode=registration_mode))
+
             if User.query.filter_by(username=form.username.data).first():
                 if registration_mode == "seller":
                     flash("El nombre de vendedor ya esta en uso.", "danger")
                 else:
-                    flash("La empresa/negocio ya esta en uso.", "danger")
+                    flash("Ese usuario ya existe.", "danger")
                 return redirect(url_for("auth.register", selected_plan=selected_plan_code, mode=registration_mode))
 
-            existing_user = User.query.filter_by(email=form.email.data).first()
             if existing_user:
                 if registration_mode == "seller":
                     flash("Este correo ya pertenece a un cliente existente. Inicia sesion para activar Referidos desde tu cuenta.", "warning")
                     return redirect(url_for("auth.login", next=url_for("referrals.activate_seller")))
-                flash("Este correo electronico ya esta registrado.", "danger")
+                flash("Este usuario ya tiene una empresa registrada.", "danger")
                 return redirect(url_for("auth.register", selected_plan=selected_plan_code, mode=registration_mode))
 
             if registration_mode == "seller":
@@ -400,42 +475,45 @@ def register():
                 flash("Registro de vendedor exitoso. Inicia sesion para entrar a tu panel.", "success")
                 return redirect(url_for("auth.login", next=url_for("referrals.seller_dashboard")))
 
-            company_name = f"Empresa {form.username.data.strip()}"
-            company = Company(name=company_name, active=True, trial_ends_at=utcnow() + timedelta(days=10))
-            db.session.add(company)
-            db.session.flush()
-
-            user = User(username=form.username.data, email=form.email.data, company_id=company.id, auth_provider="local")
-            user.set_password(form.password.data)
-            # Defensa adicional: solo el primer usuario de la empresa queda como admin.
-            is_first_company_user = User.query.filter_by(company_id=company.id).count() == 0
-            user.role = "admin" if is_first_company_user else "user"
-
-            db.session.add(user)
-            db.session.flush()
-
             PlanService.ensure_defaults(db.session)
             trial_plan = PlanService.get_plan(code="trial")
-            SubscriptionService.ensure_company_trial(db.session, company=company, trial_plan=trial_plan)
+            try:
+                company = Company(name=company_name, active=True, trial_ends_at=utcnow() + timedelta(days=10))
+                db.session.add(company)
+                db.session.flush()
 
-            referral_code = (
-                (request.values.get("ref") or "").strip()
-                or (session.get("referral_code") or "").strip()
-                or (request.cookies.get("stockarmobile_ref") or "").strip()
-            )
-            seller = ReferralService.find_seller_by_code(referral_code)
-            if seller is not None:
-                ReferralService.attribute_company(
-                    db.session,
-                    seller=seller,
-                    company=company,
-                    user=user,
-                    referral_code=referral_code,
+                user = User(username=form.username.data, email=form.email.data, company_id=company.id, auth_provider="local")
+                user.set_password(form.password.data)
+                # Defensa adicional: solo el primer usuario de la empresa queda como admin.
+                is_first_company_user = User.query.filter_by(company_id=company.id).count() == 0
+                user.role = "admin" if is_first_company_user else "user"
+
+                db.session.add(user)
+                db.session.flush()
+
+                SubscriptionService.ensure_company_trial(db.session, company=company, trial_plan=trial_plan)
+
+                referral_code = (
+                    (request.values.get("ref") or "").strip()
+                    or (session.get("referral_code") or "").strip()
+                    or (request.cookies.get("stockarmobile_ref") or "").strip()
                 )
+                seller = ReferralService.find_seller_by_code(referral_code)
+                if seller is not None:
+                    ReferralService.attribute_company(
+                        db.session,
+                        seller=seller,
+                        company=company,
+                        user=user,
+                        referral_code=referral_code,
+                    )
 
-            record_audit(action="register_success", entity="user", entity_id=user.id, detail="Registro de usuario exitoso")
-            SaaSOpsService.register_signup(db.session, company=company, user=user)
-            db.session.commit()
+                record_audit(action="register_success", entity="user", entity_id=user.id, detail="Registro de usuario exitoso")
+                SaaSOpsService.register_signup(db.session, company=company, user=user)
+                db.session.commit()
+            except Exception:
+                db.session.rollback()
+                raise
 
             session["post_register_onboarding_company_id"] = company.id
 

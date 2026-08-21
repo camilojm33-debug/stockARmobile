@@ -18,9 +18,10 @@
         <form method="post" action="{{ url_for('auth.login') }}">
           {{ form.hidden_tag() }}
           <input type="hidden" name="next" value="{{ request.args.get('next', '') }}">
+          <input type="hidden" name="mode" value="{{ login_mode or 'company' }}">
           <div class="mb-3">
-            <label class="form-label fw-semibold" for="username">Usuario</label>
-            {{ form.username(class_="form-control form-control-lg", autofocus=True, autocomplete="username", placeholder="Usuario") }}
+            <label class="form-label fw-semibold" for="username">{% if login_mode == 'seller' %}Vendedor{% else %}Empresa / Negocio{% endif %}</label>
+            {{ form.username(class_="form-control form-control-lg", autofocus=True, autocomplete="username", placeholder=('Vendedor' if login_mode == 'seller' else 'Empresa / Negocio')) }}
           </div>
           <div class="mb-4">
             {{ form.password.label(class_="form-label fw-semibold") }}

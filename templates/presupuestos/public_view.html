@@ -1,0 +1,51 @@
+{% extends "base_master.html" %}
+
+{% block title %}Presupuesto {{ quote.number or quote.id }} - StockArmobile{% endblock %}
+
+{% block content %}
+<div class="container py-4" style="max-width: 860px;">
+  <div class="card app-card border-0">
+    <div class="card-body p-4">
+      <div class="d-flex justify-content-between align-items-start gap-3 flex-wrap mb-4">
+        <div>
+          <span class="page-kicker"><i class="bi bi-file-earmark-text"></i> Presupuesto</span>
+          <h1 class="h4 fw-bold mb-1">{{ quote.number or ('P-%06d'|format(quote.id)) }}</h1>
+          <div class="text-muted">{{ quote.date.strftime('%d/%m/%Y %H:%M') if quote.date else '' }}</div>
+        </div>
+        <a class="btn btn-outline-primary" href="{{ pdf_url }}" target="_blank" rel="noopener"><i class="bi bi-filetype-pdf me-1"></i>Ver PDF</a>
+      </div>
+
+      <div class="row g-3 mb-4">
+        <div class="col-md-6"><div class="border rounded p-3 h-100"><small class="text-muted d-block">Cliente</small><strong>{{ quote.client.name if quote.client else (quote.consumer_name or 'Consumidor final') }}</strong></div></div>
+        <div class="col-md-6"><div class="border rounded p-3 h-100"><small class="text-muted d-block">Validez</small><strong>{{ quote.expires_at.strftime('%d/%m/%Y') if quote.expires_at else '-' }}</strong></div></div>
+      </div>
+
+      <div class="table-responsive mb-4">
+        <table class="table align-middle">
+          <thead><tr><th>Producto</th><th class="text-end">Cant.</th><th class="text-end">Precio</th><th class="text-end">Subtotal</th></tr></thead>
+          <tbody>
+          {% for row in rows %}
+            <tr>
+              <td>{{ row.description }}</td>
+              <td class="text-end">{{ '%.3g'|format(row.quantity) }}</td>
+              <td class="text-end">${{ '%.2f'|format(row.unit_price) }}</td>
+              <td class="text-end">${{ '%.2f'|format(row.subtotal) }}</td>
+            </tr>
+          {% endfor %}
+          </tbody>
+        </table>
+      </div>
+
+      <div class="d-flex justify-content-end">
+        <div style="min-width: 260px;">
+          <div class="d-flex justify-content-between"><span>Subtotal</span><strong>${{ '%.2f'|format(quote.subtotal or 0) }}</strong></div>
+          <div class="d-flex justify-content-between"><span>Descuento</span><strong>-${{ '%.2f'|format(quote.discount or 0) }}</strong></div>
+          <div class="d-flex justify-content-between"><span>Impuestos</span><strong>${{ '%.2f'|format(quote.tax or 0) }}</strong></div>
+          <hr>
+          <div class="d-flex justify-content-between fs-5"><span>Total</span><strong>${{ '%.2f'|format(quote.total_amount or 0) }}</strong></div>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+{% endblock %}

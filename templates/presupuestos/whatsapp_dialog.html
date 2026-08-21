@@ -10,15 +10,15 @@
         <div class="card-body p-4">
           <span class="page-kicker"><i class="bi bi-whatsapp"></i> WhatsApp</span>
           <h1 class="h5 fw-bold mb-3">Compartir presupuesto</h1>
-          <p class="text-muted">Se abrirá WhatsApp con el mensaje preparado y el enlace al PDF del presupuesto.</p>
+          <p class="text-muted">Se abrirá WhatsApp con el mensaje preparado y el enlace del presupuesto.</p>
           <form method="post" action="{{ url_for('quotes.share_whatsapp_post', quote_id=quote.id) }}" id="quoteWhatsappShareForm">
             <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
             <div class="mb-3">
               <label class="form-label">Número de WhatsApp (opcional)</label>
-              <input class="form-control" id="quoteWhatsappPhone" name="whatsapp_phone" value="{{ entered_phone }}" placeholder="54911..." maxlength="30">
-              <div class="form-text">Si lo dejás vacío, WhatsApp se abrirá para que selecciones el destinatario.</div>
+              <input class="form-control" id="quoteWhatsappPhone" name="whatsapp_phone" value="{{ entered_phone }}" placeholder="3624228296 o 5493624228296" maxlength="30">
+              <div class="form-text">Ingresalo sin +. Si es un celular argentino local, agregamos 549 automáticamente. Si lo dejás vacío, WhatsApp se abrirá para seleccionar destinatario.</div>
             </div>
-            <div class="small text-muted border rounded p-2 mb-3">{{ message }}<br>PDF: {{ pdf_url }}</div>
+            <div class="small text-muted border rounded p-2 mb-3">{{ message }}<br>Presupuesto: {{ pdf_url }}</div>
             <div class="form-text mb-3">Si tenés WhatsApp instalado en la PC, usá "Abrir app". Si preferís navegador, usá "Abrir Web".</div>
             <div class="d-flex justify-content-end gap-2">
               <a class="btn btn-outline-secondary" href="{{ url_for('quotes.view_quote', quote_id=quote.id) }}">Cancelar</a>
@@ -43,12 +43,22 @@
     const pdfUrl = {{ pdf_url|tojson }};
 
     function normalizePhone(value) {
-      return String(value || '').replace(/\D+/g, '');
+      let digits = String(value || '').replace(/\D+/g, '');
+      if (digits.startsWith('00')) digits = digits.slice(2);
+      digits = digits.replace(/^0+/, '');
+      if (digits.startsWith('54')) return digits;
+      if (digits.length === 12 && digits.slice(2, 4) === '15') {
+        digits = digits.slice(0, 2) + digits.slice(4);
+      } else if (digits.length === 12 && digits.slice(3, 5) === '15') {
+        digits = digits.slice(0, 3) + digits.slice(5);
+      }
+      if (digits.length === 10) return `549${digits}`;
+      return digits;
     }
 
     function buildDesktopUrl() {
       const phone = normalizePhone(phoneInput?.value || '');
-      const text = [baseMessage, `PDF: ${pdfUrl}`].filter(Boolean).join('\n\n');
+      const text = [baseMessage, `Presupuesto: ${pdfUrl}`].filter(Boolean).join('\n\n');
       const query = new URLSearchParams();
       if (phone) {
         query.set('phone', phone);
@@ -59,7 +69,7 @@
 
     function buildWebUrl() {
       const phone = normalizePhone(phoneInput?.value || '');
-      const text = [baseMessage, `PDF: ${pdfUrl}`].filter(Boolean).join('\n\n');
+      const text = [baseMessage, `Presupuesto: ${pdfUrl}`].filter(Boolean).join('\n\n');
       const query = new URLSearchParams();
       if (phone) {
         query.set('phone', phone);

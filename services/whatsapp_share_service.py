@@ -8,7 +8,19 @@ from urllib.parse import quote
 def normalize_whatsapp_number(value: str | None) -> str:
     if not value:
         return ""
-    return "".join(ch for ch in str(value) if ch.isdigit())
+    digits = "".join(ch for ch in str(value) if ch.isdigit())
+    if digits.startswith("00"):
+        digits = digits[2:]
+    digits = digits.lstrip("0")
+    if digits.startswith("54"):
+        return digits
+    if len(digits) == 12 and digits[2:4] == "15":
+        digits = digits[:2] + digits[4:]
+    elif len(digits) == 12 and digits[3:5] == "15":
+        digits = digits[:3] + digits[5:]
+    if len(digits) == 10:
+        return f"549{digits}"
+    return digits
 
 
 def build_whatsapp_share_url(*, phone: str | None, message: str, document_url: str | None = None, document_label: str = "PDF") -> str:

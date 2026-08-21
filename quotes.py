@@ -227,6 +227,11 @@ def _build_public_quote_pdf_url(quote_id: int) -> str:
     return url_for("quotes.quote_public_pdf", token=token, _external=True)
 
 
+def _build_public_quote_url(quote_id: int) -> str:
+    token = _public_share_serializer().dumps({"quote_id": int(quote_id)}, salt=QUOTE_PUBLIC_TOKEN_SALT)
+    return url_for("quotes.quote_public_view", token=token, _external=True)
+
+
 def _quote_id_from_public_token(token: str) -> int | None:
     try:
         payload = _public_share_serializer().loads(
@@ -1064,6 +1069,34 @@ def quote_public_pdf(token):
     return _quote_pdf_response(quote, as_attachment=False)
 
 
+@bp.route("/publico/<token>")
+def quote_public_view(token):
+    from app import Quote, QuoteItem
+
+    quote_id = _quote_id_from_public_token(token)
+    if not quote_id:
+        abort(404)
+
+    quote = (
+        Quote.query.options(
+            selectinload(Quote.client),
+            selectinload(Quote.seller),
+            selectinload(Quote.items).selectinload(QuoteItem.product),
+            selectinload(Quote.converted_sale),
+        )
+        .filter(Quote.id == quote_id)
+        .first()
+    )
+    if quote is None:
+        abort(404)
+    return render_template(
+        "presupuestos/public_view.html",
+        quote=quote,
+        rows=_quote_rows(quote),
+        pdf_url=_build_public_quote_pdf_url(quote.id),
+    )
+
+
 @bp.route("/<int:quote_id>/whatsapp")
 @tenant_required
 @login_required
@@ -1078,8 +1111,8 @@ def share_whatsapp(quote_id):
         "Quedamos a disposición para cualquier consulta.\n\n"
         "Muchas gracias."
     )
-    pdf_url = _build_public_quote_pdf_url(quote.id)
-    return render_template("presupuestos/whatsapp_dialog.html", quote=quote, entered_phone=phone, message=message, pdf_url=pdf_url)
+    public_url = _build_public_quote_url(quote.id)
+    return render_template("presupuestos/whatsapp_dialog.html", quote=quote, entered_phone=phone, message=message, pdf_url=public_url)
 
 
 @bp.route("/<int:quote_id>/whatsapp", methods=["POST"])
@@ -1096,10 +1129,10 @@ def share_whatsapp_post(quote_id):
         "Quedamos a disposición para cualquier consulta.\n\n"
         "Muchas gracias."
     )
-    pdf_url = _build_public_quote_pdf_url(quote.id)
+    public_url = _build_public_quote_url(quote.id)
     from app import record_audit
     record_audit(action="quote_share_whatsapp", entity="quote", entity_id=quote.id, detail=f"Compartido por WhatsApp {quote.number or quote.id}", ip_address=request.remote_addr)
-    return redirect(build_whatsapp_share_url(phone=phone, message=message, document_url=pdf_url, document_label="PDF"))
+    return redirect(build_whatsapp_share_url(phone=phone, message=message, document_url=public_url, document_label="Presupuesto"))
 
 
 @bp.route("/<int:quote_id>/convertir", methods=["POST"])

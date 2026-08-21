@@ -1991,12 +1991,20 @@ def test_quotes_whatsapp_allows_empty_or_custom_number():
     empty_location = empty_phone.headers.get("Location", "")
     assert empty_location.startswith("https://api.whatsapp.com/send?text=")
     assert "/presupuestos/publico/" in unquote(empty_location)
+    assert "/pdf" not in unquote(empty_location)
 
     custom_phone = client.post(f"/presupuestos/{quote_id}/whatsapp", data={"whatsapp_phone": "+54 9 11 2222 3333"}, follow_redirects=False)
     assert custom_phone.status_code in (301, 302)
     custom_location = custom_phone.headers.get("Location", "")
     assert custom_location.startswith("https://api.whatsapp.com/send?phone=5491122223333")
     assert "/presupuestos/publico/" in unquote(custom_location)
+    assert "/pdf" not in unquote(custom_location)
+
+    local_phone = client.post(f"/presupuestos/{quote_id}/whatsapp", data={"whatsapp_phone": "362 422-8296"}, follow_redirects=False)
+    assert local_phone.status_code in (301, 302)
+    local_location = local_phone.headers.get("Location", "")
+    assert local_location.startswith("https://api.whatsapp.com/send?phone=5493624228296")
+    assert "+" not in local_location.split("phone=", 1)[1].split("&", 1)[0]
 
 
 def test_quotes_allows_manual_consumer_name_without_client():
@@ -3711,6 +3719,8 @@ def test_login_has_no_google_button_and_has_forgot_password_link():
     response = client.get("/auth/login")
     assert response.status_code == 200
     html = response.data.decode("utf-8")
+    assert "Empresa / Negocio" in html
+    assert "Vendedor" not in html
     assert "Continuar con Google" not in html
     assert "/auth/google" not in html
     assert "auth.google_login" not in html
@@ -4612,6 +4622,229 @@ def test_register_with_paid_plan_keeps_trial_of_ten_days():
         remaining_days = (company.trial_ends_at - stock_app.utcnow()).total_seconds() / 86400
         assert remaining_days <= 10.05
         assert remaining_days >= 9.80
+
+
+def test_referral_seller_without_company_can_register_company_reusing_user():
+    client = stock_app.app.test_client()
+
+    with stock_app.app.app_context():
+        from app import ReferralSeller, Subscription
+
+        seller_user = User(username="seller_convert", email="vendedor@example.com", role="seller", company_id=None, active=True)
+        seller_user.set_password("seller123")
+        db.session.add(seller_user)
+        db.session.flush()
+        seller_profile = ReferralSeller(
+            user_id=seller_user.id,
+            dni="30111000",
+            referral_code="REFCONV",
+            referral_url="https://www.stockarmobile.com/?ref=REFCONV",
+            active=True,
+        )
+        db.session.add(seller_profile)
+        db.session.commit()
+        seller_user_id = seller_user.id
+        seller_profile_id = seller_profile.id
+        base_user_count = User.query.count()
+        base_company_count = Company.query.count()
+
+    response = client.post(
+        "/auth/register",
+        data={
+            "username": "Mi Comercio",
+            "email": "vendedor@example.com",
+            "password": "seller123",
+            "selected_plan": "entrepreneur",
+        },
+        follow_redirects=False,
+    )
+    assert response.status_code in (301, 302)
+
+    with stock_app.app.app_context():
+        from app import ReferralSeller, Subscription
+
+        seller_user = db.session.get(User, seller_user_id)
+        assert seller_user is not None
+        assert seller_user.email == "vendedor@example.com"
+        assert seller_user.role == "admin"
+        assert seller_user.company_id is not None
+        assert User.query.filter_by(email="vendedor@example.com").count() == 1
+        assert User.query.count() == base_user_count
+        assert Company.query.count() == base_company_count + 1
+
+        company = db.session.get(Company, seller_user.company_id)
+        assert company is not None
+        assert company.name == "Empresa Mi Comercio"
+        subscriptions = Subscription.query.filter_by(company_id=company.id).all()
+        assert len(subscriptions) == 1
+        assert (subscriptions[0].status or "").lower() == "trial"
+
+        seller_profile = db.session.get(ReferralSeller, seller_profile_id)
+        assert seller_profile is not None
+        assert seller_profile.user_id == seller_user_id
+        assert seller_profile.referral_code == "REFCONV"
+        assert seller_profile.active is True
+
+    client.post("/auth/login", data={"username": "seller_convert", "password": "seller123"})
+    dashboard = client.get("/dashboard/", follow_redirects=False)
+    assert dashboard.status_code == 200
+    referrals = client.get("/referidos", follow_redirects=False)
+    assert referrals.status_code == 200
+
+
+def test_existing_user_with_company_cannot_register_second_company():
+    client = stock_app.app.test_client()
+
+    with stock_app.app.app_context():
+        company = Company.query.filter_by(name="Empresa Demo").first()
+        assert company is not None
+        existing_user = User(username="usuario_con_empresa", email="usuario_con_empresa@example.com", role="user", company_id=company.id, active=True)
+        existing_user.set_password("admin123")
+        db.session.add(existing_user)
+        db.session.commit()
+        base_company_count = Company.query.count()
+        base_subscription_count = Subscription.query.count()
+
+    response = client.post(
+        "/auth/register",
+        data={
+            "username": "Otra Empresa",
+            "email": "usuario_con_empresa@example.com",
+            "password": "admin123",
+            "selected_plan": "trial",
+        },
+        follow_redirects=True,
+    )
+    assert response.status_code == 200
+    assert "Este usuario ya tiene una empresa registrada." in response.data.decode("utf-8")
+
+    with stock_app.app.app_context():
+        assert User.query.filter_by(email="usuario_con_empresa@example.com").count() == 1
+        assert Company.query.count() == base_company_count
+        assert Subscription.query.count() == base_subscription_count
+
+
+def test_register_duplicate_company_name_shows_company_error_without_user_duplication():
+    client = stock_app.app.test_client()
+
+    with stock_app.app.app_context():
+        base_user_count = User.query.count()
+        base_company_count = Company.query.count()
+
+    response = client.post(
+        "/auth/register",
+        data={
+            "username": "Demo",
+            "email": "empresa_duplicada@test.com",
+            "password": "demo1234",
+            "selected_plan": "trial",
+        },
+        follow_redirects=True,
+    )
+    assert response.status_code == 200
+    assert "Ya existe una empresa con ese nombre." in response.data.decode("utf-8")
+
+    with stock_app.app.app_context():
+        assert User.query.filter_by(email="empresa_duplicada@test.com").first() is None
+        assert User.query.count() == base_user_count
+        assert Company.query.count() == base_company_count
+
+
+def test_referral_seller_company_registration_retry_does_not_duplicate_records():
+    client = stock_app.app.test_client()
+
+    with stock_app.app.app_context():
+        from app import ReferralSeller
+
+        seller_user = User(username="seller_retry", email="seller_retry@test.com", role="seller", company_id=None, active=True)
+        seller_user.set_password("seller123")
+        db.session.add(seller_user)
+        db.session.flush()
+        db.session.add(
+            ReferralSeller(
+                user_id=seller_user.id,
+                dni="30111999",
+                referral_code="REFRTY",
+                referral_url="https://www.stockarmobile.com/?ref=REFRTY",
+                active=True,
+            )
+        )
+        db.session.commit()
+        seller_user_id = seller_user.id
+
+    payload = {
+        "username": "Retry Comercio",
+        "email": "seller_retry@test.com",
+        "password": "seller123",
+        "selected_plan": "trial",
+    }
+    first = client.post("/auth/register", data=payload, follow_redirects=False)
+    assert first.status_code in (301, 302)
+    second = client.post("/auth/register", data=payload, follow_redirects=True)
+    assert second.status_code == 200
+    assert "Ya existe una empresa con ese nombre." in second.data.decode("utf-8") or "Este usuario ya tiene una empresa registrada." in second.data.decode("utf-8")
+
+    db.session.remove()
+    with stock_app.app.app_context():
+        from app import Subscription
+
+        seller_user = db.session.get(User, seller_user_id)
+        assert seller_user is not None
+        assert User.query.filter_by(email="seller_retry@test.com").count() == 1
+        assert Company.query.filter_by(name="Empresa Retry Comercio").count() == 1
+        assert Subscription.query.filter_by(company_id=seller_user.company_id).count() == 1
+
+
+def test_referral_seller_company_registration_rolls_back_when_subscription_fails(monkeypatch):
+    client = stock_app.app.test_client()
+
+    with stock_app.app.app_context():
+        from app import ReferralSeller
+
+        seller_user = User(username="seller_rollback", email="seller_rollback@test.com", role="seller", company_id=None, active=True)
+        seller_user.set_password("seller123")
+        db.session.add(seller_user)
+        db.session.flush()
+        db.session.add(
+            ReferralSeller(
+                user_id=seller_user.id,
+                dni="30111888",
+                referral_code="REFRBK",
+                referral_url="https://www.stockarmobile.com/?ref=REFRBK",
+                active=True,
+            )
+        )
+        db.session.commit()
+        seller_user_id = seller_user.id
+        base_company_count = Company.query.count()
+
+    def fail_trial(*args, **kwargs):
+        raise RuntimeError("subscription failed")
+
+    monkeypatch.setattr("services.subscription_service.SubscriptionService.ensure_company_trial", fail_trial)
+
+    with pytest.raises(RuntimeError):
+        client.post(
+            "/auth/register",
+            data={
+                "username": "Rollback Comercio",
+                "email": "seller_rollback@test.com",
+                "password": "seller123",
+                "selected_plan": "trial",
+            },
+            follow_redirects=False,
+        )
+
+    with stock_app.app.app_context():
+        from app import Subscription
+
+        seller_user = db.session.get(User, seller_user_id)
+        assert seller_user is not None
+        assert seller_user.company_id is None
+        assert seller_user.role == "seller"
+        assert Company.query.filter_by(name="Empresa Rollback Comercio").first() is None
+        assert Company.query.count() == base_company_count
+        assert Subscription.query.count() == 0
 
 
 def test_checkout_during_trial_does_not_switch_to_pending_or_30_days():
@@ -5771,10 +6004,17 @@ def test_login_redirects_each_role_to_own_panel_without_mixing():
     login_page = client.get("/auth/login")
     assert login_page.status_code == 200
     login_html = login_page.data.decode("utf-8")
-    assert "Usuario" in login_html
+    assert "Empresa / Negocio" in login_html
+    assert "Vendedor" not in login_html
     assert "Usuario o email" not in login_html
-    assert "Empresa / Negocio" not in login_html
     assert "toggleLoginPassword" in login_html
+
+    seller_login_page = client.get("/auth/login?next=/referidos")
+    assert seller_login_page.status_code == 200
+    seller_login_html = seller_login_page.data.decode("utf-8")
+    assert "Vendedor" in seller_login_html
+    assert "Empresa / Negocio" not in seller_login_html
+    assert "Usuario o email" not in seller_login_html
 
     client.post("/auth/login", data={"username": "empresa_admin", "password": "admin123"})
     user_dashboard = client.get("/dashboard/", follow_redirects=False)
@@ -6007,7 +6247,7 @@ def test_seller_registration_requires_dni_and_creates_seller_profile():
     login_page = client.get("/auth/login")
     assert login_page.status_code == 200
     login_html = login_page.data.decode("utf-8")
-    assert "Usuario" in login_html
+    assert "Empresa / Negocio" in login_html
     assert "Usuario o email" not in login_html
     assert "toggleLoginPassword" in login_html
 
