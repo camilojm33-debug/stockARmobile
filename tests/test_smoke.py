@@ -5725,6 +5725,85 @@ def test_referral_role_isolation_between_seller_and_superadmin():
     assert admin_forbidden_seller.status_code == 403
 
 
+def test_login_redirects_each_role_to_own_panel_without_mixing():
+    client = stock_app.app.test_client()
+
+    with stock_app.app.app_context():
+        from app import ReferralSeller
+
+        seller_user = User(username="seller_login_matrix", email="seller_login_matrix@test.local", role="seller", active=True)
+        seller_user.set_password("seller123")
+        db.session.add(seller_user)
+        db.session.flush()
+        db.session.add(
+            ReferralSeller(
+                user_id=seller_user.id,
+                dni="30999888",
+                referral_code="REF9988",
+                referral_url="https://www.stockarmobile.com/?ref=REF9988",
+                active=True,
+            )
+        )
+        db.session.commit()
+
+    login_page = client.get("/auth/login")
+    assert login_page.status_code == 200
+    login_html = login_page.data.decode("utf-8")
+    assert "Usuario o email" in login_html
+    assert "Empresa / Negocio" not in login_html
+    assert "toggleLoginPassword" in login_html
+
+    client.post("/auth/login", data={"username": "empresa_admin", "password": "admin123"})
+    user_dashboard = client.get("/dashboard/", follow_redirects=False)
+    assert user_dashboard.status_code == 200
+    user_referrals = client.get("/referidos", follow_redirects=False)
+    assert user_referrals.status_code in (301, 302)
+    assert "/referidos/activar" in (user_referrals.headers.get("Location") or "")
+
+    client.post("/auth/logout")
+    seller_login = client.post(
+        "/auth/login",
+        data={"username": "seller_login_matrix", "password": "seller123"},
+        follow_redirects=False,
+    )
+    assert seller_login.status_code in (301, 302)
+    assert "/referidos" in (seller_login.headers.get("Location") or "")
+    seller_portal = client.get("/referidos", follow_redirects=False)
+    assert seller_portal.status_code == 200
+    seller_notifications = client.get("/api/notifications")
+    assert seller_notifications.status_code == 200
+    seller_notification_titles = {item["title"] for item in seller_notifications.get_json()["notifications"]}
+    assert seller_notification_titles
+    assert seller_notification_titles <= {"Referidos", "Comisiones", "Pagos"}
+    assert "Ventas" not in seller_notification_titles
+    assert "Empresa" not in seller_notification_titles
+    seller_dashboard = client.get("/dashboard/", follow_redirects=False)
+    assert seller_dashboard.status_code in (301, 302)
+    assert "/auth/login" in (seller_dashboard.headers.get("Location") or "")
+
+    client.post("/auth/logout")
+    admin_login = client.post(
+        "/auth/login",
+        data={"username": "negocio_admin", "password": "admin123"},
+        follow_redirects=False,
+    )
+    assert admin_login.status_code in (301, 302)
+    assert "/dashboard" in (admin_login.headers.get("Location") or "")
+    admin_dashboard = client.get("/dashboard/", follow_redirects=False)
+    assert admin_dashboard.status_code == 200
+
+    client.post("/auth/logout")
+    superadmin_login = client.post(
+        "/auth/login",
+        data={"username": "superadmin", "password": "admin123"},
+        follow_redirects=False,
+    )
+    assert superadmin_login.status_code in (301, 302)
+    assert "/superadmin" in (superadmin_login.headers.get("Location") or "")
+    superadmin_referrals = client.get("/referidos", follow_redirects=False)
+    assert superadmin_referrals.status_code == 403
+
+
 def test_referral_commission_uses_seller_specific_percent():
     from services.referral_service import ReferralService
 

@@ -16,6 +16,8 @@ def build_notifications():
     try:
         if getattr(current_user, "role", None) == "superadmin":
             return _build_superadmin_notifications()
+        if getattr(current_user, "role", None) == "seller":
+            return _build_seller_notifications()
         return _build_user_notifications()
     except (OperationalError, ProgrammingError):
         return []
@@ -137,6 +139,72 @@ def _build_superadmin_notifications():
             "href": "/soporte/admin",
         })
     return items
+
+
+def _build_seller_notifications():
+    from app import ReferralCommission, ReferralSeller
+
+    profile = ReferralSeller.query.filter_by(user_id=current_user.id, active=True).first()
+    if profile is None:
+        return [
+            {
+                "type": "warning",
+                "title": "Referidos",
+                "body": "Completa la activacion para acceder a tu portal de vendedor.",
+                "href": "/referidos/activar",
+            }
+        ]
+
+    commissions = (
+        ReferralCommission.query.filter_by(seller_id=profile.id)
+        .order_by(ReferralCommission.created_at.desc(), ReferralCommission.id.desc())
+        .limit(20)
+        .all()
+    )
+
+    pending_count = sum(1 for row in commissions if row.status in {"pendiente", "disponible"})
+    available_total = sum(float(row.commission_amount or 0) for row in commissions if row.status == "disponible")
+    paid_count = sum(1 for row in commissions if row.status == "pagada")
+
+    items = []
+    if pending_count:
+        items.append(
+            {
+                "type": "primary",
+                "title": "Referidos",
+                "body": f"{pending_count} comision(es) pendientes o disponibles.",
+                "href": "/referidos/comisiones",
+            }
+        )
+    if available_total:
+        items.append(
+            {
+                "type": "success",
+                "title": "Comisiones",
+                "body": f"Tenes ARS {available_total:.2f} disponibles para cobrar.",
+                "href": "/referidos/comisiones",
+            }
+        )
+    if paid_count:
+        items.append(
+            {
+                "type": "info",
+                "title": "Pagos",
+                "body": f"{paid_count} comision(es) ya figuran como pagadas.",
+                "href": "/referidos/comisiones",
+            }
+        )
+
+    if not items:
+        items.append(
+            {
+                "type": "secondary",
+                "title": "Referidos",
+                "body": "Tu portal esta listo para compartir tu enlace y seguir tus comisiones.",
+                "href": "/referidos",
+            }
+        )
+    return items[:6]
 
 
 def _build_user_notifications():
