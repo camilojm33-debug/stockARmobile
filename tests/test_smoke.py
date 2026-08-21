@@ -5749,7 +5749,8 @@ def test_login_redirects_each_role_to_own_panel_without_mixing():
     login_page = client.get("/auth/login")
     assert login_page.status_code == 200
     login_html = login_page.data.decode("utf-8")
-    assert "Usuario o email" in login_html
+    assert "Usuario" in login_html
+    assert "Usuario o email" not in login_html
     assert "Empresa / Negocio" not in login_html
     assert "toggleLoginPassword" in login_html
 
