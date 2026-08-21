@@ -6,7 +6,7 @@
   <div class="d-flex gap-2">
     <a class="btn btn-outline-secondary btn-sm" href="{{ url_for('referrals.admin_referrals_sellers_list') }}"><i class="bi bi-arrow-left me-1"></i>Ver vendedores</a>
     <a class="btn btn-primary btn-sm" href="{{ url_for('referrals.admin_referrals_sellers_edit', seller_id=profile.id) }}"><i class="bi bi-pencil me-1"></i>Editar</a>
-    <form method="post" action="{{ url_for('referrals.admin_referrals_seller_delete', seller_id=profile.id) }}" onsubmit="return confirm('Se desactivara el vendedor para preservar su historial. Continuar?');">
+    <form method="post" action="{{ url_for('referrals.admin_referrals_seller_delete', seller_id=profile.id) }}" onsubmit="return confirm('Si no tiene historial se eliminara definitivamente. Si tiene historial, se desactivara para conservarlo. Continuar?');">
       <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
       <button class="btn btn-outline-danger btn-sm" type="submit"><i class="bi bi-trash me-1"></i>Eliminar vendedor</button>
     </form>

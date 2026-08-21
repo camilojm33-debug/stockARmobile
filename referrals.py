@@ -1126,7 +1126,7 @@ def admin_referrals_seller_reset_password(seller_id):
 @bp.route("/superadmin/referrals/sellers/<int:seller_id>/delete", methods=["POST"])
 @superadmin_required
 def admin_referrals_seller_delete(seller_id):
-    from app import ReferralSeller, User, db
+    from app import NotificationReadState, PasswordRecoveryRequest, PasswordResetToken, ReferralAttribution, ReferralCommission, ReferralPayout, ReferralSeller, User, db
 
     if not _referrals_module_ready():
         flash("El programa de referidos todavía no está disponible porque faltan migraciones.", "warning")
@@ -1137,12 +1137,33 @@ def admin_referrals_seller_delete(seller_id):
     if user is None:
         abort(404)
 
-    # Baja logica para preservar historico de comisiones, pagos y atribuciones.
-    profile.active = False
-    user.active = False
-    user.role = "seller"
+    has_history = any(
+        [
+            ReferralAttribution.query.filter_by(seller_id=profile.id).first() is not None,
+            ReferralCommission.query.filter_by(seller_id=profile.id).first() is not None,
+            ReferralPayout.query.filter_by(seller_id=profile.id).first() is not None,
+        ]
+    )
+
+    if has_history:
+        profile.active = False
+        user.active = False
+        user.role = "seller"
+        db.session.commit()
+        flash("Vendedor desactivado con historial preservado.", "success")
+        return redirect(url_for("referrals.admin_referrals_sellers_list"))
+
+    db.session.delete(profile)
+    if user.company_id is None and (user.role or "") == "seller":
+        NotificationReadState.query.filter_by(user_id=user.id).delete(synchronize_session=False)
+        PasswordResetToken.query.filter_by(user_id=user.id).delete(synchronize_session=False)
+        PasswordRecoveryRequest.query.filter_by(user_id=user.id).delete(synchronize_session=False)
+        PasswordRecoveryRequest.query.filter_by(processed_by_user_id=user.id).update({"processed_by_user_id": None}, synchronize_session=False)
+        db.session.delete(user)
+    else:
+        user.role = "admin" if user.company_id else "user"
     db.session.commit()
-    flash("Vendedor eliminado del panel (desactivado con historial preservado).", "success")
+    flash("Vendedor eliminado definitivamente.", "success")
     return redirect(url_for("referrals.admin_referrals_sellers_list"))
 
 

@@ -6407,17 +6407,80 @@ def test_superadmin_can_create_change_and_recover_seller_password():
         follow_redirects=True,
     )
     assert deleted.status_code == 200
-    assert "Vendedor eliminado del panel" in deleted.data.decode("utf-8")
+    assert "Vendedor eliminado definitivamente." in deleted.data.decode("utf-8")
 
     with stock_app.app.app_context():
         from app import ReferralSeller
 
         seller_user = User.query.filter_by(username="seller_admin_abm").first()
         seller_profile = ReferralSeller.query.filter_by(id=seller_id).first()
+        assert seller_user is None
+        assert seller_profile is None
+
+
+def test_superadmin_delete_seller_with_history_preserves_records_as_inactive():
+    client = stock_app.app.test_client()
+
+    with stock_app.app.app_context():
+        from app import Company, Plan, ReferralAttribution, ReferralCommission, ReferralSeller
+
+        seller_user = User(username="seller_with_history", email="seller_with_history@test.com", role="seller", active=True)
+        seller_user.set_password("seller123")
+        referred_company = Company(name="Empresa Referida Historial", active=True)
+        db.session.add_all([seller_user, referred_company])
+        db.session.flush()
+
+        seller_profile = ReferralSeller(
+            user_id=seller_user.id,
+            dni="33888111",
+            referral_code="REFHIS",
+            referral_url="https://www.stockarmobile.com/?ref=REFHIS",
+            active=True,
+        )
+        db.session.add(seller_profile)
+        db.session.flush()
+        attribution = ReferralAttribution(
+            seller_id=seller_profile.id,
+            company_id=referred_company.id,
+            user_id=None,
+            referral_code=seller_profile.referral_code,
+        )
+        db.session.add(attribution)
+        db.session.flush()
+        db.session.add(
+            ReferralCommission(
+                seller_id=seller_profile.id,
+                attribution_id=attribution.id,
+                company_id=referred_company.id,
+                plan_id=Plan.query.first().id if Plan.query.first() else None,
+                sold_amount=1000,
+                commission_amount=300,
+                status="pendiente",
+            )
+        )
+        db.session.commit()
+        seller_id = seller_profile.id
+        seller_user_id = seller_user.id
+
+    client.post("/auth/login", data={"username": "superadmin", "password": "admin123"})
+    deleted = client.post(
+        f"/superadmin/referrals/sellers/{seller_id}/delete",
+        follow_redirects=True,
+    )
+    assert deleted.status_code == 200
+    assert "Vendedor desactivado con historial preservado." in deleted.data.decode("utf-8")
+
+    with stock_app.app.app_context():
+        from app import ReferralAttribution, ReferralCommission, ReferralSeller
+
+        seller_user = db.session.get(User, seller_user_id)
+        seller_profile = db.session.get(ReferralSeller, seller_id)
         assert seller_user is not None
         assert seller_profile is not None
         assert seller_user.active is False
         assert seller_profile.active is False
+        assert ReferralAttribution.query.filter_by(seller_id=seller_id).count() == 1
+        assert ReferralCommission.query.filter_by(seller_id=seller_id).count() == 1
 
 
 def test_webhook_approved_activates_subscription_and_creates_commission_automatically(monkeypatch):
