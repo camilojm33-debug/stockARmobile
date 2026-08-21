@@ -325,7 +325,7 @@ def force_password_change():
 @bp.route("/register", methods=["GET", "POST"])
 def register():
     """Registro de usuario nuevo."""
-    from app import Company, RegisterForm, User, db, record_audit, utcnow
+    from app import Company, ReferralSeller, RegisterForm, User, db, record_audit, utcnow
     from services.plan_service import PlanService
     from services.referral_service import ReferralService
     from services.saas_ops_service import SaaSOpsService
@@ -338,14 +338,24 @@ def register():
         form = RegisterForm()
         if registration_mode == "seller":
             email_candidate = (request.form.get("email") or "").strip().lower()
+            dni_candidate = (request.form.get("dni") or "").strip()
             if email_candidate:
                 existing_user = User.query.filter(db.func.lower(User.email) == email_candidate).first()
                 if existing_user is not None:
                     flash("Este correo ya pertenece a un cliente existente. Inicia sesion para activar Referidos desde tu cuenta.", "warning")
                     return redirect(url_for("auth.login", next=url_for("referrals.activate_seller")))
+            if not dni_candidate:
+                flash("El DNI es obligatorio.", "danger")
+                return redirect(url_for("auth.register", selected_plan=selected_plan_code, mode=registration_mode))
+            if ReferralSeller.query.filter(db.func.lower(ReferralSeller.dni) == dni_candidate.lower()).first() is not None:
+                flash("Este DNI ya tiene una cuenta de vendedor registrada.", "danger")
+                return redirect(url_for("auth.register", selected_plan=selected_plan_code, mode=registration_mode))
         if form.validate_on_submit():
             if User.query.filter_by(username=form.username.data).first():
-                flash("La empresa/negocio ya esta en uso.", "danger")
+                if registration_mode == "seller":
+                    flash("El nombre de vendedor ya esta en uso.", "danger")
+                else:
+                    flash("La empresa/negocio ya esta en uso.", "danger")
                 return redirect(url_for("auth.register", selected_plan=selected_plan_code, mode=registration_mode))
 
             existing_user = User.query.filter_by(email=form.email.data).first()
@@ -364,7 +374,7 @@ def register():
                 db.session.flush()
 
                 profile_data = {
-                    "dni": (request.form.get("dni") or "").strip() or f"AUTO-{user.id}",
+                    "dni": dni_candidate,
                     "tax_id": None,
                     "phone": None,
                     "province": None,

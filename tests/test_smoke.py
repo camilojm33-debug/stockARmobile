@@ -3202,6 +3202,14 @@ def test_my_company_module_supports_employee_create_and_reset():
     client.post("/auth/login", data={"username": "negocio_admin", "password": "admin123"})
     client.post("/admin/company-settings/pin/verify", data={"access_pin": "1234"}, follow_redirects=True)
 
+    employees_panel = client.get("/admin/company-settings?panel=employees")
+    assert employees_panel.status_code == 200
+    assert "password-toggle-btn" in employees_panel.data.decode("utf-8")
+
+    security_panel = client.get("/admin/company-settings?panel=security")
+    assert security_panel.status_code == 200
+    assert "password-toggle-btn" in security_panel.data.decode("utf-8")
+
     create_user = client.post(
         "/admin/company-settings/users/create",
         data={
@@ -5872,6 +5880,141 @@ def test_existing_customer_can_activate_referrals_without_duplicate_account():
         seller_profile = ReferralSeller.query.filter_by(user_id=target_user.id).first()
         assert seller_profile is not None
         assert seller_profile.referral_code.startswith("REF")
+
+
+def test_seller_registration_requires_dni_and_creates_seller_profile():
+    client = stock_app.app.test_client()
+
+    page = client.get("/auth/register?mode=seller")
+    assert page.status_code == 200
+    html = page.data.decode("utf-8")
+    assert "Nombre de vendedor" in html
+    assert "DNI" in html
+    assert "Empresa / Negocio" not in html
+    assert "toggleRegisterPassword" in html
+
+    missing_dni = client.post(
+        "/auth/register",
+        data={
+            "username": "seller_sin_dni",
+            "email": "seller_sin_dni@test.com",
+            "password": "seller123",
+            "selected_plan": "trial",
+            "mode": "seller",
+        },
+        follow_redirects=True,
+    )
+    assert missing_dni.status_code == 200
+    assert "El DNI es obligatorio." in missing_dni.data.decode("utf-8")
+
+    response = client.post(
+        "/auth/register",
+        data={
+            "username": "vendedor_dni_ok",
+            "dni": "32123456",
+            "email": "vendedor_dni_ok@test.com",
+            "password": "seller123",
+            "selected_plan": "trial",
+            "mode": "seller",
+        },
+        follow_redirects=False,
+    )
+    assert response.status_code in (301, 302)
+
+    with stock_app.app.app_context():
+        from app import ReferralSeller
+
+        seller_user = User.query.filter_by(username="vendedor_dni_ok").first()
+        assert seller_user is not None
+        assert seller_user.email == "vendedor_dni_ok@test.com"
+        assert seller_user.role == "seller"
+        seller_profile = ReferralSeller.query.filter_by(user_id=seller_user.id).first()
+        assert seller_profile is not None
+        assert seller_profile.dni == "32123456"
+
+
+def test_superadmin_can_create_change_and_recover_seller_password():
+    client = stock_app.app.test_client()
+    client.post("/auth/login", data={"username": "superadmin", "password": "admin123"})
+
+    create_page = client.get("/superadmin/referrals/sellers/create")
+    assert create_page.status_code == 200
+    create_html = create_page.data.decode("utf-8")
+    assert "Usuario" in create_html
+    assert "Contraseña inicial" in create_html
+    assert "Empresa / Negocio" not in create_html
+
+    created = client.post(
+        "/superadmin/referrals/sellers/create",
+        data={
+            "username": "seller_admin_abm",
+            "email": "seller_admin_abm@test.com",
+            "first_name": "Ana",
+            "last_name": "Vendedora",
+            "dni": "33999111",
+            "active": "1",
+            "temp_password": "inicio123",
+        },
+        follow_redirects=False,
+    )
+    assert created.status_code in (301, 302)
+
+    with stock_app.app.app_context():
+        from app import ReferralSeller
+
+        seller_user = User.query.filter_by(username="seller_admin_abm").first()
+        assert seller_user is not None
+        assert seller_user.role == "seller"
+        assert seller_user.check_password("inicio123")
+        seller_profile = ReferralSeller.query.filter_by(user_id=seller_user.id).first()
+        assert seller_profile is not None
+        seller_id = seller_profile.id
+
+    changed = client.post(
+        f"/superadmin/referrals/sellers/{seller_id}/edit",
+        data={
+            "username": "seller_admin_abm",
+            "email": "seller_admin_abm@test.com",
+            "first_name": "Ana",
+            "last_name": "Vendedora",
+            "dni": "33999111",
+            "active": "1",
+            "new_password": "manual123",
+            "confirm_password": "manual123",
+            "force_change": "1",
+        },
+        follow_redirects=False,
+    )
+    assert changed.status_code in (301, 302)
+
+    with stock_app.app.app_context():
+        seller_user = User.query.filter_by(username="seller_admin_abm").first()
+        assert seller_user is not None
+        assert seller_user.check_password("manual123")
+        assert seller_user.must_change_password is True
+
+    reset = client.post(
+        f"/superadmin/referrals/sellers/{seller_id}/reset-password",
+        follow_redirects=True,
+    )
+    assert reset.status_code == 200
+    reset_html = reset.data.decode("utf-8")
+    assert "Contraseña temporal" in reset_html
+    match = re.search(r"<code class=\"fs-6\">([^<]+)</code>", reset_html)
+    assert match is not None
+    temp_password = match.group(1).strip()
+    assert temp_password
+
+    with stock_app.app.app_context():
+        seller_user = User.query.filter_by(username="seller_admin_abm").first()
+        assert seller_user is not None
+        assert seller_user.active is True
+        assert seller_user.must_change_password is True
+        assert seller_user.check_password(temp_password)
+
+    detail_again = client.get(f"/superadmin/referrals/sellers/{seller_id}")
+    assert detail_again.status_code == 200
+    assert "Contraseña temporal" not in detail_again.data.decode("utf-8")
 
 
 def test_webhook_approved_activates_subscription_and_creates_commission_automatically(monkeypatch):

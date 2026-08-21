@@ -8,10 +8,12 @@ from datetime import datetime
 from io import StringIO
 from io import BytesIO
 from pathlib import Path
+import secrets
+import string
 from urllib.parse import quote_plus
 import zipfile
 
-from flask import Blueprint, abort, current_app, flash, make_response, redirect, render_template, request, send_file, url_for
+from flask import Blueprint, abort, current_app, flash, make_response, redirect, render_template, request, send_file, session, url_for
 from flask_login import current_user, login_required
 from reportlab.lib.pagesizes import A4
 from reportlab.pdfgen import canvas
@@ -24,6 +26,11 @@ from services.referral_service import ReferralService
 bp = Blueprint("referrals", __name__)
 
 RESOURCE_IMAGE_EXTENSIONS = {".png", ".jpg", ".jpeg", ".webp", ".svg"}
+
+
+def _temporary_password(length: int = 12) -> str:
+    alphabet = string.ascii_letters + string.digits
+    return "".join(secrets.choice(alphabet) for _ in range(length))
 
 
 def _resource_image_title(path: Path) -> str:
@@ -816,7 +823,15 @@ def admin_referrals_sellers_list():
         ReferralSeller.query.options(joinedload(ReferralSeller.user)).order_by(ReferralSeller.created_at.desc(), ReferralSeller.id.desc()).all()
     )
     metrics = _seller_metrics_map([row.id for row in sellers])
-    return render_template("saas/referrals_sellers_list.html", sellers=sellers, metrics=metrics)
+    temp_password = session.pop("referral_seller_temp_password", None)
+    temp_password_user = session.pop("referral_seller_temp_password_user", None)
+    return render_template(
+        "saas/referrals_sellers_list.html",
+        sellers=sellers,
+        metrics=metrics,
+        temp_password=temp_password,
+        temp_password_user=temp_password_user,
+    )
 
 
 @bp.route("/superadmin/referrals/sellers/create", methods=["GET", "POST"])
@@ -832,18 +847,22 @@ def admin_referrals_sellers_create():
         username = (request.form.get("username") or "").strip()
         email = (request.form.get("email") or "").strip().lower()
         if not username or not email:
-            flash("Empresa/negocio y email son obligatorios.", "danger")
+            flash("Usuario y email son obligatorios.", "danger")
             return redirect(url_for("referrals.admin_referrals_sellers_create"))
 
         if User.query.filter_by(username=username).first() is not None:
-            flash("La empresa/negocio ya existe.", "danger")
+            flash("El usuario ya existe.", "danger")
             return redirect(url_for("referrals.admin_referrals_sellers_create"))
         if User.query.filter_by(email=email).first() is not None:
             flash("El email ya existe.", "danger")
             return redirect(url_for("referrals.admin_referrals_sellers_create"))
 
+        temp_password = (request.form.get("temp_password") or "").strip()
+        if len(temp_password) < 6:
+            flash("La contrasena inicial debe tener al menos 6 caracteres.", "danger")
+            return redirect(url_for("referrals.admin_referrals_sellers_create"))
+
         user = User(username=username, email=email, role="seller", active=True)
-        temp_password = (request.form.get("temp_password") or "seller123").strip()
         user.set_password(temp_password)
         db.session.add(user)
         db.session.flush()
@@ -904,12 +923,12 @@ def admin_referrals_sellers_edit(seller_id):
         username = (request.form.get("username") or "").strip()
         email = (request.form.get("email") or "").strip().lower()
         if not username or not email:
-            flash("Empresa/negocio y email son obligatorios.", "danger")
+            flash("Usuario y email son obligatorios.", "danger")
             return redirect(url_for("referrals.admin_referrals_sellers_edit", seller_id=seller_id))
 
         existing_username = User.query.filter(User.username == username, User.id != user.id).first()
         if existing_username is not None:
-            flash("La empresa/negocio ya existe.", "danger")
+            flash("El usuario ya existe.", "danger")
             return redirect(url_for("referrals.admin_referrals_sellers_edit", seller_id=seller_id))
 
         existing_email = User.query.filter(User.email == email, User.id != user.id).first()
@@ -923,6 +942,19 @@ def admin_referrals_sellers_edit(seller_id):
         user.last_name = ((request.form.get("last_name") or "").strip()[:80] or None)
         user.active = (request.form.get("active") or "1") == "1"
         user.role = "seller"
+
+        new_password = (request.form.get("new_password") or "").strip()
+        confirm_password = (request.form.get("confirm_password") or "").strip()
+        force_change = (request.form.get("force_change") or "").strip().lower() in {"1", "true", "yes", "on"}
+        if new_password or confirm_password:
+            if len(new_password) < 6:
+                flash("La nueva contrasena debe tener al menos 6 caracteres.", "danger")
+                return redirect(url_for("referrals.admin_referrals_sellers_edit", seller_id=seller_id))
+            if new_password != confirm_password:
+                flash("Las contrasenas no coinciden.", "danger")
+                return redirect(url_for("referrals.admin_referrals_sellers_edit", seller_id=seller_id))
+            user.set_password(new_password)
+            user.must_change_password = force_change
 
         cbu = _normalize_digits(request.form.get("cbu"))
         if cbu and len(cbu) != 22:
@@ -1027,6 +1059,8 @@ def admin_referrals_seller_detail(seller_id):
     last_access = (
         AuditLog.query.filter_by(user_id=user.id, action="login_success").order_by(AuditLog.created_at.desc(), AuditLog.id.desc()).first()
     )
+    temp_password = session.pop("referral_seller_temp_password", None)
+    temp_password_user = session.pop("referral_seller_temp_password_user", None)
 
     return render_template(
         "saas/referrals_seller_detail.html",
@@ -1035,6 +1069,8 @@ def admin_referrals_seller_detail(seller_id):
         attribution_rows=attribution_rows,
         available_commissions=available_commissions,
         payouts=payouts,
+        temp_password=temp_password,
+        temp_password_user=temp_password_user,
         metrics={
             "referred_companies": referred_companies,
             "free_trials": free_trials,
@@ -1050,6 +1086,41 @@ def admin_referrals_seller_detail(seller_id):
             "last_access": last_access.created_at if last_access else None,
         },
     )
+
+
+@bp.route("/superadmin/referrals/sellers/<int:seller_id>/reset-password", methods=["POST"])
+@superadmin_required
+def admin_referrals_seller_reset_password(seller_id):
+    from app import ReferralSeller, User, db, record_audit
+
+    if not _referrals_module_ready():
+        flash("El programa de referidos todavía no está disponible porque faltan migraciones.", "warning")
+        return redirect(url_for("referrals.admin_referrals_dashboard"))
+
+    profile = ReferralSeller.query.filter_by(id=seller_id).first_or_404()
+    user = db.session.get(User, profile.user_id)
+    if user is None:
+        abort(404)
+
+    temp_password = _temporary_password()
+    user.set_password(temp_password)
+    user.must_change_password = True
+    user.active = True
+    profile.active = True
+    record_audit(
+        action="referral_seller_password_reset",
+        entity="user",
+        entity_id=user.id,
+        user_id=current_user.id,
+        company_id=None,
+        detail=f"Contrasena temporal generada para vendedor {user.username}.",
+    )
+    db.session.commit()
+
+    session["referral_seller_temp_password"] = temp_password
+    session["referral_seller_temp_password_user"] = user.username
+    flash("Contrasena temporal generada. Copiala ahora; se mostrara una sola vez.", "warning")
+    return redirect(url_for("referrals.admin_referrals_seller_detail", seller_id=seller_id))
 
 
 @bp.route("/superadmin/referrals/sellers/<int:seller_id>/delete", methods=["POST"])

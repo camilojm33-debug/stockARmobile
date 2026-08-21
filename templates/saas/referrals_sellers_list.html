@@ -9,6 +9,14 @@
   </div>
 </div>
 
+{% if temp_password %}
+<div class="alert alert-warning border border-warning-subtle" role="alert">
+  <div class="fw-semibold mb-1">Contraseña temporal (visible una sola vez)</div>
+  <div class="small text-muted mb-1">Usuario: {{ temp_password_user }}</div>
+  <code class="fs-6">{{ temp_password }}</code>
+</div>
+{% endif %}
+
 <div class="card app-card border-0">
   <div class="table-responsive">
     <table class="table align-middle mb-0">
@@ -46,6 +54,10 @@
             <div class="btn-group btn-group-sm" role="group">
               <a class="btn btn-outline-primary" href="{{ url_for('referrals.admin_referrals_seller_detail', seller_id=row.id) }}"><i class="bi bi-bar-chart me-1"></i>Ver detalle</a>
               <a class="btn btn-outline-secondary" href="{{ url_for('referrals.admin_referrals_sellers_edit', seller_id=row.id) }}"><i class="bi bi-pencil me-1"></i>Editar</a>
+              <form method="post" action="{{ url_for('referrals.admin_referrals_seller_reset_password', seller_id=row.id) }}" onsubmit="return confirm('Se generara una contrasena temporal para este vendedor. Continuar?');">
+                <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                <button class="btn btn-outline-warning" type="submit"><i class="bi bi-key me-1"></i>Recuperar</button>
+              </form>
               <form method="post" action="{{ url_for('referrals.admin_referrals_seller_delete', seller_id=row.id) }}" onsubmit="return confirm('Se desactivara el vendedor para preservar su historial. Continuar?');">
                 <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
                 <button class="btn btn-outline-danger" type="submit"><i class="bi bi-trash me-1"></i>Eliminar</button>

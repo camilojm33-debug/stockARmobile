@@ -9,12 +9,20 @@
   </div>
 </div>
 
+{% if temp_password %}
+<div class="alert alert-warning border border-warning-subtle" role="alert">
+  <div class="fw-semibold mb-1">Contraseña temporal (visible una sola vez)</div>
+  <div class="small text-muted mb-1">Usuario: {{ temp_password_user }}</div>
+  <code class="fs-6">{{ temp_password }}</code>
+</div>
+{% endif %}
+
 <div class="row g-3 mb-4">
   <div class="col-lg-6">
     <div class="card app-card h-100 border-0">
       <div class="card-header bg-white fw-semibold">Datos personales</div>
       <div class="card-body row g-2">
-        <div class="col-sm-6"><small class="text-muted d-block">Empresa / Negocio</small><strong>{{ user.username }}</strong></div>
+        <div class="col-sm-6"><small class="text-muted d-block">Usuario</small><strong>{{ user.username }}</strong></div>
         <div class="col-sm-6"><small class="text-muted d-block">Nombre</small><strong>{{ user.first_name or '-' }}</strong></div>
         <div class="col-sm-6"><small class="text-muted d-block">Apellido</small><strong>{{ user.last_name or '-' }}</strong></div>
         <div class="col-sm-6"><small class="text-muted d-block">Email</small><strong>{{ user.email or '-' }}</strong></div>
@@ -38,6 +46,23 @@
         <div class="col-sm-6"><small class="text-muted d-block">CBU</small><strong>{{ profile.cbu or '-' }}</strong></div>
         <div class="col-sm-6"><small class="text-muted d-block">Estado</small><strong>{% if profile.active %}Activo{% else %}Inactivo{% endif %}</strong></div>
       </div>
+    </div>
+  </div>
+</div>
+
+<div class="card app-card border-0 mb-4">
+  <div class="card-header bg-white fw-semibold">Acceso del vendedor</div>
+  <div class="card-body d-flex justify-content-between align-items-center flex-wrap gap-3">
+    <div>
+      <div class="fw-semibold">{{ user.username }}</div>
+      <div class="text-muted small">{{ user.email }}{% if user.must_change_password %} · debe cambiar contraseña al ingresar{% endif %}</div>
+    </div>
+    <div class="d-flex gap-2 flex-wrap">
+      <a class="btn btn-outline-secondary" href="{{ url_for('referrals.admin_referrals_sellers_edit', seller_id=profile.id) }}"><i class="bi bi-pencil me-1"></i>Cambiar contraseña</a>
+      <form method="post" action="{{ url_for('referrals.admin_referrals_seller_reset_password', seller_id=profile.id) }}" onsubmit="return confirm('Se generara una contrasena temporal para este vendedor. Continuar?');">
+        <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+        <button class="btn btn-warning" type="submit"><i class="bi bi-key me-1"></i>Recuperar contraseña</button>
+      </form>
     </div>
   </div>
 </div>

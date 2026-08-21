@@ -19,13 +19,43 @@
           {{ form.hidden_tag() }}
           <input type="hidden" name="selected_plan" value="{{ selected_plan or 'trial' }}">
           <input type="hidden" name="mode" value="{{ registration_mode or '' }}">
+          {% if registration_mode == 'seller' %}
+          <div class="mb-3"><label class="form-label fw-semibold" for="username">Nombre de vendedor</label>{{ form.username(class_="form-control form-control-lg", autocomplete="name") }}</div>
+          <div class="mb-3"><label class="form-label fw-semibold" for="sellerDni">DNI</label><input class="form-control form-control-lg" id="sellerDni" name="dni" autocomplete="off" inputmode="numeric" required></div>
+          {% else %}
           <div class="mb-3">{{ form.username.label(class_="form-label fw-semibold") }}{{ form.username(class_="form-control form-control-lg", autocomplete="username") }}</div>
+          {% endif %}
           <div class="mb-3">{{ form.email.label(class_="form-label fw-semibold") }}{{ form.email(class_="form-control form-control-lg", autocomplete="email") }}</div>
-          <div class="mb-4">{{ form.password.label(class_="form-label fw-semibold") }}{{ form.password(class_="form-control form-control-lg", autocomplete="new-password") }}</div>
+          <div class="mb-4">
+            {{ form.password.label(class_="form-label fw-semibold") }}
+            <div class="input-group input-group-lg">
+              {{ form.password(id="registerPassword", class_="form-control", autocomplete="new-password") }}
+              <button class="btn btn-outline-secondary" type="button" id="toggleRegisterPassword" aria-label="Mostrar contrasena" title="Mostrar contrasena"><i class="bi bi-eye"></i></button>
+            </div>
+          </div>
           <button class="btn btn-primary btn-lg w-100" type="submit">Registrarse</button>
         </form>
       </div>
     </div>
   </div>
 </div>
+{% endblock %}
+
+{% block extra_scripts_inline %}
+<script>
+  document.addEventListener('DOMContentLoaded', function () {
+    const passwordInput = document.getElementById('registerPassword');
+    const toggleButton = document.getElementById('toggleRegisterPassword');
+    if (!passwordInput || !toggleButton) return;
+
+    toggleButton.addEventListener('click', function () {
+      const shouldShow = passwordInput.type === 'password';
+      passwordInput.type = shouldShow ? 'text' : 'password';
+      toggleButton.setAttribute('aria-label', shouldShow ? 'Ocultar contrasena' : 'Mostrar contrasena');
+      toggleButton.setAttribute('title', shouldShow ? 'Ocultar contrasena' : 'Mostrar contrasena');
+      const icon = toggleButton.querySelector('i');
+      if (icon) icon.className = shouldShow ? 'bi bi-eye-slash' : 'bi bi-eye';
+    });
+  });
+</script>
 {% endblock %}

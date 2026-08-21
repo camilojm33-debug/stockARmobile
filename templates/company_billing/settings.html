@@ -560,8 +560,14 @@
                         obligar cambio
                       </label>
                     </div>
-                    <input class="form-control form-control-sm" type="password" name="new_password" placeholder="Nueva contraseña o dejá vacío para temporal">
-                    <input class="form-control form-control-sm" type="password" name="confirm_password" placeholder="Confirmar contraseña">
+                    <div class="input-group input-group-sm">
+                      <input class="form-control password-toggle-input" type="password" name="new_password" placeholder="Nueva contraseña o dejá vacío para temporal">
+                      <button class="btn btn-outline-secondary password-toggle-btn" type="button" aria-label="Mostrar contrasena" title="Mostrar contrasena"><i class="bi bi-eye"></i></button>
+                    </div>
+                    <div class="input-group input-group-sm">
+                      <input class="form-control password-toggle-input" type="password" name="confirm_password" placeholder="Confirmar contraseña">
+                      <button class="btn btn-outline-secondary password-toggle-btn" type="button" aria-label="Mostrar contrasena" title="Mostrar contrasena"><i class="bi bi-eye"></i></button>
+                    </div>
                     <div class="small text-muted">Si no completás los campos, se genera una contraseña temporal como antes.</div>
                     <button class="btn btn-sm btn-outline-warning" type="submit">Guardar contraseña</button>
                   </form>
@@ -636,15 +642,24 @@
               <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
               <div class="col-12">
                 <label class="form-label">Contraseña actual</label>
-                <input class="form-control" type="password" name="current_password" required>
+                <div class="input-group">
+                  <input class="form-control password-toggle-input" type="password" name="current_password" required>
+                  <button class="btn btn-outline-secondary password-toggle-btn" type="button" aria-label="Mostrar contrasena" title="Mostrar contrasena"><i class="bi bi-eye"></i></button>
+                </div>
               </div>
               <div class="col-md-6">
                 <label class="form-label">Nueva contraseña</label>
-                <input class="form-control" type="password" name="new_password" required>
+                <div class="input-group">
+                  <input class="form-control password-toggle-input" type="password" name="new_password" required>
+                  <button class="btn btn-outline-secondary password-toggle-btn" type="button" aria-label="Mostrar contrasena" title="Mostrar contrasena"><i class="bi bi-eye"></i></button>
+                </div>
               </div>
               <div class="col-md-6">
                 <label class="form-label">Confirmar contraseña</label>
-                <input class="form-control" type="password" name="confirm_password" required>
+                <div class="input-group">
+                  <input class="form-control password-toggle-input" type="password" name="confirm_password" required>
+                  <button class="btn btn-outline-secondary password-toggle-btn" type="button" aria-label="Mostrar contrasena" title="Mostrar contrasena"><i class="bi bi-eye"></i></button>
+                </div>
               </div>
               <div class="col-12">
                 <button class="btn btn-outline-primary" type="submit">Actualizar contraseña</button>
@@ -1687,6 +1702,21 @@
   {% endif %}
   {% endif %}
 </div>
+
+<script>
+  document.addEventListener('click', function (event) {
+    const button = event.target.closest('.password-toggle-btn');
+    if (!button) return;
+    const input = button.parentElement.querySelector('.password-toggle-input');
+    if (!input) return;
+    const shouldShow = input.type === 'password';
+    input.type = shouldShow ? 'text' : 'password';
+    button.setAttribute('aria-label', shouldShow ? 'Ocultar contrasena' : 'Mostrar contrasena');
+    button.setAttribute('title', shouldShow ? 'Ocultar contrasena' : 'Mostrar contrasena');
+    const icon = button.querySelector('i');
+    if (icon) icon.className = shouldShow ? 'bi bi-eye-slash' : 'bi bi-eye';
+  });
+</script>
 {% endblock %}
 
 {% block extra_css %}
