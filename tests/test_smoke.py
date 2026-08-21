@@ -5729,7 +5729,7 @@ def test_login_redirects_each_role_to_own_panel_without_mixing():
     client = stock_app.app.test_client()
 
     with stock_app.app.app_context():
-        from app import ReferralSeller
+        from app import Company, ReferralSeller
 
         seller_user = User(username="seller_login_matrix", email="seller_login_matrix@test.local", role="seller", active=True)
         seller_user.set_password("seller123")
@@ -5741,6 +5741,28 @@ def test_login_redirects_each_role_to_own_panel_without_mixing():
                 dni="30999888",
                 referral_code="REF9988",
                 referral_url="https://www.stockarmobile.com/?ref=REF9988",
+                active=True,
+            )
+        )
+        seller_company = Company(name="Empresa Seller Con Programa", active=True)
+        db.session.add(seller_company)
+        db.session.flush()
+        seller_with_company = User(
+            username="seller_with_company_login",
+            email="seller_with_company_login@test.local",
+            role="seller",
+            company_id=seller_company.id,
+            active=True,
+        )
+        seller_with_company.set_password("seller123")
+        db.session.add(seller_with_company)
+        db.session.flush()
+        db.session.add(
+            ReferralSeller(
+                user_id=seller_with_company.id,
+                dni="30999777",
+                referral_code="REF9977",
+                referral_url="https://www.stockarmobile.com/?ref=REF9977",
                 active=True,
             )
         )
@@ -5771,6 +5793,10 @@ def test_login_redirects_each_role_to_own_panel_without_mixing():
     assert "/referidos" in (seller_login.headers.get("Location") or "")
     seller_portal = client.get("/referidos", follow_redirects=False)
     assert seller_portal.status_code == 200
+    seller_html = seller_portal.data.decode("utf-8")
+    assert "Portal de Vendedor" in seller_html
+    assert ">Ventas<" not in seller_html
+    assert ">Presupuestos<" not in seller_html
     seller_notifications = client.get("/api/notifications")
     assert seller_notifications.status_code == 200
     seller_notification_titles = {item["title"] for item in seller_notifications.get_json()["notifications"]}
@@ -5781,6 +5807,14 @@ def test_login_redirects_each_role_to_own_panel_without_mixing():
     seller_dashboard = client.get("/dashboard/", follow_redirects=False)
     assert seller_dashboard.status_code in (301, 302)
     assert "/auth/login" in (seller_dashboard.headers.get("Location") or "")
+
+    client.post("/auth/logout")
+    client.post("/auth/login", data={"username": "seller_with_company_login", "password": "seller123"})
+    seller_with_company_portal = client.get("/referidos", follow_redirects=False)
+    assert seller_with_company_portal.status_code == 200
+    seller_with_company_html = seller_with_company_portal.data.decode("utf-8")
+    assert ">Ventas<" in seller_with_company_html
+    assert ">Presupuestos<" in seller_with_company_html
 
     client.post("/auth/logout")
     admin_login = client.post(

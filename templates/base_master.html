@@ -700,7 +700,7 @@
   <div class="app-sidebar-backdrop" id="appSidebarBackdrop" aria-hidden="true"></div>
   <aside class="app-sidebar" id="appSidebar">
     <button class="app-sidebar-toggle d-none d-lg-inline-flex" type="button" id="appSidebarDesktopToggle" aria-label="Contraer menú"><i class="bi bi-layout-sidebar-inset"></i></button>
-    <a class="app-brand" href="{{ url_for('saas.index') if current_user.role == 'superadmin' else url_for('dashboard.index') }}">
+    <a class="app-brand" href="{{ url_for('saas.index') if current_user.role == 'superadmin' else (url_for('referrals.seller_dashboard') if current_user.role == 'seller' and not current_user.company_id else url_for('dashboard.index')) }}">
       <span class="app-brand-mark">
         <img class="app-brand-logo" src="{{ url_for('static', filename='images/branding/logo.png') }}" alt="StockArmobile logo">
       </span>
@@ -732,9 +732,11 @@
       <a class="nav-link {% if request.endpoint and request.endpoint.startswith('saas.landing_testimonials') %}active{% endif %}" href="{{ url_for('saas.landing_testimonials_panel') }}"><i class="bi bi-chat-left-quote"></i>Testimonios Landing</a>
       <a class="nav-link {% if request.endpoint == 'saas.global_settings' %}active{% endif %}" href="{{ url_for('saas.global_settings') }}"><i class="bi bi-gear"></i>Configuración global</a>
       {% elif current_user.role == 'seller' %}
+      {% if current_user.company_id %}
       <div class="nav-section-label">Operación</div>
       <a class="nav-link {% if request.endpoint and request.endpoint.startswith('sales.') %}active{% endif %}" href="{{ url_for('sales.index') }}"><i class="bi bi-bag-check"></i><span class="nav-text">Ventas</span></a>
       <a class="nav-link {% if request.endpoint and request.endpoint.startswith('quotes.') %}active{% endif %}" href="{{ url_for('quotes.index') }}"><i class="bi bi-file-earmark-text"></i><span class="nav-text">Presupuestos</span></a>
+      {% endif %}
       <div class="nav-section-label">Referidos</div>
       <a class="nav-link {% if request.endpoint == 'referrals.seller_dashboard' %}active{% endif %}" href="{{ url_for('referrals.seller_dashboard') }}"><i class="bi bi-speedometer2"></i>Portal de Vendedor</a>
       <a class="nav-link {% if request.endpoint == 'referrals.seller_clients' %}active{% endif %}" href="{{ url_for('referrals.seller_clients') }}"><i class="bi bi-buildings"></i>Mis clientes</a>
