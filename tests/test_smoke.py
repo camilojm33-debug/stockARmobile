@@ -6037,6 +6037,9 @@ def test_login_redirects_each_role_to_own_panel_without_mixing():
     assert "Portal de Vendedor" in seller_html
     assert ">Ventas<" not in seller_html
     assert ">Presupuestos<" not in seller_html
+    assert "Resumen breve para gestionar tu programa de referidos." in seller_html
+    assert "Datos de cobro" in seller_html
+    assert "Resumen breve para operar StockArmobile de forma diaria." not in seller_html
     seller_notifications = client.get("/api/notifications")
     assert seller_notifications.status_code == 200
     seller_notification_titles = {item["title"] for item in seller_notifications.get_json()["notifications"]}
@@ -6066,6 +6069,9 @@ def test_login_redirects_each_role_to_own_panel_without_mixing():
     assert "/dashboard" in (admin_login.headers.get("Location") or "")
     admin_dashboard = client.get("/dashboard/", follow_redirects=False)
     assert admin_dashboard.status_code == 200
+    admin_html = admin_dashboard.data.decode("utf-8")
+    assert "Resumen breve para operar StockArmobile de forma diaria." in admin_html
+    assert "Resumen breve para gestionar tu programa de referidos." not in admin_html
 
     client.post("/auth/logout")
     superadmin_login = client.post(

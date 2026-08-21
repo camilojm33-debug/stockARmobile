@@ -906,6 +906,17 @@
           <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Cerrar"></button>
         </div>
         <div class="modal-body pt-0">
+          {% if current_user.role == 'seller' %}
+          <p class="text-muted small mb-3">Resumen breve para gestionar tu programa de referidos.</p>
+          <ol class="small mb-0 ps-3">
+            <li class="mb-2"><strong>Enlace de referido:</strong> copiá o compartí tu link para que cada alta quede vinculada a tu cuenta.</li>
+            <li class="mb-2"><strong>Clientes referidos:</strong> revisá las empresas que llegaron desde tu código y su estado actual.</li>
+            <li class="mb-2"><strong>Comisiones:</strong> seguí importes pendientes, disponibles y pagados desde tu panel.</li>
+            <li class="mb-2"><strong>Datos de cobro:</strong> mantené CBU, CVU, alias, banco y titular actualizados para recibir pagos.</li>
+            <li class="mb-2"><strong>Centro de recursos:</strong> usá logos, mensajes, videos y respuestas comerciales para vender mejor.</li>
+            <li><strong>Soporte:</strong> abrí un ticket desde Ayuda si necesitás asistencia con referidos o pagos.</li>
+          </ol>
+          {% else %}
           <p class="text-muted small mb-3">Resumen breve para operar StockArmobile de forma diaria.</p>
           <ol class="small mb-0 ps-3">
             <li class="mb-2"><strong>Configuración inicial:</strong> cargá tus productos, precios y stock mínimo.</li>
@@ -919,6 +930,7 @@
             <li class="mb-2"><strong>Reportes:</strong> seguí ventas, stock y clientes para tomar decisiones.</li>
             <li><strong>Soporte:</strong> usá Ayuda para abrir tickets ante dudas o errores.</li>
           </ol>
+          {% endif %}
         </div>
         <div class="modal-footer border-0">
           <form method="post" action="{{ url_for('dashboard.tour_complete') }}" class="ms-auto">
