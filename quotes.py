@@ -58,7 +58,16 @@ def _company_quotes_enabled(company):
 
 
 def _next_quote_number(company_id):
-    from services.ai_agent.quote_creation_service import next_quote_number
+    try:
+        from services.ai_agent.quote_creation_service import next_quote_number
+    except ModuleNotFoundError as exc:
+        if exc.name != "services.ai_agent.quote_creation_service":
+            raise
+        from app import Quote
+
+        last_quote = Quote.query.filter(Quote.company_id == company_id).order_by(Quote.id.desc()).first()
+        next_id = int(getattr(last_quote, "id", 0) or 0) + (0 if getattr(last_quote, "number", None) is None else 1)
+        return f"P-{max(next_id, 1):06d}"
 
     return next_quote_number(company_id=company_id)
 
@@ -216,6 +225,119 @@ def _quote_customer_name(quote):
         return quote.client.name
     raw_name = (getattr(quote, "consumer_name", None) or "").strip()
     return raw_name or "Consumidor final"
+
+
+def _plain_whatsapp_text(value, *, max_length=500):
+    text = " ".join(str(value or "").split())
+    if max_length and len(text) > max_length:
+        return f"{text[: max_length - 3].rstrip()}..."
+    return text
+
+
+def _quote_client_whatsapp_phone(quote):
+    client = getattr(quote, "client", None)
+    if client is None:
+        return ""
+    return (getattr(client, "whatsapp", None) or getattr(client, "phone", None) or "").strip()
+
+
+def _quote_missing_whatsapp_phone_message(quote):
+    if getattr(quote, "client", None) is None:
+        return "El presupuesto no tiene un cliente asociado con teléfono/WhatsApp. Seleccioná un cliente y cargá su teléfono antes de enviarlo por WhatsApp."
+    return "El cliente del presupuesto no tiene teléfono/WhatsApp registrado. Cargá el teléfono del cliente antes de enviarlo por WhatsApp."
+
+
+def _quote_number(quote):
+    return quote.number or f"P-{quote.id:06d}"
+
+
+def _quote_money(value, currency="ARS"):
+    return f"{currency or 'ARS'} {float(value or 0):.2f}"
+
+
+def _quote_quantity(value):
+    quantity = float(value or 0)
+    if quantity.is_integer():
+        return str(int(quantity))
+    return f"{quantity:.3f}".rstrip("0").rstrip(".")
+
+
+def _build_quote_whatsapp_message(quote, company):
+    currency = quote.currency or getattr(company, "currency", None) or "ARS"
+    lines = [
+        f"Hola {_plain_whatsapp_text(_quote_customer_name(quote), max_length=160)}.",
+        "",
+        f"Te enviamos el presupuesto {_quote_number(quote)}.",
+        f"Fecha: {quote.date.strftime('%d/%m/%Y') if quote.date else '-'}",
+        f"Cliente: {_plain_whatsapp_text(_quote_customer_name(quote), max_length=160)}",
+        "",
+        "Productos/servicios:",
+    ]
+
+    sorted_items = sorted(getattr(quote, "items", []) or [], key=lambda item: (item.sort_order or 0, item.id or 0))
+    for item in sorted_items:
+        line = (
+            f"- {_plain_whatsapp_text(item.description, max_length=180)} | "
+            f"Cant: {_quote_quantity(item.quantity)} | "
+            f"Precio: {_quote_money(item.unit_price, currency)}"
+        )
+        if float(item.discount or 0) > 0:
+            line += f" | Desc: {_quote_money(item.discount, currency)}"
+        line += f" | Subtotal: {_quote_money(item.subtotal, currency)}"
+        lines.append(line)
+
+    lines.extend(
+        [
+            "",
+            f"Subtotal: {_quote_money(quote.subtotal, currency)}",
+        ]
+    )
+    if float(quote.discount or 0) > 0:
+        lines.append(f"Descuento: -{_quote_money(quote.discount, currency)}")
+        if quote.discount_reason:
+            lines.append(f"Motivo descuento: {_plain_whatsapp_text(quote.discount_reason, max_length=180)}")
+    if float(quote.surcharge or 0) > 0:
+        lines.append(f"Recargo: {_quote_money(quote.surcharge, currency)}")
+        if quote.surcharge_reason:
+            lines.append(f"Motivo recargo: {_plain_whatsapp_text(quote.surcharge_reason, max_length=180)}")
+    if float(quote.tax or 0) > 0:
+        lines.append(f"Impuestos: {_quote_money(quote.tax, currency)}")
+    lines.append(f"Total: {_quote_money(quote.total_amount, currency)}")
+
+    if quote.commercial_conditions:
+        lines.extend(["", f"Condiciones comerciales: {_plain_whatsapp_text(quote.commercial_conditions, max_length=500)}"])
+    if quote.observations:
+        lines.extend(["", f"Observaciones: {_plain_whatsapp_text(quote.observations, max_length=500)}"])
+
+    if company is not None:
+        company_lines = [f"Comercio: {_plain_whatsapp_text(getattr(company, 'name', None) or 'StockArmobile', max_length=160)}"]
+        if getattr(company, "tax_id", None):
+            company_lines.append(f"CUIT: {_plain_whatsapp_text(company.tax_id, max_length=80)}")
+        location = ", ".join(
+            item
+            for item in [
+                _plain_whatsapp_text(getattr(company, "address", None), max_length=160),
+                _plain_whatsapp_text(getattr(company, "city", None), max_length=120),
+                _plain_whatsapp_text(getattr(company, "province", None), max_length=120),
+            ]
+            if item
+        )
+        if location:
+            company_lines.append(f"Dirección: {location}")
+        contact = " / ".join(
+            item
+            for item in [
+                _plain_whatsapp_text(getattr(company, "phone", None), max_length=80),
+                _plain_whatsapp_text(getattr(company, "whatsapp", None), max_length=80),
+                _plain_whatsapp_text(getattr(company, "contact_email", None), max_length=160),
+            ]
+            if item
+        )
+        if contact:
+            company_lines.append(f"Contacto: {contact}")
+        lines.extend(["", *company_lines])
+
+    return "\n".join(lines)
 
 
 def _public_share_serializer():
@@ -1101,16 +1223,18 @@ def quote_public_view(token):
 @tenant_required
 @login_required
 def share_whatsapp(quote_id):
+    from app import Company
+
     quote = _quote_lookup(quote_id)
     _require_owned_or_authorized(quote)
     _require_quote_permission("quotes_share_whatsapp")
-    phone = (quote.client.whatsapp if quote.client else "") or (getattr(current_user, "company", None) and getattr(current_user.company, "whatsapp", None)) or ""
-    message = (
-        "Hola.\n\n"
-        "Te enviamos el presupuesto solicitado.\n\n"
-        "Quedamos a disposición para cualquier consulta.\n\n"
-        "Muchas gracias."
-    )
+    phone = _quote_client_whatsapp_phone(quote)
+    if not phone:
+        flash(_quote_missing_whatsapp_phone_message(quote), "warning")
+        return redirect(url_for("quotes.view_quote", quote_id=quote.id))
+
+    company = Company.query.filter_by(id=quote.company_id).first()
+    message = _build_quote_whatsapp_message(quote, company)
     public_url = _build_public_quote_url(quote.id)
     return render_template("presupuestos/whatsapp_dialog.html", quote=quote, entered_phone=phone, message=message, pdf_url=public_url)
 
@@ -1119,16 +1243,18 @@ def share_whatsapp(quote_id):
 @tenant_required
 @login_required
 def share_whatsapp_post(quote_id):
+    from app import Company
+
     quote = _quote_lookup(quote_id)
     _require_owned_or_authorized(quote)
     _require_quote_permission("quotes_share_whatsapp")
-    phone = (request.form.get("whatsapp_phone") or "").strip()
-    message = (
-        "Hola.\n\n"
-        "Te enviamos el presupuesto solicitado.\n\n"
-        "Quedamos a disposición para cualquier consulta.\n\n"
-        "Muchas gracias."
-    )
+    phone = _quote_client_whatsapp_phone(quote)
+    if not phone:
+        flash(_quote_missing_whatsapp_phone_message(quote), "warning")
+        return redirect(url_for("quotes.view_quote", quote_id=quote.id))
+
+    company = Company.query.filter_by(id=quote.company_id).first()
+    message = _build_quote_whatsapp_message(quote, company)
     public_url = _build_public_quote_url(quote.id)
     from app import record_audit
     record_audit(action="quote_share_whatsapp", entity="quote", entity_id=quote.id, detail=f"Compartido por WhatsApp {quote.number or quote.id}", ip_address=request.remote_addr)

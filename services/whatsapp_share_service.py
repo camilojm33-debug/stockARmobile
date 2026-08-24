@@ -5,6 +5,15 @@ from __future__ import annotations
 from urllib.parse import quote
 
 
+def _remove_argentina_mobile_prefix(digits: str) -> str:
+    for area_length in (2, 3, 4):
+        if len(digits) > area_length + 2 and digits[area_length : area_length + 2] == "15":
+            candidate = digits[:area_length] + digits[area_length + 2 :]
+            if len(candidate) == 10:
+                return candidate
+    return digits
+
+
 def normalize_whatsapp_number(value: str | None) -> str:
     if not value:
         return ""
@@ -12,12 +21,21 @@ def normalize_whatsapp_number(value: str | None) -> str:
     if digits.startswith("00"):
         digits = digits[2:]
     digits = digits.lstrip("0")
+    if not digits:
+        return ""
+
     if digits.startswith("54"):
-        return digits
-    if len(digits) == 12 and digits[2:4] == "15":
-        digits = digits[:2] + digits[4:]
-    elif len(digits) == 12 and digits[3:5] == "15":
-        digits = digits[:3] + digits[5:]
+        national_number = digits[2:].lstrip("0")
+        if national_number.startswith("9"):
+            national_number = national_number[1:]
+        national_number = _remove_argentina_mobile_prefix(national_number)
+        if len(national_number) == 10:
+            return f"549{national_number}"
+        return f"54{national_number}"
+
+    if len(digits) == 10 and digits.startswith("15"):
+        digits = f"11{digits[2:]}"
+    digits = _remove_argentina_mobile_prefix(digits)
     if len(digits) == 10:
         return f"549{digits}"
     return digits
@@ -32,7 +50,7 @@ def build_whatsapp_share_url(*, phone: str | None, message: str, document_url: s
     else:
         full_message = base_message
 
-    text = quote(full_message)
+    text = quote(full_message, safe="")
     if normalized_phone:
-        return f"https://api.whatsapp.com/send?phone={normalized_phone}&text={text}"
-    return f"https://api.whatsapp.com/send?text={text}"
+        return f"https://wa.me/{normalized_phone}?text={text}"
+    return f"https://wa.me/?text={text}"

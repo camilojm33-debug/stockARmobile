@@ -14,9 +14,9 @@
           <form method="post" action="{{ url_for('quotes.share_whatsapp_post', quote_id=quote.id) }}" id="quoteWhatsappShareForm">
             <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
             <div class="mb-3">
-              <label class="form-label">Número de WhatsApp (opcional)</label>
-              <input class="form-control" id="quoteWhatsappPhone" name="whatsapp_phone" value="{{ entered_phone }}" placeholder="3624228296 o 5493624228296" maxlength="30">
-              <div class="form-text">Ingresalo sin +. Si es un celular argentino local, agregamos 549 automáticamente. Si lo dejás vacío, WhatsApp se abrirá para seleccionar destinatario.</div>
+              <label class="form-label">WhatsApp del cliente</label>
+              <input class="form-control" id="quoteWhatsappPhone" name="whatsapp_phone" value="{{ entered_phone }}" readonly maxlength="30">
+              <div class="form-text">Se usa el WhatsApp o teléfono cargado en la ficha del cliente.</div>
             </div>
             <div class="small text-muted border rounded p-2 mb-3">{{ message }}<br>Presupuesto: {{ pdf_url }}</div>
             <div class="form-text mb-3">Si tenés WhatsApp instalado en la PC, usá "Abrir app". Si preferís navegador, usá "Abrir Web".</div>
@@ -42,16 +42,32 @@
     const baseMessage = {{ message|tojson }};
     const pdfUrl = {{ pdf_url|tojson }};
 
+    function removeArgentinaMobilePrefix(digits) {
+      for (const areaLength of [2, 3, 4]) {
+        if (digits.length > areaLength + 2 && digits.slice(areaLength, areaLength + 2) === '15') {
+          const candidate = digits.slice(0, areaLength) + digits.slice(areaLength + 2);
+          if (candidate.length === 10) return candidate;
+        }
+      }
+      return digits;
+    }
+
     function normalizePhone(value) {
       let digits = String(value || '').replace(/\D+/g, '');
       if (digits.startsWith('00')) digits = digits.slice(2);
       digits = digits.replace(/^0+/, '');
-      if (digits.startsWith('54')) return digits;
-      if (digits.length === 12 && digits.slice(2, 4) === '15') {
-        digits = digits.slice(0, 2) + digits.slice(4);
-      } else if (digits.length === 12 && digits.slice(3, 5) === '15') {
-        digits = digits.slice(0, 3) + digits.slice(5);
+      if (!digits) return '';
+      if (digits.startsWith('54')) {
+        let nationalNumber = digits.slice(2).replace(/^0+/, '');
+        if (nationalNumber.startsWith('9')) nationalNumber = nationalNumber.slice(1);
+        nationalNumber = removeArgentinaMobilePrefix(nationalNumber);
+        if (nationalNumber.length === 10) return `549${nationalNumber}`;
+        return `54${nationalNumber}`;
       }
+      if (digits.length === 10 && digits.startsWith('15')) {
+        digits = `11${digits.slice(2)}`;
+      }
+      digits = removeArgentinaMobilePrefix(digits);
       if (digits.length === 10) return `549${digits}`;
       return digits;
     }
@@ -70,12 +86,11 @@
     function buildWebUrl() {
       const phone = normalizePhone(phoneInput?.value || '');
       const text = [baseMessage, `Presupuesto: ${pdfUrl}`].filter(Boolean).join('\n\n');
-      const query = new URLSearchParams();
+      const encodedText = encodeURIComponent(text);
       if (phone) {
-        query.set('phone', phone);
+        return `https://wa.me/${phone}?text=${encodedText}`;
       }
-      query.set('text', text);
-      return `https://api.whatsapp.com/send?${query.toString()}`;
+      return `https://wa.me/?text=${encodedText}`;
     }
 
     desktopButton?.addEventListener('click', () => {
