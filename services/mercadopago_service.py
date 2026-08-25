@@ -6,9 +6,10 @@ import hashlib
 import hmac
 import json
 import logging
+import socket
 import uuid
 from urllib import request as urlrequest
-from urllib.error import HTTPError
+from urllib.error import HTTPError, URLError
 from typing import Any
 
 from flask import current_app, has_app_context
@@ -18,6 +19,7 @@ from config.billing_config import load_billing_config
 
 class MercadoPagoService:
     API_BASE = "https://api.mercadopago.com"
+    REQUEST_TIMEOUT_SECONDS = 12
 
     def __init__(self):
         self.config = load_billing_config()
@@ -35,14 +37,29 @@ class MercadoPagoService:
 
     def _request(self, method: str, path: str, *, payload: dict[str, Any] | None = None, access_token: str | None = None) -> dict[str, Any]:
         body = json.dumps(payload).encode("utf-8") if payload is not None else None
-        req = urlrequest.Request(url=f"{self.API_BASE}{path}", data=body, headers=self._headers(include_idempotency=method in {"POST", "PUT", "PATCH"}, access_token=access_token), method=method)
+        req = urlrequest.Request(
+            url=f"{self.API_BASE}{path}",
+            data=body,
+            headers=self._headers(include_idempotency=method in {"POST", "PUT", "PATCH"}, access_token=access_token),
+            method=method,
+        )
         try:
-            with urlrequest.urlopen(req, timeout=25) as response:
-                raw = response.read().decode("utf-8"); status_code = response.getcode()
+            self._logger().info("Mercado Pago request: method=%s path=%s", method, path)
+            with urlrequest.urlopen(req, timeout=self.REQUEST_TIMEOUT_SECONDS) as response:
+                raw = response.read().decode("utf-8")
+                status_code = response.getcode()
         except HTTPError as exc:
             raw_error = exc.read().decode("utf-8", errors="ignore") if hasattr(exc, "read") else str(exc)
+            self._logger().error("Mercado Pago HTTP error: method=%s path=%s status=%s body=%s", method, path, exc.code, raw_error[:1000])
             raise RuntimeError(f"Mercado Pago error {exc.code}: {raw_error[:500]}") from exc
-        if status_code >= 400: raise RuntimeError(f"Mercado Pago error {status_code}: {raw[:500]}")
+        except (URLError, TimeoutError, socket.timeout) as exc:
+            reason = getattr(exc, "reason", None) or str(exc)
+            self._logger().exception("Mercado Pago connection error: method=%s path=%s reason=%s", method, path, reason)
+            raise RuntimeError(
+                f"No se pudo conectar con Mercado Pago dentro de {self.REQUEST_TIMEOUT_SECONDS} segundos. Verificá la conexión del servidor y la configuración de Mercado Pago."
+            ) from exc
+        if status_code >= 400:
+            raise RuntimeError(f"Mercado Pago error {status_code}: {raw[:500]}")
         return json.loads(raw) if raw else {}
 
     def create_checkout_preference(self, *, title: str, amount: float, currency: str, external_reference: str, company_id: int, plan_id: int, subscription_id: int | None, user_id: int) -> dict[str, Any]:
@@ -71,7 +88,7 @@ class MercadoPagoService:
     def debug_fetch_pos_catalog(self, *, access_token: str | None = None) -> dict[str, Any]:
         path = "/pos?limit=50&offset=0"; req = urlrequest.Request(url=f"{self.API_BASE}{path}", headers=self._headers(access_token=access_token), method="GET"); status_code=None; raw=""
         try:
-            with urlrequest.urlopen(req, timeout=25) as response: status_code=response.getcode(); raw=response.read().decode("utf-8")
+            with urlrequest.urlopen(req, timeout=self.REQUEST_TIMEOUT_SECONDS) as response: status_code=response.getcode(); raw=response.read().decode("utf-8")
         except HTTPError as exc: status_code=exc.code; raw=exc.read().decode("utf-8", errors="ignore") if hasattr(exc,"read") else str(exc)
         try: payload=json.loads(raw) if raw else {}
         except json.JSONDecodeError: payload={"raw":raw[:1200]}
