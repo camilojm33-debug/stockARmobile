@@ -1,0 +1,99 @@
+name: Repair hard delete and Alembic heads
+
+on:
+  push:
+    branches: [main]
+
+permissions:
+  contents: write
+
+jobs:
+  repair:
+    if: ${{ !contains(github.event.head_commit.message, '[auto-repair-hard-delete]') }}
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Patch hard delete and normalize migration graph
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+          import ast
+          import re
+          from datetime import datetime
+
+          # --- 1) Fix the hard-delete routine: companies must be deleted only
+          # after every dependent row has been processed. The old code deleted
+          # companies inside the FK loop, which could trigger IntegrityError
+          # before the rest of the dependency cleanup completed.
+          saas = Path('saas.py')
+          text = saas.read_text(encoding='utf-8')
+          old = '''        db.session.execute(sa.text("DELETE FROM companies WHERE id = :company_id"), {"company_id": company_id})\n\n\ndef _action_allowed_for_status'''
+          new = '''    # Delete the tenant only after all known dependent rows and FK-referenced\n    # entity rows have been removed. Keep this inside the same transaction so\n    # any remaining FK causes a full rollback instead of partial deletion.\n    db.session.execute(\n        sa.text("DELETE FROM companies WHERE id = :company_id"),\n        {"company_id": company_id},\n    )\n\n    # Fail loudly if the target tenant still exists. The caller rolls back.\n    remaining = db.session.execute(\n        sa.text("SELECT 1 FROM companies WHERE id = :company_id LIMIT 1"),\n        {"company_id": company_id},\n    ).first()\n    if remaining is not None:\n        raise RuntimeError(f"No se pudo eliminar companies.id={company_id}")\n\n\ndef _action_allowed_for_status'''
+          if old not in text:
+              raise SystemExit('No se encontró el bloque exacto de eliminación dentro del loop')
+          text = text.replace(old, new, 1)
+          saas.write_text(text, encoding='utf-8')
+
+          # --- 2) Parse every Alembic revision and calculate graph heads.
+          versions = Path('migrations/versions')
+          revisions = {}
+          for path in versions.glob('*.py'):
+              try:
+                  tree = ast.parse(path.read_text(encoding='utf-8'), filename=str(path))
+              except SyntaxError as exc:
+                  raise SystemExit(f'Error de sintaxis en migración {path}: {exc}')
+              rev = down = None
+              for node in tree.body:
+                  if isinstance(node, ast.Assign):
+                      for target in node.targets:
+                          if isinstance(target, ast.Name) and target.id == 'revision':
+                              try: rev = ast.literal_eval(node.value)
+                              except Exception: pass
+                          if isinstance(target, ast.Name) and target.id == 'down_revision':
+                              try: down = ast.literal_eval(node.value)
+                              except Exception: pass
+              if rev:
+                  revisions[str(rev)] = down
+
+          referenced = set()
+          for down in revisions.values():
+              if isinstance(down, (tuple, list, set)):
+                  referenced.update(str(x) for x in down if x)
+              elif down:
+                  referenced.add(str(down))
+          heads = sorted(set(revisions) - referenced)
+
+          if len(heads) > 1:
+              merge_rev = '20260825_01_merge_alembic_heads'
+              merge_path = versions / f'{merge_rev}.py'
+              if merge_rev not in revisions:
+                  down_literal = repr(tuple(heads))
+                  content = f'''"""Merge all Alembic heads so production can upgrade normally.\n\nRevision ID: {merge_rev}\nRevises: {', '.join(heads)}\nCreate Date: {datetime.utcnow().isoformat()}\n"""\nfrom alembic import op\n\nrevision = "{merge_rev}"\ndown_revision = {down_literal}\nbranch_labels = None\ndepends_on = None\n\ndef upgrade():\n    pass\n\ndef downgrade():\n    pass\n'''
+                  merge_path.write_text(content, encoding='utf-8')
+                  print('Created Alembic merge:', merge_path, heads)
+          else:
+              print('Alembic heads OK:', heads)
+
+          # --- 3) Add a small regression test script that CI can run without a DB.
+          test = Path('tests/test_hard_delete_source.py')
+          test.parent.mkdir(exist_ok=True)
+          test.write_text('''from pathlib import Path\n\n\ndef test_company_delete_is_outside_fk_loop():\n    text = Path("saas.py").read_text(encoding="utf-8")\n    marker = "for table_name in table_names:"\n    start = text.index(marker)\n    end = text.index("def _action_allowed_for_status", start)\n    block = text[start:end]\n    assert block.count("DELETE FROM companies WHERE id = :company_id") == 0\n    assert "DELETE FROM companies WHERE id = :company_id" in text[end - 500:end + 500]\n''', encoding='utf-8')
+          PY
+
+      - name: Validate Python and migration files
+        run: |
+          python -m py_compile saas.py
+          python -m py_compile migrations/versions/*.py
+
+      - name: Commit repair and remove workflow
+        run: |
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add saas.py migrations/versions tests/test_hard_delete_source.py
+          git rm .github/workflows/repair-hard-delete-and-alembic.yml
+          git diff --cached --quiet && exit 0 || true
+          git commit -m 'fix: repair hard delete and alembic heads [auto-repair-hard-delete]'
+          git push origin main
