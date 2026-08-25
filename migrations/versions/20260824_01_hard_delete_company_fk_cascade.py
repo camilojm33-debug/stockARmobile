@@ -1,7 +1,7 @@
 """make tenant foreign keys cascade on company deletion
 
 Revision ID: 20260824_01_hard_delete_company_fk_cascade
-Revises: 20260729_01_subscription_commands_hardening
+Revises: 20260818_01_order_adjustment_metadata
 Create Date: 2026-08-24 21:55:00.000000
 """
 
@@ -10,7 +10,7 @@ import sqlalchemy as sa
 
 
 revision = "20260824_01_hard_delete_company_fk_cascade"
-down_revision = "20260729_01_subscription_commands_hardening"
+down_revision = "20260818_01_order_adjustment_metadata"
 branch_labels = None
 depends_on = None
 
@@ -46,11 +46,7 @@ def _company_foreign_keys(bind):
 
 def upgrade():
     bind = op.get_bind()
-    dialect = bind.dialect.name
-
-    # Production uses PostgreSQL. SQLite cannot safely rewrite arbitrary existing
-    # foreign-key constraints with ALTER TABLE, so leave its schema untouched.
-    if dialect != "postgresql":
+    if bind.dialect.name != "postgresql":
         return
 
     for fk in _company_foreign_keys(bind):
@@ -75,19 +71,15 @@ def downgrade():
         return
 
     for fk in _company_foreign_keys(bind):
-        options = fk["options"]
-        if (options.get("ondelete") or "").upper() != "CASCADE":
+        if (fk["options"].get("ondelete") or "").upper() != "CASCADE":
             continue
 
         op.drop_constraint(fk["name"], fk["table"], type_="foreignkey")
-        original_ondelete = options.get("ondelete")
-        # Recreate the constraint without CASCADE. This matches the original
-        # schema behavior for constraints that had no ON DELETE action.
         op.create_foreign_key(
             fk["name"],
             fk["table"],
             "companies",
             fk["columns"],
             fk["referred_columns"],
-            ondelete=None if not original_ondelete or original_ondelete.upper() == "CASCADE" else original_ondelete,
+            ondelete=None,
         )
