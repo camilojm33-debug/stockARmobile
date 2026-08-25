@@ -1,4 +1,4 @@
-const CACHE_NAME = 'stockarmobile-pwa-v7';
+const CACHE_NAME = 'stockarmobile-pwa-v8';
 const STATIC_ASSETS = [
   '/',
   '/offline.html',
@@ -42,7 +42,7 @@ const SYNCABLE_POST_PREFIXES = [
   '/caja/',
 ];
 const DB_NAME = 'stockarmobile-offline';
-const DB_VERSION = 2;
+const DB_VERSION = 3;
 const REQUEST_STORE = 'requests';
 const SNAPSHOT_STORE = 'snapshots';
 const META_STORE = 'meta';
@@ -408,13 +408,29 @@ async function flushQueue() {
         body: item.body || undefined,
         credentials: 'same-origin',
       });
-      if (response.ok || [401, 403, 409, 412].includes(response.status)) {
+      if (response.ok) {
         await dbDelete(REQUEST_STORE, item.id);
         await updateMeta(LAST_SYNC_KEY, nowIso());
         await updateMeta(LAST_ERROR_KEY, '');
         syncState.syncedCount += 1;
+      } else if ([401, 403, 409, 412].includes(response.status)) {
+        await dbPut(REQUEST_STORE, {
+          ...item,
+          attempts: (item.attempts || 0) + 1,
+          status: 'needs_attention',
+          lastHttpStatus: response.status,
+          lastAttemptAt: nowIso(),
+        });
+        await updateMeta(LAST_ERROR_KEY, `Operación ${item.operationType || item.url} requiere atención: HTTP ${response.status}. No se eliminó de la cola.`);
+        syncState.errorCount += 1;
       } else {
-        await dbPut(REQUEST_STORE, { ...item, attempts: (item.attempts || 0) + 1, status: 'pending' });
+        await dbPut(REQUEST_STORE, {
+          ...item,
+          attempts: (item.attempts || 0) + 1,
+          status: 'pending',
+          lastHttpStatus: response.status,
+          lastAttemptAt: nowIso(),
+        });
         await updateMeta(LAST_ERROR_KEY, `Error sincronizando ${item.operationType || item.url}: HTTP ${response.status}`);
         syncState.errorCount += 1;
       }
