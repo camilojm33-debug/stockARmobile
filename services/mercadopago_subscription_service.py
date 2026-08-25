@@ -1,13 +1,9 @@
-"""Mercado Pago recurring subscription helpers using Preapproval.
-
-Keeps recurring-payment metadata inside the existing Subscription.metadata_json so
-no duplicate billing model or extra Render secret is required.
-"""
+"""Mercado Pago recurring subscription helpers using Preapproval."""
 
 from __future__ import annotations
 
+from datetime import datetime, timezone
 import uuid
-from datetime import timedelta
 
 from services.mercadopago_service import MercadoPagoService
 from services.subscription_service import SubscriptionService
@@ -18,11 +14,29 @@ class MercadoPagoSubscriptionService:
 
     @staticmethod
     def _external_reference(*, company_id: int, subscription_id: int) -> str:
-        return f"stockarmobile|flow:{MercadoPagoSubscriptionService.FLOW}|company_id:{company_id}|subscription_id:{subscription_id}|nonce:{uuid.uuid4().hex}"
+        return (
+            f"stockarmobile|flow:{MercadoPagoSubscriptionService.FLOW}|"
+            f"company_id:{company_id}|subscription_id:{subscription_id}|nonce:{uuid.uuid4().hex}"
+        )
 
     @staticmethod
     def _metadata(subscription):
         return SubscriptionService._metadata_dict(subscription)
+
+    @staticmethod
+    def _parse_datetime(value):
+        if not value:
+            return None
+        raw = str(value).strip()
+        if raw.endswith("Z"):
+            raw = raw[:-1] + "+00:00"
+        try:
+            parsed = datetime.fromisoformat(raw)
+        except ValueError:
+            return None
+        if parsed.tzinfo is None:
+            parsed = parsed.replace(tzinfo=timezone.utc)
+        return parsed.astimezone(timezone.utc).replace(tzinfo=None)
 
     @classmethod
     def create(cls, *, db_session, company, subscription, plan, payer_email: str, notification_url: str, back_url: str):
@@ -67,9 +81,10 @@ class MercadoPagoSubscriptionService:
                 "mercadopago_external_reference": external_reference,
                 "payment_method": "mercadopago_subscription",
                 "auto_renew": True,
-                "subscription_auto_created_at": __import__("datetime").datetime.now(__import__("datetime").timezone.utc).isoformat(),
+                "subscription_auto_created_at": datetime.now(timezone.utc).isoformat(),
             },
         )
+        # Local renewal stays disabled until Mercado Pago confirms authorization.
         subscription.renewal_enabled = False
         subscription.auto_renew = False
         subscription.cancel_at_period_end = True
@@ -91,25 +106,45 @@ class MercadoPagoSubscriptionService:
         if subscription is None:
             return None
 
-        company = subscription.company
         status = str(preapproval.get("status") or "").lower()
         metadata = cls._metadata(subscription)
-        metadata.update({
-            "mercadopago_status": status,
-            "mercadopago_last_sync_at": __import__("datetime").datetime.now(__import__("datetime").timezone.utc).isoformat(),
-        })
+        metadata.update(
+            {
+                "mercadopago_status": status,
+                "mercadopago_payer_id": preapproval.get("payer_id"),
+                "mercadopago_payment_method_id": preapproval.get("payment_method_id"),
+                "mercadopago_last_sync_at": datetime.now(timezone.utc).isoformat(),
+            }
+        )
         SubscriptionService._set_metadata(subscription, metadata)
 
         if status == "authorized":
+            if subscription.status not in {SubscriptionService.STATE_ACTIVE, SubscriptionService.STATE_SCHEDULED}:
+                SubscriptionService._transition(
+                    subscription,
+                    SubscriptionService.STATE_ACTIVE,
+                    reason="mercadopago_preapproval_authorized",
+                )
             subscription.renewal_enabled = True
             subscription.auto_renew = True
             subscription.cancel_at_period_end = False
+            next_payment = cls._parse_datetime(preapproval.get("next_payment_date"))
+            if next_payment:
+                subscription.next_billing_date = next_payment
+                subscription.ends_at = next_payment
         elif status in {"paused", "cancelled", "canceled", "expired"}:
             subscription.renewal_enabled = False
             subscription.auto_renew = False
             subscription.cancel_at_period_end = True
-            if status in {"cancelled", "canceled"} and subscription.status not in {SubscriptionService.STATE_CANCELLED, SubscriptionService.STATE_EXPIRED}:
-                SubscriptionService._transition(subscription, SubscriptionService.STATE_CANCELLED, reason="mercadopago_preapproval_cancelled")
+            if status in {"cancelled", "canceled"} and subscription.status not in {
+                SubscriptionService.STATE_CANCELLED,
+                SubscriptionService.STATE_EXPIRED,
+            }:
+                SubscriptionService._transition(
+                    subscription,
+                    SubscriptionService.STATE_CANCELLED,
+                    reason="mercadopago_preapproval_cancelled",
+                )
         elif status == "pending":
             subscription.renewal_enabled = False
             subscription.auto_renew = False
