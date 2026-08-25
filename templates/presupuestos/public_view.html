@@ -1,51 +1,82 @@
-{% extends "base_master.html" %}
-
-{% block title %}Presupuesto {{ quote.number or quote.id }} - StockArmobile{% endblock %}
-
-{% block content %}
-<div class="container py-4" style="max-width: 860px;">
-  <div class="card app-card border-0">
-    <div class="card-body p-4">
-      <div class="d-flex justify-content-between align-items-start gap-3 flex-wrap mb-4">
-        <div>
-          <span class="page-kicker"><i class="bi bi-file-earmark-text"></i> Presupuesto</span>
-          <h1 class="h4 fw-bold mb-1">{{ quote.number or ('P-%06d'|format(quote.id)) }}</h1>
-          <div class="text-muted">{{ quote.date.strftime('%d/%m/%Y %H:%M') if quote.date else '' }}</div>
+<!doctype html>
+<html lang="es">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Presupuesto {{ quote.number or quote.id }}</title>
+  <style>
+    :root{font-family:Inter,system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;color:#172033;background:#f4f6f9}
+    *{box-sizing:border-box}
+    body{margin:0;background:#f4f6f9}
+    .wrap{max-width:900px;margin:0 auto;padding:24px 16px 40px}
+    .card{background:#fff;border:1px solid #e5e9ef;border-radius:18px;box-shadow:0 10px 35px rgba(23,32,51,.08);overflow:hidden}
+    .top{padding:26px 28px;border-bottom:1px solid #edf0f4;display:flex;align-items:center;justify-content:space-between;gap:20px;flex-wrap:wrap}
+    .brand{display:flex;align-items:center;gap:14px;min-width:0}
+    .logo{width:58px;height:58px;border-radius:12px;object-fit:contain;border:1px solid #e5e9ef;background:#fff;padding:5px}
+    .brand-name{font-size:19px;font-weight:750;margin:0 0 3px}.brand-sub{font-size:13px;color:#6b7484}
+    .badge{display:inline-block;background:#eef4ff;color:#145bd7;padding:6px 10px;border-radius:999px;font-size:12px;font-weight:700;margin-bottom:7px}
+    .content{padding:28px}
+    .head{display:flex;justify-content:space-between;align-items:flex-start;gap:18px;flex-wrap:wrap;margin-bottom:22px}
+    h1{font-size:28px;margin:0 0 5px}.muted{color:#687386;font-size:14px}
+    .btn{display:inline-block;background:#1769e0;color:#fff;text-decoration:none;font-weight:700;border-radius:10px;padding:12px 17px;box-shadow:0 5px 14px rgba(23,105,224,.2)}
+    .grid{display:grid;grid-template-columns:1fr 1fr;gap:14px;margin-bottom:24px}.box{border:1px solid #e3e7ed;border-radius:11px;padding:14px}.label{display:block;color:#6b7484;font-size:12px;margin-bottom:5px}.value{font-weight:700}
+    .table-wrap{overflow-x:auto}table{width:100%;border-collapse:collapse;min-width:560px}th,td{padding:12px 8px;border-bottom:1px solid #edf0f4;text-align:left}th{font-size:12px;color:#657086;text-transform:uppercase}th:nth-child(n+2),td:nth-child(n+2){text-align:right}
+    .totals{width:min(360px,100%);margin:24px 0 0 auto}.line{display:flex;justify-content:space-between;padding:5px 0}.total{border-top:2px solid #172033;margin-top:8px;padding-top:12px;font-size:21px;font-weight:800}
+    .footer{text-align:center;color:#8992a1;font-size:12px;padding:18px 28px 24px}.footer strong{color:#5f6877}
+    @media(max-width:650px){.wrap{padding:10px 8px 24px}.top,.content{padding:20px}.grid{grid-template-columns:1fr}.head h1{font-size:24px}.btn{width:100%;text-align:center}.logo{width:50px;height:50px}}
+  </style>
+</head>
+<body>
+  <main class="wrap">
+    <section class="card">
+      <header class="top">
+        <div class="brand">
+          {% if quote.company and quote.company.logo %}
+            <img class="logo" src="{{ quote.company.logo if quote.company.logo.startswith('http') or quote.company.logo.startswith('/') else url_for('static', filename=quote.company.logo) }}" alt="Logo de la empresa">
+          {% endif %}
+          <div>
+            <div class="brand-name">{{ quote.company.name if quote.company else 'Empresa' }}</div>
+            <div class="brand-sub">Presupuesto comercial</div>
+          </div>
         </div>
-        <a class="btn btn-primary" href="{{ pdf_url }}" target="_blank" rel="noopener"><i class="bi bi-filetype-pdf me-1"></i>Ver presupuesto PDF</a>
-      </div>
+        <span class="badge">Documento público</span>
+      </header>
 
-      <div class="row g-3 mb-4">
-        <div class="col-md-6"><div class="border rounded p-3 h-100"><small class="text-muted d-block">Cliente</small><strong>{{ quote.client.name if quote.client else (quote.consumer_name or 'Consumidor final') }}</strong></div></div>
-        <div class="col-md-6"><div class="border rounded p-3 h-100"><small class="text-muted d-block">Validez</small><strong>{{ quote.expires_at.strftime('%d/%m/%Y') if quote.expires_at else '-' }}</strong></div></div>
-      </div>
+      <div class="content">
+        <div class="head">
+          <div>
+            <h1>{{ quote.number or ('P-%06d'|format(quote.id)) }}</h1>
+            <div class="muted">{{ quote.date.strftime('%d/%m/%Y %H:%M') if quote.date else '' }}</div>
+          </div>
+          <a class="btn" href="{{ pdf_url }}" target="_blank" rel="noopener">Ver presupuesto PDF</a>
+        </div>
 
-      <div class="table-responsive mb-4">
-        <table class="table align-middle">
-          <thead><tr><th>Producto</th><th class="text-end">Cant.</th><th class="text-end">Precio</th><th class="text-end">Subtotal</th></tr></thead>
-          <tbody>
-          {% for row in rows %}
-            <tr>
-              <td>{{ row.name }}</td>
-              <td class="text-end">{{ '%.3g'|format(row.quantity) }}</td>
-              <td class="text-end">${{ '%.2f'|format(row.price) }}</td>
-              <td class="text-end">${{ '%.2f'|format(row.total) }}</td>
-            </tr>
-          {% endfor %}
-          </tbody>
-        </table>
-      </div>
+        <div class="grid">
+          <div class="box"><span class="label">Cliente</span><span class="value">{{ quote.client.name if quote.client else (quote.consumer_name or 'Consumidor final') }}</span></div>
+          <div class="box"><span class="label">Validez</span><span class="value">{{ quote.expires_at.strftime('%d/%m/%Y') if quote.expires_at else '-' }}</span></div>
+        </div>
 
-      <div class="d-flex justify-content-end">
-        <div style="min-width: 260px;">
-          <div class="d-flex justify-content-between"><span>Subtotal</span><strong>${{ '%.2f'|format(quote.subtotal or 0) }}</strong></div>
-          <div class="d-flex justify-content-between"><span>Descuento</span><strong>-${{ '%.2f'|format(quote.discount or 0) }}</strong></div>
-          <div class="d-flex justify-content-between"><span>Impuestos</span><strong>${{ '%.2f'|format(quote.tax or 0) }}</strong></div>
-          <hr>
-          <div class="d-flex justify-content-between fs-5"><span>Total</span><strong>${{ '%.2f'|format(quote.total_amount or 0) }}</strong></div>
+        <div class="table-wrap">
+          <table>
+            <thead><tr><th>Producto</th><th>Cant.</th><th>Precio</th><th>Subtotal</th></tr></thead>
+            <tbody>
+            {% for row in rows %}
+              <tr><td>{{ row.name }}</td><td>{{ '%.3g'|format(row.quantity) }}</td><td>${{ '%.2f'|format(row.price) }}</td><td>${{ '%.2f'|format(row.total) }}</td></tr>
+            {% endfor %}
+            </tbody>
+          </table>
+        </div>
+
+        <div class="totals">
+          <div class="line"><span>Subtotal</span><strong>${{ '%.2f'|format(quote.subtotal or 0) }}</strong></div>
+          <div class="line"><span>Descuento</span><strong>-${{ '%.2f'|format(quote.discount or 0) }}</strong></div>
+          <div class="line"><span>Impuestos</span><strong>${{ '%.2f'|format(quote.tax or 0) }}</strong></div>
+          <div class="line total"><span>Total</span><strong>${{ '%.2f'|format(quote.total_amount or 0) }}</strong></div>
         </div>
       </div>
-    </div>
-  </div>
-</div>
-{% endblock %}
+
+      <footer class="footer">Este documento fue generado por <strong>StockArmobile</strong>. El enlace permite consultar únicamente este presupuesto.</footer>
+    </section>
+  </main>
+</body>
+</html>
