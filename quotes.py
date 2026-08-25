@@ -1224,15 +1224,10 @@ def quote_public_view(token):
 @login_required
 def share_whatsapp(quote_id):
     from app import Company
-
     quote = _quote_lookup(quote_id)
     _require_owned_or_authorized(quote)
     _require_quote_permission("quotes_share_whatsapp")
     phone = _quote_client_whatsapp_phone(quote)
-    if not phone:
-        flash(_quote_missing_whatsapp_phone_message(quote), "warning")
-        return redirect(url_for("quotes.view_quote", quote_id=quote.id))
-
     company = Company.query.filter_by(id=quote.company_id).first()
     message = _build_quote_whatsapp_message(quote, company)
     public_url = _build_public_quote_url(quote.id)
@@ -1243,20 +1238,14 @@ def share_whatsapp(quote_id):
 @tenant_required
 @login_required
 def share_whatsapp_post(quote_id):
-    from app import Company
-
+    from app import Company, record_audit
     quote = _quote_lookup(quote_id)
     _require_owned_or_authorized(quote)
     _require_quote_permission("quotes_share_whatsapp")
-    phone = _quote_client_whatsapp_phone(quote)
-    if not phone:
-        flash(_quote_missing_whatsapp_phone_message(quote), "warning")
-        return redirect(url_for("quotes.view_quote", quote_id=quote.id))
-
+    phone = (request.form.get("whatsapp_phone") or "").strip() or _quote_client_whatsapp_phone(quote)
     company = Company.query.filter_by(id=quote.company_id).first()
     message = _build_quote_whatsapp_message(quote, company)
     public_url = _build_public_quote_url(quote.id)
-    from app import record_audit
     record_audit(action="quote_share_whatsapp", entity="quote", entity_id=quote.id, detail=f"Compartido por WhatsApp {quote.number or quote.id}", ip_address=request.remote_addr)
     return redirect(build_whatsapp_share_url(phone=phone, message=message, document_url=public_url, document_label="Presupuesto"))
 
