@@ -12,7 +12,7 @@ services:
       - key: ADMIN_PASSWORD
         generateValue: true
       - key: MP_MODE
-        value: sandbox
+        value: production
       - key: MP_ACCESS_TOKEN
         sync: false
       - key: MP_PUBLIC_KEY
