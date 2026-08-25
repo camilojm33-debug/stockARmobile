@@ -1,4 +1,4 @@
-name: Fix subscriptions and budget shortcuts
+name: Repair subscription reactivation and budget shortcuts
 
 on:
   push:
@@ -9,14 +9,14 @@ permissions:
 
 jobs:
   patch:
-    if: ${{ !contains(github.event.head_commit.message, 'fix: repair Mercado Pago subscription events and remove budget shortcuts') }}
+    if: ${{ !contains(github.event.head_commit.message, 'fix: repair subscription reactivation and remove budget shortcuts') }}
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
         with:
           fetch-depth: 0
 
-      - name: Apply fixes
+      - name: Patch application source
         shell: bash
         run: |
           set -euo pipefail
@@ -24,58 +24,133 @@ jobs:
           from pathlib import Path
           import re
 
-          # 1) Remove the visible budget shortcut legend completely.
+          # 1) Remove the visible keyboard-shortcut legend entirely, regardless of prior wrapper/class.
           quote = Path('templates/presupuestos/form.html')
           q = quote.read_text(encoding='utf-8')
-          q, removed = re.subn(
-              r'\s*<div class="small text-muted(?: desktop-quote-shortcuts)?">\s*Atajos:\s*<strong>F2</strong>.*?<\/div>',
+          q, _ = re.subn(
+              r'\s*<div[^>]*>\s*Atajos:\s*<strong>F2</strong>.*?<\/div>',
               '', q, count=1, flags=re.S,
           )
-          if removed == 0:
-              # If an earlier patch added the desktop class, hide it as a safe fallback.
-              if '.desktop-quote-shortcuts' not in q:
-                  marker = '  @media (max-width: 768px) {'
-                  if marker in q:
-                      q = q.replace(marker, '  .desktop-quote-shortcuts { display: none !important; }\n\n' + marker, 1)
+          q = re.sub(r'\s*desktop-quote-shortcuts\b', '', q)
           quote.write_text(q, encoding='utf-8')
 
-          # 2) Fix Mercado Pago subscription webhook deduplication.
-          # The old logic deduplicated subscription_preapproval only by ID.
-          # MP sends the same subscription ID again when its status changes
-          # (pending -> authorized/cancelled). Those updates must be processed.
+          # 2) Replace the reactivation route. Mercado Pago allows reactivation of a PAUSED
+          # preapproval. A CANCELED/EXPIRED preapproval must be replaced by a new authorization
+          # flow; trying PUT status=authorized on a canceled record is what produced the error.
+          company = Path('company_billing.py')
+          text = company.read_text(encoding='utf-8')
+          pattern = re.compile(
+              r'@bp\.route\("/subscription/reactivate", methods=\["POST"\]\)\n'
+              r'@company_member_required\n'
+              r'def reactivate_subscription\(\):.*?(?=\n@bp\.route|\Z)',
+              re.S,
+          )
+          replacement = '''@bp.route("/subscription/reactivate", methods=["POST"])
+@company_member_required
+def reactivate_subscription():
+    from app import Company, db, record_audit
+    from services.mercadopago_service import MercadoPagoService
+    from services.mercadopago_subscription_service import MercadoPagoSubscriptionService
+
+    company_id = getattr(current_user, "company_id", None)
+    subscription = SubscriptionService.active_subscription_for_company(company_id)
+    if subscription is None:
+        flash("No se encontró una suscripción activa para reactivar.", "warning")
+        return redirect(url_for("company_billing.subscription_portal"))
+
+    try:
+        metadata = SubscriptionService._metadata_dict(subscription)
+        preapproval_id = str(metadata.get("mercadopago_preapproval_id") or "").strip()
+        plan = getattr(subscription, "plan", None)
+        company = Company.query.filter_by(id=company_id).first()
+        if company is None or plan is None:
+            raise RuntimeError("No se pudo determinar la empresa o el plan actual.")
+
+        # Existing MP subscription: only paused subscriptions are reactivated in-place.
+        if preapproval_id:
+            mp = MercadoPagoService()
+            current = mp.get_preapproval(preapproval_id)
+            mp_status = str(current.get("status") or "").strip().lower()
+            if mp_status == "paused":
+                mp.update_preapproval(preapproval_id, {"status": "authorized"})
+                BillingService.reactivate_subscription(db.session, subscription=subscription, user_id=current_user.id)
+                record_audit(
+                    action="subscription_reactivate",
+                    entity="subscription",
+                    entity_id=subscription.id,
+                    detail="Suscripción Mercado Pago reactivada desde estado pausado",
+                )
+                db.session.commit()
+                flash("La suscripción automática de Mercado Pago fue reactivada.", "success")
+                return redirect(url_for("company_billing.subscription_portal"))
+
+            if mp_status == "authorized":
+                BillingService.reactivate_subscription(db.session, subscription=subscription, user_id=current_user.id)
+                db.session.commit()
+                flash("La suscripción automática ya estaba autorizada y quedó reactivada en StockArMobile.", "success")
+                return redirect(url_for("company_billing.subscription_portal"))
+
+            # canceled/expired/unknown: create a fresh preapproval and require the customer
+            # to authorize it again instead of trying to resurrect an invalid contract.
+
+        payer_email = (getattr(current_user, "email", None) or getattr(company, "contact_email", None) or "").strip()
+        config = load_billing_config()
+        response = MercadoPagoSubscriptionService.create(
+            db_session=db.session,
+            company=company,
+            subscription=subscription,
+            plan=plan,
+            payer_email=payer_email,
+            notification_url=config.notification_url,
+            back_url=config.success_url,
+        )
+        db.session.commit()
+        checkout_url = str(response.get("init_point") or "").strip()
+        if not checkout_url:
+            raise RuntimeError("Mercado Pago no devolvió el enlace de autorización.")
+        return redirect(checkout_url)
+    except Exception as exc:
+        db.session.rollback()
+        current_app.logger.exception("Error reactivando suscripción Mercado Pago: %s", exc)
+        flash(f"No se pudo reactivar la suscripción automática en Mercado Pago: {exc}", "danger")
+        return redirect(url_for("company_billing.subscription_portal"))
+'''
+          text2, count = pattern.subn(replacement, text, count=1)
+          if count != 1:
+              raise SystemExit('No se encontró la ruta de reactivación de suscripción')
+          company.write_text(text2, encoding='utf-8')
+
+          # 3) Keep subscription webhook status changes processable; dedupe by ID+status+version.
           webhook = Path('services/webhook_service.py')
           w = webhook.read_text(encoding='utf-8')
-
-          old = '''        existing = WebhookEvent.query.filter_by(event_key=event_key).first()\n        if existing:\n            return {"status": "duplicate", "event_key": event_key}\n\n        payment_data = None\n        if event_type in {"payment", "payment.updated", "merchant_order", "topic_payment"}:\n'''
-          new = '''        # Subscription webhooks reuse the preapproval ID across status changes.\n        # Fetch the current preapproval before deduplication and include its status/version\n        # in the event key so pending -> authorized is not discarded as a duplicate.\n        subscription_preapproval = None\n        if event_type == "subscription_preapproval":\n            subscription_preapproval = self.mp_service.get_preapproval(data_id)\n            preapproval_status = str(subscription_preapproval.get("status") or "unknown").lower()\n            preapproval_version = str(subscription_preapproval.get("version") or subscription_preapproval.get("last_modified") or "unknown")\n            event_key = f"{event_type}:{data_id}:{preapproval_status}:{preapproval_version}"\n\n        existing = WebhookEvent.query.filter_by(event_key=event_key).first()\n        if existing:\n            return {"status": "duplicate", "event_key": event_key}\n\n        payment_data = None\n        if event_type in {"payment", "payment.updated", "merchant_order", "topic_payment"}:\n'''
-          if old not in w:
-              raise SystemExit('No se encontró el bloque de deduplicación de webhooks')
-          w = w.replace(old, new, 1)
-
+          old = '''        existing = WebhookEvent.query.filter_by(event_key=event_key).first()\n        if existing:\n            return {"status": "duplicate", "event_key": event_key}\n\n        payment_data = None\n'''
+          new = '''        subscription_preapproval = None\n        if event_type == "subscription_preapproval":\n            subscription_preapproval = self.mp_service.get_preapproval(data_id)\n            preapproval_status = str(subscription_preapproval.get("status") or "unknown").lower()\n            preapproval_version = str(subscription_preapproval.get("version") or subscription_preapproval.get("last_modified") or "unknown")\n            event_key = f"{event_type}:{data_id}:{preapproval_status}:{preapproval_version}"\n\n        existing = WebhookEvent.query.filter_by(event_key=event_key).first()\n        if existing:\n            return {"status": "duplicate", "event_key": event_key}\n\n        payment_data = None\n'''
+          if old in w and 'subscription_preapproval = None' not in w:
+              w = w.replace(old, new, 1)
           old2 = '''        if event_type in {"subscription_preapproval", "subscription_preapproval_plan"}:\n            from services.mercadopago_subscription_service import MercadoPagoSubscriptionService\n            preapproval = self.mp_service.get_preapproval(data_id)\n            subscription = MercadoPagoSubscriptionService.sync_preapproval(db_session=db_session, preapproval=preapproval)\n'''
           new2 = '''        if event_type == "subscription_preapproval":\n            from services.mercadopago_subscription_service import MercadoPagoSubscriptionService\n            preapproval = subscription_preapproval or self.mp_service.get_preapproval(data_id)\n            subscription = MercadoPagoSubscriptionService.sync_preapproval(db_session=db_session, preapproval=preapproval)\n'''
-          if old2 not in w:
-              raise SystemExit('No se encontró el bloque de procesamiento de preapproval')
-          w = w.replace(old2, new2, 1)
-
+          if old2 in w:
+              w = w.replace(old2, new2, 1)
           webhook.write_text(w, encoding='utf-8')
           PY
 
-      - name: Validate
+      - name: Validate source
         shell: bash
         run: |
           set -euo pipefail
-          python -m py_compile services/webhook_service.py services/mercadopago_subscription_service.py company_billing.py
+          python -m py_compile company_billing.py services/mercadopago_subscription_service.py services/mercadopago_service.py services/webhook_service.py
           ! grep -Fq 'Atajos: <strong>F2</strong>' templates/presupuestos/form.html
-          grep -Fq 'preapproval_status' services/webhook_service.py
+          grep -Fq 'if mp_status == "paused"' company_billing.py
+          grep -Fq 'if mp_status == "authorized"' company_billing.py
+          grep -Fq 'MercadoPagoSubscriptionService.create' company_billing.py
 
-      - name: Commit and remove workflow
+      - name: Commit source fix and remove workflow
         shell: bash
         run: |
           set -euo pipefail
           git config user.name 'github-actions[bot]'
           git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
-          git add templates/presupuestos/form.html services/webhook_service.py
+          git add company_billing.py services/webhook_service.py templates/presupuestos/form.html
           git rm -f .github/workflows/fix-subscriptions-and-shortcuts.yml
-          git commit -m 'fix: repair Mercado Pago subscription events and remove budget shortcuts'
+          git commit -m 'fix: repair subscription reactivation and remove budget shortcuts'
           git push origin main
