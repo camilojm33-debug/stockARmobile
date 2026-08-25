@@ -51,7 +51,7 @@ class BillingService:
         )
 
         preference = self.mp_service.create_checkout_preference(
-            title=f"StockArmobile - {plan.name}",
+            title=f"StockarMobile - {plan.name}" if False else f"StockarMobile - {plan.name}",
             amount=float(plan.price or 0),
             currency=plan.currency or "ARS",
             external_reference=external_reference,
@@ -126,6 +126,85 @@ class BillingService:
 
     @staticmethod
     def reactivate_subscription(db_session, *, subscription, user_id: int | None = None):
+        """Reactivate only after Mercado Pago confirms an authorized state.
+
+        If the previous preapproval was canceled/expired, create a fresh authorization
+        and leave the local subscription disabled until the webhook confirms it.
+        """
+        metadata = SubscriptionService._metadata_dict(subscription)
+        preapproval_id = str(metadata.get("mercadopago_preapproval_id") or "").strip()
+
+        if preapproval_id:
+            mp = MercadoPagoService()
+            remote = mp.get_preapproval(preapproval_id)
+            remote_status = str(remote.get("status") or "").strip().lower()
+
+            if remote_status in {"authorized", "paused", "pending", "in_process"}:
+                if remote_status == "paused":
+                    remote = mp.update_preapproval(preapproval_id, {"status": "authorized"})
+                    remote_status = str(remote.get("status") or "").strip().lower()
+                elif remote_status in {"pending", "in_process"}:
+                    remote = mp.update_preapproval(preapproval_id, {"status": "authorized"})
+                    remote_status = str(remote.get("status") or "").strip().lower()
+
+                if remote_status == "authorized":
+                    SubscriptionService.run_command(
+                        db_session,
+                        SubscriptionService.ReactivateSubscriptionCommand(
+                            company_id=subscription.company_id,
+                            subscription_id=subscription.id,
+                            actor_user_id=user_id,
+                            origin="portal",
+                            idempotency_key=f"reactivate:{subscription.company_id}:{subscription.id}:{user_id or 0}",
+                        ),
+                    )
+                    NotificationService.record_event(
+                        db_session,
+                        company_id=subscription.company_id,
+                        subscription_id=subscription.id,
+                        event="subscription_reactivated",
+                        detail="Renovacion automatica reactivada y autorizada en Mercado Pago.",
+                        source="portal",
+                        status=SubscriptionService.active_subscription_for_company(subscription.company_id).status,
+                        user_id=user_id,
+                    )
+                    return subscription
+
+            if remote_status in {"cancelled", "canceled", "expired"}:
+                from app import Company
+                from services.mercadopago_subscription_service import MercadoPagoSubscriptionService
+                company = db_session.get(Company, subscription.company_id)
+                plan = getattr(subscription, "plan", None)
+                if company is None or plan is None:
+                    raise RuntimeError("No se pudo determinar la empresa o el plan para crear una nueva autorización.")
+                payer_email = (getattr(company, "contact_email", None) or "").strip()
+                if not payer_email or "@" not in payer_email:
+                    raise RuntimeError("La empresa necesita un email válido para reactivar el cobro automático.")
+                config = __import__("config.billing_config", fromlist=["load_billing_config"]).load_billing_config()
+                response = MercadoPagoSubscriptionService.create(
+                    db_session=db_session,
+                    company=company,
+                    subscription=subscription,
+                    plan=plan,
+                    payer_email=payer_email,
+                    notification_url=config.notification_url,
+                    back_url=config.success_url,
+                )
+                NotificationService.record_event(
+                    db_session,
+                    company_id=subscription.company_id,
+                    subscription_id=subscription.id,
+                    event="subscription_reactivation_authorization_pending",
+                    detail="La suscripción anterior de Mercado Pago estaba cancelada/vencida. Se generó una nueva autorización; la activación local queda pendiente del webhook.",
+                    source="portal",
+                    status="pending",
+                    payload={"preapproval_id": response.get("id"), "init_point": response.get("init_point")},
+                    user_id=user_id,
+                )
+                db_session.flush()
+                return subscription
+
+        # No Mercado Pago preapproval exists: preserve the existing local behavior.
         SubscriptionService.run_command(
             db_session,
             SubscriptionService.ReactivateSubscriptionCommand(
