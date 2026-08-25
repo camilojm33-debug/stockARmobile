@@ -1,0 +1,318 @@
+name: Improve budget builder mobile UX
+
+on:
+  push:
+    branches: [main]
+
+permissions:
+  contents: write
+
+jobs:
+  patch:
+    if: ${{ !contains(github.event.head_commit.message, 'feat: improve budget builder for mobile devices') }}
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Apply mobile-first budget builder styles
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+
+          path = Path('templates/presupuestos/form.html')
+          text = path.read_text(encoding='utf-8')
+
+          if '/* MOBILE QUOTE BUILDER */' in text:
+              raise SystemExit('Mobile budget builder styles already present')
+
+          marker = '\n</style>\n{% endblock %}'
+          if marker not in text:
+              raise SystemExit('No se encontró el cierre del bloque de estilos del constructor')
+
+          mobile_css = r'''
+
+  /* MOBILE QUOTE BUILDER */
+  @media (max-width: 768px) {
+    .quote-builder-layout {
+      display: flex;
+      flex-direction: column;
+      gap: 0.75rem;
+      width: 100%;
+    }
+
+    .quote-builder-layout,
+    .quote-builder-layout * {
+      min-width: 0;
+      box-sizing: border-box;
+    }
+
+    .quote-panel {
+      width: 100%;
+      border-radius: 12px;
+    }
+
+    .quote-panel-header {
+      padding: 0.75rem;
+    }
+
+    .quote-panel-body {
+      padding: 0.75rem;
+    }
+
+    .quote-panel-header strong {
+      font-size: 0.95rem;
+    }
+
+    .quote-panel-header .badge {
+      font-size: 0.7rem;
+    }
+
+    .panel-toggle {
+      min-height: 34px;
+      padding: 0.25rem 0.6rem;
+    }
+
+    /* Cabecera compacta: los atajos de teclado no aportan en teléfono. */
+    .app-shell > .d-flex.flex-wrap.justify-content-between.align-items-start.gap-3.mb-3 > .small.text-muted {
+      display: none;
+    }
+
+    .app-shell > .d-flex.flex-wrap.justify-content-between.align-items-start.gap-3.mb-3 {
+      margin-bottom: 0.75rem !important;
+    }
+
+    .app-shell > .d-flex.flex-wrap.justify-content-between.align-items-start.gap-3.mb-3 .page-kicker {
+      margin-bottom: 0.35rem;
+    }
+
+    .app-shell > .d-flex.flex-wrap.justify-content-between.align-items-start.gap-3.mb-3 h1 {
+      font-size: 1.35rem;
+    }
+
+    .app-shell > .d-flex.flex-wrap.justify-content-between.align-items-start.gap-3.mb-3 p {
+      font-size: 0.9rem;
+      line-height: 1.35;
+    }
+
+    /* Busqueda y filtros apilados, fáciles de tocar. */
+    #panelCatalog .quote-panel-header > .d-flex:nth-child(1) {
+      gap: 0.5rem;
+    }
+
+    #panelCatalog .quote-panel-header > .d-flex.gap-2.mt-2 {
+      flex-direction: column;
+      align-items: stretch !important;
+      gap: 0.6rem !important;
+    }
+
+    #panelCatalog .quote-panel-header .form-check.form-switch {
+      margin-top: 0 !important;
+      min-height: 38px;
+      display: flex;
+      align-items: center;
+      gap: 0.45rem;
+    }
+
+    #quoteProductSearch,
+    #categoryFilter {
+      min-height: 46px;
+      font-size: 16px;
+    }
+
+    #quoteProductSearch::placeholder {
+      font-size: 0.9rem;
+    }
+
+    #catalogResults {
+      max-height: none;
+      overflow: visible;
+    }
+
+    .catalog-card {
+      grid-template-columns: 46px minmax(0, 1fr);
+      gap: 0.65rem;
+      padding: 0.65rem;
+      margin-bottom: 0.65rem;
+      border-radius: 12px;
+    }
+
+    .catalog-thumb {
+      width: 46px;
+      height: 46px;
+      border-radius: 9px;
+    }
+
+    .catalog-title {
+      font-size: 0.98rem;
+      line-height: 1.2;
+    }
+
+    .catalog-meta {
+      font-size: 0.75rem;
+      line-height: 1.25;
+      white-space: normal;
+      display: -webkit-box;
+      -webkit-line-clamp: 2;
+      -webkit-box-orient: vertical;
+      overflow: hidden;
+    }
+
+    .catalog-side {
+      grid-column: 2;
+      width: 100%;
+      min-width: 0;
+      margin-top: 0.15rem;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 0.6rem;
+      text-align: left;
+    }
+
+    .catalog-price {
+      margin-bottom: 0;
+      font-size: 1rem;
+    }
+
+    .catalog-side .btn {
+      min-height: 44px;
+      padding-inline: 0.9rem;
+      border-radius: 10px;
+      font-weight: 700;
+      flex-shrink: 0;
+    }
+
+    /* Las líneas del presupuesto pasan a una columna para evitar inputs diminutos. */
+    .quote-line-grid {
+      grid-template-columns: 1fr;
+      gap: 0.55rem;
+    }
+
+    .quote-line {
+      padding: 0.7rem;
+      border-radius: 12px;
+    }
+
+    .quote-line-grid .form-control,
+    .quote-line-grid .form-select,
+    .quote-line-grid input,
+    .quote-line-grid select,
+    .quote-line-grid button {
+      min-height: 44px;
+      font-size: 16px;
+    }
+
+    .quote-actions-grid {
+      grid-template-columns: 1fr;
+      gap: 0.5rem;
+    }
+
+    .quote-actions-grid .btn,
+    #quoteForm .btn[type="submit"] {
+      width: 100%;
+      min-height: 46px;
+    }
+
+    /* Datos del cliente en una sola columna en teléfonos angostos. */
+    #panelContext .row.g-2 > [class*="col-"] {
+      width: 100%;
+      flex: 0 0 100%;
+    }
+
+    #panelContext .form-control,
+    #panelContext .form-select,
+    #panelContext textarea,
+    #panelContext input,
+    #panelContext select {
+      min-height: 44px;
+      font-size: 16px;
+    }
+
+    #panelContext textarea {
+      min-height: 82px;
+    }
+
+    #conditionChips {
+      gap: 0.4rem !important;
+      overflow-x: auto;
+      flex-wrap: nowrap !important;
+      padding-bottom: 0.25rem;
+      -webkit-overflow-scrolling: touch;
+      scrollbar-width: thin;
+    }
+
+    .quick-chip {
+      min-height: 38px;
+      flex: 0 0 auto;
+      font-size: 0.82rem;
+      white-space: nowrap;
+    }
+
+    /* Evita que el resumen/totales genere desplazamiento horizontal. */
+    .totals-sticky {
+      width: 100%;
+      overflow: hidden;
+    }
+
+    #quoteLinesWrap {
+      max-height: none;
+      overflow: visible;
+    }
+
+    #emptyLinesHint {
+      padding: 0.25rem 0;
+    }
+  }
+
+  @media (max-width: 390px) {
+    .quote-panel-header,
+    .quote-panel-body {
+      padding-left: 0.65rem;
+      padding-right: 0.65rem;
+    }
+
+    .catalog-card {
+      grid-template-columns: 42px minmax(0, 1fr);
+      gap: 0.55rem;
+    }
+
+    .catalog-thumb {
+      width: 42px;
+      height: 42px;
+    }
+
+    .catalog-side .btn {
+      padding-inline: 0.7rem;
+      font-size: 0.88rem;
+    }
+
+    .app-shell > .d-flex.flex-wrap.justify-content-between.align-items-start.gap-3.mb-3 h1 {
+      font-size: 1.2rem;
+    }
+  }
+'''
+
+          text = text.replace(marker, mobile_css + marker, 1)
+          path.write_text(text, encoding='utf-8')
+          PY
+
+      - name: Validate template syntax markers
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+          text = Path('templates/presupuestos/form.html').read_text(encoding='utf-8')
+          assert '/* MOBILE QUOTE BUILDER */' in text
+          assert '@media (max-width: 768px)' in text
+          assert '.quote-line-grid' in text
+          PY
+
+      - name: Commit patch and remove workflow
+        run: |
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add templates/presupuestos/form.html
+          git rm .github/workflows/mobile-quote-builder.yml
+          git commit -m 'fix: optimize budget builder for mobile screens'
+          git push origin main
