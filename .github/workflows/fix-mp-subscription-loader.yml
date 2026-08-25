@@ -1,0 +1,54 @@
+name: Fix Mercado Pago subscription loader
+
+on:
+  push:
+    branches: [main]
+
+permissions:
+  contents: write
+
+jobs:
+  patch:
+    if: github.actor != 'github-actions[bot]'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Patch subscription form loading behavior
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+
+          portal = Path('templates/company_billing/portal.html')
+          text = portal.read_text(encoding='utf-8')
+          old = '''<form method="post" action="{{ url_for('company_billing.create_mercadopago_subscription') }}">\n              <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">\n              <input type="hidden" name="plan_id" value="{{ usage_snapshot.plan.id if usage_snapshot.plan else '' }}">\n              <button class="btn btn-success" type="submit">Activar suscripción automática</button>\n            </form>'''
+          new = '''<form method="post" action="{{ url_for('company_billing.create_mercadopago_subscription') }}" data-mp-auto-subscription="true">\n              <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">\n              <input type="hidden" name="plan_id" value="{{ usage_snapshot.plan.id if usage_snapshot.plan else '' }}">\n              <button class="btn btn-success" type="submit" data-mp-auto-subscription-button="true">Activar suscripción automática</button>\n            </form>'''
+          if old not in text:
+              raise SystemExit('No se encontró el formulario de suscripción automática')
+          text = text.replace(old, new, 1)
+          portal.write_text(text, encoding='utf-8')
+
+          base = Path('templates/base_master.html')
+          text = base.read_text(encoding='utf-8')
+          old = '''      document.querySelectorAll('form[method="post"]').forEach(function(form) {\n        form.addEventListener('submit', function() {\n          const loading = document.getElementById('appLoading');\n          if (loading) loading.classList.add('show');\n        });\n      });'''
+          new = '''      document.querySelectorAll('form[method="post"]').forEach(function(form) {\n        form.addEventListener('submit', function() {\n          // Mercado Pago subscription creation performs an external API call and\n          // then redirects to Mercado Pago. Do not cover the page with the global\n          // loader here: if the external API is slow/rejected, the user must still\n          // be able to see the page/error instead of getting an apparently frozen UI.\n          if (form.matches('[data-mp-auto-subscription="true"]')) {\n            const button = form.querySelector('[data-mp-auto-subscription-button="true"]');\n            if (button) {\n              button.disabled = true;\n              button.textContent = 'Conectando con Mercado Pago…';\n            }\n            return;\n          }\n          const loading = document.getElementById('appLoading');\n          if (loading) loading.classList.add('show');\n        });\n      });'''
+          if old not in text:
+              raise SystemExit('No se encontró el manejador global de formularios')
+          text = text.replace(old, new, 1)
+          base.write_text(text, encoding='utf-8')
+          PY
+
+      - name: Validate templates and remove workflow
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+          for name in ('templates/base_master.html', 'templates/company_billing/portal.html'):
+              text = Path(name).read_text(encoding='utf-8')
+              assert 'data-mp-auto-subscription' in text if 'portal.html' in name else True
+          PY
+          git rm .github/workflows/fix-mp-subscription-loader.yml
+          git add templates/base_master.html templates/company_billing/portal.html
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git commit -m 'fix: avoid global loader on Mercado Pago subscription redirect'
+          git push
