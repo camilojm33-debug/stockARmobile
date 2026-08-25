@@ -24,9 +24,10 @@
                 id="saleWhatsappPhone"
                 name="whatsapp_phone"
                 value="{{ entered_phone }}"
-                placeholder="Ej: 5491122334455"
-                maxlength="30">
-              <div class="form-text">Si lo dejás vacío, WhatsApp se abrirá para que selecciones el destinatario.</div>
+                placeholder="Ej: 3624228396 o 5493624228396"
+                maxlength="30"
+                autocomplete="tel">
+              <div class="form-text">Podés escribir el número argentino como lo tenés guardado (por ejemplo 3624228396). StockArMobile lo convertirá automáticamente al formato internacional de WhatsApp.</div>
             </div>
 
             <div class="form-text mb-3">Si tenés WhatsApp instalado en la PC, usá "Abrir app". Si preferís navegador, usá "Abrir Web".</div>
@@ -53,31 +54,83 @@
     const baseMessage = {{ message|tojson }};
     const ticketUrl = {{ pdf_url|tojson }};
 
+    // WhatsApp necesita el número en formato internacional E.164 sin + ni espacios.
+    // Para Argentina: 549 + código de área + número de abonado.
+    function removeArgentinaMobilePrefix(digits) {
+      for (const areaLength of [2, 3, 4]) {
+        if (digits.length > areaLength + 2 && digits.slice(areaLength, areaLength + 2) === '15') {
+          const candidate = digits.slice(0, areaLength) + digits.slice(areaLength + 2);
+          if (candidate.length === 10) {
+            return candidate;
+          }
+        }
+      }
+      return digits;
+    }
+
     function normalizePhone(value) {
-      return String(value || '').replace(/\D+/g, '');
+      let digits = String(value || '').replace(/\D+/g, '');
+      if (!digits) return '';
+
+      if (digits.startsWith('00')) {
+        digits = digits.slice(2);
+      }
+      digits = digits.replace(/^0+/, '');
+      if (!digits) return '';
+
+      // Ya viene con código de país Argentina.
+      if (digits.startsWith('54')) {
+        let national = digits.slice(2).replace(/^0+/, '');
+        if (national.startsWith('9')) {
+          national = national.slice(1);
+        }
+        national = removeArgentinaMobilePrefix(national);
+        if (national.length === 10) {
+          return `549${national}`;
+        }
+        return `54${national}`;
+      }
+
+      // Número local argentino de 10 dígitos.
+      if (digits.length === 10 && digits.startsWith('15')) {
+        digits = `11${digits.slice(2)}`;
+      }
+      digits = removeArgentinaMobilePrefix(digits);
+      if (digits.length === 10) {
+        return `549${digits}`;
+      }
+
+      return digits;
+    }
+
+    function buildMessage() {
+      return [baseMessage, `PDF: ${ticketUrl}`].filter(Boolean).join('\n\n');
     }
 
     function buildDesktopUrl() {
       const phone = normalizePhone(phoneInput?.value || '');
-      const text = [baseMessage, `PDF: ${ticketUrl}`].filter(Boolean).join('\n\n');
-      const query = new URLSearchParams();
-      if (phone) {
-        query.set('phone', phone);
-      }
-      query.set('text', text);
-      return `whatsapp://send?${query.toString()}`;
+      const text = encodeURIComponent(buildMessage());
+      return phone
+        ? `whatsapp://send?phone=${phone}&text=${text}`
+        : `whatsapp://send?text=${text}`;
     }
 
     function buildWebUrl() {
       const phone = normalizePhone(phoneInput?.value || '');
-      const text = [baseMessage, `PDF: ${ticketUrl}`].filter(Boolean).join('\n\n');
-      const query = new URLSearchParams();
-      if (phone) {
-        query.set('phone', phone);
-      }
-      query.set('text', text);
-      return `https://api.whatsapp.com/send?${query.toString()}`;
+      const text = encodeURIComponent(buildMessage());
+      return phone
+        ? `https://wa.me/${phone}?text=${text}`
+        : `https://wa.me/?text=${text}`;
     }
+
+    // Muestra el formato que realmente se va a enviar, evitando el error típico
+    // de ingresar un número argentino nacional y enviarlo sin el prefijo 549.
+    phoneInput?.addEventListener('blur', () => {
+      const normalized = normalizePhone(phoneInput.value);
+      if (normalized) {
+        phoneInput.value = normalized;
+      }
+    });
 
     desktopButton?.addEventListener('click', () => {
       const fallbackTimer = window.setTimeout(() => {
