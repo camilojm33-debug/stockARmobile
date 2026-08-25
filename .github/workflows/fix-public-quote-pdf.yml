@@ -25,25 +25,21 @@ jobs:
           path = Path('quotes.py')
           text = path.read_text(encoding='utf-8')
 
-          # Any public quote link generated for WhatsApp must point directly
-          # to the public PDF endpoint. The PDF endpoint already renders the
-          # professional ReportLab document and does not require login.
           pattern = re.compile(
               r'def _build_public_quote_url\(quote_id: int\) -> str:\n'
               r'    token = _public_share_serializer\(\)\.dumps\(\{"quote_id": int\(quote_id\)\}, salt=QUOTE_PUBLIC_TOKEN_SALT\)\n'
               r'    return url_for\("quotes\.quote_public_view", token=token, _external=True\)'
           )
-          replacement = '''def _build_public_quote_url(quote_id: int) -> str:
-              token = _public_share_serializer().dumps({"quote_id": int(quote_id)}, salt=QUOTE_PUBLIC_TOKEN_SALT)
-              # Compartir por WhatsApp debe llevar directamente al PDF profesional,
-              # no a una vista HTML que dependa de la sesión del usuario.
-              return url_for("quotes.quote_public_pdf", token=token, _external=True)'''
+          replacement = (
+              'def _build_public_quote_url(quote_id: int) -> str:\n'
+              '    token = _public_share_serializer().dumps({"quote_id": int(quote_id)}, salt=QUOTE_PUBLIC_TOKEN_SALT)\n'
+              '    # Compartir por WhatsApp debe llevar directamente al PDF profesional.\n'
+              '    return url_for("quotes.quote_public_pdf", token=token, _external=True)'
+          )
           text, count = pattern.subn(replacement, text, count=1)
           if count != 1:
               raise SystemExit('No se encontró _build_public_quote_url')
 
-          # Old links that already point to /publico/<token> are also redirected
-          # to the PDF, so links already sent to customers stop showing the error.
           route_pattern = re.compile(
               r'(def quote_public_view\(token\):\n)'
               r'(.*?)(?=\n\n@bp\.route\("/<int:quote_id>/whatsapp"\))',
@@ -52,12 +48,10 @@ jobs:
           route_match = route_pattern.search(text)
           if not route_match:
               raise SystemExit('No se encontró quote_public_view')
-          function_header = route_match.group(1)
-          new_function = function_header + '''    return redirect(url_for("quotes.quote_public_pdf", token=token))\n'''
-          # Preserve the decorator block and replace only the function body.
-          decorator_start = text.rfind('@bp.route("/publico/<token>")', 0, route_match.start())
-          if decorator_start < 0:
-              raise SystemExit('No se encontró decorador de quote_public_view')
+          new_function = (
+              'def quote_public_view(token):\n'
+              '    return redirect(url_for("quotes.quote_public_pdf", token=token))\n'
+          )
           text = text[:route_match.start()] + new_function + text[route_match.end():]
 
           path.write_text(text, encoding='utf-8')
