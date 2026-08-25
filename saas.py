@@ -365,7 +365,21 @@ def _hard_delete_company(company):
                 continue
             _raw_delete_where_in(table_name, constrained_cols[0], values)
 
-        db.session.execute(sa.text("DELETE FROM companies WHERE id = :company_id"), {"company_id": company_id})
+    # Delete the tenant only after all known dependent rows and FK-referenced
+    # entity rows have been removed. Keep this inside the same transaction so
+    # any remaining FK causes a full rollback instead of partial deletion.
+    db.session.execute(
+        sa.text("DELETE FROM companies WHERE id = :company_id"),
+        {"company_id": company_id},
+    )
+
+    # Fail loudly if the target tenant still exists. The caller rolls back.
+    remaining = db.session.execute(
+        sa.text("SELECT 1 FROM companies WHERE id = :company_id LIMIT 1"),
+        {"company_id": company_id},
+    ).first()
+    if remaining is not None:
+        raise RuntimeError(f"No se pudo eliminar companies.id={company_id}")
 
 
 def _action_allowed_for_status(status: str | None, action: str) -> bool:
