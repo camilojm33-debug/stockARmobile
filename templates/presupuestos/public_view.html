@@ -12,7 +12,7 @@
           <h1 class="h4 fw-bold mb-1">{{ quote.number or ('P-%06d'|format(quote.id)) }}</h1>
           <div class="text-muted">{{ quote.date.strftime('%d/%m/%Y %H:%M') if quote.date else '' }}</div>
         </div>
-        <a class="btn btn-outline-primary" href="{{ pdf_url }}" target="_blank" rel="noopener"><i class="bi bi-filetype-pdf me-1"></i>Ver PDF</a>
+        <a class="btn btn-primary" href="{{ pdf_url }}" target="_blank" rel="noopener"><i class="bi bi-filetype-pdf me-1"></i>Ver presupuesto PDF</a>
       </div>
 
       <div class="row g-3 mb-4">
@@ -26,10 +26,10 @@
           <tbody>
           {% for row in rows %}
             <tr>
-              <td>{{ row.description }}</td>
+              <td>{{ row.name }}</td>
               <td class="text-end">{{ '%.3g'|format(row.quantity) }}</td>
-              <td class="text-end">${{ '%.2f'|format(row.unit_price) }}</td>
-              <td class="text-end">${{ '%.2f'|format(row.subtotal) }}</td>
+              <td class="text-end">${{ '%.2f'|format(row.price) }}</td>
+              <td class="text-end">${{ '%.2f'|format(row.total) }}</td>
             </tr>
           {% endfor %}
           </tbody>
