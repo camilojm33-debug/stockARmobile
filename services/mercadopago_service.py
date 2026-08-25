@@ -19,7 +19,7 @@ from config.billing_config import load_billing_config
 
 class MercadoPagoService:
     API_BASE = "https://api.mercadopago.com"
-    REQUEST_TIMEOUT_SECONDS = 12
+    REQUEST_TIMEOUT_SECONDS = 10
 
     def __init__(self):
         self.config = load_billing_config()
@@ -31,8 +31,14 @@ class MercadoPagoService:
     def _headers(self, *, include_idempotency: bool = False, access_token: str | None = None) -> dict[str, str]:
         token = (access_token or self.config.access_token or "").strip()
         if not token: raise RuntimeError("MP_ACCESS_TOKEN no configurado")
-        headers = {"Authorization": f"Bearer {token}", "Content-Type": "application/json"}
-        if include_idempotency: headers["X-Idempotency-Key"] = str(uuid.uuid4())
+        headers = {
+            "Authorization": f"Bearer {token}",
+            "Content-Type": "application/json",
+            "Accept": "application/json",
+            "User-Agent": "StockArMobile/1.0",
+        }
+        if include_idempotency:
+            headers["X-Idempotency-Key"] = str(uuid.uuid4())
         return headers
 
     def _request(self, method: str, path: str, *, payload: dict[str, Any] | None = None, access_token: str | None = None) -> dict[str, Any]:
@@ -44,22 +50,24 @@ class MercadoPagoService:
             method=method,
         )
         try:
-            self._logger().info("Mercado Pago request: method=%s path=%s", method, path)
+            self._logger().info("Mercado Pago request: method=%s path=%s timeout=%ss", method, path, self.REQUEST_TIMEOUT_SECONDS)
             with urlrequest.urlopen(req, timeout=self.REQUEST_TIMEOUT_SECONDS) as response:
                 raw = response.read().decode("utf-8")
                 status_code = response.getcode()
         except HTTPError as exc:
             raw_error = exc.read().decode("utf-8", errors="ignore") if hasattr(exc, "read") else str(exc)
-            self._logger().error("Mercado Pago HTTP error: method=%s path=%s status=%s body=%s", method, path, exc.code, raw_error[:1000])
-            raise RuntimeError(f"Mercado Pago error {exc.code}: {raw_error[:500]}") from exc
+            self._logger().error("Mercado Pago HTTP error: method=%s path=%s status=%s body=%s", method, path, exc.code, raw_error[:1500])
+            raise RuntimeError(f"Mercado Pago rechazó la operación (HTTP {exc.code}). {raw_error[:700]}") from exc
         except (URLError, TimeoutError, socket.timeout) as exc:
             reason = getattr(exc, "reason", None) or str(exc)
             self._logger().exception("Mercado Pago connection error: method=%s path=%s reason=%s", method, path, reason)
             raise RuntimeError(
-                f"No se pudo conectar con Mercado Pago dentro de {self.REQUEST_TIMEOUT_SECONDS} segundos. Verificá la conexión del servidor y la configuración de Mercado Pago."
+                f"Mercado Pago no respondió dentro de {self.REQUEST_TIMEOUT_SECONDS} segundos. Verificá MP_ACCESS_TOKEN, MP_MODE y la conectividad de Render."
             ) from exc
+        except json.JSONDecodeError as exc:
+            raise RuntimeError("Mercado Pago devolvió una respuesta inválida.") from exc
         if status_code >= 400:
-            raise RuntimeError(f"Mercado Pago error {status_code}: {raw[:500]}")
+            raise RuntimeError(f"Mercado Pago respondió HTTP {status_code}: {raw[:700]}")
         return json.loads(raw) if raw else {}
 
     def create_checkout_preference(self, *, title: str, amount: float, currency: str, external_reference: str, company_id: int, plan_id: int, subscription_id: int | None, user_id: int) -> dict[str, Any]:
@@ -99,7 +107,20 @@ class MercadoPagoService:
     def get_authorized_payment(self, authorized_payment_id: str) -> dict[str, Any]: return self._request("GET", f"/authorized_payments/{authorized_payment_id}")
 
     def create_preapproval(self, *, reason: str, payer_email: str, external_reference: str, amount: float, currency: str, frequency: int, frequency_type: str, notification_url: str, back_url: str) -> dict[str, Any]:
-        payload = {"reason": reason, "external_reference": external_reference, "payer_email": payer_email, "auto_recurring": {"frequency": int(frequency), "frequency_type": frequency_type, "transaction_amount": float(amount), "currency_id": currency}, "back_url": back_url, "notification_url": notification_url}
+        payload = {
+            "reason": reason,
+            "external_reference": external_reference,
+            "payer_email": payer_email,
+            "auto_recurring": {
+                "frequency": int(frequency),
+                "frequency_type": frequency_type,
+                "transaction_amount": float(amount),
+                "currency_id": currency,
+            },
+            "back_url": back_url,
+            "notification_url": notification_url,
+        }
+        self._logger().info("Mercado Pago preapproval: company flow, amount=%s currency=%s payer=%s", amount, currency, payer_email)
         return self._request("POST", "/preapproval", payload=payload)
 
     def update_preapproval(self, preapproval_id: str, payload: dict[str, Any]) -> dict[str, Any]: return self._request("PUT", f"/preapproval/{preapproval_id}", payload=payload)
