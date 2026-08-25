@@ -17,9 +17,15 @@ class WebhookService:
         self.mp_service = MercadoPagoService()
 
     def _event_key(self, payload: dict) -> str:
+        # Mercado Pago assigns a unique notification ID to each webhook delivery.
+        # The resource ID must not be the generic dedupe key because the same
+        # subscription/preapproval can emit multiple state-change notifications.
         event_type = payload.get("type") or payload.get("topic") or "unknown"
+        notification_id = str(payload.get("id") or "").strip()
+        if notification_id:
+            return f"{event_type}:notification:{notification_id}"
         data = payload.get("data") or {}
-        data_id = str(data.get("id") or payload.get("id") or "none")
+        data_id = str(data.get("id") or "none")
         return f"{event_type}:{data_id}"
 
     @staticmethod
@@ -106,13 +112,12 @@ class WebhookService:
             result = {"status": "processed", "subscription_id": getattr(subscription, "id", None), "event_key": event_key}
 
         elif event_type == "subscription_authorized_payment":
-            from app import Payment
             authorized = self.mp_service.get_authorized_payment(data_id)
             preapproval_id = str(authorized.get("preapproval_id") or "").strip()
             subscription = None
             if preapproval_id:
                 rows = Subscription.query.filter(Subscription.metadata_json.contains(preapproval_id)).all()
-                subscription = next((row for row in rows if __import__('json').loads(row.metadata_json or '{}').get('mercadopago_preapproval_id') == preapproval_id), None)
+                subscription = next((row for row in rows if json.loads(row.metadata_json or "{}").get("mercadopago_preapproval_id") == preapproval_id), None)
             payment_info = authorized.get("payment") or {}
             payment_id = str(payment_info.get("id") or "").strip()
             if subscription is not None and payment_id:
@@ -190,41 +195,11 @@ class WebhookService:
                         payment.payload_json = json.dumps(payment_data, ensure_ascii=False)
                         payment.paid_at = paid_at or payment.paid_at
                     else:
-                        payment = Payment(
-                            payment_id=str(payment_data.get("id")),
-                            preference_id=str(payment_data.get("order", {}).get("id") or payment_data.get("metadata", {}).get("preference_id") or ""),
-                            external_reference=external_reference,
-                            company_id=company_id,
-                            subscription_id=None,
-                            user_id=user_id,
-                            amount=float(payment_data.get("transaction_amount") or 0),
-                            currency=payment_data.get("currency_id") or "ARS",
-                            status=payment_status,
-                            payment_method=payment_data.get("payment_method_id"),
-                            reference=external_reference,
-                            provider="mercadopago_pos",
-                            payload_json=json.dumps(payment_data, ensure_ascii=False),
-                            paid_at=paid_at,
-                        )
+                        payment = Payment(payment_id=str(payment_data.get("id")), preference_id=str(payment_data.get("order", {}).get("id") or payment_data.get("metadata", {}).get("preference_id") or ""), external_reference=external_reference, company_id=company_id, subscription_id=None, user_id=user_id, amount=float(payment_data.get("transaction_amount") or 0), currency=payment_data.get("currency_id") or "ARS", status=payment_status, payment_method=payment_data.get("payment_method_id"), reference=external_reference, provider="mercadopago_pos", payload_json=json.dumps(payment_data, ensure_ascii=False), paid_at=paid_at)
                         db_session.add(payment)
                         db_session.flush()
                 else:
-                    payment = Payment(
-                        payment_id=str(payment_data.get("id")),
-                        preference_id=str(payment_data.get("order", {}).get("id") or payment_data.get("metadata", {}).get("preference_id") or ""),
-                        external_reference=external_reference,
-                        company_id=company_id,
-                        subscription_id=subscription_id,
-                        user_id=user_id,
-                        amount=float(payment_data.get("transaction_amount") or 0),
-                        currency=payment_data.get("currency_id") or "ARS",
-                        status=payment_status,
-                        payment_method=payment_data.get("payment_method_id"),
-                        reference=external_reference,
-                        provider="mercadopago",
-                        payload_json=json.dumps(payment_data, ensure_ascii=False),
-                        paid_at=paid_at,
-                    )
+                    payment = Payment(payment_id=str(payment_data.get("id")), preference_id=str(payment_data.get("order", {}).get("id") or payment_data.get("metadata", {}).get("preference_id") or ""), external_reference=external_reference, company_id=company_id, subscription_id=subscription_id, user_id=user_id, amount=float(payment_data.get("transaction_amount") or 0), currency=payment_data.get("currency_id") or "ARS", status=payment_status, payment_method=payment_data.get("payment_method_id"), reference=external_reference, provider="mercadopago", payload_json=json.dumps(payment_data, ensure_ascii=False), paid_at=paid_at)
                     db_session.add(payment)
                     db_session.flush()
             else:
@@ -315,13 +290,11 @@ class WebhookService:
                 if ref_user_id and expected_user_id and ref_user_id != expected_user_id:
                     validation_errors.append("user_mismatch_reference")
 
-                # Validación fuerte para activación: sólo permitir approved si monto y moneda coinciden con el plan.
                 if payment_status == "approved":
                     expected_amount = float(getattr(subscription.plan, "price", 0) or 0)
                     incoming_amount = float(payment.amount or 0)
                     if abs(expected_amount - incoming_amount) > 0.01:
                         validation_errors.append("amount_mismatch")
-
                     expected_currency = str(getattr(subscription.plan, "currency", "ARS") or "ARS").upper()
                     incoming_currency = str(payment.currency or "").upper()
                     if expected_currency != incoming_currency:
@@ -330,119 +303,32 @@ class WebhookService:
                 if validation_errors:
                     payment_status = "rejected"
                     payment.status = "rejected"
-
-                    NotificationService.record_event(
-                        db_session,
-                        company_id=company.id,
-                        payment_id=payment.id,
-                        subscription_id=subscription.id,
-                        event="mercadopago_webhook_validation_error",
-                        detail="Validación de webhook fallida: " + ",".join(validation_errors),
-                        source="mercadopago",
-                        status="rejected",
-                        event_id=event_key,
-                        payload={"payment": payment_data, "errors": validation_errors},
-                        user_id=payment.user_id,
-                    )
+                    NotificationService.record_event(db_session, company_id=company.id, payment_id=payment.id, subscription_id=subscription.id, event="mercadopago_webhook_validation_error", detail="Validación de webhook fallida: " + ",".join(validation_errors), source="mercadopago", status="rejected", event_id=event_key, payload={"payment": payment_data, "errors": validation_errors}, user_id=payment.user_id)
 
                 should_apply_status_transition = previous_payment_status != payment_status
                 if should_apply_status_transition:
                     normalized_status = (payment_status or "pending").lower()
                     if normalized_status in {"approved", "refunded"}:
-                        SubscriptionService.run_command(
-                            db_session,
-                            SubscriptionService.RenewSubscriptionCommand(
-                                company_id=company.id,
-                                subscription_id=subscription.id,
-                                payment_status=normalized_status,
-                                actor_user_id=payment.user_id,
-                                actor_role="system",
-                                origin="webhook",
-                                idempotency_key=f"webhook-renew:{event_key}:{subscription.id}",
-                            ),
-                        )
+                        SubscriptionService.run_command(db_session, SubscriptionService.RenewSubscriptionCommand(company_id=company.id, subscription_id=subscription.id, payment_status=normalized_status, actor_user_id=payment.user_id, actor_role="system", origin="webhook", idempotency_key=f"webhook-renew:{event_key}:{subscription.id}"))
                     elif normalized_status == "cancelled":
-                        SubscriptionService.run_command(
-                            db_session,
-                            SubscriptionService.CancelSubscriptionCommand(
-                                company_id=company.id,
-                                subscription_id=subscription.id,
-                                actor_user_id=payment.user_id,
-                                actor_role="system",
-                                origin="webhook",
-                                idempotency_key=f"webhook-cancel:{event_key}:{subscription.id}",
-                                cancel_at_period_end=False,
-                            ),
-                        )
+                        SubscriptionService.run_command(db_session, SubscriptionService.CancelSubscriptionCommand(company_id=company.id, subscription_id=subscription.id, actor_user_id=payment.user_id, actor_role="system", origin="webhook", idempotency_key=f"webhook-cancel:{event_key}:{subscription.id}", cancel_at_period_end=False))
                     elif normalized_status in {"expired", "rejected"}:
-                        SubscriptionService.run_command(
-                            db_session,
-                            SubscriptionService.ExpireSubscriptionCommand(
-                                company_id=company.id,
-                                subscription_id=subscription.id,
-                                actor_user_id=payment.user_id,
-                                actor_role="system",
-                                origin="webhook",
-                                idempotency_key=f"webhook-expire:{event_key}:{subscription.id}",
-                                reason=f"webhook_{normalized_status}",
-                            ),
-                        )
+                        SubscriptionService.run_command(db_session, SubscriptionService.ExpireSubscriptionCommand(company_id=company.id, subscription_id=subscription.id, actor_user_id=payment.user_id, actor_role="system", origin="webhook", idempotency_key=f"webhook-expire:{event_key}:{subscription.id}", reason=f"webhook_{normalized_status}"))
                     elif normalized_status == "charged_back":
-                        SubscriptionService.run_command(
-                            db_session,
-                            SubscriptionService.ExpireSubscriptionCommand(
-                                company_id=company.id,
-                                subscription_id=subscription.id,
-                                actor_user_id=payment.user_id,
-                                actor_role="system",
-                                origin="webhook",
-                                idempotency_key=f"webhook-suspend:{event_key}:{subscription.id}",
-                                reason="webhook_suspend",
-                            ),
-                        )
+                        SubscriptionService.run_command(db_session, SubscriptionService.ExpireSubscriptionCommand(company_id=company.id, subscription_id=subscription.id, actor_user_id=payment.user_id, actor_role="system", origin="webhook", idempotency_key=f"webhook-suspend:{event_key}:{subscription.id}", reason="webhook_suspend"))
                     else:
                         SubscriptionService.apply_payment_status(subscription, payment_status)
-                is_pending_plan_change = bool(
-                    SubscriptionService._metadata_dict(subscription).get("pending_plan_change")
-                )
+                is_pending_plan_change = bool(SubscriptionService._metadata_dict(subscription).get("pending_plan_change"))
                 if not is_pending_plan_change:
                     company.active = subscription.status in {"active", "approved", "trial"}
                 if subscription.status in {"active", "approved"}:
                     if payment.invoice_id is None:
-                        invoice = InvoiceService.create_invoice(
-                            db_session,
-                            company=company,
-                            subscription=subscription,
-                            amount=float(payment.amount or 0),
-                            currency=payment.currency or "ARS",
-                            detail=f"Cobro Mercado Pago {payment.payment_id}",
-                            payment_id=payment.payment_id,
-                        )
+                        invoice = InvoiceService.create_invoice(db_session, company=company, subscription=subscription, amount=float(payment.amount or 0), currency=payment.currency or "ARS", detail=f"Cobro Mercado Pago {payment.payment_id}", payment_id=payment.payment_id)
                         payment.invoice_id = invoice.id
-
-                    ReferralService.create_commission_for_sale(
-                        db_session,
-                        company_id=company.id,
-                        subscription=subscription,
-                        payment=payment,
-                        plan=subscription.plan,
-                    )
+                    ReferralService.create_commission_for_sale(db_session, company_id=company.id, subscription=subscription, payment=payment, plan=subscription.plan)
 
                 user = User.query.filter_by(id=payment.user_id).first() if payment.user_id else None
-                NotificationService.record_event(
-                    db_session,
-                    company_id=company.id,
-                    payment_id=payment.id,
-                    subscription_id=subscription.id,
-                    invoice_id=payment.invoice_id,
-                    event="mercadopago_webhook_payment",
-                    detail=f"Pago {payment.payment_id} en estado {payment.status}",
-                    source="mercadopago",
-                    status=payment.status,
-                    event_id=event_key,
-                    payload=payment_data,
-                    user_id=user.id if user else None,
-                )
+                NotificationService.record_event(db_session, company_id=company.id, payment_id=payment.id, subscription_id=subscription.id, invoice_id=payment.invoice_id, event="mercadopago_webhook_payment", detail=f"Pago {payment.payment_id} en estado {payment.status}", source="mercadopago", status=payment.status, event_id=event_key, payload=payment_data, user_id=user.id if user else None)
                 result = {"status": "processed", "payment_status": payment_status, "event_key": event_key}
 
         elif event_type in {"preapproval", "subscription_preapproval"}:
@@ -453,46 +339,13 @@ class WebhookService:
                 subscription = Subscription.query.filter_by(id=int(subscription_id)).first()
             if subscription:
                 status = (preapproval_data.get("status") or "pending").lower()
-                SubscriptionService.run_command(
-                    db_session,
-                    SubscriptionService.ChangePaymentMethodCommand(
-                        company_id=subscription.company_id,
-                        subscription_id=subscription.id,
-                        actor_user_id=None,
-                        actor_role="system",
-                        origin="webhook",
-                        idempotency_key=f"webhook-preapproval-meta:{event_key}:{subscription.id}",
-                        payment_method="mercadopago_subscription",
-                        metadata={"mercadopago_subscription_id": str(preapproval_data.get("id") or "")},
-                    ),
-                )
+                SubscriptionService.run_command(db_session, SubscriptionService.ChangePaymentMethodCommand(company_id=subscription.company_id, subscription_id=subscription.id, actor_user_id=None, actor_role="system", origin="webhook", idempotency_key=f"webhook-preapproval-meta:{event_key}:{subscription.id}", payment_method="mercadopago_subscription", metadata={"mercadopago_subscription_id": str(preapproval_data.get("id") or "")}))
                 if status in {"authorized", "pending", "in_process"}:
                     SubscriptionService.apply_payment_status(subscription, status)
                 elif status in {"approved"}:
-                    SubscriptionService.run_command(
-                        db_session,
-                        SubscriptionService.ReactivateSubscriptionCommand(
-                            company_id=subscription.company_id,
-                            subscription_id=subscription.id,
-                            actor_user_id=None,
-                            actor_role="system",
-                            origin="webhook",
-                            idempotency_key=f"webhook-preapproval-reactivate:{event_key}:{subscription.id}",
-                        ),
-                    )
+                    SubscriptionService.run_command(db_session, SubscriptionService.ReactivateSubscriptionCommand(company_id=subscription.company_id, subscription_id=subscription.id, actor_user_id=None, actor_role="system", origin="webhook", idempotency_key=f"webhook-preapproval-reactivate:{event_key}:{subscription.id}"))
                 elif status in {"cancelled", "paused"}:
-                    SubscriptionService.run_command(
-                        db_session,
-                        SubscriptionService.CancelSubscriptionCommand(
-                            company_id=subscription.company_id,
-                            subscription_id=subscription.id,
-                            actor_user_id=None,
-                            actor_role="system",
-                            origin="webhook",
-                            idempotency_key=f"webhook-preapproval-cancel:{event_key}:{subscription.id}",
-                            cancel_at_period_end=False,
-                        ),
-                    )
+                    SubscriptionService.run_command(db_session, SubscriptionService.CancelSubscriptionCommand(company_id=subscription.company_id, subscription_id=subscription.id, actor_user_id=None, actor_role="system", origin="webhook", idempotency_key=f"webhook-preapproval-cancel:{event_key}:{subscription.id}", cancel_at_period_end=False))
             result = {"status": "processed_preapproval", "event_key": event_key}
 
         event_row.status = result.get("status")
