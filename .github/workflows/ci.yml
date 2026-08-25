@@ -6,60 +6,16 @@ name: CI
   pull_request:
     branches: [main]
 
-permissions:
-  contents: write
-
 jobs:
   test:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-        with:
-          fetch-depth: 0
       - uses: actions/setup-python@v5
         with:
           python-version: '3.12'
       - name: Install dependencies
         run: pip install -r requirements.txt
-      - name: Apply webhook dedupe hardening if needed
-        shell: bash
-        run: |
-          set -euo pipefail
-          if grep -Fq 'event_type}:notification:{notification_id}' services/webhook_service.py; then
-            echo 'Webhook dedupe already hardened.'
-            exit 0
-          fi
-          python - <<'PY'
-          from pathlib import Path
-          p = Path('services/webhook_service.py')
-          s = p.read_text(encoding='utf-8')
-          old = '''    def _event_key(self, payload: dict) -> str:
-        event_type = payload.get("type") or payload.get("topic") or "unknown"
-        data = payload.get("data") or {}
-        data_id = str(data.get("id") or payload.get("id") or "none")
-        return f"{event_type}:{data_id}"
-'''
-          new = '''    def _event_key(self, payload: dict) -> str:
-        # Mercado Pago assigns a unique notification ID to each webhook delivery.
-        # The resource ID is not used as the generic dedupe key because the same
-        # subscription/preapproval can emit multiple state-change notifications.
-        event_type = payload.get("type") or payload.get("topic") or "unknown"
-        notification_id = str(payload.get("id") or "").strip()
-        if notification_id:
-            return f"{event_type}:notification:{notification_id}"
-        data = payload.get("data") or {}
-        data_id = str(data.get("id") or "none")
-        return f"{event_type}:{data_id}"
-'''
-          if old not in s:
-              raise SystemExit('webhook event key block not found')
-          p.write_text(s.replace(old, new, 1), encoding='utf-8')
-          PY
-          git config user.name 'github-actions[bot]'
-          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
-          git add services/webhook_service.py
-          git commit -m 'fix: deduplicate Mercado Pago webhooks by notification id'
-          git push origin main
       - name: Compile Python
         run: python -m compileall -q .
       - name: Check service worker
