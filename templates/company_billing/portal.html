@@ -123,10 +123,10 @@
             {% if mp_auto_active %}
             <div class="text-success fw-semibold mb-2">✓ Cobro automático activo</div>
             {% else %}
-            <form method="post" action="{{ url_for('company_billing.create_mercadopago_subscription') }}">
+            <form method="post" action="{{ url_for('company_billing.create_mercadopago_subscription') }}" data-mp-auto-subscription="true">
               <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
               <input type="hidden" name="plan_id" value="{{ usage_snapshot.plan.id if usage_snapshot.plan else '' }}">
-              <button class="btn btn-success" type="submit">Activar suscripción automática</button>
+              <button class="btn btn-success" type="submit" data-mp-auto-subscription-button="true">Activar suscripción automática</button>
             </form>
             {% endif %}
           </div>

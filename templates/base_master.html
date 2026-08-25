@@ -1064,6 +1064,18 @@
       }
       document.querySelectorAll('form[method="post"]').forEach(function(form) {
         form.addEventListener('submit', function() {
+          // Mercado Pago subscription creation performs an external API call and
+          // then redirects to Mercado Pago. Do not cover the page with the global
+          // loader here: if the external API is slow/rejected, the user must still
+          // be able to see the page/error instead of getting an apparently frozen UI.
+          if (form.matches('[data-mp-auto-subscription="true"]')) {
+            const button = form.querySelector('[data-mp-auto-subscription-button="true"]');
+            if (button) {
+              button.disabled = true;
+              button.textContent = 'Conectando con Mercado Pago…';
+            }
+            return;
+          }
           const loading = document.getElementById('appLoading');
           if (loading) loading.classList.add('show');
         });
