@@ -10,7 +10,7 @@
         <div class="card-body p-4">
           <span class="page-kicker"><i class="bi bi-whatsapp"></i> WhatsApp</span>
           <h1 class="h5 fw-bold mb-3">Compartir presupuesto</h1>
-          <p class="text-muted">Podés enviar el presupuesto a un número específico o abrir WhatsApp para elegir el contacto manualmente.</p>
+          <p class="text-muted">Elegí cómo querés abrir WhatsApp. En celular se intentará abrir la app instalada; en PC se intentará abrir WhatsApp Desktop.</p>
           <form method="post" action="{{ url_for('quotes.share_whatsapp_post', quote_id=quote.id) }}" id="quoteWhatsappShareForm">
             <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
             <div class="mb-3">
@@ -19,11 +19,11 @@
               <div class="form-text">Podés usar el teléfono del cliente, escribir otro número o dejarlo vacío para abrir WhatsApp y elegir el contacto.</div>
             </div>
             <div class="small text-muted border rounded p-2 mb-3">{{ message }}<br>Presupuesto: {{ pdf_url }}</div>
-            <div class="form-text mb-3">Usá "Abrir app" para WhatsApp Desktop o "Abrir Web" para abrir WhatsApp Web. El número es opcional.</div>
+            <div class="form-text mb-3">Si tenés WhatsApp Desktop/app instalado, elegí <strong>Abrir app</strong>. Si no, elegí <strong>Abrir WhatsApp Web</strong>.</div>
             <div class="d-flex flex-wrap justify-content-end gap-2">
               <a class="btn btn-outline-secondary" href="{{ url_for('quotes.view_quote', quote_id=quote.id) }}">Cancelar</a>
-              <button class="btn btn-outline-success" type="button" id="quoteWhatsappDesktop"><i class="bi bi-whatsapp me-1"></i>Abrir app</button>
-              <button class="btn btn-success" type="button" id="quoteWhatsappWeb"><i class="bi bi-globe2 me-1"></i>Abrir Web</button>
+              <button class="btn btn-outline-success" type="button" id="quoteWhatsappDesktop"><i class="bi bi-whatsapp me-1"></i>Abrir WhatsApp Desktop / App</button>
+              <button class="btn btn-success" type="button" id="quoteWhatsappWeb"><i class="bi bi-globe2 me-1"></i>Abrir WhatsApp Web</button>
             </div>
           </form>
         </div>
@@ -93,19 +93,21 @@
 
     desktopButton?.addEventListener('click', () => {
       const webUrl = buildWebUrl();
-      const fallbackTimer = window.setTimeout(() => {
-        window.open(webUrl, '_blank', 'noopener');
-      }, 900);
-
+      let appOpened = false;
       const cancelFallback = () => {
+        appOpened = true;
         window.clearTimeout(fallbackTimer);
         window.removeEventListener('blur', cancelFallback);
         document.removeEventListener('visibilitychange', handleVisibilityChange);
       };
-
       const handleVisibilityChange = () => {
         if (document.visibilityState === 'hidden') cancelFallback();
       };
+      const fallbackTimer = window.setTimeout(() => {
+        if (!appOpened) window.open(webUrl, '_blank', 'noopener');
+        window.removeEventListener('blur', cancelFallback);
+        document.removeEventListener('visibilitychange', handleVisibilityChange);
+      }, 1200);
 
       window.addEventListener('blur', cancelFallback, { once: true });
       document.addEventListener('visibilitychange', handleVisibilityChange);
