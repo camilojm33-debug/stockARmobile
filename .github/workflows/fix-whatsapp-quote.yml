@@ -9,99 +9,18 @@ permissions:
 
 jobs:
   fix:
-    if: ${{ !contains(github.event.head_commit.message, 'fix: permitir WhatsApp sin cliente y con numero manual') }}
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
         with:
           fetch-depth: 0
-
-      - name: Patch quotes WhatsApp flow
-        run: |
-          python - <<'PY'
-          from pathlib import Path
-          import re
-
-          path = Path('quotes.py')
-          text = path.read_text(encoding='utf-8')
-
-          pattern_get = re.compile(
-              r'@bp\.route\("/<int:quote_id>/whatsapp"\)\n'
-              r'@tenant_required\n@login_required\ndef share_whatsapp\(quote_id\):\n'
-              r'.*?\n\n\n@bp\.route\("/<int:quote_id>/whatsapp", methods=\["POST"\]\)',
-              re.S,
-          )
-          replacement_get = '''@bp.route("/<int:quote_id>/whatsapp")
-          @tenant_required
-          @login_required
-          def share_whatsapp(quote_id):
-              from app import Company
-
-              quote = _quote_lookup(quote_id)
-              _require_owned_or_authorized(quote)
-              _require_quote_permission("quotes_share_whatsapp")
-              # El cliente y su teléfono son opcionales. Si existe un teléfono
-              # se precarga; si no, la pantalla permite escribirlo o abrir WhatsApp
-              # para elegir el contacto manualmente.
-              phone = _quote_client_whatsapp_phone(quote)
-              company = Company.query.filter_by(id=quote.company_id).first()
-              message = _build_quote_whatsapp_message(quote, company)
-              public_url = _build_public_quote_url(quote.id)
-              return render_template("presupuestos/whatsapp_dialog.html", quote=quote, entered_phone=phone, message=message, pdf_url=public_url)
-
-
-          @bp.route("/<int:quote_id>/whatsapp", methods=["POST"])
-          '''
-          new_text, count = pattern_get.subn(replacement_get, text, count=1)
-          if count != 1:
-              raise SystemExit('No se encontró el bloque GET de WhatsApp para presupuestos')
-          text = new_text
-
-          pattern_post = re.compile(
-              r'@bp\.route\("/<int:quote_id>/whatsapp", methods=\["POST"\]\)\n'
-              r'@tenant_required\n@login_required\ndef share_whatsapp_post\(quote_id\):\n'
-              r'.*?\n\n\n@bp\.route\("/<int:quote_id>/convertir", methods=\["POST"\]\)',
-              re.S,
-          )
-          replacement_post = '''@bp.route("/<int:quote_id>/whatsapp", methods=["POST"])
-          @tenant_required
-          @login_required
-          def share_whatsapp_post(quote_id):
-              from app import Company, record_audit
-
-              quote = _quote_lookup(quote_id)
-              _require_owned_or_authorized(quote)
-              _require_quote_permission("quotes_share_whatsapp")
-              # Permitir un número escrito manualmente; si queda vacío, abrir
-              # WhatsApp sin destinatario para que el usuario elija el contacto.
-              phone = (request.form.get("whatsapp_phone") or "").strip() or _quote_client_whatsapp_phone(quote)
-              company = Company.query.filter_by(id=quote.company_id).first()
-              message = _build_quote_whatsapp_message(quote, company)
-              public_url = _build_public_quote_url(quote.id)
-              record_audit(action="quote_share_whatsapp", entity="quote", entity_id=quote.id, detail=f"Compartido por WhatsApp {quote.number or quote.id}", ip_address=request.remote_addr)
-              return redirect(build_whatsapp_share_url(phone=phone, message=message, document_url=public_url, document_label="Presupuesto"))
-
-
-          @bp.route("/<int:quote_id>/convertir", methods=["POST"])
-          '''
-          new_text, count = pattern_post.subn(replacement_post, text, count=1)
-          if count != 1:
-              raise SystemExit('No se encontró el bloque POST de WhatsApp para presupuestos')
-          path.write_text(new_text, encoding='utf-8')
-          print('quotes.py patched successfully')
-          PY
-
-      - name: Validate Python syntax
+      - name: Patch quotes.py
+        run: echo 'ZnJvbSBwYXRobGliIGltcG9ydCBQYXRoCmltcG9ydCByZQpwPVBhdGgoInF1b3Rlcy5weSIpCnM9cC5yZWFkX3RleHQoZW5jb2Rpbmc9InV0Zi04IikKZ2V0X3BhdD1yZS5jb21waWxlKHInQGJwXC5yb3V0ZVwoIi88aW50OnF1b3RlX2lkPi93aGF0c2FwcCJcKVxuQHRlbmFudF9yZXF1aXJlZFxuQGxvZ2luX3JlcXVpcmVkXG5kZWYgc2hhcmVfd2hhdHNhcHBcKHF1b3RlX2lkXCk6XG4uKj9cblxuXG5AYnBcLnJvdXRlXCgiLzxpbnQ6cXVvdGVfaWQ+L3doYXRzYXBwIiwgbWV0aG9kcz1cWyJQT1NUIlxdXCknLHJlLlMpCmdldF9yZXA9IiIiQGJwLnJvdXRlKCIvPGludDpxdW90ZV9pZD4vd2hhdHNhcHAiKQpAdGVuYW50X3JlcXVpcmVkCkBsb2dpbl9yZXF1aXJlZApkZWYgc2hhcmVfd2hhdHNhcHAocXVvdGVfaWQpOgogICAgZnJvbSBhcHAgaW1wb3J0IENvbXBhbnkKICAgIHF1b3RlID0gX3F1b3RlX2xvb2t1cChxdW90ZV9pZCkKICAgIF9yZXF1aXJlX293bmVkX29yX2F1dGhvcml6ZWQocXVvdGUpCiAgICBfcmVxdWlyZV9xdW90ZV9wZXJtaXNzaW9uKCJxdW90ZXNfc2hhcmVfd2hhdHNhcHAiKQogICAgcGhvbmUgPSBfcXVvdGVfY2xpZW50X3doYXRzYXBwX3Bob25lKHF1b3RlKQogICAgY29tcGFueSA9IENvbXBhbnkucXVlcnkuZmlsdGVyX2J5KGlkPXF1b3RlLmNvbXBhbnlfaWQpLmZpcnN0KCkKICAgIG1lc3NhZ2UgPSBfYnVpbGRfcXVvdGVfd2hhdHNhcHBfbWVzc2FnZShxdW90ZSwgY29tcGFueSkKICAgIHB1YmxpY191cmwgPSBfYnVpbGRfcHVibGljX3F1b3RlX3VybChxdW90ZS5pZCkKICAgIHJldHVybiByZW5kZXJfdGVtcGxhdGUoInByZXN1cHVlc3Rvcy93aGF0c2FwcF9kaWFsb2cuaHRtbCIsIHF1b3RlPXF1b3RlLCBlbnRlcmVkX3Bob25lPXBob25lLCBtZXNzYWdlPW1lc3NhZ2UsIHBkZl91cmw9cHVibGljX3VybCkKCgpAYnAucm91dGUoIi88aW50OnF1b3RlX2lkPi93aGF0c2FwcCIsIG1ldGhvZHM9WyJQT1NUIl0pIiIiCnMsbj1nZXRfcGF0LnN1Ym4oZ2V0X3JlcCxzLDEpCmFzc2VydCBuPT0xCnBvc3RfcGF0PXJlLmNvbXBpbGUocidAYnBcLnJvdXRlXCgiLzxpbnQ6cXVvdGVfaWQ+L3doYXRzYXBwIiwgbWV0aG9kcz1cWyJQT1NUIlxdXClcbkB0ZW5hbnRfcmVxdWlyZWRcbkBsb2dpbl9yZXF1aXJlZFxuZGVmIHNoYXJlX3doYXRzYXBwX3Bvc3RcKHF1b3RlX2lkXCk6XG4uKj9cblxuXG5AYnBcLnJvdXRlXCgiLzxpbnQ6cXVvdGVfaWQ+L2NvbnZlcnRpciIsIG1ldGhvZHM9XFsiUE9TVCJcXVwpJyxyZS5TKQpwb3N0X3JlcD0iIiJAYnAucm91dGUoIi88aW50OnF1b3RlX2lkPi93aGF0c2FwcCIsIG1ldGhvZHM9WyJQT1NUIl0pCkB0ZW5hbnRfcmVxdWlyZWQKQGxvZ2luX3JlcXVpcmVkCmRlZiBzaGFyZV93aGF0c2FwcF9wb3N0KHF1b3RlX2lkKToKICAgIGZyb20gYXBwIGltcG9ydCBDb21wYW55LCByZWNvcmRfYXVkaXQKICAgIHF1b3RlID0gX3F1b3RlX2xvb2t1cChxdW90ZV9pZCkKICAgIF9yZXF1aXJlX293bmVkX29yX2F1dGhvcml6ZWQocXVvdGUpCiAgICBfcmVxdWlyZV9xdW90ZV9wZXJtaXNzaW9uKCJxdW90ZXNfc2hhcmVfd2hhdHNhcHAiKQogICAgcGhvbmUgPSAocmVxdWVzdC5mb3JtLmdldCgid2hhdHNhcHBfcGhvbmUiKSBvciAiIikuc3RyaXAoKSBvciBfcXVvdGVfY2xpZW50X3doYXRzYXBwX3Bob25lKHF1b3RlKQogICAgY29tcGFueSA9IENvbXBhbnkucXVlcnkuZmlsdGVyX2J5KGlkPXF1b3RlLmNvbXBhbnlfaWQpLmZpcnN0KCkKICAgIG1lc3NhZ2UgPSBfYnVpbGRfcXVvdGVfd2hhdHNhcHBfbWVzc2FnZShxdW90ZSwgY29tcGFueSkKICAgIHB1YmxpY191cmwgPSBfYnVpbGRfcHVibGljX3F1b3RlX3VybChxdW90ZS5pZCkKICAgIHJlY29yZF9hdWRpdChhY3Rpb249InF1b3RlX3NoYXJlX3doYXRzYXBwIiwgZW50aXR5PSJxdW90ZSIsIGVudGl0eV9pZD1xdW90ZS5pZCwgZGV0YWlsPWYiQ29tcGFydGlkbyBwb3IgV2hhdHNBcHAge3F1b3RlLm51bWJlciBvciBxdW90ZS5pZH0iLCBpcF9hZGRyZXNzPXJlcXVlc3QucmVtb3RlX2FkZHIpCiAgICByZXR1cm4gcmVkaXJlY3QoYnVpbGRfd2hhdHNhcHBfc2hhcmVfdXJsKHBob25lPXBob25lLCBtZXNzYWdlPW1lc3NhZ2UsIGRvY3VtZW50X3VybD1wdWJsaWNfdXJsLCBkb2N1bWVudF9sYWJlbD0iUHJlc3VwdWVzdG8iKSkKCgpAYnAucm91dGUoIi88aW50OnF1b3RlX2lkPi9jb252ZXJ0aXIiLCBtZXRob2RzPVsiUE9TVCJdKSIiIgpzLG49cG9zdF9wYXQuc3Vibihwb3N0X3JlcCxzLDEpCmFzc2VydCBuPT0xCnAud3JpdGVfdGV4dChzLGVuY29kaW5nPSJ1dGYtOCIp' | base64 -d | python
+      - name: Validate
         run: python -m py_compile quotes.py
-
-      - name: Commit backend fix
+      - name: Commit
         run: |
           git config user.name 'github-actions[bot]'
           git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
           git add quotes.py
-          if git diff --cached --quiet; then
-            echo 'No changes needed'
-            exit 0
-          fi
-          git commit -m 'fix: permitir WhatsApp sin cliente y con numero manual'
-          git push origin main
+          git diff --cached --quiet || (git commit -m 'fix: permitir WhatsApp sin cliente y con numero manual' && git push origin main)
