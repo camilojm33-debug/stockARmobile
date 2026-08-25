@@ -28,7 +28,7 @@ class MercadoPagoService:
         if has_app_context(): return current_app.logger
         return logging.getLogger(__name__)
 
-    def _headers(self, *, include_idempotency: bool = False, access_token: str | None = None) -> dict[str, str]:
+    def _headers(self, *, include_idempotency: bool = False, idempotency_key: str | None = None, access_token: str | None = None) -> dict[str, str]:
         token = (access_token or self.config.access_token or "").strip()
         if not token: raise RuntimeError("MP_ACCESS_TOKEN no configurado")
         headers = {
@@ -38,15 +38,15 @@ class MercadoPagoService:
             "User-Agent": "StockArMobile/1.0",
         }
         if include_idempotency:
-            headers["X-Idempotency-Key"] = str(uuid.uuid4())
+            headers["X-Idempotency-Key"] = (idempotency_key or str(uuid.uuid4())).strip()
         return headers
 
-    def _request(self, method: str, path: str, *, payload: dict[str, Any] | None = None, access_token: str | None = None) -> dict[str, Any]:
+    def _request(self, method: str, path: str, *, payload: dict[str, Any] | None = None, access_token: str | None = None, idempotency_key: str | None = None) -> dict[str, Any]:
         body = json.dumps(payload).encode("utf-8") if payload is not None else None
         req = urlrequest.Request(
             url=f"{self.API_BASE}{path}",
             data=body,
-            headers=self._headers(include_idempotency=method in {"POST", "PUT", "PATCH"}, access_token=access_token),
+            headers=self._headers(include_idempotency=method in {"POST", "PUT", "PATCH"}, idempotency_key=idempotency_key, access_token=access_token),
             method=method,
         )
         try:
@@ -72,11 +72,11 @@ class MercadoPagoService:
 
     def create_checkout_preference(self, *, title: str, amount: float, currency: str, external_reference: str, company_id: int, plan_id: int, subscription_id: int | None, user_id: int) -> dict[str, Any]:
         payload = {"items": [{"id": str(plan_id), "title": title, "description": f"Suscripcion plan {title}", "quantity": 1, "currency_id": currency, "unit_price": float(amount)}], "external_reference": external_reference, "metadata": {"company_id": company_id, "plan_id": plan_id, "subscription_id": subscription_id, "user_id": user_id}, "back_urls": {"success": self.config.success_url, "pending": self.config.pending_url, "failure": self.config.failure_url}, "notification_url": self.config.notification_url, "statement_descriptor": self.config.statement_descriptor, "auto_return": "approved"}
-        return self._request("POST", "/checkout/preferences", payload=payload)
+        return self._request("POST", "/checkout/preferences", payload=payload, idempotency_key=f"checkout-preference:{external_reference}")
 
     def create_pos_checkout_preference(self, *, title: str, amount: float, currency: str, external_reference: str, company_id: int, user_id: int, metadata: dict[str, Any] | None = None, access_token: str | None = None) -> dict[str, Any]:
         payload = {"items": [{"id": external_reference, "title": title, "description": "Cobro QR Mercado Pago desde POS", "quantity": 1, "currency_id": currency, "unit_price": float(amount)}], "external_reference": external_reference, "metadata": {"flow": "pos_sale", "company_id": company_id, "user_id": user_id, **(metadata or {})}, "back_urls": {"success": self.config.success_url, "pending": self.config.pending_url, "failure": self.config.failure_url}, "notification_url": self.config.notification_url, "statement_descriptor": self.config.statement_descriptor, "auto_return": "approved"}
-        return self._request("POST", "/checkout/preferences", payload=payload, access_token=access_token)
+        return self._request("POST", "/checkout/preferences", payload=payload, access_token=access_token, idempotency_key=f"pos-checkout-preference:{external_reference}")
 
     @staticmethod
     def _extract_pos_results(payload: Any) -> list[dict[str, Any]]:
@@ -121,10 +121,27 @@ class MercadoPagoService:
             "notification_url": notification_url,
         }
         self._logger().info("Mercado Pago preapproval: company flow, amount=%s currency=%s payer=%s", amount, currency, payer_email)
-        return self._request("POST", "/preapproval", payload=payload)
+        return self._request("POST", "/preapproval", payload=payload, idempotency_key=f"preapproval:{external_reference}")
 
-    def update_preapproval(self, preapproval_id: str, payload: dict[str, Any]) -> dict[str, Any]: return self._request("PUT", f"/preapproval/{preapproval_id}", payload=payload)
-    def cancel_preapproval(self, preapproval_id: str) -> dict[str, Any]: return self.update_preapproval(preapproval_id, {"status": "canceled"})
+    def update_preapproval(self, preapproval_id: str, payload: dict[str, Any]) -> dict[str, Any]:
+        """Update a preapproval only when the requested state is valid for the current resource."""
+        requested_status = str((payload or {}).get("status") or "").strip().lower()
+        current = self.get_preapproval(preapproval_id)
+        current_status = str(current.get("status") or "").strip().lower()
+        if requested_status == "authorized" and current_status in {"cancelled", "canceled", "expired"}:
+            # A canceled/expired preapproval cannot safely be forced back to authorized.
+            # The caller's billing service will create a fresh authorization flow.
+            self._logger().warning("Mercado Pago preapproval %s is %s; refusing invalid authorized transition", preapproval_id, current_status)
+            return current
+        if requested_status == "authorized" and current_status == "authorized":
+            return current
+        if requested_status == "authorized" and current_status not in {"paused", "pending", "in_process"}:
+            self._logger().warning("Mercado Pago preapproval %s is %s; refusing unauthorized transition", preapproval_id, current_status)
+            return current
+        return self._request("PUT", f"/preapproval/{preapproval_id}", payload=payload, idempotency_key=f"preapproval-update:{preapproval_id}:{requested_status or 'update'}")
+
+    def cancel_preapproval(self, preapproval_id: str) -> dict[str, Any]:
+        return self._request("PUT", f"/preapproval/{preapproval_id}", payload={"status": "canceled"}, idempotency_key=f"preapproval-update:{preapproval_id}:canceled")
 
     def validate_webhook_signature(self, *, request_id: str, x_signature: str, data_id: str) -> bool:
         secret=(self.config.webhook_secret or "").strip()
