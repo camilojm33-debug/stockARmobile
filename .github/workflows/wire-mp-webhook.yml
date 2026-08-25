@@ -1,0 +1,36 @@
+name: Wire Mercado Pago subscription webhooks
+
+on:
+  push:
+    branches: [main]
+
+permissions:
+  contents: write
+
+jobs:
+  wire:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Patch webhook service
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+          p = Path('services/webhook_service.py')
+          s = p.read_text(encoding='utf-8')
+          marker = '''        payment_status = "pending"\n        result = {"status": "ignored", "event_key": event_key}\n\n        if event_type in {"payment", "payment.updated", "merchant_order", "topic_payment"}:\n'''
+          block = '''        payment_status = "pending"\n        result = {"status": "ignored", "event_key": event_key}\n\n        if event_type == "subscription_preapproval":\n            from services.mercadopago_subscription_service import MercadoPagoSubscriptionService\n            preapproval = self.mp_service.get_preapproval(data_id)\n            subscription = MercadoPagoSubscriptionService.sync_preapproval(db_session=db_session, preapproval=preapproval)\n            result = {"status": "processed", "subscription_id": getattr(subscription, "id", None), "event_key": event_key}\n\n        elif event_type == "subscription_authorized_payment":\n            from app import Payment\n            authorized = self.mp_service.get_authorized_payment(data_id)\n            preapproval_id = str(authorized.get("preapproval_id") or "").strip()\n            rows = Subscription.query.filter(Subscription.metadata_json.contains(preapproval_id)).all() if preapproval_id else []\n            subscription = next(\n                (row for row in rows if json.loads(row.metadata_json or "{}").get("mercadopago_preapproval_id") == preapproval_id),\n                None,\n            )\n            payment_info = authorized.get("payment") or {}\n            payment_id = str(payment_info.get("id") or "").strip()\n            if subscription is not None and payment_id:\n                payment = Payment.query.filter_by(payment_id=payment_id).first()\n                status = str(payment_info.get("status") or authorized.get("summarized") or "pending").lower()\n                if payment is None:\n                    payment = Payment(\n                        payment_id=payment_id,\n                        external_reference=str(authorized.get("external_reference") or ""),\n                        company_id=subscription.company_id,\n                        subscription_id=subscription.id,\n                        user_id=None,\n                        amount=float(authorized.get("transaction_amount") or 0),\n                        currency=authorized.get("currency_id") or "ARS",\n                        status=status,\n                        payment_method="mercadopago_subscription",\n                        reference=preapproval_id,\n                        provider="mercadopago_subscription",\n                        payload_json=json.dumps(authorized, ensure_ascii=False),\n                        paid_at=self._parse_mp_datetime(authorized.get("debit_date")) if status == "approved" else None,\n                    )\n                    db_session.add(payment)\n                else:\n                    payment.status = status\n                    payment.payload_json = json.dumps(authorized, ensure_ascii=False)\n                    if status == "approved":\n                        payment.paid_at = self._parse_mp_datetime(authorized.get("debit_date")) or payment.paid_at\n                if status == "approved":\n                    SubscriptionService.run_command(\n                        db_session,\n                        SubscriptionService.RenewSubscriptionCommand(\n                            company_id=subscription.company_id,\n                            subscription_id=subscription.id,\n                            payment_status="approved",\n                            actor_user_id=payment.user_id,\n                            actor_role="system",\n                            origin="subscription_authorized_payment",\n                            idempotency_key=f"authorized-payment:{data_id}:{payment_id}",\n                        ),\n                    )\n            result = {"status": "processed", "subscription_id": getattr(subscription, "id", None), "payment_id": payment_id or None, "event_key": event_key}\n\n        elif event_type in {"payment", "payment.updated", "merchant_order", "topic_payment"}:\n'''
+          if 'event_type == "subscription_preapproval"' not in s:
+              if marker not in s: raise SystemExit('webhook marker not found')
+              s = s.replace(marker, block, 1)
+          p.write_text(s, encoding='utf-8')
+          PY
+          python -m py_compile services/webhook_service.py services/mercadopago_service.py services/mercadopago_subscription_service.py
+      - name: Commit and remove workflow
+        run: |
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add services/webhook_service.py
+          git rm .github/workflows/wire-mp-webhook.yml
+          git commit -m 'feat: process Mercado Pago subscription webhooks [skip ci]'
+          git push origin main
