@@ -10,17 +10,17 @@
         <div class="card-body p-4">
           <span class="page-kicker"><i class="bi bi-whatsapp"></i> WhatsApp</span>
           <h1 class="h5 fw-bold mb-3">Compartir presupuesto</h1>
-          <p class="text-muted">Se abrirá WhatsApp con el mensaje preparado y el enlace del presupuesto.</p>
+          <p class="text-muted">Podés enviar el presupuesto a un número específico o abrir WhatsApp para elegir el contacto manualmente.</p>
           <form method="post" action="{{ url_for('quotes.share_whatsapp_post', quote_id=quote.id) }}" id="quoteWhatsappShareForm">
             <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
             <div class="mb-3">
-              <label class="form-label">WhatsApp del cliente</label>
-              <input class="form-control" id="quoteWhatsappPhone" name="whatsapp_phone" value="{{ entered_phone }}" readonly maxlength="30">
-              <div class="form-text">Se usa el WhatsApp o teléfono cargado en la ficha del cliente.</div>
+              <label class="form-label" for="quoteWhatsappPhone">Número de WhatsApp (opcional)</label>
+              <input class="form-control" id="quoteWhatsappPhone" name="whatsapp_phone" value="{{ entered_phone }}" maxlength="30" inputmode="tel" autocomplete="tel" placeholder="Ej: 11 1234-5678">
+              <div class="form-text">Podés usar el teléfono del cliente, escribir otro número o dejarlo vacío para abrir WhatsApp y elegir el contacto.</div>
             </div>
             <div class="small text-muted border rounded p-2 mb-3">{{ message }}<br>Presupuesto: {{ pdf_url }}</div>
-            <div class="form-text mb-3">Si tenés WhatsApp instalado en la PC, usá "Abrir app". Si preferís navegador, usá "Abrir Web".</div>
-            <div class="d-flex justify-content-end gap-2">
+            <div class="form-text mb-3">Usá "Abrir app" para WhatsApp Desktop o "Abrir Web" para abrir WhatsApp Web. El número es opcional.</div>
+            <div class="d-flex flex-wrap justify-content-end gap-2">
               <a class="btn btn-outline-secondary" href="{{ url_for('quotes.view_quote', quote_id=quote.id) }}">Cancelar</a>
               <button class="btn btn-outline-success" type="button" id="quoteWhatsappDesktop"><i class="bi bi-whatsapp me-1"></i>Abrir app</button>
               <button class="btn btn-success" type="button" id="quoteWhatsappWeb"><i class="bi bi-globe2 me-1"></i>Abrir Web</button>
@@ -72,30 +72,29 @@
       return digits;
     }
 
+    function buildMessage() {
+      return [baseMessage, pdfUrl ? `Presupuesto: ${pdfUrl}` : ''].filter(Boolean).join('\n\n');
+    }
+
     function buildDesktopUrl() {
       const phone = normalizePhone(phoneInput?.value || '');
-      const text = [baseMessage, `Presupuesto: ${pdfUrl}`].filter(Boolean).join('\n\n');
       const query = new URLSearchParams();
-      if (phone) {
-        query.set('phone', phone);
-      }
-      query.set('text', text);
+      if (phone) query.set('phone', phone);
+      query.set('text', buildMessage());
       return `whatsapp://send?${query.toString()}`;
     }
 
     function buildWebUrl() {
       const phone = normalizePhone(phoneInput?.value || '');
-      const text = [baseMessage, `Presupuesto: ${pdfUrl}`].filter(Boolean).join('\n\n');
-      const encodedText = encodeURIComponent(text);
-      if (phone) {
-        return `https://wa.me/${phone}?text=${encodedText}`;
-      }
+      const encodedText = encodeURIComponent(buildMessage());
+      if (phone) return `https://wa.me/${phone}?text=${encodedText}`;
       return `https://wa.me/?text=${encodedText}`;
     }
 
     desktopButton?.addEventListener('click', () => {
+      const webUrl = buildWebUrl();
       const fallbackTimer = window.setTimeout(() => {
-        window.open(buildWebUrl(), '_blank', 'noopener');
+        window.open(webUrl, '_blank', 'noopener');
       }, 900);
 
       const cancelFallback = () => {
@@ -105,9 +104,7 @@
       };
 
       const handleVisibilityChange = () => {
-        if (document.visibilityState === 'hidden') {
-          cancelFallback();
-        }
+        if (document.visibilityState === 'hidden') cancelFallback();
       };
 
       window.addEventListener('blur', cancelFallback, { once: true });
