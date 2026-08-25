@@ -31,7 +31,6 @@ jobs:
       });'''
           new = '''      document.querySelectorAll('form[method="post"]').forEach(function(form) {
         form.addEventListener('submit', function() {
-          // Mercado Pago subscription creation must not use the global blocking loader.
           if (form.matches('[data-mp-auto-subscription="true"]')) {
             const loading = document.getElementById('appLoading');
             if (loading) loading.classList.remove('show');
@@ -52,25 +51,22 @@ jobs:
 
           portal = Path('templates/company_billing/portal.html')
           p = portal.read_text(encoding='utf-8')
-          marker = "{% block extra_js %}"
-          if "id === 'mp-auto-subscription-final-guard'" not in p:
+          if 'mp-auto-subscription-final-guard' not in p:
+              marker = '{% block extra_js %}'
               guard = '''{% block extra_js %}
 <script id="mp-auto-subscription-final-guard">
 (function () {
   const form = document.querySelector('form[data-mp-auto-subscription="true"]');
   if (!form) return;
   form.addEventListener('submit', function () {
-    const overlay = document.getElementById('appLoading');
-    if (overlay) overlay.classList.remove('show');
+    document.getElementById('appLoading')?.classList.remove('show');
   }, true);
 })();
 </script>
 '''
-              if marker in p:
-                  p = p.replace(marker, guard, 1)
-              else:
+              if marker not in p:
                   raise SystemExit('No se encontró extra_js en portal.html')
-              portal.write_text(p, encoding='utf-8')
+              portal.write_text(p.replace(marker, guard, 1), encoding='utf-8')
           PY
 
       - name: Validate
