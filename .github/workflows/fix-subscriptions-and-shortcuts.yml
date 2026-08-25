@@ -1,0 +1,81 @@
+name: Fix subscriptions and budget shortcuts
+
+on:
+  push:
+    branches: [main]
+
+permissions:
+  contents: write
+
+jobs:
+  patch:
+    if: ${{ !contains(github.event.head_commit.message, 'fix: repair Mercado Pago subscription events and remove budget shortcuts') }}
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Apply fixes
+        shell: bash
+        run: |
+          set -euo pipefail
+          python - <<'PY'
+          from pathlib import Path
+          import re
+
+          # 1) Remove the visible budget shortcut legend completely.
+          quote = Path('templates/presupuestos/form.html')
+          q = quote.read_text(encoding='utf-8')
+          q, removed = re.subn(
+              r'\s*<div class="small text-muted(?: desktop-quote-shortcuts)?">\s*Atajos:\s*<strong>F2</strong>.*?<\/div>',
+              '', q, count=1, flags=re.S,
+          )
+          if removed == 0:
+              # If an earlier patch added the desktop class, hide it as a safe fallback.
+              if '.desktop-quote-shortcuts' not in q:
+                  marker = '  @media (max-width: 768px) {'
+                  if marker in q:
+                      q = q.replace(marker, '  .desktop-quote-shortcuts { display: none !important; }\n\n' + marker, 1)
+          quote.write_text(q, encoding='utf-8')
+
+          # 2) Fix Mercado Pago subscription webhook deduplication.
+          # The old logic deduplicated subscription_preapproval only by ID.
+          # MP sends the same subscription ID again when its status changes
+          # (pending -> authorized/cancelled). Those updates must be processed.
+          webhook = Path('services/webhook_service.py')
+          w = webhook.read_text(encoding='utf-8')
+
+          old = '''        existing = WebhookEvent.query.filter_by(event_key=event_key).first()\n        if existing:\n            return {"status": "duplicate", "event_key": event_key}\n\n        payment_data = None\n        if event_type in {"payment", "payment.updated", "merchant_order", "topic_payment"}:\n'''
+          new = '''        # Subscription webhooks reuse the preapproval ID across status changes.\n        # Fetch the current preapproval before deduplication and include its status/version\n        # in the event key so pending -> authorized is not discarded as a duplicate.\n        subscription_preapproval = None\n        if event_type == "subscription_preapproval":\n            subscription_preapproval = self.mp_service.get_preapproval(data_id)\n            preapproval_status = str(subscription_preapproval.get("status") or "unknown").lower()\n            preapproval_version = str(subscription_preapproval.get("version") or subscription_preapproval.get("last_modified") or "unknown")\n            event_key = f"{event_type}:{data_id}:{preapproval_status}:{preapproval_version}"\n\n        existing = WebhookEvent.query.filter_by(event_key=event_key).first()\n        if existing:\n            return {"status": "duplicate", "event_key": event_key}\n\n        payment_data = None\n        if event_type in {"payment", "payment.updated", "merchant_order", "topic_payment"}:\n'''
+          if old not in w:
+              raise SystemExit('No se encontró el bloque de deduplicación de webhooks')
+          w = w.replace(old, new, 1)
+
+          old2 = '''        if event_type in {"subscription_preapproval", "subscription_preapproval_plan"}:\n            from services.mercadopago_subscription_service import MercadoPagoSubscriptionService\n            preapproval = self.mp_service.get_preapproval(data_id)\n            subscription = MercadoPagoSubscriptionService.sync_preapproval(db_session=db_session, preapproval=preapproval)\n'''
+          new2 = '''        if event_type == "subscription_preapproval":\n            from services.mercadopago_subscription_service import MercadoPagoSubscriptionService\n            preapproval = subscription_preapproval or self.mp_service.get_preapproval(data_id)\n            subscription = MercadoPagoSubscriptionService.sync_preapproval(db_session=db_session, preapproval=preapproval)\n'''
+          if old2 not in w:
+              raise SystemExit('No se encontró el bloque de procesamiento de preapproval')
+          w = w.replace(old2, new2, 1)
+
+          webhook.write_text(w, encoding='utf-8')
+          PY
+
+      - name: Validate
+        shell: bash
+        run: |
+          set -euo pipefail
+          python -m py_compile services/webhook_service.py services/mercadopago_subscription_service.py company_billing.py
+          ! grep -Fq 'Atajos: <strong>F2</strong>' templates/presupuestos/form.html
+          grep -Fq 'preapproval_status' services/webhook_service.py
+
+      - name: Commit and remove workflow
+        shell: bash
+        run: |
+          set -euo pipefail
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add templates/presupuestos/form.html services/webhook_service.py
+          git rm -f .github/workflows/fix-subscriptions-and-shortcuts.yml
+          git commit -m 'fix: repair Mercado Pago subscription events and remove budget shortcuts'
+          git push origin main
