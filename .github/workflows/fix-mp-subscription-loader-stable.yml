@@ -1,0 +1,108 @@
+name: Repair Mercado Pago subscription loader
+
+on:
+  push:
+    branches: [main]
+
+permissions:
+  contents: write
+
+jobs:
+  patch:
+    if: ${{ !contains(github.event.head_commit.message, 'fix: repair Mercado Pago subscription loader in-place') }}
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Patch loader behavior
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+          import re
+
+          portal = Path('templates/company_billing/portal.html')
+          p = portal.read_text(encoding='utf-8')
+
+          # Ensure the Mercado Pago automatic-subscription form is explicitly identifiable.
+          if 'data-mp-auto-subscription="true"' not in p:
+              old = '''<form method="post" action="{{ url_for('company_billing.create_mercadopago_subscription') }}">'''
+              new = '''<form method="post" action="{{ url_for('company_billing.create_mercadopago_subscription') }}" data-mp-auto-subscription="true">'''
+              if old not in p:
+                  raise SystemExit('No se encontró el formulario de suscripción automática')
+              p = p.replace(old, new, 1)
+
+          if 'data-mp-auto-subscription-button="true"' not in p:
+              old = '<button class="btn btn-success" type="submit">Activar suscripción automática</button>'
+              new = '<button class="btn btn-success" type="submit" data-mp-auto-subscription-button="true">Activar suscripción automática</button>'
+              if old not in p:
+                  raise SystemExit('No se encontró el botón de suscripción automática')
+              p = p.replace(old, new, 1)
+
+          portal.write_text(p, encoding='utf-8')
+
+          base = Path('templates/base_master.html')
+          b = base.read_text(encoding='utf-8')
+
+          # Patch the generic POST loader without depending on exact indentation.
+          if 'form.matches(\'[data-mp-auto-subscription="true"]\')' not in b:
+              pattern = re.compile(
+                  r"(?P<indent>\s*)document\.querySelectorAll\('form\[method=\\\"post\\\"\]'\)\.forEach\(function\(form\) \{\s*"
+                  r"form\.addEventListener\('submit', function\(\) \{\s*"
+                  r"const loading = document\.getElementById\('appLoading'\);\s*"
+                  r"if \(loading\) loading\.classList\.add\('show'\);\s*"
+                  r"\}\);\s*\}\);",
+                  re.MULTILINE,
+              )
+              replacement = r'''\g<indent>document.querySelectorAll('form[method="post"]').forEach(function(form) {
+\g<indent>  form.addEventListener('submit', function() {
+\g<indent>    // Mercado Pago subscription creation calls an external API and then redirects.
+\g<indent>    // Do not show the global overlay for this form, otherwise a slow/error response
+\g<indent>    // makes the page look permanently frozen.
+\g<indent>    if (form.matches('[data-mp-auto-subscription="true"]')) {
+\g<indent>      const button = form.querySelector('[data-mp-auto-subscription-button="true"]');
+\g<indent>      if (button) {
+\g<indent>        button.disabled = true;
+\g<indent>        button.textContent = 'Conectando con Mercado Pago…';
+\g<indent>      }
+\g<indent>      return;
+\g<indent>    }
+\g<indent>    const loading = document.getElementById('appLoading');
+\g<indent>    if (loading) loading.classList.add('show');
+\g<indent>  });
+\g<indent>});'''
+              b2, count = pattern.subn(replacement, b, count=1)
+              if count != 1:
+                  raise SystemExit('No se encontró el manejador global de formularios')
+              b = b2
+
+          base.write_text(b, encoding='utf-8')
+          PY
+
+      - name: Validate
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+          portal = Path('templates/company_billing/portal.html').read_text(encoding='utf-8')
+          base = Path('templates/base_master.html').read_text(encoding='utf-8')
+          assert 'data-mp-auto-subscription="true"' in portal
+          assert 'data-mp-auto-subscription-button="true"' in portal
+          assert 'form.matches(\'[data-mp-auto-subscription="true"]\')' in base
+          PY
+          python -m py_compile company_billing.py services/mercadopago_subscription_service.py
+
+      - name: Commit and remove workflow
+        run: |
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add templates/base_master.html templates/company_billing/portal.html
+          git rm .github/workflows/fix-mp-subscription-loader-stable.yml
+          if git diff --cached --quiet; then
+            echo 'No changes required.'
+            git restore --staged .github/workflows/fix-mp-subscription-loader-stable.yml
+            git checkout -- .github/workflows/fix-mp-subscription-loader-stable.yml
+            exit 0
+          fi
+          git commit -m 'fix: repair Mercado Pago subscription loader in-place'
+          git push origin main
