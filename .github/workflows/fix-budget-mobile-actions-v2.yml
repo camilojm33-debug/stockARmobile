@@ -1,0 +1,329 @@
+name: Fix budget mobile actions v2
+
+on:
+  push:
+    branches: [main]
+
+permissions:
+  contents: write
+
+jobs:
+  patch:
+    if: ${{ !contains(github.event.head_commit.message, 'fix: redesign mobile budget actions for touch devices') }}
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Patch budget builder mobile UI
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+
+          path = Path('templates/presupuestos/form.html')
+          text = path.read_text(encoding='utf-8')
+
+          if 'id="mobileBudgetToolbar"' in text:
+              raise SystemExit('mobileBudgetToolbar already present')
+
+          # Replace the mobile media block with a clean touch-first layout.
+          start = text.find('  @media (max-width: 768px) {')
+          if start < 0:
+              raise SystemExit('No se encontró @media móvil')
+          end = text.find('\n  }\n</style>', start)
+          if end < 0:
+              raise SystemExit('No se encontró el cierre del bloque móvil')
+          end += len('\n  }')
+
+          mobile_css = r'''  @media (max-width: 768px) {
+    .desktop-quote-shortcuts,
+    .quote-panel .panel-toggle {
+      display: none !important;
+    }
+
+    .quote-builder-layout {
+      display: block;
+    }
+
+    .quote-panel {
+      margin-bottom: .75rem;
+      border-radius: 14px;
+    }
+
+    .quote-panel-header {
+      padding: .8rem .85rem;
+    }
+
+    .quote-panel-body {
+      padding: .75rem .8rem;
+    }
+
+    .quote-panel-header strong {
+      font-size: 1rem;
+    }
+
+    #panelCatalog,
+    #panelLines,
+    #panelContext {
+      scroll-margin-top: 72px;
+    }
+
+    #panelLines .quote-panel-body,
+    #panelContext .quote-panel-body {
+      display: block !important;
+    }
+
+    #quoteProductSearch,
+    #categoryFilter,
+    #quoteClientSelect,
+    #quoteConsumerName,
+    #quoteSellerSelect,
+    #quoteExpiresAt,
+    #quoteStatusSelect,
+    #quoteCurrency,
+    #commercialConditions,
+    #observationsInput,
+    #generalDiscount,
+    #mobileBudgetToolbar input,
+    #mobileBudgetToolbar select {
+      font-size: 16px;
+      min-height: 46px;
+    }
+
+    .catalog-card {
+      grid-template-columns: 44px minmax(0, 1fr);
+      align-items: start;
+      gap: .6rem;
+      padding: .7rem;
+      margin-bottom: .6rem;
+    }
+
+    .catalog-thumb {
+      width: 44px;
+      height: 44px;
+    }
+
+    .catalog-title {
+      font-size: .98rem;
+    }
+
+    .catalog-meta {
+      white-space: normal;
+      font-size: .76rem;
+      line-height: 1.25;
+    }
+
+    .catalog-side {
+      min-width: 0;
+      grid-column: 2;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: .6rem;
+      text-align: left;
+      margin-top: .2rem;
+    }
+
+    .catalog-price {
+      margin-bottom: 0;
+      font-size: 1rem;
+    }
+
+    .catalog-side .btn {
+      min-height: 46px;
+      padding-inline: .9rem;
+      border-radius: 10px;
+      font-weight: 700;
+    }
+
+    .quote-line-grid {
+      grid-template-columns: 1fr 1fr;
+    }
+
+    .quote-actions-grid {
+      grid-template-columns: 1fr;
+    }
+
+    .quote-actions-grid .btn {
+      min-height: 48px;
+    }
+
+    #conditionChips {
+      overflow-x: auto;
+      flex-wrap: nowrap !important;
+      padding-bottom: .2rem;
+    }
+
+    #conditionChips .quick-chip {
+      flex: 0 0 auto;
+      min-height: 40px;
+    }
+
+    #mobileBudgetToolbar {
+      position: fixed;
+      left: 0;
+      right: 0;
+      bottom: 0;
+      z-index: 1090;
+      padding: .55rem .65rem calc(.55rem + env(safe-area-inset-bottom));
+      background: rgba(255,255,255,.97);
+      backdrop-filter: blur(16px);
+      border-top: 1px solid rgba(15,23,42,.12);
+      box-shadow: 0 -12px 30px rgba(15,23,42,.12);
+    }
+
+    #mobileBudgetToolbar .mobile-primary-actions {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: .5rem;
+      margin-bottom: .45rem;
+    }
+
+    #mobileBudgetToolbar .mobile-primary-actions .btn {
+      min-height: 50px;
+      border-radius: 12px;
+      font-size: .95rem;
+      font-weight: 800;
+    }
+
+    #mobileBudgetToolbar .mobile-secondary-actions {
+      display: grid;
+      grid-template-columns: repeat(4, 1fr);
+      gap: .35rem;
+    }
+
+    #mobileBudgetToolbar .mobile-secondary-actions .btn {
+      min-height: 42px;
+      padding: .25rem .35rem;
+      border-radius: 10px;
+      font-size: .72rem;
+      font-weight: 700;
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
+
+    body.mobile-budget-page main.container-fluid {
+      padding-bottom: 8.75rem;
+    }
+  }'''
+
+          text = text[:start] + mobile_css + text[end:]
+
+          # Hide the PC shortcut helper on mobile without relying only on CSS selector specificity.
+          text = text.replace(
+              '<div class="small text-muted">\n      Atajos:',
+              '<div class="small text-muted desktop-quote-shortcuts">\n      Atajos:',
+              1,
+          )
+
+          # Insert touch navigation before the form.
+          form_marker = '<form method="post" id="quoteForm" novalidate>'
+          mobile_nav = r'''<div class="d-md-none mobile-quote-nav mb-3" aria-label="Secciones del presupuesto">
+    <div class="row g-2">
+      <div class="col-4"><button type="button" class="btn btn-outline-primary w-100" data-mobile-jump="#panelCatalog"><i class="bi bi-box-seam"></i><span class="d-block small mt-1">Productos</span></button></div>
+      <div class="col-4"><button type="button" class="btn btn-outline-primary w-100" data-mobile-jump="#panelLines"><i class="bi bi-list-check"></i><span class="d-block small mt-1">Presupuesto</span></button></div>
+      <div class="col-4"><button type="button" class="btn btn-outline-primary w-100" data-mobile-jump="#panelContext"><i class="bi bi-person-lines-fill"></i><span class="d-block small mt-1">Datos</span></button></div>
+    </div>
+  </div>
+
+  <form method="post" id="quoteForm" novalidate>'''
+          if form_marker not in text:
+              raise SystemExit('No se encontró quoteForm')
+          text = text.replace(form_marker, mobile_nav, 1)
+
+          # Add the actual touch action toolbar after the quote form.
+          end_marker = '</form>\n</div>\n{% endblock %}'
+          toolbar = r'''</form>
+
+  <div id="mobileBudgetToolbar" class="d-md-none" aria-label="Acciones rápidas del presupuesto">
+    <div class="mobile-primary-actions">
+      <button type="button" class="btn btn-primary" id="mobileSaveQuote"><i class="bi bi-save me-1"></i>Guardar</button>
+      <button type="button" class="btn btn-success" id="mobileSendQuote"><i class="bi bi-send me-1"></i>Enviar</button>
+    </div>
+    <div class="mobile-secondary-actions">
+      {% if quote %}
+      <button type="button" class="btn btn-outline-danger" id="mobilePdfQuote"><i class="bi bi-filetype-pdf"></i><span class="d-block">PDF</span></button>
+      <button type="button" class="btn btn-outline-success" id="mobileWhatsappQuote"><i class="bi bi-whatsapp"></i><span class="d-block">WhatsApp</span></button>
+      <button type="button" class="btn btn-warning" id="mobileConvertQuote"><i class="bi bi-bag-check"></i><span class="d-block">Venta</span></button>
+      <button type="button" class="btn btn-outline-secondary" data-mobile-jump="#panelLines"><i class="bi bi-pencil"></i><span class="d-block">Modificar</span></button>
+      {% else %}
+      <button type="button" class="btn btn-outline-secondary" data-mobile-jump="#panelLines"><i class="bi bi-pencil"></i><span class="d-block">Modificar</span></button>
+      <button type="button" class="btn btn-outline-secondary" data-mobile-jump="#panelContext"><i class="bi bi-person"></i><span class="d-block">Datos</span></button>
+      <button type="button" class="btn btn-outline-secondary" data-mobile-jump="#panelCatalog"><i class="bi bi-plus-lg"></i><span class="d-block">Agregar</span></button>
+      <button type="button" class="btn btn-outline-secondary" disabled><i class="bi bi-filetype-pdf"></i><span class="d-block">PDF</span></button>
+      {% endif %}
+    </div>
+  </div>
+</div>
+{% endblock %}'''
+          if end_marker not in text:
+              raise SystemExit('No se encontró cierre del contenido')
+          text = text.replace(end_marker, toolbar, 1)
+
+          # Put mobile JS immediately after the existing extra_js block starts, so the original JS remains untouched.
+          extra_js_marker = '{% block extra_js %}'
+          mobile_js = r'''{% block extra_js %}
+<script>
+(function () {
+  document.body.classList.add('mobile-budget-page');
+
+  document.querySelectorAll('[data-mobile-jump]').forEach(function (button) {
+    button.addEventListener('click', function () {
+      var target = document.querySelector(button.getAttribute('data-mobile-jump'));
+      if (!target) return;
+      target.scrollIntoView({ behavior: 'smooth', block: 'start' });
+    });
+  });
+
+  document.getElementById('mobileSaveQuote')?.addEventListener('click', function () {
+    document.getElementById('actionSave')?.click();
+  });
+
+  document.getElementById('mobileSendQuote')?.addEventListener('click', function () {
+    document.getElementById('actionSend')?.click();
+  });
+
+  document.getElementById('mobilePdfQuote')?.addEventListener('click', function () {
+    var target = document.querySelector('#panelContext a[href*="quote_pdf"]');
+    if (target) window.open(target.href, '_blank', 'noopener');
+  });
+
+  document.getElementById('mobileWhatsappQuote')?.addEventListener('click', function () {
+    var target = document.querySelector('#panelContext a[href*="share_whatsapp"]');
+    if (target) window.location.href = target.href;
+  });
+
+  document.getElementById('mobileConvertQuote')?.addEventListener('click', function () {
+    document.getElementById('actionConvert')?.click();
+  });
+})();
+</script>'''
+          if extra_js_marker not in text:
+              raise SystemExit('No se encontró extra_js block')
+          text = text.replace(extra_js_marker, mobile_js, 1)
+
+          path.write_text(text, encoding='utf-8')
+          PY
+
+      - name: Validate mobile budget template
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+          text = Path('templates/presupuestos/form.html').read_text(encoding='utf-8')
+          required = ['mobileBudgetToolbar', 'mobileSaveQuote', 'mobileSendQuote', 'mobile-quote-nav', 'desktop-quote-shortcuts']
+          for marker in required:
+              assert marker in text, marker
+          assert '@media (max-width: 768px)' in text
+          PY
+
+      - name: Commit and remove temporary workflow
+        run: |
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add templates/presupuestos/form.html
+          git rm .github/workflows/fix-budget-mobile-actions.yml
+          git rm .github/workflows/fix-budget-mobile-actions-v2.yml 2>/dev/null || true
+          git commit -m 'fix: redesign mobile budget actions for touch devices'
+          git push origin main
