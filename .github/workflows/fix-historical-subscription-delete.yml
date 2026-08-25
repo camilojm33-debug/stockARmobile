@@ -15,117 +15,97 @@ jobs:
       - uses: actions/checkout@v4
 
       - name: Patch SuperAdmin historical subscription deletion
+        shell: bash
         run: |
           python - <<'PY'
           from pathlib import Path
+          import re
 
           saas = Path('saas.py')
           text = saas.read_text(encoding='utf-8')
 
-          old_actions = '''    subscription_actions = {
-          sub.id: (
-              _allowed_ui_actions_for_status(effective_status_by_id.get(sub.id, sub.status))
-              if current_subscription_id_by_company.get(sub.company_id) in {None, sub.id}
-              else set()
-          )
-          for sub in subscriptions
-      }
-  '''
-          new_actions = '''    subscription_actions = {}
-      for sub in subscriptions:
-          is_current = current_subscription_id_by_company.get(sub.company_id) == sub.id
-          is_historical = bool(current_subscription_id_by_company.get(sub.company_id)) and not is_current
-          if is_historical:
-              subscription_actions[sub.id] = {"delete_historical"}
-          elif current_subscription_id_by_company.get(sub.company_id) in {None, sub.id}:
-              subscription_actions[sub.id] = _allowed_ui_actions_for_status(
-                  effective_status_by_id.get(sub.id, sub.status)
-              )
-          else:
-              subscription_actions[sub.id] = set()
-  '''
-          if 'subscription_actions = {}\n      for sub in subscriptions:' not in text:
-              if old_actions not in text:
-                  raise SystemExit('No se encontró el bloque subscription_actions esperado')
-              text = text.replace(old_actions, new_actions, 1)
+          # 1) Historical rows get a dedicated destructive action; current rows keep normal lifecycle actions.
+          pattern = re.compile(r'    subscription_actions = \{.*?\n    return render_template\(', re.S)
+          match = pattern.search(text)
+          if not match:
+              raise SystemExit('No se encontró subscription_actions')
+          block = match.group(0)
+          if 'delete_historical' not in block:
+              replacement = '''    subscription_actions = {}
+    for sub in subscriptions:
+        is_current = current_subscription_id_by_company.get(sub.company_id) == sub.id
+        is_historical = bool(current_subscription_id_by_company.get(sub.company_id)) and not is_current
+        if is_historical:
+            subscription_actions[sub.id] = {"delete_historical"}
+        elif current_subscription_id_by_company.get(sub.company_id) in {None, sub.id}:
+            subscription_actions[sub.id] = _allowed_ui_actions_for_status(
+                effective_status_by_id.get(sub.id, sub.status)
+            )
+        else:
+            subscription_actions[sub.id] = set()
+    return render_template('''
+              text = text[:match.start()] + replacement + text[match.end():]
 
-          old_guard = '''    if not _action_allowed_for_status(status_before, action):
-          flash("La acción no está permitida para el estado actual de la suscripción.", "warning")
-          return _redirect_back("saas.subscriptions_panel")
-  '''
-          new_guard = '''    if action == "delete_historical":
-          current_subscription = SubscriptionService.active_subscription_for_company(subscription.company_id)
-          if current_subscription is not None and current_subscription.id == subscription.id:
-              flash("No se puede eliminar la suscripción actual de la empresa.", "warning")
-              return _redirect_back("saas.subscriptions_panel")
-      elif not _action_allowed_for_status(status_before, action):
-          flash("La acción no está permitida para el estado actual de la suscripción.", "warning")
-          return _redirect_back("saas.subscriptions_panel")
-  '''
+          # 2) Allow only historical subscriptions to use the hard-delete action.
+          guard = '''    if not _action_allowed_for_status(status_before, action):
+        flash("La acción no está permitida para el estado actual de la suscripción.", "warning")
+        return _redirect_back("saas.subscriptions_panel")
+'''
           if 'action == "delete_historical"' not in text:
-              if old_guard not in text:
-                  raise SystemExit('No se encontró el guard de subscriptions_action esperado')
-              text = text.replace(old_guard, new_guard, 1)
+              if guard not in text:
+                  raise SystemExit('No se encontró el guard de subscriptions_action')
+              text = text.replace(guard, '''    if action == "delete_historical":
+        current_subscription = SubscriptionService.active_subscription_for_company(subscription.company_id)
+        if current_subscription is not None and current_subscription.id == subscription.id:
+            flash("No se puede eliminar la suscripción actual de la empresa.", "warning")
+            return _redirect_back("saas.subscriptions_panel")
+    elif not _action_allowed_for_status(status_before, action):
+        flash("La acción no está permitida para el estado actual de la suscripción.", "warning")
+        return _redirect_back("saas.subscriptions_panel")
+''', 1)
 
-          old_branch = '''        elif action == "delete":
-              SubscriptionService.run_command(
-                  db.session,
-                  SubscriptionService.CancelSubscriptionCommand(
-                      company_id=subscription.company_id,
-                      subscription_id=subscription.id,
-                      actor_user_id=current_user.id,
-                      actor_role=current_user.role,
-                      origin="superadmin",
-                      ip_address=request.remote_addr,
-                      idempotency_key=(
-                          f"saas-action-delete:{subscription.company_id}:{subscription.id}:"
-                          f"{subscription.status}:{subscription.next_billing_date.isoformat() if subscription.next_billing_date else 'none'}"
-                      ),
-                      cancel_at_period_end=False,
-                  ),
-              )
-  '''
-          new_branch = '''        elif action == "delete_historical":
-              from app import AuditLog, Invoice, Payment, PaymentHistory, SubscriptionCommandExecution
+          # 3) Insert the hard-delete branch immediately before the legacy logical delete branch.
+          if 'elif action == "delete_historical":' not in text:
+              needle = '        elif action == "delete":\n'
+              if needle not in text:
+                  raise SystemExit('No se encontró action=delete')
+              branch = '''        elif action == "delete_historical":
+            from app import AuditLog, Invoice, Payment, PaymentHistory, SubscriptionCommandExecution
 
-              current_subscription = SubscriptionService.active_subscription_for_company(subscription.company_id)
-              if current_subscription is not None and current_subscription.id == subscription.id:
-                  raise SubscriptionCommandError("No se puede eliminar la suscripción actual de la empresa.")
+            current_subscription = SubscriptionService.active_subscription_for_company(subscription.company_id)
+            if current_subscription is not None and current_subscription.id == subscription.id:
+                raise SubscriptionCommandError("No se puede eliminar la suscripción actual de la empresa.")
 
-              subscription_id = subscription.id
-              company_id = subscription.company_id
+            subscription_id = subscription.id
+            company_id = subscription.company_id
+            for model in (Payment, Invoice, PaymentHistory, SubscriptionCommandExecution):
+                if hasattr(model, "subscription_id"):
+                    db.session.query(model).filter(model.subscription_id == subscription_id).update(
+                        {model.subscription_id: None}, synchronize_session=False
+                    )
 
-              # Preserve financial/audit history while removing the obsolete subscription row.
-              for model in (Payment, Invoice, PaymentHistory, SubscriptionCommandExecution):
-                  if hasattr(model, "subscription_id"):
-                      db.session.query(model).filter(model.subscription_id == subscription_id).update(
-                          {model.subscription_id: None}, synchronize_session=False
-                      )
-
-              db.session.add(AuditLog(
-                  user_id=current_user.id,
-                  company_id=company_id,
-                  action="subscription_historical_hard_delete",
-                  entity="subscription",
-                  entity_id=subscription_id,
-                  detail=f"Suscripción histórica eliminada por SuperAdmin. ip={request.remote_addr or 'unknown'} resultado=ok",
-              ))
-              db.session.delete(subscription)
-  '''
-          if 'action == "delete_historical"' not in text.split('elif action == "delete_historical":', 1)[-1]:
-              if old_branch not in text:
-                  raise SystemExit('No se encontró el branch delete esperado')
-              text = text.replace(old_branch, new_branch, 1)
+            db.session.add(AuditLog(
+                user_id=current_user.id,
+                company_id=company_id,
+                action="subscription_historical_hard_delete",
+                entity="subscription",
+                entity_id=subscription_id,
+                detail=f"Suscripción histórica eliminada por SuperAdmin. ip={request.remote_addr or 'unknown'} resultado=ok",
+            ))
+            db.session.delete(subscription)
+'''
+              text = text.replace(needle, branch + needle, 1)
 
           saas.write_text(text, encoding='utf-8')
 
           tpl = Path('templates/saas/subscriptions.html')
           html = tpl.read_text(encoding='utf-8')
-          marker = '''                {% if is_historical_subscription %}
+          if 'data-action="delete_historical"' not in html:
+              marker = '''                {% if is_historical_subscription %}
                 <span class="small text-muted align-self-center">Sin acciones operativas</span>
                 {% endif %}
-  '''
-          replacement = '''                {% if is_historical_subscription %}
+'''
+              replacement = '''                {% if is_historical_subscription %}
                 <span class="small text-muted align-self-center">Histórica</span>
                 {% if 'delete_historical' in allowed_actions %}
                 <form method="post" action="{{ url_for('saas.subscriptions_action', subscription_id=subscription.id) }}" onsubmit="return confirm('¿Eliminar DEFINITIVAMENTE esta suscripción histórica? La empresa y sus datos actuales NO serán eliminados. Los registros financieros conservarán su historial, pero quedarán sin esta suscripción.');">
@@ -136,13 +116,14 @@ jobs:
                 </form>
                 {% endif %}
                 {% endif %}
-  '''
-          if 'data-action="delete_historical"' not in html:
+'''
               if marker not in html:
-                  raise SystemExit('No se encontró el bloque histórico esperado en la plantilla')
-              html = html.replace(marker, replacement, 1)
-              tpl.write_text(html, encoding='utf-8')
+                  raise SystemExit('No se encontró el bloque histórico de la plantilla')
+              tpl.write_text(html.replace(marker, replacement, 1), encoding='utf-8')
           PY
+
+      - name: Validate Python
+        run: python -m py_compile saas.py
 
       - name: Commit patch
         run: |
