@@ -51,7 +51,7 @@ class BillingService:
         )
 
         preference = self.mp_service.create_checkout_preference(
-            title=f"StockarMobile - {plan.name}" if False else f"StockarMobile - {plan.name}",
+            title=f"StockArmobile - {plan.name}",
             amount=float(plan.price or 0),
             currency=plan.currency or "ARS",
             external_reference=external_reference,
@@ -140,10 +140,7 @@ class BillingService:
             remote_status = str(remote.get("status") or "").strip().lower()
 
             if remote_status in {"authorized", "paused", "pending", "in_process"}:
-                if remote_status == "paused":
-                    remote = mp.update_preapproval(preapproval_id, {"status": "authorized"})
-                    remote_status = str(remote.get("status") or "").strip().lower()
-                elif remote_status in {"pending", "in_process"}:
+                if remote_status in {"paused", "pending", "in_process"}:
                     remote = mp.update_preapproval(preapproval_id, {"status": "authorized"})
                     remote_status = str(remote.get("status") or "").strip().lower()
 
@@ -171,16 +168,18 @@ class BillingService:
                     return subscription
 
             if remote_status in {"cancelled", "canceled", "expired"}:
-                from app import Company
+                from app import Company, User
+                from config.billing_config import load_billing_config
                 from services.mercadopago_subscription_service import MercadoPagoSubscriptionService
                 company = db_session.get(Company, subscription.company_id)
                 plan = getattr(subscription, "plan", None)
                 if company is None or plan is None:
                     raise RuntimeError("No se pudo determinar la empresa o el plan para crear una nueva autorización.")
-                payer_email = (getattr(company, "contact_email", None) or "").strip()
+                user = db_session.get(User, user_id) if user_id else None
+                payer_email = (getattr(user, "email", None) or getattr(company, "contact_email", None) or "").strip()
                 if not payer_email or "@" not in payer_email:
                     raise RuntimeError("La empresa necesita un email válido para reactivar el cobro automático.")
-                config = __import__("config.billing_config", fromlist=["load_billing_config"]).load_billing_config()
+                config = load_billing_config()
                 response = MercadoPagoSubscriptionService.create(
                     db_session=db_session,
                     company=company,
@@ -204,7 +203,6 @@ class BillingService:
                 db_session.flush()
                 return subscription
 
-        # No Mercado Pago preapproval exists: preserve the existing local behavior.
         SubscriptionService.run_command(
             db_session,
             SubscriptionService.ReactivateSubscriptionCommand(
