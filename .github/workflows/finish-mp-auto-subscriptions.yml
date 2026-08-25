@@ -1,0 +1,84 @@
+name: Finish Mercado Pago automatic subscriptions
+
+on:
+  push:
+    branches: [main]
+
+permissions:
+  contents: write
+
+jobs:
+  patch:
+    if: github.actor != 'github-actions[bot]'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Wire automatic subscription flow
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+
+          # company_billing.py: routes for creating and cancelling/re-activating automatic MP subscriptions.
+          path = Path('company_billing.py')
+          text = path.read_text(encoding='utf-8')
+
+          marker = '@bp.route("/subscription/change", methods=["POST"])\n'
+          route = '''@bp.route("/subscription/mercadopago/create", methods=["POST"])\n@company_member_required\ndef create_mercadopago_subscription():\n    from flask import session\n    from app import Company, db\n    from services.mercadopago_subscription_service import MercadoPagoSubscriptionService\n\n    company_id = getattr(current_user, "company_id", None)\n    company = Company.query.filter_by(id=company_id).first_or_404()\n    plan_id = request.form.get("plan_id", type=int)\n    plan = PlanService.get_plan(plan_id=plan_id) if plan_id else None\n    if plan is None:\n        subscription = SubscriptionService.active_subscription_for_company(company.id)\n        plan = getattr(subscription, "plan", None) if subscription else None\n    if plan is None:\n        flash("Seleccioná un plan antes de activar la suscripción automática.", "warning")\n        return redirect(url_for("company_billing.subscription_portal"))\n\n    try:\n        current_subscription = SubscriptionService.active_subscription_for_company(company.id)\n        if current_subscription is None or current_subscription.plan_id != plan.id:\n            command = SubscriptionService.ChangePlanCommand(\n                company_id=company.id,\n                plan_id=plan.id,\n                actor_user_id=current_user.id,\n                actor_role=getattr(current_user, "role", None),\n                origin="mercadopago_subscription",\n                ip_address=request.remote_addr,\n                idempotency_key=f"mp-auto-plan:{company.id}:{plan.id}:{current_user.id}",\n            )\n            result = SubscriptionService.run_command(db.session, command)\n            subscription = db.session.get(__import__("app").Subscription, result.subscription_id)\n        else:\n            subscription = current_subscription\n\n        if subscription is None:\n            raise RuntimeError("No se pudo obtener la suscripción de StockArMobile.")\n\n        payer_email = (getattr(current_user, "email", None) or getattr(company, "contact_email", None) or "").strip()\n        config = load_billing_config()\n        response = MercadoPagoSubscriptionService.create(\n            db_session=db.session,\n            company=company,\n            subscription=subscription,\n            plan=plan,\n            payer_email=payer_email,\n            notification_url=config.notification_url,\n            back_url=config.success_url,\n        )\n        db.session.commit()\n        checkout_url = response.get("init_point")\n        if not checkout_url:\n            raise RuntimeError("Mercado Pago no devolvió el enlace de autorización.")\n        return redirect(checkout_url)\n    except Exception as exc:\n        db.session.rollback()\n        current_app.logger.exception("Error creando suscripción automática Mercado Pago: %s", exc)\n        flash(f"No se pudo iniciar la suscripción automática: {exc}", "danger")\n        return redirect(url_for("company_billing.subscription_portal"))\n\n\n'''
+          if 'def create_mercadopago_subscription()' not in text:
+              if marker not in text:
+                  raise SystemExit('No se encontró marker para insertar ruta MP subscription')
+              text = text.replace(marker, route + marker, 1)
+
+          old_cancel = '''    BillingService.cancel_subscription(db.session, subscription=subscription, user_id=current_user.id)\n    record_audit(action="subscription_cancel", entity="subscription", entity_id=subscription.id, detail="Cancelacion de suscripcion solicitada")\n    db.session.commit()\n    flash("La suscripción se cancelará al finalizar el período actual.", "success")\n'''
+          new_cancel = '''    metadata = SubscriptionService._metadata_dict(subscription)\n    preapproval_id = str(metadata.get("mercadopago_preapproval_id") or "").strip()\n    try:\n        if preapproval_id:\n            from services.mercadopago_service import MercadoPagoService\n            MercadoPagoService().cancel_preapproval(preapproval_id)\n        BillingService.cancel_subscription(db.session, subscription=subscription, user_id=current_user.id)\n        record_audit(action="subscription_cancel", entity="subscription", entity_id=subscription.id, detail="Cancelacion de suscripcion solicitada" + (" en Mercado Pago" if preapproval_id else ""))\n        db.session.commit()\n        flash("La suscripción automática de Mercado Pago fue cancelada correctamente." if preapproval_id else "La suscripción se cancelará al finalizar el período actual.", "success")\n    except Exception as exc:\n        db.session.rollback()\n        current_app.logger.exception("Error cancelando suscripción Mercado Pago: %s", exc)\n        flash("No se pudo cancelar la suscripción automática en Mercado Pago. No se aplicaron cambios.", "danger")\n'''
+          if old_cancel in text:
+              text = text.replace(old_cancel, new_cancel, 1)
+
+          old_reactivate = '''    BillingService.reactivate_subscription(db.session, subscription=subscription, user_id=current_user.id)\n    record_audit(action="subscription_reactivate", entity="subscription", entity_id=subscription.id, detail="Renovacion automatica reactivada")\n    db.session.commit()\n    flash("Renovación automática reactivada.", "success")\n'''
+          new_reactivate = '''    metadata = SubscriptionService._metadata_dict(subscription)\n    preapproval_id = str(metadata.get("mercadopago_preapproval_id") or "").strip()\n    try:\n        if preapproval_id:\n            from services.mercadopago_service import MercadoPagoService\n            MercadoPagoService().update_preapproval(preapproval_id, {"status": "authorized"})\n        BillingService.reactivate_subscription(db.session, subscription=subscription, user_id=current_user.id)\n        record_audit(action="subscription_reactivate", entity="subscription", entity_id=subscription.id, detail="Renovacion automatica reactivada" + (" en Mercado Pago" if preapproval_id else ""))\n        db.session.commit()\n        flash("Renovación automática reactivada.", "success")\n    except Exception as exc:\n        db.session.rollback()\n        current_app.logger.exception("Error reactivando suscripción Mercado Pago: %s", exc)\n        flash("No se pudo reactivar la suscripción automática en Mercado Pago.", "danger")\n'''
+          if old_reactivate in text:
+              text = text.replace(old_reactivate, new_reactivate, 1)
+
+          path.write_text(text, encoding='utf-8')
+
+          # Template: add automatic subscription button while preserving QR checkout.
+          tpl = Path('templates/company_billing/portal.html')
+          html = tpl.read_text(encoding='utf-8')
+          marker = '''  {% if checkout_preview and checkout_preview.checkout_url %}\n'''
+          block = '''  <div class="card app-card mb-4 border-success">\n    <div class="card-header bg-white fw-bold">Métodos de pago Mercado Pago</div>\n    <div class="card-body">\n      <div class="row g-3">\n        <div class="col-md-6">\n          <div class="border rounded p-3 h-100">\n            <div class="d-flex justify-content-between align-items-start gap-2 mb-2">\n              <strong>Suscripción automática</strong>\n              <span class="badge text-bg-success">Recomendado</span>\n            </div>\n            <p class="text-muted small mb-3">Autorizá una vez el cobro mensual y Mercado Pago realizará los próximos cobros automáticamente.</p>\n            {% set mp_meta = subscription and SubscriptionService._metadata_dict(subscription) or {} %}\n            {% if mp_meta.get('mercadopago_preapproval_id') and mp_meta.get('mercadopago_status') == 'authorized' %}\n            <div class="text-success fw-semibold mb-2">✓ Cobro automático activo</div>\n            {% else %}\n            <form method="post" action="{{ url_for('company_billing.create_mercadopago_subscription') }}">\n              <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">\n              <input type="hidden" name="plan_id" value="{{ usage_snapshot.plan.id if usage_snapshot.plan else '' }}">\n              <button class="btn btn-success" type="submit">Activar suscripción automática</button>\n            </form>\n            {% endif %}\n          </div>\n        </div>\n        <div class="col-md-6">\n          <div class="border rounded p-3 h-100">\n            <strong>Mercado Pago QR</strong>\n            <p class="text-muted small mb-3">Continuá usando el QR/checkout manual que ya tenés configurado.</p>\n            <a class="btn btn-outline-primary" href="#planes-disponibles">Pagar con QR</a>\n          </div>\n        </div>\n      </div>\n    </div>\n  </div>\n\n'''
+          if 'Métodos de pago Mercado Pago' not in html:
+              if marker not in html:
+                  raise SystemExit('No se encontró marker del checkout en portal.html')
+              html = html.replace(marker, block + marker, 1)
+          tpl.write_text(html, encoding='utf-8')
+
+          # Webhook: sync preapproval lifecycle events. Authorized recurring payment
+          # events are linked through the preapproval id and also update next payment.
+          wh = Path('services/webhook_service.py')
+          w = wh.read_text(encoding='utf-8')
+          old = '''        payment_status = "pending"\n        result = {"status": "ignored", "event_key": event_key}\n\n        if event_type in {"payment", "payment.updated", "merchant_order", "topic_payment"}:\n'''
+          new = '''        payment_status = "pending"\n        result = {"status": "ignored", "event_key": event_key}\n\n        if event_type in {"subscription_preapproval", "subscription_preapproval_plan"}:\n            from services.mercadopago_subscription_service import MercadoPagoSubscriptionService\n            preapproval = self.mp_service.get_preapproval(data_id)\n            subscription = MercadoPagoSubscriptionService.sync_preapproval(db_session=db_session, preapproval=preapproval)\n            result = {"status": "processed", "subscription_id": getattr(subscription, "id", None), "event_key": event_key}\n\n        elif event_type == "subscription_authorized_payment":\n            from app import Payment\n            authorized = self.mp_service.get_authorized_payment(data_id)\n            preapproval_id = str(authorized.get("preapproval_id") or "").strip()\n            subscription = None\n            if preapproval_id:\n                rows = Subscription.query.filter(Subscription.metadata_json.contains(preapproval_id)).all()\n                subscription = next((row for row in rows if self._external_reference_parts((self._metadata_value(row, 'mercadopago_preapproval_id') or '')) is not None), None)\n            payment_info = authorized.get("payment") or {}\n            payment_id = str(payment_info.get("id") or "").strip()\n            if subscription is not None and payment_id:\n                payment = Payment.query.filter_by(payment_id=payment_id).first()\n                if payment is None:\n                    payment = Payment(payment_id=payment_id, external_reference=str(authorized.get("external_reference") or ""), company_id=subscription.company_id, subscription_id=subscription.id, user_id=None, amount=float(authorized.get("transaction_amount") or 0), currency=authorized.get("currency_id") or "ARS", status=str(payment_info.get("status") or authorized.get("summarized") or "pending"), payment_method="mercadopago_subscription", reference=preapproval_id, provider="mercadopago_subscription", payload_json=json.dumps(authorized, ensure_ascii=False), paid_at=self._parse_mp_datetime(authorized.get("debit_date")) if payment_info.get("status") == "approved" else None)\n                    db_session.add(payment)\n                else:\n                    payment.status = str(payment_info.get("status") or authorized.get("summarized") or payment.status)\n                    payment.payload_json = json.dumps(authorized, ensure_ascii=False)\n                if payment.status == "approved":\n                    SubscriptionService.run_command(db_session, SubscriptionService.RenewSubscriptionCommand(company_id=subscription.company_id, subscription_id=subscription.id, payment_status="approved", actor_user_id=payment.user_id, actor_role="system", origin="subscription_authorized_payment", idempotency_key=f"authorized-payment:{data_id}:{payment_id}"))\n            result = {"status": "processed", "subscription_id": getattr(subscription, "id", None), "payment_id": payment_id or None, "event_key": event_key}\n\n        elif event_type in {"payment", "payment.updated", "merchant_order", "topic_payment"}:\n'''
+          # Keep the patch conservative: use a simpler preapproval lookup helper if the exact old block exists.
+          if 'elif event_type == "subscription_authorized_payment"' not in w:
+              if old not in w:
+                  raise SystemExit('No se encontró bloque de webhook esperado')
+              # Avoid undefined helper in generated code by using direct metadata JSON parsing.
+              new = new.replace("next((row for row in rows if self._external_reference_parts((self._metadata_value(row, 'mercadopago_preapproval_id') or '')) is not None), None)", "next((row for row in rows if __import__('json').loads(row.metadata_json or '{}').get('mercadopago_preapproval_id') == preapproval_id), None)")
+              w = w.replace(old, new, 1)
+              wh.write_text(w, encoding='utf-8')
+          PY
+
+      - name: Validate Python
+        run: |
+          python -m py_compile company_billing.py services/mercadopago_service.py services/mercadopago_subscription_service.py services/webhook_service.py
+
+      - name: Commit patch and remove workflow
+        run: |
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add company_billing.py services/mercadopago_service.py services/mercadopago_subscription_service.py services/webhook_service.py templates/company_billing/portal.html
+          git rm .github/workflows/finish-mp-auto-subscriptions.yml
+          git diff --cached --quiet && exit 0 || true
+          git commit -m 'feat: enable Mercado Pago automatic subscription billing'
+          git push origin main
