@@ -120,8 +120,7 @@
               <span class="badge text-bg-success">Recomendado</span>
             </div>
             <p class="text-muted small mb-3">Autorizá una vez el cobro mensual y Mercado Pago realizará los próximos cobros automáticamente.</p>
-            {% set mp_meta = subscription and SubscriptionService._metadata_dict(subscription) or {} %}
-            {% if mp_meta.get('mercadopago_preapproval_id') and mp_meta.get('mercadopago_status') == 'authorized' %}
+            {% if mp_auto_active %}
             <div class="text-success fw-semibold mb-2">✓ Cobro automático activo</div>
             {% else %}
             <form method="post" action="{{ url_for('company_billing.create_mercadopago_subscription') }}">

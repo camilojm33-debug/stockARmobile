@@ -933,6 +933,8 @@ def subscription_portal():
 
     checkout_preview = session.pop("mp_checkout_preview", None)
     checkout_status = (request.args.get("checkout") or "").strip().lower()
+    subscription_metadata = SubscriptionService._metadata_dict(subscription) if subscription else {}
+    mp_auto_active = bool(subscription_metadata.get("mercadopago_preapproval_id") and str(subscription_metadata.get("mercadopago_status") or "").lower() == "authorized" and bool(getattr(subscription, "auto_renew", False)))
     selected_plan_id = request.args.get("selected_plan_id", type=int)
     selected_plan = next((p for p in plans if p.id == selected_plan_id), None)
     return render_template(
@@ -960,6 +962,7 @@ def subscription_portal():
         invoice_rows=invoice_rows,
         timeline_items=timeline_items,
         selected_plan=selected_plan,
+        mp_auto_active=mp_auto_active,
     )
 
 
