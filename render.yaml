@@ -3,7 +3,7 @@ services:
     name: stockarmobile
     env: python
     buildCommand: pip install -r requirements.txt
-    startCommand: python -m flask db upgrade && gunicorn wsgi:application
+    startCommand: python -m flask db upgrade heads && gunicorn wsgi:application
     envVars:
       - key: SECRET_KEY
         generateValue: true
