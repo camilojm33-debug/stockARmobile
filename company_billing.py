@@ -1031,6 +1031,67 @@ def create_checkout():
     return redirect(url_for("company_billing.subscription_portal", selected_plan_id=plan.id))
 
 
+@bp.route("/subscription/mercadopago/create", methods=["POST"])
+@company_member_required
+def create_mercadopago_subscription():
+    from flask import session
+    from app import Company, db
+    from services.mercadopago_subscription_service import MercadoPagoSubscriptionService
+
+    company_id = getattr(current_user, "company_id", None)
+    company = Company.query.filter_by(id=company_id).first_or_404()
+    plan_id = request.form.get("plan_id", type=int)
+    plan = PlanService.get_plan(plan_id=plan_id) if plan_id else None
+    if plan is None:
+        subscription = SubscriptionService.active_subscription_for_company(company.id)
+        plan = getattr(subscription, "plan", None) if subscription else None
+    if plan is None:
+        flash("Seleccioná un plan antes de activar la suscripción automática.", "warning")
+        return redirect(url_for("company_billing.subscription_portal"))
+
+    try:
+        current_subscription = SubscriptionService.active_subscription_for_company(company.id)
+        if current_subscription is None or current_subscription.plan_id != plan.id:
+            command = SubscriptionService.ChangePlanCommand(
+                company_id=company.id,
+                plan_id=plan.id,
+                actor_user_id=current_user.id,
+                actor_role=getattr(current_user, "role", None),
+                origin="mercadopago_subscription",
+                ip_address=request.remote_addr,
+                idempotency_key=f"mp-auto-plan:{company.id}:{plan.id}:{current_user.id}",
+            )
+            result = SubscriptionService.run_command(db.session, command)
+            subscription = db.session.get(__import__("app").Subscription, result.subscription_id)
+        else:
+            subscription = current_subscription
+
+        if subscription is None:
+            raise RuntimeError("No se pudo obtener la suscripción de StockArMobile.")
+
+        payer_email = (getattr(current_user, "email", None) or getattr(company, "contact_email", None) or "").strip()
+        config = load_billing_config()
+        response = MercadoPagoSubscriptionService.create(
+            db_session=db.session,
+            company=company,
+            subscription=subscription,
+            plan=plan,
+            payer_email=payer_email,
+            notification_url=config.notification_url,
+            back_url=config.success_url,
+        )
+        db.session.commit()
+        checkout_url = response.get("init_point")
+        if not checkout_url:
+            raise RuntimeError("Mercado Pago no devolvió el enlace de autorización.")
+        return redirect(checkout_url)
+    except Exception as exc:
+        db.session.rollback()
+        current_app.logger.exception("Error creando suscripción automática Mercado Pago: %s", exc)
+        flash(f"No se pudo iniciar la suscripción automática: {exc}", "danger")
+        return redirect(url_for("company_billing.subscription_portal"))
+
+
 @bp.route("/subscription/change", methods=["POST"])
 @company_member_required
 def subscription_change_confirm():
@@ -1131,10 +1192,20 @@ def cancel_subscription():
     if subscription is None:
         flash("No hay suscripción activa.", "warning")
         return redirect(url_for("company_billing.subscription_portal"))
-    BillingService.cancel_subscription(db.session, subscription=subscription, user_id=current_user.id)
-    record_audit(action="subscription_cancel", entity="subscription", entity_id=subscription.id, detail="Cancelacion de suscripcion solicitada")
-    db.session.commit()
-    flash("La suscripción se cancelará al finalizar el período actual.", "success")
+    metadata = SubscriptionService._metadata_dict(subscription)
+    preapproval_id = str(metadata.get("mercadopago_preapproval_id") or "").strip()
+    try:
+        if preapproval_id:
+            from services.mercadopago_service import MercadoPagoService
+            MercadoPagoService().cancel_preapproval(preapproval_id)
+        BillingService.cancel_subscription(db.session, subscription=subscription, user_id=current_user.id)
+        record_audit(action="subscription_cancel", entity="subscription", entity_id=subscription.id, detail="Cancelacion de suscripcion solicitada" + (" en Mercado Pago" if preapproval_id else ""))
+        db.session.commit()
+        flash("La suscripción automática de Mercado Pago fue cancelada correctamente." if preapproval_id else "La suscripción se cancelará al finalizar el período actual.", "success")
+    except Exception as exc:
+        db.session.rollback()
+        current_app.logger.exception("Error cancelando suscripción Mercado Pago: %s", exc)
+        flash("No se pudo cancelar la suscripción automática en Mercado Pago. No se aplicaron cambios.", "danger")
     return redirect(url_for("company_billing.subscription_portal"))
 
 
@@ -1148,10 +1219,20 @@ def reactivate_subscription():
     if subscription is None:
         flash("No hay suscripción para reactivar.", "warning")
         return redirect(url_for("company_billing.subscription_portal"))
-    BillingService.reactivate_subscription(db.session, subscription=subscription, user_id=current_user.id)
-    record_audit(action="subscription_reactivate", entity="subscription", entity_id=subscription.id, detail="Renovacion automatica reactivada")
-    db.session.commit()
-    flash("Renovación automática reactivada.", "success")
+    metadata = SubscriptionService._metadata_dict(subscription)
+    preapproval_id = str(metadata.get("mercadopago_preapproval_id") or "").strip()
+    try:
+        if preapproval_id:
+            from services.mercadopago_service import MercadoPagoService
+            MercadoPagoService().update_preapproval(preapproval_id, {"status": "authorized"})
+        BillingService.reactivate_subscription(db.session, subscription=subscription, user_id=current_user.id)
+        record_audit(action="subscription_reactivate", entity="subscription", entity_id=subscription.id, detail="Renovacion automatica reactivada" + (" en Mercado Pago" if preapproval_id else ""))
+        db.session.commit()
+        flash("Renovación automática reactivada.", "success")
+    except Exception as exc:
+        db.session.rollback()
+        current_app.logger.exception("Error reactivando suscripción Mercado Pago: %s", exc)
+        flash("No se pudo reactivar la suscripción automática en Mercado Pago.", "danger")
     return redirect(url_for("company_billing.subscription_portal"))
 
 

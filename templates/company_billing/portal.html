@@ -109,6 +109,40 @@
     </div>
   </div>
 
+  <div class="card app-card mb-4 border-success">
+    <div class="card-header bg-white fw-bold">Métodos de pago Mercado Pago</div>
+    <div class="card-body">
+      <div class="row g-3">
+        <div class="col-md-6">
+          <div class="border rounded p-3 h-100">
+            <div class="d-flex justify-content-between align-items-start gap-2 mb-2">
+              <strong>Suscripción automática</strong>
+              <span class="badge text-bg-success">Recomendado</span>
+            </div>
+            <p class="text-muted small mb-3">Autorizá una vez el cobro mensual y Mercado Pago realizará los próximos cobros automáticamente.</p>
+            {% set mp_meta = subscription and SubscriptionService._metadata_dict(subscription) or {} %}
+            {% if mp_meta.get('mercadopago_preapproval_id') and mp_meta.get('mercadopago_status') == 'authorized' %}
+            <div class="text-success fw-semibold mb-2">✓ Cobro automático activo</div>
+            {% else %}
+            <form method="post" action="{{ url_for('company_billing.create_mercadopago_subscription') }}">
+              <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+              <input type="hidden" name="plan_id" value="{{ usage_snapshot.plan.id if usage_snapshot.plan else '' }}">
+              <button class="btn btn-success" type="submit">Activar suscripción automática</button>
+            </form>
+            {% endif %}
+          </div>
+        </div>
+        <div class="col-md-6">
+          <div class="border rounded p-3 h-100">
+            <strong>Mercado Pago QR</strong>
+            <p class="text-muted small mb-3">Continuá usando el QR/checkout manual que ya tenés configurado.</p>
+            <a class="btn btn-outline-primary" href="#planes-disponibles">Pagar con QR</a>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
   {% if checkout_preview and checkout_preview.checkout_url %}
   <div class="card app-card mb-4 border-primary">
     <div class="card-header bg-white fw-bold d-flex justify-content-between align-items-center">

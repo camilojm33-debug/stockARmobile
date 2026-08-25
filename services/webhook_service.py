@@ -99,7 +99,35 @@ class WebhookService:
         payment_status = "pending"
         result = {"status": "ignored", "event_key": event_key}
 
-        if event_type in {"payment", "payment.updated", "merchant_order", "topic_payment"}:
+        if event_type in {"subscription_preapproval", "subscription_preapproval_plan"}:
+            from services.mercadopago_subscription_service import MercadoPagoSubscriptionService
+            preapproval = self.mp_service.get_preapproval(data_id)
+            subscription = MercadoPagoSubscriptionService.sync_preapproval(db_session=db_session, preapproval=preapproval)
+            result = {"status": "processed", "subscription_id": getattr(subscription, "id", None), "event_key": event_key}
+
+        elif event_type == "subscription_authorized_payment":
+            from app import Payment
+            authorized = self.mp_service.get_authorized_payment(data_id)
+            preapproval_id = str(authorized.get("preapproval_id") or "").strip()
+            subscription = None
+            if preapproval_id:
+                rows = Subscription.query.filter(Subscription.metadata_json.contains(preapproval_id)).all()
+                subscription = next((row for row in rows if __import__('json').loads(row.metadata_json or '{}').get('mercadopago_preapproval_id') == preapproval_id), None)
+            payment_info = authorized.get("payment") or {}
+            payment_id = str(payment_info.get("id") or "").strip()
+            if subscription is not None and payment_id:
+                payment = Payment.query.filter_by(payment_id=payment_id).first()
+                if payment is None:
+                    payment = Payment(payment_id=payment_id, external_reference=str(authorized.get("external_reference") or ""), company_id=subscription.company_id, subscription_id=subscription.id, user_id=None, amount=float(authorized.get("transaction_amount") or 0), currency=authorized.get("currency_id") or "ARS", status=str(payment_info.get("status") or authorized.get("summarized") or "pending"), payment_method="mercadopago_subscription", reference=preapproval_id, provider="mercadopago_subscription", payload_json=json.dumps(authorized, ensure_ascii=False), paid_at=self._parse_mp_datetime(authorized.get("debit_date")) if payment_info.get("status") == "approved" else None)
+                    db_session.add(payment)
+                else:
+                    payment.status = str(payment_info.get("status") or authorized.get("summarized") or payment.status)
+                    payment.payload_json = json.dumps(authorized, ensure_ascii=False)
+                if payment.status == "approved":
+                    SubscriptionService.run_command(db_session, SubscriptionService.RenewSubscriptionCommand(company_id=subscription.company_id, subscription_id=subscription.id, payment_status="approved", actor_user_id=payment.user_id, actor_role="system", origin="subscription_authorized_payment", idempotency_key=f"authorized-payment:{data_id}:{payment_id}"))
+            result = {"status": "processed", "subscription_id": getattr(subscription, "id", None), "payment_id": payment_id or None, "event_key": event_key}
+
+        elif event_type in {"payment", "payment.updated", "merchant_order", "topic_payment"}:
             payment_status = (payment_data.get("status") or "pending").lower()
             external_reference = payment_data.get("external_reference") or ""
             incoming_updated_at = self._event_updated_at(payment_data)
