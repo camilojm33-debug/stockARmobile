@@ -1,0 +1,94 @@
+name: Fix Mercado Pago loader final
+
+on:
+  push:
+    branches: [main]
+
+permissions:
+  contents: write
+
+jobs:
+  patch:
+    if: github.actor != 'github-actions[bot]'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Patch global loader and subscription form
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+
+          base = Path('templates/base_master.html')
+          text = base.read_text(encoding='utf-8')
+          old = '''      document.querySelectorAll('form[method="post"]').forEach(function(form) {
+        form.addEventListener('submit', function() {
+          const loading = document.getElementById('appLoading');
+          if (loading) loading.classList.add('show');
+        });
+      });'''
+          new = '''      document.querySelectorAll('form[method="post"]').forEach(function(form) {
+        form.addEventListener('submit', function() {
+          // Mercado Pago subscription creation must not use the global blocking loader.
+          if (form.matches('[data-mp-auto-subscription="true"]')) {
+            const loading = document.getElementById('appLoading');
+            if (loading) loading.classList.remove('show');
+            const button = form.querySelector('[data-mp-auto-subscription-button="true"]');
+            if (button) {
+              button.disabled = true;
+              button.textContent = 'Conectando con Mercado Pago…';
+            }
+            return;
+          }
+          const loading = document.getElementById('appLoading');
+          if (loading) loading.classList.add('show');
+        });
+      });'''
+          if old not in text:
+              raise SystemExit('No se encontró el listener global exacto')
+          base.write_text(text.replace(old, new, 1), encoding='utf-8')
+
+          portal = Path('templates/company_billing/portal.html')
+          p = portal.read_text(encoding='utf-8')
+          marker = "{% block extra_js %}"
+          if "id === 'mp-auto-subscription-final-guard'" not in p:
+              guard = '''{% block extra_js %}
+<script id="mp-auto-subscription-final-guard">
+(function () {
+  const form = document.querySelector('form[data-mp-auto-subscription="true"]');
+  if (!form) return;
+  form.addEventListener('submit', function () {
+    const overlay = document.getElementById('appLoading');
+    if (overlay) overlay.classList.remove('show');
+  }, true);
+})();
+</script>
+'''
+              if marker in p:
+                  p = p.replace(marker, guard, 1)
+              else:
+                  raise SystemExit('No se encontró extra_js en portal.html')
+              portal.write_text(p, encoding='utf-8')
+          PY
+
+      - name: Validate
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+          base = Path('templates/base_master.html').read_text(encoding='utf-8')
+          portal = Path('templates/company_billing/portal.html').read_text(encoding='utf-8')
+          assert "form.matches('[data-mp-auto-subscription=\"true\"]')" in base
+          assert 'mp-auto-subscription-final-guard' in portal
+          PY
+
+      - name: Commit patched files and remove workflow
+        run: |
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add templates/base_master.html templates/company_billing/portal.html
+          git rm .github/workflows/fix-mp-loader-final.yml
+          git diff --cached --quiet && exit 0
+          git commit -m 'fix: bypass blocking loader for Mercado Pago subscription'
+          git push origin main
