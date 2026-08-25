@@ -19,4 +19,6 @@ jobs:
           git config user.name 'github-actions[bot]'
           git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
           git commit -m 'restore: base template from known good revision' || exit 0
+          git rm .github/workflows/restore-base-template.yml
+          git commit -m 'chore: remove temporary restore workflow'
           git push
