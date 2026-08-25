@@ -208,6 +208,23 @@
     document.addEventListener('submit', function (event) {
       const form = event.target;
       if (!(form instanceof HTMLFormElement)) return;
+
+      // Mercado Pago automatic subscription is an ordinary online POST.
+      // It must bypass the application's global blocking loader and must NOT
+      // be handled by the offline queue/interceptor.
+      if (form.matches('form[data-mp-auto-subscription="true"]')) {
+        const loading = document.getElementById('appLoading');
+        if (loading) loading.classList.remove('show');
+        const button = form.querySelector('[data-mp-auto-subscription-button="true"]');
+        if (button) {
+          button.disabled = true;
+          button.textContent = 'Conectando con Mercado Pago…';
+        }
+        event.stopImmediatePropagation();
+        // Intentionally do not preventDefault: the native POST must continue.
+        return;
+      }
+
       if ((form.method || 'GET').toLowerCase() !== 'post') return;
       if (!navigator.onLine && isCriticalOfflineForm(form)) {
         event.preventDefault();
