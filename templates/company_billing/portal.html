@@ -135,7 +135,11 @@
           <div class="border rounded p-3 h-100">
             <strong>Mercado Pago QR</strong>
             <p class="text-muted small mb-3">Continuá usando el QR/checkout manual que ya tenés configurado.</p>
-            <a class="btn btn-outline-primary" href="#planes-disponibles">Pagar con QR</a>
+            <form method="post" action="{{ url_for('company_billing.create_checkout') }}" class="d-inline">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+    <input type="hidden" name="plan_id" value="{{ usage_snapshot.plan.id if usage_snapshot.plan else '' }}">
+    <button class="btn btn-outline-primary" type="submit" data-qr-checkout="true">Pagar con QR</button>
+  </form>
           </div>
         </div>
       </div>

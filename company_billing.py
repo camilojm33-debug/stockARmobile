@@ -1020,18 +1020,68 @@ def subscription_payment_pdf(payment_id):
 @bp.route("/checkout", methods=["POST"])
 @company_member_required
 def create_checkout():
-    from app import Company
+    from flask import session
+    from app import Company, db
 
     company_id = getattr(current_user, "company_id", None)
     company = Company.query.filter_by(id=company_id).first_or_404()
-
     plan_id = request.form.get("plan_id", type=int)
-    plan = PlanService.get_plan(plan_id=plan_id)
+    plan = PlanService.get_plan(plan_id=plan_id) if plan_id else None
     if plan is None:
-        flash("Plan no encontrado.", "danger")
+        subscription = SubscriptionService.active_subscription_for_company(company.id)
+        plan = getattr(subscription, "plan", None) if subscription else None
+    if plan is None:
+        flash("Seleccioná un plan antes de pagar.", "warning")
         return redirect(url_for("company_billing.subscription_portal"))
-    _ = company  # explicitamente mantenemos validación de empresa/tenant antes del redirect
-    return redirect(url_for("company_billing.subscription_portal", selected_plan_id=plan.id))
+
+    try:
+        current_subscription = SubscriptionService.active_subscription_for_company(company.id)
+        if current_subscription is None or current_subscription.plan_id != plan.id:
+            result = SubscriptionService.run_command(
+                db.session,
+                SubscriptionService.ChangePlanCommand(
+                    company_id=company.id,
+                    plan_id=plan.id,
+                    actor_user_id=current_user.id,
+                    actor_role=getattr(current_user, "role", None),
+                    origin="qr_checkout",
+                    ip_address=request.remote_addr,
+                    idempotency_key=f"qr-plan:{company.id}:{plan.id}:{current_user.id}",
+                ),
+            )
+            subscription = db.session.get(__import__("app").Subscription, result.subscription_id)
+        else:
+            subscription = current_subscription
+
+        if subscription is None:
+            raise RuntimeError("No se pudo obtener la suscripción para generar el checkout.")
+
+        payload = BillingService().create_checkout_for_plan(
+            db_session=db.session,
+            company=company,
+            plan=plan,
+            user=current_user,
+            subscription=subscription,
+        )
+        preference = payload["preference"]
+        checkout_url = preference.get("init_point") or preference.get("sandbox_init_point")
+        if not checkout_url:
+            raise RuntimeError("Mercado Pago no devolvió una URL de checkout válida.")
+
+        session["mp_checkout_preview"] = BillingService.checkout_preview_payload(
+            preference=preference,
+            plan=plan,
+            company=company,
+        )
+        db.session.commit()
+    except Exception as exc:
+        db.session.rollback()
+        current_app.logger.exception("Error creando checkout QR Mercado Pago: %s", exc)
+        flash(f"No se pudo generar el QR de Mercado Pago: {exc}", "danger")
+        return redirect(url_for("company_billing.subscription_portal"))
+
+    flash("QR de Mercado Pago generado. Escanealo o abrí el checkout para pagar.", "info")
+    return redirect(url_for("company_billing.subscription_portal", checkout="created"))
 
 
 @bp.route("/subscription/mercadopago/create", methods=["POST"])
