@@ -1,0 +1,30 @@
+name: Mercado Pago hotfix tests
+
+on:
+  push:
+    branches:
+      - fix/mercadopago-subscription-qr
+
+permissions:
+  contents: write
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    if: github.actor != 'github-actions[bot]'
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - run: pip install -r requirements.txt
+      - run: pytest -q tests/test_mercadopago_contracts.py
+      - name: Remove temporary test workflow
+        run: rm -f .github/workflows/test-mercadopago-hotfix.yml
+      - name: Commit cleanup
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add .github/workflows/test-mercadopago-hotfix.yml
+          git commit -m "chore: remove temporary Mercado Pago test workflow"
+          git push
