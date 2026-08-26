@@ -49,9 +49,11 @@
     {% endif %}
 
     <div class="ticket-actions no-print">
+      <button class="btn btn-success" type="button" id="thermal-print-btn" onclick="printThermalTicket()">Imprimir en térmica</button>
       <a class="btn btn-primary" href="javascript:window.print()">Imprimir</a>
       <a class="btn btn-outline-secondary" href="{{ url_for('sales.view_sale', sale_id=sale.id) }}">Volver</a>
     </div>
+    <div id="thermal-print-status" class="no-print small text-muted mt-2" role="status"></div>
   </div>
 </div>
 {% endblock %}
@@ -96,6 +98,56 @@
 
 {% block extra_scripts_inline %}
 <script>
+  const STOCKARMOBILE_PRINT_AGENT = 'http://127.0.0.1:8765';
+
+  function thermalTicketPayload() {
+    return {
+      printer_type: 'windows',
+      ticket: {
+        brand: {{ (ticket_brand or 'STOCK ARMOBILE')|tojson }},
+        sale_id: {{ sale.id|tojson }},
+        date: {{ (sale.date.strftime('%Y-%m-%d %H:%M') if sale.date else '')|tojson }},
+        customer: {{ (sale.customer or 'Consumidor final')|tojson }},
+        payment_method: {{ ((sale.payment_method or '') ~ ((' + ' ~ sale.secondary_payment_method) if sale.secondary_payment_method else ''))|tojson }},
+        items: [
+          {% for row in rows %}
+          {"name": {{ row.name|tojson }}, "quantity": {{ row.quantity|tojson }}, "unit_price": {{ row.price|tojson }}, "total": {{ row.total|tojson }}}{% if not loop.last %},{% endif %}
+          {% endfor %}
+        ],
+        subtotal: {{ sale.subtotal|tojson }},
+        discount: {{ sale.discount|tojson }},
+        surcharge: {{ sale.surcharge|tojson }},
+        tax: {{ sale.tax|tojson }},
+        total: {{ sale.total_amount|tojson }},
+        note: {{ (sale.note or '')|tojson }}
+      }
+    };
+  }
+
+  async function printThermalTicket() {
+    const button = document.getElementById('thermal-print-btn');
+    const status = document.getElementById('thermal-print-status');
+    button.disabled = true;
+    status.textContent = 'Conectando con la impresora térmica...';
+    try {
+      const health = await fetch(STOCKARMOBILE_PRINT_AGENT + '/health', { cache: 'no-store' });
+      if (!health.ok) throw new Error('Agente de impresión no disponible');
+      const response = await fetch(STOCKARMOBILE_PRINT_AGENT + '/print', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(thermalTicketPayload())
+      });
+      const result = await response.json();
+      if (!response.ok || !result.ok) throw new Error(result.error || 'No se pudo imprimir');
+      status.textContent = '✓ Ticket enviado a la impresora térmica.';
+    } catch (error) {
+      status.textContent = 'No se pudo usar la impresora térmica: ' + (error.message || error);
+      setTimeout(function() { window.print(); }, 250);
+    } finally {
+      button.disabled = false;
+    }
+  }
+
   window.addEventListener('load', function() {
     setTimeout(function() { window.print(); }, 400);
   });
