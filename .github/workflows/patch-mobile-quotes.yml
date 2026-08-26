@@ -23,26 +23,132 @@ jobs:
           path = Path('templates/presupuestos/form.html')
           text = path.read_text(encoding='utf-8')
 
-          text = text.replace('''  .panel-toggle {\n    border: 1px solid var(--app-line);\n    border-radius: 8px;\n    background: #fff;\n    padding: 0.1rem 0.5rem;\n    font-size: 0.8rem;\n  }\n''', '''  .panel-toggle {\n    border: 1px solid var(--app-line);\n    border-radius: 8px;\n    background: #fff !important;\n    color: var(--app-text, #0f172a) !important;\n    padding: 0.35rem 0.65rem;\n    min-width: 82px;\n    min-height: 38px;\n    font-size: 0.8rem;\n    font-weight: 600;\n    display: inline-flex;\n    align-items: center;\n    justify-content: center;\n    gap: 0.25rem;\n    white-space: nowrap;\n  }\n\n  .mobile-quote-actions {\n    display: none;\n  }\n''', 1)
+          text = text.replace('''  .panel-toggle {
+    border: 1px solid var(--app-line);
+    border-radius: 8px;
+    background: #fff;
+    padding: 0.1rem 0.5rem;
+    font-size: 0.8rem;
+  }
+''', '''  .panel-toggle {
+    border: 1px solid var(--app-line);
+    border-radius: 8px;
+    background: #fff !important;
+    color: var(--app-text, #0f172a) !important;
+    padding: 0.35rem 0.65rem;
+    min-width: 82px;
+    min-height: 38px;
+    font-size: 0.8rem;
+    font-weight: 600;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: 0.25rem;
+    white-space: nowrap;
+  }
 
-          text = text.replace('''  @media (max-width: 768px) {\n    .catalog-card {\n''', '''  @media (max-width: 768px) {\n    .mobile-quote-actions {\n      display: grid;\n      grid-template-columns: repeat(2, minmax(0, 1fr));\n      gap: 0.5rem;\n      position: sticky;\n      bottom: 0;\n      z-index: 50;\n      padding: 0.65rem;\n      margin: 0 -0.65rem -0.65rem;\n      background: rgba(255,255,255,0.96);\n      border-top: 1px solid var(--app-line);\n      box-shadow: 0 -8px 20px rgba(15,23,42,0.08);\n      backdrop-filter: blur(8px);\n    }\n\n    .mobile-quote-actions .btn {\n      min-height: 46px;\n      font-weight: 600;\n    }\n\n    .quote-actions-grid {\n      position: sticky;\n      bottom: 0;\n      z-index: 40;\n      padding-top: 0.65rem;\n      background: rgba(255,255,255,0.96);\n      box-shadow: 0 -8px 20px rgba(15,23,42,0.06);\n      backdrop-filter: blur(8px);\n    }\n\n    .catalog-card {\n''', 1)
+  .mobile-quote-actions {
+    display: none;
+  }
+''', 1)
 
-          text = text.replace('''    <div class="small text-muted">\n      Atajos: <strong>F2</strong> buscar, <strong>F3</strong> cliente, <strong>F4</strong> guardar, <strong>F5</strong> PDF, <strong>F6</strong> convertir, <strong>ESC</strong> limpiar, <strong>ENTER</strong> agregar.\n    </div>\n''', '''    <div class="d-none d-md-block small text-muted">\n      Seleccioná productos, completá los datos y usá las acciones visibles del presupuesto.\n    </div>\n''', 1)
+          text = text.replace('''  @media (max-width: 768px) {
+    .catalog-card {
+''', '''  @media (max-width: 768px) {
+    .mobile-quote-actions {
+      display: grid;
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+      gap: 0.5rem;
+      position: sticky;
+      bottom: 0;
+      z-index: 50;
+      padding: 0.65rem;
+      margin: 0 -0.65rem -0.65rem;
+      background: rgba(255,255,255,0.96);
+      border-top: 1px solid var(--app-line);
+      box-shadow: 0 -8px 20px rgba(15,23,42,0.08);
+      backdrop-filter: blur(8px);
+    }
 
-          text = text.replace('''          <div class="quote-actions-grid mb-2">\n''', '''          <div class="mobile-quote-actions mb-2" aria-label="Acciones rápidas del presupuesto">\n            <button type="button" class="btn btn-primary" onclick="document.getElementById('actionSave')?.click()"><i class="bi bi-save me-1"></i>Guardar</button>\n            <button type="button" class="btn btn-success" onclick="document.getElementById('actionSend')?.click()"><i class="bi bi-send me-1"></i>Enviar</button>\n            {% if quote %}\n            <a class="btn btn-outline-danger" href="{{ url_for('quotes.quote_pdf', quote_id=quote.id) }}" target="_blank"><i class="bi bi-filetype-pdf me-1"></i>PDF</a>\n            <a class="btn btn-outline-success" href="{{ url_for('quotes.share_whatsapp', quote_id=quote.id) }}"><i class="bi bi-whatsapp me-1"></i>WhatsApp</a>\n            <a class="btn btn-outline-secondary" href="{{ url_for('quotes.quote_print', quote_id=quote.id) }}" target="_blank"><i class="bi bi-printer me-1"></i>Imprimir</a>\n            <button type="submit" class="btn btn-warning" formaction="{{ url_for('quotes.convert_to_sale', quote_id=quote.id) }}" formmethod="post"><i class="bi bi-bag-check me-1"></i>Convertir</button>\n            {% endif %}\n          </div>\n\n          <div class="quote-actions-grid mb-2">\n''', 1)
+    .mobile-quote-actions .btn {
+      min-height: 46px;
+      font-weight: 600;
+    }
 
-          text = text.replace('''              <button type="button" class="panel-toggle d-xl-none focus-ring" data-panel-toggle="#panelCatalog" aria-label="Plegar catálogo">Plegar</button>\n''', '''              <button type="button" class="panel-toggle d-xl-none focus-ring" data-panel-toggle="#panelCatalog" aria-label="Plegar catálogo"><i class="bi bi-chevron-down"></i><span>Plegar</span></button>\n''', 1)
-          text = text.replace('''            <button type="button" class="panel-toggle d-xl-none focus-ring" data-panel-toggle="#panelLines" aria-label="Plegar líneas">Plegar</button>\n''', '''            <button type="button" class="panel-toggle d-xl-none focus-ring" data-panel-toggle="#panelLines" aria-label="Plegar líneas"><i class="bi bi-chevron-down"></i><span>Plegar</span></button>\n''', 1)
-          text = text.replace('''            <button type="button" class="panel-toggle d-xl-none focus-ring" data-panel-toggle="#panelContext" aria-label="Plegar datos y acciones">Plegar</button>\n''', '''            <button type="button" class="panel-toggle d-xl-none focus-ring" data-panel-toggle="#panelContext" aria-label="Plegar datos y acciones"><i class="bi bi-chevron-down"></i><span>Plegar</span></button>\n''', 1)
+    .quote-actions-grid {
+      position: sticky;
+      bottom: 0;
+      z-index: 40;
+      padding-top: 0.65rem;
+      background: rgba(255,255,255,0.96);
+      box-shadow: 0 -8px 20px rgba(15,23,42,0.06);
+      backdrop-filter: blur(8px);
+    }
 
-          text = text.replace('''        button.textContent = panel.classList.contains('collapsed') ? 'Expandir' : 'Plegar';\n''', '''        const collapsed = panel.classList.contains('collapsed');\n        const icon = button.querySelector('i');\n        const label = button.querySelector('span');\n        if (icon) icon.className = collapsed ? 'bi bi-chevron-right' : 'bi bi-chevron-down';\n        if (label) label.textContent = collapsed ? 'Expandir' : 'Plegar';\n''', 1)
+    .catalog-card {
+''', 1)
 
-          text = text.replace('''    if (window.matchMedia('(max-width: 1200px)').matches) {\n      const linesPanel = document.getElementById('panelLines');\n      const contextPanel = document.getElementById('panelContext');\n      if (linesPanel) linesPanel.classList.add('collapsed');\n      if (contextPanel) contextPanel.classList.add('collapsed');\n    }\n\n    installShortcuts();\n''', '''    if (window.matchMedia('(max-width: 1200px)').matches) {\n      const contextPanel = document.getElementById('panelContext');\n      if (contextPanel) contextPanel.classList.remove('collapsed');\n    }\n''', 1)
+          text = text.replace('''    <div class="small text-muted">
+      Atajos: <strong>F2</strong> buscar, <strong>F3</strong> cliente, <strong>F4</strong> guardar, <strong>F5</strong> PDF, <strong>F6</strong> convertir, <strong>ESC</strong> limpiar, <strong>ENTER</strong> agregar.
+    </div>
+''', '''    <div class="d-none d-md-block small text-muted">
+      Seleccioná productos, completá los datos y usá las acciones visibles del presupuesto.
+    </div>
+''', 1)
+
+          text = text.replace('''          <div class="quote-actions-grid mb-2">
+''', '''          <div class="mobile-quote-actions mb-2" aria-label="Acciones rápidas del presupuesto">
+            <button type="button" class="btn btn-primary" onclick="document.getElementById('actionSave')?.click()"><i class="bi bi-save me-1"></i>Guardar</button>
+            <button type="button" class="btn btn-success" onclick="document.getElementById('actionSend')?.click()"><i class="bi bi-send me-1"></i>Enviar</button>
+            {% if quote %}
+            <a class="btn btn-outline-danger" href="{{ url_for('quotes.quote_pdf', quote_id=quote.id) }}" target="_blank"><i class="bi bi-filetype-pdf me-1"></i>PDF</a>
+            <a class="btn btn-outline-success" href="{{ url_for('quotes.share_whatsapp', quote_id=quote.id) }}"><i class="bi bi-whatsapp me-1"></i>WhatsApp</a>
+            <a class="btn btn-outline-secondary" href="{{ url_for('quotes.quote_print', quote_id=quote.id) }}" target="_blank"><i class="bi bi-printer me-1"></i>Imprimir</a>
+            <button type="submit" class="btn btn-warning" formaction="{{ url_for('quotes.convert_to_sale', quote_id=quote.id) }}" formmethod="post"><i class="bi bi-bag-check me-1"></i>Convertir</button>
+            {% endif %}
+          </div>
+
+          <div class="quote-actions-grid mb-2">
+''', 1)
+
+          text = text.replace('''              <button type="button" class="panel-toggle d-xl-none focus-ring" data-panel-toggle="#panelCatalog" aria-label="Plegar catálogo">Plegar</button>
+''', '''              <button type="button" class="panel-toggle d-xl-none focus-ring" data-panel-toggle="#panelCatalog" aria-label="Plegar catálogo"><i class="bi bi-chevron-down"></i><span>Plegar</span></button>
+''', 1)
+          text = text.replace('''            <button type="button" class="panel-toggle d-xl-none focus-ring" data-panel-toggle="#panelLines" aria-label="Plegar líneas">Plegar</button>
+''', '''            <button type="button" class="panel-toggle d-xl-none focus-ring" data-panel-toggle="#panelLines" aria-label="Plegar líneas"><i class="bi bi-chevron-down"></i><span>Plegar</span></button>
+''', 1)
+          text = text.replace('''            <button type="button" class="panel-toggle d-xl-none focus-ring" data-panel-toggle="#panelContext" aria-label="Plegar datos y acciones">Plegar</button>
+''', '''            <button type="button" class="panel-toggle d-xl-none focus-ring" data-panel-toggle="#panelContext" aria-label="Plegar datos y acciones"><i class="bi bi-chevron-down"></i><span>Plegar</span></button>
+''', 1)
+
+          text = text.replace('''        button.textContent = panel.classList.contains('collapsed') ? 'Expandir' : 'Plegar';
+''', '''        const collapsed = panel.classList.contains('collapsed');
+        const icon = button.querySelector('i');
+        const label = button.querySelector('span');
+        if (icon) icon.className = collapsed ? 'bi bi-chevron-right' : 'bi bi-chevron-down';
+        if (label) label.textContent = collapsed ? 'Expandir' : 'Plegar';
+''', 1)
+
+          text = text.replace('''    if (window.matchMedia('(max-width: 1200px)').matches) {
+      const linesPanel = document.getElementById('panelLines');
+      const contextPanel = document.getElementById('panelContext');
+      if (linesPanel) linesPanel.classList.add('collapsed');
+      if (contextPanel) contextPanel.classList.add('collapsed');
+    }
+
+    installShortcuts();
+''', '''    if (window.matchMedia('(max-width: 1200px)').matches) {
+      const contextPanel = document.getElementById('panelContext');
+      if (contextPanel) contextPanel.classList.remove('collapsed');
+    }
+''', 1)
 
           start = text.find('  function installShortcuts() {')
-          if start == -1:\n              raise SystemExit('installShortcuts function not found')
+          if start == -1:
+              raise SystemExit('installShortcuts function not found')
           end = text.find('\n  function bootstrap() {', start)
-          if end == -1:\n              raise SystemExit('bootstrap marker not found')
+          if end == -1:
+              raise SystemExit('bootstrap marker not found')
           text = text[:start] + text[end+1:]
 
           path.write_text(text, encoding='utf-8')
