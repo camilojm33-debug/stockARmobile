@@ -155,9 +155,22 @@
   .panel-toggle {
     border: 1px solid var(--app-line);
     border-radius: 8px;
-    background: #fff;
-    padding: 0.1rem 0.5rem;
+    background: #fff !important;
+    color: var(--app-text, #0f172a) !important;
+    padding: 0.35rem 0.65rem;
+    min-width: 82px;
+    min-height: 38px;
     font-size: 0.8rem;
+    font-weight: 600;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: 0.25rem;
+    white-space: nowrap;
+  }
+
+  .mobile-quote-actions {
+    display: none;
   }
 
   @media (max-width: 1200px) {
@@ -184,6 +197,36 @@
   }
 
   @media (max-width: 768px) {
+    .mobile-quote-actions {
+      display: grid;
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+      gap: 0.5rem;
+      position: sticky;
+      bottom: 0;
+      z-index: 50;
+      padding: 0.65rem;
+      margin: 0 -0.65rem -0.65rem;
+      background: rgba(255,255,255,0.96);
+      border-top: 1px solid var(--app-line);
+      box-shadow: 0 -8px 20px rgba(15,23,42,0.08);
+      backdrop-filter: blur(8px);
+    }
+
+    .mobile-quote-actions .btn {
+      min-height: 46px;
+      font-weight: 600;
+    }
+
+    .quote-actions-grid {
+      position: sticky;
+      bottom: 0;
+      z-index: 40;
+      padding-top: 0.65rem;
+      background: rgba(255,255,255,0.96);
+      box-shadow: 0 -8px 20px rgba(15,23,42,0.06);
+      backdrop-filter: blur(8px);
+    }
+
     .catalog-card {
       grid-template-columns: 44px minmax(0, 1fr);
       align-items: start;
@@ -234,8 +277,8 @@
       <h1 class="h4 fw-bold mb-1">Constructor de presupuesto</h1>
       <p class="text-muted mb-0">Flujo rápido tipo POS para crear presupuestos en menos de 60 segundos.</p>
     </div>
-    <div class="small text-muted">
-      Atajos: <strong>F2</strong> buscar, <strong>F3</strong> cliente, <strong>F4</strong> guardar, <strong>F5</strong> PDF, <strong>F6</strong> convertir, <strong>ESC</strong> limpiar, <strong>ENTER</strong> agregar.
+    <div class="d-none d-md-block small text-muted">
+      Seleccioná productos, completá los datos y usá las acciones visibles del presupuesto.
     </div>
   </div>
 
@@ -251,7 +294,7 @@
             <strong>1. Catálogo</strong>
             <div class="d-flex align-items-center gap-2">
               <span class="badge text-bg-light" id="resultCounter">0 resultados</span>
-              <button type="button" class="panel-toggle d-xl-none focus-ring" data-panel-toggle="#panelCatalog" aria-label="Plegar catálogo">Plegar</button>
+              <button type="button" class="panel-toggle d-xl-none focus-ring" data-panel-toggle="#panelCatalog" aria-label="Plegar catálogo"><i class="bi bi-chevron-down"></i><span>Plegar</span></button>
             </div>
           </div>
           <label class="form-label mb-1" for="quoteProductSearch">Buscar producto</label>
@@ -275,7 +318,7 @@
           <strong>2. Productos del presupuesto</strong>
           <div class="d-flex align-items-center gap-2">
             <span class="small text-muted" id="lineCount">0 líneas</span>
-            <button type="button" class="panel-toggle d-xl-none focus-ring" data-panel-toggle="#panelLines" aria-label="Plegar líneas">Plegar</button>
+            <button type="button" class="panel-toggle d-xl-none focus-ring" data-panel-toggle="#panelLines" aria-label="Plegar líneas"><i class="bi bi-chevron-down"></i><span>Plegar</span></button>
           </div>
         </div>
         <div class="quote-panel-body">
@@ -288,7 +331,7 @@
         <div class="quote-panel-header">
           <div class="d-flex justify-content-between align-items-center">
             <strong>3. Cliente, condiciones y acciones</strong>
-            <button type="button" class="panel-toggle d-xl-none focus-ring" data-panel-toggle="#panelContext" aria-label="Plegar datos y acciones">Plegar</button>
+            <button type="button" class="panel-toggle d-xl-none focus-ring" data-panel-toggle="#panelContext" aria-label="Plegar datos y acciones"><i class="bi bi-chevron-down"></i><span>Plegar</span></button>
           </div>
         </div>
         <div class="quote-panel-body">
@@ -378,6 +421,17 @@
             <div class="d-flex justify-content-between"><span>Rentabilidad</span><strong id="sumProfitability">0.00%</strong></div>
             <hr class="my-2">
             <div class="d-flex justify-content-between fs-5"><span>Total</span><strong class="text-primary" id="sumTotal">$0.00</strong></div>
+          </div>
+
+          <div class="mobile-quote-actions mb-2" aria-label="Acciones rápidas del presupuesto">
+            <button type="button" class="btn btn-primary" onclick="document.getElementById('actionSave')?.click()"><i class="bi bi-save me-1"></i>Guardar</button>
+            <button type="button" class="btn btn-success" onclick="document.getElementById('actionSend')?.click()"><i class="bi bi-send me-1"></i>Enviar</button>
+            {% if quote %}
+            <a class="btn btn-outline-danger" href="{{ url_for('quotes.quote_pdf', quote_id=quote.id) }}" target="_blank"><i class="bi bi-filetype-pdf me-1"></i>PDF</a>
+            <a class="btn btn-outline-success" href="{{ url_for('quotes.share_whatsapp', quote_id=quote.id) }}"><i class="bi bi-whatsapp me-1"></i>WhatsApp</a>
+            <a class="btn btn-outline-secondary" href="{{ url_for('quotes.quote_print', quote_id=quote.id) }}" target="_blank"><i class="bi bi-printer me-1"></i>Imprimir</a>
+            <button type="submit" class="btn btn-warning" formaction="{{ url_for('quotes.convert_to_sale', quote_id=quote.id) }}" formmethod="post"><i class="bi bi-bag-check me-1"></i>Convertir</button>
+            {% endif %}
           </div>
 
           <div class="quote-actions-grid mb-2">
@@ -865,43 +919,6 @@
     document.getElementById('quoteForm').submit();
   }
 
-  function installShortcuts() {
-    document.addEventListener('keydown', (event) => {
-      const key = event.key;
-      if (key === 'F2') {
-        event.preventDefault();
-        document.getElementById('quoteProductSearch').focus();
-      } else if (key === 'F3') {
-        event.preventDefault();
-        document.getElementById('quoteClientSelect').focus();
-      } else if (key === 'F4') {
-        event.preventDefault();
-        submitQuote('save');
-      } else if (key === 'F5') {
-        if (quoteId) {
-          event.preventDefault();
-          window.open(`{{ url_for('quotes.quote_pdf', quote_id=quote.id if quote else 0) if quote else '' }}`, '_blank');
-        }
-      } else if (key === 'F6') {
-        const convertBtn = document.getElementById('actionConvert');
-        if (convertBtn && !convertBtn.disabled) {
-          event.preventDefault();
-          convertBtn.click();
-        }
-      } else if (key === 'Escape') {
-        if (items.length && window.confirm('¿Limpiar líneas del presupuesto?')) {
-          items.splice(0, items.length);
-          renderLines();
-          renderCatalog();
-        }
-      } else if (key === 'Enter' && document.activeElement?.id === 'quoteProductSearch') {
-        event.preventDefault();
-        const first = currentResults[0];
-        if (first) addProduct(first);
-      }
-    });
-  }
-
   function bootstrap() {
     initialItems.forEach((item) => {
       items.push({
@@ -983,18 +1000,18 @@
         const panel = selector ? document.querySelector(selector) : null;
         if (!panel) return;
         panel.classList.toggle('collapsed');
-        button.textContent = panel.classList.contains('collapsed') ? 'Expandir' : 'Plegar';
+        const collapsed = panel.classList.contains('collapsed');
+        const icon = button.querySelector('i');
+        const label = button.querySelector('span');
+        if (icon) icon.className = collapsed ? 'bi bi-chevron-right' : 'bi bi-chevron-down';
+        if (label) label.textContent = collapsed ? 'Expandir' : 'Plegar';
       });
     });
 
     if (window.matchMedia('(max-width: 1200px)').matches) {
-      const linesPanel = document.getElementById('panelLines');
       const contextPanel = document.getElementById('panelContext');
-      if (linesPanel) linesPanel.classList.add('collapsed');
-      if (contextPanel) contextPanel.classList.add('collapsed');
+      if (contextPanel) contextPanel.classList.remove('collapsed');
     }
-
-    installShortcuts();
   }
 
   bootstrap();
