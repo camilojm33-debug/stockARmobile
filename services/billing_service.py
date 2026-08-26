@@ -101,6 +101,27 @@ class BillingService:
 
     @staticmethod
     def cancel_subscription(db_session, *, subscription, user_id: int | None = None):
+        """Cancel Mercado Pago recurring billing and keep the current paid period."""
+        metadata = SubscriptionService._metadata_dict(subscription)
+        preapproval_id = str(metadata.get("mercadopago_preapproval_id") or "").strip()
+        remote_status = "not_configured"
+
+        if preapproval_id:
+            mp = MercadoPagoService()
+            remote = mp.get_preapproval(preapproval_id)
+            remote_status = str(remote.get("status") or "").strip().lower()
+            if remote_status in {"authorized", "paused", "pending", "in_process"}:
+                canceled = mp.cancel_preapproval(preapproval_id)
+                remote_status = str(canceled.get("status") or "canceled").strip().lower()
+                if remote_status not in {"canceled", "cancelled"}:
+                    raise RuntimeError(
+                        f"Mercado Pago no confirmó la cancelación de la suscripción automática (estado: {remote_status or 'desconocido'})."
+                    )
+            elif remote_status not in {"canceled", "cancelled", "expired"}:
+                raise RuntimeError(
+                    f"No se puede cancelar la suscripción automática de Mercado Pago porque su estado actual es '{remote_status or 'desconocido'}'."
+                )
+
         SubscriptionService.run_command(
             db_session,
             SubscriptionService.CancelSubscriptionCommand(
@@ -112,14 +133,23 @@ class BillingService:
                 cancel_at_period_end=True,
             ),
         )
+        SubscriptionService._set_metadata(
+            subscription,
+            {
+                "mercadopago_cancellation_requested": True,
+                "mercadopago_cancellation_status": remote_status,
+                "cancel_requested_by_user_id": user_id,
+            },
+        )
         NotificationService.record_event(
             db_session,
             company_id=subscription.company_id,
             subscription_id=subscription.id,
             event="subscription_cancel_requested",
-            detail="El usuario solicito cancelar al final del periodo.",
+            detail="Mercado Pago cancelado y renovación local deshabilitada al finalizar el periodo vigente.",
             source="portal",
             status="cancelled",
+            payload={"preapproval_id": preapproval_id, "remote_status": remote_status},
             user_id=user_id,
         )
         return subscription
