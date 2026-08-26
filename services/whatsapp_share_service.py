@@ -62,6 +62,17 @@ def _format_quantity(value: str) -> str:
     return str(int(number)) if number.is_integer() else f"{number:.3f}".rstrip("0").rstrip(".")
 
 
+def _format_money(value: float, currency: str) -> str:
+    """Customer-facing money format: $5.600 instead of ARS 5600.00."""
+    amount = float(value)
+    if currency == "ARS":
+        if amount.is_integer():
+            return f"${int(amount):,}".replace(",", ".")
+        integer, decimals = f"{amount:,.2f}".split(".", 1)
+        return f"${integer.replace(',', '.')},{decimals}"
+    return f"{currency} {amount:,.2f}"
+
+
 def _professionalize_item_line(line: str) -> str:
     """Collapse duplicated customer-facing price/subtotal information."""
     match = _QUOTE_LINE_RE.match(line.strip())
@@ -71,9 +82,11 @@ def _professionalize_item_line(line: str) -> str:
         currency = match.group("currency")
         unit = float(match.group("unit"))
         total = float(match.group("total"))
+        unit_text = _format_money(unit, currency)
+        total_text = _format_money(total, currency)
         if qty == 1:
-            return f"{match.group('prefix')}{name}: {currency} {unit:.2f}"
-        return f"{match.group('prefix')}{name}: {_format_quantity(match.group('qty'))} x {currency} {unit:.2f} = {currency} {total:.2f}"
+            return f"{match.group('prefix')}{name}: {unit_text}"
+        return f"{match.group('prefix')}{name}: {_format_quantity(match.group('qty'))} x {unit_text} = {total_text}"
 
     match = _TICKET_LINE_RE.match(line.strip())
     if match:
@@ -81,10 +94,12 @@ def _professionalize_item_line(line: str) -> str:
         name = match.group("name").strip()
         unit = float(match.group("unit"))
         total = float(match.group("total"))
+        unit_text = _format_money(unit, "ARS")
+        total_text = _format_money(total, "ARS")
         if qty == 1:
-            return f"{name}: ${unit:.2f}"
+            return f"{name}: {unit_text}"
         measure = f" {match.group('measure').strip()}" if match.group("measure") else ""
-        return f"{name}: {_format_quantity(match.group('qty'))} x ${unit:.2f}{measure} = ${total:.2f}"
+        return f"{name}: {_format_quantity(match.group('qty'))} x {unit_text}{measure} = {total_text}"
 
     return line
 
