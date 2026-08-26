@@ -12,7 +12,7 @@ from urllib.parse import quote
 _QUOTE_LINE_RE = re.compile(
     r"^(?P<prefix>-\s*)(?P<name>.+?)\s*\|\s*Cant:\s*(?P<qty>[0-9]+(?:\.[0-9]+)?)\s*\|\s*"
     r"Precio:\s*(?P<currency>[A-Z]{3})\s*(?P<unit>[0-9]+(?:\.[0-9]+)?)\s*\|\s*"
-    r"Subtotal:\s*(?P=subcurrency>[A-Z]{3})\s*(?P<total>[0-9]+(?:\.[0-9]+)?)$"
+    r"Subtotal:\s*(?P=currency)\s*(?P<total>[0-9]+(?:\.[0-9]+)?)$"
 )
 
 _TICKET_LINE_RE = re.compile(
