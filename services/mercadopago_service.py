@@ -119,8 +119,11 @@ class MercadoPagoService:
             },
             "back_url": back_url,
             "notification_url": notification_url,
+            # Mercado Pago documents this explicitly for the pending-payment
+            # subscription flow. Do not rely on an API default that may change.
+            "status": "pending",
         }
-        self._logger().info("Mercado Pago preapproval: company flow, amount=%s currency=%s payer=%s", amount, currency, payer_email)
+        self._logger().info("Mercado Pago preapproval: company flow, amount=%s currency=%s payer=%s status=pending", amount, currency, payer_email)
         return self._request("POST", "/preapproval", payload=payload, idempotency_key=f"preapproval:{external_reference}")
 
     def update_preapproval(self, preapproval_id: str, payload: dict[str, Any]) -> dict[str, Any]:
@@ -129,8 +132,6 @@ class MercadoPagoService:
         current = self.get_preapproval(preapproval_id)
         current_status = str(current.get("status") or "").strip().lower()
         if requested_status == "authorized" and current_status in {"cancelled", "canceled", "expired"}:
-            # A canceled/expired preapproval cannot safely be forced back to authorized.
-            # The caller's billing service will create a fresh authorization flow.
             self._logger().warning("Mercado Pago preapproval %s is %s; refusing invalid authorized transition", preapproval_id, current_status)
             return current
         if requested_status == "authorized" and current_status == "authorized":
