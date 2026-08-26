@@ -51,37 +51,27 @@ jobs:
 
           new = '''    @staticmethod
     def cancel_subscription(db_session, *, subscription, user_id: int | None = None):
-        """Cancel the Mercado Pago recurring authorization and schedule local end-of-period cancellation.
-
-        Mercado Pago is the source of truth for recurring billing. The remote
-        preapproval is canceled first so no future automatic charge can be issued.
-        The local subscription keeps the current paid period until its existing
-        next_billing_date/ends_at, while renewal is disabled immediately.
-        """
+        """Cancel Mercado Pago recurring billing and keep the current paid period."""
         metadata = SubscriptionService._metadata_dict(subscription)
         preapproval_id = str(metadata.get("mercadopago_preapproval_id") or "").strip()
         remote_status = "not_configured"
 
         if preapproval_id:
-            remote = MercadoPagoService().get_preapproval(preapproval_id)
+            mp = MercadoPagoService()
+            remote = mp.get_preapproval(preapproval_id)
             remote_status = str(remote.get("status") or "").strip().lower()
             if remote_status in {"authorized", "paused", "pending", "in_process"}:
-                canceled = MercadoPagoService().cancel_preapproval(preapproval_id)
+                canceled = mp.cancel_preapproval(preapproval_id)
                 remote_status = str(canceled.get("status") or "canceled").strip().lower()
                 if remote_status not in {"canceled", "cancelled"}:
                     raise RuntimeError(
                         f"Mercado Pago no confirmó la cancelación de la suscripción automática (estado: {remote_status or 'desconocido'})."
                     )
-            elif remote_status in {"canceled", "cancelled", "expired"}:
-                # Already canceled remotely: continue idempotently with the local state.
-                pass
-            else:
+            elif remote_status not in {"canceled", "cancelled", "expired"}:
                 raise RuntimeError(
                     f"No se puede cancelar la suscripción automática de Mercado Pago porque su estado actual es '{remote_status or 'desconocido'}'."
                 )
 
-        # Keep the local subscription available until the already-paid period ends,
-        # but stop any local renewal immediately.
         SubscriptionService.run_command(
             db_session,
             SubscriptionService.CancelSubscriptionCommand(
@@ -98,7 +88,6 @@ jobs:
             {
                 "mercadopago_cancellation_requested": True,
                 "mercadopago_cancellation_status": remote_status,
-                "mercadopago_cancellation_at": __import__('datetime').datetime.now(__import__('datetime').timezone.utc).isoformat(),
                 "cancel_requested_by_user_id": user_id,
             },
         )
@@ -125,55 +114,42 @@ jobs:
         run: |
           cat > tests/test_billing_service_cancel.py <<'PY'
           import json
-          
           from services.billing_service import BillingService
-          
-          
-          class FakeQueryResult:
-              def __init__(self, row):
-                  self.row = row
-          
-          
+
           class FakeSubscription:
               company_id = 10
               id = 20
               metadata_json = json.dumps({"mercadopago_preapproval_id": "preapproval-123"})
-          
-          
-          def test_cancel_subscription_cancels_remote_preapproval_before_local_command(monkeypatch):
+
+          def test_cancel_subscription_cancels_remote_before_local(monkeypatch):
               subscription = FakeSubscription()
               calls = []
-          
+
               class FakeMP:
                   def get_preapproval(self, preapproval_id):
                       calls.append(("get", preapproval_id))
                       return {"id": preapproval_id, "status": "authorized"}
-          
                   def cancel_preapproval(self, preapproval_id):
                       calls.append(("cancel", preapproval_id))
                       return {"id": preapproval_id, "status": "canceled"}
-          
+
               class FakeSubscriptionService:
                   @staticmethod
                   def _metadata_dict(value):
                       return json.loads(value.metadata_json)
-          
                   CancelSubscriptionCommand = staticmethod(lambda **kwargs: kwargs)
-          
                   @staticmethod
                   def run_command(db_session, command):
                       calls.append(("local", command))
-          
                   @staticmethod
                   def _set_metadata(value, updates):
                       value.metadata_json = json.dumps({**json.loads(value.metadata_json), **updates})
-          
+
               monkeypatch.setattr("services.billing_service.MercadoPagoService", FakeMP)
               monkeypatch.setattr("services.billing_service.SubscriptionService", FakeSubscriptionService)
               monkeypatch.setattr("services.billing_service.NotificationService.record_event", lambda *args, **kwargs: calls.append(("event", kwargs)))
-          
+
               BillingService.cancel_subscription(object(), subscription=subscription, user_id=99)
-          
               assert [item[0] for item in calls[:2]] == ["get", "cancel"]
               assert any(item[0] == "local" for item in calls)
               assert json.loads(subscription.metadata_json)["mercadopago_cancellation_requested"] is True
