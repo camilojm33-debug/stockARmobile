@@ -2,7 +2,23 @@
 
 from __future__ import annotations
 
+import re
 from urllib.parse import quote
+
+
+# WhatsApp messages are customer-facing documents. Keep each product on one
+# clear commercial line instead of repeating unit price and subtotal when the
+# quantity is one.
+_QUOTE_LINE_RE = re.compile(
+    r"^(?P<prefix>-\s*)(?P<name>.+?)\s*\|\s*Cant:\s*(?P<qty>[0-9]+(?:\.[0-9]+)?)\s*\|\s*"
+    r"Precio:\s*(?P<currency>[A-Z]{3})\s*(?P<unit>[0-9]+(?:\.[0-9]+)?)\s*\|\s*"
+    r"Subtotal:\s*(?P=subcurrency>[A-Z]{3})\s*(?P<total>[0-9]+(?:\.[0-9]+)?)$"
+)
+
+_TICKET_LINE_RE = re.compile(
+    r"^(?P<name>.+?):\s*\$(?P<unit>[0-9]+(?:\.[0-9]+)?)\s*x\s*(?P<qty>[0-9]+(?:\.[0-9]+)?)"
+    r"(?:\s+(?P<measure>[^=]+?))?\s*=\s*\$(?P<total>[0-9]+(?:\.[0-9]+)?)$"
+)
 
 
 def _remove_argentina_mobile_prefix(digits: str) -> str:
@@ -41,9 +57,45 @@ def normalize_whatsapp_number(value: str | None) -> str:
     return digits
 
 
+def _format_quantity(value: str) -> str:
+    number = float(value)
+    return str(int(number)) if number.is_integer() else f"{number:.3f}".rstrip("0").rstrip(".")
+
+
+def _professionalize_item_line(line: str) -> str:
+    """Collapse duplicated customer-facing price/subtotal information."""
+    match = _QUOTE_LINE_RE.match(line.strip())
+    if match:
+        qty = float(match.group("qty"))
+        name = match.group("name").strip()
+        currency = match.group("currency")
+        unit = float(match.group("unit"))
+        total = float(match.group("total"))
+        if qty == 1:
+            return f"{match.group('prefix')}{name}: {currency} {unit:.2f}"
+        return f"{match.group('prefix')}{name}: {_format_quantity(match.group('qty'))} x {currency} {unit:.2f} = {currency} {total:.2f}"
+
+    match = _TICKET_LINE_RE.match(line.strip())
+    if match:
+        qty = float(match.group("qty"))
+        name = match.group("name").strip()
+        unit = float(match.group("unit"))
+        total = float(match.group("total"))
+        if qty == 1:
+            return f"{name}: ${unit:.2f}"
+        measure = f" {match.group('measure').strip()}" if match.group("measure") else ""
+        return f"{name}: {_format_quantity(match.group('qty'))} x ${unit:.2f}{measure} = ${total:.2f}"
+
+    return line
+
+
+def _professionalize_whatsapp_message(message: str) -> str:
+    return "\n".join(_professionalize_item_line(line) for line in (message or "").splitlines())
+
+
 def build_whatsapp_share_url(*, phone: str | None, message: str, document_url: str | None = None, document_label: str = "PDF") -> str:
     normalized_phone = normalize_whatsapp_number(phone)
-    base_message = (message or "").strip()
+    base_message = _professionalize_whatsapp_message((message or "").strip())
     if document_url:
         link_line = f"{document_label}: {document_url}"
         full_message = f"{base_message}\n\n{link_line}" if base_message else link_line
