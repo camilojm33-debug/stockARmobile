@@ -1,0 +1,196 @@
+name: Patch Mercado Pago cancellation
+
+on:
+  push:
+    branches:
+      - fix/mercadopago-cancel
+
+permissions:
+  contents: write
+
+jobs:
+  patch:
+    runs-on: ubuntu-latest
+    if: github.actor != 'github-actions[bot]'
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Patch cancellation flow
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+
+          path = Path('services/billing_service.py')
+          text = path.read_text(encoding='utf-8')
+
+          old = '''    @staticmethod
+    def cancel_subscription(db_session, *, subscription, user_id: int | None = None):
+        SubscriptionService.run_command(
+            db_session,
+            SubscriptionService.CancelSubscriptionCommand(
+                company_id=subscription.company_id,
+                subscription_id=subscription.id,
+                actor_user_id=user_id,
+                origin="portal",
+                idempotency_key=f"cancel:{subscription.company_id}:{subscription.id}:{user_id or 0}",
+                cancel_at_period_end=True,
+            ),
+        )
+        NotificationService.record_event(
+            db_session,
+            company_id=subscription.company_id,
+            subscription_id=subscription.id,
+            event="subscription_cancel_requested",
+            detail="El usuario solicito cancelar al final del periodo.",
+            source="portal",
+            status="cancelled",
+            user_id=user_id,
+        )
+        return subscription
+'''
+
+          new = '''    @staticmethod
+    def cancel_subscription(db_session, *, subscription, user_id: int | None = None):
+        """Cancel the Mercado Pago recurring authorization and schedule local end-of-period cancellation.
+
+        Mercado Pago is the source of truth for recurring billing. The remote
+        preapproval is canceled first so no future automatic charge can be issued.
+        The local subscription keeps the current paid period until its existing
+        next_billing_date/ends_at, while renewal is disabled immediately.
+        """
+        metadata = SubscriptionService._metadata_dict(subscription)
+        preapproval_id = str(metadata.get("mercadopago_preapproval_id") or "").strip()
+        remote_status = "not_configured"
+
+        if preapproval_id:
+            remote = MercadoPagoService().get_preapproval(preapproval_id)
+            remote_status = str(remote.get("status") or "").strip().lower()
+            if remote_status in {"authorized", "paused", "pending", "in_process"}:
+                canceled = MercadoPagoService().cancel_preapproval(preapproval_id)
+                remote_status = str(canceled.get("status") or "canceled").strip().lower()
+                if remote_status not in {"canceled", "cancelled"}:
+                    raise RuntimeError(
+                        f"Mercado Pago no confirmó la cancelación de la suscripción automática (estado: {remote_status or 'desconocido'})."
+                    )
+            elif remote_status in {"canceled", "cancelled", "expired"}:
+                # Already canceled remotely: continue idempotently with the local state.
+                pass
+            else:
+                raise RuntimeError(
+                    f"No se puede cancelar la suscripción automática de Mercado Pago porque su estado actual es '{remote_status or 'desconocido'}'."
+                )
+
+        # Keep the local subscription available until the already-paid period ends,
+        # but stop any local renewal immediately.
+        SubscriptionService.run_command(
+            db_session,
+            SubscriptionService.CancelSubscriptionCommand(
+                company_id=subscription.company_id,
+                subscription_id=subscription.id,
+                actor_user_id=user_id,
+                origin="portal",
+                idempotency_key=f"cancel:{subscription.company_id}:{subscription.id}:{user_id or 0}",
+                cancel_at_period_end=True,
+            ),
+        )
+        SubscriptionService._set_metadata(
+            subscription,
+            {
+                "mercadopago_cancellation_requested": True,
+                "mercadopago_cancellation_status": remote_status,
+                "mercadopago_cancellation_at": __import__('datetime').datetime.now(__import__('datetime').timezone.utc).isoformat(),
+                "cancel_requested_by_user_id": user_id,
+            },
+        )
+        NotificationService.record_event(
+            db_session,
+            company_id=subscription.company_id,
+            subscription_id=subscription.id,
+            event="subscription_cancel_requested",
+            detail="Mercado Pago cancelado y renovación local deshabilitada al finalizar el periodo vigente.",
+            source="portal",
+            status="cancelled",
+            payload={"preapproval_id": preapproval_id, "remote_status": remote_status},
+            user_id=user_id,
+        )
+        return subscription
+'''
+
+          if old not in text:
+              raise SystemExit('cancel_subscription block not found')
+          path.write_text(text.replace(old, new, 1), encoding='utf-8')
+          PY
+
+      - name: Add cancellation regression test
+        run: |
+          cat > tests/test_billing_service_cancel.py <<'PY'
+          import json
+          
+          from services.billing_service import BillingService
+          
+          
+          class FakeQueryResult:
+              def __init__(self, row):
+                  self.row = row
+          
+          
+          class FakeSubscription:
+              company_id = 10
+              id = 20
+              metadata_json = json.dumps({"mercadopago_preapproval_id": "preapproval-123"})
+          
+          
+          def test_cancel_subscription_cancels_remote_preapproval_before_local_command(monkeypatch):
+              subscription = FakeSubscription()
+              calls = []
+          
+              class FakeMP:
+                  def get_preapproval(self, preapproval_id):
+                      calls.append(("get", preapproval_id))
+                      return {"id": preapproval_id, "status": "authorized"}
+          
+                  def cancel_preapproval(self, preapproval_id):
+                      calls.append(("cancel", preapproval_id))
+                      return {"id": preapproval_id, "status": "canceled"}
+          
+              class FakeSubscriptionService:
+                  @staticmethod
+                  def _metadata_dict(value):
+                      return json.loads(value.metadata_json)
+          
+                  CancelSubscriptionCommand = staticmethod(lambda **kwargs: kwargs)
+          
+                  @staticmethod
+                  def run_command(db_session, command):
+                      calls.append(("local", command))
+          
+                  @staticmethod
+                  def _set_metadata(value, updates):
+                      value.metadata_json = json.dumps({**json.loads(value.metadata_json), **updates})
+          
+              monkeypatch.setattr("services.billing_service.MercadoPagoService", FakeMP)
+              monkeypatch.setattr("services.billing_service.SubscriptionService", FakeSubscriptionService)
+              monkeypatch.setattr("services.billing_service.NotificationService.record_event", lambda *args, **kwargs: calls.append(("event", kwargs)))
+          
+              BillingService.cancel_subscription(object(), subscription=subscription, user_id=99)
+          
+              assert [item[0] for item in calls[:2]] == ["get", "cancel"]
+              assert any(item[0] == "local" for item in calls)
+              assert json.loads(subscription.metadata_json)["mercadopago_cancellation_requested"] is True
+          PY
+
+      - name: Run cancellation regression test
+        run: |
+          python -m pip install pytest
+          pytest -q tests/test_billing_service_cancel.py
+
+      - name: Remove temporary workflow
+        run: rm -f .github/workflows/patch-mercadopago-cancel.yml
+
+      - name: Commit patch
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add services/billing_service.py tests/test_billing_service_cancel.py .github/workflows/patch-mercadopago-cancel.yml
+          git diff --cached --quiet || git commit -m "fix: cancel Mercado Pago recurring subscription"
+          git push
