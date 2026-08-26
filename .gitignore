@@ -1,6 +1,21 @@
 .venv/
 __pycache__/
 .pytest_cache/
-instance/*.db
-instance/backups/
 *.pyc
+
+# Local databases and backups
+*.db
+*.sqlite
+*.sqlite3
+instance/backups/
+
+# Local environment and secrets
+.env
+.env.*
+!.env.example
+
+# Temporary test/reproduction artifacts
+_repro_*
+temp_*
+*.tmp
+*.log
