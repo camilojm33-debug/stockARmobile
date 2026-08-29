@@ -6,149 +6,54 @@
   <meta name="theme-color" content="#1769e0">
   <title>Presupuesto {{ quote.number or quote.id }}</title>
   <style>
-    :root{
-      font-family:Inter,system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;
-      color:#172033;background:#f3f6fa;--primary:#1769e0;--line:#e3e8ef;--muted:#6b7484;--soft:#f7f9fc;
-    }
-    *{box-sizing:border-box}
-    body{margin:0;background:linear-gradient(180deg,#eef3f9 0%,#f8fafc 55%,#f3f6fa 100%);min-height:100vh}
-    button,a{font:inherit}
-    .wrap{max-width:980px;margin:0 auto;padding:20px 14px 42px}
-    .card{background:#fff;border:1px solid var(--line);border-radius:22px;box-shadow:0 16px 45px rgba(23,32,51,.09);overflow:hidden}
-    .top{padding:24px 28px;border-bottom:1px solid #edf0f4;display:flex;align-items:center;justify-content:space-between;gap:20px;flex-wrap:wrap}
-    .brand{display:flex;align-items:center;gap:14px;min-width:0}
-    .logo{width:60px;height:60px;border-radius:14px;object-fit:contain;border:1px solid var(--line);background:#fff;padding:5px}
-    .brand-name{font-size:20px;font-weight:800;margin:0 0 3px;overflow-wrap:anywhere}.brand-sub{font-size:13px;color:var(--muted)}
-    .status-pill{display:inline-flex;align-items:center;gap:6px;padding:8px 12px;border-radius:999px;font-size:12px;font-weight:800;background:#eef4ff;color:#145bd7}
-    .status-pill.success{background:#eaf9f0;color:#13804a}.status-pill.warning{background:#fff7e8;color:#a85e00}.status-pill.danger{background:#fff0f0;color:#b42318}
-    .content{padding:28px}
-    .head{display:flex;justify-content:space-between;align-items:flex-start;gap:18px;flex-wrap:wrap;margin-bottom:22px}
-    h1{font-size:32px;line-height:1.05;margin:0 0 6px;letter-spacing:-.02em}.muted{color:var(--muted);font-size:14px}
-    .cta-row{display:flex;gap:9px;flex-wrap:wrap}.btn{display:inline-flex;justify-content:center;align-items:center;gap:7px;min-height:46px;background:var(--primary);color:#fff;text-decoration:none;font-weight:800;border-radius:11px;padding:12px 16px;box-shadow:0 7px 17px rgba(23,105,224,.18);border:1px solid transparent;cursor:pointer}.btn.secondary{background:#fff;color:#243043;border-color:#d9e0e9;box-shadow:none}.btn.success{background:#14945b;box-shadow:0 7px 17px rgba(20,148,91,.18)}.btn:disabled{opacity:.6;cursor:not-allowed}
+    :root{font-family:Inter,system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;color:#172033;background:#f3f6fa;--primary:#1769e0;--line:#e3e8ef;--muted:#6b7484;--soft:#f7f9fc}
+    *{box-sizing:border-box}body{margin:0;background:linear-gradient(180deg,#eef3f9 0%,#f8fafc 55%,#f3f6fa 100%);min-height:100vh}button,a{font:inherit}
+    .wrap{max-width:980px;margin:0 auto;padding:20px 14px 42px}.card{background:#fff;border:1px solid var(--line);border-radius:22px;box-shadow:0 16px 45px rgba(23,32,51,.09);overflow:hidden}
+    .top{padding:24px 28px;border-bottom:1px solid #edf0f4;display:flex;align-items:center;justify-content:space-between;gap:20px;flex-wrap:wrap}.brand{display:flex;align-items:center;gap:14px;min-width:0}.logo{width:60px;height:60px;border-radius:14px;object-fit:contain;border:1px solid var(--line);background:#fff;padding:5px}.brand-name{font-size:20px;font-weight:800;margin:0 0 3px;overflow-wrap:anywhere}.brand-sub{font-size:13px;color:var(--muted)}
+    .status-pill{display:inline-flex;align-items:center;gap:6px;padding:8px 12px;border-radius:999px;font-size:12px;font-weight:800;background:#eef4ff;color:#145bd7}.status-pill.success{background:#eaf9f0;color:#13804a}.status-pill.warning{background:#fff7e8;color:#a85e00}.status-pill.danger{background:#fff0f0;color:#b42318}
+    .content{padding:28px}.head{display:flex;justify-content:space-between;align-items:flex-start;gap:18px;flex-wrap:wrap;margin-bottom:22px}h1{font-size:32px;line-height:1.05;margin:0 0 6px;letter-spacing:-.02em}.muted{color:var(--muted);font-size:14px}.cta-row{display:flex;gap:9px;flex-wrap:wrap}
+    .btn{display:inline-flex;justify-content:center;align-items:center;gap:7px;min-height:46px;background:var(--primary);color:#fff;text-decoration:none;font-weight:800;border-radius:11px;padding:12px 16px;box-shadow:0 7px 17px rgba(23,105,224,.18);border:1px solid transparent;cursor:pointer}.btn.secondary{background:#fff;color:#243043;border-color:#d9e0e9;box-shadow:none}.btn.success{background:#14945b;box-shadow:0 7px 17px rgba(20,148,91,.18)}
     .client-grid{display:grid;grid-template-columns:1.3fr .7fr;gap:14px;margin-bottom:22px}.box{border:1px solid var(--line);border-radius:13px;padding:15px;background:#fff}.label{display:block;color:var(--muted);font-size:12px;margin-bottom:5px;text-transform:uppercase;letter-spacing:.05em;font-weight:700}.value{font-weight:800;font-size:16px}.small{font-size:13px;color:#536075;margin-top:3px}
     .alert{border:1px solid #d9e8ff;background:#f4f8ff;border-radius:14px;padding:13px 15px;margin:0 0 22px}.alert.success{border-color:#c9ecd9;background:#effbf4;color:#155d3d}.alert.warning{border-color:#f6ddb1;background:#fffaf0;color:#7b4b00}
-    .table-wrap{overflow-x:auto;border:1px solid var(--line);border-radius:14px}table{width:100%;border-collapse:collapse;min-width:580px}th,td{padding:13px 12px;border-bottom:1px solid #edf0f4;text-align:left}th{font-size:11px;color:#657086;text-transform:uppercase;letter-spacing:.06em;background:var(--soft)}tbody tr:last-child td{border-bottom:0}td:nth-child(n+2),th:nth-child(n+2){text-align:right}.product-name{font-weight:700}.product-note{display:block;color:var(--muted);font-size:12px;margin-top:2px}
-    .bottom-grid{display:grid;grid-template-columns:1fr 360px;gap:20px;margin-top:22px}.notes{border:1px solid var(--line);border-radius:14px;padding:17px;background:#fbfcfe}.notes h3{font-size:14px;margin:0 0 10px}.notes p{white-space:pre-line;font-size:13px;color:#536075;line-height:1.55;margin:0 0 14px}.notes p:last-child{margin-bottom:0}
-    .totals{border:1px solid var(--line);border-radius:14px;padding:17px;background:#fff}.line{display:flex;justify-content:space-between;padding:6px 0;gap:15px;color:#4f5b6e}.total{border-top:2px solid #172033;margin-top:9px;padding-top:13px;font-size:24px;font-weight:900;color:#172033}.total strong{color:var(--primary)}
-    .accept-box{margin-top:22px;border:1px solid #cfe0ff;border-radius:16px;padding:18px;background:linear-gradient(180deg,#f7fbff,#fff)}.accept-box h2{font-size:18px;margin:0 0 6px}.accept-box p{margin:0 0 13px;color:#5f6c80;font-size:13px;line-height:1.45}.accept-box .cta-row{margin-top:12px}
-    .footer{text-align:center;color:#8a94a5;font-size:12px;padding:20px 28px 26px;border-top:1px solid #edf0f4}.footer strong{color:#5f6877}
-    @media(max-width:700px){
-      .wrap{padding:8px 7px 24px}.card{border-radius:17px}.top,.content{padding:18px 15px}.head{margin-bottom:17px}.head h1{font-size:27px}.cta-row{width:100%}.cta-row .btn{width:100%}.client-grid,.bottom-grid{grid-template-columns:1fr}.box{padding:13px}.table-wrap{border-radius:12px}.total{font-size:22px}.accept-box{padding:15px}
-    }
-    @media(max-width:420px){.top{align-items:flex-start}.brand{width:100%}.status-pill{width:100%;justify-content:center}.logo{width:52px;height:52px}.content{padding:15px 12px}h1{font-size:25px}}
+    .table-wrap{overflow-x:auto;border:1px solid var(--line);border-radius:14px}table{width:100%;border-collapse:collapse;min-width:580px}th,td{padding:13px 12px;border-bottom:1px solid #edf0f4;text-align:left}th{font-size:11px;color:#657086;text-transform:uppercase;letter-spacing:.06em;background:var(--soft)}tbody tr:last-child td{border-bottom:0}td:nth-child(n+2),th:nth-child(n+2){text-align:right}.product-name{font-weight:700}
+    .bottom-grid{display:grid;grid-template-columns:1fr 360px;gap:20px;margin-top:22px}.notes{border:1px solid var(--line);border-radius:14px;padding:17px;background:#fbfcfe}.notes h3{font-size:14px;margin:0 0 10px}.notes p{white-space:pre-line;font-size:13px;color:#536075;line-height:1.55;margin:0 0 14px}.notes p:last-child{margin-bottom:0}.totals{border:1px solid var(--line);border-radius:14px;padding:17px;background:#fff}.line{display:flex;justify-content:space-between;padding:6px 0;gap:15px;color:#4f5b6e}.total{border-top:2px solid #172033;margin-top:9px;padding-top:13px;font-size:24px;font-weight:900;color:#172033}.total strong{color:var(--primary)}
+    .accept-box{margin-top:22px;border:1px solid #cfe0ff;border-radius:16px;padding:18px;background:linear-gradient(180deg,#f7fbff,#fff)}.accept-box h2{font-size:18px;margin:0 0 6px}.accept-box p{margin:0 0 13px;color:#5f6c80;font-size:13px;line-height:1.45}.accept-box .cta-row{margin-top:12px}.footer{text-align:center;color:#8a94a5;font-size:12px;padding:20px 28px 26px;border-top:1px solid #edf0f4}.footer strong{color:#5f6877}
+    @media(max-width:700px){.wrap{padding:8px 7px 24px}.card{border-radius:17px}.top,.content{padding:18px 15px}.head{margin-bottom:17px}.head h1{font-size:27px}.cta-row{width:100%}.cta-row .btn{width:100%}.client-grid,.bottom-grid{grid-template-columns:1fr}.box{padding:13px}.table-wrap{border-radius:12px}.total{font-size:22px}.accept-box{padding:15px}}@media(max-width:420px){.top{align-items:flex-start}.brand{width:100%}.status-pill{width:100%;justify-content:center}.logo{width:52px;height:52px}.content{padding:15px 12px}h1{font-size:25px}}
   </style>
 </head>
 <body>
-  <main class="wrap">
-    <section class="card">
-      <header class="top">
-        <div class="brand">
-          {% if quote.company and quote.company.logo %}
-            <img class="logo" src="{{ quote.company.logo if quote.company.logo.startswith('http') or quote.company.logo.startswith('/') else url_for('static', filename=quote.company.logo) }}" alt="Logo de la empresa">
-          {% endif %}
-          <div>
-            <div class="brand-name">{{ quote.company.name if quote.company else 'Empresa' }}</div>
-            <div class="brand-sub">Presupuesto comercial</div>
-            {% if quote.company and quote.company.tax_id %}<div class="brand-sub">CUIT: {{ quote.company.tax_id }}</div>{% endif %}
-            {% if quote.company and (quote.company.phone or quote.company.whatsapp or quote.company.contact_email) %}
-              <div class="brand-sub">{{ [quote.company.phone, quote.company.whatsapp, quote.company.contact_email]|select|join(' · ') }}</div>
-            {% endif %}
-          </div>
-        </div>
-        {% set status = (quote.status or 'BORRADOR')|upper %}
-        <span class="status-pill {% if status == 'APROBADO' %}success{% elif status in ['VENCIDO','RECHAZADO','ANULADO'] %}danger{% elif status == 'PENDIENTE' %}warning{% endif %}">
-          {% if status == 'APROBADO' %}✓ Aceptado{% elif status == 'PENDIENTE' %}◷ Visto{% elif status == 'ENVIADO' %}✓ Enviado{% elif status == 'VENCIDO' %}⚠ Vencido{% elif status == 'RECHAZADO' %}✕ Rechazado{% elif status == 'ANULADO' %}✕ Anulado{% else %}{{ status|replace('_',' ')|title }}{% endif %}
-        </span>
-      </header>
-
-      <div class="content">
-        <div class="head">
-          <div>
-            <div class="muted">PRESUPUESTO</div>
-            <h1>{{ quote.number or ('P-%06d'|format(quote.id)) }}</h1>
-            <div class="muted">Emitido {{ quote.date.strftime('%d/%m/%Y %H:%M') if quote.date else '' }}</div>
-          </div>
-          <div class="cta-row">
-            <a class="btn" href="{{ pdf_url }}" target="_blank" rel="noopener">📄 Ver PDF</a>
-            <a class="btn secondary" href="https://wa.me/?text={{ ('Hola, quisiera consultar sobre el presupuesto ' ~ (quote.number or ('P-' ~ '%06d'|format(quote.id))))|urlencode }}" target="_blank" rel="noopener">💬 Consultar</a>
-          </div>
-        </div>
-
-        <div class="client-grid">
-          <div class="box">
-            <span class="label">Cliente</span>
-            <div class="value">{{ quote.client.name if quote.client else (quote.consumer_name or 'Consumidor final') }}</div>
-            {% if quote.client and quote.client.phone %}<div class="small">📱 {{ quote.client.phone }}</div>{% endif %}
-            {% if quote.client and quote.client.address %}<div class="small">📍 {{ quote.client.address }}</div>{% endif %}
-          </div>
-          <div class="box">
-            <span class="label">Validez</span>
-            <div class="value">{{ quote.expires_at.strftime('%d/%m/%Y') if quote.expires_at else '-' }}</div>
-            <div class="small">{{ quote.currency or 'ARS' }}</div>
-          </div>
-        </div>
-
-        {% if status == 'APROBADO' %}
-          <div class="alert success"><strong>✓ Presupuesto aceptado.</strong> La empresa ya puede procesar tu pedido.</div>
-        {% elif status == 'VENCIDO' %}
-          <div class="alert warning"><strong>Este presupuesto está vencido.</strong> Consultá con la empresa antes de realizar el pedido.</div>
-        {% elif status == 'RECHAZADO' or status == 'ANULADO' %}
-          <div class="alert warning"><strong>Este presupuesto ya no está disponible para aceptación.</strong></div>
-        {% else %}
-          <div class="alert"><strong>Revisá el detalle y el total.</strong> Podés consultar a la empresa desde esta misma página.</div>
-        {% endif %}
-
-        <div class="table-wrap">
-          <table>
-            <thead><tr><th>Producto / servicio</th><th>Cant.</th><th>Precio unit.</th><th>Subtotal</th></tr></thead>
-            <tbody>
-            {% for row in rows %}
-              <tr>
-                <td><span class="product-name">{{ row.name }}</span></td>
-                <td>{{ '%.3g'|format(row.quantity) }}</td>
-                <td>${{ '%.2f'|format(row.price) }}</td>
-                <td><strong>${{ '%.2f'|format(row.total) }}</strong></td>
-              </tr>
-            {% endfor %}
-            </tbody>
-          </table>
-        </div>
-
-        <div class="bottom-grid">
-          <div>
-            {% if quote.observations or quote.commercial_conditions %}
-              <div class="notes">
-                {% if quote.commercial_conditions %}<h3>Condiciones comerciales</h3><p>{{ quote.commercial_conditions }}</p>{% endif %}
-                {% if quote.observations %}<h3>Observaciones</h3><p>{{ quote.observations }}</p>{% endif %}
-              </div>
-            {% endif %}
-
-            {% if status not in ['APROBADO','RECHAZADO','ANULADO','VENCIDO'] %}
-              <div class="accept-box">
-                <h2>¿Querés avanzar con este presupuesto?</h2>
-                <p>Al aceptar, la empresa recibirá la confirmación y podrá continuar con el pedido.</p>
-                <form method="post" action="{{ accept_url }}" onsubmit="return confirm('¿Confirmás que querés aceptar este presupuesto?');">
-                  <button type="submit" class="btn success" style="width:100%">✅ Aceptar presupuesto</button>
-                </form>
-                <div class="cta-row">
-                  <a class="btn secondary" style="flex:1" href="https://wa.me/?text={{ ('Hola, quisiera consultar sobre el presupuesto ' ~ (quote.number or ('P-' ~ '%06d'|format(quote.id))))|urlencode }}" target="_blank" rel="noopener">💬 Consultar por WhatsApp</a>
-                </div>
-              </div>
-            {% endif %}
-          </div>
-
-          <aside class="totals">
-            <div class="line"><span>Subtotal</span><strong>${{ '%.2f'|format(quote.subtotal or 0) }}</strong></div>
-            <div class="line"><span>Descuento</span><strong>-${{ '%.2f'|format(quote.discount or 0) }}</strong></div>
-            {% if quote.surcharge and quote.surcharge > 0 %}<div class="line"><span>Recargo</span><strong>${{ '%.2f'|format(quote.surcharge or 0) }}</strong></div>{% endif %}
-            {% if quote.tax and quote.tax > 0 %}<div class="line"><span>Impuestos</span><strong>${{ '%.2f'|format(quote.tax or 0) }}</strong></div>{% endif %}
-            <div class="line total"><span>Total</span><strong>{{ quote.currency or 'ARS' }} {{ '%.2f'|format(quote.total_amount or 0) }}</strong></div>
-          </aside>
-        </div>
+  <main class="wrap"><section class="card">
+    <header class="top"><div class="brand">
+      {% if quote.company and quote.company.logo %}<img class="logo" src="{{ quote.company.logo if quote.company.logo.startswith('http') or quote.company.logo.startswith('/') else url_for('static', filename=quote.company.logo) }}" alt="Logo de la empresa">{% endif %}
+      <div><div class="brand-name">{{ quote.company.name if quote.company else 'Empresa' }}</div><div class="brand-sub">Presupuesto comercial</div>
+        {% if quote.company and quote.company.tax_id %}<div class="brand-sub">CUIT: {{ quote.company.tax_id }}</div>{% endif %}
+        {% if quote.company and (quote.company.phone or quote.company.whatsapp or quote.company.contact_email) %}<div class="brand-sub">{{ [quote.company.phone, quote.company.whatsapp, quote.company.contact_email]|select|join(' · ') }}</div>{% endif %}
+      </div></div>
+      {% set status = (quote.status or 'BORRADOR')|upper %}<span class="status-pill {% if status == 'APROBADO' %}success{% elif status in ['VENCIDO','RECHAZADO','ANULADO'] %}danger{% elif status == 'PENDIENTE' %}warning{% endif %}">
+        {% if status == 'APROBADO' %}✓ Aceptado{% elif status == 'PENDIENTE' %}◷ Visto{% elif status == 'ENVIADO' %}✓ Enviado{% elif status == 'VENCIDO' %}⚠ Vencido{% elif status == 'RECHAZADO' %}✕ Rechazado{% elif status == 'ANULADO' %}✕ Anulado{% else %}{{ status|replace('_',' ')|title }}{% endif %}
+      </span>
+    </header>
+    <div class="content">
+      <div class="head"><div><div class="muted">PRESUPUESTO</div><h1>{{ quote.number or ('P-%06d'|format(quote.id)) }}</h1><div class="muted">Emitido {{ quote.date.strftime('%d/%m/%Y %H:%M') if quote.date else '' }}</div></div>
+        <div class="cta-row"><a class="btn" href="{{ pdf_url }}" target="_blank" rel="noopener">📄 Ver PDF</a><a class="btn secondary" href="https://wa.me/?text={{ ('Hola, quisiera consultar sobre el presupuesto ' ~ (quote.number or ('P-' ~ '%06d'|format(quote.id))))|urlencode }}" target="_blank" rel="noopener">💬 Consultar</a></div>
       </div>
-
-      <footer class="footer">Documento generado por <strong>StockARmobile</strong>. El enlace permite consultar únicamente este presupuesto.</footer>
-    </section>
-  </main>
-</body>
-</html>
+      <div class="client-grid"><div class="box"><span class="label">Cliente</span><div class="value">{{ quote.client.name if quote.client else (quote.consumer_name or 'Consumidor final') }}</div>{% if quote.client and quote.client.phone %}<div class="small">📱 {{ quote.client.phone }}</div>{% endif %}{% if quote.client and quote.client.address %}<div class="small">📍 {{ quote.client.address }}</div>{% endif %}</div>
+        <div class="box"><span class="label">Validez</span><div class="value">{{ quote.expires_at.strftime('%d/%m/%Y') if quote.expires_at else '-' }}</div><div class="small">{{ quote.currency or 'ARS' }}</div></div></div>
+      {% if status == 'APROBADO' %}<div class="alert success"><strong>✓ Presupuesto aceptado.</strong> La empresa ya puede procesar tu pedido.</div>
+      {% elif status == 'VENCIDO' %}<div class="alert warning"><strong>Este presupuesto está vencido.</strong> Consultá con la empresa antes de realizar el pedido.</div>
+      {% elif status == 'RECHAZADO' or status == 'ANULADO' %}<div class="alert warning"><strong>Este presupuesto ya no está disponible para aceptación.</strong></div>
+      {% else %}<div class="alert"><strong>Revisá el detalle y el total.</strong> Podés consultar a la empresa desde esta misma página.</div>{% endif %}
+      <div class="table-wrap"><table><thead><tr><th>Producto / servicio</th><th>Cant.</th><th>Precio unit.</th><th>Subtotal</th></tr></thead><tbody>{% for row in rows %}<tr><td><span class="product-name">{{ row.name }}</span></td><td>{{ '%.3g'|format(row.quantity) }}</td><td>${{ '%.2f'|format(row.price) }}</td><td><strong>${{ '%.2f'|format(row.total) }}</strong></td></tr>{% endfor %}</tbody></table></div>
+      <div class="bottom-grid"><div>
+        {% if quote.observations or quote.commercial_conditions %}<div class="notes">{% if quote.commercial_conditions %}<h3>Condiciones comerciales</h3><p>{{ quote.commercial_conditions }}</p>{% endif %}{% if quote.observations %}<h3>Observaciones</h3><p>{{ quote.observations }}</p>{% endif %}</div>{% endif %}
+        {% if status not in ['APROBADO','RECHAZADO','ANULADO','VENCIDO'] %}<div class="accept-box"><h2>¿Querés avanzar con este presupuesto?</h2><p>Al aceptar, la empresa recibirá la confirmación y podrá continuar con el pedido.</p>
+          <a class="btn success" style="width:100%" href="{{ accept_url }}" onclick="return confirm('¿Confirmás que querés aceptar este presupuesto?');">✅ Aceptar presupuesto</a>
+          <div class="cta-row"><a class="btn secondary" style="flex:1" href="https://wa.me/?text={{ ('Hola, quisiera consultar sobre el presupuesto ' ~ (quote.number or ('P-' ~ '%06d'|format(quote.id))))|urlencode }}" target="_blank" rel="noopener">💬 Consultar por WhatsApp</a></div>
+        </div>{% endif %}
+      </div>
+      <aside class="totals"><div class="line"><span>Subtotal</span><strong>${{ '%.2f'|format(quote.subtotal or 0) }}</strong></div><div class="line"><span>Descuento</span><strong>-${{ '%.2f'|format(quote.discount or 0) }}</strong></div>{% if quote.surcharge and quote.surcharge > 0 %}<div class="line"><span>Recargo</span><strong>${{ '%.2f'|format(quote.surcharge or 0) }}</strong></div>{% endif %}{% if quote.tax and quote.tax > 0 %}<div class="line"><span>Impuestos</span><strong>${{ '%.2f'|format(quote.tax or 0) }}</strong></div>{% endif %}<div class="line total"><span>Total</span><strong>{{ quote.currency or 'ARS' }} {{ '%.2f'|format(quote.total_amount or 0) }}</strong></div></aside>
+      </div>
+    </div>
+    <footer class="footer">Documento generado por <strong>StockARmobile</strong>. El enlace permite consultar únicamente este presupuesto.</footer>
+  </section></main>
+</body></html>
