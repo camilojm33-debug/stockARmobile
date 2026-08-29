@@ -4,6 +4,7 @@ from datetime import datetime, time, timedelta
 from hashlib import sha256
 import json
 
+from flask import url_for
 from flask_login import current_user
 from sqlalchemy import or_
 from sqlalchemy.exc import OperationalError, ProgrammingError
@@ -90,6 +91,14 @@ def _signature_for_items(items):
     return sha256(payload.encode("utf-8")).hexdigest()
 
 
+def _subscription_notification_target():
+    """Build the canonical subscription portal URL instead of the legacy /admin path."""
+    try:
+        return url_for("company_billing.subscription_portal")
+    except Exception:
+        return "/portal"
+
+
 def _build_superadmin_notifications():
     from app import BackupLog, Company, Payment, PaymentHistory, ReferralCommission, WebhookEvent, utcnow
     from app import SupportTicket
@@ -126,18 +135,19 @@ def _build_superadmin_notifications():
         items.append({"type": "warning", "title": "Backups", "body": f"{backup_alerts} respaldo(s) con error requieren revision.", "href": "/superadmin"})
     if system_events:
         items.append({"type": "secondary", "title": "Eventos del sistema", "body": f"{system_events} webhook(s) procesados en las ultimas 24h.", "href": "/superadmin"})
-    # Support tickets pending
     try:
         support_pending = SupportTicket.query.filter(SupportTicket.status == "pendiente").count()
     except Exception:
         support_pending = 0
     if support_pending:
-        items.append({
-            "type": "info",
-            "title": "Pedidos de ayuda",
-            "body": f"{support_pending} pendiente(s)",
-            "href": "/soporte/admin",
-        })
+        items.append(
+            {
+                "type": "info",
+                "title": "Pedidos de ayuda",
+                "body": f"{support_pending} pendiente(s)",
+                "href": "/soporte/admin",
+            }
+        )
     return items
 
 
@@ -276,7 +286,7 @@ def _build_user_notifications():
 
     if latest_subscription is not None:
         sub_status = (latest_subscription.status or "sin estado").replace("_", " ")
-        items.append({"type": "info", "title": "Suscripcion", "body": f"Estado actual: {sub_status}.", "href": "/admin"})
+        items.append({"type": "info", "title": "Suscripcion", "body": f"Estado actual: {sub_status}.", "href": _subscription_notification_target()})
 
     if latest_backup is not None:
         backup_status = (latest_backup.status or "pendiente").lower()
@@ -306,7 +316,7 @@ def _build_user_notifications():
                 "type": "danger",
                 "title": "Empresa",
                 "body": company_state.get("reason", "Revisa el estado de tu empresa."),
-                "href": "/admin",
+                "href": _subscription_notification_target(),
             }
         )
 
