@@ -1,0 +1,71 @@
+name: Finish quote acceptance flow
+
+on:
+  push:
+    branches: [main]
+
+permissions:
+  contents: write
+
+jobs:
+  patch:
+    if: ${{ !contains(github.event.head_commit.message, 'finish: quote acceptance flow') }}
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Patch quote flow
+        shell: bash
+        run: |
+          set -euo pipefail
+          python - <<'PY'
+          from pathlib import Path
+
+          q = Path('quotes.py')
+          s = q.read_text(encoding='utf-8')
+          old_import = 'from app import tenant_required, utcnow\n'
+          if 'from stockarmobile.extensions import csrf\n' not in s:
+              if old_import not in s:
+                  raise SystemExit('quotes.py import marker not found')
+              s = s.replace(old_import, old_import + 'from stockarmobile.extensions import csrf\n', 1)
+
+          old_route = '@bp.route("/publico/<token>/aceptar", methods=["GET"])\ndef quote_public_accept(token):'
+          new_route = '@bp.route("/publico/<token>/aceptar", methods=["POST"])\n@csrf.exempt\ndef quote_public_accept(token):'
+          if old_route in s:
+              s = s.replace(old_route, new_route, 1)
+          elif new_route not in s:
+              raise SystemExit('public acceptance route marker not found')
+          q.write_text(s, encoding='utf-8')
+
+          v = Path('templates/presupuestos/view.html')
+          s = v.read_text(encoding='utf-8')
+          old_button = "{% if quote.status != 'CONVERTIDO' %}\n      {% if current_user_has_permission('quotes_convert') %}\n      <form method=\"post\" action=\"{{ url_for('quotes.convert_to_sale', quote_id=quote.id) }}\"><input type=\"hidden\" name=\"csrf_token\" value=\"{{ csrf_token() }}\"><button class=\"btn btn-success\" type=\"submit\"><i class=\"bi bi-bag-check me-1\"></i>Convertir en venta</button></form>\n      {% endif %}\n      {% endif %}"
+          new_button = "{% if quote.status == 'APROBADO' %}\n      {% if current_user_has_permission('quotes_convert') %}\n      <form method=\"post\" action=\"{{ url_for('quotes.convert_to_sale', quote_id=quote.id) }}\"><input type=\"hidden\" name=\"csrf_token\" value=\"{{ csrf_token() }}\"><button class=\"btn btn-success\" type=\"submit\"><i class=\"bi bi-bag-check me-1\"></i>Convertir en venta</button></form>\n      {% endif %}\n      {% endif %}"
+          if old_button in s:
+              s = s.replace(old_button, new_button, 1)
+
+          old_subtitle = "<p class=\"text-muted mb-0\">{{ quote.client.name if quote.client else (quote.consumer_name or 'Consumidor final') }} · {{ quote.status }}</p>"
+          new_subtitle = "<p class=\"text-muted mb-0\">{{ quote.client.name if quote.client else (quote.consumer_name or 'Consumidor final') }} · {{ quote.status }}</p>\n      {% if quote.status == 'APROBADO' %}<div class=\"alert alert-success py-2 px-3 mt-2 mb-0\"><i class=\"bi bi-check-circle me-1\"></i>El cliente aceptó este presupuesto. Ya podés convertirlo en venta.</div>{% endif %}"
+          if old_subtitle in s and 'Ya podés convertirlo en venta' not in s:
+              s = s.replace(old_subtitle, new_subtitle, 1)
+          v.write_text(s, encoding='utf-8')
+          PY
+
+      - name: Validate
+        env:
+          PYTHONPATH: .
+        run: |
+          pip install -r requirements.txt
+          python -m compileall -q .
+          pytest -q
+
+      - name: Commit green patch
+        shell: bash
+        run: |
+          set -euo pipefail
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add quotes.py templates/presupuestos/view.html
+          git rm -f .github/workflows/finish-quote-acceptance-flow.yml
+          git commit -m 'finish: quote acceptance flow'
+          git push origin HEAD:main
