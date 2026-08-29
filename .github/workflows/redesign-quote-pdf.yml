@@ -1,0 +1,252 @@
+name: Redesign quote PDF
+
+on:
+  push:
+    branches: [main]
+
+permissions:
+  contents: write
+
+jobs:
+  patch-and-test:
+    if: ${{ !contains(github.event.head_commit.message, 'feat: apply quote PDF redesign') }}
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Replace PDF renderer
+        shell: bash
+        run: |
+          set -euo pipefail
+          python - <<'PY'
+          from pathlib import Path
+          import re
+
+          p = Path('quotes.py')
+          s = p.read_text(encoding='utf-8')
+          marker = '# quote-pdf-redesign-v1'
+          if marker in s:
+              raise SystemExit('already applied')
+
+          start = s.find('def _quote_pdf_response(quote, *, as_attachment=False):')
+          end = s.find('\ndef _quote_lookup(quote_id):', start)
+          if start < 0 or end < 0:
+              raise SystemExit('PDF function boundaries not found')
+
+          new_function = r'''# quote-pdf-redesign-v1
+
+def _quote_pdf_response(quote, *, as_attachment=False):
+    """Genera un PDF comercial A4, legible en pantalla e impresión."""
+    from app import Company
+    from reportlab.lib import colors
+    from reportlab.lib.enums import TA_LEFT, TA_RIGHT
+    from reportlab.lib.styles import ParagraphStyle, getSampleStyleSheet
+    from reportlab.lib.units import mm
+    from reportlab.platypus import Paragraph, Spacer, Table, TableStyle
+
+    company = Company.query.filter_by(id=quote.company_id).first()
+    currency = quote.currency or getattr(company, "currency", None) or "ARS"
+    buffer = BytesIO()
+    pdf = canvas.Canvas(buffer, pagesize=A4)
+    width, height = A4
+    pdf.setTitle(f"Presupuesto {quote.number or quote.id}")
+
+    styles = getSampleStyleSheet()
+    body = ParagraphStyle("QuoteBody", parent=styles["Normal"], fontName="Helvetica", fontSize=9.5, leading=13, textColor=colors.HexColor("#334155"))
+    small = ParagraphStyle("QuoteSmall", parent=body, fontSize=8, leading=10.5, textColor=colors.HexColor("#64748B"))
+    table_header = ParagraphStyle("QuoteHeader", parent=body, fontName="Helvetica-Bold", fontSize=8, leading=10, textColor=colors.HexColor("#475569"))
+    right = ParagraphStyle("QuoteRight", parent=body, alignment=TA_RIGHT)
+    right_bold = ParagraphStyle("QuoteRightBold", parent=right, fontName="Helvetica-Bold")
+    total_style = ParagraphStyle("QuoteTotal", parent=right_bold, fontSize=15, leading=18, textColor=colors.HexColor("#1769E0"))
+
+    left = 20 * mm
+    right_margin = 20 * mm
+    usable = width - left - right_margin
+    y = height - 22 * mm
+
+    # Header / brand
+    logo_path = _resolve_static_image_path(getattr(company, "logo", None))
+    if logo_path:
+        try:
+            pdf.drawImage(ImageReader(logo_path), left, y - 13 * mm, width=25 * mm, height=18 * mm, preserveAspectRatio=True, mask="auto")
+            brand_x = left + 31 * mm
+        except Exception:
+            brand_x = left
+    else:
+        brand_x = left
+
+    pdf.setFont("Helvetica-Bold", 17)
+    pdf.setFillColor(colors.HexColor("#172033"))
+    pdf.drawString(brand_x, y, (company.name if company else "StockARmobile")[:70])
+    pdf.setFont("Helvetica", 8.5)
+    pdf.setFillColor(colors.HexColor("#64748B"))
+    company_contact = " · ".join(
+        str(value).strip()
+        for value in [
+            getattr(company, "tax_id", None),
+            getattr(company, "phone", None),
+            getattr(company, "whatsapp", None),
+            getattr(company, "contact_email", None),
+        ]
+        if str(value or "").strip()
+    )
+    if company_contact:
+        pdf.drawString(brand_x, y - 13, company_contact[:115])
+    company_address = " · ".join(
+        str(value).strip()
+        for value in [getattr(company, "address", None), getattr(company, "city", None), getattr(company, "province", None)]
+        if str(value or "").strip()
+    )
+    if company_address:
+        pdf.drawString(brand_x, y - 25, company_address[:115])
+
+    doc_x = width - right_margin
+    pdf.setFillColor(colors.HexColor("#1769E0"))
+    pdf.setFont("Helvetica-Bold", 10)
+    pdf.drawRightString(doc_x, y, "PRESUPUESTO")
+    pdf.setFillColor(colors.HexColor("#172033"))
+    pdf.setFont("Helvetica-Bold", 16)
+    pdf.drawRightString(doc_x, y - 17, _quote_number(quote))
+    pdf.setFont("Helvetica", 8.5)
+    pdf.setFillColor(colors.HexColor("#64748B"))
+    pdf.drawRightString(doc_x, y - 31, f"Fecha: {quote.date.strftime('%d/%m/%Y %H:%M') if quote.date else '-'}")
+    pdf.drawRightString(doc_x, y - 43, f"Válido hasta: {quote.expires_at.strftime('%d/%m/%Y') if quote.expires_at else '-'}")
+
+    y -= 64
+    pdf.setStrokeColor(colors.HexColor("#DDE4ED"))
+    pdf.line(left, y, width - right_margin, y)
+    y -= 22
+
+    # Customer / status cards
+    customer = _quote_customer_name(quote)
+    status = (quote.status or "BORRADOR").replace("_", " ")
+    card_data = [
+        [Paragraph("CLIENTE", small), Paragraph("ESTADO", small), Paragraph("MONEDA", small)],
+        [Paragraph(f"<b>{customer}</b>", body), Paragraph(f"<b>{status}</b>", body), Paragraph(f"<b>{currency}</b>", body)],
+    ]
+    card = Table(card_data, colWidths=[usable * .52, usable * .24, usable * .24])
+    card.setStyle(TableStyle([
+        ("BACKGROUND", (0,0), (-1,-1), colors.HexColor("#F7F9FC")),
+        ("BOX", (0,0), (-1,-1), .6, colors.HexColor("#E3E8EF")),
+        ("INNERGRID", (0,0), (-1,-1), .4, colors.HexColor("#E3E8EF")),
+        ("VALIGN", (0,0), (-1,-1), "MIDDLE"),
+        ("LEFTPADDING", (0,0), (-1,-1), 9), ("RIGHTPADDING", (0,0), (-1,-1), 9),
+        ("TOPPADDING", (0,0), (-1,-1), 7), ("BOTTOMPADDING", (0,0), (-1,-1), 7),
+    ]))
+    w, h = card.wrapOn(pdf, usable, 100)
+    card.drawOn(pdf, left, y - h)
+    y -= h + 18
+
+    # Items table
+    table_data = [[Paragraph("PRODUCTO / SERVICIO", table_header), Paragraph("CANT.", table_header), Paragraph("PRECIO UNIT.", table_header), Paragraph("SUBTOTAL", table_header)]]
+    for item in sorted(quote.items, key=lambda row: (row.sort_order or 0, row.id or 0)):
+        name = (item.description or "Producto")[:90]
+        qty = _quote_quantity(item.quantity)
+        price = _quote_money(item.unit_price, currency)
+        subtotal = _quote_money(item.subtotal, currency)
+        table_data.append([Paragraph(name, body), Paragraph(qty, right), Paragraph(price, right), Paragraph(subtotal, right)])
+
+    items_table = Table(table_data, colWidths=[usable * .50, usable * .12, usable * .19, usable * .19], repeatRows=1)
+    items_table.setStyle(TableStyle([
+        ("BACKGROUND", (0,0), (-1,0), colors.HexColor("#F4F7FB")),
+        ("TEXTCOLOR", (0,0), (-1,0), colors.HexColor("#475569")),
+        ("LINEBELOW", (0,0), (-1,0), .7, colors.HexColor("#DDE4ED")),
+        ("LINEBELOW", (0,1), (-1,-1), .35, colors.HexColor("#EDF1F5")),
+        ("VALIGN", (0,0), (-1,-1), "MIDDLE"),
+        ("LEFTPADDING", (0,0), (-1,-1), 8), ("RIGHTPADDING", (0,0), (-1,-1), 8),
+        ("TOPPADDING", (0,0), (-1,-1), 8), ("BOTTOMPADDING", (0,0), (-1,-1), 8),
+    ]))
+    w, h = items_table.wrapOn(pdf, usable, height)
+    if y - h < 95 * mm:
+        pdf.showPage(); y = height - 22 * mm
+    items_table.drawOn(pdf, left, y - h)
+    y -= h + 18
+
+    # Totals and conditions
+    totals_width = usable * .43
+    totals_x = left + usable - totals_width
+    total_rows = [
+        [Paragraph("Subtotal", body), Paragraph(_quote_money(quote.subtotal, currency), right)],
+        [Paragraph("Descuento", body), Paragraph(f"-{_quote_money(quote.discount, currency)}", right)],
+    ]
+    if float(quote.surcharge or 0) > 0:
+        total_rows.append([Paragraph("Recargo", body), Paragraph(_quote_money(quote.surcharge, currency), right)])
+    if float(quote.tax or 0) > 0:
+        total_rows.append([Paragraph("Impuestos", body), Paragraph(_quote_money(quote.tax, currency), right)])
+    total_rows.append([Paragraph("TOTAL", ParagraphStyle("TotalLabel", parent=body, fontName="Helvetica-Bold", fontSize=12)), Paragraph(_quote_money(quote.total_amount, currency), total_style)])
+    totals = Table(total_rows, colWidths=[totals_width * .55, totals_width * .45])
+    totals.setStyle(TableStyle([
+        ("ALIGN", (1,0), (1,-1), "RIGHT"),
+        ("LINEABOVE", (0,-1), (-1,-1), 1.2, colors.HexColor("#172033")),
+        ("TOPPADDING", (0,-1), (-1,-1), 10),
+        ("BOTTOMPADDING", (0,-1), (-1,-1), 4),
+        ("LEFTPADDING", (0,0), (-1,-1), 4), ("RIGHTPADDING", (0,0), (-1,-1), 4),
+    ]))
+    w, h = totals.wrapOn(pdf, totals_width, 150)
+    if y - h < 55 * mm:
+        pdf.showPage(); y = height - 22 * mm
+    totals.drawOn(pdf, totals_x, y - h)
+    left_y = y - h
+
+    notes_x = left
+    notes_width = usable - totals_width - 12
+    note_parts = []
+    if quote.commercial_conditions:
+        note_parts.append(("CONDICIONES COMERCIALES", quote.commercial_conditions))
+    if quote.observations:
+        note_parts.append(("OBSERVACIONES", quote.observations))
+    if note_parts:
+        note_rows = []
+        for title, value in note_parts:
+            note_rows.append([Paragraph(title, small)])
+            note_rows.append([Paragraph(str(value).replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;").replace("\n", "<br/>"), body)])
+        notes = Table(note_rows, colWidths=[notes_width])
+        notes.setStyle(TableStyle([
+            ("BACKGROUND", (0,0), (-1,-1), colors.HexColor("#F8FAFC")),
+            ("BOX", (0,0), (-1,-1), .6, colors.HexColor("#E3E8EF")),
+            ("LEFTPADDING", (0,0), (-1,-1), 9), ("RIGHTPADDING", (0,0), (-1,-1), 9),
+            ("TOPPADDING", (0,0), (-1,-1), 6), ("BOTTOMPADDING", (0,0), (-1,-1), 6),
+        ]))
+        w, nh = notes.wrapOn(pdf, notes_width, 220)
+        notes.drawOn(pdf, notes_x, max(42 * mm, left_y - nh))
+
+    # QR points to the customer-facing public quote, not the authenticated panel.
+    qr_value = _build_public_quote_url(quote.id)
+    qr = qrcode.QRCode(error_correction=qrcode.constants.ERROR_CORRECT_M, box_size=4, border=1)
+    qr.add_data(qr_value); qr.make(fit=True)
+    qr_image = qr.make_image(fill_color="black", back_color="white")
+    qr_buffer = BytesIO(); qr_image.save(qr_buffer, format="PNG"); qr_buffer.seek(0)
+    try:
+        pdf.drawImage(ImageReader(qr_buffer), width - right_margin - 25 * mm, 18 * mm, width=23 * mm, height=23 * mm, preserveAspectRatio=True, mask="auto")
+        pdf.setFont("Helvetica", 6.5); pdf.setFillColor(colors.HexColor("#64748B"))
+        pdf.drawRightString(width - right_margin, 15 * mm, "Escaneá para ver el presupuesto")
+    except Exception:
+        pass
+
+    pdf.setFont("Helvetica", 7.5); pdf.setFillColor(colors.HexColor("#8A94A5"))
+    pdf.drawString(left, 15 * mm, "Documento generado por StockARmobile")
+    pdf.drawRightString(width - right_margin, 15 * mm, f"{_quote_number(quote)} · {currency}")
+    pdf.save()
+    buffer.seek(0)
+    return send_file(buffer, mimetype="application/pdf", as_attachment=as_attachment, download_name=f"presupuesto_{quote.id}.pdf")
+'''
+
+          s = s[:start] + new_function + s[end:]
+          p.write_text(s, encoding='utf-8')
+          PY
+      - name: Test
+        env:
+          PYTHONPATH: .
+        run: |
+          pip install -r requirements.txt
+          python -m compileall -q .
+          pytest -q
+      - name: Commit only if green
+        shell: bash
+        run: |
+          set -euo pipefail
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add quotes.py
+          git rm -f .github/workflows/redesign-quote-pdf.yml
+          git commit -m 'feat: apply quote PDF redesign'
+          git push origin HEAD:main
