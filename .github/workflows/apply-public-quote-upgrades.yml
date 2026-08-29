@@ -9,7 +9,7 @@ permissions:
 
 jobs:
   patch-and-test:
-    if: ${{ !contains(github.event.head_commit.message, 'finish: quote acceptance flow') && !contains(github.event.head_commit.message, 'chore: patch quote acceptance flow') }}
+    if: ${{ !contains(github.event.head_commit.message, 'finish: quote acceptance flow') }}
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -23,7 +23,6 @@ jobs:
 
           p = Path('quotes.py')
           s = p.read_text(encoding='utf-8')
-
           import_marker = 'from app import tenant_required, utcnow\n'
           csrf_import = 'from stockarmobile.extensions import csrf\n'
           if csrf_import not in s:
@@ -37,7 +36,6 @@ jobs:
               s = s.replace(old_route, new_route, 1)
           elif new_route not in s:
               raise SystemExit('public acceptance route marker not found')
-
           p.write_text(s, encoding='utf-8')
 
           p = Path('templates/presupuestos/view.html')
