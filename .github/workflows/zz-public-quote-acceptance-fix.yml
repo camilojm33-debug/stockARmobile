@@ -66,3 +66,4 @@ jobs:
             git commit -m 'fix: public quote acceptance'
             git push origin HEAD:main
           fi
+# trigger-run
