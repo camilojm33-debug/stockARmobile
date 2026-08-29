@@ -1,0 +1,121 @@
+name: Apply dashboard center control v2
+
+on:
+  push:
+    branches: [feat/dashboard-centro-control]
+
+permissions:
+  contents: write
+
+jobs:
+  patch-dashboard:
+    if: ${{ github.event.head_commit.message != 'feat: apply dashboard center control' }}
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Apply dashboard UI layer
+        shell: bash
+        run: |
+          set -euo pipefail
+          python - <<'PY'
+          from pathlib import Path
+
+          p = Path('templates/dashboard/index.html')
+          s = p.read_text(encoding='utf-8')
+          marker = '<!-- DASHBOARD_CENTER_CONTROL_V2 -->'
+
+          if marker in s:
+              print('Dashboard control already present')
+              raise SystemExit(0)
+
+          anchor = '<div class="app-shell">'
+          pos = s.find(anchor)
+          if pos < 0:
+              raise SystemExit('Dashboard app-shell anchor not found')
+          pos += len(anchor)
+
+          block = '''\n          <!-- DASHBOARD_CENTER_CONTROL_V2 -->
+          <style>
+            .dcc2{border:1px solid rgba(15,98,254,.12);border-radius:20px;background:linear-gradient(135deg,rgba(15,98,254,.055),rgba(20,148,91,.045));box-shadow:0 12px 35px rgba(16,24,40,.06);margin-bottom:1.5rem}
+            .dcc2-actions{display:flex;gap:.65rem;flex-wrap:wrap}.dcc2-actions .btn{min-height:44px;font-weight:700}
+            .dcc2-status{display:flex;gap:.5rem;flex-wrap:wrap;margin-top:1rem}.dcc2-chip{display:inline-flex;align-items:center;gap:.4rem;padding:.45rem .7rem;border-radius:999px;background:rgba(255,255,255,.86);border:1px solid rgba(16,24,40,.08);font-size:.78rem;font-weight:800;color:#344054}
+            .dcc2-grid{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:.8rem;margin-top:1rem}.dcc2-tile{display:block;color:inherit;text-decoration:none;background:#fff;border:1px solid rgba(16,24,40,.08);border-radius:14px;padding:.95rem;transition:transform .15s ease,box-shadow .15s ease,border-color .15s ease}.dcc2-tile:hover{color:inherit;transform:translateY(-2px);box-shadow:0 10px 24px rgba(16,24,40,.08);border-color:rgba(15,98,254,.22)}.dcc2-icon{width:38px;height:38px;border-radius:10px;background:#f1f5fb;display:grid;place-items:center;margin-bottom:.55rem}.dcc2-label{font-size:.75rem;font-weight:800;text-transform:uppercase;letter-spacing:.04em;color:#667085}.dcc2-value{font-size:1.4rem;font-weight:900;margin-top:.12rem}.dcc2-meta{font-size:.76rem;color:#667085;margin-top:.16rem}
+            .dcc2-attention{margin-top:1rem;border-top:1px solid rgba(16,24,40,.08);padding-top:.9rem}.dcc2-attention-title{display:flex;justify-content:space-between;gap:1rem;align-items:center;margin-bottom:.55rem}.dcc2-attention-title strong{font-size:.95rem}.dcc2-attention-title span{font-size:.76rem;color:#667085}.dcc2-alert{display:flex;align-items:center;justify-content:space-between;gap:1rem;background:#fff;border:1px solid rgba(16,24,40,.08);border-radius:12px;padding:.7rem .8rem;margin-top:.45rem}.dcc2-alert-main{display:flex;align-items:center;gap:.65rem;min-width:0}.dcc2-alert-icon{width:34px;height:34px;border-radius:10px;background:#fff4e5;color:#a15c00;display:grid;place-items:center;flex:0 0 auto}.dcc2-alert-title{font-size:.86rem;font-weight:800}.dcc2-alert-text{font-size:.74rem;color:#667085}.dcc2-alert a{font-size:.78rem;font-weight:800;text-decoration:none;white-space:nowrap}
+            @media(max-width:991.98px){.dcc2-grid{grid-template-columns:repeat(2,minmax(0,1fr))}}
+            @media(max-width:575.98px){.dcc2{border-radius:15px}.dcc2-actions .btn{width:100%}.dcc2-grid{grid-template-columns:1fr 1fr;gap:.55rem}.dcc2-tile{padding:.72rem}.dcc2-value{font-size:1.15rem}.dcc2-chip{font-size:.7rem}.dcc2-alert{align-items:flex-start}.dcc2-alert a{align-self:center}.dcc2-attention-title{align-items:flex-start;flex-direction:column;gap:.2rem}}
+          </style>
+          <section class="dcc2 app-card" aria-label="Centro de control">
+            <div class="card-body p-3 p-lg-4">
+              <div class="d-flex flex-wrap justify-content-between align-items-start gap-3">
+                <div class="me-auto">
+                  <span class="page-kicker"><i class="bi bi-speedometer2"></i> Centro de control</span>
+                  <h2 class="h3 fw-bold mb-1">Resumen de tu negocio</h2>
+                  <p class="text-muted mb-0">Acciones rápidas, estado operativo y alertas importantes.</p>
+                </div>
+                <div class="dcc2-actions">
+                  <a href="/ventas/" class="btn btn-primary"><i class="bi bi-cart-plus me-1"></i>Nueva venta</a>
+                  {% if company_feature_enabled('quotes_module_enabled') and current_user_has_permission('quotes_view') %}
+                  <a href="/presupuestos/" class="btn btn-outline-primary"><i class="bi bi-file-earmark-text me-1"></i>Presupuestos</a>
+                  {% endif %}
+                </div>
+              </div>
+
+              <div class="dcc2-status">
+                <span class="dcc2-chip"><i class="bi bi-wifi"></i> Sistema operativo</span>
+                <span class="dcc2-chip"><i class="bi bi-safe2"></i> Caja: {{ 'abierta' if cash_stats.open_sessions else 'cerrada' }}</span>
+                <span class="dcc2-chip"><i class="bi bi-box-seam"></i> Stock bajo: {{ productos_bajo_nivel }}</span>
+                {% if quote_stats %}<span class="dcc2-chip"><i class="bi bi-file-earmark-text"></i> Presupuestos pendientes: {{ quote_stats.pending }}</span>{% endif %}
+              </div>
+
+              <div class="dcc2-grid">
+                {% if can_view_economic_metrics %}
+                <a class="dcc2-tile" href="/ventas/"><span class="dcc2-icon"><i class="bi bi-cash-stack"></i></span><div class="dcc2-label">Ventas hoy</div><div class="dcc2-value">${{ "%.2f"|format(ingresos_hoy) }}</div><div class="dcc2-meta">{{ ventas_hoy }} operación(es)</div></a>
+                <div class="dcc2-tile"><span class="dcc2-icon"><i class="bi bi-piggy-bank"></i></span><div class="dcc2-label">Ganancia hoy</div><div class="dcc2-value">${{ "%.2f"|format(ganancia_hoy) }}</div><div class="dcc2-meta">Margen {{ "%.1f"|format(rentabilidad) }}%</div></div>
+                {% endif %}
+                <a class="dcc2-tile" href="/productos/"><span class="dcc2-icon"><i class="bi bi-exclamation-triangle"></i></span><div class="dcc2-label">Stock crítico</div><div class="dcc2-value">{{ productos_bajo_nivel }}</div><div class="dcc2-meta">{{ stock_agotado }} agotado(s)</div></a>
+                <a class="dcc2-tile" href="/clientes/"><span class="dcc2-icon"><i class="bi bi-people"></i></span><div class="dcc2-label">Clientes</div><div class="dcc2-value">{{ total_clients }}</div><div class="dcc2-meta">{{ clientes_nuevos }} nuevo(s) este mes</div></a>
+              </div>
+
+              {% set dcc2_alerts = (stock_agotado or 0) + (productos_bajo_nivel or 0) + ((quote_stats.pending or 0) if quote_stats else 0) %}
+              <div class="dcc2-attention">
+                <div class="dcc2-attention-title"><strong>Atención</strong><span>{{ dcc2_alerts }} elemento(s) para revisar</span></div>
+                {% if stock_agotado %}<div class="dcc2-alert"><div class="dcc2-alert-main"><span class="dcc2-alert-icon"><i class="bi bi-x-octagon"></i></span><div><div class="dcc2-alert-title">{{ stock_agotado }} producto(s) agotado(s)</div><div class="dcc2-alert-text">Conviene reponerlos antes de la próxima venta.</div></div></div><a href="/productos/">Revisar →</a></div>{% endif %}
+                {% if productos_bajo_nivel %}<div class="dcc2-alert"><div class="dcc2-alert-main"><span class="dcc2-alert-icon"><i class="bi bi-box-arrow-down"></i></span><div><div class="dcc2-alert-title">{{ productos_bajo_nivel }} producto(s) con stock bajo</div><div class="dcc2-alert-text">Revisá niveles y prepará una compra.</div></div></div><a href="/productos/">Ver stock →</a></div>{% endif %}
+                {% if quote_stats and quote_stats.pending %}<div class="dcc2-alert"><div class="dcc2-alert-main"><span class="dcc2-alert-icon"><i class="bi bi-file-earmark-check"></i></span><div><div class="dcc2-alert-title">{{ quote_stats.pending }} presupuesto(s) pendientes</div><div class="dcc2-alert-text">Revisá respuestas y oportunidades.</div></div></div><a href="/presupuestos/">Ver →</a></div>{% endif %}
+                {% if not dcc2_alerts %}<div class="dcc2-alert"><div class="dcc2-alert-main"><span class="dcc2-alert-icon" style="background:#eaf9f0;color:#13804a"><i class="bi bi-check2-circle"></i></span><div><div class="dcc2-alert-title">No hay alertas importantes</div><div class="dcc2-alert-text">Tu negocio está al día.</div></div></div></div>{% endif %}
+              </div>
+            </div>
+          </section>
+          '''
+
+          s = s[:pos] + block + s[pos:]
+          p.write_text(s, encoding='utf-8')
+          print('Dashboard center control applied')
+          PY
+
+      - name: Validate
+        shell: bash
+        run: |
+          set -euo pipefail
+          python -m compileall -q .
+          python - <<'PY'
+          from pathlib import Path
+          from jinja2 import Environment
+          source = Path('templates/dashboard/index.html').read_text(encoding='utf-8')
+          Environment().parse(source)
+          print('Jinja dashboard template parsed successfully')
+          PY
+
+      - name: Commit and clean workflow
+        shell: bash
+        run: |
+          set -euo pipefail
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add templates/dashboard/index.html
+          git rm -f .github/workflows/apply-dashboard-centro-control-v2.yml
+          git commit -m 'feat: apply dashboard center control'
+          git push origin HEAD:feat/dashboard-centro-control
