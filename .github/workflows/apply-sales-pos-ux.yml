@@ -1,0 +1,75 @@
+name: Apply sales POS UX patch
+
+on:
+  push:
+    branches: [feat/ventas-pos-ux]
+
+permissions:
+  contents: write
+
+jobs:
+  patch:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Apply additive POS UX patch in the correct template blocks
+        shell: bash
+        run: |
+          set -euo pipefail
+          python - <<'PY'
+          from pathlib import Path
+
+          path = Path('templates/ventas/index.html')
+          source = path.read_text(encoding='utf-8-sig')
+          marker = 'sales-pos-ux-v3'
+          if marker in source:
+              print('Patch already present')
+              raise SystemExit(0)
+
+          css = r'''\n  /* sales-pos-ux-v3: additive POS presentation only */\n  .sales-pos-ux-shortcuts{display:flex;gap:.5rem;align-items:center;flex-wrap:wrap;margin:.5rem 0 0}\n  .sales-pos-ux-shortcuts .btn{min-height:42px;font-weight:700}\n  .pos-product-card{transition:transform .16s ease,box-shadow .16s ease,border-color .16s ease}\n  .pos-product-card:hover{transform:translateY(-2px);box-shadow:0 12px 28px rgba(15,23,42,.10);border-color:rgba(37,99,235,.20)}\n  .pos-cart-panel{border:1px solid rgba(37,99,235,.14);box-shadow:0 14px 34px rgba(15,23,42,.08)}\n  .pos-cart-panel .summary-panel{border:1px solid #e7ebf1;border-radius:14px;padding:.8rem;background:#fbfcfe}\n  .pos-cart-panel #pos-total{font-size:1.45rem;font-weight:900}\n  .pos-cart-panel .btn-success{font-weight:900}\n  .pos-ux-search-focus{box-shadow:0 0 0 3px rgba(37,99,235,.12)!important;border-color:#2563eb!important}\n  .sales-pos-ux-mobile-bar{display:none}\n  @media (max-width:767.98px){\n    .pos-hero h1{font-size:1.55rem}\n    .pos-hero .btn{min-height:44px}\n    .pos-toolbar{padding:.7rem!important}\n    .pos-toolbar .input-group-lg .form-control,.pos-toolbar .input-group-lg .input-group-text{min-height:48px}\n    .pos-category-strip{overflow-x:auto;flex-wrap:nowrap!important;scrollbar-width:none}\n    .pos-category-strip::-webkit-scrollbar{display:none}\n    .pos-category-strip .btn{flex:0 0 auto;min-height:42px}\n    .pos-grid{grid-template-columns:repeat(2,minmax(0,1fr))!important;gap:.65rem!important}\n    .pos-product-card .card-body{padding:.65rem}\n    .pos-product-card .pos-product-thumb{width:42px!important;height:42px!important}\n    .pos-product-card .badge{font-size:.66rem}\n    .pos-product-card .small{font-size:.72rem}\n    .pos-product-card input{min-height:42px}\n    .pos-product-card .btn{min-height:44px;font-weight:800}\n    .sales-pos-ux-shortcuts{display:none}\n    .pos-quick-controls{display:none!important}\n    .sales-pos-ux-mobile-bar{position:fixed;left:.55rem;right:.55rem;bottom:max(.55rem,env(safe-area-inset-bottom));display:grid;grid-template-columns:1fr 1.35fr 1fr;gap:.4rem;padding:.45rem;border:1px solid #dfe5ed;border-radius:15px;background:rgba(255,255,255,.96);box-shadow:0 -10px 30px rgba(15,23,42,.15);backdrop-filter:blur(10px);z-index:1200}\n    .sales-pos-ux-mobile-bar .btn{min-height:50px;border-radius:11px;font-weight:900;font-size:.78rem;padding:.35rem .45rem}\n    .sales-pos-ux-mobile-bar .cart-main{font-size:.9rem}\n    .sales-pos-ux-mobile-bar .mobile-total{display:block;font-size:.78rem;line-height:1.1;margin-top:.08rem}\n    .app-shell.pos-shell{padding-bottom:6rem}\n    .pos-recent-sales-desktop{display:none}\n  }\n  @media (max-width:390px){.pos-grid{grid-template-columns:1fr!important}.sales-pos-ux-mobile-bar{grid-template-columns:.9fr 1.5fr .9fr}}\n'''
+
+          markup = r'''\n<div class="sales-pos-ux-shortcuts" aria-label="Acciones rápidas de ventas">\n  <button type="button" class="btn btn-outline-primary" onclick="document.getElementById('pos-search-input')?.focus();document.getElementById('pos-search-input')?.select();"><i class="bi bi-search me-1"></i>Buscar</button>\n  <button type="button" class="btn btn-outline-secondary" onclick="document.getElementById('fast-scanner-input')?.focus();"><i class="bi bi-upc-scan me-1"></i>Escanear</button>\n  <button type="button" class="btn btn-outline-dark" onclick="openCartModal()"><i class="bi bi-cart3 me-1"></i>Ver carrito <span class="badge text-bg-primary cart-count ms-1">0</span></button>\n</div>\n<div class="sales-pos-ux-mobile-bar" aria-label="Acciones rápidas móviles">\n  <button type="button" class="btn btn-outline-primary" onclick="document.getElementById('pos-search-input')?.focus();document.getElementById('pos-search-input')?.scrollIntoView({behavior:'smooth',block:'center'});"><i class="bi bi-search d-block"></i>Buscar</button>\n  <button type="button" class="btn btn-success cart-main" onclick="openCartModal()"><i class="bi bi-cart3 me-1"></i>Carrito <span class="badge text-bg-light cart-count ms-1">0</span><span class="mobile-total" id="sales-pos-mobile-total">$0.00</span></button>\n  <button type="button" class="btn btn-primary" onclick="document.getElementById('fast-scanner-input')?.focus();document.getElementById('fast-scanner-input')?.scrollIntoView({behavior:'smooth',block:'center'});"><i class="bi bi-upc-scan d-block"></i>Escanear</button>\n</div>\n'''
+
+          js = r'''\n<script>\n(function(){\n  'use strict';\n  function syncSalesUx(){\n    const total=document.getElementById('pos-total');\n    const mobileTotal=document.getElementById('sales-pos-mobile-total');\n    if(total&&mobileTotal) mobileTotal.textContent=total.textContent.trim()||'$0.00';\n    const firstCount=document.querySelector('.cart-count');\n    if(firstCount){document.querySelectorAll('.cart-count').forEach(el=>el.textContent=firstCount.textContent)}\n    document.querySelectorAll('[data-product-card]').forEach(card=>{\n      const stock=Number(card.dataset.productStock||0);\n      if(!Number.isFinite(stock)) return;\n      const badge=card.querySelector('.badge.text-bg-success,.badge.text-bg-warning,.badge.text-bg-danger');\n      if(badge) badge.textContent='Stock '+Math.max(0,stock).toLocaleString('es-AR',{maximumFractionDigits:3});\n    });\n  }\n  const search=document.getElementById('pos-search-input');\n  if(search){\n    search.addEventListener('focus',()=>search.classList.add('pos-ux-search-focus'));\n    search.addEventListener('blur',()=>search.classList.remove('pos-ux-search-focus'));\n    search.addEventListener('keydown',(event)=>{\n      if(event.key!=='Enter') return;\n      const first=[...document.querySelectorAll('[data-product-card]')].find(card=>!card.hidden&&card.offsetParent!==null);\n      const button=first?.querySelector('button[onclick*="handleAddToCartClick"]');\n      if(button&&!button.disabled){event.preventDefault();button.click();}\n    });\n  }\n  const root=document.querySelector('.pos-shell');\n  if(root&&window.MutationObserver){new MutationObserver(syncSalesUx).observe(root,{subtree:true,childList:true,characterData:true})}\n  syncSalesUx();setTimeout(syncSalesUx,250);setTimeout(syncSalesUx,800);\n})();\n</script>\n'''
+
+          css_marker = '{% block extra_css %}'
+          css_start = source.find(css_marker)
+          if css_start < 0: raise SystemExit('extra_css block not found')
+          style_end = source.find('</style>', css_start)
+          if style_end < 0: raise SystemExit('extra_css style tag not found')
+          source = source[:style_end] + css + source[style_end:]
+
+          content_end = source.find('{% block extra_css %}')
+          if content_end < 0: raise SystemExit('content/extra_css boundary not found')
+          source = source[:content_end] + markup + source[content_end:]
+
+          js_marker = '{% block extra_js %}'
+          js_start = source.find(js_marker)
+          if js_start < 0: raise SystemExit('extra_js block not found')
+          insert_at = js_start + len(js_marker)
+          source = source[:insert_at] + js + source[insert_at:]
+
+          source = source.replace('{% block extra_css %}', '{% block extra_css %}\n  /* sales-pos-ux-v3 marker */', 1)
+          path.write_text(source, encoding='utf-8')
+          print('Sales POS UX patch applied safely.')
+          PY
+
+      - name: Validate
+        shell: bash
+        run: |
+          set -euo pipefail
+          python -m compileall -q .
+          pip install -r requirements.txt
+          pytest -q
+
+      - name: Commit patch and remove workflow
+        shell: bash
+        run: |
+          set -euo pipefail
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add templates/ventas/index.html
+          git rm -f .github/workflows/apply-sales-pos-ux.yml
+          git commit -m 'feat: improve sales POS UX'
+          git push origin HEAD:feat/ventas-pos-ux
