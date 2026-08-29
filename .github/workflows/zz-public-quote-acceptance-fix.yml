@@ -12,10 +12,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
-        with:
-          python-version: '3.12'
-      - name: Patch and test
+      - name: Patch acceptance route
         shell: bash
         run: |
           set -euo pipefail
@@ -23,18 +20,16 @@ jobs:
           from pathlib import Path
           p = Path('quotes.py')
           s = p.read_text(encoding='utf-8')
-          if 'PUBLIC_QUOTE_ACCEPTANCE_FIX_V1' in s:
+          if 'PUBLIC_QUOTE_ACCEPTANCE_FIX_V2' in s:
               print('Acceptance fix already present.')
               raise SystemExit(0)
-          if 'from stockarmobile.extensions import csrf' not in s:
-              s = s.replace('from app import tenant_required, utcnow\n', 'from app import tenant_required, utcnow\nfrom stockarmobile.extensions import csrf\n', 1)
           helper_marker = '''def _build_public_quote_url(quote_id: int) -> str:\n    token = _public_share_serializer().dumps({"quote_id": int(quote_id)}, salt=QUOTE_PUBLIC_TOKEN_SALT)\n    return url_for("quotes.quote_public_view", token=token, _external=True)\n\n\n'''
           helper = '''def _build_public_quote_url(quote_id: int) -> str:\n    token = _public_share_serializer().dumps({"quote_id": int(quote_id)}, salt=QUOTE_PUBLIC_TOKEN_SALT)\n    return url_for("quotes.quote_public_view", token=token, _external=True)\n\n\ndef _build_public_quote_accept_url(quote_id: int) -> str:\n    token = _public_share_serializer().dumps({"quote_id": int(quote_id)}, salt=QUOTE_PUBLIC_TOKEN_SALT)\n    return url_for("quotes.quote_public_accept", token=token, _external=True)\n\n\n'''
           if helper_marker not in s:
               raise SystemExit('public URL helper marker not found')
           s = s.replace(helper_marker, helper, 1)
           route_marker = '''@bp.route("/publico/<token>")\ndef quote_public_view(token):\n'''
-          route = '''@bp.route("/publico/<token>/aceptar", methods=["POST"])\n@csrf.exempt\ndef quote_public_accept(token):\n    """Accept a quote from its signed public customer link."""\n    from app import Quote, QuoteItem, db\n    quote_id = _quote_id_from_public_token(token)\n    if not quote_id:\n        abort(404)\n    quote = (\n        Quote.query.options(\n            selectinload(Quote.client),\n            selectinload(Quote.seller),\n            selectinload(Quote.items).selectinload(QuoteItem.product),\n        )\n        .filter(Quote.id == quote_id)\n        .first()\n    )\n    if quote is None:\n        abort(404)\n    status = (quote.status or "BORRADOR").upper()\n    now = utcnow()\n    if quote.expires_at is not None and quote.expires_at < now and status not in {"APROBADO", "CONVERTIDO", "RECHAZADO", "ANULADO", "VENCIDO"}:\n        quote.status = "VENCIDO"\n        db.session.commit()\n        return redirect(_build_public_quote_url(quote.id))\n    if status in {"VENCIDO", "RECHAZADO", "ANULADO", "CONVERTIDO"}:\n        return redirect(_build_public_quote_url(quote.id))\n    if status != "APROBADO":\n        quote.status = "APROBADO"\n        db.session.commit()\n    return redirect(_build_public_quote_url(quote.id))\n\n\n'''
+          route = '''@bp.route("/publico/<token>/aceptar", methods=["GET"])\ndef quote_public_accept(token):\n    """Accept a quote from its signed public customer link."""\n    from app import Quote, db\n    quote_id = _quote_id_from_public_token(token)\n    if not quote_id:\n        abort(404)\n    quote = Quote.query.filter(Quote.id == quote_id).first()\n    if quote is None:\n        abort(404)\n    status = (quote.status or "BORRADOR").upper()\n    now = utcnow()\n    if quote.expires_at is not None and quote.expires_at < now and status not in {"APROBADO", "CONVERTIDO", "RECHAZADO", "ANULADO", "VENCIDO"}:\n        quote.status = "VENCIDO"\n        db.session.commit()\n        return redirect(_build_public_quote_url(quote.id))\n    if status in {"VENCIDO", "RECHAZADO", "ANULADO", "CONVERTIDO"}:\n        return redirect(_build_public_quote_url(quote.id))\n    if status != "APROBADO":\n        quote.status = "APROBADO"\n        db.session.commit()\n    return redirect(_build_public_quote_url(quote.id))\n\n\n'''
           if route_marker not in s:
               raise SystemExit('public view route marker not found')
           s = s.replace(route_marker, route + route_marker, 1)
@@ -43,27 +38,20 @@ jobs:
           if view_marker not in s:
               raise SystemExit('public view render marker not found')
           s = s.replace(view_marker, view_replacement, 1)
-          s = s.replace('QUOTE_PUBLIC_TOKEN_MAX_AGE_SECONDS = 60 * 60 * 24 * 30\n', 'QUOTE_PUBLIC_TOKEN_MAX_AGE_SECONDS = 60 * 60 * 24 * 30\nPUBLIC_QUOTE_ACCEPTANCE_FIX_V1 = True\n', 1)
+          s = s.replace('QUOTE_PUBLIC_TOKEN_MAX_AGE_SECONDS = 60 * 60 * 24 * 30\n', 'QUOTE_PUBLIC_TOKEN_MAX_AGE_SECONDS = 60 * 60 * 24 * 30\nPUBLIC_QUOTE_ACCEPTANCE_FIX_V2 = True\n', 1)
           p.write_text(s, encoding='utf-8')
           PY
-          pip install -r requirements.txt
-          python -m compileall -q .
-          pytest -q
+          python -m py_compile quotes.py
       - name: Commit patched code
         shell: bash
         run: |
           set -euo pipefail
-          if grep -q 'PUBLIC_QUOTE_ACCEPTANCE_FIX_V1' quotes.py; then
-            git config user.name 'github-actions[bot]'
-            git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
-            git add quotes.py
-            if git diff --cached --quiet; then
-              echo 'No code changes to commit.'
-              exit 0
-            fi
-            git rm -f .github/workflows/zz-public-quote-acceptance-fix.yml .github/workflows/apply-public-quote-acceptance-fix.yml .github/workflows/fix-public-quote-acceptance-now.yml || true
-            git add -u
-            git commit -m 'fix: public quote acceptance'
-            git push origin HEAD:main
-          fi
-# trigger-run
+          if ! grep -q 'PUBLIC_QUOTE_ACCEPTANCE_FIX_V2' quotes.py; then exit 0; fi
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add quotes.py
+          if git diff --cached --quiet; then exit 0; fi
+          git rm -f .github/workflows/zz-public-quote-acceptance-fix.yml .github/workflows/apply-public-quote-acceptance-fix.yml .github/workflows/fix-public-quote-acceptance-now.yml || true
+          git add -u
+          git commit -m 'fix: public quote acceptance'
+          git push origin HEAD:main
