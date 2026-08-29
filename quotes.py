@@ -37,6 +37,7 @@ QUOTE_STATUS_OPTIONS = [
 ]
 QUOTE_PUBLIC_TOKEN_SALT = "quotes-public-share-v1"
 QUOTE_PUBLIC_TOKEN_MAX_AGE_SECONDS = 60 * 60 * 24 * 30
+PUBLIC_QUOTE_ACCEPTANCE_FIX_V2 = True
 
 
 def _json_dict(raw_value):
@@ -352,6 +353,11 @@ def _build_public_quote_pdf_url(quote_id: int) -> str:
 def _build_public_quote_url(quote_id: int) -> str:
     token = _public_share_serializer().dumps({"quote_id": int(quote_id)}, salt=QUOTE_PUBLIC_TOKEN_SALT)
     return url_for("quotes.quote_public_view", token=token, _external=True)
+
+
+def _build_public_quote_accept_url(quote_id: int) -> str:
+    token = _public_share_serializer().dumps({"quote_id": int(quote_id)}, salt=QUOTE_PUBLIC_TOKEN_SALT)
+    return url_for("quotes.quote_public_accept", token=token, _external=True)
 
 
 def _quote_id_from_public_token(token: str) -> int | None:
@@ -1191,6 +1197,30 @@ def quote_public_pdf(token):
     return _quote_pdf_response(quote, as_attachment=False)
 
 
+@bp.route("/publico/<token>/aceptar", methods=["GET"])
+def quote_public_accept(token):
+    """Accept a quote from its signed public customer link."""
+    from app import Quote, db
+    quote_id = _quote_id_from_public_token(token)
+    if not quote_id:
+        abort(404)
+    quote = Quote.query.filter(Quote.id == quote_id).first()
+    if quote is None:
+        abort(404)
+    status = (quote.status or "BORRADOR").upper()
+    now = utcnow()
+    if quote.expires_at is not None and quote.expires_at < now and status not in {"APROBADO", "CONVERTIDO", "RECHAZADO", "ANULADO", "VENCIDO"}:
+        quote.status = "VENCIDO"
+        db.session.commit()
+        return redirect(_build_public_quote_url(quote.id))
+    if status in {"VENCIDO", "RECHAZADO", "ANULADO", "CONVERTIDO"}:
+        return redirect(_build_public_quote_url(quote.id))
+    if status != "APROBADO":
+        quote.status = "APROBADO"
+        db.session.commit()
+    return redirect(_build_public_quote_url(quote.id))
+
+
 @bp.route("/publico/<token>")
 def quote_public_view(token):
     from app import Quote, QuoteItem
@@ -1216,6 +1246,7 @@ def quote_public_view(token):
         quote=quote,
         rows=_quote_rows(quote),
         pdf_url=_build_public_quote_pdf_url(quote.id),
+        accept_url=_build_public_quote_accept_url(quote.id),
     )
 
 
