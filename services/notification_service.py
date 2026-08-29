@@ -99,6 +99,45 @@ def _subscription_notification_target():
         return "/admin/portal"
 
 
+def _build_recent_quote_acceptance_notifications():
+    """Notify company users about quotes recently accepted by a customer."""
+    from app import Quote, scope_query_to_company, utcnow
+
+    cutoff = utcnow() - timedelta(days=7)
+    quotes = (
+        scope_query_to_company(Quote.query, Quote)
+        .filter(
+            Quote.status == "APROBADO",
+            Quote.converted_sale_id.is_(None),
+            Quote.updated_at.isnot(None),
+            Quote.updated_at >= cutoff,
+        )
+        .order_by(Quote.updated_at.desc(), Quote.id.desc())
+        .limit(6)
+        .all()
+    )
+
+    items = []
+    for quote in quotes:
+        customer_name = (
+            getattr(getattr(quote, "client", None), "name", None)
+            or getattr(quote, "consumer_name", None)
+            or "Consumidor final"
+        )
+        number = getattr(quote, "number", None) or f"P-{quote.id:06d}"
+        currency = getattr(quote, "currency", None) or "ARS"
+        total = float(getattr(quote, "total_amount", 0) or 0)
+        items.append(
+            {
+                "type": "success",
+                "title": "Presupuesto aceptado",
+                "body": f"{customer_name} aceptó el {number} · {currency} {total:.2f}. Listo para convertir en venta.",
+                "href": url_for("quotes.view_quote", quote_id=quote.id),
+            }
+        )
+    return items
+
+
 def _build_superadmin_notifications():
     from app import BackupLog, Company, Payment, PaymentHistory, ReferralCommission, WebhookEvent, utcnow
     from app import SupportTicket
@@ -156,7 +195,7 @@ def _build_seller_notifications():
 
     profile = ReferralSeller.query.filter_by(user_id=current_user.id, active=True).first()
     if profile is None:
-        return [
+        return _build_recent_quote_acceptance_notifications() + [
             {
                 "type": "warning",
                 "title": "Referidos",
@@ -176,7 +215,7 @@ def _build_seller_notifications():
     available_total = sum(float(row.commission_amount or 0) for row in commissions if row.status == "disponible")
     paid_count = sum(1 for row in commissions if row.status == "pagada")
 
-    items = []
+    items = _build_recent_quote_acceptance_notifications()
     if pending_count:
         items.append(
             {
@@ -268,7 +307,7 @@ def _build_user_notifications():
     company_id = get_current_company_id()
     company_state = get_company_access_state(company_id) if company_id else {"status": "missing", "can_access": False}
 
-    items = []
+    items = _build_recent_quote_acceptance_notifications()
     items.append({"type": "success", "title": "Ventas", "body": f"{sales_today} venta(s) hoy · ${float(sales_amount):.2f}", "href": "/ventas/"})
 
     if low_stock or out_stock:
