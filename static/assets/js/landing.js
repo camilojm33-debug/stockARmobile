@@ -47,23 +47,28 @@
   }, { threshold: 0.5 });
   document.querySelectorAll("[data-counter]").forEach(function (counter) { counterObserver.observe(counter); });
 
-  /* Landing comercial 2.0: mejora de conversión sin romper el template existente. */
+  /* Landing comercial 2.0: capa no destructiva sobre la landing existente. */
   if (!document.getElementById("landing-commercial-v2")) {
     const style = document.createElement("style");
     style.id = "landing-commercial-v2-styles";
     style.textContent = `
       .landing-v2-bridge{position:relative;z-index:2;padding:1rem 0;border-top:1px solid var(--border);border-bottom:1px solid var(--border);background:var(--surface-strong)}
-      .landing-v2-bridge__inner{display:flex;align-items:center;justify-content:center;gap:.7rem;flex-wrap:wrap;text-align:center}
-      .landing-v2-bridge__item{display:inline-flex;align-items:center;gap:.4rem;color:var(--muted);font-size:.86rem;font-weight:600}.landing-v2-bridge__item i{color:var(--accent)}
-      .landing-v2-section{padding:4rem 0}.landing-v2-problem{border:1px solid var(--border);border-radius:24px;padding:1.5rem;background:var(--surface-strong);box-shadow:var(--shadow-sm)}
-      .landing-v2-problem h3{font-size:1.25rem;font-weight:800;margin-bottom:1rem}.landing-v2-list{display:grid;gap:.65rem;margin:0;padding:0;list-style:none}.landing-v2-list li{display:flex;align-items:flex-start;gap:.6rem;color:var(--muted);line-height:1.55}.landing-v2-list i{flex:0 0 auto;margin-top:.15rem}.landing-v2-list.problem i{color:#dc3545}.landing-v2-list.solution i{color:var(--accent)}
-      .landing-v2-solution{border-color:rgba(15,98,254,.18);background:linear-gradient(145deg,rgba(15,98,254,.06),rgba(18,185,129,.05))}
-      .landing-v2-kicker{display:inline-flex;align-items:center;gap:.45rem;border-radius:999px;padding:.4rem .75rem;margin-bottom:.8rem;background:rgba(15,98,254,.09);color:var(--primary);font-size:.76rem;font-weight:800;text-transform:uppercase;letter-spacing:.07em}
-      .landing-v2-title{font-size:clamp(2rem,4vw,3rem);line-height:1.08;font-weight:800;letter-spacing:-.02em;margin-bottom:.75rem}.landing-v2-subtitle{max-width:760px;margin:0 auto;color:var(--muted);font-size:1.05rem;line-height:1.7}
-      .landing-v2-flow{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:.8rem;margin-top:1.7rem}.landing-v2-flow__step{padding:1rem;border:1px solid var(--border);border-radius:16px;background:var(--surface-strong)}.landing-v2-flow__num{display:grid;place-items:center;width:34px;height:34px;border-radius:50%;margin-bottom:.65rem;background:rgba(15,98,254,.1);color:var(--primary);font-weight:900}.landing-v2-flow__step strong{display:block;margin-bottom:.25rem}.landing-v2-flow__step span{display:block;color:var(--muted);font-size:.83rem;line-height:1.5}
+      .landing-v2-bridge__inner{display:flex;align-items:center;justify-content:center;gap:.7rem;flex-wrap:wrap;text-align:center}.landing-v2-bridge__item{display:inline-flex;align-items:center;gap:.4rem;color:var(--muted);font-size:.86rem;font-weight:600}.landing-v2-bridge__item i{color:var(--accent)}
+      .landing-v2-section{padding:4rem 0}.landing-v2-problem{border:1px solid var(--border);border-radius:24px;padding:1.5rem;background:var(--surface-strong);box-shadow:var(--shadow-sm)}.landing-v2-problem h3{font-size:1.25rem;font-weight:800;margin-bottom:1rem}
+      .landing-v2-list{display:grid;gap:.65rem;margin:0;padding:0;list-style:none}.landing-v2-list li{display:flex;align-items:flex-start;gap:.6rem;color:var(--muted);line-height:1.55}.landing-v2-list i{flex:0 0 auto;margin-top:.15rem}.landing-v2-list.problem i{color:#dc3545}.landing-v2-list.solution i{color:var(--accent)}
+      .landing-v2-solution{border-color:rgba(15,98,254,.18);background:linear-gradient(145deg,rgba(15,98,254,.06),rgba(18,185,129,.05))}.landing-v2-kicker{display:inline-flex;align-items:center;gap:.45rem;border-radius:999px;padding:.4rem .75rem;margin-bottom:.8rem;background:rgba(15,98,254,.09);color:var(--primary);font-size:.76rem;font-weight:800;text-transform:uppercase;letter-spacing:.07em}
+      .landing-v2-title{font-size:clamp(2rem,4vw,3rem);line-height:1.08;font-weight:800;letter-spacing:-.02em;margin-bottom:.75rem}.landing-v2-subtitle{max-width:780px;margin:0 auto;color:var(--muted);font-size:1.05rem;line-height:1.7}.landing-v2-flow{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:.8rem;margin-top:1.7rem}
+      .landing-v2-flow__step{padding:1rem;border:1px solid var(--border);border-radius:16px;background:var(--surface-strong)}.landing-v2-flow__num{display:grid;place-items:center;width:34px;height:34px;border-radius:50%;margin-bottom:.65rem;background:rgba(15,98,254,.1);color:var(--primary);font-weight:900}.landing-v2-flow__step strong{display:block;margin-bottom:.25rem}.landing-v2-flow__step span{display:block;color:var(--muted);font-size:.83rem;line-height:1.5}
       .landing-v2-inline-cta{margin-top:1.4rem;display:flex;justify-content:center;gap:.75rem;flex-wrap:wrap}.landing-v2-sticky{display:none}
-      @media(max-width:767px){.landing-v2-section{padding:3rem 0}.landing-v2-flow{grid-template-columns:1fr 1fr}.landing-v2-sticky{position:fixed;z-index:1000;left:12px;right:12px;bottom:12px;display:flex;align-items:center;gap:.65rem;padding:.65rem;border:1px solid var(--border);border-radius:18px;background:var(--surface-muted);box-shadow:0 18px 45px rgba(2,8,23,.18);backdrop-filter:blur(18px)}.landing-v2-sticky__copy{min-width:0;flex:1}.landing-v2-sticky__copy strong{display:block;font-size:.78rem;line-height:1.2}.landing-v2-sticky__copy span{display:block;color:var(--muted);font-size:.68rem;margin-top:.12rem}.landing-v2-sticky .btn{white-space:nowrap;font-weight:800}body{padding-bottom:78px}}
+      .landing-v2-proof{border:1px solid rgba(15,98,254,.14);border-radius:24px;padding:1rem;background:linear-gradient(145deg,rgba(15,98,254,.06),rgba(18,185,129,.05));box-shadow:var(--shadow-sm)}
+      .landing-v2-proof__image{display:block;width:100%;height:100%;min-height:330px;object-fit:cover;object-position:center;border-radius:18px;border:1px solid var(--border);background:var(--surface-strong)}
+      .landing-v2-proof__copy{padding:1rem}.landing-v2-proof__steps{display:grid;gap:.7rem;margin-top:1rem}.landing-v2-proof__step{display:flex;gap:.7rem;align-items:flex-start}.landing-v2-proof__num{display:grid;place-items:center;flex:0 0 auto;width:30px;height:30px;border-radius:50%;background:rgba(15,98,254,.1);color:var(--primary);font-weight:900;font-size:.8rem}.landing-v2-proof__step strong{display:block;font-size:.92rem}.landing-v2-proof__step span{display:block;color:var(--muted);font-size:.78rem;line-height:1.45;margin-top:.15rem}
+      .landing-v2-quote{border-radius:26px;padding:1.6rem;background:linear-gradient(145deg,rgba(15,98,254,.08),rgba(18,185,129,.07));border:1px solid rgba(15,98,254,.12)}
+      .landing-v2-quote__badge{display:inline-flex;align-items:center;gap:.45rem;padding:.4rem .72rem;border-radius:999px;background:rgba(255,255,255,.72);color:var(--primary);font-size:.76rem;font-weight:800}
+      .landing-v2-quote__card{height:100%;padding:1.1rem;border:1px solid var(--border);border-radius:16px;background:var(--surface-strong)}.landing-v2-quote__icon{font-size:1.35rem;color:var(--primary)}
+      @media(max-width:767px){.landing-v2-section{padding:3rem 0}.landing-v2-flow{grid-template-columns:1fr 1fr}.landing-v2-sticky{position:fixed;z-index:1000;left:12px;right:12px;bottom:12px;display:flex;align-items:center;gap:.65rem;padding:.65rem;border:1px solid var(--border);border-radius:18px;background:var(--surface-muted);box-shadow:0 18px 45px rgba(2,8,23,.18);backdrop-filter:blur(18px)}.landing-v2-sticky__copy{min-width:0;flex:1}.landing-v2-sticky__copy strong{display:block;font-size:.78rem;line-height:1.2}.landing-v2-sticky__copy span{display:block;color:var(--muted);font-size:.68rem;margin-top:.12rem}.landing-v2-sticky .btn{white-space:nowrap;font-weight:800}.landing-v2-proof__image{min-height:250px}.landing-v2-proof__copy{padding:.8rem}.landing-v2-quote{padding:1.15rem}body{padding-bottom:78px}}
       @media(max-width:420px){.landing-v2-flow{grid-template-columns:1fr}.landing-v2-sticky__copy span{display:none}.landing-v2-sticky .btn{padding-inline:.8rem;font-size:.78rem}}
+      [data-theme="dark"] .landing-v2-bridge{background:var(--surface-strong)}[data-theme="dark"] .landing-v2-problem{background:var(--surface-strong)}[data-theme="dark"] .landing-v2-proof__image{background:#0f172a}
     `;
     document.head.appendChild(style);
 
@@ -94,6 +99,21 @@
         </div>`;
       videoSection.insertAdjacentElement("beforebegin", problem);
 
+      const quoteSection = document.createElement("section");
+      quoteSection.id = "presupuestos-como-venta";
+      quoteSection.className = "landing-v2-section section-soft";
+      quoteSection.innerHTML = `
+        <div class="container">
+          <div class="landing-v2-quote">
+            <div class="text-center mb-4"><span class="landing-v2-kicker"><i class="bi bi-file-earmark-check"></i> Presupuestos que venden</span><h2 class="landing-v2-title">No mandes un presupuesto y te olvides</h2><p class="landing-v2-subtitle">Seguí el presupuesto desde el envío hasta la venta, con un flujo claro para vos y simple para tu cliente.</p></div>
+            <div class="row g-3">
+              <div class="col-lg-7"><div class="landing-v2-proof h-100"><img class="landing-v2-proof__image" src="/static/assets/images/landing-demo-poster.jpg" alt="Vista real de StockARmobile" loading="lazy"></div></div>
+              <div class="col-lg-5"><div class="landing-v2-proof h-100"><div class="landing-v2-proof__copy"><span class="landing-v2-quote__badge"><i class="bi bi-arrow-right-circle"></i> Flujo comercial</span><div class="landing-v2-proof__steps"><div class="landing-v2-proof__step"><span class="landing-v2-proof__num">1</span><div><strong>Creás el presupuesto</strong><span>Con productos, cantidades, precios y cliente.</span></div></div><div class="landing-v2-proof__step"><span class="landing-v2-proof__num">2</span><div><strong>Lo recibe el cliente</strong><span>Lo abre desde un enlace y puede revisarlo desde el celular.</span></div></div><div class="landing-v2-proof__step"><span class="landing-v2-proof__num">3</span><div><strong>Lo acepta online</strong><span>La aceptación queda registrada en StockARmobile.</span></div></div><div class="landing-v2-proof__step"><span class="landing-v2-proof__num">4</span><div><strong>Lo convertís en venta</strong><span>La operación pasa al circuito del POS para cobrar y descontar stock.</span></div></div></div><div class="landing-v2-inline-cta"><a class="btn btn-primary btn-pill w-100" href="${trialUrl}"><i class="bi bi-rocket-takeoff me-1"></i>Probá este flujo gratis</a></div></div></div></div>
+            </div>
+          </div>
+        </div>`;
+      problem.insertAdjacentElement("afterend", quoteSection);
+
       const mobileCta = document.createElement("div");
       mobileCta.className = "landing-v2-sticky";
       mobileCta.innerHTML = `<div class="landing-v2-sticky__copy"><strong>Probá StockARmobile gratis</strong><span>10 días · sin tarjeta</span></div><a class="btn btn-primary btn-pill" href="${trialUrl}"><i class="bi bi-rocket-takeoff me-1"></i>Probar gratis</a>`;
@@ -103,6 +123,12 @@
       const heroLead = hero.querySelector("p.lead");
       if (heroTitle) heroTitle.textContent = "Controlá tu comercio desde cualquier lugar";
       if (heroLead) heroLead.textContent = "Vendé, controlá stock, manejá caja, clientes y presupuestos desde una sola plataforma. Probalo gratis durante 10 días y seguí tu negocio desde la PC o el celular.";
+
+      /* Reemplazá el mockup abstracto por una captura real del producto disponible en el repositorio. */
+      const mockup = hero.querySelector(".hero-mockup");
+      if (mockup && !mockup.querySelector(".landing-v2-hero-real")) {
+        mockup.innerHTML = `<div class="landing-v2-hero-real" style="position:relative;overflow:hidden;border-radius:22px;border:1px solid var(--border);background:var(--surface-strong)"><img src="/static/assets/images/landing-demo-poster.jpg" alt="Captura real de StockARmobile" style="display:block;width:100%;height:auto;min-height:360px;object-fit:cover;object-position:center"><div style="position:absolute;left:14px;bottom:14px;right:14px;display:flex;align-items:center;justify-content:space-between;gap:10px;padding:10px 12px;border-radius:14px;background:rgba(2,8,23,.78);color:#fff;backdrop-filter:blur(8px)"><span style="font-size:.75rem;font-weight:700">StockARmobile · vista real</span><span style="font-size:.7rem;opacity:.9">Ventas · Stock · Caja</span></div></div>`;
+      }
 
       const installButton = document.getElementById("pwaInstallBtn");
       if (installButton) {
