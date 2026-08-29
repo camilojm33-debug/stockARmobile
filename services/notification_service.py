@@ -96,7 +96,7 @@ def _subscription_notification_target():
     try:
         return url_for("company_billing.subscription_portal")
     except Exception:
-        return "/portal"
+        return "/admin/portal"
 
 
 def _build_superadmin_notifications():
