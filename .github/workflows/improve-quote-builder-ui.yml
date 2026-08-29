@@ -1,0 +1,425 @@
+name: Improve quote builder UI
+
+on:
+  push:
+    branches: [main]
+
+permissions:
+  contents: write
+
+jobs:
+  patch-and-test:
+    if: ${{ !contains(github.event.head_commit.message, 'feat: apply quote builder UX') }}
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Patch quote builder UX
+        shell: bash
+        run: |
+          set -euo pipefail
+          python - <<'PY'
+          from pathlib import Path
+
+          path = Path('templates/presupuestos/form.html')
+          source = path.read_text(encoding='utf-8')
+          marker = 'quote-builder-ux-v1'
+          if marker in source:
+              print('Quote builder UX already applied.')
+              raise SystemExit(0)
+
+          ux_markup = r'''
+          <!-- quote-builder-ux-v1 -->
+          <style>
+            .quote-ux-toolbar {
+              display:flex;
+              align-items:center;
+              justify-content:space-between;
+              gap:.75rem;
+              margin-bottom:1rem;
+              padding:.75rem 1rem;
+              border:1px solid var(--app-line);
+              border-radius:14px;
+              background:rgba(255,255,255,.88);
+              box-shadow:0 8px 24px rgba(15,23,42,.05);
+              backdrop-filter:blur(8px);
+            }
+            .quote-ux-toolbar-main { min-width:0; display:flex; align-items:center; gap:.65rem; flex-wrap:wrap; }
+            .quote-ux-kicker { font-size:.75rem; font-weight:800; text-transform:uppercase; letter-spacing:.08em; color:#64748b; }
+            .quote-ux-client { font-weight:700; max-width:34vw; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+            .quote-ux-stats { display:flex; align-items:center; gap:.45rem; flex-wrap:wrap; }
+            .quote-ux-stat { border:1px solid var(--app-line); background:#f8fafc; border-radius:999px; padding:.28rem .55rem; font-size:.78rem; font-weight:700; color:#475569; }
+            .quote-ux-stat strong { color:#0f172a; }
+            .quote-ux-total-mini { margin-left:auto; text-align:right; white-space:nowrap; }
+            .quote-ux-total-label { display:block; font-size:.68rem; text-transform:uppercase; letter-spacing:.06em; color:#64748b; font-weight:800; }
+            .quote-ux-total-value { display:block; font-size:1.15rem; font-weight:900; line-height:1.1; }
+
+            .quote-ux-stepbar { display:none; }
+            .quote-ux-actions {
+              display:flex;
+              flex-wrap:wrap;
+              align-items:center;
+              gap:.5rem;
+              margin-top:1rem;
+              padding:.7rem;
+              border:1px solid var(--app-line);
+              border-radius:14px;
+              background:rgba(255,255,255,.94);
+              box-shadow:0 10px 24px rgba(15,23,42,.07);
+              backdrop-filter:blur(8px);
+              position:sticky;
+              bottom:1rem;
+              z-index:60;
+            }
+            .quote-ux-actions .quote-ux-action { min-height:44px; font-weight:700; border-radius:10px; }
+            .quote-ux-action-primary { flex:1 1 170px; }
+            .quote-ux-actions .quote-ux-action[hidden] { display:none !important; }
+
+            .quote-ux-total {
+              border:2px solid rgba(15,98,254,.22) !important;
+              border-radius:14px !important;
+              padding:.8rem !important;
+              background:linear-gradient(180deg,#f8fbff,#fff) !important;
+              box-shadow:0 8px 24px rgba(15,98,254,.08);
+            }
+            .quote-ux-total * { font-weight:800; }
+
+            .quote-panel { transition:box-shadow .18s ease,border-color .18s ease,transform .18s ease; }
+            .quote-panel:focus-within { border-color:rgba(15,98,254,.35); box-shadow:0 12px 28px rgba(15,98,254,.08); }
+            .catalog-card { min-height:76px; }
+            .catalog-side .btn, .quote-line button { min-height:42px; }
+            .quote-line input, .quote-line select { min-height:42px; }
+            .quote-line-grid { align-items:end; }
+            .quote-ux-actions .bi { margin-right:.25rem; }
+
+            @media (max-width: 1200px) {
+              .quote-ux-toolbar { position:sticky; top:.5rem; z-index:55; margin-left:0; margin-right:0; }
+              .quote-builder-layout { grid-template-columns:1fr; gap:.75rem; }
+              .quote-panel { scroll-margin-top:5rem; }
+              .quote-lines-wrap { max-height:none; overflow:visible; }
+              .catalog-results { max-height:42vh; }
+              .quote-ux-stepbar {
+                display:grid;
+                grid-template-columns:repeat(3,minmax(0,1fr));
+                gap:.45rem;
+                position:sticky;
+                top:5.2rem;
+                z-index:54;
+                margin-bottom:.75rem;
+                padding:.45rem;
+                border:1px solid var(--app-line);
+                border-radius:12px;
+                background:rgba(255,255,255,.94);
+                backdrop-filter:blur(8px);
+                box-shadow:0 8px 22px rgba(15,23,42,.06);
+              }
+              .quote-ux-stepbar button {
+                min-height:44px;
+                border:1px solid var(--app-line);
+                border-radius:10px;
+                background:#fff;
+                color:#334155;
+                font-weight:800;
+                font-size:.8rem;
+              }
+              .quote-ux-stepbar button.active { border-color:#0f62fe; color:#0f62fe; background:rgba(15,98,254,.07); }
+            }
+
+            @media (max-width: 768px) {
+              .app-shell { padding-bottom:6rem; }
+              .quote-ux-toolbar { align-items:flex-start; padding:.7rem .75rem; }
+              .quote-ux-client { max-width:55vw; }
+              .quote-ux-total-mini { width:100%; margin-left:0; text-align:left; border-top:1px solid var(--app-line); padding-top:.45rem; }
+              .quote-ux-total-value { font-size:1.35rem; }
+              .quote-ux-stepbar { top:.45rem; }
+              .quote-ux-actions {
+                position:fixed;
+                left:.55rem;
+                right:.55rem;
+                bottom:max(.55rem, env(safe-area-inset-bottom));
+                margin:0;
+                padding:.55rem;
+                border-radius:14px;
+                box-shadow:0 -10px 28px rgba(15,23,42,.13);
+              }
+              .quote-ux-actions .quote-ux-action { min-height:48px; padding-left:.65rem; padding-right:.65rem; }
+              .quote-ux-action-primary { flex:1 1 calc(50% - .25rem); }
+              .quote-ux-action-secondary { flex:1 1 calc(50% - .25rem); }
+              .quote-ux-actions .quote-ux-action[hidden] { display:none !important; }
+
+              .quote-panel-header { padding:.75rem; }
+              .quote-panel-body { padding:.75rem; }
+              .catalog-card { grid-template-columns:48px minmax(0,1fr); gap:.55rem; min-height:0; padding:.6rem; }
+              .catalog-thumb { width:48px; height:48px; }
+              .catalog-main { min-width:0; }
+              .catalog-title { font-size:.95rem; }
+              .catalog-meta { font-size:.77rem; }
+              .catalog-side { grid-column:2; min-width:0; margin-top:.1rem; }
+              .catalog-side .btn { min-height:44px; padding:.35rem .6rem; }
+
+              .quote-line { padding:.7rem; }
+              .quote-line-grid {
+                grid-template-columns:repeat(2,minmax(0,1fr));
+                gap:.55rem;
+              }
+              .quote-line-grid > :first-child { grid-column:1 / -1; }
+              .quote-line-grid label { font-size:.75rem; }
+              .quote-line-grid input, .quote-line-grid select { min-height:44px; font-size:.9rem; }
+              .quote-line-grid button { min-height:44px; }
+
+              #quoteConsumerNameWrap { transition:all .18s ease; }
+              .quote-ux-actions + * { margin-bottom:1rem; }
+            }
+
+            @media (max-width: 420px) {
+              .quote-ux-stepbar button { font-size:.74rem; padding:.3rem .25rem; }
+              .quote-ux-stat { font-size:.72rem; }
+              .quote-ux-action-primary, .quote-ux-action-secondary { flex-basis:100%; }
+            }
+          </style>
+
+          <div class="quote-ux-toolbar" aria-label="Resumen del presupuesto">
+            <div class="quote-ux-toolbar-main">
+              <span class="quote-ux-kicker">Presupuesto</span>
+              <strong class="quote-ux-client" id="quoteUxClient">Consumidor final</strong>
+              <div class="quote-ux-stats">
+                <span class="quote-ux-stat" id="quoteUxLines"><strong>0</strong> productos</span>
+                <span class="quote-ux-stat" id="quoteUxMode">{{ 'Editar' if mode == 'edit' else 'Nuevo' }}</span>
+              </div>
+            </div>
+            <div class="quote-ux-total-mini">
+              <span class="quote-ux-total-label">Total</span>
+              <strong class="quote-ux-total-value" id="quoteUxTotal">—</strong>
+            </div>
+          </div>
+
+          <div class="quote-ux-stepbar" aria-label="Pasos del presupuesto">
+            <button type="button" data-quote-step="#panelCatalog">1 · Productos</button>
+            <button type="button" data-quote-step="#panelLines">2 · Detalle</button>
+            <button type="button" data-quote-step="#panelContext">3 · Cliente</button>
+          </div>
+
+          <div class="quote-ux-actions" aria-label="Acciones rápidas del presupuesto">
+            <button type="button" class="btn btn-primary quote-ux-action quote-ux-action-primary" data-quote-action="save" hidden>💾 Guardar</button>
+            <button type="button" class="btn btn-outline-primary quote-ux-action quote-ux-action-secondary" data-quote-action="preview" hidden>👁 Vista previa</button>
+            <button type="button" class="btn btn-outline-success quote-ux-action quote-ux-action-secondary" data-quote-action="whatsapp" hidden>📲 WhatsApp</button>
+            <button type="button" class="btn btn-outline-secondary quote-ux-action quote-ux-action-secondary" data-quote-action="pdf" hidden>📄 PDF</button>
+            <button type="button" class="btn btn-outline-dark quote-ux-action quote-ux-action-secondary" data-quote-action="convert" hidden>🛒 Convertir en venta</button>
+          </div>
+          '''
+
+          form_marker = '  <form method="post" id="quoteForm" novalidate>'
+          if form_marker not in source:
+              raise SystemExit('quote form marker not found')
+          source = source.replace(form_marker, ux_markup + '\n' + form_marker, 1)
+
+          script = r'''
+          <script>
+          (function () {
+            "use strict";
+            const form = document.getElementById("quoteForm");
+            if (!form) return;
+
+            const clientSelect = document.getElementById("quoteClientSelect");
+            const consumerWrap = document.getElementById("quoteConsumerNameWrap");
+            const consumerInput = document.getElementById("quoteConsumerName");
+            const clientSummary = document.getElementById("quoteUxClient");
+            const linesSummary = document.getElementById("quoteUxLines");
+            const totalSummary = document.getElementById("quoteUxTotal");
+
+            function normalizeText(value) {
+              return String(value || "").replace(/\s+/g, " ").trim();
+            }
+
+            function getLineCount() {
+              const counter = document.getElementById("lineCount");
+              if (counter) {
+                const match = normalizeText(counter.textContent).match(/\d+/);
+                if (match) return Number(match[0]);
+              }
+              const lines = document.querySelectorAll("#quoteLinesWrap .quote-line");
+              return lines.length;
+            }
+
+            function getClientLabel() {
+              if (clientSelect && clientSelect.value) {
+                const option = clientSelect.options[clientSelect.selectedIndex];
+                return normalizeText(option ? option.textContent : "Cliente");
+              }
+              return normalizeText(consumerInput && consumerInput.value) || "Consumidor final";
+            }
+
+            function extractTotal() {
+              const context = document.getElementById("panelContext");
+              if (!context) return "—";
+              const candidates = Array.from(context.querySelectorAll("*"));
+              for (const element of candidates) {
+                if (element.children.length) continue;
+                const text = normalizeText(element.textContent);
+                if (/^total(?:\s|:)/i.test(text) && /\d/.test(text)) return text.replace(/^total\s*:?[\s]*/i, "");
+              }
+              const text = normalizeText(context.textContent);
+              const matches = text.match(/total\s*[:\-]?\s*((?:[A-Z]{3}\s*)?[\$]?\s?[\d.,]+)/ig);
+              return matches && matches.length ? matches[matches.length - 1].replace(/^total\s*[:\-]?\s*/i, "") : "—";
+            }
+
+            function syncSummary() {
+              const count = getLineCount();
+              if (linesSummary) linesSummary.innerHTML = "<strong>" + count + "</strong> " + (count === 1 ? "producto" : "productos");
+              if (clientSummary) clientSummary.textContent = getClientLabel();
+              if (totalSummary) totalSummary.textContent = extractTotal();
+            }
+
+            function syncConsumerVisibility() {
+              if (!consumerWrap) return;
+              const hasClient = Boolean(clientSelect && clientSelect.value);
+              consumerWrap.style.display = hasClient ? "none" : "";
+              if (hasClient && consumerInput) consumerInput.value = "";
+              syncSummary();
+            }
+
+            function findOriginalAction(kind) {
+              const all = Array.from(document.querySelectorAll("a,button,input[type='submit'],input[type='button']"));
+              const textOf = (node) => normalizeText(node.innerText || node.value || node.getAttribute("aria-label") || "").toLowerCase();
+              const hrefOf = (node) => normalizeText(node.getAttribute("href") || "").toLowerCase();
+              const rules = {
+                save: node => /guardar|actualizar|guardar presupuesto|crear presupuesto/.test(textOf(node)) && !node.closest(".quote-ux-actions"),
+                preview: node => /vista previa|previsualizar|preview/.test(textOf(node)) && !node.closest(".quote-ux-actions"),
+                whatsapp: node => (/whatsapp|wa\.me/.test(textOf(node)) || /whatsapp|wa\.me/.test(hrefOf(node))) && !node.closest(".quote-ux-actions"),
+                pdf: node => (/\bpdf\b|descargar.*pdf|imprimir/.test(textOf(node)) || /pdf/.test(hrefOf(node))) && !node.closest(".quote-ux-actions"),
+                convert: node => /convertir(?: en)? venta|pasar a venta/.test(textOf(node)) && !node.closest(".quote-ux-actions")
+              };
+              return all.find(rules[kind]) || null;
+            }
+
+            document.querySelectorAll("[data-quote-action]").forEach(button => {
+              button.addEventListener("click", function () {
+                const original = findOriginalAction(button.dataset.quoteAction);
+                if (!original) return;
+                original.click();
+              });
+            });
+
+            function revealAvailableActions() {
+              document.querySelectorAll("[data-quote-action]").forEach(button => {
+                button.hidden = !findOriginalAction(button.dataset.quoteAction);
+              });
+              syncSummary();
+            }
+
+            if (clientSelect) clientSelect.addEventListener("change", syncConsumerVisibility);
+            if (consumerInput) consumerInput.addEventListener("input", syncSummary);
+
+            const search = document.getElementById("quoteProductSearch");
+            if (search) {
+              search.addEventListener("keydown", function (event) {
+                if (event.key !== "Enter") return;
+                const firstAdd = Array.from(document.querySelectorAll("#catalogResults button, #catalogResults a")).find(node => {
+                  const text = normalizeText(node.innerText || node.value || node.getAttribute("aria-label") || "").toLowerCase();
+                  return /agregar/.test(text);
+                });
+                if (firstAdd) {
+                  event.preventDefault();
+                  firstAdd.click();
+                  setTimeout(syncSummary, 40);
+                }
+              });
+            }
+
+            document.addEventListener("dblclick", function (event) {
+              const card = event.target.closest("#catalogResults .catalog-card");
+              if (!card || event.target.closest("button,a,input,select,textarea")) return;
+              const add = Array.from(card.querySelectorAll("button,a")).find(node => /agregar/.test(normalizeText(node.innerText || node.value || node.getAttribute("aria-label") || "").toLowerCase()));
+              if (add) { add.click(); setTimeout(syncSummary, 40); }
+            });
+
+            document.querySelectorAll("[data-quote-step]").forEach(button => {
+              button.addEventListener("click", function () {
+                const selector = button.dataset.quoteStep;
+                const panel = selector && document.querySelector(selector);
+                if (!panel) return;
+                if (panel.classList.contains("collapsed")) panel.classList.remove("collapsed");
+                panel.scrollIntoView({ behavior: "smooth", block: "start" });
+              });
+            });
+
+            const panels = ["#panelCatalog", "#panelLines", "#panelContext"].map(selector => document.querySelector(selector)).filter(Boolean);
+            if ("IntersectionObserver" in window && panels.length) {
+              const observer = new IntersectionObserver(entries => {
+                const visible = entries.filter(entry => entry.isIntersecting).sort((a,b) => b.intersectionRatio - a.intersectionRatio)[0];
+                if (!visible) return;
+                const id = "#" + visible.target.id;
+                document.querySelectorAll("[data-quote-step]").forEach(btn => btn.classList.toggle("active", btn.dataset.quoteStep === id));
+              }, { rootMargin: "-25% 0px -55% 0px", threshold: [0,.25,.5] });
+              panels.forEach(panel => observer.observe(panel));
+            }
+
+            function emphasizeTotal() {
+              const context = document.getElementById("panelContext");
+              if (!context) return;
+              const nodes = Array.from(context.querySelectorAll("*"));
+              for (const node of nodes) {
+                if (node.children.length) continue;
+                const text = normalizeText(node.textContent);
+                if (!/^total(?:\s|:)/i.test(text)) continue;
+                let parent = node.parentElement;
+                for (let i = 0; i < 4 && parent; i++, parent = parent.parentElement) {
+                  if (parent.matches(".border,.card,.mb-2,.mb-3")) {
+                    parent.classList.add("quote-ux-total");
+                    return;
+                  }
+                }
+                node.classList.add("quote-ux-total");
+                return;
+              }
+            }
+
+            const mo = new MutationObserver(() => {
+              syncSummary();
+              emphasizeTotal();
+              revealAvailableActions();
+            });
+            mo.observe(form, { childList:true, subtree:true, characterData:true });
+
+            syncConsumerVisibility();
+            emphasizeTotal();
+            revealAvailableActions();
+            setTimeout(() => { syncSummary(); emphasizeTotal(); revealAvailableActions(); }, 250);
+          })();
+          </script>
+          '''
+
+          end_marker = '\n{% endblock %}'
+          end_pos = source.rfind(end_marker)
+          if end_pos < 0:
+              raise SystemExit('final content endblock not found')
+          source = source[:end_pos] + '\n' + script + source[end_pos:]
+          path.write_text(source, encoding='utf-8')
+          print('Quote builder UX patch written.')
+          PY
+
+      - name: Test
+        env:
+          PYTHONPATH: .
+        run: |
+          pip install -r requirements.txt
+          python -m compileall -q .
+          node --check static/service-worker.js
+          pytest -q
+
+      - name: Commit only if green
+        shell: bash
+        run: |
+          set -euo pipefail
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          if git diff --quiet -- templates/presupuestos/form.html; then
+            echo 'No template changes detected.'
+            git rm -f .github/workflows/improve-quote-builder-ui.yml
+            git commit -m 'chore: remove quote builder ux workflow'
+          else
+            git add templates/presupuestos/form.html
+            git rm -f .github/workflows/improve-quote-builder-ui.yml
+            git commit -m 'feat: apply quote builder UX'
+          fi
+          git push origin HEAD:main
