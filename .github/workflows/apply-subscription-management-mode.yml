@@ -1,0 +1,166 @@
+name: Apply subscription management mode
+
+on:
+  push:
+    branches: [main]
+
+permissions:
+  contents: write
+
+jobs:
+  patch-and-test:
+    if: ${{ !contains(github.event.head_commit.message, 'fix: subscription management mode') }}
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Apply subscription management mode
+        shell: bash
+        run: |
+          set -euo pipefail
+          python - <<'PY'
+          from pathlib import Path
+
+          def replace_once(path: str, old: str, new: str, label: str):
+              p = Path(path)
+              s = p.read_text(encoding="utf-8")
+              if old not in s:
+                  if new in s:
+                      return
+                  raise SystemExit(f"marker not found: {label}")
+              p.write_text(s.replace(old, new, 1), encoding="utf-8")
+
+          # --- Subscription service: explicit manual/automatic mode ---
+          replace_once(
+              "services/subscription_service.py",
+              '''    @staticmethod\n    def is_manual_subscription(subscription):\n        data = SubscriptionService._metadata_dict(subscription)\n        managed_by = (str(data.get("managed_by") or "").strip().lower())\n        if managed_by in {"admin", "superadmin", "manual"}:\n            return True\n        return bool(data.get("is_manual"))\n''',
+              '''    @staticmethod\n    def is_manual_subscription(subscription):\n        data = SubscriptionService._metadata_dict(subscription)\n        management_mode = (str(data.get("management_mode") or "").strip().lower())\n        if management_mode == "automatic":\n            return False\n        if management_mode == "manual":\n            return True\n\n        # Legacy/manual records remain manual unless they explicitly opt into\n        # automatic management. This keeps historical SuperAdmin decisions intact.\n        managed_by = (str(data.get("managed_by") or "").strip().lower())\n        if managed_by in {"admin", "superadmin", "manual"}:\n            return True\n        if bool(data.get("is_manual")):\n            return True\n        return False\n\n    @staticmethod\n    def management_mode(subscription):\n        data = SubscriptionService._metadata_dict(subscription)\n        mode = (str(data.get("management_mode") or "").strip().lower())\n        if mode in {"manual", "automatic"}:\n            return mode\n        if SubscriptionService.is_manual_subscription(subscription):\n            return "manual"\n        return "automatic"\n''',
+              "is_manual_subscription",
+          )
+
+          replace_once(
+              "services/subscription_service.py",
+              '''        sub = SubscriptionService._new_subscription(\n            db_session,\n            company=company,\n            plan=plan,\n            status=status,\n''',
+              '''        requested_management_mode = (command.metadata or {}).get("management_mode")\n        if requested_management_mode not in {"manual", "automatic"}:\n            requested_management_mode = "manual" if (command.actor_role or "").lower() == "superadmin" else "automatic"\n        sub = SubscriptionService._new_subscription(\n            db_session,\n            company=company,\n            plan=plan,\n            status=status,\n''',
+              "create management mode",
+          )
+
+          replace_once(
+              "services/subscription_service.py",
+              '''            metadata={\n                "managed_by": "superadmin" if (command.actor_role or "").lower() == "superadmin" else "system",\n                "is_manual": False,\n                "origin": command.origin,\n            },\n''',
+              '''            metadata={\n                "managed_by": "superadmin" if (command.actor_role or "").lower() == "superadmin" else "system",\n                "is_manual": requested_management_mode == "manual",\n                "management_mode": requested_management_mode,\n                "origin": command.origin,\n            },\n''',
+              "create management metadata",
+          )
+
+          replace_once(
+              "services/subscription_service.py",
+              '''        if not getattr(company, "active", True):\n            return {\n                "status": "suspended",\n                "subscription_status": raw_status,\n                "can_access": False,\n                "reason": "La empresa ha sido suspendida.",\n                "trial_ends_at": trial_end,\n                "reference_date": trial_end,\n                "next_billing_date": getattr(subscription, "next_billing_date", None) if subscription is not None else None,\n            }\n\n        if subscription is None:\n''',
+              '''        if not getattr(company, "active", True):\n            return {\n                "status": "suspended",\n                "subscription_status": raw_status,\n                "can_access": False,\n                "reason": "La empresa ha sido suspendida.",\n                "trial_ends_at": trial_end,\n                "reference_date": trial_end,\n                "next_billing_date": getattr(subscription, "next_billing_date", None) if subscription is not None else None,\n            }\n\n        # Explicit/manual SuperAdmin mode is authoritative. Dates and the trial\n        # clock never rewrite a manually selected subscription state.\n        if subscription is not None and is_manual:\n            manual_reference = (\n                getattr(subscription, "next_billing_date", None)\n                or getattr(subscription, "ends_at", None)\n                or trial_end\n            )\n            if raw_status in SubscriptionService.ACTIVE_STATUSES:\n                return {\n                    "status": SubscriptionService.STATE_ACTIVE,\n                    "subscription_status": raw_status,\n                    "can_access": True,\n                    "reason": "Suscripción activa establecida manualmente desde SuperAdmin.",\n                    "trial_ends_at": trial_end,\n                    "reference_date": manual_reference,\n                    "next_billing_date": getattr(subscription, "next_billing_date", None),\n                }\n            if raw_status in SubscriptionService.TRIAL_STATUSES:\n                return {\n                    "status": SubscriptionService.STATE_TRIAL,\n                    "subscription_status": raw_status,\n                    "can_access": True,\n                    "reason": "Prueba establecida manualmente desde SuperAdmin.",\n                    "trial_ends_at": trial_end,\n                    "reference_date": manual_reference,\n                    "next_billing_date": getattr(subscription, "next_billing_date", None),\n                }\n            if raw_status in SubscriptionService.PENDING_STATUSES:\n                return {\n                    "status": raw_status,\n                    "subscription_status": raw_status,\n                    "can_access": False,\n                    "reason": "Suscripción pendiente según el estado establecido desde SuperAdmin.",\n                    "trial_ends_at": trial_end,\n                    "reference_date": manual_reference,\n                    "next_billing_date": getattr(subscription, "next_billing_date", None),\n                }\n            if raw_status in SubscriptionService.BLOCKED_STATUSES:\n                return {\n                    "status": raw_status,\n                    "subscription_status": raw_status,\n                    "can_access": False,\n                    "reason": "Suscripción bloqueada según el estado establecido desde SuperAdmin.",\n                    "trial_ends_at": trial_end,\n                    "reference_date": manual_reference,\n                    "next_billing_date": getattr(subscription, "next_billing_date", None),\n                }\n\n        if subscription is None:\n''',
+              "manual authoritative resolution",
+          )
+
+          replace_once(
+              "services/subscription_service.py",
+              '''            paid_limit = row.next_billing_date or row.ends_at\n            raw_active_current = raw_status in SubscriptionService.ACTIVE_STATUSES and (\n                paid_limit is None or paid_limit > now\n            )\n            if raw_active_current:\n                ranked.append((0, row))\n''',
+              '''            paid_limit = row.next_billing_date or row.ends_at\n            is_manual = SubscriptionService.is_manual_subscription(row)\n            raw_active_current = raw_status in SubscriptionService.ACTIVE_STATUSES and (\n                paid_limit is None or paid_limit > now\n            )\n            if is_manual and raw_status in SubscriptionService.ACTIVE_STATUSES:\n                ranked.append((0, row))\n            elif raw_active_current:\n                ranked.append((0, row))\n''',
+              "manual subscription ranking",
+          )
+
+          # --- SaaS admin route: persist explicit management mode ---
+          replace_once(
+              "saas.py",
+              '''    start_date = _parse_dt(request.form.get("start_date")) or utcnow()\n    next_billing_date = _parse_dt(request.form.get("next_billing_date"))\n    renewal_enabled = (request.form.get("renewal_enabled") or "1") == "1"\n''',
+              '''    start_date = _parse_dt(request.form.get("start_date")) or utcnow()\n    next_billing_date = _parse_dt(request.form.get("next_billing_date"))\n    renewal_enabled = (request.form.get("renewal_enabled") or "1") == "1"\n    management_mode = (request.form.get("management_mode") or "manual").strip().lower()\n    if management_mode not in {"manual", "automatic"}:\n        management_mode = "manual"\n''',
+              "subscription create mode input",
+          )
+
+          replace_once(
+              "saas.py",
+              '''                ip_address=request.remote_addr,\n                idempotency_key=(\n                    request.form.get("idempotency_key")\n                    or f"saas-create:{company.id}:{plan.id}:{status}:{int(bool(renewal_enabled))}"\n                ),\n            ),\n''',
+              '''                ip_address=request.remote_addr,\n                idempotency_key=(\n                    request.form.get("idempotency_key")\n                    or f"saas-create:{company.id}:{plan.id}:{status}:{management_mode}:{int(bool(renewal_enabled))}"\n                ),\n                metadata={"management_mode": management_mode},\n            ),\n''',
+              "subscription create mode metadata",
+          )
+
+          replace_once(
+              "saas.py",
+              '''    last_payment_date = _parse_dt(request.form.get("last_payment_date"))\n    renewal_enabled = (request.form.get("renewal_enabled") or "1") == "1"\n\n    try:\n''',
+              '''    last_payment_date = _parse_dt(request.form.get("last_payment_date"))\n    renewal_enabled = (request.form.get("renewal_enabled") or "1") == "1"\n    management_mode = (request.form.get("management_mode") or SubscriptionService.management_mode(subscription)).strip().lower()\n    if management_mode not in {"manual", "automatic"}:\n        management_mode = "manual"\n\n    try:\n''',
+              "subscription update mode input",
+          )
+
+          replace_once(
+              "saas.py",
+              '''        target_subscription.renewal_enabled = renewal_enabled\n        target_subscription.auto_renew = renewal_enabled\n        if renewal_enabled:\n            target_subscription.cancel_at_period_end = False\n''',
+              '''        target_subscription.renewal_enabled = renewal_enabled\n        target_subscription.auto_renew = renewal_enabled\n        SubscriptionService._set_metadata(\n            target_subscription,\n            {\n                "management_mode": management_mode,\n                "is_manual": management_mode == "manual",\n                "managed_by": "superadmin" if management_mode == "manual" else "system",\n                "management_mode_updated_by": current_user.id,\n                "management_mode_updated_at": utcnow().isoformat(),\n            },\n        )\n        if renewal_enabled:\n            target_subscription.cancel_at_period_end = False\n''',
+              "subscription update mode persistence",
+          )
+
+          replace_once(
+              "saas.py",
+              '''    start_display_by_id = {}\n    start_input_by_id = {}\n''',
+              '''    management_mode_by_id = {}\n    start_display_by_id = {}\n    start_input_by_id = {}\n''',
+              "subscription mode view map",
+          )
+
+          replace_once(
+              "saas.py",
+              '''    for sub in subscriptions:\n        effective_state = effective_state_by_id.get(sub.id, {})\n''',
+              '''    for sub in subscriptions:\n        effective_state = effective_state_by_id.get(sub.id, {})\n        management_mode_by_id[sub.id] = SubscriptionService.management_mode(sub)\n''',
+              "subscription mode view values",
+          )
+
+          replace_once(
+              "saas.py",
+              '''        effective_status_by_id=effective_status_by_id,\n        current_subscription_id_by_company=current_subscription_id_by_company,\n''',
+              '''        effective_status_by_id=effective_status_by_id,\n        management_mode_by_id=management_mode_by_id,\n        current_subscription_id_by_company=current_subscription_id_by_company,\n''',
+              "subscription mode template context",
+          )
+
+          # --- Subscription UI ---
+          replace_once(
+              "templates/saas/subscriptions.html",
+              '''        <div class="col-md-1">\n          <select class="form-select" name="renewal_enabled">\n            <option value="1" selected>Auto</option>\n            <option value="0">Manual</option>\n          </select>\n        </div>\n''',
+              '''        <div class="col-md-1">\n          <select class="form-select" name="renewal_enabled">\n            <option value="1" selected>Renov. auto</option>\n            <option value="0">Renov. manual</option>\n          </select>\n        </div>\n        <div class="col-md-1">\n          <select class="form-select" name="management_mode">\n            <option value="manual" selected>Gest. manual</option>\n            <option value="automatic">Gest. auto</option>\n          </select>\n        </div>\n''',
+              "subscription create mode selector",
+          )
+
+          replace_once(
+              "templates/saas/subscriptions.html",
+              '''            <th>Renovación</th>\n            <th class="text-end">Acciones</th>\n''',
+              '''            <th>Renovación</th>\n            <th>Gestión</th>\n            <th class="text-end">Acciones</th>\n''',
+              "subscription mode column",
+          )
+
+          replace_once(
+              "templates/saas/subscriptions.html",
+              '''            <td><span class="badge {{ 'text-bg-success' if subscription.renewal_enabled else 'text-bg-secondary' }}">{{ 'Automática' if subscription.renewal_enabled else 'Manual' }}</span></td>\n            <td class="text-end">\n''',
+              '''            <td><span class="badge {{ 'text-bg-success' if subscription.renewal_enabled else 'text-bg-secondary' }}">{{ 'Automática' if subscription.renewal_enabled else 'Manual' }}</span></td>\n            <td><span class="badge {{ 'text-bg-warning' if management_mode_by_id.get(subscription.id, 'manual') == 'manual' else 'text-bg-info' }}">{{ 'Manual' if management_mode_by_id.get(subscription.id, 'manual') == 'manual' else 'Automática' }}</span></td>\n            <td class="text-end">\n''',
+              "subscription mode cell",
+          )
+
+          replace_once(
+              "templates/saas/subscriptions.html",
+              '''                <div class="col-md-1">\n                  <select class="form-select" name="renewal_enabled">\n                    <option value="1" {% if subscription.renewal_enabled %}selected{% endif %}>Auto</option>\n                    <option value="0" {% if not subscription.renewal_enabled %}selected{% endif %}>Manual</option>\n                  </select>\n                </div>\n                <div class="col-md-1 d-grid"><button class="btn btn-primary" type="submit">Guardar</button></div>\n''',
+              '''                <div class="col-md-1">\n                  <select class="form-select" name="renewal_enabled">\n                    <option value="1" {% if subscription.renewal_enabled %}selected{% endif %}>Renov. auto</option>\n                    <option value="0" {% if not subscription.renewal_enabled %}selected{% endif %}>Renov. manual</option>\n                  </select>\n                </div>\n                <div class="col-md-1">\n                  <select class="form-select" name="management_mode">\n                    <option value="manual" {% if management_mode_by_id.get(subscription.id, 'manual') == 'manual' %}selected{% endif %}>Gest. manual</option>\n                    <option value="automatic" {% if management_mode_by_id.get(subscription.id, 'manual') == 'automatic' %}selected{% endif %}>Gest. auto</option>\n                  </select>\n                </div>\n                <div class="col-md-1 d-grid"><button class="btn btn-primary" type="submit">Guardar</button></div>\n''',
+              "subscription edit mode selector",
+          )
+
+          # Existing one-time workflow cleanup is safe to keep; this workflow self-removes below.
+          PY
+
+      - name: Test
+        env:
+          PYTHONPATH: .
+        run: |
+          pip install -r requirements.txt
+          python -m compileall -q .
+          pytest -q
+
+      - name: Commit only if green
+        run: |
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add services/subscription_service.py saas.py templates/saas/subscriptions.html
+          git rm -f .github/workflows/apply-subscription-management-mode.yml
+          git commit -m 'fix: subscription management mode'
+          git push origin HEAD:main
