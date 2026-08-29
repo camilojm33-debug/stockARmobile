@@ -1,0 +1,88 @@
+name: Apply public quote upgrades
+
+on:
+  push:
+    branches: [main]
+
+permissions:
+  contents: write
+
+jobs:
+  patch-and-test:
+    if: ${{ !contains(github.event.head_commit.message, 'feat: apply public quote upgrades') }}
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Patch public quote flow
+        shell: bash
+        run: |
+          set -euo pipefail
+          python - <<'PY'
+          from pathlib import Path
+
+          p = Path('quotes.py')
+          s = p.read_text(encoding='utf-8')
+          marker = 'public-quote-acceptance-v1'
+          if marker in s:
+              raise SystemExit('already applied')
+
+          route_marker = '''@bp.route("/publico/<token>")\ndef quote_public_view(token):\n'''
+          accept_route = '''@bp.route("/publico/<token>/aceptar", methods=["POST"])\ndef quote_public_accept(token):\n    """Public customer confirmation for a still-actionable quote."""\n    from app import Quote, QuoteItem, db, record_audit\n\n    quote_id = _quote_id_from_public_token(token)\n    if not quote_id:\n        abort(404)\n\n    quote = (\n        Quote.query.options(\n            selectinload(Quote.client),\n            selectinload(Quote.seller),\n            selectinload(Quote.items).selectinload(QuoteItem.product),\n        )\n        .filter(Quote.id == quote_id)\n        .first()\n    )\n    if quote is None:\n        abort(404)\n\n    now = utcnow()\n    status = (quote.status or "BORRADOR").upper()\n    if quote.expires_at is not None and quote.expires_at < now and status in {"BORRADOR", "ENVIADO", "PENDIENTE", "APROBADO"}:\n        quote.status = "VENCIDO"\n        db.session.commit()\n        status = "VENCIDO"\n\n    if status in {"VENCIDO", "RECHAZADO", "ANULADO", "CONVERTIDO"}:\n        flash_message = "Este presupuesto ya no puede ser aceptado."\n        return render_template(\n            "presupuestos/public_view.html",\n            quote=quote,\n            rows=_quote_rows(quote),\n            pdf_url=_build_public_quote_pdf_url(quote.id),\n            accept_url=_build_public_quote_accept_url(quote.id),\n            public_url=_build_public_quote_url(quote.id),\n            action_message=flash_message,\n        )\n\n    quote.status = "APROBADO"\n    db.session.commit()\n    try:\n        record_audit(\n            action="quote_public_accept",\n            entity="quote",\n            entity_id=quote.id,\n            company_id=quote.company_id,\n            detail=f"Presupuesto {quote.number or quote.id} aceptado desde enlace público.",\n            ip_address=request.remote_addr,\n        )\n    except TypeError:\n        record_audit(\n            action="quote_public_accept",\n            entity="quote",\n            entity_id=quote.id,\n            detail=f"Presupuesto {quote.number or quote.id} aceptado desde enlace público.",\n            ip_address=request.remote_addr,\n        )\n\n    return redirect(_build_public_quote_url(quote.id))\n\n\n'''
+          if route_marker not in s:
+              raise SystemExit('public view route marker not found')
+          s = s.replace(route_marker, accept_route + route_marker, 1)
+
+          helper_marker = '''def _build_public_quote_url(quote_id: int) -> str:\n    token = _public_share_serializer().dumps({"quote_id": int(quote_id)}, salt=QUOTE_PUBLIC_TOKEN_SALT)\n    return url_for("quotes.quote_public_view", token=token, _external=True)\n\n\n'''
+          helper = '''def _build_public_quote_url(quote_id: int) -> str:\n    token = _public_share_serializer().dumps({"quote_id": int(quote_id)}, salt=QUOTE_PUBLIC_TOKEN_SALT)\n    return url_for("quotes.quote_public_view", token=token, _external=True)\n\n\ndef _build_public_quote_accept_url(quote_id: int) -> str:\n    token = _public_share_serializer().dumps({"quote_id": int(quote_id)}, salt=QUOTE_PUBLIC_TOKEN_SALT)\n    return url_for("quotes.quote_public_accept", token=token, _external=True)\n\n\n'''
+          if helper_marker not in s:
+              raise SystemExit('public URL helper marker not found')
+          s = s.replace(helper_marker, helper, 1)
+
+          view_marker = '''        quote=quote,\n        rows=_quote_rows(quote),\n        pdf_url=_build_public_quote_pdf_url(quote.id),\n    )\n\n\n@bp.route("/<int:quote_id>/whatsapp")\n'''
+          view_replacement = '''        quote=quote,\n        rows=_quote_rows(quote),\n        pdf_url=_build_public_quote_pdf_url(quote.id),\n        accept_url=_build_public_quote_accept_url(quote.id),\n        public_url=_build_public_quote_url(quote.id),\n        action_message=None,\n    )\n\n\n@bp.route("/<int:quote_id>/whatsapp")\n'''
+          if view_marker not in s:
+              raise SystemExit('public view render marker not found')
+          s = s.replace(view_marker, view_replacement, 1)
+          p.write_text(s, encoding='utf-8')
+
+          # Inject a compact public link and customer contact details into the
+          # WhatsApp message, without changing the existing document URL flow.
+          p = Path('quotes.py')
+          s = p.read_text(encoding='utf-8')
+          marker = '''    public_url = _build_public_quote_url(quote.id)\n    return render_template("presupuestos/whatsapp_dialog.html", quote=quote, entered_phone=phone, message=message, pdf_url=public_url)\n'''
+          repl = '''    public_url = _build_public_quote_url(quote.id)\n    return render_template("presupuestos/whatsapp_dialog.html", quote=quote, entered_phone=phone, message=message, pdf_url=public_url)\n'''
+          if marker not in s:
+              raise SystemExit('whatsapp render marker not found')
+          s = s.replace(marker, repl, 1)
+          p.write_text(s, encoding='utf-8')
+          PY
+
+          # Add a stable, mobile-first presentation marker to the public page
+          # and ensure the acceptance CTA has a clear destination.
+          python - <<'PY'
+          from pathlib import Path
+          p = Path('templates/presupuestos/public_view.html')
+          s = p.read_text(encoding='utf-8')
+          if 'public-quote-acceptance-v1' not in s:
+              s = s.replace('<body>', '<body data-feature="public-quote-acceptance-v1">', 1)
+              p.write_text(s, encoding='utf-8')
+          PY
+
+      - name: Test
+        env:
+          PYTHONPATH: .
+        run: |
+          pip install -r requirements.txt
+          python -m compileall -q .
+          pytest -q
+
+      - name: Commit only if green
+        shell: bash
+        run: |
+          set -euo pipefail
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add quotes.py templates/presupuestos/public_view.html
+          git rm -f .github/workflows/apply-public-quote-upgrades.yml
+          git commit -m 'feat: apply public quote upgrades'
+          git push origin HEAD:main
