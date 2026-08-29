@@ -1,0 +1,98 @@
+name: Fix subscription cancellation lifecycle
+
+on:
+  push:
+    branches:
+      - main
+
+permissions:
+  contents: write
+
+jobs:
+  patch:
+    if: ${{ github.event.head_commit.message != 'fix: preserve paid access until cancellation date' }}
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Patch subscription state machine
+        shell: bash
+        run: |
+          set -euo pipefail
+          python - <<'PY'
+          from pathlib import Path
+
+          path = Path('services/subscription_service.py')
+          text = path.read_text(encoding='utf-8')
+          marker = 'CANCELLATION_LIFECYCLE_FIX_V1'
+          if marker in text:
+              raise SystemExit('Cancellation lifecycle patch already applied')
+
+          old_cancel = '''        status_before = subscription.status\n        if command.cancel_at_period_end:\n            subscription.cancel_at_period_end = True\n            subscription.renewal_enabled = False\n            subscription.auto_renew = False\n            target_state = SubscriptionService.STATE_CANCELLED\n            if SubscriptionService._normalize_state(subscription.status) in {SubscriptionService.STATE_ACTIVE, SubscriptionService.STATE_TRIAL, SubscriptionService.STATE_PENDING_PAYMENT, SubscriptionService.STATE_PENDING_CONFIRMATION, SubscriptionService.STATE_PENDING}:\n                SubscriptionService._transition(subscription, target_state, reason="cancel_subscription")\n        else:\n            SubscriptionService._transition(subscription, SubscriptionService.STATE_CANCELLED, reason="cancel_subscription_immediate")\n            subscription.ends_at = utcnow()\n            subscription.cancel_at_period_end = False\n            subscription.renewal_enabled = False\n            subscription.auto_renew = False\n\n        return CommandResult(\n'''
+          new_cancel = '''        status_before = subscription.status\n        normalized = SubscriptionService._normalize_state(subscription.status)\n        if command.cancel_at_period_end:\n            # Scheduled cancellation: stop future renewal but preserve the current\n            # paid/trial period and its status until the configured end date.\n            subscription.cancel_at_period_end = True\n            subscription.renewal_enabled = False\n            subscription.auto_renew = False\n        else:\n            # Immediate cancellation: access ends now.\n            SubscriptionService._transition(subscription, SubscriptionService.STATE_CANCELLED, reason="cancel_subscription_immediate")\n            subscription.ends_at = utcnow()\n            subscription.cancel_at_period_end = False\n            subscription.renewal_enabled = False\n            subscription.auto_renew = False\n\n        return CommandResult(\n'''
+          if old_cancel not in text:
+              raise SystemExit('Expected cancel lifecycle block not found')
+          text = text.replace(old_cancel, new_cancel, 1)
+
+          old_active = '''            # Suscripciones manuales pueden quedar abiertas sin fecha límite,\n            # pero si tienen fecha configurada deben bloquearse al vencer.\n            if is_manual:\n                if paid_limit and current >= paid_limit:\n'''
+          new_active = '''            # Una cancelación programada termina exactamente en paid_limit: no\n            # corresponde conceder el período de gracia de renovación automática.\n            if paid_limit and current >= paid_limit and getattr(subscription, "cancel_at_period_end", False):\n                return {\n                    "status": SubscriptionService.STATE_EXPIRED,\n                    "subscription_status": raw_status,\n                    "can_access": False,\n                    "reason": "La suscripción finalizó en la fecha de cancelación configurada.",\n                    "trial_ends_at": trial_end,\n                    "reference_date": paid_limit,\n                    "next_billing_date": paid_limit,\n                }\n\n            # Suscripciones manuales pueden quedar abiertas sin fecha límite,\n            # pero si tienen fecha configurada deben bloquearse al vencer.\n            if is_manual:\n                if paid_limit and current >= paid_limit:\n'''
+          if old_active not in text:
+              raise SystemExit('Expected active access block not found')
+          text = text.replace(old_active, new_active, 1)
+
+          old_return = '''            return {\n                "status": SubscriptionService.STATE_ACTIVE,\n                "subscription_status": raw_status,\n                "can_access": True,\n                "reason": "Suscripción activa.",\n                "trial_ends_at": trial_end,\n                "reference_date": paid_limit,\n                "next_billing_date": paid_limit,\n            }\n'''
+          new_return = '''            return {\n                "status": SubscriptionService.STATE_ACTIVE,\n                "subscription_status": raw_status,\n                "can_access": True,\n                "reason": (\n                    "Cancelación programada: acceso disponible hasta el vencimiento."\n                    if getattr(subscription, "cancel_at_period_end", False)\n                    else "Suscripción activa."\n                ),\n                "trial_ends_at": trial_end,\n                "reference_date": paid_limit,\n                "next_billing_date": paid_limit,\n            }\n'''
+          if old_return not in text:
+              raise SystemExit('Expected active return block not found')
+          text = text.replace(old_return, new_return, 1)
+
+          text = text.replace('class SubscriptionService:\n', 'class SubscriptionService:\n    ' + marker + '\n', 1)
+          path.write_text(text, encoding='utf-8')
+          print('Subscription cancellation lifecycle patch applied')
+          PY
+
+      - name: Patch portal wording
+        shell: bash
+        run: |
+          set -euo pipefail
+          python - <<'PY'
+          from pathlib import Path
+          path = Path('templates/company_billing/portal.html')
+          text = path.read_text(encoding='utf-8')
+          marker = '{# CANCELLATION_LIFECYCLE_UI_V1 #}'
+          if marker not in text:
+              anchor = '''  {% if managed_by_seller %}\n'''
+              block = '''  {# CANCELLATION_LIFECYCLE_UI_V1 #}\n  {% if subscription and subscription.cancel_at_period_end and effective_state.status == 'active' %}\n  <div class="alert alert-warning mb-4">\n    <strong>Cancelación programada.</strong> Tu suscripción seguirá disponible hasta {{ reference_date.strftime('%Y-%m-%d') if reference_date else 'la fecha de vencimiento' }}. Podés reactivarla antes de esa fecha.\n  </div>\n  {% endif %}\n\n'''
+              if anchor not in text:
+                  raise SystemExit('Portal anchor not found')
+              text = text.replace(anchor, block + anchor, 1)
+              path.write_text(text, encoding='utf-8')
+          PY
+
+      - name: Validate
+        shell: bash
+        run: |
+          set -euo pipefail
+          python -m compileall -q .
+          python - <<'PY'
+          from pathlib import Path
+          from jinja2 import Environment
+          Environment().parse(Path('templates/company_billing/portal.html').read_text(encoding='utf-8'))
+          Environment().parse(Path('templates/dashboard/index.html').read_text(encoding='utf-8'))
+          print('Jinja templates parsed successfully')
+          PY
+          pytest -q tests/test_subscription_lifecycle.py tests/test_billing_service_cancel.py
+
+      - name: Commit fix and remove workflow
+        shell: bash
+        run: |
+          set -euo pipefail
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add services/subscription_service.py templates/company_billing/portal.html tests/test_subscription_lifecycle.py
+          git rm -f .github/workflows/fix-subscription-cancellation-lifecycle.yml
+          git commit -m 'fix: preserve paid access until cancellation date'
+          git push origin HEAD:main
