@@ -7,3 +7,217 @@
 .list-group-item-action:hover {
   background-color: rgba(37, 99, 235, .08);
 }
+
+/* Dashboard UX v3: prioriza decisiones y reduce ruido visual sin alterar datos ni rutas. */
+.app-shell > .dcc4 {
+  position: relative;
+  overflow: hidden;
+}
+.app-shell > .dcc4::before {
+  content: "";
+  position: absolute;
+  inset: 0 0 auto 0;
+  height: 3px;
+  background: linear-gradient(90deg, #2563eb, #10b981);
+  opacity: .9;
+}
+.app-shell > .dcc4 .dcc4-grid {
+  align-items: stretch;
+}
+.app-shell > .dcc4 .dcc4-tile {
+  min-height: 126px;
+}
+.app-shell > .dcc4 .dcc4-tile:focus-visible,
+.app-shell > .dcc4 .dcc4-actions .btn:focus-visible,
+.app-shell > .dcc4 .dcc4-alert a:focus-visible {
+  outline: 3px solid rgba(37, 99, 235, .24);
+  outline-offset: 2px;
+}
+
+/* La segunda cabecera del dashboard pasa a ser contexto secundario. */
+.app-shell > .hero-surface {
+  margin-top: .25rem;
+  border-radius: 16px;
+  box-shadow: var(--app-shadow-soft);
+}
+.app-shell > .hero-surface .page-title {
+  font-size: clamp(1.25rem, 2vw, 1.7rem);
+}
+.app-shell > .hero-surface .summary-pill {
+  border: 1px solid var(--app-line);
+  border-radius: 13px;
+  background: var(--app-panel-soft);
+  padding: .85rem 1rem;
+  min-height: 86px;
+}
+.app-shell > .hero-surface .summary-pill-label {
+  color: var(--app-muted);
+  font-size: .72rem;
+  font-weight: 800;
+  letter-spacing: .045em;
+  text-transform: uppercase;
+}
+.app-shell > .hero-surface .summary-pill-value {
+  font-size: 1.15rem;
+  font-weight: 850;
+  margin-top: .15rem;
+}
+.app-shell > .hero-surface .summary-pill-meta {
+  color: var(--app-muted);
+  font-size: .74rem;
+  margin-top: .08rem;
+}
+
+/* KPIs: más contraste y lectura rápida. */
+.dashboard-kpis .metric-card {
+  min-height: 148px;
+}
+.dashboard-kpis .metric-card .card-body {
+  display: flex;
+  flex-direction: column;
+  justify-content: space-between;
+}
+.dashboard-kpis .metric-card .metric-value {
+  font-variant-numeric: tabular-nums;
+}
+.dashboard-kpis .metric-card .metric-icon {
+  flex: 0 0 auto;
+}
+.dashboard-panels .app-card,
+.dashboard-lists .app-card {
+  overflow: hidden;
+}
+.dashboard-panels .card-header,
+.dashboard-lists .card-header,
+.app-shell > .row.g-4.mt-1 .card-header {
+  min-height: 50px;
+}
+
+/* Hace más evidente la información de acción: stock y ventas recientes. */
+.dashboard-lists .list-group-item-action,
+.app-shell > .row.g-4.mt-1 .list-group-item {
+  transition: background-color .15s ease, padding-left .15s ease;
+}
+.dashboard-lists .list-group-item-action:hover,
+.app-shell > .row.g-4.mt-1 .list-group-item:hover {
+  padding-left: .35rem;
+}
+
+/* Asistente IA menos dominante que los indicadores principales. */
+#ai-chat-messages {
+  min-height: 120px;
+}
+
+[data-bs-theme="dark"] .app-shell > .hero-surface .summary-pill {
+  background: #101a2b;
+}
+
+@media (max-width: 991.98px) {
+  .app-shell > .dcc4 .dcc4-tile {
+    min-height: 118px;
+  }
+  .dashboard-kpis .metric-card {
+    min-height: 136px;
+  }
+}
+
+@media (max-width: 767.98px) {
+  .app-shell > .dcc4 {
+    border-radius: 16px;
+    margin-bottom: 1rem;
+  }
+  .app-shell > .dcc4 .card-body {
+    padding: .95rem;
+  }
+  .app-shell > .dcc4 .dcc4-actions {
+    width: 100%;
+  }
+  .app-shell > .dcc4 .dcc4-actions .btn {
+    width: 100%;
+  }
+  .app-shell > .dcc4 .dcc4-status {
+    overflow-x: auto;
+    flex-wrap: nowrap;
+    padding-bottom: 2px;
+    scrollbar-width: none;
+  }
+  .app-shell > .dcc4 .dcc4-status::-webkit-scrollbar {
+    display: none;
+  }
+  .app-shell > .dcc4 .dcc4-chip {
+    flex: 0 0 auto;
+    white-space: nowrap;
+  }
+  .app-shell > .dcc4 .dcc4-grid {
+    gap: .5rem;
+  }
+  .app-shell > .dcc4 .dcc4-tile {
+    min-height: 108px;
+    padding: .72rem;
+  }
+  .app-shell > .dcc4 .dcc4-value {
+    font-size: 1.08rem;
+  }
+  .app-shell > .dcc4 .dcc4-alert {
+    padding: .65rem .7rem;
+  }
+
+  .app-shell > .hero-surface {
+    margin-bottom: 1rem !important;
+  }
+  .app-shell > .hero-surface .card-body {
+    padding: 1rem;
+  }
+  .app-shell > .hero-surface .d-flex.gap-2.flex-wrap {
+    width: 100%;
+  }
+  .app-shell > .hero-surface .d-flex.gap-2.flex-wrap .btn {
+    flex: 1 1 100%;
+  }
+  .app-shell > .hero-surface .row.g-3.mt-3 {
+    margin-top: .65rem !important;
+  }
+  .app-shell > .hero-surface .summary-pill {
+    min-height: 72px;
+  }
+
+  .dashboard-kpis .metric-card {
+    min-height: 124px;
+  }
+  .dashboard-kpis .metric-icon {
+    width: 44px;
+    height: 44px;
+    font-size: 1.2rem;
+  }
+  .dashboard-kpis .metric-value {
+    font-size: 1.55rem;
+  }
+  .dashboard-panels .card-body,
+  .dashboard-lists .card-body,
+  .app-shell > .row.g-4.mt-1 .card-body,
+  .app-shell > .row.g-4 .card-body {
+    padding: .9rem;
+  }
+}
+
+@media (max-width: 420px) {
+  .app-shell > .dcc4 .dcc4-grid {
+    grid-template-columns: 1fr;
+  }
+  .app-shell > .dcc4 .dcc4-tile {
+    min-height: 92px;
+  }
+  .dashboard-kpis .metric-card {
+    min-height: 112px;
+  }
+  .dashboard-kpis .metric-value {
+    font-size: 1.4rem;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .dashboard-lists .list-group-item-action,
+  .app-shell > .row.g-4.mt-1 .list-group-item {
+    transition: none !important;
+  }
+}
