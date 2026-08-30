@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from services.ai_agent.orchestrator_v2 import AgentRuntime
+from services.ai_agent.providers.lm_studio import LMStudioProvider
 
 
 class AgentOrchestrator:
@@ -25,10 +26,12 @@ class AgentOrchestrator:
 
     @classmethod
     def execute_tool(cls, name, *, company_id, arguments=None):
-        return AgentRuntime._execute_tool(name, company_id=company_id, arguments=arguments or {})
+        return AgentRuntime._execute_tool(name, company_id=company_id, arguments=arguments or {}, context={})
 
     @classmethod
     def handle_message(cls, *, company_id, conversation_id, message, channel=None, sender_id=None, metadata=None):
+        # Keep the legacy provider symbol patchable for the historical tests.
+        provider = LMStudioProvider()
         return AgentRuntime.process(
             company_id=company_id,
             conversation_id=conversation_id,
@@ -37,4 +40,6 @@ class AgentOrchestrator:
             sender_id=sender_id,
             idempotency_key=(metadata or {}).get("idempotency_key"),
             metadata=metadata or {},
+            provider_override=provider,
+            include_system_prompt=False,
         )
