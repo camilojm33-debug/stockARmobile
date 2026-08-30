@@ -51,3 +51,5 @@ class AgentOrchestrator:
             include_system_prompt=False,
             provider_override=LMStudioProvider(),
         )
+
+# CI verification marker: validate this branch HEAD.
