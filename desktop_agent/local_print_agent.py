@@ -41,12 +41,14 @@ def _json_response(handler: BaseHTTPRequestHandler, status: int, payload: dict[s
 
 def _escpos_text(text: str) -> bytes:
     cleaned = str(text or "").replace("\r\n", "\n").replace("\r", "\n")
-    # Windows-1252 is broadly supported by inexpensive ESC/POS printers.
     return cleaned.encode("cp1252", errors="replace")
 
 
+def _money(value: Any) -> str:
+    return f"${float(value or 0):.2f}"
+
+
 def _build_ticket_bytes(ticket: dict[str, Any]) -> bytes:
-    lines = []
     brand = str(ticket.get("brand") or "STOCK ARMOBILE").strip()
     sale_id = ticket.get("sale_id")
     date = str(ticket.get("date") or "")
@@ -54,16 +56,16 @@ def _build_ticket_bytes(ticket: dict[str, Any]) -> bytes:
     payment = str(ticket.get("payment_method") or "")
 
     data = bytearray()
-    data += b"\x1b@"  # initialize
-    data += b"\x1ba\x01"  # center
-    data += b"\x1bE\x01"  # bold
-    data += b"\x1d!\x11"  # double width/height
+    data += b"\x1b@"
+    data += b"\x1ba\x01"
+    data += b"\x1bE\x01"
+    data += b"\x1d!\x11"
     data += _escpos_text(f"{brand}\n")
     data += b"\x1d!\x00"
     data += b"\x1bE\x00"
     data += _escpos_text("Ticket de venta\n")
     data += _escpos_text("--------------------------------\n")
-    data += b"\x1ba\x00"  # left
+    data += b"\x1ba\x00"
     data += _escpos_text(f"Venta: #{sale_id}\n")
     if date:
         data += _escpos_text(f"Fecha: {date}\n")
@@ -78,11 +80,9 @@ def _build_ticket_bytes(ticket: dict[str, Any]) -> bytes:
         unit = float(item.get("unit_price") or 0)
         total = float(item.get("total") or 0)
         if qty == 1:
-            data += _escpos_text(f"{name[:30]}: ${unit:,.2f}\n".replace(",", "."))
+            data += _escpos_text(f"{name[:30]}: {_money(unit)}\n")
         else:
-            data += _escpos_text(
-                f"{name[:30]}\n{qty:g} x ${unit:,.2f} = ${total:,.2f}\n".replace(",", ".")
-            )
+            data += _escpos_text(f"{name[:30]}\n{qty:g} x {_money(unit)} = {_money(total)}\n")
 
     data += _escpos_text("--------------------------------\n")
     subtotal = float(ticket.get("subtotal") or 0)
@@ -90,22 +90,22 @@ def _build_ticket_bytes(ticket: dict[str, Any]) -> bytes:
     surcharge = float(ticket.get("surcharge") or 0)
     tax = float(ticket.get("tax") or 0)
     grand_total = float(ticket.get("total") or 0)
-    data += _escpos_text(f"Subtotal: ${subtotal:,.2f}\n".replace(",", "."))
+    data += _escpos_text(f"Subtotal: {_money(subtotal)}\n")
     if discount:
-        data += _escpos_text(f"Descuento: -${discount:,.2f}\n".replace(",", "."))
+        data += _escpos_text(f"Descuento: -{_money(discount)}\n")
     if surcharge:
-        data += _escpos_text(f"Recargo: ${surcharge:,.2f}\n".replace(",", "."))
+        data += _escpos_text(f"Recargo: {_money(surcharge)}\n")
     if tax:
-        data += _escpos_text(f"Impuestos: ${tax:,.2f}\n".replace(",", "."))
+        data += _escpos_text(f"Impuestos: {_money(tax)}\n")
     data += b"\x1bE\x01"
-    data += _escpos_text(f"TOTAL: ${grand_total:,.2f}\n".replace(",", "."))
+    data += _escpos_text(f"TOTAL: {_money(grand_total)}\n")
     data += b"\x1bE\x00"
     note = str(ticket.get("note") or "").strip()
     if note:
         data += _escpos_text(f"Obs.: {note}\n")
     data += b"\x1ba\x01"
     data += _escpos_text("Gracias por su compra\n\n\n")
-    data += b"\x1dV\x00"  # cut
+    data += b"\x1dV\x00"
     return bytes(data)
 
 
@@ -113,11 +113,7 @@ def _list_windows_printers() -> list[dict[str, str]]:
     if win32print is None:
         return []
     flags = win32print.PRINTER_ENUM_LOCAL | win32print.PRINTER_ENUM_CONNECTIONS
-    rows = []
-    for printer in win32print.EnumPrinters(flags):
-        name = printer[2]
-        rows.append({"name": name, "type": "windows"})
-    return rows
+    return [{"name": printer[2], "type": "windows"} for printer in win32print.EnumPrinters(flags)]
 
 
 def _raw_print_windows(printer_name: str, payload: bytes) -> None:
@@ -125,7 +121,7 @@ def _raw_print_windows(printer_name: str, payload: bytes) -> None:
         raise RuntimeError("win32print no está disponible. Ejecutá el agente en Windows.")
     handle = win32print.OpenPrinter(printer_name)
     try:
-        job = win32print.StartDocPrinter(handle, 1, ("StockArMobile", None, "RAW"))
+        win32print.StartDocPrinter(handle, 1, ("StockArMobile", None, "RAW"))
         try:
             win32print.StartPagePrinter(handle)
             win32print.WritePrinter(handle, payload)
@@ -156,16 +152,7 @@ class Handler(BaseHTTPRequestHandler):
             _json_response(self, 200, {"ok": True, "service": "stockarmobile-print-agent", "version": "1.0"})
             return
         if self.path.rstrip("/") == "/printers":
-            _json_response(
-                self,
-                200,
-                {
-                    "ok": True,
-                    "default_printer": DEFAULT_PRINTER,
-                    "default_network": {"host": DEFAULT_NETWORK_HOST, "port": DEFAULT_NETWORK_PORT},
-                    "printers": _list_windows_printers(),
-                },
-            )
+            _json_response(self, 200, {"ok": True, "default_printer": DEFAULT_PRINTER, "default_network": {"host": DEFAULT_NETWORK_HOST, "port": DEFAULT_NETWORK_PORT}, "printers": _list_windows_printers()})
             return
         _json_response(self, 404, {"ok": False, "error": "Ruta no encontrada"})
 
@@ -181,14 +168,12 @@ class Handler(BaseHTTPRequestHandler):
             payload = json.loads(raw.decode("utf-8"))
             if not isinstance(payload, dict):
                 raise ValueError("Payload inválido")
-
             ticket = payload.get("ticket") or {}
             printer_type = str(payload.get("printer_type") or "windows").strip().lower()
             printer_name = str(payload.get("printer_name") or DEFAULT_PRINTER).strip()
             network_host = str(payload.get("printer_host") or DEFAULT_NETWORK_HOST).strip()
             network_port = int(payload.get("printer_port") or DEFAULT_NETWORK_PORT)
             raw_ticket = _build_ticket_bytes(ticket)
-
             if printer_type in {"network", "ethernet", "tcp"}:
                 if not network_host:
                     raise ValueError("Falta printer_host para impresora de red")
@@ -199,7 +184,6 @@ class Handler(BaseHTTPRequestHandler):
                     raise ValueError("Falta printer_name para impresora USB/Windows")
                 _raw_print_windows(printer_name, raw_ticket)
                 backend = "windows"
-
             _json_response(self, 200, {"ok": True, "printed": True, "backend": backend})
         except Exception as exc:
             _json_response(self, 400, {"ok": False, "printed": False, "error": str(exc)})
