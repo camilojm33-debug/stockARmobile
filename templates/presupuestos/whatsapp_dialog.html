@@ -11,6 +11,10 @@
           <span class="page-kicker"><i class="bi bi-whatsapp"></i> WhatsApp</span>
           <h1 class="h5 fw-bold mb-3">Compartir presupuesto</h1>
           <p class="text-muted">Elegí cómo querés abrir WhatsApp. En celular se intentará abrir la app instalada; en PC se intentará abrir WhatsApp Desktop.</p>
+          <div class="alert {{ 'alert-success' if entered_phone else 'alert-warning' }} py-2">
+            <strong>WhatsApp del cliente:</strong>
+            {% if entered_phone %}{{ entered_phone }}{% else %}no tiene teléfono/WhatsApp registrado{% endif %}
+          </div>
           <form method="post" action="{{ url_for('quotes.share_whatsapp_post', quote_id=quote.id) }}" id="quoteWhatsappShareForm">
             <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
             <div class="mb-3">
@@ -41,7 +45,6 @@
     const phoneInput = document.getElementById('quoteWhatsappPhone');
     const baseMessage = {{ message|tojson }};
     const pdfUrl = {{ pdf_url|tojson }};
-
     function removeArgentinaMobilePrefix(digits) {
       for (const areaLength of [2, 3, 4]) {
         if (digits.length > areaLength + 2 && digits.slice(areaLength, areaLength + 2) === '15') {
@@ -51,7 +54,6 @@
       }
       return digits;
     }
-
     function normalizePhone(value) {
       let digits = String(value || '').replace(/\D+/g, '');
       if (digits.startsWith('00')) digits = digits.slice(2);
@@ -64,18 +66,12 @@
         if (nationalNumber.length === 10) return `549${nationalNumber}`;
         return `54${nationalNumber}`;
       }
-      if (digits.length === 10 && digits.startsWith('15')) {
-        digits = `11${digits.slice(2)}`;
-      }
+      if (digits.length === 10 && digits.startsWith('15')) digits = `11${digits.slice(2)}`;
       digits = removeArgentinaMobilePrefix(digits);
       if (digits.length === 10) return `549${digits}`;
       return digits;
     }
-
-    function buildMessage() {
-      return [baseMessage, pdfUrl ? `Presupuesto: ${pdfUrl}` : ''].filter(Boolean).join('\n\n');
-    }
-
+    function buildMessage() { return [baseMessage, pdfUrl ? `Presupuesto: ${pdfUrl}` : ''].filter(Boolean).join('\n\n'); }
     function buildDesktopUrl() {
       const phone = normalizePhone(phoneInput?.value || '');
       const query = new URLSearchParams();
@@ -83,40 +79,23 @@
       query.set('text', buildMessage());
       return `whatsapp://send?${query.toString()}`;
     }
-
     function buildWebUrl() {
       const phone = normalizePhone(phoneInput?.value || '');
       const encodedText = encodeURIComponent(buildMessage());
       if (phone) return `https://wa.me/${phone}?text=${encodedText}`;
       return `https://wa.me/?text=${encodedText}`;
     }
-
     desktopButton?.addEventListener('click', () => {
       const webUrl = buildWebUrl();
       let appOpened = false;
-      const cancelFallback = () => {
-        appOpened = true;
-        window.clearTimeout(fallbackTimer);
-        window.removeEventListener('blur', cancelFallback);
-        document.removeEventListener('visibilitychange', handleVisibilityChange);
-      };
-      const handleVisibilityChange = () => {
-        if (document.visibilityState === 'hidden') cancelFallback();
-      };
-      const fallbackTimer = window.setTimeout(() => {
-        if (!appOpened) window.open(webUrl, '_blank', 'noopener');
-        window.removeEventListener('blur', cancelFallback);
-        document.removeEventListener('visibilitychange', handleVisibilityChange);
-      }, 1200);
-
+      const cancelFallback = () => { appOpened = true; window.clearTimeout(fallbackTimer); window.removeEventListener('blur', cancelFallback); document.removeEventListener('visibilitychange', handleVisibilityChange); };
+      const handleVisibilityChange = () => { if (document.visibilityState === 'hidden') cancelFallback(); };
+      const fallbackTimer = window.setTimeout(() => { if (!appOpened) window.open(webUrl, '_blank', 'noopener'); window.removeEventListener('blur', cancelFallback); document.removeEventListener('visibilitychange', handleVisibilityChange); }, 1200);
       window.addEventListener('blur', cancelFallback, { once: true });
       document.addEventListener('visibilitychange', handleVisibilityChange);
       window.location.href = buildDesktopUrl();
     });
-
-    webButton?.addEventListener('click', () => {
-      window.open(buildWebUrl(), '_blank', 'noopener');
-    });
+    webButton?.addEventListener('click', () => { window.open(buildWebUrl(), '_blank', 'noopener'); });
   })();
 </script>
 {% endblock %}
