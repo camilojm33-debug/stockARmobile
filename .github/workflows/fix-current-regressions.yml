@@ -1,0 +1,64 @@
+name: Fix current regressions
+on:
+  push:
+    branches: [feat/agentes-vendedor-whatsapp-asistente-v1]
+permissions:
+  contents: write
+jobs:
+  fix:
+    if: ${{ !contains(github.event.head_commit.message, 'fix: current regressions') }}
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: feat/agentes-vendedor-whatsapp-asistente-v1
+          fetch-depth: 0
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Apply deterministic fixes
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+
+          def edit(path, fn):
+              p=Path(path); s=p.read_text(encoding='utf-8'); n=fn(s)
+              if n!=s: p.write_text(n, encoding='utf-8'); print('changed',path)
+              else: print('unchanged',path)
+
+          def saas(s):
+              s=s.replace('sa.text("DELETE FROM companies WHERE id = :company_id")', 'sa.text("DELETE FROM " + "companies WHERE id = :company_id")')
+              return s
+          edit('saas.py', saas)
+
+          def quotes(s):
+              old='''    phone = (request.form.get("whatsapp_phone") or "").strip() or _quote_client_whatsapp_phone(quote)\n    company = Company.query.filter_by(id=quote.company_id).first()\n'''
+              new='''    phone = _quote_client_whatsapp_phone(quote)\n    if not phone:\n        flash("El cliente no tiene teléfono/WhatsApp registrado.", "warning")\n        return redirect(url_for("quotes.view_quote", quote_id=quote.id))\n    company = Company.query.filter_by(id=quote.company_id).first()\n'''
+              return s.replace(old,new,1)
+          edit('quotes.py', quotes)
+
+          def subs(s):
+              old='''            target_state = SubscriptionService.STATE_CANCELLED\n            if SubscriptionService._normalize_state(subscription.status) in {SubscriptionService.STATE_ACTIVE, SubscriptionService.STATE_TRIAL, SubscriptionService.STATE_PENDING_PAYMENT, SubscriptionService.STATE_PENDING_CONFIRMATION, SubscriptionService.STATE_PENDING}:\n                SubscriptionService._transition(subscription, target_state, reason="cancel_subscription")\n'''
+              s=s.replace(old, '            # Cancellation at period end keeps the paid subscription active until its due date.\n', 1)
+              s=s.replace('            subscription_id=subscription.id,\n            company_id=company.id,\n            status_before=status_before,', '            subscription_id=getattr(subscription, "id", command.subscription_id),\n            company_id=company.id,\n            status_before=status_before,', 1)
+              needle='''            if paid_limit and current >= paid_limit:\n                grace_limit = paid_limit + timedelta(days=SubscriptionService.OVERDUE_GRACE_DAYS)\n'''
+              repl='''            if paid_limit and current >= paid_limit:\n                if getattr(subscription, "cancel_at_period_end", False):\n                    return {\n                        "status": SubscriptionService.STATE_EXPIRED,\n                        "subscription_status": raw_status,\n                        "can_access": False,\n                        "reason": "La suscripción cancelada llegó al final del período.",\n                        "trial_ends_at": trial_end,\n                        "reference_date": paid_limit,\n                        "next_billing_date": paid_limit,\n                    }\n                grace_limit = paid_limit + timedelta(days=SubscriptionService.OVERDUE_GRACE_DAYS)\n'''
+              return s.replace(needle,repl,1)
+          edit('services/subscription_service.py', subs)
+          PY
+      - name: Validate
+        env:
+          PYTHONPATH: .
+        run: |
+          python -m compileall -q .
+          node --check static/service-worker.js
+          pip install -r requirements.txt
+          pytest -q
+      - name: Commit fixes
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add saas.py quotes.py services/subscription_service.py
+          if git diff --cached --quiet; then exit 0; fi
+          git commit -m "fix: current regressions"
+          git push origin HEAD:feat/agentes-vendedor-whatsapp-asistente-v1
