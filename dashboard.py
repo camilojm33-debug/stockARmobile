@@ -105,19 +105,11 @@ def ai_agent_chat():
         except (TypeError, ValueError):
             return jsonify({"success": False, "error": "Identificador de conversación inválido."}), 400
 
-        conversation = (
-            db.session.query(Conversation)
-            .filter(Conversation.id == conversation_id, Conversation.company_id == company_id)
-            .first()
-        )
+        conversation = db.session.query(Conversation).filter(Conversation.id == conversation_id, Conversation.company_id == company_id).first()
         if conversation is None:
             return jsonify({"success": False, "error": "La conversación no pertenece a tu empresa."}), 403
     else:
-        conversation = Conversation(
-            company_id=company_id,
-            agent_id=None,
-            channel="web",
-        )
+        conversation = Conversation(company_id=company_id, agent_id=None, channel="web")
         db.session.add(conversation)
         db.session.flush()
 
@@ -137,24 +129,61 @@ def ai_agent_chat():
         db.session.rollback()
         return jsonify({"success": False, "error": "No se pudo procesar tu solicitud."}), 500
 
-    return jsonify(
-        {
+    return jsonify({"success": True, "conversation_id": result.get("conversation_id"), "message_id": result.get("message_id"), "assistant_message_id": result.get("assistant_message_id"), "content": result.get("content")})
+
+
+@bp.route("/ai-agent/whatsapp/config", methods=["GET", "POST"])
+@tenant_required
+@login_required
+def ai_agent_whatsapp_config():
+    """Configure the vendor's WhatsApp Cloud API without exposing the token."""
+    if getattr(current_user, "role", "") not in {"admin", "superadmin"}:
+        return jsonify({"success": False, "error": "Solo administradores pueden configurar WhatsApp."}), 403
+    from app import Company
+    from services.ai_agent.config_service import configure_whatsapp_connection, get_whatsapp_connection, is_ai_enabled
+
+    company = Company.query.filter_by(id=getattr(current_user, "company_id", None)).first()
+    if company is None:
+        return jsonify({"success": False, "error": "Empresa no encontrada."}), 404
+
+    if request.method == "GET":
+        connection = get_whatsapp_connection(company)
+        return jsonify({
             "success": True,
-            "conversation_id": result.get("conversation_id"),
-            "message_id": result.get("message_id"),
-            "assistant_message_id": result.get("assistant_message_id"),
-            "content": result.get("content"),
-        }
+            "enabled": connection["enabled"],
+            "phone_number_id": connection["phone_number_id"],
+            "business_account_id": connection["business_account_id"],
+            "display_phone_number": connection["display_phone_number"],
+            "template_name": connection["template_name"],
+            "template_language": connection["template_language"],
+            "ai_enabled": is_ai_enabled(company),
+            "webhook_url": f"{request.url_root.rstrip('/')}/dashboard/api/whatsapp/webhook",
+        })
+
+    payload = request.get_json(silent=True) or {}
+    phone_number_id = str(payload.get("phone_number_id") or "").strip()
+    access_token = str(payload.get("access_token") or "").strip()
+    if not phone_number_id:
+        return jsonify({"success": False, "error": "phone_number_id es obligatorio."}), 400
+    if not access_token and not get_whatsapp_connection(company)["access_token"]:
+        return jsonify({"success": False, "error": "access_token es obligatorio la primera vez."}), 400
+
+    configure_whatsapp_connection(
+        company,
+        phone_number_id=phone_number_id,
+        access_token=access_token or None,
+        business_account_id=str(payload.get("business_account_id") or ""),
+        display_phone_number=str(payload.get("display_phone_number") or ""),
+        enabled=bool(payload.get("enabled", True)),
+        template_name=str(payload.get("template_name") or ""),
+        template_language=str(payload.get("template_language") or "es_AR"),
     )
+    db.session.commit()
+    return jsonify({"success": True, "message": "WhatsApp del Vendedor 24 hs configurado.", "webhook_url": f"{request.url_root.rstrip('/')}/dashboard/api/whatsapp/webhook"})
 
 
 @bp.route("/api/whatsapp/webhook", methods=["GET", "POST"])
 @csrf.exempt
 def whatsapp_webhook():
-    """Meta WhatsApp Cloud API webhook endpoint.
-
-    The channel adapter lives in services/ai_agent/whatsapp_agent.py so the
-    transport can be tested independently from the dashboard blueprint.
-    """
     from whatsapp_agent import webhook
     return webhook()
