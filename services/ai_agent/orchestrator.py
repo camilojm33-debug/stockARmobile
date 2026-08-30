@@ -27,27 +27,10 @@ class AgentOrchestrator:
 
     @classmethod
     def execute_tool(cls, name, *, company_id, arguments=None):
-        return AgentRuntime._execute_tool(
-            name,
-            company_id=company_id,
-            arguments=arguments or {},
-            context={},
-        )
+        return AgentRuntime._execute_tool(name, company_id=company_id, arguments=arguments or {}, context={})
 
     @classmethod
-    def handle_message(
-        cls,
-        *,
-        company_id,
-        conversation_id,
-        message,
-        channel=None,
-        sender_id=None,
-        metadata=None,
-    ):
-        # Preserve the historical LMStudioProvider injection seam used by
-        # tests and integrations while production defaults to the hosted
-        # OpenAI-compatible provider above.
+    def handle_message(cls, *, company_id, conversation_id, message, channel=None, sender_id=None, metadata=None):
         provider_factory = LMStudioProvider
         provider = provider_factory() if callable(provider_factory) else provider_factory
         return AgentRuntime.process(
@@ -58,6 +41,6 @@ class AgentOrchestrator:
             sender_id=sender_id,
             idempotency_key=(metadata or {}).get("idempotency_key"),
             metadata=metadata or {},
-            include_system_prompt=True,
+            include_system_prompt=False,
             provider_override=provider,
         )
