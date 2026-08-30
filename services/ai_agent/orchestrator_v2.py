@@ -15,6 +15,10 @@ from services.ai_agent.vendor_order_service import VendorOrderService
 from stockarmobile.extensions import db
 from stockarmobile.models.conversations import Agent, AgentConfiguration, Conversation, ConversationMessage
 
+# Backwards-compatible provider symbol. Production resolves to the hosted
+# OpenAI-compatible implementation; tests/integrations may replace this seam.
+LMStudioProvider = OpenAICompatibleProvider
+
 VENDOR_SYSTEM_PROMPT = "Sos el Vendedor 24 hs de StockARmobile. Consultá herramientas antes de afirmar precio o stock. No inventes información."
 BUSINESS_SYSTEM_PROMPT = "Sos el Asistente empresarial de StockARmobile. Usá herramientas para consultar datos reales y nunca inventes cifras."
 
@@ -34,7 +38,7 @@ class VendorOrderPreviewTool(AgentTool):
 class AgentRuntime:
     tool_registry={"buscar_producto":BuscarProductoTool,"consultar_stock":ConsultarStockTool,"buscar_cliente":BuscarClienteTool,"resumen_ventas":ResumenVentasTool,"stock_critico":StockCriticoTool,"carrito_vendedor":VendorCartTool,"agregar_al_carrito":VendorAddTool,"quitar_del_carrito":VendorRemoveTool,"preparar_pedido":VendorOrderPreviewTool}
     @classmethod
-    def provider(cls): return OpenAICompatibleProvider()
+    def provider(cls): return LMStudioProvider()
     @classmethod
     def ensure_agent(cls, company_id, *, channel): return choose_agent(company_id, channel=channel)
     @classmethod
