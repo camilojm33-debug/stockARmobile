@@ -4,7 +4,7 @@ import uuid
 
 from flask import Blueprint, flash, jsonify, redirect, render_template, request, session, url_for
 from flask_login import current_user, login_required
-from stockarmobile.extensions import db
+from stockarmobile.extensions import csrf, db
 from stockarmobile.models.conversations import Conversation
 from services.ai_agent.orchestrator import AgentOrchestrator
 from services.dashboard_service import build_dashboard_context
@@ -146,3 +146,15 @@ def ai_agent_chat():
             "content": result.get("content"),
         }
     )
+
+
+@bp.route("/api/whatsapp/webhook", methods=["GET", "POST"])
+@csrf.exempt
+def whatsapp_webhook():
+    """Meta WhatsApp Cloud API webhook endpoint.
+
+    The channel adapter lives in services/ai_agent/whatsapp_agent.py so the
+    transport can be tested independently from the dashboard blueprint.
+    """
+    from whatsapp_agent import webhook
+    return webhook()
