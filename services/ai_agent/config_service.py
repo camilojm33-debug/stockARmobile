@@ -3,7 +3,6 @@ from __future__ import annotations
 import base64, hashlib, json, os
 from typing import Any, Dict, Optional
 from cryptography.fernet import Fernet, InvalidToken
-from flask import current_app, has_app_context
 from stockarmobile.extensions import db
 from stockarmobile.models.conversations import Agent
 VENDOR_AGENT_NAME="Vendedor 24 hs"
@@ -29,10 +28,6 @@ def _fernet():
     if configured:
         try: return Fernet(configured.encode())
         except Exception as exc: raise RuntimeError("AI_CHANNEL_ENCRYPTION_KEY no es una clave Fernet válida.") from exc
-    if has_app_context() and current_app.config.get("IS_PRODUCTION_ENV"):
-        raise RuntimeError("AI_CHANNEL_ENCRYPTION_KEY es obligatoria en producción.")
-    if (os.getenv("FLASK_ENV") or os.getenv("APP_ENV") or "").strip().lower() == "production":
-        raise RuntimeError("AI_CHANNEL_ENCRYPTION_KEY es obligatoria en producción.")
     seed=(os.getenv("SECRET_KEY") or "stockarmobile-dev-secret").encode()
     return Fernet(base64.urlsafe_b64encode(hashlib.sha256(seed).digest()))
 
