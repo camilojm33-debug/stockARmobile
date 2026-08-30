@@ -2,11 +2,8 @@
 
 from __future__ import annotations
 
-# Keep the historical symbol importable for existing integrations and tests.
-# The runtime itself uses the configured OpenAI-compatible provider.
 from services.ai_agent.providers.openai_compatible import OpenAICompatibleProvider
 LMStudioProvider = OpenAICompatibleProvider
-
 from services.ai_agent.orchestrator_v2 import AgentRuntime
 
 
@@ -48,6 +45,11 @@ class AgentOrchestrator:
         sender_id=None,
         metadata=None,
     ):
+        # Preserve the historical LMStudioProvider injection seam used by
+        # tests and integrations while production defaults to the hosted
+        # OpenAI-compatible provider above.
+        provider_factory = LMStudioProvider
+        provider = provider_factory() if callable(provider_factory) else provider_factory
         return AgentRuntime.process(
             company_id=company_id,
             conversation_id=conversation_id,
@@ -57,4 +59,5 @@ class AgentOrchestrator:
             idempotency_key=(metadata or {}).get("idempotency_key"),
             metadata=metadata or {},
             include_system_prompt=True,
+            provider_override=provider,
         )
