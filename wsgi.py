@@ -3,6 +3,17 @@ from flask_login import current_user, login_required
 
 from app import app, AuditLog, Invoice, Payment, PaymentHistory, Subscription, SubscriptionCommandExecution, db
 from services.subscription_service import SubscriptionService
+from services.ai_agent.admin import bp as ai_admin_bp
+from whatsapp_agent import bp as whatsapp_agent_bp
+
+
+# These blueprints are intentionally registered here, after importing ``app`` and
+# all application models. This keeps startup order safe because the AI/WhatsApp
+# modules depend on models defined by app.py.
+if "ai_admin" not in app.blueprints:
+    app.register_blueprint(ai_admin_bp)
+if "whatsapp_agent" not in app.blueprints:
+    app.register_blueprint(whatsapp_agent_bp)
 
 
 @app.route("/superadmin/subscriptions/<int:subscription_id>/delete-historical", methods=["POST"])
