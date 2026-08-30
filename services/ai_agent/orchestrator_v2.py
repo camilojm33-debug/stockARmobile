@@ -1,7 +1,5 @@
 """Production-oriented runtime for StockARmobile AI agents."""
-
 from __future__ import annotations
-
 import json
 import uuid
 from services.ai_agent.providers.openai_compatible import OpenAICompatibleProvider
@@ -21,13 +19,13 @@ BUSINESS_SYSTEM_PROMPT = "Sos el Asistente empresarial de StockARmobile. Usá he
 
 class VendorCartTool(AgentTool):
     name="carrito_vendedor"; description="Consulta el carrito actual del cliente de WhatsApp."; input_schema={"type":"object","properties":{},"additionalProperties":False}
-    def execute(self, **kwargs): return {"success":True, **VendorOrderService.get_cart(company_id=self.company_id, conversation_id=self._context["conversation_id"])}
+    def execute(self, **kwargs): return VendorOrderService.get_cart(company_id=self.company_id, conversation_id=self._context["conversation_id"])
 class VendorAddTool(AgentTool):
     name="agregar_al_carrito"; description="Agrega un producto al carrito."; input_schema={"type":"object","properties":{"product_query":{"type":"string"},"quantity":{"type":"number","minimum":0.01}},"required":["product_query","quantity"],"additionalProperties":False}
-    def execute(self, **kwargs): return {**VendorOrderService.update_cart(company_id=self.company_id, conversation_id=self._context["conversation_id"], items=[kwargs]),"success":True}
+    def execute(self, **kwargs): return VendorOrderService.update_cart(company_id=self.company_id, conversation_id=self._context["conversation_id"], items=[kwargs])
 class VendorRemoveTool(AgentTool):
     name="quitar_del_carrito"; description="Quita un producto del carrito."; input_schema={"type":"object","properties":{"product_query":{"type":"string"}},"required":["product_query"],"additionalProperties":False}
-    def execute(self, **kwargs): return {"success":True, **VendorOrderService.remove_from_cart(company_id=self.company_id, conversation_id=self._context["conversation_id"], product_query=kwargs["product_query"])}
+    def execute(self, **kwargs): return VendorOrderService.remove_from_cart(company_id=self.company_id, conversation_id=self._context["conversation_id"], product_query=kwargs["product_query"])
 class VendorOrderPreviewTool(AgentTool):
     name="preparar_pedido"; description="Prepara un pedido pendiente y genera un link seguro de pago."; input_schema={"type":"object","properties":{"customer_name":{"type":"string"}},"additionalProperties":False}
     def execute(self, **kwargs): return VendorOrderService.create_pending_order(company_id=self.company_id, conversation_id=self._context["conversation_id"], customer_name=str(kwargs.get("customer_name") or ""), customer_phone=str(self._context.get("customer_phone") or ""), actor_user_id=self._context.get("actor_user_id"))
@@ -48,10 +46,12 @@ class AgentRuntime:
     def _tool_definitions(cls): return [{"type":"function","function":{"name":n,"description":getattr(t,"description",""),"parameters":getattr(t,"input_schema",{"type":"object","properties":{}})}} for n,t in cls.tool_registry.items()]
     @classmethod
     def _execute_tool(cls,name,*,company_id,arguments,context=None):
+        if not isinstance(arguments,dict): return {"success":False,"error":"arguments must be an object"}
         tool_class=cls.tool_registry.get(name)
         if tool_class is None:return {"success":False,"error":"tool_not_found"}
         if "company_id" in arguments:return {"success":False,"error":"company_id must be passed explicitly"}
-        return tool_class(company_id=company_id,**(context or {})).execute(**arguments)
+        result=tool_class(company_id=company_id,**(context or {})).execute(**arguments)
+        return result if isinstance(result,dict) else {"success":False,"error":"tool result must be an object"}
     @classmethod
     def process(cls,*,company_id,conversation_id,message,channel,sender_id=None,external_message_id=None,idempotency_key=None,metadata=None,provider_override=None,include_system_prompt=True):
         conversation=db.session.query(Conversation).filter(Conversation.id==conversation_id,Conversation.company_id==company_id).first()
