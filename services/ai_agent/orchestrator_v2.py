@@ -15,10 +15,7 @@ from services.ai_agent.vendor_order_service import VendorOrderService
 from stockarmobile.extensions import db
 from stockarmobile.models.conversations import Agent, AgentConfiguration, Conversation, ConversationMessage
 
-# Backwards-compatible provider symbol. Production resolves to the hosted
-# OpenAI-compatible implementation; tests/integrations may replace this seam.
 LMStudioProvider = OpenAICompatibleProvider
-
 VENDOR_SYSTEM_PROMPT = "Sos el Vendedor 24 hs de StockARmobile. Consultá herramientas antes de afirmar precio o stock. No inventes información."
 BUSINESS_SYSTEM_PROMPT = "Sos el Asistente empresarial de StockARmobile. Usá herramientas para consultar datos reales y nunca inventes cifras."
 
@@ -65,7 +62,7 @@ class AgentRuntime:
         if idempotency_key:
             duplicate=db.session.query(ConversationMessage).filter(ConversationMessage.company_id==company_id,ConversationMessage.idempotency_key==idempotency_key).first()
             if duplicate:return {"status":"duplicate","conversation_id":conversation.id,"message_id":duplicate.id,"content":""}
-        history=cls._history(company_id,conversation.id,20); trace_id=str(uuid.uuid4())
+        history=cls._history(company_id,conversation.id,19); trace_id=str(uuid.uuid4())
         incoming=ConversationMessage(conversation_id=conversation.id,company_id=company_id,sender_type="user",sender_id=sender_id,role="user",content=str(message),content_type="text",external_message_id=external_message_id,idempotency_key=idempotency_key,trace_id=trace_id,metadata_json=metadata or {})
         db.session.add(incoming); db.session.flush()
         config=cls._config(agent,company_id); prompt=VENDOR_SYSTEM_PROMPT if agent.name==VENDOR_AGENT_NAME else BUSINESS_SYSTEM_PROMPT
