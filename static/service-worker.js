@@ -1,3 +1,4 @@
+// Compatibility marker for deployments that previously used stockarmobile-pwa-v7.
 const CACHE_NAME = 'stockarmobile-pwa-v8';
 const STATIC_ASSETS = [
   '/',

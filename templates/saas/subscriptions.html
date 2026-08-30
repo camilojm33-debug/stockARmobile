@@ -171,7 +171,7 @@
               <div class="d-flex flex-wrap justify-content-end gap-1" id="subActions{{ subscription.id }}" data-status="{{ (effective_status or 'pending')|lower }}">
                 {% if is_historical_subscription %}
                 <span class="small text-muted align-self-center">Histórica</span>
-                <form method="post" action="{{ url_for('superadmin_delete_historical_subscription', subscription_id=subscription.id) }}" onsubmit="return confirm('¿Eliminar DEFINITIVAMENTE esta suscripción histórica? La empresa y sus datos actuales NO serán eliminados. Los registros financieros conservarán su historial, pero quedarán sin esta suscripción.');">
+                <form method="post" action="/superadmin/subscriptions/{{ subscription.id }}/delete-historical" onsubmit="return confirm('¿Eliminar DEFINITIVAMENTE esta suscripción histórica? La empresa y sus datos actuales NO serán eliminados. Los registros financieros conservarán su historial, pero quedarán sin esta suscripción.');">
                   <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
                   <input type="hidden" name="next" value="{{ request.full_path }}">
                   <button class="btn btn-sm btn-outline-danger" data-action="delete_historical" type="submit">Eliminar histórica</button>
