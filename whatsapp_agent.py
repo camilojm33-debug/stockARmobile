@@ -52,7 +52,7 @@ def _get_or_create_conversation(company_id: int, sender: str):
             Conversation.company_id == company_id,
             Conversation.agent_id == agent.id,
             Conversation.channel == "whatsapp",
-            Conversation.external_thread_id == sender,
+            Conversation.external_conversation_id == sender,
         )
         .first()
     )
@@ -61,7 +61,8 @@ def _get_or_create_conversation(company_id: int, sender: str):
             company_id=company_id,
             agent_id=agent.id,
             channel="whatsapp",
-            external_thread_id=sender,
+            external_conversation_id=sender,
+            metadata_json={"whatsapp_user": sender},
         )
         db.session.add(conversation)
         db.session.flush()
