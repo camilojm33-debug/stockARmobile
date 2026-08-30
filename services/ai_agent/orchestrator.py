@@ -7,8 +7,10 @@ from services.ai_agent.orchestrator_v2 import AgentRuntime
 
 LMStudioProvider = OpenAICompatibleProvider
 
+
 class AgentOrchestrator:
     """Backwards-compatible facade used by the dashboard and existing callers."""
+
     _tool_registry = AgentRuntime.tool_registry
 
     @classmethod
@@ -46,6 +48,6 @@ class AgentOrchestrator:
             sender_id=sender_id,
             idempotency_key=(metadata or {}).get("idempotency_key"),
             metadata=metadata or {},
-            include_system_prompt=True,
+            include_system_prompt=False,
             provider_override=LMStudioProvider(),
         )
