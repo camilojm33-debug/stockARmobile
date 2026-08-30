@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import os
+
 from services.ai_agent.orchestrator_v2 import AgentRuntime
 from services.ai_agent.providers.lm_studio import LMStudioProvider
 
@@ -26,12 +28,33 @@ class AgentOrchestrator:
 
     @classmethod
     def execute_tool(cls, name, *, company_id, arguments=None):
-        return AgentRuntime._execute_tool(name, company_id=company_id, arguments=arguments or {}, context={})
+        return AgentRuntime._execute_tool(
+            name,
+            company_id=company_id,
+            arguments=arguments or {},
+            context={},
+        )
 
     @classmethod
-    def handle_message(cls, *, company_id, conversation_id, message, channel=None, sender_id=None, metadata=None):
-        # Keep the legacy provider symbol patchable for the historical tests.
-        provider = LMStudioProvider()
+    def _legacy_provider(cls):
+        """Keep old LM Studio tests/dev usage while honoring production config."""
+        provider_name = (os.getenv("AI_PROVIDER") or "").strip().lower()
+        if not provider_name or provider_name in {"lmstudio", "lm_studio"}:
+            return LMStudioProvider()
+        return AgentRuntime.provider()
+
+    @classmethod
+    def handle_message(
+        cls,
+        *,
+        company_id,
+        conversation_id,
+        message,
+        channel=None,
+        sender_id=None,
+        metadata=None,
+    ):
+        provider = cls._legacy_provider()
         return AgentRuntime.process(
             company_id=company_id,
             conversation_id=conversation_id,
