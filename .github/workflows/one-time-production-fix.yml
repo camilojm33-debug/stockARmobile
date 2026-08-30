@@ -19,152 +19,85 @@ jobs:
           import re
 
           def replace_once(path, old, new, label):
-              p = Path(path)
-              s = p.read_text(encoding='utf-8')
-              if old not in s:
-                  raise SystemExit(f'{label}: pattern not found in {path}')
+              p = Path(path); s = p.read_text(encoding='utf-8')
+              if old not in s: raise SystemExit(f'{label}: pattern not found in {path}')
               p.write_text(s.replace(old, new, 1), encoding='utf-8')
 
-          # 1) AI history: keep 19 stored messages + the incoming message <= 20.
-          replace_once(
-              'services/ai_agent/orchestrator_v2.py',
-              'history=cls._history(company_id,conversation.id,20); trace_id=str(uuid.uuid4())',
-              'history=cls._history(company_id,conversation.id,19); trace_id=str(uuid.uuid4())',
-              'AI history limit',
-          )
+          replace_once('services/ai_agent/orchestrator_v2.py', 'history=cls._history(company_id,conversation.id,20); trace_id=str(uuid.uuid4())', 'history=cls._history(company_id,conversation.id,19); trace_id=str(uuid.uuid4())', 'AI history limit')
 
-          # 2) Thermal ticket money: plain decimal, no locale thousands separator.
-          p = Path('desktop_agent/local_print_agent.py')
-          s = p.read_text(encoding='utf-8')
-          s2 = s.replace(':,.2f', ':.2f')
-          if s2 == s:
-              raise SystemExit('printer money format: pattern not found')
-          p.write_text(s2, encoding='utf-8')
+          p=Path('desktop_agent/local_print_agent.py'); s=p.read_text(encoding='utf-8'); s2=s.replace(':,.2f', ':.2f')
+          if s2 == s: raise SystemExit('printer money format: pattern not found')
+          p.write_text(s2,encoding='utf-8')
 
-          # 3) Offline queue compatibility contract. Auth/conflict failures are
-          # represented as needs_attention instead of being treated as sent.
-          p = Path('static/service-worker.js')
-          s = p.read_text(encoding='utf-8')
-          marker = "const CACHE_NAME = 'stockarmobile-pwa-v8';"
-          contract = "const OFFLINE_QUEUE_STATUS = Object.freeze({QUEUED: 'queued', SENT: 'sent', NEEDS_ATTENTION: 'needs_attention'});\nconst OFFLINE_NEEDS_ATTENTION_STATUS = {status: 'needs_attention'};\n"
+          p=Path('static/service-worker.js'); s=p.read_text(encoding='utf-8')
+          marker="const CACHE_NAME = 'stockarmobile-pwa-v8';"
+          contract="const OFFLINE_QUEUE_STATUS = Object.freeze({QUEUED: 'queued', SENT: 'sent', NEEDS_ATTENTION: 'needs_attention'});\nconst OFFLINE_NEEDS_ATTENTION_STATUS = {status: 'needs_attention'};\n"
           if 'OFFLINE_QUEUE_STATUS' not in s:
-              if marker not in s:
-                  raise SystemExit('service worker cache marker not found')
-              s = s.replace(marker, marker + '\n' + contract, 1)
-          p.write_text(s, encoding='utf-8')
+              s=s.replace(marker, marker+'\n'+contract, 1)
+          p.write_text(s,encoding='utf-8')
 
-          # 4) Hard-delete company only after FK traversal has completed.
-          p = Path('saas.py')
-          s = p.read_text(encoding='utf-8')
-          delete_line = '        db.session.execute(text("DELETE FROM companies WHERE id = :company_id"), {"company_id": company_id})\n'
-          s = s.replace(delete_line, '', 1)
-          # Also remove the equivalent multiline form if present.
-          s = re.sub(
-              r'\n\s*db\.session\.execute\(\s*text\("DELETE FROM companies WHERE id = :company_id"\),\s*\{"company_id": company_id\}\s*\)\n',
-              '\n', s, count=1,
-          )
-          marker_fn = '\ndef _action_allowed_for_status(status: str | None, action: str) -> bool:\n'
-          if marker_fn not in s:
-              raise SystemExit('hard-delete function boundary not found')
-          delete_stmt = '\n    db.session.execute(text("DELETE FROM companies WHERE id = :company_id"), {"company_id": company_id})\n'
-          if delete_stmt.strip() not in s:
-              s = s.replace(marker_fn, delete_stmt + marker_fn, 1)
-          p.write_text(s, encoding='utf-8')
-
-          # 5) Historical subscription delete endpoint used by the existing UI.
-          p = Path('saas.py')
-          s = p.read_text(encoding='utf-8')
+          p=Path('saas.py'); s=p.read_text(encoding='utf-8')
+          s=s.replace('        db.session.execute(text("DELETE FROM companies WHERE id = :company_id"), {"company_id": company_id})\n','',1)
+          marker_fn='\ndef _action_allowed_for_status(status: str | None, action: str) -> bool:\n'
+          if marker_fn not in s: raise SystemExit('hard-delete function boundary not found')
+          if 'DELETE FROM companies WHERE id = :company_id' not in s[s.index(marker_fn):]:
+              s=s.replace(marker_fn,'\n    db.session.execute(text("DELETE FROM companies WHERE id = :company_id"), {"company_id": company_id})\n'+marker_fn,1)
           if 'def superadmin_delete_historical_subscription' not in s:
-              marker = '@bp.route("/subscriptions/quick-renew-company", methods=["POST"])'
-              endpoint = '''@bp.route("/subscriptions/historical/<int:subscription_id>/delete", methods=["POST"])
-          @superadmin_required
-          def superadmin_delete_historical_subscription(subscription_id):
-              from app import Payment, Subscription, db, record_audit, utcnow
-              from services.subscription_service import SubscriptionService
-
-              _require_superadmin()
-              subscription = db.session.get(Subscription, subscription_id)
-              if subscription is None:
-                  abort(404)
-              current = SubscriptionService.active_subscription_for_company(subscription.company_id)
-              if current is not None and current.id == subscription.id:
-                  flash("No se puede eliminar la suscripción actualmente vigente.", "danger")
-                  return _redirect_back("saas.subscriptions_panel")
-              status = SubscriptionService.get_effective_subscription_status(
-                  subscription, company=subscription.company, now=utcnow()
-              )
-              historical = {
-                  SubscriptionService.STATE_EXPIRED,
-                  SubscriptionService.STATE_TRIAL_EXPIRED,
-                  SubscriptionService.STATE_CANCELLED,
-                  SubscriptionService.STATE_SUSPENDED,
-                  "canceled",
-                  "suspended",
-              }
-              if status not in historical:
-                  flash("Solo se pueden eliminar suscripciones históricas.", "warning")
-                  return _redirect_back("saas.subscriptions_panel")
-              Payment.query.filter(Payment.subscription_id == subscription.id).update(
-                  {Payment.subscription_id: None}, synchronize_session=False
-              )
-              record_audit(
-                  action="subscription_historical_delete",
-                  entity="subscription",
-                  entity_id=subscription.id,
-                  company_id=subscription.company_id,
-                  user_id=current_user.id,
-                  detail=f"Suscripción histórica eliminada definitivamente. estado={status}",
-              )
-              db.session.delete(subscription)
-              db.session.commit()
-              flash("Suscripción histórica eliminada definitivamente. Los registros financieros fueron conservados.", "success")
-              return _redirect_back("saas.subscriptions_panel")
+              marker='@bp.route("/subscriptions/quick-renew-company", methods=["POST"])'
+              endpoint='''@bp.route("/subscriptions/historical/<int:subscription_id>/delete", methods=["POST"])
+@superadmin_required
+def superadmin_delete_historical_subscription(subscription_id):
+    from app import Payment, Subscription, db, record_audit, utcnow
+    from services.subscription_service import SubscriptionService
+    _require_superadmin()
+    subscription = db.session.get(Subscription, subscription_id)
+    if subscription is None:
+        abort(404)
+    current = SubscriptionService.active_subscription_for_company(subscription.company_id)
+    if current is not None and current.id == subscription.id:
+        flash("No se puede eliminar la suscripción actualmente vigente.", "danger")
+        return _redirect_back("saas.subscriptions_panel")
+    status = SubscriptionService.get_effective_subscription_status(subscription, company=subscription.company, now=utcnow())
+    historical = {SubscriptionService.STATE_EXPIRED, SubscriptionService.STATE_TRIAL_EXPIRED, SubscriptionService.STATE_CANCELLED, SubscriptionService.STATE_SUSPENDED, "canceled", "suspended"}
+    if status not in historical:
+        flash("Solo se pueden eliminar suscripciones históricas.", "warning")
+        return _redirect_back("saas.subscriptions_panel")
+    Payment.query.filter(Payment.subscription_id == subscription.id).update({Payment.subscription_id: None}, synchronize_session=False)
+    record_audit(action="subscription_historical_delete", entity="subscription", entity_id=subscription.id, company_id=subscription.company_id, user_id=current_user.id, detail=f"Suscripción histórica eliminada definitivamente. estado={status}")
+    db.session.delete(subscription)
+    db.session.commit()
+    flash("Suscripción histórica eliminada definitivamente. Los registros financieros fueron conservados.", "success")
+    return _redirect_back("saas.subscriptions_panel")
 
 
-          '''
-              if marker not in s:
-                  raise SystemExit('subscription route insertion marker not found')
-              s = s.replace(marker, endpoint + marker, 1)
-              p.write_text(s, encoding='utf-8')
+'''
+              if marker not in s: raise SystemExit('subscription route insertion marker not found')
+              s=s.replace(marker,endpoint+marker,1)
+          p.write_text(s,encoding='utf-8')
 
-          # 6) WhatsApp quote sharing must use the stored client phone and must
-          # return to the quote when no phone exists. A manually typed phone is
-          # deliberately not allowed to override the customer's stored number.
-          p = Path('quotes.py')
-          s = p.read_text(encoding='utf-8')
-          old = '''    phone = _quote_client_whatsapp_phone(quote)\n    company = Company.query.filter_by(id=quote.company_id).first()'''
-          new = '''    phone = _quote_client_whatsapp_phone(quote)\n    if not phone:\n        flash("El cliente no tiene teléfono/WhatsApp registrado.", "warning")\n        return redirect(url_for("quotes.view_quote", quote_id=quote.id))\n    company = Company.query.filter_by(id=quote.company_id).first()'''
-          if old not in s:
-              raise SystemExit('WhatsApp GET phone block not found')
-          s = s.replace(old, new, 1)
-          old = '''    phone = (request.form.get("whatsapp_phone") or "").strip() or _quote_client_whatsapp_phone(quote)\n    company = Company.query.filter_by(id=quote.company_id).first()'''
-          new = '''    phone = _quote_client_whatsapp_phone(quote)\n    if not phone:\n        flash("El cliente no tiene teléfono/WhatsApp registrado.", "warning")\n        return redirect(url_for("quotes.view_quote", quote_id=quote.id))\n    company = Company.query.filter_by(id=quote.company_id).first()'''
-          if old not in s:
-              raise SystemExit('WhatsApp POST phone block not found')
-          s = s.replace(old, new, 1)
-          p.write_text(s, encoding='utf-8')
+          p=Path('quotes.py'); s=p.read_text(encoding='utf-8')
+          old='    phone = _quote_client_whatsapp_phone(quote)\n    company = Company.query.filter_by(id=quote.company_id).first()'
+          new='    phone = _quote_client_whatsapp_phone(quote)\n    if not phone:\n        flash("El cliente no tiene teléfono/WhatsApp registrado.", "warning")\n        return redirect(url_for("quotes.view_quote", quote_id=quote.id))\n    company = Company.query.filter_by(id=quote.company_id).first()'
+          if old not in s: raise SystemExit('WhatsApp GET block not found')
+          s=s.replace(old,new,1)
+          old='    phone = (request.form.get("whatsapp_phone") or "").strip() or _quote_client_whatsapp_phone(quote)\n    company = Company.query.filter_by(id=quote.company_id).first()'
+          new='    phone = _quote_client_whatsapp_phone(quote)\n    if not phone:\n        flash("El cliente no tiene teléfono/WhatsApp registrado.", "warning")\n        return redirect(url_for("quotes.view_quote", quote_id=quote.id))\n    company = Company.query.filter_by(id=quote.company_id).first()'
+          if old not in s: raise SystemExit('WhatsApp POST block not found')
+          s=s.replace(old,new,1); p.write_text(s,encoding='utf-8')
 
-          # 7) Subscription cancellation-at-period-end keeps access until the
-          # paid period actually ends; once due, it expires without grace.
-          p = Path('services/subscription_service.py')
-          s = p.read_text(encoding='utf-8')
-          old = '''        if command.cancel_at_period_end:\n            subscription.cancel_at_period_end = True\n            subscription.renewal_enabled = False\n            subscription.auto_renew = False\n            target_state = SubscriptionService.STATE_CANCELLED\n            if SubscriptionService._normalize_state(subscription.status) in {SubscriptionService.STATE_ACTIVE, SubscriptionService.STATE_TRIAL, SubscriptionService.STATE_PENDING_PAYMENT, SubscriptionService.STATE_PENDING_CONFIRMATION, SubscriptionService.STATE_PENDING}:\n                SubscriptionService._transition(subscription, target_state, reason="cancel_subscription")\n'''
-          new = '''        if command.cancel_at_period_end:\n            # Cancellation at period end is an intent, not an immediate state change.\n            # The customer keeps the paid access state until the billing period ends.\n            subscription.cancel_at_period_end = True\n            subscription.renewal_enabled = False\n            subscription.auto_renew = False\n'''
-          if old not in s:
-              raise SystemExit('subscription cancel block not found')
-          s = s.replace(old, new, 1)
-          s = s.replace('subscription_id=subscription.id,\n            company_id=company.id,', 'subscription_id=getattr(subscription, "id", command.subscription_id),\n            company_id=company.id,', 1)
-          # Add an explicit no-grace branch before generic ACTIVE expiry/grace logic.
-          active_marker = '''        if raw_status in SubscriptionService.ACTIVE_STATUSES:\n            paid_limit = getattr(subscription, "next_billing_date", None) or getattr(subscription, "ends_at", None)\n'''
-          active_replacement = '''        if raw_status in SubscriptionService.ACTIVE_STATUSES:\n            paid_limit = getattr(subscription, "next_billing_date", None) or getattr(subscription, "ends_at", None)\n            if getattr(subscription, "cancel_at_period_end", False) and paid_limit and current >= paid_limit:\n                return {\n                    "status": SubscriptionService.STATE_EXPIRED,\n                    "subscription_status": raw_status,\n                    "can_access": False,\n                    "reason": "La suscripción cancelada al final del período ya venció.",\n                    "trial_ends_at": trial_end,\n                    "reference_date": paid_limit,\n                    "next_billing_date": paid_limit,\n                }\n'''
-          if active_marker not in s:
-              raise SystemExit('subscription active resolution marker not found')
-          s = s.replace(active_marker, active_replacement, 1)
-          p.write_text(s, encoding='utf-8')
+          p=Path('services/subscription_service.py'); s=p.read_text(encoding='utf-8')
+          old='''        if command.cancel_at_period_end:\n            subscription.cancel_at_period_end = True\n            subscription.renewal_enabled = False\n            subscription.auto_renew = False\n            target_state = SubscriptionService.STATE_CANCELLED\n            if SubscriptionService._normalize_state(subscription.status) in {SubscriptionService.STATE_ACTIVE, SubscriptionService.STATE_TRIAL, SubscriptionService.STATE_PENDING_PAYMENT, SubscriptionService.STATE_PENDING_CONFIRMATION, SubscriptionService.STATE_PENDING}:\n                SubscriptionService._transition(subscription, target_state, reason="cancel_subscription")\n'''
+          new='''        if command.cancel_at_period_end:\n            subscription.cancel_at_period_end = True\n            subscription.renewal_enabled = False\n            subscription.auto_renew = False\n'''
+          if old not in s: raise SystemExit('cancel block not found')
+          s=s.replace(old,new,1)
+          s=s.replace('subscription_id=subscription.id,\n            company_id=company.id,','subscription_id=getattr(subscription, "id", command.subscription_id),\n            company_id=company.id,',1)
+          active_marker='''        if raw_status in SubscriptionService.ACTIVE_STATUSES:\n            paid_limit = getattr(subscription, "next_billing_date", None) or getattr(subscription, "ends_at", None)\n'''
+          active_replacement='''        if raw_status in SubscriptionService.ACTIVE_STATUSES:\n            paid_limit = getattr(subscription, "next_billing_date", None) or getattr(subscription, "ends_at", None)\n            if getattr(subscription, "cancel_at_period_end", False) and paid_limit and current >= paid_limit:\n                return {\n                    "status": SubscriptionService.STATE_EXPIRED,\n                    "subscription_status": raw_status,\n                    "can_access": False,\n                    "reason": "La suscripción cancelada al final del período ya venció.",\n                    "trial_ends_at": trial_end,\n                    "reference_date": paid_limit,\n                    "next_billing_date": paid_limit,\n                }\n'''
+          if active_marker not in s: raise SystemExit('active resolution block not found')
+          s=s.replace(active_marker,active_replacement,1); p.write_text(s,encoding='utf-8')
           PY
       - name: Test all regressions
-        env:
-          PYTHONPATH: .
+        env: {PYTHONPATH: .}
         run: |
           pip install -r requirements.txt
           python -m compileall -q .
