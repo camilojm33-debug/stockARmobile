@@ -30,7 +30,27 @@ def _company_preferences(company) -> Dict[str, Any]:
 
 
 def save_company_preferences(company, payload: Dict[str, Any]) -> None:
+    """Persist the complete preferences document without dropping unrelated settings."""
     company.preferences_json = json.dumps(payload, ensure_ascii=False, separators=(",", ":"))
+
+
+def update_ai_preferences(company, *, ai_updates: Optional[Dict[str, Any]] = None, whatsapp_updates: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
+    """Merge only AI/WhatsApp settings into the existing company preferences."""
+    prefs = _company_preferences(company)
+    ai = prefs.get("ai_agent")
+    if not isinstance(ai, dict):
+        ai = {}
+    if ai_updates:
+        ai.update(ai_updates)
+    whatsapp = ai.get("whatsapp")
+    if not isinstance(whatsapp, dict):
+        whatsapp = {}
+    if whatsapp_updates:
+        whatsapp.update(whatsapp_updates)
+    ai["whatsapp"] = whatsapp
+    prefs["ai_agent"] = ai
+    save_company_preferences(company, prefs)
+    return prefs
 
 
 def _fernet() -> Fernet:
@@ -41,7 +61,7 @@ def _fernet() -> Fernet:
         except Exception as exc:
             raise RuntimeError("AI_CHANNEL_ENCRYPTION_KEY no es una clave Fernet válida.") from exc
 
-    # Development-safe deterministic fallback. Production must configure a real key.
+    # Development-only fallback. Production should always set AI_CHANNEL_ENCRYPTION_KEY.
     seed = (os.getenv("SECRET_KEY") or "stockarmobile-dev-secret").encode("utf-8")
     key = base64.urlsafe_b64encode(hashlib.sha256(seed).digest())
     return Fernet(key)
@@ -129,8 +149,12 @@ def configure_whatsapp_connection(
     template_language: str = "es_AR",
 ) -> None:
     prefs = _company_preferences(company)
-    ai = prefs.setdefault("ai_agent", {})
-    whatsapp = ai.setdefault("whatsapp", {})
+    ai = prefs.get("ai_agent")
+    if not isinstance(ai, dict):
+        ai = {}
+    whatsapp = ai.get("whatsapp")
+    if not isinstance(whatsapp, dict):
+        whatsapp = {}
     whatsapp.update(
         {
             "enabled": bool(enabled),
@@ -143,6 +167,8 @@ def configure_whatsapp_connection(
     )
     if access_token:
         whatsapp["access_token_encrypted"] = encrypt_secret(access_token)
+    ai["whatsapp"] = whatsapp
+    prefs["ai_agent"] = ai
     save_company_preferences(company, prefs)
 
 
@@ -153,7 +179,6 @@ def company_for_whatsapp_phone_id(phone_number_id: str):
     if not target:
         return None
 
-    # PostgreSQL and SQLite both support substring matching on TEXT columns.
     company = (
         Company.query
         .filter(Company.active.is_(True), Company.preferences_json.contains(target))
