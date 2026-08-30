@@ -11,15 +11,12 @@ import uuid
 from urllib import request as urlrequest
 from urllib.error import HTTPError, URLError
 from typing import Any
-
 from flask import current_app, has_app_context
 from config.billing_config import load_billing_config
-
 
 class MercadoPagoService:
     API_BASE = "https://api.mercadopago.com"
     REQUEST_TIMEOUT_SECONDS = 10
-
     def __init__(self): self.config = load_billing_config()
     def _logger(self): return current_app.logger if has_app_context() else logging.getLogger(__name__)
     def _headers(self, *, include_idempotency=False, idempotency_key=None, access_token=None):
@@ -39,7 +36,6 @@ class MercadoPagoService:
         if status_code>=400: raise RuntimeError(f"Mercado Pago respondió HTTP {status_code}: {raw[:700]}")
         return json.loads(raw) if raw else {}
     def create_preapproval(self, *, reason, payer_email, external_reference, amount, currency, frequency=1, frequency_type="months", notification_url=None, back_url=None, access_token=None):
-        """Create an explicitly pending recurring subscription flow."""
         payload={"reason":str(reason),"payer_email":str(payer_email),"external_reference":str(external_reference),"status":"pending","auto_recurring":{"frequency":int(frequency),"frequency_type":str(frequency_type),"transaction_amount":float(amount),"currency_id":str(currency).upper()},"notification_url":notification_url or self.config.notification_url,"back_url":back_url or self.config.success_url}
         return self._request("POST","/preapproval",payload=payload,access_token=access_token,idempotency_key=f"preapproval:{external_reference}")
     def create_checkout_preference(self, *, title, amount, currency, external_reference, company_id, plan_id, subscription_id, user_id):
@@ -68,3 +64,11 @@ class MercadoPagoService:
         if not ts or not v1:return False
         manifest=f"id:{data_id};request-id:{request_id};ts:{ts};"; digest=hmac.new(secret.encode(),manifest.encode(),hashlib.sha256).hexdigest()
         return hmac.compare_digest(digest,v1)
+    def debug_fetch_pos_catalog(self, *, access_token=None, limit=50, offset=0):
+        path=f"/pos?limit={int(limit)}&offset={int(offset)}"
+        try:
+            response=self._request("GET",path,access_token=access_token)
+            results=response.get("results") if isinstance(response,dict) else []
+            return {"path":path,"status_code":200,"pos_count":len(results or []),"response":response}
+        except Exception as exc:
+            return {"path":path,"status_code":getattr(exc,"code",500) or 500,"pos_count":0,"response":{"results":[]},"error":str(exc)}
