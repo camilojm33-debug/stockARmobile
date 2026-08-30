@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import json
 import os
 from decimal import Decimal, InvalidOperation
 
@@ -20,7 +19,7 @@ from services.ai_agent.config_service import (
     ensure_default_agents,
     get_ai_preferences,
     get_whatsapp_connection,
-    save_company_preferences,
+    update_ai_preferences,
 )
 
 bp = Blueprint("ai_admin", __name__, url_prefix="/dashboard/ai-agent")
@@ -41,18 +40,12 @@ def _default_model() -> str:
 
 
 def _ensure_configs(company_id: int, agents: dict[str, Agent]) -> dict[str, AgentConfiguration]:
-    defaults = {
-        VENDOR_AGENT_NAME: _DEFAULT_VENDOR_PROMPT,
-        BUSINESS_AGENT_NAME: _DEFAULT_BUSINESS_PROMPT,
-    }
+    defaults = {VENDOR_AGENT_NAME: _DEFAULT_VENDOR_PROMPT, BUSINESS_AGENT_NAME: _DEFAULT_BUSINESS_PROMPT}
     configs: dict[str, AgentConfiguration] = {}
     for name, agent in agents.items():
         config = (
             db.session.query(AgentConfiguration)
-            .filter(
-                AgentConfiguration.agent_id == agent.id,
-                AgentConfiguration.company_id == company_id,
-            )
+            .filter(AgentConfiguration.agent_id == agent.id, AgentConfiguration.company_id == company_id)
             .order_by(AgentConfiguration.id.asc())
             .first()
         )
@@ -96,10 +89,15 @@ def _safe_decimal(raw: str | None, default: Decimal) -> Decimal:
 @company_admin_required
 def index():
     company_id = get_current_company_id(current_user)
+    from app import Company
+
+    company = Company.query.get(company_id)
+    if company is None:
+        return redirect(url_for("dashboard.index"))
     agents = ensure_default_agents(company_id)
     configs = _ensure_configs(company_id, agents)
-    prefs = get_ai_preferences(__import__("app").Company.query.get(company_id))
-    whatsapp = get_whatsapp_connection(__import__("app").Company.query.get(company_id))
+    prefs = get_ai_preferences(company)
+    whatsapp = get_whatsapp_connection(company)
 
     conversations = (
         db.session.query(Conversation)
@@ -113,27 +111,22 @@ def index():
     for conversation in conversations:
         latest = (
             db.session.query(ConversationMessage)
-            .filter(
-                ConversationMessage.company_id == company_id,
-                ConversationMessage.conversation_id == conversation.id,
-            )
+            .filter(ConversationMessage.company_id == company_id, ConversationMessage.conversation_id == conversation.id)
             .order_by(ConversationMessage.id.desc())
             .first()
         )
-        conversation_rows.append(
-            {
-                "id": conversation.id,
-                "agent_name": agent_ids.get(conversation.agent_id, "Agente"),
-                "channel": conversation.channel,
-                "external_id": conversation.external_conversation_id,
-                "status": conversation.status,
-                "updated_at": conversation.updated_at,
-                "last_message": (latest.content[:180] if latest else ""),
-            }
-        )
+        conversation_rows.append({
+            "id": conversation.id,
+            "agent_name": agent_ids.get(conversation.agent_id, "Agente"),
+            "channel": conversation.channel,
+            "external_id": conversation.external_conversation_id,
+            "status": conversation.status,
+            "updated_at": conversation.updated_at,
+            "last_message": (latest.content[:180] if latest else ""),
+        })
 
     provider = (os.getenv("AI_PROVIDER") or "openai_compatible").strip().lower()
-    ai_key_configured = bool((os.getenv("AI_PROVIDER_API_KEY") or "").strip()) or provider in {"lmstudio", "lm_studio"}
+    ai_key_configured = bool((os.getenv("AI_PROVIDER_API_KEY") or os.getenv("OPENAI_API_KEY") or "").strip()) or provider in {"lmstudio", "lm_studio"}
     return render_template(
         "ai_agent/admin.html",
         agents=agents,
@@ -161,7 +154,6 @@ def save():
 
     agents = ensure_default_agents(company_id)
     configs = _ensure_configs(company_id, agents)
-
     agents[VENDOR_AGENT_NAME].active = request.form.get("vendor_enabled") == "1"
     agents[BUSINESS_AGENT_NAME].active = request.form.get("business_enabled") == "1"
 
@@ -175,11 +167,13 @@ def save():
         config.max_tokens = _safe_int(request.form.get(f"{prefix}_max_tokens"), 700, 128, 4000)
         config.temperature = _safe_decimal(request.form.get(f"{prefix}_temperature"), Decimal("0.20"))
 
-    prefs = get_ai_preferences(company)
-    ai = prefs["ai_agent"]
-    ai["enabled"] = request.form.get("ai_enabled") == "1"
-    ai["whatsapp_enabled"] = request.form.get("whatsapp_enabled") == "1"
-    save_company_preferences(company, {**prefs.get("ai_agent", {}) and {"ai_agent": prefs["ai_agent"]} or {"ai_agent": ai}, **({"whatsapp": prefs.get("whatsapp", {})} if isinstance(prefs.get("whatsapp"), dict) else {})})
+    update_ai_preferences(
+        company,
+        ai_updates={
+            "enabled": request.form.get("ai_enabled") == "1",
+            "whatsapp_enabled": request.form.get("whatsapp_enabled") == "1",
+        },
+    )
 
     configure_whatsapp_connection(
         company,
