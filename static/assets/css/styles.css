@@ -11,339 +11,88 @@
   background: transparent;
   border: 0;
 }
-#section-apertura .summary-panel > div {
-  min-width: 0;
-  padding: .75rem .8rem;
-  border: 1px solid var(--app-line);
-  border-radius: 12px;
-  background: var(--app-panel-soft);
-}
-#section-apertura .summary-panel > div:nth-child(2) {
-  grid-column: 1 / -1;
-  padding: 1rem;
-  border-color: rgba(37,99,235,.22);
-  background: linear-gradient(145deg, rgba(37,99,235,.08), rgba(37,99,235,.025));
-}
-#section-apertura .summary-panel > div:nth-child(2) strong {
-  color: var(--app-primary);
-  font-size: 1.7rem;
-  letter-spacing: -.025em;
-}
-#section-apertura .summary-panel > div:last-child strong {
-  font-variant-numeric: tabular-nums;
-}
+#section-apertura .summary-panel > div { min-width: 0; padding: .75rem .8rem; border: 1px solid var(--app-line); border-radius: 12px; background: var(--app-panel-soft); }
+#section-apertura .summary-panel > div:nth-child(2) { grid-column: 1 / -1; padding: 1rem; border-color: rgba(37,99,235,.22); background: linear-gradient(145deg, rgba(37,99,235,.08), rgba(37,99,235,.025)); }
+#section-apertura .summary-panel > div:nth-child(2) strong { color: var(--app-primary); font-size: 1.7rem; letter-spacing: -.025em; }
+#section-apertura .summary-panel > div:last-child strong { font-variant-numeric: tabular-nums; }
 #section-apertura .summary-panel strong { font-variant-numeric: tabular-nums; }
-
-/* Estado de caja abierto: más claro sin alterar el HTML existente. */
-#section-apertura > .card-body > h2 {
-  font-size: 1.2rem;
-  letter-spacing: -.015em;
-}
-#section-apertura > .card-body > p.text-muted {
-  font-size: .82rem;
-}
-#section-apertura .js-close-counted {
-  font-size: 1.08rem;
-  font-weight: 750;
-  min-height: 50px;
-}
-#section-apertura .js-open-close-diff {
-  font-size: 1.1rem;
-  font-variant-numeric: tabular-nums;
-}
-#section-arqueo + form button,
-#section-apertura button.btn-danger {
-  min-height: 48px;
-  font-weight: 800;
-}
-
-/* Menú interno de Caja: compacto, desplazable y más fácil de tocar. */
-.app-shell .card.app-card:has(a[href="#section-apertura"]) .d-flex.flex-wrap.gap-2 {
-  overflow-x: auto;
-  flex-wrap: nowrap !important;
-  padding-bottom: 2px;
-  scrollbar-width: thin;
-  -webkit-overflow-scrolling: touch;
-}
-.app-shell .card.app-card:has(a[href="#section-apertura"]) .btn {
-  flex: 0 0 auto;
-  white-space: nowrap;
-}
-
-/* Alerta de caja atrasada: menos ruido, acciones más evidentes. */
-.app-shell > .alert.alert-warning.border-0.shadow-sm {
-  border-left: 4px solid #f59e0b !important;
-  padding: .9rem 1rem;
-  border-radius: 12px;
-}
-.app-shell > .alert.alert-warning.border-0.shadow-sm .btn {
-  font-weight: 750;
-}
-
-/* Comprobantes pendientes: separar visualmente el contador del importe. */
-.app-shell .card.app-card .badge.text-bg-warning,
-.app-shell .card.app-card .badge.text-bg-primary {
-  font-variant-numeric: tabular-nums;
-}
-
-/* Administración: diferencia actual como métrica de decisión. */
-.app-shell .metric-card {
-  border: 1px solid var(--app-line);
-  border-radius: 12px;
-  background: var(--app-panel-soft);
-}
-.app-shell .metric-card:last-child .h4 {
-  font-variant-numeric: tabular-nums;
-}
-
-/* Historial: importes y acciones fáciles de escanear. */
-#section-historial .table td,
-#section-historial .table th,
-#section-movimientos-listado .table td,
-#section-movimientos-listado .table th {
-  vertical-align: middle;
-}
-#section-historial .table td:nth-last-child(1) .btn,
-#section-movimientos-listado .table td:last-child {
-  white-space: nowrap;
-}
-#section-historial .table .fw-semibold {
-  font-variant-numeric: tabular-nums;
-}
-#section-historial .table-responsive,
-#section-movimientos-listado .table-responsive {
-  border-radius: 12px;
-}
-
-/* Panel de cierre: convierte el arqueo en una zona visualmente prioritaria. */
-#section-arqueo {
-  scroll-margin-top: 18px;
-}
-#section-arqueo + form,
-#section-arqueo ~ form {
-  min-width: 0;
-}
-#section-arqueo ~ form .alert.alert-light {
-  border-radius: 12px;
-}
+#section-apertura > .card-body > h2 { font-size: 1.2rem; letter-spacing: -.015em; }
+#section-apertura > .card-body > p.text-muted { font-size: .82rem; }
+#section-apertura .js-close-counted { font-size: 1.08rem; font-weight: 750; min-height: 50px; }
+#section-apertura .js-open-close-diff { font-size: 1.1rem; font-variant-numeric: tabular-nums; }
+#section-arqueo + form button, #section-apertura button.btn-danger { min-height: 48px; font-weight: 800; }
+.app-shell .card.app-card:has(a[href="#section-apertura"]) .d-flex.flex-wrap.gap-2 { overflow-x: auto; flex-wrap: nowrap !important; padding-bottom: 2px; scrollbar-width: thin; -webkit-overflow-scrolling: touch; }
+.app-shell .card.app-card:has(a[href="#section-apertura"]) .btn { flex: 0 0 auto; white-space: nowrap; }
+.app-shell > .alert.alert-warning.border-0.shadow-sm { border-left: 4px solid #f59e0b !important; padding: .9rem 1rem; border-radius: 12px; }
+.app-shell > .alert.alert-warning.border-0.shadow-sm .btn { font-weight: 750; }
+.app-shell .card.app-card .badge.text-bg-warning, .app-shell .card.app-card .badge.text-bg-primary { font-variant-numeric: tabular-nums; }
+.app-shell .metric-card { border: 1px solid var(--app-line); border-radius: 12px; background: var(--app-panel-soft); }
+.app-shell .metric-card:last-child .h4 { font-variant-numeric: tabular-nums; }
+#section-historial .table td, #section-historial .table th, #section-movimientos-listado .table td, #section-movimientos-listado .table th { vertical-align: middle; }
+#section-historial .table td:nth-last-child(1) .btn, #section-movimientos-listado .table td:last-child { white-space: nowrap; }
+#section-historial .table .fw-semibold { font-variant-numeric: tabular-nums; }
+#section-historial .table-responsive, #section-movimientos-listado .table-responsive { border-radius: 12px; }
+#section-arqueo { scroll-margin-top: 18px; }
+#section-arqueo + form, #section-arqueo ~ form { min-width: 0; }
+#section-arqueo ~ form .alert.alert-light { border-radius: 12px; }
 
 /* Móvil: operación tipo app, sin tablas apretadas. */
 @media (max-width: 767.98px) {
-  #section-apertura .summary-panel {
-    grid-template-columns: 1fr 1fr;
-    gap: .5rem;
-    padding: .35rem 0 .7rem;
-  }
-  #section-apertura .summary-panel > div {
-    padding: .7rem;
-    border-radius: 11px;
-    font-size: .82rem;
-  }
-  #section-apertura .summary-panel > div:nth-child(2) {
-    grid-column: 1 / -1;
-    padding: .9rem;
-  }
-  #section-apertura .summary-panel > div:nth-child(2) strong {
-    font-size: 1.5rem;
-  }
-  #section-apertura .summary-panel > div span,
-  #section-apertura .summary-panel > div strong {
-    overflow-wrap: anywhere;
-  }
-  #section-apertura .row.g-2 > [class*="col-"] {
-    min-width: 0;
-  }
-  #section-apertura .form-label {
-    font-size: .78rem;
-    font-weight: 700;
-  }
-  #section-historial .table.mobile-card-table tr,
-  #section-movimientos-listado .table.mobile-card-table tr {
-    border-radius: 14px;
-    padding: .7rem .85rem;
-  }
-  #section-historial .table.mobile-card-table td,
-  #section-movimientos-listado .table.mobile-card-table td {
-    min-width: 0;
-  }
-  #section-historial .table.mobile-card-table td:last-child {
-    display: grid;
-    grid-template-columns: 1fr;
-    gap: .45rem;
-  }
-  #section-historial .table.mobile-card-table td:last-child::before {
-    margin-bottom: .1rem;
-  }
-  #section-historial .table.mobile-card-table td:last-child .d-flex {
-    display: grid !important;
-    grid-template-columns: repeat(2, minmax(0, 1fr));
-  }
-  #section-historial .table.mobile-card-table td:last-child .btn {
-    width: 100%;
-  }
-  #section-movimientos-listado .table.mobile-card-table td:nth-child(5) {
-    font-weight: 800;
-    font-size: 1rem;
-  }
-  #section-movimientos-listado .table.mobile-card-table td:nth-child(5)::before {
-    font-weight: 700;
-  }
+  #section-apertura .summary-panel { grid-template-columns: 1fr 1fr; gap: .5rem; padding: .35rem 0 .7rem; }
+  #section-apertura .summary-panel > div { padding: .7rem; border-radius: 11px; font-size: .82rem; }
+  #section-apertura .summary-panel > div:nth-child(2) { grid-column: 1 / -1; padding: .9rem; }
+  #section-apertura .summary-panel > div:nth-child(2) strong { font-size: 1.5rem; }
+  #section-apertura .summary-panel > div span, #section-apertura .summary-panel > div strong { overflow-wrap: anywhere; }
+  #section-apertura .row.g-2 > [class*="col-"] { min-width: 0; }
+  #section-apertura .form-label { font-size: .78rem; font-weight: 700; }
+  #section-historial .table.mobile-card-table tr, #section-movimientos-listado .table.mobile-card-table tr { border-radius: 14px; padding: .7rem .85rem; }
+  #section-historial .table.mobile-card-table td, #section-movimientos-listado .table.mobile-card-table td { min-width: 0; }
+  #section-historial .table.mobile-card-table td:last-child { display: grid; grid-template-columns: 1fr; gap: .45rem; }
+  #section-historial .table.mobile-card-table td:last-child::before { margin-bottom: .1rem; }
+  #section-historial .table.mobile-card-table td:last-child .d-flex { display: grid !important; grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  #section-historial .table.mobile-card-table td:last-child .btn { width: 100%; }
+  #section-movimientos-listado .table.mobile-card-table td:nth-child(5) { font-weight: 800; font-size: 1rem; }
+  #section-movimientos-listado .table.mobile-card-table td:nth-child(5)::before { font-weight: 700; }
 }
-
 @media (max-width: 420px) {
-  #section-apertura .summary-panel {
-    grid-template-columns: 1fr;
-  }
-  #section-apertura .summary-panel > div:nth-child(2) {
-    grid-column: auto;
-  }
-  #section-historial .table.mobile-card-table td:last-child .d-flex {
-    grid-template-columns: 1fr;
-  }
+  #section-apertura .summary-panel { grid-template-columns: 1fr; }
+  #section-apertura .summary-panel > div:nth-child(2) { grid-column: auto; }
+  #section-historial .table.mobile-card-table td:last-child .d-flex { grid-template-columns: 1fr; }
 }
-
-[data-bs-theme="dark"] #section-apertura .summary-panel > div {
-  background: #101a2b;
-}
-[data-bs-theme="dark"] #section-apertura .summary-panel > div:nth-child(2) {
-  background: linear-gradient(145deg, rgba(37,99,235,.15), rgba(15,23,42,.7));
-}
+[data-bs-theme="dark"] #section-apertura .summary-panel > div { background: #101a2b; }
+[data-bs-theme="dark"] #section-apertura .summary-panel > div:nth-child(2) { background: linear-gradient(145deg, rgba(37,99,235,.15), rgba(15,23,42,.7)); }
 
 /* ============================================ */
 /* Sidebar UX v3: navegación compacta, jerarquía clara y mejor acceso móvil. */
-
-.app-sidebar {
-  width: var(--sidebar-width);
-  scrollbar-width: thin;
-  scrollbar-color: rgba(100,116,139,.55) transparent;
-}
-
-.app-brand {
-  height: 66px;
-  padding: 0 16px;
-  gap: 10px;
-}
-.app-brand-mark {
-  width: 36px;
-  height: 36px;
-  border-radius: 10px;
-}
-.app-brand .fw-bold {
-  font-size: .94rem;
-}
-.app-brand small {
-  font-size: .69rem;
-  line-height: 1.2;
-}
-
-.app-nav {
-  padding: 10px 10px 12px;
-}
-.app-nav .nav-section-label {
-  padding: 9px 10px 5px;
-  font-size: .66rem;
-  letter-spacing: .13em;
-}
-.app-nav .nav-link {
-  min-height: 40px;
-  padding: .52rem .7rem;
-  gap: 9px;
-  font-size: .9rem;
-  border-radius: 10px;
-  margin-bottom: 2px;
-}
-.app-nav .nav-link i {
-  width: 20px;
-  font-size: 1rem;
-}
-.app-nav .nav-link.active {
-  box-shadow: inset 3px 0 0 var(--app-primary);
-}
-
-/* El pie queda accesible mientras se recorre el menú largo. */
-.app-sidebar-footer {
-  position: sticky;
-  bottom: 0;
-  z-index: 4;
-  padding: 12px;
-  background: rgba(255,255,255,.96);
-  backdrop-filter: blur(16px);
-}
-[data-bs-theme="dark"] .app-sidebar-footer {
-  background: rgba(24,34,53,.97);
-}
-
-.user-chip {
-  gap: 9px;
-  padding: 8px 9px;
-  border-radius: 12px;
-  margin-bottom: 9px !important;
-}
-.user-avatar {
-  width: 34px;
-  height: 34px;
-  flex: 0 0 auto;
-}
-.user-chip .fw-semibold {
-  font-size: .86rem;
-}
-.user-chip small {
-  font-size: .72rem;
-}
-
-.offline-status-panel {
-  padding: 10px 11px;
-  margin-bottom: 9px;
-  border-radius: 12px;
-}
-.offline-status-panel .progress {
-  height: 6px !important;
-}
-.offline-status-panel .small {
-  line-height: 1.4;
-}
-.offline-status-panel #offlineSyncNow {
-  min-height: 40px;
-}
-
-.app-sidebar-footer > .d-flex.gap-2:last-child {
-  gap: 6px !important;
-}
-.app-sidebar-footer > .d-flex.gap-2:last-child > button,
-.app-sidebar-footer > .d-flex.gap-2:last-child > form > button {
-  min-height: 42px;
-}
-.app-sidebar-footer > .d-flex.gap-2:last-child > button:not(#themeToggle),
-.app-sidebar-footer > .d-flex.gap-2:last-child > form {
-  min-width: 0;
-}
-.app-sidebar-footer > .d-flex.gap-2:last-child > button:first-child,
-.app-sidebar-footer > .d-flex.gap-2:last-child > button:nth-child(2),
-.app-sidebar-footer > .d-flex.gap-2:last-child > button:nth-child(3) {
-  width: 44px;
-  padding-inline: 0;
-}
-.app-sidebar-footer > .d-flex.gap-2:last-child > form {
-  flex: 1 1 auto;
-}
-
-.device-clock {
-  justify-content: center;
-  font-size: .72rem;
-  opacity: .9;
-}
-
-body.sidebar-collapsed .app-brand {
-  height: 66px;
-}
-body.sidebar-collapsed .app-sidebar {
-  scrollbar-width: none;
-}
-body.sidebar-collapsed .app-nav .nav-link.active {
-  box-shadow: none;
-}
-
-/* Escritorio pequeño: conserva todos los accesos sin hacer el sidebar demasiado alto. */
+.app-sidebar { width: var(--sidebar-width); scrollbar-width: thin; scrollbar-color: rgba(100,116,139,.55) transparent; }
+.app-brand { height: 66px; padding: 0 16px; gap: 10px; }
+.app-brand-mark { width: 36px; height: 36px; border-radius: 10px; }
+.app-brand .fw-bold { font-size: .94rem; }
+.app-brand small { font-size: .69rem; line-height: 1.2; }
+.app-nav { padding: 10px 10px 12px; }
+.app-nav .nav-section-label { padding: 9px 10px 5px; font-size: .66rem; letter-spacing: .13em; }
+.app-nav .nav-link { min-height: 40px; padding: .52rem .7rem; gap: 9px; font-size: .9rem; border-radius: 10px; margin-bottom: 2px; }
+.app-nav .nav-link i { width: 20px; font-size: 1rem; }
+.app-nav .nav-link.active { box-shadow: inset 3px 0 0 var(--app-primary); }
+.app-sidebar-footer { position: sticky; bottom: 0; z-index: 4; padding: 12px; background: rgba(255,255,255,.96); backdrop-filter: blur(16px); }
+[data-bs-theme="dark"] .app-sidebar-footer { background: rgba(24,34,53,.97); }
+.user-chip { gap: 9px; padding: 8px 9px; border-radius: 12px; margin-bottom: 9px !important; }
+.user-avatar { width: 34px; height: 34px; flex: 0 0 auto; }
+.user-chip .fw-semibold { font-size: .86rem; }
+.user-chip small { font-size: .72rem; }
+.offline-status-panel { padding: 10px 11px; margin-bottom: 9px; border-radius: 12px; }
+.offline-status-panel .progress { height: 6px !important; }
+.offline-status-panel .small { line-height: 1.4; }
+.offline-status-panel #offlineSyncNow { min-height: 40px; }
+.app-sidebar-footer > .d-flex.gap-2:last-child { gap: 6px !important; }
+.app-sidebar-footer > .d-flex.gap-2:last-child > button, .app-sidebar-footer > .d-flex.gap-2:last-child > form > button { min-height: 42px; }
+.app-sidebar-footer > .d-flex.gap-2:last-child > button:not(#themeToggle), .app-sidebar-footer > .d-flex.gap-2:last-child > form { min-width: 0; }
+.app-sidebar-footer > .d-flex.gap-2:last-child > button:first-child, .app-sidebar-footer > .d-flex.gap-2:last-child > button:nth-child(2), .app-sidebar-footer > .d-flex.gap-2:last-child > button:nth-child(3) { width: 44px; padding-inline: 0; }
+.app-sidebar-footer > .d-flex.gap-2:last-child > form { flex: 1 1 auto; }
+.device-clock { justify-content: center; font-size: .72rem; opacity: .9; }
+body.sidebar-collapsed .app-brand { height: 66px; }
+body.sidebar-collapsed .app-sidebar { scrollbar-width: none; }
+body.sidebar-collapsed .app-nav .nav-link.active { box-shadow: none; }
 @media (min-width: 992px) and (max-height: 780px) {
   .app-brand { height: 60px; }
   .app-nav { padding-top: 7px; }
@@ -353,62 +102,67 @@ body.sidebar-collapsed .app-nav .nav-link.active {
   .offline-status-panel { padding: 8px 10px; }
   .user-chip { padding: 7px 8px; }
 }
-
 @media (max-width: 991.98px) {
-  .app-sidebar {
-    width: min(86vw, 312px);
-    max-width: min(86vw, 312px);
-  }
-  .app-sidebar-footer {
-    padding: 10px;
-  }
-  .app-brand {
-    padding-inline: 14px;
-  }
-  .app-nav {
-    padding-inline: 8px;
-  }
-  .app-nav .nav-link {
-    min-height: 44px;
-    font-size: .93rem;
-  }
-  .offline-status-panel {
-    padding: 9px 10px;
-  }
-  .offline-status-panel .small {
-    font-size: .74rem !important;
-  }
-  .app-sidebar-footer > .d-flex.gap-2:last-child > button,
-  .app-sidebar-footer > .d-flex.gap-2:last-child > form > button {
-    min-height: 44px;
-  }
+  .app-sidebar { width: min(86vw, 312px); max-width: min(86vw, 312px); }
+  .app-sidebar-footer { padding: 10px; }
+  .app-brand { padding-inline: 14px; }
+  .app-nav { padding-inline: 8px; }
+  .app-nav .nav-link { min-height: 44px; font-size: .93rem; }
+  .offline-status-panel { padding: 9px 10px; }
+  .offline-status-panel .small { font-size: .74rem !important; }
+  .app-sidebar-footer > .d-flex.gap-2:last-child > button, .app-sidebar-footer > .d-flex.gap-2:last-child > form > button { min-height: 44px; }
 }
-
 @media (max-width: 575.98px) {
-  .app-sidebar {
-    width: min(90vw, 300px);
-    max-width: min(90vw, 300px);
-  }
-  .app-brand {
-    height: 62px;
-  }
-  .app-brand-mark {
-    width: 34px;
-    height: 34px;
-  }
-  .app-nav .nav-link {
-    min-height: 43px;
-    padding-inline: .65rem;
-  }
-  .offline-status-panel {
-    margin-bottom: 7px;
-  }
+  .app-sidebar { width: min(90vw, 300px); max-width: min(90vw, 300px); }
+  .app-brand { height: 62px; }
+  .app-brand-mark { width: 34px; height: 34px; }
+  .app-nav .nav-link { min-height: 43px; padding-inline: .65rem; }
+  .offline-status-panel { margin-bottom: 7px; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .app-sidebar, .app-nav .nav-link, .app-sidebar-backdrop { transition: none !important; }
 }
 
-@media (prefers-reduced-motion: reduce) {
-  .app-sidebar,
-  .app-nav .nav-link,
-  .app-sidebar-backdrop {
-    transition: none !important;
-  }
+/* ============================================ */
+/* Empleados UX v1: lista limpia, edición legible y móvil tipo tarjetas. */
+.app-shell:has(form[action*="company_settings_user_update"]) .card.app-card { border-radius: 16px; }
+.app-shell:has(form[action*="company_settings_user_update"]) .card-header { padding: .9rem 1rem; border-bottom-color: var(--app-line); }
+.app-shell:has(form[action*="company_settings_user_update"]) .table-responsive { border-radius: 14px; border: 1px solid var(--app-line); background: var(--app-panel); }
+.app-shell:has(form[action*="company_settings_user_update"]) .table { margin-bottom: 0; }
+.app-shell:has(form[action*="company_settings_user_update"]) .table thead th { padding: .75rem .65rem; white-space: nowrap; background: var(--app-panel-soft); }
+.app-shell:has(form[action*="company_settings_user_update"]) .table tbody td { padding: .8rem .65rem; }
+.app-shell:has(form[action*="company_settings_user_update"]) .table tbody tr:hover { --bs-table-hover-bg: rgba(37, 99, 235, .045); }
+.app-shell:has(form[action*="company_settings_user_update"]) form[action*="company_settings_user_update"] { display: flex; flex-wrap: wrap; align-items: center; gap: .45rem; }
+.app-shell:has(form[action*="company_settings_user_update"]) form[action*="company_settings_user_update"]::before { content: "Datos"; display: block; flex: 0 0 100%; color: var(--app-muted); font-size: .68rem; font-weight: 800; letter-spacing: .08em; text-transform: uppercase; }
+.app-shell:has(form[action*="company_settings_user_update"]) form[action*="company_settings_user_update"] .form-control { min-width: 0 !important; width: auto !important; flex: 1 1 180px; }
+.app-shell:has(form[action*="company_settings_user_update"]) form[action*="company_settings_user_update"] .btn { flex: 0 0 auto; }
+.app-shell:has(form[action*="company_settings_user_update"]) form[action*="company_settings_user_reset_password"], .app-shell:has(form[action*="company_settings_user_update"]) form[action*="company_settings_user_toggle"] { border-radius: 10px; }
+.app-shell:has(form[action*="company_settings_user_update"]) form[action*="company_settings_user_reset_password"]::before { content: "Seguridad"; display: block; color: var(--app-muted); font-size: .68rem; font-weight: 800; letter-spacing: .08em; text-transform: uppercase; }
+.app-shell:has(form[action*="company_settings_user_update"]) form[action*="company_settings_user_reset_password"] input[type="password"], .app-shell:has(form[action*="company_settings_user_update"]) form[action*="company_settings_user_reset_password"] input[type="text"] { min-width: 0 !important; }
+.app-shell:has(form[action*="company_settings_user_update"]) .form-check { border-radius: 10px; }
+.app-shell:has(form[action*="company_settings_user_update"]) .form-check-input { width: 1.05rem; height: 1.05rem; }
+.app-shell:has(form[action*="company_settings_user_update"]) .form-check-label { font-size: .82rem; }
+.app-shell:has(form[action*="company_settings_user_update"]) form[action*="company_settings_user_toggle"] .btn { font-weight: 800; }
+.app-shell:has(form[action*="company_settings_user_update"]) form[action*="company_settings_user_delete"] .btn, .app-shell:has(form[action*="company_settings_user_delete"]) .btn-danger { font-weight: 800; }
+@media (max-width: 767.98px) {
+  .app-shell:has(form[action*="company_settings_user_update"]) .table-responsive { border: 0; overflow: visible; background: transparent; }
+  .app-shell:has(form[action*="company_settings_user_update"]) .table.mobile-card-table thead { display: none; }
+  .app-shell:has(form[action*="company_settings_user_update"]) .table.mobile-card-table, .app-shell:has(form[action*="company_settings_user_update"]) .table.mobile-card-table tbody, .app-shell:has(form[action*="company_settings_user_update"]) .table.mobile-card-table tr, .app-shell:has(form[action*="company_settings_user_update"]) .table.mobile-card-table td { display: block; width: 100%; }
+  .app-shell:has(form[action*="company_settings_user_update"]) .table.mobile-card-table tr { margin-bottom: .75rem; padding: .85rem; border: 1px solid var(--app-line); border-radius: 16px; background: var(--app-panel); box-shadow: var(--app-shadow-soft); }
+  .app-shell:has(form[action*="company_settings_user_update"]) .table.mobile-card-table td { display: grid; grid-template-columns: minmax(88px, 34%) 1fr; gap: .65rem; padding: .52rem 0; border: 0; white-space: normal; }
+  .app-shell:has(form[action*="company_settings_user_update"]) .table.mobile-card-table td::before { content: attr(data-label); color: var(--app-muted); font-size: .68rem; font-weight: 800; letter-spacing: .06em; text-transform: uppercase; }
+  .app-shell:has(form[action*="company_settings_user_update"]) .table.mobile-card-table td:last-child { display: block; padding-top: .8rem; margin-top: .35rem; border-top: 1px solid var(--app-line); }
+  .app-shell:has(form[action*="company_settings_user_update"]) .table.mobile-card-table td:last-child::before { display: block; margin-bottom: .5rem; }
+  .app-shell:has(form[action*="company_settings_user_update"]) form[action*="company_settings_user_update"], .app-shell:has(form[action*="company_settings_user_update"]) form[action*="company_settings_user_reset_password"], .app-shell:has(form[action*="company_settings_user_update"]) form[action*="company_settings_user_toggle"] { width: 100%; min-width: 0 !important; }
+  .app-shell:has(form[action*="company_settings_user_update"]) form[action*="company_settings_user_update"]::before, .app-shell:has(form[action*="company_settings_user_update"]) form[action*="company_settings_user_reset_password"]::before { margin-bottom: .15rem; }
+  .app-shell:has(form[action*="company_settings_user_update"]) form[action*="company_settings_user_update"] .form-control { width: 100% !important; flex: 1 1 100%; }
+  .app-shell:has(form[action*="company_settings_user_update"]) .table.mobile-card-table td:last-child .d-flex, .app-shell:has(form[action*="company_settings_user_update"]) .table.mobile-card-table td:last-child > div { display: grid !important; grid-template-columns: 1fr; gap: .55rem; }
+  .app-shell:has(form[action*="company_settings_user_update"]) .table.mobile-card-table td:last-child .btn, .app-shell:has(form[action*="company_settings_user_update"]) .table.mobile-card-table td:last-child form { width: 100%; }
+  .app-shell:has(form[action*="company_settings_user_update"]) .card-header { align-items: flex-start !important; flex-wrap: wrap; gap: .65rem; }
+  .app-shell:has(form[action*="company_settings_user_update"]) .card-header .btn { width: 100%; }
 }
+@media (max-width: 420px) {
+  .app-shell:has(form[action*="company_settings_user_update"]) .table.mobile-card-table td { grid-template-columns: 1fr; gap: .18rem; }
+  .app-shell:has(form[action*="company_settings_user_update"]) .table.mobile-card-table td::before { margin-bottom: .05rem; }
+}
+[data-bs-theme="dark"] .app-shell:has(form[action*="company_settings_user_update"]) .table-responsive, [data-bs-theme="dark"] .app-shell:has(form[action*="company_settings_user_update"]) .table thead th, [data-bs-theme="dark"] .app-shell:has(form[action*="company_settings_user_update"]) .table.mobile-card-table tr { background: #101a2b; }
