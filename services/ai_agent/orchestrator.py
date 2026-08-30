@@ -2,6 +2,11 @@
 
 from __future__ import annotations
 
+# Keep the historical symbol importable for existing integrations and tests.
+# The runtime itself uses the configured OpenAI-compatible provider.
+from services.ai_agent.providers.openai_compatible import OpenAICompatibleProvider
+LMStudioProvider = OpenAICompatibleProvider
+
 from services.ai_agent.orchestrator_v2 import AgentRuntime
 
 
@@ -43,7 +48,6 @@ class AgentOrchestrator:
         sender_id=None,
         metadata=None,
     ):
-        # No local-model fallback: AI responses always use the configured provider.
         return AgentRuntime.process(
             company_id=company_id,
             conversation_id=conversation_id,
