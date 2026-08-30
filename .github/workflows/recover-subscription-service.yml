@@ -1,0 +1,28 @@
+name: Recover subscription service
+
+on:
+  push:
+    branches:
+      - feat/agentes-vendedor-whatsapp-asistente-v1
+
+permissions:
+  contents: write
+
+jobs:
+  recover:
+    if: github.sha == '879ae6e868e02b75b75774f420344f039de4df5d'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          token: ${{ secrets.GITHUB_TOKEN }}
+      - name: Restore file from known-good parent commit
+        run: |
+          git checkout c549538f8b601a55e69e858118a8fda1f108f07e -- services/subscription_service.py
+          rm -f .github/workflows/recover-subscription-service.yml
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add services/subscription_service.py .github/workflows/recover-subscription-service.yml
+          git commit -m "fix: restore subscription service after compatibility correction"
+          git push
