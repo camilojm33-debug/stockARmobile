@@ -22,25 +22,27 @@ class OpenAICompatibleProvider(AIProvider):
         api_key: Optional[str] = None,
         timeout: Optional[float] = None,
     ):
-        self.base_url = (base_url or os.getenv("AI_PROVIDER_BASE_URL", "https://api.openai.com/v1")).rstrip("/")
-        self.model = model or os.getenv("AI_PROVIDER_MODEL", "gpt-4.1-mini")
-        self.api_key = api_key if api_key is not None else os.getenv("AI_PROVIDER_API_KEY")
+        self.base_url = (
+            base_url
+            or os.getenv("AI_PROVIDER_BASE_URL")
+            or os.getenv("OPENAI_BASE_URL")
+            or "https://api.openai.com/v1"
+        ).rstrip("/")
+        self.model = (
+            model
+            or os.getenv("AI_PROVIDER_MODEL")
+            or os.getenv("OPENAI_MODEL")
+            or "gpt-4.1-mini"
+        )
+        self.api_key = api_key if api_key is not None else (os.getenv("AI_PROVIDER_API_KEY") or os.getenv("OPENAI_API_KEY"))
         self.timeout = float(timeout if timeout is not None else os.getenv("AI_PROVIDER_TIMEOUT", "45"))
 
     def _endpoint(self) -> str:
         return f"{self.base_url}/chat/completions"
 
-    def generate(
-        self,
-        *,
-        messages,
-        tools=None,
-        model=None,
-        temperature=None,
-        max_tokens=None,
-    ) -> Dict[str, Any]:
+    def generate(self, *, messages, tools=None, model=None, temperature=None, max_tokens=None) -> Dict[str, Any]:
         if not self.api_key:
-            raise RuntimeError("AI_PROVIDER_API_KEY no está configurada.")
+            raise RuntimeError("AI_PROVIDER_API_KEY/OPENAI_API_KEY no está configurada.")
 
         payload: Dict[str, Any] = {"model": model or self.model, "messages": messages}
         if tools:
@@ -51,10 +53,7 @@ class OpenAICompatibleProvider(AIProvider):
         if max_tokens is not None:
             payload["max_tokens"] = max_tokens
 
-        headers = {
-            "Content-Type": "application/json",
-            "Authorization": f"Bearer {self.api_key}",
-        }
+        headers = {"Content-Type": "application/json", "Authorization": f"Bearer {self.api_key}"}
         try:
             response = requests.post(self._endpoint(), json=payload, headers=headers, timeout=self.timeout)
             response.raise_for_status()
@@ -81,13 +80,5 @@ class OpenAICompatibleProvider(AIProvider):
                     arguments = json.loads(arguments)
                 except json.JSONDecodeError as exc:
                     raise RuntimeError("Los argumentos de la Tool no son JSON válido.") from exc
-            return {
-                "content": content,
-                "tool_call": {
-                    "id": first.get("id"),
-                    "name": function.get("name"),
-                    "arguments": arguments,
-                },
-                "usage": data.get("usage") or {},
-            }
+            return {"content": content, "tool_call": {"id": first.get("id"), "name": function.get("name"), "arguments": arguments}, "usage": data.get("usage") or {}}
         return {"content": content, "tool_call": None, "usage": data.get("usage") or {}}
