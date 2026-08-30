@@ -1,0 +1,207 @@
+name: Final landing responsive pass
+
+on:
+  push:
+    branches:
+      - feat/landing-comercial-2
+
+permissions:
+  contents: write
+
+jobs:
+  responsive-pass:
+    if: ${{ github.event.head_commit.message != 'feat: landing responsive final' }}
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Apply final responsive UX layer
+        shell: bash
+        run: |
+          set -euo pipefail
+          python - <<'PY'
+          from pathlib import Path
+
+          path = Path('static/assets/js/landing.js')
+          source = path.read_text(encoding='utf-8')
+          marker = '/* LANDING_RESPONSIVE_FINAL_V1 */'
+          if marker in source:
+              print('Responsive final pass already present')
+              raise SystemExit(0)
+
+          injection = r'''
+
+  /* LANDING_RESPONSIVE_FINAL_V1 */
+  (function () {
+    const style = document.createElement('style');
+    style.id = 'landing-responsive-final-styles';
+    style.textContent = `
+      html{scroll-padding-top:18px}
+      .landing-mobile-menu{display:none}
+      .landing-mobile-toggle{display:none}
+      .landing-mobile-close{display:none}
+      .hero-section .container.py-5.py-lg-6{padding-top:3.35rem!important;padding-bottom:3.5rem!important}
+      .hero-section .hero-media-col{min-width:0}
+      .hero-section .hero-mockup{width:100%;max-width:620px}
+      .hero-section .hero-mockup img{max-width:100%}
+      .video-frame iframe,.video-frame video{display:block;width:100%;aspect-ratio:16/9;height:auto;border:0;border-radius:16px}
+      .landing-v2-proof__image{aspect-ratio:16/10;height:auto;min-height:0}
+      .landing-whatsapp-float{bottom:92px!important}
+      .landing-v2-sticky{bottom:12px!important;padding-bottom:max(.65rem,env(safe-area-inset-bottom))!important}
+      @media (max-width:991.98px){
+        .hero-section .hero-copy,.hero-section .hero-media-col{width:100%}
+        .hero-section .hero-mockup{margin-inline:auto}
+        .landing-v2-section{padding:3.5rem 0}
+      }
+      @media (max-width:767px){
+        body{padding-bottom:92px!important}
+        .hero-section .container.py-5.py-lg-6{padding-top:2.1rem!important;padding-bottom:2.6rem!important}
+        .hero-section h1,.hero-copy .display-4{font-size:clamp(2.05rem,9vw,2.85rem)!important;line-height:1.06!important}
+        .hero-section .lead{font-size:1rem;line-height:1.65}
+        .hero-section .d-flex.flex-wrap.gap-3.mb-3{display:grid!important;grid-template-columns:1fr;gap:.65rem!important}
+        .hero-section .d-flex.flex-wrap.gap-3.mb-3 .btn{width:100%;margin:0}
+        .hero-highlights{gap:.6rem!important;display:grid!important;grid-template-columns:1fr}
+        .hero-section .badge{font-size:.72rem;padding:.5rem .65rem}
+        .hero-media-col{order:2}
+        .landing-v2-bridge{padding:.75rem 0}
+        .landing-v2-bridge__inner{justify-content:flex-start;overflow-x:auto;flex-wrap:nowrap;scrollbar-width:none;padding-bottom:2px}
+        .landing-v2-bridge__inner::-webkit-scrollbar{display:none}
+        .landing-v2-bridge__item{flex:0 0 auto;white-space:nowrap;font-size:.78rem}
+        .landing-v2-title{font-size:clamp(1.8rem,8vw,2.4rem)}
+        .landing-v2-subtitle{font-size:.96rem;line-height:1.6}
+        .landing-v2-problem{padding:1.1rem;border-radius:18px}
+        .landing-v2-flow{grid-template-columns:1fr!important;gap:.65rem;margin-top:1rem}
+        .landing-v2-flow__step{display:grid;grid-template-columns:auto 1fr;column-gap:.65rem;align-items:start;padding:.85rem}
+        .landing-v2-flow__num{grid-row:span 2;margin:0}
+        .landing-v2-flow__step strong{margin:0}
+        .landing-v2-proof{padding:.7rem;border-radius:18px}
+        .landing-v2-proof__copy{padding:.65rem}
+        .landing-v2-proof__step strong{font-size:.85rem}
+        .landing-v2-proof__step span{font-size:.74rem}
+        .landing-v2-quote{padding:.8rem;border-radius:20px}
+        .landing-v2-quote .btn{width:100%}
+        .table-responsive{border-radius:14px}
+        .landing-v2-sticky__copy strong{font-size:.74rem}
+        .landing-v2-sticky .btn{padding:.62rem .82rem}
+        .landing-whatsapp-float{width:48px!important;height:48px!important;right:12px!important;bottom:96px!important}
+        .landing-whatsapp-float__icon{font-size:1.15rem!important}
+
+        .landing-mobile-toggle{display:inline-flex;align-items:center;justify-content:center;width:44px;height:44px;border:1px solid var(--border);border-radius:999px;background:var(--surface-muted);color:var(--primary);font-size:1.08rem}
+        .landing-mobile-toggle[aria-expanded="true"]{background:var(--primary);color:#fff;border-color:transparent}
+        .navbar-actions{position:relative}
+        .navbar-actions>.theme-toggle{margin-left:auto}
+        .landing-mobile-menu{position:absolute;z-index:1200;left:0;right:0;top:calc(100% + .55rem);display:grid;gap:.35rem;padding:.65rem;border:1px solid var(--border);border-radius:18px;background:var(--surface-muted);box-shadow:var(--shadow);backdrop-filter:blur(18px);transform:translateY(-6px);opacity:0;visibility:hidden;pointer-events:none;transition:opacity .18s ease,transform .18s ease,visibility .18s ease}
+        .landing-mobile-menu.is-open{transform:translateY(0);opacity:1;visibility:visible;pointer-events:auto}
+        .landing-mobile-menu a{display:flex;align-items:center;justify-content:space-between;padding:.75rem .85rem;border-radius:12px;color:var(--text);font-size:.92rem;font-weight:700}
+        .landing-mobile-menu a:hover,.landing-mobile-menu a:focus-visible{background:rgba(15,98,254,.08);color:var(--primary)}
+        [data-theme="dark"] .landing-mobile-menu{background:rgba(15,23,42,.94)}
+      }
+      @media (min-width:768px){.landing-mobile-menu{display:none!important}}
+      @media (max-width:420px){
+        .hero-section .brand-logo{object-fit:contain}
+        .hero-section .btn{font-size:.9rem}
+        .landing-v2-sticky{left:8px;right:8px}
+        .landing-v2-sticky__copy{display:none}
+        .landing-v2-sticky .btn{width:100%}
+      }
+      @media (prefers-reduced-motion:reduce){
+        *,*::before,*::after{scroll-behavior:auto!important;animation:none!important;transition:none!important}
+        .reveal{opacity:1!important;transform:none!important}
+      }
+    `;
+    document.head.appendChild(style);
+
+    const actions = document.querySelector('.navbar-actions');
+    const navLinks = document.querySelector('.navbar-navlinks');
+    if (actions && !document.getElementById('landingMobileToggle')) {
+      const menuToggle = document.createElement('button');
+      menuToggle.id = 'landingMobileToggle';
+      menuToggle.className = 'landing-mobile-toggle';
+      menuToggle.type = 'button';
+      menuToggle.setAttribute('aria-expanded', 'false');
+      menuToggle.setAttribute('aria-controls', 'landingMobileMenu');
+      menuToggle.setAttribute('aria-label', 'Abrir menú');
+      menuToggle.innerHTML = '<i class="bi bi-list"></i>';
+
+      const mobileMenu = document.createElement('div');
+      mobileMenu.id = 'landingMobileMenu';
+      mobileMenu.className = 'landing-mobile-menu';
+      mobileMenu.setAttribute('aria-label', 'Navegación móvil');
+      mobileMenu.innerHTML = `
+        <a href="#beneficios">Beneficios <i class="bi bi-arrow-right"></i></a>
+        <a href="#planes">Planes <i class="bi bi-arrow-right"></i></a>
+        <a href="#faq">Preguntas frecuentes <i class="bi bi-arrow-right"></i></a>
+        <a href="#contacto">Contacto <i class="bi bi-arrow-right"></i></a>
+        <a href="${document.querySelector('.btn-cta-register')?.href || '/auth/register?selected_plan=trial'}">Probar gratis 10 días <i class="bi bi-rocket-takeoff"></i></a>`;
+
+      navLinks?.setAttribute('aria-hidden', 'true');
+      actions.appendChild(menuToggle);
+      actions.appendChild(mobileMenu);
+
+      const setMenu = function (open) {
+        menuToggle.setAttribute('aria-expanded', open ? 'true' : 'false');
+        menuToggle.setAttribute('aria-label', open ? 'Cerrar menú' : 'Abrir menú');
+        menuToggle.innerHTML = open ? '<i class="bi bi-x-lg"></i>' : '<i class="bi bi-list"></i>';
+        mobileMenu.classList.toggle('is-open', open);
+      };
+
+      menuToggle.addEventListener('click', function () {
+        setMenu(menuToggle.getAttribute('aria-expanded') !== 'true');
+      });
+      mobileMenu.querySelectorAll('a').forEach(function (link) {
+        link.addEventListener('click', function () { setMenu(false); });
+      });
+      document.addEventListener('keydown', function (event) {
+        if (event.key === 'Escape') setMenu(false);
+      });
+      document.addEventListener('click', function (event) {
+        if (window.innerWidth > 767) return;
+        if (!actions.contains(event.target)) setMenu(false);
+      });
+      window.addEventListener('resize', function () {
+        if (window.innerWidth > 767) setMenu(false);
+      });
+    }
+
+    /* PWA: only advertise installation when the browser supports it. */
+    const pwaButton = document.getElementById('pwaInstallBtn');
+    if (pwaButton) {
+      const isiOS = /iphone|ipad|ipod/i.test(window.navigator.userAgent || '');
+      if (!isiOS && !window.matchMedia('(display-mode: standalone)').matches) {
+        pwaButton.hidden = true;
+      }
+      window.addEventListener('beforeinstallprompt', function () {
+        pwaButton.hidden = false;
+      }, { once: false });
+    }
+  })();
+'''
+
+          anchor = '\n})();'
+          if anchor not in source:
+              raise SystemExit('landing.js closing anchor not found')
+          source = source.rsplit(anchor, 1)[0] + injection + '\n})();'
+          path.write_text(source, encoding='utf-8')
+          print('Final responsive layer applied')
+          PY
+
+      - name: Validate JavaScript
+        shell: bash
+        run: |
+          set -euo pipefail
+          node --check static/assets/js/landing.js
+          echo 'JavaScript syntax OK'
+
+      - name: Commit final pass and remove workflow
+        shell: bash
+        run: |
+          set -euo pipefail
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add static/assets/js/landing.js
+          git rm -f .github/workflows/landing-final-responsive.yml
+          git commit -m 'feat: landing responsive final'
+          git push origin HEAD:feat/landing-comercial-2
