@@ -10,7 +10,6 @@ from typing import Any, Dict, Type
 from stockarmobile.extensions import db
 from stockarmobile.models.conversations import Agent, AgentConfiguration, Conversation, ConversationMessage
 from services.ai_agent.config_service import VENDOR_AGENT_NAME, choose_agent
-from services.ai_agent.providers.lm_studio import LMStudioProvider
 from services.ai_agent.providers.openai_compatible import OpenAICompatibleProvider
 from services.ai_agent.tools.base import AgentTool
 from services.ai_agent.tools.business_metrics import ResumenVentasTool, StockCriticoTool
@@ -42,7 +41,7 @@ class AgentRuntime:
     tool_registry={"buscar_producto":BuscarProductoTool,"consultar_stock":ConsultarStockTool,"buscar_cliente":BuscarClienteTool,"resumen_ventas":ResumenVentasTool,"stock_critico":StockCriticoTool,"carrito_vendedor":VendorCartTool,"agregar_al_carrito":VendorAddTool,"quitar_del_carrito":VendorRemoveTool,"preparar_pedido":VendorOrderPreviewTool}
     @classmethod
     def provider(cls):
-        return LMStudioProvider() if (os.getenv("AI_PROVIDER") or "").strip().lower() in {"lmstudio","lm_studio"} else OpenAICompatibleProvider()
+        return OpenAICompatibleProvider()
     @classmethod
     def ensure_agent(cls, company_id, *, channel): return choose_agent(company_id, channel=channel)
     @classmethod
