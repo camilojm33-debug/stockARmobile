@@ -2,10 +2,7 @@
 
 from __future__ import annotations
 
-import os
-
 from services.ai_agent.orchestrator_v2 import AgentRuntime
-from services.ai_agent.providers.lm_studio import LMStudioProvider
 
 
 class AgentOrchestrator:
@@ -36,14 +33,6 @@ class AgentOrchestrator:
         )
 
     @classmethod
-    def _legacy_provider(cls):
-        """Keep old LM Studio tests/dev usage while honoring production config."""
-        provider_name = (os.getenv("AI_PROVIDER") or "").strip().lower()
-        if not provider_name or provider_name in {"lmstudio", "lm_studio"}:
-            return LMStudioProvider()
-        return AgentRuntime.provider()
-
-    @classmethod
     def handle_message(
         cls,
         *,
@@ -54,7 +43,7 @@ class AgentOrchestrator:
         sender_id=None,
         metadata=None,
     ):
-        provider = cls._legacy_provider()
+        # No local-model fallback: AI responses always use the configured provider.
         return AgentRuntime.process(
             company_id=company_id,
             conversation_id=conversation_id,
@@ -63,6 +52,5 @@ class AgentOrchestrator:
             sender_id=sender_id,
             idempotency_key=(metadata or {}).get("idempotency_key"),
             metadata=metadata or {},
-            provider_override=provider,
-            include_system_prompt=False,
+            include_system_prompt=True,
         )
