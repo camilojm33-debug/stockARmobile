@@ -684,9 +684,6 @@ class SubscriptionService:
             subscription.cancel_at_period_end = True
             subscription.renewal_enabled = False
             subscription.auto_renew = False
-            target_state = SubscriptionService.STATE_CANCELLED
-            if SubscriptionService._normalize_state(subscription.status) in {SubscriptionService.STATE_ACTIVE, SubscriptionService.STATE_TRIAL, SubscriptionService.STATE_PENDING_PAYMENT, SubscriptionService.STATE_PENDING_CONFIRMATION, SubscriptionService.STATE_PENDING}:
-                SubscriptionService._transition(subscription, target_state, reason="cancel_subscription")
         else:
             SubscriptionService._transition(subscription, SubscriptionService.STATE_CANCELLED, reason="cancel_subscription_immediate")
             subscription.ends_at = utcnow()
@@ -696,12 +693,12 @@ class SubscriptionService:
 
         return CommandResult(
             command_name="CancelSubscriptionCommand",
-            subscription_id=subscription.id,
+            subscription_id=getattr(subscription, "id", command.subscription_id),
             company_id=company.id,
             status_before=status_before,
             status_after=subscription.status,
-            plan_before_id=subscription.plan_id,
-            plan_after_id=subscription.plan_id,
+            plan_before_id=getattr(subscription, "plan_id", None),
+            plan_after_id=getattr(subscription, "plan_id", None),
             details={"cancel_at_period_end": command.cancel_at_period_end},
         )
 
@@ -1114,6 +1111,16 @@ class SubscriptionService:
                 start_ref = getattr(subscription, "start_date", None) or getattr(subscription, "starts_at", None)
                 if start_ref is not None:
                     paid_limit = start_ref + timedelta(days=plan_duration_days)
+            if paid_limit and getattr(subscription, "cancel_at_period_end", False) and current >= paid_limit:
+                return {
+                    "status": SubscriptionService.STATE_EXPIRED,
+                    "subscription_status": raw_status,
+                    "can_access": False,
+                    "reason": "La suscripción cancelada venció al finalizar su período.",
+                    "trial_ends_at": trial_end,
+                    "reference_date": paid_limit,
+                    "next_billing_date": paid_limit,
+                }
             # Suscripciones manuales pueden quedar abiertas sin fecha límite,
             # pero si tienen fecha configurada deben bloquearse al vencer.
             if is_manual:
