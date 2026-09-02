@@ -10,6 +10,7 @@ gunicorn>=21.0.0
 requests>=2.31.0
 cryptography>=49.0.0
 redis>=5.0.0
+tzdata>=2025.2
 
 # PDF, codigos QR y etiquetas
 qrcode>=7.3.0

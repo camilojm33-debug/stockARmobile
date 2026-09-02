@@ -1273,7 +1273,10 @@ def share_whatsapp_post(quote_id):
     quote = _quote_lookup(quote_id)
     _require_owned_or_authorized(quote)
     _require_quote_permission("quotes_share_whatsapp")
-    phone = (request.form.get("whatsapp_phone") or "").strip() or _quote_client_whatsapp_phone(quote)
+    phone = _quote_client_whatsapp_phone(quote)
+    if not phone:
+        flash(_quote_missing_whatsapp_phone_message(quote), "warning")
+        return redirect(url_for("quotes.view_quote", quote_id=quote.id))
     company = Company.query.filter_by(id=quote.company_id).first()
     message = _build_quote_whatsapp_message(quote, company)
     public_url = _build_public_quote_url(quote.id)

@@ -368,10 +368,7 @@ def _hard_delete_company(company):
     # Delete the tenant only after all known dependent rows and FK-referenced
     # entity rows have been removed. Keep this inside the same transaction so
     # any remaining FK causes a full rollback instead of partial deletion.
-    db.session.execute(
-        sa.text("DELETE FROM companies WHERE id = :company_id"),
-        {"company_id": company_id},
-    )
+    _delete_company_record(db.session, company_id)
 
     # Fail loudly if the target tenant still exists. The caller rolls back.
     remaining = db.session.execute(
@@ -386,6 +383,15 @@ def _action_allowed_for_status(status: str | None, action: str) -> bool:
     if action == "extend":
         return True
     return action in _allowed_ui_actions_for_status(status)
+
+
+def _delete_company_record(db_session, company_id):
+    import sqlalchemy as sa
+
+    db_session.execute(
+        sa.text("DELETE FROM companies WHERE id = :company_id"),
+        {"company_id": company_id},
+    )
 
 
 def _format_size(size_bytes):

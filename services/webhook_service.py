@@ -143,6 +143,35 @@ class WebhookService:
             metadata_company_id = int(metadata.get("company_id") or 0)
             ref_company_id = int(ref_parts.get("company_id") or 0) if str(ref_parts.get("company_id") or "").isdigit() else 0
 
+            if flow == "ai_order":
+                from services.ai_agent.vendor_order_service import VendorOrderService
+
+                company_id = int(metadata.get("company_id") or ref_parts.get("company_id") or 0)
+                quote_id = int(metadata.get("quote_id") or ref_parts.get("quote_id") or 0)
+                if not company_id or not quote_id:
+                    raise RuntimeError("Webhook Mercado Pago de pedido IA sin empresa o presupuesto válido")
+                if metadata_company_id and ref_company_id and metadata_company_id != ref_company_id:
+                    raise RuntimeError("Webhook Mercado Pago de pedido IA con empresa inconsistente")
+                if payment_status == "approved":
+                    result = VendorOrderService.finalize_paid_order(
+                        company_id=company_id,
+                        quote_id=quote_id,
+                        payment_data=payment_data,
+                        commit=False,
+                    )
+                else:
+                    payment = Payment.query.filter_by(company_id=company_id, external_reference=external_reference).first()
+                    if payment is None:
+                        raise RuntimeError("Webhook Mercado Pago de pedido IA sin pago pendiente")
+                    payment.payment_id = str(payment_data.get("id") or payment.payment_id or "") or None
+                    payment.status = payment_status
+                    payment.payload_json = json.dumps(payment_data, ensure_ascii=False)
+                    payment.paid_at = paid_at or payment.paid_at
+                    result = {"status": "processed", "payment_status": payment_status, "event_key": event_key}
+                event_row.status = result.get("status", "processed")
+                db_session.add(event_row)
+                return result
+
             payment = Payment.query.filter_by(payment_id=str(payment_data.get("id"))).first()
             previous_payment_status = (payment.status or "").lower() if payment is not None else ""
             if payment is None:

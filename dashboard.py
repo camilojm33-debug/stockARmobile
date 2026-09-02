@@ -7,6 +7,7 @@ from flask_login import current_user, login_required
 from stockarmobile.extensions import db
 from stockarmobile.models.conversations import Conversation
 from services.ai_agent.orchestrator import AgentOrchestrator
+from services.ai_agent.orchestrator_v2 import AgentRuntime
 from services.dashboard_service import build_dashboard_context
 from app import tenant_required
 
@@ -122,13 +123,15 @@ def ai_agent_chat():
         db.session.flush()
 
     try:
-        result = AgentOrchestrator.handle_message(
+        result = AgentRuntime.process(
             company_id=company_id,
             conversation_id=conversation.id,
             message=message.strip(),
             channel="web",
             sender_id=current_user.id,
-            metadata={"idempotency_key": str(uuid.uuid4())},
+            idempotency_key=str(uuid.uuid4()),
+            metadata={},
+            include_system_prompt=False,
         )
     except ValueError as exc:
         db.session.rollback()
