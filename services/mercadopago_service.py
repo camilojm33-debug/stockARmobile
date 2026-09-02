@@ -78,6 +78,19 @@ class MercadoPagoService:
         payload = {"items": [{"id": external_reference, "title": title, "description": "Cobro QR Mercado Pago desde POS", "quantity": 1, "currency_id": currency, "unit_price": float(amount)}], "external_reference": external_reference, "metadata": {"flow": "pos_sale", "company_id": company_id, "user_id": user_id, **(metadata or {})}, "back_urls": {"success": self.config.success_url, "pending": self.config.pending_url, "failure": self.config.failure_url}, "notification_url": self.config.notification_url, "statement_descriptor": self.config.statement_descriptor, "auto_return": "approved"}
         return self._request("POST", "/checkout/preferences", payload=payload, access_token=access_token, idempotency_key=f"pos-checkout-preference:{external_reference}")
 
+    def create_ai_order_checkout_preference(self, *, title: str, items: list[dict[str, Any]], amount: float, currency: str, external_reference: str, company_id: int, user_id: int, quote_id: int, conversation_id: int, return_url: str, access_token: str | None = None) -> dict[str, Any]:
+        if amount <= 0 or not items:
+            raise ValueError("El pedido debe contener productos y un importe mayor a cero.")
+        safe_items = []
+        for item in items:
+            quantity = float(item.get("quantity") or 0)
+            unit_price = float(item.get("unit_price") or 0)
+            if quantity <= 0 or unit_price < 0:
+                raise ValueError("Línea de pedido inválida.")
+            safe_items.append({"id": str(item.get("id") or ""), "title": str(item.get("title") or "Producto")[:256], "description": str(item.get("description") or item.get("title") or "Producto")[:256], "quantity": int(quantity) if quantity.is_integer() else quantity, "currency_id": str(item.get("currency_id") or currency).upper(), "unit_price": unit_price})
+        payload = {"items": safe_items, "external_reference": external_reference, "metadata": {"flow": "ai_order", "company_id": int(company_id), "user_id": int(user_id), "quote_id": int(quote_id), "conversation_id": int(conversation_id)}, "back_urls": {"success": return_url, "pending": return_url, "failure": return_url}, "notification_url": self.config.notification_url, "statement_descriptor": self.config.statement_descriptor, "auto_return": "approved"}
+        return self._request("POST", "/checkout/preferences", payload=payload, access_token=access_token, idempotency_key=f"ai-order-preference:{external_reference}")
+
     @staticmethod
     def _extract_pos_results(payload: Any) -> list[dict[str, Any]]:
         if isinstance(payload, dict):
