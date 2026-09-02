@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import os
 from decimal import Decimal, InvalidOperation
+from functools import wraps
 
 from flask import Blueprint, flash, redirect, render_template, request, url_for
 from flask_login import current_user
@@ -33,6 +34,20 @@ _DEFAULT_BUSINESS_PROMPT = (
     "Sos el Asistente empresarial del comercio. Consultá las herramientas antes de informar cifras. "
     "Mostrá resultados claros y accionables. No inventes datos ni ejecutes operaciones financieras o de stock sin una acción explícita."
 )
+
+
+def _company_pin_required(func):
+    @wraps(func)
+    def decorated(*args, **kwargs):
+        from company_billing import _is_pin_verified
+
+        company_id = get_current_company_id(current_user)
+        if not _is_pin_verified(company_id):
+            flash("Debes validar PIN para gestionar Mi Empresa.", "warning")
+            return redirect(url_for("company_billing.company_settings"))
+        return func(*args, **kwargs)
+
+    return decorated
 
 
 def _default_model() -> str:
@@ -87,6 +102,7 @@ def _safe_decimal(raw: str | None, default: Decimal) -> Decimal:
 
 @bp.get("")
 @company_admin_required
+@_company_pin_required
 def index():
     company_id = get_current_company_id(current_user)
     from app import Company
@@ -143,6 +159,7 @@ def index():
 
 @bp.post("/save")
 @company_admin_required
+@_company_pin_required
 def save():
     company_id = get_current_company_id(current_user)
     from app import Company, record_audit
@@ -204,6 +221,7 @@ def save():
 
 @bp.post("/toggle")
 @company_admin_required
+@_company_pin_required
 def toggle():
     company_id = get_current_company_id(current_user)
     agents = ensure_default_agents(company_id)
