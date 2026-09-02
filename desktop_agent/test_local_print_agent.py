@@ -22,8 +22,8 @@ def test_build_ticket_contains_sale_and_total():
     )
     assert b"Mi Comercio" in payload
     assert b"Venta: #520" in payload
-    assert b"machimbre: $5600.00" in payload
-    assert b"2 x $5300.00 = $10600.00" in payload
-    assert b"TOTAL: $16200.00" in payload
+    assert b"machimbre: $5.600.00" in payload
+    assert b"2 x $5.300.00 = $10.600.00" in payload
+    assert b"TOTAL: $16.200.00" in payload
     assert payload.startswith(b"\x1b@")
     assert payload.endswith(b"\x1dV\x00")
