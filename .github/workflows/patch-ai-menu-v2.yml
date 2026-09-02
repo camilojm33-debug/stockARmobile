@@ -1,0 +1,42 @@
+name: Patch AI menu under Mi Empresa PIN
+
+on:
+  push:
+    branches: [fix/ai-menu-under-pin-v2]
+
+permissions:
+  contents: write
+
+jobs:
+  patch:
+    if: github.event.head_commit.message != 'fix: add AI agents tile to Mi Empresa'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Add AI tile
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+          p=Path('templates/company_billing/settings.html')
+          s=p.read_text(encoding='utf-8-sig')
+          needle="        {'panel': 'branches', 'title': 'Sucursales', 'icon': 'bi-shop-window', 'tone': 'indigo', 'description': 'Puntos de atención y sedes.'},"
+          if "'panel': 'ai-agent'" not in s:
+              if needle not in s:
+                  raise SystemExit('AI tile insertion point not found')
+              s=s.replace(needle, needle+"\n        {'panel': 'ai-agent', 'title': 'Agentes IA', 'icon': 'bi-robot', 'tone': 'primary', 'description': 'Vendedor 24 hs y Asistente empresarial.'},",1)
+              p.write_text(s,encoding='utf-8')
+          print('AI tile ready')
+          PY
+          grep -F "'panel': 'ai-agent'" templates/company_billing/settings.html
+
+      - name: Commit and remove workflow
+        run: |
+          git config user.name github-actions[bot]
+          git config user.email 41898282+github-actions[bot]@users.noreply.github.com
+          git add templates/company_billing/settings.html
+          git rm .github/workflows/patch-ai-menu-v2.yml
+          git commit -m 'fix: add AI agents tile to Mi Empresa'
+          git push origin HEAD:fix/ai-menu-under-pin-v2
