@@ -1,0 +1,53 @@
+name: Apply AI menu visibility fix
+
+on:
+  push:
+    branches: [main]
+
+permissions:
+  contents: write
+
+jobs:
+  patch:
+    if: github.event.head_commit.message != 'fix: expose AI agents in company menu'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Add AI agents menu entry
+        shell: bash
+        run: |
+          set -euo pipefail
+          python - <<'PY'
+          from pathlib import Path
+
+          path = Path('templates/base_master.html')
+          source = path.read_text(encoding='utf-8-sig')
+          marker = '<!-- AI_AGENTS_MENU_V1 -->'
+          anchor = '''      {% if current_user.role == 'admin' %}\n      <a class="nav-link {% if request.endpoint == 'purchases.suppliers_panel' %}active{% endif %}" href="{{ url_for('purchases.suppliers_panel') }}"><i class="bi bi-people"></i><span class="nav-text">Proveedores</span></a>\n      {% endif %}\n'''
+          entry = '''      {% if current_user.role == 'admin' %}\n      <a class="nav-link {% if request.endpoint == 'ai_admin.index' %}active{% endif %}" href="{{ url_for('ai_admin.index') }}"><i class="bi bi-robot"></i><span class="nav-text">Agentes IA</span></a>\n      {% endif %}\n'''
+          if marker not in source:
+              if anchor not in source:
+                  raise SystemExit('Expected sidebar anchor not found')
+              source = source.replace(anchor, anchor + '      ' + marker + '\n' + entry, 1)
+              path.write_text(source, encoding='utf-8')
+          PY
+
+      - name: Validate
+        shell: bash
+        run: |
+          set -euo pipefail
+          python -m compileall -q .
+
+      - name: Commit and remove helper workflow
+        shell: bash
+        run: |
+          set -euo pipefail
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add templates/base_master.html
+          git rm -f .github/workflows/apply-ai-menu-once.yml
+          git commit -m 'fix: expose AI agents in company menu'
+          git push origin HEAD:main
