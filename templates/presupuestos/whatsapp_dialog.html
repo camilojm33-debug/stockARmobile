@@ -11,6 +11,10 @@
           <span class="page-kicker"><i class="bi bi-whatsapp"></i> WhatsApp</span>
           <h1 class="h5 fw-bold mb-3">Compartir presupuesto</h1>
           <p class="text-muted">Elegí cómo querés abrir WhatsApp. En celular se intentará abrir la app instalada; en PC se intentará abrir WhatsApp Desktop.</p>
+          <div class="alert {{ 'alert-success' if entered_phone else 'alert-warning' }} py-2">
+            <strong>WhatsApp del cliente:</strong>
+            {% if entered_phone %}{{ entered_phone }}{% else %}no tiene teléfono/WhatsApp registrado{% endif %}
+          </div>
           <form method="post" action="{{ url_for('quotes.share_whatsapp_post', quote_id=quote.id) }}" id="quoteWhatsappShareForm">
             <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
             <div class="mb-3">
