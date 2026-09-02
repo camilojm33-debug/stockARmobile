@@ -78,6 +78,25 @@ def _with_payment_query(url: str, **params: str) -> str:
     return urlunsplit((parts.scheme, parts.netloc, parts.path, query, parts.fragment))
 
 
+def _ai_order_external_reference(
+    *,
+    company_id: int,
+    quote_id: int,
+    conversation_id: int | None = None,
+    user_id: int | None = None,
+) -> str:
+    parts = [
+        FLOW_PREFIX,
+        f"company_id:{int(company_id)}",
+        f"quote_id:{int(quote_id)}",
+    ]
+    if conversation_id is not None:
+        parts.append(f"conversation_id:{int(conversation_id)}")
+    if user_id is not None:
+        parts.append(f"user_id:{int(user_id)}")
+    return "|".join(parts)
+
+
 def _search_candidates(company_id: int, query: str):
     from app import Product
 
@@ -313,7 +332,20 @@ class VendorOrderService:
             except (TypeError, ValueError):
                 existing = None
             if existing is not None and existing.status not in {"ANULADO", "RECHAZADO", "VENCIDO", "CONVERTIDO"}:
-                payment = Payment.query.filter_by(external_reference=f"{FLOW_PREFIX}|company_id:{company_id}|quote_id:{existing.id}").first()
+                external_reference = _ai_order_external_reference(
+                    company_id=company_id,
+                    quote_id=existing.id,
+                    conversation_id=conversation.id,
+                    user_id=existing.created_by_user_id,
+                )
+                legacy_reference = _ai_order_external_reference(
+                    company_id=company_id,
+                    quote_id=existing.id,
+                )
+                payment = Payment.query.filter(
+                    Payment.company_id == company_id,
+                    Payment.external_reference.in_([external_reference, legacy_reference]),
+                ).first()
                 if payment is not None and payment.status in {"pending", "in_process"}:
                     return {
                         "success": True,
@@ -423,13 +455,12 @@ class VendorOrderService:
             )
         db.session.flush()
 
-        external_reference = "|".join([
-            FLOW_PREFIX,
-            f"company_id:{company_id}",
-            f"quote_id:{quote.id}",
-            f"conversation_id:{conversation_id}",
-            f"user_id:{actor.id}",
-        ])
+        external_reference = _ai_order_external_reference(
+            company_id=company_id,
+            quote_id=quote.id,
+            conversation_id=conversation_id,
+            user_id=actor.id,
+        )
         oauth = MercadoPagoOAuthService()
         access_token = oauth.ensure_access_token(company_id=company_id)
         mp = MercadoPagoService()
