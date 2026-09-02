@@ -40,3 +40,5 @@ jobs:
           git rm .github/workflows/patch-ai-menu-v2.yml
           git commit -m 'fix: add AI agents tile to Mi Empresa'
           git push origin HEAD:fix/ai-menu-under-pin-v2
+
+# trigger patch run
