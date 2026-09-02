@@ -1,4 +1,4 @@
-name: Apply AI menu visibility fix
+name: Apply AI settings PIN fix
 
 on:
   push:
@@ -9,30 +9,57 @@ permissions:
 
 jobs:
   patch:
-    if: github.event.head_commit.message != 'fix: expose AI agents in company menu'
+    if: github.event.head_commit.message != 'fix: put AI config behind company PIN'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
         with:
           fetch-depth: 0
 
-      - name: Add AI agents menu entry
+      - name: Put AI configuration behind Mi Empresa PIN
         shell: bash
         run: |
           set -euo pipefail
           python - <<'PY'
           from pathlib import Path
 
-          path = Path('templates/base_master.html')
+          # 1) Secure the AI admin endpoints with the same Mi Empresa PIN session.
+          path = Path('services/ai_agent/admin.py')
           source = path.read_text(encoding='utf-8-sig')
-          marker = '<!-- AI_AGENTS_MENU_V1 -->'
-          anchor = '''      {% if current_user.role == 'admin' %}\n      <a class="nav-link {% if request.endpoint == 'purchases.suppliers_panel' %}active{% endif %}" href="{{ url_for('purchases.suppliers_panel') }}"><i class="bi bi-people"></i><span class="nav-text">Proveedores</span></a>\n      {% endif %}\n'''
-          entry = '''      {% if current_user.role == 'admin' %}\n      <a class="nav-link {% if request.endpoint == 'ai_admin.index' %}active{% endif %}" href="{{ url_for('ai_admin.index') }}"><i class="bi bi-robot"></i><span class="nav-text">Agentes IA</span></a>\n      {% endif %}\n'''
-          if marker not in source:
+          if 'def _require_company_pin()' not in source:
+              source = source.replace(
+                  'from flask import Blueprint, flash, redirect, render_template, request, url_for\n',
+                  'from flask import Blueprint, flash, redirect, render_template, request, session, url_for\n',
+                  1,
+              )
+              helper = '''\n\ndef _require_company_pin():\n    company_id = get_current_company_id(current_user)\n    if session.get(f"company_pin_verified_{company_id}"):\n        return None\n    flash("Debes validar PIN para gestionar Mi Empresa.", "warning")\n    return redirect(url_for("company_billing.company_settings"))\n\n'''
+              anchor = '\n\ndef _default_model() -> str:\n'
               if anchor not in source:
-                  raise SystemExit('Expected sidebar anchor not found')
-              source = source.replace(anchor, anchor + '      ' + marker + '\n' + entry, 1)
+                  raise SystemExit('AI admin helper anchor not found')
+              source = source.replace(anchor, helper + '\ndef _default_model() -> str:\n', 1)
+              for fn in ('index', 'save', 'toggle'):
+                  marker = f'def {fn}(' 
+                  pos = source.find(marker)
+                  if pos < 0:
+                      raise SystemExit(f'AI admin function {fn} not found')
+                  body_pos = source.find('\n', pos) + 1
+                  source = source[:body_pos] + '    guard = _require_company_pin()\n    if guard is not None:\n        return guard\n' + source[body_pos:]
               path.write_text(source, encoding='utf-8')
+
+          # 2) Expose the AI configuration from Mi Empresa only after the PIN is verified.
+          path = Path('templates/company_billing/settings.html')
+          source = path.read_text(encoding='utf-8-sig')
+          marker = 'AI_COMPANY_PIN_LINK_V1'
+          if marker not in source:
+              anchor = '      <a class="btn btn-primary" href="{{ url_for(\'company_billing.subscription_portal\') }}"><i class="bi bi-credit-card-2-front me-1"></i>Suscripción</a>\n      {% if pin_verified %}'
+              entry = '      <a class="btn btn-outline-primary" href="{{ url_for(\'ai_admin.index\') }}"><i class="bi bi-robot me-1"></i>Agentes IA</a><!-- AI_COMPANY_PIN_LINK_V1 -->\n'
+              if anchor not in source:
+                  raise SystemExit('Mi Empresa header anchor not found')
+              source = source.replace(anchor, anchor.replace('      {% if pin_verified %}', entry + '      {% if pin_verified %}'), 1)
+              source = source.replace("    'stats': {'title': 'Estadísticas de la Empresa', 'subtitle': 'Seguimiento de ventas, caja, actividad y rentabilidad.'}\n", "    'stats': {'title': 'Estadísticas de la Empresa', 'subtitle': 'Seguimiento de ventas, caja, actividad y rentabilidad.'},\n    'ai-agent': {'title': 'Agentes IA', 'subtitle': 'Configurá el Vendedor 24 hs y el Asistente empresarial.'}\n", 1)
+              path.write_text(source, encoding='utf-8')
+
+          print('AI configuration is now reachable from Mi Empresa after PIN validation')
           PY
 
       - name: Validate
@@ -47,7 +74,7 @@ jobs:
           set -euo pipefail
           git config user.name 'github-actions[bot]'
           git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
-          git add templates/base_master.html
+          git add services/ai_agent/admin.py templates/company_billing/settings.html
           git rm -f .github/workflows/apply-ai-menu-once.yml
-          git commit -m 'fix: expose AI agents in company menu'
+          git commit -m 'fix: put AI config behind company PIN'
           git push origin HEAD:main
