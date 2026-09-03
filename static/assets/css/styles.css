@@ -118,7 +118,7 @@ body.sidebar-collapsed .app-nav .nav-link.active { box-shadow: none; }
   .offline-status-panel { padding: 8px 10px; }
   .user-chip { padding: 7px 8px; }
 }
-@media (max-width: 1199.98px) {
+@media (min-width: 0) {
   .app-sidebar-footer { padding: 6px; }
   .sidebar-footer-mobile-summary { display: block; }
   .sidebar-footer-toggle {
@@ -128,9 +128,9 @@ body.sidebar-collapsed .app-nav .nav-link.active { box-shadow: none; }
     align-items: center;
     gap: .55rem;
     padding: 4px 6px;
-    border: 0;
+    border: 1px solid var(--app-line);
     border-radius: 8px;
-    background: var(--app-panel-soft);
+    background: var(--app-panel);
     color: var(--app-ink);
     text-align: left;
   }

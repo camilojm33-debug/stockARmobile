@@ -1044,6 +1044,8 @@
         if (!sidebar) return;
         sidebar.classList.remove('show');
         sidebarBackdrop?.classList.remove('show');
+        sidebarFooter?.classList.remove('is-expanded');
+        sidebarFooterToggle?.setAttribute('aria-expanded', 'false');
       }
 
       function toggleSidebar() {
