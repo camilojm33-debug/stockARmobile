@@ -74,7 +74,7 @@
 .app-nav .nav-link { min-height: 40px; padding: .52rem .7rem; gap: 9px; font-size: .9rem; border-radius: 10px; margin-bottom: 2px; }
 .app-nav .nav-link i { width: 20px; font-size: 1rem; }
 .app-nav .nav-link.active { box-shadow: inset 3px 0 0 var(--app-primary); }
-.app-sidebar-footer { padding: 12px; background: rgba(255,255,255,.96); backdrop-filter: blur(16px); }
+.app-sidebar-footer { position: sticky; bottom: 0; z-index: 4; padding: 12px; background: rgba(255,255,255,.96); backdrop-filter: blur(16px); }
 [data-bs-theme="dark"] .app-sidebar-footer { background: rgba(24,34,53,.97); }
 .user-chip { gap: 9px; padding: 8px 9px; border-radius: 12px; margin-bottom: 9px !important; }
 .user-avatar { width: 34px; height: 34px; flex: 0 0 auto; }
