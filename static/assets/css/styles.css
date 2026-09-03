@@ -74,7 +74,7 @@
 .app-nav .nav-link { min-height: 40px; padding: .52rem .7rem; gap: 9px; font-size: .9rem; border-radius: 10px; margin-bottom: 2px; }
 .app-nav .nav-link i { width: 20px; font-size: 1rem; }
 .app-nav .nav-link.active { box-shadow: inset 3px 0 0 var(--app-primary); }
-.app-sidebar-footer { position: sticky; bottom: 0; z-index: 4; padding: 12px; background: rgba(255,255,255,.96); backdrop-filter: blur(16px); }
+.app-sidebar-footer { padding: 12px; background: rgba(255,255,255,.96); backdrop-filter: blur(16px); }
 [data-bs-theme="dark"] .app-sidebar-footer { background: rgba(24,34,53,.97); }
 .user-chip { gap: 9px; padding: 8px 9px; border-radius: 12px; margin-bottom: 9px !important; }
 .user-avatar { width: 34px; height: 34px; flex: 0 0 auto; }
@@ -104,13 +104,19 @@ body.sidebar-collapsed .app-nav .nav-link.active { box-shadow: none; }
 }
 @media (max-width: 991.98px) {
   .app-sidebar { width: min(86vw, 312px); max-width: min(86vw, 312px); }
-  .app-sidebar-footer { padding: 10px; }
+  .app-sidebar-footer { padding: 8px 10px max(8px, env(safe-area-inset-bottom)); }
   .app-brand { padding-inline: 14px; }
   .app-nav { padding-inline: 8px; }
   .app-nav .nav-link { min-height: 44px; font-size: .93rem; }
-  .offline-status-panel { padding: 9px 10px; }
-  .offline-status-panel .small { font-size: .74rem !important; }
+  .user-chip { gap: 7px; padding: 6px 8px; margin-bottom: 7px !important; }
+  .user-avatar { width: 30px; height: 30px; }
+  .user-chip small { display: none; }
+  .offline-status-panel { padding: 8px 10px; margin-bottom: 7px; }
+  .offline-status-panel > .d-flex { margin-bottom: .35rem !important; }
+  .offline-status-panel .small { font-size: .69rem !important; line-height: 1.25; }
+  .offline-status-panel #offlineSyncNow { min-height: 38px; padding-top: .35rem; padding-bottom: .35rem; }
   .app-sidebar-footer > .d-flex.gap-2:last-child > button, .app-sidebar-footer > .d-flex.gap-2:last-child > form > button { min-height: 44px; }
+  .app-sidebar-footer .device-clock { display: none; }
 }
 @media (max-width: 575.98px) {
   .app-sidebar { width: min(90vw, 300px); max-width: min(90vw, 300px); }

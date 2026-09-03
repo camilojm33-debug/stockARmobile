@@ -529,6 +529,37 @@ def _quote_snapshot(quote):
         ],
     }
 
+def _duplicate_commercial_quote(original):
+    """Create a new draft using only commercial content from a quote."""
+    from app import Quote
+
+    return Quote(
+        client_id=original.client_id,
+        consumer_name=original.consumer_name,
+        seller_id=original.seller_id,
+        company_id=original.company_id,
+        branch_id=original.branch_id,
+        expires_at=original.expires_at,
+        subtotal=original.subtotal,
+        discount=original.discount,
+        surcharge=original.surcharge,
+        discount_type=original.discount_type,
+        discount_value=original.discount_value,
+        discount_reason=original.discount_reason,
+        surcharge_type=original.surcharge_type,
+        surcharge_value=original.surcharge_value,
+        surcharge_reason=original.surcharge_reason,
+        tax=original.tax,
+        total_amount=original.total_amount,
+        observations=original.observations,
+        commercial_conditions=original.commercial_conditions,
+        currency=original.currency,
+        status=QuoteStatus.BORRADOR.value,
+        date=utcnow(),
+        created_by_user_id=getattr(current_user, "id", None),
+    )
+
+
 
 def _quote_rows(quote):
     rows = []
@@ -1071,26 +1102,9 @@ def duplicate_quote(quote_id):
     _require_quote_permission("quotes_duplicate")
     original = _quote_lookup(quote_id)
     _require_owned_or_authorized(original)
-    from app import Quote, QuoteItem, db
+    from app import QuoteItem, db
 
-    duplicate = Quote(
-        client_id=original.client_id,
-        consumer_name=original.consumer_name,
-        seller_id=original.seller_id,
-        company_id=original.company_id,
-        expires_at=original.expires_at,
-        subtotal=original.subtotal,
-        discount=original.discount,
-        surcharge=original.surcharge,
-        tax=original.tax,
-        total_amount=original.total_amount,
-        observations=original.observations,
-        commercial_conditions=original.commercial_conditions,
-        currency=original.currency,
-        status="BORRADOR",
-        date=utcnow(),
-        created_by_user_id=getattr(current_user, "id", None),
-    )
+    duplicate = _duplicate_commercial_quote(original)
     db.session.add(duplicate)
     db.session.flush()
     duplicate.number = f"P-{duplicate.id:06d}"
