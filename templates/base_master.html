@@ -782,11 +782,13 @@
           <small class="text-muted">{{ current_user.role or 'user' }}</small>
         </span>
       </div>
-      <div class="offline-status-panel">
-        <div class="d-flex justify-content-between align-items-center gap-2 mb-2">
+      <div class="offline-status-panel" id="offlineStatusPanel">
+        <button class="offline-status-toggle" type="button" id="offlineStatusToggle" aria-expanded="false" aria-controls="offlineStatusDetails">
           <span class="small fw-semibold text-uppercase text-muted">Conectividad</span>
           <span id="offlineConnectivityBadge" class="badge text-bg-secondary">Verificando...</span>
-        </div>
+          <i class="bi bi-chevron-down" aria-hidden="true"></i>
+        </button>
+        <div class="offline-status-details" id="offlineStatusDetails">
         <div class="small text-muted mb-1">Pendientes: <strong id="offlinePendingCount">0</strong></div>
         <div class="small text-muted mb-1">Sincronizadas: <strong id="offlineSyncedCount">0</strong> | Errores: <strong id="offlineErrorCount">0</strong></div>
         <div class="small text-muted mb-1">Última sincronización: <span id="offlineLastSync">-</span></div>
@@ -797,6 +799,7 @@
         <div id="offlineSyncProgressLabel" class="small text-muted mb-1">Sincronización al día</div>
         <div id="offlineCurrentOperation" class="small text-muted mb-2"></div>
         <button class="btn btn-outline-primary btn-sm w-100" type="button" id="offlineSyncNow"><i class="bi bi-arrow-repeat me-1"></i>Sincronizar ahora</button>
+        </div>
       </div>
       {% if current_user.role == 'admin' and switchable_company_users %}
       <div class="dropdown mb-2">
@@ -1044,6 +1047,12 @@
       sidebarBackdrop?.addEventListener('click', function() {
         closeSidebar();
       });
+      const offlineStatusPanel = document.getElementById('offlineStatusPanel');
+      const offlineStatusToggle = document.getElementById('offlineStatusToggle');
+      offlineStatusToggle?.addEventListener('click', function() {
+        const isExpanded = offlineStatusPanel?.classList.toggle('is-expanded');
+        offlineStatusToggle.setAttribute('aria-expanded', String(Boolean(isExpanded)));
+      });
       document.querySelectorAll('#appSidebar .nav-link').forEach(function(link) {
         link.addEventListener('click', function() {
           if (mobileViewport.matches) closeSidebar();
@@ -1053,6 +1062,8 @@
         if (!mobileViewport.matches) {
           sidebarBackdrop?.classList.remove('show');
           sidebar?.classList.remove('show');
+          offlineStatusPanel?.classList.remove('is-expanded');
+          offlineStatusToggle?.setAttribute('aria-expanded', 'false');
         }
       });
       document.addEventListener('keydown', function(event) {

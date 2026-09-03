@@ -1566,6 +1566,8 @@ import sales  # noqa: E402
 import quotes  # noqa: E402
 import support  # noqa: E402
 import seo_pages  # noqa: E402
+from services.ai_agent.admin import bp as ai_admin_bp  # noqa: E402
+from whatsapp_agent import bp as whatsapp_agent_bp  # noqa: E402
 
 auth_bp = auth.bp
 dashboard_bp = dashboard.bp
@@ -1600,6 +1602,9 @@ app.register_blueprint(company_billing_bp, url_prefix="/admin")
 app.register_blueprint(referrals_bp)
 app.register_blueprint(support_bp, url_prefix="/soporte")
 app.register_blueprint(seo_pages_bp)
+app.register_blueprint(ai_admin_bp)
+app.register_blueprint(whatsapp_agent_bp)
+csrf.exempt(whatsapp_agent_bp)
 
 
 def _plan_feature_flags(plan):
