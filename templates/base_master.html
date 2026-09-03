@@ -137,13 +137,14 @@
       position: fixed;
       inset: 0 auto 0 0;
       width: var(--sidebar-width);
+      height: 100vh;
+      height: 100dvh;
       background: rgba(255, 255, 255, .88);
       border-right: 1px solid var(--app-line);
       backdrop-filter: var(--surface-blur);
       display: flex;
       flex-direction: column;
-      overflow-y: auto;
-      -webkit-overflow-scrolling: touch;
+      overflow: hidden;
       z-index: 1030;
     }
     [data-bs-theme="dark"] .app-sidebar,
@@ -152,6 +153,7 @@
     }
     .app-brand {
       height: 76px;
+      flex: 0 0 auto;
       padding: 0 22px;
       display: flex;
       align-items: center;
@@ -215,7 +217,7 @@
       display: block;
       margin: 0 auto 12px;
     }
-    .app-nav { padding: 16px 12px; }
+    .app-nav { flex: 1 1 auto; min-height: 0; padding: 16px 12px; overflow-y: auto; overscroll-behavior: contain; -webkit-overflow-scrolling: touch; }
     .app-nav .nav-link {
       min-height: 42px;
       color: #475569;
@@ -242,6 +244,7 @@
     .app-nav .nav-link i { font-size: 1.05rem; width: 22px; text-align: center; }
     .app-sidebar-footer {
       margin-top: auto;
+      flex: 0 0 auto;
       padding: 16px;
       border-top: 1px solid var(--app-line);
     }

@@ -127,6 +127,28 @@ def index():
 
     provider = (os.getenv("AI_PROVIDER") or "openai_compatible").strip().lower()
     ai_key_configured = bool((os.getenv("AI_PROVIDER_API_KEY") or os.getenv("OPENAI_API_KEY") or "").strip()) or provider in {"lmstudio", "lm_studio"}
+    ai_enabled = bool(prefs["ai_agent"].get("enabled", True))
+    whatsapp_connected = bool(whatsapp.get("enabled") and whatsapp.get("phone_number_id"))
+    provider_labels = {
+        "openai": "OpenAI",
+        "openai_compatible": "OpenAI compatible",
+        "lmstudio": "LM Studio",
+        "lm_studio": "LM Studio",
+    }
+    agent_states = {}
+    for name, agent in agents.items():
+        if not ai_enabled or not agent.active:
+            agent_states[name] = {"label": "Desactivado", "tone": "danger"}
+        elif not ai_key_configured or (name == VENDOR_AGENT_NAME and not whatsapp_connected):
+            agent_states[name] = {"label": "Configuración pendiente", "tone": "warning"}
+        else:
+            agent_states[name] = {"label": "Activo", "tone": "success"}
+    if whatsapp_connected and ai_enabled and agents[VENDOR_AGENT_NAME].active:
+        whatsapp_state = {"label": "Conectado", "tone": "success"}
+    elif whatsapp.get("enabled"):
+        whatsapp_state = {"label": "Configuración pendiente", "tone": "warning"}
+    else:
+        whatsapp_state = {"label": "Desactivado", "tone": "danger"}
     return render_template(
         "ai_agent/admin.html",
         agents=agents,
@@ -135,7 +157,11 @@ def index():
         whatsapp=whatsapp,
         ai_key_configured=ai_key_configured,
         provider=provider,
+        provider_label=provider_labels.get(provider, provider.replace("_", " ").title()),
         provider_model=_default_model(),
+        ai_enabled=ai_enabled,
+        agent_states=agent_states,
+        whatsapp_state=whatsapp_state,
         webhook_url=url_for("whatsapp_agent.webhook", _external=True),
         conversations=conversation_rows,
     )
