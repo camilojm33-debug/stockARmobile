@@ -105,6 +105,7 @@
 .app-sidebar-footer > .d-flex.gap-2:last-child > button:first-child, .app-sidebar-footer > .d-flex.gap-2:last-child > button:nth-child(2), .app-sidebar-footer > .d-flex.gap-2:last-child > button:nth-child(3) { width: 44px; padding-inline: 0; }
 .app-sidebar-footer > .d-flex.gap-2:last-child > form { flex: 1 1 auto; }
 .device-clock { justify-content: center; font-size: .72rem; opacity: .9; }
+.sidebar-footer-mobile-summary { display: none; }
 body.sidebar-collapsed .app-brand { height: 66px; }
 body.sidebar-collapsed .app-sidebar { scrollbar-width: none; }
 body.sidebar-collapsed .app-nav .nav-link.active { box-shadow: none; }
@@ -118,20 +119,33 @@ body.sidebar-collapsed .app-nav .nav-link.active { box-shadow: none; }
   .user-chip { padding: 7px 8px; }
 }
 @media (max-width: 1199.98px) {
-  .offline-status-panel { padding: 4px 10px; margin-bottom: 7px; }
-  .offline-status-toggle {
-    min-height: 32px;
-    margin-bottom: 0;
-    padding: 0;
+  .app-sidebar-footer { padding: 6px; }
+  .sidebar-footer-mobile-summary { display: block; }
+  .sidebar-footer-toggle {
+    width: 100%;
+    min-height: 44px;
+    display: flex;
+    align-items: center;
+    gap: .55rem;
+    padding: 4px 6px;
+    border: 0;
+    border-radius: 8px;
+    background: var(--app-panel-soft);
+    color: var(--app-ink);
+    text-align: left;
   }
-  .offline-status-toggle .badge { margin-left: auto; }
-  .offline-status-toggle .bi { display: block; transition: transform .16s ease; }
-  .offline-status-panel.is-expanded .offline-status-toggle .bi { transform: rotate(180deg); }
-  .offline-status-details { display: none; }
-  .offline-status-panel.is-expanded .offline-status-details {
+  .sidebar-footer-toggle .user-avatar { width: 32px; height: 32px; }
+  .sidebar-footer-user { min-width: 0; font-size: .88rem; font-weight: 700; }
+  .sidebar-footer-toggle .badge { margin-left: auto; }
+  .sidebar-footer-toggle .bi { font-size: 1.1rem; color: var(--app-muted); }
+  .sidebar-footer-secondary { display: none; padding-top: 6px; }
+  .app-sidebar-footer.is-expanded .sidebar-footer-secondary { display: block; }
+  .app-sidebar-footer.is-expanded .user-chip { display: none; }
+  .offline-status-panel { padding: 8px 10px; margin-bottom: 7px; }
+  .offline-status-toggle { display: none; }
+  .app-sidebar-footer.is-expanded .offline-status-details {
     display: block;
     max-height: min(36dvh, 240px);
-    margin-top: .35rem;
     overflow-y: auto;
     overscroll-behavior: contain;
   }

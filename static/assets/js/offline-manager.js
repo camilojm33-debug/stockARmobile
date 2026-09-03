@@ -8,6 +8,7 @@
   const elements = {
     badge: document.getElementById('offlineConnectivityBadge'),
     badgeCompact: document.getElementById('offlineConnectivityBadgeCompact'),
+    badgeFooter: document.getElementById('offlineConnectivityBadgeFooter'),
     pendingCounts: Array.from(document.querySelectorAll('[data-offline-pending-count], #offlinePendingCount')),
     syncedCount: document.getElementById('offlineSyncedCount'),
     errorCount: document.getElementById('offlineErrorCount'),
@@ -101,7 +102,7 @@
       ? (pendingCount > 0 ? 'badge text-bg-warning' : 'badge text-bg-success')
       : 'badge text-bg-danger';
 
-    [elements.badge, elements.badgeCompact].forEach((node) => {
+    [elements.badge, elements.badgeCompact, elements.badgeFooter].forEach((node) => {
       if (!node) return;
       node.textContent = label;
       node.className = classes;

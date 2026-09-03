@@ -774,7 +774,16 @@
       <a class="nav-link {% if request.endpoint and request.endpoint.startswith('support.') %}active{% endif %}" href="{{ url_for('support.new_ticket') }}"><i class="bi bi-life-preserver"></i><span class="nav-text">Ayuda</span></a>
       {% endif %}
     </nav>
-    <div class="app-sidebar-footer">
+    <div class="app-sidebar-footer" id="appSidebarFooter">
+      <div class="sidebar-footer-mobile-summary">
+        <button class="sidebar-footer-toggle" type="button" id="appSidebarFooterToggle" aria-expanded="false" aria-controls="appSidebarFooterDetails">
+          <span class="user-avatar">{{ current_user.username[:1]|upper }}</span>
+          <span class="sidebar-footer-user text-truncate">{{ current_user.username }}</span>
+          <span id="offlineConnectivityBadgeFooter" class="badge text-bg-secondary">Verificando...</span>
+          <i class="bi bi-three-dots-vertical" aria-hidden="true"></i>
+        </button>
+      </div>
+      <div class="sidebar-footer-secondary" id="appSidebarFooterDetails">
       <div class="user-chip mb-3">
         <span class="user-avatar">{{ current_user.username[:1]|upper }}</span>
         <span class="min-w-0">
@@ -832,6 +841,7 @@
         </form>
       </div>
       <div class="device-clock mt-3" aria-live="polite"><i class="bi bi-clock"></i><time data-device-clock>--:--:--</time></div>
+      </div>
     </div>
   </aside>
   <div class="app-main">
@@ -1026,6 +1036,8 @@
       const sidebar = document.getElementById('appSidebar');
       const sidebarToggle = document.getElementById('appSidebarToggle');
       const sidebarBackdrop = document.getElementById('appSidebarBackdrop');
+      const sidebarFooter = document.getElementById('appSidebarFooter');
+      const sidebarFooterToggle = document.getElementById('appSidebarFooterToggle');
       const mobileViewport = window.matchMedia('(max-width: 991.98px)');
 
       function closeSidebar() {
@@ -1047,11 +1059,9 @@
       sidebarBackdrop?.addEventListener('click', function() {
         closeSidebar();
       });
-      const offlineStatusPanel = document.getElementById('offlineStatusPanel');
-      const offlineStatusToggle = document.getElementById('offlineStatusToggle');
-      offlineStatusToggle?.addEventListener('click', function() {
-        const isExpanded = offlineStatusPanel?.classList.toggle('is-expanded');
-        offlineStatusToggle.setAttribute('aria-expanded', String(Boolean(isExpanded)));
+      sidebarFooterToggle?.addEventListener('click', function() {
+        const isExpanded = sidebarFooter?.classList.toggle('is-expanded');
+        sidebarFooterToggle.setAttribute('aria-expanded', String(Boolean(isExpanded)));
       });
       document.querySelectorAll('#appSidebar .nav-link').forEach(function(link) {
         link.addEventListener('click', function() {
@@ -1062,8 +1072,8 @@
         if (!mobileViewport.matches) {
           sidebarBackdrop?.classList.remove('show');
           sidebar?.classList.remove('show');
-          offlineStatusPanel?.classList.remove('is-expanded');
-          offlineStatusToggle?.setAttribute('aria-expanded', 'false');
+          sidebarFooter?.classList.remove('is-expanded');
+          sidebarFooterToggle?.setAttribute('aria-expanded', 'false');
         }
       });
       document.addEventListener('keydown', function(event) {
