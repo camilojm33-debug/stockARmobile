@@ -15,7 +15,7 @@ from flask_login import login_user, logout_user
 from sqlite_test_db import clear_test_data
 
 import app as stock_app
-from app import CashMovement, CashSession, Client, Company, Product, Quote, ReferralAttribution, SaaSAlert, SaaSLead, SaaSTask, Sale, SaleItem, SaleModificationHistory, Subscription, User, db
+from app import CashMovement, CashSession, Client, Company, Product, Quote, QuoteItem, ReferralAttribution, SaaSAlert, SaaSLead, SaaSTask, Sale, SaleItem, SaleModificationHistory, Subscription, User, db
 from services.whatsapp_share_service import normalize_whatsapp_number
 from sqlalchemy.exc import ProgrammingError
 
@@ -1599,6 +1599,95 @@ def test_quotes_create_convert_pdf_and_stock_flow():
         assert len(sale.items) == 1
         assert float(sale.items[0].quantity) == 2.0
         assert float(sale.items[0].total_amount) == float(sale.total_amount)
+
+
+@pytest.mark.parametrize("source_status", ["BORRADOR", "PENDIENTE", "APROBADO", "RECHAZADO"])
+def test_duplicate_quote_copies_commercial_content_as_new_draft(source_status):
+    client = stock_app.app.test_client()
+    client.post("/auth/login", data={"username": "empresa_admin", "password": "admin123"})
+
+    with stock_app.app.app_context():
+        company = Company.query.filter_by(name="Empresa Demo").first()
+        user = User.query.filter_by(username="empresa_admin").first()
+        assert company is not None
+        assert user is not None
+        source = Quote(
+            number="P-ORIGINAL",
+            client_id=1,
+            seller_id=user.id,
+            created_by_user_id=user.id,
+            company_id=company.id,
+            branch_id=42,
+            expires_at=stock_app.utcnow() + timedelta(days=5),
+            subtotal=Decimal("250.00"),
+            discount=Decimal("25.00"),
+            discount_type="percentage",
+            discount_value=Decimal("10.00"),
+            discount_reason="Cliente frecuente",
+            surcharge=Decimal("5.00"),
+            surcharge_type="fixed",
+            surcharge_value=Decimal("5.00"),
+            surcharge_reason="Entrega",
+            tax=Decimal("10.00"),
+            total_amount=Decimal("240.00"),
+            observations="Entregar por la manana",
+            commercial_conditions="Pago a 30 dias",
+            currency="ARS",
+            status=source_status,
+        )
+        db.session.add(source)
+        db.session.flush()
+        db.session.add(QuoteItem(
+            quote_id=source.id,
+            product_id=1,
+            description="Yerba kilo",
+            quantity=2,
+            unit_price=Decimal("125.00"),
+            discount=Decimal("25.00"),
+            subtotal=Decimal("225.00"),
+            sort_order=1,
+        ))
+        db.session.commit()
+        source_id = source.id
+        user_id = user.id
+        source_snapshot = (source.status, source.number, source.total_amount, source.converted_sale_id, len(source.items))
+
+    response = client.post(f"/presupuestos/{source_id}/duplicar", follow_redirects=False)
+    assert response.status_code in {302, 303}
+    duplicate_id = int((response.headers["Location"] or "").split("/")[-2])
+
+    with stock_app.app.app_context():
+        source = Quote.query.get(source_id)
+        duplicate = Quote.query.get(duplicate_id)
+        assert source is not None
+        assert duplicate is not None
+        assert (source.status, source.number, source.total_amount, source.converted_sale_id, len(source.items)) == source_snapshot
+        assert duplicate.id != source.id
+        assert duplicate.number != source.number
+        assert duplicate.status == "BORRADOR"
+        assert duplicate.converted_sale_id is None
+        assert duplicate.created_by_user_id == user_id
+        for field_name in (
+            "client_id", "seller_id", "company_id", "branch_id", "expires_at", "subtotal", "discount", "discount_type",
+            "discount_value", "discount_reason", "surcharge", "surcharge_type", "surcharge_value", "surcharge_reason",
+            "tax", "total_amount", "observations", "commercial_conditions", "currency",
+        ):
+            assert getattr(duplicate, field_name) == getattr(source, field_name)
+        assert len(duplicate.items) == 1
+        assert duplicate.items[0].id != source.items[0].id
+        assert duplicate.items[0].quote_id == duplicate.id
+
+    from quotes import _build_public_quote_url, _quote_id_from_public_token
+
+    with stock_app.app.test_request_context():
+        public_url = _build_public_quote_url(duplicate_id)
+    public_token = public_url.rsplit("/", 1)[-1]
+    assert _quote_id_from_public_token(public_token) == duplicate_id
+    public_response = client.get(public_url)
+    public_html = public_response.get_data(as_text=True)
+    assert public_response.status_code == 200
+    assert "Presupuesto aceptado." not in public_html
+    assert "¿Querés avanzar con este presupuesto?" in public_html
 
 
 def _fake_png_bytes(color=(255, 0, 0)):
