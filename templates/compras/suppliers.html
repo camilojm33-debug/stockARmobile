@@ -1,9 +1,126 @@
 {% extends "base_master.html" %}
 {% block title %}Proveedores - StockArmobile{% endblock %}
 {% block content %}
-<div class="app-shell">
-<nav aria-label="breadcrumb" class="mb-2"><ol class="breadcrumb"><li class="breadcrumb-item"><a href="{{ url_for('company_billing.company_settings') if current_user.role != 'superadmin' else url_for('saas.index') }}">{{ 'Mi Empresa' if current_user.role != 'superadmin' else 'Panel SaaS' }}</a></li><li class="breadcrumb-item"><a href="{{ url_for('purchases.index', company_id=selected_company_id) if selected_company_id else url_for('purchases.index') }}">Compras</a></li><li class="breadcrumb-item active">Proveedores</li></ol></nav>
-<div class="d-flex flex-wrap justify-content-between align-items-center gap-3 mb-4"><div><span class="page-kicker"><i class="bi bi-people"></i> Abastecimiento</span><h1 class="h3 fw-bold mb-0">Proveedores</h1><p class="text-muted mb-0">Alta, edición y compras asociadas.</p></div><a class="btn btn-outline-secondary" href="{{ url_for('purchases.index', company_id=selected_company_id) if selected_company_id else url_for('purchases.index') }}"><i class="bi bi-arrow-left me-1"></i>Volver a Compras</a></div>
-{% if current_user.role == 'superadmin' %}<div class="card app-card mb-3"><div class="card-body"><form class="row g-2 align-items-end" method="get"><div class="col-md-8"><label class="form-label">Empresa</label><select class="form-select" name="company_id" required><option value="">Seleccionar empresa...</option>{% for company in companies %}<option value="{{ company.id }}" {% if selected_company_id == company.id %}selected{% endif %}>{{ company.name }}</option>{% endfor %}</select></div><div class="col-md-4 d-grid"><button class="btn btn-primary">Abrir proveedores</button></div></form>{% if company_required %}<div class="alert alert-warning mt-3 mb-0">Seleccioná una empresa para gestionar proveedores.</div>{% endif %}</div></div>{% endif %}
-{% if not company_required %}<div class="row g-3 mb-4"><div class="col-lg-7"><div class="card app-card h-100"><div class="card-header bg-white fw-bold">Listado de proveedores</div><div class="card-body"><form class="row g-2 mb-3" method="get"><input type="hidden" name="company_id" value="{{ selected_company_id or '' }}"><div class="col-md-7"><input class="form-control" name="q" value="{{ search }}" placeholder="Buscar por nombre, email, teléfono o dirección"></div><div class="col-md-3"><select class="form-select" name="status"><option value="active" {% if status_filter == 'active' %}selected{% endif %}>Activos</option><option value="inactive" {% if status_filter == 'inactive' %}selected{% endif %}>Inactivos</option><option value="all" {% if status_filter == 'all' %}selected{% endif %}>Todos</option></select></div><div class="col-md-2 d-grid"><button class="btn btn-outline-primary">Filtrar</button></div></form><div class="table-responsive"><table class="table table-hover align-middle"><thead><tr><th>Proveedor</th><th>Contacto</th><th>Compras</th><th>Estado</th><th class="text-end">Acciones</th></tr></thead><tbody>{% for supplier in suppliers %}{% set stats = supplier_stats.get(supplier.id, {'purchase_count': 0, 'total_amount': 0}) %}<tr><td><div class="fw-semibold">{{ supplier.name }}</div><div class="small text-muted">{{ supplier.address or 'Sin dirección' }}</div></td><td><div class="small">{{ supplier.phone or '—' }}</div><div class="small">{{ supplier.whatsapp or '—' }}</div><div class="small text-muted">{{ supplier.email or '—' }}</div></td><td><div>{{ stats.purchase_count }} compras</div><div class="small text-muted">${{ '%.2f'|format(stats.total_amount or 0) }}</div></td><td><span class="badge {{ 'text-bg-success' if supplier.active else 'text-bg-secondary' }}">{{ 'Activo' if supplier.active else 'Inactivo' }}</span></td><td class="text-end"><a class="btn btn-sm btn-primary" href="{{ url_for('purchases.supplier_purchases', supplier_id=supplier.id, company_id=selected_company_id) }}"><i class="bi bi-bag-check me-1"></i>Compras</a> <button class="btn btn-sm btn-outline-primary" data-bs-toggle="collapse" data-bs-target="#edit{{ supplier.id }}">Editar</button> <form class="d-inline" method="post" action="{{ url_for('purchases.toggle_supplier', supplier_id=supplier.id) }}"><input type="hidden" name="csrf_token" value="{{ csrf_token() }}"><button class="btn btn-sm {{ 'btn-outline-danger' if supplier.active else 'btn-outline-success' }}">{{ 'Desactivar' if supplier.active else 'Activar' }}</button></form></td></tr><tr class="collapse" id="edit{{ supplier.id }}"><td colspan="5" class="bg-light-subtle"><form method="post" action="{{ url_for('purchases.update_supplier', supplier_id=supplier.id) }}" class="row g-2"><input type="hidden" name="csrf_token" value="{{ csrf_token() }}"><div class="col-md-4"><input class="form-control" name="name" value="{{ supplier.name }}" required></div><div class="col-md-2"><input class="form-control" name="phone" value="{{ supplier.phone or '' }}"></div><div class="col-md-2"><input class="form-control" name="whatsapp" value="{{ supplier.whatsapp or '' }}"></div><div class="col-md-4"><input class="form-control" name="email" value="{{ supplier.email or '' }}"></div><div class="col-md-6"><input class="form-control" name="address" value="{{ supplier.address or '' }}"></div><div class="col-md-6"><input class="form-control" name="notes" value="{{ supplier.notes or '' }}"></div><div class="col-12 text-end"><button class="btn btn-primary btn-sm">Guardar cambios</button></div></form></td></tr>{% else %}<tr><td colspan="5" class="text-center text-muted py-4">No hay proveedores para mostrar.</td></tr>{% endfor %}</tbody></table></div></div></div><div class="col-lg-5"><div class="card app-card h-100"><div class="card-header bg-white fw-bold">Nuevo proveedor</div><div class="card-body"><form method="post"><input type="hidden" name="csrf_token" value="{{ csrf_token() }}"><div class="row g-2"><div class="col-12"><input class="form-control" name="name" placeholder="Nombre" required></div><div class="col-md-6"><input class="form-control" name="phone" placeholder="Teléfono"></div><div class="col-md-6"><input class="form-control" name="whatsapp" placeholder="WhatsApp"></div><div class="col-md-6"><input class="form-control" name="email" type="email" placeholder="Email"></div><div class="col-12"><input class="form-control" name="address" placeholder="Dirección"></div><div class="col-12"><textarea class="form-control" name="notes" rows="3" placeholder="Observaciones"></textarea></div></div><button class="btn btn-outline-primary mt-3">Guardar proveedor</button></form></div></div></div></div>{% endif %}</div>
+<style>
+  .suppliers-page{--sp-border:rgba(31,41,55,.08);--sp-muted:#64748b;}
+  .suppliers-page .page-hero{background:linear-gradient(135deg,#fff 0%,#f7faff 100%);border:1px solid var(--sp-border);border-radius:20px;box-shadow:0 8px 30px rgba(15,23,42,.05)}
+  .suppliers-page .section-card{background:#fff;border:1px solid var(--sp-border);border-radius:18px;box-shadow:0 6px 24px rgba(15,23,42,.045);overflow:hidden}
+  .suppliers-page .section-head{padding:18px 20px;border-bottom:1px solid var(--sp-border);display:flex;align-items:center;justify-content:space-between;gap:12px}
+  .suppliers-page .section-title{font-weight:700;margin:0;font-size:.98rem}
+  .suppliers-page .section-subtitle{font-size:.78rem;color:var(--sp-muted);margin-top:3px}
+  .suppliers-page .metric{padding:14px 16px;border:1px solid var(--sp-border);border-radius:14px;background:#fff;height:100%}
+  .suppliers-page .metric-icon{width:36px;height:36px;border-radius:11px;display:grid;place-items:center;background:#eef4ff;color:#2563eb;font-size:1rem}
+  .suppliers-page .metric-value{font-size:1.2rem;font-weight:800;line-height:1.1}
+  .suppliers-page .metric-label{font-size:.72rem;color:var(--sp-muted);margin-top:3px}
+  .suppliers-page .filter-box{background:#f8fafc;border:1px solid var(--sp-border);border-radius:14px;padding:12px}
+  .suppliers-page .table{margin:0}
+  .suppliers-page .table thead th{font-size:.68rem;text-transform:uppercase;letter-spacing:.055em;color:#64748b;font-weight:700;background:#f8fafc;border-bottom:1px solid var(--sp-border);padding:12px 16px;white-space:nowrap}
+  .suppliers-page .table tbody td{padding:14px 16px;border-color:rgba(31,41,55,.06)}
+  .suppliers-page .supplier-avatar{width:40px;height:40px;border-radius:12px;display:grid;place-items:center;background:#edf3ff;color:#2563eb;font-weight:800;flex:0 0 auto}
+  .suppliers-page .contact-line{font-size:.78rem;color:#64748b;line-height:1.5}
+  .suppliers-page .action-stack{display:flex;justify-content:flex-end;gap:6px;flex-wrap:wrap}
+  .suppliers-page .empty-state{padding:44px 24px;text-align:center;color:#64748b}
+  .suppliers-page .empty-icon{width:54px;height:54px;border-radius:16px;background:#f1f5f9;display:grid;place-items:center;margin:0 auto 12px;font-size:1.35rem;color:#94a3b8}
+  .suppliers-page .form-control,.suppliers-page .form-select{border-radius:10px;border-color:#dbe2ea;padding-top:.62rem;padding-bottom:.62rem}
+  .suppliers-page .form-control:focus,.suppliers-page .form-select:focus{box-shadow:0 0 0 .2rem rgba(37,99,235,.10);border-color:#93b4f5}
+  .suppliers-page .new-card{position:sticky;top:20px}
+  .suppliers-page .edit-row td{background:#f8fafc;padding:18px 16px}
+  @media(max-width:991.98px){.suppliers-page .new-card{position:static}.suppliers-page .page-hero{border-radius:16px}}
+  @media(max-width:767.98px){.suppliers-page .table thead{display:none}.suppliers-page .table tbody tr.supplier-row{display:block;padding:14px 0;border-bottom:1px solid var(--sp-border)}.suppliers-page .table tbody tr.supplier-row td{display:block;border:0;padding:4px 16px}.suppliers-page .table tbody tr.supplier-row td:first-child{padding-top:12px}.suppliers-page .table tbody tr.supplier-row td:last-child{padding-bottom:12px}.suppliers-page .action-stack{justify-content:flex-start;margin-top:8px}.suppliers-page .filter-box .btn{width:100%}}
+</style>
+
+<div class="app-shell suppliers-page">
+  <nav aria-label="breadcrumb" class="mb-3">
+    <ol class="breadcrumb small mb-0">
+      <li class="breadcrumb-item"><a href="{{ url_for('company_billing.company_settings') if current_user.role != 'superadmin' else url_for('saas.index') }}">{{ 'Mi Empresa' if current_user.role != 'superadmin' else 'Panel SaaS' }}</a></li>
+      <li class="breadcrumb-item"><a href="{{ url_for('purchases.index', company_id=selected_company_id) if selected_company_id else url_for('purchases.index') }}">Compras</a></li>
+      <li class="breadcrumb-item active">Proveedores</li>
+    </ol>
+  </nav>
+
+  <section class="page-hero p-4 p-lg-4 mb-4">
+    <div class="d-flex flex-wrap justify-content-between align-items-start gap-3">
+      <div>
+        <span class="page-kicker"><i class="bi bi-people me-1"></i> Abastecimiento</span>
+        <h1 class="h3 fw-bold mb-1 mt-1">Proveedores</h1>
+        <p class="text-muted mb-0">Tené a mano tus contactos y todo el historial de compras.</p>
+      </div>
+      <a class="btn btn-outline-secondary" href="{{ url_for('purchases.index', company_id=selected_company_id) if selected_company_id else url_for('purchases.index') }}"><i class="bi bi-arrow-left me-1"></i>Volver a Compras</a>
+    </div>
+  </section>
+
+  {% if current_user.role == 'superadmin' %}
+  <div class="section-card mb-4">
+    <div class="section-head"><div><div class="section-title">Seleccionar empresa</div><div class="section-subtitle">Elegí el comercio que querés administrar.</div></div></div>
+    <div class="p-3 p-lg-4">
+      <form class="row g-2 align-items-end" method="get">
+        <div class="col-md-8"><label class="form-label small fw-semibold">Empresa</label><select class="form-select" name="company_id" required><option value="">Seleccionar empresa...</option>{% for company in companies %}<option value="{{ company.id }}" {% if selected_company_id == company.id %}selected{% endif %}>{{ company.name }}</option>{% endfor %}</select></div>
+        <div class="col-md-4 d-grid"><button class="btn btn-primary"><i class="bi bi-arrow-right-circle me-1"></i>Abrir proveedores</button></div>
+      </form>
+      {% if company_required %}<div class="alert alert-warning mt-3 mb-0"><i class="bi bi-info-circle me-1"></i>Seleccioná una empresa para gestionar proveedores.</div>{% endif %}
+    </div>
+  </div>
+  {% endif %}
+
+  {% if not company_required %}
+  <div class="row g-3 mb-4">
+    <div class="col-sm-4"><div class="metric"><div class="d-flex align-items-center gap-3"><div class="metric-icon"><i class="bi bi-person-lines-fill"></i></div><div><div class="metric-value">{{ suppliers|length }}</div><div class="metric-label">Proveedores visibles</div></div></div></div></div>
+    <div class="col-sm-4"><div class="metric"><div class="d-flex align-items-center gap-3"><div class="metric-icon"><i class="bi bi-check2-circle"></i></div><div><div class="metric-value">{{ suppliers|selectattr('active')|list|length }}</div><div class="metric-label">Proveedores activos</div></div></div></div></div>
+    <div class="col-sm-4"><div class="metric"><div class="d-flex align-items-center gap-3"><div class="metric-icon"><i class="bi bi-cart-check"></i></div><div><div class="metric-value">{{ supplier_stats.values()|map(attribute='purchase_count')|sum }}</div><div class="metric-label">Compras registradas</div></div></div></div></div>
+  </div>
+
+  <div class="row g-4 align-items-start">
+    <div class="col-xl-8">
+      <section class="section-card">
+        <div class="section-head"><div><div class="section-title">Listado de proveedores</div><div class="section-subtitle">Buscá, editá o abrí el historial de cada proveedor.</div></div><span class="badge rounded-pill text-bg-light">{{ suppliers|length }} resultados</span></div>
+        <div class="p-3 border-bottom">
+          <form class="filter-box row g-2 align-items-end" method="get">
+            <input type="hidden" name="company_id" value="{{ selected_company_id or '' }}">
+            <div class="col-md-6 col-lg-6"><label class="form-label small fw-semibold mb-1">Buscar</label><input class="form-control" name="q" value="{{ search }}" placeholder="Nombre, email, teléfono o dirección"></div>
+            <div class="col-md-4 col-lg-3"><label class="form-label small fw-semibold mb-1">Estado</label><select class="form-select" name="status"><option value="active" {% if status_filter == 'active' %}selected{% endif %}>Activos</option><option value="inactive" {% if status_filter == 'inactive' %}selected{% endif %}>Inactivos</option><option value="all" {% if status_filter == 'all' %}selected{% endif %}>Todos</option></select></div>
+            <div class="col-md-2 col-lg-3 d-grid"><button class="btn btn-outline-primary"><i class="bi bi-funnel me-1"></i>Aplicar filtros</button></div>
+          </form>
+        </div>
+        <div class="table-responsive">
+          <table class="table table-hover align-middle">
+            <thead><tr><th>Proveedor</th><th>Contacto</th><th>Compras</th><th>Estado</th><th class="text-end">Acciones</th></tr></thead>
+            <tbody>
+            {% for supplier in suppliers %}
+              {% set stats = supplier_stats.get(supplier.id, {'purchase_count': 0, 'total_amount': 0}) %}
+              <tr class="supplier-row">
+                <td><div class="d-flex align-items-center gap-3"><div class="supplier-avatar">{{ supplier.name[:1]|upper }}</div><div><div class="fw-semibold">{{ supplier.name }}</div><div class="small text-muted">{{ supplier.address or 'Sin dirección cargada' }}</div></div></div></td>
+                <td><div class="contact-line">{% if supplier.phone %}<div><i class="bi bi-telephone me-1"></i>{{ supplier.phone }}</div>{% endif %}{% if supplier.whatsapp %}<div><i class="bi bi-whatsapp me-1"></i>{{ supplier.whatsapp }}</div>{% endif %}{% if supplier.email %}<div><i class="bi bi-envelope me-1"></i>{{ supplier.email }}</div>{% endif %}{% if not supplier.phone and not supplier.whatsapp and not supplier.email %}<span>Sin datos de contacto</span>{% endif %}</div></td>
+                <td><div class="fw-semibold">{{ stats.purchase_count }}</div><div class="small text-muted">${{ '%.2f'|format(stats.total_amount or 0) }}</div></td>
+                <td><span class="badge rounded-pill {{ 'text-bg-success' if supplier.active else 'text-bg-secondary' }}">{{ 'Activo' if supplier.active else 'Inactivo' }}</span></td>
+                <td class="text-end"><div class="action-stack"><a class="btn btn-sm btn-primary" href="{{ url_for('purchases.supplier_purchases', supplier_id=supplier.id, company_id=selected_company_id) }}"><i class="bi bi-bag-check me-1"></i>Compras</a><button class="btn btn-sm btn-outline-secondary" data-bs-toggle="collapse" data-bs-target="#edit{{ supplier.id }}"><i class="bi bi-pencil me-1"></i>Editar</button><form class="d-inline" method="post" action="{{ url_for('purchases.toggle_supplier', supplier_id=supplier.id) }}"><input type="hidden" name="csrf_token" value="{{ csrf_token() }}"><button class="btn btn-sm {{ 'btn-outline-danger' if supplier.active else 'btn-outline-success' }}">{{ 'Desactivar' if supplier.active else 'Activar' }}</button></form></div></td>
+              </tr>
+              <tr class="collapse edit-row" id="edit{{ supplier.id }}"><td colspan="5"><form method="post" action="{{ url_for('purchases.update_supplier', supplier_id=supplier.id) }}" class="row g-2 align-items-end"><input type="hidden" name="csrf_token" value="{{ csrf_token() }}"><div class="col-md-4"><label class="form-label small">Nombre</label><input class="form-control" name="name" value="{{ supplier.name }}" required></div><div class="col-md-2"><label class="form-label small">Teléfono</label><input class="form-control" name="phone" value="{{ supplier.phone or '' }}"></div><div class="col-md-2"><label class="form-label small">WhatsApp</label><input class="form-control" name="whatsapp" value="{{ supplier.whatsapp or '' }}"></div><div class="col-md-4"><label class="form-label small">Email</label><input class="form-control" name="email" value="{{ supplier.email or '' }}"></div><div class="col-md-6"><label class="form-label small">Dirección</label><input class="form-control" name="address" value="{{ supplier.address or '' }}"></div><div class="col-md-6"><label class="form-label small">Observaciones</label><input class="form-control" name="notes" value="{{ supplier.notes or '' }}"></div><div class="col-12 text-end"><button class="btn btn-primary btn-sm"><i class="bi bi-check-lg me-1"></i>Guardar cambios</button></div></form></td></tr>
+            {% else %}
+              <tr><td colspan="5"><div class="empty-state"><div class="empty-icon"><i class="bi bi-people"></i></div><div class="fw-semibold text-dark">No encontramos proveedores</div><div class="small mt-1">Probá cambiar los filtros o cargá tu primer proveedor.</div></div></td></tr>
+            {% endfor %}
+            </tbody>
+          </table>
+        </div>
+      </section>
+    </div>
+
+    <div class="col-xl-4">
+      <section class="section-card new-card">
+        <div class="section-head"><div><div class="section-title"><i class="bi bi-person-plus me-1 text-primary"></i>Nuevo proveedor</div><div class="section-subtitle">Guardá sus datos para reutilizarlos en tus compras.</div></div></div>
+        <div class="p-3 p-lg-4">
+          <form method="post">
+            <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+            <div class="mb-3"><label class="form-label small fw-semibold">Nombre <span class="text-danger">*</span></label><input class="form-control" name="name" placeholder="Ej. Distribuidora Central" required></div>
+            <div class="row g-2"><div class="col-6"><label class="form-label small fw-semibold">Teléfono</label><input class="form-control" name="phone" placeholder="11 1234-5678"></div><div class="col-6"><label class="form-label small fw-semibold">WhatsApp</label><input class="form-control" name="whatsapp" placeholder="11 1234-5678"></div></div>
+            <div class="mt-3"><label class="form-label small fw-semibold">Email</label><input class="form-control" name="email" type="email" placeholder="contacto@empresa.com"></div>
+            <div class="mt-3"><label class="form-label small fw-semibold">Dirección</label><input class="form-control" name="address" placeholder="Calle y número"></div>
+            <div class="mt-3"><label class="form-label small fw-semibold">Observaciones</label><textarea class="form-control" name="notes" rows="3" placeholder="Horarios, condiciones, vendedor, etc."></textarea></div>
+            <button class="btn btn-primary w-100 mt-3"><i class="bi bi-person-plus me-1"></i>Guardar proveedor</button>
+          </form>
+        </div>
+      </section>
+    </div>
+  </div>
+  {% endif %}
+</div>
 {% endblock %}
