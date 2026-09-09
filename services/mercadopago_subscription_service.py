@@ -52,7 +52,8 @@ class MercadoPagoSubscriptionService:
         if existing_id:
             current = MercadoPagoService().get_preapproval(existing_id)
             current_status = str(current.get("status") or "").lower()
-            if current_status in {"authorized", "pending"}:
+            current_init_point = str(current.get("init_point") or "").strip()
+            if current_status in {"authorized", "pending"} and current_init_point:
                 return current
 
         external_reference = cls._external_reference(company_id=company.id, subscription_id=subscription.id)

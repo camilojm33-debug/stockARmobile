@@ -1242,6 +1242,13 @@ def create_mercadopago_subscription():
         checkout_url = response.get("init_point")
         if not checkout_url:
             raise RuntimeError("Mercado Pago no devolvió el enlace de autorización.")
+        current_app.logger.info(
+            "Checkout suscripción automática StockArMobile creado: company_id=%s subscription_id=%s plan_id=%s preapproval_id=%s",
+            company.id,
+            subscription.id,
+            plan.id,
+            response.get("id"),
+        )
         return redirect(checkout_url)
     except Exception as exc:
         db.session.rollback()
