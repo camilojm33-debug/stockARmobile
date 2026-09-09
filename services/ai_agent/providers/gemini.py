@@ -47,7 +47,13 @@ class GeminiProvider(AIProvider):
                 api_key=self.api_key,
                 http_options=types.HttpOptions(
                     timeout=int(self.timeout * 1000),
-                    retry_options=types.HttpRetryOptions(attempts=1),
+                    # 503 is a transient upstream condition. Allow one bounded retry,
+                    # while keeping the total request well below Gunicorn's 120s budget.
+                    retry_options=types.HttpRetryOptions(
+                        attempts=2,
+                        initial_delay=1.0,
+                        max_delay=3.0,
+                    ),
                     client_args={"transport": transport},
                 ),
             )
