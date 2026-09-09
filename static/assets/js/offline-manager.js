@@ -36,6 +36,22 @@
     return CRITICAL_PATH_RULES.some((rule) => rule.test(pathname));
   }
 
+  function isMercadoPagoOnlineForm(form) {
+    const action = new URL(form.action || window.location.href, window.location.origin);
+    return form.matches('form[data-mp-auto-subscription="true"]')
+      || action.pathname === '/subscription/ai-agent/checkout';
+  }
+
+  function prepareMercadoPagoOnlineForm(form) {
+    const loading = document.getElementById('appLoading');
+    if (loading) loading.classList.remove('show');
+    const button = form.querySelector('button[type="submit"], input[type="submit"]');
+    if (button) {
+      button.disabled = true;
+      if (button.matches('button')) button.textContent = 'Conectando con Mercado Pago…';
+    }
+  }
+
   function ensureOfflineUuid(form) {
     let input = form.querySelector('input[name="offline_uuid"]');
     if (!input) {
@@ -210,17 +226,10 @@
       const form = event.target;
       if (!(form instanceof HTMLFormElement)) return;
 
-      // Mercado Pago automatic subscription is an ordinary online POST.
-      // It must bypass the application's global blocking loader and must NOT
-      // be handled by the offline queue/interceptor.
-      if (form.matches('form[data-mp-auto-subscription="true"]')) {
-        const loading = document.getElementById('appLoading');
-        if (loading) loading.classList.remove('show');
-        const button = form.querySelector('[data-mp-auto-subscription-button="true"]');
-        if (button) {
-          button.disabled = true;
-          button.textContent = 'Conectando con Mercado Pago…';
-        }
+      // Mercado Pago subscriptions are ordinary online POSTs.
+      // They must bypass the application's global blocking loader and offline queue.
+      if (isMercadoPagoOnlineForm(form)) {
+        prepareMercadoPagoOnlineForm(form);
         event.stopImmediatePropagation();
         // Intentionally do not preventDefault: the native POST must continue.
         return;
