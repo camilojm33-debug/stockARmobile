@@ -52,11 +52,14 @@ def _context():
     ai_usage = usage_snapshot(company_id)
     agent_access = {key: can_use_ai(company, key) for key in AGENT_LABELS}
     invoice_access = can_use_ai(company, "facturas")
-    any_chat_agent = any(item.get("allowed") for item in agent_access.values())
+
+    # These values are consumed by the dashboard's extra_js block too.
+    # Keep them in the shared context because Jinja blocks have independent scopes.
+    any_chat_agent = any(access.allowed for access in agent_access.values())
     default_chat_agent = "asistente"
-    if not agent_access.get(default_chat_agent, {}).get("allowed"):
+    if not agent_access[default_chat_agent].allowed:
         for candidate in ("vendedor", "analista", "marketing"):
-            if agent_access.get(candidate, {}).get("allowed"):
+            if agent_access[candidate].allowed:
                 default_chat_agent = candidate
                 break
 
@@ -125,13 +128,11 @@ def campaign_transition(campaign_id):
 @bp.get("/<agent>")
 @tenant_required
 def agent(agent):
-    from services.ai_agent.usage_service import AGENT_LABELS
-    if agent not in AGENT_LABELS and agent != "planes":
-        return redirect(url_for("ai_agents.index"))
-    context = _context()
-    if agent == "planes":
-        return render_template("ai_agents/plans.html", view="planes", **context)
-    access = context["agent_access"].get(agent, {})
-    if not access.get("allowed"):
-        return render_template("ai_agents/index.html", view="locked", locked_agent=agent, locked_reason=access.get("reason") or "Este agente no está incluido en tu plan actual.", **context)
-    return render_template("ai_agents/index.html", view=agent, **context)
+    if agent not in {"vendedor", "asistente", "analista", "marketing", "planes"}:
+        from flask import abort
+        abort(404)
+    if agent != "planes":
+        access = _context()["agent_access"][agent]
+        if not access.allowed:
+            return render_template("ai_agents/index.html", view="locked", locked_agent=agent, locked_reason=access.reason, **_context())
+    return render_template("ai_agents/index.html", view=agent, **_context())
