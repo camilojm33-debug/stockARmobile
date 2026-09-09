@@ -36,22 +36,6 @@
     return CRITICAL_PATH_RULES.some((rule) => rule.test(pathname));
   }
 
-  function isMercadoPagoOnlineForm(form) {
-    const action = new URL(form.action || window.location.href, window.location.origin);
-    return form.matches('form[data-mp-auto-subscription="true"]')
-      || action.pathname === '/subscription/ai-agent/checkout';
-  }
-
-  function prepareMercadoPagoOnlineForm(form) {
-    const loading = document.getElementById('appLoading');
-    if (loading) loading.classList.remove('show');
-    const button = form.querySelector('button[type="submit"], input[type="submit"]');
-    if (button) {
-      button.disabled = true;
-      if (button.matches('button')) button.textContent = 'Conectando con Mercado Pago…';
-    }
-  }
-
   function ensureOfflineUuid(form) {
     let input = form.querySelector('input[name="offline_uuid"]');
     if (!input) {
@@ -225,15 +209,6 @@
     document.addEventListener('submit', function (event) {
       const form = event.target;
       if (!(form instanceof HTMLFormElement)) return;
-
-      // Mercado Pago subscriptions are ordinary online POSTs.
-      // They must bypass the application's global blocking loader and offline queue.
-      if (isMercadoPagoOnlineForm(form)) {
-        prepareMercadoPagoOnlineForm(form);
-        event.stopImmediatePropagation();
-        // Intentionally do not preventDefault: the native POST must continue.
-        return;
-      }
 
       if ((form.method || 'GET').toLowerCase() !== 'post') return;
       if (!navigator.onLine && isCriticalOfflineForm(form)) {

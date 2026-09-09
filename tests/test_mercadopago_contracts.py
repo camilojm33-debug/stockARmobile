@@ -46,6 +46,32 @@ def test_preapproval_explicitly_uses_pending_flow(monkeypatch):
     assert captured["payload"]["auto_recurring"]["currency_id"] == "ARS"
 
 
+def test_cancel_preapproval_uses_mercado_pago_cancelled_status(monkeypatch):
+    service = MercadoPagoService()
+    captured = {}
+
+    def fake_request(method, path, *, payload=None, access_token=None, idempotency_key=None):
+        captured.update(
+            {
+                "method": method,
+                "path": path,
+                "payload": payload,
+                "idempotency_key": idempotency_key,
+            }
+        )
+        return {"id": "preapproval-test", "status": "cancelled"}
+
+    monkeypatch.setattr(service, "_request", fake_request)
+
+    response = service.cancel_preapproval("preapproval-test")
+
+    assert response["status"] == "cancelled"
+    assert captured["method"] == "PUT"
+    assert captured["path"] == "/preapproval/preapproval-test"
+    assert captured["payload"] == {"status": "cancelled"}
+    assert captured["idempotency_key"] == "preapproval-update:preapproval-test:cancelled"
+
+
 def test_webhook_signature_matches_mercado_pago_manifest():
     import hashlib
     import hmac

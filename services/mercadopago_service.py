@@ -155,7 +155,7 @@ class MercadoPagoService:
         return self._request("PUT", f"/preapproval/{preapproval_id}", payload=payload, idempotency_key=f"preapproval-update:{preapproval_id}:{requested_status or 'update'}")
 
     def cancel_preapproval(self, preapproval_id: str) -> dict[str, Any]:
-        return self._request("PUT", f"/preapproval/{preapproval_id}", payload={"status": "canceled"}, idempotency_key=f"preapproval-update:{preapproval_id}:canceled")
+        return self._request("PUT", f"/preapproval/{preapproval_id}", payload={"status": "cancelled"}, idempotency_key=f"preapproval-update:{preapproval_id}:cancelled")
 
     def validate_webhook_signature(self, *, request_id: str, x_signature: str, data_id: str) -> bool:
         secret=(self.config.webhook_secret or "").strip()

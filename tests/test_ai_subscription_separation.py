@@ -282,3 +282,40 @@ def test_standard_webhook_updates_only_standard_subscription(subscription_app, m
     assert subscription.status == SubscriptionService.STATE_ACTIVE
     assert subscription.auto_renew is True
     assert AISubscriptionService.get_status(company) == ai_before
+
+
+def test_standard_auto_subscription_checkout_works_when_ai_is_active(subscription_app, monkeypatch):
+    company, user, _, subscription = _tenant_with_standard_subscription()
+    update_ai_preferences(company, ai_updates={"plan_code": "inicio", "status": "ACTIVA", "origin": "MERCADO_PAGO", "mercadopago_preapproval_id": "ai-pre"})
+    db.session.commit()
+    ai_before = deepcopy(AISubscriptionService.get_status(company))
+    calls = []
+
+    def create_standard_preapproval(*, db_session, company, subscription, plan, payer_email, notification_url, back_url):
+        calls.append({
+            "company_id": company.id,
+            "subscription_id": subscription.id,
+            "plan_id": plan.id,
+            "payer_email": payer_email,
+            "notification_url": notification_url,
+            "back_url": back_url,
+        })
+        return {"id": "standard-pre", "init_point": "https://mp.test/standard", "status": "pending"}
+
+    monkeypatch.setattr("services.mercadopago_subscription_service.MercadoPagoSubscriptionService.create", create_standard_preapproval)
+    client = subscription_app.test_client()
+    _login(client, user)
+
+    response = client.post("/admin/subscription/mercadopago/create", data={"plan_id": subscription.plan_id})
+
+    assert response.status_code == 302
+    assert response.headers["Location"] == "https://mp.test/standard"
+    assert calls == [{
+        "company_id": company.id,
+        "subscription_id": subscription.id,
+        "plan_id": subscription.plan_id,
+        "payer_email": user.email,
+        "notification_url": calls[0]["notification_url"],
+        "back_url": calls[0]["back_url"],
+    }]
+    assert AISubscriptionService.get_status(company) == ai_before
