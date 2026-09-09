@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import time
 from pathlib import Path
 from typing import Any, Dict, Iterable
@@ -230,6 +231,15 @@ class GeminiProvider(AIProvider):
         except (TypeError, ValueError):
             return None
 
+    @staticmethod
+    def _quota_retry_delay(exc: Exception) -> str | None:
+        message = str(exc)
+        match = re.search(r"Please retry in ([0-9]+(?:\.[0-9]+)?s)", message)
+        if match:
+            return match.group(1)
+        match = re.search(r"'retryDelay': '([^']+)'", message)
+        return match.group(1) if match else None
+
     def _generate_content_with_retry(self, *, model: str, contents, config):
         attempts = 2
         last_exc = None
@@ -238,7 +248,7 @@ class GeminiProvider(AIProvider):
                 return self.client.models._generate_content(model=model, contents=contents, config=config)
             except Exception as exc:
                 last_exc = exc
-                if attempt == 0 and self._api_error_code(exc) in {429, 503}:
+                if attempt == 0 and self._api_error_code(exc) == 503:
                     time.sleep(1.0)
                     continue
                 raise
@@ -258,7 +268,14 @@ class GeminiProvider(AIProvider):
         except Exception as exc:
             if self._is_timeout_error(exc):
                 raise AIProviderError("Gemini tardó demasiado en responder. Intentá nuevamente en unos segundos.", status_code=503) from exc
-            if self._api_error_code(exc) in {429, 503}:
+            api_error_code = self._api_error_code(exc)
+            if api_error_code == 429:
+                retry_delay = self._quota_retry_delay(exc)
+                message = "Se agotó la cuota disponible de Gemini para este modelo. Revisá el plan o la facturación de la API de Gemini."
+                if retry_delay:
+                    message = f"{message} Podés intentar nuevamente en {retry_delay}."
+                raise AIProviderError(message, status_code=429) from exc
+            if api_error_code in {503, 504}:
                 raise AIProviderError("Gemini está saturado temporalmente. Intentá nuevamente en unos segundos.", status_code=503) from exc
             raise AIProviderError("Gemini no pudo procesar la solicitud.", status_code=503) from exc
         self._capture_thought_signatures(response)
