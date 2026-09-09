@@ -35,22 +35,27 @@ class GeminiProvider(AIProvider):
     def client(self):
         if not self.api_key:
             raise RuntimeError("GEMINI_API_KEY no está configurada.")
+        if self._types is None:
+            try:
+                from google.genai import types
+            except ImportError as exc:
+                raise RuntimeError("La dependencia google-genai no está instalada.") from exc
+            self._types = types
         if self._client is None:
             try:
                 import httpx
                 from google import genai
-                from google.genai import types
             except ImportError as exc:
                 raise RuntimeError("La dependencia google-genai no está instalada.") from None
             # Fuerza IPv4: evita que httpx intente primero direcciones IPv6 que fallan en este entorno.
             transport = httpx.HTTPTransport(local_address="0.0.0.0")
             self._client = genai.Client(
                 api_key=self.api_key,
-                http_options=types.HttpOptions(
+                http_options=self._types.HttpOptions(
                     timeout=int(self.timeout * 1000),
                     # google-genai retries httpx read timeouts as transient errors too.
                     # Keep SDK attempts at 1 and retry only explicit 429/503 API responses below.
-                    retry_options=types.HttpRetryOptions(
+                    retry_options=self._types.HttpRetryOptions(
                         attempts=1,
                         initial_delay=1.0,
                         max_delay=3.0,
@@ -243,6 +248,7 @@ class GeminiProvider(AIProvider):
         effective_model = model or self.model
         if not effective_model:
             raise AIProviderError("El asistente IA no está configurado correctamente.", status_code=503)
+        self.client
         try:
             response = self._generate_content_with_retry(
                 model=effective_model,
