@@ -50,9 +50,22 @@
 
     <div class="col-lg-7">
       <div class="card app-card mb-4">
-        <div class="card-header bg-white fw-bold">{% if status.origin == 'MERCADO_PAGO' %}Cambiar plan IA{% else %}Asignar plan{% endif %}</div>
+        <div class="card-header bg-white fw-bold">
+          {% if status.origin == 'MERCADO_PAGO' and status.status in ['CANCELADA', 'VENCIDA'] %}
+            Tomar control manual
+          {% elif status.origin == 'MERCADO_PAGO' %}
+            Cambiar plan IA
+          {% else %}
+            Asignar plan
+          {% endif %}
+        </div>
         <div class="card-body">
-          {% if status.origin == 'MERCADO_PAGO' %}
+          {% if status.origin == 'MERCADO_PAGO' and status.status in ['CANCELADA', 'VENCIDA'] %}
+          <div class="alert alert-warning small mb-3">
+            Esta suscripción de Mercado Pago ya terminó. Podés convertirla en una suscripción <strong>MANUAL</strong> administrada por Super Admin.
+            Esto no reactiva ni modifica el preapproval anterior: se desvincula el cobro recurrente terminado y se inicia una nueva vigencia manual de 30 días.
+          </div>
+          {% elif status.origin == 'MERCADO_PAGO' %}
           <div class="alert alert-info small mb-3">Esta suscripción se administra mediante Mercado Pago. El cambio actualiza el mismo preapproval recurrente; no se crea un segundo cobro. Si Mercado Pago no confirma el cambio, el plan actual se conserva.</div>
           {% endif %}
           <form method="post" action="{{ url_for('saas.ai_subscriptions_action', company_id=company.id) }}" class="row g-2 align-items-end">
@@ -66,7 +79,11 @@
                 {% for plan in ai_plans %}<option value="{{ plan.code }}" {% if status.plan_code == plan.code %}selected{% endif %}>{{ plan.name }} · {{ plan.price }} · {{ plan.limit }} interacciones{% if plan.invoice_processing %} · Facturas IA{% endif %}</option>{% endfor %}
               </select>
             </div>
-            <div class="col-md-4"><button class="btn btn-primary w-100" type="submit">{% if status.origin == 'MERCADO_PAGO' %}Cambiar plan{% else %}Asignar plan{% endif %}</button></div>
+            <div class="col-md-4">
+              <button class="btn {% if status.origin == 'MERCADO_PAGO' and status.status in ['CANCELADA', 'VENCIDA'] %}btn-warning{% else %}btn-primary{% endif %} w-100" type="submit">
+                {% if status.origin == 'MERCADO_PAGO' and status.status in ['CANCELADA', 'VENCIDA'] %}Tomar control manual{% elif status.origin == 'MERCADO_PAGO' %}Cambiar plan{% else %}Asignar plan{% endif %}
+              </button>
+            </div>
           </form>
         </div>
       </div>
@@ -81,9 +98,12 @@
             <form method="post" action="{{ url_for('saas.ai_subscriptions_action', company_id=company.id) }}"><input type="hidden" name="action" value="reactivate"><input type="hidden" name="csrf_token" value="{{ csrf_token() }}"><input type="hidden" name="next" value="{{ request.path }}"><button class="btn btn-outline-success" type="submit">Reactivar</button></form>
             <form method="post" action="{{ url_for('saas.ai_subscriptions_action', company_id=company.id) }}"><input type="hidden" name="action" value="cancel"><input type="hidden" name="csrf_token" value="{{ csrf_token() }}"><input type="hidden" name="next" value="{{ request.path }}"><button class="btn btn-outline-danger" type="submit" onclick="return confirm('¿Seguro que querés cancelar la suscripción IA? Esta acción no afecta la suscripción StockArMobile.');">Cancelar</button></form>
           {% elif status.status in ['CANCELADA', 'VENCIDA'] and status.origin == 'MERCADO_PAGO' %}
+            <div class="small text-muted align-self-center">La suscripción MP terminó. Usá <strong>Tomar control manual</strong> arriba para administrarla como una suscripción manual, o contratá nuevamente por Mercado Pago.</div>
             <a class="btn btn-outline-primary" href="{{ url_for('ai_agents.agent', agent='planes') }}">Contratar nuevamente</a>
           {% elif status.status == 'CANCELADA' %}
             <form method="post" action="{{ url_for('saas.ai_subscriptions_action', company_id=company.id) }}"><input type="hidden" name="action" value="activate"><input type="hidden" name="csrf_token" value="{{ csrf_token() }}"><input type="hidden" name="next" value="{{ request.path }}"><button class="btn btn-outline-success" type="submit">Activar</button></form>
+          {% elif status.status == 'VENCIDA' %}
+            <form method="post" action="{{ url_for('saas.ai_subscriptions_action', company_id=company.id) }}"><input type="hidden" name="action" value="renew"><input type="hidden" name="csrf_token" value="{{ csrf_token() }}"><input type="hidden" name="next" value="{{ request.path }}"><input class="form-control form-control-sm" style="max-width:120px" type="number" name="days" min="1" max="365" value="30"><button class="btn btn-outline-primary" type="submit">Renovar</button></form>
           {% elif status.status == 'TRIAL' %}
             <form method="post" action="{{ url_for('saas.ai_subscriptions_action', company_id=company.id) }}"><input type="hidden" name="action" value="cancel"><input type="hidden" name="csrf_token" value="{{ csrf_token() }}"><input type="hidden" name="next" value="{{ request.path }}"><button class="btn btn-outline-danger" type="submit" onclick="return confirm('¿Seguro que querés cancelar la suscripción IA? Esta acción no afecta la suscripción StockArMobile.');">Cancelar</button></form>
           {% else %}
