@@ -108,15 +108,15 @@ class WebhookService:
         if event_type in {"subscription_preapproval", "subscription_preapproval_plan"}:
             from services.mercadopago_subscription_service import MercadoPagoSubscriptionService
             preapproval = self.mp_service.get_preapproval(data_id)
-            subscription = MercadoPagoSubscriptionService.sync_preapproval(db_session=db_session, preapproval=preapproval)
-            if subscription is not None:
-                result = {"status": "processed", "subscription_id": getattr(subscription, "id", None), "event_key": event_key}
-            else:
-                # No es una suscripcion comercial: puede ser una suscripcion IA (Company.preferences_json).
+            ref_parts = self._external_reference_parts(str(preapproval.get("external_reference") or ""))
+            if ref_parts.get("ai_subscription") == "true":
                 from services.ai_agent.subscription_service import AISubscriptionService
                 ai_company = AISubscriptionService.sync_from_mercadopago(preapproval=preapproval)
                 db_session.flush()
                 result = {"status": "processed_ai_subscription" if ai_company is not None else "ignored", "company_id": getattr(ai_company, "id", None), "event_key": event_key}
+            else:
+                subscription = MercadoPagoSubscriptionService.sync_preapproval(db_session=db_session, preapproval=preapproval)
+                result = {"status": "processed", "subscription_id": getattr(subscription, "id", None), "event_key": event_key} if subscription is not None else {"status": "ignored", "event_key": event_key}
 
         elif event_type == "subscription_authorized_payment":
             authorized = self.mp_service.get_authorized_payment(data_id)

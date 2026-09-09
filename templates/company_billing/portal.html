@@ -6,9 +6,9 @@
 <div class="app-shell subscription-shell">
   <div class="d-flex flex-wrap justify-content-between align-items-center gap-3 mb-4">
     <div>
-      <span class="page-kicker"><i class="bi bi-credit-card-2-front"></i> Suscripción</span>
+      <span class="page-kicker"><i class="bi bi-credit-card-2-front"></i> Suscripciones</span>
       <h1 class="h3 fw-bold mb-0">Mi Suscripción</h1>
-      <p class="text-muted mb-0">Administrá tu plan, pagos y facturas de StockArMobile en un solo lugar.</p>
+      <p class="text-muted mb-0">Administrá por separado StockArMobile y Agentes IA.</p>
     </div>
     <a class="btn btn-outline-secondary" href="{{ url_for('company_billing.company_settings', panel='company') }}"><i class="bi bi-building me-1"></i>Mi Empresa</a>
   </div>
@@ -38,7 +38,7 @@
 
   <div class="row g-3 mb-4">
     <div class="col-12">
-      <div class="small text-uppercase text-muted fw-semibold">Uso del plan</div>
+      <div class="small text-uppercase text-muted fw-semibold">Mi suscripción StockArMobile</div>
     </div>
     <div class="col-md-6 col-xl-4">
       <div class="card app-card h-100 subscription-summary-card">
@@ -51,7 +51,7 @@
     <div class="col-md-6 col-xl-4">
       <div class="card app-card h-100 subscription-summary-card">
         <div class="card-body">
-          <div class="small text-muted text-uppercase fw-semibold">Estado de la suscripción</div>
+          <div class="small text-muted text-uppercase fw-semibold">Estado StockArMobile</div>
           <span class="badge {{ status_badge.class }} fs-6">{{ status_badge.label }}</span>
         </div>
       </div>
@@ -90,10 +90,16 @@
     </div>
   </div>
 
-  <div class="card app-card mb-4">
-    <div class="card-header bg-white fw-bold d-flex justify-content-between align-items-center"><span>Planes de Agentes IA</span><a class="btn btn-sm btn-outline-primary" href="{{ url_for('ai_agents.agent', agent='planes') }}">Ver detalle</a></div>
+  <div id="suscripcion-ia" class="card app-card mb-4">
+    <div class="card-header bg-white fw-bold d-flex justify-content-between align-items-center"><span>Mi suscripción Agentes IA</span><a class="btn btn-sm btn-outline-primary" href="{{ url_for('ai_agents.agent', agent='planes') }}">Ver planes IA</a></div>
     <div class="card-body">
-      <div class="small text-muted mb-2">{% if ai_status and ai_status.plan_name %}Suscripción IA actual: <strong>{{ ai_status.plan_name }}</strong> · {{ ai_status.status or 'SIN ESTADO' }}{% if ai_status.origin %} · Origen: {{ ai_status.origin }}{% endif %}{% else %}Sin suscripción IA asignada todavía.{% endif %}</div>
+      <div class="row g-3 mb-3">
+        <div class="col-md-6 col-xl-3"><div class="border rounded p-3 h-100"><div class="small text-muted text-uppercase fw-semibold">Plan IA</div><div class="h5 fw-bold mb-0">{{ ai_status.plan_name if ai_status and ai_status.plan_name else 'Sin plan IA' }}</div></div></div>
+        <div class="col-md-6 col-xl-3"><div class="border rounded p-3 h-100"><div class="small text-muted text-uppercase fw-semibold">Estado IA</div><div class="h5 fw-bold mb-0">{{ ai_status.status if ai_status and ai_status.status else 'SIN ESTADO' }}</div></div></div>
+        <div class="col-md-6 col-xl-3"><div class="border rounded p-3 h-100"><div class="small text-muted text-uppercase fw-semibold">Uso IA</div><div class="h5 fw-bold mb-0">{{ ai_status.usage.used_usage if ai_status and ai_status.usage else 0 }} / {{ ai_status.usage.included_usage if ai_status and ai_status.usage else 0 }}</div></div></div>
+        <div class="col-md-6 col-xl-3"><div class="border rounded p-3 h-100"><div class="small text-muted text-uppercase fw-semibold">Método de pago IA</div><div class="h5 fw-bold mb-0">{% if ai_status and ai_status.origin == 'MERCADO_PAGO' %}Mercado Pago IA{% elif ai_status and ai_status.origin %}{{ ai_status.origin }}{% else %}Sin método IA{% endif %}</div></div></div>
+        <div class="col-md-6 col-xl-3"><div class="border rounded p-3 h-100"><div class="small text-muted text-uppercase fw-semibold">Próximo cobro IA</div><div class="h5 fw-bold mb-0">{{ ai_status.ends_at[:10] if ai_status and ai_status.ends_at else 'Sin fecha IA' }}</div></div></div>
+      </div>
       <div class="row g-3">
         {% for plan in ai_plans %}
         {% set is_active_plan = ai_status and ai_status.plan_code == plan.code and ai_status.status == 'ACTIVA' %}
@@ -123,7 +129,7 @@
   </div>
 
   <div class="card app-card mb-4">
-    <div class="card-header bg-white fw-bold">Acciones de suscripción</div>
+    <div class="card-header bg-white fw-bold">Acciones de suscripción StockArMobile</div>
     <div class="card-body d-flex flex-wrap gap-2">
       <a class="btn btn-primary" href="#planes-disponibles"><i class="bi bi-arrow-repeat me-1"></i>Actualizar plan</a>
       <a class="btn btn-outline-secondary" href="#actividad-suscripcion"><i class="bi bi-clock-history me-1"></i>Administrar suscripción</a>
@@ -144,13 +150,13 @@
   </div>
 
   <div class="card app-card mb-4 border-success">
-    <div class="card-header bg-white fw-bold">Métodos de pago Mercado Pago</div>
+    <div class="card-header bg-white fw-bold">Métodos de pago Mercado Pago StockArMobile</div>
     <div class="card-body">
       <div class="row g-3">
         <div class="col-md-6">
           <div class="border rounded p-3 h-100">
             <div class="d-flex justify-content-between align-items-start gap-2 mb-2">
-              <strong>Suscripción automática</strong>
+              <strong>Suscripción automática StockArMobile</strong>
               <span class="badge text-bg-success">Recomendado</span>
             </div>
             <p class="text-muted small mb-3">Autorizá una vez el cobro mensual y Mercado Pago realizará los próximos cobros automáticamente.</p>
@@ -167,7 +173,7 @@
         </div>
         <div class="col-md-6">
           <div class="border rounded p-3 h-100">
-            <strong>Mercado Pago QR</strong>
+            <strong>Mercado Pago QR StockArMobile</strong>
             <p class="text-muted small mb-3">Continuá usando el QR/checkout manual que ya tenés configurado.</p>
             <form method="post" action="{{ url_for('company_billing.create_checkout') }}" class="d-inline">
     <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">

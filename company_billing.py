@@ -1105,7 +1105,7 @@ def create_ai_subscription_checkout():
     plan = AI_PLAN_BY_CODE.get(plan_code)
     if plan is None:
         flash("Plan IA inválido.", "danger")
-        return redirect(url_for("company_billing.subscription_portal"))
+        return redirect(url_for("ai_agents.agent", agent="planes"))
 
     payment_method = (request.form.get("payment_method") or "automatic").strip().lower()
     if payment_method not in {"automatic", "qr"}:
@@ -1114,7 +1114,7 @@ def create_ai_subscription_checkout():
     payer_email = (getattr(current_user, "email", None) or getattr(company, "contact_email", None) or "").strip()
     if not payer_email or "@" not in payer_email:
         flash("Necesitás un email válido en tu cuenta para activar el cobro automático de IA.", "danger")
-        return redirect(url_for("company_billing.subscription_portal"))
+        return redirect(url_for("ai_agents.agent", agent="planes"))
 
     # Estado server-side de la suscripción IA de la empresa; nunca se confía en lo que envía el frontend.
     ai_status = AISubscriptionService.get_status(company)
@@ -1127,11 +1127,11 @@ def create_ai_subscription_checkout():
             flash("Tu suscripción IA ya está activa.", "info")
         else:
             flash("Ya tenés una suscripción IA activa. Para cambiar de plan primero debemos gestionar la suscripción actual.", "warning")
-        return redirect(url_for("company_billing.subscription_portal"))
+        return redirect(url_for("ai_agents.agent", agent="planes"))
 
     if current_status == "PENDIENTE" and existing_preapproval_id and current_plan_code != plan_code:
         flash("Ya tenés una suscripción IA pendiente. Para cambiar de plan primero debemos gestionar la suscripción actual.", "warning")
-        return redirect(url_for("company_billing.subscription_portal"))
+        return redirect(url_for("ai_agents.agent", agent="planes"))
 
     mp_service = MercadoPagoService()
 
@@ -1183,14 +1183,14 @@ def create_ai_subscription_checkout():
                 "currency": "ARS",
                 "qr_data_uri": BillingService._qr_data_uri(checkout_url),
             }
-            return redirect(url_for("company_billing.subscription_portal", checkout="ai_created"))
+            return redirect(url_for("company_billing.subscription_portal", checkout="ai_created", _anchor="suscripcion-ia"))
 
         return redirect(checkout_url)
     except (AISubscriptionError, RuntimeError, ValueError) as exc:
         db.session.rollback()
         current_app.logger.exception("Error creando suscripción IA Mercado Pago: %s", exc)
         flash(f"No se pudo iniciar la suscripción IA: {exc}", "danger")
-        return redirect(url_for("company_billing.subscription_portal"))
+        return redirect(url_for("ai_agents.agent", agent="planes"))
 
 
 @bp.route("/subscription/mercadopago/create", methods=["POST"])

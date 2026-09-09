@@ -26,7 +26,7 @@ bp = Blueprint("ai_agents", __name__, url_prefix="/agentes-ia")
 
 def _context():
     from app import Client, Company, Product, Quote, Sale, SaleItem
-    from services.subscription_service import SubscriptionService
+    from services.ai_agent.subscription_service import AISubscriptionService
 
     company_id = current_user.company_id
     company = Company.query.get(company_id)
@@ -75,8 +75,7 @@ def _context():
         Product.active.is_(True),
         ~Product.id.in_(sold_product_ids),
     ).count()
-    subscription = SubscriptionService.active_subscription_for_company(company_id)
-    plan = getattr(subscription, "plan", None)
+    ai_status = AISubscriptionService.get_status(company)
     ai_plan = current_plan(company)
     ai_usage = usage_snapshot(company_id)
     agent_access = {key: can_use_ai(company, key) for key in AGENT_LABELS}
@@ -98,14 +97,15 @@ def _context():
             "low_rotation": low_rotation,
             "opportunities": None,
         },
-        "plan": plan,
+        "ai_status": ai_status,
         "ai_plans": AI_PLANS,
         "agent_labels": AGENT_LABELS,
         "ai_plan": ai_plan,
         "ai_usage": ai_usage,
         "agent_access": agent_access,
         "invoice_access": invoice_access,
-        "plan_url": url_for("company_billing.subscription_portal"),
+        "plan_url": url_for("ai_agents.agent", agent="planes"),
+        "ai_checkout_url": url_for("company_billing.create_ai_subscription_checkout"),
         "config_url": url_for("ai_admin.index") if current_user.role == "admin" else None,
         "chat_url": url_for("dashboard.ai_agent_chat"),
     }
