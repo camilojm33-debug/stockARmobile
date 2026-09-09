@@ -52,8 +52,15 @@ def _context():
     ai_usage = usage_snapshot(company_id)
     agent_access = {key: can_use_ai(company, key) for key in AGENT_LABELS}
     invoice_access = can_use_ai(company, "facturas")
+    any_chat_agent = any(item.get("allowed") for item in agent_access.values())
+    default_chat_agent = "asistente"
+    if not agent_access.get(default_chat_agent, {}).get("allowed"):
+        for candidate in ("vendedor", "analista", "marketing"):
+            if agent_access.get(candidate, {}).get("allowed"):
+                default_chat_agent = candidate
+                break
 
-    return {"company": company, "agents": agents, "preferences": preferences, "metrics": {"conversations": conversations, "clients_attended": clients_attended, "quotes": quotes, "sales": int(sales_month.count())}, "analyst": {"sales_change": sales_change, "critical_stock": critical_stock, "low_rotation": low_rotation, "opportunities": None}, "ai_status": ai_status, "ai_plans": AI_PLANS, "agent_labels": AGENT_LABELS, "ai_plan": ai_plan, "ai_usage": ai_usage, "agent_access": agent_access, "invoice_access": invoice_access, "plan_url": url_for("ai_agents.agent", agent="planes"), "ai_checkout_url": url_for("company_billing.create_ai_subscription_checkout"), "config_url": url_for("ai_admin.index") if current_user.role == "admin" else None, "chat_url": url_for("dashboard.ai_agent_chat")}
+    return {"company": company, "agents": agents, "preferences": preferences, "metrics": {"conversations": conversations, "clients_attended": clients_attended, "quotes": quotes, "sales": int(sales_month.count())}, "analyst": {"sales_change": sales_change, "critical_stock": critical_stock, "low_rotation": low_rotation, "opportunities": None}, "ai_status": ai_status, "ai_plans": AI_PLANS, "agent_labels": AGENT_LABELS, "ai_plan": ai_plan, "ai_usage": ai_usage, "agent_access": agent_access, "invoice_access": invoice_access, "any_chat_agent": any_chat_agent, "default_chat_agent": default_chat_agent, "plan_url": url_for("ai_agents.agent", agent="planes"), "ai_checkout_url": url_for("company_billing.create_ai_subscription_checkout"), "config_url": url_for("ai_admin.index") if current_user.role == "admin" else None, "chat_url": url_for("dashboard.ai_agent_chat")}
 
 
 def _campaign_rows(company_id: int):
@@ -118,11 +125,13 @@ def campaign_transition(campaign_id):
 @bp.get("/<agent>")
 @tenant_required
 def agent(agent):
-    if agent not in {"vendedor", "asistente", "analista", "marketing", "planes"}:
-        from flask import abort
-        abort(404)
-    if agent != "planes":
-        access = _context()["agent_access"][agent]
-        if not access.allowed:
-            return render_template("ai_agents/index.html", view="locked", locked_agent=agent, locked_reason=access.reason, **_context())
-    return render_template("ai_agents/index.html", view=agent, **_context())
+    from services.ai_agent.usage_service import AGENT_LABELS
+    if agent not in AGENT_LABELS and agent != "planes":
+        return redirect(url_for("ai_agents.index"))
+    context = _context()
+    if agent == "planes":
+        return render_template("ai_agents/plans.html", view="planes", **context)
+    access = context["agent_access"].get(agent, {})
+    if not access.get("allowed"):
+        return render_template("ai_agents/index.html", view="locked", locked_agent=agent, locked_reason=access.get("reason") or "Este agente no está incluido en tu plan actual.", **context)
+    return render_template("ai_agents/index.html", view=agent, **context)
