@@ -139,8 +139,8 @@ def webhook():
                 continue
             WhatsAppService.send_text(company, to=sender, body=result["content"])
             processed += 1
-        except Exception as exc:
+        except Exception:
             db.session.rollback()
             current_app.logger.exception("WhatsApp agent error external_message_id=%s", external_id)
-            errors.append({"external_message_id": external_id, "error": str(exc)[:300]})
+            errors.append({"external_message_id": external_id, "error": "internal_error"})
     return jsonify({"success": True, "processed": processed, "errors": errors}), 200
