@@ -1,4 +1,4 @@
-const CACHE_NAME = 'stockarmobile-pwa-v9';
+const CACHE_NAME = 'stockarmobile-pwa-v10';
 const STATIC_ASSETS = [
   '/',
   '/offline.html',
@@ -40,6 +40,10 @@ const SYNCABLE_POST_PREFIXES = [
   '/compras/proveedores',
   '/gastos/',
   '/caja/',
+];
+const ONLINE_NAVIGATION_POST_PREFIXES = [
+  '/admin/subscription/mercadopago/create',
+  '/admin/subscription/ai-agent/checkout',
 ];
 const DB_NAME = 'stockarmobile-offline';
 const DB_VERSION = 3;
@@ -248,6 +252,9 @@ self.addEventListener('fetch', event => {
   const request = event.request;
   const url = new URL(request.url);
   if (request.method !== 'GET') {
+    if (ONLINE_NAVIGATION_POST_PREFIXES.some(prefix => url.pathname.startsWith(prefix))) {
+      return;
+    }
     if (SYNCABLE_POST_PREFIXES.some(prefix => url.pathname.startsWith(prefix))) {
       event.respondWith(queueWhenOffline(request));
       return;
