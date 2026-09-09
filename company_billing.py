@@ -1091,8 +1091,9 @@ def create_checkout():
 @bp.route("/subscription/ai-agent/checkout", methods=["POST"])
 @company_admin_required
 def create_ai_subscription_checkout():
-    """Crea una suscripcion recurrente de Mercado Pago para el plan IA elegido.
-    Reutiliza MercadoPagoService.create_preapproval() y AISubscriptionService; no crea un segundo catalogo de precios."""
+    """Crea o reutiliza una suscripcion recurrente de Mercado Pago para el plan IA elegido.
+    Reutiliza MercadoPagoService.create_preapproval()/get_preapproval() y AISubscriptionService;
+    no crea un segundo catalogo de precios ni un segundo generador de QR (BillingService._qr_data_uri)."""
     from app import Company, db
     from services.ai_agent.subscription_service import AISubscriptionError, AISubscriptionService
     from services.ai_agent.usage_service import AI_PLAN_BY_CODE
@@ -1106,32 +1107,84 @@ def create_ai_subscription_checkout():
         flash("Plan IA inválido.", "danger")
         return redirect(url_for("company_billing.subscription_portal"))
 
+    payment_method = (request.form.get("payment_method") or "automatic").strip().lower()
+    if payment_method not in {"automatic", "qr"}:
+        payment_method = "automatic"
+
     payer_email = (getattr(current_user, "email", None) or getattr(company, "contact_email", None) or "").strip()
     if not payer_email or "@" not in payer_email:
         flash("Necesitás un email válido en tu cuenta para activar el cobro automático de IA.", "danger")
         return redirect(url_for("company_billing.subscription_portal"))
 
+    # Estado server-side de la suscripción IA de la empresa; nunca se confía en lo que envía el frontend.
+    ai_status = AISubscriptionService.get_status(company)
+    current_status = str(ai_status.get("status") or "").strip().upper()
+    current_plan_code = str(ai_status.get("plan_code") or "").strip().lower()
+    existing_preapproval_id = str(ai_status.get("mercadopago_preapproval_id") or "").strip()
+
+    if current_status == "ACTIVA" and existing_preapproval_id:
+        if current_plan_code == plan_code:
+            flash("Tu suscripción IA ya está activa.", "info")
+        else:
+            flash("Ya tenés una suscripción IA activa. Para cambiar de plan primero debemos gestionar la suscripción actual.", "warning")
+        return redirect(url_for("company_billing.subscription_portal"))
+
+    if current_status == "PENDIENTE" and existing_preapproval_id and current_plan_code != plan_code:
+        flash("Ya tenés una suscripción IA pendiente. Para cambiar de plan primero debemos gestionar la suscripción actual.", "warning")
+        return redirect(url_for("company_billing.subscription_portal"))
+
+    mp_service = MercadoPagoService()
+
     try:
         # El precio SIEMPRE se resuelve server-side desde AI_PLANS; nunca se confia en un monto enviado por el navegador.
         amount = AISubscriptionService.plan_amount_ars(plan_code)
-        external_reference = f"ai_subscription:true|company_id:{company.id}|plan_code:{plan_code}|nonce:{uuid.uuid4().hex}"
-        config = load_billing_config()
-        response = MercadoPagoService().create_preapproval(
-            reason=f"StockArMobile IA - Plan {plan['name']}",
-            payer_email=payer_email,
-            external_reference=external_reference,
-            amount=amount,
-            currency="ARS",
-            frequency=1,
-            frequency_type="months",
-            notification_url=config.notification_url,
-            back_url=config.success_url,
-        )
-        preapproval_id = str(response.get("id") or "").strip()
-        checkout_url = str(response.get("init_point") or "").strip()
-        if not preapproval_id or not checkout_url:
-            raise RuntimeError("Mercado Pago no devolvió una suscripción IA válida (id/init_point).")
-        AISubscriptionService.link_mercadopago_pending(company, plan_code=plan_code, preapproval_id=preapproval_id, payer_email=payer_email)
+
+        preapproval_id = ""
+        checkout_url = ""
+
+        if current_status == "PENDIENTE" and existing_preapproval_id and current_plan_code == plan_code:
+            try:
+                remote = mp_service.get_preapproval(existing_preapproval_id)
+            except RuntimeError:
+                remote = {}
+            remote_status = str(remote.get("status") or "").strip().lower()
+            remote_init_point = str(remote.get("init_point") or "").strip()
+            if remote_status not in {"cancelled", "canceled", "expired"} and remote_init_point:
+                preapproval_id = existing_preapproval_id
+                checkout_url = remote_init_point
+
+        if not preapproval_id:
+            external_reference = f"ai_subscription:true|company_id:{company.id}|plan_code:{plan_code}|nonce:{uuid.uuid4().hex}"
+            config = load_billing_config()
+            response = mp_service.create_preapproval(
+                reason=f"StockArMobile IA - Plan {plan['name']}",
+                payer_email=payer_email,
+                external_reference=external_reference,
+                amount=amount,
+                currency="ARS",
+                frequency=1,
+                frequency_type="months",
+                notification_url=config.notification_url,
+                back_url=config.success_url,
+            )
+            preapproval_id = str(response.get("id") or "").strip()
+            checkout_url = str(response.get("init_point") or "").strip()
+            if not preapproval_id or not checkout_url:
+                raise RuntimeError("Mercado Pago no devolvió una suscripción IA válida (id/init_point).")
+            AISubscriptionService.link_mercadopago_pending(company, plan_code=plan_code, preapproval_id=preapproval_id, payer_email=payer_email)
+
+        if payment_method == "qr":
+            session["mp_checkout_preview"] = {
+                "kind": "ai_subscription",
+                "preapproval_id": preapproval_id,
+                "checkout_url": checkout_url,
+                "plan_name": plan["name"],
+                "amount": amount,
+                "currency": "ARS",
+                "qr_data_uri": BillingService._qr_data_uri(checkout_url),
+            }
+            return redirect(url_for("company_billing.subscription_portal", checkout="ai_created"))
+
         return redirect(checkout_url)
     except (AISubscriptionError, RuntimeError, ValueError) as exc:
         db.session.rollback()
