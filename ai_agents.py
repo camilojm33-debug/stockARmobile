@@ -36,84 +36,28 @@ def _context():
     month_start = now.replace(day=1, hour=0, minute=0, second=0, microsecond=0)
     previous_start = (month_start - timedelta(days=1)).replace(day=1)
 
-    conversations = Conversation.query.filter(
-        Conversation.company_id == company_id,
-        Conversation.created_at >= month_start,
-    ).count()
-    clients_attended = db.session.query(Conversation.external_conversation_id).filter(
-        Conversation.company_id == company_id,
-        Conversation.created_at >= month_start,
-        Conversation.external_conversation_id.isnot(None),
-    ).distinct().count()
+    conversations = Conversation.query.filter(Conversation.company_id == company_id, Conversation.created_at >= month_start).count()
+    clients_attended = db.session.query(Conversation.external_conversation_id).filter(Conversation.company_id == company_id, Conversation.created_at >= month_start, Conversation.external_conversation_id.isnot(None)).distinct().count()
     quotes = Quote.query.filter(Quote.company_id == company_id, Quote.created_at >= month_start).count()
-    sales_month = Sale.query.filter(
-        Sale.company_id == company_id,
-        Sale.created_at >= month_start,
-        Sale.status.notin_(["cancelada", "anulada"]),
-    )
-    sales_previous = Sale.query.filter(
-        Sale.company_id == company_id,
-        Sale.created_at >= previous_start,
-        Sale.created_at < month_start,
-        Sale.status.notin_(["cancelada", "anulada"]),
-    )
+    sales_month = Sale.query.filter(Sale.company_id == company_id, Sale.created_at >= month_start, Sale.status.notin_(["cancelada", "anulada"]))
+    sales_previous = Sale.query.filter(Sale.company_id == company_id, Sale.created_at >= previous_start, Sale.created_at < month_start, Sale.status.notin_(["cancelada", "anulada"]))
     sales_total = float(sales_month.with_entities(db.func.coalesce(db.func.sum(Sale.total_amount), 0)).scalar() or 0)
     previous_total = float(sales_previous.with_entities(db.func.coalesce(db.func.sum(Sale.total_amount), 0)).scalar() or 0)
     sales_change = None if previous_total == 0 else round(((sales_total - previous_total) / previous_total) * 100, 1)
-    critical_stock = Product.query.filter(
-        Product.company_id == company_id,
-        Product.active.is_(True),
-        Product.stock <= Product.min_stock,
-    ).count()
-    sold_product_ids = db.session.query(SaleItem.product_id).join(Sale).filter(
-        Sale.company_id == company_id,
-        Sale.created_at >= now - timedelta(days=90),
-        Sale.status.notin_(["cancelada", "anulada"]),
-    ).distinct()
-    low_rotation = Product.query.filter(
-        Product.company_id == company_id,
-        Product.active.is_(True),
-        ~Product.id.in_(sold_product_ids),
-    ).count()
+    critical_stock = Product.query.filter(Product.company_id == company_id, Product.active.is_(True), Product.stock <= Product.min_stock).count()
+    sold_product_ids = db.session.query(SaleItem.product_id).join(Sale).filter(Sale.company_id == company_id, Sale.created_at >= now - timedelta(days=90), Sale.status.notin_(["cancelada", "anulada"])).distinct()
+    low_rotation = Product.query.filter(Product.company_id == company_id, Product.active.is_(True), ~Product.id.in_(sold_product_ids)).count()
     ai_status = AISubscriptionService.get_status(company)
     ai_plan = current_plan(company)
     ai_usage = usage_snapshot(company_id)
     agent_access = {key: can_use_ai(company, key) for key in AGENT_LABELS}
     invoice_access = can_use_ai(company, "facturas")
 
-    return {
-        "company": company,
-        "agents": agents,
-        "preferences": preferences,
-        "metrics": {
-            "conversations": conversations,
-            "clients_attended": clients_attended,
-            "quotes": quotes,
-            "sales": int(sales_month.count()),
-        },
-        "analyst": {
-            "sales_change": sales_change,
-            "critical_stock": critical_stock,
-            "low_rotation": low_rotation,
-            "opportunities": None,
-        },
-        "ai_status": ai_status,
-        "ai_plans": AI_PLANS,
-        "agent_labels": AGENT_LABELS,
-        "ai_plan": ai_plan,
-        "ai_usage": ai_usage,
-        "agent_access": agent_access,
-        "invoice_access": invoice_access,
-        "plan_url": url_for("ai_agents.agent", agent="planes"),
-        "ai_checkout_url": url_for("company_billing.create_ai_subscription_checkout"),
-        "config_url": url_for("ai_admin.index") if current_user.role == "admin" else None,
-        "chat_url": url_for("dashboard.ai_agent_chat"),
-    }
+    return {"company": company, "agents": agents, "preferences": preferences, "metrics": {"conversations": conversations, "clients_attended": clients_attended, "quotes": quotes, "sales": int(sales_month.count())}, "analyst": {"sales_change": sales_change, "critical_stock": critical_stock, "low_rotation": low_rotation, "opportunities": None}, "ai_status": ai_status, "ai_plans": AI_PLANS, "agent_labels": AGENT_LABELS, "ai_plan": ai_plan, "ai_usage": ai_usage, "agent_access": agent_access, "invoice_access": invoice_access, "plan_url": url_for("ai_agents.agent", agent="planes"), "ai_checkout_url": url_for("company_billing.create_ai_subscription_checkout"), "config_url": url_for("ai_admin.index") if current_user.role == "admin" else None, "chat_url": url_for("dashboard.ai_agent_chat")}
 
 
 def _campaign_rows(company_id: int):
     from app import Campaign
-
     return Campaign.query.filter_by(company_id=company_id).order_by(Campaign.updated_at.desc(), Campaign.id.desc()).all()
 
 
@@ -125,7 +69,7 @@ def _campaign_summary(company_id: int):
 @bp.get("/")
 @tenant_required
 def index():
-    return render_template("ai_agents/index.html", view="dashboard", **_context())
+    return render_template("ai_agents/dashboard.html", view="dashboard", **_context())
 
 
 @bp.get("/campanas")
@@ -140,7 +84,6 @@ def campaign_detail(campaign_id):
     campaign = CampaignService._campaign(current_user.company_id, campaign_id)
     if campaign is None:
         from flask import abort
-
         abort(404)
     return render_template("ai_agents/campaign_detail.html", campaign=campaign, **_context())
 
@@ -177,7 +120,6 @@ def campaign_transition(campaign_id):
 def agent(agent):
     if agent not in {"vendedor", "asistente", "analista", "marketing", "planes"}:
         from flask import abort
-
         abort(404)
     if agent != "planes":
         access = _context()["agent_access"][agent]
