@@ -6,6 +6,14 @@ from abc import ABC, abstractmethod
 from typing import Any, Dict
 
 
+class AIProviderError(RuntimeError):
+    """User-facing provider failure with an HTTP status hint for web endpoints."""
+
+    def __init__(self, message: str, *, status_code: int = 503) -> None:
+        super().__init__(message)
+        self.status_code = status_code
+
+
 class AIProvider(ABC):
     """Abstract contract for future AI model providers."""
 

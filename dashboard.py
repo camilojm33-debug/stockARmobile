@@ -8,6 +8,7 @@ from flask_login import current_user, login_required
 from stockarmobile.extensions import csrf, db
 from stockarmobile.models.conversations import Conversation
 from services.ai_agent.config_service import ensure_agent_for_key
+from services.ai_agent.providers.base import AIProviderError
 from services.ai_agent.usage_service import can_use_ai
 from services.ai_agent.orchestrator import AgentOrchestrator
 from services.ai_agent.orchestrator_v2 import AgentRuntime
@@ -236,6 +237,15 @@ def ai_agent_chat():
     except ValueError as exc:
         db.session.rollback()
         return jsonify({"success": False, "error": str(exc)}), 400
+    except AIProviderError as exc:
+        db.session.rollback()
+        current_app.logger.exception(
+            "Proveedor IA no disponible: company_id=%s conversation_id=%s agent=%s",
+            company_id,
+            conversation.id,
+            agent_key,
+        )
+        return jsonify({"success": False, "error": str(exc)}), exc.status_code
     except Exception:
         db.session.rollback()
         current_app.logger.exception(

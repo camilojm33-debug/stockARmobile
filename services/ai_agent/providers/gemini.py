@@ -4,10 +4,11 @@ from __future__ import annotations
 
 import json
 import os
+import time
 from pathlib import Path
 from typing import Any, Dict, Iterable
 
-from .base import AIProvider
+from .base import AIProvider, AIProviderError
 
 
 class GeminiProvider(AIProvider):
@@ -47,10 +48,10 @@ class GeminiProvider(AIProvider):
                 api_key=self.api_key,
                 http_options=types.HttpOptions(
                     timeout=int(self.timeout * 1000),
-                    # 503 is a transient upstream condition. Allow one bounded retry,
-                    # while keeping the total request well below Gunicorn's 120s budget.
+                    # google-genai retries httpx read timeouts as transient errors too.
+                    # Keep SDK attempts at 1 and retry only explicit 429/503 API responses below.
                     retry_options=types.HttpRetryOptions(
-                        attempts=2,
+                        attempts=1,
                         initial_delay=1.0,
                         max_delay=3.0,
                     ),
@@ -212,19 +213,48 @@ class GeminiProvider(AIProvider):
             "total_tokens": cls._value(usage, "total_token_count", 0) or 0,
         }
 
+    @staticmethod
+    def _is_timeout_error(exc: Exception) -> bool:
+        return exc.__class__.__module__.startswith("httpx") and exc.__class__.__name__.endswith("Timeout")
+
+    @staticmethod
+    def _api_error_code(exc: Exception) -> int | None:
+        code = getattr(exc, "code", None)
+        try:
+            return int(code) if code is not None else None
+        except (TypeError, ValueError):
+            return None
+
+    def _generate_content_with_retry(self, *, model: str, contents, config):
+        attempts = 2
+        last_exc = None
+        for attempt in range(attempts):
+            try:
+                return self.client.models._generate_content(model=model, contents=contents, config=config)
+            except Exception as exc:
+                last_exc = exc
+                if attempt == 0 and self._api_error_code(exc) in {429, 503}:
+                    time.sleep(1.0)
+                    continue
+                raise
+        raise last_exc or RuntimeError("Gemini no devolvió respuesta.")
+
     def generate(self, *, messages, tools=None, model=None, temperature=None, max_tokens=None) -> Dict[str, Any]:
         effective_model = model or self.model
         if not effective_model:
-            raise RuntimeError("GEMINI_MODEL no está configurado.")
-        client = self.client
+            raise AIProviderError("El asistente IA no está configurado correctamente.", status_code=503)
         try:
-            response = client.models._generate_content(
+            response = self._generate_content_with_retry(
                 model=effective_model,
                 contents=self._contents(messages),
                 config=self._config(messages=messages, tools=tools, temperature=temperature, max_tokens=max_tokens),
             )
         except Exception as exc:
-            raise RuntimeError("Gemini no pudo procesar la solicitud.") from exc
+            if self._is_timeout_error(exc):
+                raise AIProviderError("Gemini tardó demasiado en responder. Intentá nuevamente en unos segundos.", status_code=503) from exc
+            if self._api_error_code(exc) in {429, 503}:
+                raise AIProviderError("Gemini está saturado temporalmente. Intentá nuevamente en unos segundos.", status_code=503) from exc
+            raise AIProviderError("Gemini no pudo procesar la solicitud.", status_code=503) from exc
         self._capture_thought_signatures(response)
         return {"content": str(self._value(response, "text", "") or ""), "tool_call": self._tool_call(response), "usage": self._usage(response), "model": effective_model}
 
