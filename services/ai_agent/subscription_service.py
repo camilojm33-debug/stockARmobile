@@ -180,54 +180,84 @@ class AISubscriptionService:
         preapproval_id = cls._preapproval_id(ai)
 
         if current_origin == "MERCADO_PAGO":
-            if current_status in {"CANCELADA", "VENCIDA"} or not preapproval_id:
-                raise AISubscriptionError(
-                    "La suscripción IA de Mercado Pago está terminada. Para contratar otro plan debe iniciar un nuevo checkout."
-                )
-            if current_plan_code == code:
-                return cls.get_status(company)
-
-            amount = cls.plan_amount_ars(code)
-            remote = cls._get_mp_preapproval(company)
-            remote_status = str(remote.get("status") or "").strip().lower()
-            if remote_status in MP_TERMINAL_STATUSES:
-                raise AISubscriptionError("Mercado Pago ya no tiene un preapproval IA operativo. Iniciá un nuevo checkout.")
-
-            payload = {
-                "reason": f"StockArMobile IA - Plan {AI_PLAN_BY_CODE[code]['name']}",
-                "auto_recurring": {
-                    "frequency": 1,
-                    "frequency_type": "months",
-                    "transaction_amount": amount,
-                    "currency_id": "ARS",
-                },
-            }
-            try:
-                updated = cls._mp_service().update_preapproval(preapproval_id, payload)
-            except Exception as exc:
-                raise AISubscriptionError("No se pudo actualizar el monto de la suscripción IA en Mercado Pago.") from exc
-
-            updated_id = str(updated.get("id") or "").strip()
-            if updated_id != preapproval_id:
-                raise AISubscriptionError("Mercado Pago devolvió un preapproval IA diferente al registrado.")
-            new_remote_status = str(updated.get("status") or remote_status).strip().lower()
-            if new_remote_status in MP_TERMINAL_STATUSES:
-                raise AISubscriptionError("Mercado Pago dejó de tener una suscripción IA operativa al cambiar el plan.")
-
-            return cls._apply(
-                company,
-                admin_user_id=admin_user_id,
-                action="ai_subscription_plan_changed",
-                new_fields={
+            # Una suscripción MP terminada ya no puede cobrar. Permitimos tomarla
+            # manualmente, pero archivamos la referencia anterior y eliminamos el
+            # vínculo operativo para que nunca vuelva a interpretarse como cobrable.
+            if current_status in {"CANCELADA", "VENCIDA"}:
+                now = utcnow_naive()
+                days = 30
+                archive_fields = {
+                    "mercadopago_previous_preapproval_id": preapproval_id or None,
+                    "mercadopago_previous_status": ai.get("mercadopago_status"),
+                    "mercadopago_previous_external_reference": ai.get("mercadopago_external_reference"),
+                    "mercadopago_preapproval_id": None,
+                    "mercadopago_status": None,
+                    "mercadopago_external_reference": None,
+                    "mercadopago_payer_email": None,
                     "plan_code": code,
-                    "status": current_status if current_status in VALID_STATUSES else "ACTIVA",
-                    "origin": "MERCADO_PAGO",
-                    "mercadopago_status": new_remote_status or "authorized",
-                },
-                reason=f"Cambio de plan IA a {code}; preapproval={preapproval_id}",
-            )
+                    "status": "ACTIVA",
+                    "origin": "MANUAL",
+                    "starts_at": now.isoformat(),
+                    "ends_at": (now + timedelta(days=days)).isoformat(),
+                    "granted_by_user_id": admin_user_id,
+                    "trial_reason": None,
+                    "manual_reason": "Activación manual por Super Admin luego de terminar la suscripción Mercado Pago.",
+                }
+                return cls._apply(
+                    company,
+                    admin_user_id=admin_user_id,
+                    action="ai_subscription_manual_takeover",
+                    new_fields=archive_fields,
+                    reason="Conversión segura de una suscripción IA MP terminal a gestión manual.",
+                )
 
-        # Una operación manual nunca debe convertir una suscripción MP existente en MANUAL.
+            if current_status in {"ACTIVA", "PENDIENTE", "SUSPENDIDA", "TRIAL"} and not preapproval_id:
+                raise AISubscriptionError("La suscripción IA figura administrada por Mercado Pago pero no tiene preapproval verificable.")
+
+            if current_status in {"ACTIVA", "PENDIENTE", "SUSPENDIDA", "TRIAL"}:
+                if current_plan_code == code:
+                    return cls.get_status(company)
+                amount = cls.plan_amount_ars(code)
+                remote = cls._get_mp_preapproval(company)
+                remote_status = str(remote.get("status") or "").strip().lower()
+                if remote_status in MP_TERMINAL_STATUSES:
+                    raise AISubscriptionError("Mercado Pago ya no tiene un preapproval IA operativo. Iniciá un nuevo checkout.")
+
+                payload = {
+                    "reason": f"StockArMobile IA - Plan {AI_PLAN_BY_CODE[code]['name']}",
+                    "auto_recurring": {
+                        "frequency": 1,
+                        "frequency_type": "months",
+                        "transaction_amount": amount,
+                        "currency_id": "ARS",
+                    },
+                }
+                try:
+                    updated = cls._mp_service().update_preapproval(preapproval_id, payload)
+                except Exception as exc:
+                    raise AISubscriptionError("No se pudo actualizar el monto de la suscripción IA en Mercado Pago.") from exc
+
+                updated_id = str(updated.get("id") or "").strip()
+                if updated_id != preapproval_id:
+                    raise AISubscriptionError("Mercado Pago devolvió un preapproval IA diferente al registrado.")
+                new_remote_status = str(updated.get("status") or remote_status).strip().lower()
+                if new_remote_status in MP_TERMINAL_STATUSES:
+                    raise AISubscriptionError("Mercado Pago dejó de tener una suscripción IA operativa al cambiar el plan.")
+
+                return cls._apply(
+                    company,
+                    admin_user_id=admin_user_id,
+                    action="ai_subscription_plan_changed",
+                    new_fields={
+                        "plan_code": code,
+                        "status": current_status if current_status in VALID_STATUSES else "ACTIVA",
+                        "origin": "MERCADO_PAGO",
+                        "mercadopago_status": new_remote_status or "authorized",
+                    },
+                    reason=f"Cambio de plan IA a {code}; preapproval={preapproval_id}",
+                )
+
+        # Una operación manual nunca debe convertir una suscripción MP viva en manual.
         if current_origin == "MERCADO_PAGO":
             raise AISubscriptionError("No se puede convertir una suscripción IA de Mercado Pago en manual desde esta acción.")
 
@@ -409,8 +439,6 @@ class AISubscriptionService:
         if parsed is None:
             raise AISubscriptionError("Fecha de vencimiento inválida.")
         return cls._apply(company, admin_user_id=admin_user_id, action="ai_subscription_set_expiry", new_fields={"ends_at": parsed.isoformat(), "origin": "MANUAL"})
-
-    # --- Mercado Pago (origin=MERCADO_PAGO). Reusa AI_PLANS/_apply; no crea un segundo catalogo ni servicio. ---
 
     @staticmethod
     def plan_amount_ars(plan_code: str) -> float:
