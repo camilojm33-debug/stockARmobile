@@ -1,7 +1,7 @@
 """supplier purchase payment details
 
 Revision ID: 20260909_01_supplier_purchase_payments
-Revises: 20260824_01_hard_delete_company_fk_cascade
+Revises: 20260908_01
 Create Date: 2026-09-09
 """
 
@@ -10,7 +10,7 @@ import sqlalchemy as sa
 
 
 revision = "20260909_01_supplier_purchase_payments"
-down_revision = "20260824_01_hard_delete_company_fk_cascade"
+down_revision = "20260908_01"
 branch_labels = None
 depends_on = None
 
