@@ -121,12 +121,54 @@ class WebhookService:
         elif event_type == "subscription_authorized_payment":
             authorized = self.mp_service.get_authorized_payment(data_id)
             preapproval_id = str(authorized.get("preapproval_id") or "").strip()
+            external_reference = str(authorized.get("external_reference") or "")
+            ref_parts = self._external_reference_parts(external_reference)
+            payment_info = authorized.get("payment") or {}
+            payment_id = str(payment_info.get("id") or "").strip()
+            payment_status = str(payment_info.get("status") or authorized.get("summarized") or "pending").lower()
+            if ref_parts.get("ai_subscription") == "true":
+                from services.ai_agent.subscription_service import AISubscriptionService
+
+                ai_company = None
+                should_sync_ai_preapproval = False
+                if preapproval_id:
+                    ai_company = AISubscriptionService.company_for_mercadopago_reference(preapproval_id=preapproval_id, external_reference=external_reference)
+                if ai_company is not None and payment_id:
+                    payment = Payment.query.filter_by(payment_id=payment_id).first()
+                    previous_payment_status = (payment.status or "").lower() if payment else ""
+                    if payment is None:
+                        payment = Payment(payment_id=payment_id, external_reference=external_reference, company_id=ai_company.id, subscription_id=None, user_id=None, amount=float(authorized.get("transaction_amount") or 0), currency=authorized.get("currency_id") or "ARS", status=payment_status, payment_method="mercadopago_ai_subscription", reference=preapproval_id, provider="mercadopago_ai_subscription", payload_json=json.dumps(authorized, ensure_ascii=False), paid_at=self._parse_mp_datetime(authorized.get("debit_date")) if payment_status == "approved" else None)
+                        db_session.add(payment)
+                        db_session.flush()
+                    else:
+                        payment.external_reference = external_reference or payment.external_reference
+                        payment.company_id = ai_company.id
+                        payment.subscription_id = None
+                        payment.amount = float(authorized.get("transaction_amount") or payment.amount or 0)
+                        payment.currency = authorized.get("currency_id") or payment.currency or "ARS"
+                        payment.status = payment_status
+                        payment.payment_method = payment.payment_method or "mercadopago_ai_subscription"
+                        payment.reference = preapproval_id
+                        payment.provider = "mercadopago_ai_subscription"
+                        payment.payload_json = json.dumps(authorized, ensure_ascii=False)
+                        payment.paid_at = self._parse_mp_datetime(authorized.get("debit_date")) or payment.paid_at
+                    if previous_payment_status != payment_status:
+                        should_sync_ai_preapproval = payment_status == "approved"
+                        AISubscriptionService.record_mercadopago_payment(ai_company, payment_id=payment_id, payment_status=payment_status, amount=float(payment.amount or 0), currency=payment.currency or "ARS", paid_at=payment.paid_at, preapproval_id=preapproval_id, external_reference=external_reference)
+                    if ai_company is not None and preapproval_id and should_sync_ai_preapproval:
+                        preapproval = self.mp_service.get_preapproval(preapproval_id)
+                        if not preapproval.get("external_reference"):
+                            preapproval["external_reference"] = external_reference
+                        ai_company = AISubscriptionService.sync_from_mercadopago(preapproval=preapproval)
+                        db_session.flush()
+                result = {"status": "processed_ai_subscription_payment", "company_id": getattr(ai_company, "id", None), "payment_status": payment_status, "payment_id": payment_id or None, "event_key": event_key}
+                event_row.status = result.get("status", "processed_ai_subscription_payment")
+                db_session.add(event_row)
+                return result
             subscription = None
             if preapproval_id:
                 rows = Subscription.query.filter(Subscription.metadata_json.contains(preapproval_id)).all()
                 subscription = next((row for row in rows if json.loads(row.metadata_json or "{}").get("mercadopago_preapproval_id") == preapproval_id), None)
-            payment_info = authorized.get("payment") or {}
-            payment_id = str(payment_info.get("id") or "").strip()
             if subscription is not None and payment_id:
                 payment = Payment.query.filter_by(payment_id=payment_id).first()
                 if payment is None:

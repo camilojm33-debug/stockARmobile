@@ -117,7 +117,7 @@
             <div class="col-sm-6 col-xl-4"><div class="border rounded p-2"><div class="text-muted small">Clientes</div><div class="fw-bold">{{ stats.clients }}</div></div></div>
             <div class="col-sm-6 col-xl-4"><div class="border rounded p-2"><div class="text-muted small">Ventas</div><div class="fw-bold">{{ stats.sales }}</div></div></div>
             <div class="col-sm-6 col-xl-4"><div class="border rounded p-2"><div class="text-muted small">Monto ventas</div><div class="fw-bold">${{ '%.2f'|format(stats.sales_amount) }}</div></div></div>
-            <div class="col-sm-6 col-xl-4"><div class="border rounded p-2"><div class="text-muted small">Pagos aprobados</div><div class="fw-bold">${{ '%.2f'|format(stats.payments_approved) }}</div></div></div>
+            <div class="col-sm-6 col-xl-4"><div class="border rounded p-2"><div class="text-muted small">Pagos aprobados total</div><div class="fw-bold">${{ '%.2f'|format(stats.payments_approved) }}</div><div class="small text-muted">Standard ${{ '%.2f'|format(stats.payments_standard_amount) }} · IA ${{ '%.2f'|format(stats.payments_ai_amount) }}</div></div></div>
           </div>
           <div class="small text-muted">
             Estado empresa: <span class="badge {{ 'text-bg-success' if company.active else 'text-bg-danger' }}">{{ 'Activa' if company.active else 'Suspendida' }}</span>
@@ -145,7 +145,7 @@
         <div class="card-body">
           {% for payment in last_payments %}
           <div class="d-flex justify-content-between border-bottom py-2 small">
-            <span>{{ payment.payment_id or payment.reference or 'Pago' }}</span>
+            <span>{{ payment_flow_label(payment) }} · {{ payment.payment_id or payment.reference or 'Pago' }}</span>
             <span class="text-muted">{{ payment.status }} · ${{ '%.2f'|format(payment.amount or 0) }}</span>
           </div>
           {% else %}

@@ -28,6 +28,7 @@ from services.business_billing_service import BusinessBillingService
 from services.company_security_service import CompanySecurityService
 from services.plan_service import PlanService
 from services.plan_usage_service import PlanUsageService
+from services.payment_flow import ai_subscription_payment_filter, payment_flow_label, standard_subscription_payment_filter
 from services.referral_service import ReferralService
 from services.subscription_service import SubscriptionService
 from services.webhook_service import WebhookService
@@ -864,9 +865,15 @@ def subscription_portal():
 
     usage_snapshot = PlanUsageService.usage_snapshot(company.id)
     recent_payments = (
-        Payment.query.filter_by(company_id=company.id)
+        Payment.query.filter(Payment.company_id == company.id, standard_subscription_payment_filter(Payment))
         .order_by(Payment.created_at.desc(), Payment.id.desc())
         .limit(20)
+        .all()
+    )
+    recent_ai_payments = (
+        Payment.query.filter(Payment.company_id == company.id, ai_subscription_payment_filter(Payment))
+        .order_by(Payment.created_at.desc(), Payment.id.desc())
+        .limit(10)
         .all()
     )
     recent_invoices = (
@@ -908,8 +915,23 @@ def subscription_portal():
                 "amount": float(payment.amount or 0),
                 "currency": payment.currency or currency,
                 "method": _human_payment_method(payment.payment_method),
+                "type": payment_flow_label(payment),
                 "receipt": payment.payment_id or f"#{payment.id}",
                 "payment_id": payment.id,
+            }
+        )
+    ai_payment_rows = []
+    for payment in recent_ai_payments:
+        status = _payment_status_badge(payment.status)
+        ai_payment_rows.append(
+            {
+                "date": payment.paid_at or payment.created_at,
+                "concept": "Suscripción IA",
+                "status": status,
+                "amount": float(payment.amount or 0),
+                "currency": payment.currency or "ARS",
+                "method": _human_payment_method(payment.payment_method),
+                "receipt": payment.payment_id or f"#{payment.id}",
             }
         )
     invoice_rows = []
@@ -978,6 +1000,7 @@ def subscription_portal():
         frequency_label=frequency_label,
         payment_method_label=payment_method_label,
         payment_rows=payment_rows,
+        ai_payment_rows=ai_payment_rows,
         invoice_rows=invoice_rows,
         timeline_items=timeline_items,
         selected_plan=selected_plan,
@@ -1025,7 +1048,7 @@ def subscription_payment_pdf(payment_id):
 
     company_id = getattr(current_user, "company_id", None)
     company = Company.query.filter_by(id=company_id).first_or_404()
-    payment = Payment.query.filter_by(id=payment_id, company_id=company.id).first_or_404()
+    payment = Payment.query.filter(Payment.id == payment_id, Payment.company_id == company.id, standard_subscription_payment_filter(Payment)).first_or_404()
     lines = [
         f"Empresa: {company.name}",
         f"Pago: {payment.payment_id or ('#' + str(payment.id))}",
@@ -1143,6 +1166,20 @@ def create_ai_subscription_checkout():
         flash("Tu suscripción IA ya está activa.", "info")
         return redirect(url_for("ai_agents.agent", agent="planes"))
 
+    if current_status == "ACTIVA" and current_plan_code != plan_code:
+        message = "Ya tenés un plan IA activo. Cancelalo explícitamente antes de contratar otro plan IA. Esta acción no afecta tu suscripción StockArMobile."
+        if _wants_json_response():
+            return jsonify({"success": False, "error": message}), 409
+        flash(message, "warning")
+        return redirect(url_for("ai_agents.agent", agent="planes"))
+
+    if current_status == "PENDIENTE" and existing_preapproval_id and current_plan_code != plan_code:
+        message = "Ya tenés un checkout IA pendiente de otro plan. Podés continuarlo o cancelar explícitamente la suscripción IA pendiente antes de elegir otro plan."
+        if _wants_json_response():
+            return jsonify({"success": False, "error": message}), 409
+        flash(message, "warning")
+        return redirect(url_for("ai_agents.agent", agent="planes"))
+
     mp_service = MercadoPagoService()
 
     try:
@@ -1151,9 +1188,6 @@ def create_ai_subscription_checkout():
 
         preapproval_id = ""
         checkout_url = ""
-
-        if current_status in {"ACTIVA", "PENDIENTE"} and existing_preapproval_id and current_plan_code != plan_code:
-            mp_service.cancel_preapproval(existing_preapproval_id)
 
         if current_status == "PENDIENTE" and existing_preapproval_id and current_plan_code == plan_code:
             try:
@@ -1184,7 +1218,7 @@ def create_ai_subscription_checkout():
             checkout_url = str(response.get("init_point") or "").strip()
             if not preapproval_id or not checkout_url:
                 raise RuntimeError("Mercado Pago no devolvió una suscripción IA válida (id/init_point).")
-            AISubscriptionService.link_mercadopago_pending(company, plan_code=plan_code, preapproval_id=preapproval_id, payer_email=payer_email)
+            AISubscriptionService.link_mercadopago_pending(company, plan_code=plan_code, preapproval_id=preapproval_id, payer_email=payer_email, external_reference=external_reference)
 
         if payment_method == "qr":
             session["mp_checkout_preview"] = {
@@ -1203,6 +1237,53 @@ def create_ai_subscription_checkout():
         db.session.rollback()
         current_app.logger.exception("Error creando suscripción IA Mercado Pago: %s", exc)
         return _checkout_error_response(f"No se pudo iniciar la suscripción IA: {exc}", url_for("ai_agents.agent", agent="planes"), status_code=500)
+
+
+@bp.route("/subscription/ai-agent/cancel", methods=["POST"])
+@company_admin_required
+def cancel_ai_subscription():
+    from app import Company, db
+    from services.ai_agent.subscription_service import AISubscriptionService
+    from services.mercadopago_service import MercadoPagoService
+
+    company_id = getattr(current_user, "company_id", None)
+    company = Company.query.filter_by(id=company_id).first_or_404()
+    if request.form.get("confirm_ai_cancel") != "1":
+        message = "Confirmá explícitamente la cancelación de la suscripción IA. Esta acción no afecta tu suscripción StockArMobile."
+        if _wants_json_response():
+            return jsonify({"success": False, "error": message}), 400
+        flash(message, "warning")
+        return redirect(url_for("company_billing.subscription_portal", _anchor="suscripcion-ia"))
+
+    ai_status = AISubscriptionService.get_status(company)
+    current_status = str(ai_status.get("status") or "").strip().upper()
+    if current_status not in {"ACTIVA", "PENDIENTE", "TRIAL", "SUSPENDIDA"}:
+        message = "No hay una suscripción IA activa o pendiente para cancelar."
+        if _wants_json_response():
+            return jsonify({"success": False, "error": message}), 400
+        flash(message, "warning")
+        return redirect(url_for("company_billing.subscription_portal", _anchor="suscripcion-ia"))
+
+    preapproval_id = str(ai_status.get("mercadopago_preapproval_id") or "").strip()
+    try:
+        if preapproval_id and ai_status.get("origin") == "MERCADO_PAGO":
+            MercadoPagoService().cancel_preapproval(preapproval_id)
+        AISubscriptionService.cancel(company, admin_user_id=current_user.id, reason="tenant_explicit_cancel")
+        db.session.commit()
+    except Exception as exc:
+        db.session.rollback()
+        current_app.logger.exception("Error cancelando suscripción IA: %s", exc)
+        message = f"No se pudo cancelar la suscripción IA: {exc}"
+        if _wants_json_response():
+            return jsonify({"success": False, "error": message}), 500
+        flash(message, "danger")
+        return redirect(url_for("company_billing.subscription_portal", _anchor="suscripcion-ia"))
+
+    message = "Suscripción IA cancelada. Tu suscripción StockArMobile no fue modificada."
+    if _wants_json_response():
+        return jsonify({"success": True, "message": message})
+    flash(message, "success")
+    return redirect(url_for("company_billing.subscription_portal", _anchor="suscripcion-ia"))
 
 
 @bp.route("/subscription/mercadopago/create", methods=["POST"])
@@ -2531,7 +2612,7 @@ def company_settings_billing_payment_pdf(payment_id):
     if blocked is not None:
         return blocked
 
-    payment = Payment.query.filter_by(id=payment_id, company_id=company.id).first_or_404()
+    payment = Payment.query.filter(Payment.id == payment_id, Payment.company_id == company.id, standard_subscription_payment_filter(Payment)).first_or_404()
     lines = [
         f"Empresa: {company.name}",
         f"Pago: {payment.payment_id or ('#' + str(payment.id))}",

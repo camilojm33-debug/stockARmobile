@@ -26,6 +26,15 @@ from sqlalchemy import text
 from app import model_table_exists, superadmin_required, utcnow
 from config.billing_config import load_billing_config
 from services.backup_service import BackupService
+from services.payment_flow import (
+    FLOW_AI_SUBSCRIPTION,
+    FLOW_STANDARD,
+    ai_subscription_payment_filter,
+    payment_flow,
+    payment_flow_label,
+    standard_subscription_payment_filter,
+    subscription_revenue_payment_filter,
+)
 from services.plan_service import PlanService
 
 bp = Blueprint("saas", __name__)
@@ -648,7 +657,7 @@ def _build_attention_queue(now):
 
     rejected_payments = (
         Payment.query.join(Company, Company.id == Payment.company_id)
-        .filter(Payment.status.in_(["rejected", "charged_back", "cancelled"]), Payment.created_at >= now - timedelta(days=15))
+        .filter(subscription_revenue_payment_filter(Payment), Payment.status.in_(["rejected", "charged_back", "cancelled"]), Payment.created_at >= now - timedelta(days=15))
         .order_by(Payment.created_at.desc())
         .limit(20)
         .all()
@@ -657,14 +666,14 @@ def _build_attention_queue(now):
         queue.append({
             "company_id": payment.company_id,
             "company_name": payment.company.name if payment.company else f"Empresa #{payment.company_id}",
-            "reason": "Pago rechazado",
+            "reason": f"Pago rechazado ({payment_flow_label(payment)})",
             "severity": "danger",
             "detail": f"{payment.status} · ${float(payment.amount or 0):.2f}",
         })
 
     pending_payments = (
         Payment.query.join(Company, Company.id == Payment.company_id)
-        .filter(Payment.status.in_(["pending", "authorized", "in_process"]), Payment.created_at >= now - timedelta(days=10))
+        .filter(subscription_revenue_payment_filter(Payment), Payment.status.in_(["pending", "authorized", "in_process"]), Payment.created_at >= now - timedelta(days=10))
         .order_by(Payment.created_at.desc())
         .limit(20)
         .all()
@@ -673,7 +682,7 @@ def _build_attention_queue(now):
         queue.append({
             "company_id": payment.company_id,
             "company_name": payment.company.name if payment.company else f"Empresa #{payment.company_id}",
-            "reason": "Pago pendiente",
+            "reason": f"Pago pendiente ({payment_flow_label(payment)})",
             "severity": "warning",
             "detail": f"{payment.status} · ${float(payment.amount or 0):.2f}",
         })
@@ -906,9 +915,14 @@ def index():
     trial_companies = Subscription.query.filter(Subscription.status == "trial").count()
     active_subscriptions = Subscription.query.filter(Subscription.status.in_(["active", "approved", "trial"])).count()
 
-    pending_payments = Payment.query.filter(Payment.status.in_(["pending", "authorized", "in_process"])).count()
-    rejected_payments = Payment.query.filter(Payment.status.in_(["rejected", "cancelled", "charged_back", "expired"])).count()
+    pending_payments_standard = Payment.query.filter(standard_subscription_payment_filter(Payment), Payment.status.in_(["pending", "authorized", "in_process"])).count()
+    pending_payments_ai = Payment.query.filter(ai_subscription_payment_filter(Payment), Payment.status.in_(["pending", "authorized", "in_process"])).count()
+    pending_payments = pending_payments_standard + pending_payments_ai
+    rejected_payments_standard = Payment.query.filter(standard_subscription_payment_filter(Payment), Payment.status.in_(["rejected", "cancelled", "charged_back", "expired"])).count()
+    rejected_payments_ai = Payment.query.filter(ai_subscription_payment_filter(Payment), Payment.status.in_(["rejected", "cancelled", "charged_back", "expired"])).count()
+    rejected_payments = rejected_payments_standard + rejected_payments_ai
     pending_payments_previous = Payment.query.filter(
+        subscription_revenue_payment_filter(Payment),
         Payment.status.in_(["pending", "authorized", "in_process"]),
         Payment.created_at >= previous_period_start,
         Payment.created_at < previous_period_end,
@@ -933,15 +947,23 @@ def index():
         .scalar()
         or 0
     )
-    income_month = (
+    income_month_standard = (
         db.session.query(db.func.coalesce(db.func.sum(Payment.amount), 0))
-        .filter(Payment.status == "approved", Payment.created_at >= month_start)
+        .filter(standard_subscription_payment_filter(Payment), Payment.status == "approved", Payment.created_at >= month_start)
         .scalar()
         or 0
     )
-    income_month_previous = (
+    income_month_ai = (
+        db.session.query(db.func.coalesce(db.func.sum(Payment.amount), 0))
+        .filter(ai_subscription_payment_filter(Payment), Payment.status == "approved", Payment.created_at >= month_start)
+        .scalar()
+        or 0
+    )
+    income_month = float(income_month_standard or 0) + float(income_month_ai or 0)
+    income_month_previous_standard = (
         db.session.query(db.func.coalesce(db.func.sum(Payment.amount), 0))
         .filter(
+            standard_subscription_payment_filter(Payment),
             Payment.status == "approved",
             Payment.created_at >= previous_month_start,
             Payment.created_at < previous_month_end,
@@ -949,12 +971,31 @@ def index():
         .scalar()
         or 0
     )
-    income_year = (
+    income_month_previous_ai = (
         db.session.query(db.func.coalesce(db.func.sum(Payment.amount), 0))
-        .filter(Payment.status == "approved", Payment.created_at >= year_start)
+        .filter(
+            ai_subscription_payment_filter(Payment),
+            Payment.status == "approved",
+            Payment.created_at >= previous_month_start,
+            Payment.created_at < previous_month_end,
+        )
         .scalar()
         or 0
     )
+    income_month_previous = float(income_month_previous_standard or 0) + float(income_month_previous_ai or 0)
+    income_year_standard = (
+        db.session.query(db.func.coalesce(db.func.sum(Payment.amount), 0))
+        .filter(standard_subscription_payment_filter(Payment), Payment.status == "approved", Payment.created_at >= year_start)
+        .scalar()
+        or 0
+    )
+    income_year_ai = (
+        db.session.query(db.func.coalesce(db.func.sum(Payment.amount), 0))
+        .filter(ai_subscription_payment_filter(Payment), Payment.status == "approved", Payment.created_at >= year_start)
+        .scalar()
+        or 0
+    )
+    income_year = float(income_year_standard or 0) + float(income_year_ai or 0)
 
     upcoming_renewals = (
         Subscription.query.filter(
@@ -969,7 +1010,7 @@ def index():
 
     last_registrations = Company.query.order_by(Company.created_at.desc()).limit(10).all()
     last_users = User.query.order_by(User.created_at.desc()).limit(10).all()
-    last_payments = Payment.query.order_by(Payment.created_at.desc()).limit(10).all()
+    last_payments = Payment.query.filter(subscription_revenue_payment_filter(Payment)).order_by(Payment.created_at.desc()).limit(10).all()
     last_errors = AuditLog.query.filter(
         db.or_(
             db.func.lower(AuditLog.action).like("%error%"),
@@ -1006,7 +1047,7 @@ def index():
             Subscription.query.filter(Subscription.starts_at >= start, Subscription.starts_at < end).count()
         )
         renewals_data.append(
-            Payment.query.filter(Payment.status == "approved", Payment.created_at >= start, Payment.created_at < end).count()
+            Payment.query.filter(subscription_revenue_payment_filter(Payment), Payment.status == "approved", Payment.created_at >= start, Payment.created_at < end).count()
         )
 
     plan_state_rows = (
@@ -1063,13 +1104,21 @@ def index():
         "active_subscriptions": active_subscriptions,
         "trial_companies": trial_companies,
         "pending_payments": pending_payments,
+        "pending_payments_standard": pending_payments_standard,
+        "pending_payments_ai": pending_payments_ai,
         "rejected_payments": rejected_payments,
+        "rejected_payments_standard": rejected_payments_standard,
+        "rejected_payments_ai": rejected_payments_ai,
         "mrr": float(mrr),
         "arr": float(mrr) * 12,
         "monthly_billing": float(monthly_billing),
         "annual_billing": float(annual_billing),
         "income_month": float(income_month),
+        "income_month_standard": float(income_month_standard),
+        "income_month_ai": float(income_month_ai),
         "income_year": float(income_year),
+        "income_year_standard": float(income_year_standard),
+        "income_year_ai": float(income_year_ai),
         "upcoming_renewals": upcoming_renewals,
         "growth_labels": growth_labels,
         "growth_companies_data": growth_companies_data,
@@ -1127,7 +1176,7 @@ def index():
     ).count()
     income_today = (
         db.session.query(db.func.coalesce(db.func.sum(Payment.amount), 0))
-        .filter(Payment.status == "approved", Payment.created_at >= datetime(now.year, now.month, now.day))
+        .filter(subscription_revenue_payment_filter(Payment), Payment.status == "approved", Payment.created_at >= datetime(now.year, now.month, now.day))
         .scalar()
         or 0
     )
@@ -1162,6 +1211,7 @@ def index():
     income_today_previous = (
         db.session.query(db.func.coalesce(db.func.sum(Payment.amount), 0))
         .filter(
+            subscription_revenue_payment_filter(Payment),
             Payment.status == "approved",
             Payment.created_at >= datetime(previous_period_end.year, previous_period_end.month, previous_period_end.day),
             Payment.created_at < datetime(previous_period_end.year, previous_period_end.month, previous_period_end.day) + timedelta(days=1),
@@ -1878,6 +1928,8 @@ def company_detail(company_id):
         .first()
     )
     effective_state = SubscriptionService.resolve_company_access_state(company, subscription=subscription)
+    payments_standard_amount = float(db.session.query(db.func.coalesce(db.func.sum(Payment.amount), 0)).filter(Payment.company_id == company.id, standard_subscription_payment_filter(Payment), Payment.status == "approved").scalar() or 0)
+    payments_ai_amount = float(db.session.query(db.func.coalesce(db.func.sum(Payment.amount), 0)).filter(Payment.company_id == company.id, ai_subscription_payment_filter(Payment), Payment.status == "approved").scalar() or 0)
     stats = {
         "users": User.query.filter_by(company_id=company.id).count(),
         "active_users": User.query.filter_by(company_id=company.id, active=True).count(),
@@ -1885,10 +1937,12 @@ def company_detail(company_id):
         "clients": Client.query.filter_by(company_id=company.id, active=True).count(),
         "sales": Sale.query.filter_by(company_id=company.id).count(),
         "sales_amount": float(db.session.query(db.func.coalesce(db.func.sum(Sale.total_amount), 0)).filter(Sale.company_id == company.id).scalar() or 0),
-        "payments_approved": float(db.session.query(db.func.coalesce(db.func.sum(Payment.amount), 0)).filter(Payment.company_id == company.id, Payment.status == "approved").scalar() or 0),
+        "payments_approved": payments_standard_amount + payments_ai_amount,
+        "payments_standard_amount": payments_standard_amount,
+        "payments_ai_amount": payments_ai_amount,
     }
     pin_revealed_once = session.pop(f"company_pin_reveal_{company.id}", None)
-    last_payments = Payment.query.filter_by(company_id=company.id).order_by(Payment.created_at.desc()).limit(10).all()
+    last_payments = Payment.query.filter(Payment.company_id == company.id, subscription_revenue_payment_filter(Payment)).order_by(Payment.created_at.desc()).limit(10).all()
     audit = AuditLog.query.filter_by(company_id=company.id).order_by(AuditLog.created_at.desc()).limit(20).all()
     return render_template(
         "saas/company_detail.html",
@@ -1897,6 +1951,7 @@ def company_detail(company_id):
         effective_state=effective_state,
         stats=stats,
         last_payments=last_payments,
+        payment_flow_label=payment_flow_label,
         audit=audit,
         pin_revealed_once=pin_revealed_once,
     )
@@ -2096,19 +2151,25 @@ def billing():
 
     _require_superadmin()
     invoices = Invoice.query.order_by(Invoice.issued_at.desc()).limit(40).all()
-    payments = Payment.query.order_by(Payment.created_at.desc()).limit(40).all()
+    payments = Payment.query.filter(subscription_revenue_payment_filter(Payment)).order_by(Payment.created_at.desc()).limit(40).all()
     history = PaymentHistory.query.order_by(PaymentHistory.created_at.desc()).limit(30).all()
     companies = Company.query.order_by(Company.created_at.desc()).all()
     subscriptions = Subscription.query.order_by(Subscription.start_date.desc().nullslast(), Subscription.id.desc()).limit(40).all()
 
     totals = {
         "total_invoiced": float(db.session.query(db.func.coalesce(db.func.sum(Invoice.amount), 0)).scalar() or 0),
-        "total_paid": float(db.session.query(db.func.coalesce(db.func.sum(Payment.amount), 0)).filter(Payment.status == "approved").scalar() or 0),
-        "pending_payments": Payment.query.filter(Payment.status.in_(["pending", "authorized", "in_process"])).count(),
+        "total_paid_standard": float(db.session.query(db.func.coalesce(db.func.sum(Payment.amount), 0)).filter(standard_subscription_payment_filter(Payment), Payment.status == "approved").scalar() or 0),
+        "total_paid_ai": float(db.session.query(db.func.coalesce(db.func.sum(Payment.amount), 0)).filter(ai_subscription_payment_filter(Payment), Payment.status == "approved").scalar() or 0),
         "pending_invoices": Invoice.query.filter(Invoice.status.in_(["pending", "draft", "issued"])).count(),
-        "rejected_payments": Payment.query.filter(Payment.status.in_(["rejected", "cancelled", "expired", "charged_back"])).count(),
+        "pending_payments_standard": Payment.query.filter(standard_subscription_payment_filter(Payment), Payment.status.in_(["pending", "authorized", "in_process"])).count(),
+        "pending_payments_ai": Payment.query.filter(ai_subscription_payment_filter(Payment), Payment.status.in_(["pending", "authorized", "in_process"])).count(),
+        "rejected_payments_standard": Payment.query.filter(standard_subscription_payment_filter(Payment), Payment.status.in_(["rejected", "cancelled", "expired", "charged_back"])).count(),
+        "rejected_payments_ai": Payment.query.filter(ai_subscription_payment_filter(Payment), Payment.status.in_(["rejected", "cancelled", "expired", "charged_back"])).count(),
         "trial_companies": Subscription.query.filter(Subscription.status == "trial").count(),
     }
+    totals["total_paid"] = totals["total_paid_standard"] + totals["total_paid_ai"]
+    totals["pending_payments"] = totals["pending_payments_standard"] + totals["pending_payments_ai"]
+    totals["rejected_payments"] = totals["rejected_payments_standard"] + totals["rejected_payments_ai"]
     return render_template(
         "saas/billing.html",
         invoices=invoices,
@@ -2117,6 +2178,8 @@ def billing():
         companies=companies,
         subscriptions=subscriptions,
         totals=totals,
+        payment_flow=payment_flow,
+        payment_flow_label=payment_flow_label,
         mp_config=load_billing_config(),
     )
 
@@ -2216,7 +2279,7 @@ def subscriptions_panel():
     if company_ids:
         for row in (
             db.session.query(Payment.company_id, db.func.max(Payment.paid_at).label("last_paid_at"))
-            .filter(Payment.company_id.in_(company_ids), Payment.status.in_(confirmed_payment_statuses), Payment.paid_at.isnot(None))
+            .filter(Payment.company_id.in_(company_ids), standard_subscription_payment_filter(Payment), Payment.status.in_(confirmed_payment_statuses), Payment.paid_at.isnot(None))
             .group_by(Payment.company_id)
             .all()
         ):
@@ -2981,7 +3044,7 @@ def payments_panel():
 
     _require_superadmin()
     payments = Payment.query.order_by(Payment.created_at.desc()).limit(200).all()
-    return render_template("saas/payments.html", payments=payments)
+    return render_template("saas/payments.html", payments=payments, payment_flow_label=payment_flow_label)
 
 
 @bp.route("/trials")
@@ -3369,8 +3432,10 @@ def export_metrics():
         ("Suscripciones", Subscription.query.count()),
         ("Empresas trial", Subscription.query.filter(Subscription.status == "trial").count()),
         ("Empresas suspendidas", Subscription.query.filter(Subscription.status.in_(["suspended", "expired", "cancelled", "rejected", "charged_back"])).count()),
-        ("Pagos pendientes", Payment.query.filter(Payment.status.in_(["pending", "authorized", "in_process"])).count()),
-        ("Pagos rechazados", Payment.query.filter(Payment.status.in_(["rejected", "cancelled", "expired", "charged_back"])).count()),
+        ("Pagos pendientes Standard", Payment.query.filter(standard_subscription_payment_filter(Payment), Payment.status.in_(["pending", "authorized", "in_process"])).count()),
+        ("Pagos pendientes IA", Payment.query.filter(ai_subscription_payment_filter(Payment), Payment.status.in_(["pending", "authorized", "in_process"])).count()),
+        ("Pagos rechazados Standard", Payment.query.filter(standard_subscription_payment_filter(Payment), Payment.status.in_(["rejected", "cancelled", "expired", "charged_back"])).count()),
+        ("Pagos rechazados IA", Payment.query.filter(ai_subscription_payment_filter(Payment), Payment.status.in_(["rejected", "cancelled", "expired", "charged_back"])).count()),
         ("MRR", float(mrr_total)),
         ("ARR", float(mrr_total) * 12),
     ]

@@ -31,6 +31,8 @@
           </div>
           <div class="small text-muted">Consumo: <strong>{{ status.usage.used_usage }} / {{ status.usage.included_usage }}</strong> · {{ status.usage.percent }}%</div>
           <div class="small text-muted">Inicio: {{ status.starts_at or '-' }}</div>
+          <div class="small text-muted">Mercado Pago: {{ status.mercadopago_status or '-' }}</div>
+          <div class="small text-muted">Último pago IA: {{ status.last_payment_at or '-' }}{% if status.last_payment_id %} · {{ status.last_payment_id }} · {{ status.last_payment_status or '-' }}{% endif %}</div>
           <div class="small text-muted mb-0">Vence: {{ status.ends_at or '-' }}</div>
         </div>
       </div>
@@ -75,14 +77,14 @@
           {# Acciones contextuales por estado; el backend (AISubscriptionService) sigue siendo la autoridad real. #}
           {% if status.status == 'ACTIVA' %}
             <form method="post" action="{{ url_for('saas.ai_subscriptions_action', company_id=company.id) }}"><input type="hidden" name="action" value="suspend"><input type="hidden" name="csrf_token" value="{{ csrf_token() }}"><input type="hidden" name="next" value="{{ request.path }}"><button class="btn btn-outline-warning" type="submit">Suspender</button></form>
-            <form method="post" action="{{ url_for('saas.ai_subscriptions_action', company_id=company.id) }}"><input type="hidden" name="action" value="cancel"><input type="hidden" name="csrf_token" value="{{ csrf_token() }}"><input type="hidden" name="next" value="{{ request.path }}"><button class="btn btn-outline-danger" type="submit" onclick="return confirm('¿Cancelar la suscripción IA?');">Cancelar</button></form>
+            <form method="post" action="{{ url_for('saas.ai_subscriptions_action', company_id=company.id) }}"><input type="hidden" name="action" value="cancel"><input type="hidden" name="csrf_token" value="{{ csrf_token() }}"><input type="hidden" name="next" value="{{ request.path }}"><button class="btn btn-outline-danger" type="submit" onclick="return confirm('¿Seguro que querés cancelar la suscripción IA? Esta acción no afecta la suscripción StockArMobile.');">Cancelar</button></form>
           {% elif status.status == 'SUSPENDIDA' %}
             <form method="post" action="{{ url_for('saas.ai_subscriptions_action', company_id=company.id) }}"><input type="hidden" name="action" value="reactivate"><input type="hidden" name="csrf_token" value="{{ csrf_token() }}"><input type="hidden" name="next" value="{{ request.path }}"><button class="btn btn-outline-success" type="submit">Reactivar</button></form>
-            <form method="post" action="{{ url_for('saas.ai_subscriptions_action', company_id=company.id) }}"><input type="hidden" name="action" value="cancel"><input type="hidden" name="csrf_token" value="{{ csrf_token() }}"><input type="hidden" name="next" value="{{ request.path }}"><button class="btn btn-outline-danger" type="submit" onclick="return confirm('¿Cancelar la suscripción IA?');">Cancelar</button></form>
+            <form method="post" action="{{ url_for('saas.ai_subscriptions_action', company_id=company.id) }}"><input type="hidden" name="action" value="cancel"><input type="hidden" name="csrf_token" value="{{ csrf_token() }}"><input type="hidden" name="next" value="{{ request.path }}"><button class="btn btn-outline-danger" type="submit" onclick="return confirm('¿Seguro que querés cancelar la suscripción IA? Esta acción no afecta la suscripción StockArMobile.');">Cancelar</button></form>
           {% elif status.status == 'CANCELADA' %}
             <form method="post" action="{{ url_for('saas.ai_subscriptions_action', company_id=company.id) }}"><input type="hidden" name="action" value="activate"><input type="hidden" name="csrf_token" value="{{ csrf_token() }}"><input type="hidden" name="next" value="{{ request.path }}"><button class="btn btn-outline-success" type="submit">Activar</button></form>
           {% elif status.status == 'TRIAL' %}
-            <form method="post" action="{{ url_for('saas.ai_subscriptions_action', company_id=company.id) }}"><input type="hidden" name="action" value="cancel"><input type="hidden" name="csrf_token" value="{{ csrf_token() }}"><input type="hidden" name="next" value="{{ request.path }}"><button class="btn btn-outline-danger" type="submit" onclick="return confirm('¿Cancelar la suscripción IA?');">Cancelar</button></form>
+            <form method="post" action="{{ url_for('saas.ai_subscriptions_action', company_id=company.id) }}"><input type="hidden" name="action" value="cancel"><input type="hidden" name="csrf_token" value="{{ csrf_token() }}"><input type="hidden" name="next" value="{{ request.path }}"><button class="btn btn-outline-danger" type="submit" onclick="return confirm('¿Seguro que querés cancelar la suscripción IA? Esta acción no afecta la suscripción StockArMobile.');">Cancelar</button></form>
           {% else %}
             <form method="post" action="{{ url_for('saas.ai_subscriptions_action', company_id=company.id) }}"><input type="hidden" name="action" value="activate"><input type="hidden" name="csrf_token" value="{{ csrf_token() }}"><input type="hidden" name="next" value="{{ request.path }}"><button class="btn btn-outline-success" type="submit">Activar</button></form>
           {% endif %}

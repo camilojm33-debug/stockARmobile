@@ -63,6 +63,13 @@ class AISubscriptionService:
             "granted_by_user_id": ai.get("granted_by_user_id"),
             "trial_reason": ai.get("trial_reason"),
             "mercadopago_preapproval_id": ai.get("mercadopago_preapproval_id"),
+            "mercadopago_status": ai.get("mercadopago_status"),
+            "mercadopago_external_reference": ai.get("mercadopago_external_reference"),
+            "last_payment_id": ai.get("last_payment_id"),
+            "last_payment_status": ai.get("last_payment_status"),
+            "last_payment_at": ai.get("last_payment_at"),
+            "last_payment_amount": ai.get("last_payment_amount"),
+            "last_payment_currency": ai.get("last_payment_currency"),
             "usage": snapshot,
         }
 
@@ -186,7 +193,7 @@ class AISubscriptionService:
         return float(digits)
 
     @classmethod
-    def link_mercadopago_pending(cls, company, *, plan_code: str, preapproval_id: str, payer_email: str) -> dict[str, Any]:
+    def link_mercadopago_pending(cls, company, *, plan_code: str, preapproval_id: str, payer_email: str, external_reference: str | None = None) -> dict[str, Any]:
         """Registra el preapproval reci\u00e9n creado ANTES de redirigir a Mercado Pago. Queda en PENDIENTE hasta que el webhook confirme."""
         code = str(plan_code or "").strip().lower()
         if code not in AI_PLAN_BY_CODE:
@@ -199,7 +206,42 @@ class AISubscriptionService:
             "origin": "MERCADO_PAGO",
             "mercadopago_preapproval_id": str(preapproval_id).strip(),
             "mercadopago_payer_email": str(payer_email or "").strip().lower(),
+            "mercadopago_external_reference": str(external_reference or "").strip() or None,
+            "mercadopago_status": "pending",
         })
+
+    @classmethod
+    def company_for_mercadopago_reference(cls, *, preapproval_id: str, external_reference: str):
+        from app import Company
+
+        parts = dict(segment.split(":", 1) for segment in str(external_reference or "").split("|") if ":" in segment)
+        if parts.get("ai_subscription") != "true":
+            return None
+        try:
+            company_id = int(parts.get("company_id") or 0)
+        except (TypeError, ValueError):
+            return None
+        if not company_id:
+            return None
+        company = Company.query.get(company_id)
+        if company is None:
+            return None
+        stored_id = str(cls._ai_prefs(company).get("mercadopago_preapproval_id") or "").strip()
+        return company if preapproval_id and stored_id == str(preapproval_id).strip() else None
+
+    @classmethod
+    def record_mercadopago_payment(cls, company, *, payment_id: str, payment_status: str, amount: float | None, currency: str | None, paid_at: datetime | None, preapproval_id: str, external_reference: str) -> dict[str, Any]:
+        fields = {
+            "last_payment_id": str(payment_id or "").strip() or None,
+            "last_payment_status": str(payment_status or "").strip().lower() or None,
+            "last_payment_amount": float(amount or 0) if amount is not None else None,
+            "last_payment_currency": str(currency or "ARS").strip().upper() or "ARS",
+            "last_payment_at": paid_at.isoformat() if paid_at else utcnow_naive().isoformat(),
+            "mercadopago_preapproval_id": str(preapproval_id or "").strip() or None,
+            "mercadopago_external_reference": str(external_reference or "").strip() or None,
+            "origin": "MERCADO_PAGO",
+        }
+        return cls._apply(company, admin_user_id=None, action="ai_subscription_payment_recorded", new_fields=fields, reason=f"payment_status={payment_status}")
 
     @classmethod
     def sync_from_mercadopago(cls, *, preapproval: dict):
@@ -241,7 +283,7 @@ class AISubscriptionService:
         if new_status is None:
             return company
 
-        new_fields: dict[str, Any] = {"status": new_status, "origin": "MERCADO_PAGO"}
+        new_fields: dict[str, Any] = {"status": new_status, "origin": "MERCADO_PAGO", "mercadopago_status": mp_status}
         if new_status == "ACTIVA":
             next_payment = (preapproval or {}).get("next_payment_date")
             if next_payment and _parse_dt(next_payment) is not None:

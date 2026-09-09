@@ -141,14 +141,19 @@ def _build_recent_quote_acceptance_notifications():
 def _build_superadmin_notifications():
     from app import BackupLog, Company, Payment, PaymentHistory, ReferralCommission, WebhookEvent, utcnow
     from app import SupportTicket
+    from services.payment_flow import ai_subscription_payment_filter, standard_subscription_payment_filter
 
     now = utcnow()
     today_start = datetime.combine(now.date(), time.min)
     last_24h = now - timedelta(hours=24)
 
     new_companies = Company.query.filter(Company.created_at >= today_start).count()
-    pending_payments = Payment.query.filter(Payment.status.in_(["pending", "in_process", "authorized"])).count()
-    approved_payments_today = Payment.query.filter(Payment.status == "approved", Payment.created_at >= today_start).count()
+    pending_payments_standard = Payment.query.filter(standard_subscription_payment_filter(Payment), Payment.status.in_(["pending", "in_process", "authorized"])).count()
+    pending_payments_ai = Payment.query.filter(ai_subscription_payment_filter(Payment), Payment.status.in_(["pending", "in_process", "authorized"])).count()
+    pending_payments = pending_payments_standard + pending_payments_ai
+    approved_payments_today_standard = Payment.query.filter(standard_subscription_payment_filter(Payment), Payment.status == "approved", Payment.created_at >= today_start).count()
+    approved_payments_today_ai = Payment.query.filter(ai_subscription_payment_filter(Payment), Payment.status == "approved", Payment.created_at >= today_start).count()
+    approved_payments_today = approved_payments_today_standard + approved_payments_today_ai
     pending_referrals = ReferralCommission.query.filter(ReferralCommission.status == "pendiente").count()
     admin_alerts = PaymentHistory.query.filter(PaymentHistory.created_at >= last_24h, PaymentHistory.status == "rejected").count()
     backup_alerts = BackupLog.query.filter(BackupLog.status.in_(["error", "failed", "fallido"])).count()
@@ -162,7 +167,7 @@ def _build_superadmin_notifications():
             {
                 "type": "success",
                 "title": "Pagos",
-                "body": f"{pending_payments} pendientes · {approved_payments_today} aprobados hoy.",
+                "body": f"{pending_payments} pendientes ({pending_payments_standard} Standard · {pending_payments_ai} IA) · {approved_payments_today} aprobados hoy ({approved_payments_today_standard} Standard · {approved_payments_today_ai} IA).",
                 "href": "/superadmin",
             }
         )

@@ -37,8 +37,9 @@
     <div class="col-sm-6 col-xl-3">
       <div class="card app-card">
         <div class="card-body">
-          <div class="text-muted small fw-semibold text-uppercase">Pagado</div>
+          <div class="text-muted small fw-semibold text-uppercase">Pagado total</div>
           <div class="metric-value fw-bold">${{ "%.2f"|format(totals.total_paid) }}</div>
+          <div class="text-muted small">Standard ${{ "%.2f"|format(totals.total_paid_standard) }} · IA ${{ "%.2f"|format(totals.total_paid_ai) }}</div>
         </div>
       </div>
     </div>
@@ -47,6 +48,7 @@
         <div class="card-body">
           <div class="text-muted small fw-semibold text-uppercase">Pendientes</div>
           <div class="metric-value fw-bold">{{ totals.pending_payments }}</div>
+          <div class="text-muted small">Standard {{ totals.pending_payments_standard }} · IA {{ totals.pending_payments_ai }}</div>
         </div>
       </div>
     </div>
@@ -55,7 +57,7 @@
         <div class="card-body">
           <div class="text-muted small fw-semibold text-uppercase">Facturas abiertas</div>
           <div class="metric-value fw-bold">{{ totals.pending_invoices }}</div>
-          <div class="text-muted small">Rechazados {{ totals.rejected_payments }}</div>
+          <div class="text-muted small">Rechazados {{ totals.rejected_payments }} · Standard {{ totals.rejected_payments_standard }} · IA {{ totals.rejected_payments_ai }}</div>
         </div>
       </div>
     </div>
@@ -105,20 +107,21 @@
         <div class="card-header bg-white fw-bold">Pagos recientes</div>
         <div class="table-responsive">
           <table class="table mb-0">
-            <thead><tr><th>Empresa</th><th>Usuario</th><th>Plan</th><th>Fecha</th><th>Importe</th><th>Estado</th><th>Operación</th></tr></thead>
+            <thead><tr><th>Empresa</th><th>Tipo</th><th>Usuario</th><th>Plan</th><th>Fecha</th><th>Importe</th><th>Estado</th><th>Operación</th></tr></thead>
             <tbody>
               {% for payment in payments %}
               <tr>
                 <td>{{ payment.company.name if payment.company else payment.company_id }}</td>
+                <td>{{ payment_flow_label(payment) }}</td>
                 <td>{{ payment.user.username if payment.user else '-' }}</td>
-                <td>{{ payment.subscription.plan.name if payment.subscription and payment.subscription.plan else '-' }}</td>
+                <td>{% if payment_flow(payment) == 'ai_subscription' %}Suscripción IA{% else %}{{ payment.subscription.plan.name if payment.subscription and payment.subscription.plan else '-' }}{% endif %}</td>
                 <td>{{ payment.paid_at.strftime('%Y-%m-%d %H:%M') if payment.paid_at else (payment.created_at.strftime('%Y-%m-%d %H:%M') if payment.created_at else '-') }}</td>
                 <td>${{ "%.2f"|format(payment.amount or 0) }}</td>
                 <td><span class="badge {{ 'text-bg-success' if payment.status == 'approved' else 'text-bg-warning' if payment.status in ['pending', 'authorized', 'in_process'] else 'text-bg-danger' }}">{{ status_labels.get(payment.status, payment.status|replace('_', ' ')|title) }}</span></td>
                 <td>{{ payment.payment_id or payment.reference or '—' }}</td>
               </tr>
               {% else %}
-              <tr><td colspan="7" class="text-center text-muted py-4">Sin pagos registrados.</td></tr>
+              <tr><td colspan="8" class="text-center text-muted py-4">Sin pagos registrados.</td></tr>
               {% endfor %}
             </tbody>
           </table>
