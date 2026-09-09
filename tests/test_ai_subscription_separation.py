@@ -107,6 +107,21 @@ def test_ai_plans_page_posts_directly_to_ai_checkout(subscription_app):
     assert '>Contratar<' not in html
 
 
+def test_subscription_portal_uses_separate_ai_payment_method_forms(subscription_app):
+    _, user, _, _ = _tenant_with_standard_subscription()
+    client = subscription_app.test_client()
+    _login(client, user)
+
+    response = client.get("/admin/portal")
+    html = response.get_data(as_text=True)
+
+    assert response.status_code == 200
+    assert 'action="/admin/subscription/ai-agent/checkout"' in html
+    assert 'type="hidden" name="payment_method" value="automatic"' in html
+    assert 'type="hidden" name="payment_method" value="qr"' in html
+    assert 'type="submit" name="payment_method"' not in html
+
+
 def test_standard_active_ai_active_blocks_same_ai_plan_only(subscription_app, monkeypatch):
     company, user, _, subscription = _tenant_with_standard_subscription()
     update_ai_preferences(company, ai_updates={"plan_code": "inicio", "status": "ACTIVA", "origin": "MERCADO_PAGO", "mercadopago_preapproval_id": "ai-pre"})

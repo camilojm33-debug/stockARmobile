@@ -113,12 +113,20 @@
             {% if is_active_plan %}
             <div class="mt-auto text-success fw-semibold text-center"><i class="bi bi-check-circle-fill me-1"></i>Suscripción activa</div>
             {% else %}
-            <form method="post" action="{{ url_for('company_billing.create_ai_subscription_checkout') }}" class="mt-auto d-flex flex-column gap-2">
-              <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
-              <input type="hidden" name="plan_code" value="{{ plan.code }}">
-              <button class="btn btn-sm btn-primary w-100" type="submit" name="payment_method" value="automatic">{% if is_pending_plan %}Continuar con Mercado Pago{% else %}Contratar con Mercado Pago{% endif %}</button>
-              <button class="btn btn-sm btn-outline-primary w-100" type="submit" name="payment_method" value="qr">Pagar con QR</button>
-            </form>
+            <div class="mt-auto d-flex flex-column gap-2">
+              <form method="post" action="{{ url_for('company_billing.create_ai_subscription_checkout') }}">
+                <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                <input type="hidden" name="plan_code" value="{{ plan.code }}">
+                <input type="hidden" name="payment_method" value="automatic">
+                <button class="btn btn-sm btn-primary w-100" type="submit">{% if is_pending_plan %}Continuar con Mercado Pago{% else %}Contratar con Mercado Pago{% endif %}</button>
+              </form>
+              <form method="post" action="{{ url_for('company_billing.create_ai_subscription_checkout') }}">
+                <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                <input type="hidden" name="plan_code" value="{{ plan.code }}">
+                <input type="hidden" name="payment_method" value="qr">
+                <button class="btn btn-sm btn-outline-primary w-100" type="submit">Pagar con QR</button>
+              </form>
+            </div>
             {% endif %}
           </div>
         </div>
