@@ -77,7 +77,6 @@
         <div class="col-sm-6 col-xl-3"><div class="summary-pill"><div class="summary-pill-label">Stock bajo</div><div class="summary-pill-value">{{ productos_bajo_nivel }}</div><div class="summary-pill-meta">Productos para revisar hoy</div></div></div>
         <div class="col-sm-6 col-xl-3"><div class="summary-pill"><div class="summary-pill-label">Clientes activos</div><div class="summary-pill-value">{{ total_clients }}</div><div class="summary-pill-meta">{{ clientes_nuevos }} nuevos este mes</div></div></div>
       </div>
-        <div id="ai-chat-messages" class="chat-messages mb-3" aria-live="polite" style="max-height: 300px; overflow-y: auto; border: 1px solid rgba(0,0,0,.08); border-radius: .75rem; padding: .75rem; background: rgba(13,110,253,.02);"><div class="text-muted small">Hola, ¿en qué puedo ayudarte?</div></div>
   </div>
   <div class="row g-3 mb-4 dashboard-kpis">
     {% if can_view_economic_metrics %}
@@ -124,7 +123,6 @@
     {% if can_view_economic_metrics %}<div class="col-lg-6"><div class="card app-card h-100"><div class="card-header bg-white border-0 fw-bold pt-3">Ranking clientes</div><div class="card-body pt-0">{% if ranking_clientes %}<div class="list-group list-group-flush">{% for client in ranking_clientes %}<div class="list-group-item d-flex justify-content-between px-0"><span>{{ client.nombre }}</span><strong>${{ "%.2f"|format(client.total_compras or 0) }}</strong></div>{% endfor %}</div>{% else %}<p class="text-muted mb-0">Sin compras de clientes todavia.</p>{% endif %}</div></div></div>{% endif %}
     <div class="{{ 'col-lg-6' if can_view_economic_metrics else 'col-lg-12' }}"><div class="card app-card h-100"><div class="card-header bg-white border-0 fw-bold pt-3 d-flex justify-content-between align-items-center"><span>Stock agotado</span><span class="badge text-bg-danger">{{ stock_agotado }}</span></div><div class="card-body pt-0">{% if low_stock %}<div class="list-group list-group-flush">{% for product in low_stock %}<a class="list-group-item list-group-item-action d-flex justify-content-between px-0" href="{{ url_for('products.index', low_stock=1) }}"><span class="d-flex align-items-center gap-2 min-w-0">{% if product.photo %}<img src="{{ product.photo }}" alt="{{ product.name }}" class="dashboard-product-thumb" loading="lazy" data-product-image data-category="{{ (product.category or '')|e }}" data-product-name="{{ product.name|e }}" data-fallback-class="dashboard-product-thumb" data-fallback-extra-class="d-flex align-items-center justify-content-center">{% else %}<span class="dashboard-product-thumb d-flex align-items-center justify-content-center" data-category-icon data-category="{{ (product.category or '')|e }}" data-product-name="{{ product.name|e }}" aria-label="Sin imagen de {{ product.name }}"></span>{% endif %}<span class="text-truncate">{{ product.name }}</span></span><span class="badge {{ 'text-bg-danger' if product.stock <= 0 else 'text-bg-warning' }}">{{ "%.3g"|format(product.stock or 0) }} {{ product.unit_measure or '' }}</span></a>{% endfor %}</div>{% else %}<p class="text-muted mb-0">No hay productos criticos.</p>{% endif %}</div></div></div>
   </div>
-  <div class="row g-4 mt-1"><div class="col-12"><div class="card app-card h-100"><div class="card-header bg-white border-0 fw-bold pt-3">Asistente IA</div><div class="card-body"><p class="text-muted mb-3">Consultá productos, stock y clientes.</p><div id="ai-chat-messages" class="chat-messages mb-3" aria-live="polite" style="max-height: 300px; overflow-y: auto; border: 1px solid rgba(0,0,0,.08); border-radius: .75rem; padding: .75rem; background: rgba(13,110,253,.02);"><div class="text-muted small">Hola, ¿en qué puedo ayudarte?</div></div><div id="ai-chat-error" class="alert alert-danger d-none mb-3" role="alert"></div><div class="input-group"><input id="ai-chat-input" type="text" class="form-control" placeholder="Escribí tu consulta..." maxlength="500" /><button id="ai-chat-submit" class="btn btn-primary" type="button">Enviar</button></div><div id="ai-chat-status" class="small text-muted mt-2">Listo.</div><hr class="my-4"><div class="d-flex flex-wrap justify-content-between align-items-center gap-2"><div><strong>Factura de proveedor</strong><div class="small text-muted">Procesá el archivo, revisá el preview y confirmá la compra.</div></div><input id="invoice-file" class="form-control" type="file" accept=".jpg,.jpeg,.png,.webp,.pdf" style="max-width:360px"></div><div class="d-flex flex-wrap gap-2 mt-3"><button id="invoice-upload" class="btn btn-outline-primary" type="button"><i class="bi bi-upload me-1"></i>Recibir factura</button><button id="invoice-process" class="btn btn-primary" type="button" disabled><i class="bi bi-eye me-1"></i>Procesar y mostrar preview</button><button id="invoice-confirm" class="btn btn-success" type="button" disabled><i class="bi bi-check2-circle me-1"></i>Confirmar carga</button></div><div id="invoice-status" class="small text-muted mt-2">Ninguna factura seleccionada.</div><div id="invoice-preview" class="table-responsive mt-3"></div></div></div></div></div>
 </div>
 {% endblock %}
 
@@ -138,128 +136,6 @@
 {% endblock %}
 
 {% block extra_js %}
-<script>
-  (function () {
-    const messagesEl = document.getElementById('ai-chat-messages');
-    const inputEl = document.getElementById('ai-chat-input');
-    const buttonEl = document.getElementById('ai-chat-submit');
-    const statusEl = document.getElementById('ai-chat-status');
-    const errorEl = document.getElementById('ai-chat-error');
-    let conversationId = null;
-
-    function appendMessage(role, text) {
-      const row = document.createElement('div');
-      const label = role === 'user' ? 'Tú' : 'Asistente';
-      row.className = 'mb-2';
-      row.innerHTML = '<div class="small fw-semibold text-uppercase text-muted">' + label + '</div><div class="rounded-3 px-3 py-2 bg-white border" style="white-space: pre-wrap;">' + (text || '') + '</div>';
-      messagesEl.appendChild(row);
-      messagesEl.scrollTop = messagesEl.scrollHeight;
-    }
-
-    function setLoading(loading) { buttonEl.disabled = loading; statusEl.textContent = loading ? 'Pensando...' : 'Listo.'; inputEl.disabled = loading; }
-    function setError(message) { if (!message) { errorEl.classList.add('d-none'); errorEl.textContent = ''; return; } errorEl.textContent = message; errorEl.classList.remove('d-none'); }
-
-    async function sendMessage() {
-      const message = (inputEl.value || '').trim();
-      if (!message) { setError('Ingresá un mensaje para consultar al asistente.'); return; }
-      setError(''); appendMessage('user', message); inputEl.value = ''; setLoading(true);
-      try {
-        const payload = { message: message, ...(conversationId ? { conversation_id: conversationId } : {}) };
-        const response = await fetch('{{ url_for("dashboard.ai_agent_chat") }}', { method: 'POST', headers: { 'Content-Type': 'application/json', 'X-CSRFToken': '{{ csrf_token() }}' }, body: JSON.stringify(payload) });
-        const data = await response.json();
-        if (!response.ok || !data.success) throw new Error(data.error || 'No se pudo procesar la consulta.');
-        conversationId = data.conversation_id; appendMessage('assistant', data.content || ''); setError('');
-      } catch (error) { setError(error.message || 'No se pudo procesar la solicitud.'); }
-      finally { setLoading(false); }
-    }
-
-    buttonEl.addEventListener('click', sendMessage);
-    inputEl.addEventListener('keydown', function (event) { if (event.key === 'Enter') { event.preventDefault(); sendMessage(); } });
-  })();
-</script>
-<script>
-  (function () {
-    const fileEl = document.getElementById('invoice-file');
-    const uploadButton = document.getElementById('invoice-upload');
-    const processButton = document.getElementById('invoice-process');
-    const confirmButton = document.getElementById('invoice-confirm');
-    const statusEl = document.getElementById('invoice-status');
-    const previewEl = document.getElementById('invoice-preview');
-    let uploadId = null;
-    let preview = null;
-    const csrf = '{{ csrf_token() }}';
-    const invoiceUrls = {
-      process: '{{ url_for("dashboard.process_invoice", upload_id="UPLOAD_ID") }}',
-      resolve: '{{ url_for("dashboard.resolve_invoice_line", upload_id="UPLOAD_ID") }}',
-      confirm: '{{ url_for("dashboard.confirm_invoice", upload_id="UPLOAD_ID") }}'
-    };
-    function escapeHtml(value) {
-      return String(value ?? '').replace(/[&<>'"]/g, function (character) {
-        return {'&':'&amp;','<':'&lt;','>':'&gt;',"'":'&#39;','"':'&quot;'}[character];
-      });
-    }
-    function invoiceUrl(kind) { return invoiceUrls[kind].replace('UPLOAD_ID', encodeURIComponent(uploadId)); }
-    function render(data) {
-      preview = data || {};
-      const supplierMatch = preview.supplier_match || {};
-      const supplierOptions = (supplierMatch.candidates || []).map(function (candidate) { return '<option value="' + escapeHtml(candidate.id) + '">' + escapeHtml(candidate.name) + (candidate.phone ? ' · ' + escapeHtml(candidate.phone) : '') + '</option>'; }).join('');
-      const supplierAction = supplierMatch.status === 'AMBIGUO' ? '<div class="alert alert-warning py-2 mt-2">Proveedor ambiguo: ' + escapeHtml(supplierMatch.name) + ' <select class="form-select form-select-sm d-inline-block w-auto invoice-supplier-choice">' + supplierOptions + '</select> <button type="button" class="btn btn-sm btn-outline-secondary invoice-resolve-supplier">Resolver proveedor</button></div>' : '';
-      const lines = (preview.matches || []).map(line => {
-        const action = ['AMBIGUO', 'MATCH_PROPUESTO'].includes(line.matching_status) ? '<button type="button" class="btn btn-sm btn-outline-secondary invoice-resolve" data-line="' + escapeHtml(line.line_number) + '">Resolver</button>' : '';
-        return '<tr><td>' + escapeHtml(line.description) + '</td><td>' + escapeHtml(line.product_name || 'No encontrado') + '</td><td>' + escapeHtml(line.matching_status) + '</td><td>' + escapeHtml(line.quantity) + '</td><td>' + escapeHtml(line.unit_cost) + '</td><td>' + escapeHtml(line.line_total) + '</td><td>' + action + '</td></tr>';
-      }).join('');
-      previewEl.innerHTML = supplierAction + (lines ? '<table class="table table-sm align-middle"><thead><tr><th>Descripción</th><th>Producto</th><th>Estado</th><th>Cantidad</th><th>Costo</th><th>Total</th><th>Acción</th></tr></thead><tbody>' + lines + '</tbody></table>' : '');
-      confirmButton.disabled = preview.status !== 'LISTA_PARA_CONFIRMAR' || !['admin', 'superadmin'].includes('{{ current_user.role }}');
-      previewEl.querySelectorAll('.invoice-resolve').forEach(function (button) {
-        button.addEventListener('click', async function () {
-          const query = window.prompt('Ingresá el SKU, barcode o descripción exacta del producto:');
-          if (!query) return;
-          try {
-            const response = await fetch(invoiceUrl('resolve'), { method: 'POST', headers: { 'Content-Type': 'application/json', 'X-CSRFToken': csrf }, body: JSON.stringify({ line_number: button.dataset.line, description: query }) });
-            const result = await response.json();
-            if (!response.ok || !result.success) throw new Error(result.error || 'No se pudo resolver la línea.');
-            render(result.preview); statusEl.textContent = 'Coincidencia resuelta.';
-          } catch (error) { statusEl.textContent = error.message; }
-        });
-      });
-      const supplierButton = previewEl.querySelector('.invoice-resolve-supplier');
-      if (supplierButton) supplierButton.addEventListener('click', async function () {
-        const choice = previewEl.querySelector('.invoice-supplier-choice');
-        if (!choice || !choice.value) return;
-        try {
-          const response = await fetch(invoiceUrl('resolve'), { method: 'POST', headers: { 'Content-Type': 'application/json', 'X-CSRFToken': csrf }, body: JSON.stringify({ target: 'supplier', supplier_id: choice.value }) });
-          const result = await response.json();
-          if (!response.ok || !result.success) throw new Error(result.error || 'No se pudo resolver el proveedor.');
-          render(result.preview); statusEl.textContent = 'Proveedor resuelto.';
-        } catch (error) { statusEl.textContent = error.message; }
-      });
-    }
-    uploadButton.addEventListener('click', async function () {
-      const file = fileEl.files[0]; if (!file) { statusEl.textContent = 'Seleccioná una factura.'; return; }
-      const form = new FormData(); form.append('message', 'Factura de proveedor'); form.append('invoice_file', file);
-      uploadButton.disabled = true; statusEl.textContent = 'Recibiendo archivo...';
-      try { const response = await fetch('{{ url_for("dashboard.ai_agent_chat") }}', { method: 'POST', headers: { 'X-CSRFToken': csrf }, body: form }); const data = await response.json(); if (!response.ok || !data.success) throw new Error(data.error || 'No se pudo recibir la factura.'); uploadId = data.document_id; processButton.disabled = false; statusEl.textContent = 'Factura recibida. Lista para procesar.'; } catch (error) { statusEl.textContent = error.message; } finally { uploadButton.disabled = false; }
-    });
-    processButton.addEventListener('click', async function () {
-      if (!uploadId) return; processButton.disabled = true; statusEl.textContent = 'Procesando factura...';
-      try { const response = await fetch(invoiceUrl('process'), { method: 'POST', headers: { 'X-CSRFToken': csrf } }); const data = await response.json(); if (!response.ok || !data.success) throw new Error(data.error || 'No se pudo procesar.'); render(data.preview); statusEl.textContent = 'Estado: ' + data.status; } catch (error) { statusEl.textContent = error.message; } finally { processButton.disabled = false; }
-    });
-    confirmButton.addEventListener('click', async function () {
-      if (!uploadId || !window.confirm('¿Confirmar la carga de esta factura y actualizar stock?')) return; confirmButton.disabled = true; statusEl.textContent = 'Confirmando...';
-      try { const response = await fetch(invoiceUrl('confirm'), { method: 'POST', headers: { 'X-CSRFToken': csrf } }); const data = await response.json(); if (!response.ok || !data.success) throw new Error(data.error || 'No se pudo confirmar.'); statusEl.textContent = 'Factura aplicada. Compra #' + data.result.purchase_order_id; render({ ...(preview || {}), status: 'APLICADA' }); } catch (error) { statusEl.textContent = error.message; confirmButton.disabled = false; }
-    });
-  })();
-</script>
-{% if invoice_access and not invoice_access.allowed %}<script>
-  (function () {
-    const fileInput = document.getElementById('invoice-file');
-    const uploadButton = document.getElementById('invoice-upload');
-    const status = document.getElementById('invoice-status');
-    if (fileInput) fileInput.disabled = true;
-    if (uploadButton) uploadButton.disabled = true;
-    if (status) status.textContent = 'El procesamiento de facturas con IA está disponible desde IA PRO.';
-  })();
-</script>{% endif %}
 <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.7/dist/chart.umd.min.js"></script>
 <script src="{{ url_for('static', filename='assets/js/category-visuals.js') }}"></script>
 <script>

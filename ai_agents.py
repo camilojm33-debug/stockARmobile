@@ -69,7 +69,7 @@ def _campaign_summary(company_id: int):
 @bp.get("/")
 @tenant_required
 def index():
-    return render_template("ai_agents/dashboard.html", view="dashboard", **_context())
+    return render_template("ai_agents/index.html", view="dashboard", **_context())
 
 
 @bp.get("/campanas")
