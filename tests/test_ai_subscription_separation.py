@@ -120,6 +120,7 @@ def test_subscription_portal_uses_separate_ai_payment_method_forms(subscription_
     assert 'type="hidden" name="payment_method" value="automatic"' in html
     assert 'type="hidden" name="payment_method" value="qr"' in html
     assert 'type="submit" name="payment_method"' not in html
+    assert 'data-mp-external-checkout="true"' in html
 
 
 def test_standard_active_ai_active_blocks_same_ai_plan_only(subscription_app, monkeypatch):
@@ -334,3 +335,44 @@ def test_standard_auto_subscription_checkout_works_when_ai_is_active(subscriptio
         "back_url": calls[0]["back_url"],
     }]
     assert AISubscriptionService.get_status(company) == ai_before
+
+
+def test_standard_auto_subscription_checkout_returns_json_redirect_for_ajax(subscription_app, monkeypatch):
+    company, user, _, subscription = _tenant_with_standard_subscription()
+    update_ai_preferences(company, ai_updates={"plan_code": "inicio", "status": "ACTIVA", "origin": "MERCADO_PAGO", "mercadopago_preapproval_id": "ai-pre"})
+    db.session.commit()
+
+    def create_standard_preapproval(*, db_session, company, subscription, plan, payer_email, notification_url, back_url):
+        return {"id": "standard-pre", "init_point": "https://mp.test/standard", "status": "pending"}
+
+    monkeypatch.setattr("services.mercadopago_subscription_service.MercadoPagoSubscriptionService.create", create_standard_preapproval)
+    client = subscription_app.test_client()
+    _login(client, user)
+
+    response = client.post(
+        "/admin/subscription/mercadopago/create",
+        data={"plan_id": subscription.plan_id},
+        headers={"X-Requested-With": "XMLHttpRequest"},
+    )
+
+    assert response.status_code == 200
+    assert response.get_json() == {"success": True, "redirect_url": "https://mp.test/standard"}
+
+
+def test_ai_auto_subscription_checkout_returns_json_redirect_for_ajax(subscription_app, monkeypatch):
+    company, user, _, subscription = _tenant_with_standard_subscription()
+    update_ai_preferences(company, ai_updates={"plan_code": "inicio", "status": "PENDIENTE", "origin": "MERCADO_PAGO", "mercadopago_preapproval_id": "ai-pre"})
+    db.session.commit()
+    _mock_preapproval(monkeypatch)
+    client = subscription_app.test_client()
+    _login(client, user)
+
+    response = client.post(
+        "/admin/subscription/ai-agent/checkout",
+        data={"plan_code": "inicio", "payment_method": "automatic"},
+        headers={"X-Requested-With": "XMLHttpRequest"},
+    )
+
+    assert response.status_code == 200
+    assert response.get_json() == {"success": True, "redirect_url": "https://mp.test/ai-pre"}
+    assert _standard_snapshot(subscription)["status"] == SubscriptionService.STATE_ACTIVE

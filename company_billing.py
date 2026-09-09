@@ -41,6 +41,23 @@ MAX_LOGO_SIZE_BYTES = 3 * 1024 * 1024
 MAX_LOGO_DIMENSION_PX = 600
 
 
+def _wants_json_response() -> bool:
+    return request.headers.get("X-Requested-With") == "XMLHttpRequest"
+
+
+def _checkout_redirect_response(checkout_url: str):
+    if _wants_json_response():
+        return jsonify({"success": True, "redirect_url": checkout_url})
+    return redirect(checkout_url)
+
+
+def _checkout_error_response(message: str, target: str, *, status_code: int = 400):
+    if _wants_json_response():
+        return jsonify({"success": False, "error": message}), status_code
+    flash(message, "danger")
+    return redirect(target)
+
+
 def _save_company_logo(upload, company_id):
     """Valida y guarda el logo de una empresa de forma aislada por company_id."""
     filename = (upload.filename or "").strip()
@@ -1104,8 +1121,7 @@ def create_ai_subscription_checkout():
     plan_code = (request.form.get("plan_code") or "").strip().lower()
     plan = AI_PLAN_BY_CODE.get(plan_code)
     if plan is None:
-        flash("Plan IA inválido.", "danger")
-        return redirect(url_for("ai_agents.agent", agent="planes"))
+        return _checkout_error_response("Plan IA inválido.", url_for("ai_agents.agent", agent="planes"))
 
     payment_method = (request.form.get("payment_method") or "automatic").strip().lower()
     if payment_method not in {"automatic", "qr"}:
@@ -1113,8 +1129,7 @@ def create_ai_subscription_checkout():
 
     payer_email = (getattr(current_user, "email", None) or getattr(company, "contact_email", None) or "").strip()
     if not payer_email or "@" not in payer_email:
-        flash("Necesitás un email válido en tu cuenta para activar el cobro automático de IA.", "danger")
-        return redirect(url_for("ai_agents.agent", agent="planes"))
+        return _checkout_error_response("Necesitás un email válido en tu cuenta para activar el cobro automático de IA.", url_for("ai_agents.agent", agent="planes"))
 
     # Estado server-side de la suscripción IA de la empresa; nunca se confía en lo que envía el frontend.
     ai_status = AISubscriptionService.get_status(company)
@@ -1123,6 +1138,8 @@ def create_ai_subscription_checkout():
     existing_preapproval_id = str(ai_status.get("mercadopago_preapproval_id") or "").strip()
 
     if current_status == "ACTIVA" and current_plan_code == plan_code:
+        if _wants_json_response():
+            return jsonify({"success": False, "error": "Tu suscripción IA ya está activa."}), 409
         flash("Tu suscripción IA ya está activa.", "info")
         return redirect(url_for("ai_agents.agent", agent="planes"))
 
@@ -1181,12 +1198,11 @@ def create_ai_subscription_checkout():
             }
             return redirect(url_for("company_billing.subscription_portal", checkout="ai_created", _anchor="suscripcion-ia"))
 
-        return redirect(checkout_url)
+        return _checkout_redirect_response(checkout_url)
     except (AISubscriptionError, RuntimeError, ValueError) as exc:
         db.session.rollback()
         current_app.logger.exception("Error creando suscripción IA Mercado Pago: %s", exc)
-        flash(f"No se pudo iniciar la suscripción IA: {exc}", "danger")
-        return redirect(url_for("ai_agents.agent", agent="planes"))
+        return _checkout_error_response(f"No se pudo iniciar la suscripción IA: {exc}", url_for("ai_agents.agent", agent="planes"), status_code=500)
 
 
 @bp.route("/subscription/mercadopago/create", methods=["POST"])
@@ -1204,6 +1220,8 @@ def create_mercadopago_subscription():
         subscription = SubscriptionService.active_subscription_for_company(company.id)
         plan = getattr(subscription, "plan", None) if subscription else None
     if plan is None:
+        if _wants_json_response():
+            return jsonify({"success": False, "error": "Seleccioná un plan antes de activar la suscripción automática."}), 400
         flash("Seleccioná un plan antes de activar la suscripción automática.", "warning")
         return redirect(url_for("company_billing.subscription_portal"))
 
@@ -1249,12 +1267,11 @@ def create_mercadopago_subscription():
             plan.id,
             response.get("id"),
         )
-        return redirect(checkout_url)
+        return _checkout_redirect_response(checkout_url)
     except Exception as exc:
         db.session.rollback()
         current_app.logger.exception("Error creando suscripción automática Mercado Pago: %s", exc)
-        flash(f"No se pudo iniciar la suscripción automática: {exc}", "danger")
-        return redirect(url_for("company_billing.subscription_portal"))
+        return _checkout_error_response(f"No se pudo iniciar la suscripción automática: {exc}", url_for("company_billing.subscription_portal"), status_code=500)
 
 
 @bp.route("/subscription/change", methods=["POST"])
