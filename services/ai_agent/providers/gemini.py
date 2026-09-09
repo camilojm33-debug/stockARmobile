@@ -1,0 +1,236 @@
+"""Google Gemini adapter for the shared StockArmobile AIProvider contract."""
+
+from __future__ import annotations
+
+import json
+import os
+from pathlib import Path
+from typing import Any, Dict, Iterable
+
+from .base import AIProvider
+
+
+class GeminiProvider(AIProvider):
+    """Adapt Gemini generate-content and function calling to AgentRuntime."""
+
+    def __init__(
+        self,
+        *,
+        model: str | None = None,
+        api_key: str | None = None,
+        timeout: float | None = None,
+    ) -> None:
+        self.model = model or os.getenv("GEMINI_MODEL")
+        self.api_key = api_key if api_key is not None else os.getenv("GEMINI_API_KEY")
+        self.timeout = float(timeout if timeout is not None else os.getenv("GEMINI_TIMEOUT", "60"))
+        self._client = None
+        self._types = None
+        # Gemini 3.x exige reenviar el thought_signature original junto al functionCall en el turno siguiente.
+        self._thought_signatures: Dict[str, Any] = {}
+
+    @property
+    def client(self):
+        if not self.api_key:
+            raise RuntimeError("GEMINI_API_KEY no está configurada.")
+        if self._client is None:
+            try:
+                import httpx
+                from google import genai
+                from google.genai import types
+            except ImportError as exc:
+                raise RuntimeError("La dependencia google-genai no está instalada.") from None
+            # Fuerza IPv4: evita que httpx intente primero direcciones IPv6 que fallan en este entorno.
+            transport = httpx.HTTPTransport(local_address="0.0.0.0")
+            self._client = genai.Client(
+                api_key=self.api_key,
+                http_options=types.HttpOptions(
+                    timeout=int(self.timeout * 1000),
+                    client_args={"transport": transport},
+                ),
+            )
+            self._types = types
+        return self._client
+
+    @staticmethod
+    def _value(value: Any, name: str, default: Any = None) -> Any:
+        if isinstance(value, dict):
+            return value.get(name, default)
+        try:
+            return getattr(value, name, default)
+        except Exception:
+            return default
+
+    @classmethod
+    def _function_declarations(cls, tools: Iterable[Dict[str, Any]] | None) -> list[Dict[str, Any]]:
+        declarations = []
+        for tool in tools or []:
+            function = tool.get("function") or {}
+            declarations.append({
+                "name": function.get("name"),
+                "description": function.get("description") or "",
+                "parameters": function.get("parameters") or {"type": "object", "properties": {}},
+            })
+        return declarations
+
+    def _contents(self, messages: Iterable[Dict[str, Any]]):
+        contents = []
+        function_names: dict[str, str] = {}
+        for message in messages:
+            role = message.get("role")
+            if role == "system":
+                continue
+            if role == "tool":
+                call_id = message.get("tool_call_id") or "call_1"
+                name = function_names.get(call_id) or "tool"
+                try:
+                    response = json.loads(str(message.get("content") or "{}"))
+                except json.JSONDecodeError:
+                    response = {"content": str(message.get("content") or "")}
+                contents.append({"role": "user", "parts": [{"function_response": {"name": name, "response": response}}]})
+                continue
+
+            tool_calls = message.get("tool_calls") or []
+            if role == "assistant" and tool_calls:
+                parts = []
+                for tool_call in tool_calls:
+                    function = tool_call.get("function") or {}
+                    call_id = tool_call.get("id") or "call_1"
+                    name = function.get("name") or "tool"
+                    arguments = function.get("arguments") or {}
+                    if isinstance(arguments, str):
+                        try:
+                            arguments = json.loads(arguments)
+                        except json.JSONDecodeError:
+                            arguments = {}
+                    function_names[call_id] = name
+                    part: Dict[str, Any] = {"function_call": {"name": name, "args": arguments}}
+                    signature = self._thought_signatures.get(name)
+                    if signature is not None:
+                        part["thought_signature"] = signature
+                    parts.append(part)
+                contents.append({"role": "model", "parts": parts})
+                continue
+
+            if role in {"user", "assistant", "model"}:
+                contents.append({"role": "model" if role in {"assistant", "model"} else "user", "parts": [{"text": str(message.get("content") or "")}]})
+        return contents
+
+    def _config(self, *, messages, tools=None, temperature=None, max_tokens=None, response_schema=None):
+        types = self._types
+        system_parts = [str(message.get("content") or "") for message in messages if message.get("role") == "system"]
+        kwargs: Dict[str, Any] = {}
+        if system_parts:
+            kwargs["system_instruction"] = "\n\n".join(system_parts)
+        if temperature is not None:
+            kwargs["temperature"] = float(temperature)
+        if max_tokens is not None:
+            kwargs["max_output_tokens"] = int(max_tokens)
+        declarations = self._function_declarations(tools)
+        if declarations:
+            kwargs["tools"] = [types.Tool(function_declarations=declarations)]
+        if response_schema is not None:
+            kwargs["response_mime_type"] = "application/json"
+            kwargs["response_schema"] = self._to_gemini_schema(response_schema)
+        return types.GenerateContentConfig(**kwargs)
+
+    @classmethod
+    def _to_gemini_schema(cls, schema: Any) -> Any:
+        """Adapta un JSON Schema est\u00e1ndar (uniones tipo ["string","null"], additionalProperties)
+        al formato aceptado por la API REST de Gemini, sin modificar el esquema fuente."""
+        if not isinstance(schema, dict):
+            return schema
+        converted = dict(schema)
+        # La API REST de Gemini no reconoce additionalProperties dentro de response_schema (HTTP 400).
+        converted.pop("additionalProperties", None)
+        converted.pop("additional_properties", None)
+        type_value = converted.get("type")
+        if isinstance(type_value, list):
+            remaining = [t for t in type_value if t != "null"]
+            if len(type_value) != len(remaining):
+                converted["nullable"] = True
+            if len(remaining) == 1:
+                converted["type"] = remaining[0]
+            elif len(remaining) > 1:
+                converted.pop("type", None)
+                converted["anyOf"] = [{"type": t} for t in remaining]
+            else:
+                converted.pop("type", None)
+        if isinstance(converted.get("properties"), dict):
+            converted["properties"] = {key: cls._to_gemini_schema(value) for key, value in converted["properties"].items()}
+        if isinstance(converted.get("items"), dict):
+            converted["items"] = cls._to_gemini_schema(converted["items"])
+        if isinstance(converted.get("anyOf"), list):
+            converted["anyOf"] = [cls._to_gemini_schema(entry) for entry in converted["anyOf"]]
+        return converted
+
+    @classmethod
+    def _tool_call(cls, response: Any) -> Dict[str, Any] | None:
+        candidates = cls._value(response, "candidates", []) or []
+        content = cls._value(candidates[0], "content") if candidates else None
+        for part in cls._value(content, "parts", []) or []:
+            function_call = cls._value(part, "function_call")
+            if function_call is None:
+                continue
+            arguments = cls._value(function_call, "args", {}) or {}
+            if not isinstance(arguments, dict):
+                arguments = dict(arguments)
+            return {"id": "gemini-call-1", "name": cls._value(function_call, "name"), "arguments": arguments}
+        return None
+
+    def _capture_thought_signatures(self, response: Any) -> None:
+        """Cachea thought_signature (metadata interna del SDK) por nombre de función, sin exponerla al tool_call."""
+        candidates = self._value(response, "candidates", []) or []
+        content = self._value(candidates[0], "content") if candidates else None
+        for part in self._value(content, "parts", []) or []:
+            function_call = self._value(part, "function_call")
+            if function_call is None:
+                continue
+            signature = self._value(part, "thought_signature")
+            name = self._value(function_call, "name")
+            if signature is not None and name:
+                self._thought_signatures[name] = signature
+
+    @classmethod
+    def _usage(cls, response: Any) -> Dict[str, Any]:
+        usage = cls._value(response, "usage_metadata")
+        return {
+            "prompt_tokens": cls._value(usage, "prompt_token_count", 0) or 0,
+            "completion_tokens": cls._value(usage, "candidates_token_count", 0) or 0,
+            "total_tokens": cls._value(usage, "total_token_count", 0) or 0,
+        }
+
+    def generate(self, *, messages, tools=None, model=None, temperature=None, max_tokens=None) -> Dict[str, Any]:
+        effective_model = model or self.model
+        if not effective_model:
+            raise RuntimeError("GEMINI_MODEL no está configurado.")
+        client = self.client
+        try:
+            response = client.models.generate_content(
+                model=effective_model,
+                contents=self._contents(messages),
+                config=self._config(messages=messages, tools=tools, temperature=temperature, max_tokens=max_tokens),
+            )
+        except Exception:
+            raise RuntimeError("Gemini no pudo procesar la solicitud.") from None
+        self._capture_thought_signatures(response)
+        return {"content": str(self._value(response, "text", "") or ""), "tool_call": self._tool_call(response), "usage": self._usage(response), "model": effective_model}
+
+    def generate_invoice(self, *, file_path, mime_type: str, prompt: str, schema: Dict[str, Any], model: str | None = None) -> Dict[str, Any]:
+        effective_model = model or os.getenv("GEMINI_INVOICE_MODEL") or self.model
+        if not effective_model:
+            raise RuntimeError("GEMINI_INVOICE_MODEL u GEMINI_MODEL no está configurado.")
+        path = Path(file_path)
+        try:
+            client = self.client
+            document = self._types.Part.from_bytes(data=path.read_bytes(), mime_type=mime_type)
+            response = client.models.generate_content(
+                model=effective_model,
+                contents=[prompt, document],
+                config=self._config(messages=[], response_schema=schema),
+            )
+        except Exception:
+            raise RuntimeError("Gemini no pudo procesar la factura.") from None
+        content = str(self._value(response, "text", "") or "")
+        if not content:
+            raise RuntimeError("Gemini no devolvió una extracción estructurada.")
+        return {"content": content, "usage": self._usage(response), "model": effective_model}

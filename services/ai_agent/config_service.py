@@ -7,6 +7,7 @@ from stockarmobile.extensions import db
 from stockarmobile.models.conversations import Agent
 VENDOR_AGENT_NAME="Vendedor 24 hs"
 BUSINESS_AGENT_NAME="Asistente empresarial"
+SPECIAL_AGENT_NAMES={"analista":"Analista IA","marketing":"Marketing IA"}
 
 def _company_preferences(company)->Dict[str,Any]:
     raw=getattr(company,"preferences_json",None) or ""
@@ -47,6 +48,16 @@ def ensure_default_agents(company_id):
             agent=Agent(company_id=company_id,name=name,description=description,active=True); db.session.add(agent); db.session.flush()
         agents[name]=agent
     return agents
+
+def ensure_agent_for_key(company_id, agent_key):
+    name = SPECIAL_AGENT_NAMES.get(str(agent_key or "").strip().lower())
+    if not name:
+        return None
+    description = {"analista":"Analista IA de ventas, stock y oportunidades.","marketing":"Marketing IA para propuestas basadas en productos y clientes reales."}[str(agent_key).strip().lower()]
+    agent=db.session.query(Agent).filter(Agent.company_id==company_id,Agent.name==name).order_by(Agent.id.asc()).first()
+    if agent is None:
+        agent=Agent(company_id=company_id,name=name,description=description,active=True); db.session.add(agent); db.session.flush()
+    return agent
 
 def get_ai_preferences(company):
     prefs=_company_preferences(company); ai=prefs.get("ai_agent") if isinstance(prefs.get("ai_agent"),dict) else {}; whatsapp=ai.get("whatsapp") if isinstance(ai.get("whatsapp"),dict) else {}

@@ -84,6 +84,7 @@
             <th>Email</th>
             <th>Estado</th>
             <th>Plan</th>
+            <th>Suscripción IA</th>
             <th>Stats</th>
             <th class="text-end">Acciones</th>
           </tr>
@@ -118,12 +119,26 @@
               {% endif %}
             </td>
             <td class="small">
+              {% set ai_status = ai_statuses.get(company.id) %}
+              {% if ai_status and ai_status.plan_name %}
+                <div class="fw-semibold">{{ ai_status.plan_name }}</div>
+                <div class="text-muted">{{ ai_status.status or 'SIN ESTADO' }}</div>
+                <div class="text-muted">{{ ai_status.usage.used_usage }} / {{ ai_status.usage.included_usage }}</div>
+                <div class="text-muted">
+                  {% for agent in ['asistente', 'vendedor', 'analista', 'marketing'] %}{% if agent in ai_status.agents %}<span class="text-success">✓</span>{% else %}<span class="text-muted">✗</span>{% endif %}{% endfor %}
+                </div>
+              {% else %}
+                <span class="text-muted">Sin suscripción IA</span>
+              {% endif %}
+            </td>
+            <td class="small">
               U {{ user_counts.get(company.id, 0) }} · P {{ product_counts.get(company.id, 0) }} · C {{ client_counts.get(company.id, 0) }} · V {{ sale_counts.get(company.id, 0) }}
             </td>
             <td class="text-end">
               <div class="d-flex flex-wrap justify-content-end gap-1">
                 <a class="btn btn-sm btn-outline-primary" href="{{ url_for('saas.company_detail', company_id=company.id) }}">Ver empresa</a>
                 <a class="btn btn-sm btn-outline-success" href="{{ url_for('saas.subscriptions_panel', company_id=company.id) }}">Renovar manual</a>
+                <a class="btn btn-sm btn-outline-info" href="{{ url_for('saas.ai_subscription_detail', company_id=company.id) }}">Gestionar IA</a>
                 <a class="btn btn-sm btn-outline-secondary" href="{{ url_for('saas.company_detail', company_id=company.id) }}#stats">Ver estadisticas</a>
                 <a class="btn btn-sm btn-outline-info" href="{{ url_for('saas.users_panel', company_id=company.id) }}">Ver empleados</a>
                 <form method="post" action="{{ url_for('saas.company_impersonate', company_id=company.id) }}">

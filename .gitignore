@@ -7,6 +7,9 @@ __pycache__/
 *.db
 *.sqlite
 *.sqlite3
+instance/*.db
+instance/qa_e2e.db
+instance/stock_armobile.db
 instance/backups/
 
 # Local environment and secrets
@@ -14,8 +17,15 @@ instance/backups/
 .env.*
 !.env.example
 
+# User-uploaded documents (invoices, private files) - never release/commit
+uploads/
+instance/uploads/
+
+# Local logs
+logs/
+*.log
+
 # Temporary test/reproduction artifacts
 _repro_*
 temp_*
 *.tmp
-*.log

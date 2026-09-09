@@ -12,8 +12,10 @@ from stockarmobile.helpers.dates import local_day_bounds_utc_naive, local_month_
 
 def build_dashboard_context():
     from app import CashSession, Client, Expense, Product, Quote, Sale, SaleItem, db, model_table_exists, scope_query_to_company
+    from services.ai_agent.usage_service import can_use_ai
 
     company = db.session.get(__import__('app').Company, getattr(__import__('flask_login').current_user, 'company_id', None))
+    invoice_access = can_use_ai(company, "facturas") if company is not None else None
     company_tz = getattr(company, "timezone", None) or "America/Argentina/Buenos_Aires"
     today = local_today(company_tz)
     today_start, tomorrow_start = local_day_bounds_utc_naive(today, company_tz)
@@ -124,7 +126,7 @@ def build_dashboard_context():
         "clientes_recentes": ranking_clients, "ranking_clientes": ranking_clients, "ranking_categorias": ranking_categories,
         "chart_labels": _last_days_labels(7), "chart_sales": _sales_by_day(7) if can_view_economic_metrics else [],
         "chart_categories_labels": [item.category or "Sin categoria" for item in ranking_categories], "chart_categories_data": [item.sold or 0 for item in ranking_categories],
-        "cash_stats": cash_stats,
+        "cash_stats": cash_stats, "invoice_access": invoice_access,
         "quote_stats": {"created": quotes_created, "pending": quotes_pending, "sent": quotes_sent, "approved": quotes_approved, "rejected": quotes_rejected, "expired": quotes_expired, "converted": quotes_converted, "amount": quotes_amount, "conversion_rate": quotes_conversion_rate, "recent_quotes": recent_quotes},
     }
 

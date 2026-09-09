@@ -30,8 +30,9 @@ def ai_database():
         db.drop_all()
         db.create_all()
 
-        company_a = Company(name="Empresa A", active=True)
-        company_b = Company(name="Empresa B", active=True)
+        ai_preferences = json.dumps({"ai_agent": {"plan_code": "inicio"}})
+        company_a = Company(name="Empresa A", active=True, preferences_json=ai_preferences)
+        company_b = Company(name="Empresa B", active=True, preferences_json=ai_preferences)
         db.session.add_all([company_a, company_b])
         db.session.flush()
 

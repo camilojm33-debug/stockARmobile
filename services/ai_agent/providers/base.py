@@ -20,3 +20,15 @@ class AIProvider(ABC):
         max_tokens=None,
     ) -> Dict[str, Any]:
         raise NotImplementedError
+
+    def generate_invoice(
+        self,
+        *,
+        file_path,
+        mime_type: str,
+        prompt: str,
+        schema: Dict[str, Any],
+        model: str | None = None,
+    ) -> Dict[str, Any]:
+        """Extract a structured invoice when the provider supports documents."""
+        raise NotImplementedError("Este proveedor no admite extracción multimodal de facturas.")

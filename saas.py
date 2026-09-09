@@ -1702,11 +1702,85 @@ def toggle_company(company_id):
     return _redirect_back("saas.companies_panel")
 
 
+@bp.route("/ai-subscriptions")
+@superadmin_required
+def ai_subscriptions_panel():
+    from app import Company
+    from services.ai_agent.subscription_service import AISubscriptionService
+    from services.ai_agent.usage_service import AI_PLANS
+
+    _require_superadmin()
+    q = (request.args.get("q") or "").strip()
+    company_id = request.args.get("company_id", type=int)
+    query = Company.query.order_by(Company.name.asc())
+    if company_id:
+        # Navegacion directa desde el Gestor de empresas: el id siempre viene del backend (url_for), nunca de un input libre.
+        query = query.filter(Company.id == company_id)
+    elif q:
+        query = query.filter(Company.name.ilike(f"%{q}%"))
+    rows = [{"company": company, "status": AISubscriptionService.get_status(company)} for company in query.all()]
+    return render_template("saas/ai_subscriptions.html", rows=rows, ai_plans=AI_PLANS, filters={"q": q, "company_id": company_id})
+
+
+@bp.route("/ai-subscriptions/<int:company_id>")
+@superadmin_required
+def ai_subscription_detail(company_id):
+    """Centro de control IA de una empresa puntual: unico lugar con las acciones de AISubscriptionService."""
+    from app import Company
+    from services.ai_agent.subscription_service import AISubscriptionService
+    from services.ai_agent.usage_service import AI_PLANS
+
+    _require_superadmin()
+    company = Company.query.get(company_id)
+    if company is None:
+        abort(404)
+    status = AISubscriptionService.get_status(company)
+    return render_template("saas/ai_subscription_detail.html", company=company, status=status, ai_plans=AI_PLANS)
+
+
+@bp.route("/ai-subscriptions/<int:company_id>/action", methods=["POST"])
+@superadmin_required
+def ai_subscriptions_action(company_id):
+    from app import Company
+    from services.ai_agent.subscription_service import AISubscriptionError, AISubscriptionService
+
+    _require_superadmin()
+    company = Company.query.get(company_id)
+    if company is None:
+        abort(404)
+    action = (request.form.get("action") or "").strip().lower()
+    try:
+        if action == "assign_plan":
+            AISubscriptionService.assign_plan(company, plan_code=request.form.get("plan_code"), admin_user_id=current_user.id)
+        elif action == "activate":
+            AISubscriptionService.activate(company, admin_user_id=current_user.id)
+        elif action == "suspend":
+            AISubscriptionService.suspend(company, admin_user_id=current_user.id, reason=request.form.get("reason"))
+        elif action == "reactivate":
+            AISubscriptionService.reactivate(company, admin_user_id=current_user.id)
+        elif action == "cancel":
+            AISubscriptionService.cancel(company, admin_user_id=current_user.id, reason=request.form.get("reason"))
+        elif action == "grant_trial":
+            AISubscriptionService.grant_trial(company, plan_code=request.form.get("plan_code"), days=request.form.get("days"), admin_user_id=current_user.id, reason=request.form.get("reason"))
+        elif action == "renew":
+            AISubscriptionService.renew(company, admin_user_id=current_user.id, days=request.form.get("days"))
+        elif action == "set_expiry":
+            AISubscriptionService.set_expiry(company, ends_at=request.form.get("ends_at"), admin_user_id=current_user.id)
+        else:
+            flash("Acción inválida.", "danger")
+            return _redirect_back("saas.ai_subscriptions_panel")
+        flash("Suscripción IA actualizada.", "success")
+    except AISubscriptionError as exc:
+        flash(str(exc), "danger")
+    return _redirect_back("saas.ai_subscriptions_panel")
+
+
 @bp.route("/companies")
 @superadmin_required
 def companies_panel():
     from app import Client, Company, Plan, Product, Sale, Subscription, User, db
     from services.subscription_service import SubscriptionService
+    from services.ai_agent.subscription_service import AISubscriptionService
 
     _require_superadmin()
     q = (request.args.get("q") or "").strip()
@@ -1771,6 +1845,9 @@ def companies_panel():
             sub = latest_subscriptions.get(company.id)
             effective_states[company.id] = SubscriptionService.resolve_company_access_state(company, subscription=sub)
 
+    # Suscripcion IA: proyeccion de solo lectura via AISubscriptionService, sin duplicar AI_PLANS/can_use_ai.
+    ai_statuses = {company.id: AISubscriptionService.get_status(company) for company in companies}
+
     return render_template(
         "saas/companies.html",
         companies=companies,
@@ -1781,6 +1858,7 @@ def companies_panel():
         sale_counts=sale_counts,
         latest_subscriptions=latest_subscriptions,
         effective_states=effective_states,
+        ai_statuses=ai_statuses,
         plans=Plan.query.filter(Plan.active.is_(True)).order_by(Plan.price.asc()).all(),
         filters={"q": q, "status": status, "plan": plan_code, "per_page": per_page},
     )

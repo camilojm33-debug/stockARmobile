@@ -835,6 +835,8 @@ def subscription_portal():
     from flask import session
 
     from app import Company, Invoice, Payment, PaymentHistory, ReferralAttribution
+    from services.ai_agent.usage_service import AI_PLANS
+    from services.ai_agent.subscription_service import AISubscriptionService
 
     company_id = getattr(current_user, "company_id", None)
     company = Company.query.filter_by(id=company_id).first_or_404()
@@ -963,6 +965,8 @@ def subscription_portal():
         timeline_items=timeline_items,
         selected_plan=selected_plan,
         mp_auto_active=mp_auto_active,
+        ai_plans=AI_PLANS,
+        ai_status=AISubscriptionService.get_status(company),
     )
 
 
@@ -1082,6 +1086,58 @@ def create_checkout():
 
     flash("QR de Mercado Pago generado. Escanealo o abrí el checkout para pagar.", "info")
     return redirect(url_for("company_billing.subscription_portal", checkout="created"))
+
+
+@bp.route("/subscription/ai-agent/checkout", methods=["POST"])
+@company_admin_required
+def create_ai_subscription_checkout():
+    """Crea una suscripcion recurrente de Mercado Pago para el plan IA elegido.
+    Reutiliza MercadoPagoService.create_preapproval() y AISubscriptionService; no crea un segundo catalogo de precios."""
+    from app import Company, db
+    from services.ai_agent.subscription_service import AISubscriptionError, AISubscriptionService
+    from services.ai_agent.usage_service import AI_PLAN_BY_CODE
+    from services.mercadopago_service import MercadoPagoService
+
+    company_id = getattr(current_user, "company_id", None)
+    company = Company.query.filter_by(id=company_id).first_or_404()
+    plan_code = (request.form.get("plan_code") or "").strip().lower()
+    plan = AI_PLAN_BY_CODE.get(plan_code)
+    if plan is None:
+        flash("Plan IA inválido.", "danger")
+        return redirect(url_for("company_billing.subscription_portal"))
+
+    payer_email = (getattr(current_user, "email", None) or getattr(company, "contact_email", None) or "").strip()
+    if not payer_email or "@" not in payer_email:
+        flash("Necesitás un email válido en tu cuenta para activar el cobro automático de IA.", "danger")
+        return redirect(url_for("company_billing.subscription_portal"))
+
+    try:
+        # El precio SIEMPRE se resuelve server-side desde AI_PLANS; nunca se confia en un monto enviado por el navegador.
+        amount = AISubscriptionService.plan_amount_ars(plan_code)
+        external_reference = f"ai_subscription:true|company_id:{company.id}|plan_code:{plan_code}|nonce:{uuid.uuid4().hex}"
+        config = load_billing_config()
+        response = MercadoPagoService().create_preapproval(
+            reason=f"StockArMobile IA - Plan {plan['name']}",
+            payer_email=payer_email,
+            external_reference=external_reference,
+            amount=amount,
+            currency="ARS",
+            frequency=1,
+            frequency_type="months",
+            notification_url=config.notification_url,
+            back_url=config.success_url,
+        )
+        preapproval_id = str(response.get("id") or "").strip()
+        checkout_url = str(response.get("init_point") or "").strip()
+        if not preapproval_id or not checkout_url:
+            raise RuntimeError("Mercado Pago no devolvió una suscripción IA válida (id/init_point).")
+        AISubscriptionService.link_mercadopago_pending(company, plan_code=plan_code, preapproval_id=preapproval_id, payer_email=payer_email)
+        return redirect(checkout_url)
+    except (AISubscriptionError, RuntimeError, ValueError) as exc:
+        db.session.rollback()
+        current_app.logger.exception("Error creando suscripción IA Mercado Pago: %s", exc)
+        flash(f"No se pudo iniciar la suscripción IA: {exc}", "danger")
+        return redirect(url_for("company_billing.subscription_portal"))
 
 
 @bp.route("/subscription/mercadopago/create", methods=["POST"])

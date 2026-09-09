@@ -89,6 +89,11 @@
   </div>
 
   <div class="card app-card mb-4">
+    <div class="card-header bg-white fw-bold d-flex justify-content-between align-items-center"><span>Planes de Agentes IA</span><a class="btn btn-sm btn-outline-primary" href="{{ url_for('ai_agents.agent', agent='planes') }}">Ver detalle</a></div>
+    <div class="card-body"><div class="small text-muted mb-2">{% if ai_status and ai_status.plan_name %}Suscripción IA actual: <strong>{{ ai_status.plan_name }}</strong> · {{ ai_status.status or 'SIN ESTADO' }}{% if ai_status.origin %} · Origen: {{ ai_status.origin }}{% endif %}{% else %}Sin suscripción IA asignada todavía.{% endif %}</div><div class="row g-3">{% for plan in ai_plans %}<div class="col-md-6 col-xl-3"><div class="border rounded p-3 h-100 d-flex flex-column"><div class="d-flex justify-content-between gap-2"><strong>{{ plan.name }}</strong>{% if plan.badge %}<span class="badge {{ 'text-bg-primary' if plan.badge == 'RECOMENDADO' else 'text-bg-dark' }}">{{ plan.badge }}</span>{% endif %}</div><div class="h5 fw-bold my-2">{{ plan.price }}</div><div class="small text-muted mb-2">{{ plan.tagline }}</div><div class="small mb-3">{{ plan.limit }} interacciones IA/mes{% if plan.invoice_processing %}<br>Reconocimiento de facturas con IA{% endif %}</div><form method="post" action="{{ url_for('company_billing.create_ai_subscription_checkout') }}" class="mt-auto"><input type="hidden" name="csrf_token" value="{{ csrf_token() }}"><input type="hidden" name="plan_code" value="{{ plan.code }}"><button class="btn btn-sm {% if ai_status and ai_status.plan_code == plan.code %}btn-outline-success{% else %}btn-primary{% endif %} w-100" type="submit">{% if ai_status and ai_status.plan_code == plan.code %}Renovar / reactivar{% else %}Contratar con Mercado Pago{% endif %}</button></form></div></div>{% endfor %}</div><div class="small text-muted mt-3">El precio y el límite de cada plan se validan siempre en el servidor antes de generar el cobro.</div></div>
+  </div>
+
+  <div class="card app-card mb-4">
     <div class="card-header bg-white fw-bold">Acciones de suscripción</div>
     <div class="card-body d-flex flex-wrap gap-2">
       <a class="btn btn-primary" href="#planes-disponibles"><i class="bi bi-arrow-repeat me-1"></i>Actualizar plan</a>

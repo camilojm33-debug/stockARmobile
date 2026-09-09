@@ -1,0 +1,63 @@
+{% extends "base_master.html" %}
+
+{% block title %}Suscripciones IA - SuperAdmin{% endblock %}
+
+{% block content %}
+<div class="app-shell">
+  <div class="d-flex flex-wrap justify-content-between align-items-center gap-3 mb-4">
+    <div>
+      <span class="page-kicker"><i class="bi bi-robot"></i> SuperAdmin</span>
+      <h1 class="h3 fw-bold mb-0">Suscripciones IA</h1>
+      <p class="text-muted mb-0">Gestión manual del plan, estado y vencimiento del agente IA de cada empresa.</p>
+    </div>
+    <div class="d-flex gap-2">
+      <a class="btn btn-outline-secondary" href="{{ url_for('saas.companies_panel') }}">Gestor de empresas</a>
+      <a class="btn btn-outline-secondary" href="{{ url_for('saas.index') }}">Volver</a>
+    </div>
+  </div>
+
+  {% if filters.company_id %}
+  <div class="alert alert-info d-flex justify-content-between align-items-center">
+    <span>Mostrando solo la empresa seleccionada.</span>
+    <a class="btn btn-sm btn-outline-primary" href="{{ url_for('saas.ai_subscriptions_panel') }}">Ver todas las empresas</a>
+  </div>
+  {% endif %}
+
+  <form class="row g-2 mb-3" method="get" action="{{ url_for('saas.ai_subscriptions_panel') }}">
+    <div class="col-md-4"><input class="form-control" type="text" name="q" value="{{ filters.q }}" placeholder="Buscar empresa..."></div>
+    <div class="col-md-2"><button class="btn btn-outline-primary w-100" type="submit">Buscar</button></div>
+  </form>
+
+  {% for row in rows %}
+  {% set company = row.company %}
+  {% set status = row.status %}
+  <div class="card app-card mb-3">
+    <div class="card-body">
+      <div class="d-flex flex-wrap justify-content-between align-items-start gap-3">
+        <div>
+          <h2 class="h5 fw-bold mb-1">{{ company.name }}</h2>
+          <div class="mb-1">
+            <span class="badge text-bg-dark">{{ status.plan_name or 'Sin plan IA' }}</span>
+            <span class="badge {% if status.status == 'ACTIVA' %}text-bg-success{% elif status.status == 'TRIAL' %}text-bg-info{% elif status.status in ['SUSPENDIDA','CANCELADA','VENCIDA'] %}text-bg-danger{% elif status.status == 'PENDIENTE' %}text-bg-warning{% else %}text-bg-secondary{% endif %}">{{ status.status or 'SIN ESTADO' }}</span>
+            <span class="badge text-bg-light text-dark">Origen: {{ status.origin or 'MANUAL' }}</span>
+          </div>
+          <div class="small text-muted mb-1">Consumo: {{ status.usage.used_usage }} / {{ status.usage.included_usage }} · {{ status.usage.percent }}%</div>
+          <div class="small text-muted mb-1">
+            {% for agent in ['asistente', 'vendedor', 'analista', 'marketing'] %}
+              {% if agent in status.agents %}<span class="text-success">✓</span>{% else %}<span class="text-muted">✗</span>{% endif %} {{ agent }}
+            {% endfor %}
+            {% if status.invoice_processing %}<span class="text-success">✓ facturas</span>{% endif %}
+          </div>
+          <div class="small text-muted">Inicio: {{ status.starts_at or '-' }} · Vence: {{ status.ends_at or '-' }}</div>
+        </div>
+        <div>
+          <a class="btn btn-sm btn-primary" href="{{ url_for('saas.ai_subscription_detail', company_id=company.id) }}">Gestionar</a>
+        </div>
+      </div>
+    </div>
+  </div>
+  {% else %}
+  <div class="alert alert-info">No se encontraron empresas.</div>
+  {% endfor %}
+</div>
+{% endblock %}

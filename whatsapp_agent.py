@@ -7,8 +7,9 @@ import hmac
 import os
 
 from flask import Blueprint, current_app, jsonify, request
+from sqlalchemy.exc import IntegrityError
 from stockarmobile.extensions import db
-from stockarmobile.models.conversations import Conversation
+from stockarmobile.models.conversations import Conversation, ConversationMessage
 from services.ai_agent.config_service import company_for_whatsapp_phone_id, get_whatsapp_connection, is_ai_enabled, choose_agent
 from services.ai_agent.orchestrator_v2 import AgentRuntime
 from services.ai_agent.vendor_order_service import VendorOrderService
@@ -99,6 +100,14 @@ def webhook():
             if company is None:
                 errors.append({"external_message_id": external_id, "error": "company_not_configured"})
                 continue
+
+            duplicate = db.session.query(ConversationMessage).filter(
+                ConversationMessage.company_id == company.id,
+                ConversationMessage.external_message_id == external_id,
+            ).first()
+            if duplicate is not None:
+                continue
+
             connection = get_whatsapp_connection(company)
             if not connection["enabled"] or not is_ai_enabled(company):
                 continue
@@ -108,7 +117,24 @@ def webhook():
                 WhatsAppService.send_text(company, to=sender, body=command_response)
                 processed += 1
                 continue
-            result = AgentRuntime.process(company_id=company.id, conversation_id=conversation.id, message=text, channel="whatsapp", external_message_id=external_id, idempotency_key=f"whatsapp:{external_id}", metadata={"phone_number_id": phone_number_id, "from": sender, "channel": "whatsapp"})
+
+            idempotency_key = f"whatsapp:{external_id}"
+            try:
+                result = AgentRuntime.process(
+                    company_id=company.id,
+                    conversation_id=conversation.id,
+                    message=text,
+                    channel="whatsapp",
+                    external_message_id=external_id,
+                    idempotency_key=idempotency_key,
+                    metadata={"phone_number_id": phone_number_id, "from": sender, "channel": "whatsapp"},
+                )
+            except IntegrityError as exc:
+                db.session.rollback()
+                if "uq_convmsg_company_idempotency" in str(exc.orig) or "uq_convmsg_external_company_conv" in str(exc.orig):
+                    continue
+                raise
+
             if result.get("status") == "duplicate":
                 continue
             WhatsAppService.send_text(company, to=sender, body=result["content"])

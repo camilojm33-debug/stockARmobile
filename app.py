@@ -1023,6 +1023,10 @@ class Supplier(db.Model):
 
 class PurchaseOrder(db.Model):
     __tablename__ = "purchase_orders"
+    __table_args__ = (
+        # Idempotencia real a nivel de BD: como maximo una compra aplicada por factura de IA por tenant.
+        Index("ix_purchase_orders_company_document_hash", "company_id", "source_document_hash", unique=True),
+    )
 
     id = db.Column(db.Integer, primary_key=True)
     supplier_id = db.Column(db.Integer, db.ForeignKey("suppliers.id"))
@@ -1032,6 +1036,7 @@ class PurchaseOrder(db.Model):
     subtotal = db.Column(MONEY, default=Decimal("0.00"))
     total_amount = db.Column(MONEY, default=Decimal("0.00"))
     note = db.Column(db.Text)
+    source_document_hash = db.Column(db.String(64), nullable=True)
     supplier = db.relationship("Supplier", backref="purchase_orders")
     items = db.relationship("PurchaseItem", backref="purchase_order", cascade="all, delete-orphan")
 
@@ -1446,6 +1451,36 @@ class SaaSAlert(db.Model):
     created_by = db.relationship("User", foreign_keys=[created_by_user_id], backref="saas_alerts_created")
 
 
+class Campaign(db.Model):
+    __tablename__ = "ai_campaigns"
+    __table_args__ = (
+        Index("ix_ai_campaigns_company_status", "company_id", "status"),
+        Index("ix_ai_campaigns_company_created", "company_id", "created_at"),
+    )
+
+    id = db.Column(db.Integer, primary_key=True)
+    company_id = db.Column(db.Integer, db.ForeignKey("companies.id"), nullable=False, index=True)
+    title = db.Column(db.String(180), nullable=False)
+    objective = db.Column(db.String(120), nullable=False)
+    campaign_type = db.Column(db.String(80), nullable=False)
+    status = db.Column(db.String(30), nullable=False, default="BORRADOR", index=True)
+    content = db.Column(db.Text, nullable=False)
+    system_data_json = db.Column(db.Text, nullable=False, default="{}")
+    audience_segment = db.Column(db.String(120))
+    audience_count = db.Column(db.Integer, nullable=False, default=0)
+    product_id = db.Column(db.Integer, db.ForeignKey("products.id"), nullable=True, index=True)
+    created_by_user_id = db.Column(db.Integer, db.ForeignKey("users.id"), nullable=False, index=True)
+    approved_by_user_id = db.Column(db.Integer, db.ForeignKey("users.id"), nullable=True, index=True)
+    approved_at = db.Column(db.DateTime)
+    created_at = db.Column(db.DateTime, default=utcnow, nullable=False, index=True)
+    updated_at = db.Column(db.DateTime, default=utcnow, onupdate=utcnow, nullable=False)
+
+    company = db.relationship("Company", backref="ai_campaigns")
+    product = db.relationship("Product")
+    created_by = db.relationship("User", foreign_keys=[created_by_user_id])
+    approved_by = db.relationship("User", foreign_keys=[approved_by_user_id])
+
+
 def record_audit(*, action, entity=None, entity_id=None, detail=None, user_id=None, company_id=None, ip_address=None):
     try:
         record_audit_entry(
@@ -1566,6 +1601,7 @@ import sales  # noqa: E402
 import quotes  # noqa: E402
 import support  # noqa: E402
 import seo_pages  # noqa: E402
+import ai_agents  # noqa: E402
 from services.ai_agent.admin import bp as ai_admin_bp  # noqa: E402
 from whatsapp_agent import bp as whatsapp_agent_bp  # noqa: E402
 
@@ -1585,6 +1621,7 @@ company_billing_bp = company_billing.bp
 referrals_bp = referrals.bp
 support_bp = support.bp
 seo_pages_bp = seo_pages.bp
+ai_agents_bp = ai_agents.bp
 
 app.register_blueprint(auth_bp, url_prefix="/auth")
 app.register_blueprint(dashboard_bp, url_prefix="/dashboard")
@@ -1602,6 +1639,7 @@ app.register_blueprint(company_billing_bp, url_prefix="/admin")
 app.register_blueprint(referrals_bp)
 app.register_blueprint(support_bp, url_prefix="/soporte")
 app.register_blueprint(seo_pages_bp)
+app.register_blueprint(ai_agents_bp)
 app.register_blueprint(ai_admin_bp)
 app.register_blueprint(whatsapp_agent_bp)
 csrf.exempt(whatsapp_agent_bp)

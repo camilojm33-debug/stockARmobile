@@ -21,6 +21,7 @@ from services.ai_agent.config_service import (
     get_whatsapp_connection,
     update_ai_preferences,
 )
+from services.ai_agent.usage_service import AI_PLANS
 
 bp = Blueprint("ai_admin", __name__, url_prefix="/dashboard/ai-agent")
 
@@ -97,6 +98,7 @@ def index():
     agents = ensure_default_agents(company_id)
     configs = _ensure_configs(company_id, agents)
     prefs = get_ai_preferences(company)
+    vendor_options = prefs["ai_agent"].get("vendor_options") if isinstance(prefs["ai_agent"].get("vendor_options"), dict) else {}
     whatsapp = get_whatsapp_connection(company)
 
     conversations = (
@@ -164,6 +166,8 @@ def index():
         whatsapp_state=whatsapp_state,
         webhook_url=url_for("whatsapp_agent.webhook", _external=True),
         conversations=conversation_rows,
+        vendor_options=vendor_options,
+        ai_plans=AI_PLANS,
     )
 
 
@@ -198,6 +202,22 @@ def save():
         ai_updates={
             "enabled": request.form.get("ai_enabled") == "1",
             "whatsapp_enabled": request.form.get("whatsapp_enabled") == "1",
+            # ai_plan_code deliberadamente NO se acepta desde este formulario tenant-facing:
+            # el plan/estado IA lo administra exclusivamente Super Admin (AISubscriptionService).
+            "vendor_options": {
+                "personality": (request.form.get("vendor_personality") or "amigable").strip()[:30],
+                "can_recommend": request.form.get("vendor_can_recommend") == "1",
+                "can_offer_alternatives": request.form.get("vendor_can_offer_alternatives") == "1",
+                "can_prepare_quotes": request.form.get("vendor_can_prepare_quotes") == "1",
+                "can_take_orders": request.form.get("vendor_can_take_orders") == "1",
+                "can_follow_up": request.form.get("vendor_can_follow_up") == "1",
+                "can_handoff": request.form.get("vendor_can_handoff") == "1",
+                "agent_name": (request.form.get("vendor_agent_name") or "Vendedor IA").strip()[:120],
+                "greeting": (request.form.get("vendor_greeting") or "").strip()[:1000],
+                "schedule": (request.form.get("vendor_schedule") or "").strip()[:120],
+                "out_of_hours_message": (request.form.get("vendor_out_of_hours_message") or "").strip()[:1000],
+                "business_information": (request.form.get("vendor_business_information") or "").strip()[:4000],
+            },
         },
     )
 
