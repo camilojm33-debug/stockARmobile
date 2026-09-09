@@ -141,7 +141,7 @@ _PUBLIC_RATE_LIMIT_RULES = [
 
 def is_api_request() -> bool:
     path = request.path or ""
-    return bool(path.startswith("/ventas/api/") or path.startswith("/api/") or request.is_json)
+    return bool(path.startswith("/ventas/api/") or path.startswith("/api/") or path.startswith("/dashboard/ai-agent/") or request.is_json)
 
 
 def _request_client_ip() -> str:

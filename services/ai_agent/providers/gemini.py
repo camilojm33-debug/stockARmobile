@@ -24,7 +24,7 @@ class GeminiProvider(AIProvider):
         self.api_key = api_key if api_key is not None else os.getenv("GEMINI_API_KEY")
         # Keep each Google request below the Gunicorn request budget. AgentRuntime can
         # make two sequential Gemini calls when a tool is used.
-        self.timeout = float(timeout if timeout is not None else os.getenv("GEMINI_TIMEOUT", "45"))
+        self.timeout = float(timeout if timeout is not None else os.getenv("GEMINI_TIMEOUT", "25"))
         self._client = None
         self._types = None
         # Gemini 3.x exige reenviar el thought_signature original junto al functionCall en el turno siguiente.
@@ -139,7 +139,10 @@ class GeminiProvider(AIProvider):
             kwargs["tools"] = [types.Tool(function_declarations=declarations)]
             # AgentRuntime executes tools explicitly and then sends the tool result
             # back in a second Gemini request. Do not let the SDK execute tools too.
-            kwargs["automatic_function_calling"] = types.AutomaticFunctionCallingConfig(disable=True)
+            kwargs["automatic_function_calling"] = types.AutomaticFunctionCallingConfig(
+                disable=True,
+                maximum_remote_calls=None,
+            )
         if response_schema is not None:
             kwargs["response_mime_type"] = "application/json"
             kwargs["response_schema"] = self._to_gemini_schema(response_schema)
@@ -220,8 +223,8 @@ class GeminiProvider(AIProvider):
                 contents=self._contents(messages),
                 config=self._config(messages=messages, tools=tools, temperature=temperature, max_tokens=max_tokens),
             )
-        except Exception:
-            raise RuntimeError("Gemini no pudo procesar la solicitud.") from None
+        except Exception as exc:
+            raise RuntimeError("Gemini no pudo procesar la solicitud.") from exc
         self._capture_thought_signatures(response)
         return {"content": str(self._value(response, "text", "") or ""), "tool_call": self._tool_call(response), "usage": self._usage(response), "model": effective_model}
 
@@ -238,8 +241,8 @@ class GeminiProvider(AIProvider):
                 contents=[prompt, document],
                 config=self._config(messages=[], response_schema=schema),
             )
-        except Exception:
-            raise RuntimeError("Gemini no pudo procesar la factura.") from None
+        except Exception as exc:
+            raise RuntimeError("Gemini no pudo procesar la factura.") from exc
         content = str(self._value(response, "text", "") or "")
         if not content:
             raise RuntimeError("Gemini no devolvió una extracción estructurada.")

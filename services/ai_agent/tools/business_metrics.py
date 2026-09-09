@@ -99,6 +99,17 @@ class ProductosMasVendidosTool(AgentTool):
         return {"success": True, "days": days, "items": [{"id": row.id, "name": row.name, "quantity": float(row.quantity or 0)} for row in rows]}
 
 
+class ContarProductosTool(AgentTool):
+    name = "contar_productos"
+    description = "Cuenta productos reales de la empresa actual."
+    input_schema = {"type": "object", "properties": {}, "required": []}
+
+    def execute(self, **kwargs: Any) -> Dict[str, Any]:
+        total_products = int(Product.query.filter(Product.company_id == self.company_id).count())
+        active_products = int(Product.query.filter(Product.company_id == self.company_id, Product.active.is_(True)).count())
+        return {"success": True, "total_products": total_products, "active_products": active_products}
+
+
 class ProductosSinVentasRecientesTool(AgentTool):
     name = "productos_sin_ventas_recientes"
     description = "Lista productos activos de la empresa que no registran ventas en los últimos días indicados."
