@@ -103,9 +103,9 @@
   padding-left: .35rem;
 }
 
-/* Asistente IA menos dominante que los indicadores principales. */
-#ai-chat-messages {
-  min-height: 120px;
+/* La conversación y carga de facturas pertenecen al hub Agentes IA, no al panel principal. */
+.app-shell > .row.g-4.mt-1:has(#ai-chat-messages) {
+  display: none !important;
 }
 
 [data-bs-theme="dark"] .app-shell > .hero-surface .summary-pill {
