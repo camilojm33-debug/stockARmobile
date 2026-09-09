@@ -1,4 +1,4 @@
-const CACHE_NAME = 'stockarmobile-pwa-v8';
+const CACHE_NAME = 'stockarmobile-pwa-v9';
 const STATIC_ASSETS = [
   '/',
   '/offline.html',

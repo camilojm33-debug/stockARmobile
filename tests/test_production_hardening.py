@@ -24,4 +24,4 @@ def test_offline_queue_does_not_delete_auth_or_conflict_failures():
     source = Path("static/service-worker.js").read_text(encoding="utf-8")
     assert "status: 'needs_attention'" in source
     assert "response.ok || [401, 403, 409, 412]" not in source
-    assert "const CACHE_NAME = 'stockarmobile-pwa-v8';" in source
+    assert "const CACHE_NAME = 'stockarmobile-pwa-v9';" in source
