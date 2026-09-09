@@ -5,7 +5,7 @@ import uuid
 
 from flask import Blueprint, current_app, flash, jsonify, redirect, render_template, request, session, url_for
 from flask_login import current_user, login_required
-from stockarmobile.extensions import db
+from stockarmobile.extensions import csrf, db
 from stockarmobile.models.conversations import Conversation
 from services.ai_agent.config_service import ensure_agent_for_key
 from services.ai_agent.usage_service import can_use_ai
@@ -255,6 +255,9 @@ def ai_agent_chat():
             "content": result.get("content"),
         }
     )
+
+
+csrf.exempt(ai_agent_chat)
 
 
 @bp.route("/ai-agent/invoices/<upload_id>/process", methods=["POST"])

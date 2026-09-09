@@ -218,7 +218,7 @@ class GeminiProvider(AIProvider):
             raise RuntimeError("GEMINI_MODEL no está configurado.")
         client = self.client
         try:
-            response = client.models.generate_content(
+            response = client.models._generate_content(
                 model=effective_model,
                 contents=self._contents(messages),
                 config=self._config(messages=messages, tools=tools, temperature=temperature, max_tokens=max_tokens),
