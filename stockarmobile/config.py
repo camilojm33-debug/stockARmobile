@@ -7,9 +7,12 @@ from werkzeug.middleware.proxy_fix import ProxyFix
 
 
 def _sqlite_engine_options(database_url: str):
-    """Ensure in-memory SQLite databases are shared across connections in tests."""
+    """Return safe SQLAlchemy pool options for SQLite and PostgreSQL."""
     if not database_url.startswith("sqlite"):
-        return {}
+        return {
+            "pool_pre_ping": True,
+            "pool_recycle": 1800,
+        }
 
     options = {"connect_args": {"check_same_thread": False}}
     if database_url == "sqlite:///:memory:":
