@@ -131,6 +131,9 @@ class GeminiProvider(AIProvider):
         declarations = self._function_declarations(tools)
         if declarations:
             kwargs["tools"] = [types.Tool(function_declarations=declarations)]
+            # AgentRuntime executes tools explicitly and then sends the tool result
+            # back in a second Gemini request. Do not let the SDK execute tools too.
+            kwargs["automatic_function_calling"] = types.AutomaticFunctionCallingConfig(disable=True)
         if response_schema is not None:
             kwargs["response_mime_type"] = "application/json"
             kwargs["response_schema"] = self._to_gemini_schema(response_schema)
