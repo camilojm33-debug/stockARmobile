@@ -19,6 +19,8 @@
   <div class="alert alert-warning">Tu pago está pendiente. Se actualizará de forma automática cuando se confirme.</div>
   {% elif checkout_status == 'failure' %}
   <div class="alert alert-danger">No se pudo completar el pago. Podés reintentar desde esta pantalla.</div>
+  {% elif checkout_status == 'ai_created' %}
+  <div class="alert alert-info">Suscripción IA lista para continuar. Escaneá el QR o abrí el checkout para autorizar el cobro mensual.</div>
   {% endif %}
 
   {% if managed_by_seller %}
@@ -90,7 +92,34 @@
 
   <div class="card app-card mb-4">
     <div class="card-header bg-white fw-bold d-flex justify-content-between align-items-center"><span>Planes de Agentes IA</span><a class="btn btn-sm btn-outline-primary" href="{{ url_for('ai_agents.agent', agent='planes') }}">Ver detalle</a></div>
-    <div class="card-body"><div class="small text-muted mb-2">{% if ai_status and ai_status.plan_name %}Suscripción IA actual: <strong>{{ ai_status.plan_name }}</strong> · {{ ai_status.status or 'SIN ESTADO' }}{% if ai_status.origin %} · Origen: {{ ai_status.origin }}{% endif %}{% else %}Sin suscripción IA asignada todavía.{% endif %}</div><div class="row g-3">{% for plan in ai_plans %}<div class="col-md-6 col-xl-3"><div class="border rounded p-3 h-100 d-flex flex-column"><div class="d-flex justify-content-between gap-2"><strong>{{ plan.name }}</strong>{% if plan.badge %}<span class="badge {{ 'text-bg-primary' if plan.badge == 'RECOMENDADO' else 'text-bg-dark' }}">{{ plan.badge }}</span>{% endif %}</div><div class="h5 fw-bold my-2">{{ plan.price }}</div><div class="small text-muted mb-2">{{ plan.tagline }}</div><div class="small mb-3">{{ plan.limit }} interacciones IA/mes{% if plan.invoice_processing %}<br>Reconocimiento de facturas con IA{% endif %}</div><form method="post" action="{{ url_for('company_billing.create_ai_subscription_checkout') }}" class="mt-auto"><input type="hidden" name="csrf_token" value="{{ csrf_token() }}"><input type="hidden" name="plan_code" value="{{ plan.code }}"><button class="btn btn-sm {% if ai_status and ai_status.plan_code == plan.code %}btn-outline-success{% else %}btn-primary{% endif %} w-100" type="submit">{% if ai_status and ai_status.plan_code == plan.code %}Renovar / reactivar{% else %}Contratar con Mercado Pago{% endif %}</button></form></div></div>{% endfor %}</div><div class="small text-muted mt-3">El precio y el límite de cada plan se validan siempre en el servidor antes de generar el cobro.</div></div>
+    <div class="card-body">
+      <div class="small text-muted mb-2">{% if ai_status and ai_status.plan_name %}Suscripción IA actual: <strong>{{ ai_status.plan_name }}</strong> · {{ ai_status.status or 'SIN ESTADO' }}{% if ai_status.origin %} · Origen: {{ ai_status.origin }}{% endif %}{% else %}Sin suscripción IA asignada todavía.{% endif %}</div>
+      <div class="row g-3">
+        {% for plan in ai_plans %}
+        {% set is_active_plan = ai_status and ai_status.plan_code == plan.code and ai_status.status == 'ACTIVA' %}
+        {% set is_pending_plan = ai_status and ai_status.plan_code == plan.code and ai_status.status == 'PENDIENTE' %}
+        <div class="col-md-6 col-xl-3">
+          <div class="border rounded p-3 h-100 d-flex flex-column">
+            <div class="d-flex justify-content-between gap-2"><strong>{{ plan.name }}</strong>{% if plan.badge %}<span class="badge {{ 'text-bg-primary' if plan.badge == 'RECOMENDADO' else 'text-bg-dark' }}">{{ plan.badge }}</span>{% endif %}</div>
+            <div class="h5 fw-bold my-2">{{ plan.price }}</div>
+            <div class="small text-muted mb-2">{{ plan.tagline }}</div>
+            <div class="small mb-3">{{ plan.limit }} interacciones IA/mes{% if plan.invoice_processing %}<br>Reconocimiento de facturas con IA{% endif %}</div>
+            {% if is_active_plan %}
+            <div class="mt-auto text-success fw-semibold text-center"><i class="bi bi-check-circle-fill me-1"></i>Suscripción activa</div>
+            {% else %}
+            <form method="post" action="{{ url_for('company_billing.create_ai_subscription_checkout') }}" class="mt-auto d-flex flex-column gap-2">
+              <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+              <input type="hidden" name="plan_code" value="{{ plan.code }}">
+              <button class="btn btn-sm btn-primary w-100" type="submit" name="payment_method" value="automatic">{% if is_pending_plan %}Continuar con Mercado Pago{% else %}Contratar con Mercado Pago{% endif %}</button>
+              <button class="btn btn-sm btn-outline-primary w-100" type="submit" name="payment_method" value="qr">Pagar con QR</button>
+            </form>
+            {% endif %}
+          </div>
+        </div>
+        {% endfor %}
+      </div>
+      <div class="small text-muted mt-3">El precio y el límite de cada plan se validan siempre en el servidor antes de generar el cobro.</div>
+    </div>
   </div>
 
   <div class="card app-card mb-4">
@@ -154,7 +183,7 @@
   {% if checkout_preview and checkout_preview.checkout_url %}
   <div class="card app-card mb-4 border-primary">
     <div class="card-header bg-white fw-bold d-flex justify-content-between align-items-center">
-      <span>Checkout listo para continuar</span>
+      <span>{% if checkout_preview.kind == 'ai_subscription' %}Suscripción IA lista para continuar{% else %}Checkout listo para continuar{% endif %}</span>
       <span class="badge text-bg-primary">{{ checkout_preview.plan_name }}</span>
     </div>
     <div class="card-body">
@@ -166,7 +195,11 @@
         </div>
         <div class="col-md-8">
           <div class="h5 mb-2">{{ checkout_preview.currency }} {{ '{:,.0f}'.format(checkout_preview.amount or 0).replace(',', '.') }}</div>
+          {% if checkout_preview.kind == 'ai_subscription' %}
+          <p class="text-muted mb-3">Escaneá el QR o abrí el checkout para autorizar la suscripción mensual.</p>
+          {% else %}
           <p class="text-muted mb-3">Escaneá el QR o abrí el checkout para terminar la operación.</p>
+          {% endif %}
           <div class="d-flex gap-2 flex-wrap">
             <a class="btn btn-primary" href="{{ checkout_preview.checkout_url }}" target="_blank" rel="noopener noreferrer">Pagar ahora</a>
             <a class="btn btn-outline-secondary" href="{{ checkout_preview.checkout_url }}" target="_blank" rel="noopener noreferrer">Abrir checkout</a>
