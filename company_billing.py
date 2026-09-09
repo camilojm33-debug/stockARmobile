@@ -1122,15 +1122,8 @@ def create_ai_subscription_checkout():
     current_plan_code = str(ai_status.get("plan_code") or "").strip().lower()
     existing_preapproval_id = str(ai_status.get("mercadopago_preapproval_id") or "").strip()
 
-    if current_status == "ACTIVA" and existing_preapproval_id:
-        if current_plan_code == plan_code:
-            flash("Tu suscripción IA ya está activa.", "info")
-        else:
-            flash("Ya tenés una suscripción IA activa. Para cambiar de plan primero debemos gestionar la suscripción actual.", "warning")
-        return redirect(url_for("ai_agents.agent", agent="planes"))
-
-    if current_status == "PENDIENTE" and existing_preapproval_id and current_plan_code != plan_code:
-        flash("Ya tenés una suscripción IA pendiente. Para cambiar de plan primero debemos gestionar la suscripción actual.", "warning")
+    if current_status == "ACTIVA" and current_plan_code == plan_code:
+        flash("Tu suscripción IA ya está activa.", "info")
         return redirect(url_for("ai_agents.agent", agent="planes"))
 
     mp_service = MercadoPagoService()
@@ -1141,6 +1134,9 @@ def create_ai_subscription_checkout():
 
         preapproval_id = ""
         checkout_url = ""
+
+        if current_status in {"ACTIVA", "PENDIENTE"} and existing_preapproval_id and current_plan_code != plan_code:
+            mp_service.cancel_preapproval(existing_preapproval_id)
 
         if current_status == "PENDIENTE" and existing_preapproval_id and current_plan_code == plan_code:
             try:

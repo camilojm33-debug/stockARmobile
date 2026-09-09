@@ -125,6 +125,35 @@ def test_standard_active_ai_active_blocks_same_ai_plan_only(subscription_app, mo
     assert _standard_snapshot(subscription) == before
 
 
+def test_standard_active_ai_active_can_change_to_different_ai_plan(subscription_app, monkeypatch):
+    company, user, _, subscription = _tenant_with_standard_subscription()
+    update_ai_preferences(company, ai_updates={"plan_code": "inicio", "status": "ACTIVA", "origin": "MERCADO_PAGO", "mercadopago_preapproval_id": "ai-pre-old"})
+    db.session.commit()
+    before = _standard_snapshot(subscription)
+    calls = _mock_preapproval(monkeypatch, created_id="ai-pre-new-plan", init_point="https://mp.test/ai-new-plan")
+    cancelled = []
+
+    def cancel_preapproval(self, preapproval_id):
+        cancelled.append(preapproval_id)
+        return {"id": preapproval_id, "status": "canceled"}
+
+    monkeypatch.setattr("services.mercadopago_service.MercadoPagoService.cancel_preapproval", cancel_preapproval)
+    client = subscription_app.test_client()
+    _login(client, user)
+
+    response = client.post("/admin/subscription/ai-agent/checkout", data={"plan_code": "vendedor", "payment_method": "automatic"})
+
+    assert response.status_code == 302
+    assert response.headers["Location"] == "https://mp.test/ai-new-plan"
+    assert cancelled == ["ai-pre-old"]
+    assert calls[0][0] == "create"
+    status = AISubscriptionService.get_status(company)
+    assert status["status"] == "PENDIENTE"
+    assert status["plan_code"] == "vendedor"
+    assert status["mercadopago_preapproval_id"] == "ai-pre-new-plan"
+    assert _standard_snapshot(subscription) == before
+
+
 def test_standard_active_ai_pending_can_continue_same_ai_checkout(subscription_app, monkeypatch):
     company, user, _, subscription = _tenant_with_standard_subscription()
     update_ai_preferences(company, ai_updates={"plan_code": "inicio", "status": "PENDIENTE", "origin": "MERCADO_PAGO", "mercadopago_preapproval_id": "ai-pre"})
@@ -140,6 +169,35 @@ def test_standard_active_ai_pending_can_continue_same_ai_checkout(subscription_a
     assert response.headers["Location"] == "https://mp.test/ai-pre"
     assert calls == [("get", "ai-pre")]
     assert AISubscriptionService.get_status(company)["status"] == "PENDIENTE"
+    assert _standard_snapshot(subscription) == before
+
+
+def test_standard_active_ai_pending_can_change_to_different_ai_plan(subscription_app, monkeypatch):
+    company, user, _, subscription = _tenant_with_standard_subscription()
+    update_ai_preferences(company, ai_updates={"plan_code": "inicio", "status": "PENDIENTE", "origin": "MERCADO_PAGO", "mercadopago_preapproval_id": "ai-pre-pending"})
+    db.session.commit()
+    before = _standard_snapshot(subscription)
+    calls = _mock_preapproval(monkeypatch, created_id="ai-pre-pending-change", init_point="https://mp.test/ai-pending-change")
+    cancelled = []
+
+    def cancel_preapproval(self, preapproval_id):
+        cancelled.append(preapproval_id)
+        return {"id": preapproval_id, "status": "canceled"}
+
+    monkeypatch.setattr("services.mercadopago_service.MercadoPagoService.cancel_preapproval", cancel_preapproval)
+    client = subscription_app.test_client()
+    _login(client, user)
+
+    response = client.post("/admin/subscription/ai-agent/checkout", data={"plan_code": "negocio", "payment_method": "automatic"})
+
+    assert response.status_code == 302
+    assert response.headers["Location"] == "https://mp.test/ai-pending-change"
+    assert cancelled == ["ai-pre-pending"]
+    assert calls[0][0] == "create"
+    status = AISubscriptionService.get_status(company)
+    assert status["status"] == "PENDIENTE"
+    assert status["plan_code"] == "negocio"
+    assert status["mercadopago_preapproval_id"] == "ai-pre-pending-change"
     assert _standard_snapshot(subscription) == before
 
 
