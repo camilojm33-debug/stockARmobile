@@ -22,7 +22,9 @@ class GeminiProvider(AIProvider):
     ) -> None:
         self.model = model or os.getenv("GEMINI_MODEL")
         self.api_key = api_key if api_key is not None else os.getenv("GEMINI_API_KEY")
-        self.timeout = float(timeout if timeout is not None else os.getenv("GEMINI_TIMEOUT", "60"))
+        # Keep each Google request below the Gunicorn request budget. AgentRuntime can
+        # make two sequential Gemini calls when a tool is used.
+        self.timeout = float(timeout if timeout is not None else os.getenv("GEMINI_TIMEOUT", "45"))
         self._client = None
         self._types = None
         # Gemini 3.x exige reenviar el thought_signature original junto al functionCall en el turno siguiente.
@@ -45,6 +47,7 @@ class GeminiProvider(AIProvider):
                 api_key=self.api_key,
                 http_options=types.HttpOptions(
                     timeout=int(self.timeout * 1000),
+                    retry_options=types.HttpRetryOptions(attempts=1),
                     client_args={"transport": transport},
                 ),
             )
@@ -135,12 +138,10 @@ class GeminiProvider(AIProvider):
 
     @classmethod
     def _to_gemini_schema(cls, schema: Any) -> Any:
-        """Adapta un JSON Schema est\u00e1ndar (uniones tipo ["string","null"], additionalProperties)
-        al formato aceptado por la API REST de Gemini, sin modificar el esquema fuente."""
+        """Adapta un JSON Schema estándar al formato aceptado por la API REST de Gemini."""
         if not isinstance(schema, dict):
             return schema
         converted = dict(schema)
-        # La API REST de Gemini no reconoce additionalProperties dentro de response_schema (HTTP 400).
         converted.pop("additionalProperties", None)
         converted.pop("additional_properties", None)
         type_value = converted.get("type")
@@ -178,7 +179,7 @@ class GeminiProvider(AIProvider):
         return None
 
     def _capture_thought_signatures(self, response: Any) -> None:
-        """Cachea thought_signature (metadata interna del SDK) por nombre de función, sin exponerla al tool_call."""
+        """Cachea thought_signature por nombre de función."""
         candidates = self._value(response, "candidates", []) or []
         content = self._value(candidates[0], "content") if candidates else None
         for part in self._value(content, "parts", []) or []:
