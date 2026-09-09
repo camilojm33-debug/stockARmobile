@@ -39,6 +39,8 @@ services:
         value: https://www.stockarmobile.com/admin/portal?checkout=pending
       - key: MP_FAILURE_URL
         value: https://www.stockarmobile.com/admin/portal?checkout=failure
+      - key: GEMINI_TIMEOUT
+        value: "25"
       - key: DATABASE_URL
         fromDatabase:
           name: stockarmobile-db
