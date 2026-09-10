@@ -24,26 +24,67 @@ jobs:
       - name: Install dependencies
         run: python -m pip install -r requirements.txt
 
-      - name: Normalize AI regression tests
+      - name: Apply final production-safe repairs
         run: |
           python - <<'PY'
           from pathlib import Path
           import re
 
-          # The runtime cap test must request one additional tool call so the
-          # answer-only synthesis branch is exercised. If it is already patched,
-          # leave it untouched.
-          p = Path('tests/test_ai_agent_multitool_runtime.py')
+          # 1) AI multi-tool cap: count only executed tool rounds. The extra
+          # provider call that triggers synthesis must not be reported as a tool round.
+          p = Path('services/ai_agent/orchestrator_v2.py')
           text = p.read_text()
-          desired = 'responses = [_tool_call("buscar_producto", f"call-{index}") for index in range(MAX_TOOL_TURNS + 1)]'
-          old_pattern = r'responses = \[_tool_call\("buscar_producto", f"call-\{index\}"\) for index in range\(MAX_TOOL_TURNS\)\]'
-          if desired not in text:
-              text, changed = re.subn(old_pattern, desired, text, count=1)
-              if changed != 1:
-                  raise SystemExit('multitool cap test is neither legacy nor patched')
+          old = '''            tool_rounds += 1\n            if tool_rounds > MAX_TOOL_TURNS:'''
+          new = '''            next_tool_round = tool_rounds + 1\n            if next_tool_round > MAX_TOOL_TURNS:'''
+          if old in text:
+              text = text.replace(old, new, 1)
+              anchor = '''                raise RuntimeError("El proveedor IA no pudo completar la respuesta después de consultar las herramientas.")\n\n            assistant_tool_calls = []'''
+              replacement = '''                raise RuntimeError("El proveedor IA no pudo completar la respuesta después de consultar las herramientas.")\n\n            tool_rounds = next_tool_round\n            assistant_tool_calls = []'''
+              if anchor not in text:
+                  raise SystemExit('orchestrator tool-round anchor not found')
+              text = text.replace(anchor, replacement, 1)
               p.write_text(text)
+          elif 'next_tool_round = tool_rounds + 1' not in text or 'tool_rounds = next_tool_round' not in text:
+              raise SystemExit('orchestrator cap state is inconsistent')
 
-          # Keep explicit AI cancellation hermetic: do not call Mercado Pago from CI.
+          # 2) AI subscription cancel: the service owns the remote Mercado Pago
+          # cancellation. The HTTP route must not cancel the same preapproval twice.
+          p = Path('company_billing.py')
+          text = p.read_text()
+          duplicate = '''        if preapproval_id and ai_status.get("origin") == "MERCADO_PAGO":\n            MercadoPagoService().cancel_preapproval(preapproval_id)\n        AISubscriptionService.cancel(company, admin_user_id=current_user.id, reason="tenant_explicit_cancel")'''
+          canonical = '''        AISubscriptionService.cancel(company, admin_user_id=current_user.id, reason="tenant_explicit_cancel")'''
+          if duplicate in text:
+              text = text.replace(duplicate, canonical, 1)
+              p.write_text(text)
+          elif canonical not in text:
+              raise SystemExit('AI cancel route anchor not found')
+
+          # 3) Regression test setup: initialize WSGI-only referral routes before
+          # any request, and remove the late import that Flask rejects.
+          p = Path('tests/test_smoke.py')
+          text = p.read_text()
+          if 'import wsgi  # noqa: F401\n' not in text:
+              text = text.replace('import app as stock_app\n', 'import app as stock_app\nimport wsgi  # noqa: F401\n', 1)
+          text = re.sub(r'(?m)^\s{8}import wsgi  # noqa: F401\n', '', text, count=1)
+
+          # Keep this suite internally consistent with its isolated test host.
+          text = text.replace('APP_URL = stock_app.app.config["APP_URL"]', 'APP_URL = "http://test.local"', 1)
+          fixture_marker = 'def clean_database():\n    stock_app.app.config["TESTING"] = True\n    stock_app.app.config["WTF_CSRF_ENABLED"] = False\n'
+          if fixture_marker in text and 'stock_app.app.config["APP_URL"] = APP_URL' not in text:
+              text = text.replace(fixture_marker, fixture_marker + '    stock_app.app.config["APP_URL"] = APP_URL\n', 1)
+
+          # The production route is the company-settings billing receipt route.
+          text = text.replace('/admin/subscription/payments/{payment_id}/pdf', '/admin/company-settings/billing/payment/{payment_id}/pdf')
+
+          # Sitemap assertions should use the suite's APP_URL rather than a hardcoded domain.
+          text = text.replace(
+              'f"<url><loc>https://www.stockarmobile.com{page[\'endpoint\']}</loc>"',
+              'f"<url><loc>{APP_URL.rstrip(\'/\')}{page[\'endpoint\']}</loc>"',
+          )
+          p.write_text(text)
+
+          # The AI cancellation regression must stub the service lookup, not the
+          # production cancellation behavior.
           p = Path('tests/test_ai_subscription_separation.py')
           text = p.read_text()
           marker = 'def test_explicit_tenant_ai_cancel_does_not_modify_standard_subscription(subscription_app, monkeypatch):\n'
@@ -65,37 +106,11 @@ jobs:
               )
               text = text[:start] + block + text[next_def:]
               p.write_text(text)
-
-          # Smoke tests: initialize WSGI routes before the first request.
-          p = Path('tests/test_smoke.py')
-          text = p.read_text()
-          if 'import wsgi  # noqa: F401\n' not in text:
-              text = text.replace('import app as stock_app\n', 'import app as stock_app\nimport wsgi  # noqa: F401\n', 1)
-          # Remove only the known late import used by the referral role test.
-          text = re.sub(
-              r'(?m)^\s{8}import wsgi  # noqa: F401\n',
-              '',
-              text,
-              count=1,
-          )
-
-          # Smoke tests intentionally use an isolated URL for canonical/sitemap assertions.
-          text = text.replace('APP_URL = stock_app.app.config["APP_URL"]', 'APP_URL = "http://test.local"', 1)
-          fixture_marker = 'def clean_database():\n    stock_app.app.config["TESTING"] = True\n    stock_app.app.config["WTF_CSRF_ENABLED"] = False\n'
-          if fixture_marker in text and 'stock_app.app.config["APP_URL"] = APP_URL' not in text:
-              text = text.replace(fixture_marker, fixture_marker + '    stock_app.app.config["APP_URL"] = APP_URL\n', 1)
-
-          # The current payment receipt route is under /admin/subscription/payments/.
-          text = text.replace(
-              '/admin/company-settings/billing/payment/{payment_id}/pdf',
-              '/admin/subscription/payments/{payment_id}/pdf',
-          )
-          p.write_text(text)
           PY
 
       - name: Verify syntax
         run: |
-          python -m py_compile services/ai_agent/orchestrator_v2.py services/ai_agent/providers/gemini.py services/ai_agent/subscription_service.py tests/test_ai_agent_multitool_runtime.py tests/test_ai_subscription_separation.py tests/test_smoke.py
+          python -m py_compile services/ai_agent/orchestrator_v2.py services/ai_agent/providers/gemini.py services/ai_agent/subscription_service.py company_billing.py tests/test_ai_agent_multitool_runtime.py tests/test_ai_subscription_separation.py tests/test_smoke.py
           node --check static/service-worker.js
 
       - name: Run focused regression tests
@@ -105,7 +120,7 @@ jobs:
         run: |
           git config user.name 'github-actions[bot]'
           git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
-          git add tests/test_ai_agent_multitool_runtime.py tests/test_ai_subscription_separation.py tests/test_smoke.py .github/workflows/repair-ai-validation.yml
+          git add services/ai_agent/orchestrator_v2.py company_billing.py tests/test_ai_agent_multitool_runtime.py tests/test_ai_subscription_separation.py tests/test_smoke.py .github/workflows/repair-ai-validation.yml
           git rm .github/workflows/repair-ai-validation.yml
-          git commit -m 'fix(ai): finalize deterministic validation setup' || exit 0
+          git commit -m 'fix(ai): finalize runtime and billing regressions'
           git push
