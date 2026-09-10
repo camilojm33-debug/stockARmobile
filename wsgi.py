@@ -10,7 +10,8 @@ if "referral_network.dashboard" not in app.view_functions:
     app.register_blueprint(network_bp)
 install_commission_hook()
 
-def health():
+
+def stockarmobile_health():
     """Lightweight liveness/readiness endpoint for Render and uptime checks."""
     try:
         db.session.execute(text("SELECT 1"))
@@ -20,8 +21,17 @@ def health():
         app.logger.exception("Health check database probe failed")
         return jsonify({"status": "error"}), 503
 
-if "health" not in app.view_functions:
-    app.add_url_rule("/health", endpoint="health", view_func=health, methods=["GET"])
+
+# The application factory or another bootstrap path may already expose /health.
+# Detect the URL rule itself (not only the endpoint name) before adding ours.
+if not any(rule.rule == "/health" for rule in app.url_map.iter_rules()):
+    app.add_url_rule(
+        "/health",
+        endpoint="stockarmobile_health",
+        view_func=stockarmobile_health,
+        methods=["GET"],
+    )
+
 
 @app.route("/superadmin/subscriptions/<int:subscription_id>/delete-historical", methods=["POST"])
 @login_required
@@ -48,5 +58,6 @@ def superadmin_delete_historical_subscription(subscription_id):
         app.logger.exception("Error eliminando suscripción histórica id=%s", subscription_id)
         flash("No se pudo eliminar la suscripción histórica.", "danger")
     return redirect(url_for("saas.subscriptions_panel"))
+
 
 application = app
