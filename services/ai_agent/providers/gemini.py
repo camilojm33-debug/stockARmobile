@@ -24,12 +24,9 @@ class GeminiProvider(AIProvider):
     ) -> None:
         self.model = model or os.getenv("GEMINI_MODEL")
         self.api_key = api_key if api_key is not None else os.getenv("GEMINI_API_KEY")
-        # Keep each Google request below the Gunicorn request budget. AgentRuntime can
-        # make two sequential Gemini calls when a tool is used.
         self.timeout = float(timeout if timeout is not None else os.getenv("GEMINI_TIMEOUT", "25"))
         self._client = None
         self._types = None
-        # Gemini 3.x exige reenviar el thought_signature original junto al functionCall en el turno siguiente.
         self._thought_signatures: Dict[str, Any] = {}
 
     @property
@@ -46,16 +43,13 @@ class GeminiProvider(AIProvider):
             try:
                 import httpx
                 from google import genai
-            except ImportError as exc:
+            except ImportError:
                 raise RuntimeError("La dependencia google-genai no está instalada.") from None
-            # Fuerza IPv4: evita que httpx intente primero direcciones IPv6 que fallan en este entorno.
             transport = httpx.HTTPTransport(local_address="0.0.0.0")
             self._client = genai.Client(
                 api_key=self.api_key,
                 http_options=self._types.HttpOptions(
                     timeout=int(self.timeout * 1000),
-                    # google-genai retries httpx read timeouts as transient errors too.
-                    # Keep SDK attempts at 1 and retry only explicit 429/503 API responses below.
                     retry_options=self._types.HttpRetryOptions(
                         attempts=1,
                         initial_delay=1.0,
@@ -64,7 +58,6 @@ class GeminiProvider(AIProvider):
                     client_args={"transport": transport},
                 ),
             )
-            self._types = types
         return self._client
 
     @staticmethod
@@ -77,15 +70,53 @@ class GeminiProvider(AIProvider):
             return default
 
     @classmethod
+    def _to_gemini_schema(cls, schema: Any) -> Any:
+        """Adapt standard JSON Schema/OpenAI tool schemas to Gemini's accepted schema."""
+        if not isinstance(schema, dict):
+            return schema
+        converted = {}
+        for key, value in schema.items():
+            if key in {"additionalProperties", "additional_properties", "$schema", "title"}:
+                continue
+            converted[key] = value
+
+        type_value = converted.get("type")
+        if isinstance(type_value, list):
+            remaining = [item for item in type_value if item != "null"]
+            if len(remaining) != len(type_value):
+                converted["nullable"] = True
+            if len(remaining) == 1:
+                converted["type"] = remaining[0]
+            elif len(remaining) > 1:
+                converted.pop("type", None)
+                converted["anyOf"] = [{"type": item} for item in remaining]
+            else:
+                converted.pop("type", None)
+
+        if isinstance(converted.get("properties"), dict):
+            converted["properties"] = {
+                key: cls._to_gemini_schema(value)
+                for key, value in converted["properties"].items()
+            }
+        if isinstance(converted.get("items"), dict):
+            converted["items"] = cls._to_gemini_schema(converted["items"])
+        if isinstance(converted.get("anyOf"), list):
+            converted["anyOf"] = [cls._to_gemini_schema(item) for item in converted["anyOf"]]
+        return converted
+
+    @classmethod
     def _function_declarations(cls, tools: Iterable[Dict[str, Any]] | None) -> list[Dict[str, Any]]:
         declarations = []
         for tool in tools or []:
             function = tool.get("function") or {}
-            declarations.append({
-                "name": function.get("name"),
-                "description": function.get("description") or "",
-                "parameters": function.get("parameters") or {"type": "object", "properties": {}},
-            })
+            raw_parameters = function.get("parameters") or {"type": "object", "properties": {}}
+            declarations.append(
+                {
+                    "name": function.get("name"),
+                    "description": function.get("description") or "",
+                    "parameters": cls._to_gemini_schema(raw_parameters),
+                }
+            )
         return declarations
 
     def _contents(self, messages: Iterable[Dict[str, Any]]):
@@ -144,8 +175,6 @@ class GeminiProvider(AIProvider):
         declarations = self._function_declarations(tools)
         if declarations:
             kwargs["tools"] = [types.Tool(function_declarations=declarations)]
-            # AgentRuntime executes tools explicitly and then sends the tool result
-            # back in a second Gemini request. Do not let the SDK execute tools too.
             kwargs["automatic_function_calling"] = types.AutomaticFunctionCallingConfig(
                 disable=True,
                 maximum_remote_calls=None,
@@ -154,34 +183,6 @@ class GeminiProvider(AIProvider):
             kwargs["response_mime_type"] = "application/json"
             kwargs["response_schema"] = self._to_gemini_schema(response_schema)
         return types.GenerateContentConfig(**kwargs)
-
-    @classmethod
-    def _to_gemini_schema(cls, schema: Any) -> Any:
-        """Adapta un JSON Schema estándar al formato aceptado por la API REST de Gemini."""
-        if not isinstance(schema, dict):
-            return schema
-        converted = dict(schema)
-        converted.pop("additionalProperties", None)
-        converted.pop("additional_properties", None)
-        type_value = converted.get("type")
-        if isinstance(type_value, list):
-            remaining = [t for t in type_value if t != "null"]
-            if len(type_value) != len(remaining):
-                converted["nullable"] = True
-            if len(remaining) == 1:
-                converted["type"] = remaining[0]
-            elif len(remaining) > 1:
-                converted.pop("type", None)
-                converted["anyOf"] = [{"type": t} for t in remaining]
-            else:
-                converted.pop("type", None)
-        if isinstance(converted.get("properties"), dict):
-            converted["properties"] = {key: cls._to_gemini_schema(value) for key, value in converted["properties"].items()}
-        if isinstance(converted.get("items"), dict):
-            converted["items"] = cls._to_gemini_schema(converted["items"])
-        if isinstance(converted.get("anyOf"), list):
-            converted["anyOf"] = [cls._to_gemini_schema(entry) for entry in converted["anyOf"]]
-        return converted
 
     @classmethod
     def _tool_call(cls, response: Any) -> Dict[str, Any] | None:
@@ -198,7 +199,6 @@ class GeminiProvider(AIProvider):
         return None
 
     def _capture_thought_signatures(self, response: Any) -> None:
-        """Cachea thought_signature por nombre de función."""
         candidates = self._value(response, "candidates", []) or []
         content = self._value(candidates[0], "content") if candidates else None
         for part in self._value(content, "parts", []) or []:
