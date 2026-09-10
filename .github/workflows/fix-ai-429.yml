@@ -1,0 +1,74 @@
+name: Fix AI quota UX
+
+on:
+  push:
+    branches:
+      - fix/ai-429-user-experience-20260910
+
+permissions:
+  contents: write
+
+jobs:
+  repair:
+    runs-on: ubuntu-latest
+    if: github.actor == 'camilojm33-debug'
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Install dependencies
+        run: python -m pip install -r requirements.txt
+      - name: Apply safe quota handling
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+
+          p = Path('services/ai_agent/providers/gemini.py')
+          text = p.read_text()
+
+          old = '''    @staticmethod\n    def _quota_retry_delay(exc: Exception) -> str | None:\n        message = str(exc)\n        match = re.search(r"Please retry in ([0-9]+(?:\\.[0-9]+)?s)", message)\n        if match:\n            return match.group(1)\n        match = re.search(r"'retryDelay': '([^']+)'", message)\n        return match.group(1) if match else None\n'''
+          new = '''    @staticmethod\n    def _quota_retry_delay(exc: Exception) -> float | None:\n        """Return a bounded retry delay in seconds when the provider supplies one."""\n        message = str(exc)\n        match = re.search(r"Please retry in ([0-9]+(?:\\.[0-9]+)?)(ms|s)", message, re.IGNORECASE)\n        if match:\n            value = float(match.group(1))\n            return value / 1000.0 if match.group(2).lower() == "ms" else value\n        match = re.search(r"'retryDelay': '([^']+)'", message)\n        if match:\n            value = match.group(1).strip().lower()\n            unit_match = re.fullmatch(r"([0-9]+(?:\\.[0-9]+)?)(ms|s)", value)\n            if unit_match:\n                numeric = float(unit_match.group(1))\n                return numeric / 1000.0 if unit_match.group(2) == "ms" else numeric\n        return None\n\n    @staticmethod\n    def _is_daily_quota_exhausted(exc: Exception) -> bool:\n        """Detect project/model daily quota exhaustion instead of treating it as a transient 429."""\n        message = str(exc).lower()\n        return (\n            "perdayperprojectpermodel-freetier" in message\n            or "generate_content_free_tier_requests" in message\n            or "exceeded your current quota" in message\n        )\n\n    @staticmethod\n    def _format_retry_delay(delay: float | None) -> str | None:\n        if delay is None or delay <= 0:\n            return None\n        if delay < 1:\n            return "menos de 1 segundo"\n        seconds = max(1, round(delay))\n        return f"{seconds} segundo" + ("s" if seconds != 1 else "")\n'''
+          if old not in text:
+              raise SystemExit('Gemini quota helper anchor not found')
+          text = text.replace(old, new, 1)
+
+          old = '''                if attempt == 0 and self._api_error_code(exc) == 503:\n                    time.sleep(1.0)\n                    continue\n                raise\n'''
+          new = '''                api_error_code = self._api_error_code(exc)\n                if attempt == 0 and api_error_code == 503:\n                    time.sleep(1.0)\n                    continue\n                if (\n                    attempt == 0\n                    and api_error_code == 429\n                    and not self._is_daily_quota_exhausted(exc)\n                ):\n                    delay = self._quota_retry_delay(exc)\n                    if delay is not None and 0 < delay <= 2.0:\n                        time.sleep(delay)\n                        continue\n                raise\n'''
+          if old not in text:
+              raise SystemExit('Gemini retry anchor not found')
+          text = text.replace(old, new, 1)
+
+          old = '''            if api_error_code == 429:\n                retry_delay = self._quota_retry_delay(exc)\n                message = "El servicio de IA alcanzó temporalmente su límite de uso."\n                if retry_delay:\n                    message = f"{message} Podés intentar nuevamente en {retry_delay}."\n                raise AIProviderError(message, status_code=429) from exc\n'''
+          new = '''            if api_error_code == 429:\n                if self._is_daily_quota_exhausted(exc):\n                    message = (\n                        "El servicio de IA alcanzó el límite de uso disponible para este proyecto. "\n                        "Intentá nuevamente más tarde."\n                    )\n                else:\n                    retry_delay = self._format_retry_delay(self._quota_retry_delay(exc))\n                    message = "El servicio de IA está temporalmente ocupado."\n                    if retry_delay:\n                        message = f"{message} Podés intentar nuevamente en {retry_delay}."\n                    else:\n                        message = f"{message} Intentá nuevamente en unos segundos."\n                raise AIProviderError(message, status_code=429) from exc\n'''
+          if old not in text:
+              raise SystemExit('Gemini 429 presentation anchor not found')
+          text = text.replace(old, new, 1)
+          p.write_text(text)
+
+          p = Path('dashboard.py')
+          text = p.read_text()
+          old = '''    except AIProviderError as exc:\n        db.session.rollback()\n        current_app.logger.exception(\n            "Proveedor IA no disponible: company_id=%s conversation_id=%s agent=%s",\n            company_id,\n            conversation.id,\n            agent_key,\n        )\n        return jsonify({"success": False, "error": "El servicio de IA no está disponible en este momento. Intentá nuevamente más tarde."}), exc.status_code\n'''
+          new = '''    except AIProviderError as exc:\n        db.session.rollback()\n        current_app.logger.warning(\n            "Proveedor IA no disponible: company_id=%s conversation_id=%s agent=%s status=%s error=%s",\n            company_id,\n            conversation.id,\n            agent_key,\n            exc.status_code,\n            str(exc),\n        )\n        error_message = str(exc) or "El servicio de IA no está disponible en este momento."\n        return jsonify({"success": False, "error": error_message}), exc.status_code\n'''
+          if old not in text:
+              raise SystemExit('Dashboard AIProviderError anchor not found')
+          text = text.replace(old, new, 1)
+          p.write_text(text)
+
+          test_path = Path('tests/test_gemini_quota_handling.py')
+          test_path.write_text('''from services.ai_agent.providers.gemini import GeminiProvider\n\n\nclass FakeQuotaError(Exception):\n    code = 429\n\n\ndef test_daily_free_tier_quota_is_user_safe_and_not_transient(monkeypatch):\n    provider = GeminiProvider(model="gemini-3.6-flash", api_key="test-key")\n    provider._types = object()\n    provider._client = object()\n\n    error = FakeQuotaError(\n        "429 RESOURCE_EXHAUSTED: You exceeded your current quota. "\n        "quotaId: GenerateRequestsPerDayPerProjectPerModel-FreeTier"\n    )\n    monkeypatch.setattr(provider, "_generate_content_with_retry", lambda **kwargs: (_ for _ in ()).throw(error))\n\n    try:\n        provider.generate(messages=[{"role": "user", "content": "hola"}])\n    except Exception as exc:\n        assert exc.status_code == 429\n        assert "límite de uso disponible" in str(exc)\n        assert "865" not in str(exc)\n    else:\n        raise AssertionError("Expected an AIProviderError")\n\n\ndef test_quota_retry_delay_parses_milliseconds():\n    error = FakeQuotaError("Please retry in 865.016009ms.")\n    assert GeminiProvider._quota_retry_delay(error) == 0.865016009\n\n\ndef test_transient_quota_message_can_include_retry_seconds():\n    error = FakeQuotaError("Please retry in 2s")\n    assert GeminiProvider._format_retry_delay(GeminiProvider._quota_retry_delay(error)) == "2 segundos"\n''')
+          PY
+      - name: Verify syntax and focused tests
+        run: |
+          python -m py_compile services/ai_agent/providers/gemini.py dashboard.py tests/test_gemini_quota_handling.py
+          python -m pytest -q tests/test_gemini_quota_handling.py
+      - name: Persist repair and remove helper
+        run: |
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add services/ai_agent/providers/gemini.py dashboard.py tests/test_gemini_quota_handling.py .github/workflows/fix-ai-429.yml
+          git rm .github/workflows/fix-ai-429.yml
+          git commit -m 'fix(ai): handle Gemini quota exhaustion gracefully' || exit 0
+          git push
