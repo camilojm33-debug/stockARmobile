@@ -1,0 +1,58 @@
+{% extends "base_master.html" %}
+{% block title %}Red de Referidos | SuperAdmin{% endblock %}
+{% block content %}
+<style>
+.network-hero{border-radius:24px;background:linear-gradient(135deg,#111827,#1f2937);color:#fff;padding:28px;box-shadow:0 18px 45px rgba(15,23,42,.16)}
+.network-stat{border:0;border-radius:18px;background:var(--bs-body-bg);box-shadow:0 8px 24px rgba(15,23,42,.07);height:100%}
+.network-card{border:0;border-radius:20px;box-shadow:0 8px 28px rgba(15,23,42,.07)}
+.network-node{border:1px solid rgba(148,163,184,.25);border-radius:16px;padding:14px;background:var(--bs-body-bg)}
+.network-child{border-left:3px solid var(--bs-primary);margin-left:20px;margin-top:10px;padding-left:14px}
+</style>
+<div class="network-hero mb-4">
+  <div class="d-flex justify-content-between align-items-start flex-wrap gap-3">
+    <div>
+      <div class="text-uppercase small opacity-75 fw-semibold">SuperAdmin · Programa de referidos</div>
+      <h1 class="display-6 fw-bold mb-2">Red multinivel</h1>
+      <p class="mb-0 opacity-75">Gestioná vendedores padre e hijos, comisiones de red y excepciones del 50% desde un único lugar.</p>
+    </div>
+    <a class="btn btn-light" href="{{ url_for('referrals.admin_referrals_sellers_list') }}"><i class="bi bi-people me-1"></i>Vendedores</a>
+  </div>
+</div>
+<div class="row g-3 mb-4">
+  <div class="col-md-4"><div class="card network-stat p-3"><small class="text-muted">Comisiones de red pendientes</small><div class="fs-3 fw-bold mt-1">ARS {{ '%.2f'|format(pending or 0) }}</div><span class="badge text-bg-warning-subtle text-warning-emphasis mt-2">30% por defecto</span></div></div>
+  <div class="col-md-4"><div class="card network-stat p-3"><small class="text-muted">Comisiones de red pagadas</small><div class="fs-3 fw-bold mt-1">ARS {{ '%.2f'|format(paid or 0) }}</div><span class="text-muted small">Historial conservado</span></div></div>
+  <div class="col-md-4"><div class="card network-stat p-3"><small class="text-muted">Movimientos de red</small><div class="fs-3 fw-bold mt-1">{{ total_network_commissions }}</div><span class="text-muted small">Un movimiento por comisión hija</span></div></div>
+</div>
+<div class="row g-4">
+  <div class="col-lg-5">
+    <div class="card network-card p-4">
+      <h2 class="h5 fw-bold mb-1">Asignar vendedor hijo</h2>
+      <p class="text-muted small mb-4">El hijo conserva sus comisiones normales. Su padre recibe además 30% de las suscripciones que el hijo genere; podés elevar esa red a 50% manualmente.</p>
+      <form method="post" action="{{ url_for('referral_network.link_seller') }}" class="row g-3">
+        <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+        <div class="col-12"><label class="form-label">Vendedor padre</label><select name="parent_id" class="form-select" required><option value="">Seleccionar...</option>{% for seller in sellers %}{% if seller.active %}<option value="{{ seller.id }}">{{ seller.user.name if seller.user else seller.user.username }} · {{ seller.referral_code }}</option>{% endif %}{% endfor %}</select></div>
+        <div class="col-12"><label class="form-label">Vendedor hijo</label><select name="child_id" class="form-select" required><option value="">Seleccionar...</option>{% for seller in sellers %}<option value="{{ seller.id }}">{{ seller.user.name if seller.user else seller.user.username }} · {{ seller.referral_code }}</option>{% endfor %}</select></div>
+        <div class="col-12"><label class="form-label">Comisión del padre</label><select name="override_percent" class="form-select"><option value="">30% automático</option><option value="50">50% — excepción SuperAdmin</option></select></div>
+        <div class="col-12"><button class="btn btn-primary w-100"><i class="bi bi-diagram-3 me-1"></i>Guardar relación</button></div>
+      </form>
+      <div class="alert alert-info mt-3 mb-0 small"><strong>Regla:</strong> solo hay un nivel padre → hijo. Esto evita cadenas ilimitadas y mantiene las liquidaciones fáciles de auditar.</div>
+    </div>
+  </div>
+  <div class="col-lg-7">
+    <div class="card network-card p-4">
+      <div class="d-flex justify-content-between align-items-center mb-3"><div><h2 class="h5 fw-bold mb-1">Estructura actual</h2><div class="text-muted small">Cada vendedor hijo tiene como máximo un padre.</div></div><span class="badge text-bg-primary">{{ links|length }} relaciones</span></div>
+      {% for link in links %}
+      <div class="network-node mb-3">
+        <div class="d-flex justify-content-between align-items-start gap-3 flex-wrap">
+          <div><div class="small text-muted">PADRE</div><div class="fw-bold">{{ link.parent.user.name if link.parent.user else link.parent.user.username }}</div><div class="small text-muted">{{ link.parent.referral_code }}</div></div>
+          <div class="text-center px-2"><i class="bi bi-arrow-right fs-4 text-primary"></i><div class="badge text-bg-success">{{ '50%' if link.override_percent == 0.5000 else '30%' }}</div></div>
+          <div><div class="small text-muted">HIJO</div><div class="fw-bold">{{ link.child.user.name if link.child.user else link.child.user.username }}</div><div class="small text-muted">{{ link.child.referral_code }}</div></div>
+          <div class="ms-auto"><form method="post" action="{{ url_for('referral_network.unlink_seller', child_id=link.child_seller_id) }}" onsubmit="return confirm('Quitar esta relación? El historial de comisiones se conserva.');"><input type="hidden" name="csrf_token" value="{{ csrf_token() }}"><button class="btn btn-sm btn-outline-danger">Desvincular</button></form></div>
+        </div>
+        <div class="d-flex justify-content-end gap-2 mt-3"><form method="post" action="{{ url_for('referral_network.set_percent', child_id=link.child_seller_id) }}"><input type="hidden" name="csrf_token" value="{{ csrf_token() }}"><button name="percent" value="30" class="btn btn-sm btn-outline-secondary">Volver a 30%</button><button name="percent" value="50" class="btn btn-sm btn-outline-primary">Forzar 50%</button></form></div>
+      </div>
+      {% else %}<div class="text-center text-muted py-5"><i class="bi bi-diagram-3 fs-1 d-block mb-2"></i>No hay relaciones padre → hijo todavía.</div>{% endfor %}
+    </div>
+  </div>
+</div>
+{% endblock %}

@@ -12,6 +12,7 @@
       <div class="d-flex flex-wrap gap-2">
         <a class="btn btn-outline-secondary" href="{{ url_for('referrals.admin_referrals_export') }}"><i class="bi bi-download me-1"></i>Exportar CSV</a>
         <a class="btn btn-primary" href="{{ url_for('referrals.admin_referrals_sellers') }}"><i class="bi bi-people me-1"></i>Gestionar vendedores</a>
+        <a class="btn btn-outline-primary" href="{{ url_for('referral_network.dashboard') }}"><i class="bi bi-diagram-3 me-1"></i>Red multinivel</a>
         <a class="btn btn-outline-primary" href="{{ url_for('referrals.admin_resource_messages') }}"><i class="bi bi-chat-dots me-1"></i>Mensajes comerciales</a>
       </div>
     </div>
@@ -121,23 +122,10 @@
 {% block extra_css %}
 <style>
   .referrals-admin-shell { max-width: 1320px; }
-  .referrals-admin-hero {
-    background:
-      radial-gradient(circle at 88% 18%, rgba(14, 165, 233, .20), transparent 36%),
-      linear-gradient(135deg, rgba(37, 99, 235, .18), rgba(16, 185, 129, .10));
-    border: 1px solid rgba(37, 99, 235, .24);
-  }
-  .referrals-kpi strong {
-    line-height: 1.15;
-  }
-  .referrals-elevated {
-    box-shadow: 0 16px 34px rgba(15, 23, 42, .12);
-  }
-  @media (max-width: 991.98px) {
-    .referrals-admin-hero .btn {
-      width: 100%;
-    }
-  }
+  .referrals-admin-hero { background: radial-gradient(circle at 88% 18%, rgba(14, 165, 233, .20), transparent 36%), linear-gradient(135deg, rgba(37, 99, 235, .18), rgba(16, 185, 129, .10)); border: 1px solid rgba(37, 99, 235, .24); }
+  .referrals-kpi strong { line-height: 1.15; }
+  .referrals-elevated { box-shadow: 0 16px 34px rgba(15, 23, 42, .12); }
+  @media (max-width: 991.98px) { .referrals-admin-hero .btn { width: 100%; } }
 </style>
 {% endblock %}
 {% endblock %}
