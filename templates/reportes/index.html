@@ -2,80 +2,91 @@
 
 {% block title %}Reportes - StockArmobile{% endblock %}
 
-{% block content %}
-<div class="app-shell">
-  <div class="d-flex flex-wrap justify-content-between align-items-center gap-3 mb-4">
-    <div>
-      <span class="page-kicker"><i class="bi bi-file-earmark-bar-graph"></i> Analitica</span>
-      <h1 class="h3 fw-bold mb-0">Reportes</h1>
-      <p class="text-muted mb-0">Balance, ganancias, ventas, compras, gastos y rentabilidad.</p>
-    </div>
-    <div class="d-flex gap-2">
-      <a class="btn btn-outline-primary" href="{{ url_for('reports.balance_csv') }}"><i class="bi bi-filetype-csv me-1"></i>Balance CSV</a>
-      <a class="btn btn-primary" href="{{ url_for('reports.balance_pdf') }}"><i class="bi bi-filetype-pdf me-1"></i>Balance PDF</a>
-    </div>
-  </div>
+{% block extra_css %}
+<style>
+  .reports-page .reports-hero,
+  .reports-page .tool-card,
+  .reports-page .filter-card,
+  .reports-page .report-card,
+  .reports-page .metric-card { background:#fff; border:1px solid rgba(31,41,55,.08); border-radius:18px; box-shadow:0 6px 24px rgba(15,23,42,.045); }
+  .reports-page .reports-hero{background:linear-gradient(135deg,#fff 0%,#f7faff 100%);border-radius:20px}
+  .reports-page .tool-card{height:100%;padding:14px 16px;transition:.18s ease;text-decoration:none;display:block}
+  .reports-page .tool-card:hover{transform:translateY(-2px);box-shadow:0 10px 28px rgba(15,23,42,.08);border-color:rgba(37,99,235,.18)}
+  .reports-page .tool-icon{width:34px;height:34px;border-radius:10px;display:grid;place-items:center;background:#f1f5f9;font-size:1rem}
+  .reports-page .filter-card{background:#f8fafc;box-shadow:none;padding:14px}
+  .reports-page .metric-card{min-height:118px}
+  .reports-page .metric-card .metric-value{font-size:1.55rem;letter-spacing:-.02em}
+  .reports-page .report-card{height:100%;padding:15px}
+  .reports-page .report-card-title{font-weight:800;color:#1e293b}
+  .reports-page .report-card-help{font-size:.78rem;color:#64748b;margin-top:.15rem}
+  .reports-page .report-actions{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:.45rem;margin-top:.8rem}
+  .reports-page .report-actions .btn{font-size:.78rem}
+  .reports-page .period-badge{font-size:.76rem}
+  @media(max-width:767.98px){.reports-page .report-actions{grid-template-columns:1fr}.reports-page .reports-hero{border-radius:16px}}
+</style>
+{% endblock %}
 
-  <!-- Filtro de periodo para métricas del resumen -->
-  <form class="card app-card mb-3" method="get" action="{{ url_for('reports.index') }}">
-    <div class="card-body py-2">
-      <div class="row g-2 align-items-end">
-        <div class="col-auto">
-          <label class="form-label small mb-1 fw-semibold">Período del resumen</label>
-        </div>
-        <div class="col-sm-auto">
-          <label class="form-label small mb-1">Desde</label>
-          <input class="form-control form-control-sm" type="date" name="desde" value="{{ desde }}">
-        </div>
-        <div class="col-sm-auto">
-          <label class="form-label small mb-1">Hasta</label>
-          <input class="form-control form-control-sm" type="date" name="hasta" value="{{ hasta }}">
-        </div>
-        <div class="col-auto">
-          <button class="btn btn-sm btn-outline-primary" type="submit"><i class="bi bi-funnel me-1"></i>Filtrar</button>
-        </div>
-        {% if desde == hasta %}
-        <div class="col-auto">
-          <span class="badge bg-primary-subtle text-primary">
-            <i class="bi bi-calendar-check me-1"></i>{{ desde }}
-          </span>
-        </div>
-        {% else %}
-        <div class="col-auto">
-          <span class="badge bg-primary-subtle text-primary">
-            <i class="bi bi-calendar-range me-1"></i>{{ desde }} → {{ hasta }}
-          </span>
-        </div>
-        {% endif %}
+{% block content %}
+<div class="app-shell reports-page">
+  <section class="reports-hero p-4 p-lg-5 mb-4">
+    <div class="d-flex flex-wrap justify-content-between align-items-center gap-3">
+      <div>
+        <span class="page-kicker"><i class="bi bi-file-earmark-bar-graph me-1"></i> Analítica</span>
+        <h1 class="h3 fw-bold mb-1 mt-1">Reportes</h1>
+        <p class="text-muted mb-0">Descargá información real de tu comercio en CSV, Excel o PDF.</p>
+      </div>
+      <div class="d-flex flex-wrap gap-2">
+        <a class="btn btn-outline-primary" href="{{ url_for('reports.balance_csv', desde=desde, hasta=hasta) }}"><i class="bi bi-filetype-csv me-1"></i>Balance CSV</a>
+        <a class="btn btn-outline-success" href="{{ url_for('reports.balance_excel', desde=desde, hasta=hasta) }}"><i class="bi bi-file-earmark-excel me-1"></i>Balance Excel</a>
+        <a class="btn btn-primary" href="{{ url_for('reports.balance_pdf', desde=desde, hasta=hasta) }}"><i class="bi bi-filetype-pdf me-1"></i>Balance PDF</a>
       </div>
     </div>
-  </form>
+  </section>
 
-  <div class="row g-3">
-    <div class="col-md-4"><div class="card app-card metric-card"><div class="card-body"><div class="text-muted small fw-semibold text-uppercase">Ventas</div><div class="metric-value fw-bold">${{ "%.2f"|format(sales_total) }}</div></div></div></div>
-    <div class="col-md-4"><div class="card app-card metric-card"><div class="card-body"><div class="text-muted small fw-semibold text-uppercase">Compras</div><div class="metric-value fw-bold">${{ "%.2f"|format(purchases_total) }}</div></div></div></div>
-    <div class="col-md-4"><div class="card app-card metric-card"><div class="card-body"><div class="text-muted small fw-semibold text-uppercase">Gastos</div><div class="metric-value fw-bold">${{ "%.2f"|format(expenses_total) }}</div></div></div></div>
+  <section class="filter-card mb-4">
+    <form class="row g-2 align-items-end" method="get" action="{{ url_for('reports.index') }}">
+      <div class="col-lg-3"><label class="form-label small fw-semibold mb-1">Período del resumen</label><div class="small text-muted">La misma fecha se aplica a las exportaciones con información temporal.</div></div>
+      <div class="col-sm-6 col-lg-2"><label class="form-label small mb-1">Desde</label><input class="form-control" type="date" name="desde" value="{{ desde }}"></div>
+      <div class="col-sm-6 col-lg-2"><label class="form-label small mb-1">Hasta</label><input class="form-control" type="date" name="hasta" value="{{ hasta }}"></div>
+      <div class="col-sm-6 col-lg-2 d-grid"><button class="btn btn-outline-primary" type="submit"><i class="bi bi-funnel me-1"></i>Aplicar período</button></div>
+      <div class="col-sm-6 col-lg-3 d-flex align-items-center"><span class="badge bg-primary-subtle text-primary period-badge"><i class="bi bi-calendar-range me-1"></i>{{ desde }}{% if desde != hasta %} → {{ hasta }}{% endif %}</span></div>
+    </form>
+  </section>
+
+  <div class="row g-3 mb-4">
+    <div class="col-md-4"><div class="card app-card metric-card"><div class="card-body"><div class="text-muted small fw-semibold text-uppercase">Ventas</div><div class="metric-value fw-bold">${{ "%.2f"|format(sales_total) }}</div><div class="small text-muted mt-1">Período seleccionado</div></div></div></div>
+    <div class="col-md-4"><div class="card app-card metric-card"><div class="card-body"><div class="text-muted small fw-semibold text-uppercase">Compras</div><div class="metric-value fw-bold">${{ "%.2f"|format(purchases_total) }}</div><div class="small text-muted mt-1">Período seleccionado</div></div></div></div>
+    <div class="col-md-4"><div class="card app-card metric-card"><div class="card-body"><div class="text-muted small fw-semibold text-uppercase">Gastos</div><div class="metric-value fw-bold">${{ "%.2f"|format(expenses_total) }}</div><div class="small text-muted mt-1">Período seleccionado</div></div></div></div>
   </div>
-  <div class="card app-card mt-4">
-    <div class="card-header bg-white fw-bold">Exportaciones operativas</div>
-    <div class="card-body">
-      <form class="row g-2 align-items-end mb-3" method="get" action="{{ url_for('reports.export_csv', kind='ventas') }}">
-        <div class="col-md-3"><label class="form-label">Desde</label><input class="form-control" type="date" name="desde" value="{{ desde }}"></div>
-        <div class="col-md-3"><label class="form-label">Hasta</label><input class="form-control" type="date" name="hasta" value="{{ hasta }}"></div>
-        <div class="col-md-3"><label class="form-label">Reporte</label><select class="form-select" id="report-kind"><option value="ventas">Ventas</option><option value="compras">Compras</option><option value="caja">Caja</option><option value="gastos">Gastos</option><option value="clientes">Clientes</option><option value="productos">Productos</option><option value="stock">Stock</option></select></div>
-        <div class="col-md-3 d-grid gap-2 d-md-flex">
-          <button class="btn btn-outline-primary flex-fill" onclick="this.form.action='/reportes/' + document.getElementById('report-kind').value + '.csv'"><i class="bi bi-filetype-csv me-1"></i>CSV</button>
-          <button class="btn btn-outline-success flex-fill" onclick="this.form.action='/reportes/' + document.getElementById('report-kind').value + '.xlsx'"><i class="bi bi-file-earmark-excel me-1"></i>Excel</button>
-        </div>
-      </form>
-      <div class="row g-2">
-        {% for kind, label in [('ventas','Ventas'), ('compras','Compras'), ('gastos','Gastos'), ('caja','Caja'), ('clientes','Clientes'), ('productos','Productos'), ('stock','Stock')] %}
-        <div class="col-6 col-md-3 col-xl-2">
-          <a class="btn btn-light border w-100" href="{{ url_for('reports.export_excel', kind=kind) }}">{{ label }} XLSX</a>
+
+  <section class="card app-card mb-4">
+    <div class="card-body p-4">
+      <div class="d-flex flex-wrap justify-content-between align-items-center gap-2 mb-3">
+        <div><div class="fw-bold">Exportaciones operativas</div><div class="small text-muted">Cada botón descarga exactamente el formato indicado y respeta el período elegido cuando corresponde.</div></div>
+      </div>
+      <div class="row g-3">
+        {% for kind, label, icon, description in [
+          ('ventas','Ventas','bi-bag-check','Detalle de ventas y unidades'),
+          ('compras','Compras','bi-truck','Historial de compras y proveedores'),
+          ('gastos','Gastos','bi-receipt','Gastos, categoría e importe'),
+          ('caja','Caja','bi-cash-stack','Movimientos de caja'),
+          ('clientes','Clientes','bi-people','Clientes, saldo y crédito'),
+          ('productos','Productos','bi-box-seam','Catálogo, precios y costos'),
+          ('stock','Stock','bi-boxes','Stock actual y estado crítico')
+        ] %}
+        <div class="col-md-6 col-xl-4">
+          <article class="report-card">
+            <div class="d-flex align-items-start gap-3"><div class="tool-icon text-primary"><i class="bi {{ icon }}"></i></div><div><div class="report-card-title">{{ label }}</div><div class="report-card-help">{{ description }}</div></div></div>
+            <div class="report-actions">
+              <a class="btn btn-sm btn-outline-primary" href="{{ url_for('reports.export_csv', kind=kind, desde=desde, hasta=hasta) }}"><i class="bi bi-filetype-csv me-1"></i>CSV</a>
+              <a class="btn btn-sm btn-outline-success" href="{{ url_for('reports.export_excel', kind=kind, desde=desde, hasta=hasta) }}"><i class="bi bi-file-earmark-excel me-1"></i>Excel</a>
+              <a class="btn btn-sm btn-primary" href="{{ url_for('reports.export_pdf', kind=kind, desde=desde, hasta=hasta) }}"><i class="bi bi-filetype-pdf me-1"></i>PDF</a>
+            </div>
+          </article>
         </div>
         {% endfor %}
       </div>
     </div>
-  </div>
+  </section>
 </div>
 {% endblock %}
