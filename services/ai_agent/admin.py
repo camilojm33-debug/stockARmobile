@@ -35,10 +35,9 @@ def _require_company_pin():
     flash("Validá el PIN de Mi Empresa para gestionar la configuración de IA.", "warning")
     return redirect(url_for("company_billing.company_settings"))
 
-# AI_ADMIN_PIN_FINAL
 
 _DEFAULT_VENDOR_PROMPT = (
-    "Sos el Vendedor 24 hs del comercio. Consultá siempre los datos reales antes de informar precio o stock. "
+    "Sos el Vendedor 24 hs de StockARmobile. Consultá siempre los datos reales antes de informar precio o stock. "
     "Ayudá a elegir productos, armar pedidos y orientar al cliente hacia el pago. "
     "Nunca inventes promociones, descuentos, stock ni confirmaciones de pago."
 )
@@ -49,6 +48,11 @@ _DEFAULT_BUSINESS_PROMPT = (
 
 
 def _default_model() -> str:
+    provider = (os.getenv("AI_PROVIDER") or "openai_compatible").strip().lower()
+    if provider == "gemini":
+        return (os.getenv("GEMINI_MODEL") or "gemini-3.6-flash").strip()
+    if provider == "openai":
+        return (os.getenv("OPENAI_MODEL") or "gpt-4.1-mini").strip()
     return (os.getenv("AI_PROVIDER_MODEL") or "gpt-4.1-mini").strip()
 
 
@@ -129,18 +133,23 @@ def index():
             .order_by(ConversationMessage.id.desc())
             .first()
         )
-        conversation_rows.append({
-            "id": conversation.id,
-            "agent_name": agent_ids.get(conversation.agent_id, "Agente"),
-            "channel": conversation.channel,
-            "external_id": conversation.external_conversation_id,
-            "status": conversation.status,
-            "updated_at": conversation.updated_at,
-            "last_message": (latest.content[:180] if latest else ""),
-        })
+        conversation_rows.append(
+            {
+                "id": conversation.id,
+                "agent_name": agent_ids.get(conversation.agent_id, "Agente"),
+                "channel": conversation.channel,
+                "external_id": conversation.external_conversation_id,
+                "status": conversation.status,
+                "updated_at": conversation.updated_at,
+                "last_message": (latest.content[:180] if latest else ""),
+            }
+        )
 
     provider = (os.getenv("AI_PROVIDER") or "openai_compatible").strip().lower()
-    ai_key_configured = bool((os.getenv("AI_PROVIDER_API_KEY") or os.getenv("OPENAI_API_KEY") or "").strip()) or provider in {"lmstudio", "lm_studio"}
+    if provider == "gemini":
+        ai_key_configured = bool((os.getenv("GEMINI_API_KEY") or "").strip())
+    else:
+        ai_key_configured = bool((os.getenv("AI_PROVIDER_API_KEY") or os.getenv("OPENAI_API_KEY") or "").strip()) or provider in {"lmstudio", "lm_studio"}
     ai_enabled = bool(prefs["ai_agent"].get("enabled", True))
     whatsapp_connected = bool(whatsapp.get("enabled") and whatsapp.get("phone_number_id"))
     agent_states = {}
@@ -156,7 +165,7 @@ def index():
     elif whatsapp.get("enabled"):
         whatsapp_state = {"label": "Configuración pendiente", "tone": "warning"}
     else:
-        whatsapp_state = {"label": "Desactivado", "tone": "danger"}
+        whatsapp_state = {"label": "No conectado", "tone": "danger"}
     return render_template(
         "ai_agent/admin_v2.html",
         agents=agents,
