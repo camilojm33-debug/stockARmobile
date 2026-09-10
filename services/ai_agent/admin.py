@@ -143,12 +143,6 @@ def index():
     ai_key_configured = bool((os.getenv("AI_PROVIDER_API_KEY") or os.getenv("OPENAI_API_KEY") or "").strip()) or provider in {"lmstudio", "lm_studio"}
     ai_enabled = bool(prefs["ai_agent"].get("enabled", True))
     whatsapp_connected = bool(whatsapp.get("enabled") and whatsapp.get("phone_number_id"))
-    provider_labels = {
-        "openai": "OpenAI",
-        "openai_compatible": "OpenAI compatible",
-        "lmstudio": "LM Studio",
-        "lm_studio": "LM Studio",
-    }
     agent_states = {}
     for name, agent in agents.items():
         if not ai_enabled or not agent.active:
@@ -170,9 +164,6 @@ def index():
         prefs=prefs,
         whatsapp=whatsapp,
         ai_key_configured=ai_key_configured,
-        provider=provider,
-        provider_label=provider_labels.get(provider, provider.replace("_", " ").title()),
-        provider_model=_default_model(),
         ai_enabled=ai_enabled,
         agent_states=agent_states,
         whatsapp_state=whatsapp_state,
@@ -222,8 +213,6 @@ def save():
         ai_updates={
             "enabled": request.form.get("ai_enabled") == "1",
             "whatsapp_enabled": request.form.get("whatsapp_enabled") == "1",
-            # ai_plan_code deliberadamente NO se acepta desde este formulario tenant-facing:
-            # el plan/estado IA lo administra exclusivamente Super Admin (AISubscriptionService).
             "vendor_options": {
                 "personality": (request.form.get("vendor_personality") or "amigable").strip()[:30],
                 "can_recommend": request.form.get("vendor_can_recommend") == "1",
