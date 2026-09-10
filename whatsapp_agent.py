@@ -12,6 +12,7 @@ from stockarmobile.extensions import db
 from stockarmobile.models.conversations import Conversation, ConversationMessage
 from services.ai_agent.config_service import company_for_whatsapp_phone_id, get_whatsapp_connection, is_ai_enabled, choose_agent
 from services.ai_agent.orchestrator_v2 import AgentRuntime
+from services.ai_agent.usage_service import can_use_ai
 from services.ai_agent.vendor_order_service import VendorOrderService
 from services.ai_agent.whatsapp_service import WhatsAppService
 
@@ -78,6 +79,35 @@ def _handle_vendor_command(company_id: int, conversation_id: int, sender: str, t
     return None
 
 
+def _persist_deterministic_turn(conversation, *, external_id: str, text: str, response: str) -> None:
+    """Persist successful WhatsApp commands for a complete, auditable conversation."""
+    incoming = ConversationMessage(
+        conversation_id=conversation.id,
+        company_id=conversation.company_id,
+        sender_type="user",
+        role="user",
+        content=text,
+        content_type="text",
+        external_message_id=external_id,
+        idempotency_key=f"whatsapp:{external_id}",
+        metadata_json={"channel": "whatsapp", "deterministic_command": True},
+    )
+    db.session.add(incoming)
+    db.session.flush()
+    assistant = ConversationMessage(
+        conversation_id=conversation.id,
+        company_id=conversation.company_id,
+        sender_type="agent",
+        sender_id=conversation.agent_id,
+        role="assistant",
+        content=response,
+        content_type="text",
+        metadata_json={"channel": "whatsapp", "deterministic_command": True, "agent_key": "vendedor"},
+    )
+    db.session.add(assistant)
+    db.session.commit()
+
+
 @bp.route("/api/whatsapp/webhook", methods=["GET", "POST"])
 def webhook():
     if request.method == "GET":
@@ -111,9 +141,16 @@ def webhook():
             connection = get_whatsapp_connection(company)
             if not connection["enabled"] or not is_ai_enabled(company):
                 continue
+
             conversation = _get_or_create_conversation(company.id, sender)
+            access = can_use_ai(company, "vendedor")
+            if not access.allowed:
+                errors.append({"external_message_id": external_id, "error": "ai_plan_blocked", "reason": access.reason})
+                continue
+
             command_response = _handle_vendor_command(company.id, conversation.id, sender, text)
             if command_response is not None:
+                _persist_deterministic_turn(conversation, external_id=external_id, text=text, response=command_response)
                 WhatsAppService.send_text(company, to=sender, body=command_response)
                 processed += 1
                 continue
