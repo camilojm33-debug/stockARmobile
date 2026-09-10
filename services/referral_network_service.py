@@ -1,5 +1,6 @@
 """Multilevel referral network and SuperAdmin controls."""
 from __future__ import annotations
+from datetime import datetime
 from decimal import Decimal
 from flask import Blueprint, flash, redirect, render_template, request, url_for
 from sqlalchemy import event
@@ -37,9 +38,25 @@ class ReferralNetworkCommission(db.Model):
     status = db.Column(db.String(20), nullable=False, default="pendiente", index=True)
     created_at = db.Column(db.DateTime, nullable=False, server_default=db.func.now(), index=True)
     paid_at = db.Column(db.DateTime)
+    payout_id = db.Column(db.Integer, db.ForeignKey("referral_network_payouts.id"), index=True)
     parent = db.relationship("ReferralSeller", foreign_keys=[parent_seller_id])
     child = db.relationship("ReferralSeller", foreign_keys=[child_seller_id])
     source_commission = db.relationship("ReferralCommission", foreign_keys=[source_commission_id])
+
+class ReferralNetworkPayout(db.Model):
+    __tablename__ = "referral_network_payouts"
+    id = db.Column(db.Integer, primary_key=True)
+    parent_seller_id = db.Column(db.Integer, db.ForeignKey("referral_sellers.id"), nullable=False, index=True)
+    processed_by_user_id = db.Column(db.Integer, db.ForeignKey("users.id"), nullable=False, index=True)
+    amount = db.Column(db.Numeric(12, 2), nullable=False)
+    transfer_date = db.Column(db.DateTime, nullable=False)
+    payment_method = db.Column(db.String(80))
+    receipt = db.Column(db.String(255))
+    transfer_number = db.Column(db.String(120))
+    observations = db.Column(db.Text)
+    created_at = db.Column(db.DateTime, nullable=False, server_default=db.func.now(), index=True)
+    parent_seller = db.relationship("ReferralSeller")
+    processed_by = db.relationship("User")
 
 def _money(value):
     return Decimal(str(value or 0)).quantize(Decimal("0.01"))
@@ -58,12 +75,18 @@ def validate_parent_assignment(*, parent_id, child_id):
         raise ValueError("El vendedor seleccionado no existe.")
     if not parent.active:
         raise ValueError("El vendedor padre debe estar activo.")
+    # La red es de un solo nivel; además impedimos cualquier ciclo futuro recorriendo padres.
+    seen = {child_id}
+    cursor = parent_id
+    while cursor is not None:
+        if cursor in seen:
+            raise ValueError("La relación generaría un ciclo de referidos.")
+        seen.add(cursor)
+        link = db.session.query(ReferralNetworkLink).filter_by(child_seller_id=cursor, active=True).first()
+        cursor = link.parent_seller_id if link else None
 
 def set_parent(*, child_id, parent_id, override_percent=None):
     validate_parent_assignment(parent_id=parent_id, child_id=child_id)
-    current = db.session.query(ReferralNetworkLink).filter_by(child_seller_id=parent_id, active=True).first()
-    if current is not None and current.parent_seller_id == child_id:
-        raise ValueError("La relación generaría un ciclo de referidos.")
     link = db.session.query(ReferralNetworkLink).filter_by(child_seller_id=child_id).first()
     if link is None:
         link = ReferralNetworkLink(child_seller_id=child_id, parent_seller_id=parent_id)
@@ -122,9 +145,34 @@ def network_snapshot():
         source_status = (row.source_commission.status if row.source_commission else row.status) or row.status
         if row.status == "pagada":
             paid += _money(row.commission_amount)
-        elif source_status in {"pendiente", "disponible"}:
+        elif source_status in {"pendiente", "disponible"} and row.payout_id is None:
             pending += _money(row.commission_amount)
     return {"sellers": sellers, "links": links, "pending": pending, "paid": paid, "total_network_commissions": len(rows)}
+
+def register_network_payout(db_session, *, parent_seller_id, commission_ids, processed_by_user_id, transfer_date, payment_method=None, receipt=None, transfer_number=None, observations=None):
+    """Liquida exclusivamente comisiones de red disponibles y del mismo padre, de forma atómica."""
+    rows = (ReferralNetworkCommission.query.filter(
+        ReferralNetworkCommission.id.in_(commission_ids),
+        ReferralNetworkCommission.parent_seller_id == parent_seller_id,
+        ReferralNetworkCommission.payout_id.is_(None),
+    ).all())
+    eligible = []
+    for row in rows:
+        source_status = (row.source_commission.status if row.source_commission else row.status) or row.status
+        if source_status == "disponible":
+            eligible.append(row)
+    total = sum((_money(row.commission_amount) for row in eligible), Decimal("0.00"))
+    if not eligible or total <= 0:
+        raise ValueError("No hay comisiones de red disponibles para liquidar.")
+    payout = ReferralNetworkPayout(parent_seller_id=parent_seller_id, processed_by_user_id=processed_by_user_id, amount=total, transfer_date=transfer_date, payment_method=(payment_method or "").strip() or None, receipt=(receipt or "").strip() or None, transfer_number=(transfer_number or "").strip() or None, observations=(observations or "").strip() or None)
+    db_session.add(payout)
+    db_session.flush()
+    now = datetime.utcnow()
+    for row in eligible:
+        row.payout_id = payout.id
+        row.status = "pagada"
+        row.paid_at = now
+    return payout
 
 @network_bp.route("/superadmin/referrals/network")
 @superadmin_required
@@ -174,6 +222,21 @@ def set_percent(child_id):
         link.override_percent = None if value == DEFAULT_PARENT_PERCENT else value
         db.session.commit()
         flash(f"Comisión del padre actualizada a {int(value * 100)}%.", "success")
+    except Exception as exc:
+        db.session.rollback()
+        flash(str(exc), "danger")
+    return redirect(url_for("referral_network.dashboard"))
+
+@network_bp.route("/superadmin/referrals/network/payout", methods=["POST"])
+@superadmin_required
+def payout_network():
+    try:
+        parent_id = int(request.form.get("parent_seller_id"))
+        ids = [int(value) for value in request.form.getlist("commission_ids") if str(value).isdigit()]
+        transfer_date = datetime.strptime((request.form.get("transfer_date") or "").strip(), "%Y-%m-%d")
+        payout = register_network_payout(db.session, parent_seller_id=parent_id, commission_ids=ids, processed_by_user_id=request.current_user.id if hasattr(request, "current_user") else 0, transfer_date=transfer_date, payment_method=request.form.get("payment_method"), receipt=request.form.get("receipt"), transfer_number=request.form.get("transfer_number"), observations=request.form.get("observations"))
+        db.session.commit()
+        flash(f"Pago de red registrado por ARS {payout.amount:.2f}.", "success")
     except Exception as exc:
         db.session.rollback()
         flash(str(exc), "danger")
