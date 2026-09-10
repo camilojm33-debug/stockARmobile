@@ -21,14 +21,15 @@ jobs:
         with:
           python-version: '3.12'
 
+      - name: Install dependencies
+        run: python -m pip install -r requirements.txt
+
       - name: Patch final runtime tests deterministically
         run: |
           python - <<'PY'
           from pathlib import Path
           import re
 
-          # The runtime already supports iterative tool calling. Make the cap test
-          # exercise the actual synthesis path by asking for one extra tool round.
           p = Path('tests/test_ai_agent_multitool_runtime.py')
           text = p.read_text()
           text, changed = re.subn(
@@ -41,12 +42,9 @@ jobs:
               raise SystemExit(f'multitool cap fixture patch count={changed}')
           p.write_text(text)
 
-          # Keep the explicit AI cancel test hermetic. The application contract is
-          # that a known pending preapproval is canceled remotely and then synced
-          # locally; the test should not call Mercado Pago.
           p = Path('tests/test_ai_subscription_separation.py')
           text = p.read_text()
-          marker = '''def test_explicit_tenant_ai_cancel_does_not_modify_standard_subscription(subscription_app, monkeypatch):\n'''
+          marker = 'def test_explicit_tenant_ai_cancel_does_not_modify_standard_subscription(subscription_app, monkeypatch):\n'
           start = text.find(marker)
           if start < 0:
               raise SystemExit('explicit AI cancel test not found')
@@ -66,29 +64,16 @@ jobs:
               text = text[:start] + block + text[next_def:]
               p.write_text(text)
 
-          # Smoke tests must initialize every WSGI-only route before the first request.
           p = Path('tests/test_smoke.py')
           text = p.read_text()
-          text = text.replace(
-              'import app as stock_app\n',
-              'import app as stock_app\nimport wsgi  # noqa: F401\n',
-              1,
-          )
-          # Remove any late import inside an individual test.
+          if 'import wsgi  # noqa: F401\n' not in text:
+              text = text.replace('import app as stock_app\n', 'import app as stock_app\nimport wsgi  # noqa: F401\n', 1)
           text = text.replace('        import wsgi  # noqa: F401\n', '', 1)
           text = text.replace('APP_URL = stock_app.app.config["APP_URL"]', 'APP_URL = "http://test.local"', 1)
           fixture_marker = 'def clean_database():\n    stock_app.app.config["TESTING"] = True\n    stock_app.app.config["WTF_CSRF_ENABLED"] = False\n'
           if fixture_marker in text and 'stock_app.app.config["APP_URL"] = APP_URL' not in text:
-              text = text.replace(
-                  fixture_marker,
-                  fixture_marker + '    stock_app.app.config["APP_URL"] = APP_URL\n',
-                  1,
-              )
-          # Use the current billing payment PDF endpoint in the smoke test.
-          text = text.replace(
-              '/admin/company-settings/billing/payment/{payment_id}/pdf',
-              '/admin/subscription/payments/{payment_id}/pdf',
-          )
+              text = text.replace(fixture_marker, fixture_marker + '    stock_app.app.config["APP_URL"] = APP_URL\n', 1)
+          text = text.replace('/admin/company-settings/billing/payment/{payment_id}/pdf', '/admin/subscription/payments/{payment_id}/pdf')
           p.write_text(text)
           PY
 
@@ -98,14 +83,13 @@ jobs:
           node --check static/service-worker.js
 
       - name: Run focused regression tests
-        run: |
-          pytest -q tests/test_ai_agent_multitool_runtime.py tests/test_ai_subscription_separation.py tests/test_smoke.py
+        run: python -m pytest -q tests/test_ai_agent_multitool_runtime.py tests/test_ai_subscription_separation.py tests/test_smoke.py
 
       - name: Commit and remove helper
         run: |
           git config user.name 'github-actions[bot]'
           git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
-          git add services/ai_agent/orchestrator_v2.py services/ai_agent/providers/gemini.py tests/test_ai_agent_multitool_runtime.py tests/test_ai_subscription_separation.py tests/test_smoke.py .github/workflows/apply-ai-final-fixes.yml
+          git add tests/test_ai_agent_multitool_runtime.py tests/test_ai_subscription_separation.py tests/test_smoke.py .github/workflows/apply-ai-final-fixes.yml
           git rm .github/workflows/apply-ai-final-fixes.yml
           git commit -m 'fix(ai): finalize multi-tool validation' || exit 0
           git push
