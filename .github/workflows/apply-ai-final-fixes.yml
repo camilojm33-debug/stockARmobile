@@ -1,0 +1,134 @@
+name: Apply AI final fixes
+
+on:
+  push:
+    branches:
+      - fix/ai-multitool-runtime-20260910
+
+permissions:
+  contents: write
+
+jobs:
+  patch:
+    runs-on: ubuntu-latest
+    if: github.actor == 'camilojm33-debug'
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Patch final runtime and tests
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+          import re
+
+          # Enforce MAX_TOOL_TURNS before executing an extra tool call.
+          p = Path('services/ai_agent/orchestrator_v2.py')
+          text = p.read_text()
+          old = '''            tool_rounds += 1
+            if tool_rounds > MAX_TOOL_TURNS:
+                # Give the provider one final answer-only pass using the accumulated evidence.
+                synthesis_prompt = {
+                    "role": "user",
+                    "content": (
+                        "Terminá la respuesta usando exclusivamente los resultados de las herramientas ya ejecutadas. "
+                        "No vuelvas a llamar herramientas y explicá claramente los datos obtenidos."
+                    ),
+                }
+                final_messages = working_messages + [synthesis_prompt]
+                response = provider.generate(messages=final_messages, tools=[], **kwargs)
+                final_content = cls._content(response)
+                if final_content:
+                    return final_content, campaign_context, tool_rounds
+                raise RuntimeError("El proveedor IA no pudo completar la respuesta después de consultar las herramientas.")
+
+            assistant_tool_calls = []'''
+          new = '''            next_tool_round = tool_rounds + 1
+            if next_tool_round > MAX_TOOL_TURNS:
+                # Do not execute another tool after the safety bound; synthesize from accumulated evidence.
+                synthesis_prompt = {
+                    "role": "user",
+                    "content": (
+                        "Terminá la respuesta usando exclusivamente los resultados de las herramientas ya ejecutadas. "
+                        "No vuelvas a llamar herramientas y explicá claramente los datos obtenidos."
+                    ),
+                }
+                final_messages = working_messages + [synthesis_prompt]
+                response = provider.generate(messages=final_messages, tools=[], **kwargs)
+                final_content = cls._content(response)
+                if final_content:
+                    return final_content, campaign_context, tool_rounds
+                raise RuntimeError("El proveedor IA no pudo completar la respuesta después de consultar las herramientas.")
+            tool_rounds = next_tool_round
+
+            assistant_tool_calls = []'''
+          if old not in text:
+              raise SystemExit('orchestrator cap block not found')
+          p.write_text(text.replace(old, new, 1))
+
+          # Make the cap test actually reach the synthesis path.
+          p = Path('tests/test_ai_agent_multitool_runtime.py')
+          text = p.read_text()
+          text = text.replace(
+              'responses = [_tool_call("buscar_producto", f"call-{index}") for index in range(MAX_TOOL_TURNS)]',
+              'responses = [_tool_call("buscar_producto", f"call-{index}") for index in range(MAX_TOOL_TURNS + 1)]',
+              1,
+          )
+          text = text.replace(
+              'assert rounds == MAX_TOOL_TURNS\n    assert executed == ["buscar_producto"] * MAX_TOOL_TURNS\n    assert provider.calls[-1]["tools"] == []',
+              'assert rounds == MAX_TOOL_TURNS\n    assert executed == ["buscar_producto"] * MAX_TOOL_TURNS\n    assert provider.calls[-1]["tools"] == []',
+              1,
+          )
+          p.write_text(text)
+
+          # Make the explicit AI cancellation test deterministic.
+          p = Path('tests/test_ai_subscription_separation.py')
+          text = p.read_text()
+          marker = '    monkeypatch.setattr("services.mercadopago_service.MercadoPagoService.cancel_preapproval", cancel_preapproval)\n    client = subscription_app.test_client()\n    _login(client, user)'
+          replacement = '    monkeypatch.setattr("services.mercadopago_service.MercadoPagoService.cancel_preapproval", cancel_preapproval)\n    monkeypatch.setattr(AISubscriptionService, "_get_mp_preapproval", lambda company: {"id": "ai-pre", "status": "pending"})\n    client = subscription_app.test_client()\n    _login(client, user)'
+          if marker not in text:
+              raise SystemExit('explicit AI cancel marker not found')
+          p.write_text(text.replace(marker, replacement, 1))
+
+          # Make smoke tests hermetic: APP_URL is test.local for this suite.
+          p = Path('tests/test_smoke.py')
+          text = p.read_text()
+          text = text.replace('APP_URL = stock_app.app.config["APP_URL"]', 'APP_URL = "http://test.local"', 1)
+          fixture_marker = 'def clean_database():\n    stock_app.app.config["TESTING"] = True\n    stock_app.app.config["WTF_CSRF_ENABLED"] = False\n'
+          fixture_replacement = 'def clean_database():\n    stock_app.app.config["TESTING"] = True\n    stock_app.app.config["WTF_CSRF_ENABLED"] = False\n    stock_app.app.config["APP_URL"] = APP_URL\n'
+          if fixture_marker not in text:
+              raise SystemExit('smoke fixture marker not found')
+          text = text.replace(fixture_marker, fixture_replacement, 1)
+          # Register WSGI-only blueprints before the first request.
+          import_anchor = 'import app as stock_app\n'
+          if 'import wsgi  # noqa: F401\n' not in text:
+              text = text.replace(import_anchor, import_anchor + 'import wsgi  # noqa: F401\n', 1)
+          # The legacy payment URL is a standard-subscription receipt in this test.
+          payment_anchor = '                status="approved",\n                payment_method="transferencia",'
+          payment_replacement = '                status="approved",\n                provider="mercadopago_subscription",\n                payment_method="transferencia",'
+          if payment_anchor not in text:
+              raise SystemExit('payment fixture anchor not found')
+          text = text.replace(payment_anchor, payment_replacement, 1)
+          # Remove any late WSGI import left by previous patching.
+          text = text.replace('        import wsgi  # noqa: F401\n', '', 1)
+          p.write_text(text)
+          PY
+
+      - name: Verify syntax
+        run: |
+          python -m py_compile services/ai_agent/orchestrator_v2.py services/ai_agent/providers/gemini.py services/invoice_matching_service.py company_billing.py tests/test_ai_agent_multitool_runtime.py tests/test_ai_subscription_separation.py tests/test_smoke.py
+          node --check static/service-worker.js
+
+      - name: Commit and remove helper
+        run: |
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add services/ai_agent/orchestrator_v2.py tests/test_ai_agent_multitool_runtime.py tests/test_ai_subscription_separation.py tests/test_smoke.py .github/workflows/apply-ai-final-fixes.yml
+          git rm .github/workflows/apply-ai-final-fixes.yml
+          git commit -m 'fix(ai): finalize multi-tool runtime validation' || exit 0
+          git push
