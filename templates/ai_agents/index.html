@@ -29,6 +29,25 @@
   .ai-plan-card { background:linear-gradient(135deg,#f8fbff,#fff); border:1px solid var(--app-line); }
   .ai-progress { height:9px; border-radius:999px; background:#e5e7eb; overflow:hidden; }
   .ai-progress > span { display:block; height:100%; border-radius:inherit; background:linear-gradient(90deg,#2563eb,#4f46e5); }
+  /* Presentación comercial del plan activo */
+  .ai-plan-card-v2 { background:linear-gradient(135deg,#f8fbff,#ffffff); border:1px solid var(--app-line); }
+  .ai-plan-kicker { font-size:.74rem; font-weight:900; letter-spacing:.08em; text-transform:uppercase; color:#2563eb; }
+  .ai-plan-name { font-size:1.8rem; font-weight:900; letter-spacing:-.03em; }
+  .ai-plan-price { font-size:1.55rem; font-weight:900; letter-spacing:-.02em; }
+  .ai-plan-meta { display:flex; flex-wrap:wrap; gap:.5rem; }
+  .ai-plan-meta span { display:inline-flex; align-items:center; gap:.35rem; border:1px solid var(--app-line); border-radius:999px; padding:.35rem .65rem; font-size:.78rem; color:var(--app-muted); background:#fff; }
+  .ai-plan-box { border:1px solid var(--app-line); border-radius:14px; padding:1rem; background:#fff; height:100%; }
+  .ai-plan-box-title { font-size:.78rem; text-transform:uppercase; letter-spacing:.07em; font-weight:900; color:var(--app-muted); margin-bottom:.65rem; }
+  .ai-plan-agent-list { display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:.45rem .8rem; }
+  .ai-plan-agent-list div { display:flex; align-items:flex-start; gap:.4rem; font-size:.84rem; }
+  .ai-plan-agent-list i { color:#16a34a; margin-top:.12rem; }
+  .ai-plan-usage { border:1px solid var(--app-line); border-radius:14px; padding:1rem; background:var(--app-panel-soft); }
+  .ai-plan-usage-head { display:flex; justify-content:space-between; gap:.8rem; flex-wrap:wrap; }
+  .ai-plan-usage-big { font-size:1.15rem; font-weight:900; }
+  .ai-plan-usage-bar { height:10px; border-radius:999px; background:#e5e7eb; overflow:hidden; }
+  .ai-plan-usage-bar span { display:block; height:100%; border-radius:inherit; background:linear-gradient(90deg,#2563eb,#4f46e5); }
+  .ai-plan-pro-banner { border:1px solid rgba(37,99,235,.16); border-radius:14px; padding:1rem; background:linear-gradient(135deg,rgba(37,99,235,.06),rgba(79,70,229,.03)); }
+  .ai-plan-pro-banner strong { display:block; margin-bottom:.25rem; }
   .ai-flow { display:grid; grid-template-columns:repeat(5,minmax(0,1fr)); gap:.65rem; }
   .ai-flow-step { border:1px solid var(--app-line); border-radius:14px; padding:.85rem .65rem; text-align:center; background:var(--app-panel-soft); }
   .ai-flow-step strong { display:block; margin-top:.3rem; font-size:.82rem; }
@@ -68,6 +87,9 @@
     .ai-float-launcher { right:14px; bottom:calc(86px + env(safe-area-inset-bottom)); }
     .ai-float-button { min-height:44px; padding:.68rem .95rem; }
     .ai-chat-panel { right:14px; bottom:calc(144px + env(safe-area-inset-bottom)); width:calc(100vw - 28px); height:min(650px,calc(100dvh - 160px)); border-radius:16px; }
+    .ai-plan-agent-list { grid-template-columns:1fr; }
+    .ai-plan-name { font-size:1.55rem; }
+    .ai-plan-price { font-size:1.35rem; }
   }
 </style>
 {% endblock %}
@@ -131,7 +153,8 @@
     <div class="card-body p-4">
       <div class="mb-3"><h2 class="h5 fw-bold mb-1">¿Qué puede hacer por vos?</h2><p class="text-muted mb-0">Un equipo de agentes que trabaja con la información real de tu comercio.</p></div>
       <div class="ai-benefits">
-        {% for title, icon, text in [('Atención 24/7','bi-headset','Respondé consultas de clientes y mantené la atención activa fuera de horario.'),('Más ventas','bi-graph-up-arrow','El Vendedor IA convierte consultas en oportunidades, presupuestos y pedidos.'),('Más control','bi-clipboard-data','El Asistente consulta ventas, stock, productos y clientes sin que tengas que buscar todo manualmente.'),('Decisiones con datos','bi-bar-chart','El Analista detecta cambios, baja rotación y clientes que requieren atención.'),('Marketing inteligente','bi-megaphone','Prepará promociones y mensajes segmentados a partir de los datos de tu negocio.'),('Menos trabajo manual','bi-lightning-charge','Automatizá consultas repetitivas y dedicá tu tiempo a vender y administrar.')] %}
+        {% for title, icon, text in [('Atención 24/7','bi-headset','Respondé consultas de clientes y mantené la atención activa fuera de horario.'),('Más ventas','bi-graph-up-arrow','El Vendedor IA convierte consultas en oportunidades, presupuestos y pedidos.'),('Más control','bi-clipboard-data','El Asistente consulta ventas, stock, productos y clientes sin que tengas que buscar todo manualmente.'),('Decisiones con datos','bi-bar-chart','El Analista detecta cambios, baja rotación y clientes que requieren atención.'),('Marketing inteligente','bi-megaphone','Prepará promociones y mensajes segmentados a partir de los datos de tu negocio.'),('Menos trabajo manual','bi-lightning-charge','Automatizá consultas repetitivas y dedicá tu tiempo a vender y administrar.')]
+        %}
         <div class="ai-benefit"><div class="ai-benefit-icon"><i class="bi {{ icon }}"></i></div><div class="fw-bold mb-1">{{ title }}</div><div class="small text-muted">{{ text }}</div></div>
         {% endfor %}
       </div>
@@ -146,11 +169,67 @@
   </section>
 
   {% if ai_status and ai_status.plan_name %}
+  {% set current_plan_ns = namespace(plan=None) %}
+  {% for plan_item in ai_plans %}{% if plan_item.code == ai_status.plan_code %}{% set current_plan_ns.plan = plan_item %}{% endif %}{% endfor %}
   {% set plan_percent = ai_usage.percent if ai_usage and ai_usage.percent is not none else 0 %}
-  <section class="card app-card ai-plan-card mb-4">
+  <section class="card app-card ai-plan-card-v2 mb-4">
     <div class="card-body p-4 p-lg-5">
-      <div class="d-flex flex-wrap justify-content-between align-items-start gap-3"><div><span class="page-kicker"><i class="bi bi-stars"></i> Tu plan IA actual</span><h2 class="h3 fw-bold mb-1">{{ ai_status.plan_name }}</h2><div class="text-muted">{{ ai_status.status or 'SIN ESTADO' }} · {{ ai_status.plan_limit }} interacciones incluidas{% if ai_status.origin %} · {{ ai_status.origin }}{% endif %}</div></div><a class="btn btn-outline-primary" href="{{ plan_url }}">Ver todos los planes</a></div>
-      <div class="row g-4 mt-1 align-items-end"><div class="col-lg-7"><div class="small text-muted mb-1">Uso mensual</div><div class="d-flex justify-content-between small mb-2"><span>{{ ai_usage.used_usage }} utilizadas</span><span>{{ ai_usage.remaining_usage }} restantes</span></div><div class="ai-progress"><span style="width: {{ [plan_percent, 100] | min }}%"></span></div><div class="small text-muted mt-2">{{ plan_percent }}% del límite mensual</div></div><div class="col-lg-5"><div class="small text-muted mb-1">Incluye</div><div class="fw-bold fs-5">{{ ai_status.agents | length }} agentes IA</div><div class="small text-muted">{% if ai_status.invoice_processing %}También incluye reconocimiento de facturas de proveedores y preparación de carga de productos y stock.{% else %}Podés ampliar tu plan para sumar facturas y más automatización.{% endif %}</div></div></div>
+      <div class="d-flex flex-wrap justify-content-between align-items-start gap-4 mb-4">
+        <div>
+          <div class="ai-plan-kicker mb-2"><i class="bi bi-stars me-1"></i> Tu plan IA actual</div>
+          <div class="d-flex flex-wrap align-items-center gap-2 mb-2"><h2 class="ai-plan-name mb-0">{{ ai_status.plan_name }}</h2><span class="badge {{ 'text-bg-success' if ai_status.status == 'ACTIVA' else 'text-bg-warning text-dark' if ai_status.status == 'PENDIENTE' else 'text-bg-secondary' }}">{{ ai_status.status or 'SIN ESTADO' }}</span></div>
+          <p class="text-muted mb-2">{{ current_plan_ns.plan.tagline if current_plan_ns.plan else 'Tu equipo inteligente trabajando para tu comercio.' }}</p>
+          {% if current_plan_ns.plan %}<div class="ai-plan-price mb-2">{{ current_plan_ns.plan.price }}</div>{% endif %}
+          <div class="ai-plan-meta">
+            <span><i class="bi bi-lightning-charge"></i>{{ ai_status.plan_limit }} interacciones/mes</span>
+            <span><i class="bi bi-arrow-repeat"></i>{% if ai_status.origin == 'MERCADO_PAGO' %}Renovación automática{% else %}Gestión manual{% endif %}</span>
+          </div>
+        </div>
+        <div class="d-flex flex-wrap gap-2"><a class="btn btn-outline-primary" href="{{ plan_url }}">Ver otros planes</a><a class="btn btn-primary" href="{{ plan_url }}">Administrar mi plan</a></div>
+      </div>
+
+      <div class="row g-3 mb-3">
+        <div class="col-lg-7">
+          <div class="ai-plan-usage h-100">
+            <div class="ai-plan-usage-head mb-2"><div><div class="ai-plan-usage-big">Uso de IA</div><div class="small text-muted">{{ ai_usage.used_usage }} de {{ ai_usage.included_usage or ai_status.plan_limit }} interacciones utilizadas</div></div><div class="small text-muted">{{ plan_percent }}%</div></div>
+            <div class="ai-plan-usage-bar"><span style="width:{{ [plan_percent, 100] | min }}%"></span></div>
+            <div class="d-flex justify-content-between small text-muted mt-2"><span>{{ ai_usage.remaining_usage }} restantes</span><span>Renovación según tu modalidad</span></div>
+          </div>
+        </div>
+        <div class="col-lg-5">
+          <div class="ai-plan-box">
+            <div class="ai-plan-box-title">Vigencia y cobro</div>
+            {% if ai_status.origin == 'MERCADO_PAGO' %}
+            <div class="fw-bold"><i class="bi bi-check-circle-fill text-success me-1"></i>Cobro automático</div>
+            <div class="small text-muted mt-1">Los cobros y el próximo ciclo se sincronizan con el medio de pago de tu suscripción.</div>
+            {% elif ai_status.ends_at %}
+            <div class="fw-bold"><i class="bi bi-calendar-check me-1"></i>Vencimiento: {{ ai_status.ends_at[:10] }}</div>
+            <div class="small text-muted mt-1">La renovación de este plan es administrada por StockArMobile.</div>
+            {% else %}
+            <div class="fw-bold">Plan activo</div><div class="small text-muted mt-1">La vigencia se administra desde tu suscripción IA.</div>
+            {% endif %}
+          </div>
+        </div>
+      </div>
+
+      <div class="row g-3">
+        <div class="col-lg-7">
+          <div class="ai-plan-box">
+            <div class="ai-plan-box-title">¿Qué incluye tu plan?</div>
+            <div class="ai-plan-agent-list">
+              {% if current_plan_ns.plan %}{% for agent_key in current_plan_ns.plan.agents %}<div><i class="bi bi-check-circle-fill"></i><span>{{ agent_labels[agent_key] }}</span></div>{% endfor %}{% endif %}
+              {% if current_plan_ns.plan and current_plan_ns.plan.invoice_processing %}<div><i class="bi bi-check-circle-fill"></i><span>Reconocimiento de facturas con IA</span></div><div><i class="bi bi-check-circle-fill"></i><span>Preparación de productos y stock desde facturas</span></div>{% endif %}
+            </div>
+          </div>
+        </div>
+        <div class="col-lg-5">
+          {% if current_plan_ns.plan and current_plan_ns.plan.invoice_processing %}
+          <div class="ai-plan-pro-banner h-100"><strong><i class="bi bi-file-earmark-text me-1"></i>Facturas de proveedores + IA</strong><div class="small text-muted">Cargá una factura para facilitar el reconocimiento de productos y la preparación de tu stock.</div></div>
+          {% else %}
+          <div class="ai-plan-pro-banner h-100"><strong><i class="bi bi-stars me-1"></i>Más automatización</strong><div class="small text-muted">Con IA PRO sumás reconocimiento de facturas de proveedores y más automatización para tu comercio.</div><a class="btn btn-sm btn-primary mt-2" href="{{ plan_url }}">Conocer IA PRO</a></div>
+          {% endif %}
+        </div>
+      </div>
     </div>
   </section>
   {% endif %}
