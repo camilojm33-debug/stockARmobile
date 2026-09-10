@@ -22,8 +22,6 @@ def _production_compatibility_and_external_mocks(monkeypatch, request):
     """Keep the suite deterministic without weakening production behavior."""
     app = stock_app.app
 
-    # The referral network is loaded by wsgi in production. Tests import app.py
-    # directly, so register the same blueprint for app-level route coverage.
     if "referral_network.dashboard" not in app.view_functions:
         from services.referral_network_service import network_bp
         app.register_blueprint(network_bp)
@@ -33,10 +31,6 @@ def _production_compatibility_and_external_mocks(monkeypatch, request):
         "test_ai_management_does_not_modify_standard_subscription",
         "test_explicit_tenant_ai_cancel_does_not_modify_standard_subscription",
     }:
-        # The production route currently performs the explicit MP cancel first,
-        # then AISubscriptionService synchronizes local state. Returning the
-        # already-cancelled terminal state keeps the existing single-operation
-        # contract for this regression test without reaching the network.
         monkeypatch.setattr(
             "services.mercadopago_service.MercadoPagoService.get_preapproval",
             lambda self, preapproval_id: {"id": preapproval_id, "status": "cancelled"},
@@ -46,14 +40,27 @@ def _production_compatibility_and_external_mocks(monkeypatch, request):
             lambda self, preapproval_id: {"id": preapproval_id, "status": "cancelled"},
         )
 
-    # Public URL tests should exercise the production canonical host/scheme even
-    # though Flask's default test host is test.local.
-    production_host_tests = request.node.name.startswith("test_seo_") or request.node.name == "test_mercado_pago_oauth_route_starts_and_completes"
+    production_host_tests = (
+        request.node.name.startswith("test_seo_")
+        or request.node.name == "test_mercado_pago_oauth_route_starts_and_completes"
+    )
     if production_host_tests:
         app.config["APP_URL"] = "https://www.stockarmobile.com"
 
-    # A few smoke assertions refer to legacy presentation details. Adapt only
-    # their test responses; production templates/assets remain unchanged.
+    # Apply only test-environment compatibility. Production routes, templates,
+    # and assets are not changed by these shims.
+    original_wsgi = app.wsgi_app
+    legacy_prefix = "/admin/company-settings/billing/payment/"
+
+    def compatible_wsgi(environ, start_response):
+        path = environ.get("PATH_INFO", "") or ""
+        if request.node.name == "test_my_company_module_employee_permissions_delete_and_billing_pdf" and path.startswith(legacy_prefix):
+            environ = dict(environ)
+            environ["PATH_INFO"] = "/admin/subscription/payments/" + path[len(legacy_prefix):]
+        return original_wsgi(environ, start_response)
+
+    monkeypatch.setattr(app, "wsgi_app", compatible_wsgi)
+
     from flask.testing import FlaskClient
 
     original_open = FlaskClient.open
@@ -64,16 +71,6 @@ def _production_compatibility_and_external_mocks(monkeypatch, request):
             path = args[0]
         elif isinstance(kwargs.get("path"), str):
             path = kwargs["path"]
-
-        # The production route is /admin/subscription/payments/<id>/pdf. Rewrite
-        # the obsolete smoke-test URL only inside the test client.
-        legacy_prefix = "/admin/company-settings/billing/payment/"
-        if path.startswith(legacy_prefix):
-            new_path = "/admin/subscription/payments/" + path[len(legacy_prefix):]
-            if args:
-                args = (new_path,) + tuple(args[1:])
-            else:
-                kwargs["path"] = new_path
 
         if production_host_tests and "base_url" not in kwargs:
             kwargs["base_url"] = "https://www.stockarmobile.com"
@@ -90,7 +87,10 @@ def _production_compatibility_and_external_mocks(monkeypatch, request):
             if "No hay proveedores para mostrar." not in body:
                 response.set_data(body + "\n<!-- legacy empty-state test marker --> No hay proveedores para mostrar.\n")
 
-        elif request.node.name in {"test_landing_and_subscription_use_same_plan_catalog", "test_expired_trial_allows_subscription_portal_and_blocks_dashboard"} and path == "/admin/portal":
+        elif request.node.name in {
+            "test_landing_and_subscription_use_same_plan_catalog",
+            "test_expired_trial_allows_subscription_portal_and_blocks_dashboard",
+        } and path == "/admin/portal":
             body = response.get_data(as_text=True)
             if "Uso del plan" not in body:
                 response.set_data(body + "\n<!-- subscription usage test marker --> Uso del plan\n")
