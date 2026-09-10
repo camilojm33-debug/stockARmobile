@@ -90,9 +90,8 @@ def test_run_tool_loop_accepts_tool_calls_list(monkeypatch):
 
 
 def test_run_tool_loop_caps_tool_rounds_and_requests_final_synthesis(monkeypatch):
-    responses = [_tool_call("buscar_producto", f"call-{index}") for index in range(MAX_TOOL_TURNS)]
-    responses.append({"content": "Síntesis final.", "tool_call": None})
-    provider = SequenceProvider(responses)
+    responses = [_tool_call("buscar_producto", f"call-{index}") for index in range(MAX_TOOL_TURNS + 1)]
+    provider = SequenceProvider(responses + [{"content": "Síntesis final.", "tool_call": None}])
     executed = []
 
     def fake_execute(name, **kwargs):
@@ -129,6 +128,7 @@ def test_run_tool_loop_does_not_accept_empty_provider_response():
             context={},
         )
 
+
 def test_every_agent_exposes_its_declared_tools():
     expected_agents = {"asistente", "vendedor", "analista", "marketing"}
     assert set(AgentRuntime.agent_tool_names) == expected_agents
@@ -138,4 +138,3 @@ def test_every_agent_exposes_its_declared_tools():
         declared = {item["function"]["name"] for item in definitions}
         assert declared == AgentRuntime.agent_tool_names[agent_key]
         assert declared
-
