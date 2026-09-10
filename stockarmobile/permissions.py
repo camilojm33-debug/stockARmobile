@@ -4,6 +4,8 @@ import json
 
 from .constants import ROLE_ADMIN, ROLE_SUPERADMIN
 
+AI_ACCESS_PERMISSION = "ai_access"
+
 
 def user_role(user):
     return (getattr(user, "role", None) or "").strip().lower()
@@ -32,3 +34,11 @@ def parse_permissions_json(raw_permissions):
 
 def has_any_permission(user, candidates):
     return bool(parse_permissions_json(getattr(user, "permissions_json", None)).intersection(set(candidates or [])))
+
+
+def can_access_ai(user):
+    """Tenant AI access: admins are allowed; employees need the explicit ai_access permission."""
+    role = user_role(user)
+    if role in {ROLE_ADMIN, ROLE_SUPERADMIN}:
+        return True
+    return AI_ACCESS_PERMISSION in parse_permissions_json(getattr(user, "permissions_json", None))
