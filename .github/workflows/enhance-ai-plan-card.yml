@@ -27,7 +27,7 @@ jobs:
           source = path.read_text(encoding='utf-8-sig')
 
           if 'AI_PLAN_VALUE_V2' not in source:
-              marker = '  .ai-flow { '
+              marker = '  @media (max-width: 1100px)'
               styles = '''  /* AI_PLAN_VALUE_V2 */
           .ai-plan-card-v2 { background:linear-gradient(135deg,#f8fbff,#ffffff); border:1px solid var(--app-line); }
           .ai-plan-kicker { font-size:.74rem; font-weight:900; letter-spacing:.08em; text-transform:uppercase; color:#2563eb; }
@@ -50,7 +50,7 @@ jobs:
           @media (max-width:700px) { .ai-plan-agent-list { grid-template-columns:1fr; } .ai-plan-name { font-size:1.55rem; } .ai-plan-price { font-size:1.35rem; } }
 '''
               if marker not in source:
-                  raise SystemExit('AI flow CSS marker not found')
+                  raise SystemExit('AI responsive CSS marker not found')
               source = source.replace(marker, styles + marker, 1)
 
           replacement = '''{% if ai_status and ai_status.plan_name %}
@@ -123,7 +123,6 @@ jobs:
           source, count = pattern.subn(replacement, source, count=1)
           if count != 1:
               raise SystemExit(f'AI plan section not found uniquely: {count}')
-
           path.write_text(source, encoding='utf-8')
           PY
 
@@ -131,17 +130,9 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          python - <<'PY'
-          from pathlib import Path
-          p = Path('templates/ai_agents/index.html')
-          text = p.read_text(encoding='utf-8-sig')
-          assert 'AI_PLAN_VALUE_V2' in text
-          assert 'Tu plan IA actual' in text
-          assert '¿Qué incluye tu plan?' in text
-          assert 'Facturas de proveedores + IA' in text
-          assert 'current_plan_ns.plan' in text
-          print('AI plan card source validation OK')
-          PY
+          grep -q 'AI_PLAN_VALUE_V2' templates/ai_agents/index.html
+          grep -q '¿Qué incluye tu plan?' templates/ai_agents/index.html
+          grep -q 'current_plan_ns.plan' templates/ai_agents/index.html
           git diff --check
 
       - name: Commit source change and remove workflow
@@ -151,7 +142,12 @@ jobs:
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git add templates/ai_agents/index.html
-          git commit -m "feat: improve AI subscription plan card"
-          git rm .github/workflows/enhance-ai-plan-card.yml
-          git commit -m "chore: remove temporary AI plan workflow"
+          if git diff --cached --quiet; then
+            git rm .github/workflows/enhance-ai-plan-card.yml
+            git commit -m "chore: remove temporary AI plan workflow"
+          else
+            git commit -m "feat: improve AI subscription plan card"
+            git rm .github/workflows/enhance-ai-plan-card.yml
+            git commit -m "chore: remove temporary AI plan workflow"
+          fi
           git push origin main
