@@ -2,7 +2,7 @@
 from __future__ import annotations
 from datetime import datetime
 from decimal import Decimal
-from flask import Blueprint, flash, redirect, render_template, request, url_for
+from flask import Blueprint, current_user, flash, redirect, render_template, request, url_for
 from sqlalchemy import event
 from sqlalchemy.orm import Session
 from app import db, superadmin_required
@@ -75,7 +75,6 @@ def validate_parent_assignment(*, parent_id, child_id):
         raise ValueError("El vendedor seleccionado no existe.")
     if not parent.active:
         raise ValueError("El vendedor padre debe estar activo.")
-    # La red es de un solo nivel; además impedimos cualquier ciclo futuro recorriendo padres.
     seen = {child_id}
     cursor = parent_id
     while cursor is not None:
@@ -150,17 +149,8 @@ def network_snapshot():
     return {"sellers": sellers, "links": links, "pending": pending, "paid": paid, "total_network_commissions": len(rows)}
 
 def register_network_payout(db_session, *, parent_seller_id, commission_ids, processed_by_user_id, transfer_date, payment_method=None, receipt=None, transfer_number=None, observations=None):
-    """Liquida exclusivamente comisiones de red disponibles y del mismo padre, de forma atómica."""
-    rows = (ReferralNetworkCommission.query.filter(
-        ReferralNetworkCommission.id.in_(commission_ids),
-        ReferralNetworkCommission.parent_seller_id == parent_seller_id,
-        ReferralNetworkCommission.payout_id.is_(None),
-    ).all())
-    eligible = []
-    for row in rows:
-        source_status = (row.source_commission.status if row.source_commission else row.status) or row.status
-        if source_status == "disponible":
-            eligible.append(row)
+    rows = (ReferralNetworkCommission.query.filter(ReferralNetworkCommission.id.in_(commission_ids), ReferralNetworkCommission.parent_seller_id == parent_seller_id, ReferralNetworkCommission.payout_id.is_(None)).all())
+    eligible = [row for row in rows if ((row.source_commission.status if row.source_commission else row.status) or row.status) == "disponible"]
     total = sum((_money(row.commission_amount) for row in eligible), Decimal("0.00"))
     if not eligible or total <= 0:
         raise ValueError("No hay comisiones de red disponibles para liquidar.")
@@ -234,7 +224,7 @@ def payout_network():
         parent_id = int(request.form.get("parent_seller_id"))
         ids = [int(value) for value in request.form.getlist("commission_ids") if str(value).isdigit()]
         transfer_date = datetime.strptime((request.form.get("transfer_date") or "").strip(), "%Y-%m-%d")
-        payout = register_network_payout(db.session, parent_seller_id=parent_id, commission_ids=ids, processed_by_user_id=request.current_user.id if hasattr(request, "current_user") else 0, transfer_date=transfer_date, payment_method=request.form.get("payment_method"), receipt=request.form.get("receipt"), transfer_number=request.form.get("transfer_number"), observations=request.form.get("observations"))
+        payout = register_network_payout(db.session, parent_seller_id=parent_id, commission_ids=ids, processed_by_user_id=current_user.id, transfer_date=transfer_date, payment_method=request.form.get("payment_method"), receipt=request.form.get("receipt"), transfer_number=request.form.get("transfer_number"), observations=request.form.get("observations"))
         db.session.commit()
         flash(f"Pago de red registrado por ARS {payout.amount:.2f}.", "success")
     except Exception as exc:
