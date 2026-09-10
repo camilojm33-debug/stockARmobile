@@ -31,7 +31,7 @@
       <form method="post" action="{{ url_for('referral_network.link_seller') }}" class="row g-3">
         <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
         <div class="col-12"><label class="form-label">Vendedor padre</label><select name="parent_id" class="form-select" required><option value="">Seleccionar...</option>{% for seller in sellers %}{% if seller.active %}<option value="{{ seller.id }}">{{ seller.user.name if seller.user else seller.user.username }} · {{ seller.referral_code }}</option>{% endif %}{% endfor %}</select></div>
-        <div class="col-12"><label class="form-label">Vendedor hijo</label><select name="child_id" class="form-select" required><option value="">Seleccionar...</option>{% for seller in sellers %}<option value="{{ seller.id }}">{{ seller.user.name if seller.user else seller.user.username }} · {{ seller.referral_code }}</option>{% endfor %}</select></div>
+        <div class="col-12"><label class="form-label">Vendedor hijo</label><select name="child_id" class="form-select" required><option value="">Seleccionar...</option>{% for seller in sellers %}<option value="{{ seller.id }}">{{ seller.user.name if seller.user else seller.user.username }} · {{ seller.referral_code }}</option>{% endif %}{% endfor %}</select></div>
         <div class="col-12"><label class="form-label">Comisión del padre</label><select name="override_percent" class="form-select"><option value="">30% automático</option><option value="50">50% — excepción SuperAdmin</option></select></div>
         <div class="col-12"><button class="btn btn-primary w-100"><i class="bi bi-diagram-3 me-1"></i>Guardar relación</button></div>
       </form>
@@ -54,5 +54,36 @@
       {% else %}<div class="text-center text-muted py-5"><i class="bi bi-diagram-3 fs-1 d-block mb-2"></i>No hay relaciones padre → hijo todavía.</div>{% endfor %}
     </div>
   </div>
+</div>
+<div class="card network-card mt-4 p-4">
+  <div class="d-flex justify-content-between align-items-center flex-wrap gap-2 mb-3">
+    <div><h2 class="h5 fw-bold mb-1">Liquidación de comisiones de red</h2><div class="text-muted small">Solo aparecen comisiones disponibles, no pagadas y pertenecientes al vendedor padre seleccionado.</div></div>
+    <span class="badge text-bg-success">Pago auditable</span>
+  </div>
+  {% for seller in sellers %}
+    {% set available = network_commissions|selectattr('parent_seller_id','equalto',seller.id)|selectattr('payout_id','equalto',none)|list %}
+    {% if available %}
+    <div class="border rounded-4 p-3 mb-3">
+      <div class="d-flex justify-content-between align-items-center flex-wrap gap-2 mb-2">
+        <div><strong>{{ seller.user.name if seller.user else seller.user.username }}</strong><div class="small text-muted">{{ seller.referral_code }}</div></div>
+        <span class="badge text-bg-light">{{ available|length }} movimientos</span>
+      </div>
+      <form method="post" action="{{ url_for('referral_network.payout_network') }}">
+        <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+        <input type="hidden" name="parent_seller_id" value="{{ seller.id }}">
+        <div class="table-responsive mb-3"><table class="table table-sm align-middle mb-0"><thead><tr><th></th><th>Hijo</th><th>Venta</th><th>%</th><th>Comisión</th><th>Estado</th></tr></thead><tbody>
+          {% for row in available %}
+            {% set source_status = row.source_commission.status if row.source_commission else row.status %}
+            {% if source_status == 'disponible' %}
+            <tr><td><input class="form-check-input" type="checkbox" name="commission_ids" value="{{ row.id }}"></td><td>{{ row.child.user.name if row.child.user else row.child.user.username }}</td><td>ARS {{ '%.2f'|format(row.sold_amount or 0) }}</td><td>{{ '%.0f'|format((row.commission_percent or 0) * 100) }}%</td><td class="fw-semibold">ARS {{ '%.2f'|format(row.commission_amount or 0) }}</td><td><span class="badge text-bg-success">Disponible</span></td></tr>
+            {% endif %}
+          {% endfor %}
+        </tbody></table></div>
+        <div class="row g-2"><div class="col-md-3"><label class="form-label small">Fecha</label><input type="date" name="transfer_date" class="form-control" required></div><div class="col-md-3"><label class="form-label small">Método</label><input name="payment_method" class="form-control" placeholder="Transferencia"></div><div class="col-md-3"><label class="form-label small">N.º transferencia</label><input name="transfer_number" class="form-control"></div><div class="col-md-3 d-flex align-items-end"><button class="btn btn-success w-100" onclick="return confirm('Registrar el pago de las comisiones seleccionadas?');"><i class="bi bi-check2-circle me-1"></i>Registrar pago</button></div></div>
+      </form>
+    </div>
+    {% endif %}
+  {% endfor %}
+  {% if not network_commissions %}<div class="text-center text-muted py-4">Todavía no hay movimientos de comisiones de red.</div>{% endif %}
 </div>
 {% endblock %}
