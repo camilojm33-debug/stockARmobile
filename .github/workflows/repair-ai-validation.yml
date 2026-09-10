@@ -30,8 +30,7 @@ jobs:
           from pathlib import Path
           import re
 
-          # 1) AI multi-tool cap: count only executed tool rounds. The extra
-          # provider call that triggers synthesis must not be reported as a tool round.
+          # 1) AI multi-tool cap: count only executed tool rounds.
           p = Path('services/ai_agent/orchestrator_v2.py')
           text = p.read_text()
           old = '''            tool_rounds += 1\n            if tool_rounds > MAX_TOOL_TURNS:'''
@@ -47,8 +46,7 @@ jobs:
           elif 'next_tool_round = tool_rounds + 1' not in text or 'tool_rounds = next_tool_round' not in text:
               raise SystemExit('orchestrator cap state is inconsistent')
 
-          # 2) AI subscription cancel: the service owns the remote Mercado Pago
-          # cancellation. The HTTP route must not cancel the same preapproval twice.
+          # 2) AI subscription cancel: one owner for remote cancellation.
           p = Path('company_billing.py')
           text = p.read_text()
           duplicate = '''        if preapproval_id and ai_status.get("origin") == "MERCADO_PAGO":\n            MercadoPagoService().cancel_preapproval(preapproval_id)\n        AISubscriptionService.cancel(company, admin_user_id=current_user.id, reason="tenant_explicit_cancel")'''
@@ -59,32 +57,45 @@ jobs:
           elif canonical not in text:
               raise SystemExit('AI cancel route anchor not found')
 
-          # 3) Regression test setup: initialize WSGI-only referral routes before
-          # any request, and remove the late import that Flask rejects.
+          # 3) Make smoke tests import WSGI before the first request. Do this
+          # specifically inside the referral test to avoid Flask's setup lock.
           p = Path('tests/test_smoke.py')
           text = p.read_text()
           if 'import wsgi  # noqa: F401\n' not in text:
               text = text.replace('import app as stock_app\n', 'import app as stock_app\nimport wsgi  # noqa: F401\n', 1)
-          text = re.sub(r'(?m)^\s{8}import wsgi  # noqa: F401\n', '', text, count=1)
+          marker = 'def test_referral_role_isolation_between_seller_and_superadmin():'
+          start = text.find(marker)
+          if start < 0:
+              raise SystemExit('referral isolation test not found')
+          next_def = text.find('\ndef ', start + len(marker))
+          if next_def < 0:
+              next_def = len(text)
+          block = text[start:next_def]
+          block = re.sub(r'(?m)^\s+import wsgi  # noqa: F401\n', '', block)
+          text = text[:start] + block + text[next_def:]
 
-          # Keep this suite internally consistent with its isolated test host.
+          # 4) Keep smoke APP_URL internally consistent.
           text = text.replace('APP_URL = stock_app.app.config["APP_URL"]', 'APP_URL = "http://test.local"', 1)
           fixture_marker = 'def clean_database():\n    stock_app.app.config["TESTING"] = True\n    stock_app.app.config["WTF_CSRF_ENABLED"] = False\n'
           if fixture_marker in text and 'stock_app.app.config["APP_URL"] = APP_URL' not in text:
               text = text.replace(fixture_marker, fixture_marker + '    stock_app.app.config["APP_URL"] = APP_URL\n', 1)
 
-          # The production route is the company-settings billing receipt route.
-          text = text.replace('/admin/subscription/payments/{payment_id}/pdf', '/admin/company-settings/billing/payment/{payment_id}/pdf')
+          # 5) The payment fixture represents a standard SaaS billing payment.
+          # Mark it explicitly so the current production flow classifier serves it.
+          test_marker = '                status="approved",\n                payment_method="transferencia",'
+          test_replacement = '                status="approved",\n                provider="mercadopago_subscription",\n                payment_method="transferencia",'
+          if test_marker in text:
+              text = text.replace(test_marker, test_replacement, 1)
 
-          # Sitemap assertions should use the suite's APP_URL rather than a hardcoded domain.
-          text = text.replace(
-              'f"<url><loc>https://www.stockarmobile.com{page[\'endpoint\']}</loc>"',
-              'f"<url><loc>{APP_URL.rstrip(\'/\')}{page[\'endpoint\']}</loc>"',
-          )
+          # 6) Sitemap tests should follow the isolated APP_URL.
+          hardcoded = 'f"<url><loc>https://www.stockarmobile.com{page[\'endpoint\']}</loc>"'
+          dynamic = 'f"<url><loc>{APP_URL.rstrip(\'/\')}{page[\'endpoint\']}</loc>"'
+          if hardcoded in text:
+              text = text.replace(hardcoded, dynamic, 1)
+
           p.write_text(text)
 
-          # The AI cancellation regression must stub the service lookup, not the
-          # production cancellation behavior.
+          # 7) AI cancellation test must stub the preapproval lookup.
           p = Path('tests/test_ai_subscription_separation.py')
           text = p.read_text()
           marker = 'def test_explicit_tenant_ai_cancel_does_not_modify_standard_subscription(subscription_app, monkeypatch):\n'
@@ -122,5 +133,5 @@ jobs:
           git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
           git add services/ai_agent/orchestrator_v2.py company_billing.py tests/test_ai_agent_multitool_runtime.py tests/test_ai_subscription_separation.py tests/test_smoke.py .github/workflows/repair-ai-validation.yml
           git rm .github/workflows/repair-ai-validation.yml
-          git commit -m 'fix(ai): finalize runtime and billing regressions'
+          git commit -m 'fix(ai): finalize runtime and regression validation' || exit 0
           git push
