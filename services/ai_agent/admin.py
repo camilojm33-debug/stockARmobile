@@ -35,10 +35,9 @@ def _require_company_pin():
     flash("Validá el PIN de Mi Empresa para gestionar la configuración de IA.", "warning")
     return redirect(url_for("company_billing.company_settings"))
 
-# AI_ADMIN_PIN_FINAL
 
 _DEFAULT_VENDOR_PROMPT = (
-    "Sos el Vendedor 24 hs del comercio. Consultá siempre los datos reales antes de informar precio o stock. "
+    "Sos el Vendedor 24 hs de StockARmobile. Consultá siempre los datos reales antes de informar precio o stock. "
     "Ayudá a elegir productos, armar pedidos y orientar al cliente hacia el pago. "
     "Nunca inventes promociones, descuentos, stock ni confirmaciones de pago."
 )
@@ -49,6 +48,11 @@ _DEFAULT_BUSINESS_PROMPT = (
 
 
 def _default_model() -> str:
+    provider = (os.getenv("AI_PROVIDER") or "openai_compatible").strip().lower()
+    if provider == "gemini":
+        return (os.getenv("GEMINI_MODEL") or "gemini-3.6-flash").strip()
+    if provider == "openai":
+        return (os.getenv("OPENAI_MODEL") or "gpt-4.1-mini").strip()
     return (os.getenv("AI_PROVIDER_MODEL") or "gpt-4.1-mini").strip()
 
 
@@ -129,18 +133,23 @@ def index():
             .order_by(ConversationMessage.id.desc())
             .first()
         )
-        conversation_rows.append({
-            "id": conversation.id,
-            "agent_name": agent_ids.get(conversation.agent_id, "Agente"),
-            "channel": conversation.channel,
-            "external_id": conversation.external_conversation_id,
-            "status": conversation.status,
-            "updated_at": conversation.updated_at,
-            "last_message": (latest.content[:180] if latest else ""),
-        })
+        conversation_rows.append(
+            {
+                "id": conversation.id,
+                "agent_name": agent_ids.get(conversation.agent_id, "Agente"),
+                "channel": conversation.channel,
+                "external_id": conversation.external_conversation_id,
+                "status": conversation.status,
+                "updated_at": conversation.updated_at,
+                "last_message": (latest.content[:180] if latest else ""),
+            }
+        )
 
     provider = (os.getenv("AI_PROVIDER") or "openai_compatible").strip().lower()
-    ai_key_configured = bool((os.getenv("AI_PROVIDER_API_KEY") or os.getenv("OPENAI_API_KEY") or "").strip()) or provider in {"lmstudio", "lm_studio"}
+    if provider == "gemini":
+        ai_key_configured = bool((os.getenv("GEMINI_API_KEY") or "").strip())
+    else:
+        ai_key_configured = bool((os.getenv("AI_PROVIDER_API_KEY") or os.getenv("OPENAI_API_KEY") or "").strip()) or provider in {"lmstudio", "lm_studio"}
     ai_enabled = bool(prefs["ai_agent"].get("enabled", True))
     whatsapp_connected = bool(whatsapp.get("enabled") and whatsapp.get("phone_number_id"))
     agent_states = {}
@@ -156,7 +165,7 @@ def index():
     elif whatsapp.get("enabled"):
         whatsapp_state = {"label": "Configuración pendiente", "tone": "warning"}
     else:
-        whatsapp_state = {"label": "Desactivado", "tone": "danger"}
+        whatsapp_state = {"label": "No conectado", "tone": "danger"}
     return render_template(
         "ai_agent/admin_v2.html",
         agents=agents,
@@ -208,27 +217,51 @@ def save():
         if temperature_raw is not None:
             config.temperature = _safe_decimal(temperature_raw, config.temperature or Decimal("0.20"))
 
-    update_ai_preferences(
-        company,
-        ai_updates={
-            "enabled": request.form.get("ai_enabled") == "1",
-            "whatsapp_enabled": request.form.get("whatsapp_enabled") == "1",
-            "vendor_options": {
-                "personality": (request.form.get("vendor_personality") or "amigable").strip()[:30],
-                "can_recommend": request.form.get("vendor_can_recommend") == "1",
-                "can_offer_alternatives": request.form.get("vendor_can_offer_alternatives") == "1",
-                "can_prepare_quotes": request.form.get("vendor_can_prepare_quotes") == "1",
-                "can_take_orders": request.form.get("vendor_can_take_orders") == "1",
-                "can_follow_up": request.form.get("vendor_can_follow_up") == "1",
-                "can_handoff": request.form.get("vendor_can_handoff") == "1",
-                "agent_name": (request.form.get("vendor_agent_name") or "Vendedor IA").strip()[:120],
-                "greeting": (request.form.get("vendor_greeting") or "").strip()[:1000],
-                "schedule": (request.form.get("vendor_schedule") or "").strip()[:120],
-                "out_of_hours_message": (request.form.get("vendor_out_of_hours_message") or "").strip()[:1000],
-                "business_information": (request.form.get("vendor_business_information") or "").strip()[:4000],
-            },
-        },
-    )
+    prefs_before = get_ai_preferences(company)
+    old_vendor = prefs_before["ai_agent"].get("vendor_options") if isinstance(prefs_before["ai_agent"].get("vendor_options"), dict) else {}
+    vendor_options = {
+        "personality": old_vendor.get("personality", "amigable"),
+        "can_recommend": bool(old_vendor.get("can_recommend", True)),
+        "can_offer_alternatives": bool(old_vendor.get("can_offer_alternatives", True)),
+        "can_prepare_quotes": bool(old_vendor.get("can_prepare_quotes", True)),
+        "can_take_orders": bool(old_vendor.get("can_take_orders", True)),
+        "can_follow_up": bool(old_vendor.get("can_follow_up", False)),
+        "can_handoff": bool(old_vendor.get("can_handoff", False)),
+        "agent_name": old_vendor.get("agent_name", "Vendedor IA"),
+        "greeting": old_vendor.get("greeting", ""),
+        "schedule": old_vendor.get("schedule", ""),
+        "out_of_hours_message": old_vendor.get("out_of_hours_message", ""),
+        "business_information": old_vendor.get("business_information", ""),
+    }
+    if "vendor_personality" in request.form:
+        vendor_options["personality"] = (request.form.get("vendor_personality") or "amigable").strip()[:30]
+    for key, field in {
+        "can_recommend": "vendor_can_recommend",
+        "can_offer_alternatives": "vendor_can_offer_alternatives",
+        "can_prepare_quotes": "vendor_can_prepare_quotes",
+        "can_take_orders": "vendor_can_take_orders",
+        "can_follow_up": "vendor_can_follow_up",
+        "can_handoff": "vendor_can_handoff",
+    }.items():
+        if field in request.form:
+            vendor_options[key] = request.form.get(field) == "1"
+    for key, field, limit in (
+        ("agent_name", "vendor_agent_name", 120),
+        ("greeting", "vendor_greeting", 1000),
+        ("schedule", "vendor_schedule", 120),
+        ("out_of_hours_message", "vendor_out_of_hours_message", 1000),
+        ("business_information", "vendor_business_information", 4000),
+    ):
+        if field in request.form:
+            vendor_options[key] = (request.form.get(field) or "").strip()[:limit]
+
+    ai_updates = {
+        "enabled": request.form.get("ai_enabled") == "1",
+        "vendor_options": vendor_options,
+    }
+    if "whatsapp_enabled" in request.form:
+        ai_updates["whatsapp_enabled"] = request.form.get("whatsapp_enabled") == "1"
+    update_ai_preferences(company, ai_updates=ai_updates)
 
     existing_whatsapp = get_whatsapp_connection(company)
     configure_whatsapp_connection(

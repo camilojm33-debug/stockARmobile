@@ -39,6 +39,14 @@ services:
         value: https://www.stockarmobile.com/admin/portal?checkout=pending
       - key: MP_FAILURE_URL
         value: https://www.stockarmobile.com/admin/portal?checkout=failure
+      - key: AI_PROVIDER
+        value: gemini
+      - key: GEMINI_API_KEY
+        sync: false
+      - key: GEMINI_MODEL
+        value: gemini-3.6-flash
+      - key: GEMINI_INVOICE_MODEL
+        value: gemini-3.6-flash
       - key: GEMINI_TIMEOUT
         value: "25"
       - key: DATABASE_URL
