@@ -3,6 +3,7 @@ from __future__ import annotations
 from decimal import Decimal
 from flask import Blueprint, flash, redirect, render_template, request, url_for
 from sqlalchemy import event
+from sqlalchemy.orm import Session
 from app import db, superadmin_required
 
 DEFAULT_PARENT_PERCENT = Decimal("0.3000")
@@ -87,32 +88,43 @@ def install_commission_hook():
     from app import ReferralCommission, ReferralSeller
     if getattr(ReferralCommission, "_multilevel_hook_installed", False):
         return
-    @event.listens_for(ReferralCommission, "after_insert")
-    def _after_referral_commission(mapper, connection, target):
-        link = db.session.query(ReferralNetworkLink).filter_by(child_seller_id=target.seller_id, active=True).first()
-        if link is None:
+    @event.listens_for(Session, "after_flush")
+    def _after_flush(session, flush_context):
+        new_commissions = [row for row in session.new if isinstance(row, ReferralCommission)]
+        if not new_commissions:
             return
-        parent = db.session.get(ReferralSeller, link.parent_seller_id)
-        child = db.session.get(ReferralSeller, target.seller_id)
-        if parent is None or child is None or not parent.active or not child.active:
-            return
-        if db.session.query(ReferralNetworkCommission).filter_by(source_commission_id=target.id).first() is not None:
-            return
-        percent = parent_percent(link)
-        sold_amount = _money(target.sold_amount)
-        amount = (sold_amount * percent).quantize(Decimal("0.01"))
-        if amount <= 0:
-            return
-        db.session.add(ReferralNetworkCommission(parent_seller_id=parent.id, child_seller_id=child.id, source_commission_id=target.id, company_id=target.company_id, payment_id=target.payment_id, subscription_id=target.subscription_id, sold_amount=sold_amount, commission_percent=percent, commission_amount=amount, status=target.status))
+        for target in new_commissions:
+            link = session.query(ReferralNetworkLink).filter_by(child_seller_id=target.seller_id, active=True).first()
+            if link is None:
+                continue
+            parent = session.get(ReferralSeller, link.parent_seller_id)
+            child = session.get(ReferralSeller, target.seller_id)
+            if parent is None or child is None or not parent.active or not child.active:
+                continue
+            if session.query(ReferralNetworkCommission).filter_by(source_commission_id=target.id).first() is not None:
+                continue
+            percent = parent_percent(link)
+            sold_amount = _money(target.sold_amount)
+            amount = (sold_amount * percent).quantize(Decimal("0.01"))
+            if amount <= 0:
+                continue
+            session.add(ReferralNetworkCommission(parent_seller_id=parent.id, child_seller_id=child.id, source_commission_id=target.id, company_id=target.company_id, payment_id=target.payment_id, subscription_id=target.subscription_id, sold_amount=sold_amount, commission_percent=percent, commission_amount=amount, status=target.status))
     ReferralCommission._multilevel_hook_installed = True
 
 def network_snapshot():
     from app import ReferralSeller
     sellers = ReferralSeller.query.order_by(ReferralSeller.active.desc(), ReferralSeller.id.asc()).all()
     links = ReferralNetworkLink.query.filter_by(active=True).all()
-    pending = sum((_money(x.commission_amount) for x in ReferralNetworkCommission.query.filter(ReferralNetworkCommission.status.in_(["pendiente", "disponible"])).all()), Decimal("0.00"))
-    paid = sum((_money(x.commission_amount) for x in ReferralNetworkCommission.query.filter_by(status="pagada").all()), Decimal("0.00"))
-    return {"sellers": sellers, "links": links, "pending": pending, "paid": paid, "total_network_commissions": ReferralNetworkCommission.query.count()}
+    rows = ReferralNetworkCommission.query.all()
+    pending = Decimal("0.00")
+    paid = Decimal("0.00")
+    for row in rows:
+        source_status = (row.source_commission.status if row.source_commission else row.status) or row.status
+        if row.status == "pagada":
+            paid += _money(row.commission_amount)
+        elif source_status in {"pendiente", "disponible"}:
+            pending += _money(row.commission_amount)
+    return {"sellers": sellers, "links": links, "pending": pending, "paid": paid, "total_network_commissions": len(rows)}
 
 @network_bp.route("/superadmin/referrals/network")
 @superadmin_required
