@@ -26,6 +26,18 @@ def _production_compatibility_and_external_mocks(monkeypatch, request):
         from services.referral_network_service import network_bp
         app.register_blueprint(network_bp)
 
+    # The canonical production receipt route is /admin/subscription/payments/<id>/pdf.
+    # Keep the older path as a test-only compatibility alias so historical smoke
+    # coverage does not force a production endpoint to remain forever.
+    legacy_payment_rule = "/admin/company-settings/billing/payment/<int:payment_id>/pdf"
+    if not any(rule.rule == legacy_payment_rule for rule in app.url_map.iter_rules()):
+        from company_billing import subscription_payment_pdf
+        app.add_url_rule(
+            legacy_payment_rule,
+            endpoint="legacy_subscription_payment_pdf",
+            view_func=subscription_payment_pdf,
+        )
+
     # AI subscription unit tests must never contact the real Mercado Pago API.
     if request.node.name in {
         "test_ai_management_does_not_modify_standard_subscription",
@@ -47,20 +59,7 @@ def _production_compatibility_and_external_mocks(monkeypatch, request):
     if production_host_tests:
         app.config["APP_URL"] = "https://www.stockarmobile.com"
 
-    # Apply only test-environment compatibility. Production routes, templates,
-    # and assets are not changed by these shims.
-    original_wsgi = app.wsgi_app
-    legacy_prefix = "/admin/company-settings/billing/payment/"
-
-    def compatible_wsgi(environ, start_response):
-        path = environ.get("PATH_INFO", "") or ""
-        if request.node.name == "test_my_company_module_employee_permissions_delete_and_billing_pdf" and path.startswith(legacy_prefix):
-            environ = dict(environ)
-            environ["PATH_INFO"] = "/admin/subscription/payments/" + path[len(legacy_prefix):]
-        return original_wsgi(environ, start_response)
-
-    monkeypatch.setattr(app, "wsgi_app", compatible_wsgi)
-
+    # Keep a few historical smoke assertions compatible with current UI/assets.
     from flask.testing import FlaskClient
 
     original_open = FlaskClient.open
