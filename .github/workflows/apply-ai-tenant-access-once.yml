@@ -15,7 +15,7 @@ jobs:
         with:
           fetch-depth: 0
 
-      - name: Patch AI tenant UI and access
+      - name: Apply final AI hardening
         shell: bash
         run: |
           set -euo pipefail
@@ -29,13 +29,13 @@ jobs:
           def write(path, text):
               Path(path).write_text(text, encoding='utf-8')
 
-          # Public chat API: never return provider-specific errors to tenant browsers.
+          # 1. Never expose provider-specific failures from the tenant chat API.
           path = 'dashboard.py'
           source = read(path)
-          exact = '        return jsonify({"success": False, "error": str(exc)}), exc.status_code'
-          generic = '''        public_error = "El servicio de IA no está disponible en este momento. Intentá nuevamente más tarde."\n        return jsonify({"success": False, "error": public_error}), exc.status_code'''
-          if exact in source:
-              source = source.replace(exact, generic, 1)
+          old = '        return jsonify({"success": False, "error": str(exc)}), exc.status_code'
+          new = '''        public_error = "El servicio de IA no está disponible en este momento. Intentá nuevamente más tarde."\n        return jsonify({"success": False, "error": public_error}), exc.status_code'''
+          if old in source:
+              source = source.replace(old, new, 1)
           elif 'public_error = "El servicio de IA no está disponible en este momento."' not in source:
               raise SystemExit('AIProviderError response handler not found')
           if 'from stockarmobile.permissions import can_access_ai' not in source:
@@ -48,7 +48,7 @@ jobs:
               source = source.replace(anchor, guard, 1)
           write(path, source)
 
-          # Provider implementation: keep provider names internal to logs/code only.
+          # 2. Keep provider names out of provider exception messages as defense in depth.
           path = 'services/ai_agent/providers/gemini.py'
           source = read(path)
           source = source.replace('message = "Se agotó la cuota disponible de Gemini para este modelo. Revisá el plan o la facturación de la API de Gemini."', 'message = "El servicio de IA alcanzó temporalmente su límite de uso."')
@@ -56,7 +56,7 @@ jobs:
           source = source.replace('raise AIProviderError("Gemini no pudo procesar la solicitud.", status_code=503) from exc', 'raise AIProviderError("El servicio de IA no pudo procesar la solicitud.", status_code=503) from exc')
           write(path, source)
 
-          # Employee AI permission in Mi Empresa, protected by the existing company PIN.
+          # 3. Add explicit employee permission and require the existing Mi Empresa PIN to change it.
           path = 'company_billing.py'
           source = read(path)
           if '("ai_access", "Agentes IA"),' not in source:
@@ -71,24 +71,26 @@ jobs:
               source = source.replace(route, route + '''    company_id = getattr(current_user, "company_id", None)\n    if not company_id or not _is_pin_verified(company_id):\n        flash("Validá el PIN de Mi Empresa para administrar los permisos de empleados.", "warning")\n        return redirect(url_for("company_billing.company_settings", panel="employees"))\n    # AI_PERMISSION_PIN_FINAL\n''', 1)
           write(path, source)
 
-          # Sidebar: hide AI from employees unless explicitly authorized.
+          # 4. Hide the AI navigation item for employees without ai_access.
           path = 'templates/base_master.html'
           source = read(path)
           if 'AI_NAV_PERMISSION_FINAL' not in source:
-              pattern = re.compile(r'(?m)^(?P<indent>\\s*)<a class="nav-link[^\\n]*href="\\{\\{ url_for\\(\'ai_agents\\.index\'\\) \\}\\}">.*?</a>')
-              match = pattern.search(source)
-              if not match:
+              lines = source.splitlines(True)
+              for i, line in enumerate(lines):
+                  if "url_for('ai_agents.index')" in line:
+                      indent = line[:len(line) - len(line.lstrip())]
+                      link = line.strip()
+                      lines[i] = (f'{indent}{{% set _ai_permissions = (current_user.permissions_json or "") %}}\n'
+                                  f'{indent}{{% if current_user.is_authenticated and (current_user.role in ["admin", "superadmin"] or \'"ai_access"\' in _ai_permissions) %}}\n'
+                                  f'{indent}{link} <!-- AI_NAV_PERMISSION_FINAL -->\n'
+                                  f'{indent}{{% endif %}}\n')
+                      source = ''.join(lines)
+                      break
+              else:
                   raise SystemExit('Agentes IA sidebar link not found')
-              indent = match.group('indent')
-              link = match.group(0).strip()
-              wrapped = (f'{indent}{{% set _ai_permissions = (current_user.permissions_json or "") %}}\n'
-                         f'{indent}{{% if current_user.is_authenticated and (current_user.role in ["admin", "superadmin"] or \'"ai_access"\' in _ai_permissions) %}}\n'
-                         f'{indent}{link} <!-- AI_NAV_PERMISSION_FINAL -->\n'
-                         f'{indent}{{% endif %}}')
-              source = source[:match.start()] + wrapped + source[match.end():]
           write(path, source)
 
-          # AI administration: administrator + valid Mi Empresa PIN only.
+          # 5. AI configuration is administrator-only and requires the existing company PIN.
           path = 'services/ai_agent/admin.py'
           source = read(path)
           if '# AI_ADMIN_PIN_FINAL' not in source:
@@ -98,7 +100,6 @@ jobs:
                   raise SystemExit('AI admin blueprint anchor not found')
               source = source.replace(anchor, helper, 1)
 
-          # Preserve technical values that are intentionally hidden from the UI.
           if 'existing_whatsapp = get_whatsapp_connection(company)' not in source:
               anchor = '    configure_whatsapp_connection(\n'
               if anchor not in source:
@@ -115,59 +116,57 @@ jobs:
           for old, new in replacements.items():
               if old in source:
                   source = source.replace(old, new, 1)
-
           old_cfg = '''        model = (request.form.get(f"{prefix}_model") or "").strip()[:120]\n        if model:\n            config.model = model\n        config.system_prompt = (request.form.get(f"{prefix}_prompt") or "").strip()[:12000]\n        config.language = (request.form.get(f"{prefix}_language") or "es-AR").strip()[:8]\n        config.max_tokens = _safe_int(request.form.get(f"{prefix}_max_tokens"), 700, 128, 4000)\n        config.temperature = _safe_decimal(request.form.get(f"{prefix}_temperature"), Decimal("0.20"))\n'''
           new_cfg = '''        model = (request.form.get(f"{prefix}_model") or "").strip()[:120]\n        if model:\n            config.model = model\n        prompt = request.form.get(f"{prefix}_prompt")\n        if prompt is not None:\n            config.system_prompt = prompt.strip()[:12000]\n        language = request.form.get(f"{prefix}_language")\n        if language is not None:\n            config.language = language.strip()[:8] or "es-AR"\n        max_tokens_raw = request.form.get(f"{prefix}_max_tokens")\n        if max_tokens_raw is not None:\n            config.max_tokens = _safe_int(max_tokens_raw, config.max_tokens or 700, 128, 4000)\n        temperature_raw = request.form.get(f"{prefix}_temperature")\n        if temperature_raw is not None:\n            config.temperature = _safe_decimal(temperature_raw, config.temperature or Decimal("0.20"))\n'''
           if old_cfg in source:
               source = source.replace(old_cfg, new_cfg, 1)
           write(path, source)
 
-          # AI admin UI: branded StockArMobile terminology only.
+          # 6. Remove provider/model/vendor identifiers and technical Meta settings from tenant-facing AI admin.
           path = 'templates/ai_agent/admin.html'
           source = read(path)
           if 'AI_BRANDING_FINAL' not in source:
-              top_cards = re.compile(r'\n  <div class="row g-3 mb-4">\s*<div class="col-md-4">.*?<div class="col-md-4"><div class="card app-card ai-status-card \{\{ whatsapp_state\.tone \}\} h-100">.*?</div>\s*</div>\n', re.S)
+              start = source.find('\n  <div class="row g-3 mb-4">')
+              end = source.find('\n\n  <form method="post" action="{{ url_for(\'ai_admin.save\') }}">', start)
+              if start == -1 or end == -1:
+                  raise SystemExit('AI admin status cards anchors not found')
               replacement = '''\n  <div class="row g-3 mb-4">\n    <div class="col-md-4"><div class="card app-card ai-status-card h-100"><div class="card-body"><div class="ai-status-label">Inteligencia artificial</div><div class="ai-status-value">{{ 'Activa' if ai_enabled else 'Desactivada' }}</div><div class="ai-state {{ 'success' if ai_enabled else 'danger' }} mt-2">{{ 'Lista para trabajar' if ai_enabled else 'Desactivada por la empresa' }}</div></div></div></div>\n    <div class="col-md-4"><div class="card app-card ai-status-card h-100"><div class="card-body"><div class="ai-status-label">Plan IA</div><div class="ai-status-value">{% if prefs.ai_agent.plan_code %}{% for plan in ai_plans %}{% if plan.code == prefs.ai_agent.plan_code %}{{ plan.name }}{% endif %}{% endfor %}{% else %}Sin plan IA{% endif %}</div><div class="small text-muted mt-2">{{ 'Servicio activo para tu comercio.' if prefs.ai_agent.plan_code else 'El plan lo administra Super Admin.' }}</div></div></div></div>\n    <div class="col-md-4"><div class="card app-card ai-status-card {{ whatsapp_state.tone }} h-100"><div class="card-body"><div class="ai-status-label">Canal de atención</div><div class="ai-status-value">{{ whatsapp_state.label }}</div><div class="small text-muted mt-2">Atención integrada para tus clientes.</div></div></div></div>\n  </div>\n<!-- AI_BRANDING_FINAL -->\n'''
-              source, count = top_cards.subn(replacement, source, count=1)
-              if count != 1:
-                  raise SystemExit('AI admin top cards not found')
+              source = source[:start] + replacement + source[end:]
 
-              tech = re.compile(r'<details class="agent-config"><summary>Configurar agente</summary><div class="agent-config-body">.*?</details>')
+              tech = re.compile(r'<details class="agent-config"><summary>Configurar agente</summary><div class="agent-config-body">.*?</details>', re.S)
               source, count = tech.subn('''<details class="agent-config"><summary>Personalizar comportamiento</summary><div class="agent-config-body"><div class="row g-3"><div class="col-md-4"><label class="form-label fw-semibold">Idioma</label><input class="form-control" name="{{ prefix }}_language" value="{{ config.language or \'es-AR\' }}"></div><div class="col-md-8"><label class="form-label fw-semibold">Instrucciones del comercio</label><textarea class="form-control" rows="4" name="{{ prefix }}_prompt">{{ config.system_prompt or \'\' }}</textarea></div></div></div></details>''', source, count=2)
               if count != 2:
                   raise SystemExit(f'expected 2 technical agent blocks, found {count}')
 
-              meta = re.compile(r'\n\s*<details class="mt-3"><summary class="small text-muted">Configuración avanzada de Meta</summary>.*?</details>', re.S)
-              source = meta.sub('', source, count=1)
-
-              wa = re.compile(r'<details class="agent-config mt-3"><summary>Configuración avanzada</summary>.*?</details>', re.S)
-              source = wa.sub('', source, count=1)
+              source = re.sub(r'\n\s*<details class="mt-3"><summary class="small text-muted">Configuración avanzada de Meta</summary>.*?</details>', '', source, count=1, flags=re.S)
+              source = re.sub(r'<details class="agent-config mt-3"><summary>Configuración avanzada</summary>.*?</details>', '', source, count=1, flags=re.S)
               source = source.replace('El token se guarda cifrado y nunca vuelve a mostrarse.', 'La conexión se gestiona de forma segura y sus credenciales no se muestran en este panel.', 1)
-
           forbidden = ['Proveedor de IA', 'provider_label', 'provider_model', 'Phone Number ID', 'Business Account ID', 'Access Token', 'Configuración avanzada de Meta']
           for needle in forbidden:
               if needle in source:
-                  raise SystemExit(f'provider detail still present in tenant AI admin: {needle}')
+                  raise SystemExit(f'provider detail still present: {needle}')
           write(path, source)
 
-          # Browser-side defense in case a stale/backend message contains a provider name.
+          # 7. Browser-side defense: sanitize any stale provider message before showing it.
           path = 'templates/ai_agents/index.html'
           source = read(path)
           if 'function publicAiError' not in source:
               marker = '  async function ask() {'
               helper = '''  function publicAiError(message) {\n    const text = String(message || "");\n    if (/gemini|openai|anthropic|provider|proveedor|cuota|modelo|model|token|billing|factur/i.test(text)) {\n      return "El servicio de IA no está disponible en este momento. Intentá nuevamente más tarde.";\n    }\n    return text || "No se pudo procesar la consulta.";\n  }\n'''
+              if marker not in source:
+                  raise SystemExit('AI chat ask function marker not found')
               source = source.replace(marker, helper + marker, 1)
               source = source.replace("throw new Error(data.error || 'No se pudo procesar la consulta.');", "throw new Error(publicAiError(data.error || 'No se pudo procesar la consulta.'));" )
           write(path, source)
 
-          # Remove old one-shot workflows once the patch is applied.
+          # Remove obsolete one-shot workflows after the patch is committed.
           for workflow in ['.github/workflows/apply-ai-tenant-access-once.yml', '.github/workflows/one-time-production-fix.yml']:
               p = Path(workflow)
               if p.exists():
                   p.unlink()
           PY
 
-      - name: Validate
+      - name: Validate final source
         shell: bash
         run: |
           set -euo pipefail
@@ -187,7 +186,7 @@ jobs:
           git diff --check
           echo 'validation ok'
 
-      - name: Commit and push final patch
+      - name: Commit final changes
         shell: bash
         run: |
           set -euo pipefail
