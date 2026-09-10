@@ -11,7 +11,7 @@ Configure the Render web service health-check path as `/health`. The application
 
 ## Next hardening stages
 
-These are intentionally separate from the current deploy to keep production changes small and reversible:
+These remain separate to keep production changes small and reversible:
 
 1. Durable/idempotent WhatsApp webhook processing and explicit transient-error retry semantics.
 2. Indexed WhatsApp connection lookup instead of searching encrypted credentials inside tenant preferences.
