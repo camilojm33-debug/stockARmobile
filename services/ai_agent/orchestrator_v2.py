@@ -273,8 +273,8 @@ class AgentRuntime:
                     return final_content, campaign_context, tool_rounds
                 raise RuntimeError("El proveedor IA no devolvió una respuesta.")
 
-            tool_rounds += 1
-            if tool_rounds > MAX_TOOL_TURNS:
+            next_tool_round = tool_rounds + 1
+            if next_tool_round > MAX_TOOL_TURNS:
                 # Give the provider one final answer-only pass using the accumulated evidence.
                 synthesis_prompt = {
                     "role": "user",
@@ -290,6 +290,7 @@ class AgentRuntime:
                     return final_content, campaign_context, tool_rounds
                 raise RuntimeError("El proveedor IA no pudo completar la respuesta después de consultar las herramientas.")
 
+            tool_rounds = next_tool_round
             assistant_tool_calls = []
             results_to_append = []
             for index, call in enumerate(tool_calls):

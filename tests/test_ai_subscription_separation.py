@@ -317,6 +317,7 @@ def test_explicit_tenant_ai_cancel_does_not_modify_standard_subscription(subscri
         return {"id": preapproval_id, "status": "cancelled"}
 
     monkeypatch.setattr("services.mercadopago_service.MercadoPagoService.cancel_preapproval", cancel_preapproval)
+    monkeypatch.setattr(AISubscriptionService, "_get_mp_preapproval", lambda company: {"id": "ai-pre", "status": "pending"})
     client = subscription_app.test_client()
     _login(client, user)
 

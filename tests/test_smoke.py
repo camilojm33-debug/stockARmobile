@@ -17,7 +17,7 @@ from sqlite_test_db import clear_test_data
 import app as stock_app
 from app import CashMovement, CashSession, Client, Company, Product, Quote, QuoteItem, ReferralAttribution, SaaSAlert, SaaSLead, SaaSTask, Sale, SaleItem, SaleModificationHistory, Subscription, User, db
 
-APP_URL = stock_app.app.config["APP_URL"]
+APP_URL = "http://test.local"
 from services.whatsapp_share_service import normalize_whatsapp_number
 from sqlalchemy.exc import ProgrammingError
 
@@ -31,6 +31,7 @@ except ImportError:  # pragma: no cover
 def clean_database():
     stock_app.app.config["TESTING"] = True
     stock_app.app.config["WTF_CSRF_ENABLED"] = False
+    stock_app.app.config["APP_URL"] = APP_URL
     with stock_app.app.app_context():
         db.session.rollback()
         db.session.remove()
@@ -3473,6 +3474,7 @@ def test_my_company_module_employee_permissions_delete_and_billing_pdf():
             amount=1500,
             currency="ARS",
             status="approved",
+            provider="mercadopago_subscription",
             payment_method="transferencia",
             reference="TEST-REF",
         )
@@ -4398,7 +4400,7 @@ def test_seo_niche_pages_are_in_sitemap_with_correct_priority():
     assert f"<url><loc>{APP_URL.rstrip('/')}/</loc><changefreq>weekly</changefreq><priority>1.0</priority></url>" in xml
     for page in SEO_NICHE_PAGES:
         assert (
-            f"<url><loc>https://www.stockarmobile.com{page['endpoint']}</loc>"
+            f"<url><loc>{APP_URL.rstrip('/')}{page['endpoint']}</loc>"
             f"<changefreq>weekly</changefreq><priority>0.8</priority></url>"
         ) in xml
     assert "/auth/login" not in xml
@@ -6121,8 +6123,6 @@ def test_referral_role_isolation_between_seller_and_superadmin():
 
     client.post("/auth/logout")
     client.post("/auth/login", data={"username": "superadmin", "password": "admin123"})
-
-    import wsgi  # noqa: F401
     admin_referrals = client.get("/superadmin/referrals")
     assert admin_referrals.status_code == 200
 

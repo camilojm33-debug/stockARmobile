@@ -1273,8 +1273,6 @@ def cancel_ai_subscription():
 
     preapproval_id = str(ai_status.get("mercadopago_preapproval_id") or "").strip()
     try:
-        if preapproval_id and ai_status.get("origin") == "MERCADO_PAGO":
-            MercadoPagoService().cancel_preapproval(preapproval_id)
         AISubscriptionService.cancel(company, admin_user_id=current_user.id, reason="tenant_explicit_cancel")
         db.session.commit()
     except Exception as exc:

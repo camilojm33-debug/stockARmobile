@@ -37,6 +37,7 @@ from stockarmobile.constants import (
 from stockarmobile.context import bind_current_tenant_context
 from stockarmobile.decorators import company_admin_required, seller_required, superadmin_required, tenant_required, trial_required
 from stockarmobile.extensions import csrf, db, login_manager, migrate
+from services.referral_network_service import network_bp, install_commission_hook
 from stockarmobile.helpers.dates import utcnow_naive
 from stockarmobile.helpers.validators import is_valid_email
 from stockarmobile.responses import api_error
@@ -1637,6 +1638,8 @@ app.register_blueprint(reports_bp, url_prefix="/reportes")
 app.register_blueprint(saas_bp, url_prefix="/superadmin")
 app.register_blueprint(company_billing_bp, url_prefix="/admin")
 app.register_blueprint(referrals_bp)
+app.register_blueprint(network_bp)
+install_commission_hook()
 app.register_blueprint(support_bp, url_prefix="/soporte")
 app.register_blueprint(seo_pages_bp)
 app.register_blueprint(ai_agents_bp)
