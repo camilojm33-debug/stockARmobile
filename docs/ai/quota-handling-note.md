@@ -1,0 +1,1 @@
+Gemini 429 handling: transient quota errors may be retried once with a bounded delay; daily project quota exhaustion is not retried immediately; customer responses never expose provider tracebacks or raw quota payloads.

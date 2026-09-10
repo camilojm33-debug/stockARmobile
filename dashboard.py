@@ -248,13 +248,16 @@ def ai_agent_chat():
         return jsonify({"success": False, "error": str(exc)}), 400
     except AIProviderError as exc:
         db.session.rollback()
-        current_app.logger.exception(
-            "Proveedor IA no disponible: company_id=%s conversation_id=%s agent=%s",
+        current_app.logger.warning(
+            "Proveedor IA no disponible: company_id=%s conversation_id=%s agent=%s status=%s error=%s",
             company_id,
             conversation.id,
             agent_key,
+            exc.status_code,
+            str(exc),
         )
-        return jsonify({"success": False, "error": "El servicio de IA no está disponible en este momento. Intentá nuevamente más tarde."}), exc.status_code
+        error_message = str(exc) or "El servicio de IA no está disponible en este momento."
+        return jsonify({"success": False, "error": error_message}), exc.status_code
     except Exception:
         db.session.rollback()
         current_app.logger.exception(
