@@ -1,60 +1,1313 @@
-from flask import flash, redirect, request, url_for, jsonify
-from flask_login import current_user, login_required
-from sqlalchemy import text
+"""
+StockArmobile - aplicacion Flask de inventario, ventas, clientes y QR.
+Compatible con SQLite local, PostgreSQL/Render y Flask-Login.
+"""
 
-from app import app, AuditLog, Invoice, Payment, PaymentHistory, Subscription, SubscriptionCommandExecution, db
-from services.subscription_service import SubscriptionService
-from services.referral_network_service import network_bp, install_commission_hook
+import os
+import json
+import sys
+import threading
+import time
+from datetime import datetime, timedelta, timezone
+from decimal import Decimal
+from urllib.parse import parse_qs, urlparse
 
-if "referral_network.dashboard" not in app.view_functions:
-    app.register_blueprint(network_bp)
-install_commission_hook()
+from flask import abort, flash, g, jsonify, make_response, redirect, render_template, request, send_from_directory, session, url_for
+from flask_login import UserMixin, current_user, login_required
+from flask_wtf import FlaskForm
+from flask_wtf.csrf import CSRFError
+from sqlalchemy import CheckConstraint, Index, inspect, text
+from sqlalchemy.exc import IntegrityError, OperationalError, ProgrammingError
+from werkzeug.exceptions import HTTPException
+from werkzeug.security import check_password_hash, generate_password_hash
+from wtforms import BooleanField, DateField, DecimalField, PasswordField, SelectField, StringField, SubmitField, TextAreaField
+from wtforms.validators import DataRequired, Email, Length, NumberRange, Optional
+from config.logging_config import configure_logging
+from services.notification_service import get_notification_payload, mark_notifications_seen
+from services.search_service import global_search
+from stockarmobile import create_app
+from stockarmobile.audit import record_audit_entry
+from stockarmobile.constants import (
+    HEADER_CORRELATION_ID,
+    HEADER_CSRF_TOKEN,
+    HEADER_REQUEST_ID,
+    SESSION_REFERRAL_CODE,
+    SESSION_REFERRAL_COOKIE,
+)
+from stockarmobile.context import bind_current_tenant_context
+from stockarmobile.decorators import company_admin_required, seller_required, superadmin_required, tenant_required, trial_required
+from stockarmobile.extensions import csrf, db, login_manager, migrate
+from stockarmobile.helpers.dates import utcnow_naive
+from stockarmobile.helpers.validators import is_valid_email
+from stockarmobile.responses import api_error
+from stockarmobile.tenant import (
+    get_current_company_id as _shared_get_current_company_id,
+    is_control_panel_owner,
+    model_table_exists as _shared_model_table_exists,
+    scope_query_to_company as _shared_scope_query_to_company,
+)
 
-def health():
-    """Lightweight liveness/readiness endpoint for Render and uptime checks."""
+try:
+    from psycopg2.errors import UndefinedTable as PGUndefinedTable
+except ImportError:  # pragma: no cover - unavailable outside postgres runtime
+    PGUndefinedTable = None
+
+
+class _NeverUndefinedTableError(Exception):
+    pass
+
+
+UndefinedTableError = PGUndefinedTable or _NeverUndefinedTableError
+
+
+configure_logging()
+app = create_app(__name__, template_folder="templates", static_folder="static")
+sys.modules.setdefault("app", sys.modules[__name__])
+is_production_env = bool(app.config.get("IS_PRODUCTION_ENV", False))
+is_pytest_context = bool(app.config.get("IS_PYTEST_CONTEXT", False))
+
+MONEY = db.Numeric(18, 2)
+PERCENT = db.Numeric(10, 4)
+
+SALE_UNIT_CHOICES = [
+    ("unidad", "Unidad"),
+    ("kilogramo", "Kilogramo"),
+    ("gramos", "Gramo"),
+    ("litros", "Litro"),
+    ("mililitros", "Mililitro"),
+    ("metros", "Metro"),
+    ("centimetros", "Centímetro"),
+    ("caja", "Caja"),
+    ("pack", "Pack"),
+    ("bolsa", "Bolsa"),
+    ("botella", "Botella"),
+    ("paquete", "Paquete"),
+    ("docena", "Docena"),
+    ("media_docena", "Media docena"),
+]
+
+SALE_UNIT_LABELS = {value: label for value, label in SALE_UNIT_CHOICES}
+
+UNIT_MEASURE_CHOICES = [
+    ("u", "Unidad"),
+    ("kg", "Kilogramo"),
+    ("g", "Gramo"),
+    ("l", "Litro"),
+    ("ml", "Mililitro"),
+    ("m", "Metro"),
+    ("cm", "Centímetro"),
+    ("caja", "Caja"),
+    ("pack", "Pack"),
+    ("bolsa", "Bolsa"),
+    ("botella", "Botella"),
+    ("paquete", "Paquete"),
+    ("docena", "Docena"),
+    ("media_docena", "Media docena"),
+]
+
+PRODUCT_UNIT_CHOICES = UNIT_MEASURE_CHOICES
+
+UNIT_MEASURE_DEFAULTS = {
+    "unidad": "u",
+    "kilogramo": "kg",
+    "gramos": "g",
+    "litros": "l",
+    "mililitros": "ml",
+    "metros": "m",
+    "centimetros": "cm",
+    "caja": "caja",
+    "pack": "pack",
+    "bolsa": "bolsa",
+    "botella": "botella",
+    "paquete": "paq",
+    "docena": "doc",
+    "media_docena": "1/2 doc",
+}
+
+login_manager.login_view = "auth.login"
+login_manager.login_message = "Debes iniciar sesion para acceder a esta pagina."
+login_manager.login_message_category = "info"
+
+_PUBLIC_RATE_LIMIT_BUCKETS = {}
+_PUBLIC_RATE_LIMIT_LOCK = threading.Lock()
+_PUBLIC_RATE_LIMIT_RULES = [
+    {"method": "POST", "path": "/auth/login", "limit": 10, "window": 60},
+    {"method": "POST", "path": "/auth/register", "limit": 5, "window": 300},
+    {"method": "POST", "path": "/auth/forgot-password", "limit": 5, "window": 300},
+    {"method": "POST", "path_prefix": "/auth/reset-password/", "limit": 8, "window": 600},
+    {"method": "POST", "path": "/landing/contact", "limit": 5, "window": 300},
+]
+
+
+def is_api_request() -> bool:
+    path = request.path or ""
+    return bool(path.startswith("/ventas/api/") or path.startswith("/api/") or path.startswith("/dashboard/ai-agent/") or request.is_json)
+
+
+def _request_client_ip() -> str:
+    forwarded_for = (request.headers.get("X-Forwarded-For") or "").split(",")
+    if forwarded_for and forwarded_for[0].strip():
+        return forwarded_for[0].strip()
+    return (request.remote_addr or "unknown").strip()
+
+
+def _find_rate_limit_rule(method: str, path: str):
+    normalized_method = (method or "").upper()
+    normalized_path = (path or "").strip()
+    for rule in _PUBLIC_RATE_LIMIT_RULES:
+        if normalized_method != rule["method"]:
+            continue
+        exact_path = rule.get("path")
+        if exact_path and normalized_path == exact_path:
+            return rule
+        path_prefix = rule.get("path_prefix")
+        if path_prefix and normalized_path.startswith(path_prefix):
+            return rule
+    return None
+
+
+def _is_rate_limited(rule, scope_key: str) -> tuple[bool, int]:
+    now_ts = time.time()
+    window = int(rule["window"])
+    limit = int(rule["limit"])
+    bucket_key = f"{scope_key}:{rule.get('path') or rule.get('path_prefix')}"
+    with _PUBLIC_RATE_LIMIT_LOCK:
+        max_window = max(item["window"] for item in _PUBLIC_RATE_LIMIT_RULES)
+        for key, timestamps in list(_PUBLIC_RATE_LIMIT_BUCKETS.items()):
+            recent = [ts for ts in timestamps if now_ts - ts <= max_window]
+            if recent:
+                _PUBLIC_RATE_LIMIT_BUCKETS[key] = recent
+            else:
+                _PUBLIC_RATE_LIMIT_BUCKETS.pop(key, None)
+
+        timestamps = [ts for ts in _PUBLIC_RATE_LIMIT_BUCKETS.get(bucket_key, []) if now_ts - ts <= window]
+        if len(timestamps) >= limit:
+            oldest_in_window = timestamps[0]
+            retry_after = max(1, int(window - (now_ts - oldest_in_window)))
+            _PUBLIC_RATE_LIMIT_BUCKETS[bucket_key] = timestamps
+            return True, retry_after
+
+        timestamps.append(now_ts)
+        _PUBLIC_RATE_LIMIT_BUCKETS[bucket_key] = timestamps
+    return False, 0
+
+
+@app.before_request
+def enforce_public_rate_limits():
+    if app.config.get("TESTING") and not app.config.get("ENABLE_RATE_LIMITS_IN_TESTS", False):
+        return None
+    rule = _find_rate_limit_rule(request.method, request.path)
+    if rule is None:
+        return None
+
+    scope_key = _request_client_ip()
+    limited, retry_after = _is_rate_limited(rule, scope_key)
+    if not limited:
+        return None
+
+    message = "Demasiados intentos. Esperá unos segundos e intentá nuevamente."
+    response = None
+    if is_api_request():
+        response = jsonify({"success": False, "error": message})
+        response.status_code = 429
+    else:
+        flash(message, "warning")
+        redirect_target = request.referrer or request.path or url_for("auth.login")
+        response = redirect(redirect_target)
+        response.status_code = 429
+    response.headers["Retry-After"] = str(retry_after)
+    return response
+
+
+@login_manager.unauthorized_handler
+def unauthorized_handler():
+    if is_api_request():
+        return jsonify({"success": False, "error": "Debes iniciar sesión para acceder a este recurso."}), 401
+    return redirect(url_for("auth.login"))
+
+
+def utcnow():
+    return utcnow_naive()
+
+
+@app.after_request
+def add_security_headers(response):
+    response.headers.setdefault("X-Content-Type-Options", "nosniff")
+    response.headers.setdefault("X-Frame-Options", "SAMEORIGIN")
+    response.headers.setdefault("Referrer-Policy", "strict-origin-when-cross-origin")
+    response.headers.setdefault("Permissions-Policy", "camera=(self), microphone=()")
+    response.headers.setdefault(
+        "Content-Security-Policy",
+        "default-src 'self' https: data: blob:; "
+        "script-src 'self' 'unsafe-inline' https:; "
+        "style-src 'self' 'unsafe-inline' https:; "
+        "font-src 'self' data: https:; "
+        "img-src 'self' data: blob: https:; "
+        "connect-src 'self' https: wss:; "
+        "worker-src 'self' blob:; "
+        "object-src 'none'; "
+        "base-uri 'self'; "
+        "form-action 'self'; "
+        "frame-src 'self' https://*.mercadopago.com; "
+        "frame-ancestors 'self';",
+    )
+    if is_production_env:
+        response.headers.setdefault("Strict-Transport-Security", "max-age=31536000; includeSubDomains")
+        csp_value = response.headers.get("Content-Security-Policy", "")
+        if "upgrade-insecure-requests" not in csp_value:
+            response.headers["Content-Security-Policy"] = (csp_value + " upgrade-insecure-requests;").strip()
+    return response
+
+
+@login_manager.user_loader
+def load_user(user_id):
+    return db.session.get(User, int(user_id))
+
+
+def get_current_company_id():
+    return _shared_get_current_company_id(current_user)
+
+
+def scope_query_to_company(query, model):
+    return _shared_scope_query_to_company(query, model, current_user_obj=current_user)
+
+
+def model_table_exists(model):
+    return _shared_model_table_exists(db.engine, model)
+
+
+def get_company_access_state(company_id):
+    from app import Company
+    from services.subscription_service import SubscriptionService
+
+    if company_id is None:
+        return {"status": "missing", "can_access": False, "reason": "No hay empresa activa."}
+    company = db.session.get(Company, company_id)
+    if company is None:
+        return {"status": "missing", "can_access": False, "reason": "Empresa no encontrada."}
+    if not company.active:
+        return {"status": "suspended", "can_access": False, "reason": "La empresa ha sido suspendida."}
+
+    subscription = SubscriptionService.active_subscription_for_company(company.id)
+    state = SubscriptionService.resolve_company_access_state(company, subscription=subscription)
+    return {
+        "status": state["status"],
+        "can_access": bool(state["can_access"]),
+        "reason": state["reason"],
+    }
+
+
+@app.before_request
+def bind_tenant_context():
+    bind_current_tenant_context(current_user)
+
+
+@app.before_request
+def trace_mp_qr_requests():
+    path = request.path or ""
+    if not path.startswith("/ventas/api/mp-qr/"):
+        return None
+    g.mp_qr_trace_started = True
+    g.mp_qr_endpoint_entered = False
+    g.mp_qr_csrf_header_present = bool(request.headers.get(HEADER_CSRF_TOKEN))
+    g.mp_qr_request_method = request.method
+    g.mp_qr_request_path = path
+    g.mp_qr_request_endpoint = request.endpoint or ""
+    g.mp_qr_request_id = request.headers.get(HEADER_REQUEST_ID) or request.headers.get(HEADER_CORRELATION_ID) or ""
+    g.mp_qr_user_id = None
+    g.mp_qr_company_id = None
     try:
-        db.session.execute(text("SELECT 1"))
-        return jsonify({"status": "ok"}), 200
-    except Exception:
-        db.session.rollback()
-        app.logger.exception("Health check database probe failed")
-        return jsonify({"status": "error"}), 503
-
-if "health" not in app.view_functions:
-    app.add_url_rule("/health", endpoint="health", view_func=health, methods=["GET"])
-
-@app.route("/superadmin/subscriptions/<int:subscription_id>/delete-historical", methods=["POST"])
-@login_required
-def superadmin_delete_historical_subscription(subscription_id):
-    if getattr(current_user, "role", None) != "superadmin":
-        return ("Forbidden", 403)
-    subscription = Subscription.query.filter_by(id=subscription_id).first_or_404()
-    current_subscription = SubscriptionService.active_subscription_for_company(subscription.company_id)
-    if current_subscription is not None and current_subscription.id == subscription.id:
-        flash("No se puede eliminar la suscripción actual de la empresa.", "warning")
-        return redirect(url_for("saas.subscriptions_panel"))
-    company_id = subscription.company_id
-    company_name = subscription.company.name if subscription.company else str(company_id)
-    try:
-        for model in (Payment, Invoice, PaymentHistory, SubscriptionCommandExecution):
-            if hasattr(model, "subscription_id"):
-                db.session.query(model).filter(model.subscription_id == subscription.id).update({model.subscription_id: None}, synchronize_session=False)
-        db.session.add(AuditLog(user_id=current_user.id, company_id=company_id, action="subscription_historical_hard_delete", entity="subscription", entity_id=subscription.id, detail=f"Suscripción histórica eliminada definitivamente por SuperAdmin: {company_name}. ip={request.remote_addr or 'unknown'} resultado=ok"))
-        db.session.delete(subscription)
-        db.session.commit()
-        flash("Suscripción histórica eliminada definitivamente.", "success")
-    except Exception:
-        db.session.rollback()
-        app.logger.exception("Error eliminando suscripción histórica id=%s", subscription_id)
-        flash("No se pudo eliminar la suscripción histórica.", "danger")
-    return redirect(url_for("saas.subscriptions_panel"))
+        if current_user.is_authenticated:
+            g.mp_qr_user_id = getattr(current_user, "id", None)
+            g.mp_qr_company_id = getattr(current_user, "company_id", None)
+    except Exception as exc:
+        app.logger.warning("MP QR trace incoming user-context capture failed: %s", exc)
+    app.logger.info(
+        "MP QR trace incoming: method=%s path=%s endpoint=%s csrf_header_present=%s company_id=%s user_id=%s request_id=%s",
+        request.method,
+        path,
+        request.endpoint or "",
+        g.mp_qr_csrf_header_present,
+        getattr(g, "mp_qr_company_id", None),
+        getattr(g, "mp_qr_user_id", None),
+        g.mp_qr_request_id,
+    )
+    return None
 
 
-class ReferralNetworkPayout(db.Model):
-    __tablename__ = "referral_network_payouts"
+@app.after_request
+def trace_mp_qr_response(response):
+    path = request.path or ""
+    if path.startswith("/ventas/api/mp-qr/"):
+        app.logger.info(
+            "MP QR trace outgoing: method=%s path=%s endpoint=%s entered=%s status=%s content_type=%s csrf_header_present=%s company_id=%s user_id=%s request_id=%s",
+            request.method,
+            path,
+            request.endpoint or "",
+            bool(getattr(g, "mp_qr_endpoint_entered", False)),
+            response.status_code,
+            response.headers.get("Content-Type", ""),
+            bool(getattr(g, "mp_qr_csrf_header_present", False)),
+            getattr(g, "mp_qr_company_id", None),
+            getattr(g, "mp_qr_user_id", None),
+            getattr(g, "mp_qr_request_id", ""),
+        )
+    return response
+
+
+@app.before_request
+def enforce_password_change_if_required():
+    if not current_user.is_authenticated:
+        return None
+    if not getattr(current_user, "must_change_password", False):
+        return None
+
+    endpoint = request.endpoint or ""
+    allowed = {
+        "auth.force_password_change",
+        "auth.logout",
+        "static",
+    }
+    if endpoint in allowed:
+        return None
+    if is_api_request():
+        return api_error("Debes actualizar tu contraseña para continuar.", 403)
+    return redirect(url_for("auth.force_password_change"))
+
+
+@app.before_request
+def enforce_billing_restrictions_for_blocked_tenants():
+    if not current_user.is_authenticated:
+        return None
+    if getattr(current_user, "role", None) == "superadmin":
+        return None
+
+    endpoint = request.endpoint or ""
+    allowed_endpoints = {
+        "static",
+        "access_status",
+        "auth.login",
+        "auth.logout",
+        "auth.force_password_change",
+        "company_billing.subscription_portal",
+        "company_billing.create_checkout",
+        "company_billing.cancel_subscription",
+        "company_billing.reactivate_subscription",
+        "company_billing.subscription_payment_pdf",
+        "company_billing.subscription_invoice_pdf",
+        "company_billing.webhook_mercadopago",
+    }
+    if endpoint in allowed_endpoints:
+        return None
+
+    company_id = get_current_company_id()
+    if company_id is None:
+        return None
+
+    state = get_company_access_state(company_id)
+    if state["can_access"]:
+        return None
+
+    if is_api_request():
+        return api_error(state["reason"], 403, status=state["status"])
+    return redirect(url_for("access_status"))
+
+
+class User(UserMixin, db.Model):
+    __tablename__ = "users"
 
     id = db.Column(db.Integer, primary_key=True)
-    parent_seller_id = db.Column(db.Integer, db.ForeignKey("referral_sellers.id"), nullable=False, index=True)
+    username = db.Column(db.String(80), unique=True, nullable=False, index=True)
+    email = db.Column(db.String(120), unique=True, nullable=False, index=True)
+    password_hash = db.Column(db.String(256), nullable=False)
+    first_name = db.Column(db.String(80))
+    last_name = db.Column(db.String(80))
+    avatar_url = db.Column(db.String(255))
+    auth_provider = db.Column(db.String(30), default="local")
+    google_sub = db.Column(db.String(120), unique=True, index=True)
+    role = db.Column(db.String(20), default="user")
+    permissions_json = db.Column(db.Text)
+    active = db.Column(db.Boolean, default=True, nullable=False)
+    must_change_password = db.Column(db.Boolean, default=False, nullable=False)
+    company_id = db.Column(db.Integer, db.ForeignKey("companies.id"))
+    created_at = db.Column(db.DateTime, default=utcnow)
+    updated_at = db.Column(db.DateTime, default=utcnow, onupdate=utcnow)
+
+    @property
+    def name(self):
+        full_name = " ".join(part for part in [self.first_name, self.last_name] if part)
+        return full_name or self.username
+
+    def set_password(self, password):
+        self.password_hash = generate_password_hash(password)
+
+    def check_password(self, password):
+        return check_password_hash(self.password_hash, password)
+
+
+class NotificationReadState(db.Model):
+    __tablename__ = "notification_read_states"
+
+    id = db.Column(db.Integer, primary_key=True)
+    user_id = db.Column(db.Integer, db.ForeignKey("users.id"), nullable=False, unique=True, index=True)
+    last_seen_signature = db.Column(db.String(64), nullable=False)
+    last_seen_at = db.Column(db.DateTime, nullable=False, default=utcnow)
+    created_at = db.Column(db.DateTime, default=utcnow)
+    updated_at = db.Column(db.DateTime, default=utcnow, onupdate=utcnow)
+
+
+class Product(db.Model):
+    __tablename__ = "products"
+    __table_args__ = (
+        Index("ix_products_company_barcode", "company_id", "barcode", unique=True),
+    )
+
+    id = db.Column(db.Integer, primary_key=True)
+    barcode = db.Column(db.String(50), nullable=False, index=True)
+    name = db.Column(db.String(200), nullable=False)
+    description = db.Column(db.Text)
+    category = db.Column(db.String(100))
+    sale_type = db.Column(db.String(30), default="unidad")
+    unit_measure = db.Column(db.String(20), default="u")
+    photo = db.Column(db.String(255))
+    brand = db.Column(db.String(120))
+    supplier = db.Column(db.String(160))
+    supplier_id = db.Column(db.Integer, db.ForeignKey("suppliers.id"))
+    cost_price = db.Column(MONEY, default=Decimal("0.00"))
+    price = db.Column(MONEY, default=Decimal("0.00"))
+    margin = db.Column(MONEY, default=Decimal("0.00"))
+    profit_percent = db.Column(PERCENT, default=Decimal("0.0000"))
+    tax = db.Column(PERCENT, default=Decimal("0.0000"))
+    stock = db.Column(db.Float, default=0.0)
+    min_stock = db.Column(db.Float, default=5.0)
+    discount = db.Column(MONEY, default=Decimal("0.00"))
+    favorite = db.Column(db.Boolean, default=False, nullable=False)
+    active = db.Column(db.Boolean, default=True, nullable=False)
+    company_id = db.Column(db.Integer, db.ForeignKey("companies.id"))
+    created_at = db.Column(db.DateTime, default=utcnow)
+    updated_at = db.Column(db.DateTime, default=utcnow, onupdate=utcnow)
+
+    @property
+    def code(self):
+        return self.barcode
+
+    @property
+    def codigo(self):
+        return self.barcode
+
+    @property
+    def nombre(self):
+        return self.name
+
+    @property
+    def categoria(self):
+        return self.category
+
+    @property
+    def category_name(self):
+        return self.category
+
+    @property
+    def sku(self):
+        return self.barcode
+
+    @property
+    def precio_costo(self):
+        return self.cost_price
+
+    @property
+    def precio_venta(self):
+        return self.price
+
+    @property
+    def tipo_venta(self):
+        return self.sale_type
+
+    @property
+    def unidad_medida(self):
+        return self.unit_measure
+
+    @property
+    def profit_amount(self):
+        return float(self.price or 0) - float(self.cost_price or 0)
+
+    @property
+    def iva(self):
+        return self.tax
+
+    def __repr__(self):
+        return f"<Product {self.name}>"
+
+
+class Client(db.Model):
+    __tablename__ = "clients"
+
+    id = db.Column(db.Integer, primary_key=True)
+    name = db.Column(db.String(200), nullable=False)
+    email = db.Column(db.String(120))
+    phone = db.Column(db.String(20), index=True)
+    address = db.Column(db.Text)
+    city = db.Column(db.String(100))
+    notes = db.Column(db.Text)
+    whatsapp = db.Column(db.String(30))
+    birthday = db.Column(db.Date)
+    balance = db.Column(MONEY, default=Decimal("0.00"))
+    credit_limit = db.Column(MONEY, default=Decimal("0.00"))
+    observations = db.Column(db.Text)
+    account_current_enabled = db.Column(db.Boolean, default=False, nullable=False)
+    active = db.Column(db.Boolean, default=True, nullable=False)
+    company_id = db.Column(db.Integer, db.ForeignKey("companies.id"))
+    created_at = db.Column(db.DateTime, default=utcnow)
+    updated_at = db.Column(db.DateTime, default=utcnow, onupdate=utcnow)
+
+    @property
+    def nombre(self):
+        return self.name
+
+    @property
+    def telefono(self):
+        return self.phone
+
+
+class Sale(db.Model):
+    __tablename__ = "sales"
+    __table_args__ = (
+        Index("ix_sales_company_client_txn", "company_id", "client_txn_id", unique=True),
+    )
+
+    id = db.Column(db.Integer, primary_key=True)
+    date = db.Column(db.DateTime, default=utcnow, index=True)
+    customer = db.Column(db.String(200))
+    subtotal = db.Column(MONEY, default=Decimal("0.00"))
+    discount = db.Column(MONEY, default=Decimal("0.00"))
+    tax = db.Column(MONEY, default=Decimal("0.00"))
+    total_amount = db.Column(MONEY, default=Decimal("0.00"))
+    payment_method = db.Column(db.String(50))
+    secondary_payment_method = db.Column(db.String(50))
+    paid_amount = db.Column(MONEY, default=Decimal("0.00"))
+    secondary_paid_amount = db.Column(MONEY, default=Decimal("0.00"))
+    surcharge = db.Column(MONEY, default=Decimal("0.00"))
+    discount_type = db.Column(db.String(20))
+    discount_value = db.Column(MONEY)
+    discount_reason = db.Column(db.Text)
+    surcharge_type = db.Column(db.String(20))
+    surcharge_value = db.Column(MONEY)
+    surcharge_reason = db.Column(db.Text)
+    client_txn_id = db.Column(db.String(64), index=True)
+    document_type = db.Column(db.String(30), default="venta")
+    requiere_comprobante = db.Column(db.Boolean, default=False, nullable=False, index=True)
+    tipo_comprobante = db.Column(db.String(30))
+    observacion_comprobante = db.Column(db.String(255))
+    comprobante_emitido = db.Column(db.Boolean, default=False, nullable=False, index=True)
+    status = db.Column(db.String(30), default="confirmada", index=True)
+    qr_reference = db.Column(db.String(160))
+    note = db.Column(db.Text)
+    client_id = db.Column(db.Integer, db.ForeignKey("clients.id"))
+    seller_id = db.Column(db.Integer, db.ForeignKey("users.id"))
+    company_id = db.Column(db.Integer, db.ForeignKey("companies.id"))
+    cash_session_id = db.Column(db.Integer, db.ForeignKey("cash_sessions.id"), index=True)
+    client = db.relationship("Client", backref="sales")
+    seller = db.relationship("User", backref="sales")
+    cash_session = db.relationship("CashSession", backref="sales")
+    items = db.relationship("SaleItem", backref="sale", lazy=True, cascade="all, delete-orphan")
+    created_at = db.Column(db.DateTime, default=utcnow)
+    updated_at = db.Column(db.DateTime, default=utcnow, onupdate=utcnow)
+
+    @property
+    def products(self):
+        return self.items
+
+
+class SaleItem(db.Model):
+    __tablename__ = "sale_items"
+
+    id = db.Column(db.Integer, primary_key=True)
+    quantity = db.Column(db.Float, nullable=False)
+    price = db.Column(MONEY, nullable=False)
+    cost_price = db.Column(MONEY, default=Decimal("0.00"))
+    discount = db.Column(MONEY, default=Decimal("0.00"))
+    sale_id = db.Column(db.Integer, db.ForeignKey("sales.id"), nullable=False)
+    product_id = db.Column(db.Integer, db.ForeignKey("products.id"), nullable=False)
+    product = db.relationship("Product", backref="sale_items")
+
+    @property
+    def total_amount(self):
+        unit_price = self.price or Decimal("0.00")
+        quantity = Decimal(str(self.quantity or 0))
+        discount = self.discount or Decimal("0.00")
+        gross = unit_price * quantity
+        return max(gross - discount, Decimal("0.00"))
+
+
+class Quote(db.Model):
+    __tablename__ = "quotes"
+    __table_args__ = (
+        Index("ix_quotes_company_status_date", "company_id", "status", "date"),
+        Index("ix_quotes_company_number", "company_id", "number", unique=True),
+    )
+
+    id = db.Column(db.Integer, primary_key=True)
+    number = db.Column(db.String(40), index=True)
+    date = db.Column(db.DateTime, default=utcnow, index=True)
+    expires_at = db.Column(db.DateTime, index=True)
+    subtotal = db.Column(MONEY, default=Decimal("0.00"))
+    discount = db.Column(MONEY, default=Decimal("0.00"))
+    surcharge = db.Column(MONEY, default=Decimal("0.00"))
+    discount_type = db.Column(db.String(20))
+    discount_value = db.Column(MONEY)
+    discount_reason = db.Column(db.Text)
+    surcharge_type = db.Column(db.String(20))
+    surcharge_value = db.Column(MONEY)
+    surcharge_reason = db.Column(db.Text)
+    tax = db.Column(MONEY, default=Decimal("0.00"))
+    total_amount = db.Column(MONEY, default=Decimal("0.00"))
+    observations = db.Column(db.Text)
+    commercial_conditions = db.Column(db.Text)
+    status = db.Column(db.String(30), default="BORRADOR", index=True)
+    currency = db.Column(db.String(10), default="ARS")
+    client_id = db.Column(db.Integer, db.ForeignKey("clients.id"))
+    consumer_name = db.Column(db.String(160))
+    created_by_user_id = db.Column(db.Integer, db.ForeignKey("users.id"), nullable=False)
+    seller_id = db.Column(db.Integer, db.ForeignKey("users.id"))
+    company_id = db.Column(db.Integer, db.ForeignKey("companies.id"), index=True)
+    branch_id = db.Column(db.Integer, index=True)
+    converted_sale_id = db.Column(db.Integer, db.ForeignKey("sales.id"), index=True)
+    created_at = db.Column(db.DateTime, default=utcnow)
+    updated_at = db.Column(db.DateTime, default=utcnow, onupdate=utcnow)
+
+    client = db.relationship("Client", backref="quotes")
+    created_by_user = db.relationship("User", foreign_keys=[created_by_user_id], backref="quotes_created")
+    seller = db.relationship("User", foreign_keys=[seller_id], backref="quotes_sold")
+    converted_sale = db.relationship("Sale", foreign_keys=[converted_sale_id], backref=db.backref("quote_origin", uselist=False))
+    items = db.relationship("QuoteItem", backref="quote", lazy=True, cascade="all, delete-orphan")
+
+
+class QuoteItem(db.Model):
+    __tablename__ = "quote_items"
+
+    id = db.Column(db.Integer, primary_key=True)
+    quote_id = db.Column(db.Integer, db.ForeignKey("quotes.id"), nullable=False, index=True)
+    product_id = db.Column(db.Integer, db.ForeignKey("products.id"))
+    description = db.Column(db.String(255), nullable=False)
+    quantity = db.Column(db.Float, nullable=False)
+    unit_price = db.Column(MONEY, nullable=False)
+    discount = db.Column(MONEY, default=Decimal("0.00"))
+    subtotal = db.Column(MONEY, default=Decimal("0.00"))
+    sort_order = db.Column(db.Integer, default=0, nullable=False)
+
+    product = db.relationship("Product")
+
+    @property
+    def total_amount(self):
+        return self.subtotal or Decimal("0.00")
+
+
+class BusinessDocumentSequence(db.Model):
+    __tablename__ = "business_document_sequences"
+    __table_args__ = (
+        Index("ix_bd_sequences_company_doctype_pos", "company_id", "doc_type", "pos_number", unique=True),
+    )
+
+    id = db.Column(db.Integer, primary_key=True)
+    company_id = db.Column(db.Integer, db.ForeignKey("companies.id"), nullable=False, index=True)
+    doc_type = db.Column(db.String(40), nullable=False, index=True)
+    pos_number = db.Column(db.String(5), nullable=False, index=True)
+    current_number = db.Column(db.Integer, nullable=False, default=0)
+    updated_at = db.Column(db.DateTime, default=utcnow, onupdate=utcnow)
+    created_at = db.Column(db.DateTime, default=utcnow)
+
+
+class BusinessDocument(db.Model):
+    __tablename__ = "business_documents"
+    __table_args__ = (
+        Index("ix_bd_company_date", "company_id", "issued_at"),
+        Index("ix_bd_company_status", "company_id", "status"),
+        Index("ix_bd_company_source", "company_id", "source_type", "source_id"),
+        Index("ix_bd_company_number", "company_id", "document_number", unique=True),
+        Index("ix_bd_company_doctype_pos_seq", "company_id", "doc_type", "pos_number", "seq_number", unique=True),
+    )
+
+    id = db.Column(db.Integer, primary_key=True)
+    company_id = db.Column(db.Integer, db.ForeignKey("companies.id"), nullable=False, index=True)
+    source_type = db.Column(db.String(20), nullable=False, default="sale")
+    source_id = db.Column(db.Integer, nullable=False, index=True)
+    doc_type = db.Column(db.String(40), nullable=False, index=True)
+    pos_number = db.Column(db.String(5), nullable=False)
+    seq_number = db.Column(db.Integer, nullable=False)
+    document_number = db.Column(db.String(20), nullable=False)
+    status = db.Column(db.String(20), nullable=False, default="emitido", index=True)
+    client_name = db.Column(db.String(200))
+    client_tax_id = db.Column(db.String(50))
+    total_amount = db.Column(MONEY, default=Decimal("0.00"))
+    currency = db.Column(db.String(10), default="ARS")
+    branch_label = db.Column(db.String(120))
+    emitted_by_user_id = db.Column(db.Integer, db.ForeignKey("users.id"), index=True)
+    metadata_json = db.Column(db.Text)
+    issued_at = db.Column(db.DateTime, default=utcnow, index=True)
+    annulled_at = db.Column(db.DateTime)
+    created_at = db.Column(db.DateTime, default=utcnow)
+    updated_at = db.Column(db.DateTime, default=utcnow, onupdate=utcnow)
+
+    company = db.relationship("Company", backref="business_documents")
+    emitted_by_user = db.relationship("User")
+
+
+class Company(db.Model):
+    __tablename__ = "companies"
+
+    id = db.Column(db.Integer, primary_key=True)
+    name = db.Column(db.String(160), nullable=False, default="StockArmobile")
+    legal_name = db.Column(db.String(160))
+    address = db.Column(db.String(255))
+    province = db.Column(db.String(120))
+    city = db.Column(db.String(120))
+    postal_code = db.Column(db.String(20))
+    phone = db.Column(db.String(40))
+    whatsapp = db.Column(db.String(40))
+    contact_email = db.Column(db.String(160), index=True)
+    website = db.Column(db.String(255))
+    tax_id = db.Column(db.String(50))
+    social_facebook = db.Column(db.String(255))
+    social_instagram = db.Column(db.String(255))
+    social_tiktok = db.Column(db.String(255))
+    social_youtube = db.Column(db.String(255))
+    social_linkedin = db.Column(db.String(255))
+    payment_alias = db.Column(db.String(120))
+    payment_cbu = db.Column(db.String(40))
+    payment_cvu = db.Column(db.String(40))
+    payment_qr_text = db.Column(db.String(255))
+    payment_qr_url = db.Column(db.String(255))
+    logo = db.Column(db.String(255))
+    language = db.Column(db.String(20), default="es", nullable=False)
+    timezone = db.Column(db.String(80), default="America/Argentina/Buenos_Aires", nullable=False)
+    currency = db.Column(db.String(10), default="ARS", nullable=False)
+    date_format = db.Column(db.String(20), default="%Y-%m-%d", nullable=False)
+    numbering_format = db.Column(db.String(20), default="es_AR", nullable=False)
+    printer_settings_json = db.Column(db.Text)
+    preferences_json = db.Column(db.Text)
+    schedules_json = db.Column(db.Text)
+    business_pin_hash = db.Column(db.String(255))
+    business_pin_failed_attempts = db.Column(db.Integer, default=0, nullable=False)
+    business_pin_blocked_until = db.Column(db.DateTime)
+    business_pin_updated_at = db.Column(db.DateTime)
+    active = db.Column(db.Boolean, default=True, nullable=False)
+    trial_ends_at = db.Column(db.DateTime)
+    license_key = db.Column(db.String(120), index=True)
+    created_at = db.Column(db.DateTime, default=utcnow)
+
+
+class MercadoPagoConnection(db.Model):
+    __tablename__ = "mercadopago_connections"
+
+    id = db.Column(db.Integer, primary_key=True)
+    company_id = db.Column(db.Integer, db.ForeignKey("companies.id"), nullable=False, unique=True, index=True)
+    mp_user_id = db.Column(db.String(80), index=True)
+    account_name = db.Column(db.String(160))
+    account_email = db.Column(db.String(160), index=True)
+    country = db.Column(db.String(80))
+    status = db.Column(db.String(20), nullable=False, default="disconnected", index=True)
+    connected_at = db.Column(db.DateTime)
+    last_synced_at = db.Column(db.DateTime)
+    token_expires_at = db.Column(db.DateTime, index=True)
+    access_token_encrypted = db.Column(db.Text)
+    refresh_token_encrypted = db.Column(db.Text)
+    scope = db.Column(db.String(255))
+    metadata_json = db.Column(db.Text)
+    created_at = db.Column(db.DateTime, default=utcnow)
+    updated_at = db.Column(db.DateTime, default=utcnow, onupdate=utcnow)
+
+    company = db.relationship("Company", backref=db.backref("mercadopago_connection", uselist=False, cascade="all, delete-orphan"))
+
+
+class Plan(db.Model):
+    __tablename__ = "plans"
+
+    id = db.Column(db.Integer, primary_key=True)
+    code = db.Column(db.String(40), unique=True, index=True)
+    name = db.Column(db.String(100), nullable=False)
+    price = db.Column(MONEY, default=Decimal("0.00"))
+    currency = db.Column(db.String(10), default="ARS")
+    duration_days = db.Column(db.Integer, default=30)
+    max_users = db.Column(db.Integer, default=1)
+    max_products = db.Column(db.Integer, default=1000)
+    max_clients = db.Column(db.Integer, default=1000)
+    features_json = db.Column(db.Text)
+    state = db.Column(db.String(20), default="active", index=True)
+    active = db.Column(db.Boolean, default=True, nullable=False)
+    created_at = db.Column(db.DateTime, default=utcnow)
+    updated_at = db.Column(db.DateTime, default=utcnow, onupdate=utcnow)
+
+
+class Subscription(db.Model):
+    __tablename__ = "subscriptions"
+    __table_args__ = (
+        Index("ix_subscriptions_company_status", "company_id", "status"),
+        Index(
+            "uq_subscriptions_single_active_company",
+            "company_id",
+            unique=True,
+            sqlite_where=text("status = 'active'"),
+            postgresql_where=text("status = 'active'"),
+        ),
+        CheckConstraint(
+            "status IN ('draft','pending','pending_payment','pending_confirmation','trial','trial_expired','active','scheduled','expired','cancelled','suspended')",
+            name="ck_subscriptions_status",
+        ),
+        CheckConstraint(
+            "(ends_at IS NULL OR starts_at IS NULL OR ends_at >= starts_at)",
+            name="ck_subscriptions_dates_order",
+        ),
+        CheckConstraint(
+            "(next_billing_date IS NULL OR start_date IS NULL OR next_billing_date >= start_date)",
+            name="ck_subscriptions_next_billing_order",
+        ),
+    )
+
+    id = db.Column(db.Integer, primary_key=True)
+    company_id = db.Column(db.Integer, db.ForeignKey("companies.id"), nullable=False)
+    plan_id = db.Column(db.Integer, db.ForeignKey("plans.id"))
+    status = db.Column(db.String(30), default="trial", index=True)
+    starts_at = db.Column(db.DateTime, default=utcnow)
+    ends_at = db.Column(db.DateTime)
+    trial_end = db.Column(db.DateTime)
+    start_date = db.Column(db.DateTime, default=utcnow)
+    next_billing_date = db.Column(db.DateTime, index=True)
+    last_payment_date = db.Column(db.DateTime)
+    cancel_at_period_end = db.Column(db.Boolean, default=False, nullable=False)
+    renewal_enabled = db.Column(db.Boolean, default=True, nullable=False)
+    mercadopago_subscription_id = db.Column(db.String(120), index=True)
+    auto_renew = db.Column(db.Boolean, default=True, nullable=False)
+    external_reference = db.Column(db.String(120), index=True)
+    metadata_json = db.Column(db.Text)
+    created_at = db.Column(db.DateTime, default=utcnow)
+    updated_at = db.Column(db.DateTime, default=utcnow, onupdate=utcnow)
+    company = db.relationship("Company", backref="subscriptions")
+    plan = db.relationship("Plan")
+
+
+class Invoice(db.Model):
+    __tablename__ = "invoices"
+    __table_args__ = (
+        Index("ix_invoices_company_status", "company_id", "status"),
+    )
+
+    id = db.Column(db.Integer, primary_key=True)
+    company_id = db.Column(db.Integer, db.ForeignKey("companies.id"), nullable=False)
+    subscription_id = db.Column(db.Integer, db.ForeignKey("subscriptions.id"))
+    status = db.Column(db.String(30), default="draft", index=True)
+    amount = db.Column(MONEY, default=Decimal("0.00"))
+    vat_amount = db.Column(MONEY, default=Decimal("0.00"))
+    currency = db.Column(db.String(10), default="USD")
+    due_at = db.Column(db.DateTime)
+    issued_at = db.Column(db.DateTime, default=utcnow)
+    paid_at = db.Column(db.DateTime)
+    invoice_number = db.Column(db.String(80), unique=True, index=True)
+    detail = db.Column(db.Text)
+    line_items_json = db.Column(db.Text)
+    provider = db.Column(db.String(40), default="manual")
+    reference = db.Column(db.String(120))
+    note = db.Column(db.Text)
+    created_at = db.Column(db.DateTime, default=utcnow)
+    updated_at = db.Column(db.DateTime, default=utcnow, onupdate=utcnow)
+    company = db.relationship("Company", backref="invoices")
+    subscription = db.relationship("Subscription", backref="invoices")
+
+
+class Payment(db.Model):
+    __tablename__ = "payments"
+    __table_args__ = (
+        Index("ix_payments_company_status", "company_id", "status"),
+    )
+
+    id = db.Column(db.Integer, primary_key=True)
+    payment_id = db.Column(db.String(120), unique=True, index=True)
+    preference_id = db.Column(db.String(120), index=True)
+    external_reference = db.Column(db.String(255), index=True)
+    company_id = db.Column(db.Integer, db.ForeignKey("companies.id"), nullable=False)
+    subscription_id = db.Column(db.Integer, db.ForeignKey("subscriptions.id"))
+    user_id = db.Column(db.Integer, db.ForeignKey("users.id"))
+    invoice_id = db.Column(db.Integer, db.ForeignKey("invoices.id"))
+    amount = db.Column(MONEY, default=Decimal("0.00"))
+    currency = db.Column(db.String(10), default="USD")
+    status = db.Column(db.String(30), default="pending", index=True)
+    payment_method = db.Column(db.String(80))
+    provider = db.Column(db.String(40), default="manual")
+    reference = db.Column(db.String(120))
+    paid_at = db.Column(db.DateTime)
+    payload_json = db.Column(db.Text)
+    next_billing_date = db.Column(db.DateTime)
+    last_payment_date = db.Column(db.DateTime)
+    created_at = db.Column(db.DateTime, default=utcnow, index=True)
+    updated_at = db.Column(db.DateTime, default=utcnow, onupdate=utcnow)
+    company = db.relationship("Company", backref="payments")
+    subscription = db.relationship("Subscription", backref="payments")
+    user = db.relationship("User")
+    invoice = db.relationship("Invoice", backref="payments")
+
+
+class PaymentHistory(db.Model):
+    __tablename__ = "payment_history"
+    __table_args__ = (
+        Index("ix_payment_history_company_event", "company_id", "event"),
+    )
+
+    id = db.Column(db.Integer, primary_key=True)
+    payment_id = db.Column(db.Integer, db.ForeignKey("payments.id"))
+    subscription_id = db.Column(db.Integer, db.ForeignKey("subscriptions.id"))
+    invoice_id = db.Column(db.Integer, db.ForeignKey("invoices.id"))
+    company_id = db.Column(db.Integer, db.ForeignKey("companies.id"), nullable=False)
+    event = db.Column(db.String(80), nullable=False)
+    detail = db.Column(db.Text)
+    source = db.Column(db.String(40), default="system")
+    event_id = db.Column(db.String(120), index=True)
+    payload_json = db.Column(db.Text)
+    status = db.Column(db.String(30), index=True)
+    created_at = db.Column(db.DateTime, default=utcnow, index=True)
+    payment = db.relationship("Payment", backref="history")
+    subscription = db.relationship("Subscription")
+    invoice = db.relationship("Invoice")
+    company = db.relationship("Company", backref="payment_history")
+
+
+class SubscriptionCommandExecution(db.Model):
+    __tablename__ = "subscription_command_executions"
+    __table_args__ = (
+        Index("ix_subscription_command_company_created", "company_id", "created_at"),
+    )
+
+    id = db.Column(db.Integer, primary_key=True)
+    command_name = db.Column(db.String(80), nullable=False, index=True)
+    command_key = db.Column(db.String(180), nullable=False, unique=True, index=True)
+    command_status = db.Column(db.String(30), nullable=False, default="completed", index=True)
+    company_id = db.Column(db.Integer, db.ForeignKey("companies.id"), nullable=False)
+    subscription_id = db.Column(db.Integer, db.ForeignKey("subscriptions.id"))
+    actor_user_id = db.Column(db.Integer, db.ForeignKey("users.id"))
+    origin = db.Column(db.String(40), default="system", index=True)
+    ip_address = db.Column(db.String(120))
+    payload_json = db.Column(db.Text)
+    result_json = db.Column(db.Text)
+    created_at = db.Column(db.DateTime, default=utcnow, index=True)
+
+    company = db.relationship("Company")
+    subscription = db.relationship("Subscription")
+    actor_user = db.relationship("User")
+
+
+class WebhookEvent(db.Model):
+    __tablename__ = "webhook_events"
+
+    id = db.Column(db.Integer, primary_key=True)
+    provider = db.Column(db.String(40), nullable=False, default="mercadopago")
+    event_key = db.Column(db.String(180), nullable=False, unique=True, index=True)
+    event_type = db.Column(db.String(80), nullable=False)
+    status = db.Column(db.String(30), default="processed", index=True)
+    payload_json = db.Column(db.Text)
+    created_at = db.Column(db.DateTime, default=utcnow, index=True)
+
+
+class Supplier(db.Model):
+    __tablename__ = "suppliers"
+
+    id = db.Column(db.Integer, primary_key=True)
+    name = db.Column(db.String(160), nullable=False, index=True)
+    email = db.Column(db.String(120))
+    phone = db.Column(db.String(30))
+    whatsapp = db.Column(db.String(30))
+    address = db.Column(db.Text)
+    notes = db.Column(db.Text)
+    active = db.Column(db.Boolean, default=True, nullable=False)
+    company_id = db.Column(db.Integer, db.ForeignKey("companies.id"), nullable=False, index=True)
+    created_at = db.Column(db.DateTime, default=utcnow)
+    updated_at = db.Column(db.DateTime, default=utcnow, onupdate=utcnow)
+
+
+class PurchaseOrder(db.Model):
+    __tablename__ = "purchase_orders"
+    __table_args__ = (
+        # Idempotencia real a nivel de BD: como maximo una compra aplicada por factura de IA por tenant.
+        Index("ix_purchase_orders_company_document_hash", "company_id", "source_document_hash", unique=True),
+    )
+
+    id = db.Column(db.Integer, primary_key=True)
+    supplier_id = db.Column(db.Integer, db.ForeignKey("suppliers.id"))
+    company_id = db.Column(db.Integer, db.ForeignKey("companies.id"), nullable=False, index=True)
+    date = db.Column(db.DateTime, default=utcnow, index=True)
+    status = db.Column(db.String(30), default="recibida", index=True)
+    subtotal = db.Column(MONEY, default=Decimal("0.00"))
+    total_amount = db.Column(MONEY, default=Decimal("0.00"))
+    note = db.Column(db.Text)
+    source_document_hash = db.Column(db.String(64), nullable=True)
+    supplier = db.relationship("Supplier", backref="purchase_orders")
+    items = db.relationship("PurchaseItem", backref="purchase_order", cascade="all, delete-orphan")
+
+
+class PurchaseItem(db.Model):
+    __tablename__ = "purchase_items"
+
+    id = db.Column(db.Integer, primary_key=True)
+    purchase_order_id = db.Column(db.Integer, db.ForeignKey("purchase_orders.id"), nullable=False)
+    product_id = db.Column(db.Integer, db.ForeignKey("products.id"), nullable=False)
+    quantity = db.Column(db.Float, nullable=False)
+    unit_cost = db.Column(MONEY, nullable=False)
+    product = db.relationship("Product")
+
+    @property
+    def total_amount(self):
+        return (self.quantity or 0) * (self.unit_cost or 0)
+
+
+class CashSession(db.Model):
+    __tablename__ = "cash_sessions"
+
+    id = db.Column(db.Integer, primary_key=True)
+    user_id = db.Column(db.Integer, db.ForeignKey("users.id"), nullable=False)
+    company_id = db.Column(db.Integer, db.ForeignKey("companies.id"))
+    opened_by_user_id = db.Column(db.Integer, db.ForeignKey("users.id"))
+    opened_at = db.Column(db.DateTime, default=utcnow, index=True)
+    closed_at = db.Column(db.DateTime)
+    opening_amount = db.Column(MONEY, default=Decimal("0.00"))
+    closing_amount = db.Column(MONEY)
+    expected_amount = db.Column(MONEY, default=Decimal("0.00"))
+    counted_amount = db.Column(MONEY)
+    difference_amount = db.Column(MONEY)
+    closing_note = db.Column(db.Text)
+    status = db.Column(db.String(20), default="abierta", index=True)
+    note = db.Column(db.Text)
+    reopened_at = db.Column(db.DateTime)
+    reopened_by_user_id = db.Column(db.Integer, db.ForeignKey("users.id"))
+    voided_at = db.Column(db.DateTime)
+    voided_by_user_id = db.Column(db.Integer, db.ForeignKey("users.id"))
+    void_reason = db.Column(db.Text)
+    user = db.relationship("User", foreign_keys=[user_id])
+    movements = db.relationship("CashMovement", backref="session", cascade="all, delete-orphan")
+    company = db.relationship("Company", backref="cash_sessions")
+    opened_by = db.relationship("User", foreign_keys=[opened_by_user_id], backref="opened_cash_sessions")
+    reopened_by = db.relationship("User", foreign_keys=[reopened_by_user_id], backref="reopened_cash_sessions")
+    voided_by = db.relationship("User", foreign_keys=[voided_by_user_id], backref="voided_cash_sessions")
+
+
+class CashMovement(db.Model):
+    __tablename__ = "cash_movements"
+
+    id = db.Column(db.Integer, primary_key=True)
+    session_id = db.Column(db.Integer, db.ForeignKey("cash_sessions.id"))
+    user_id = db.Column(db.Integer, db.ForeignKey("users.id"), nullable=False)
+    company_id = db.Column(db.Integer, db.ForeignKey("companies.id"))
+    sale_id = db.Column(db.Integer, db.ForeignKey("sales.id"), index=True)
+    movement_type = db.Column(db.String(20), nullable=False)
+    category = db.Column(db.String(80))
+    amount = db.Column(MONEY, nullable=False)
+    description = db.Column(db.Text)
+    created_at = db.Column(db.DateTime, default=utcnow, index=True)
+    user = db.relationship("User")
+
+
+# Semantic aliases for the cash module.
+Caja = CashSession
+CajaMovimiento = CashMovement
+
+
+class Expense(db.Model):
+    __tablename__ = "expenses"
+
+    id = db.Column(db.Integer, primary_key=True)
+    date = db.Column(db.DateTime, default=utcnow, index=True)
+    category = db.Column(db.String(80), nullable=False)
+    description = db.Column(db.String(240), nullable=False)
+    amount = db.Column(MONEY, nullable=False)
+    payment_method = db.Column(db.String(50))
+    user_id = db.Column(db.Integer, db.ForeignKey("users.id"))
+    company_id = db.Column(db.Integer, db.ForeignKey("companies.id"))
+    user = db.relationship("User")
+
+
+class ProductPriceHistory(db.Model):
+    __tablename__ = "product_price_history"
+
+    id = db.Column(db.Integer, primary_key=True)
+    product_id = db.Column(db.Integer, db.ForeignKey("products.id"), nullable=False)
+    company_id = db.Column(db.Integer, db.ForeignKey("companies.id"))
+    old_price = db.Column(MONEY, default=Decimal("0.00"))
+    new_price = db.Column(MONEY, default=Decimal("0.00"))
+    old_cost = db.Column(MONEY, default=Decimal("0.00"))
+    new_cost = db.Column(MONEY, default=Decimal("0.00"))
+    user_id = db.Column(db.Integer, db.ForeignKey("users.id"))
+    created_at = db.Column(db.DateTime, default=utcnow, index=True)
+    product = db.relationship("Product", backref="price_history")
+
+
+class ProductModification(db.Model):
+    __tablename__ = "product_modifications"
+
+    id = db.Column(db.Integer, primary_key=True)
+    product_id = db.Column(db.Integer, db.ForeignKey("products.id"), nullable=False)
+    company_id = db.Column(db.Integer, db.ForeignKey("companies.id"))
+    user_id = db.Column(db.Integer, db.ForeignKey("users.id"))
+    action = db.Column(db.String(80), nullable=False)
+    detail = db.Column(db.Text)
+    created_at = db.Column(db.DateTime, default=utcnow, index=True)
+    product = db.relationship("Product", backref="modifications")
+
+
+class SaleModificationHistory(db.Model):
+    __tablename__ = "sale_modification_history"
+
+    id = db.Column(db.Integer, primary_key=True)
+    sale_id = db.Column(db.Integer, db.ForeignKey("sales.id"), nullable=False, index=True)
+    company_id = db.Column(db.Integer, db.ForeignKey("companies.id"), index=True)
+    user_id = db.Column(db.Integer, db.ForeignKey("users.id"), index=True)
+    reason = db.Column(db.Text, nullable=False)
+    previous_data = db.Column(db.Text, nullable=False)
+    new_data = db.Column(db.Text, nullable=False)
+    created_at = db.Column(db.DateTime, default=utcnow, index=True)
+    sale = db.relationship("Sale", backref=db.backref("modification_history", lazy=True, cascade="all, delete-orphan"))
+    user = db.relationship("User")
+
+
+class AuditLog(db.Model):
+    __tablename__ = "audit_logs"
+
+    id = db.Column(db.Integer, primary_key=True)
+    user_id = db.Column(db.Integer, db.ForeignKey("users.id"))
+    company_id = db.Column(db.Integer, db.ForeignKey("companies.id"))
+    action = db.Column(db.String(120), nullable=False)
+    entity = db.Column(db.String(80))
+    entity_id = db.Column(db.Integer)
+    detail = db.Column(db.Text)
+    ip_address = db.Column(db.String(45))
+    created_at = db.Column(db.DateTime, default=utcnow, index=True)
+
+
+class BackupLog(db.Model):
+    __tablename__ = "backup_logs"
+
+    id = db.Column(db.Integer, primary_key=True)
+    company_id = db.Column(db.Integer, db.ForeignKey("companies.id"))
+    status = db.Column(db.String(30), default="pendiente")
+    trigger_type = db.Column(db.String(30), default="manual", nullable=False)
+    plan_code = db.Column(db.String(40), index=True)
+    file_name = db.Column(db.String(255))
+    file_size_bytes = db.Column(db.BigInteger, default=0)
+    path = db.Column(db.String(255))
+    created_by_user_id = db.Column(db.Integer, db.ForeignKey("users.id"))
+    restored_by_user_id = db.Column(db.Integer, db.ForeignKey("users.id"))
+    restored_at = db.Column(db.DateTime)
+    is_automated = db.Column(db.Boolean, default=False, nullable=False)
+    next_run_at = db.Column(db.DateTime)
+    metadata_json = db.Column(db.Text)
+    detail = db.Column(db.Text)
+    created_at = db.Column(db.DateTime, default=utcnow, index=True)
+    company = db.relationship("Company", backref="backup_logs")
+    created_by_user = db.relationship("User", foreign_keys=[created_by_user_id], backref="created_backups")
+    restored_by_user = db.relationship("User", foreign_keys=[restored_by_user_id], backref="restored_backups")
+
+
+class PasswordRecoveryRequest(db.Model):
+    __tablename__ = "password_recovery_requests"
+
+    id = db.Column(db.Integer, primary_key=True)
+    company_id = db.Column(db.Integer, db.ForeignKey("companies.id"), index=True)
+    user_id = db.Column(db.Integer, db.ForeignKey("users.id"), nullable=False, index=True)
+    email = db.Column(db.String(160), nullable=False, index=True)
+    status = db.Column(db.String(20), nullable=False, default="pendiente", index=True)
+    requested_at = db.Column(db.DateTime, default=utcnow, index=True)
+    processed_at = db.Column(db.DateTime)
+    processed_by_user_id = db.Column(db.Integer, db.ForeignKey("users.id"))
+
+    company = db.relationship("Company", foreign_keys=[company_id], backref="password_recovery_requests")
+    user = db.relationship("User", foreign_keys=[user_id], backref="password_recovery_requests")
+    processed_by = db.relationship("User", foreign_keys=[processed_by_user_id], backref="password_recovery_processed")
+
+
+class PasswordResetToken(db.Model):
+    __tablename__ = "password_reset_tokens"
+
+    id = db.Column(db.Integer, primary_key=True)
+    user_id = db.Column(db.Integer, db.ForeignKey("users.id"), nullable=False, index=True)
+    email = db.Column(db.String(160), nullable=False, index=True)
+    token_hash = db.Column(db.String(128), nullable=False, unique=True, index=True)
+    expires_at = db.Column(db.DateTime, nullable=False, index=True)
+    used_at = db.Column(db.DateTime, index=True)
+    revoked_at = db.Column(db.DateTime, index=True)
+    created_at = db.Column(db.DateTime, default=utcnow, index=True)
+
+    user = db.relationship("User", backref="password_reset_tokens")
+
+
+class ReferralSeller(db.Model):
+    __tablename__ = "referral_sellers"
+
+    id = db.Column(db.Integer, primary_key=True)
+    user_id = db.Column(db.Integer, db.ForeignKey("users.id"), nullable=False, unique=True, index=True)
+    dni = db.Column(db.String(30), nullable=False)
+    tax_id = db.Column(db.String(30))
+    phone = db.Column(db.String(30))
+    province = db.Column(db.String(120))
+    city = db.Column(db.String(120))
+    address = db.Column(db.String(255))
+    alias = db.Column(db.String(120))
+    cvu = db.Column(db.String(30))
+    cbu = db.Column(db.String(22))
+    bank = db.Column(db.String(120))
+    account_holder = db.Column(db.String(160))
+    referral_code = db.Column(db.String(20), nullable=False, unique=True, index=True)
+    referral_url = db.Column(db.String(255), nullable=False)
+    commission_percent = db.Column(PERCENT, default=Decimal("0.3000"), nullable=False)
+    active = db.Column(db.Boolean, default=True, nullable=False)
+    created_at = db.Column(db.DateTime, default=utcnow, index=True)
+    updated_at = db.Column(db.DateTime, default=utcnow, onupdate=utcnow)
+
+    user = db.relationship("User", backref="seller_profile")
+
+
+class ReferralAttribution(db.Model):
+    __tablename__ = "referral_attributions"
+
+    id = db.Column(db.Integer, primary_key=True)
+    seller_id = db.Column(db.Integer, db.ForeignKey("referral_sellers.id"), nullable=False, index=True)
+    company_id = db.Column(db.Integer, db.ForeignKey("companies.id"), nullable=False, unique=True, index=True)
+    user_id = db.Column(db.Integer, db.ForeignKey("users.id"), index=True)
+    referral_code = db.Column(db.String(20), nullable=False, index=True)
+    created_at = db.Column(db.DateTime, default=utcnow, index=True)
+
+    seller = db.relationship("ReferralSeller", backref="attributions")
+    company = db.relationship("Company", backref="referral_attribution")
+    user = db.relationship("User", backref="referral_attributions")
+
+
+class ReferralCommission(db.Model):
+    __tablename__ = "referral_commissions"
+
+    id = db.Column(db.Integer, primary_key=True)
+    seller_id = db.Column(db.Integer, db.ForeignKey("referral_sellers.id"), nullable=False, index=True)
+    attribution_id = db.Column(db.Integer, db.ForeignKey("referral_attributions.id"), nullable=False, index=True)
+    company_id = db.Column(db.Integer, db.ForeignKey("companies.id"), nullable=False, index=True)
+    subscription_id = db.Column(db.Integer, db.ForeignKey("subscriptions.id"), index=True)
+    payment_id = db.Column(db.Integer, db.ForeignKey("payments.id"), index=True)
+    plan_id = db.Column(db.Integer, db.ForeignKey("plans.id"), index=True)
+    sold_amount = db.Column(MONEY, default=Decimal("0.00"), nullable=False)
+    commission_percent = db.Column(PERCENT, default=Decimal("0.3000"), nullable=False)
+    commission_amount = db.Column(MONEY, default=Decimal("0.00"), nullable=False)
+    status = db.Column(db.String(20), default="pendiente", nullable=False, index=True)
+    created_at = db.Column(db.DateTime, default=utcnow, index=True)
+    available_at = db.Column(db.DateTime, index=True)
+    paid_at = db.Column(db.DateTime)
+    cancelled_at = db.Column(db.DateTime)
+    note = db.Column(db.Text)
+
+    seller = db.relationship("ReferralSeller", backref="commissions")
+    attribution = db.relationship("ReferralAttribution", backref="commissions")
+    company = db.relationship("Company", backref="referral_commissions")
+    subscription = db.relationship("Subscription", backref="referral_commissions")
+    payment = db.relationship("Payment", backref="referral_commissions")
+    plan = db.relationship("Plan")
+
+
+class ReferralPayout(db.Model):
+    __tablename__ = "referral_payouts"
+
+    id = db.Column(db.Integer, primary_key=True)
+    seller_id = db.Column(db.Integer, db.ForeignKey("referral_sellers.id"), nullable=False, index=True)
     processed_by_user_id = db.Column(db.Integer, db.ForeignKey("users.id"), nullable=False, index=True)
     amount = db.Column(MONEY, default=Decimal("0.00"), nullable=False)
     transfer_date = db.Column(db.DateTime, nullable=False)
@@ -64,8 +1317,1051 @@ class ReferralNetworkPayout(db.Model):
     observations = db.Column(db.Text)
     created_at = db.Column(db.DateTime, default=utcnow, index=True)
 
-    parent_seller = db.relationship("ReferralSeller")
+    seller = db.relationship("ReferralSeller", backref="payouts")
     processed_by = db.relationship("User")
 
 
-application = app
+class ReferralPayoutItem(db.Model):
+    __tablename__ = "referral_payout_items"
+
+    id = db.Column(db.Integer, primary_key=True)
+    payout_id = db.Column(db.Integer, db.ForeignKey("referral_payouts.id"), nullable=False, index=True)
+    commission_id = db.Column(db.Integer, db.ForeignKey("referral_commissions.id"), nullable=False, unique=True, index=True)
+
+    payout = db.relationship("ReferralPayout", backref="items")
+    commission = db.relationship("ReferralCommission", backref="payout_item")
+
+
+class LandingTestimonial(db.Model):
+    __tablename__ = "landing_testimonials"
+
+    id = db.Column(db.Integer, primary_key=True)
+    author_name = db.Column(db.String(120), nullable=False)
+    company_name = db.Column(db.String(160))
+    quote = db.Column(db.Text, nullable=False)
+    active = db.Column(db.Boolean, default=True, nullable=False, index=True)
+    created_at = db.Column(db.DateTime, default=utcnow, index=True)
+    updated_at = db.Column(db.DateTime, default=utcnow, onupdate=utcnow)
+
+
+class SupportTicket(db.Model):
+    __tablename__ = "support_tickets"
+
+    id = db.Column(db.Integer, primary_key=True)
+    company_id = db.Column(db.Integer, db.ForeignKey("companies.id"), index=True)
+    user_id = db.Column(db.Integer, db.ForeignKey("users.id"), nullable=False, index=True)
+    email = db.Column(db.String(160), nullable=False)
+    reason = db.Column(db.String(80), nullable=False, index=True)
+    description = db.Column(db.Text, nullable=False)
+    status = db.Column(db.String(20), nullable=False, default="pendiente", index=True)
+    created_at = db.Column(db.DateTime, default=utcnow, index=True)
+    resolved_at = db.Column(db.DateTime)
+    resolved_by_user_id = db.Column(db.Integer, db.ForeignKey("users.id"))
+    resolved_note = db.Column(db.Text)
+
+    company = db.relationship("Company", foreign_keys=[company_id], backref="support_tickets")
+    user = db.relationship("User", foreign_keys=[user_id], backref="support_tickets_created")
+    resolved_by = db.relationship("User", foreign_keys=[resolved_by_user_id], backref="support_tickets_resolved")
+
+
+class ResourceMessage(db.Model):
+    __tablename__ = "resource_messages"
+
+    id = db.Column(db.Integer, primary_key=True)
+    category = db.Column(db.String(40), nullable=False, index=True)
+    title = db.Column(db.String(160), nullable=False)
+    content = db.Column(db.Text, nullable=False)
+    sort_order = db.Column(db.Integer, default=0, nullable=False)
+    active = db.Column(db.Boolean, default=True, nullable=False, index=True)
+    created_at = db.Column(db.DateTime, default=utcnow, index=True)
+    updated_at = db.Column(db.DateTime, default=utcnow, onupdate=utcnow)
+
+
+class SaaSLead(db.Model):
+    __tablename__ = "saas_leads"
+
+    id = db.Column(db.Integer, primary_key=True)
+    company_name = db.Column(db.String(160), nullable=False, index=True)
+    contact_name = db.Column(db.String(160), nullable=False, index=True)
+    email = db.Column(db.String(160), index=True)
+    phone = db.Column(db.String(40))
+    source = db.Column(db.String(80), default="manual", nullable=False, index=True)
+    status = db.Column(db.String(30), default="nuevo", nullable=False, index=True)
+    priority = db.Column(db.String(20), default="media", nullable=False, index=True)
+    next_follow_up_at = db.Column(db.DateTime, index=True)
+    notes = db.Column(db.Text)
+    company_id = db.Column(db.Integer, db.ForeignKey("companies.id"), index=True)
+    assigned_user_id = db.Column(db.Integer, db.ForeignKey("users.id"), index=True)
+    created_by_user_id = db.Column(db.Integer, db.ForeignKey("users.id"), nullable=False, index=True)
+    converted_at = db.Column(db.DateTime, index=True)
+    created_at = db.Column(db.DateTime, default=utcnow, index=True)
+    updated_at = db.Column(db.DateTime, default=utcnow, onupdate=utcnow)
+
+    company = db.relationship("Company", backref="saas_leads")
+    assigned_user = db.relationship("User", foreign_keys=[assigned_user_id], backref="saas_leads_assigned")
+    created_by = db.relationship("User", foreign_keys=[created_by_user_id], backref="saas_leads_created")
+
+
+class SaaSTask(db.Model):
+    __tablename__ = "saas_tasks"
+
+    id = db.Column(db.Integer, primary_key=True)
+    lead_id = db.Column(db.Integer, db.ForeignKey("saas_leads.id"), index=True)
+    company_id = db.Column(db.Integer, db.ForeignKey("companies.id"), index=True)
+    title = db.Column(db.String(180), nullable=False, index=True)
+    description = db.Column(db.Text)
+    status = db.Column(db.String(30), default="pendiente", nullable=False, index=True)
+    priority = db.Column(db.String(20), default="media", nullable=False, index=True)
+    due_at = db.Column(db.DateTime, index=True)
+    completed_at = db.Column(db.DateTime, index=True)
+    assigned_user_id = db.Column(db.Integer, db.ForeignKey("users.id"), index=True)
+    created_by_user_id = db.Column(db.Integer, db.ForeignKey("users.id"), nullable=False, index=True)
+    created_at = db.Column(db.DateTime, default=utcnow, index=True)
+    updated_at = db.Column(db.DateTime, default=utcnow, onupdate=utcnow)
+
+    lead = db.relationship("SaaSLead", backref="tasks")
+    company = db.relationship("Company", backref="saas_tasks")
+    assigned_user = db.relationship("User", foreign_keys=[assigned_user_id], backref="saas_tasks_assigned")
+    created_by = db.relationship("User", foreign_keys=[created_by_user_id], backref="saas_tasks_created")
+
+
+class SaaSAlert(db.Model):
+    __tablename__ = "saas_alerts"
+
+    id = db.Column(db.Integer, primary_key=True)
+    company_id = db.Column(db.Integer, db.ForeignKey("companies.id"), index=True)
+    lead_id = db.Column(db.Integer, db.ForeignKey("saas_leads.id"), index=True)
+    task_id = db.Column(db.Integer, db.ForeignKey("saas_tasks.id"), index=True)
+    title = db.Column(db.String(180), nullable=False, index=True)
+    message = db.Column(db.Text, nullable=False)
+    category = db.Column(db.String(40), default="operativa", nullable=False, index=True)
+    severity = db.Column(db.String(20), default="media", nullable=False, index=True)
+    status = db.Column(db.String(20), default="abierta", nullable=False, index=True)
+    assigned_user_id = db.Column(db.Integer, db.ForeignKey("users.id"), index=True)
+    created_by_user_id = db.Column(db.Integer, db.ForeignKey("users.id"), nullable=False, index=True)
+    acknowledged_at = db.Column(db.DateTime, index=True)
+    resolved_at = db.Column(db.DateTime, index=True)
+    created_at = db.Column(db.DateTime, default=utcnow, index=True)
+    updated_at = db.Column(db.DateTime, default=utcnow, onupdate=utcnow)
+
+    company = db.relationship("Company", backref="saas_alerts")
+    lead = db.relationship("SaaSLead", backref="alerts")
+    task = db.relationship("SaaSTask", backref="alerts")
+    assigned_user = db.relationship("User", foreign_keys=[assigned_user_id], backref="saas_alerts_assigned")
+    created_by = db.relationship("User", foreign_keys=[created_by_user_id], backref="saas_alerts_created")
+
+
+class Campaign(db.Model):
+    __tablename__ = "ai_campaigns"
+    __table_args__ = (
+        Index("ix_ai_campaigns_company_status", "company_id", "status"),
+        Index("ix_ai_campaigns_company_created", "company_id", "created_at"),
+    )
+
+    id = db.Column(db.Integer, primary_key=True)
+    company_id = db.Column(db.Integer, db.ForeignKey("companies.id"), nullable=False, index=True)
+    title = db.Column(db.String(180), nullable=False)
+    objective = db.Column(db.String(120), nullable=False)
+    campaign_type = db.Column(db.String(80), nullable=False)
+    status = db.Column(db.String(30), nullable=False, default="BORRADOR", index=True)
+    content = db.Column(db.Text, nullable=False)
+    system_data_json = db.Column(db.Text, nullable=False, default="{}")
+    audience_segment = db.Column(db.String(120))
+    audience_count = db.Column(db.Integer, nullable=False, default=0)
+    product_id = db.Column(db.Integer, db.ForeignKey("products.id"), nullable=True, index=True)
+    created_by_user_id = db.Column(db.Integer, db.ForeignKey("users.id"), nullable=False, index=True)
+    approved_by_user_id = db.Column(db.Integer, db.ForeignKey("users.id"), nullable=True, index=True)
+    approved_at = db.Column(db.DateTime)
+    created_at = db.Column(db.DateTime, default=utcnow, nullable=False, index=True)
+    updated_at = db.Column(db.DateTime, default=utcnow, onupdate=utcnow, nullable=False)
+
+    company = db.relationship("Company", backref="ai_campaigns")
+    product = db.relationship("Product")
+    created_by = db.relationship("User", foreign_keys=[created_by_user_id])
+    approved_by = db.relationship("User", foreign_keys=[approved_by_user_id])
+
+
+def record_audit(*, action, entity=None, entity_id=None, detail=None, user_id=None, company_id=None, ip_address=None):
+    try:
+        record_audit_entry(
+            db.session,
+            AuditLog,
+            get_current_company_id,
+            action=action,
+            entity=entity,
+            entity_id=entity_id,
+            detail=detail,
+            user_id=user_id,
+            company_id=company_id,
+            ip_address=ip_address,
+        )
+    except Exception:
+        app.logger.exception("No se pudo registrar auditoria: %s", action)
+
+
+class RegisterForm(FlaskForm):
+    username = StringField("Empresa / Negocio", validators=[DataRequired(), Length(min=3, max=50)])
+    email = StringField("Email", validators=[DataRequired(), Email()])
+    password = PasswordField("Contrasena", validators=[DataRequired(), Length(min=6)])
+    submit = SubmitField("Registrarse")
+
+
+class LoginForm(FlaskForm):
+    username = StringField("Empresa / Negocio", validators=[DataRequired()])
+    password = PasswordField("Contrasena", validators=[DataRequired()])
+    remember = BooleanField("Recordarme")
+    submit = SubmitField("Iniciar sesion")
+
+
+class ProductForm(FlaskForm):
+    barcode = StringField("Codigo", validators=[Optional(), Length(max=50)])
+    name = StringField("Nombre", validators=[DataRequired(), Length(max=200)])
+    description = TextAreaField("Descripcion", validators=[Optional()])
+    category = StringField("Categoria", validators=[Optional(), Length(max=100)])
+    sale_type = SelectField(
+        "Tipo de venta",
+        choices=[
+            ("unidad", "Unidad"),
+            ("kilogramo", "Kilogramo"),
+            ("gramos", "Gramos"),
+            ("litros", "Litros"),
+            ("mililitros", "Mililitros"),
+            ("metros", "Metros"),
+        ],
+        default="unidad",
+    )
+    unit_measure = SelectField("Unidad medida", choices=PRODUCT_UNIT_CHOICES, default="u")
+    brand = StringField("Marca", validators=[Optional(), Length(max=120)])
+    supplier = StringField("Proveedor", validators=[Optional(), Length(max=160)])
+    cost_price = DecimalField("Precio costo", validators=[Optional(), NumberRange(min=0)], default=0)
+    price = DecimalField("Precio venta", validators=[Optional(), NumberRange(min=0)], default=0)
+    margin = DecimalField("Ganancia $", validators=[Optional(), NumberRange(min=0)], default=0)
+    profit_percent = DecimalField("Margen %", validators=[Optional(), NumberRange(min=0)], default=0)
+    tax = DecimalField("IVA %", validators=[Optional(), NumberRange(min=0)], default=0)
+    stock = DecimalField("Stock", validators=[Optional(), NumberRange(min=0)], default=0)
+    min_stock = DecimalField("Stock minimo", validators=[Optional(), NumberRange(min=0)], default=5)
+    discount = DecimalField("Descuento", validators=[Optional(), NumberRange(min=0)], default=0)
+    favorite = BooleanField("Favorito")
+    submit = SubmitField("Guardar")
+
+    @property
+    def codigo(self):
+        return self.barcode
+
+    @property
+    def nombre(self):
+        return self.name
+
+    @property
+    def categoria(self):
+        return self.category
+
+    @property
+    def precio_costo(self):
+        return self.cost_price
+
+    @property
+    def precio_venta(self):
+        return self.price
+
+    @property
+    def iva(self):
+        return self.tax
+
+
+class ClientForm(FlaskForm):
+    name = StringField("Nombre", validators=[DataRequired(), Length(max=200)])
+    email = StringField("Email", validators=[Optional(), Email()])
+    phone = StringField("Telefono", validators=[Optional(), Length(max=20)])
+    whatsapp = StringField("WhatsApp", validators=[Optional(), Length(max=30)])
+    birthday = DateField("Cumpleanos", validators=[Optional()])
+    balance = DecimalField("Saldo", validators=[Optional()], default=0)
+    credit_limit = DecimalField("Limite de credito", validators=[Optional(), NumberRange(min=0)], default=0)
+    address = TextAreaField("Direccion", validators=[Optional()])
+    city = StringField("Ciudad", validators=[Optional(), Length(max=100)])
+    notes = TextAreaField("Notas", validators=[Optional()])
+    observations = TextAreaField("Observaciones", validators=[Optional()])
+    account_current_enabled = BooleanField("Cuenta corriente")
+    submit = SubmitField("Guardar")
+
+
+import auth  # noqa: E402
+import cash  # noqa: E402
+import clients  # noqa: E402
+import dashboard  # noqa: E402
+import expenses  # noqa: E402
+import products  # noqa: E402
+import purchases  # noqa: E402
+import qr_labels  # noqa: E402
+import reports  # noqa: E402
+import saas  # noqa: E402
+import company_billing  # noqa: E402
+import referrals  # noqa: E402
+import sales  # noqa: E402
+import quotes  # noqa: E402
+import support  # noqa: E402
+import seo_pages  # noqa: E402
+import ai_agents  # noqa: E402
+from services.ai_agent.admin import bp as ai_admin_bp  # noqa: E402
+from whatsapp_agent import bp as whatsapp_agent_bp  # noqa: E402
+
+auth_bp = auth.bp
+dashboard_bp = dashboard.bp
+products_bp = products.bp
+clients_bp = clients.bp
+sales_bp = sales.bp
+quotes_bp = quotes.bp
+qr_labels_bp = qr_labels.bp
+purchases_bp = purchases.bp
+cash_bp = cash.bp
+expenses_bp = expenses.bp
+reports_bp = reports.bp
+saas_bp = saas.bp
+company_billing_bp = company_billing.bp
+referrals_bp = referrals.bp
+support_bp = support.bp
+seo_pages_bp = seo_pages.bp
+ai_agents_bp = ai_agents.bp
+
+app.register_blueprint(auth_bp, url_prefix="/auth")
+app.register_blueprint(dashboard_bp, url_prefix="/dashboard")
+app.register_blueprint(products_bp, url_prefix="/productos")
+app.register_blueprint(clients_bp, url_prefix="/clientes")
+app.register_blueprint(sales_bp, url_prefix="/ventas")
+app.register_blueprint(quotes_bp, url_prefix="/presupuestos")
+app.register_blueprint(qr_labels_bp, url_prefix="/qr")
+app.register_blueprint(purchases_bp, url_prefix="/compras")
+app.register_blueprint(cash_bp, url_prefix="/caja")
+app.register_blueprint(expenses_bp, url_prefix="/gastos")
+app.register_blueprint(reports_bp, url_prefix="/reportes")
+app.register_blueprint(saas_bp, url_prefix="/superadmin")
+app.register_blueprint(company_billing_bp, url_prefix="/admin")
+app.register_blueprint(referrals_bp)
+app.register_blueprint(support_bp, url_prefix="/soporte")
+app.register_blueprint(seo_pages_bp)
+app.register_blueprint(ai_agents_bp)
+app.register_blueprint(ai_admin_bp)
+app.register_blueprint(whatsapp_agent_bp)
+csrf.exempt(whatsapp_agent_bp)
+
+
+def _plan_feature_flags(plan):
+    raw = (getattr(plan, "features_json", "") or "").strip().lower()
+    tokens = {item.strip() for item in raw.replace(";", ",").split(",") if item.strip()}
+    has_all = "all" in tokens
+
+    def has(*names):
+        return has_all or any(name in tokens for name in names)
+
+    return {
+        "usuarios": int(getattr(plan, "max_users", 0) or 0),
+        "productos": int(getattr(plan, "max_products", 0) or 0),
+        "clientes": int(getattr(plan, "max_clients", 0) or 0),
+        "ventas": has("ventas"),
+        "caja": has("caja"),
+        "reportes": has("reportes", "reportes_basicos"),
+        "qr": has("qr"),
+        "etiquetas": has("etiquetas", "excel", "kardex"),
+        "whatsapp": has("whatsapp"),
+        "multiusuario": int(getattr(plan, "max_users", 0) or 0) > 1,
+        "soporte": True,
+    }
+
+
+@app.route("/")
+def index():
+    from services.plan_service import PlanService
+    from services.referral_service import ReferralService
+    from services.subscription_service import SubscriptionService
+    from app import LandingTestimonial, ReferralAttribution, ReferralCommission, ReferralSeller
+
+    PlanService.ensure_defaults(db.session)
+    plans = PlanService.all_commercial_plans()
+
+    current_plan_id = None
+    if current_user.is_authenticated and getattr(current_user, "role", None) != "superadmin":
+        company_id = getattr(current_user, "company_id", None)
+        if company_id:
+            subscription = SubscriptionService.active_subscription_for_company(company_id)
+            current_plan_id = getattr(subscription, "plan_id", None)
+
+    trial_plan = next((plan for plan in plans if (plan.code or "").lower() == "trial"), None)
+    paid_plans = [plan for plan in plans if float(plan.price or 0) > 0]
+    recommended_plan = None
+    if current_plan_id:
+        recommended_plan = next((plan for plan in plans if plan.id == current_plan_id), None)
+    if recommended_plan is None:
+        if paid_plans:
+            recommended_plan = paid_plans[len(paid_plans) // 2]
+        elif plans:
+            recommended_plan = plans[0]
+
+    plan_feature_rows = {plan.id: _plan_feature_flags(plan) for plan in plans}
+    referral_percent = float(ReferralService.COMMISSION_PERCENT)
+
+    ranking_rows = []
+
+    def _is_undefined_table(error):
+        if PGUndefinedTable is None:
+            return False
+        if isinstance(error, PGUndefinedTable):
+            return True
+        return isinstance(getattr(error, "orig", None), PGUndefinedTable)
+
+    try:
+        ranking_rows = (
+            db.session.query(
+                ReferralSeller,
+                db.func.coalesce(db.func.sum(ReferralCommission.sold_amount), 0).label("sold_total"),
+                db.func.coalesce(db.func.count(db.distinct(ReferralAttribution.company_id)), 0).label("clients_total"),
+            )
+            .outerjoin(ReferralCommission, ReferralCommission.seller_id == ReferralSeller.id)
+            .outerjoin(ReferralAttribution, ReferralAttribution.seller_id == ReferralSeller.id)
+            .group_by(ReferralSeller.id)
+            .order_by(db.text("sold_total DESC"))
+            .limit(3)
+            .all()
+        )
+    except ProgrammingError as exc:
+        if not _is_undefined_table(exc):
+            raise
+        db.session.rollback()
+        app.logger.warning("Landing cargada sin ranking de referidos por tabla inexistente: %s", exc)
+    except UndefinedTableError as exc:
+        db.session.rollback()
+        app.logger.warning("Landing cargada sin ranking de referidos por UndefinedTable: %s", exc)
+
+    medal_targets = [1, 5, 10, 25, 50, 100]
+    medal_progress = []
+    for row in ranking_rows:
+        clients_total = int(row.clients_total or 0)
+        medal_progress.append(
+            {
+                "seller": row[0],
+                "clients_total": clients_total,
+                "medals": [target for target in medal_targets if clients_total >= target],
+                "sold_total": float(row.sold_total or 0),
+            }
+        )
+
+    app_base_url = (os.environ.get("APP_URL") or request.url_root.rstrip("/")).rstrip("/")
+    seo = {
+        "title": "StockArmobile | Sistema de gestión para comercios en Argentina",
+        "description": "Sistema de gestión para comercios en Argentina: control de stock, ventas, caja y clientes en una sola plataforma. Funciona desde el celular, con modo offline y prueba gratuita de 10 días.",
+        "url": f"{app_base_url}/",
+        # Branding centralizado: esta ruta quedara estable para futuros reemplazos de identidad visual.
+        "image": f"{app_base_url}{url_for('static', filename='images/branding/logo.png')}",
+        "site_name": "StockArmobile",
+    }
+
+    whatsapp_value = app.config.get("SUPPORT_WHATSAPP_DISPLAY", "3624-228396")
+    whatsapp_digits = app.config.get("SUPPORT_WHATSAPP_NUMBER", "5493624228396")
+    contact = {
+        "whatsapp": whatsapp_value,
+        "whatsapp_link": f"https://wa.me/{whatsapp_digits}" if whatsapp_digits else "https://wa.me/",
+        "email": app.config.get("SUPPORT_EMAIL", "stockarmobile@gmail.com"),
+    }
+    raw_demo_video_url = (os.environ.get("LANDING_DEMO_VIDEO_URL") or "").strip()
+    demo_video_url = raw_demo_video_url
+    demo_video_open_url = raw_demo_video_url
+    if raw_demo_video_url:
+        try:
+            parsed_demo_url = urlparse(raw_demo_video_url)
+            host = (parsed_demo_url.netloc or "").lower()
+            video_id = ""
+            if "youtu.be" in host:
+                video_id = (parsed_demo_url.path or "").strip("/").split("/")[0]
+            elif "youtube.com" in host:
+                if "/embed/" in (parsed_demo_url.path or ""):
+                    video_id = (parsed_demo_url.path or "").split("/embed/", 1)[1].split("/")[0]
+                else:
+                    video_id = (parse_qs(parsed_demo_url.query).get("v") or [""])[0]
+
+            if video_id:
+                # Keep configured embed URL untouched; only compute a direct-open fallback link.
+                demo_video_open_url = f"https://www.youtube.com/watch?v={video_id}"
+        except Exception:
+            demo_video_open_url = raw_demo_video_url
+
+    local_demo_video_path = os.path.join(app.static_folder, "assets", "videos", "landing-demo.mp4")
+    demo_video_file_url = url_for("static", filename="assets/videos/landing-demo.mp4") if os.path.exists(local_demo_video_path) else ""
+    local_demo_poster_path = os.path.join(app.static_folder, "assets", "images", "landing-demo-poster.jpg")
+    demo_video_poster_url = url_for("static", filename="assets/images/landing-demo-poster.jpg") if os.path.exists(local_demo_poster_path) else ""
+    local_demo_audio_path = os.path.join(app.static_folder, "assets", "audio", "landing-theme.mp3")
+    demo_audio_file_url = url_for("static", filename="assets/audio/landing-theme.mp3") if os.path.exists(local_demo_audio_path) else ""
+
+    testimonials = []
+    try:
+        testimonials = (
+            LandingTestimonial.query.filter(LandingTestimonial.active.is_(True))
+            .order_by(LandingTestimonial.created_at.desc())
+            .limit(6)
+            .all()
+        )
+    except ProgrammingError as exc:
+        if not _is_undefined_table(exc):
+            raise
+        db.session.rollback()
+        app.logger.warning("Landing cargada sin testimonios por tabla inexistente: %s", exc)
+    except UndefinedTableError as exc:
+        db.session.rollback()
+        app.logger.warning("Landing cargada sin testimonios por UndefinedTable: %s", exc)
+
+    referral_code = (request.args.get("ref") or "").strip().upper()
+    response = make_response(
+        render_template(
+            "landing/index.html",
+            plans=plans,
+            current_plan_id=current_plan_id,
+            recommended_plan_id=getattr(recommended_plan, "id", None),
+            trial_plan=trial_plan,
+            plan_feature_rows=plan_feature_rows,
+            referral_percent=referral_percent,
+            ranking_rows=ranking_rows,
+            medal_targets=medal_targets,
+            medal_progress=medal_progress,
+            testimonials=testimonials,
+            seo=seo,
+            contact=contact,
+            demo_video_url=demo_video_url,
+            demo_video_open_url=demo_video_open_url,
+            demo_video_file_url=demo_video_file_url,
+            demo_video_poster_url=demo_video_poster_url,
+            demo_audio_file_url=demo_audio_file_url,
+        )
+    )
+    if referral_code:
+        seller = ReferralService.find_seller_by_code(referral_code)
+        if seller is not None:
+            record_audit(
+                action="referral_link_click",
+                entity="referral_seller",
+                entity_id=seller.id,
+                detail=f"Click registrado para codigo {referral_code}.",
+                user_id=seller.user_id,
+                company_id=getattr(getattr(seller, "user", None), "company_id", None),
+            )
+            db.session.commit()
+        session[SESSION_REFERRAL_CODE] = referral_code
+        response.set_cookie(SESSION_REFERRAL_COOKIE, referral_code, max_age=60 * 60 * 24 * 90, samesite="Lax")
+    return response
+
+
+@app.route("/landing/contact", methods=["POST"])
+def landing_contact():
+    from services.saas_ops_service import SaaSOpsService
+
+    name = (request.form.get("name") or "").strip()
+    email = (request.form.get("email") or "").strip().lower()
+    message = (request.form.get("message") or "").strip()
+
+    if not name or not email or not message:
+        flash("Completa nombre, email y mensaje para enviarnos tu consulta.", "warning")
+        return redirect(url_for("index", _anchor="contacto"))
+    if len(name) > 120:
+        flash("El nombre es demasiado largo.", "warning")
+        return redirect(url_for("index", _anchor="contacto"))
+    if len(message) < 10 or len(message) > 2000:
+        flash("El mensaje debe tener entre 10 y 2000 caracteres.", "warning")
+        return redirect(url_for("index", _anchor="contacto"))
+    if not is_valid_email(email):
+        flash("Ingresá un correo electrónico válido.", "warning")
+        return redirect(url_for("index", _anchor="contacto"))
+
+    support_email = app.config.get("SUPPORT_EMAIL", "stockarmobile@gmail.com")
+    app.logger.info(
+        "Lead landing contacto: to=%s name=%s email=%s message_len=%s",
+        support_email,
+        name,
+        email,
+        len(message),
+    )
+    SaaSOpsService.register_landing_contact(db.session, name=name, email=email, message=message)
+    db.session.commit()
+    flash(
+        "Gracias por comunicarte con StockArmobile. Nuestro equipo respondera tu consulta a la brevedad.",
+        "success",
+    )
+    return redirect(url_for("index", _anchor="contacto"))
+
+
+@app.route("/access-status")
+def access_status():
+    if not current_user.is_authenticated:
+        return redirect(url_for("auth.login"))
+    company_id = get_current_company_id()
+    if company_id is None:
+        return redirect(url_for("auth.login"))
+    state = get_company_access_state(company_id)
+    return render_template("errors/access_status.html", state=state)
+
+
+@app.errorhandler(404)
+def not_found(error):
+    if is_api_request():
+        return jsonify({"success": False, "error": "Recurso no encontrado."}), 404
+    return render_template("errors/404.html"), 404
+
+
+@app.errorhandler(403)
+def forbidden(error):
+    if is_api_request():
+        return jsonify({"success": False, "error": "No autorizado para este recurso."}), 403
+    return render_template("errors/403.html"), 403
+
+
+@app.errorhandler(CSRFError)
+def handle_csrf_error(error):
+    if (request.path or "") == "/ventas/api/mp-qr/create":
+        payload = request.get_json(silent=True) or {}
+        form_payload = request.form.to_dict(flat=False)
+        app.logger.warning(
+            "MP QR create blocked by CSRF: request_json=%s request_form=%s company_id=%s user_id=%s pos_id=%s qr_id=%s",
+            payload,
+            form_payload,
+            getattr(current_user, "company_id", None) if getattr(current_user, "is_authenticated", False) else None,
+            getattr(current_user, "id", None) if getattr(current_user, "is_authenticated", False) else None,
+            payload.get("mp_pos_id") or payload.get("pos_id"),
+            payload.get("qr_id") or payload.get("mp_qr_id"),
+        )
+    if (request.path or "").startswith("/ventas/api/mp-qr/"):
+        app.logger.warning(
+            "MP QR CSRF rejected before endpoint: method=%s path=%s endpoint=%s csrf_header_present=%s company_id=%s user_id=%s request_id=%s error=%s",
+            request.method,
+            request.path,
+            request.endpoint or "",
+            bool(request.headers.get(HEADER_CSRF_TOKEN)),
+            getattr(current_user, "company_id", None) if current_user.is_authenticated else None,
+            getattr(current_user, "id", None) if current_user.is_authenticated else None,
+            request.headers.get(HEADER_REQUEST_ID) or request.headers.get(HEADER_CORRELATION_ID) or "",
+            error.description,
+        )
+    if is_api_request():
+        return jsonify({"success": False, "error": f"CSRF inválido: {error.description}"}), 400
+    return render_template("errors/403.html"), 400
+
+
+@app.errorhandler(HTTPException)
+def handle_http_exception(error):
+    app.logger.error(
+        "GLOBAL HTTPException handler entered: method=%s path=%s endpoint=%s code=%s description=%s",
+        request.method,
+        request.path,
+        request.endpoint or "",
+        getattr(error, "code", None),
+        getattr(error, "description", ""),
+    )
+    if is_api_request():
+        message = getattr(error, "description", None) or "Error HTTP"
+        return jsonify({"success": False, "error": str(message)}), error.code or 500
+    return error
+
+
+@app.errorhandler(500)
+def internal_error(error):
+    app.logger.error(
+        "GLOBAL 500 handler entered: method=%s path=%s endpoint=%s error_type=%s",
+        request.method,
+        request.path,
+        request.endpoint or "",
+        error.__class__.__name__ if error is not None else "None",
+    )
+    app.logger.exception("Error interno no controlado: %s", error)
+    if is_api_request():
+        return jsonify({"success": False, "error": "Error interno no controlado."}), 500
+    return render_template("errors/500.html"), 500
+
+
+@app.context_processor
+def inject_notifications():
+    has_active_seller_profile = False
+    switchable_company_users = []
+    current_company_preferences = {}
+    support_contact = {
+        "email": app.config.get("SUPPORT_EMAIL", "stockarmobile@gmail.com"),
+        "whatsapp_display": app.config.get("SUPPORT_WHATSAPP_DISPLAY", "3624228396"),
+        "whatsapp_number": app.config.get("SUPPORT_WHATSAPP_NUMBER", "3624228396"),
+        "whatsapp_link": f"https://wa.me/{app.config.get('SUPPORT_WHATSAPP_NUMBER', '3624228396')}",
+        "email_link": f"mailto:{app.config.get('SUPPORT_EMAIL', 'stockarmobile@gmail.com')}",
+    }
+    if current_user.is_authenticated:
+        notification_payload = get_notification_payload()
+        company = Company.query.filter_by(id=getattr(current_user, "company_id", None)).first() if getattr(current_user, "company_id", None) else None
+        if company is not None:
+            try:
+                current_company_preferences = json.loads(company.preferences_json or "{}") if company.preferences_json else {}
+            except json.JSONDecodeError:
+                current_company_preferences = {}
+        if getattr(current_user, "role", None) != "superadmin":
+            has_active_seller_profile = ReferralSeller.query.filter_by(user_id=current_user.id, active=True).first() is not None
+        if getattr(current_user, "role", None) == "admin" and getattr(current_user, "company_id", None):
+            switchable_company_users = (
+                User.query.filter(
+                    User.company_id == current_user.company_id,
+                    User.active.is_(True),
+                    User.id != current_user.id,
+                    User.role.in_(["user", "admin"]),
+                )
+                .order_by(User.first_name.asc(), User.last_name.asc(), User.username.asc())
+                .all()
+            )
+        return {
+            "notification_items": notification_payload["items"],
+            "notification_count": notification_payload["count"],
+            "has_active_seller_profile": has_active_seller_profile,
+            "support_contact": support_contact,
+            "switchable_company_users": switchable_company_users,
+            "company_preferences": current_company_preferences,
+            "company_feature_enabled": lambda key, default=False: bool(current_company_preferences.get(key, default)),
+            "current_user_has_permission": lambda key: _user_has_permission(current_user, key),
+        }
+    return {
+        "notification_items": [],
+        "notification_count": 0,
+        "has_active_seller_profile": False,
+        "support_contact": support_contact,
+        "switchable_company_users": [],
+        "company_preferences": {},
+        "company_feature_enabled": lambda key, default=False: bool(default),
+        "current_user_has_permission": lambda key: _user_has_permission(current_user, key),
+    }
+
+
+def _user_has_permission(user, permission_key):
+    role = (getattr(user, "role", None) or "").strip().lower()
+    if role in {"admin", "superadmin"}:
+        return True
+    raw_permissions = (getattr(user, "permissions_json", None) or "").strip()
+    if not raw_permissions:
+        return False
+    try:
+        payload = json.loads(raw_permissions)
+    except json.JSONDecodeError:
+        return False
+    if not isinstance(payload, list):
+        return False
+    normalized = {str(item).strip().lower() for item in payload if str(item).strip()}
+    return (permission_key or "").strip().lower() in normalized
+
+
+@app.route("/api/search")
+@login_required
+def api_search():
+    return jsonify({"results": global_search(request.args.get("q", ""))})
+
+
+@app.route("/api/notifications")
+@login_required
+def api_notifications():
+    payload = get_notification_payload()
+    return jsonify({"notifications": payload["items"], "notification_count": payload["count"]})
+
+
+@app.route("/api/notifications/mark-seen", methods=["POST"])
+@login_required
+def api_notifications_mark_seen():
+    payload = mark_notifications_seen()
+    return jsonify(payload)
+
+
+@app.route("/manifest.json")
+def web_manifest():
+    return send_from_directory(app.static_folder, "manifest.json", mimetype="application/manifest+json")
+
+
+@app.route("/robots.txt")
+def robots_txt():
+    sitemap_url = f"{app.config['APP_URL']}/sitemap.xml"
+    body = f"User-agent: *\nAllow: /\nSitemap: {sitemap_url}\n"
+    response = make_response(body)
+    response.mimetype = "text/plain"
+    return response
+
+
+@app.route("/sitemap.xml")
+def sitemap_xml():
+    base_url = app.config["APP_URL"].rstrip("/")
+    # Fase 1 SEO: solo URLs GET publicas y realmente indexables (sin login/registro/demo/POST).
+    # Fase 3 SEO: paginas comerciales por tipo de comercio, publicas y sin autenticacion.
+    # Fase 4A SEO: paginas de funcionalidad (presupuestos, control de stock).
+    urls = [
+        {"loc": f"{base_url}/", "priority": "1.0"},
+        {"loc": f"{base_url}/software-para-ferreterias", "priority": "0.8"},
+        {"loc": f"{base_url}/software-para-corralones", "priority": "0.8"},
+        {"loc": f"{base_url}/sistema-para-kioscos", "priority": "0.8"},
+        {"loc": f"{base_url}/sistema-para-supermercados", "priority": "0.8"},
+        {"loc": f"{base_url}/sistema-de-presupuestos", "priority": "0.8"},
+        {"loc": f"{base_url}/control-de-stock", "priority": "0.8"},
+    ]
+    xml = [
+        "<?xml version=\"1.0\" encoding=\"UTF-8\"?>",
+        '<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">',
+    ]
+    for entry in urls:
+        xml.append(f"  <url><loc>{entry['loc']}</loc><changefreq>weekly</changefreq><priority>{entry['priority']}</priority></url>")
+    xml.append("</urlset>")
+    response = make_response("\n".join(xml))
+    response.mimetype = "application/xml"
+    return response
+
+
+@app.route("/favicon.ico")
+def favicon():
+    # Branding centralizado para permitir reemplazo de identidad sin tocar codigo.
+    return send_from_directory(app.static_folder, "images/branding/favicon.ico", mimetype="image/x-icon")
+
+
+@app.route("/apple-touch-icon.png")
+def apple_touch_icon():
+    return send_from_directory(app.static_folder, "images/branding/apple-touch-icon.png", mimetype="image/png")
+
+
+@app.route("/icon-192.png")
+def icon_192():
+    return send_from_directory(app.static_folder, "images/branding/icon-192.png", mimetype="image/png")
+
+
+@app.route("/icon-256.png")
+def icon_256():
+    return send_from_directory(app.static_folder, "images/branding/icon-256.png", mimetype="image/png")
+
+
+@app.route("/icon-384.png")
+def icon_384():
+    return send_from_directory(app.static_folder, "images/branding/icon-384.png", mimetype="image/png")
+
+
+@app.route("/icon-512.png")
+def icon_512():
+    return send_from_directory(app.static_folder, "images/branding/icon-512.png", mimetype="image/png")
+
+
+@app.route("/icon-maskable-512.png")
+def icon_maskable_512():
+    return send_from_directory(app.static_folder, "images/branding/icon-maskable-512.png", mimetype="image/png")
+
+
+@app.route("/splash.png")
+def splash_icon():
+    return send_from_directory(app.static_folder, "images/branding/splash.png", mimetype="image/png")
+
+
+@app.route("/service-worker.js")
+def service_worker():
+    response = send_from_directory(app.static_folder, "service-worker.js", mimetype="application/javascript")
+    response.headers["Service-Worker-Allowed"] = "/"
+    response.headers["Cache-Control"] = "no-cache"
+    return response
+
+
+@app.route("/offline.html")
+def offline_page():
+    return send_from_directory(app.static_folder, "offline.html", mimetype="text/html")
+
+
+def create_admin_user():
+    from services.plan_service import PlanService
+    from services.subscription_service import SubscriptionService
+
+    admin_created = False
+    admin_updated = False
+    company = Company.query.first()
+    if company is None:
+        company = Company(name=os.environ.get("COMPANY_NAME", "StockArmobile"))
+        db.session.add(company)
+        db.session.flush()
+    if company.trial_ends_at is None:
+        company.trial_ends_at = utcnow() + timedelta(days=10)
+    PlanService.ensure_defaults(db.session)
+
+    admin_username = (os.environ.get("ADMIN_USERNAME", "admin") or "admin").strip() or "admin"
+    admin_email = (os.environ.get("ADMIN_EMAIL", "admin@stockarmobile.local") or "admin@stockarmobile.local").strip().lower()
+    by_username = User.query.filter_by(username=admin_username).first()
+    by_email = User.query.filter_by(email=admin_email).first()
+
+    is_production = os.environ.get("FLASK_ENV") == "production" or os.environ.get("RENDER")
+    admin_password = os.environ.get("ADMIN_PASSWORD")
+
+    target_admin = by_email or by_username
+    if target_admin is not None:
+        changed = False
+        if by_email is not None:
+            # Priorizamos el email para evitar IntegrityError cuando OAuth ya creó ese usuario.
+            username_taken_by_other = by_username is not None and by_username.id != by_email.id
+            if not username_taken_by_other and target_admin.username != admin_username:
+                target_admin.username = admin_username
+                changed = True
+            elif username_taken_by_other and target_admin.username != admin_username:
+                app.logger.warning("No se pudo normalizar username admin por conflicto con otro usuario existente.")
+        desired_role = target_admin.role or "user"
+        if desired_role != "superadmin":
+            desired_role = "superadmin" if is_control_panel_owner(target_admin) else "admin"
+        if target_admin.role != desired_role:
+            target_admin.role = desired_role
+            changed = True
+        if not target_admin.active:
+            target_admin.active = True
+            changed = True
+        if target_admin.company_id is None:
+            target_admin.company_id = company.id
+            changed = True
+        if changed:
+            admin_updated = True
+    else:
+        if is_production and not admin_password:
+            app.logger.warning("ADMIN_PASSWORD no configurado; no se pudo crear el usuario admin.")
+        else:
+            user = User(
+                username=admin_username,
+                email=admin_email,
+                company_id=company.id,
+                active=True,
+            )
+            user.set_password(admin_password or "admin123")
+            user.role = "superadmin"
+            db.session.add(user)
+            admin_created = True
+
+    if Subscription.query.filter_by(company_id=company.id).first() is None:
+        trial_plan = Plan.query.filter_by(code="trial").first() or Plan.query.order_by(Plan.id.asc()).first()
+        SubscriptionService.ensure_company_trial(db.session, company=company, trial_plan=trial_plan)
+    db.session.commit()
+    if admin_created:
+        app.logger.info("Admin creado")
+    elif admin_updated:
+        app.logger.info("Admin actualizado")
+    return admin_created
+
+
+DEFAULT_SUPERADMIN_USERNAME = (os.environ.get("DEFAULT_SUPERADMIN_USERNAME") or "superadmin").strip()
+DEFAULT_SUPERADMIN_EMAIL = (os.environ.get("DEFAULT_SUPERADMIN_EMAIL") or "superadmin@stockarmobile.local").strip().lower()
+DEFAULT_SUPERADMIN_PASSWORD = (os.environ.get("DEFAULT_SUPERADMIN_PASSWORD") or "").strip()
+DEFAULT_SUPERADMIN_ROLE = "superadmin"
+
+
+def _users_table_ready_for_superadmin_bootstrap():
+    try:
+        with app.app_context():
+            return inspect(db.engine).has_table("users")
+    except Exception:
+        return False
+
+
+def ensure_default_superadmin_user():
+    """Crea el Super Admin fijo solo si no existe ningun usuario con ese rol."""
+    if getattr(app, "_default_superadmin_bootstrap_blocked", False):
+        return False
+
+    if not _users_table_ready_for_superadmin_bootstrap():
+        return False
+
+    created = False
+    try:
+        bootstrap_password = DEFAULT_SUPERADMIN_PASSWORD
+        if not bootstrap_password:
+            if is_production_env and not is_pytest_context:
+                app.logger.error("DEFAULT_SUPERADMIN_PASSWORD no configurado. Se omite bootstrap de Super Admin en produccion.")
+                app._default_superadmin_bootstrap_blocked = True
+                return False
+            bootstrap_password = "admin123"
+
+        existing_superadmin = User.query.filter(User.role == DEFAULT_SUPERADMIN_ROLE).first()
+        if existing_superadmin is None:
+            by_username = User.query.filter_by(username=DEFAULT_SUPERADMIN_USERNAME).first()
+            by_email = User.query.filter_by(email=DEFAULT_SUPERADMIN_EMAIL).first()
+            if by_username is None and by_email is None:
+                user = User(
+                    username=DEFAULT_SUPERADMIN_USERNAME,
+                    email=DEFAULT_SUPERADMIN_EMAIL,
+                    active=True,
+                    role=DEFAULT_SUPERADMIN_ROLE,
+                )
+                user.set_password(bootstrap_password)
+                db.session.add(user)
+                db.session.commit()
+                app.logger.info("Super Admin creado correctamente")
+                created = True
+        return created
+    except (IntegrityError, OperationalError, ProgrammingError):
+        db.session.rollback()
+        return False
+
+
+def bootstrap_database():
+    """Bootstrap opcional de datos base usando migraciones."""
+    if getattr(app, "_bootstrap_done", False):
+        return
+    if (os.environ.get("ENABLE_BOOTSTRAP") or "").strip().lower() != "true":
+        app.logger.info("Bootstrap deshabilitado. Usa ENABLE_BOOTSTRAP=true para habilitarlo.")
+        app._bootstrap_done = True
+        return
+    with app.app_context():
+        from flask_migrate import upgrade
+
+        app.logger.info("Aplicando migraciones por bootstrap...")
+        upgrade()
+        ensure_default_superadmin_user()
+        create_admin_user()
+        ensure_primary_superadmin()
+        app.logger.info("Bootstrap completado")
+    app._bootstrap_done = True
+
+
+def ensure_primary_superadmin():
+    """Garantiza que el primer usuario tenga acceso total al sistema."""
+    first_user = User.query.order_by(User.id.asc()).first()
+    if first_user is None:
+        return
+
+    changed = False
+    company = Company.query.first()
+    if company is None:
+        company = Company(name=os.environ.get("COMPANY_NAME", "StockArmobile"), active=True)
+        db.session.add(company)
+        db.session.flush()
+
+    if first_user.company_id is None:
+        first_user.company_id = company.id
+        changed = True
+    if not first_user.active:
+        first_user.active = True
+        changed = True
+    expected_role = first_user.role or "user"
+    if expected_role != "superadmin" and is_control_panel_owner(first_user):
+        expected_role = "superadmin"
+    if first_user.role != expected_role:
+        first_user.role = expected_role
+        changed = True
+
+    if changed:
+        db.session.commit()
+
+
+def ensure_database_schema():
+    """Compatibilidad retroactiva: deshabilitado para forzar migraciones Alembic."""
+    app.logger.info("ensure_database_schema() deshabilitado. Usa migraciones Alembic.")
+
+
+@app.cli.command("init-db")
+def init_db_command():
+    from flask_migrate import upgrade
+
+    upgrade()
+    ensure_default_superadmin_user()
+    create_admin_user()
+    ensure_primary_superadmin()
+    app.logger.info("Base de datos inicializada correctamente.")
+
+
+@app.before_request
+def ensure_superadmin_on_startup():
+    ensure_default_superadmin_user()
+
+
+with app.app_context():
+    ensure_default_superadmin_user()
+
+
+if __name__ == "__main__":
+    app.run(debug=True, host="0.0.0.0", port=int(os.environ.get("PORT", 5000)))
+
