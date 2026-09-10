@@ -30,8 +30,7 @@ jobs:
           from pathlib import Path
           import re
 
-          # 1) AI multi-tool cap: count only executed tool rounds. The synthesis
-          # call is answer-only and must not increment the tool-round counter.
+          # 1) AI multi-tool cap: count only executed tool rounds.
           p = Path('services/ai_agent/orchestrator_v2.py')
           text = p.read_text()
           old = '''            tool_rounds += 1\n            if tool_rounds > MAX_TOOL_TURNS:'''
@@ -47,8 +46,7 @@ jobs:
           elif 'next_tool_round = tool_rounds + 1' not in text or 'tool_rounds = next_tool_round' not in text:
               raise SystemExit('orchestrator cap state is inconsistent')
 
-          # 2) AI subscription cancellation: keep the remote cancellation owned
-          # by AISubscriptionService so it is executed exactly once.
+          # 2) AI subscription cancellation: one owner for remote cancellation.
           p = Path('company_billing.py')
           text = p.read_text()
           duplicate = '''        if preapproval_id and ai_status.get("origin") == "MERCADO_PAGO":\n            MercadoPagoService().cancel_preapproval(preapproval_id)\n        AISubscriptionService.cancel(company, admin_user_id=current_user.id, reason="tenant_explicit_cancel")'''
@@ -59,15 +57,18 @@ jobs:
           elif canonical not in text:
               raise SystemExit('AI cancel route anchor not found')
 
-          # 3) Register the multilevel referral blueprint during normal app
-          # bootstrap instead of depending on wsgi.py side effects.
+          # 3) Register the multilevel referral blueprint during normal app bootstrap.
+          # referral_network_service imports db/superadmin_required from app, so the
+          # import belongs after those core symbols are initialized and before the
+          # blueprint registration block.
           p = Path('app.py')
           text = p.read_text()
-          import_anchor = 'from services.referral_service import ReferralService\n'
-          if 'from services.referral_network_service import network_bp, install_commission_hook\n' not in text:
-              if import_anchor not in text:
-                  raise SystemExit('app.py referral import anchor not found')
-              text = text.replace(import_anchor, import_anchor + 'from services.referral_network_service import network_bp, install_commission_hook\n', 1)
+          top_anchor = 'from stockarmobile.extensions import csrf, db, login_manager, migrate\n'
+          network_import = 'from services.referral_network_service import network_bp, install_commission_hook\n'
+          if network_import not in text:
+              if top_anchor not in text:
+                  raise SystemExit('app.py extension import anchor not found')
+              text = text.replace(top_anchor, top_anchor + network_import, 1)
           register_anchor = 'app.register_blueprint(referrals_bp)\n'
           register_replacement = 'app.register_blueprint(referrals_bp)\napp.register_blueprint(network_bp)\ninstall_commission_hook()\n'
           if 'app.register_blueprint(network_bp)\n' not in text:
@@ -76,15 +77,18 @@ jobs:
               text = text.replace(register_anchor, register_replacement, 1)
           p.write_text(text)
 
-          # 4) WSGI remains a thin entrypoint: remove the referral-network
-          # registration side effect now handled by app bootstrap.
+          # 4) WSGI stays a thin entrypoint; the app owns referral network setup.
           p = Path('wsgi.py')
           text = p.read_text()
-          text = text.replace('from services.referral_network_service import network_bp, install_commission_hook\n\nif "referral_network.dashboard" not in app.view_functions:\n    app.register_blueprint(network_bp)\ninstall_commission_hook()\n\n', '')
+          text = re.sub(
+              r'from services\.referral_network_service import network_bp, install_commission_hook\n\nif "referral_network\.dashboard" not in app\.view_functions:\n    app\.register_blueprint\(network_bp\)\ninstall_commission_hook\(\)\n\n',
+              '',
+              text,
+              count=1,
+          )
           p.write_text(text)
 
-          # 5) Tests should never import WSGI after Flask has served a request.
-          # The application now owns the referral blueprint at import time.
+          # 5) Tests should not import WSGI at all; app.py now registers the routes.
           p = Path('tests/test_smoke.py')
           text = p.read_text()
           text = re.sub(r'(?m)^\s*import wsgi  # noqa: F401\s*\n', '', text)
@@ -93,8 +97,7 @@ jobs:
           if fixture_marker in text and 'stock_app.app.config["APP_URL"] = APP_URL' not in text:
               text = text.replace(fixture_marker, fixture_marker + '    stock_app.app.config["APP_URL"] = APP_URL\n', 1)
 
-          # 6) Payment fixture is a standard SaaS billing payment; identify it
-          # explicitly so the production classifier can distinguish it from POS/AI.
+          # Current SaaS billing payment receipt contract: make the fixture explicit.
           marker = 'def test_my_company_module_employee_permissions_delete_and_billing_pdf():'
           start = text.find(marker)
           if start < 0:
@@ -120,7 +123,7 @@ jobs:
               text = text.replace(hardcoded, dynamic, 1)
           p.write_text(text)
 
-          # 7) AI cancellation regression is hermetic: stub the preapproval lookup.
+          # AI cancel regression: isolate MP lookup from the provider.
           p = Path('tests/test_ai_subscription_separation.py')
           text = p.read_text()
           marker = 'def test_explicit_tenant_ai_cancel_does_not_modify_standard_subscription(subscription_app, monkeypatch):\n'
