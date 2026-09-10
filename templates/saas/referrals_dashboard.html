@@ -4,14 +4,11 @@
 <div class="app-shell referrals-admin-shell">
   <section class="card app-card border-0 referrals-admin-hero mb-4">
     <div class="card-body p-4 p-lg-5 d-flex flex-column flex-lg-row justify-content-between align-items-lg-center gap-3">
-      <div>
-        <span class="page-kicker"><i class="bi bi-megaphone"></i> SuperAdmin</span>
-        <h1 class="h3 fw-bold mb-1">Programa de Referidos</h1>
-        <p class="text-muted mb-0">Gestiona vendedores, comisiones y desempeño desde un tablero único y accionable.</p>
-      </div>
+      <div><span class="page-kicker"><i class="bi bi-megaphone"></i> SuperAdmin</span><h1 class="h3 fw-bold mb-1">Programa de Referidos</h1><p class="text-muted mb-0">Gestiona vendedores, comisiones y desempeño desde un tablero único y accionable.</p></div>
       <div class="d-flex flex-wrap gap-2">
         <a class="btn btn-outline-secondary" href="{{ url_for('referrals.admin_referrals_export') }}"><i class="bi bi-download me-1"></i>Exportar CSV</a>
         <a class="btn btn-primary" href="{{ url_for('referrals.admin_referrals_sellers') }}"><i class="bi bi-people me-1"></i>Gestionar vendedores</a>
+        <a class="btn btn-outline-primary" href="{{ url_for('referral_network.dashboard') }}"><i class="bi bi-diagram-3 me-1"></i>Red multinivel</a>
         <a class="btn btn-outline-primary" href="{{ url_for('referrals.admin_resource_messages') }}"><i class="bi bi-chat-dots me-1"></i>Mensajes comerciales</a>
       </div>
     </div>
@@ -26,118 +23,13 @@
   </div>
 
 <div class="row g-3 mb-4">
-  <div class="col-lg-6">
-    <div class="card app-card referrals-elevated">
-      <div class="card-header bg-white fw-bold">Top 3 vendedores</div>
-      <div class="table-responsive">
-        <table class="table mb-0 align-middle">
-          <thead><tr><th>#</th><th>Vendedor</th><th>Ventas</th></tr></thead>
-          <tbody>
-          {% for row in ranking %}
-            <tr>
-              <td>{{ loop.index }}</td>
-              <td>{{ row[0].user.username if row[0] and row[0].user else 'N/A' }}</td>
-              <td>${{ '%.2f'|format(row[1] or 0) }}</td>
-            </tr>
-          {% else %}
-            <tr><td colspan="3" class="text-center text-muted">Sin datos</td></tr>
-          {% endfor %}
-          </tbody>
-        </table>
-      </div>
-    </div>
-  </div>
-  <div class="col-lg-6">
-    <div class="card app-card card-body referrals-elevated">
-      <h2 class="h6 text-uppercase text-muted mb-2">Mejor vendedor</h2>
-      {% if stats.best_seller %}
-        <p class="mb-1 fs-5 fw-semibold">{{ stats.best_seller[0].user.username if stats.best_seller[0] and stats.best_seller[0].user else 'N/A' }}</p>
-        <p class="mb-0 text-muted">Ventas acumuladas: ${{ '%.2f'|format(stats.best_seller[1] or 0) }}</p>
-      {% else %}
-        <p class="text-muted mb-0">Sin ventas registradas.</p>
-      {% endif %}
-    </div>
-  </div>
+  <div class="col-lg-6"><div class="card app-card referrals-elevated"><div class="card-header bg-white fw-bold">Top 3 vendedores</div><div class="table-responsive"><table class="table mb-0 align-middle"><thead><tr><th>#</th><th>Vendedor</th><th>Ventas</th></tr></thead><tbody>{% for row in ranking %}<tr><td>{{ loop.index }}</td><td>{{ row[0].user.username if row[0] and row[0].user else 'N/A' }}</td><td>${{ '%.2f'|format(row[1] or 0) }}</td></tr>{% else %}<tr><td colspan="3" class="text-center text-muted">Sin datos</td></tr>{% endfor %}</tbody></table></div></div></div>
+  <div class="col-lg-6"><div class="card app-card card-body referrals-elevated"><h2 class="h6 text-uppercase text-muted mb-2">Mejor vendedor</h2>{% if stats.best_seller %}<p class="mb-1 fs-5 fw-semibold">{{ stats.best_seller[0].user.username if stats.best_seller[0] and stats.best_seller[0].user else 'N/A' }}</p><p class="mb-0 text-muted">Ventas acumuladas: ${{ '%.2f'|format(stats.best_seller[1] or 0) }}</p>{% else %}<p class="text-muted mb-0">Sin ventas registradas.</p>{% endif %}</div></div>
 </div>
 
-  <div class="card app-card mb-4 referrals-elevated">
-    <div class="card-header d-flex justify-content-between align-items-center bg-white">
-      <span class="fw-bold">Control de comisiones por vendedor</span>
-      <small class="text-muted">Comisión aplicada a nuevas ventas referidas</small>
-    </div>
-    <div class="table-responsive">
-      <table class="table table-hover mb-0 align-middle">
-        <thead><tr><th>Vendedor</th><th>Email</th><th>Comisión actual</th><th style="width: 300px;">Ajustar %</th></tr></thead>
-        <tbody>
-        {% for seller in sellers %}
-          <tr>
-            <td>{{ seller.user.username if seller.user else 'N/A' }}</td>
-            <td>{{ seller.user.email if seller.user else '-' }}</td>
-            <td><span class="badge text-bg-primary">{{ '%.2f'|format((seller.commission_percent or 0) * 100) }}%</span></td>
-            <td>
-              <form class="d-flex gap-2" method="post" action="{{ url_for('referrals.admin_referrals_update_commission', seller_id=seller.id) }}">
-                <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
-                <input class="form-control" type="number" name="commission_percent" min="0" max="100" step="0.01" value="{{ '%.2f'|format((seller.commission_percent or 0) * 100) }}" aria-label="Porcentaje de comision">
-                <button class="btn btn-primary" type="submit">Guardar</button>
-              </form>
-            </td>
-          </tr>
-        {% else %}
-          <tr><td colspan="4" class="text-center text-muted py-4">No hay vendedores registrados.</td></tr>
-        {% endfor %}
-        </tbody>
-      </table>
-    </div>
-  </div>
+  <div class="card app-card mb-4 referrals-elevated"><div class="card-header d-flex justify-content-between align-items-center bg-white"><span class="fw-bold">Control de comisiones por vendedor</span><small class="text-muted">Comisión aplicada a nuevas ventas referidas</small></div><div class="table-responsive"><table class="table table-hover mb-0 align-middle"><thead><tr><th>Vendedor</th><th>Email</th><th>Comisión actual</th><th style="width: 300px;">Ajustar %</th></tr></thead><tbody>{% for seller in sellers %}<tr><td>{{ seller.user.username if seller.user else 'N/A' }}</td><td>{{ seller.user.email if seller.user else '-' }}</td><td><span class="badge text-bg-primary">{{ '%.2f'|format((seller.commission_percent or 0) * 100) }}%</span></td><td><form class="d-flex gap-2" method="post" action="{{ url_for('referrals.admin_referrals_update_commission', seller_id=seller.id) }}"><input type="hidden" name="csrf_token" value="{{ csrf_token() }}"><input class="form-control" type="number" name="commission_percent" min="0" max="100" step="0.01" value="{{ '%.2f'|format((seller.commission_percent or 0) * 100) }}" aria-label="Porcentaje de comision"><button class="btn btn-primary" type="submit">Guardar</button></form></td></tr>{% else %}<tr><td colspan="4" class="text-center text-muted py-4">No hay vendedores registrados.</td></tr>{% endfor %}</tbody></table></div></div>
 
-  <div class="card app-card referrals-elevated">
-    <div class="card-header d-flex justify-content-between align-items-center bg-white">
-      <span class="fw-bold">Últimas comisiones</span>
-      <a href="{{ url_for('referrals.admin_referrals_commissions') }}" class="btn btn-sm btn-outline-primary">Ver todas</a>
-    </div>
-    <div class="table-responsive">
-      <table class="table mb-0 align-middle">
-      <thead><tr><th>ID</th><th>Vendedor</th><th>Cliente</th><th>Venta</th><th>Comision</th><th>Estado</th><th>Fecha</th></tr></thead>
-      <tbody>
-      {% for row in commissions[:20] %}
-        <tr>
-          <td>{{ row.id }}</td>
-          <td>{{ row.seller.user.username if row.seller and row.seller.user else 'N/A' }}</td>
-          <td>{{ row.company.name if row.company else 'N/A' }}</td>
-          <td>${{ '%.2f'|format(row.sold_amount or 0) }}</td>
-          <td>${{ '%.2f'|format(row.commission_amount or 0) }}</td>
-          <td><span class="badge text-bg-{% if row.status == 'pagada' %}success{% elif row.status == 'disponible' %}warning{% elif row.status == 'anulada' %}danger{% else %}secondary{% endif %}">{{ row.status }}</span></td>
-          <td>{{ row.created_at.strftime('%Y-%m-%d') if row.created_at else '-' }}</td>
-        </tr>
-      {% else %}
-        <tr><td colspan="7" class="text-center text-muted">Aun no hay comisiones.</td></tr>
-      {% endfor %}
-      </tbody>
-      </table>
-    </div>
-  </div>
+  <div class="card app-card referrals-elevated"><div class="card-header d-flex justify-content-between align-items-center bg-white"><span class="fw-bold">Últimas comisiones</span><a href="{{ url_for('referrals.admin_referrals_commissions') }}" class="btn btn-sm btn-outline-primary">Ver todas</a></div><div class="table-responsive"><table class="table mb-0 align-middle"><thead><tr><th>ID</th><th>Vendedor</th><th>Cliente</th><th>Venta</th><th>Comision</th><th>Estado</th><th>Fecha</th></tr></thead><tbody>{% for row in commissions[:20] %}<tr><td>{{ row.id }}</td><td>{{ row.seller.user.username if row.seller and row.seller.user else 'N/A' }}</td><td>{{ row.company.name if row.company else 'N/A' }}</td><td>${{ '%.2f'|format(row.sold_amount or 0) }}</td><td>${{ '%.2f'|format(row.commission_amount or 0) }}</td><td><span class="badge text-bg-{% if row.status == 'pagada' %}success{% elif row.status == 'disponible' %}warning{% elif row.status == 'anulada' %}danger{% else %}secondary{% endif %}">{{ row.status }}</span></td><td>{{ row.created_at.strftime('%Y-%m-%d') if row.created_at else '-' }}</td></tr>{% else %}<tr><td colspan="7" class="text-center text-muted">Aun no hay comisiones.</td></tr>{% endfor %}</tbody></table></div></div>
 </div>
-
-{% block extra_css %}
-<style>
-  .referrals-admin-shell { max-width: 1320px; }
-  .referrals-admin-hero {
-    background:
-      radial-gradient(circle at 88% 18%, rgba(14, 165, 233, .20), transparent 36%),
-      linear-gradient(135deg, rgba(37, 99, 235, .18), rgba(16, 185, 129, .10));
-    border: 1px solid rgba(37, 99, 235, .24);
-  }
-  .referrals-kpi strong {
-    line-height: 1.15;
-  }
-  .referrals-elevated {
-    box-shadow: 0 16px 34px rgba(15, 23, 42, .12);
-  }
-  @media (max-width: 991.98px) {
-    .referrals-admin-hero .btn {
-      width: 100%;
-    }
-  }
-</style>
-{% endblock %}
+{% block extra_css %}<style>.referrals-admin-shell{max-width:1320px}.referrals-admin-hero{background:radial-gradient(circle at 88% 18%,rgba(14,165,233,.20),transparent 36%),linear-gradient(135deg,rgba(37,99,235,.18),rgba(16,185,129,.10));border:1px solid rgba(37,99,235,.24)}.referrals-kpi strong{line-height:1.15}.referrals-elevated{box-shadow:0 16px 34px rgba(15,23,42,.12)}@media(max-width:991.98px){.referrals-admin-hero .btn{width:100%}}</style>{% endblock %}
 {% endblock %}
