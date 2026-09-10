@@ -1,6 +1,6 @@
 name: Redesign AI plans page
 
-on:
+"on":
   push:
     branches: [main]
 
