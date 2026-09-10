@@ -24,27 +24,26 @@ jobs:
       - name: Install dependencies
         run: python -m pip install -r requirements.txt
 
-      - name: Repair deterministic test setup
+      - name: Normalize AI regression tests
         run: |
           python - <<'PY'
           from pathlib import Path
           import re
 
-          # Cap test must actually request one more tool call than the allowed
-          # maximum, forcing the answer-only synthesis branch.
+          # The runtime cap test must request one additional tool call so the
+          # answer-only synthesis branch is exercised. If it is already patched,
+          # leave it untouched.
           p = Path('tests/test_ai_agent_multitool_runtime.py')
           text = p.read_text()
-          text, changed = re.subn(
-              r'responses = \[_tool_call\("buscar_producto", f"call-\{index\}"\) for index in range\(MAX_TOOL_TURNS\)\]',
-              'responses = [_tool_call("buscar_producto", f"call-{index}") for index in range(MAX_TOOL_TURNS + 1)]',
-              text,
-              count=1,
-          )
-          if changed != 1:
-              raise SystemExit(f'multitool cap fixture patch count={changed}')
-          p.write_text(text)
+          desired = 'responses = [_tool_call("buscar_producto", f"call-{index}") for index in range(MAX_TOOL_TURNS + 1)]'
+          old_pattern = r'responses = \[_tool_call\("buscar_producto", f"call-\{index\}"\) for index in range\(MAX_TOOL_TURNS\)\]'
+          if desired not in text:
+              text, changed = re.subn(old_pattern, desired, text, count=1)
+              if changed != 1:
+                  raise SystemExit('multitool cap test is neither legacy nor patched')
+              p.write_text(text)
 
-          # Explicit AI cancellation test: isolate the provider interaction.
+          # Keep explicit AI cancellation hermetic: do not call Mercado Pago from CI.
           p = Path('tests/test_ai_subscription_separation.py')
           text = p.read_text()
           marker = 'def test_explicit_tenant_ai_cancel_does_not_modify_standard_subscription(subscription_app, monkeypatch):\n'
@@ -67,22 +66,30 @@ jobs:
               text = text[:start] + block + text[next_def:]
               p.write_text(text)
 
-          # WSGI routes must be registered before the first request in the suite.
+          # Smoke tests: initialize WSGI routes before the first request.
           p = Path('tests/test_smoke.py')
           text = p.read_text()
           if 'import wsgi  # noqa: F401\n' not in text:
               text = text.replace('import app as stock_app\n', 'import app as stock_app\nimport wsgi  # noqa: F401\n', 1)
-          # Remove only the late import inside the referral isolation test.
-          text = text.replace('        import wsgi  # noqa: F401\n', '', 1)
+          # Remove only the known late import used by the referral role test.
+          text = re.sub(
+              r'(?m)^\s{8}import wsgi  # noqa: F401\n',
+              '',
+              text,
+              count=1,
+          )
 
-          # Keep smoke-test APP_URL internally consistent.
+          # Smoke tests intentionally use an isolated URL for canonical/sitemap assertions.
           text = text.replace('APP_URL = stock_app.app.config["APP_URL"]', 'APP_URL = "http://test.local"', 1)
           fixture_marker = 'def clean_database():\n    stock_app.app.config["TESTING"] = True\n    stock_app.app.config["WTF_CSRF_ENABLED"] = False\n'
           if fixture_marker in text and 'stock_app.app.config["APP_URL"] = APP_URL' not in text:
               text = text.replace(fixture_marker, fixture_marker + '    stock_app.app.config["APP_URL"] = APP_URL\n', 1)
 
-          # Current production route for a payment receipt.
-          text = text.replace('/admin/company-settings/billing/payment/{payment_id}/pdf', '/admin/subscription/payments/{payment_id}/pdf')
+          # The current payment receipt route is under /admin/subscription/payments/.
+          text = text.replace(
+              '/admin/company-settings/billing/payment/{payment_id}/pdf',
+              '/admin/subscription/payments/{payment_id}/pdf',
+          )
           p.write_text(text)
           PY
 
