@@ -244,13 +244,42 @@ class GeminiProvider(AIProvider):
             return None
 
     @staticmethod
-    def _quota_retry_delay(exc: Exception) -> str | None:
+    def _quota_retry_delay(exc: Exception) -> float | None:
+        """Return a retry delay in seconds when the provider supplies one."""
+        import re
+
         message = str(exc)
-        match = re.search(r"Please retry in ([0-9]+(?:\.[0-9]+)?s)", message)
+        match = re.search(r"Please retry in ([0-9]+(?:\.[0-9]+)?)(ms|s)", message, re.IGNORECASE)
         if match:
-            return match.group(1)
+            value = float(match.group(1))
+            return value / 1000.0 if match.group(2).lower() == "ms" else value
         match = re.search(r"'retryDelay': '([^']+)'", message)
-        return match.group(1) if match else None
+        if match:
+            value = match.group(1).strip().lower()
+            unit_match = re.fullmatch(r"([0-9]+(?:\.[0-9]+)?)(ms|s)", value)
+            if unit_match:
+                numeric = float(unit_match.group(1))
+                return numeric / 1000.0 if unit_match.group(2) == "ms" else numeric
+        return None
+
+    @staticmethod
+    def _is_daily_quota_exhausted(exc: Exception) -> bool:
+        """Detect project/model daily quota exhaustion instead of treating it as transient."""
+        message = str(exc).lower()
+        return (
+            "perdayperprojectpermodel-freetier" in message
+            or "generate_content_free_tier_requests" in message
+            or "exceeded your current quota" in message
+        )
+
+    @staticmethod
+    def _format_retry_delay(delay: float | None) -> str | None:
+        if delay is None or delay <= 0:
+            return None
+        if delay < 1:
+            return "menos de 1 segundo"
+        seconds = max(1, round(delay))
+        return f"{seconds} segundo" + ("s" if seconds != 1 else "")
 
     def _generate_content_with_retry(self, *, model: str, contents, config):
         attempts = 2
@@ -260,9 +289,19 @@ class GeminiProvider(AIProvider):
                 return self.client.models._generate_content(model=model, contents=contents, config=config)
             except Exception as exc:
                 last_exc = exc
-                if attempt == 0 and self._api_error_code(exc) == 503:
+                api_error_code = self._api_error_code(exc)
+                if attempt == 0 and api_error_code == 503:
                     time.sleep(1.0)
                     continue
+                if (
+                    attempt == 0
+                    and api_error_code == 429
+                    and not self._is_daily_quota_exhausted(exc)
+                ):
+                    delay = self._quota_retry_delay(exc)
+                    if delay is not None and 0 < delay <= 2.0:
+                        time.sleep(delay)
+                        continue
                 raise
         raise last_exc or RuntimeError("Gemini no devolvió respuesta.")
 
@@ -282,10 +321,18 @@ class GeminiProvider(AIProvider):
                 raise AIProviderError("Gemini tardó demasiado en responder. Intentá nuevamente en unos segundos.", status_code=503) from exc
             api_error_code = self._api_error_code(exc)
             if api_error_code == 429:
-                retry_delay = self._quota_retry_delay(exc)
-                message = "El servicio de IA alcanzó temporalmente su límite de uso."
-                if retry_delay:
-                    message = f"{message} Podés intentar nuevamente en {retry_delay}."
+                if self._is_daily_quota_exhausted(exc):
+                    message = (
+                        "El servicio de IA alcanzó el límite de uso disponible para este proyecto. "
+                        "Intentá nuevamente más tarde."
+                    )
+                else:
+                    retry_delay = self._format_retry_delay(self._quota_retry_delay(exc))
+                    message = "El servicio de IA está temporalmente ocupado."
+                    if retry_delay:
+                        message = f"{message} Podés intentar nuevamente en {retry_delay}."
+                    else:
+                        message = f"{message} Intentá nuevamente en unos segundos."
                 raise AIProviderError(message, status_code=429) from exc
             if api_error_code in {503, 504}:
                 raise AIProviderError("El servicio de IA está temporalmente saturado. Intentá nuevamente en unos segundos.", status_code=503) from exc
