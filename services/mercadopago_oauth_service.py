@@ -66,18 +66,24 @@ class MercadoPagoOAuthService:
         return f"{app_url}/admin/mercado-pago/callback"
 
     def build_authorization_url(self, *, state: str, redirect_uri: str) -> str:
+        raw_scope = (os.environ.get("MP_OAUTH_SCOPE") or "offline_access").strip()
+        scopes = [scope for scope in raw_scope.split() if scope]
+        if "offline_access" not in scopes:
+            scopes.append("offline_access")
         params = {
             "client_id": self._client_id(),
             "response_type": "code",
             "platform_id": "mp",
             "state": state,
             "redirect_uri": redirect_uri,
+            "scope": " ".join(scopes),
         }
         authorization_url = f"{self.AUTH_URL}?{urlencode(params)}"
         self._logger().info(
-            "Mercado Pago OAuth authorization generated: client_id=%s redirect_uri=%s",
+            "Mercado Pago OAuth authorization generated: client_id=%s redirect_uri=%s scope=%s",
             params["client_id"],
             redirect_uri,
+            params["scope"],
         )
         return authorization_url
 
@@ -90,6 +96,32 @@ class MercadoPagoOAuthService:
         if "access_token" in lowered or "refresh_token" in lowered or "client_secret" in lowered:
             return "[redacted-sensitive-response]"
         return raw[:300]
+
+    @staticmethod
+    def _error_status(exc: Exception) -> int | None:
+        raw = str(exc or "")
+        marker = "Mercado Pago OAuth error "
+        if marker not in raw:
+            return None
+        tail = raw.split(marker, 1)[1]
+        digits = "".join(ch for ch in tail.split(":", 1)[0] if ch.isdigit())
+        return int(digits) if digits else None
+
+    @classmethod
+    def _is_transient_refresh_error(cls, exc: Exception) -> bool:
+        status = cls._error_status(exc)
+        if status is not None:
+            return status == 429 or status >= 500
+        return isinstance(exc, (requests.RequestException, TimeoutError, OSError))
+
+    @classmethod
+    def _stored_profile(cls, connection: MercadoPagoConnection) -> dict:
+        try:
+            payload = json.loads(connection.metadata_json or "{}")
+        except (TypeError, ValueError):
+            return {}
+        profile = payload.get("user_profile")
+        return profile if isinstance(profile, dict) else {}
 
     def _post_token(self, *, payload: dict[str, str]) -> dict:
         client_id = self._client_id()
@@ -117,7 +149,7 @@ class MercadoPagoOAuthService:
                 response.status_code,
                 self._safe_error_excerpt(response.text),
             )
-            raise RuntimeError(f"Mercado Pago OAuth error {response.status_code}: {response.text[:500]}")
+            raise RuntimeError(f"Mercado Pago OAuth error {response.status_code}: {self._safe_error_excerpt(response.text)}")
         token_payload = response.json()
         self._logger().info(
             "Mercado Pago OAuth token response received: http_status=%s keys=%s",
@@ -155,7 +187,7 @@ class MercadoPagoOAuthService:
                 response.status_code,
                 self._safe_error_excerpt(response.text),
             )
-            raise RuntimeError(f"Mercado Pago user profile error {response.status_code}: {response.text[:500]}")
+            raise RuntimeError(f"Mercado Pago user profile error {response.status_code}: {self._safe_error_excerpt(response.text)}")
         profile = response.json()
         self._logger().info(
             "Mercado Pago OAuth userinfo response received: http_status=%s keys=%s",
@@ -218,6 +250,8 @@ class MercadoPagoOAuthService:
             db.session.add(connection)
         now = utcnow()
         expires_in = int(token_payload.get("expires_in") or 0)
+        new_access_token = (token_payload.get("access_token") or "").strip()
+        new_refresh_token = (token_payload.get("refresh_token") or "").strip()
         connection.mp_user_id = str(profile.get("id") or connection.mp_user_id or "")
         connection.account_name = str(profile.get("first_name") or profile.get("nickname") or profile.get("username") or profile.get("id") or "").strip()[:160] or None
         connection.account_email = (profile.get("email") or connection.account_email or "").strip()[:160] or None
@@ -225,14 +259,20 @@ class MercadoPagoOAuthService:
         connection.status = "connected"
         connection.connected_at = connection.connected_at or now
         connection.last_synced_at = now
-        connection.token_expires_at = now + timedelta(seconds=expires_in) if expires_in else None
-        connection.access_token_encrypted = self.encrypt_value(token_payload.get("access_token"))
-        connection.refresh_token_encrypted = self.encrypt_value(token_payload.get("refresh_token"))
+        connection.token_expires_at = now + timedelta(seconds=expires_in) if expires_in else connection.token_expires_at
+        if new_access_token:
+            connection.access_token_encrypted = self.encrypt_value(new_access_token)
+        if new_refresh_token:
+            connection.refresh_token_encrypted = self.encrypt_value(new_refresh_token)
         connection.scope = (token_payload.get("scope") or connection.scope or "").strip()[:255] or None
-        connection.metadata_json = json.dumps({
-            "user_profile": profile,
-            "token_type": token_payload.get("token_type"),
-        }, ensure_ascii=False)
+        current_metadata = {}
+        try:
+            current_metadata = json.loads(connection.metadata_json or "{}")
+        except (TypeError, ValueError):
+            current_metadata = {}
+        current_metadata["user_profile"] = profile or current_metadata.get("user_profile") or {}
+        current_metadata["token_type"] = token_payload.get("token_type") or current_metadata.get("token_type")
+        connection.metadata_json = json.dumps(current_metadata, ensure_ascii=False)
         db.session.flush()
         return connection
 
@@ -249,10 +289,24 @@ class MercadoPagoOAuthService:
             connection.last_synced_at = now
             db.session.commit()
             raise RuntimeError("Mercado Pago requiere una nueva autorización")
+        previous_profile = self._stored_profile(connection)
         try:
             token_payload = self.refresh_tokens(refresh_token=refresh_token)
-            profile = self.fetch_user_profile(access_token=token_payload.get("access_token") or "")
+            access_token = str(token_payload.get("access_token") or "").strip()
+            if not access_token:
+                raise RuntimeError("Mercado Pago no devolvió un access token durante la renovación")
+            try:
+                profile = self.fetch_user_profile(access_token=access_token)
+            except Exception as profile_exc:
+                if self._is_transient_refresh_error(profile_exc):
+                    self._logger().warning("Mercado Pago OAuth profile refresh temporarily failed; keeping refreshed tokens")
+                    profile = previous_profile
+                else:
+                    raise
         except Exception as exc:
+            if self._is_transient_refresh_error(exc):
+                self._logger().warning("Mercado Pago OAuth refresh temporarily failed; preserving connection status: %s", exc)
+                raise RuntimeError("Mercado Pago no pudo renovar temporalmente la autorización. Intentá nuevamente en unos minutos.") from exc
             connection.status = "disconnected"
             connection.access_token_encrypted = None
             connection.refresh_token_encrypted = None
