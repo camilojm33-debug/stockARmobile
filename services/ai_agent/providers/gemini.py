@@ -151,7 +151,7 @@ class GeminiProvider(AIProvider):
                             arguments = {}
                     function_names[call_id] = name
                     part: Dict[str, Any] = {"function_call": {"name": name, "args": arguments}}
-                    signature = self._thought_signatures.get(name)
+                    signature = self._thought_signatures.get(call_id) or self._thought_signatures.get(name)
                     if signature is not None:
                         part["thought_signature"] = signature
                     parts.append(part)
@@ -185,30 +185,42 @@ class GeminiProvider(AIProvider):
         return types.GenerateContentConfig(**kwargs)
 
     @classmethod
-    def _tool_call(cls, response: Any) -> Dict[str, Any] | None:
+    def _tool_calls(cls, response: Any) -> list[Dict[str, Any]]:
+        """Extract every function call from the first Gemini candidate."""
         candidates = cls._value(response, "candidates", []) or []
         content = cls._value(candidates[0], "content") if candidates else None
-        for part in cls._value(content, "parts", []) or []:
+        calls: list[Dict[str, Any]] = []
+        for index, part in enumerate(cls._value(content, "parts", []) or []):
             function_call = cls._value(part, "function_call")
             if function_call is None:
                 continue
             arguments = cls._value(function_call, "args", {}) or {}
             if not isinstance(arguments, dict):
-                arguments = dict(arguments)
-            return {"id": "gemini-call-1", "name": cls._value(function_call, "name"), "arguments": arguments}
-        return None
+                try:
+                    arguments = dict(arguments)
+                except (TypeError, ValueError):
+                    arguments = {}
+            name = cls._value(function_call, "name")
+            if not name:
+                continue
+            call_id = cls._value(part, "id") or cls._value(function_call, "id") or f"gemini-call-{index + 1}"
+            calls.append({"id": str(call_id), "name": str(name), "arguments": arguments})
+        return calls
 
     def _capture_thought_signatures(self, response: Any) -> None:
         candidates = self._value(response, "candidates", []) or []
         content = self._value(candidates[0], "content") if candidates else None
-        for part in self._value(content, "parts", []) or []:
+        for index, part in enumerate(self._value(content, "parts", []) or []):
             function_call = self._value(part, "function_call")
             if function_call is None:
                 continue
             signature = self._value(part, "thought_signature")
             name = self._value(function_call, "name")
-            if signature is not None and name:
-                self._thought_signatures[name] = signature
+            call_id = self._value(part, "id") or self._value(function_call, "id") or f"gemini-call-{index + 1}"
+            if signature is not None:
+                self._thought_signatures[str(call_id)] = signature
+                if name:
+                    self._thought_signatures[str(name)] = signature
 
     @classmethod
     def _usage(cls, response: Any) -> Dict[str, Any]:
@@ -279,7 +291,14 @@ class GeminiProvider(AIProvider):
                 raise AIProviderError("El servicio de IA está temporalmente saturado. Intentá nuevamente en unos segundos.", status_code=503) from exc
             raise AIProviderError("El servicio de IA no pudo procesar la solicitud.", status_code=503) from exc
         self._capture_thought_signatures(response)
-        return {"content": str(self._value(response, "text", "") or ""), "tool_call": self._tool_call(response), "usage": self._usage(response), "model": effective_model}
+        calls = self._tool_calls(response)
+        return {
+            "content": str(self._value(response, "text", "") or ""),
+            "tool_call": calls[0] if calls else None,
+            "tool_calls": calls,
+            "usage": self._usage(response),
+            "model": effective_model,
+        }
 
     def generate_invoice(self, *, file_path, mime_type: str, prompt: str, schema: Dict[str, Any], model: str | None = None) -> Dict[str, Any]:
         effective_model = model or os.getenv("GEMINI_INVOICE_MODEL") or self.model

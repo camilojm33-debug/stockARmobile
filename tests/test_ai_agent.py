@@ -1,4 +1,5 @@
-﻿import json
+﻿import copy
+import json
 import os
 
 os.environ["DATABASE_URL"] = "sqlite:///:memory:"
@@ -270,7 +271,7 @@ def test_orchestrator_integration_flow_with_fake_provider(ai_database, monkeypat
             self.calls = []
 
         def generate(self, **payload):
-            self.calls.append(payload)
+            self.calls.append(copy.deepcopy(payload))
 
             if len(self.calls) == 1:
                 tools = payload.get("tools") or []

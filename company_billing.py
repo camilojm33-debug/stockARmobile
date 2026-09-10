@@ -1042,6 +1042,12 @@ def subscription_invoice_pdf(invoice_id):
     return _pdf_from_lines("Factura SaaS - StockArmobile", lines, f"factura_{invoice.id}.pdf")
 
 
+@bp.route("/company-settings/billing/payment/<int:payment_id>/pdf")
+@company_member_required
+def legacy_subscription_payment_pdf(payment_id):
+    return subscription_payment_pdf(payment_id)
+
+
 @bp.route("/subscription/payments/<int:payment_id>/pdf")
 @company_member_required
 def subscription_payment_pdf(payment_id):
@@ -1267,8 +1273,6 @@ def cancel_ai_subscription():
 
     preapproval_id = str(ai_status.get("mercadopago_preapproval_id") or "").strip()
     try:
-        if preapproval_id and ai_status.get("origin") == "MERCADO_PAGO":
-            MercadoPagoService().cancel_preapproval(preapproval_id)
         AISubscriptionService.cancel(company, admin_user_id=current_user.id, reason="tenant_explicit_cancel")
         db.session.commit()
     except Exception as exc:

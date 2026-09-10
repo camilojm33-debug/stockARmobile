@@ -4,12 +4,6 @@ from sqlalchemy import text
 
 from app import app, AuditLog, Invoice, Payment, PaymentHistory, Subscription, SubscriptionCommandExecution, db
 from services.subscription_service import SubscriptionService
-from services.referral_network_service import network_bp, install_commission_hook
-
-if "referral_network.dashboard" not in app.view_functions:
-    app.register_blueprint(network_bp)
-install_commission_hook()
-
 
 def stockarmobile_health():
     """Lightweight liveness/readiness endpoint for Render and uptime checks."""
