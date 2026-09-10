@@ -158,7 +158,7 @@ def index():
     else:
         whatsapp_state = {"label": "Desactivado", "tone": "danger"}
     return render_template(
-        "ai_agent/admin.html",
+        "ai_agent/admin_v2.html",
         agents=agents,
         configs=configs,
         prefs=prefs,
@@ -231,7 +231,6 @@ def save():
     )
 
     existing_whatsapp = get_whatsapp_connection(company)
-
     configure_whatsapp_connection(
         company,
         phone_number_id=(request.form.get("phone_number_id") or existing_whatsapp.get("phone_number_id") or "").strip(),
