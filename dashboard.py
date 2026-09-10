@@ -245,7 +245,7 @@ def ai_agent_chat():
             conversation.id,
             agent_key,
         )
-        return jsonify({"success": False, "error": str(exc)}), exc.status_code
+        return jsonify({"success": False, "error": "El servicio de IA no está disponible en este momento. Intentá nuevamente más tarde."}), exc.status_code
     except Exception:
         db.session.rollback()
         current_app.logger.exception(

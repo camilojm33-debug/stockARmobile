@@ -271,13 +271,13 @@ class GeminiProvider(AIProvider):
             api_error_code = self._api_error_code(exc)
             if api_error_code == 429:
                 retry_delay = self._quota_retry_delay(exc)
-                message = "Se agotó la cuota disponible de Gemini para este modelo. Revisá el plan o la facturación de la API de Gemini."
+                message = "El servicio de IA alcanzó temporalmente su límite de uso."
                 if retry_delay:
                     message = f"{message} Podés intentar nuevamente en {retry_delay}."
                 raise AIProviderError(message, status_code=429) from exc
             if api_error_code in {503, 504}:
-                raise AIProviderError("Gemini está saturado temporalmente. Intentá nuevamente en unos segundos.", status_code=503) from exc
-            raise AIProviderError("Gemini no pudo procesar la solicitud.", status_code=503) from exc
+                raise AIProviderError("El servicio de IA está temporalmente saturado. Intentá nuevamente en unos segundos.", status_code=503) from exc
+            raise AIProviderError("El servicio de IA no pudo procesar la solicitud.", status_code=503) from exc
         self._capture_thought_signatures(response)
         return {"content": str(self._value(response, "text", "") or ""), "tool_call": self._tool_call(response), "usage": self._usage(response), "model": effective_model}
 
