@@ -1,0 +1,1 @@
+StockArMobile treats Gemini 429 quota failures as safe, expected provider errors: transient 429s may be retried once with a bounded delay; daily project quota exhaustion is not retried immediately; customer-facing responses never expose provider tracebacks or raw quota details.
