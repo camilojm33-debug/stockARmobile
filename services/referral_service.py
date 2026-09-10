@@ -112,7 +112,7 @@ class ReferralService:
 
     @classmethod
     def create_commission_for_sale(cls, db_session, *, company_id: int, subscription=None, payment=None, plan=None):
-        from app import ReferralAttribution, ReferralCommission
+        from app import Payment, ReferralAttribution, ReferralCommission
 
         attribution = ReferralAttribution.query.filter_by(company_id=company_id).first()
         if attribution is None:
@@ -122,9 +122,24 @@ class ReferralService:
         if sold_amount <= 0:
             return None
 
+        # A Mercado Pago retry can arrive concurrently. Lock the canonical payment row
+        # so only one transaction can create the commission associated with it.
+        locked_payment = payment
+        if payment is not None and getattr(payment, "id", None):
+            locked_payment = (
+                db_session.query(Payment)
+                .filter(Payment.id == payment.id)
+                .with_for_update()
+                .first()
+                or payment
+            )
+            existing = ReferralCommission.query.filter_by(payment_id=locked_payment.id).first()
+            if existing is not None:
+                return existing
+
         existing = None
-        if payment is not None:
-            existing = ReferralCommission.query.filter_by(payment_id=payment.id).first()
+        if locked_payment is not None:
+            existing = ReferralCommission.query.filter_by(payment_id=locked_payment.id).first()
         if existing is not None:
             return existing
 
@@ -138,7 +153,7 @@ class ReferralService:
             attribution_id=attribution.id,
             company_id=company_id,
             subscription_id=getattr(subscription, "id", None),
-            payment_id=getattr(payment, "id", None),
+            payment_id=getattr(locked_payment, "id", None),
             plan_id=getattr(plan, "id", None),
             sold_amount=sold_amount,
             commission_percent=seller_percent,
