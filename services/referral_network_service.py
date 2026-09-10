@@ -2,7 +2,8 @@
 from __future__ import annotations
 from datetime import datetime
 from decimal import Decimal
-from flask import Blueprint, current_user, flash, redirect, render_template, request, url_for
+from flask import Blueprint, flash, redirect, render_template, request, url_for
+from flask_login import current_user
 from sqlalchemy import event
 from sqlalchemy.orm import Session
 from app import db, superadmin_required
