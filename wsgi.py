@@ -6,10 +6,10 @@ from app import app, AuditLog, Invoice, Payment, PaymentHistory, Subscription, S
 from services.subscription_service import SubscriptionService
 from services.referral_network_service import network_bp, install_commission_hook
 
-app.register_blueprint(network_bp)
+if "referral_network.dashboard" not in app.view_functions:
+    app.register_blueprint(network_bp)
 install_commission_hook()
 
-@app.route("/health", methods=["GET"])
 def health():
     """Lightweight liveness/readiness endpoint for Render and uptime checks."""
     try:
@@ -20,17 +20,8 @@ def health():
         app.logger.exception("Health check database probe failed")
         return jsonify({"status": "error"}), 503
 
-@app.route("/health", methods=["GET"])
-def health():
-    """Lightweight liveness/readiness endpoint for Render and uptime checks."""
-    try:
-        db.session.execute(text("SELECT 1"))
-        return jsonify({"status": "ok"}), 200
-    except Exception:
-        db.session.rollback()
-        app.logger.exception("Health check database probe failed")
-        return jsonify({"status": "error"}), 503
-
+if "health" not in app.view_functions:
+    app.add_url_rule("/health", endpoint="health", view_func=health, methods=["GET"])
 
 @app.route("/superadmin/subscriptions/<int:subscription_id>/delete-historical", methods=["POST"])
 @login_required
