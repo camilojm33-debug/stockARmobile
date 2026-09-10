@@ -137,7 +137,7 @@ def network_snapshot():
     from app import ReferralSeller
     sellers = ReferralSeller.query.order_by(ReferralSeller.active.desc(), ReferralSeller.id.asc()).all()
     links = ReferralNetworkLink.query.filter_by(active=True).all()
-    rows = ReferralNetworkCommission.query.all()
+    rows = ReferralNetworkCommission.query.order_by(ReferralNetworkCommission.created_at.desc()).all()
     pending = Decimal("0.00")
     paid = Decimal("0.00")
     for row in rows:
@@ -146,10 +146,10 @@ def network_snapshot():
             paid += _money(row.commission_amount)
         elif source_status in {"pendiente", "disponible"} and row.payout_id is None:
             pending += _money(row.commission_amount)
-    return {"sellers": sellers, "links": links, "pending": pending, "paid": paid, "total_network_commissions": len(rows)}
+    return {"sellers": sellers, "links": links, "network_commissions": rows, "pending": pending, "paid": paid, "total_network_commissions": len(rows)}
 
 def register_network_payout(db_session, *, parent_seller_id, commission_ids, processed_by_user_id, transfer_date, payment_method=None, receipt=None, transfer_number=None, observations=None):
-    rows = (ReferralNetworkCommission.query.filter(ReferralNetworkCommission.id.in_(commission_ids), ReferralNetworkCommission.parent_seller_id == parent_seller_id, ReferralNetworkCommission.payout_id.is_(None)).all())
+    rows = ReferralNetworkCommission.query.filter(ReferralNetworkCommission.id.in_(commission_ids), ReferralNetworkCommission.parent_seller_id == parent_seller_id, ReferralNetworkCommission.payout_id.is_(None)).all()
     eligible = [row for row in rows if ((row.source_commission.status if row.source_commission else row.status) or row.status) == "disponible"]
     total = sum((_money(row.commission_amount) for row in eligible), Decimal("0.00"))
     if not eligible or total <= 0:
