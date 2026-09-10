@@ -1,62 +1,159 @@
 {% extends "base_master.html" %}
-{% block title %}Agentes IA - StockARmobile{% endblock %}
+{% block title %}Configuración de Agentes IA - StockArmobile{% endblock %}
 {% block extra_css %}
 <style>
-  .ai-agent-page { max-width: 1180px; }
-  .ai-status-card { border-left: 4px solid var(--app-primary); }
-  .ai-status-card.warning { border-left-color: #d97706; }.ai-status-card.danger { border-left-color: #dc2626; }
-  .ai-status-label { font-size: .72rem; font-weight: 800; letter-spacing: .08em; text-transform: uppercase; color: var(--app-muted); }
-  .ai-status-value { margin-top: .35rem; font-size: 1.15rem; font-weight: 800; overflow-wrap: anywhere; }
-  .ai-state { display: inline-flex; align-items: center; gap: .35rem; font-size: .78rem; font-weight: 700; }
-  .ai-state::before { content: ""; width: .55rem; height: .55rem; border-radius: 50%; background: currentColor; }
-  .ai-state.success { color: #15803d; }.ai-state.warning { color: #b45309; }.ai-state.danger { color: #b91c1c; }
-  .agent-card-header { display: flex; align-items: flex-start; justify-content: space-between; gap: 1rem; }
-  .agent-capabilities { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: .45rem .75rem; margin: 1rem 0; padding: .85rem 0; border-top: 1px solid var(--app-line); border-bottom: 1px solid var(--app-line); }
-  .agent-capability { display: flex; align-items: center; gap: .45rem; color: var(--app-muted); font-size: .86rem; }.agent-capability i { color: #15803d; }
-  .agent-config { border: 1px solid var(--app-line); border-radius: 8px; background: var(--app-panel-soft); }.agent-config summary { cursor: pointer; padding: .75rem .9rem; color: var(--app-primary-deep); font-weight: 700; }.agent-config-body { padding: .25rem .9rem .9rem; }
-  @media (min-width: 769px) { .agent-config summary { display: none; }.agent-config { border: 0; background: transparent; }.agent-config-body, .agent-config:not([open]) .agent-config-body { display: block; padding: 0; } }
-  @media (max-width: 768px) { .agent-card-header { flex-direction: column; }.agent-capabilities { grid-template-columns: repeat(2, minmax(0, 1fr)); }.ai-agent-page .btn { min-height: 44px; } }
+  .ai-admin-page { max-width: 1180px; }
+  .ai-admin-hero { position: relative; overflow: hidden; border: 1px solid var(--app-line); border-left: 4px solid var(--app-primary); background: linear-gradient(135deg, rgba(37,99,235,.07), rgba(79,70,229,.025)); }
+  .ai-admin-hero::after { content:""; position:absolute; width:260px; height:260px; border-radius:50%; right:-90px; bottom:-130px; background:rgba(37,99,235,.07); }
+  .ai-hero-copy { position:relative; z-index:1; max-width:780px; }
+  .ai-hero-art { position:relative; z-index:1; width:150px; height:150px; display:grid; place-items:center; }
+  .ai-hero-orb { width:120px; height:120px; border-radius:32px; transform:rotate(-7deg); background:linear-gradient(145deg,#2563eb,#4f46e5); box-shadow:0 18px 38px rgba(37,99,235,.22); display:grid; place-items:center; }
+  .ai-hero-orb span { width:88px; height:88px; border-radius:26px; transform:rotate(7deg); background:#fff; color:#2563eb; display:grid; place-items:center; }
+  .ai-hero-orb i { font-size:2.8rem; }
+  .ai-kicker { font-size:.72rem; font-weight:900; text-transform:uppercase; letter-spacing:.09em; color:var(--app-primary); }
+  .ai-summary-card { border:1px solid var(--app-line); border-radius:16px; background:var(--app-panel-soft); height:100%; }
+  .ai-summary-icon { width:40px; height:40px; border-radius:12px; display:grid; place-items:center; background:#eef4ff; color:#2563eb; }
+  .ai-summary-label { font-size:.72rem; font-weight:800; letter-spacing:.07em; text-transform:uppercase; color:var(--app-muted); }
+  .ai-summary-value { font-size:1.2rem; font-weight:900; margin-top:.15rem; }
+  .ai-pill { display:inline-flex; align-items:center; gap:.35rem; border:1px solid var(--app-line); background:#fff; border-radius:999px; padding:.34rem .65rem; font-size:.78rem; color:var(--app-muted); }
+  .ai-section { border:1px solid var(--app-line); border-radius:16px; background:var(--app-panel); overflow:hidden; }
+  .ai-section-head { padding:1.05rem 1.15rem; border-bottom:1px solid var(--app-line); display:flex; justify-content:space-between; align-items:flex-start; gap:1rem; }
+  .ai-section-body { padding:1.15rem; }
+  .ai-section-title { font-size:1.05rem; font-weight:900; }
+  .ai-section-subtitle { font-size:.84rem; color:var(--app-muted); margin-top:.2rem; }
+  .ai-note { border:1px solid rgba(37,99,235,.14); border-radius:13px; background:rgba(37,99,235,.045); padding:.8rem .9rem; color:var(--app-muted); font-size:.84rem; }
+  .ai-switch-row { display:flex; justify-content:space-between; gap:1rem; align-items:center; padding:1rem; border:1px solid var(--app-line); border-radius:14px; background:var(--app-panel-soft); }
+  .ai-capabilities { display:grid; grid-template-columns:repeat(3,minmax(0,1fr)); gap:.55rem; }
+  .ai-capability { display:flex; gap:.45rem; align-items:flex-start; border:1px solid var(--app-line); border-radius:12px; padding:.72rem .75rem; background:#fff; font-size:.83rem; color:var(--app-muted); }
+  .ai-capability i { color:#15803d; margin-top:.08rem; }
+  .ai-control-grid { display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:1rem; }
+  .ai-control-card { border:1px solid var(--app-line); border-radius:14px; padding:1rem; background:var(--app-panel-soft); }
+  .ai-control-card h3 { font-size:.95rem; font-weight:900; margin:0 0 .7rem; }
+  .ai-control-card small { color:var(--app-muted); }
+  .ai-advanced { border:1px solid var(--app-line); border-radius:14px; background:var(--app-panel-soft); }
+  .ai-advanced summary { cursor:pointer; padding:.85rem 1rem; font-weight:800; list-style:none; display:flex; justify-content:space-between; gap:1rem; }
+  .ai-advanced summary::-webkit-details-marker { display:none; }
+  .ai-advanced summary::after { content:'+'; font-size:1.2rem; color:var(--app-muted); }
+  .ai-advanced[open] summary::after { content:'−'; }
+  .ai-advanced-body { padding:0 1rem 1rem; }
+  .ai-permission-card { border:1px solid var(--app-line); border-radius:14px; padding:1rem; background:linear-gradient(135deg,#fbfdff,#fff); }
+  .ai-permission-step { display:flex; gap:.7rem; align-items:flex-start; }
+  .ai-permission-number { width:28px; height:28px; border-radius:50%; display:grid; place-items:center; flex:0 0 auto; background:#eef4ff; color:#2563eb; font-weight:900; font-size:.8rem; }
+  .ai-channel-card { border:1px dashed var(--app-line); border-radius:14px; padding:1rem; background:var(--app-panel-soft); }
+  .ai-table-wrap { overflow:auto; }
+  .ai-table-wrap table { min-width:760px; }
+  .ai-save-bar { position:sticky; bottom:12px; z-index:20; display:flex; justify-content:space-between; gap:1rem; align-items:center; padding:.8rem 1rem; margin-top:1rem; border:1px solid var(--app-line); border-radius:16px; background:rgba(255,255,255,.96); box-shadow:0 12px 35px rgba(15,23,42,.12); backdrop-filter:blur(8px); }
+  @media (max-width: 900px) { .ai-capabilities { grid-template-columns:repeat(2,minmax(0,1fr)); } .ai-control-grid { grid-template-columns:1fr; } }
+  @media (max-width: 700px) {
+    .ai-admin-page { max-width:none; }
+    .ai-hero-art { width:110px; height:110px; }
+    .ai-hero-orb { width:92px; height:92px; border-radius:25px; }
+    .ai-hero-orb span { width:68px; height:68px; border-radius:20px; }
+    .ai-hero-orb i { font-size:2.15rem; }
+    .ai-capabilities { grid-template-columns:1fr; }
+    .ai-section-head { flex-direction:column; }
+    .ai-switch-row { align-items:flex-start; flex-direction:column; }
+    .ai-save-bar { position:static; flex-direction:column; align-items:stretch; }
+    .ai-save-bar .btn { width:100%; }
+  }
 </style>
 {% endblock %}
 {% block content %}
-<div class="app-shell ai-agent-page">
-  <div class="d-flex flex-wrap justify-content-between align-items-start gap-3 mb-4">
-    <div><span class="page-kicker"><i class="bi bi-robot"></i> Inteligencia artificial</span><h1 class="h2 fw-bold mb-1">Agentes IA</h1><p class="text-muted mb-0">Controlá el Vendedor 24 hs y el Asistente empresarial desde un solo lugar.</p></div>
-    <a href="{{ url_for('dashboard.index') }}" class="btn btn-outline-secondary"><i class="bi bi-arrow-left me-1"></i>Volver al panel</a>
-  </div>
+<div class="app-shell ai-admin-page">
+  <section class="card app-card ai-admin-hero mb-4">
+    <div class="card-body p-4 p-lg-5 d-flex flex-wrap justify-content-between align-items-center gap-4">
+      <div class="ai-hero-copy">
+        <div class="ai-kicker mb-2"><i class="bi bi-robot me-1"></i> Administración de IA</div>
+        <h1 class="h2 fw-bold mb-2">Configurá cómo trabaja tu equipo inteligente</h1>
+        <p class="lead text-muted mb-3">Personalizá el comportamiento de tus agentes, sus horarios, permisos y canales desde un solo lugar.</p>
+        <div class="d-flex flex-wrap gap-2">
+          <a href="{{ url_for('dashboard.index') }}" class="btn btn-outline-secondary"><i class="bi bi-arrow-left me-1"></i>Volver al panel</a>
+          <a href="{{ url_for('company_billing.company_settings', panel='employees') }}" class="btn btn-outline-primary"><i class="bi bi-people me-1"></i>Permisos de empleados</a>
+        </div>
+      </div>
+      <div class="ai-hero-art" aria-hidden="true"><div class="ai-hero-orb"><span><i class="bi bi-stars"></i></span></div></div>
+    </div>
+  </section>
 
   <div class="row g-3 mb-4">
-    <div class="col-md-4"><div class="card app-card ai-status-card h-100"><div class="card-body"><div class="ai-status-label">Inteligencia artificial</div><div class="ai-status-value">{{ 'Activa' if ai_enabled else 'Desactivada' }}</div><div class="ai-state {{ 'success' if ai_enabled else 'danger' }} mt-2">{{ 'Lista para trabajar' if ai_enabled else 'Desactivada por la empresa' }}</div></div></div></div>
-    <div class="col-md-4"><div class="card app-card ai-status-card h-100"><div class="card-body"><div class="ai-status-label">Plan IA</div><div class="ai-status-value">{% if prefs.ai_agent.plan_code %}{% for plan in ai_plans %}{% if plan.code == prefs.ai_agent.plan_code %}{{ plan.name }}{% endif %}{% endfor %}{% else %}Sin plan IA{% endif %}</div><div class="small text-muted mt-2">{{ 'Servicio activo para tu comercio.' if prefs.ai_agent.plan_code else 'El plan lo administra Super Admin.' }}</div></div></div></div>
-    <div class="col-md-4"><div class="card app-card ai-status-card {{ whatsapp_state.tone }} h-100"><div class="card-body"><div class="ai-status-label">Canal de atención</div><div class="ai-status-value">{{ whatsapp_state.label }}</div><div class="small text-muted mt-2">Atención integrada para tus clientes.</div></div></div></div>
+    <div class="col-md-4"><div class="ai-summary-card p-3"><div class="ai-summary-icon mb-2"><i class="bi bi-shield-check"></i></div><div class="ai-summary-label">Servicio</div><div class="ai-summary-value">{{ 'Activo' if ai_enabled else 'Pausado' }}</div><div class="small text-muted mt-1">{{ 'Tus agentes están listos para trabajar.' if ai_enabled else 'Podés reactivarlo sin perder la configuración.' }}</div></div></div>
+    <div class="col-md-4"><div class="ai-summary-card p-3"><div class="ai-summary-icon mb-2"><i class="bi bi-stars"></i></div><div class="ai-summary-label">Plan contratado</div><div class="ai-summary-value">{% if prefs.ai_agent.plan_code %}{% for plan in ai_plans %}{% if plan.code == prefs.ai_agent.plan_code %}{{ plan.name }}{% endif %}{% endfor %}{% else %}Sin plan IA{% endif %}</div><div class="small text-muted mt-1">Las capacidades dependen de tu plan.</div></div></div>
+    <div class="col-md-4"><div class="ai-summary-card p-3"><div class="ai-summary-icon mb-2"><i class="bi bi-chat-dots"></i></div><div class="ai-summary-label">Canales</div><div class="ai-summary-value">{{ whatsapp_state.label }}</div><div class="small text-muted mt-1">Configurá los canales de atención cuando quieras.</div></div></div>
   </div>
-<!-- AI_BRANDING_FINAL -->
-
 
   <form method="post" action="{{ url_for('ai_admin.save') }}">
     <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
-    <div class="card app-card mb-3"><div class="card-body">
-      <div class="d-flex justify-content-between align-items-center mb-3"><div><h2 class="h5 fw-bold mb-1">Control general</h2><p class="text-muted small mb-0">Podés apagar todo el funcionamiento IA sin borrar la configuración.</p></div><label class="form-check form-switch fs-5"><input class="form-check-input" type="checkbox" name="ai_enabled" value="1" {% if prefs.ai_agent.enabled|default(true) %}checked{% endif %}><span class="ms-2 small fw-bold">IA activa</span></label></div>
-      <div class="row g-3"><div class="col-md-6"><label class="form-label fw-semibold">Plan IA asignado</label><div class="form-control-plaintext fw-semibold">{% if prefs.ai_agent.plan_code %}{% for plan in ai_plans %}{% if plan.code == prefs.ai_agent.plan_code %}{{ plan.name }} · {{ plan.price }} · {{ plan.limit }} interacciones{% if plan.invoice_processing %} · Facturas IA{% endif %}{% endif %}{% endfor %}{% else %}Sin plan IA asignado{% endif %}</div><div class="form-text">El plan IA lo administra exclusivamente Super Admin. Contactá a soporte para cambiarlo.</div></div></div>
-    </div></div>
 
-    <div class="card app-card mb-3"><div class="card-body"><h2 class="h5 fw-bold mb-1">Personalidad y comportamiento del Vendedor</h2><p class="text-muted small mb-3">Preferencias listas para el runtime del agente y futuras integraciones de canales.</p><div class="row g-3"><div class="col-md-4"><label class="form-label fw-semibold">Personalidad</label><select class="form-select" name="vendor_personality">{% for value, label in [('profesional', 'Profesional'), ('amigable', 'Amigable'), ('directo', 'Directo'), ('comercial', 'Comercial')] %}<option value="{{ value }}" {% if vendor_options.personality|default('amigable') == value %}selected{% endif %}>{{ label }}</option>{% endfor %}</select></div><div class="col-md-8"><label class="form-label fw-semibold">Nombre del agente</label><input class="form-control" name="vendor_agent_name" value="{{ vendor_options.agent_name|default('Vendedor IA') }}"></div>{% for key, label in [('can_recommend', 'Puede recomendar productos'), ('can_offer_alternatives', 'Puede ofrecer alternativas'), ('can_prepare_quotes', 'Puede preparar presupuestos'), ('can_take_orders', 'Puede tomar pedidos'), ('can_follow_up', 'Puede hacer seguimiento'), ('can_handoff', 'Puede derivar conversaciones')] %}<div class="col-md-4"><label class="form-check form-switch"><input class="form-check-input" type="checkbox" name="vendor_{{ key }}" value="1" {% if vendor_options[key]|default(true) %}checked{% endif %}><span class="form-check-label">{{ label }}</span></label></div>{% endfor %}<div class="col-md-6"><label class="form-label fw-semibold">Saludo inicial</label><textarea class="form-control" name="vendor_greeting" rows="2">{{ vendor_options.greeting|default('') }}</textarea></div><div class="col-md-6"><label class="form-label fw-semibold">Horarios</label><input class="form-control" name="vendor_schedule" value="{{ vendor_options.schedule|default('') }}" placeholder="Ej.: lunes a viernes, 9 a 18 h"></div><div class="col-md-6"><label class="form-label fw-semibold">Mensaje fuera de horario</label><textarea class="form-control" name="vendor_out_of_hours_message" rows="2">{{ vendor_options.out_of_hours_message|default('') }}</textarea></div><div class="col-md-6"><label class="form-label fw-semibold">Información adicional del comercio</label><textarea class="form-control" name="vendor_business_information" rows="2">{{ vendor_options.business_information|default('') }}</textarea></div></div></div></div>
+    <section class="ai-section mb-3">
+      <div class="ai-section-head"><div><div class="ai-section-title"><i class="bi bi-power me-2 text-primary"></i>Estado general</div><div class="ai-section-subtitle">Activá o pausá la inteligencia artificial sin borrar su configuración.</div></div><span class="ai-pill"><i class="bi bi-lock"></i> Solo administrador</span></div>
+      <div class="ai-section-body">
+        <div class="ai-switch-row mb-3"><div><div class="fw-bold">Inteligencia artificial</div><div class="small text-muted">Al pausarla, los agentes dejan de atender pero conservan sus preferencias.</div></div><label class="form-check form-switch fs-5 mb-0"><input class="form-check-input" type="checkbox" name="ai_enabled" value="1" {% if prefs.ai_agent.enabled|default(true) %}checked{% endif %}><span class="ms-2 small fw-bold">{{ 'Activa' if ai_enabled else 'Pausada' }}</span></label></div>
+        <div class="ai-note"><i class="bi bi-info-circle me-1"></i>El plan IA lo administra Super Admin. Desde esta pantalla podés configurar el funcionamiento de los agentes que ya tenés habilitados.</div>
+      </div>
+    </section>
 
-    {% for name, prefix, label, description in [("Vendedor 24 hs", "vendor", "Vendedor 24 hs", "Atiende clientes por WhatsApp, consulta productos, arma pedidos y deriva al pago."), ("Asistente empresarial", "business", "Asistente empresarial", "Consulta ventas, stock, clientes y métricas reales del negocio.")] %}
-    {% set agent=agents[name] %}{% set config=configs[name] %}{% set state=agent_states[name] %}
-    <div class="card app-card mb-3"><div class="card-body">
-      <div class="agent-card-header"><div><h2 class="h5 fw-bold mb-1"><i class="bi bi-robot me-2"></i>{{ label }}</h2><p class="text-muted small mb-0">{{ description }}</p></div><div class="text-md-end"><div class="ai-state {{ state.tone }}">{{ state.label }}</div><label class="form-check form-switch mt-2"><input class="form-check-input" type="checkbox" name="{{ prefix }}_enabled" value="1" {% if agent.active %}checked{% endif %}><span class="form-check-label fw-bold">Activar agente</span></label></div></div>
-      <div class="small fw-bold text-muted text-uppercase mt-3">Puede hacer</div>
-      <div class="agent-capabilities">{% if prefix == 'vendor' %}{% for capability in ['Consultar productos', 'Consultar precios y stock', 'Armar y revisar carritos', 'Quitar productos del carrito', 'Preparar pedidos', 'Generar presupuesto y pago'] %}<div class="agent-capability"><i class="bi bi-check2-circle"></i><span>{{ capability }}</span></div>{% endfor %}{% else %}{% for capability in ['Buscar productos', 'Consultar precios y stock', 'Buscar clientes', 'Resumir ventas por período', 'Detectar stock crítico'] %}<div class="agent-capability"><i class="bi bi-check2-circle"></i><span>{{ capability }}</span></div>{% endfor %}{% endif %}</div>
-      <details class="agent-config"><summary>Personalizar comportamiento</summary><div class="agent-config-body"><div class="row g-3"><div class="col-md-4"><label class="form-label fw-semibold">Idioma</label><input class="form-control" name="{{ prefix }}_language" value="{{ config.language or 'es-AR' }}"></div><div class="col-md-8"><label class="form-label fw-semibold">Instrucciones del comercio</label><textarea class="form-control" rows="4" name="{{ prefix }}_prompt">{{ config.system_prompt or '' }}</textarea></div></div></div></details>
-    </div></div>
-    {% endfor %}
+    <section class="ai-section mb-3">
+      <div class="ai-section-head"><div><div class="ai-section-title"><i class="bi bi-cart3 me-2 text-primary"></i>Vendedor IA 24/7</div><div class="ai-section-subtitle">Configurá cómo atiende a tus clientes y qué puede hacer en tu nombre.</div></div>{% set vendor_state = agent_states['Vendedor 24 hs'] %}<span class="ai-state {{ vendor_state.tone }}">{{ vendor_state.label }}</span></div>
+      <div class="ai-section-body">
+        <div class="ai-control-grid mb-3">
+          <div class="ai-control-card"><h3>Identidad del agente</h3><div class="row g-3"><div class="col-sm-5"><label class="form-label fw-semibold">Personalidad</label><select class="form-select" name="vendor_personality">{% for value,label in [('profesional','Profesional'),('amigable','Amigable'),('directo','Directo'),('comercial','Comercial')] %}<option value="{{ value }}" {% if vendor_options.personality|default('amigable') == value %}selected{% endif %}>{{ label }}</option>{% endfor %}</select></div><div class="col-sm-7"><label class="form-label fw-semibold">Nombre</label><input class="form-control" name="vendor_agent_name" value="{{ vendor_options.agent_name|default('Vendedor IA') }}"></div></div></div>
+          <div class="ai-control-card"><h3>Estado del agente</h3><div class="d-flex justify-content-between align-items-center gap-3"><div><div class="fw-bold">{{ 'Puede atender' if agent.active else 'No atenderá' }}</div><small>{{ 'El agente está habilitado.' if agent.active else 'El agente está desactivado.' }}</small></div><label class="form-check form-switch fs-5 mb-0"><input class="form-check-input" type="checkbox" name="vendor_enabled" value="1" {% if agent.active %}checked{% endif %}><span class="visually-hidden">Activar Vendedor IA</span></label></div></div>
+        </div>
 
-    <div class="card app-card mb-3"><div class="card-body"><div class="agent-card-header"><div><h2 class="h5 fw-bold mb-1"><i class="bi bi-whatsapp me-2"></i>WhatsApp</h2><p class="text-muted small mb-0">Conectá este canal para que el Vendedor 24 hs atienda consultas de clientes.</p></div><span class="ai-state {{ whatsapp_state.tone }}">{{ whatsapp_state.label }}</span></div><div class="d-flex flex-wrap align-items-center justify-content-between gap-3 p-3 mt-3 border rounded-2"><span class="small text-muted">La conexión se gestiona de forma segura y sus credenciales no se muestran en este panel.</span><label class="form-check form-switch mb-0"><input class="form-check-input" type="checkbox" name="whatsapp_enabled" value="1" {% if whatsapp.enabled %}checked{% endif %}><span class="form-check-label fw-bold">Activar WhatsApp</span></label></div></div></div>
+        <div class="small fw-bold text-uppercase text-muted mb-2">Capacidades</div>
+        <div class="ai-capabilities mb-3">{% for capability in ['Consultar productos','Consultar precios y stock','Recomendar productos','Ofrecer alternativas','Preparar presupuestos','Armar pedidos pendientes de pago'] %}<div class="ai-capability"><i class="bi bi-check-circle-fill"></i><span>{{ capability }}</span></div>{% endfor %}</div>
 
-    <div class="d-flex justify-content-end mb-5"><button class="btn btn-primary btn-lg px-4" type="submit"><i class="bi bi-check2-circle me-1"></i>Guardar configuración</button></div>
+        <details class="ai-advanced"><summary>Personalizar comportamiento avanzado</summary><div class="ai-advanced-body"><div class="row g-3"><div class="col-md-4"><label class="form-label fw-semibold">Idioma</label><input class="form-control" name="vendor_language" value="{{ configs['Vendedor 24 hs'].language or 'es-AR' }}"></div><div class="col-md-8"><label class="form-label fw-semibold">Instrucciones del comercio</label><textarea class="form-control" rows="4" name="vendor_prompt">{{ configs['Vendedor 24 hs'].system_prompt or '' }}</textarea></div></div></div></details>
+      </div>
+    </section>
+
+    <section class="ai-section mb-3">
+      <div class="ai-section-head"><div><div class="ai-section-title"><i class="bi bi-lightbulb me-2 text-primary"></i>Asistente Empresarial</div><div class="ai-section-subtitle">Consultá la información real de tu negocio de forma simple y rápida.</div></div>{% set business_state = agent_states['Asistente empresarial'] %}<span class="ai-state {{ business_state.tone }}">{{ business_state.label }}</span></div>
+      <div class="ai-section-body">
+        <div class="ai-control-grid mb-3">
+          <div class="ai-control-card"><h3>Estado del agente</h3><div class="d-flex justify-content-between align-items-center gap-3"><div><div class="fw-bold">{{ 'Puede responder consultas' if agents['Asistente empresarial'].active else 'No responderá consultas' }}</div><small>{{ 'El agente está habilitado.' if agents['Asistente empresarial'].active else 'El agente está desactivado.' }}</small></div><label class="form-check form-switch fs-5 mb-0"><input class="form-check-input" type="checkbox" name="business_enabled" value="1" {% if agents['Asistente empresarial'].active %}checked{% endif %}><span class="visually-hidden">Activar Asistente Empresarial</span></label></div></div>
+          <div class="ai-control-card"><h3>Qué puede consultar</h3><div class="small text-muted">Ventas, productos, stock, clientes y métricas disponibles para tu empresa.</div></div>
+        </div>
+        <details class="ai-advanced"><summary>Personalizar comportamiento avanzado</summary><div class="ai-advanced-body"><div class="row g-3"><div class="col-md-4"><label class="form-label fw-semibold">Idioma</label><input class="form-control" name="business_language" value="{{ configs['Asistente empresarial'].language or 'es-AR' }}"></div><div class="col-md-8"><label class="form-label fw-semibold">Instrucciones del comercio</label><textarea class="form-control" rows="4" name="business_prompt">{{ configs['Asistente empresarial'].system_prompt or '' }}</textarea></div></div></div></details>
+      </div>
+    </section>
+
+    <section class="ai-section mb-3">
+      <div class="ai-section-head"><div><div class="ai-section-title"><i class="bi bi-clock me-2 text-primary"></i>Horarios y mensajes</div><div class="ai-section-subtitle">Definí cuándo trabaja el Vendedor IA y cómo se presenta al cliente.</div></div></div>
+      <div class="ai-section-body">
+        <div class="row g-3">
+          <div class="col-lg-6"><label class="form-label fw-semibold">Horario de atención</label><input class="form-control" name="vendor_schedule" value="{{ vendor_options.schedule|default('') }}" placeholder="Ej.: lunes a viernes, 9 a 18 h"><div class="form-text">Podés indicar 24/7 o un horario personalizado.</div></div>
+          <div class="col-lg-6"><label class="form-label fw-semibold">Saludo inicial</label><textarea class="form-control" name="vendor_greeting" rows="3" placeholder="Ej.: Hola, soy el asistente de tu comercio. ¿En qué puedo ayudarte?">{{ vendor_options.greeting|default('') }}</textarea></div>
+          <div class="col-lg-6"><label class="form-label fw-semibold">Mensaje fuera de horario</label><textarea class="form-control" name="vendor_out_of_hours_message" rows="3" placeholder="Mensaje que verá el cliente fuera del horario de atención.">{{ vendor_options.out_of_hours_message|default('') }}</textarea></div>
+          <div class="col-lg-6"><label class="form-label fw-semibold">Información adicional del comercio</label><textarea class="form-control" name="vendor_business_information" rows="3" placeholder="Ej.: hacemos envíos a todo el país y aceptamos Mercado Pago.">{{ vendor_options.business_information|default('') }}</textarea></div>
+        </div>
+      </div>
+    </section>
+
+    <section class="ai-section mb-3">
+      <div class="ai-section-head"><div><div class="ai-section-title"><i class="bi bi-chat-square-text me-2 text-primary"></i>Canales de atención</div><div class="ai-section-subtitle">Conectá los canales desde los que tus agentes pueden atender consultas.</div></div><span class="ai-state {{ whatsapp_state.tone }}">{{ whatsapp_state.label }}</span></div>
+      <div class="ai-section-body">
+        <div class="ai-channel-card"><div class="d-flex flex-wrap justify-content-between align-items-center gap-3"><div><div class="fw-bold"><i class="bi bi-whatsapp me-1 text-success"></i>WhatsApp</div><div class="small text-muted">Conectá este canal para que el Vendedor IA atienda a tus clientes. Las credenciales técnicas se gestionan de forma segura y no se muestran aquí.</div></div><label class="form-check form-switch mb-0"><input class="form-check-input" type="checkbox" name="whatsapp_enabled" value="1" {% if whatsapp.enabled %}checked{% endif %}><span class="form-check-label fw-bold">{{ 'Activado' if whatsapp.enabled else 'Desactivado' }}</span></label></div></div>
+        <div class="ai-note mt-3"><i class="bi bi-shield-lock me-1"></i>La conexión y las credenciales se administran internamente. Esta pantalla solo muestra el estado funcional del canal.</div>
+      </div>
+    </section>
+
+    <section class="ai-section mb-3">
+      <div class="ai-section-head"><div><div class="ai-section-title"><i class="bi bi-people me-2 text-primary"></i>Permisos de uso</div><div class="ai-section-subtitle">Controlá qué personas de tu empresa pueden usar Agentes IA.</div></div><span class="ai-pill"><i class="bi bi-shield-lock"></i> Protegido</span></div>
+      <div class="ai-section-body">
+        <div class="row g-3 align-items-stretch">
+          <div class="col-lg-7"><div class="ai-permission-card h-100"><div class="fw-bold mb-3">Regla de acceso</div><div class="d-grid gap-3"><div class="ai-permission-step"><span class="ai-permission-number">1</span><div><strong>Administrador</strong><div class="small text-muted">Tiene acceso completo a la configuración de IA.</div></div></div><div class="ai-permission-step"><span class="ai-permission-number">2</span><div><strong>Empleado autorizado</strong><div class="small text-muted">Solo puede usar IA cuando el administrador le habilita el permiso correspondiente.</div></div></div><div class="ai-permission-step"><span class="ai-permission-number">3</span><div><strong>PIN de Mi Empresa</strong><div class="small text-muted">La modificación de permisos requiere validación del PIN.</div></div></div></div></div></div>
+          <div class="col-lg-5"><div class="ai-permission-card h-100 d-flex flex-column justify-content-between"><div><div class="fw-bold mb-2">Administrar empleados</div><div class="small text-muted">Asigná o quitá el permiso de Agentes IA desde Mi Empresa.</div></div><a class="btn btn-outline-primary mt-3" href="{{ url_for('company_billing.company_settings', panel='employees') }}"><i class="bi bi-person-gear me-1"></i>Administrar permisos</a></div></div>
+        </div>
+      </div>
+    </section>
+
+    <div class="ai-save-bar"><div><div class="fw-bold">¿Terminaste la configuración?</div><div class="small text-muted">Guardá los cambios para aplicarlos a tus agentes.</div></div><button class="btn btn-primary btn-lg px-4" type="submit"><i class="bi bi-check2-circle me-1"></i>Guardar configuración</button></div>
   </form>
 
-  <div class="card app-card"><div class="card-body"><div class="d-flex justify-content-between align-items-center mb-3"><div><h2 class="h5 fw-bold mb-1">Conversaciones recientes</h2><p class="text-muted small mb-0">Actividad registrada por empresa y agente.</p></div><span class="badge text-bg-light">{{ conversations|length }}</span></div><div class="table-responsive"><table class="table align-middle mb-0"><thead><tr><th>Agente</th><th>Canal</th><th>Contacto</th><th>Estado</th><th>Último mensaje</th><th>Actualizado</th></tr></thead><tbody>{% for row in conversations %}<tr><td class="fw-semibold">{{ row.agent_name }}</td><td>{{ row.channel }}</td><td>{{ row.external_id or '-' }}</td><td><span class="badge text-bg-secondary">{{ row.status }}</span></td><td class="text-truncate" style="max-width:360px">{{ row.last_message or '-' }}</td><td>{{ row.updated_at.strftime('%d/%m/%Y %H:%M') if row.updated_at else '-' }}</td></tr>{% else %}<tr><td colspan="6" class="text-center text-muted py-4">Todavía no hay conversaciones registradas.</td></tr>{% endfor %}</tbody></table></div></div></div>
+  <section class="ai-section mt-4 mb-5">
+    <div class="ai-section-head"><div><div class="ai-section-title"><i class="bi bi-chat-left-text me-2 text-primary"></i>Conversaciones recientes</div><div class="ai-section-subtitle">Actividad registrada por empresa y agente.</div></div><span class="ai-pill">{{ conversations|length }} registros</span></div>
+    <div class="ai-section-body ai-table-wrap"><table class="table align-middle mb-0"><thead><tr><th>Agente</th><th>Canal</th><th>Contacto</th><th>Estado</th><th>Último mensaje</th><th>Actualizado</th></tr></thead><tbody>{% for row in conversations %}<tr><td class="fw-semibold">{{ row.agent_name }}</td><td>{{ row.channel }}</td><td>{{ row.external_id or '-' }}</td><td><span class="badge text-bg-secondary">{{ row.status }}</span></td><td class="text-truncate" style="max-width:360px">{{ row.last_message or '-' }}</td><td>{{ row.updated_at.strftime('%d/%m/%Y %H:%M') if row.updated_at else '-' }}</td></tr>{% else %}<tr><td colspan="6" class="text-center text-muted py-4">Todavía no hay conversaciones registradas.</td></tr>{% endfor %}</tbody></table></div>
+  </section>
 </div>
 {% endblock %}
