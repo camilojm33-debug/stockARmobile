@@ -10,6 +10,7 @@ from stockarmobile.models.conversations import Conversation
 from services.ai_agent.config_service import ensure_agent_for_key
 from services.ai_agent.providers.base import AIProviderError
 from services.ai_agent.usage_service import can_use_ai
+from stockarmobile.permissions import can_access_ai
 from services.ai_agent.orchestrator import AgentOrchestrator
 from services.ai_agent.orchestrator_v2 import AgentRuntime
 from services.dashboard_service import build_dashboard_context
@@ -20,6 +21,14 @@ from services.invoice_purchase_service import InvoicePurchaseError, InvoicePurch
 from app import tenant_required
 
 bp = Blueprint("dashboard", __name__)
+
+
+@bp.before_request
+def _ai_access_guard():
+    if request.path.startswith("/dashboard/ai-agent") and not can_access_ai(current_user):
+        return jsonify({"success": False, "error": "Tu usuario no tiene habilitado el acceso a Agentes IA."}), 403
+
+# AI_ACCESS_GUARD_FINAL
 
 
 def _invoice_record(upload_id, company_id):

@@ -139,6 +139,7 @@ EMPLOYEE_PERMISSIONS = [
     ("reports", "Reportes"),
     ("cash", "Caja"),
     ("economic_stats", "Puede visualizar estadísticas económicas"),
+    ("ai_access", "Agentes IA"),
 ]
 
 BILLING_DOCUMENT_TYPES = [
@@ -2067,6 +2068,11 @@ def company_settings_user_role_update(user_id):
 @bp.route("/company-settings/users/<int:user_id>/permissions", methods=["POST"])
 @company_admin_required
 def company_settings_user_permissions(user_id):
+    company_id = getattr(current_user, "company_id", None)
+    if not company_id or not _is_pin_verified(company_id):
+        flash("Validá el PIN de Mi Empresa para administrar los permisos de empleados.", "warning")
+        return redirect(url_for("company_billing.company_settings", panel="employees"))
+    # AI_PERMISSION_PIN_FINAL
     from app import User, db, record_audit
 
     company_id = getattr(current_user, "company_id", None)

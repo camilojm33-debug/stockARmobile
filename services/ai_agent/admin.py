@@ -25,6 +25,18 @@ from services.ai_agent.usage_service import AI_PLANS
 
 bp = Blueprint("ai_admin", __name__, url_prefix="/dashboard/ai-agent")
 
+
+@bp.before_request
+def _require_company_pin():
+    from company_billing import _is_pin_verified
+    company_id = get_current_company_id(current_user)
+    if _is_pin_verified(company_id):
+        return None
+    flash("Validá el PIN de Mi Empresa para gestionar la configuración de IA.", "warning")
+    return redirect(url_for("company_billing.company_settings"))
+
+# AI_ADMIN_PIN_FINAL
+
 _DEFAULT_VENDOR_PROMPT = (
     "Sos el Vendedor 24 hs del comercio. Consultá siempre los datos reales antes de informar precio o stock. "
     "Ayudá a elegir productos, armar pedidos y orientar al cliente hacia el pago. "
@@ -192,10 +204,18 @@ def save():
         model = (request.form.get(f"{prefix}_model") or "").strip()[:120]
         if model:
             config.model = model
-        config.system_prompt = (request.form.get(f"{prefix}_prompt") or "").strip()[:12000]
-        config.language = (request.form.get(f"{prefix}_language") or "es-AR").strip()[:8]
-        config.max_tokens = _safe_int(request.form.get(f"{prefix}_max_tokens"), 700, 128, 4000)
-        config.temperature = _safe_decimal(request.form.get(f"{prefix}_temperature"), Decimal("0.20"))
+        prompt = request.form.get(f"{prefix}_prompt")
+        if prompt is not None:
+            config.system_prompt = prompt.strip()[:12000]
+        language = request.form.get(f"{prefix}_language")
+        if language is not None:
+            config.language = language.strip()[:8] or "es-AR"
+        max_tokens_raw = request.form.get(f"{prefix}_max_tokens")
+        if max_tokens_raw is not None:
+            config.max_tokens = _safe_int(max_tokens_raw, config.max_tokens or 700, 128, 4000)
+        temperature_raw = request.form.get(f"{prefix}_temperature")
+        if temperature_raw is not None:
+            config.temperature = _safe_decimal(temperature_raw, config.temperature or Decimal("0.20"))
 
     update_ai_preferences(
         company,
@@ -221,15 +241,17 @@ def save():
         },
     )
 
+    existing_whatsapp = get_whatsapp_connection(company)
+
     configure_whatsapp_connection(
         company,
-        phone_number_id=(request.form.get("phone_number_id") or "").strip(),
+        phone_number_id=(request.form.get("phone_number_id") or existing_whatsapp.get("phone_number_id") or "").strip(),
         access_token=(request.form.get("access_token") or "").strip() or None,
-        business_account_id=(request.form.get("business_account_id") or "").strip(),
-        display_phone_number=(request.form.get("display_phone_number") or "").strip(),
-        enabled=request.form.get("whatsapp_enabled") == "1",
-        template_name=(request.form.get("template_name") or "").strip(),
-        template_language=(request.form.get("template_language") or "es_AR").strip(),
+        business_account_id=(request.form.get("business_account_id") or existing_whatsapp.get("business_account_id") or "").strip(),
+        display_phone_number=(request.form.get("display_phone_number") or existing_whatsapp.get("display_phone_number") or "").strip(),
+        enabled=(request.form.get("whatsapp_enabled") == "1") if "whatsapp_enabled" in request.form else bool(existing_whatsapp.get("enabled")),
+        template_name=(request.form.get("template_name") or existing_whatsapp.get("template_name") or "").strip(),
+        template_language=(request.form.get("template_language") or existing_whatsapp.get("template_language") or "es_AR").strip(),
     )
 
     try:
