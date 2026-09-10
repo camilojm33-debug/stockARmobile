@@ -217,27 +217,51 @@ def save():
         if temperature_raw is not None:
             config.temperature = _safe_decimal(temperature_raw, config.temperature or Decimal("0.20"))
 
-    update_ai_preferences(
-        company,
-        ai_updates={
-            "enabled": request.form.get("ai_enabled") == "1",
-            "whatsapp_enabled": request.form.get("whatsapp_enabled") == "1",
-            "vendor_options": {
-                "personality": (request.form.get("vendor_personality") or "amigable").strip()[:30],
-                "can_recommend": request.form.get("vendor_can_recommend") == "1",
-                "can_offer_alternatives": request.form.get("vendor_can_offer_alternatives") == "1",
-                "can_prepare_quotes": request.form.get("vendor_can_prepare_quotes") == "1",
-                "can_take_orders": request.form.get("vendor_can_take_orders") == "1",
-                "can_follow_up": request.form.get("vendor_can_follow_up") == "1",
-                "can_handoff": request.form.get("vendor_can_handoff") == "1",
-                "agent_name": (request.form.get("vendor_agent_name") or "Vendedor IA").strip()[:120],
-                "greeting": (request.form.get("vendor_greeting") or "").strip()[:1000],
-                "schedule": (request.form.get("vendor_schedule") or "").strip()[:120],
-                "out_of_hours_message": (request.form.get("vendor_out_of_hours_message") or "").strip()[:1000],
-                "business_information": (request.form.get("vendor_business_information") or "").strip()[:4000],
-            },
-        },
-    )
+    prefs_before = get_ai_preferences(company)
+    old_vendor = prefs_before["ai_agent"].get("vendor_options") if isinstance(prefs_before["ai_agent"].get("vendor_options"), dict) else {}
+    vendor_options = {
+        "personality": old_vendor.get("personality", "amigable"),
+        "can_recommend": bool(old_vendor.get("can_recommend", True)),
+        "can_offer_alternatives": bool(old_vendor.get("can_offer_alternatives", True)),
+        "can_prepare_quotes": bool(old_vendor.get("can_prepare_quotes", True)),
+        "can_take_orders": bool(old_vendor.get("can_take_orders", True)),
+        "can_follow_up": bool(old_vendor.get("can_follow_up", False)),
+        "can_handoff": bool(old_vendor.get("can_handoff", False)),
+        "agent_name": old_vendor.get("agent_name", "Vendedor IA"),
+        "greeting": old_vendor.get("greeting", ""),
+        "schedule": old_vendor.get("schedule", ""),
+        "out_of_hours_message": old_vendor.get("out_of_hours_message", ""),
+        "business_information": old_vendor.get("business_information", ""),
+    }
+    if "vendor_personality" in request.form:
+        vendor_options["personality"] = (request.form.get("vendor_personality") or "amigable").strip()[:30]
+    for key, field in {
+        "can_recommend": "vendor_can_recommend",
+        "can_offer_alternatives": "vendor_can_offer_alternatives",
+        "can_prepare_quotes": "vendor_can_prepare_quotes",
+        "can_take_orders": "vendor_can_take_orders",
+        "can_follow_up": "vendor_can_follow_up",
+        "can_handoff": "vendor_can_handoff",
+    }.items():
+        if field in request.form:
+            vendor_options[key] = request.form.get(field) == "1"
+    for key, field, limit in (
+        ("agent_name", "vendor_agent_name", 120),
+        ("greeting", "vendor_greeting", 1000),
+        ("schedule", "vendor_schedule", 120),
+        ("out_of_hours_message", "vendor_out_of_hours_message", 1000),
+        ("business_information", "vendor_business_information", 4000),
+    ):
+        if field in request.form:
+            vendor_options[key] = (request.form.get(field) or "").strip()[:limit]
+
+    ai_updates = {
+        "enabled": request.form.get("ai_enabled") == "1",
+        "vendor_options": vendor_options,
+    }
+    if "whatsapp_enabled" in request.form:
+        ai_updates["whatsapp_enabled"] = request.form.get("whatsapp_enabled") == "1"
+    update_ai_preferences(company, ai_updates=ai_updates)
 
     existing_whatsapp = get_whatsapp_connection(company)
     configure_whatsapp_connection(
