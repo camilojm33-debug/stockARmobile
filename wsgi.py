@@ -1,8 +1,21 @@
-from flask import flash, redirect, request, url_for
+from flask import flash, redirect, request, url_for, jsonify
 from flask_login import current_user, login_required
+from sqlalchemy import text
 
 from app import app, AuditLog, Invoice, Payment, PaymentHistory, Subscription, SubscriptionCommandExecution, db
 from services.subscription_service import SubscriptionService
+
+
+@app.route("/health", methods=["GET"])
+def health():
+    """Lightweight liveness/readiness endpoint for Render and uptime checks."""
+    try:
+        db.session.execute(text("SELECT 1"))
+        return jsonify({"status": "ok"}), 200
+    except Exception:
+        db.session.rollback()
+        app.logger.exception("Health check database probe failed")
+        return jsonify({"status": "error"}), 503
 
 
 @app.route("/superadmin/subscriptions/<int:subscription_id>/delete-historical", methods=["POST"])
