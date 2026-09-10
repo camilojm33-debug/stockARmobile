@@ -6,7 +6,9 @@ import hashlib
 import hmac
 import json
 import logging
+import os
 import socket
+import time
 import uuid
 from urllib import request as urlrequest
 from urllib.error import HTTPError, URLError
@@ -157,12 +159,33 @@ class MercadoPagoService:
     def cancel_preapproval(self, preapproval_id: str) -> dict[str, Any]:
         return self._request("PUT", f"/preapproval/{preapproval_id}", payload={"status": "cancelled"}, idempotency_key=f"preapproval-update:{preapproval_id}:cancelled")
 
+    @staticmethod
+    def _webhook_timestamp_seconds(value: str | None) -> float | None:
+        try:
+            timestamp = float(str(value or "").strip())
+        except (TypeError, ValueError):
+            return None
+        # Mercado Pago sends ts as Unix seconds. Accept milliseconds defensively
+        # so the validator remains robust to transport/fixture differences.
+        if timestamp > 10_000_000_000:
+            timestamp /= 1000.0
+        return timestamp
+
     def validate_webhook_signature(self, *, request_id: str, x_signature: str, data_id: str) -> bool:
         secret=(self.config.webhook_secret or "").strip()
         if not secret: return self.config.mode != "production"
         if not x_signature: return False
         parts=dict(part.split("=",1) for part in x_signature.split(",") if "=" in part); ts=parts.get("ts"); v1=parts.get("v1")
         if not ts or not v1 or not request_id: return False
+        if self.config.mode == "production":
+            timestamp = self._webhook_timestamp_seconds(ts)
+            try:
+                max_age = max(30.0, float(os.environ.get("MP_WEBHOOK_MAX_AGE_SECONDS") or 300))
+            except ValueError:
+                max_age = 300.0
+            if timestamp is None or abs(time.time() - timestamp) > max_age:
+                self._logger().warning("Mercado Pago webhook rejected due to stale/future timestamp")
+                return False
         manifest=f"id:{data_id};request-id:{request_id};ts:{ts};"; digest=hmac.new(secret.encode(), manifest.encode(), hashlib.sha256).hexdigest()
         return hmac.compare_digest(digest,v1)
 
