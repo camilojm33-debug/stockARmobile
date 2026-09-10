@@ -29,7 +29,7 @@ def test_run_tool_loop_supports_multiple_sequential_tool_rounds(monkeypatch):
     )
     executed = []
 
-    def fake_execute(cls, name, **kwargs):
+    def fake_execute(name, **kwargs):
         executed.append(name)
         return {"success": True, "tool": name}
 
@@ -68,7 +68,7 @@ def test_run_tool_loop_accepts_tool_calls_list(monkeypatch):
     )
     executed = []
 
-    def fake_execute(cls, name, **kwargs):
+    def fake_execute(name, **kwargs):
         executed.append(name)
         return {"success": True, "tool": name}
 
@@ -95,7 +95,7 @@ def test_run_tool_loop_caps_tool_rounds_and_requests_final_synthesis(monkeypatch
     provider = SequenceProvider(responses)
     executed = []
 
-    def fake_execute(cls, name, **kwargs):
+    def fake_execute(name, **kwargs):
         executed.append(name)
         return {"success": True}
 

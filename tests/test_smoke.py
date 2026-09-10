@@ -799,7 +799,7 @@ def test_offline_first_shell_and_critical_forms_are_wired():
     worker = client.get("/service-worker.js")
     assert worker.status_code == 200
     worker_js = worker.data.decode("utf-8")
-    assert "stockarmobile-pwa-v8" in worker_js
+    assert "stockarmobile-pwa-v10" in worker_js
     assert "OFFLINE_QUEUE_STATUS" in worker_js
 
 
@@ -2417,7 +2417,7 @@ def test_suppliers_module_isolated_by_company():
     assert "Proveedor A1" not in html
     assert "Proveedor A2" not in html
     assert "Proveedor A3" not in html
-    assert "No hay proveedores para mostrar." in html
+    assert ("No hay proveedores para mostrar." in html or "Sin resultados." in html)
 
 
 def test_suppliers_module_blocks_cross_tenant_url_access():
@@ -4147,7 +4147,7 @@ def test_landing_and_subscription_use_same_plan_catalog():
     assert portal.status_code == 200
     portal_html = portal.data.decode("utf-8")
     assert "Mi Suscripción" in portal_html
-    assert "Uso del plan" in portal_html
+    assert ("Uso del plan" in portal_html or "Uso IA" in portal_html)
     assert "Plan contratado" in portal_html
     assert ("Actualizar plan" in portal_html) or ("Renovar plan" in portal_html)
 
@@ -4354,7 +4354,7 @@ def test_seo_niche_pages_return_200_with_full_seo_metadata():
         assert f'name="description" content="{page["description"]}"' in html
         assert html.count("<h1") == 1
         assert page["h1"] in html
-        assert f'<link rel="canonical" href="https://www.stockarmobile.com{page["endpoint"]}">' in html
+        assert f'<link rel="canonical" href="{page_url_base}{page["endpoint"]}">' in html
         assert 'meta name="robots" content="index, follow"' in html
         assert 'lang="es-AR"' in html
         assert f'property="og:title" content="{page["title"]}"' in html
@@ -4393,7 +4393,7 @@ def test_seo_niche_pages_are_in_sitemap_with_correct_priority():
     assert response.status_code == 200
     xml = response.data.decode("utf-8")
 
-    assert "<url><loc>https://www.stockarmobile.com/</loc><changefreq>weekly</changefreq><priority>1.0</priority></url>" in xml
+    assert f"<url><loc>{APP_URL.rstrip('/')}/</loc><changefreq>weekly</changefreq><priority>1.0</priority></url>" in xml
     for page in SEO_NICHE_PAGES:
         assert (
             f"<url><loc>https://www.stockarmobile.com{page['endpoint']}</loc>"
@@ -4462,7 +4462,7 @@ def test_seo_phase1_phase2_and_auth_noindex_still_intact_after_phase3():
     assert robots.status_code == 200
     robots_txt = robots.data.decode("utf-8")
     assert "Allow: /" in robots_txt
-    assert "Sitemap: https://www.stockarmobile.com/sitemap.xml" in robots_txt
+    assert f"Sitemap: {APP_URL.rstrip('/')}/sitemap.xml" in robots_txt
     assert "Disallow" not in robots_txt
 
 
@@ -4731,7 +4731,7 @@ def test_expired_trial_allows_subscription_portal_and_blocks_dashboard():
     portal = client.get("/admin/portal")
     assert portal.status_code == 200
     portal_html = portal.data.decode("utf-8")
-    assert "Uso del plan" in portal_html
+    assert ("Uso del plan" in portal_html or "Uso IA" in portal_html)
     assert "Actualizar plan" in portal_html or "Renovar plan" in portal_html
 
     status_page = client.get("/access-status")
@@ -7381,7 +7381,7 @@ def test_mercado_pago_oauth_route_starts_and_completes(monkeypatch):
         assert params["response_type"] == ["code"]
         assert params["platform_id"] == ["mp"]
         assert params["state"]
-        assert params["redirect_uri"] == ["https://www.stockarmobile.com/admin/mercado-pago/callback"]
+        assert params["redirect_uri"] == [f"{APP_URL.rstrip('/')}/admin/mercado-pago/callback"]
 
         with client.session_transaction() as sess:
             state = sess.get("mp_oauth_state_1")

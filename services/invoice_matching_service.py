@@ -22,7 +22,7 @@ class InvoiceMatchingService:
         if len(matches) == 1:
             return {"status": "MATCH_EXACTO", "supplier_id": matches[0].id, "name": matches[0].name, "candidates": []}
         if len(matches) > 1:
-            return {"status": "AMBIGUO", "supplier_id": None, "name": name, "candidates": [{"id": item.id, "name": item.name, "phone": item.phone} for item in matches]}
+            return {"status": "AMBIGUO", "supplier_id": None, "name": name, "candidates": [{"id": item.id, "name": item.name, "phone": getattr(item, "phone", None)} for item in matches]}
         return {"status": "NUEVO_PROVEEDOR_PROPUESTO", "supplier_id": None, "name": name, "candidates": []}
 
     @classmethod

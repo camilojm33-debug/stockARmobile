@@ -178,6 +178,7 @@ def test_standard_active_ai_active_different_plan_does_not_cancel_or_create(subs
         return {"id": preapproval_id, "status": "canceled"}
 
     monkeypatch.setattr("services.mercadopago_service.MercadoPagoService.cancel_preapproval", cancel_preapproval)
+    monkeypatch.setattr(AISubscriptionService, "_get_mp_preapproval", lambda company: {"id": "ai-pre", "status": "pending"})
     client = subscription_app.test_client()
     _login(client, user)
 
@@ -289,11 +290,12 @@ def test_standard_active_ai_cancelled_can_start_ai_again(subscription_app, monke
     assert _standard_snapshot(subscription) == before
 
 
-def test_ai_management_does_not_modify_standard_subscription(subscription_app):
+def test_ai_management_does_not_modify_standard_subscription(subscription_app, monkeypatch):
     company, _, _, subscription = _tenant_with_standard_subscription()
     update_ai_preferences(company, ai_updates={"plan_code": "inicio", "status": "ACTIVA", "origin": "MERCADO_PAGO", "mercadopago_preapproval_id": "ai-pre"})
     db.session.commit()
     before = _standard_snapshot(subscription)
+    monkeypatch.setattr(AISubscriptionService, "_get_mp_preapproval", lambda company: {"id": "ai-pre", "status": "authorized"})
 
     AISubscriptionService.cancel(company, admin_user_id=None, reason="tenant requested")
 
