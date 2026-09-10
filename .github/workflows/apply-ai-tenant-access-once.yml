@@ -1,0 +1,177 @@
+name: Apply AI tenant access and branding
+
+on:
+  push:
+    branches: [main]
+
+permissions:
+  contents: write
+
+jobs:
+  patch:
+    if: github.event.head_commit.message != 'fix: harden AI tenant access and hide provider details'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Apply server and tenant UI hardening
+        shell: bash
+        run: |
+          set -euo pipefail
+          python - <<'PY'
+          from pathlib import Path
+          import re
+
+          # 1) Dedicated employee permission + server-side PIN gate.
+          path = Path('company_billing.py')
+          source = path.read_text(encoding='utf-8-sig')
+          if '("ai_access", "Agentes IA"),' not in source:
+              anchor = '("economic_stats", "Puede visualizar estadísticas económicas"),\n]'
+              if anchor not in source:
+                  raise SystemExit('employee permission anchor not found')
+              source = source.replace(anchor, '("economic_stats", "Puede visualizar estadísticas económicas"),\n    ("ai_access", "Agentes IA"),\n]', 1)
+          route = '@bp.route("/company-settings/users/<int:user_id>/permissions", methods=["POST"])\n@company_admin_required\ndef company_settings_user_permissions(user_id):\n'
+          if '_AI_PERMISSION_PIN_GUARD_V1' not in source:
+              if route not in source:
+                  raise SystemExit('employee permissions route anchor not found')
+              guarded = route + '    company_id = getattr(current_user, "company_id", None)\n    if not company_id or not _is_pin_verified(company_id):\n        flash("Validá el PIN de Mi Empresa para administrar los permisos de empleados.", "warning")\n        return redirect(url_for("company_billing.company_settings", panel="employees"))\n    # _AI_PERMISSION_PIN_GUARD_V1\n'
+              source = source.replace(route, guarded, 1)
+          path.write_text(source, encoding='utf-8')
+
+          # 2) Hide the Agentes IA menu item from employees without explicit permission.
+          path = Path('templates/base_master.html')
+          source = path.read_text(encoding='utf-8-sig')
+          if 'AI_NAV_PERMISSION_V1' not in source:
+              pattern = re.compile(r'(?m)^(?P<indent>\s*)<a class="nav-link[^\n]*href="\{\{ url_for\(\'ai_agents\.index\'\) \}\}">.*?</a>')
+              match = pattern.search(source)
+              if not match:
+                  raise SystemExit('Agentes IA navigation link not found')
+              indent = match.group('indent')
+              link = match.group(0).strip()
+              wrapped = (f'{indent}{{% set _ai_permissions = (current_user.permissions_json or "") %}}\n'
+                         f'{indent}{{% if current_user.is_authenticated and (current_user.role in ["admin", "superadmin"] or \'"ai_access"\' in _ai_permissions) %}}\n'
+                         f'{indent}{link} <!-- AI_NAV_PERMISSION_V1 -->\n'
+                         f'{indent}{{% endif %}}')
+              source = source[:match.start()] + wrapped + source[match.end():]
+          path.write_text(source, encoding='utf-8')
+
+          # 3) Enforce the same permission on AI API/invoice endpoints.
+          path = Path('dashboard.py')
+          source = path.read_text(encoding='utf-8-sig')
+          if '# AI_ACCESS_GUARD_V1' not in source:
+              source = source.replace('from services.ai_agent.usage_service import can_use_ai\n', 'from services.ai_agent.usage_service import can_use_ai\nfrom stockarmobile.permissions import can_access_ai\n', 1)
+              anchor = 'bp = Blueprint("dashboard", __name__)\n\n'
+              if anchor not in source:
+                  raise SystemExit('dashboard blueprint anchor not found')
+              guard = ('bp = Blueprint("dashboard", __name__)\n\n'
+                       '@bp.before_request\n'
+                       'def _ai_access_guard():\n'
+                       '    if request.path.startswith("/dashboard/ai-agent") and not can_access_ai(current_user):\n'
+                       '        return jsonify({"success": False, "error": "Tu usuario no tiene habilitado el acceso a Agentes IA."}), 403\n\n'
+                       '# AI_ACCESS_GUARD_V1\n\n')
+              source = source.replace(anchor, guard, 1)
+          path.write_text(source, encoding='utf-8')
+
+          # 4) AI configuration is admin-only and also requires the existing Mi Empresa PIN session.
+          path = Path('services/ai_agent/admin.py')
+          source = path.read_text(encoding='utf-8-sig')
+          if '# AI_ADMIN_PIN_GUARD_V3' not in source:
+              anchor = 'bp = Blueprint("ai_admin", __name__, url_prefix="/dashboard/ai-agent")\n\n'
+              if anchor not in source:
+                  raise SystemExit('AI admin blueprint anchor not found')
+              helper = '''bp = Blueprint("ai_admin", __name__, url_prefix="/dashboard/ai-agent")\n\n\n@bp.before_request\ndef _require_company_pin():\n    from company_billing import _is_pin_verified\n    company_id = get_current_company_id(current_user)\n    if _is_pin_verified(company_id):\n        return None\n    flash("Validá el PIN de Mi Empresa para gestionar la configuración de IA.", "warning")\n    return redirect(url_for("company_billing.company_settings"))\n\n# AI_ADMIN_PIN_GUARD_V3\n\n'''
+              source = source.replace(anchor, helper, 1)
+
+              # Preserve technical configuration and WhatsApp credentials when those fields are intentionally hidden.
+              save_anchor = '    configure_whatsapp_connection(\n'
+              if save_anchor not in source:
+                  raise SystemExit('WhatsApp save anchor not found')
+              source = source.replace(save_anchor, '    existing_whatsapp = get_whatsapp_connection(company)\n\n    configure_whatsapp_connection(\n', 1)
+              replacements = {
+                  'phone_number_id=(request.form.get("phone_number_id") or "").strip(),': 'phone_number_id=(request.form.get("phone_number_id") or existing_whatsapp.get("phone_number_id") or "").strip(),',
+                  'business_account_id=(request.form.get("business_account_id") or "").strip(),': 'business_account_id=(request.form.get("business_account_id") or existing_whatsapp.get("business_account_id") or "").strip(),',
+                  'display_phone_number=(request.form.get("display_phone_number") or "").strip(),': 'display_phone_number=(request.form.get("display_phone_number") or existing_whatsapp.get("display_phone_number") or "").strip(),',
+                  'enabled=request.form.get("whatsapp_enabled") == "1",': 'enabled=(request.form.get("whatsapp_enabled") == "1") if "whatsapp_enabled" in request.form else bool(existing_whatsapp.get("enabled")),',
+                  'template_name=(request.form.get("template_name") or "").strip(),': 'template_name=(request.form.get("template_name") or existing_whatsapp.get("template_name") or "").strip(),',
+                  'template_language=(request.form.get("template_language") or "es_AR").strip(),': 'template_language=(request.form.get("template_language") or existing_whatsapp.get("template_language") or "es_AR").strip(),',
+              }
+              for old, new in replacements.items():
+                  if old not in source:
+                      raise SystemExit(f'expected save field not found: {old}')
+                  source = source.replace(old, new, 1)
+
+              old_cfg = '''        model = (request.form.get(f"{prefix}_model") or "").strip()[:120]\n        if model:\n            config.model = model\n        config.system_prompt = (request.form.get(f"{prefix}_prompt") or "").strip()[:12000]\n        config.language = (request.form.get(f"{prefix}_language") or "es-AR").strip()[:8]\n        config.max_tokens = _safe_int(request.form.get(f"{prefix}_max_tokens"), 700, 128, 4000)\n        config.temperature = _safe_decimal(request.form.get(f"{prefix}_temperature"), Decimal("0.20"))\n'''
+              new_cfg = '''        model = (request.form.get(f"{prefix}_model") or "").strip()[:120]\n        if model:\n            config.model = model\n        prompt = request.form.get(f"{prefix}_prompt")\n        if prompt is not None:\n            config.system_prompt = prompt.strip()[:12000]\n        language = request.form.get(f"{prefix}_language")\n        if language is not None:\n            config.language = language.strip()[:8] or "es-AR"\n        max_tokens_raw = request.form.get(f"{prefix}_max_tokens")\n        if max_tokens_raw is not None:\n            config.max_tokens = _safe_int(max_tokens_raw, config.max_tokens or 700, 128, 4000)\n        temperature_raw = request.form.get(f"{prefix}_temperature")\n        if temperature_raw is not None:\n            config.temperature = _safe_decimal(temperature_raw, config.temperature or Decimal("0.20"))\n'''
+              if old_cfg not in source:
+                  raise SystemExit('technical agent config save block not found')
+              source = source.replace(old_cfg, new_cfg, 1)
+          path.write_text(source, encoding='utf-8')
+
+          # 5) Tenant-facing AI screen should look like StockArMobile and expose no provider/model/vendor IDs/tokens.
+          path = Path('templates/ai_agent/admin.html')
+          source = path.read_text(encoding='utf-8-sig')
+          if 'AI_BRANDING_V3' not in source:
+              top_cards = re.compile(r'\n  <div class="row g-3 mb-4">\s*<div class="col-md-4">.*?<div class="col-md-4"><div class="card app-card ai-status-card \{\{ whatsapp_state\.tone \}\} h-100">.*?</div>\s*</div>\n', re.S)
+              replacement = '''\n  <div class="row g-3 mb-4">\n    <div class="col-md-4"><div class="card app-card ai-status-card h-100"><div class="card-body"><div class="ai-status-label">Inteligencia artificial</div><div class="ai-status-value">{{ 'Activa' if ai_enabled else 'Desactivada' }}</div><div class="ai-state {{ 'success' if ai_enabled else 'danger' }} mt-2">{{ 'Lista para trabajar' if ai_enabled else 'Desactivada por la empresa' }}</div></div></div></div>\n    <div class="col-md-4"><div class="card app-card ai-status-card h-100"><div class="card-body"><div class="ai-status-label">Plan IA</div><div class="ai-status-value">{% if prefs.ai_agent.plan_code %}{% for plan in ai_plans %}{% if plan.code == prefs.ai_agent.plan_code %}{{ plan.name }}{% endif %}{% endfor %}{% else %}Sin plan IA{% endif %}</div><div class="small text-muted mt-2">{{ 'Servicio activo para tu comercio.' if prefs.ai_agent.plan_code else 'El plan lo administra Super Admin.' }}</div></div></div></div>\n    <div class="col-md-4"><div class="card app-card ai-status-card {{ whatsapp_state.tone }} h-100"><div class="card-body"><div class="ai-status-label">Canal de atención</div><div class="ai-status-value">{{ whatsapp_state.label }}</div><div class="small text-muted mt-2">Atención integrada para tus clientes.</div></div></div></div>\n  </div>\n<!-- AI_BRANDING_V3 -->\n'''
+              source, count = top_cards.subn(replacement, source, count=1)
+              if count != 1:
+                  raise SystemExit('AI tenant top cards not found')
+
+              tech = re.compile(r'      <details class="agent-config"><summary>Configurar agente</summary><div class="agent-config-body">.*?</details>')
+              source, count = tech.subn('      <details class="agent-config"><summary>Personalizar comportamiento</summary><div class="agent-config-body"><div class="row g-3"><div class="col-md-4"><label class="form-label fw-semibold">Idioma</label><input class="form-control" name="{{ prefix }}_language" value="{{ config.language or \'es-AR\' }}"></div><div class="col-md-8"><label class="form-label fw-semibold">Instrucciones del comercio</label><textarea class="form-control" rows="4" name="{{ prefix }}_prompt">{{ config.system_prompt or \'\' }}</textarea></div></div></div></details>', source, count=2)
+              if count != 2:
+                  raise SystemExit(f'expected 2 tenant technical agent blocks, found {count}')
+
+              meta = re.compile(r'\n\s*<details class="mt-3"><summary class="small text-muted">Configuración avanzada de Meta</summary>.*?</details>', re.S)
+              source, count = meta.subn('', source, count=1)
+              if count != 1:
+                  raise SystemExit('Meta advanced block not found')
+
+              whatsapp_advanced = re.compile(r'<details class="agent-config mt-3"><summary>Configuración avanzada</summary>.*?</details>', re.S)
+              source, count = whatsapp_advanced.subn('', source, count=1)
+              if count != 1:
+                  raise SystemExit('WhatsApp advanced block not found')
+              source = source.replace('El token se guarda cifrado y nunca vuelve a mostrarse.', 'La conexión se gestiona de forma segura y sus credenciales no se muestran en este panel.', 1)
+          forbidden = ['Proveedor de IA', 'provider_label', 'provider_model', 'Phone Number ID', 'Business Account ID', 'Access Token']
+          for needle in forbidden:
+              if needle in source:
+                  raise SystemExit(f'tenant AI screen still exposes provider data: {needle}')
+          path.write_text(source, encoding='utf-8')
+
+          print('AI tenant access and branding changes applied')
+          PY
+
+      - name: Validate
+        shell: bash
+        run: |
+          set -euo pipefail
+          python -m py_compile company_billing.py dashboard.py ai_agents.py services/ai_agent/admin.py stockarmobile/permissions.py
+          python - <<'PY'
+          from pathlib import Path
+          checks = {
+              'company_billing.py': ['("ai_access", "Agentes IA"),', '_AI_PERMISSION_PIN_GUARD_V1'],
+              'dashboard.py': ['# AI_ACCESS_GUARD_V1', 'can_access_ai'],
+              'ai_agents.py': ['def _require_ai_access', 'can_access_ai'],
+              'services/ai_agent/admin.py': ['# AI_ADMIN_PIN_GUARD_V3', '_is_pin_verified'],
+              'templates/base_master.html': ['AI_NAV_PERMISSION_V1'],
+              'templates/ai_agent/admin.html': ['Inteligencia artificial', 'Plan IA', 'Canal de atención', 'AI_BRANDING_V3'],
+          }
+          for filename, needles in checks.items():
+              text = Path(filename).read_text(encoding='utf-8-sig')
+              for needle in needles:
+                  if needle not in text:
+                      raise SystemExit(f'{filename}: missing {needle}')
+          print('validation ok')
+          PY
+
+      - name: Commit hardening and remove one-shot workflows
+        shell: bash
+        run: |
+          set -euo pipefail
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add -A
+          git commit -m 'fix: harden AI tenant access and hide provider details' || exit 0
+          git push origin HEAD:main
