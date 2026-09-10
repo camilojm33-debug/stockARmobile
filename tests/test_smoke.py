@@ -16,6 +16,8 @@ from sqlite_test_db import clear_test_data
 
 import app as stock_app
 from app import CashMovement, CashSession, Client, Company, Product, Quote, QuoteItem, ReferralAttribution, SaaSAlert, SaaSLead, SaaSTask, Sale, SaleItem, SaleModificationHistory, Subscription, User, db
+
+APP_URL = stock_app.app.config["APP_URL"]
 from services.whatsapp_share_service import normalize_whatsapp_number
 from sqlalchemy.exc import ProgrammingError
 
@@ -4354,7 +4356,7 @@ def test_seo_niche_pages_return_200_with_full_seo_metadata():
         assert f'name="description" content="{page["description"]}"' in html
         assert html.count("<h1") == 1
         assert page["h1"] in html
-        assert f'<link rel="canonical" href="{page_url_base}{page["endpoint"]}">' in html
+        assert f'<link rel="canonical" href="{APP_URL.rstrip("/")}{page["endpoint"]}">' in html
         assert 'meta name="robots" content="index, follow"' in html
         assert 'lang="es-AR"' in html
         assert f'property="og:title" content="{page["title"]}"' in html
@@ -6120,6 +6122,7 @@ def test_referral_role_isolation_between_seller_and_superadmin():
     client.post("/auth/logout")
     client.post("/auth/login", data={"username": "superadmin", "password": "admin123"})
 
+    import wsgi  # noqa: F401
     admin_referrals = client.get("/superadmin/referrals")
     assert admin_referrals.status_code == 200
 

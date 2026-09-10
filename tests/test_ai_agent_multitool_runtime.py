@@ -111,7 +111,7 @@ def test_run_tool_loop_caps_tool_rounds_and_requests_final_synthesis(monkeypatch
     )
 
     assert content == "Síntesis final."
-    assert rounds == MAX_TOOL_TURNS + 1
+    assert rounds == MAX_TOOL_TURNS
     assert executed == ["buscar_producto"] * MAX_TOOL_TURNS
     assert provider.calls[-1]["tools"] == []
 
@@ -128,3 +128,14 @@ def test_run_tool_loop_does_not_accept_empty_provider_response():
             company_id=1,
             context={},
         )
+
+def test_every_agent_exposes_its_declared_tools():
+    expected_agents = {"asistente", "vendedor", "analista", "marketing"}
+    assert set(AgentRuntime.agent_tool_names) == expected_agents
+
+    for agent_key in expected_agents:
+        definitions = AgentRuntime._tool_definitions(agent_key)
+        declared = {item["function"]["name"] for item in definitions}
+        assert declared == AgentRuntime.agent_tool_names[agent_key]
+        assert declared
+
