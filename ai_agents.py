@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from datetime import datetime, timedelta
 
-from flask import Blueprint, flash, redirect, render_template, request, url_for
+from flask import Blueprint, abort, flash, redirect, render_template, request, url_for
 from flask_login import current_user
 
 from app import tenant_required
@@ -18,10 +18,18 @@ from services.ai_agent.usage_service import AI_PLANS, AGENT_LABELS, can_use_ai, 
 from stockarmobile.extensions import db
 from stockarmobile.models.conversations import Conversation
 from stockarmobile.decorators import company_admin_required
+from stockarmobile.permissions import can_access_ai
 from services.ai_agent.campaign_service import CampaignService
 
 
 bp = Blueprint("ai_agents", __name__, url_prefix="/agentes-ia")
+
+
+@bp.before_request
+def _require_ai_access():
+    if not can_access_ai(current_user):
+        flash("Tu usuario no tiene habilitado el acceso a Agentes IA. Pedile al administrador de la empresa que lo active desde Mi Empresa.", "warning")
+        return redirect(url_for("dashboard.index"))
 
 
 def _context():
@@ -53,8 +61,6 @@ def _context():
     agent_access = {key: can_use_ai(company, key) for key in AGENT_LABELS}
     invoice_access = can_use_ai(company, "facturas")
 
-    # These values are consumed by the dashboard's extra_js block too.
-    # Keep them in the shared context because Jinja blocks have independent scopes.
     any_chat_agent = any(access.allowed for access in agent_access.values())
     default_chat_agent = "asistente"
     if not agent_access[default_chat_agent].allowed:
@@ -129,7 +135,6 @@ def campaign_transition(campaign_id):
 @tenant_required
 def agent(agent):
     if agent not in {"vendedor", "asistente", "analista", "marketing", "planes"}:
-        from flask import abort
         abort(404)
     if agent != "planes":
         access = _context()["agent_access"][agent]
