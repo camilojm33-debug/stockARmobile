@@ -1,5 +1,8 @@
 name: Apply AI tenant access and branding
 
+# Trigger hardening after the merge that introduced this workflow.
+# It self-removes/reconciles its one-shot changes through a guarded commit.
+
 on:
   push:
     branches: [main]
@@ -166,7 +169,7 @@ jobs:
           print('validation ok')
           PY
 
-      - name: Commit hardening and remove one-shot workflows
+      - name: Commit hardening and remove one-shot workflow
         shell: bash
         run: |
           set -euo pipefail
