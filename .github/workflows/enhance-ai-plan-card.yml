@@ -21,15 +21,14 @@ jobs:
           set -euo pipefail
           python - <<'PY'
           from pathlib import Path
-          import re
 
           path = Path('templates/ai_agents/index.html')
           source = path.read_text(encoding='utf-8-sig')
 
-          if 'AI_PLAN_VALUE_V2' not in source:
-              marker = '  @media (max-width: 1100px)'
-              styles = '''  /* AI_PLAN_VALUE_V2 */
-          .ai-plan-card-v2 { background:linear-gradient(135deg,#f8fbff,#ffffff); border:1px solid var(--app-line); }
+          if 'AI_PLAN_VALUE_V3' not in source:
+              css_marker = '  @media (max-width: 1100px)'
+              css = '''  /* AI_PLAN_VALUE_V3 */
+          .ai-plan-card-v3 { background:linear-gradient(135deg,#f8fbff,#ffffff); border:1px solid var(--app-line); }
           .ai-plan-kicker { font-size:.74rem; font-weight:900; letter-spacing:.08em; text-transform:uppercase; color:#2563eb; }
           .ai-plan-name { font-size:1.8rem; font-weight:900; letter-spacing:-.03em; }
           .ai-plan-price { font-size:1.55rem; font-weight:900; letter-spacing:-.02em; }
@@ -49,80 +48,87 @@ jobs:
           .ai-plan-pro-banner strong { display:block; margin-bottom:.25rem; }
           @media (max-width:700px) { .ai-plan-agent-list { grid-template-columns:1fr; } .ai-plan-name { font-size:1.55rem; } .ai-plan-price { font-size:1.35rem; } }
 '''
-              if marker not in source:
+              if css_marker not in source:
                   raise SystemExit('AI responsive CSS marker not found')
-              source = source.replace(marker, styles + marker, 1)
+              source = source.replace(css_marker, css + css_marker, 1)
 
-          replacement = '''{% if ai_status and ai_status.plan_name %}
-          {% set current_plan_ns = namespace(plan=None) %}
-          {% for plan_item in ai_plans %}{% if plan_item.code == ai_status.plan_code %}{% set current_plan_ns.plan = plan_item %}{% endif %}{% endfor %}
-          {% set plan_percent = ai_usage.percent if ai_usage and ai_usage.percent is not none else 0 %}
-          <section class="card app-card ai-plan-card-v2 mb-4">
-            <div class="card-body p-4 p-lg-5">
-              <div class="d-flex flex-wrap justify-content-between align-items-start gap-4 mb-4">
-                <div>
-                  <div class="ai-plan-kicker mb-2"><i class="bi bi-stars me-1"></i> Tu plan IA actual</div>
-                  <div class="d-flex flex-wrap align-items-center gap-2 mb-2"><h2 class="ai-plan-name mb-0">{{ ai_status.plan_name }}</h2><span class="badge {{ 'text-bg-success' if ai_status.status == 'ACTIVA' else 'text-bg-warning text-dark' if ai_status.status == 'PENDIENTE' else 'text-bg-secondary' }}">{{ ai_status.status or 'SIN ESTADO' }}</span></div>
-                  <p class="text-muted mb-2">{{ current_plan_ns.plan.tagline if current_plan_ns.plan else 'Tu equipo inteligente trabajando para tu comercio.' }}</p>
-                  <div class="ai-plan-meta">
-                    {% if current_plan_ns.plan %}<span><i class="bi bi-cash-stack"></i>{{ current_plan_ns.plan.price }}</span>{% endif %}
-                    <span><i class="bi bi-lightning-charge"></i>{{ ai_status.plan_limit }} interacciones/mes</span>
-                    <span><i class="bi bi-arrow-repeat"></i>{% if ai_status.origin == 'MERCADO_PAGO' %}Renovación automática{% else %}Gestión manual{% endif %}</span>
-                  </div>
-                </div>
-                <div class="d-flex flex-wrap gap-2"><a class="btn btn-outline-primary" href="{{ plan_url }}">Ver otros planes</a><a class="btn btn-primary" href="{{ plan_url }}">Administrar mi plan</a></div>
-              </div>
+              start_marker = '  {% if ai_status and ai_status.plan_name %}'
+              end_marker = '  <section class="card app-card mb-4">\n    <div class="card-body p-4">\n      <h2 class="h5 fw-bold mb-1">Facturas de proveedores + IA</h2>'
+              start = source.find(start_marker)
+              if start < 0:
+                  raise SystemExit('AI plan section start not found')
+              end = source.find(end_marker, start)
+              if end < 0:
+                  raise SystemExit('AI plan section end boundary not found')
 
-              <div class="row g-3 mb-3">
-                <div class="col-lg-7">
-                  <div class="ai-plan-usage h-100">
-                    <div class="ai-plan-usage-head mb-2"><div><div class="ai-plan-usage-big">Uso de IA</div><div class="small text-muted">{{ ai_usage.used_usage }} de {{ ai_usage.included_usage or ai_status.plan_limit }} interacciones utilizadas</div></div><div class="small text-muted">{{ plan_percent }}%</div></div>
-                    <div class="ai-plan-usage-bar"><span style="width:{{ [plan_percent, 100] | min }}%"></span></div>
-                    <div class="d-flex justify-content-between small text-muted mt-2"><span>{{ ai_usage.remaining_usage }} restantes</span><span>Renovación según tu modalidad</span></div>
-                  </div>
-                </div>
-                <div class="col-lg-5">
-                  <div class="ai-plan-box">
-                    <div class="ai-plan-box-title">Vigencia y cobro</div>
-                    {% if ai_status.origin == 'MERCADO_PAGO' %}
-                    <div class="fw-bold"><i class="bi bi-check-circle-fill text-success me-1"></i>Cobro automático</div>
-                    <div class="small text-muted mt-1">Los cobros y el próximo ciclo se sincronizan con Mercado Pago.</div>
-                    {% elif ai_status.ends_at %}
-                    <div class="fw-bold"><i class="bi bi-calendar-check me-1"></i>Vencimiento: {{ ai_status.ends_at[:10] }}</div>
-                    <div class="small text-muted mt-1">La renovación de este plan es administrada por StockArMobile.</div>
-                    {% else %}
-                    <div class="fw-bold">Plan activo</div><div class="small text-muted mt-1">La vigencia se administra desde tu suscripción IA.</div>
-                    {% endif %}
-                  </div>
-                </div>
-              </div>
+              replacement = '''  {% if ai_status and ai_status.plan_name %}
+  {% set current_plan_ns = namespace(plan=None) %}
+  {% for plan_item in ai_plans %}{% if plan_item.code == ai_status.plan_code %}{% set current_plan_ns.plan = plan_item %}{% endif %}{% endfor %}
+  {% set plan_percent = ai_usage.percent if ai_usage and ai_usage.percent is not none else 0 %}
+  <section class="card app-card ai-plan-card-v3 mb-4">
+    <div class="card-body p-4 p-lg-5">
+      <div class="d-flex flex-wrap justify-content-between align-items-start gap-4 mb-4">
+        <div>
+          <div class="ai-plan-kicker mb-2"><i class="bi bi-stars me-1"></i> Tu plan IA actual</div>
+          <div class="d-flex flex-wrap align-items-center gap-2 mb-2"><h2 class="ai-plan-name mb-0">{{ ai_status.plan_name }}</h2><span class="badge {{ 'text-bg-success' if ai_status.status == 'ACTIVA' else 'text-bg-warning text-dark' if ai_status.status == 'PENDIENTE' else 'text-bg-secondary' }}">{{ ai_status.status or 'SIN ESTADO' }}</span></div>
+          <p class="text-muted mb-2">{{ current_plan_ns.plan.tagline if current_plan_ns.plan else 'Tu equipo inteligente trabajando para tu comercio.' }}</p>
+          {% if current_plan_ns.plan %}<div class="ai-plan-price mb-2">{{ current_plan_ns.plan.price }}</div>{% endif %}
+          <div class="ai-plan-meta">
+            <span><i class="bi bi-lightning-charge"></i>{{ ai_status.plan_limit }} interacciones/mes</span>
+            <span><i class="bi bi-arrow-repeat"></i>{% if ai_status.origin == 'MERCADO_PAGO' %}Renovación automática{% else %}Gestión manual{% endif %}</span>
+          </div>
+        </div>
+        <div class="d-flex flex-wrap gap-2"><a class="btn btn-outline-primary" href="{{ plan_url }}">Ver otros planes</a><a class="btn btn-primary" href="{{ plan_url }}">Administrar mi plan</a></div>
+      </div>
 
-              <div class="row g-3">
-                <div class="col-lg-7">
-                  <div class="ai-plan-box">
-                    <div class="ai-plan-box-title">¿Qué incluye tu plan?</div>
-                    <div class="ai-plan-agent-list">
-                      {% if current_plan_ns.plan %}{% for agent_key in current_plan_ns.plan.agents %}<div><i class="bi bi-check-circle-fill"></i><span>{{ agent_labels[agent_key] }}</span></div>{% endfor %}{% endif %}
-                      {% if current_plan_ns.plan and current_plan_ns.plan.invoice_processing %}<div><i class="bi bi-check-circle-fill"></i><span>Reconocimiento de facturas con IA</span></div><div><i class="bi bi-check-circle-fill"></i><span>Carga de productos y stock desde facturas</span></div>{% endif %}
-                    </div>
-                  </div>
-                </div>
-                <div class="col-lg-5">
-                  {% if current_plan_ns.plan and current_plan_ns.plan.invoice_processing %}
-                  <div class="ai-plan-pro-banner h-100"><strong><i class="bi bi-file-earmark-text me-1"></i>Facturas de proveedores + IA</strong><div class="small text-muted">Cargá una factura y prepará el reconocimiento de productos y la actualización de tu stock.</div></div>
-                  {% else %}
-                  <div class="ai-plan-pro-banner h-100"><strong><i class="bi bi-stars me-1"></i>Más automatización</strong><div class="small text-muted">Con IA PRO sumás reconocimiento de facturas de proveedores y más automatización para tu comercio.</div><a class="btn btn-sm btn-primary mt-2" href="{{ plan_url }}">Conocer IA PRO</a></div>
-                  {% endif %}
-                </div>
-              </div>
+      <div class="row g-3 mb-3">
+        <div class="col-lg-7">
+          <div class="ai-plan-usage h-100">
+            <div class="ai-plan-usage-head mb-2"><div><div class="ai-plan-usage-big">Uso de IA</div><div class="small text-muted">{{ ai_usage.used_usage }} de {{ ai_usage.included_usage or ai_status.plan_limit }} interacciones utilizadas</div></div><div class="small text-muted">{{ plan_percent }}%</div></div>
+            <div class="ai-plan-usage-bar"><span style="width:{{ [plan_percent, 100] | min }}%"></span></div>
+            <div class="d-flex justify-content-between small text-muted mt-2"><span>{{ ai_usage.remaining_usage }} restantes</span><span>Renovación según tu modalidad</span></div>
+          </div>
+        </div>
+        <div class="col-lg-5">
+          <div class="ai-plan-box">
+            <div class="ai-plan-box-title">Vigencia y cobro</div>
+            {% if ai_status.origin == 'MERCADO_PAGO' %}
+            <div class="fw-bold"><i class="bi bi-check-circle-fill text-success me-1"></i>Cobro automático</div>
+            <div class="small text-muted mt-1">Los cobros y el próximo ciclo se sincronizan con el medio de pago de tu suscripción.</div>
+            {% elif ai_status.ends_at %}
+            <div class="fw-bold"><i class="bi bi-calendar-check me-1"></i>Vencimiento: {{ ai_status.ends_at[:10] }}</div>
+            <div class="small text-muted mt-1">La renovación de este plan es administrada por StockArMobile.</div>
+            {% else %}
+            <div class="fw-bold">Plan activo</div><div class="small text-muted mt-1">La vigencia se administra desde tu suscripción IA.</div>
+            {% endif %}
+          </div>
+        </div>
+      </div>
+
+      <div class="row g-3">
+        <div class="col-lg-7">
+          <div class="ai-plan-box">
+            <div class="ai-plan-box-title">¿Qué incluye tu plan?</div>
+            <div class="ai-plan-agent-list">
+              {% if current_plan_ns.plan %}{% for agent_key in current_plan_ns.plan.agents %}<div><i class="bi bi-check-circle-fill"></i><span>{{ agent_labels[agent_key] }}</span></div>{% endfor %}{% endif %}
+              {% if current_plan_ns.plan and current_plan_ns.plan.invoice_processing %}<div><i class="bi bi-check-circle-fill"></i><span>Reconocimiento de facturas con IA</span></div><div><i class="bi bi-check-circle-fill"></i><span>Carga de productos y stock desde facturas</span></div>{% endif %}
             </div>
-          </section>
-          {% endif %}'''
+          </div>
+        </div>
+        <div class="col-lg-5">
+          {% if current_plan_ns.plan and current_plan_ns.plan.invoice_processing %}
+          <div class="ai-plan-pro-banner h-100"><strong><i class="bi bi-file-earmark-text me-1"></i>Facturas de proveedores + IA</strong><div class="small text-muted">Cargá una factura para facilitar el reconocimiento de productos y la preparación de tu stock.</div></div>
+          {% else %}
+          <div class="ai-plan-pro-banner h-100"><strong><i class="bi bi-stars me-1"></i>Más automatización</strong><div class="small text-muted">Con IA PRO sumás reconocimiento de facturas de proveedores y más automatización para tu comercio.</div><a class="btn btn-sm btn-primary mt-2" href="{{ plan_url }}">Conocer IA PRO</a></div>
+          {% endif %}
+        </div>
+      </div>
+    </div>
+  </section>
 
-          pattern = re.compile(r'\{% if ai_status and ai_status\.plan_name %\}.*?\{% endif %\}', re.S)
-          source, count = pattern.subn(replacement, source, count=1)
-          if count != 1:
-              raise SystemExit(f'AI plan section not found uniquely: {count}')
+'''
+              source = source[:start] + replacement + source[end:]
+
           path.write_text(source, encoding='utf-8')
           PY
 
@@ -130,24 +136,24 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          grep -q 'AI_PLAN_VALUE_V2' templates/ai_agents/index.html
+          grep -q 'AI_PLAN_VALUE_V3' templates/ai_agents/index.html
           grep -q '¿Qué incluye tu plan?' templates/ai_agents/index.html
           grep -q 'current_plan_ns.plan' templates/ai_agents/index.html
           git diff --check
 
-      - name: Commit source change and remove workflow
+      - name: Commit source change and remove temporary workflow
         shell: bash
         run: |
           set -euo pipefail
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add templates/ai_agents/index.html
-          if git diff --cached --quiet; then
-            git rm .github/workflows/enhance-ai-plan-card.yml
-            git commit -m "chore: remove temporary AI plan workflow"
-          else
+          if git diff -- templates/ai_agents/index.html | grep -q 'AI_PLAN_VALUE_V3'; then
+            git add templates/ai_agents/index.html
             git commit -m "feat: improve AI subscription plan card"
-            git rm .github/workflows/enhance-ai-plan-card.yml
-            git commit -m "chore: remove temporary AI plan workflow"
           fi
+          if test -f TMP_AI_PLAN_TRIGGER.md; then
+            git rm TMP_AI_PLAN_TRIGGER.md
+          fi
+          git rm .github/workflows/enhance-ai-plan-card.yml
+          git commit -m "chore: remove temporary AI plan workflow"
           git push origin main
