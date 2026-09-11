@@ -43,15 +43,21 @@ def _initial_delay_seconds() -> int:
 def _run_once(flask_app) -> None:
     from stockarmobile.extensions import db
     from services.ai_agent.followup_service import AIFollowupService
+    from services.ai_agent.followup_delivery_service import AIFollowupDeliveryService
 
-    def scan() -> None:
+    def work_once() -> None:
         with flask_app.app_context():
-            result = AIFollowupService.scan()
+            planned = AIFollowupService.scan()
+            delivered = AIFollowupDeliveryService.dispatch_pending()
             logger.info(
-                "AI follow-up worker scanned=%s eligible=%s queued=%s",
-                result["scanned"],
-                result["eligible"],
-                result["queued"],
+                "AI follow-up cycle planned_scanned=%s eligible=%s queued=%s sent=%s stale=%s blocked=%s failed=%s",
+                planned["scanned"],
+                planned["eligible"],
+                planned["queued"],
+                delivered["sent"],
+                delivered["stale"],
+                delivered["blocked"],
+                delivered["failed"],
             )
 
     try:
@@ -64,7 +70,7 @@ def _run_once(flask_app) -> None:
             if not acquired:
                 return
             try:
-                scan()
+                work_once()
             finally:
                 connection.execute(
                     text("SELECT pg_advisory_unlock(:key)"), {"key": _LOCK_KEY}
@@ -74,9 +80,9 @@ def _run_once(flask_app) -> None:
         # SQLite/dev does not support PostgreSQL advisory locks. Production
         # Render/Postgres uses the cross-worker lock above.
         try:
-            scan()
+            work_once()
         except Exception:
-            logger.exception("AI follow-up worker scan failed")
+            logger.exception("AI follow-up worker cycle failed")
 
 
 def _worker(flask_app) -> None:
