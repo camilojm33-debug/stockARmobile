@@ -8,6 +8,7 @@
 - Se conservaron los enlaces SEO de rubros y control de stock y se restauro el marcado estructurado de WebSite.
 - Se alinearon los smoke tests de la landing con el nuevo copy sin relajar las comprobaciones funcionales de planes, SEO, referidos y seguridad.
 - Se agregaron reglas de Git para ignorar metadatos comunes del sistema operativo.
+- Se ajustaron las ultimas expectativas de regresion de la landing para reflejar la experiencia comercial actual sin perder cobertura funcional.
 
 ## 2026-07-09
 
