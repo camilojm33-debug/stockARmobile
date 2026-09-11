@@ -1,4 +1,13 @@
-# CHANGELOG - StockArmobile SaaS Audit
+# CHANGELOG - StockarMobile
+
+## 2026-09-11
+
+- Se actualizo la landing comercial con una propuesta mas clara de StockarMobile como plataforma de gestion, ventas e inteligencia artificial.
+- Se incorporaron bloques comerciales para Vendedor IA, Asistente IA, Analista IA y Marketing IA, manteniendo los flujos existentes de registro, demo, planes, referidos, contacto y PWA.
+- Se mejoro la presentacion responsive del hero, beneficios y flujo comercial para PC, tablet y celular.
+- Se conservaron los enlaces SEO de rubros y control de stock y se restauro el marcado estructurado de WebSite.
+- Se alinearon los smoke tests de la landing con el nuevo copy sin relajar las comprobaciones funcionales de planes, SEO, referidos y seguridad.
+- Se agregaron reglas de Git para ignorar metadatos comunes del sistema operativo.
 
 ## 2026-07-09
 
