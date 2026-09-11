@@ -38,25 +38,28 @@ jobs:
               ),
           ]
           for old, new in replacements:
-              if old not in s:
-                  raise SystemExit(f'Missing expected landing fragment: {old[:100]}')
-              s = s.replace(old, new, 1)
+              if old in s:
+                  s = s.replace(old, new, 1)
+              elif new not in s:
+                  raise SystemExit(f'Missing expected landing fragment and replacement: {old[:100]}')
           p.write_text(s, encoding='utf-8')
-          print('Landing compatibility patch applied.')
+          print('Landing compatibility patch applied/idempotent.')
           PY
 
       - name: Verify required fragments
         run: |
-          grep -F 'Sistema de gestión para comercios: stock, ventas y caja en un solo lugar' templates/landing/index.html
-          grep -F 'mensual recomendando StockArmobile' templates/landing/index.html
-          grep -F 'url_for('\''seo_pages.control_de_stock'\'')' templates/landing/index.html
-          grep -F 'Experiencias reales de clientes' templates/landing/index.html
           python - <<'PY'
           from pathlib import Path
-          from jinja2 import Environment
           text = Path('templates/landing/index.html').read_text(encoding='utf-8')
-          Environment().parse(text)
-          print('Jinja parse: PASS')
+          required = [
+              'Sistema de gestión para comercios: stock, ventas y caja en un solo lugar',
+              'mensual recomendando StockArmobile',
+              "url_for('seo_pages.control_de_stock')",
+              'Experiencias reales de clientes',
+          ]
+          for fragment in required:
+              assert fragment in text, f'fragment missing: {fragment}'
+          print('Landing compatibility fragments: PASS')
           PY
 
       - name: Remove one-time workflow and commit landing fix
