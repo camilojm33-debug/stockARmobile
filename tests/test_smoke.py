@@ -4135,16 +4135,12 @@ def test_landing_and_subscription_use_same_plan_catalog():
         "12.999",
         "29.999",
         "54.999",
-        "Sistema de gestión para comercios: stock, ventas y caja en un solo lugar",
         "Comparación comercial completa",
-        "Gana dinero recomendando StockArmobile",
-        "Comisión configurada",
-        "Prueba StockArmobile GRATIS",
-        "Sin tarjeta de crédito",
-        "Ya sos cliente? Iniciar sesion y activar Referidos",
-        "No sos cliente? Crear cuenta de vendedor",
     ]:
         assert value in landing_html
+    assert "Tu negocio más ordenado. Tus ventas más inteligentes." in landing_html
+    assert "Sumá inteligencia artificial a tu negocio" in landing_html
+    assert "Vendedor IA" in landing_html
 
     client.post("/auth/login", data={"username": "empresa_admin", "password": "admin123"})
     portal = client.get("/admin/portal")
@@ -4168,11 +4164,9 @@ def test_landing_seo_phase2_copy_and_single_h1():
         'en una sola plataforma. Funciona desde el celular, con modo offline y prueba gratuita de 10 días."' in html
     )
     assert html.count("<h1") == 1
-    assert "Sistema de gestión para comercios: stock, ventas y caja en un solo lugar" in html
-    assert (
-        "Controlá tu negocio desde la PC o el celular: ventas, stock, clientes, caja, QR, etiquetas y reportes "
-        "en una sola plataforma pensada para comercios argentinos." in html
-    )
+    assert "Tu negocio más ordenado. Tus ventas más inteligentes." in html
+    assert "Sumá inteligencia artificial a tu negocio" in html
+    assert "Vendedor IA" in html
     assert "Beneficios para el control de stock y ventas de tu comercio" in html
     assert "Pensado para comercios, ferreterías, kioscos y negocios en crecimiento" in html
     assert "Mercado Pago" in html
@@ -4244,8 +4238,6 @@ def test_landing_public_ranking_no_longer_exposes_referrer_identity():
     # El programa de referidos sigue presente, en forma generica.
     assert "Programa de Referidos" in html
     assert "mensual recomendando StockArmobile" in html
-    assert "Ya sos cliente? Iniciar sesion y activar Referidos" in html
-    assert "No sos cliente? Crear cuenta de vendedor" in html
 
     # SEO de Fase 1/2 intacto.
     assert html.count("<h1") == 1
