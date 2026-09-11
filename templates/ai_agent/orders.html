@@ -3,74 +3,420 @@
 {% block title %}Pedidos IA - StockArmobile{% endblock %}
 
 {% block content %}
-<div class="app-shell">
-  <div class="d-flex flex-column flex-lg-row justify-content-between align-items-lg-center gap-3 mb-4">
-    <div>
-      <span class="page-kicker"><i class="bi bi-robot"></i> Operación con IA</span>
-      <h1 class="h3 fw-bold mb-0">Pedidos IA</h1>
-      <p class="text-muted mb-0">Pedidos generados por el Vendedor 24/7 desde WhatsApp, con seguimiento del pago y la venta.</p>
-    </div>
-    <div class="d-flex gap-2 flex-wrap">
-      <a class="btn btn-outline-secondary" href="{{ url_for('ai_admin.index') }}"><i class="bi bi-robot me-1"></i>Configurar IA</a>
-      <a class="btn btn-outline-primary" href="{{ url_for('quotes.index') }}"><i class="bi bi-file-earmark-text me-1"></i>Presupuestos</a>
-    </div>
-  </div>
-
-  <div class="row g-3 mb-4">
-    <div class="col-6 col-xl-3"><div class="card app-card h-100 ai-order-stat"><div class="card-body"><div class="small text-muted">Todos</div><div class="fs-3 fw-bold">{{ summary.total }}</div><div class="small text-muted">Pedidos IA</div></div></div></div>
-    <div class="col-6 col-xl-3"><div class="card app-card h-100 ai-order-stat ai-order-stat-warning"><div class="card-body"><div class="small text-muted">Esperando pago</div><div class="fs-3 fw-bold">{{ summary.pending }}</div><div class="small text-muted">Para seguimiento</div></div></div></div>
-    <div class="col-6 col-xl-3"><div class="card app-card h-100 ai-order-stat ai-order-stat-success"><div class="card-body"><div class="small text-muted">Pagados</div><div class="fs-3 fw-bold">{{ summary.paid }}</div><div class="small text-muted">Pago aprobado</div></div></div></div>
-    <div class="col-6 col-xl-3"><div class="card app-card h-100 ai-order-stat ai-order-stat-primary"><div class="card-body"><div class="small text-muted">Confirmados</div><div class="fs-3 fw-bold">{{ summary.confirmed }}</div><div class="small text-muted">Venta y stock aplicados</div></div></div></div>
-  </div>
-
-  <div class="card app-card mb-4">
-    <div class="card-body py-3">
-      <div class="d-flex flex-wrap gap-2 align-items-center">
-        <span class="small text-muted fw-semibold me-1">Filtrar:</span>
-        {% for key, label in [('','Todos'),('pending','Esperando pago'),('paid','Pagados'),('confirmed','Confirmados'),('problem','Con incidencia')] %}
-        <a class="btn btn-sm {% if selected_status == key %}btn-primary{% else %}btn-outline-secondary{% endif %}" href="{{ url_for('whatsapp_agent.ai_orders', status=key) }}">{{ label }}</a>
-        {% endfor %}
+<div class="app-shell ai-orders-page">
+  <section class="ai-orders-hero mb-4">
+    <div class="ai-orders-hero-main">
+      <div class="ai-orders-hero-icon" aria-hidden="true">
+        <i class="bi bi-robot"></i>
+      </div>
+      <div class="ai-orders-hero-copy">
+        <div class="ai-orders-hero-kicker"><i class="bi bi-stars"></i> Operación con IA</div>
+        <div class="d-flex flex-wrap align-items-center gap-2 mb-2">
+          <h1 class="h2 fw-bold mb-0">Pedidos IA</h1>
+          <span class="ai-channel-pill"><i class="bi bi-whatsapp"></i> WhatsApp</span>
+        </div>
+        <p class="mb-0">Centralizá los pedidos generados por el Vendedor 24/7 y controlá en un solo lugar el pago, la venta y el stock.</p>
       </div>
     </div>
-  </div>
+    <div class="ai-orders-hero-actions">
+      <a class="btn ai-btn-primary" href="{{ url_for('ai_admin.index') }}">
+        <i class="bi bi-robot me-2"></i>Configurar IA
+      </a>
+      <a class="btn ai-btn-light" href="{{ url_for('quotes.index') }}">
+        <i class="bi bi-file-earmark-text me-2"></i>Presupuestos
+      </a>
+    </div>
+  </section>
 
-  <div class="card app-card">
-    <div class="card-body p-0">
-      <div class="table-responsive">
-        <table class="table table-hover align-middle mb-0">
-          <thead><tr><th>Pedido</th><th>Cliente</th><th>Importe</th><th>Pago</th><th>Pedido</th><th>Origen</th><th>Fecha</th><th class="text-end">Acciones</th></tr></thead>
-          <tbody>
-            {% for order in orders %}
-            <tr>
-              <td><div class="fw-bold">{{ order.number }}</div><div class="small text-muted">#{{ order.quote_id }}</div></td>
-              <td><div class="fw-semibold">{{ order.customer_name }}</div>{% if order.customer_phone %}<div class="small text-muted">{{ order.customer_phone }}</div>{% endif %}</td>
-              <td><div class="fw-bold">{{ order.currency }} {{ '%.2f'|format(order.total) }}</div><div class="small text-muted">{{ order.line_count }} línea(s)</div></td>
-              <td><span class="badge {{ order.payment_badge }}">{{ order.payment_label }}</span>{% if order.payment_id %}<div class="small text-muted mt-1">MP #{{ order.payment_id }}</div>{% endif %}</td>
-              <td><span class="badge {{ order.order_badge }}">{{ order.order_label }}</span>{% if order.sale_id %}<div class="small mt-1"><a href="/ventas/{{ order.sale_id }}">Venta #{{ order.sale_id }}</a></div>{% endif %}</td>
-              <td><span class="badge text-bg-light border">WhatsApp</span><div class="small text-muted mt-1">Vendedor IA</div></td>
-              <td><div>{{ order.created_at.strftime('%d/%m/%Y') if order.created_at else '-' }}</div><div class="small text-muted">{{ order.created_at.strftime('%H:%M') if order.created_at else '' }}</div></td>
-              <td class="text-end"><a class="btn btn-sm btn-outline-primary" href="{{ url_for('whatsapp_agent.ai_order_detail', quote_id=order.quote_id) }}"><i class="bi bi-eye me-1"></i>Ver</a></td>
-            </tr>
-            {% else %}
-            <tr><td colspan="8" class="text-center py-5 text-muted"><i class="bi bi-inbox fs-2 d-block mb-2"></i>No hay pedidos IA para este filtro.</td></tr>
-            {% endfor %}
-          </tbody>
-        </table>
+  <section class="row g-3 mb-4" aria-label="Resumen de pedidos IA">
+    <div class="col-6 col-xl-3">
+      <a class="ai-order-stat-card ai-order-stat-all" href="{{ url_for('whatsapp_agent.ai_orders', status='') }}">
+        <div class="ai-order-stat-icon"><i class="bi bi-inbox"></i></div>
+        <div class="ai-order-stat-copy">
+          <div class="ai-order-stat-label">Todos</div>
+          <div class="ai-order-stat-value">{{ summary.total }}</div>
+          <div class="ai-order-stat-helper">Pedidos IA</div>
+        </div>
+        <i class="bi bi-arrow-up-right ai-order-stat-arrow"></i>
+      </a>
+    </div>
+    <div class="col-6 col-xl-3">
+      <a class="ai-order-stat-card ai-order-stat-pending" href="{{ url_for('whatsapp_agent.ai_orders', status='pending') }}">
+        <div class="ai-order-stat-icon"><i class="bi bi-hourglass-split"></i></div>
+        <div class="ai-order-stat-copy">
+          <div class="ai-order-stat-label">Esperando pago</div>
+          <div class="ai-order-stat-value">{{ summary.pending }}</div>
+          <div class="ai-order-stat-helper">Requieren seguimiento</div>
+        </div>
+        <i class="bi bi-arrow-up-right ai-order-stat-arrow"></i>
+      </a>
+    </div>
+    <div class="col-6 col-xl-3">
+      <a class="ai-order-stat-card ai-order-stat-paid" href="{{ url_for('whatsapp_agent.ai_orders', status='paid') }}">
+        <div class="ai-order-stat-icon"><i class="bi bi-credit-card-2-front"></i></div>
+        <div class="ai-order-stat-copy">
+          <div class="ai-order-stat-label">Pagados</div>
+          <div class="ai-order-stat-value">{{ summary.paid }}</div>
+          <div class="ai-order-stat-helper">Pago aprobado</div>
+        </div>
+        <i class="bi bi-arrow-up-right ai-order-stat-arrow"></i>
+      </a>
+    </div>
+    <div class="col-6 col-xl-3">
+      <a class="ai-order-stat-card ai-order-stat-confirmed" href="{{ url_for('whatsapp_agent.ai_orders', status='confirmed') }}">
+        <div class="ai-order-stat-icon"><i class="bi bi-check2-circle"></i></div>
+        <div class="ai-order-stat-copy">
+          <div class="ai-order-stat-label">Confirmados</div>
+          <div class="ai-order-stat-value">{{ summary.confirmed }}</div>
+          <div class="ai-order-stat-helper">Venta y stock aplicados</div>
+        </div>
+        <i class="bi bi-arrow-up-right ai-order-stat-arrow"></i>
+      </a>
+    </div>
+  </section>
+
+  <section class="ai-orders-filters app-card mb-4">
+    <div class="ai-orders-filters-head">
+      <div class="d-flex align-items-center gap-2">
+        <div class="ai-section-icon"><i class="bi bi-funnel"></i></div>
+        <div>
+          <div class="fw-bold">Filtros rápidos</div>
+          <div class="small text-muted">Encontrá en segundos los pedidos que necesitan atención.</div>
+        </div>
       </div>
     </div>
-  </div>
+    <div class="ai-orders-filter-list" role="navigation" aria-label="Filtrar pedidos IA">
+      {% set filter_items = [
+        ('', 'Todos', summary.total, 'bi-inboxes'),
+        ('pending', 'Esperando pago', summary.pending, 'bi-hourglass-split'),
+        ('paid', 'Pagados', summary.paid, 'bi-credit-card-2-front'),
+        ('confirmed', 'Confirmados', summary.confirmed, 'bi-check2-circle'),
+        ('problem', 'Con incidencia', none, 'bi-exclamation-circle')
+      ] %}
+      {% for key, label, count, icon in filter_items %}
+      <a class="ai-order-filter {% if selected_status == key %}is-active{% endif %}" href="{{ url_for('whatsapp_agent.ai_orders', status=key) }}" {% if selected_status == key %}aria-current="page"{% endif %}>
+        <i class="bi {{ icon }}"></i>
+        <span>{{ label }}</span>
+        {% if count is not none %}<span class="ai-order-filter-count">{{ count }}</span>{% endif %}
+      </a>
+      {% endfor %}
+    </div>
+  </section>
+
+  <section class="app-card ai-orders-table-card">
+    <div class="ai-orders-table-head">
+      <div>
+        <div class="d-flex align-items-center gap-2 mb-1">
+          <div class="ai-section-icon"><i class="bi bi-bag-check"></i></div>
+          <h2 class="h5 fw-bold mb-0">Pedidos recientes</h2>
+        </div>
+        <p class="small text-muted mb-0">Pedidos creados por el Vendedor IA y su estado actual.</p>
+      </div>
+      <div class="ai-orders-table-channel"><i class="bi bi-whatsapp"></i> Origen WhatsApp</div>
+    </div>
+
+    {% if orders %}
+    <div class="table-responsive ai-orders-table-wrap">
+      <table class="table table-hover align-middle ai-orders-table mb-0">
+        <thead>
+          <tr>
+            <th>Pedido</th>
+            <th>Cliente</th>
+            <th>Importe</th>
+            <th>Pago</th>
+            <th>Estado</th>
+            <th>Origen</th>
+            <th>Fecha</th>
+            <th class="text-end">Acciones</th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for order in orders %}
+          <tr>
+            <td data-label="Pedido">
+              <div class="ai-order-identity">
+                <div class="ai-order-row-icon"><i class="bi bi-receipt"></i></div>
+                <div>
+                  <div class="fw-bold">{{ order.number }}</div>
+                  <div class="small text-muted">#{{ order.quote_id }}</div>
+                </div>
+              </div>
+            </td>
+            <td data-label="Cliente">
+              <div class="ai-customer-cell">
+                <div class="ai-avatar"><i class="bi bi-person"></i></div>
+                <div>
+                  <div class="fw-semibold">{{ order.customer_name }}</div>
+                  {% if order.customer_phone %}<div class="small text-muted">{{ order.customer_phone }}</div>{% endif %}
+                </div>
+              </div>
+            </td>
+            <td data-label="Importe">
+              <div class="fw-bold ai-order-amount">{{ order.currency }} {{ '%.2f'|format(order.total) }}</div>
+              <div class="small text-muted">{{ order.line_count }} línea(s)</div>
+            </td>
+            <td data-label="Pago">
+              <span class="ai-status-chip ai-status-payment {{ order.payment_badge }}">
+                <i class="bi bi-credit-card"></i>{{ order.payment_label }}
+              </span>
+              {% if order.payment_id %}<div class="small text-muted mt-1">MP #{{ order.payment_id }}</div>{% endif %}
+            </td>
+            <td data-label="Estado">
+              <span class="ai-status-chip ai-status-order {{ order.order_badge }}">
+                <i class="bi bi-box-seam"></i>{{ order.order_label }}
+              </span>
+              {% if order.sale_id %}<div class="small mt-1"><a class="ai-sale-link" href="/ventas/{{ order.sale_id }}">Venta #{{ order.sale_id }}</a></div>{% endif %}
+            </td>
+            <td data-label="Origen">
+              <span class="ai-origin-chip"><i class="bi bi-whatsapp"></i>WhatsApp</span>
+              <div class="small text-muted mt-1">Vendedor IA</div>
+            </td>
+            <td data-label="Fecha">
+              <div class="fw-semibold">{{ order.created_at.strftime('%d/%m/%Y') if order.created_at else '-' }}</div>
+              <div class="small text-muted">{{ order.created_at.strftime('%H:%M') if order.created_at else '' }}</div>
+            </td>
+            <td data-label="Acciones" class="text-end">
+              <a class="btn ai-view-btn" href="{{ url_for('whatsapp_agent.ai_order_detail', quote_id=order.quote_id) }}">
+                Ver pedido <i class="bi bi-arrow-right ms-1"></i>
+              </a>
+            </td>
+          </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+    {% else %}
+    <div class="ai-orders-empty">
+      {% if selected_status %}
+      <div class="ai-empty-icon ai-empty-icon-neutral"><i class="bi bi-search"></i></div>
+      <h3 class="h5 fw-bold mb-2">No encontramos pedidos en este estado</h3>
+      <p class="text-muted mb-0">Probá con otro filtro para revisar el resto de tus pedidos IA.</p>
+      <div class="mt-3"><a class="btn ai-btn-light" href="{{ url_for('whatsapp_agent.ai_orders', status='') }}"><i class="bi bi-inboxes me-2"></i>Ver todos</a></div>
+      {% else %}
+      <div class="ai-empty-icon"><i class="bi bi-bag-plus"></i></div>
+      <span class="ai-empty-kicker">Tu centro de pedidos IA</span>
+      <h3 class="h4 fw-bold mb-2">Todavía no hay pedidos</h3>
+      <p class="text-muted mb-4 ai-empty-description">Cuando el Vendedor 24/7 reciba una compra por WhatsApp, vas a verla acá con su pago, estado y venta vinculada.</p>
+      <div class="ai-empty-steps">
+        <div class="ai-empty-step"><span>1</span><div><strong>Conectá tu canal</strong><small>Configurá WhatsApp y el Vendedor.</small></div></div>
+        <div class="ai-empty-step"><span>2</span><div><strong>El Vendedor atiende</strong><small>Busca productos y arma el pedido.</small></div></div>
+        <div class="ai-empty-step"><span>3</span><div><strong>El pedido aparece acá</strong><small>Seguís pago, venta y stock.</small></div></div>
+      </div>
+      <a class="btn ai-btn-primary mt-4" href="{{ url_for('ai_admin.index') }}"><i class="bi bi-robot me-2"></i>Configurar Vendedor IA</a>
+    {% endif %}
+    </div>
+    {% endif %}
+  </section>
 </div>
 
 <style>
-  .ai-order-stat { border-radius: 18px; }
-  .ai-order-stat-warning { border-color: rgba(245,158,11,.35); }
-  .ai-order-stat-success { border-color: rgba(16,185,129,.35); }
-  .ai-order-stat-primary { border-color: rgba(37,99,235,.35); }
+  .ai-orders-page { padding-bottom: 32px; }
+  .ai-orders-hero {
+    position: relative;
+    overflow: hidden;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 24px;
+    padding: 24px 26px;
+    border: 1px solid rgba(37, 99, 235, .14);
+    border-radius: 22px;
+    background:
+      radial-gradient(circle at 82% -10%, rgba(37, 99, 235, .16), transparent 34%),
+      linear-gradient(135deg, rgba(255,255,255,.98), rgba(242,247,255,.96));
+    box-shadow: 0 18px 42px rgba(15, 23, 42, .08);
+  }
+  [data-bs-theme="dark"] .ai-orders-hero {
+    border-color: rgba(96,165,250,.16);
+    background:
+      radial-gradient(circle at 82% -10%, rgba(37,99,235,.22), transparent 36%),
+      linear-gradient(135deg, rgba(22,32,51,.98), rgba(15,23,42,.98));
+  }
+  .ai-orders-hero-main { display: flex; align-items: center; gap: 18px; min-width: 0; }
+  .ai-orders-hero-icon {
+    flex: 0 0 auto;
+    width: 58px;
+    height: 58px;
+    border-radius: 17px;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    background: linear-gradient(135deg, #2563eb, #60a5fa);
+    color: #fff;
+    font-size: 1.65rem;
+    box-shadow: 0 10px 24px rgba(37,99,235,.24);
+  }
+  .ai-orders-hero-copy { min-width: 0; }
+  .ai-orders-hero-kicker { color: var(--app-primary-deep); font-size: .78rem; font-weight: 800; margin-bottom: 6px; letter-spacing: .02em; }
+  [data-bs-theme="dark"] .ai-orders-hero-kicker { color: #93c5fd; }
+  .ai-orders-hero-copy p { max-width: 760px; color: var(--app-muted); font-size: .93rem; }
+  .ai-channel-pill, .ai-orders-table-channel, .ai-origin-chip {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    border: 1px solid rgba(34,197,94,.18);
+    background: rgba(34,197,94,.08);
+    color: #15803d;
+    border-radius: 999px;
+    font-weight: 700;
+  }
+  .ai-channel-pill { padding: 6px 10px; font-size: .74rem; }
+  [data-bs-theme="dark"] .ai-channel-pill, [data-bs-theme="dark"] .ai-orders-table-channel, [data-bs-theme="dark"] .ai-origin-chip { color: #86efac; background: rgba(34,197,94,.12); }
+  .ai-orders-hero-actions { display: flex; gap: 10px; flex-wrap: wrap; flex: 0 0 auto; }
+  .ai-btn-primary {
+    color: #fff;
+    background: linear-gradient(135deg, #2563eb, #1d4ed8);
+    border: 0;
+    border-radius: 12px;
+    font-weight: 700;
+    box-shadow: 0 10px 22px rgba(37,99,235,.18);
+  }
+  .ai-btn-primary:hover, .ai-btn-primary:focus { color: #fff; transform: translateY(-1px); box-shadow: 0 14px 26px rgba(37,99,235,.24); }
+  .ai-btn-light { background: var(--app-panel); color: var(--app-ink); border: 1px solid var(--app-line); border-radius: 12px; font-weight: 700; }
+  .ai-btn-light:hover { background: var(--app-panel-soft); color: var(--app-primary-deep); border-color: rgba(37,99,235,.22); }
+
+  .ai-order-stat-card {
+    position: relative;
+    display: flex;
+    align-items: center;
+    gap: 14px;
+    min-height: 118px;
+    padding: 18px;
+    text-decoration: none;
+    color: var(--app-ink);
+    background: var(--app-panel);
+    border: 1px solid var(--app-line);
+    border-radius: 18px;
+    box-shadow: var(--app-shadow-soft);
+    overflow: hidden;
+    transition: transform .16s ease, box-shadow .16s ease, border-color .16s ease;
+  }
+  .ai-order-stat-card::after { content: ""; position: absolute; inset: auto 0 0 0; height: 3px; background: rgba(37,99,235,.16); }
+  .ai-order-stat-card:hover { transform: translateY(-2px); color: var(--app-ink); box-shadow: 0 16px 34px rgba(15,23,42,.10); border-color: rgba(37,99,235,.2); }
+  .ai-order-stat-icon { flex: 0 0 auto; width: 46px; height: 46px; border-radius: 14px; display: inline-flex; align-items: center; justify-content: center; font-size: 1.15rem; }
+  .ai-order-stat-copy { min-width: 0; }
+  .ai-order-stat-label { color: var(--app-muted); font-size: .8rem; font-weight: 700; }
+  .ai-order-stat-value { font-size: 1.9rem; font-weight: 800; line-height: 1; margin: 6px 0 5px; font-variant-numeric: tabular-nums; }
+  .ai-order-stat-helper { color: var(--app-muted); font-size: .73rem; }
+  .ai-order-stat-arrow { margin-left: auto; color: var(--app-muted); font-size: .95rem; align-self: flex-start; }
+  .ai-order-stat-all .ai-order-stat-icon { background: rgba(37,99,235,.10); color: #2563eb; }
+  .ai-order-stat-pending .ai-order-stat-icon { background: rgba(245,158,11,.12); color: #d97706; }
+  .ai-order-stat-paid .ai-order-stat-icon { background: rgba(16,185,129,.11); color: #059669; }
+  .ai-order-stat-confirmed .ai-order-stat-icon { background: rgba(99,102,241,.10); color: #4f46e5; }
+  .ai-order-stat-pending::after { background: rgba(245,158,11,.55); }
+  .ai-order-stat-paid::after { background: rgba(16,185,129,.55); }
+  .ai-order-stat-confirmed::after { background: rgba(99,102,241,.48); }
+  [data-bs-theme="dark"] .ai-order-stat-all .ai-order-stat-icon { background: rgba(59,130,246,.18); color: #93c5fd; }
+  [data-bs-theme="dark"] .ai-order-stat-pending .ai-order-stat-icon { background: rgba(245,158,11,.18); color: #fbbf24; }
+  [data-bs-theme="dark"] .ai-order-stat-paid .ai-order-stat-icon { background: rgba(16,185,129,.18); color: #6ee7b7; }
+  [data-bs-theme="dark"] .ai-order-stat-confirmed .ai-order-stat-icon { background: rgba(99,102,241,.18); color: #a5b4fc; }
+
+  .ai-orders-filters { padding: 16px 18px; border-radius: 18px; }
+  .ai-orders-filters-head { margin-bottom: 12px; }
+  .ai-section-icon { width: 32px; height: 32px; border-radius: 10px; display: inline-flex; align-items: center; justify-content: center; background: rgba(37,99,235,.09); color: var(--app-primary); font-size: .95rem; }
+  [data-bs-theme="dark"] .ai-section-icon { background: rgba(59,130,246,.18); color: #93c5fd; }
+  .ai-order-filter-list { display: flex; flex-wrap: wrap; gap: 8px; }
+  .ai-order-filter {
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+    padding: 9px 12px;
+    border-radius: 12px;
+    border: 1px solid var(--app-line);
+    background: var(--app-panel-soft);
+    color: var(--app-muted);
+    text-decoration: none;
+    font-size: .83rem;
+    font-weight: 700;
+    transition: .16s ease;
+  }
+  .ai-order-filter:hover { color: var(--app-primary-deep); border-color: rgba(37,99,235,.20); background: #f3f7ff; }
+  .ai-order-filter.is-active { color: #fff; border-color: var(--app-primary); background: linear-gradient(135deg,#2563eb,#1d4ed8); box-shadow: 0 8px 18px rgba(37,99,235,.18); }
+  .ai-order-filter-count { min-width: 22px; height: 20px; padding: 0 6px; border-radius: 999px; display: inline-flex; align-items: center; justify-content: center; background: rgba(15,23,42,.07); font-size: .7rem; }
+  .ai-order-filter.is-active .ai-order-filter-count { background: rgba(255,255,255,.18); color: #fff; }
+  [data-bs-theme="dark"] .ai-order-filter:hover { background: rgba(37,99,235,.12); }
+
+  .ai-orders-table-card { overflow: hidden; border-radius: 18px; }
+  .ai-orders-table-head { display: flex; justify-content: space-between; align-items: center; gap: 16px; padding: 18px 20px; border-bottom: 1px solid var(--app-line); background: linear-gradient(180deg, rgba(248,250,252,.70), transparent); }
+  [data-bs-theme="dark"] .ai-orders-table-head { background: linear-gradient(180deg, rgba(15,23,42,.46), transparent); }
+  .ai-orders-table-channel { padding: 7px 10px; font-size: .74rem; flex: 0 0 auto; }
+  .ai-orders-table-wrap { min-width: 0; }
+  .ai-orders-table { --bs-table-bg: transparent; }
+  .ai-orders-table thead th { padding: 12px 16px; color: var(--app-muted); font-size: .69rem; font-weight: 800; text-transform: uppercase; letter-spacing: .06em; border-bottom: 1px solid var(--app-line); white-space: nowrap; }
+  .ai-orders-table tbody td { padding: 15px 16px; border-color: var(--app-line); vertical-align: middle; }
+  .ai-orders-table tbody tr:last-child td { border-bottom: 0; }
+  .ai-orders-table tbody tr:hover { --bs-table-hover-bg: rgba(37,99,235,.035); }
+  .ai-order-identity, .ai-customer-cell { display: flex; align-items: center; gap: 10px; }
+  .ai-order-row-icon, .ai-avatar { width: 36px; height: 36px; border-radius: 11px; display: inline-flex; align-items: center; justify-content: center; flex: 0 0 auto; }
+  .ai-order-row-icon { background: rgba(37,99,235,.08); color: var(--app-primary); }
+  .ai-avatar { background: var(--app-panel-soft); border: 1px solid var(--app-line); color: var(--app-muted); }
+  .ai-order-amount { white-space: nowrap; }
+  .ai-status-chip { display: inline-flex; align-items: center; gap: 6px; padding: 5px 9px; border-radius: 999px; font-size: .72rem; font-weight: 800; border: 1px solid transparent; white-space: nowrap; }
+  .ai-status-chip i { font-size: .74rem; }
+  .ai-status-payment, .ai-status-order { background: rgba(100,116,139,.09); color: #475569; }
+  .ai-orders-table .badge { border-radius: 999px; padding: 5px 9px; font-weight: 800; }
+  .ai-sale-link { color: var(--app-primary-deep); font-weight: 700; text-decoration: none; }
+  .ai-sale-link:hover { text-decoration: underline; }
+  .ai-origin-chip { padding: 5px 9px; font-size: .72rem; }
+  .ai-view-btn { border: 1px solid rgba(37,99,235,.18); color: var(--app-primary-deep); background: rgba(37,99,235,.055); border-radius: 10px; font-weight: 800; white-space: nowrap; }
+  .ai-view-btn:hover { color: #fff; background: var(--app-primary); border-color: var(--app-primary); }
+  [data-bs-theme="dark"] .ai-status-payment, [data-bs-theme="dark"] .ai-status-order { background: rgba(148,163,184,.12); color: #d5e2f2; }
+
+  .ai-orders-empty { padding: 54px 22px 58px; text-align: center; }
+  .ai-empty-icon { width: 74px; height: 74px; margin: 0 auto 14px; border-radius: 22px; display: inline-flex; align-items: center; justify-content: center; background: rgba(37,99,235,.09); color: var(--app-primary); font-size: 2rem; }
+  .ai-empty-icon-neutral { background: rgba(100,116,139,.09); color: var(--app-muted); }
+  .ai-empty-kicker { display: inline-flex; margin-bottom: 7px; padding: 5px 9px; border-radius: 999px; background: rgba(37,99,235,.08); color: var(--app-primary-deep); font-size: .72rem; font-weight: 800; }
+  .ai-empty-description { max-width: 560px; margin-inline: auto; }
+  .ai-empty-steps { width: min(100%, 760px); margin: 22px auto 0; display: grid; grid-template-columns: repeat(3, 1fr); gap: 10px; text-align: left; }
+  .ai-empty-step { display: flex; gap: 10px; padding: 12px; border: 1px solid var(--app-line); background: var(--app-panel-soft); border-radius: 14px; }
+  .ai-empty-step > span { width: 28px; height: 28px; flex: 0 0 auto; border-radius: 9px; display: inline-flex; align-items: center; justify-content: center; background: rgba(37,99,235,.10); color: var(--app-primary); font-weight: 800; font-size: .78rem; }
+  .ai-empty-step strong, .ai-empty-step small { display: block; }
+  .ai-empty-step strong { font-size: .77rem; }
+  .ai-empty-step small { margin-top: 3px; color: var(--app-muted); font-size: .69rem; line-height: 1.35; }
+
+  @media (max-width: 991.98px) {
+    .ai-orders-hero { align-items: flex-start; flex-direction: column; }
+    .ai-orders-hero-actions { width: 100%; }
+  }
   @media (max-width: 767.98px) {
-    .table thead { display: none; }
-    .ai-orders-mobile-label { display: inline-block; }
-    .table tbody tr { display:block; padding: .9rem 1rem; border-bottom: 1px solid var(--app-line); }
-    .table tbody td { display:flex; justify-content:space-between; gap:1rem; border:0; padding:.28rem 0; text-align:right; }
+    .ai-orders-page { padding-bottom: 18px; }
+    .ai-orders-hero { padding: 20px; border-radius: 18px; }
+    .ai-orders-hero-main { align-items: flex-start; }
+    .ai-orders-hero-icon { width: 50px; height: 50px; border-radius: 14px; font-size: 1.35rem; }
+    .ai-orders-hero-copy p { font-size: .84rem; }
+    .ai-orders-hero-actions .btn { flex: 1 1 0; min-width: 0; }
+    .ai-order-stat-card { min-height: 104px; padding: 14px; gap: 10px; }
+    .ai-order-stat-icon { width: 40px; height: 40px; border-radius: 12px; }
+    .ai-order-stat-value { font-size: 1.55rem; }
+    .ai-order-stat-helper { font-size: .67rem; }
+    .ai-order-stat-arrow { display: none; }
+    .ai-orders-filters { padding: 14px; }
+    .ai-order-filter-list { gap: 7px; }
+    .ai-order-filter { flex: 1 1 auto; justify-content: center; }
+    .ai-orders-table-head { padding: 16px; }
+    .ai-orders-table-channel { display: none; }
+    .ai-orders-table-wrap { overflow: visible; }
+    .ai-orders-table thead { display: none; }
+    .ai-orders-table, .ai-orders-table tbody, .ai-orders-table tr, .ai-orders-table td { display: block; width: 100%; }
+    .ai-orders-table tbody tr { padding: 14px 16px; border-bottom: 1px solid var(--app-line); }
+    .ai-orders-table tbody td { display: flex; justify-content: space-between; align-items: flex-start; gap: 14px; padding: 7px 0; border: 0; text-align: right; }
+    .ai-orders-table tbody td::before { content: attr(data-label); color: var(--app-muted); font-size: .69rem; font-weight: 800; text-transform: uppercase; letter-spacing: .04em; text-align: left; padding-top: 3px; }
+    .ai-orders-table tbody td > * { max-width: 66%; }
+    .ai-orders-table tbody td:first-child { padding-top: 2px; }
+    .ai-orders-table tbody td:last-child { padding-bottom: 2px; }
+    .ai-orders-table .ai-order-identity, .ai-orders-table .ai-customer-cell { justify-content: flex-end; }
+    .ai-orders-table .ai-status-chip, .ai-orders-table .ai-origin-chip { margin-left: auto; }
+    .ai-orders-empty { padding: 44px 18px 48px; }
+    .ai-empty-steps { grid-template-columns: 1fr; }
+  }
+  @media (max-width: 420px) {
+    .ai-channel-pill { display: none; }
+    .ai-orders-hero-actions { flex-direction: column; }
+    .ai-orders-hero-actions .btn { width: 100%; }
+    .ai-order-stat-card { min-height: 100px; }
+    .ai-order-stat-label { font-size: .73rem; }
+    .ai-order-stat-helper { display: none; }
+    .ai-orders-table tbody td > * { max-width: 62%; }
   }
 </style>
 {% endblock %}
