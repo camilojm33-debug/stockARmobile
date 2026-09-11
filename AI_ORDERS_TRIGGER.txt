@@ -1,2 +1,0 @@
-Trigger one-time AI orders center implementation.
-Second trigger after workflow installation.
