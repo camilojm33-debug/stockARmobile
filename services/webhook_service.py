@@ -193,7 +193,7 @@ class WebhookService:
             ref_company_id = int(ref_parts.get("company_id") or 0) if str(ref_parts.get("company_id") or "").isdigit() else 0
 
             if flow == "ai_order":
-                from services.ai_agent.vendor_order_service import VendorOrderService
+                from services.ai_agent.vendor_order_service import VendorOrderService, _metadata, _set_metadata
 
                 company_id = int(metadata.get("company_id") or ref_parts.get("company_id") or 0)
                 quote_id = int(metadata.get("quote_id") or ref_parts.get("quote_id") or 0)
@@ -218,9 +218,6 @@ class WebhookService:
                     payment.paid_at = paid_at or payment.paid_at
                     result = {"status": "processed", "payment_status": payment_status, "event_key": event_key}
 
-                # Persist the payment/sale transaction before any outbound WhatsApp call.
-                event_row.status = result.get("status", "processed")
-                db_session.add(event_row)
                 conversation = None
                 try:
                     from stockarmobile.models.conversations import Conversation
@@ -228,19 +225,21 @@ class WebhookService:
                     if str(conversation_id_raw or "").isdigit():
                         conversation = Conversation.query.filter_by(id=int(conversation_id_raw), company_id=company_id).first()
                     if conversation is not None and payment_status == "approved":
-                        state = VendorOrderService._metadata(conversation)
-                        state.pop(VendorOrderService.CART_KEY if hasattr(VendorOrderService, "CART_KEY") else "vendor_cart", None)
+                        state = _metadata(conversation)
+                        state.pop("vendor_cart", None)
                         state.pop("pending_quote_id", None)
                         state.pop("pending_payment_url", None)
-                        VendorOrderService._set_metadata(conversation, state)
+                        _set_metadata(conversation, state)
                         db_session.add(conversation)
-                    db_session.commit()
                 except Exception:
-                    # Keep the normal webhook transaction alive if customer notification wiring fails.
-                    db_session.rollback()
-                    raise
+                    conversation = None
 
-                # Customer confirmation is best-effort and never rolls back a successful payment.
+                event_row.status = result.get("status", "processed")
+                db_session.add(event_row)
+                # This branch commits its own isolated payment/order transaction so the
+                # customer is only notified after the sale/payment is durable.
+                db_session.commit()
+
                 try:
                     if conversation is not None:
                         from services.ai_agent.whatsapp_service import WhatsAppService
