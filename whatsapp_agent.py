@@ -14,7 +14,7 @@ from stockarmobile.models.conversations import Conversation, ConversationMessage
 from services.ai_agent.config_service import company_for_whatsapp_phone_id, get_whatsapp_connection, is_ai_enabled, choose_agent
 from services.ai_agent.orchestrator_v2 import AgentRuntime
 from services.ai_agent.usage_service import can_use_ai
-from services.ai_agent.vendor_order_service import VendorOrderService
+from services.ai_agent.vendor_order_service import VendorOrderService, _metadata, _set_metadata
 from services.ai_agent.whatsapp_service import WhatsAppService
 
 bp = Blueprint("whatsapp_agent", __name__)
@@ -62,18 +62,107 @@ def _get_or_create_conversation(company_id: int, sender: str):
     return conversation
 
 
+def _customer_order_response(company_id: int, conversation_id: int, order_number: str = "") -> str:
+    result = VendorOrderService.get_customer_order_status(
+        company_id=company_id,
+        conversation_id=conversation_id,
+        order_number=order_number,
+    )
+    if not result.get("found"):
+        return "Todavía no encuentro un pedido generado por este WhatsApp. Si querés, revisamos tu carrito."
+    messages = {
+        "confirmado": "✅ tu pedido está confirmado y el pago fue aprobado.",
+        "pagado": "💰 tu pago ya figura aprobado y el pedido está pendiente de confirmación de venta.",
+        "pendiente_pago": "⏳ tu pedido está esperando el pago.",
+        "pago_con_incidencia": "⚠️ el último pago tuvo una incidencia.",
+    }
+    body = messages.get(result["order_status"], f"tu pedido está en estado {result['order_status']}.")
+    extra = f"\n\nPedido: *{result['quote_number']}*"
+    if result.get("payment_url") and result["order_status"] == "pendiente_pago":
+        extra += f"\nLink de pago: {result['payment_url']}"
+    return f"El pedido *{result['quote_number']}* por *${result['total']:.2f} ARS* {body}{extra}"
+
+
 def _handle_vendor_command(company_id: int, conversation_id: int, sender: str, text: str):
-    """Deterministic commands keep money/stock actions outside the LLM."""
+    """Deterministic WhatsApp commands keep order and payment actions outside the LLM."""
     normalized = " ".join(text.lower().strip().split())
-    if normalized in {"carrito", "ver carrito", "mi carrito", "pedido"}:
+
+    if normalized in {"carrito", "ver carrito", "mi carrito", "retomar compra", "continuar compra", "seguir compra", "continuar pedido"}:
         cart = VendorOrderService.get_cart(company_id=company_id, conversation_id=conversation_id)
         if not cart["items"]:
             return "Tu carrito está vacío. Decime qué producto querés agregar."
         lines = [f"• {row['quantity']:g} x {row['name']} — ${row['subtotal']:.2f}" for row in cart["items"]]
         return "🛒 *Tu carrito*\n" + "\n".join(lines) + f"\n\n*Total: ${cart['total']:.2f} ARS*\n\nCuando quieras pagar, escribí *pagar*."
-    if normalized in {"vaciar carrito", "borrar carrito", "cancelar pedido"}:
+
+    if normalized == "pedido" or "estado de mi pedido" in normalized or "seguimiento de mi pedido" in normalized or "donde esta mi pedido" in normalized or "dónde está mi pedido" in normalized or "ver mi pedido" in normalized:
+        return _customer_order_response(company_id, conversation_id)
+
+    if normalized.startswith("pedido ") or normalized.startswith("estado pedido ") or normalized.startswith("seguimiento "):
+        prefix = "pedido " if normalized.startswith("pedido ") else ("estado pedido " if normalized.startswith("estado pedido ") else "seguimiento ")
+        return _customer_order_response(company_id, conversation_id, order_number=text[len(prefix):].strip())
+
+    if normalized in {"reintentar pago", "volver a pagar", "nuevo link de pago", "pasame otro link", "pasame el link de pago", "pagar de nuevo"} or ("nuevo link" in normalized and "pago" in normalized):
+        result = VendorOrderService.retry_payment(company_id=company_id, conversation_id=conversation_id)
+        if result.get("success"):
+            return f"Claro. 🔗 Acá tenés el link para pagar nuevamente tu pedido *{result['quote_number']}*:\n{result['payment_url']}"
+        messages = {
+            "pedido_no_encontrado": "No encuentro un pedido pendiente para volver a pagar.",
+            "pedido_ya_confirmado": "Ese pedido ya está confirmado; no necesitás volver a pagar.",
+            "pago_ya_aprobado": "El pago de ese pedido ya figura aprobado.",
+            "pedido_vencido": "Ese pedido venció y ya no puedo reactivarlo. Podemos preparar uno nuevo.",
+            "stock_no_disponible": "El stock actual ya no alcanza para ese pedido. Podemos armar uno nuevo con disponibilidad real.",
+            "pedido_no_disponible": "Ese pedido ya no está disponible para volver a pagar.",
+        }
+        return messages.get(result.get("error"), "No pude generar un nuevo link de pago para ese pedido.")
+
+    if normalized in {"cancelar pedido", "quiero cancelar mi pedido", "anular pedido"} or ("cancelar" in normalized and "pedido" in normalized):
+        result = VendorOrderService.cancel_order(company_id=company_id, conversation_id=conversation_id, confirm=False)
+        if result.get("confirmation_required"):
+            conversation = Conversation.query.filter_by(id=conversation_id, company_id=company_id).first()
+            if conversation is not None:
+                state = _metadata(conversation)
+                state["pending_cancel_quote_number"] = result.get("quote_number") or ""
+                _set_metadata(conversation, state)
+                db.session.commit()
+            return result["message"]
+        return "No pude cancelar el pedido."
+
+    if normalized in {"si", "sí", "confirmo", "confirmar", "dale", "ok", "okay", "cancelalo", "cancelálo"}:
+        conversation = Conversation.query.filter_by(id=conversation_id, company_id=company_id).first()
+        state = _metadata(conversation) if conversation is not None else {}
+        pending_number = str(state.pop("pending_cancel_quote_number", "") or "").strip()
+        if not pending_number:
+            if conversation is not None:
+                _set_metadata(conversation, state)
+                db.session.commit()
+            return None
+        if conversation is not None:
+            _set_metadata(conversation, state)
+        result = VendorOrderService.cancel_order(
+            company_id=company_id,
+            conversation_id=conversation_id,
+            order_number=pending_number,
+            confirm=True,
+        )
+        db.session.commit()
+        return result.get("message") if result.get("success") else "No pude cancelar el pedido."
+
+    if normalized in {"catalogo", "catálogo", "ver catalogo", "ver catálogo", "productos"}:
+        result = VendorOrderService.list_catalog(company_id=company_id, limit=20)
+        if not result.get("products"):
+            return "Ahora mismo no encuentro productos activos en el catálogo."
+        lines = [f"• {item['name']} — ${item['price']:.2f} ({item['stock']:g} disponibles)" for item in result["products"]]
+        return "📦 *Catálogo*\n" + "\n".join(lines)
+
+    if normalized in {"promociones", "ofertas", "promos", "que esta en oferta", "qué está en oferta"}:
+        result = VendorOrderService.list_promotions(company_id=company_id)
+        lines = [f"• {item['name']} — antes ${item['price']:.2f}, ahora ${item['final_price']:.2f}" for item in result.get("products", []) if item.get("stock", 0) > 0]
+        return "🔥 *Promociones*\n" + ("\n".join(lines) if lines else "No hay promociones con stock disponible.")
+
+    if normalized in {"vaciar carrito", "borrar carrito"}:
         VendorOrderService.update_cart(company_id=company_id, conversation_id=conversation_id, clear=True)
         return "Listo, vacié tu carrito."
+
     if normalized in {"pagar", "quiero pagar", "confirmar pedido", "confirmar compra"}:
         result = VendorOrderService.create_pending_order(company_id=company_id, conversation_id=conversation_id, customer_phone=sender)
         return f"Perfecto. Tu pedido *{result['quote_number']}* suma *${result['total']:.2f} ARS*.\n\nPagalo acá: {result['payment_url']}\n\nUna vez aprobado el pago, StockARmobile confirma la venta y descuenta el stock automáticamente."
