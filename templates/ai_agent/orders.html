@@ -1,0 +1,76 @@
+{% extends "base_master.html" %}
+
+{% block title %}Pedidos IA - StockArmobile{% endblock %}
+
+{% block content %}
+<div class="app-shell">
+  <div class="d-flex flex-column flex-lg-row justify-content-between align-items-lg-center gap-3 mb-4">
+    <div>
+      <span class="page-kicker"><i class="bi bi-robot"></i> Operación con IA</span>
+      <h1 class="h3 fw-bold mb-0">Pedidos IA</h1>
+      <p class="text-muted mb-0">Pedidos generados por el Vendedor 24/7 desde WhatsApp, con seguimiento del pago y la venta.</p>
+    </div>
+    <div class="d-flex gap-2 flex-wrap">
+      <a class="btn btn-outline-secondary" href="{{ url_for('ai_admin.index') }}"><i class="bi bi-robot me-1"></i>Configurar IA</a>
+      <a class="btn btn-outline-primary" href="{{ url_for('quotes.index') }}"><i class="bi bi-file-earmark-text me-1"></i>Presupuestos</a>
+    </div>
+  </div>
+
+  <div class="row g-3 mb-4">
+    <div class="col-6 col-xl-3"><div class="card app-card h-100 ai-order-stat"><div class="card-body"><div class="small text-muted">Todos</div><div class="fs-3 fw-bold">{{ summary.total }}</div><div class="small text-muted">Pedidos IA</div></div></div></div>
+    <div class="col-6 col-xl-3"><div class="card app-card h-100 ai-order-stat ai-order-stat-warning"><div class="card-body"><div class="small text-muted">Esperando pago</div><div class="fs-3 fw-bold">{{ summary.pending }}</div><div class="small text-muted">Para seguimiento</div></div></div></div>
+    <div class="col-6 col-xl-3"><div class="card app-card h-100 ai-order-stat ai-order-stat-success"><div class="card-body"><div class="small text-muted">Pagados</div><div class="fs-3 fw-bold">{{ summary.paid }}</div><div class="small text-muted">Pago aprobado</div></div></div></div>
+    <div class="col-6 col-xl-3"><div class="card app-card h-100 ai-order-stat ai-order-stat-primary"><div class="card-body"><div class="small text-muted">Confirmados</div><div class="fs-3 fw-bold">{{ summary.confirmed }}</div><div class="small text-muted">Venta y stock aplicados</div></div></div></div>
+  </div>
+
+  <div class="card app-card mb-4">
+    <div class="card-body py-3">
+      <div class="d-flex flex-wrap gap-2 align-items-center">
+        <span class="small text-muted fw-semibold me-1">Filtrar:</span>
+        {% for key, label in [('','Todos'),('pending','Esperando pago'),('paid','Pagados'),('confirmed','Confirmados'),('problem','Con incidencia')] %}
+        <a class="btn btn-sm {% if selected_status == key %}btn-primary{% else %}btn-outline-secondary{% endif %}" href="{{ url_for('whatsapp_agent.ai_orders', status=key) }}">{{ label }}</a>
+        {% endfor %}
+      </div>
+    </div>
+  </div>
+
+  <div class="card app-card">
+    <div class="card-body p-0">
+      <div class="table-responsive">
+        <table class="table table-hover align-middle mb-0">
+          <thead><tr><th>Pedido</th><th>Cliente</th><th>Importe</th><th>Pago</th><th>Pedido</th><th>Origen</th><th>Fecha</th><th class="text-end">Acciones</th></tr></thead>
+          <tbody>
+            {% for order in orders %}
+            <tr>
+              <td><div class="fw-bold">{{ order.number }}</div><div class="small text-muted">#{{ order.quote_id }}</div></td>
+              <td><div class="fw-semibold">{{ order.customer_name }}</div>{% if order.customer_phone %}<div class="small text-muted">{{ order.customer_phone }}</div>{% endif %}</td>
+              <td><div class="fw-bold">{{ order.currency }} {{ '%.2f'|format(order.total) }}</div><div class="small text-muted">{{ order.line_count }} línea(s)</div></td>
+              <td><span class="badge {{ order.payment_badge }}">{{ order.payment_label }}</span>{% if order.payment_id %}<div class="small text-muted mt-1">MP #{{ order.payment_id }}</div>{% endif %}</td>
+              <td><span class="badge {{ order.order_badge }}">{{ order.order_label }}</span>{% if order.sale_id %}<div class="small mt-1"><a href="/ventas/{{ order.sale_id }}">Venta #{{ order.sale_id }}</a></div>{% endif %}</td>
+              <td><span class="badge text-bg-light border">WhatsApp</span><div class="small text-muted mt-1">Vendedor IA</div></td>
+              <td><div>{{ order.created_at.strftime('%d/%m/%Y') if order.created_at else '-' }}</div><div class="small text-muted">{{ order.created_at.strftime('%H:%M') if order.created_at else '' }}</div></td>
+              <td class="text-end"><a class="btn btn-sm btn-outline-primary" href="{{ url_for('whatsapp_agent.ai_order_detail', quote_id=order.quote_id) }}"><i class="bi bi-eye me-1"></i>Ver</a></td>
+            </tr>
+            {% else %}
+            <tr><td colspan="8" class="text-center py-5 text-muted"><i class="bi bi-inbox fs-2 d-block mb-2"></i>No hay pedidos IA para este filtro.</td></tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      </div>
+    </div>
+  </div>
+</div>
+
+<style>
+  .ai-order-stat { border-radius: 18px; }
+  .ai-order-stat-warning { border-color: rgba(245,158,11,.35); }
+  .ai-order-stat-success { border-color: rgba(16,185,129,.35); }
+  .ai-order-stat-primary { border-color: rgba(37,99,235,.35); }
+  @media (max-width: 767.98px) {
+    .table thead { display: none; }
+    .ai-orders-mobile-label { display: inline-block; }
+    .table tbody tr { display:block; padding: .9rem 1rem; border-bottom: 1px solid var(--app-line); }
+    .table tbody td { display:flex; justify-content:space-between; gap:1rem; border:0; padding:.28rem 0; text-align:right; }
+  }
+</style>
+{% endblock %}
