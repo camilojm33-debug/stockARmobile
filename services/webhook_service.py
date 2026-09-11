@@ -217,8 +217,45 @@ class WebhookService:
                     payment.payload_json = json.dumps(payment_data, ensure_ascii=False)
                     payment.paid_at = paid_at or payment.paid_at
                     result = {"status": "processed", "payment_status": payment_status, "event_key": event_key}
+
+                # Persist the payment/sale transaction before any outbound WhatsApp call.
                 event_row.status = result.get("status", "processed")
                 db_session.add(event_row)
+                conversation = None
+                try:
+                    from stockarmobile.models.conversations import Conversation
+                    conversation_id_raw = ref_parts.get("conversation_id") or metadata.get("conversation_id")
+                    if str(conversation_id_raw or "").isdigit():
+                        conversation = Conversation.query.filter_by(id=int(conversation_id_raw), company_id=company_id).first()
+                    if conversation is not None and payment_status == "approved":
+                        state = VendorOrderService._metadata(conversation)
+                        state.pop(VendorOrderService.CART_KEY if hasattr(VendorOrderService, "CART_KEY") else "vendor_cart", None)
+                        state.pop("pending_quote_id", None)
+                        state.pop("pending_payment_url", None)
+                        VendorOrderService._set_metadata(conversation, state)
+                        db_session.add(conversation)
+                    db_session.commit()
+                except Exception:
+                    # Keep the normal webhook transaction alive if customer notification wiring fails.
+                    db_session.rollback()
+                    raise
+
+                # Customer confirmation is best-effort and never rolls back a successful payment.
+                try:
+                    if conversation is not None:
+                        from services.ai_agent.whatsapp_service import WhatsAppService
+                        recipient = str(conversation.external_conversation_id or "").strip()
+                        if recipient and payment_status == "approved":
+                            number = result.get("quote_number") or f"P-{quote_id:06d}"
+                            total = float(result.get("total") or 0)
+                            body = f"✅ Pago recibido. Tu pedido {number} fue confirmado correctamente. Total: ${total:.2f} ARS. Gracias por tu compra."
+                            WhatsAppService.send_text(conversation.company, to=recipient, body=body)
+                        elif recipient and payment_status in {"rejected", "cancelled", "canceled"}:
+                            number = result.get("quote_number") or f"P-{quote_id:06d}"
+                            body = f"⚠️ El pago de tu pedido {number} no fue aprobado. Escribime *reintentar pago* para volver a intentarlo."
+                            WhatsAppService.send_text(conversation.company, to=recipient, body=body)
+                except Exception:
+                    pass
                 return result
 
             payment = Payment.query.filter_by(payment_id=str(payment_data.get("id"))).first()
