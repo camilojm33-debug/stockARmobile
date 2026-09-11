@@ -91,10 +91,9 @@ def post_worker_init(worker) -> None:
     if not _enabled():
         return
 
-    flask_app = worker.app.wsgi()
-    if getattr(flask_app, "config", {}).get("TESTING"):
-        return
-    if getattr(flask_app, "config", {}).get("IS_PYTEST_CONTEXT"):
+    from wsgi import application as flask_app
+
+    if flask_app.config.get("TESTING") or flask_app.config.get("IS_PYTEST_CONTEXT"):
         return
 
     thread = threading.Thread(
