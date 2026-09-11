@@ -1,0 +1,96 @@
+{% extends "base_master.html" %}
+
+{% block title %}{{ order.number }} - Pedidos IA{% endblock %}
+
+{% block content %}
+<div class="app-shell">
+  <div class="d-flex flex-column flex-lg-row justify-content-between align-items-lg-center gap-3 mb-4">
+    <div>
+      <span class="page-kicker"><i class="bi bi-robot"></i> Pedido generado por IA</span>
+      <h1 class="h3 fw-bold mb-0">{{ order.number }}</h1>
+      <p class="text-muted mb-0">Seguimiento desde WhatsApp, pago y confirmación de venta.</p>
+    </div>
+    <div class="d-flex gap-2 flex-wrap">
+      <a class="btn btn-outline-secondary" href="{{ url_for('whatsapp_agent.ai_orders') }}"><i class="bi bi-arrow-left me-1"></i>Pedidos IA</a>
+      <a class="btn btn-outline-primary" href="{{ url_for('quotes.view_quote', quote_id=quote.id) }}"><i class="bi bi-file-earmark-text me-1"></i>Ver presupuesto</a>
+      {% if order.sale_id %}<a class="btn btn-primary" href="/ventas/{{ order.sale_id }}"><i class="bi bi-bag-check me-1"></i>Ver venta</a>{% endif %}
+    </div>
+  </div>
+
+  <div class="row g-3 mb-4">
+    <div class="col-6 col-lg-3"><div class="card app-card h-100"><div class="card-body"><div class="small text-muted">Pedido</div><div class="fw-bold fs-5">{{ order.order_label }}</div></div></div></div>
+    <div class="col-6 col-lg-3"><div class="card app-card h-100"><div class="card-body"><div class="small text-muted">Pago</div><div class="fw-bold fs-5">{{ order.payment_label }}</div>{% if order.paid_at %}<div class="small text-muted">{{ order.paid_at.strftime('%d/%m/%Y %H:%M') }}</div>{% endif %}</div></div></div>
+    <div class="col-6 col-lg-3"><div class="card app-card h-100"><div class="card-body"><div class="small text-muted">Importe</div><div class="fw-bold fs-5">{{ order.currency }} {{ '%.2f'|format(order.total) }}</div></div></div></div>
+    <div class="col-6 col-lg-3"><div class="card app-card h-100"><div class="card-body"><div class="small text-muted">Origen</div><div class="fw-bold fs-5">WhatsApp</div><div class="small text-muted">Vendedor IA</div></div></div></div>
+  </div>
+
+  <div class="row g-4">
+    <div class="col-lg-7">
+      <div class="card app-card mb-4">
+        <div class="card-header bg-white fw-bold">Productos del pedido</div>
+        <div class="card-body p-0">
+          <div class="table-responsive">
+            <table class="table align-middle mb-0">
+              <thead><tr><th>Producto</th><th>Cantidad</th><th>Precio</th><th class="text-end">Subtotal</th></tr></thead>
+              <tbody>
+                {% for item in quote.items %}
+                <tr><td class="fw-semibold">{{ item.description or (item.product.name if item.product else 'Producto') }}</td><td>{{ item.quantity:g }}</td><td>{{ quote.currency or 'ARS' }} {{ '%.2f'|format(item.unit_price or 0) }}</td><td class="text-end fw-semibold">{{ quote.currency or 'ARS' }} {{ '%.2f'|format(item.subtotal or 0) }}</td></tr>
+                {% endfor %}
+              </tbody>
+              <tfoot><tr><th colspan="3" class="text-end">Total</th><th class="text-end">{{ order.currency }} {{ '%.2f'|format(order.total) }}</th></tr></tfoot>
+            </table>
+          </div>
+        </div>
+      </div>
+
+      <div class="card app-card">
+        <div class="card-header bg-white fw-bold">Trazabilidad</div>
+        <div class="card-body">
+          <div class="ai-order-timeline">
+            <div class="ai-order-step"><span class="ai-order-dot"></span><div><div class="fw-semibold">Pedido generado por Vendedor IA</div><div class="small text-muted">{{ order.created_at.strftime('%d/%m/%Y %H:%M') if order.created_at else '-' }}</div></div></div>
+            <div class="ai-order-step"><span class="ai-order-dot"></span><div><div class="fw-semibold">Estado del pago: {{ order.payment_label }}</div><div class="small text-muted">{{ order.paid_at.strftime('%d/%m/%Y %H:%M') if order.paid_at else 'Pendiente de aprobación' }}</div></div></div>
+            {% if order.sale_id %}<div class="ai-order-step"><span class="ai-order-dot ai-order-dot-success"></span><div><div class="fw-semibold">Venta confirmada</div><div class="small text-muted">Venta #{{ order.sale_id }} · stock aplicado</div></div></div>{% else %}<div class="ai-order-step"><span class="ai-order-dot"></span><div><div class="fw-semibold">Venta confirmada</div><div class="small text-muted">Todavía no hay una venta convertida.</div></div></div>{% endif %}
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <div class="col-lg-5">
+      <div class="card app-card mb-4">
+        <div class="card-header bg-white fw-bold">Cliente</div>
+        <div class="card-body"><div class="fw-bold fs-5">{{ order.customer_name }}</div>{% if order.customer_phone %}<div class="text-muted mt-1"><i class="bi bi-whatsapp me-1"></i>{{ order.customer_phone }}</div>{% endif %}</div>
+      </div>
+
+      <div class="card app-card mb-4">
+        <div class="card-header bg-white fw-bold">Pago</div>
+        <div class="card-body">
+          <div class="d-flex justify-content-between align-items-center mb-2"><span class="text-muted">Estado</span><span class="badge {{ order.payment_badge }}">{{ order.payment_label }}</span></div>
+          <div class="d-flex justify-content-between align-items-center mb-2"><span class="text-muted">Monto</span><span class="fw-bold">{{ order.currency }} {{ '%.2f'|format(order.total) }}</span></div>
+          {% if order.payment_id %}<div class="d-flex justify-content-between align-items-center"><span class="text-muted">Mercado Pago</span><span class="fw-semibold">#{{ order.payment_id }}</span></div>{% endif %}
+          {% if payment and payment.reference %}<div class="small text-muted mt-3 text-break">Referencia: {{ payment.reference }}</div>{% endif %}
+        </div>
+      </div>
+
+      <div class="card app-card">
+        <div class="card-header bg-white fw-bold">Control operativo</div>
+        <div class="card-body">
+          {% if order.sale_id %}
+            <div class="alert alert-success mb-0">El pago fue aprobado y el pedido quedó convertido en una venta confirmada.</div>
+          {% elif order.payment_status == 'approved' %}
+            <div class="alert alert-warning mb-0">El pago está aprobado, pero todavía no existe una venta vinculada. Revisá este pedido.</div>
+          {% else %}
+            <div class="alert alert-light border mb-0">El pedido todavía no está confirmado como venta. El stock no se descuenta hasta que el pago se apruebe y el flujo finalice correctamente.</div>
+          {% endif %}
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<style>
+  .ai-order-timeline { display:grid; gap:1rem; }
+  .ai-order-step { display:flex; gap:.8rem; align-items:flex-start; }
+  .ai-order-dot { width:10px; height:10px; border-radius:50%; background:#64748b; margin-top:.35rem; flex:0 0 10px; box-shadow:0 0 0 4px rgba(100,116,139,.12); }
+  .ai-order-dot-success { background:#16a34a; box-shadow:0 0 0 4px rgba(22,163,74,.12); }
+</style>
+{% endblock %}
