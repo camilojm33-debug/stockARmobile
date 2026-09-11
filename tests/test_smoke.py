@@ -4168,7 +4168,7 @@ def test_landing_seo_phase2_copy_and_single_h1():
     assert "Sumá inteligencia artificial a tu negocio" in html
     assert "Vendedor IA" in html
     assert "Ventas más ágiles" in html
-    assert "Pensado para comercios, ferreterías, kioscos y negocios en crecimiento" in html
+    assert "Comercios con equipo" in html
     assert "Mercado Pago" in html
     assert "presupuestos" in html.lower()
     assert "códigos de barras" in html.lower()
