@@ -6,7 +6,8 @@ import hashlib
 import hmac
 import os
 
-from flask import Blueprint, current_app, jsonify, request
+from flask import Blueprint, abort, current_app, jsonify, render_template, request
+from flask_login import current_user, login_required
 from sqlalchemy.exc import IntegrityError
 from stockarmobile.extensions import db
 from stockarmobile.models.conversations import Conversation, ConversationMessage
@@ -106,6 +107,111 @@ def _persist_deterministic_turn(conversation, *, external_id: str, text: str, re
     )
     db.session.add(assistant)
     db.session.commit()
+
+
+def _ai_order_payment(company_id: int, quote_id: int):
+    from app import Payment
+    prefix = f"flow:ai_order|company_id:{int(company_id)}|quote_id:{int(quote_id)}|"
+    return (
+        Payment.query.filter(
+            Payment.company_id == int(company_id),
+            Payment.provider == "mercadopago_ai_order",
+            Payment.external_reference.like(prefix + "%"),
+        )
+        .order_by(Payment.id.desc())
+        .first()
+    )
+
+
+def _ai_order_row(company_id: int, quote):
+    payment = _ai_order_payment(company_id, quote.id)
+    payment_status = str(getattr(payment, "status", "pending") or "pending").lower()
+    if getattr(quote, "converted_sale_id", None):
+        order_key, order_label, order_badge = "confirmed", "Confirmado", "text-bg-success"
+    elif payment_status == "approved":
+        order_key, order_label, order_badge = "paid", "Pagado · pendiente de venta", "text-bg-warning"
+    elif payment_status in {"pending", "in_process", "authorized", ""}:
+        order_key, order_label, order_badge = "pending", "Esperando pago", "text-bg-warning"
+    else:
+        order_key, order_label, order_badge = "problem", "Incidencia de pago", "text-bg-danger"
+    payment_labels = {
+        "approved": ("Pagado", "text-bg-success"),
+        "pending": ("Pendiente", "text-bg-warning"),
+        "in_process": ("En proceso", "text-bg-info"),
+        "authorized": ("Autorizado", "text-bg-info"),
+        "rejected": ("Rechazado", "text-bg-danger"),
+        "cancelled": ("Cancelado", "text-bg-danger"),
+        "canceled": ("Cancelado", "text-bg-danger"),
+        "refunded": ("Reembolsado", "text-bg-secondary"),
+        "charged_back": ("Contracargo", "text-bg-danger"),
+    }
+    payment_label, payment_badge = payment_labels.get(payment_status, (payment_status.replace("_", " ").title(), "text-bg-secondary"))
+    client = getattr(quote, "client", None)
+    return {
+        "quote_id": quote.id,
+        "number": quote.number or f"P-{quote.id:06d}",
+        "customer_name": getattr(client, "name", None) or getattr(quote, "consumer_name", None) or "Consumidor final",
+        "customer_phone": getattr(client, "whatsapp", None) or getattr(client, "phone", None) or "",
+        "total": float(quote.total_amount or 0),
+        "currency": quote.currency or "ARS",
+        "line_count": len(getattr(quote, "items", []) or []),
+        "payment_status": payment_status,
+        "payment_label": payment_label,
+        "payment_badge": payment_badge,
+        "payment_id": getattr(payment, "payment_id", None) if payment else None,
+        "paid_at": getattr(payment, "paid_at", None) if payment else None,
+        "order_key": order_key,
+        "order_label": order_label,
+        "order_badge": order_badge,
+        "sale_id": quote.converted_sale_id,
+        "created_at": quote.date or quote.created_at,
+    }
+
+
+@bp.get("/pedidos-ia")
+@login_required
+def ai_orders():
+    company_id = getattr(current_user, "company_id", None)
+    if not company_id or getattr(current_user, "role", None) not in {"admin", "user"}:
+        abort(403)
+    from app import Quote
+    marker = "Pedido generado por el Vendedor 24 hs de StockARmobile."
+    quotes = (
+        Quote.query.filter(Quote.company_id == int(company_id), Quote.observations == marker)
+        .order_by(Quote.date.desc(), Quote.id.desc())
+        .limit(100)
+        .all()
+    )
+    all_rows = [_ai_order_row(company_id, quote) for quote in quotes]
+    selected_status = (request.args.get("status") or "").strip().lower()
+    allowed_filters = {"pending", "paid", "confirmed", "problem"}
+    rows = [row for row in all_rows if not selected_status or selected_status not in allowed_filters or row["order_key"] == selected_status]
+    summary = {
+        "total": len(all_rows),
+        "pending": sum(1 for row in all_rows if row["order_key"] == "pending"),
+        "paid": sum(1 for row in all_rows if row["payment_status"] == "approved"),
+        "confirmed": sum(1 for row in all_rows if row["order_key"] == "confirmed"),
+    }
+    return render_template("ai_agent/orders.html", orders=rows, summary=summary, selected_status=selected_status if selected_status in allowed_filters else "")
+
+
+@bp.get("/pedidos-ia/<int:quote_id>")
+@login_required
+def ai_order_detail(quote_id: int):
+    company_id = getattr(current_user, "company_id", None)
+    if not company_id or getattr(current_user, "role", None) not in {"admin", "user"}:
+        abort(403)
+    from app import Quote
+    marker = "Pedido generado por el Vendedor 24 hs de StockARmobile."
+    quote = Quote.query.filter_by(id=int(quote_id), company_id=int(company_id), observations=marker).first()
+    if quote is None:
+        abort(404)
+    return render_template(
+        "ai_agent/order_detail.html",
+        order=_ai_order_row(company_id, quote),
+        quote=quote,
+        payment=_ai_order_payment(company_id, quote.id),
+    )
 
 
 @bp.route("/api/whatsapp/webhook", methods=["GET", "POST"])
