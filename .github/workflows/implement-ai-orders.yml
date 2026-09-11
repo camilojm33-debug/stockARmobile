@@ -1,0 +1,515 @@
+name: Implement AI orders center
+
+on:
+  push:
+    branches: [main]
+
+permissions:
+  contents: write
+
+jobs:
+  implement:
+    if: ${{ hashFiles('AI_ORDERS_TRIGGER.txt') != '' }}
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Implement AI orders center
+        shell: bash
+        run: |
+          set -euo pipefail
+          python - <<'PY'
+          from pathlib import Path
+
+          repo = Path('.')
+
+          orders_template = '''{% extends "base_master.html" %}
+
+{% block title %}Pedidos IA - StockArmobile{% endblock %}
+
+{% block content %}
+<div class="app-shell">
+  <div class="d-flex flex-column flex-lg-row justify-content-between align-items-lg-center gap-3 mb-4">
+    <div>
+      <span class="page-kicker"><i class="bi bi-robot"></i> Operación con IA</span>
+      <h1 class="h3 fw-bold mb-0">Pedidos IA</h1>
+      <p class="text-muted mb-0">Pedidos generados por el Vendedor 24/7, desde WhatsApp hasta el pago y la venta confirmada.</p>
+    </div>
+    <div class="d-flex gap-2 flex-wrap">
+      <a class="btn btn-outline-secondary" href="{{ url_for('ai_admin.index') }}"><i class="bi bi-robot me-1"></i>Configurar IA</a>
+      <a class="btn btn-outline-primary" href="{{ url_for('quotes.index') }}"><i class="bi bi-file-earmark-text me-1"></i>Presupuestos</a>
+    </div>
+  </div>
+
+  <div class="row g-3 mb-4">
+    <div class="col-6 col-xl-3"><div class="card app-card h-100 ai-order-stat"><div class="card-body"><div class="small text-muted">Todos</div><div class="fs-3 fw-bold">{{ summary.total }}</div><div class="small text-muted">Pedidos IA</div></div></div></div>
+    <div class="col-6 col-xl-3"><div class="card app-card h-100 ai-order-stat ai-order-stat-warning"><div class="card-body"><div class="small text-muted">Esperando pago</div><div class="fs-3 fw-bold">{{ summary.pending }}</div><div class="small text-muted">Requieren seguimiento</div></div></div></div>
+    <div class="col-6 col-xl-3"><div class="card app-card h-100 ai-order-stat ai-order-stat-success"><div class="card-body"><div class="small text-muted">Pagados</div><div class="fs-3 fw-bold">{{ summary.paid }}</div><div class="small text-muted">Pago aprobado</div></div></div></div>
+    <div class="col-6 col-xl-3"><div class="card app-card h-100 ai-order-stat ai-order-stat-primary"><div class="card-body"><div class="small text-muted">Confirmados</div><div class="fs-3 fw-bold">{{ summary.confirmed }}</div><div class="small text-muted">Venta creada y stock aplicado</div></div></div></div>
+  </div>
+
+  <div class="card app-card mb-4">
+    <div class="card-body py-3">
+      <div class="d-flex flex-wrap gap-2 align-items-center">
+        <span class="small text-muted fw-semibold me-1">Filtrar:</span>
+        {% for key, label in [('','Todos'),('pending','Esperando pago'),('paid','Pagados'),('confirmed','Confirmados'),('problem','Con incidencia')] %}
+        <a class="btn btn-sm {% if selected_status == key %}btn-primary{% else %}btn-outline-secondary{% endif %}" href="{{ url_for('whatsapp_agent.ai_orders', status=key) }}">{{ label }}</a>
+        {% endfor %}
+      </div>
+    </div>
+  </div>
+
+  <div class="card app-card">
+    <div class="card-body p-0">
+      <div class="table-responsive">
+        <table class="table table-hover align-middle mb-0">
+          <thead>
+            <tr>
+              <th>Pedido</th>
+              <th>Cliente</th>
+              <th>Importe</th>
+              <th>Pago</th>
+              <th>Pedido</th>
+              <th>Origen</th>
+              <th>Fecha</th>
+              <th class="text-end">Acciones</th>
+            </tr>
+          </thead>
+          <tbody>
+            {% for order in orders %}
+            <tr>
+              <td>
+                <div class="fw-bold">{{ order.number }}</div>
+                <div class="small text-muted">#{{ order.quote_id }}</div>
+              </td>
+              <td>
+                <div class="fw-semibold">{{ order.customer_name }}</div>
+                {% if order.customer_phone %}<div class="small text-muted">{{ order.customer_phone }}</div>{% endif %}
+              </td>
+              <td>
+                <div class="fw-bold">{{ order.currency }} {{ '%.2f'|format(order.total) }}</div>
+                <div class="small text-muted">{{ order.line_count }} línea(s)</div>
+              </td>
+              <td><span class="badge {{ order.payment_badge }}">{{ order.payment_label }}</span>{% if order.payment_id %}<div class="small text-muted mt-1">MP #{{ order.payment_id }}</div>{% endif %}</td>
+              <td><span class="badge {{ order.order_badge }}">{{ order.order_label }}</span>{% if order.sale_id %}<div class="small mt-1"><a href="/ventas/{{ order.sale_id }}">Venta #{{ order.sale_id }}</a></div>{% endif %}</td>
+              <td><span class="badge text-bg-light border">WhatsApp</span><div class="small text-muted mt-1">Vendedor IA</div></td>
+              <td>
+                <div>{{ order.created_at.strftime('%d/%m/%Y') if order.created_at else '-' }}</div>
+                <div class="small text-muted">{{ order.created_at.strftime('%H:%M') if order.created_at else '' }}</div>
+              </td>
+              <td class="text-end"><a class="btn btn-sm btn-outline-primary" href="{{ url_for('whatsapp_agent.ai_order_detail', quote_id=order.quote_id) }}"><i class="bi bi-eye me-1"></i>Ver</a></td>
+            </tr>
+            {% else %}
+            <tr><td colspan="8" class="text-center py-5 text-muted"><i class="bi bi-inbox fs-2 d-block mb-2"></i>No hay pedidos IA para este filtro.</td></tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      </div>
+    </div>
+  </div>
+</div>
+
+<style>
+  .ai-order-stat { border-radius: 18px; }
+  .ai-order-stat-warning { border-color: rgba(245, 158, 11, .35); }
+  .ai-order-stat-success { border-color: rgba(16, 185, 129, .35); }
+  .ai-order-stat-primary { border-color: rgba(37, 99, 235, .35); }
+  .ai-order-stat .fs-3 { letter-spacing: -.03em; }
+  @media (max-width: 767.98px) {
+    .table thead { display: none; }
+    .table tbody tr { display: block; padding: .9rem 1rem; border-bottom: 1px solid var(--app-line); }
+    .table tbody td { display: flex; justify-content: space-between; gap: 1rem; border: 0; padding: .28rem 0; text-align: right; }
+    .table tbody td::before { content: attr(data-label); color: #64748b; font-size: .8rem; font-weight: 700; text-align: left; }
+  }
+</style>
+{% endblock %}
+'''
+          (repo / 'templates/ai_agent').mkdir(parents=True, exist_ok=True)
+          (repo / 'templates/ai_agent/orders.html').write_text(orders_template, encoding='utf-8')
+
+          wa = repo / 'whatsapp_agent.py'
+          s = wa.read_text(encoding='utf-8')
+          s = s.replace(
+              'from flask import Blueprint, current_app, jsonify, request',
+              'from flask import Blueprint, abort, current_app, jsonify, render_template, request',
+              1,
+          )
+          s = s.replace(
+              'from sqlalchemy.exc import IntegrityError\n',
+              'from sqlalchemy.exc import IntegrityError\nfrom flask_login import current_user, login_required\n',
+              1,
+          )
+
+          routes_marker = '@bp.route("/api/whatsapp/webhook", methods=["GET", "POST"])\n'
+          if routes_marker not in s:
+              raise SystemExit('whatsapp webhook marker not found')
+          if 'def ai_orders():' not in s:
+              routes_block = r'''
+
+def _ai_order_payment(company_id: int, quote_id: int):
+    from app import Payment
+
+    prefix = f"flow:ai_order|company_id:{int(company_id)}|quote_id:{int(quote_id)}|"
+    return (
+        Payment.query.filter(
+            Payment.company_id == int(company_id),
+            Payment.provider == "mercadopago_ai_order",
+            Payment.external_reference.like(prefix + "%"),
+        )
+        .order_by(Payment.id.desc())
+        .first()
+    )
+
+
+def _ai_order_status(quote, payment):
+    payment_status = str(getattr(payment, "status", "") or "").lower() if payment else "pending"
+    if getattr(quote, "converted_sale_id", None):
+        return {"key": "confirmed", "label": "Confirmado", "badge": "text-bg-success"}
+    if payment_status == "approved":
+        return {"key": "paid", "label": "Pagado · pendiente de venta", "badge": "text-bg-warning"}
+    if payment_status in {"pending", "in_process", "authorized", ""}:
+        return {"key": "pending", "label": "Esperando pago", "badge": "text-bg-warning"}
+    if payment_status in {"rejected", "cancelled", "canceled", "refunded", "charged_back"}:
+        return {"key": "problem", "label": "Incidencia de pago", "badge": "text-bg-danger"}
+    return {"key": "problem", "label": str(payment_status).replace("_", " ").title(), "badge": "text-bg-secondary"}
+
+
+def _ai_order_row(company_id: int, quote):
+    payment = _ai_order_payment(company_id, quote.id)
+    payment_status = str(getattr(payment, "status", "pending") or "pending").lower()
+    status = _ai_order_status(quote, payment)
+    customer = getattr(getattr(quote, "client", None), "name", None) or getattr(quote, "consumer_name", None) or "Consumidor final"
+    phone = getattr(getattr(quote, "client", None), "whatsapp", None) or getattr(getattr(quote, "client", None), "phone", None) or ""
+    payment_labels = {
+        "approved": ("Pagado", "text-bg-success"),
+        "pending": ("Pendiente", "text-bg-warning"),
+        "in_process": ("En proceso", "text-bg-info"),
+        "authorized": ("Autorizado", "text-bg-info"),
+        "rejected": ("Rechazado", "text-bg-danger"),
+        "cancelled": ("Cancelado", "text-bg-danger"),
+        "canceled": ("Cancelado", "text-bg-danger"),
+        "refunded": ("Reembolsado", "text-bg-secondary"),
+        "charged_back": ("Contracargo", "text-bg-danger"),
+    }
+    payment_label, payment_badge = payment_labels.get(payment_status, (payment_status.replace("_", " ").title(), "text-bg-secondary"))
+    return {
+        "quote_id": quote.id,
+        "number": quote.number or f"P-{quote.id:06d}",
+        "customer_name": customer,
+        "customer_phone": phone,
+        "total": float(quote.total_amount or 0),
+        "currency": quote.currency or "ARS",
+        "line_count": len(getattr(quote, "items", []) or []),
+        "payment_status": payment_status,
+        "payment_label": payment_label,
+        "payment_badge": payment_badge,
+        "payment_id": getattr(payment, "payment_id", None) if payment else None,
+        "paid_at": getattr(payment, "paid_at", None) if payment else None,
+        "payment_url": "",
+        "order_key": status["key"],
+        "order_label": status["label"],
+        "order_badge": status["badge"],
+        "sale_id": quote.converted_sale_id,
+        "created_at": quote.date or quote.created_at,
+        "expires_at": quote.expires_at,
+        "quote_status": quote.status,
+    }
+
+
+@bp.get("/pedidos-ia")
+@login_required
+def ai_orders():
+    company_id = getattr(current_user, "company_id", None)
+    if not company_id or getattr(current_user, "role", None) not in {"admin", "user"}:
+        abort(403)
+    from app import Quote
+
+    ai_marker = "Pedido generado por el Vendedor 24 hs de StockARmobile."
+    quotes = (
+        Quote.query.filter(Quote.company_id == int(company_id), Quote.observations == ai_marker)
+        .order_by(Quote.date.desc(), Quote.id.desc())
+        .limit(100)
+        .all()
+    )
+    rows = [_ai_order_row(company_id, quote) for quote in quotes]
+    selected_status = (request.args.get("status") or "").strip().lower()
+    if selected_status in {"pending", "paid", "confirmed", "problem"}:
+        rows = [row for row in rows if row["order_key"] == selected_status]
+
+    all_rows = [_ai_order_row(company_id, quote) for quote in quotes]
+    summary = {
+        "total": len(all_rows),
+        "pending": sum(1 for row in all_rows if row["order_key"] == "pending"),
+        "paid": sum(1 for row in all_rows if row["payment_status"] == "approved"),
+        "confirmed": sum(1 for row in all_rows if row["order_key"] == "confirmed"),
+    }
+    return render_template("ai_agent/orders.html", orders=rows, summary=summary, selected_status=selected_status)
+
+
+@bp.get("/pedidos-ia/<int:quote_id>")
+@login_required
+def ai_order_detail(quote_id: int):
+    company_id = getattr(current_user, "company_id", None)
+    if not company_id or getattr(current_user, "role", None) not in {"admin", "user"}:
+        abort(403)
+    from app import Quote
+
+    ai_marker = "Pedido generado por el Vendedor 24 hs de StockARmobile."
+    quote = Quote.query.filter_by(id=int(quote_id), company_id=int(company_id), observations=ai_marker).first()
+    if quote is None:
+        abort(404)
+    order = _ai_order_row(company_id, quote)
+    payment = _ai_order_payment(company_id, quote.id)
+    return render_template(
+        "ai_agent/order_detail.html",
+        order=order,
+        quote=quote,
+        payment=payment,
+    )
+
+
+'''
+              s = s.replace(routes_marker, routes_block + routes_marker, 1)
+          wa.write_text(s, encoding='utf-8')
+
+          detail_template = '''{% extends "base_master.html" %}
+
+{% block title %}{{ order.number }} - Pedidos IA{% endblock %}
+
+{% block content %}
+<div class="app-shell">
+  <div class="d-flex flex-column flex-lg-row justify-content-between align-items-lg-center gap-3 mb-4">
+    <div>
+      <span class="page-kicker"><i class="bi bi-robot"></i> Pedido generado por IA</span>
+      <h1 class="h3 fw-bold mb-0">{{ order.number }}</h1>
+      <p class="text-muted mb-0">Seguimiento desde WhatsApp, pago y confirmación de venta.</p>
+    </div>
+    <div class="d-flex gap-2 flex-wrap">
+      <a class="btn btn-outline-secondary" href="{{ url_for('whatsapp_agent.ai_orders') }}"><i class="bi bi-arrow-left me-1"></i>Pedidos IA</a>
+      <a class="btn btn-outline-primary" href="{{ url_for('quotes.view_quote', quote_id=quote.id) }}"><i class="bi bi-file-earmark-text me-1"></i>Ver presupuesto</a>
+      {% if order.sale_id %}<a class="btn btn-primary" href="/ventas/{{ order.sale_id }}"><i class="bi bi-bag-check me-1"></i>Ver venta</a>{% endif %}
+    </div>
+  </div>
+
+  <div class="row g-3 mb-4">
+    <div class="col-6 col-lg-3"><div class="card app-card h-100"><div class="card-body"><div class="small text-muted">Pedido</div><div class="fw-bold fs-5">{{ order.order_label }}</div></div></div></div>
+    <div class="col-6 col-lg-3"><div class="card app-card h-100"><div class="card-body"><div class="small text-muted">Pago</div><div class="fw-bold fs-5">{{ order.payment_label }}</div>{% if order.paid_at %}<div class="small text-muted">{{ order.paid_at.strftime('%d/%m/%Y %H:%M') }}</div>{% endif %}</div></div></div>
+    <div class="col-6 col-lg-3"><div class="card app-card h-100"><div class="card-body"><div class="small text-muted">Importe</div><div class="fw-bold fs-5">{{ order.currency }} {{ '%.2f'|format(order.total) }}</div></div></div></div>
+    <div class="col-6 col-lg-3"><div class="card app-card h-100"><div class="card-body"><div class="small text-muted">Origen</div><div class="fw-bold fs-5">WhatsApp</div><div class="small text-muted">Vendedor IA</div></div></div></div>
+  </div>
+
+  <div class="row g-4">
+    <div class="col-lg-7">
+      <div class="card app-card mb-4">
+        <div class="card-header bg-white fw-bold">Productos del pedido</div>
+        <div class="card-body p-0">
+          <div class="table-responsive">
+            <table class="table align-middle mb-0">
+              <thead><tr><th>Producto</th><th>Cantidad</th><th>Precio</th><th class="text-end">Subtotal</th></tr></thead>
+              <tbody>
+                {% for item in quote.items %}
+                <tr><td class="fw-semibold">{{ item.description or (item.product.name if item.product else 'Producto') }}</td><td>{{ item.quantity:g }}</td><td>{{ quote.currency or 'ARS' }} {{ '%.2f'|format(item.unit_price or 0) }}</td><td class="text-end fw-semibold">{{ quote.currency or 'ARS' }} {{ '%.2f'|format(item.subtotal or 0) }}</td></tr>
+                {% endfor %}
+              </tbody>
+              <tfoot><tr><th colspan="3" class="text-end">Total</th><th class="text-end">{{ order.currency }} {{ '%.2f'|format(order.total) }}</th></tr></tfoot>
+            </table>
+          </div>
+        </div>
+      </div>
+
+      <div class="card app-card">
+        <div class="card-header bg-white fw-bold">Trazabilidad</div>
+        <div class="card-body">
+          <div class="ai-order-timeline">
+            <div class="ai-order-step"><span class="ai-order-dot"></span><div><div class="fw-semibold">Pedido generado por Vendedor IA</div><div class="small text-muted">{{ order.created_at.strftime('%d/%m/%Y %H:%M') if order.created_at else '-' }}</div></div></div>
+            <div class="ai-order-step"><span class="ai-order-dot"></span><div><div class="fw-semibold">Estado del pago: {{ order.payment_label }}</div><div class="small text-muted">{{ order.paid_at.strftime('%d/%m/%Y %H:%M') if order.paid_at else 'Pendiente de aprobación' }}</div></div></div>
+            {% if order.sale_id %}<div class="ai-order-step"><span class="ai-order-dot ai-order-dot-success"></span><div><div class="fw-semibold">Venta confirmada</div><div class="small text-muted">Venta #{{ order.sale_id }} · stock aplicado</div></div></div>{% else %}<div class="ai-order-step"><span class="ai-order-dot"></span><div><div class="fw-semibold">Venta confirmada</div><div class="small text-muted">Todavía no hay una venta convertida.</div></div></div>{% endif %}
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <div class="col-lg-5">
+      <div class="card app-card mb-4">
+        <div class="card-header bg-white fw-bold">Cliente</div>
+        <div class="card-body">
+          <div class="fw-bold fs-5">{{ order.customer_name }}</div>
+          {% if order.customer_phone %}<div class="text-muted mt-1"><i class="bi bi-whatsapp me-1"></i>{{ order.customer_phone }}</div>{% endif %}
+        </div>
+      </div>
+
+      <div class="card app-card mb-4">
+        <div class="card-header bg-white fw-bold">Pago</div>
+        <div class="card-body">
+          <div class="d-flex justify-content-between align-items-center mb-2"><span class="text-muted">Estado</span><span class="badge {{ order.payment_badge }}">{{ order.payment_label }}</span></div>
+          <div class="d-flex justify-content-between align-items-center mb-2"><span class="text-muted">Monto</span><span class="fw-bold">{{ order.currency }} {{ '%.2f'|format(order.total) }}</span></div>
+          {% if order.payment_id %}<div class="d-flex justify-content-between align-items-center"><span class="text-muted">Mercado Pago</span><span class="fw-semibold">#{{ order.payment_id }}</span></div>{% endif %}
+          {% if payment and payment.reference %}<div class="small text-muted mt-3 text-break">Referencia: {{ payment.reference }}</div>{% endif %}
+        </div>
+      </div>
+
+      <div class="card app-card">
+        <div class="card-header bg-white fw-bold">Control operativo</div>
+        <div class="card-body">
+          {% if order.sale_id %}
+            <div class="alert alert-success mb-0">El pago fue aprobado y el pedido quedó convertido en una venta confirmada.</div>
+          {% elif order.payment_status == 'approved' %}
+            <div class="alert alert-warning mb-0">El pago está aprobado, pero todavía no existe una venta vinculada. Revisá este pedido.</div>
+          {% else %}
+            <div class="alert alert-light border mb-0">El pedido todavía no está confirmado como venta. El stock no se descuenta hasta que el pago se apruebe y el flujo finalice correctamente.</div>
+          {% endif %}
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<style>
+  .ai-order-timeline { display: grid; gap: 1rem; }
+  .ai-order-step { display: flex; gap: .8rem; align-items: flex-start; }
+  .ai-order-dot { width: 10px; height: 10px; border-radius: 50%; background: #64748b; margin-top: .35rem; flex: 0 0 10px; box-shadow: 0 0 0 4px rgba(100,116,139,.12); }
+  .ai-order-dot-success { background: #16a34a; box-shadow: 0 0 0 4px rgba(22,163,74,.12); }
+</style>
+{% endblock %}
+'''
+          (repo / 'templates/ai_agent/order_detail.html').write_text(detail_template, encoding='utf-8')
+
+          ns = repo / 'services/notification_service.py'
+          n = ns.read_text(encoding='utf-8')
+          marker = '\ndef _build_user_notifications():\n'
+          if marker not in n:
+              raise SystemExit('notification user builder marker not found')
+          if 'def _build_ai_order_notifications()' not in n:
+              helper = r'''
+
+def _build_ai_order_notifications():
+    """Build tenant notifications for orders created by the 24h AI seller."""
+    from app import Payment, Quote, utcnow, get_current_company_id
+
+    company_id = get_current_company_id()
+    if not company_id:
+        return []
+    cutoff = utcnow() - timedelta(days=7)
+    ai_marker = "Pedido generado por el Vendedor 24 hs de StockARmobile."
+    quotes = (
+        Quote.query.filter(
+            Quote.company_id == company_id,
+            Quote.observations == ai_marker,
+            Quote.date >= cutoff,
+        )
+        .order_by(Quote.date.desc(), Quote.id.desc())
+        .limit(8)
+        .all()
+    )
+    if not quotes:
+        return []
+
+    payments = (
+        Payment.query.filter(
+            Payment.company_id == company_id,
+            Payment.provider == "mercadopago_ai_order",
+            Payment.created_at >= cutoff,
+        )
+        .order_by(Payment.id.desc())
+        .limit(50)
+        .all()
+    )
+    payment_by_quote = {}
+    prefix = f"flow:ai_order|company_id:{int(company_id)}|quote_id:"
+    for payment in payments:
+        reference = str(payment.external_reference or "")
+        if not reference.startswith(prefix):
+            continue
+        tail = reference[len(prefix):]
+        quote_part = tail.split("|", 1)[0]
+        if quote_part.isdigit() and int(quote_part) not in payment_by_quote:
+            payment_by_quote[int(quote_part)] = payment
+
+    items = []
+    for quote in quotes:
+        payment = payment_by_quote.get(quote.id)
+        customer_name = getattr(getattr(quote, "client", None), "name", None) or getattr(quote, "consumer_name", None) or "Consumidor final"
+        number = getattr(quote, "number", None) or f"P-{quote.id:06d}"
+        total = float(getattr(quote, "total_amount", 0) or 0)
+        if getattr(quote, "converted_sale_id", None):
+            items.append(
+                {
+                    "type": "success",
+                    "title": "Pedido IA confirmado",
+                    "body": f"{number} de {customer_name} · ${total:.2f}. Pago aprobado y venta confirmada.",
+                    "href": f"/pedidos-ia/{quote.id}",
+                }
+            )
+            continue
+        payment_status = str(getattr(payment, "status", "pending") or "pending").lower() if payment else "pending"
+        if payment_status == "approved":
+            items.append(
+                {
+                    "type": "warning",
+                    "title": "Pago aprobado · revisar pedido IA",
+                    "body": f"{number} de {customer_name} tiene el pago aprobado, pero todavía no figura como venta confirmada.",
+                    "href": f"/pedidos-ia/{quote.id}",
+                }
+            )
+        elif payment_status in {"pending", "in_process", "authorized"}:
+            items.append(
+                {
+                    "type": "primary",
+                    "title": "Nuevo pedido IA",
+                    "body": f"{number} de {customer_name} · ${total:.2f}. Esperando aprobación de pago.",
+                    "href": f"/pedidos-ia/{quote.id}",
+                }
+            )
+        else:
+            items.append(
+                {
+                    "type": "danger",
+                    "title": "Incidencia en pedido IA",
+                    "body": f"{number} de {customer_name} · estado de pago: {payment_status.replace('_', ' ')}.",
+                    "href": f"/pedidos-ia/{quote.id}",
+                }
+            )
+    return items[:6]
+
+'''
+              n = n.replace(marker, helper + marker, 1)
+          old = '    items = _build_recent_quote_acceptance_notifications()\n    items.append({"type": "success", "title": "Ventas",'
+          new = '    items = _build_ai_order_notifications() + _build_recent_quote_acceptance_notifications()\n    items.append({"type": "success", "title": "Ventas",'
+          if old not in n:
+              raise SystemExit('user notification items anchor not found')
+          n = n.replace(old, new, 1)
+          ns.write_text(n, encoding='utf-8')
+
+          base = repo / 'templates/base_master.html'
+          b = base.read_text(encoding='utf-8')
+          marker = '''      <a class="nav-link {% if request.endpoint and request.endpoint.startswith('quotes.') %}active{% endif %}" href="{{ url_for('quotes.index') }}"><i class="bi bi-file-earmark-text"></i><span class="nav-text">Presupuestos</span></a>
+'''
+          addition = marker + '''      <a class="nav-link {% if request.endpoint and request.endpoint.startswith('whatsapp_agent.ai_orders') %}active{% endif %}" href="{{ url_for('whatsapp_agent.ai_orders') }}"><i class="bi bi-robot"></i><span class="nav-text">Pedidos IA</span></a>
+'''
+          if addition not in b:
+              if marker not in b:
+                  raise SystemExit('base menu quotes marker not found')
+              b = b.replace(marker, addition, 1)
+          base.write_text(b, encoding='utf-8')
+
+          # Basic repository checks; no external services are touched here.
+          import py_compile
+          for filename in ['whatsapp_agent.py', 'services/notification_service.py']:
+              py_compile.compile(filename, doraise=True)
+          if 'Pedidos IA' not in (repo / 'templates/base_master.html').read_text(encoding='utf-8'):
+              raise SystemExit('Pedidos IA menu label missing')
+          print('AI orders implementation prepared successfully.')
+          PY
+          git diff --check
+
+      - name: Commit implementation and remove temporary hook
+        shell: bash
+        run: |
+          set -euo pipefail
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add whatsapp_agent.py services/notification_service.py templates/base_master.html templates/ai_agent/orders.html templates/ai_agent/order_detail.html
+          git rm -f AI_ORDERS_TRIGGER.txt .github/workflows/implement-ai-orders.yml
+          git diff --cached --check
+          git commit -m 'feat: add AI orders center'
+          git push origin HEAD:main
