@@ -6,7 +6,6 @@ permissions:
   contents: write
 jobs:
   polish:
-    if: ${{ !contains(github.event.head_commit.message, 'chore: polish Mi Empresa UX') }}
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -71,9 +70,8 @@ jobs:
           PY
 
           git diff --check
-          python -m compileall -q .
 
-      - name: Commit and remove one-time workflow
+      - name: Commit changes and remove one-time workflow
         run: |
           git config user.name 'github-actions[bot]'
           git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
