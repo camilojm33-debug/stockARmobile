@@ -17,76 +17,50 @@ jobs:
         run: |
           python - <<'PY'
           from pathlib import Path
-
           p = Path('tests/test_smoke.py')
           s = p.read_text(encoding='utf-8')
 
-          old_catalog = '''    for value in [
-        "Trial",
-        "Emprendedor",
-        "Negocio",
-        "Premium",
-        "12.999",
-        "29.999",
-        "54.999",
-        "Sistema de gestión para comercios: stock, ventas y caja en un solo lugar",
-        "Comparación comercial completa",
-        "Gana dinero recomendando StockArmobile",
-        "Comisión configurada",
-        "Prueba StockArmobile GRATIS",
-        "Sin tarjeta de crédito",
-        "Ya sos cliente? Iniciar sesion y activar Referidos",
-        "No sos cliente? Crear cuenta de vendedor",
-    ]:
-        assert value in landing_html
-'''
-          new_catalog = '''    for value in [
-        "Trial",
-        "Emprendedor",
-        "Negocio",
-        "Premium",
-        "12.999",
-        "29.999",
-        "54.999",
-        "Comparación comercial completa",
-    ]:
-        assert value in landing_html
-    assert "Tu negocio más ordenado. Tus ventas más inteligentes." in landing_html
-    assert "Sumá inteligencia artificial a tu negocio" in landing_html
-    assert "Vendedor IA" in landing_html
-'''
-          if old_catalog not in s:
-              raise SystemExit('Expected landing catalog assertion block not found')
-          s = s.replace(old_catalog, new_catalog, 1)
+          for obsolete in [
+              '        "Sistema de gestión para comercios: stock, ventas y caja en un solo lugar",\n',
+              '        "Gana dinero recomendando StockArmobile",\n',
+              '        "Comisión configurada",\n',
+              '        "Prueba StockArmobile GRATIS",\n',
+              '        "Sin tarjeta de crédito",\n',
+              '        "Ya sos cliente? Iniciar sesion y activar Referidos",\n',
+              '        "No sos cliente? Crear cuenta de vendedor",\n',
+          ]:
+              s = s.replace(obsolete, '', 1)
 
-          old_seo = '''    assert html.count("<h1") == 1
-    assert "Sistema de gestión para comercios: stock, ventas y caja en un solo lugar" in html
-    assert (
-        "Controlá tu negocio desde la PC o el celular: ventas, stock, clientes, caja, QR, etiquetas y reportes "
-        "en una sola plataforma pensada para comercios argentinos." in html
-    )
-'''
-          new_seo = '''    assert html.count("<h1") == 1
-    assert "Tu negocio más ordenado. Tus ventas más inteligentes." in html
-    assert "Sumá inteligencia artificial a tu negocio" in html
-    assert "Vendedor IA" in html
-'''
+          marker = '    ]:\n        assert value in landing_html\n\n    client.post("/auth/login", data={"username": "empresa_admin", "password": "admin123"})'
+          replacement = '    ]:\n        assert value in landing_html\n    assert "Tu negocio más ordenado. Tus ventas más inteligentes." in landing_html\n    assert "Sumá inteligencia artificial a tu negocio" in landing_html\n    assert "Vendedor IA" in landing_html\n\n    client.post("/auth/login", data={"username": "empresa_admin", "password": "admin123"})'
+          if marker not in s:
+              raise SystemExit('Landing catalog assertion marker not found')
+          s = s.replace(marker, replacement, 1)
+
+          old_seo = ('    assert html.count("<h1") == 1\n'
+                     '    assert "Sistema de gestión para comercios: stock, ventas y caja en un solo lugar" in html\n'
+                     '    assert (\n'
+                     '        "Controlá tu negocio desde la PC o el celular: ventas, stock, clientes, caja, QR, etiquetas y reportes "\n'
+                     '        "en una sola plataforma pensada para comercios argentinos." in html\n'
+                     '    )\n')
+          new_seo = ('    assert html.count("<h1") == 1\n'
+                     '    assert "Tu negocio más ordenado. Tus ventas más inteligentes." in html\n'
+                     '    assert "Sumá inteligencia artificial a tu negocio" in html\n'
+                     '    assert "Vendedor IA" in html\n')
           if old_seo not in s:
-              raise SystemExit('Expected landing SEO copy assertion block not found')
+              raise SystemExit('Landing SEO assertion block not found')
           s = s.replace(old_seo, new_seo, 1)
 
-          old_referral_cta = '''    assert "Ya sos cliente? Iniciar sesion y activar Referidos" in html
-    assert "No sos cliente? Crear cuenta de vendedor" in html
-'''
-          if old_referral_cta not in s:
-              raise SystemExit('Expected referral CTA assertions not found')
-          s = s.replace(old_referral_cta, '', 1)
+          referral_cta = ('    assert "Ya sos cliente? Iniciar sesion y activar Referidos" in html\n'
+                          '    assert "No sos cliente? Crear cuenta de vendedor" in html\n')
+          if referral_cta not in s:
+              raise SystemExit('Referral CTA assertions not found')
+          s = s.replace(referral_cta, '', 1)
 
           p.write_text(s, encoding='utf-8')
           print('Landing regression tests refreshed for current copy and agent UX.')
           PY
-
-      - name: Verify refreshed landing assertions
+      - name: Verify refreshed assertions
         run: |
           python - <<'PY'
           from pathlib import Path
@@ -95,13 +69,11 @@ jobs:
               'Tu negocio más ordenado. Tus ventas más inteligentes.',
               'Sumá inteligencia artificial a tu negocio',
               'Vendedor IA',
-              'Comparación comercial completa',
           ]
           for fragment in required:
               assert fragment in text, fragment
           print('Landing test refresh: PASS')
           PY
-
       - name: Remove one-time workflow and commit
         run: |
           git config user.name 'github-actions[bot]'
