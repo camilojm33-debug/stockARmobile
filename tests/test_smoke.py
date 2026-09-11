@@ -4135,7 +4135,7 @@ def test_landing_and_subscription_use_same_plan_catalog():
         "12.999",
         "29.999",
         "54.999",
-        "Comparación comercial completa",
+        "Elegí la capacidad que necesitás hoy",
     ]:
         assert value in landing_html
     assert "Tu negocio más ordenado. Tus ventas más inteligentes." in landing_html
@@ -4167,7 +4167,7 @@ def test_landing_seo_phase2_copy_and_single_h1():
     assert "Tu negocio más ordenado. Tus ventas más inteligentes." in html
     assert "Sumá inteligencia artificial a tu negocio" in html
     assert "Vendedor IA" in html
-    assert "Beneficios para el control de stock y ventas de tu comercio" in html
+    assert "Ventas más ágiles" in html
     assert "Pensado para comercios, ferreterías, kioscos y negocios en crecimiento" in html
     assert "Mercado Pago" in html
     assert "presupuestos" in html.lower()
