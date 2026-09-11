@@ -1,0 +1,192 @@
+/* ui-polish-pages-v1: additive visual polish for core commerce screens. */
+.app-shell:has(#section-apertura) > .d-flex:first-child,
+.app-shell:has(#productForm) > .d-flex:first-child,
+.app-shell:has(#clientForm) > .d-flex:first-child,
+.app-shell:has(select[name="payment_method"]) > .d-flex:first-child,
+.app-shell:has(a[href*="scanner=1"]) > .mb-4:first-child,
+.app-shell:has(.page-kicker .bi-life-preserver) > .d-flex:first-child {
+  padding: 1.05rem 1.15rem;
+  margin-bottom: 1rem !important;
+  border: 1px solid var(--app-line);
+  border-radius: 20px;
+  background: linear-gradient(135deg, rgba(255,255,255,.96), rgba(248,251,255,.94));
+  box-shadow: 0 14px 34px rgba(15,23,42,.07);
+}
+[data-bs-theme="dark"] .app-shell:has(#section-apertura) > .d-flex:first-child,
+[data-bs-theme="dark"] .app-shell:has(#productForm) > .d-flex:first-child,
+[data-bs-theme="dark"] .app-shell:has(#clientForm) > .d-flex:first-child,
+[data-bs-theme="dark"] .app-shell:has(select[name="payment_method"]) > .d-flex:first-child,
+[data-bs-theme="dark"] .app-shell:has(a[href*="scanner=1"]) > .mb-4:first-child,
+[data-bs-theme="dark"] .app-shell:has(.page-kicker .bi-life-preserver) > .d-flex:first-child {
+  background: linear-gradient(135deg, rgba(22,32,51,.96), rgba(15,23,42,.95));
+}
+.app-shell:has(#section-apertura) > .d-flex:first-child h1,
+.app-shell:has(#productForm) > .d-flex:first-child h1,
+.app-shell:has(#clientForm) > .d-flex:first-child h1,
+.app-shell:has(select[name="payment_method"]) > .d-flex:first-child h1,
+.app-shell:has(a[href*="scanner=1"]) > .mb-4:first-child h1,
+.app-shell:has(.page-kicker .bi-life-preserver) > .d-flex:first-child h1 { letter-spacing: -.025em; }
+
+/* Caja */
+.app-shell:has(#section-apertura) .card.app-card { border-radius: 18px; box-shadow: 0 12px 30px rgba(15,23,42,.06); }
+.app-shell:has(#section-apertura) .card.app-card .card-header { border-bottom-color: var(--app-line); font-weight: 800; }
+.app-shell:has(#section-apertura) .btn { border-radius: 11px; font-weight: 700; }
+.app-shell:has(#section-apertura) .form-control,
+.app-shell:has(#section-apertura) .form-select { min-height: 44px; border-radius: 11px; }
+.app-shell:has(#section-apertura) #section-apertura .summary-panel { gap: .7rem; }
+.app-shell:has(#section-apertura) #section-apertura .summary-panel > div { border-radius: 14px; box-shadow: 0 6px 18px rgba(15,23,42,.035); }
+.app-shell:has(#section-apertura) #section-arqueo,
+.app-shell:has(#section-apertura) #section-historial,
+.app-shell:has(#section-apertura) #section-admin { scroll-margin-top: 24px; }
+
+/* Productos */
+.app-shell:has(#productForm) .card.app-card { border-radius: 18px; }
+.app-shell:has(#productForm) #productForm .card-body { padding: 1.15rem; }
+.app-shell:has(#productForm) #productForm .form-control,
+.app-shell:has(#productForm) #productForm .form-select { min-height: 44px; border-radius: 11px; }
+.app-shell:has(#productForm) .toolbar-card { padding: .9rem; background: linear-gradient(180deg,var(--app-panel),var(--app-panel-soft)); }
+.app-shell:has(#productForm) .toolbar-card .input-group-lg .form-control,
+.app-shell:has(#productForm) .toolbar-card .input-group-lg .input-group-text { min-height: 50px; }
+.app-shell:has(#productForm) .table-responsive { border: 1px solid var(--app-line); border-radius: 15px; }
+.app-shell:has(#productForm) .table tbody tr { transition: background .16s ease; }
+.app-shell:has(#productForm) .table tbody tr:hover { transform: translateY(-1px); }
+.app-shell:has(#productForm) .product-catalog-visual { min-height: 165px; border-bottom: 1px solid var(--app-line); }
+.app-shell:has(#productForm) .row > .col-sm-6 > .card.app-card,
+.app-shell:has(#productForm) .row > .col-lg-4 > .card.app-card { overflow: hidden; }
+.app-shell:has(#productForm) .card.app-card .card-body { min-width: 0; }
+@media (max-width: 767.98px) {
+  .app-shell:has(#productForm) .table-responsive { border: 0; }
+  .app-shell:has(#productForm) .table { border-collapse: separate; border-spacing: 0 .7rem; }
+  .app-shell:has(#productForm) .table thead { display: none; }
+  .app-shell:has(#productForm) .table tbody tr { display: block; padding: .85rem .9rem; border: 1px solid var(--app-line); border-radius: 16px; background: var(--app-panel); box-shadow: 0 8px 22px rgba(15,23,42,.05); }
+  .app-shell:has(#productForm) .table tbody td { display: flex; justify-content: space-between; gap: 1rem; align-items: center; padding: .38rem 0; border: 0; min-width: 0; text-align: right; }
+  .app-shell:has(#productForm) .table tbody td::before { color: var(--app-muted); font-size: .72rem; font-weight: 800; text-transform: uppercase; letter-spacing: .04em; text-align: left; flex: 0 0 auto; }
+  .app-shell:has(#productForm) .table tbody td:nth-child(1)::before { content: "Código"; }
+  .app-shell:has(#productForm) .table tbody td:nth-child(2)::before { content: "Producto"; }
+  .app-shell:has(#productForm) .table tbody td:nth-child(3)::before { content: "Marca"; }
+  .app-shell:has(#productForm) .table tbody td:nth-child(4)::before { content: "Tipo"; }
+  .app-shell:has(#productForm) .table tbody td:nth-child(5)::before { content: "Costo"; }
+  .app-shell:has(#productForm) .table tbody td:nth-child(6)::before { content: "Margen"; }
+  .app-shell:has(#productForm) .table tbody td:nth-child(7)::before { content: "Ganancia"; }
+  .app-shell:has(#productForm) .table tbody td:nth-child(8)::before { content: "Precio"; }
+  .app-shell:has(#productForm) .table tbody td:nth-child(9)::before { content: "Stock"; }
+  .app-shell:has(#productForm) .table tbody td:nth-child(10)::before { content: "Acciones"; }
+  .app-shell:has(#productForm) .table tbody td:nth-child(2) { align-items: flex-start; }
+  .app-shell:has(#productForm) .table tbody td:nth-child(10) { display: flex; flex-wrap: wrap; justify-content: flex-end; }
+  .app-shell:has(#productForm) .table tbody td:nth-child(10)::before { margin-right: auto; }
+}
+
+/* Gastos */
+.app-shell:has(select[name="payment_method"]) .metric-value { padding: .9rem 1.1rem; border-radius: 16px; background: linear-gradient(135deg, rgba(37,99,235,.10), rgba(79,70,229,.05)); color: var(--app-primary-deep); box-shadow: 0 10px 24px rgba(37,99,235,.10); }
+.app-shell:has(select[name="payment_method"]) .card.app-card { border-radius: 18px; }
+.app-shell:has(select[name="payment_method"]) .card.app-card:first-of-type { border-color: rgba(37,99,235,.14); }
+.app-shell:has(select[name="payment_method"]) .card.app-card:first-of-type .card-body { padding: 1rem; }
+.app-shell:has(select[name="payment_method"]) .form-control,
+.app-shell:has(select[name="payment_method"]) .form-select { min-height: 46px; border-radius: 11px; }
+.app-shell:has(select[name="payment_method"]) .btn-primary { min-height: 46px; border-radius: 11px; font-weight: 800; }
+.app-shell:has(select[name="payment_method"]) table { border-collapse: separate; border-spacing: 0; }
+.app-shell:has(select[name="payment_method"]) table tbody tr:last-child td { border-bottom: 0; }
+@media (max-width: 767.98px) {
+  .app-shell:has(select[name="payment_method"]) > .d-flex:first-child { align-items: stretch !important; }
+  .app-shell:has(select[name="payment_method"]) .metric-value { align-self: stretch; text-align: left; }
+}
+
+/* Clientes */
+.app-shell:has(#clientForm) .card.app-card { border-radius: 18px; }
+.app-shell:has(#clientForm) #clientForm .card-body { padding: 1.15rem; }
+.app-shell:has(#clientForm) #clientForm .form-control,
+.app-shell:has(#clientForm) #clientForm .form-select { min-height: 44px; border-radius: 11px; }
+.app-shell:has(#clientForm) .toolbar-card { padding: .9rem; background: linear-gradient(180deg,var(--app-panel),var(--app-panel-soft)); }
+.app-shell:has(#clientForm) .toolbar-card .input-group-text { border-radius: 12px 0 0 12px; }
+.app-shell:has(#clientForm) .toolbar-card .form-control { min-height: 50px; }
+.app-shell:has(#clientForm) .table-responsive { border: 1px solid var(--app-line); border-radius: 15px; }
+@media (max-width: 767.98px) {
+  .app-shell:has(#clientForm) .table-responsive { border: 0; }
+  .app-shell:has(#clientForm) .table thead { display: none; }
+  .app-shell:has(#clientForm) .table { border-collapse: separate; border-spacing: 0 .7rem; }
+  .app-shell:has(#clientForm) .table tbody tr { display: block; padding: .85rem .9rem; border: 1px solid var(--app-line); border-radius: 16px; background: var(--app-panel); box-shadow: 0 8px 22px rgba(15,23,42,.05); }
+  .app-shell:has(#clientForm) .table tbody td { display: flex; justify-content: space-between; align-items: flex-start; gap: 1rem; padding: .4rem 0; border: 0; min-width: 0; text-align: right; overflow-wrap: anywhere; }
+  .app-shell:has(#clientForm) .table tbody td::before { color: var(--app-muted); font-size: .72rem; font-weight: 800; text-transform: uppercase; letter-spacing: .04em; text-align: left; flex: 0 0 auto; }
+  .app-shell:has(#clientForm) .table tbody td:nth-child(1)::before { content: "Cliente"; }
+  .app-shell:has(#clientForm) .table tbody td:nth-child(2)::before { content: "Email"; }
+  .app-shell:has(#clientForm) .table tbody td:nth-child(3)::before { content: "WhatsApp"; }
+  .app-shell:has(#clientForm) .table tbody td:nth-child(4)::before { content: "Compras"; }
+  .app-shell:has(#clientForm) .table tbody td:nth-child(5)::before { content: "Total comprado"; }
+  .app-shell:has(#clientForm) .table tbody td:nth-child(6)::before { content: "Presupuestos"; }
+  .app-shell:has(#clientForm) .table tbody td:nth-child(7)::before { content: "Total presupuestado"; }
+  .app-shell:has(#clientForm) .table tbody td:nth-child(8)::before { content: "Saldo"; }
+  .app-shell:has(#clientForm) .table tbody td:nth-child(9)::before { content: "Crédito"; }
+  .app-shell:has(#clientForm) .table tbody td:nth-child(10)::before { content: "Acciones"; }
+  .app-shell:has(#clientForm) .table tbody td:nth-child(10) { flex-wrap: wrap; justify-content: flex-end; }
+  .app-shell:has(#clientForm) .table tbody td:nth-child(10)::before { margin-right: auto; }
+}
+
+/* Inicio rápido */
+.app-shell:has(a[href*="scanner=1"]) .row.g-3 { gap: .85rem 0; }
+.app-shell:has(a[href*="scanner=1"]) .row.g-3 > [class*="col-"] > a.card { position: relative; overflow: hidden; min-height: 152px; border-radius: 18px; box-shadow: 0 10px 26px rgba(15,23,42,.06); transition: transform .18s ease, box-shadow .18s ease, border-color .18s ease; }
+.app-shell:has(a[href*="scanner=1"]) .row.g-3 > [class*="col-"] > a.card::after { content: ""; position: absolute; width: 100px; height: 100px; right: -34px; bottom: -36px; border-radius: 50%; background: rgba(37,99,235,.07); }
+.app-shell:has(a[href*="scanner=1"]) .row.g-3 > [class*="col-"] > a.card:hover { transform: translateY(-3px); box-shadow: 0 16px 34px rgba(15,23,42,.10); border-color: rgba(37,99,235,.24); }
+.app-shell:has(a[href*="scanner=1"]) .row.g-3 > [class*="col-"] > a.card .display-6 { margin-bottom: .2rem; }
+.app-shell:has(a[href*="scanner=1"]) .row.g-3 > [class*="col-"] > a.card .fw-bold { font-size: .93rem; }
+@media (max-width: 575.98px) {
+  .app-shell:has(a[href*="scanner=1"]) .row.g-3 > [class*="col-"] > a.card { min-height: 128px; }
+  .app-shell:has(a[href*="scanner=1"]) .row.g-3 > [class*="col-"] > a.card .card-body { padding: 1rem .7rem !important; }
+  .app-shell:has(a[href*="scanner=1"]) .row.g-3 > [class*="col-"] > a.card .display-6 { font-size: 2rem; }
+}
+
+/* Referidos */
+.referrals-shell { max-width: 1240px; }
+.referrals-shell .referrals-hero { border-radius: 22px; border: 1px solid var(--app-line); background: linear-gradient(135deg, rgba(37,99,235,.08), rgba(79,70,229,.04)); box-shadow: 0 18px 42px rgba(15,23,42,.08); }
+.referrals-shell .referrals-quick-guide { border-radius: 15px; background: var(--app-panel-soft); }
+.referrals-shell .referrals-card-elevated { border-radius: 18px; box-shadow: 0 12px 30px rgba(15,23,42,.06); overflow: hidden; }
+.referrals-shell .referrals-card-elevated .card-header { padding: .9rem 1rem; border-bottom-color: var(--app-line); }
+.referrals-shell .referrals-kpi { border-radius: 16px; min-height: 100%; }
+.referrals-shell .referrals-stat-chip { border: 1px solid var(--app-line); border-radius: 14px; padding: .65rem .55rem; background: var(--app-panel-soft); transition: transform .16s ease, border-color .16s ease; }
+.referrals-shell .referrals-stat-chip:hover { transform: translateY(-1px); border-color: rgba(37,99,235,.22); }
+.referrals-shell .table-responsive { border-radius: 15px; }
+.referrals-shell .progress { border-radius: 999px; overflow: hidden; }
+.referrals-shell .btn { border-radius: 11px; font-weight: 700; }
+@media (max-width: 767.98px) {
+  .referrals-shell .referrals-hero .card-body { padding: 1.1rem !important; }
+  .referrals-shell .referrals-hero .btn { width: 100%; }
+  .referrals-shell .referrals-quick-guide .d-flex { gap: .45rem !important; align-items: flex-start !important; }
+  .referrals-shell .referrals-kpi strong { display: block; font-size: 1.05rem; overflow-wrap: anywhere; }
+  .referrals-shell .table-responsive { border: 0; }
+  .referrals-shell .table thead { display: none; }
+  .referrals-shell .table { border-collapse: separate; border-spacing: 0 .65rem; }
+  .referrals-shell .table tbody tr { display: block; padding: .75rem .8rem; border: 1px solid var(--app-line); border-radius: 15px; background: var(--app-panel); box-shadow: 0 8px 22px rgba(15,23,42,.04); }
+  .referrals-shell .table tbody td { display: flex; justify-content: space-between; gap: .8rem; align-items: flex-start; padding: .34rem 0; border: 0; min-width: 0; text-align: right; overflow-wrap: anywhere; }
+  .referrals-shell .table tbody td::before { color: var(--app-muted); font-size: .68rem; font-weight: 800; text-transform: uppercase; letter-spacing: .04em; text-align: left; flex: 0 0 auto; }
+}
+
+/* Ayuda / soporte */
+.app-shell:has(.page-kicker .bi-life-preserver) .card.app-card { border-radius: 18px; overflow: hidden; }
+.app-shell:has(.page-kicker .bi-life-preserver) .card.app-card .card-body { padding: 1.2rem; }
+.app-shell:has(.page-kicker .bi-life-preserver) .form-control,
+.app-shell:has(.page-kicker .bi-life-preserver) .form-select { min-height: 46px; border-radius: 11px; }
+.app-shell:has(.page-kicker .bi-life-preserver) textarea.form-control { min-height: 150px; resize: vertical; }
+.app-shell:has(.page-kicker .bi-life-preserver) .btn { border-radius: 11px; font-weight: 700; }
+@media (max-width: 767.98px) {
+  .app-shell:has(.page-kicker .bi-life-preserver) > .d-flex:first-child { align-items: stretch !important; }
+  .app-shell:has(.page-kicker .bi-life-preserver) > .d-flex:first-child .d-flex { width: 100%; }
+  .app-shell:has(.page-kicker .bi-life-preserver) > .d-flex:first-child .btn { flex: 1 1 100%; }
+  .app-shell:has(.page-kicker .bi-life-preserver) .card.app-card .card-body { padding: 1rem; }
+  .app-shell:has(.page-kicker .bi-life-preserver) .table-responsive { border: 0; }
+  .app-shell:has(.page-kicker .bi-life-preserver) .table thead { display: none; }
+  .app-shell:has(.page-kicker .bi-life-preserver) .table { border-collapse: separate; border-spacing: 0 .6rem; }
+  .app-shell:has(.page-kicker .bi-life-preserver) .table tbody tr { display: block; padding: .75rem .8rem; border: 1px solid var(--app-line); border-radius: 15px; background: var(--app-panel); box-shadow: 0 8px 22px rgba(15,23,42,.04); }
+  .app-shell:has(.page-kicker .bi-life-preserver) .table tbody td { display: flex; justify-content: space-between; align-items: flex-start; gap: .8rem; padding: .35rem 0; border: 0; text-align: right; overflow-wrap: anywhere; }
+  .app-shell:has(.page-kicker .bi-life-preserver) .table tbody td::before { color: var(--app-muted); font-size: .68rem; font-weight: 800; text-transform: uppercase; letter-spacing: .04em; text-align: left; flex: 0 0 auto; }
+  .app-shell:has(.page-kicker .bi-life-preserver) .table tbody td:nth-child(1)::before { content: "#"; }
+  .app-shell:has(.page-kicker .bi-life-preserver) .table tbody td:nth-child(2)::before { content: "Motivo"; }
+  .app-shell:has(.page-kicker .bi-life-preserver) .table tbody td:nth-child(3)::before { content: "Descripción"; }
+  .app-shell:has(.page-kicker .bi-life-preserver) .table tbody td:nth-child(4)::before { content: "Fecha"; }
+  .app-shell:has(.page-kicker .bi-life-preserver) .table tbody td:nth-child(5)::before { content: "Estado"; }
+}
+
+/* Respeto para usuarios con movimiento reducido. */
+@media (prefers-reduced-motion: reduce) {
+  .app-shell:has(a[href*="scanner=1"]) .row.g-3 > [class*="col-"] > a.card,
+  .app-shell:has(#productForm) .table tbody tr,
+  .referrals-shell .referrals-stat-chip { transition: none; }
+}
