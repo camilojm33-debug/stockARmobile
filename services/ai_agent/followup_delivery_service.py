@@ -228,6 +228,8 @@ class AIFollowupDeliveryService:
             "skipped": 0,
         }
 
+        from app import Company
+
         for conversation in conversations:
             if stats["sent"] >= limit:
                 break
@@ -245,7 +247,7 @@ class AIFollowupDeliveryService:
             if not pending:
                 continue
 
-            company = conversation.company
+            company = Company.query.filter_by(id=int(conversation.company_id)).first()
             if company is None or not getattr(company, "active", True):
                 stats["skipped"] += len(pending)
                 continue
