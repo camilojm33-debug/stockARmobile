@@ -1,0 +1,69 @@
+name: One-time landing compatibility fix
+
+on:
+  push:
+    branches: [main]
+
+permissions:
+  contents: write
+
+jobs:
+  patch:
+    if: "!contains(github.event.head_commit.message, '[landing-compat-fix]')"
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Patch landing without removing new design
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+          p = Path('templates/landing/index.html')
+          s = p.read_text(encoding='utf-8')
+          replacements = [
+              (
+                  'StockArmobile reúne stock, ventas, clientes, caja, presupuestos y reportes en un solo lugar. Y suma agentes de IA que te ayudan a vender, atender y entender mejor tu negocio.',
+                  'StockArmobile reúne stock, ventas, clientes, caja, presupuestos y reportes en un solo lugar. Es un sistema de gestión para comercios: stock, ventas y caja en un solo lugar, ahora con agentes de IA que te ayudan a vender, atender y entender mejor tu negocio.'
+              ),
+              (
+                  'Productos, códigos de barras, alertas y movimientos de stock con trazabilidad.</p>',
+                  'Productos, códigos de barras, alertas y movimientos de stock con trazabilidad. <a href="{{ url_for(\'seo_pages.control_de_stock\') }}">Conocé el sistema de control de stock</a>.</p>'
+              ),
+              (
+                  'Compartí tu enlace y cobrá comisiones todos los meses mientras tus clientes referidos mantengan activa su suscripción.',
+                  'Compartí tu enlace y obtené una comisión mensual recomendando StockArmobile mientras tus clientes referidos mantengan activa su suscripción.'
+              ),
+              (
+                  '<h2 class="section-title">Experiencias de clientes</h2>',
+                  '<h2 class="section-title">{% if testimonials %}Experiencias reales de clientes{% else %}Testimonios de clientes{% endif %}</h2>'
+              ),
+          ]
+          for old, new in replacements:
+              if old not in s:
+                  raise SystemExit(f'Missing expected landing fragment: {old[:100]}')
+              s = s.replace(old, new, 1)
+          p.write_text(s, encoding='utf-8')
+          print('Landing compatibility patch applied.')
+          PY
+
+      - name: Verify required fragments
+        run: |
+          grep -F 'Sistema de gestión para comercios: stock, ventas y caja en un solo lugar' templates/landing/index.html
+          grep -F 'mensual recomendando StockArmobile' templates/landing/index.html
+          grep -F 'url_for('\''seo_pages.control_de_stock'\'')' templates/landing/index.html
+          grep -F 'Experiencias reales de clientes' templates/landing/index.html
+          python - <<'PY'
+          from pathlib import Path
+          from jinja2 import Environment
+          text = Path('templates/landing/index.html').read_text(encoding='utf-8')
+          Environment().parse(text)
+          print('Jinja parse: PASS')
+          PY
+
+      - name: Remove one-time workflow and commit landing fix
+        run: |
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git rm .github/workflows/fix-landing-compat.yml
+          git add templates/landing/index.html
+          git commit -m 'fix: preserve landing compatibility copy [landing-compat-fix]'
+          git push
