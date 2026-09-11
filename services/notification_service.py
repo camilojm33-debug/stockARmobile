@@ -15,11 +15,9 @@ from services.notification_service_legacy import (
     _signature_for_items,
     _subscription_notification_target,
 )
-from services.ai_agent.order_notifications import build_ai_order_notifications
 
 
 # Keep the legacy builders import-compatible for existing extensions and tests.
-
 def build_notifications():
     if not getattr(current_user, "is_authenticated", False):
         return []
@@ -27,6 +25,12 @@ def build_notifications():
         return _build_superadmin_notifications()
     if getattr(current_user, "role", None) == "seller":
         return _build_seller_notifications()
+
+    # Lazy import is intentional: order_notifications imports the AI runtime,
+    # which imports models that are initialized while the application is being
+    # imported. Importing it at module import time creates a circular import.
+    from services.ai_agent.order_notifications import build_ai_order_notifications
+
     return build_ai_order_notifications() + _build_user_notifications()
 
 
