@@ -1,0 +1,423 @@
+name: Apply vendor 24-7 second phase
+
+on:
+  push:
+    branches: [main]
+
+permissions:
+  contents: write
+
+jobs:
+  apply:
+    if: "!contains(github.event.head_commit.message, 'chore: finalize vendor second phase')"
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Patch vendor agent
+        shell: bash
+        run: |
+          set -euo pipefail
+          python - <<'PY'
+          from pathlib import Path
+
+          # Vendor order service: add customer follow-up operations.
+          path = Path('services/ai_agent/vendor_order_service.py')
+          text = path.read_text(encoding='utf-8')
+          marker = '    @staticmethod\n    def finalize_paid_order(*, company_id: int, quote_id: int, payment_data: Dict[str, Any], commit: bool = True) -> Dict[str, Any]:\n'
+          if 'def get_customer_order_status(' not in text:
+              block = '''    @staticmethod
+    def _conversation_for_order(*, company_id: int, conversation_id: int):
+        from stockarmobile.models.conversations import Conversation
+        conversation = Conversation.query.filter_by(id=int(conversation_id), company_id=int(company_id)).first()
+        if conversation is None:
+            raise ValueError("Conversación no encontrada para esta empresa.")
+        return conversation
+
+    @staticmethod
+    def _payment_for_quote(*, company_id: int, quote_id: int):
+        from app import Payment
+        prefix = f"{FLOW_PREFIX}|company_id:{int(company_id)}|quote_id:{int(quote_id)}|"
+        return (Payment.query.filter(Payment.company_id == int(company_id), Payment.provider == "mercadopago_ai_order", Payment.external_reference.like(prefix + "%"))
+                .order_by(Payment.id.desc()).first())
+
+    @staticmethod
+    def _find_conversation_quote(*, company_id: int, conversation, order_number: str = ""):
+        from app import Payment, Quote
+        quote_query = Quote.query.filter(Quote.company_id == int(company_id), Quote.observations == "Pedido generado por el Vendedor 24 hs de StockARmobile.")
+        state = _metadata(conversation)
+        pending_id = state.get(PENDING_QUOTE_KEY)
+        normalized = _normalize_text(order_number)
+        if normalized:
+            quote = quote_query.filter(Quote.number == order_number.strip()).first()
+            if quote is None and normalized.startswith("p-") and normalized[2:].isdigit():
+                quote = quote_query.filter(Quote.id == int(normalized[2:])).first()
+            elif quote is None and normalized.isdigit():
+                quote = quote_query.filter(Quote.id == int(normalized)).first()
+            if quote is not None:
+                return quote
+        if pending_id:
+            try:
+                quote = quote_query.filter(Quote.id == int(pending_id)).first()
+            except (TypeError, ValueError):
+                quote = None
+            if quote is not None:
+                return quote
+        conv_token = f"%conversation_id:{int(conversation.id)}%"
+        payment = (Payment.query.filter(Payment.company_id == int(company_id), Payment.provider == "mercadopago_ai_order", Payment.external_reference.like(conv_token))
+                   .order_by(Payment.id.desc()).first())
+        if payment is None:
+            return None
+        parts = str(payment.external_reference or "").split("|")
+        quote_part = next((part.split(":", 1)[1] for part in parts if part.startswith("quote_id:") and part.split(":", 1)[1].isdigit()), None)
+        return quote_query.filter(Quote.id == int(quote_part)).first() if quote_part else None
+
+    @staticmethod
+    def _order_row(*, company_id: int, quote, payment=None) -> Dict[str, Any]:
+        payment = payment or VendorOrderService._payment_for_quote(company_id=company_id, quote_id=quote.id)
+        payment_status = str(getattr(payment, "status", "pending") or "pending").lower() if payment else "pending"
+        if quote.converted_sale_id:
+            order_status = "confirmado"
+        elif payment_status == "approved":
+            order_status = "pagado"
+        elif payment_status in {"pending", "in_process", "authorized"}:
+            order_status = "pendiente_pago"
+        elif payment_status in {"cancelled", "canceled", "rejected", "refunded", "charged_back"}:
+            order_status = "pago_con_incidencia"
+        else:
+            order_status = "pendiente"
+        client = getattr(quote, "client", None)
+        return {
+            "quote_id": quote.id,
+            "quote_number": quote.number or f"P-{quote.id:06d}",
+            "customer_name": getattr(client, "name", None) or getattr(quote, "consumer_name", None) or "Consumidor final",
+            "total": float(quote.total_amount or 0),
+            "currency": quote.currency or "ARS",
+            "order_status": order_status,
+            "payment_status": payment_status,
+            "payment_id": getattr(payment, "payment_id", None) if payment else None,
+            "payment_url": None,
+            "sale_id": quote.converted_sale_id,
+            "created_at": quote.date.isoformat() if getattr(quote, "date", None) else None,
+            "expires_at": quote.expires_at.isoformat() if getattr(quote, "expires_at", None) else None,
+        }
+
+    @staticmethod
+    def get_customer_order_status(*, company_id: int, conversation_id: int, order_number: str = "") -> Dict[str, Any]:
+        from app import Quote
+        conversation = VendorOrderService._conversation_for_order(company_id=company_id, conversation_id=conversation_id)
+        state = _metadata(conversation)
+        quote = VendorOrderService._find_conversation_quote(company_id=company_id, conversation=conversation, order_number=order_number)
+        if quote is None:
+            return {"found": False}
+        row = VendorOrderService._order_row(company_id=company_id, quote=quote)
+        row["found"] = True
+        pending_id = state.get(PENDING_QUOTE_KEY)
+        row["payment_url"] = state.get(PENDING_PAYMENT_KEY) if str(quote.id) == str(pending_id) else None
+        return row
+
+    @staticmethod
+    def retry_payment(*, company_id: int, conversation_id: int, order_number: str = "") -> Dict[str, Any]:
+        from app import Payment, Product, Quote
+        conversation = VendorOrderService._conversation_for_order(company_id=company_id, conversation_id=conversation_id)
+        state = _metadata(conversation)
+        current = VendorOrderService.get_customer_order_status(company_id=company_id, conversation_id=conversation_id, order_number=order_number)
+        if not current.get("found"):
+            return {"success": False, "error": "pedido_no_encontrado"}
+        quote = Quote.query.filter_by(id=int(current["quote_id"]), company_id=int(company_id)).first()
+        if quote is None or quote.converted_sale_id:
+            return {"success": False, "error": "pedido_ya_confirmado" if quote and quote.converted_sale_id else "pedido_no_encontrado"}
+        if quote.status in {"ANULADO", "RECHAZADO", "CONVERTIDO"}:
+            return {"success": False, "error": "pedido_no_disponible"}
+        payment = VendorOrderService._payment_for_quote(company_id=company_id, quote_id=quote.id)
+        payment_status = str(getattr(payment, "status", "") or "").lower() if payment else ""
+        if payment_status == "approved":
+            return {"success": False, "error": "pago_ya_aprobado"}
+        now = __import__("datetime").datetime.utcnow()
+        if quote.expires_at and quote.expires_at < now:
+            return {"success": False, "error": "pedido_vencido"}
+        if payment_status in {"pending", "in_process"} and state.get(PENDING_PAYMENT_KEY):
+            return {"success": True, "existing": True, "quote_number": quote.number, "payment_url": state[PENDING_PAYMENT_KEY], "expires_at": quote.expires_at.isoformat() if quote.expires_at else None}
+        product_ids = [int(item.product_id) for item in quote.items if item.product_id]
+        products = {row.id: row for row in Product.query.filter(Product.company_id == company_id, Product.id.in_(product_ids), Product.active.is_(True)).all()}
+        for item in quote.items:
+            product = products.get(int(item.product_id or 0))
+            if product is None or Decimal(str(product.stock or 0)) < Decimal(str(item.quantity or 0)):
+                return {"success": False, "error": "stock_no_disponible", "product": getattr(product, "name", None) or "producto"}
+        external_reference = _ai_order_external_reference(company_id=company_id, quote_id=quote.id, conversation_id=conversation.id, user_id=quote.created_by_user_id)
+        access_token = MercadoPagoOAuthService().ensure_access_token(company_id=company_id)
+        mp = MercadoPagoService()
+        quote_url = _public_quote_url(quote.id)
+        result = mp.create_ai_order_checkout_preference(
+            title=f"Pedido {quote.number} - StockARmobile",
+            items=[
+                {"id": str(product.id), "title": product.name, "description": product.name,
+                 "quantity": int(float(item.quantity)) if float(item.quantity).is_integer() else float(item.quantity),
+                 "currency_id": quote.currency or "ARS", "unit_price": float(_money(item.unit_price))}
+                for item in quote.items for product in [products[int(item.product_id)]]
+            ],
+            amount=float(quote.total_amount or 0), currency=quote.currency or "ARS", external_reference=external_reference,
+            company_id=company_id, user_id=quote.created_by_user_id, quote_id=quote.id, conversation_id=conversation.id,
+            return_url=_with_payment_query(quote_url, payment="completed"), access_token=access_token,
+        )
+        payment_url = str(result.get("init_point") or result.get("sandbox_init_point") or "").strip()
+        if not payment_url:
+            raise RuntimeError("Mercado Pago no devolvió un nuevo link de pago.")
+        db.session.add(Payment(payment_id=None, preference_id=str(result.get("id") or "").strip() or None, external_reference=external_reference,
+                               company_id=company_id, subscription_id=None, user_id=quote.created_by_user_id, amount=quote.total_amount,
+                               currency=quote.currency or "ARS", status="pending", payment_method="mercadopago_ai_order",
+                               provider="mercadopago_ai_order", reference=external_reference, payload_json=json.dumps(result, ensure_ascii=False)))
+        state[PENDING_QUOTE_KEY] = quote.id
+        state[PENDING_PAYMENT_KEY] = payment_url
+        _set_metadata(conversation, state)
+        db.session.commit()
+        return {"success": True, "existing": False, "quote_number": quote.number, "payment_url": payment_url, "expires_at": quote.expires_at.isoformat() if quote.expires_at else None}
+
+    @staticmethod
+    def cancel_order(*, company_id: int, conversation_id: int, order_number: str = "", confirm: bool = False) -> Dict[str, Any]:
+        from app import Quote, Payment
+        conversation = VendorOrderService._conversation_for_order(company_id=company_id, conversation_id=conversation_id)
+        state = _metadata(conversation)
+        current = VendorOrderService.get_customer_order_status(company_id=company_id, conversation_id=conversation_id, order_number=order_number)
+        if not current.get("found"):
+            return {"success": False, "error": "pedido_no_encontrado"}
+        quote = Quote.query.filter_by(id=int(current["quote_id"]), company_id=int(company_id)).first()
+        if quote is None:
+            return {"success": False, "error": "pedido_no_encontrado"}
+        if quote.converted_sale_id:
+            return {"success": False, "error": "pedido_ya_confirmado"}
+        if not confirm:
+            return {"success": False, "confirmation_required": True, "quote_number": quote.number, "message": f"¿Confirmás que querés cancelar el pedido {quote.number}?"}
+        if quote.status in {"ANULADO", "RECHAZADO", "CONVERTIDO"}:
+            return {"success": False, "error": "pedido_no_disponible"}
+        quote.status = "ANULADO"
+        payment = VendorOrderService._payment_for_quote(company_id=company_id, quote_id=quote.id)
+        if payment is not None and str(payment.status or "").lower() in {"pending", "in_process", "authorized"}:
+            payment.status = "cancelled"
+        if str(state.get(PENDING_QUOTE_KEY)) == str(quote.id):
+            state.pop(PENDING_QUOTE_KEY, None)
+            state.pop(PENDING_PAYMENT_KEY, None)
+        _set_metadata(conversation, state)
+        db.session.commit()
+        return {"success": True, "quote_number": quote.number, "message": f"Pedido {quote.number} cancelado correctamente."}
+
+    @staticmethod
+    def list_catalog(*, company_id: int, query: str = "", limit: int = 20) -> Dict[str, Any]:
+        from app import Product
+        safe_limit = max(1, min(int(limit or 20), 40))
+        if query.strip():
+            rows = _search_candidates(company_id, query)
+        else:
+            rows = (Product.query.filter(Product.company_id == company_id, Product.active.is_(True))
+                    .order_by(Product.favorite.desc(), Product.name.asc()).limit(safe_limit).all())
+        products = [{"product_id": p.id, "name": p.name, "brand": p.brand or "", "category": p.category or "",
+                     "price": float(p.price or 0), "stock": float(p.stock or 0), "unit_measure": p.unit_measure or "u"}
+                    for p in rows[:safe_limit]]
+        return {"success": True, "count": len(products), "products": products}
+
+    @staticmethod
+    def list_promotions(*, company_id: int, limit: int = 12) -> Dict[str, Any]:
+        from app import Product
+        safe_limit = max(1, min(int(limit or 12), 24))
+        rows = (Product.query.filter(Product.company_id == company_id, Product.active.is_(True), Product.discount > 0)
+                .order_by(Product.favorite.desc(), Product.name.asc()).limit(safe_limit).all())
+        products = []
+        for p in rows:
+            price = _money(p.price)
+            discount = _money(p.discount)
+            final_price = max(price - discount, Decimal("0.00"))
+            products.append({"product_id": p.id, "name": p.name, "price": float(price), "discount": float(discount),
+                             "final_price": float(final_price), "stock": float(p.stock or 0), "unit_measure": p.unit_measure or "u"})
+        return {"success": True, "count": len(products), "products": products}
+
+'''
+              text = text.replace(marker, block + marker, 1)
+          # Prevent a late webhook from converting a customer-cancelled order.
+          guard = '        if quote.converted_sale_id:\n            sale = Sale.query.filter_by(id=quote.converted_sale_id, company_id=company_id).first()\n'
+          if 'El pedido está cancelado y no puede convertirse en venta.' not in text and guard in text:
+              replacement = '        if quote.status in {"ANULADO", "RECHAZADO"}:\n            raise ValueError("El pedido está cancelado y no puede convertirse en venta.")\n\n' + guard
+              text = text.replace(guard, replacement, 1)
+          path.write_text(text, encoding='utf-8')
+
+          # Runtime: expose the new capabilities only to Vendedor.
+          path = Path('services/ai_agent/orchestrator_v2.py')
+          text = path.read_text(encoding='utf-8')
+          marker = 'class AgentRuntime:\n'
+          if 'class VendorOrderStatusTool' not in text:
+              block = '''class VendorOrderStatusTool(AgentTool):
+    name = "consultar_pedido"
+    description = "Consulta el estado real del pedido del cliente."
+    input_schema = {"type": "object", "properties": {"order_number": {"type": "string"}}, "additionalProperties": False}
+    def execute(self, **kwargs):
+        return VendorOrderService.get_customer_order_status(company_id=self.company_id, conversation_id=self._context["conversation_id"], order_number=str(kwargs.get("order_number") or ""))
+
+
+class VendorRetryPaymentTool(AgentTool):
+    name = "reintentar_pago"
+    description = "Recupera o genera un nuevo link de Mercado Pago para un pedido pendiente."
+    input_schema = {"type": "object", "properties": {"order_number": {"type": "string"}}, "additionalProperties": False}
+    def execute(self, **kwargs):
+        return VendorOrderService.retry_payment(company_id=self.company_id, conversation_id=self._context["conversation_id"], order_number=str(kwargs.get("order_number") or ""))
+
+
+class VendorCancelOrderTool(AgentTool):
+    name = "cancelar_pedido"
+    description = "Cancela un pedido pendiente. Siempre requiere confirmacion explicita antes de cancelar."
+    input_schema = {"type": "object", "properties": {"order_number": {"type": "string"}, "confirm": {"type": "boolean"}}, "additionalProperties": False}
+    def execute(self, **kwargs):
+        return VendorOrderService.cancel_order(company_id=self.company_id, conversation_id=self._context["conversation_id"], order_number=str(kwargs.get("order_number") or ""), confirm=bool(kwargs.get("confirm", False)))
+
+
+class VendorCatalogTool(AgentTool):
+    name = "ver_catalogo"
+    description = "Lista productos activos del catalogo real del comercio."
+    input_schema = {"type": "object", "properties": {"query": {"type": "string"}, "limit": {"type": "integer", "minimum": 1, "maximum": 40}}, "additionalProperties": False}
+    def execute(self, **kwargs):
+        return VendorOrderService.list_catalog(company_id=self.company_id, query=str(kwargs.get("query") or ""), limit=int(kwargs.get("limit") or 20))
+
+
+class VendorPromotionsTool(AgentTool):
+    name = "ver_promociones"
+    description = "Lista productos con descuento real configurado y stock disponible."
+    input_schema = {"type": "object", "properties": {"limit": {"type": "integer", "minimum": 1, "maximum": 24}}, "additionalProperties": False}
+    def execute(self, **kwargs):
+        return VendorOrderService.list_promotions(company_id=self.company_id, limit=int(kwargs.get("limit") or 12))
+
+
+'''
+              text = text.replace(marker, block + marker, 1)
+          if '"consultar_pedido": VendorOrderStatusTool' not in text:
+              text = text.replace('        "preparar_pedido": VendorOrderPreviewTool,\n', '        "preparar_pedido": VendorOrderPreviewTool,\n        "consultar_pedido": VendorOrderStatusTool,\n        "reintentar_pago": VendorRetryPaymentTool,\n        "cancelar_pedido": VendorCancelOrderTool,\n        "ver_catalogo": VendorCatalogTool,\n        "ver_promociones": VendorPromotionsTool,\n', 1)
+          vendor_set = '            "buscar_producto", "consultar_stock", "buscar_cliente", "carrito_vendedor",\n            "agregar_al_carrito", "quitar_del_carrito", "preparar_pedido",\n'
+          if '"consultar_pedido", "reintentar_pago", "cancelar_pedido"' not in text:
+              text = text.replace(vendor_set, vendor_set + '            "consultar_pedido", "reintentar_pago", "cancelar_pedido", "ver_catalogo", "ver_promociones",\n', 1)
+          text = text.replace(
+              'VENDOR_SYSTEM_PROMPT = "Sos el Vendedor 24 hs de StockARmobile. Consultá herramientas antes de afirmar precio o stock. No inventes información."',
+              'VENDOR_SYSTEM_PROMPT = "Sos el Vendedor 24 hs de StockARmobile. Consultá herramientas antes de afirmar precio, stock o estado de pedido. No inventes información. Podés consultar pedidos, recuperar links de pago, cancelar pedidos solo con confirmación explícita, mostrar catálogo y promociones reales. Si el cliente retoma una conversación con un carrito activo, ayudalo a continuar la compra. Nunca declares un pago aprobado sin confirmación backend."',
+              1,
+          )
+          path.write_text(text, encoding='utf-8')
+
+          # WhatsApp: expose deterministic commands for the most common follow-up requests.
+          path = Path('whatsapp_agent.py')
+          text = path.read_text(encoding='utf-8')
+          start = 'def _handle_vendor_command(company_id: int, conversation_id: int, sender: str, text: str):\n'
+          end = '\n\ndef _persist_deterministic_turn'
+          i = text.find(start)
+          j = text.find(end, i)
+          if i < 0 or j < 0:
+              raise SystemExit('WhatsApp command block not found')
+          new = '''def _handle_vendor_command(company_id: int, conversation_id: int, sender: str, text: str):
+    """Deterministic WhatsApp commands keep order and payment actions out of the LLM path."""
+    normalized = " ".join(text.lower().strip().split())
+    if normalized in {"carrito", "ver carrito", "mi carrito"}:
+        cart = VendorOrderService.get_cart(company_id=company_id, conversation_id=conversation_id)
+        if not cart["items"]:
+            return "Tu carrito está vacío. Decime qué producto querés agregar."
+        lines = [f"• {row['quantity']:g} x {row['name']} — ${row['subtotal']:.2f}" for row in cart["items"]]
+        return "🛒 *Tu carrito*\\n" + "\\n".join(lines) + f"\\n\\n*Total: ${cart['total']:.2f} ARS*\\n\\nCuando quieras pagar, escribí *pagar*."
+    if normalized in {"pedido", "mi pedido", "estado de mi pedido", "seguimiento", "donde esta mi pedido", "dónde está mi pedido"}:
+        result = VendorOrderService.get_customer_order_status(company_id=company_id, conversation_id=conversation_id)
+        if not result.get("found"):
+            return "Todavía no encuentro un pedido generado por este WhatsApp. Si querés, revisamos tu carrito."
+        messages = {"confirmado": "✅ tu pedido está confirmado y el pago fue aprobado.", "pagado": "💰 tu pago ya figura aprobado y el pedido está pendiente de confirmación de venta.", "pendiente_pago": "⏳ tu pedido está esperando el pago.", "pago_con_incidencia": "⚠️ el último pago tuvo una incidencia."}
+        body = messages.get(result["order_status"], f"tu pedido está en estado {result['order_status']}.")
+        extra = f"\\n\\nPedido: *{result['quote_number']}*"
+        if result.get("payment_url") and result["order_status"] == "pendiente_pago":
+            extra += f"\\nLink de pago: {result['payment_url']}"
+        return f"El pedido *{result['quote_number']}* por *${result['total']:.2f} ARS* {body}{extra}"
+    if normalized in {"reintentar pago", "volver a pagar", "nuevo link de pago", "pasame otro link", "pasame el link de pago"}:
+        result = VendorOrderService.retry_payment(company_id=company_id, conversation_id=conversation_id)
+        if result.get("success"):
+            return f"Claro. 🔗 Acá tenés el link para pagar nuevamente tu pedido *{result['quote_number']}*:\\n{result['payment_url']}"
+        messages = {"pedido_no_encontrado": "No encuentro un pedido pendiente para volver a pagar.", "pedido_ya_confirmado": "Ese pedido ya está confirmado; no necesitás volver a pagar.", "pago_ya_aprobado": "El pago de ese pedido ya figura aprobado.", "pedido_vencido": "Ese pedido venció y ya no puedo reactivarlo. Podemos preparar uno nuevo.", "stock_no_disponible": "El stock actual ya no alcanza para ese pedido. Podemos armar uno nuevo con disponibilidad real."}
+        return messages.get(result.get("error"), "No pude generar un nuevo link de pago para ese pedido.")
+    if normalized in {"cancelar pedido", "quiero cancelar mi pedido", "anular pedido"}:
+        result = VendorOrderService.cancel_order(company_id=company_id, conversation_id=conversation_id, confirm=False)
+        return result.get("message") or "No pude cancelar el pedido."
+    if normalized in {"si", "sí", "confirmo", "confirmar", "dale", "cancelalo", "cancelálo"}:
+        result = VendorOrderService.cancel_order(company_id=company_id, conversation_id=conversation_id, confirm=True)
+        return result.get("message") if result.get("success") else "No pude cancelar el pedido."
+    if normalized in {"catalogo", "catálogo", "ver catalogo", "ver catálogo", "productos"}:
+        result = VendorOrderService.list_catalog(company_id=company_id, limit=20)
+        if not result.get("products"):
+            return "Ahora mismo no encuentro productos activos en el catálogo."
+        lines = [f"• {item['name']} — ${item['price']:.2f} ({item['stock']:g} disponibles)" for item in result["products"]]
+        return "📦 *Catálogo*\\n" + "\\n".join(lines)
+    if normalized in {"promociones", "ofertas", "promos", "que esta en oferta", "qué está en oferta"}:
+        result = VendorOrderService.list_promotions(company_id=company_id)
+        lines = [f"• {item['name']} — antes ${item['price']:.2f}, ahora ${item['final_price']:.2f}" for item in result.get("products", []) if item.get("stock", 0) > 0]
+        return "🔥 *Promociones*\\n" + ("\\n".join(lines) if lines else "No hay promociones con stock disponible.")
+    if normalized in {"vaciar carrito", "borrar carrito"}:
+        VendorOrderService.update_cart(company_id=company_id, conversation_id=conversation_id, clear=True)
+        return "Listo, vacié tu carrito."
+    if normalized in {"pagar", "quiero pagar", "confirmar pedido", "confirmar compra"}:
+        result = VendorOrderService.create_pending_order(company_id=company_id, conversation_id=conversation_id, customer_phone=sender)
+        return f"Perfecto. Tu pedido *{result['quote_number']}* suma *${result['total']:.2f} ARS*.\\n\\nPagalo acá: {result['payment_url']}\\n\\nUna vez aprobado el pago, StockARmobile confirma la venta y descuenta el stock automáticamente."
+    return None
+'''
+          text = text[:i] + new + text[j:]
+          path.write_text(text, encoding='utf-8')
+
+          # Webhook: confirm/recover the customer via WhatsApp after payment updates.
+          path = Path('services/webhook_service.py')
+          text = path.read_text(encoding='utf-8')
+          marker = '                event_row.status = result.get("status", "processed")\n                db_session.add(event_row)\n                return result\n'
+          if 'AI_ORDER_CUSTOMER_NOTIFY_V2' not in text:
+              block = '''                event_row.status = result.get("status", "processed")
+                db_session.add(event_row)
+                # AI_ORDER_CUSTOMER_NOTIFY_V2: outbound messaging is best-effort and never blocks payment processing.
+                try:
+                    from stockarmobile.models.conversations import Conversation
+                    from services.ai_agent.whatsapp_service import WhatsAppService
+                    from services.ai_agent.vendor_order_service import _metadata
+                    conv_id = int(ref_parts.get("conversation_id") or 0) if str(ref_parts.get("conversation_id") or "").isdigit() else 0
+                    if conv_id:
+                        conversation = Conversation.query.filter_by(id=conv_id, company_id=company_id).first()
+                        if conversation is not None:
+                            state = _metadata(conversation)
+                            recipient = str(state.get("customer_phone") or conversation.external_conversation_id or "").strip()
+                            if recipient:
+                                number = result.get("quote_number") or f"P-{quote_id:06d}"
+                                if payment_status == "approved":
+                                    body = f"✅ Pago recibido. Tu pedido {number} fue confirmado correctamente. Total: ${float(result.get('total') or 0):.2f} ARS. Gracias por tu compra."
+                                elif payment_status in {"rejected", "cancelled", "canceled"}:
+                                    body = f"⚠️ El pago de tu pedido {number} no fue aprobado. Podés escribirme *reintentar pago* para volver a intentarlo."
+                                else:
+                                    body = f"Tu pedido {number} sigue pendiente de pago. Cuando quieras, escribime *reintentar pago* para recibir el link."
+                                WhatsAppService.send_text(conversation.company, to=recipient, body=body)
+                except Exception:
+                    pass
+                return result
+'''
+              if marker not in text:
+                  raise SystemExit('Webhook AI order return marker not found')
+              text = text.replace(marker, block, 1)
+          path.write_text(text, encoding='utf-8')
+
+          # Compile the changed Python files before committing.
+          import py_compile
+          for filename in [
+              'services/ai_agent/vendor_order_service.py',
+              'services/ai_agent/orchestrator_v2.py',
+              'whatsapp_agent.py',
+              'services/webhook_service.py',
+          ]:
+              py_compile.compile(filename, doraise=True)
+
+          Path('VENDOR_SECOND_PHASE_COMPLETE.md').write_text(
+              '# Vendedor 24/7 — segunda fase\n\n'
+              'Seguimiento de pedidos, reintento de pago, cancelación con confirmación, catálogo, promociones y recuperación del carrito al retomar la conversación.\n',
+              encoding='utf-8',
+          )
+          PY
+
+          git config user.name 'stockarmobile-bot'
+          git config user.email 'actions@github.com'
+          git add services/ai_agent/vendor_order_service.py services/ai_agent/orchestrator_v2.py whatsapp_agent.py services/webhook_service.py VENDOR_SECOND_PHASE_COMPLETE.md
+          if git diff --cached --quiet; then
+            echo 'No changes detected.'
+            exit 0
+          fi
+          git commit -m 'chore: finalize vendor second phase'
+          git push
