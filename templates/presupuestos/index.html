@@ -3,98 +3,125 @@
 {% block title %}Presupuestos - StockArmobile{% endblock %}
 
 {% block content %}
-<div class="app-shell">
-  <div class="d-flex justify-content-between align-items-center flex-wrap gap-3 mb-4">
-    <div>
-      <span class="page-kicker"><i class="bi bi-file-earmark-text"></i> Presupuestos</span>
-      <h1 class="h3 fw-bold mb-0">Listado</h1>
-      <p class="text-muted mb-0">Cotizaciones, historial y conversión a venta.</p>
+<div class="app-shell quotes-page">
+  <section class="quotes-hero mb-4">
+    <div class="quotes-hero-main">
+      <div class="quotes-hero-icon" aria-hidden="true"><i class="bi bi-file-earmark-text"></i></div>
+      <div class="quotes-hero-copy">
+        <div class="quotes-hero-kicker"><i class="bi bi-stars"></i> Gestión comercial</div>
+        <div class="d-flex flex-wrap align-items-center gap-2 mb-2">
+          <h1 class="h2 fw-bold mb-0">Presupuestos</h1>
+          <span class="quotes-hero-pill"><i class="bi bi-arrow-repeat"></i> Seguimiento comercial</span>
+        </div>
+        <p class="mb-0">Creá cotizaciones, haceles seguimiento y convertí oportunidades en ventas desde un solo lugar.</p>
+      </div>
     </div>
-    <a class="btn btn-primary" href="{{ url_for('quotes.new_quote') }}"><i class="bi bi-plus-lg me-1"></i>Nuevo presupuesto</a>
-  </div>
+    <a class="btn quotes-primary-btn" href="{{ url_for('quotes.new_quote') }}"><i class="bi bi-plus-lg me-2"></i>Nuevo presupuesto</a>
+  </section>
 
-  <div class="row g-3 mb-4">
-    <div class="col-6 col-lg-2"><div class="card app-card"><div class="card-body"><div class="small text-muted">Creados</div><div class="h4 mb-0">{{ quotes|length }}</div></div></div></div>
-    <div class="col-6 col-lg-2"><div class="card app-card"><div class="card-body"><div class="small text-muted">Pendientes</div><div class="h4 mb-0">{{ (quotes|selectattr('status', 'equalto', 'BORRADOR')|list|length) + (quotes|selectattr('status', 'equalto', 'ENVIADO')|list|length) }}</div></div></div></div>
-    <div class="col-6 col-lg-2"><div class="card app-card"><div class="card-body"><div class="small text-muted">Convertidos</div><div class="h4 mb-0">{{ quotes|selectattr('status', 'equalto', 'CONVERTIDO')|list|length }}</div></div></div></div>
-    <div class="col-6 col-lg-3"><div class="card app-card"><div class="card-body"><div class="small text-muted">Monto presupuestado</div><div class="h4 mb-0">${{ "%.2f"|format(quotes|sum(attribute='total_amount')) }}</div></div></div></div>
-    <div class="col-6 col-lg-3"><div class="card app-card"><div class="card-body"><div class="small text-muted">Tasa de conversión</div><div class="h4 mb-0">{{ ((quotes|selectattr('status', 'equalto', 'CONVERTIDO')|list|length) * 100 / (quotes|length or 1))|round(1) }}%</div></div></div></div>
-  </div>
+  <section class="row g-3 mb-4" aria-label="Resumen de presupuestos">
+    <div class="col-6 col-xl">
+      <div class="quotes-stat-card quotes-stat-blue"><div class="quotes-stat-icon"><i class="bi bi-files"></i></div><div class="quotes-stat-copy"><div class="quotes-stat-label">Creados</div><div class="quotes-stat-value">{{ quotes|length }}</div><div class="quotes-stat-helper">Total de presupuestos</div></div></div>
+    </div>
+    <div class="col-6 col-xl">
+      <div class="quotes-stat-card quotes-stat-amber"><div class="quotes-stat-icon"><i class="bi bi-hourglass-split"></i></div><div class="quotes-stat-copy"><div class="quotes-stat-label">Pendientes</div><div class="quotes-stat-value">{{ (quotes|selectattr('status', 'equalto', 'BORRADOR')|list|length) + (quotes|selectattr('status', 'equalto', 'ENVIADO')|list|length) }}</div><div class="quotes-stat-helper">Para seguimiento</div></div></div>
+    </div>
+    <div class="col-6 col-xl">
+      <div class="quotes-stat-card quotes-stat-green"><div class="quotes-stat-icon"><i class="bi bi-check2-circle"></i></div><div class="quotes-stat-copy"><div class="quotes-stat-label">Convertidos</div><div class="quotes-stat-value">{{ quotes|selectattr('status', 'equalto', 'CONVERTIDO')|list|length }}</div><div class="quotes-stat-helper">Pasaron a venta</div></div></div>
+    </div>
+    <div class="col-6 col-xl">
+      <div class="quotes-stat-card quotes-stat-violet"><div class="quotes-stat-icon"><i class="bi bi-cash-stack"></i></div><div class="quotes-stat-copy"><div class="quotes-stat-label">Monto presupuestado</div><div class="quotes-stat-value quotes-stat-value-amount">${{ "%.2f"|format(quotes|sum(attribute='total_amount')) }}</div><div class="quotes-stat-helper">Valor acumulado</div></div></div>
+    </div>
+    <div class="col-6 col-xl">
+      <div class="quotes-stat-card quotes-stat-indigo"><div class="quotes-stat-icon"><i class="bi bi-graph-up-arrow"></i></div><div class="quotes-stat-copy"><div class="quotes-stat-label">Tasa de conversión</div><div class="quotes-stat-value">{{ ((quotes|selectattr('status', 'equalto', 'CONVERTIDO')|list|length) * 100 / (quotes|length or 1))|round(1) }}%</div><div class="quotes-stat-helper">Presupuesto → venta</div></div></div>
+    </div>
+  </section>
 
-  <div class="d-flex flex-wrap gap-2 mb-3">
-    <a class="btn btn-sm {% if selected_quick == 'today' %}btn-primary{% else %}btn-outline-primary{% endif %}" href="{{ url_for('quotes.index', quick='today') }}">Hoy</a>
-    <a class="btn btn-sm {% if selected_quick == 'week' %}btn-primary{% else %}btn-outline-primary{% endif %}" href="{{ url_for('quotes.index', quick='week') }}">Semana</a>
-    <a class="btn btn-sm {% if selected_quick == 'month' %}btn-primary{% else %}btn-outline-primary{% endif %}" href="{{ url_for('quotes.index', quick='month') }}">Mes</a>
-    <a class="btn btn-sm {% if selected_quick == 'year' %}btn-primary{% else %}btn-outline-primary{% endif %}" href="{{ url_for('quotes.index', quick='year') }}">Año</a>
-    <a class="btn btn-sm {% if selected_quick == 'pending' %}btn-primary{% else %}btn-outline-primary{% endif %}" href="{{ url_for('quotes.index', quick='pending') }}">Pendientes</a>
-    <a class="btn btn-sm {% if selected_quick == 'sent' %}btn-primary{% else %}btn-outline-primary{% endif %}" href="{{ url_for('quotes.index', quick='sent') }}">Enviados</a>
-    <a class="btn btn-sm {% if selected_quick == 'approved' %}btn-primary{% else %}btn-outline-primary{% endif %}" href="{{ url_for('quotes.index', quick='approved') }}">Aprobados</a>
-    <a class="btn btn-sm {% if selected_quick == 'rejected' %}btn-primary{% else %}btn-outline-primary{% endif %}" href="{{ url_for('quotes.index', quick='rejected') }}">Rechazados</a>
-    <a class="btn btn-sm {% if selected_quick == 'converted' %}btn-primary{% else %}btn-outline-primary{% endif %}" href="{{ url_for('quotes.index', quick='converted') }}">Convertidos</a>
-    <a class="btn btn-sm {% if selected_quick == 'expired' %}btn-primary{% else %}btn-outline-primary{% endif %}" href="{{ url_for('quotes.index', quick='expired') }}">Vencidos</a>
-  </div>
+  <section class="quotes-quick app-card mb-4">
+    <div class="quotes-section-head"><div class="d-flex align-items-center gap-2"><div class="quotes-section-icon"><i class="bi bi-lightning-charge"></i></div><div><div class="fw-bold">Vistas rápidas</div><div class="small text-muted">Accedé rápidamente a los presupuestos que necesitás.</div></div></div></div>
+    <div class="quotes-quick-scroll" role="navigation" aria-label="Vistas rápidas de presupuestos">
+      {% set quick_items = [
+        ('today', 'Hoy', 'bi-calendar-day'), ('week', 'Semana', 'bi-calendar-week'), ('month', 'Mes', 'bi-calendar3'), ('year', 'Año', 'bi-calendar4'),
+        ('pending', 'Pendientes', 'bi-hourglass-split'), ('sent', 'Enviados', 'bi-send'), ('approved', 'Aprobados', 'bi-check-circle'), ('rejected', 'Rechazados', 'bi-x-circle'), ('converted', 'Convertidos', 'bi-arrow-left-right'), ('expired', 'Vencidos', 'bi-calendar-x')
+      ] %}
+      {% for key, label, icon in quick_items %}
+      <a class="quotes-quick-item {% if selected_quick == key %}is-active{% endif %}" href="{{ url_for('quotes.index', quick=key) }}" {% if selected_quick == key %}aria-current="page"{% endif %}><i class="bi {{ icon }}"></i><span>{{ label }}</span></a>
+      {% endfor %}
+    </div>
+  </section>
 
-  <div class="card app-card toolbar-card mb-3">
-    <form class="row g-2 align-items-end" method="get">
-      <div class="col-lg-3">
-        <label class="form-label">Buscar</label>
-        <input class="form-control" name="q" value="{{ search }}" placeholder="Número, observación o estado" oninput="this.form.submit()">
+  <section class="app-card quotes-filter-card mb-4">
+    <div class="quotes-filter-head">
+      <div class="d-flex align-items-center gap-2"><div class="quotes-section-icon"><i class="bi bi-funnel"></i></div><div><div class="fw-bold">Buscar y filtrar</div><div class="small text-muted">Combiná búsqueda, estado, cliente, vendedor y fechas.</div></div></div>
+      {% if search or product_search or selected_status or selected_client_id or selected_seller_id or date_from or date_to or selected_quick %}<a class="btn quotes-clear-btn" href="{{ url_for('quotes.index') }}"><i class="bi bi-x-circle me-1"></i>Limpiar filtros</a>{% endif %}
+    </div>
+    <form method="get">
+      <div class="row g-3">
+        <div class="col-12 col-xl-3"><label class="form-label">Buscar</label><div class="input-group quotes-input-group"><span class="input-group-text"><i class="bi bi-search"></i></span><input class="form-control" name="q" value="{{ search }}" placeholder="Número, observación o estado" oninput="this.form.submit()"></div></div>
+        <div class="col-12 col-xl-3"><label class="form-label">Producto</label><div class="input-group quotes-input-group"><span class="input-group-text"><i class="bi bi-box-seam"></i></span><input class="form-control" name="product" value="{{ product_search }}" placeholder="Nombre, código o barra" oninput="this.form.submit()"></div></div>
+        <div class="col-6 col-xl-2"><label class="form-label">Estado</label><select class="form-select" name="status" onchange="this.form.submit()"><option value="">Todos</option>{% for item in statuses %}<option value="{{ item }}" {% if selected_status == item %}selected{% endif %}>{{ item }}</option>{% endfor %}</select></div>
+        <div class="col-6 col-xl-2"><label class="form-label">Cliente</label><select class="form-select" name="client_id" onchange="this.form.submit()"><option value="">Todos</option>{% for client in clients %}<option value="{{ client.id }}" {% if selected_client_id == client.id %}selected{% endif %}>{{ client.name }}</option>{% endfor %}</select></div>
+        <div class="col-6 col-xl-2"><label class="form-label">Vendedor</label><select class="form-select" name="seller_id" onchange="this.form.submit()"><option value="">Todos</option>{% for seller in sellers %}<option value="{{ seller.id }}" {% if selected_seller_id == seller.id %}selected{% endif %}>{{ seller.name }}</option>{% endfor %}</select></div>
       </div>
-      <div class="col-lg-3">
-        <label class="form-label">Producto</label>
-        <input class="form-control" name="product" value="{{ product_search }}" placeholder="Nombre, código o barra" oninput="this.form.submit()">
+      <div class="row g-3 mt-0 align-items-end">
+        <div class="col-6 col-xl-3"><label class="form-label">Desde</label><input class="form-control" type="date" name="from" value="{{ date_from }}" onchange="this.form.submit()"></div>
+        <div class="col-6 col-xl-3"><label class="form-label">Hasta</label><input class="form-control" type="date" name="to" value="{{ date_to }}" onchange="this.form.submit()"></div>
+        <div class="col-12 col-xl-2"><button class="btn quotes-filter-btn w-100" type="submit"><i class="bi bi-funnel me-2"></i>Aplicar filtros</button></div>
       </div>
-      <div class="col-lg-2">
-        <label class="form-label">Estado</label>
-        <select class="form-select" name="status" onchange="this.form.submit()">
-          <option value="">Todos</option>
-          {% for item in statuses %}
-          <option value="{{ item }}" {% if selected_status == item %}selected{% endif %}>{{ item }}</option>
-          {% endfor %}
-        </select>
-      </div>
-      <div class="col-lg-2"><label class="form-label">Cliente</label><select class="form-select" name="client_id" onchange="this.form.submit()"><option value="">Todos</option>{% for client in clients %}<option value="{{ client.id }}" {% if selected_client_id == client.id %}selected{% endif %}>{{ client.name }}</option>{% endfor %}</select></div>
-      <div class="col-lg-2"><label class="form-label">Vendedor</label><select class="form-select" name="seller_id" onchange="this.form.submit()"><option value="">Todos</option>{% for seller in sellers %}<option value="{{ seller.id }}" {% if selected_seller_id == seller.id %}selected{% endif %}>{{ seller.name }}</option>{% endfor %}</select></div>
-      <div class="col-lg-1"><label class="form-label">Desde</label><input class="form-control" type="date" name="from" value="{{ date_from }}" onchange="this.form.submit()"></div>
-      <div class="col-lg-1"><label class="form-label">Hasta</label><input class="form-control" type="date" name="to" value="{{ date_to }}" onchange="this.form.submit()"></div>
-      <div class="col-lg-1 d-grid"><button class="btn btn-outline-primary">Filtrar</button></div>
     </form>
-  </div>
+  </section>
 
-  <div class="card app-card">
-    <div class="table-responsive">
-      <table class="table table-hover align-middle mb-0">
-        <thead class="table-light">
-          <tr>
-            <th>Número</th><th>Cliente</th><th>Vendedor</th><th>Fecha</th><th>Vence</th><th>Estado</th><th class="text-end">Total</th><th class="text-end">Acciones</th>
-          </tr>
-        </thead>
+  <section class="app-card quotes-table-card">
+    <div class="quotes-table-head"><div><div class="d-flex align-items-center gap-2 mb-1"><div class="quotes-section-icon"><i class="bi bi-file-earmark-check"></i></div><h2 class="h5 fw-bold mb-0">Historial de presupuestos</h2></div><p class="small text-muted mb-0">Revisá clientes, fechas, estados y valores desde un solo lugar.</p></div><div class="quotes-table-count"><i class="bi bi-files me-1"></i>{{ quotes|length }} presupuestos</div></div>
+
+    {% if quotes %}
+    <div class="table-responsive quotes-table-wrap">
+      <table class="table table-hover align-middle quotes-table mb-0">
+        <thead><tr><th>Número</th><th>Cliente</th><th>Vendedor</th><th>Fecha</th><th>Vence</th><th>Estado</th><th class="text-end">Total</th><th class="text-end">Acciones</th></tr></thead>
         <tbody>
           {% for quote in quotes %}
           <tr>
-            <td class="fw-semibold">{{ quote.number or ('P-' ~ '%06d'|format(quote.id)) }}</td>
-            <td>{{ quote.client.name if quote.client else (quote.consumer_name or 'Consumidor final') }}</td>
-            <td>{{ quote.seller.name if quote.seller else '-' }}</td>
-            <td>{{ quote.date.strftime('%d/%m/%Y %H:%M') if quote.date else '-' }}</td>
-            <td>{{ quote.expires_at.strftime('%d/%m/%Y') if quote.expires_at else '-' }}</td>
-            <td><span class="badge {% if quote.status == 'CONVERTIDO' %}text-bg-success{% elif quote.status in ['APROBADO','ENVIADO'] %}text-bg-primary{% elif quote.status == 'RECHAZADO' %}text-bg-danger{% elif quote.status == 'VENCIDO' %}text-bg-warning{% elif quote.status == 'ANULADO' %}text-bg-dark{% else %}text-bg-secondary{% endif %}">{{ quote.status }}</span></td>
-            <td class="text-end fw-semibold">${{ "%.2f"|format(quote.total_amount or 0) }}</td>
-            <td class="text-end">
-              <div class="d-inline-flex flex-wrap gap-1 justify-content-end">
-                <a class="btn btn-sm btn-outline-secondary" href="{{ url_for('quotes.view_quote', quote_id=quote.id) }}">Ver</a>
-                <a class="btn btn-sm btn-outline-primary" href="{{ url_for('quotes.edit_quote', quote_id=quote.id) }}">Editar</a>
-                {% if current_user_has_permission('quotes_duplicate') %}
-                <form method="post" action="{{ url_for('quotes.duplicate_quote', quote_id=quote.id) }}"><input type="hidden" name="csrf_token" value="{{ csrf_token() }}"><button class="btn btn-sm btn-outline-dark" type="submit">Duplicar</button></form>
-                {% endif %}
-              </div>
-            </td>
+            <td data-label="Número"><div class="quotes-main-cell"><div class="quotes-row-icon"><i class="bi bi-receipt"></i></div><div><div class="fw-bold quotes-number">{{ quote.number or ('P-' ~ '%06d'|format(quote.id)) }}</div><div class="small text-muted">Presupuesto #{{ quote.id }}</div></div></div></td>
+            <td data-label="Cliente"><div class="quotes-person-cell"><div class="quotes-avatar"><i class="bi bi-person"></i></div><div><div class="fw-semibold">{{ quote.client.name if quote.client else (quote.consumer_name or 'Consumidor final') }}</div><div class="small text-muted">Cliente</div></div></div></td>
+            <td data-label="Vendedor"><div class="quotes-seller-cell"><div class="quotes-avatar quotes-avatar-soft"><i class="bi bi-person-badge"></i></div><span>{{ quote.seller.name if quote.seller else 'Sin asignar' }}</span></div></td>
+            <td data-label="Fecha"><div class="fw-semibold">{{ quote.date.strftime('%d/%m/%Y') if quote.date else '-' }}</div><div class="small text-muted">{{ quote.date.strftime('%H:%M') if quote.date else '' }}</div></td>
+            <td data-label="Vence"><div class="fw-semibold">{{ quote.expires_at.strftime('%d/%m/%Y') if quote.expires_at else '-' }}</div></td>
+            <td data-label="Estado"><span class="quotes-status {% if quote.status == 'CONVERTIDO' %}quotes-status-success{% elif quote.status in ['APROBADO','ENVIADO'] %}quotes-status-primary{% elif quote.status == 'RECHAZADO' %}quotes-status-danger{% elif quote.status == 'VENCIDO' %}quotes-status-warning{% elif quote.status == 'ANULADO' %}quotes-status-dark{% else %}quotes-status-secondary{% endif %}"><i class="bi {% if quote.status == 'CONVERTIDO' %}bi-check2-circle{% elif quote.status in ['APROBADO','ENVIADO'] %}bi-send{% elif quote.status == 'RECHAZADO' %}bi-x-circle{% elif quote.status == 'VENCIDO' %}bi-exclamation-circle{% elif quote.status == 'ANULADO' %}bi-slash-circle{% else %}bi-hourglass-split{% endif %}"></i>{{ quote.status }}</span></td>
+            <td data-label="Total" class="text-end"><div class="fw-bold quotes-total">${{ "%.2f"|format(quote.total_amount or 0) }}</div></td>
+            <td data-label="Acciones" class="text-end"><div class="quotes-actions">
+              <a class="btn quotes-action quotes-action-view" href="{{ url_for('quotes.view_quote', quote_id=quote.id) }}" title="Ver presupuesto" aria-label="Ver presupuesto"><i class="bi bi-eye"></i><span class="quotes-action-text">Ver</span></a>
+              <a class="btn quotes-action quotes-action-edit" href="{{ url_for('quotes.edit_quote', quote_id=quote.id) }}" title="Editar presupuesto" aria-label="Editar presupuesto"><i class="bi bi-pencil-square"></i><span class="quotes-action-text">Editar</span></a>
+              {% if current_user_has_permission('quotes_duplicate') %}<form method="post" action="{{ url_for('quotes.duplicate_quote', quote_id=quote.id) }}"><input type="hidden" name="csrf_token" value="{{ csrf_token() }}"><button class="btn quotes-action quotes-action-duplicate" type="submit" title="Duplicar presupuesto" aria-label="Duplicar presupuesto"><i class="bi bi-copy"></i><span class="quotes-action-text">Duplicar</span></button></form>{% endif %}
+            </div></td>
           </tr>
-          {% else %}
-          <tr><td colspan="8" class="text-center text-muted py-5"><i class="bi bi-file-earmark-text display-6 d-block mb-2"></i>No hay presupuestos registrados.</td></tr>
           {% endfor %}
         </tbody>
       </table>
     </div>
-  </div>
+    {% else %}
+    <div class="quotes-empty">
+      {% if search or product_search or selected_status or selected_client_id or selected_seller_id or date_from or date_to or selected_quick %}
+      <div class="quotes-empty-icon quotes-empty-icon-neutral"><i class="bi bi-search"></i></div><h3 class="h5 fw-bold mb-2">No encontramos presupuestos</h3><p class="text-muted mb-3">Probá con otros filtros para revisar tu historial comercial.</p><a class="btn quotes-secondary-btn" href="{{ url_for('quotes.index') }}"><i class="bi bi-arrow-counterclockwise me-2"></i>Ver todos</a>
+      {% else %}
+      <div class="quotes-empty-icon"><i class="bi bi-file-earmark-plus"></i></div><span class="quotes-empty-kicker">Tu espacio comercial</span><h3 class="h4 fw-bold mb-2">Todavía no hay presupuestos</h3><p class="text-muted quotes-empty-description mb-4">Creá tu primera cotización y empezá a convertir oportunidades en ventas.</p><a class="btn quotes-primary-btn" href="{{ url_for('quotes.new_quote') }}"><i class="bi bi-plus-lg me-2"></i>Crear primer presupuesto</a>
+      {% endif %}
+    </div>
+    {% endif %}
+  </section>
 </div>
+
+<style>
+.quotes-page{padding-bottom:32px}.quotes-hero{position:relative;overflow:hidden;display:flex;align-items:center;justify-content:space-between;gap:24px;padding:24px 26px;border:1px solid rgba(37,99,235,.14);border-radius:22px;background:radial-gradient(circle at 85% -20%,rgba(37,99,235,.16),transparent 34%),linear-gradient(135deg,rgba(255,255,255,.98),rgba(242,247,255,.96));box-shadow:0 18px 42px rgba(15,23,42,.08)}
+[data-bs-theme="dark"] .quotes-hero{border-color:rgba(96,165,250,.16);background:radial-gradient(circle at 85% -20%,rgba(37,99,235,.22),transparent 36%),linear-gradient(135deg,rgba(22,32,51,.98),rgba(15,23,42,.98))}.quotes-hero-main{display:flex;align-items:center;gap:18px;min-width:0}.quotes-hero-icon{flex:0 0 auto;width:58px;height:58px;border-radius:17px;display:inline-flex;align-items:center;justify-content:center;background:linear-gradient(135deg,#2563eb,#60a5fa);color:#fff;font-size:1.65rem;box-shadow:0 10px 24px rgba(37,99,235,.24)}.quotes-hero-copy{min-width:0}.quotes-hero-kicker{color:var(--app-primary-deep);font-size:.78rem;font-weight:800;margin-bottom:6px}.quotes-hero-copy p{max-width:760px;color:var(--app-muted);font-size:.93rem}.quotes-hero-pill{display:inline-flex;align-items:center;gap:6px;padding:6px 10px;border-radius:999px;background:rgba(37,99,235,.08);color:var(--app-primary-deep);font-size:.74rem;font-weight:700}[data-bs-theme="dark"] .quotes-hero-pill{background:rgba(59,130,246,.18);color:#93c5fd}.quotes-primary-btn{color:#fff;background:linear-gradient(135deg,#2563eb,#1d4ed8);border:0;border-radius:12px;font-weight:800;box-shadow:0 10px 22px rgba(37,99,235,.18);padding:.7rem 1rem}.quotes-primary-btn:hover,.quotes-primary-btn:focus{color:#fff;transform:translateY(-1px);box-shadow:0 14px 26px rgba(37,99,235,.24)}
+.quotes-stat-card{position:relative;display:flex;align-items:center;gap:12px;min-height:112px;padding:16px;border:1px solid var(--app-line);border-radius:18px;background:var(--app-panel);box-shadow:var(--app-shadow-soft);overflow:hidden;transition:.16s ease}.quotes-stat-card:after{content:"";position:absolute;left:0;right:0;bottom:0;height:3px;background:rgba(37,99,235,.45)}.quotes-stat-card:hover{transform:translateY(-2px);box-shadow:0 16px 34px rgba(15,23,42,.10);border-color:rgba(37,99,235,.18)}.quotes-stat-icon{width:44px;height:44px;flex:0 0 auto;border-radius:13px;display:inline-flex;align-items:center;justify-content:center;font-size:1.08rem}.quotes-stat-copy{min-width:0}.quotes-stat-label{font-size:.75rem;font-weight:700;color:var(--app-muted)}.quotes-stat-value{font-size:1.55rem;line-height:1.05;font-weight:800;margin:5px 0 4px;font-variant-numeric:tabular-nums}.quotes-stat-value-amount{font-size:1.25rem;white-space:nowrap}.quotes-stat-helper{font-size:.68rem;color:var(--app-muted)}.quotes-stat-blue .quotes-stat-icon{background:rgba(37,99,235,.10);color:#2563eb}.quotes-stat-blue:after{background:rgba(37,99,235,.55)}.quotes-stat-amber .quotes-stat-icon{background:rgba(245,158,11,.12);color:#d97706}.quotes-stat-amber:after{background:rgba(245,158,11,.55)}.quotes-stat-green .quotes-stat-icon{background:rgba(16,185,129,.11);color:#059669}.quotes-stat-green:after{background:rgba(16,185,129,.55)}.quotes-stat-violet .quotes-stat-icon{background:rgba(139,92,246,.11);color:#7c3aed}.quotes-stat-violet:after{background:rgba(139,92,246,.48)}.quotes-stat-indigo .quotes-stat-icon{background:rgba(99,102,241,.10);color:#4f46e5}.quotes-stat-indigo:after{background:rgba(99,102,241,.48)}
+[data-bs-theme="dark"] .quotes-stat-blue .quotes-stat-icon{background:rgba(59,130,246,.18);color:#93c5fd}[data-bs-theme="dark"] .quotes-stat-amber .quotes-stat-icon{background:rgba(245,158,11,.18);color:#fbbf24}[data-bs-theme="dark"] .quotes-stat-green .quotes-stat-icon{background:rgba(16,185,129,.18);color:#6ee7b7}[data-bs-theme="dark"] .quotes-stat-violet .quotes-stat-icon{background:rgba(139,92,246,.18);color:#c4b5fd}[data-bs-theme="dark"] .quotes-stat-indigo .quotes-stat-icon{background:rgba(99,102,241,.18);color:#a5b4fc}
+.quotes-quick,.quotes-filter-card{border-radius:18px;padding:16px 18px}.quotes-section-head{margin-bottom:12px}.quotes-section-icon{width:32px;height:32px;border-radius:10px;display:inline-flex;align-items:center;justify-content:center;background:rgba(37,99,235,.09);color:var(--app-primary);font-size:.95rem}[data-bs-theme="dark"] .quotes-section-icon{background:rgba(59,130,246,.18);color:#93c5fd}.quotes-quick-scroll{display:flex;gap:8px;overflow-x:auto;padding-bottom:2px;scrollbar-width:none}.quotes-quick-scroll::-webkit-scrollbar{display:none}.quotes-quick-item{display:inline-flex;align-items:center;gap:7px;flex:0 0 auto;padding:9px 12px;border-radius:12px;border:1px solid var(--app-line);background:var(--app-panel-soft);color:var(--app-muted);text-decoration:none;font-size:.79rem;font-weight:700;transition:.16s ease}.quotes-quick-item:hover{background:#f3f7ff;color:var(--app-primary-deep);border-color:rgba(37,99,235,.20)}.quotes-quick-item.is-active{background:linear-gradient(135deg,#2563eb,#1d4ed8);border-color:#2563eb;color:#fff;box-shadow:0 8px 18px rgba(37,99,235,.18)}
+.quotes-filter-head{display:flex;align-items:center;justify-content:space-between;gap:14px;margin-bottom:14px}.quotes-clear-btn,.quotes-secondary-btn{background:var(--app-panel);color:var(--app-ink);border:1px solid var(--app-line);border-radius:10px;font-weight:700}.quotes-clear-btn:hover,.quotes-secondary-btn:hover{background:var(--app-panel-soft);color:var(--app-primary-deep);border-color:rgba(37,99,235,.22)}.quotes-filter-card .form-label{font-size:.74rem;font-weight:800;color:var(--app-muted);margin-bottom:6px}.quotes-input-group .input-group-text{background:var(--app-panel-soft);border-color:var(--app-line);color:var(--app-muted)}.quotes-input-group .form-control{border-color:var(--app-line)}.quotes-filter-btn{background:linear-gradient(135deg,#2563eb,#1d4ed8);color:#fff;border:0;border-radius:11px;font-weight:800}.quotes-filter-btn:hover{color:#fff;transform:translateY(-1px);box-shadow:0 10px 20px rgba(37,99,235,.18)}
+.quotes-table-card{overflow:hidden;border-radius:18px}.quotes-table-head{display:flex;align-items:center;justify-content:space-between;gap:16px;padding:18px 20px;border-bottom:1px solid var(--app-line);background:linear-gradient(180deg,rgba(248,250,252,.70),transparent)}[data-bs-theme="dark"] .quotes-table-head{background:linear-gradient(180deg,rgba(15,23,42,.46),transparent)}.quotes-table-count{padding:7px 10px;border-radius:999px;background:rgba(37,99,235,.07);color:var(--app-primary-deep);font-size:.74rem;font-weight:800;white-space:nowrap}.quotes-table thead th{padding:12px 15px;color:var(--app-muted);font-size:.68rem;font-weight:800;text-transform:uppercase;letter-spacing:.06em;border-bottom:1px solid var(--app-line);white-space:nowrap}.quotes-table tbody td{padding:15px;border-color:var(--app-line);vertical-align:middle}.quotes-table tbody tr:last-child td{border-bottom:0}.quotes-table tbody tr:hover{--bs-table-hover-bg:rgba(37,99,235,.035)}.quotes-main-cell,.quotes-person-cell,.quotes-seller-cell{display:flex;align-items:center;gap:10px}.quotes-row-icon,.quotes-avatar{width:36px;height:36px;border-radius:11px;display:inline-flex;align-items:center;justify-content:center;flex:0 0 auto}.quotes-row-icon{background:rgba(37,99,235,.08);color:var(--app-primary)}.quotes-avatar{background:var(--app-panel-soft);border:1px solid var(--app-line);color:var(--app-muted)}.quotes-avatar-soft{background:rgba(37,99,235,.06);color:var(--app-primary)}.quotes-number{white-space:nowrap}.quotes-total{font-size:1rem;white-space:nowrap}.quotes-status{display:inline-flex;align-items:center;gap:6px;padding:5px 9px;border-radius:999px;font-size:.7rem;font-weight:800;white-space:nowrap}.quotes-status-primary{background:rgba(37,99,235,.09);color:#1d4ed8}.quotes-status-success{background:rgba(16,185,129,.10);color:#047857}.quotes-status-danger{background:rgba(239,68,68,.10);color:#b91c1c}.quotes-status-warning{background:rgba(245,158,11,.12);color:#b45309}.quotes-status-dark{background:rgba(15,23,42,.10);color:#334155}.quotes-status-secondary{background:rgba(100,116,139,.10);color:#475569}.quotes-actions{display:flex;gap:6px;justify-content:flex-end;align-items:center}.quotes-actions form{margin:0}.quotes-action{border-radius:9px;font-weight:800;font-size:.75rem;display:inline-flex;align-items:center;gap:6px}.quotes-action-view{background:rgba(100,116,139,.08);color:#475569;border:1px solid rgba(100,116,139,.18)}.quotes-action-edit{background:rgba(37,99,235,.07);color:#1d4ed8;border:1px solid rgba(37,99,235,.16)}.quotes-action-duplicate{background:rgba(15,23,42,.05);color:#334155;border:1px solid rgba(15,23,42,.12)}.quotes-action:hover{color:#fff;background:var(--app-primary);border-color:var(--app-primary)}
+[data-bs-theme="dark"] .quotes-status-primary{background:rgba(59,130,246,.18);color:#93c5fd}[data-bs-theme="dark"] .quotes-status-success{background:rgba(16,185,129,.18);color:#6ee7b7}[data-bs-theme="dark"] .quotes-status-danger{background:rgba(239,68,68,.18);color:#fca5a5}[data-bs-theme="dark"] .quotes-status-warning{background:rgba(245,158,11,.18);color:#fbbf24}[data-bs-theme="dark"] .quotes-status-dark{background:rgba(148,163,184,.14);color:#d5e2f2}[data-bs-theme="dark"] .quotes-status-secondary{background:rgba(148,163,184,.12);color:#d5e2f2}[data-bs-theme="dark"] .quotes-table-count{background:rgba(59,130,246,.16);color:#93c5fd}
+.quotes-empty{text-align:center;padding:54px 22px 58px}.quotes-empty-icon{width:74px;height:74px;margin:0 auto 14px;border-radius:22px;display:inline-flex;align-items:center;justify-content:center;background:rgba(37,99,235,.09);color:var(--app-primary);font-size:2rem}.quotes-empty-icon-neutral{background:rgba(100,116,139,.09);color:var(--app-muted)}.quotes-empty-kicker{display:inline-flex;margin-bottom:7px;padding:5px 9px;border-radius:999px;background:rgba(37,99,235,.08);color:var(--app-primary-deep);font-size:.72rem;font-weight:800}.quotes-empty-description{max-width:520px;margin-inline:auto}
+@media (max-width:991.98px){.quotes-hero{align-items:flex-start;flex-direction:column}.quotes-primary-btn{width:100%}.quotes-filter-head{align-items:flex-start;flex-direction:column}.quotes-clear-btn{width:100%}}
+@media (max-width:767.98px){.quotes-page{padding-bottom:18px}.quotes-hero{padding:20px;border-radius:18px}.quotes-hero-main{align-items:flex-start}.quotes-hero-icon{width:50px;height:50px;border-radius:14px;font-size:1.35rem}.quotes-hero-copy p{font-size:.84rem}.quotes-stat-card{min-height:102px;padding:14px;gap:10px}.quotes-stat-icon{width:40px;height:40px;border-radius:12px}.quotes-stat-value{font-size:1.35rem}.quotes-stat-value-amount{font-size:1.08rem}.quotes-stat-helper{font-size:.63rem}.quotes-quick,.quotes-filter-card{padding:14px}.quotes-quick-item{padding:9px 11px}.quotes-table-head{padding:16px}.quotes-table-count{display:none}.quotes-table-wrap{overflow:visible}.quotes-table thead{display:none}.quotes-table,.quotes-table tbody,.quotes-table tr,.quotes-table td{display:block;width:100%}.quotes-table tbody tr{padding:14px 16px;border-bottom:1px solid var(--app-line)}.quotes-table tbody td{display:flex;justify-content:space-between;align-items:flex-start;gap:14px;padding:7px 0;border:0;text-align:right}.quotes-table tbody td:before{content:attr(data-label);color:var(--app-muted);font-size:.68rem;font-weight:800;text-transform:uppercase;letter-spacing:.04em;text-align:left;padding-top:3px}.quotes-table tbody td>*{max-width:66%}.quotes-main-cell,.quotes-person-cell,.quotes-seller-cell{justify-content:flex-end}.quotes-actions{margin-left:auto;justify-content:flex-end}.quotes-action-text{display:none}.quotes-action{width:34px;height:34px;justify-content:center;padding:0}.quotes-total{font-size:.92rem}}
+@media (max-width:420px){.quotes-table tbody td>*{max-width:62%}.quotes-empty{padding:44px 18px 48px}.quotes-stat-helper{display:none}.quotes-stat-label{font-size:.71rem}.quotes-stat-value{font-size:1.25rem}}
+</style>
 {% endblock %}
