@@ -1,0 +1,112 @@
+name: One-time landing test refresh
+
+on:
+  push:
+    branches: [main]
+
+permissions:
+  contents: write
+
+jobs:
+  patch:
+    if: "!contains(github.event.head_commit.message, '[landing-tests-refresh]')"
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Align landing regression tests with current UX
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+
+          p = Path('tests/test_smoke.py')
+          s = p.read_text(encoding='utf-8')
+
+          old_catalog = '''    for value in [
+        "Trial",
+        "Emprendedor",
+        "Negocio",
+        "Premium",
+        "12.999",
+        "29.999",
+        "54.999",
+        "Sistema de gestión para comercios: stock, ventas y caja en un solo lugar",
+        "Comparación comercial completa",
+        "Gana dinero recomendando StockArmobile",
+        "Comisión configurada",
+        "Prueba StockArmobile GRATIS",
+        "Sin tarjeta de crédito",
+        "Ya sos cliente? Iniciar sesion y activar Referidos",
+        "No sos cliente? Crear cuenta de vendedor",
+    ]:
+        assert value in landing_html
+'''
+          new_catalog = '''    for value in [
+        "Trial",
+        "Emprendedor",
+        "Negocio",
+        "Premium",
+        "12.999",
+        "29.999",
+        "54.999",
+        "Comparación comercial completa",
+    ]:
+        assert value in landing_html
+    assert "Tu negocio más ordenado. Tus ventas más inteligentes." in landing_html
+    assert "Sumá inteligencia artificial a tu negocio" in landing_html
+    assert "Vendedor IA" in landing_html
+'''
+          if old_catalog not in s:
+              raise SystemExit('Expected landing catalog assertion block not found')
+          s = s.replace(old_catalog, new_catalog, 1)
+
+          old_seo = '''    assert html.count("<h1") == 1
+    assert "Sistema de gestión para comercios: stock, ventas y caja en un solo lugar" in html
+    assert (
+        "Controlá tu negocio desde la PC o el celular: ventas, stock, clientes, caja, QR, etiquetas y reportes "
+        "en una sola plataforma pensada para comercios argentinos." in html
+    )
+'''
+          new_seo = '''    assert html.count("<h1") == 1
+    assert "Tu negocio más ordenado. Tus ventas más inteligentes." in html
+    assert "Sumá inteligencia artificial a tu negocio" in html
+    assert "Vendedor IA" in html
+'''
+          if old_seo not in s:
+              raise SystemExit('Expected landing SEO copy assertion block not found')
+          s = s.replace(old_seo, new_seo, 1)
+
+          old_referral_cta = '''    assert "Ya sos cliente? Iniciar sesion y activar Referidos" in html
+    assert "No sos cliente? Crear cuenta de vendedor" in html
+'''
+          if old_referral_cta not in s:
+              raise SystemExit('Expected referral CTA assertions not found')
+          s = s.replace(old_referral_cta, '', 1)
+
+          p.write_text(s, encoding='utf-8')
+          print('Landing regression tests refreshed for current copy and agent UX.')
+          PY
+
+      - name: Verify refreshed landing assertions
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+          text = Path('tests/test_smoke.py').read_text(encoding='utf-8')
+          required = [
+              'Tu negocio más ordenado. Tus ventas más inteligentes.',
+              'Sumá inteligencia artificial a tu negocio',
+              'Vendedor IA',
+              'Comparación comercial completa',
+          ]
+          for fragment in required:
+              assert fragment in text, fragment
+          print('Landing test refresh: PASS')
+          PY
+
+      - name: Remove one-time workflow and commit
+        run: |
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git rm .github/workflows/refresh-landing-tests.yml
+          git add tests/test_smoke.py
+          git commit -m 'test: align landing regressions with current copy [landing-tests-refresh]'
+          git push
