@@ -1,0 +1,84 @@
+name: Finish Mi Empresa UX
+
+"on":
+  push:
+    branches: [main]
+
+permissions:
+  contents: write
+
+jobs:
+  polish:
+    if: ${{ !contains(github.event.head_commit.message, 'feat: polish Mi Empresa UI') }}
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Apply targeted UI polish
+        shell: bash
+        run: |
+          set -euo pipefail
+          python - <<'PY'
+          from pathlib import Path
+
+          settings = Path('templates/company_billing/settings.html')
+          source = settings.read_text(encoding='utf-8')
+
+          # Keep "Mi empresa" as the hub name; only improve hierarchy inside the module area.
+          if 'Administración de la empresa</div>' not in source:
+              marker = '      <div class="row g-3 company-module-grid">'
+              if marker not in source:
+                  raise SystemExit('company module grid marker not found')
+              source = source.replace(
+                  marker,
+                  '      <div class="company-module-section-label mb-2">Administración de la empresa</div>\n' + marker,
+                  1,
+              )
+
+          # Give the AI entry its own visual section and a wider card on desktop.
+          if 'company-module-section-label mb-2">IA para tu negocio' not in source:
+              marker = '''        <div class="col-sm-6 col-xl-4">\n          <a class="card app-card company-module-card{% if tile.endpoint == 'ai_admin.index' %} ai-company-module-card{% endif %}'''
+              replacement = '''        {% if tile.endpoint == 'ai_admin.index' %}\n        <div class="col-12 col-xl-6 mt-2">\n          <div class="company-module-section-label mb-2">IA para tu negocio</div>\n        {% else %}\n        <div class="col-sm-6 col-xl-4">\n        {% endif %}\n          <a class="card app-card company-module-card{% if tile.endpoint == 'ai_admin.index' %} ai-company-module-card{% endif %}'''
+              if marker not in source:
+                  raise SystemExit('AI tile marker not found')
+              source = source.replace(marker, replacement, 1)
+
+          if '.company-module-section-label {' not in source:
+              marker = '  .company-module-grid { margin-top: .25rem; }'
+              if marker not in source:
+                  raise SystemExit('company module CSS marker not found')
+              rules = '''  .company-module-section-label {\n    display: flex;\n    align-items: center;\n    gap: .7rem;\n    margin-top: .35rem;\n    color: #64748b;\n    font-size: .72rem;\n    font-weight: 900;\n    letter-spacing: .08em;\n    text-transform: uppercase;\n  }\n  .company-module-section-label::after {\n    content: "";\n    flex: 1;\n    height: 1px;\n    background: var(--app-line);\n  }\n'''
+              source = source.replace(marker, rules + marker, 1)
+
+          settings.write_text(source, encoding='utf-8')
+
+          # Keep the sidebar naming aligned with the tenant-facing hub.
+          base = Path('templates/base_master.html')
+          base_source = base.read_text(encoding='utf-8')
+          base_source = base_source.replace(
+              '<span class="nav-text">Agentes IA</span>',
+              '<span class="nav-text">IA para tu negocio</span>',
+              1,
+          )
+          base.write_text(base_source, encoding='utf-8')
+
+          # Restore CI to the repository's normal, non-patching workflow.
+          Path('.github/workflows/ci.yml').write_text('''name: CI\n\n"on":\n  push:\n    branches: [main]\n  pull_request:\n    branches: [main]\n\njobs:\n  test:\n    runs-on: ubuntu-latest\n    env:\n      PYTHONPATH: .\n    steps:\n      - uses: actions/checkout@v4\n      - uses: actions/setup-python@v5\n        with:\n          python-version: '3.12'\n      - name: Install dependencies\n        run: pip install -r requirements.txt\n      - name: Compile Python\n        run: python -m compileall -q .\n      - name: Check service worker\n        run: node --check static/service-worker.js\n      - name: Run tests\n        run: pytest -q\n''', encoding='utf-8')
+          PY
+          git diff --check
+
+      - name: Commit polished UI and clean one-time hooks
+        shell: bash
+        run: |
+          set -euo pipefail
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add templates/company_billing/settings.html templates/base_master.html .github/workflows/ci.yml
+          git rm -f .github/workflows/polish-company-settings-ux.yml UX_TRIGGER.txt || true
+          if git diff --cached --quiet; then
+            echo 'No changes to commit.'
+            exit 0
+          fi
+          git diff --cached --check
+          git commit -m 'feat: polish Mi Empresa UI'
+          git push origin HEAD:main
