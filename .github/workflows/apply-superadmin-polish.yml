@@ -1,0 +1,42 @@
+name: apply superadmin visual polish
+on:
+  push:
+    branches: [main]
+permissions:
+  contents: write
+jobs:
+  polish:
+    if: ${{ !contains(github.event.head_commit.message, '[skip superadmin polish]') }}
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Link shared SuperAdmin stylesheet
+        run: |
+          set -euo pipefail
+          test -f static/assets/css/superadmin-polish.css
+          python - <<'PY'
+          from pathlib import Path
+          path = Path('templates/base_master.html')
+          source = path.read_text(encoding='utf-8')
+          link = '  <link href="{{ url_for(\'static\', filename=\'assets/css/superadmin-polish.css\') }}" rel="stylesheet">\n'
+          if 'assets/css/superadmin-polish.css' not in source:
+              anchor = '  {% block extra_css %}{% endblock %}'
+              if anchor in source:
+                  source = source.replace(anchor, link + anchor, 1)
+              else:
+                  source = source.replace('</head>', link + '</head>', 1)
+              path.write_text(source, encoding='utf-8')
+          PY
+      - name: Commit and remove one-time workflow
+        run: |
+          set -euo pipefail
+          rm -f .github/workflows/apply-superadmin-polish.yml
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add templates/base_master.html static/assets/css/superadmin-polish.css .github/workflows/apply-superadmin-polish.yml
+          if git diff --cached --quiet; then exit 0; fi
+          git commit -m 'feat: unify superadmin visual system [skip superadmin polish]'
+          git push
