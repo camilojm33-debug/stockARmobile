@@ -37,37 +37,16 @@ jobs:
                   '<h2 class="section-title">{% if testimonials %}Experiencias reales de clientes{% else %}Testimonios de clientes{% endif %}</h2>'
               ),
           ]
-          changed = False
           for old, new in replacements:
               if old in s:
                   s = s.replace(old, new, 1)
-                  changed = True
-              elif new in s:
-                  continue
-              else:
-                  raise SystemExit(f'Missing expected landing fragment and replacement: {old[:100]}')
+              elif new not in s:
+                  raise SystemExit(f'Missing expected landing fragment: {old[:100]}')
           p.write_text(s, encoding='utf-8')
-          print(f'Landing compatibility patch applied/idempotent; changed={changed}.')
+          print('Landing compatibility patch ready.')
           PY
 
-      - name: Verify required fragments
-        run: |
-          python - <<'PY'
-          from pathlib import Path
-          text = Path('templates/landing/index.html').read_text(encoding='utf-8')
-          required = [
-              'Sistema de gestión para comercios: stock, ventas y caja en un solo lugar',
-              'mensual recomendando StockArmobile',
-              "url_for('seo_pages.control_de_stock')",
-              'Experiencias reales de clientes',
-          ]
-          missing = [fragment for fragment in required if fragment not in text]
-          if missing:
-              raise SystemExit('Missing fragments: ' + ' | '.join(missing))
-          print('Landing compatibility fragments: PASS')
-          PY
-
-      - name: Remove one-time workflow and commit landing fix
+      - name: Commit landing fix and remove one-time workflow
         run: |
           git config user.name 'github-actions[bot]'
           git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
