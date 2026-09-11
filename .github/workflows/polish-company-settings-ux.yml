@@ -1,0 +1,82 @@
+name: Polish Mi Empresa UX
+on:
+  push:
+    branches: [main]
+permissions:
+  contents: write
+jobs:
+  polish:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Apply targeted visual polish
+        shell: bash
+        run: |
+          set -euo pipefail
+          python - <<'PY'
+          from pathlib import Path
+
+          settings = Path('templates/company_billing/settings.html')
+          s = settings.read_text(encoding='utf-8')
+
+          replacements = [
+              (
+                  'Panel de administración por módulos y accesos rápidos.',
+                  'Configurá y administrá todos los aspectos de tu negocio desde un solo lugar.',
+              ),
+              (
+                  "{'endpoint': 'ai_admin.index', 'title': 'Agentes IA', 'icon': 'bi-robot', 'tone': 'primary', 'description': 'Vendedor 24 hs y asistente empresarial.'}",
+                  "{'endpoint': 'ai_admin.index', 'title': 'IA para tu negocio', 'icon': 'bi-robot', 'tone': 'primary', 'description': 'Vendedor IA: atiende clientes y prepara presupuestos. Asistente IA: consulta ventas, stock, productos y clientes.'}",
+              ),
+              (
+                  '<a class="card app-card company-module-card h-100 text-decoration-none text-reset" href="{{ url_for(tile.endpoint) if tile.endpoint else url_for(\'company_billing.company_settings\', panel=tile.panel) }}" style="--tile-accent: var(--module-{{ tile.tone }});">',
+                  '<a class="card app-card company-module-card{% if tile.endpoint == \'ai_admin.index\' %} ai-company-module-card{% endif %} h-100 text-decoration-none text-reset" href="{{ url_for(tile.endpoint) if tile.endpoint else url_for(\'company_billing.company_settings\', panel=tile.panel) }}" style="--tile-accent: var(--module-{{ tile.tone }});">',
+              ),
+              (
+                  '<div class="company-module-description">{{ tile.description }}</div>\n',
+                  '<div class="company-module-description">{{ tile.description }}</div>\n              {% if tile.endpoint == \'ai_admin.index\' %}<span class="company-module-badge"><i class="bi bi-stars"></i> Ventas + consultas de negocio</span>{% endif %}\n',
+              ),
+          ]
+
+          for old, new in replacements:
+              if old not in s:
+                  raise SystemExit(f'Expected settings marker not found: {old[:100]}')
+              s = s.replace(old, new, 1)
+
+          css_anchor = '''  .company-module-card {\n    border-radius: 20px;\n    border-width: 1px;\n'''
+          if css_anchor not in s:
+              raise SystemExit('company module CSS anchor not found')
+
+          css_extra = '''  .company-module-card {\n    border-radius: 18px;\n    border-width: 1px;\n    min-height: 96px;\n'''
+          s = s.replace(css_anchor, css_extra, 1)
+
+          css_title = '''  .company-module-title {'''
+          if css_title not in s:
+              raise SystemExit('company-module-title CSS marker not found')
+
+          extra_rules = '''  .company-module-card .card-body { padding: 1.05rem 1.15rem !important; }\n  .company-module-title { color: #0f172a; font-weight: 800; letter-spacing: -.01em; }\n  .company-module-description { color: #64748b; line-height: 1.35; }\n  .company-module-icon { width: 48px; height: 48px; border-radius: 14px; font-size: 1.25rem; flex: 0 0 48px; }\n  .company-module-badge { display: inline-flex; align-items: center; gap: .35rem; margin-top: .45rem; padding: .2rem .5rem; border-radius: 999px; background: rgba(37,99,235,.08); color: #2563eb; font-size: .69rem; font-weight: 800; letter-spacing: .01em; }\n  .ai-company-module-card { border-color: rgba(37,99,235,.28); background: linear-gradient(135deg, rgba(239,246,255,.98), rgba(255,255,255,.98) 58%, rgba(245,243,255,.98)); box-shadow: 0 10px 26px rgba(37,99,235,.08); }\n  .ai-company-module-card .company-module-icon { color: #2563eb; background: linear-gradient(145deg, #dbeafe, #eef2ff); box-shadow: inset 0 0 0 1px rgba(37,99,235,.12); }\n  .ai-company-module-card .company-module-title { color: #1d4ed8; }\n'''
+          s = s.replace(css_title, extra_rules + css_title, 1)
+
+          settings.write_text(s, encoding='utf-8')
+
+          base = Path('templates/base_master.html')
+          b = base.read_text(encoding='utf-8')
+          old_nav = '<span class="nav-text">Agentes IA</span>'
+          new_nav = '<span class="nav-text">IA para tu negocio</span>'
+          if old_nav not in b:
+              raise SystemExit('AI sidebar label not found')
+          b = b.replace(old_nav, new_nav, 1)
+          base.write_text(b, encoding='utf-8')
+          PY
+
+          git diff --check
+
+      - name: Commit changes and remove one-time workflow
+        run: |
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add templates/company_billing/settings.html templates/base_master.html
+          git rm -f .github/workflows/polish-company-settings-ux.yml UX_TRIGGER.txt
+          git diff --cached --check
+          git commit -m 'chore: polish Mi Empresa UX'
+          git push origin HEAD:main
