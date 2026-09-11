@@ -29,3 +29,7 @@ logs/
 _repro_*
 temp_*
 *.tmp
+
+# OS metadata
+.DS_Store
+Thumbs.db
