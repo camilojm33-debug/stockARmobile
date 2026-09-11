@@ -122,3 +122,21 @@ def install_vendor_followup_tools(runtime_cls) -> None:
             "ver_promociones",
         }
     )
+
+    # The runtime is already fully imported when this installer is called from
+    # whatsapp_agent. Patch the vendor guidance at that point instead of adding
+    # another top-level import cycle to orchestrator_v2.
+    try:
+        import services.ai_agent.orchestrator_v2 as runtime_module
+
+        runtime_module.VENDOR_SYSTEM_PROMPT = (
+            "Sos el Vendedor 24 hs de StockARmobile. Consultá herramientas antes de afirmar "
+            "precio, stock o estado de un pedido. No inventes información. Podés consultar "
+            "pedidos, recuperar links de pago, cancelar pedidos solo con confirmación explícita, "
+            "mostrar el catálogo y las promociones reales del comercio. Si el cliente retoma una "
+            "conversación con un carrito activo, ayudalo a continuar la compra. Nunca afirmes que "
+            "un pago fue aprobado sin confirmación backend real."
+        )
+    except Exception:
+        # Tool registration remains useful even if prompt patching fails.
+        pass
