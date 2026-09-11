@@ -10,7 +10,7 @@
     <div>
       <span class="page-kicker"><i class="bi bi-building"></i> Centro de empresa</span>
       <h1 class="h3 fw-bold mb-0">Mi empresa</h1>
-      <p class="text-muted mb-0">Panel de administración por módulos y accesos rápidos.</p>
+      <p class="text-muted mb-0">Configurá y administrá todos los aspectos de tu negocio desde un solo lugar.</p>
     </div>
     <div class="d-flex flex-wrap gap-2">
       <a class="btn btn-outline-secondary" href="{{ url_for('products.index') }}"><i class="bi bi-arrow-left me-1"></i>Volver a inventario</a>
@@ -1512,18 +1512,19 @@
       ] %}
       {% if current_user.role == 'admin' %}
       {% set module_tiles = module_tiles + [
-        {'endpoint': 'ai_admin.index', 'title': 'Agentes IA', 'icon': 'bi-robot', 'tone': 'primary', 'description': 'Vendedor 24 hs y asistente empresarial.'}
+        {'endpoint': 'ai_admin.index', 'title': 'IA para tu negocio', 'icon': 'bi-robot', 'tone': 'primary', 'description': 'Vendedor IA: atiende clientes y prepara presupuestos. Asistente IA: consulta ventas, stock, productos y clientes.'}
       ] %}
       {% endif %}
       <div class="row g-3 company-module-grid">
         {% for tile in module_tiles %}
         <div class="col-sm-6 col-xl-4">
-          <a class="card app-card company-module-card h-100 text-decoration-none text-reset" href="{{ url_for(tile.endpoint) if tile.endpoint else url_for('company_billing.company_settings', panel=tile.panel) }}" style="--tile-accent: var(--module-{{ tile.tone }});">
+          <a class="card app-card company-module-card{% if tile.endpoint == 'ai_admin.index' %} ai-company-module-card{% endif %} h-100 text-decoration-none text-reset" href="{{ url_for(tile.endpoint) if tile.endpoint else url_for('company_billing.company_settings', panel=tile.panel) }}" style="--tile-accent: var(--module-{{ tile.tone }});">
             <div class="card-body d-flex align-items-start gap-3 p-4">
               <div class="company-module-icon"><i class="bi {{ tile.icon }}"></i></div>
               <div class="flex-grow-1">
                 <div class="company-module-title">{{ tile.title }}</div>
                 <div class="company-module-description">{{ tile.description }}</div>
+              {% if tile.endpoint == 'ai_admin.index' %}<span class="company-module-badge"><i class="bi bi-stars"></i> Ventas + consultas de negocio</span>{% endif %}
               </div>
               <i class="bi bi-arrow-right-short company-module-arrow"></i>
             </div>
@@ -1738,8 +1739,9 @@
     --module-indigo: #6366f1;
   }
   .company-module-card {
-    border-radius: 20px;
+    border-radius: 18px;
     border-width: 1px;
+    min-height: 96px;
     transition: transform .18s ease, box-shadow .18s ease, border-color .18s ease;
     overflow: hidden;
     position: relative;
@@ -1773,6 +1775,14 @@
     flex: 0 0 auto;
     box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--tile-accent) 18%, transparent);
   }
+  .company-module-card .card-body { padding: 1.05rem 1.15rem !important; }
+  .company-module-title { color: #0f172a; font-weight: 800; letter-spacing: -.01em; }
+  .company-module-description { color: #64748b; line-height: 1.35; }
+  .company-module-icon { width: 48px; height: 48px; border-radius: 14px; font-size: 1.25rem; flex: 0 0 48px; }
+  .company-module-badge { display: inline-flex; align-items: center; gap: .35rem; margin-top: .45rem; padding: .2rem .5rem; border-radius: 999px; background: rgba(37,99,235,.08); color: #2563eb; font-size: .69rem; font-weight: 800; letter-spacing: .01em; }
+  .ai-company-module-card { border-color: rgba(37,99,235,.28); background: linear-gradient(135deg, rgba(239,246,255,.98), rgba(255,255,255,.98) 58%, rgba(245,243,255,.98)); box-shadow: 0 10px 26px rgba(37,99,235,.08); }
+  .ai-company-module-card .company-module-icon { color: #2563eb; background: linear-gradient(145deg, #dbeafe, #eef2ff); box-shadow: inset 0 0 0 1px rgba(37,99,235,.12); }
+  .ai-company-module-card .company-module-title { color: #1d4ed8; }
   .company-module-title {
     font-weight: 800;
     font-size: 1.02rem;

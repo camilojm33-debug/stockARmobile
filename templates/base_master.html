@@ -758,7 +758,7 @@
       <a class="nav-link {% if request.endpoint == 'dashboard.quick_start' %}active{% endif %}" href="{{ url_for('dashboard.quick_start') }}"><i class="bi bi-lightning-charge"></i><span class="nav-text">Inicio rápido</span></a>
       {% set _ai_permissions = (current_user.permissions_json or "") %}
       {% if current_user.is_authenticated and (current_user.role in ["admin", "superadmin"] or '"ai_access"' in _ai_permissions) %}
-      <a class="nav-link {% if request.endpoint and request.endpoint.startswith('ai_agents.') %}active{% endif %}" href="{{ url_for('ai_agents.index') }}"><i class="bi bi-robot"></i><span class="nav-text">Agentes IA</span></a> <!-- AI_NAV_PERMISSION_FINAL -->
+      <a class="nav-link {% if request.endpoint and request.endpoint.startswith('ai_agents.') %}active{% endif %}" href="{{ url_for('ai_agents.index') }}"><i class="bi bi-robot"></i><span class="nav-text">IA para tu negocio</span></a> <!-- AI_NAV_PERMISSION_FINAL -->
       {% endif %}
       {% if current_user.role in ['admin', 'user'] %}
       <a class="nav-link {% if request.endpoint == 'company_billing.company_settings' %}active{% endif %}" href="{{ url_for('company_billing.company_settings') }}"><i class="bi bi-building"></i><span class="nav-text">Mi empresa</span></a>
