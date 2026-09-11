@@ -14,8 +14,11 @@ from stockarmobile.models.conversations import Conversation, ConversationMessage
 from services.ai_agent.config_service import company_for_whatsapp_phone_id, get_whatsapp_connection, is_ai_enabled, choose_agent
 from services.ai_agent.orchestrator_v2 import AgentRuntime
 from services.ai_agent.usage_service import can_use_ai
+from services.ai_agent.vendor_followup_tools import install_vendor_followup_tools
 from services.ai_agent.vendor_order_service import VendorOrderService, _metadata, _set_metadata
 from services.ai_agent.whatsapp_service import WhatsAppService
+
+install_vendor_followup_tools(AgentRuntime)
 
 bp = Blueprint("whatsapp_agent", __name__)
 
