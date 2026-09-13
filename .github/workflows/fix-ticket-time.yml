@@ -1,0 +1,45 @@
+name: Fix ticket timezone
+
+on:
+  push:
+    branches: [main]
+
+permissions:
+  contents: write
+
+jobs:
+  fix:
+    if: github.event.head_commit.message == 'chore: apply one-time ticket timezone correction'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Correct ticket emission time
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+          p = Path('templates/ventas/ticket.html')
+          text = p.read_text()
+          old = "{{ sale.date.strftime('%Y-%m-%d %H:%M') if sale.date else '' }}"
+          new = "{{ (ticket_text.split('\\n')[3].replace('Fecha: ', '') if ticket_text else '') }}"
+          if old not in text:
+              raise SystemExit('expected ticket date expression not found')
+          text = text.replace(old, new)
+          old_js = "{{ (sale.date.strftime('%Y-%m-%d %H:%M') if sale.date else '')|tojson }}"
+          new_js = "{{ ((ticket_text.split('\\n')[3].replace('Fecha: ', '') if ticket_text else ''))|tojson }}"
+          if old_js not in text:
+              raise SystemExit('expected thermal ticket date expression not found')
+          text = text.replace(old_js, new_js)
+          p.write_text(text)
+          PY
+      - name: Commit correction and remove one-time workflow
+        run: |
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add templates/ventas/ticket.html
+          git commit -m 'fix: use local emission time in sale ticket'
+          git push
+          git rm .github/workflows/fix-ticket-time.yml
+          git commit -m 'chore: remove one-time ticket timezone workflow'
+          git push
