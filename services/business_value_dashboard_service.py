@@ -1,20 +1,21 @@
 """Value-oriented metrics for the tenant business dashboard.
 
 This layer is intentionally read-only: it projects existing sales, clients,
-products, quotes and AI-attribution metadata into a compact business-value
+products, quotes and AI order/payment data into a compact business-value
 summary. It does not create a second source of truth.
 """
 
 from __future__ import annotations
 
 import json
+import re
 from datetime import timedelta
 from decimal import Decimal
 
 from sqlalchemy import func, or_
 
 from services.sales_calculation_service import to_decimal
-from stockarmobile.helpers.dates import local_month_start_utc_naive, local_today
+from stockarmobile.helpers.dates import local_month_start_utc_naive
 
 
 CONFIRMED_STATUSES = {"confirmada", "confirmed", "aprobada", "approved", "completada", "complete"}
@@ -41,14 +42,21 @@ def _ai_flags(sale):
     return metadata, origin in {"ai_vendor", "vendedor_ia", "vendedor"}
 
 
-def build_business_value_metrics(*, company, can_view_economic_metrics: bool) -> dict:
-    """Return dashboard KPIs scoped to the active company.
+def _conversation_was_recovered(conversation_id: int | None, *, company_id: int) -> bool:
+    if not conversation_id:
+        return False
+    from stockarmobile.models.conversations import Conversation
+    conversation = Conversation.query.filter_by(id=int(conversation_id), company_id=int(company_id)).first()
+    if conversation is None:
+        return False
+    metadata = _metadata(conversation.metadata_json)
+    outbox = metadata.get("ai_outbox")
+    return any(isinstance(item, dict) and item.get("status") == "sent" for item in (outbox if isinstance(outbox, list) else []))
 
-    Economic values are hidden for users without the existing economic-metrics
-    permission. Operational opportunity counts remain available because they
-    do not expose monetary totals.
-    """
-    from app import Client, Product, Quote, Sale, db, scope_query_to_company
+
+def build_business_value_metrics(*, company, can_view_economic_metrics: bool) -> dict:
+    """Return dashboard KPIs scoped to the active company."""
+    from app import Client, Payment, Product, Quote, Sale, db, scope_query_to_company
 
     company_id = getattr(company, "id", None)
     if company_id is None:
@@ -56,7 +64,6 @@ def build_business_value_metrics(*, company, can_view_economic_metrics: bool) ->
 
     timezone_name = getattr(company, "timezone", None) or "America/Argentina/Buenos_Aires"
     month_start = local_month_start_utc_naive(timezone_name)
-    today = local_today(timezone_name)
     recoverable_cutoff = month_start - timedelta(days=60)
 
     sales_base = scope_query_to_company(Sale.query.filter(_confirmed(Sale)), Sale)
@@ -72,8 +79,6 @@ def build_business_value_metrics(*, company, can_view_economic_metrics: bool) ->
         Product.query.filter(Product.active.is_(True), Product.stock <= Product.min_stock), Product
     ).count()
 
-    # Last confirmed purchase per client. A client is "recoverable" only if it
-    # has bought before and has been inactive for at least 60 days.
     last_purchase = (
         db.session.query(Sale.client_id.label("client_id"), func.max(Sale.date).label("last_purchase"))
         .filter(Sale.company_id == company_id, Sale.client_id.isnot(None), _confirmed(Sale))
@@ -100,15 +105,50 @@ def build_business_value_metrics(*, company, can_view_economic_metrics: bool) ->
     ai_sales_amount = Decimal("0.00")
     recovered_amount = Decimal("0.00")
     recovered_sales_count = 0
+
+    # The existing AI vendor flow marks its payment provider as
+    # mercadopago_ai_order and links the payment to the quote. This lets us
+    # attribute historical AI sales without adding a new table.
+    ai_rows = (
+        db.session.query(Sale, Payment.external_reference)
+        .join(Quote, Quote.converted_sale_id == Sale.id)
+        .join(Payment, Payment.quote_id == Quote.id)
+        .filter(
+            Sale.company_id == company_id,
+            Sale.date >= month_start,
+            _confirmed(Sale),
+            Payment.company_id == company_id,
+            Payment.provider == "mercadopago_ai_order",
+        )
+        .distinct(Sale.id)
+        .all()
+    )
+    seen_sale_ids = set()
+    for sale, external_reference in ai_rows:
+        if sale.id in seen_sale_ids:
+            continue
+        seen_sale_ids.add(sale.id)
+        ai_sales_count += 1
+        amount = to_decimal(getattr(sale, "total_amount", 0))
+        ai_sales_amount += amount
+        match = re.search(r"(?:^|\|)conversation_id:(\d+)(?:\||$)", str(external_reference or ""))
+        conversation_id = int(match.group(1)) if match else None
+        if _conversation_was_recovered(conversation_id, company_id=company_id):
+            recovered_sales_count += 1
+            recovered_amount += amount
+
+    # Also accept explicit attribution if a future flow writes it directly on Sale.
     for sale in month_sales:
         metadata, is_ai = _ai_flags(sale)
-        if not is_ai:
+        if not is_ai or sale.id in seen_sale_ids:
             continue
+        seen_sale_ids.add(sale.id)
+        amount = to_decimal(getattr(sale, "total_amount", 0))
         ai_sales_count += 1
-        ai_sales_amount += to_decimal(getattr(sale, "total_amount", 0))
+        ai_sales_amount += amount
         if metadata.get("ai_recovered") or metadata.get("recovered_by_ai"):
             recovered_sales_count += 1
-            recovered_amount += to_decimal(getattr(sale, "total_amount", 0))
+            recovered_amount += amount
 
     opportunities = []
     if recoverable_clients:
