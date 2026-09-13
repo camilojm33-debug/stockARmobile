@@ -12,7 +12,7 @@
 
     <div class="ticket-meta">
       <div><strong>Venta:</strong> #{{ sale.id }}</div>
-      <div><strong>Fecha:</strong> {{ sale.date.strftime('%Y-%m-%d %H:%M') if sale.date else '' }}</div>
+      <div><strong>Fecha:</strong> {{ (ticket_text.split('\n')[3].replace('Fecha: ', '') if ticket_text else '') }}</div>
       <div><strong>Cliente:</strong> {{ sale.customer or 'Consumidor final' }}</div>
       {% if sale.payment_method %}<div><strong>Pago:</strong> {{ sale.payment_method }}{% if sale.secondary_payment_method %} + {{ sale.secondary_payment_method }}{% endif %}</div>{% endif %}
     </div>
@@ -106,7 +106,7 @@
       ticket: {
         brand: {{ (ticket_brand or 'STOCK ARMOBILE')|tojson }},
         sale_id: {{ sale.id|tojson }},
-        date: {{ (sale.date.strftime('%Y-%m-%d %H:%M') if sale.date else '')|tojson }},
+        date: {{ ((ticket_text.split('\n')[3].replace('Fecha: ', '') if ticket_text else ''))|tojson }},
         customer: {{ (sale.customer or 'Consumidor final')|tojson }},
         payment_method: {{ ((sale.payment_method or '') ~ ((' + ' ~ sale.secondary_payment_method) if sale.secondary_payment_method else ''))|tojson }},
         items: [
