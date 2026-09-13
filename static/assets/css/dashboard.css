@@ -112,6 +112,12 @@
   background: #101a2b;
 }
 
+/* Dashboard consolidation: un solo bloque de KPIs; conserva los datos y rutas existentes. */
+.app-shell > .dcc4,
+.app-shell > .hero-surface {
+  display: none !important;
+}
+
 @media (max-width: 991.98px) {
   .app-shell > .dcc4 .dcc4-tile {
     min-height: 118px;
