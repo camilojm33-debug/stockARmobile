@@ -1,0 +1,119 @@
+{% extends "base_master.html" %}
+
+{% block title %}Métricas de IA - StockArmobile{% endblock %}
+
+{% block content %}
+<div class="app-shell ai-metrics-page">
+  <div class="hero-surface app-card mb-4">
+    <div class="card-body p-4 p-lg-5">
+      <div class="d-flex flex-wrap justify-content-between align-items-start gap-3">
+        <div>
+          <span class="page-kicker"><i class="bi bi-robot"></i> Inteligencia artificial</span>
+          <h1 class="page-title h2 fw-bold mb-1">Métricas de IA</h1>
+          <p class="text-muted mb-0">Medí el impacto real que los agentes de IA están generando en tu negocio.</p>
+        </div>
+        <a href="{{ url_for('dashboard.index') }}" class="btn btn-outline-primary">
+          <i class="bi bi-arrow-left me-1"></i>Volver al panel
+        </a>
+      </div>
+    </div>
+  </div>
+
+  <div class="row g-3 mb-4">
+    <div class="col-sm-6 col-xl-3">
+      <div class="card app-card ai-metric-card h-100">
+        <div class="card-body">
+          <div class="ai-metric-icon"><i class="bi bi-cart-check"></i></div>
+          <div class="ai-metric-label">Ventas generadas por IA</div>
+          <div class="ai-metric-value">${{ "%.2f"|format(business_value.ai_sales_amount or 0) }}</div>
+          <div class="ai-metric-meta">{{ business_value.ai_sales_count or 0 }} venta(s) atribuidas</div>
+        </div>
+      </div>
+    </div>
+    <div class="col-sm-6 col-xl-3">
+      <div class="card app-card ai-metric-card h-100">
+        <div class="card-body">
+          <div class="ai-metric-icon"><i class="bi bi-arrow-counterclockwise"></i></div>
+          <div class="ai-metric-label">Dinero recuperado por IA</div>
+          <div class="ai-metric-value">${{ "%.2f"|format(business_value.recovered_amount or 0) }}</div>
+          <div class="ai-metric-meta">{{ business_value.recovered_sales_count or 0 }} recuperación(es)</div>
+        </div>
+      </div>
+    </div>
+    <div class="col-sm-6 col-xl-3">
+      <div class="card app-card ai-metric-card h-100">
+        <div class="card-body">
+          <div class="ai-metric-icon"><i class="bi bi-lightbulb"></i></div>
+          <div class="ai-metric-label">Oportunidades detectadas</div>
+          <div class="ai-metric-value">{{ business_value.opportunities|length }}</div>
+          <div class="ai-metric-meta">Basadas en datos actuales</div>
+        </div>
+      </div>
+    </div>
+    <div class="col-sm-6 col-xl-3">
+      <div class="card app-card ai-metric-card h-100">
+        <div class="card-body">
+          <div class="ai-metric-icon"><i class="bi bi-graph-up-arrow"></i></div>
+          <div class="ai-metric-label">Actividad comercial IA</div>
+          <div class="ai-metric-value">{{ business_value.ai_sales_count or 0 }}</div>
+          <div class="ai-metric-meta">Operaciones atribuidas a IA</div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <section class="card app-card mb-4">
+    <div class="card-header bg-transparent border-0 pt-4 px-4">
+      <div class="d-flex justify-content-between align-items-center gap-2">
+        <div>
+          <h2 class="h5 fw-bold mb-1"><i class="bi bi-stars me-2"></i>Oportunidades para la IA</h2>
+          <p class="text-muted small mb-0">Señales comerciales que los agentes pueden convertir en acciones.</p>
+        </div>
+      </div>
+    </div>
+    <div class="card-body px-4 pb-4">
+      {% for opportunity in business_value.opportunities %}
+      <div class="ai-opportunity">
+        <div class="ai-opportunity-main">
+          <span class="ai-opportunity-icon"><i class="bi {{ opportunity.icon }}"></i></span>
+          <div>
+            <div class="fw-bold">{{ opportunity.title }}</div>
+            <div class="small text-muted">{{ opportunity.text }}</div>
+          </div>
+        </div>
+        <a class="btn btn-sm btn-outline-primary" href="{{ opportunity.url }}">{{ opportunity.action }} <i class="bi bi-arrow-right"></i></a>
+      </div>
+      {% else %}
+      <div class="ai-empty">
+        <span class="ai-opportunity-icon"><i class="bi bi-check2-circle"></i></span>
+        <div>
+          <div class="fw-bold">No hay oportunidades prioritarias</div>
+          <div class="small text-muted">Los datos actuales no muestran una oportunidad comercial urgente.</div>
+        </div>
+      </div>
+      {% endfor %}
+    </div>
+  </section>
+
+  <div class="alert alert-info d-flex gap-2 align-items-start" role="note">
+    <i class="bi bi-info-circle mt-1"></i>
+    <div><strong>Datos reales:</strong> estas métricas reutilizan las ventas y atribuciones de IA existentes; esta pantalla no crea una fuente de datos paralela.</div>
+  </div>
+</div>
+{% endblock %}
+
+{% block extra_css %}
+<style>
+  .ai-metrics-page .ai-metric-card{border:1px solid rgba(16,24,40,.08);border-radius:16px}
+  .ai-metric-icon{display:grid;place-items:center;width:42px;height:42px;border-radius:11px;background:#eef4ff;margin-bottom:.75rem}
+  .ai-metric-label{font-size:.72rem;font-weight:800;text-transform:uppercase;letter-spacing:.035em;color:#667085}
+  .ai-metric-value{font-size:1.5rem;font-weight:900;margin-top:.2rem}
+  .ai-metric-meta{font-size:.75rem;color:#667085;margin-top:.2rem}
+  .ai-opportunity,.ai-empty{display:flex;align-items:center;justify-content:space-between;gap:1rem;padding:.85rem;border:1px solid rgba(16,24,40,.08);border-radius:13px;margin-top:.55rem;background:#fff}
+  .ai-opportunity-main{display:flex;align-items:center;gap:.7rem;min-width:0}
+  .ai-opportunity-icon{display:grid;place-items:center;flex:0 0 auto;width:36px;height:36px;border-radius:10px;background:#eef4ff}
+  [data-bs-theme="dark"] .ai-metric-card,[data-bs-theme="dark"] .ai-opportunity,[data-bs-theme="dark"] .ai-empty{background:rgba(15,23,42,.72);border-color:rgba(226,232,240,.12)}
+  [data-bs-theme="dark"] .ai-metric-label,[data-bs-theme="dark"] .ai-metric-meta{color:#b7c4d6}
+  @media(max-width:575.98px){.ai-opportunity{align-items:flex-start;flex-direction:column}.ai-opportunity .btn{width:100%}}
+</style>
+{% endblock %}
