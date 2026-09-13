@@ -6,9 +6,6 @@ name: CI
   pull_request:
     branches: [main]
 
-permissions:
-  contents: write
-
 jobs:
   test:
     runs-on: ubuntu-latest
@@ -19,54 +16,6 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: '3.12'
-      - name: Patch invoice camera capture
-        if: github.event_name == 'push'
-        shell: python
-        run: |
-          from pathlib import Path
-          p = Path('templates/ai_agents/invoices.html')
-          s = p.read_text(encoding='utf-8')
-          old = '''<label class="invoice-action mb-0" for="invoice-camera-input"><span class="invoice-action-icon"><i class="bi bi-camera"></i></span><span class="invoice-action-copy"><strong>Tomar foto</strong><span>Ideal desde el celular. Se abre la cámara.</span></span></label>'''
-          new = '''<button id="invoice-camera-button" class="invoice-action mb-0" type="button"><span class="invoice-action-icon"><i class="bi bi-camera"></i></span><span class="invoice-action-copy"><strong>Tomar foto</strong><span>Abre la cámara para fotografiar la factura.</span></span></button>'''
-          if old in s:
-              s = s.replace(old, new, 1)
-          css_anchor = '.invoice-empty-icon{width:56px;height:56px;border-radius:16px;display:grid;place-items:center;background:#eef4ff;color:#2563eb;margin:0 auto;font-size:1.6rem}'
-          css_extra = '''.invoice-camera-modal{position:fixed;inset:0;z-index:1080;display:none;align-items:center;justify-content:center;padding:1rem;background:rgba(15,23,42,.72)}.invoice-camera-modal.is-open{display:flex}.invoice-camera-dialog{width:min(720px,100%);max-height:calc(100vh - 2rem);overflow:auto;border-radius:20px;background:#fff;box-shadow:0 24px 80px rgba(15,23,42,.28)}.invoice-camera-preview{background:#0f172a;aspect-ratio:4/3;display:grid;place-items:center;overflow:hidden}.invoice-camera-preview video{display:block;width:100%;height:100%;object-fit:cover}.invoice-camera-actions{display:flex;justify-content:flex-end;gap:.6rem;flex-wrap:wrap;padding:1rem}.invoice-camera-error{margin:0 1rem 1rem}.invoice-action{border:1px solid var(--app-line);font:inherit;color:inherit}.invoice-action:focus-visible{outline:3px solid rgba(37,99,235,.25);outline-offset:2px}'''
-          if css_extra not in s:
-              s = s.replace(css_anchor, css_anchor + css_extra, 1)
-          input_anchor = '<input id="invoice-camera-input" class="visually-hidden" type="file" accept="image/*" capture="environment">'
-          modal = '''<div id="invoice-camera-modal" class="invoice-camera-modal" role="dialog" aria-modal="true" aria-labelledby="invoice-camera-title"><div class="invoice-camera-dialog"><div class="p-3 d-flex justify-content-between align-items-center gap-2"><div><h2 id="invoice-camera-title" class="h5 fw-bold mb-1">Fotografiar factura</h2><div class="small invoice-muted">Acomodá la factura dentro del cuadro y sacá la foto.</div></div><button id="invoice-camera-close" class="btn btn-sm btn-outline-secondary" type="button" aria-label="Cerrar cámara"><i class="bi bi-x-lg"></i></button></div><div class="invoice-camera-preview"><video id="invoice-camera-video" autoplay playsinline muted></video></div><div id="invoice-camera-error" class="invoice-camera-error small text-danger" role="alert"></div><div class="invoice-camera-actions"><button id="invoice-camera-cancel" class="btn btn-outline-secondary" type="button">Cancelar</button><button id="invoice-camera-capture" class="btn btn-primary" type="button"><i class="bi bi-camera me-1"></i>Capturar foto</button></div></div></div>'''
-          if modal not in s:
-              if input_anchor not in s: raise SystemExit('camera input anchor not found')
-              s = s.replace(input_anchor, input_anchor + modal, 1)
-          script_anchor = '<script>\n(()=>{const accessAllowed='
-          camera_script = r'''<script>
-(()=>{
-  const cameraButton=document.getElementById('invoice-camera-button'),cameraInput=document.getElementById('invoice-camera-input'),modal=document.getElementById('invoice-camera-modal'),video=document.getElementById('invoice-camera-video'),capture=document.getElementById('invoice-camera-capture'),close=document.getElementById('invoice-camera-close'),cancel=document.getElementById('invoice-camera-cancel'),cameraError=document.getElementById('invoice-camera-error');
-  if(!cameraButton||!cameraInput||!modal)return;
-  let stream=null;
-  function stopCamera(){if(stream){stream.getTracks().forEach(track=>track.stop());stream=null}video.srcObject=null;modal.classList.remove('is-open');document.body.classList.remove('overflow-hidden')}
-  function fallbackToFileInput(message){stopCamera();if(message)cameraError.textContent=message;cameraInput.click()}
-  async function openCamera(){cameraError.textContent='';if(!navigator.mediaDevices||!navigator.mediaDevices.getUserMedia){fallbackToFileInput('Tu navegador no permite acceso directo a la cámara. Se abrió el selector de imágenes como alternativa.');return}try{stream=await navigator.mediaDevices.getUserMedia({video:{facingMode:{ideal:'environment'},width:{ideal:1920},height:{ideal:1080}},audio:false});video.srcObject=stream;modal.classList.add('is-open');document.body.classList.add('overflow-hidden');await video.play().catch(()=>{})}catch(error){console.warn('No se pudo abrir la cámara de factura',error);const denied=error&&['NotAllowedError','SecurityError'].includes(error.name);fallbackToFileInput(denied?'No se pudo acceder a la cámara. Revisá el permiso del navegador; mientras tanto podés seleccionar una foto.':'No se pudo abrir la cámara. Podés seleccionar una foto como alternativa.')}}
-  function acceptCapture(){if(!video.videoWidth||!video.videoHeight){cameraError.textContent='Esperá un momento hasta que la cámara esté lista.';return}const canvas=document.createElement('canvas');canvas.width=video.videoWidth;canvas.height=video.videoHeight;const ctx=canvas.getContext('2d',{alpha:false});ctx.drawImage(video,0,0,canvas.width,canvas.height);canvas.toBlob(blob=>{if(!blob){cameraError.textContent='No se pudo capturar la foto. Intentá nuevamente.';return}const file=new File([blob],`factura-camera-${Date.now()}.jpg`,{type:'image/jpeg',lastModified:Date.now()});try{const dt=new DataTransfer();dt.items.add(file);cameraInput.files=dt.files;cameraInput.dispatchEvent(new Event('change',{bubbles:true}));stopCamera()}catch(error){console.warn('No se pudo transferir la captura al formulario',error);cameraError.textContent='No se pudo preparar la foto para la IA. Intentá nuevamente.'}},'image/jpeg',.92)}
-  cameraButton.addEventListener('click',openCamera);capture.addEventListener('click',acceptCapture);close.addEventListener('click',stopCamera);cancel.addEventListener('click',stopCamera);modal.addEventListener('click',event=>{if(event.target===modal)stopCamera()});document.addEventListener('keydown',event=>{if(event.key==='Escape'&&modal.classList.contains('is-open'))stopCamera()});window.addEventListener('pagehide',stopCamera);
-})();
-</script>
-'''
-          if camera_script not in s:
-              if script_anchor not in s: raise SystemExit('extra_js anchor not found')
-              s = s.replace(script_anchor, camera_script + script_anchor, 1)
-          p.write_text(s, encoding='utf-8')
-      - name: Validate invoice camera patch
-        if: github.event_name == 'push'
-        run: |
-          python - <<'PY'
-          from pathlib import Path
-          s=Path('templates/ai_agents/invoices.html').read_text(encoding='utf-8')
-          for marker in ('invoice-camera-button','invoice-camera-modal','getUserMedia','invoice-camera-capture','new DataTransfer'):
-              assert marker in s, marker
-          print('Invoice camera patch validation OK')
-          PY
       - name: Install dependencies
         run: pip install -r requirements.txt
       - name: Compile Python
@@ -75,14 +24,3 @@ jobs:
         run: node --check static/service-worker.js
       - name: Run tests
         run: pytest -q
-      - name: Commit invoice camera patch and remove temporary workflow
-        if: github.event_name == 'push'
-        shell: bash
-        run: |
-          git config user.name "github-actions[bot]"
-          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add templates/ai_agents/invoices.html
-          git rm -f .github/workflows/fix-invoice-camera.yml || true
-          git add .github/workflows/ci.yml
-          git commit -m "fix: open real camera for invoice capture"
-          git push
