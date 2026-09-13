@@ -106,32 +106,45 @@ def build_business_value_metrics(*, company, can_view_economic_metrics: bool) ->
     recovered_amount = Decimal("0.00")
     recovered_sales_count = 0
 
-    # The existing AI vendor flow marks its payment provider as
-    # mercadopago_ai_order and links the payment to the quote. This lets us
-    # attribute historical AI sales without adding a new table.
-    ai_rows = (
-        db.session.query(Sale, Payment.external_reference)
-        .join(Quote, Quote.converted_sale_id == Sale.id)
-        .join(Payment, Payment.quote_id == Quote.id)
-        .filter(
-            Sale.company_id == company_id,
-            Sale.date >= month_start,
-            _confirmed(Sale),
-            Payment.company_id == company_id,
-            Payment.provider == "mercadopago_ai_order",
+    # The existing AI vendor flow stores the quote and conversation IDs in
+    # Payment.external_reference. Avoid relying on a Payment.quote_id field.
+    ai_payments = Payment.query.filter_by(
+        company_id=company_id,
+        provider="mercadopago_ai_order",
+    ).all()
+    payment_by_quote = {}
+    for payment in ai_payments:
+        match = re.search(
+            r"(?:^|\|)quote_id:(\d+)(?:\||$)",
+            str(getattr(payment, "external_reference", "") or ""),
         )
-        .distinct(Sale.id)
-        .all()
-    )
+        if match:
+            payment_by_quote[int(match.group(1))] = str(payment.external_reference or "")
+
+    ai_rows = []
+    if payment_by_quote:
+        ai_rows = (
+            db.session.query(Sale, Quote.id)
+            .join(Quote, Quote.converted_sale_id == Sale.id)
+            .filter(
+                Sale.company_id == company_id,
+                Sale.date >= month_start,
+                _confirmed(Sale),
+                Quote.id.in_(list(payment_by_quote.keys())),
+            )
+            .all()
+        )
+
     seen_sale_ids = set()
-    for sale, external_reference in ai_rows:
+    for sale, quote_id in ai_rows:
         if sale.id in seen_sale_ids:
             continue
         seen_sale_ids.add(sale.id)
         ai_sales_count += 1
         amount = to_decimal(getattr(sale, "total_amount", 0))
         ai_sales_amount += amount
-        match = re.search(r"(?:^|\|)conversation_id:(\d+)(?:\||$)", str(external_reference or ""))
+        external_reference = payment_by_quote.get(int(quote_id), "")
+        match = re.search(r"(?:^|\|)conversation_id:(\d+)(?:\||$)", external_reference)
         conversation_id = int(match.group(1)) if match else None
         if _conversation_was_recovered(conversation_id, company_id=company_id):
             recovered_sales_count += 1
