@@ -1,0 +1,83 @@
+name: Consolidate dashboard UI
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - '.github/workflows/cleanup-dashboard-repetition.yml'
+
+permissions:
+  contents: write
+
+jobs:
+  patch:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Consolidate dashboard
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+          import re
+
+          p = Path('templates/dashboard/index.html')
+          s = p.read_text(encoding='utf-8')
+
+          # Keep the new business-value dashboard as the single primary KPI block.
+          # Remove the duplicated center-control card without touching the legacy
+          # charts/tables that follow it.
+          pattern = r'\s*<!-- DASHBOARD_CENTER_CONTROL_V4 -->.*?</section>\s*'
+          s, removed = re.subn(pattern, '\n', s, count=1, flags=re.S)
+          if removed != 1:
+              raise SystemExit(f'expected one duplicated center-control section, removed={removed}')
+
+          # Remove the old four-card summary row that repeats the same KPIs.
+          # :has() is used only as a scoped visual guard in the remaining template,
+          # so no data or routes are changed.
+          legacy_guard = '''    .bvd{margin-bottom:1.5rem;'''
+          if legacy_guard not in s:
+              raise SystemExit('business value styles not found')
+          s = s.replace(
+              legacy_guard,
+              '''    .app-shell > .row:has(.summary-pill){display:none !important}\n    .bvd-ops{margin-top:1rem;padding-top:1rem;border-top:1px solid rgba(16,24,40,.08)}\n    .bvd-ops-grid{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:.65rem;margin-top:.65rem}\n    .bvd-op{padding:.7rem .8rem;border:1px solid rgba(16,24,40,.08);border-radius:12px;background:#fff}\n    .bvd-op-label{font-size:.7rem;font-weight:800;text-transform:uppercase;letter-spacing:.035em;color:#667085}\n    .bvd-op-value{font-size:1rem;font-weight:900;margin-top:.15rem}\n    .bvd-op-meta{font-size:.72rem;color:#667085;margin-top:.1rem}\n    [data-bs-theme="dark"] .bvd-op{background:rgba(15,23,42,.72);border-color:rgba(226,232,240,.12)}\n    [data-bs-theme="dark"] .bvd-op-label,[data-bs-theme="dark"] .bvd-op-meta{color:#b7c4d6}\n    @media(max-width:767.98px){.bvd-ops-grid{grid-template-columns:repeat(2,minmax(0,1fr))}}\n    .bvd{margin-bottom:1.5rem;''',
+              1,
+          )
+
+          old_header = '''<div><span class="page-kicker"><i class="bi bi-stars"></i> Valor del negocio</span><h2 class="h3 fw-bold mb-1">Lo importante de tu negocio, en un vistazo</h2><p class="text-muted mb-0">Métricas y oportunidades construidas con los datos reales de tu comercio.</p></div>\n        <span class="badge text-bg-primary align-self-start">{{ business_value.opportunities|length }} oportunidad(es)</span>'''
+          new_header = '''<div><span class="page-kicker"><i class="bi bi-speedometer2"></i> Panel principal</span><h2 class="h3 fw-bold mb-1">Todo lo importante de tu negocio</h2><p class="text-muted mb-0">Ventas, stock, clientes, pendientes y resultados de IA, sin información repetida.</p></div>\n        <div class="d-flex flex-wrap align-items-center gap-2">\n          <a href="/ventas/" class="btn btn-primary btn-sm"><i class="bi bi-cart-plus me-1"></i>Nueva venta</a>\n          {% if company_feature_enabled('quotes_module_enabled') and current_user_has_permission('quotes_view') %}<a href="/presupuestos/" class="btn btn-outline-primary btn-sm"><i class="bi bi-file-earmark-text me-1"></i>Presupuestos</a>{% endif %}\n          <span class="badge text-bg-primary">{{ business_value.opportunities|length }} oportunidad(es)</span>\n        </div>'''
+          if old_header not in s:
+              raise SystemExit('expected business value header not found')
+          s = s.replace(old_header, new_header, 1)
+
+          grid_end = '''      </div>\n      <div class="bvd-opps" id="business-value-ai">'''
+          ops = '''      </div>\n      <div class="bvd-ops" aria-label="Operación de hoy">\n        <div class="d-flex justify-content-between align-items-center gap-2"><strong><i class="bi bi-lightning-charge me-1"></i> Operación de hoy</strong><span class="small text-muted">Estado actual</span></div>\n        <div class="bvd-ops-grid">\n          {% if can_view_economic_metrics %}<a class="bvd-op text-decoration-none text-reset" href="/ventas/"><div class="bvd-op-label">Ventas hoy</div><div class="bvd-op-value">${{ "%.2f"|format(ingresos_hoy or 0) }}</div><div class="bvd-op-meta">{{ ventas_hoy }} operación(es)</div></a><div class="bvd-op"><div class="bvd-op-label">Ganancia hoy</div><div class="bvd-op-value">${{ "%.2f"|format(ganancia_hoy or 0) }}</div><div class="bvd-op-meta">Resultado estimado</div></div>{% endif %}\n          <div class="bvd-op"><div class="bvd-op-label">Caja</div><div class="bvd-op-value">{{ 'Abierta' if cash_stats.open_sessions else 'Cerrada' }}</div><div class="bvd-op-meta">Estado de caja</div></div>\n          <a class="bvd-op text-decoration-none text-reset" href="/productos/"><div class="bvd-op-label">Stock bajo</div><div class="bvd-op-value">{{ productos_bajo_nivel }}</div><div class="bvd-op-meta">Productos para revisar</div></a>\n        </div>\n      </div>\n      <div class="bvd-opps" id="business-value-ai">'''
+          if grid_end not in s:
+              raise SystemExit('expected business value grid boundary not found')
+          s = s.replace(grid_end, ops, 1)
+
+          p.write_text(s, encoding='utf-8')
+          print('dashboard consolidation applied')
+          PY
+
+      - name: Validate template structure
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+          s = Path('templates/dashboard/index.html').read_text(encoding='utf-8')
+          assert 'DASHBOARD_CENTER_CONTROL_V4' not in s
+          assert 'Todo lo importante de tu negocio' in s
+          assert 'Operación de hoy' in s
+          assert s.count('business-value-ai') == 1
+          print('dashboard template checks passed')
+          PY
+          git diff --check
+
+      - name: Commit changes and remove temporary workflows
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add templates/dashboard/index.html
+          git rm .github/workflows/cleanup-dashboard-repetition.yml .github/workflows/fix-dashboard-payment-join.yml
+          git commit -m "refactor: consolidate dashboard presentation"
+          git push
