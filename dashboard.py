@@ -65,6 +65,21 @@ def index():
     return render_template("dashboard/index.html", **build_dashboard_context())
 
 
+
+
+@bp.route("/ia")
+@tenant_required
+def ai_metrics():
+    if not can_access_ai(current_user):
+        flash("Tu empresa no tiene habilitado el acceso a Agentes IA.", "warning")
+        return redirect(url_for("dashboard.index"))
+    context = build_dashboard_context()
+    return render_template(
+        "dashboard/ai_metrics.html",
+        business_value=context.get("business_value") or {},
+        can_view_economic_metrics=context.get("can_view_economic_metrics", False),
+    )
+
 @bp.route("/stats")
 @tenant_required
 def stats():
