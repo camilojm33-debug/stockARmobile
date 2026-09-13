@@ -24,17 +24,11 @@ jobs:
           p = Path('templates/dashboard/index.html')
           s = p.read_text(encoding='utf-8')
 
-          # Keep the new business-value dashboard as the single primary KPI block.
-          # Remove the duplicated center-control card without touching the legacy
-          # charts/tables that follow it.
           pattern = r'\s*<!-- DASHBOARD_CENTER_CONTROL_V4 -->.*?</section>\s*'
           s, removed = re.subn(pattern, '\n', s, count=1, flags=re.S)
           if removed != 1:
               raise SystemExit(f'expected one duplicated center-control section, removed={removed}')
 
-          # Remove the old four-card summary row that repeats the same KPIs.
-          # :has() is used only as a scoped visual guard in the remaining template,
-          # so no data or routes are changed.
           legacy_guard = '''    .bvd{margin-bottom:1.5rem;'''
           if legacy_guard not in s:
               raise SystemExit('business value styles not found')
@@ -81,3 +75,5 @@ jobs:
           git rm .github/workflows/cleanup-dashboard-repetition.yml .github/workflows/fix-dashboard-payment-join.yml
           git commit -m "refactor: consolidate dashboard presentation"
           git push
+
+# Trigger note: updating this workflow file forces a fresh run after creation.
