@@ -8,6 +8,7 @@ from sqlalchemy import func, or_
 from sqlalchemy.orm import selectinload
 from services.sales_calculation_service import sale_payment_breakdown, to_decimal
 from stockarmobile.helpers.dates import local_day_bounds_utc_naive, local_month_start_utc_naive, local_today
+from services.business_value_dashboard_service import build_business_value_metrics
 
 
 def build_dashboard_context():
@@ -30,6 +31,7 @@ def build_dashboard_context():
     new_clients_month = scope_query_to_company(Client.query.filter(Client.active.is_(True), Client.created_at >= month_start), Client).count()
 
     can_view_economic_metrics = _can_view_economic_metrics()
+    business_value = build_business_value_metrics(company=company, can_view_economic_metrics=can_view_economic_metrics)
 
     confirmed_sales_base = _confirmed_sales_query(scope_query_to_company(Sale.query, Sale), Sale)
     total_sales_amount = _sum(Sale.total_amount, model=Sale, base_query=confirmed_sales_base) if can_view_economic_metrics else Decimal("0.00")
@@ -126,7 +128,7 @@ def build_dashboard_context():
         "clientes_recentes": ranking_clients, "ranking_clientes": ranking_clients, "ranking_categorias": ranking_categories,
         "chart_labels": _last_days_labels(7), "chart_sales": _sales_by_day(7) if can_view_economic_metrics else [],
         "chart_categories_labels": [item.category or "Sin categoria" for item in ranking_categories], "chart_categories_data": [item.sold or 0 for item in ranking_categories],
-        "cash_stats": cash_stats, "invoice_access": invoice_access,
+        "cash_stats": cash_stats, "invoice_access": invoice_access, "business_value": business_value,
         "quote_stats": {"created": quotes_created, "pending": quotes_pending, "sent": quotes_sent, "approved": quotes_approved, "rejected": quotes_rejected, "expired": quotes_expired, "converted": quotes_converted, "amount": quotes_amount, "conversion_rate": quotes_conversion_rate, "recent_quotes": recent_quotes},
     }
 
