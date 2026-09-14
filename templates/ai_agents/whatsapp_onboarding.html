@@ -1,0 +1,164 @@
+{% extends "base_master.html" %}
+{% block title %}Conectar WhatsApp | Vendedor IA 24/7{% endblock %}
+{% block extra_css %}
+<style>
+  .wa-onboard { max-width: 760px; margin: 0 auto; }
+  .wa-card { border: 1px solid var(--app-line); border-radius: 22px; background: var(--app-panel); overflow: hidden; box-shadow: 0 18px 50px rgba(15,23,42,.08); }
+  .wa-head { padding: 2rem; background: linear-gradient(135deg, rgba(37,99,235,.08), rgba(34,197,94,.06)); border-bottom: 1px solid var(--app-line); }
+  .wa-icon { width: 58px; height: 58px; border-radius: 18px; display:grid; place-items:center; background:#25D366; color:#fff; font-size:1.7rem; box-shadow:0 10px 24px rgba(37,211,102,.22); }
+  .wa-body { padding: 2rem; }
+  .wa-step { display:flex; gap:.85rem; align-items:flex-start; padding:.9rem 0; }
+  .wa-step-num { flex:0 0 30px; width:30px; height:30px; border-radius:50%; display:grid; place-items:center; background:#eef4ff; color:#2563eb; font-weight:900; font-size:.82rem; }
+  .wa-status { display:none; border-radius:14px; padding:1rem; margin-top:1rem; }
+  .wa-status.show { display:block; }
+  .wa-status.error { background:#fef2f2; color:#991b1b; border:1px solid #fecaca; }
+  .wa-status.ok { background:#f0fdf4; color:#166534; border:1px solid #bbf7d0; }
+  .wa-note { border:1px solid var(--app-line); border-radius:14px; padding:1rem; background:var(--app-panel-soft); color:var(--app-muted); font-size:.86rem; }
+</style>
+{% endblock %}
+{% block content %}
+<div class="app-shell wa-onboard py-4">
+  <div class="mb-3"><a href="{{ url_for('ai_agents.index') }}" class="text-decoration-none"><i class="bi bi-arrow-left me-1"></i>Volver a Agentes IA</a></div>
+  <section class="wa-card">
+    <div class="wa-head">
+      <div class="d-flex align-items-center gap-3">
+        <div class="wa-icon"><i class="bi bi-whatsapp"></i></div>
+        <div>
+          <div class="small fw-bold text-uppercase text-primary">Vendedor IA 24/7</div>
+          <h1 class="h3 fw-bold mb-1">Conectá tu WhatsApp</h1>
+          <p class="text-muted mb-0">Meta hará la verificación y StockArMobile se ocupa del resto.</p>
+        </div>
+      </div>
+    </div>
+    <div class="wa-body">
+      {% if whatsapp.enabled and whatsapp.phone_number_id %}
+        <div class="alert alert-success"><i class="bi bi-check-circle-fill me-2"></i>Este comercio ya tiene un WhatsApp conectado: <strong>{{ whatsapp.display_phone_number or 'número conectado' }}</strong>.</div>
+        <a class="btn btn-primary" href="{{ vendor_url }}"><i class="bi bi-cart-check me-1"></i>Ir al Vendedor IA</a>
+      {% elif not app_id or not config_id %}
+        <div class="alert alert-warning mb-3"><i class="bi bi-exclamation-triangle me-2"></i>La conexión automática todavía no está habilitada en la cuenta de StockArMobile.</div>
+        <div class="wa-note">El administrador debe terminar la configuración de Meta Embedded Signup antes de habilitar este botón para clientes.</div>
+      {% else %}
+        <div class="mb-3">
+          <div class="fw-bold mb-2">Es muy simple</div>
+          <div class="wa-step"><div class="wa-step-num">1</div><div><strong>Tocá “Conectar WhatsApp”.</strong><div class="text-muted small">Se abre el flujo oficial de Meta.</div></div></div>
+          <div class="wa-step"><div class="wa-step-num">2</div><div><strong>Elegí tu cuenta y número.</strong><div class="text-muted small">Meta te pedirá las verificaciones necesarias.</div></div></div>
+          <div class="wa-step"><div class="wa-step-num">3</div><div><strong>Volvés a StockArMobile.</strong><div class="text-muted small">Guardamos la conexión y activamos el Vendedor IA 24/7.</div></div></div>
+        </div>
+        <button id="connect-whatsapp" class="btn btn-success btn-lg w-100" type="button">
+          <i class="bi bi-whatsapp me-2"></i>Conectar WhatsApp
+        </button>
+        <div id="wa-status" class="wa-status" role="status"></div>
+        <div class="wa-note mt-3"><i class="bi bi-shield-check me-2"></i>No vas a tener que copiar tokens, IDs, webhooks ni configuraciones técnicas. Esa parte queda gestionada por StockArMobile.</div>
+      {% endif %}
+    </div>
+  </section>
+</div>
+{% endblock %}
+{% block extra_js %}
+{% if app_id and config_id and not (whatsapp.enabled and whatsapp.phone_number_id) %}
+<script async defer crossorigin="anonymous" src="https://connect.facebook.net/en_US/sdk.js"></script>
+<script>
+(function () {
+  const appId = {{ app_id|tojson }};
+  const configId = {{ config_id|tojson }};
+  const completeUrl = {{ complete_url|tojson }};
+  const vendorUrl = {{ vendor_url|tojson }};
+  const button = document.getElementById('connect-whatsapp');
+  const statusBox = document.getElementById('wa-status');
+  let authCode = null;
+  let sessionInfo = null;
+  let submitted = false;
+  let finishTimer = null;
+
+  function setStatus(message, type) {
+    if (!statusBox) return;
+    statusBox.className = 'wa-status show ' + (type || '');
+    statusBox.innerHTML = message;
+  }
+
+  function tryComplete() {
+    if (submitted || !authCode || !sessionInfo || !sessionInfo.waba_id || !sessionInfo.phone_number_id) return;
+    submitted = true;
+    if (finishTimer) clearTimeout(finishTimer);
+    button.disabled = true;
+    button.innerHTML = '<span class="spinner-border spinner-border-sm me-2"></span>Conectando...';
+    const csrf = document.querySelector('meta[name="csrf-token"]')?.content || '';
+    fetch(completeUrl, {
+      method: 'POST',
+      credentials: 'same-origin',
+      headers: {'Content-Type': 'application/json', 'X-CSRFToken': csrf},
+      body: JSON.stringify({code: authCode, waba_id: sessionInfo.waba_id, phone_number_id: sessionInfo.phone_number_id, business_id: sessionInfo.business_id || ''})
+    }).then(async (response) => {
+      const data = await response.json().catch(() => ({}));
+      if (!response.ok || !data.success) throw new Error(data.error || 'No pudimos completar la conexión.');
+      setStatus('<i class="bi bi-check-circle-fill me-2"></i><strong>WhatsApp conectado.</strong> Activando tu Vendedor IA...', 'ok');
+      window.location.href = data.redirect_url || vendorUrl;
+    }).catch((error) => {
+      submitted = false;
+      button.disabled = false;
+      button.innerHTML = '<i class="bi bi-whatsapp me-2"></i>Conectar WhatsApp';
+      setStatus('<i class="bi bi-exclamation-triangle me-2"></i>' + (error.message || 'No pudimos completar la conexión.'), 'error');
+    });
+  }
+
+  window.addEventListener('message', function (event) {
+    if (!event.origin || !event.origin.endsWith('facebook.com')) return;
+    let data;
+    try { data = typeof event.data === 'string' ? JSON.parse(event.data) : event.data; } catch (_) { return; }
+    if (!data || data.type !== 'WA_EMBEDDED_SIGNUP') return;
+    const eventName = String(data.event || '').toUpperCase();
+    if (data.data && data.data.waba_id) {
+      sessionInfo = {
+        waba_id: data.data.waba_id,
+        phone_number_id: data.data.phone_number_id || null,
+        business_id: data.data.businessId || data.data.business_id || ''
+      };
+    }
+    if (eventName === 'ERROR') {
+      submitted = false;
+      button.disabled = false;
+      button.innerHTML = '<i class="bi bi-whatsapp me-2"></i>Conectar WhatsApp';
+      setStatus('<i class="bi bi-exclamation-triangle me-2"></i>' + (data.data?.error_message || 'Meta no pudo completar la conexión.'), 'error');
+      return;
+    }
+    if (eventName === 'CANCEL') {
+      submitted = false;
+      button.disabled = false;
+      button.innerHTML = '<i class="bi bi-whatsapp me-2"></i>Conectar WhatsApp';
+      setStatus('La conexión fue cancelada. Podés intentarlo nuevamente.', 'error');
+      return;
+    }
+    if (eventName === 'FINISH' || eventName === 'FINISH_ONLY_WABA' || eventName === 'FINISH_WHATSAPP_BUSINESS_APP_ONBOARDING') {
+      tryComplete();
+    }
+  });
+
+  window.fbAsyncInit = function () {
+    FB.init({appId: appId, cookie: true, xfbml: true, version: 'v26.0'});
+  };
+
+  button.addEventListener('click', function () {
+    if (!window.FB) {
+      setStatus('No se pudo cargar Meta. Actualizá la página e intentá nuevamente.', 'error');
+      return;
+    }
+    setStatus('Abriendo el registro seguro de Meta...', '');
+    FB.login(function (response) {
+      if (response && response.authResponse && response.authResponse.code) {
+        authCode = response.authResponse.code;
+        finishTimer = setTimeout(tryComplete, 1500);
+        tryComplete();
+      } else if (response && response.status === 'unknown') {
+        setStatus('La conexión no fue autorizada. Podés intentarlo nuevamente.', 'error');
+      }
+    }, {
+      config_id: configId,
+      response_type: 'code',
+      override_default_response_type: true,
+      extras: {sessionInfoVersion: '3'}
+    });
+  });
+})();
+</script>
+{% endif %}
+{% endblock %}
