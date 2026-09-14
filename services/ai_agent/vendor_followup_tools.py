@@ -103,7 +103,7 @@ class VendorPromotionsTool(AgentTool):
 
 
 def install_vendor_followup_tools(runtime_cls) -> None:
-    """Register follow-up tools exclusively for the Vendedor agent."""
+    """Register follow-up tools for Vendedor plus safe pricing tools."""
     runtime_cls.tool_registry.update(
         {
             "consultar_pedido": VendorOrderStatusTool,
@@ -127,6 +127,10 @@ def install_vendor_followup_tools(runtime_cls) -> None:
     # whatsapp_agent. Patch the vendor guidance at that point instead of adding
     # another top-level import cycle to orchestrator_v2.
     try:
+        from services.ai_agent.tools.pricing_controller import install_pricing_controller_tools
+
+        install_pricing_controller_tools(runtime_cls)
+
         import services.ai_agent.orchestrator_v2 as runtime_module
 
         runtime_module.VENDOR_SYSTEM_PROMPT = (
