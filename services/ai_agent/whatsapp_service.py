@@ -44,12 +44,19 @@ class WhatsAppService:
 
     @classmethod
     def send_text(cls, company, *, to: str, body: str) -> Dict[str, Any]:
+        body_text = str(body or "")[:4096]
+        # Mercado Pago generates a link preview whose title can show the first
+        # item's unit price (e.g. $5.300) even when the checkout total is higher.
+        # Hide only that preview so the customer sees the authoritative total
+        # already included in the WhatsApp message, while keeping previews for
+        # other useful links.
+        is_mercado_pago_link = "mercadopago.com" in body_text.lower()
         payload = {
             "messaging_product": "whatsapp",
             "recipient_type": "individual",
             "to": "".join(ch for ch in str(to or "") if ch.isdigit()),
             "type": "text",
-            "text": {"preview_url": True, "body": str(body or "")[:4096]},
+            "text": {"preview_url": not is_mercado_pago_link, "body": body_text},
         }
         return cls._post_message(company, to=to, payload=payload)
 
