@@ -143,9 +143,9 @@ def vendor_whatsapp_complete():
         return jsonify({"success": False, "error": "Meta no devolvió todos los datos necesarios para conectar el número."}), 400
 
     app_id, config_id = _embedded_signup_config()
-    app_secret = (os.getenv("META_APP_SECRET") or "").strip()
+    app_secret = (os.getenv("META_APP_SECRET") or os.getenv("WHATSAPP_APP_SECRET") or "").strip()
     if not app_id or not app_secret or not config_id:
-        current_app.logger.error("WhatsApp Embedded Signup is not configured: missing META_APP_ID, META_APP_SECRET or META_EMBEDDED_SIGNUP_CONFIG_ID")
+        current_app.logger.error("WhatsApp Embedded Signup is not configured: missing META_APP_ID, META_APP_SECRET/WHATSAPP_APP_SECRET or META_EMBEDDED_SIGNUP_CONFIG_ID")
         return jsonify({"success": False, "error": "La conexión de WhatsApp todavía no está habilitada en StockArMobile."}), 503
 
     try:
@@ -163,9 +163,7 @@ def vendor_whatsapp_complete():
 
         phone_response = requests.get(
             _meta_graph_url(phone_number_id),
-            params={
-                "fields": "id,display_phone_number,verified_name,status,platform_type,code_verification_status,name_status",
-            },
+            params={"fields": "id,display_phone_number,verified_name,status,platform_type,code_verification_status,name_status"},
             headers={"Authorization": f"Bearer {access_token}"},
             timeout=20,
         )
@@ -232,11 +230,7 @@ def vendor_whatsapp_complete():
         update_ai_preferences(company, whatsapp_updates=whatsapp_updates)
         db.session.commit()
         current_app.logger.info("WhatsApp Embedded Signup connected company_id=%s waba_id=%s phone_number_id=%s", current_user.company_id, waba_id, phone_number_id)
-        return jsonify({
-            "success": True,
-            "phone_number": str(phone.get("display_phone_number") or "").strip(),
-            "redirect_url": url_for("ai_agents.agent", agent="vendedor", whatsapp="connected"),
-        })
+        return jsonify({"success": True, "phone_number": str(phone.get("display_phone_number") or "").strip(), "redirect_url": url_for("ai_agents.agent", agent="vendedor", whatsapp="connected")})
     except requests.RequestException:
         current_app.logger.exception("WhatsApp Embedded Signup network failure")
         return jsonify({"success": False, "error": "No pudimos comunicarnos con Meta. Intentá nuevamente en unos segundos."}), 502
