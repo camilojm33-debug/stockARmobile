@@ -6,6 +6,7 @@ from app import app, AuditLog, Company, Invoice, Payment, PaymentHistory, Subscr
 from services.subscription_service import SubscriptionService
 from services.ai_agent.usage_service import can_use_ai
 from stockarmobile.models.conversations import Conversation
+from pricing_controller import bp as pricing_controller_bp
 
 
 def stockarmobile_health():
@@ -102,6 +103,17 @@ def superadmin_delete_historical_subscription(subscription_id):
         app.logger.exception("Error eliminando suscripción histórica id=%s", subscription_id)
         flash("No se pudo eliminar la suscripción histórica.", "danger")
     return redirect(url_for("saas.subscriptions_panel"))
+
+
+# Pricing controller is bootstrapped here instead of altering the main app module.
+# This keeps the existing application import graph unchanged while exposing the new tenant-scoped feature.
+app.register_blueprint(pricing_controller_bp)
+
+
+@app.route("/productos/precios")
+@login_required
+def products_pricing_shortcut():
+    return redirect(url_for("pricing_controller.index"))
 
 
 application = app
