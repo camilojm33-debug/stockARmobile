@@ -14,8 +14,8 @@ from stockarmobile.models.conversations import ConversationMessage
 AI_PLANS = (
     {"code": "inicio", "name": "Inicio", "price": "$11.385 / mes", "limit": 300, "agents": ("asistente",), "tagline": "Tu negocio empieza a trabajar con IA", "badge": None, "invoice_processing": False},
     {"code": "vendedor", "name": "Vendedor", "price": "$22.885 / mes", "limit": 1500, "agents": ("asistente", "vendedor"), "tagline": "Tu vendedor trabaja 24/7", "badge": None, "invoice_processing": False},
-    {"code": "negocio", "name": "Negocio IA", "price": "$45.885 / mes", "limit": 5000, "agents": ("asistente", "vendedor", "analista"), "tagline": "Convertí tus datos en decisiones", "badge": "RECOMENDADO", "invoice_processing": False},
-    {"code": "pro", "name": "IA PRO", "price": "$110.000 / mes", "limit": 15000, "agents": ("asistente", "vendedor", "analista", "marketing"), "tagline": "La IA completa para tu negocio", "badge": "PLAN PREMIUM", "invoice_processing": True},
+    {"code": "negocio", "name": "Negocio IA", "price": "$45.885 / mes", "limit": 5000, "agents": ("asistente", "vendedor", "analista"), "tagline": "Decisiones + optimización de precios con IA, con vista previa y aprobación", "badge": "RECOMENDADO", "invoice_processing": False, "pricing_controller": True},
+    {"code": "pro", "name": "IA PRO", "price": "$110.000 / mes", "limit": 15000, "agents": ("asistente", "vendedor", "analista", "marketing"), "tagline": "Equipo IA completo + control global de precios con vista previa, aprobación y rollback", "badge": "PLAN PREMIUM", "invoice_processing": True, "pricing_controller": True},
 )
 AI_PLAN_BY_CODE = {plan["code"]: plan for plan in AI_PLANS}
 AGENT_LABELS = {"vendedor": "Vendedor IA", "asistente": "Asistente Empresarial", "analista": "Analista IA", "marketing": "Marketing IA"}
