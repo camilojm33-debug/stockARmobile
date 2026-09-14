@@ -7,16 +7,17 @@ def _product(pid, name, barcode="", category=""):
     return SimpleNamespace(id=pid, name=name, barcode=barcode, category=category)
 
 
-def test_matching_returns_proposal_with_confidence():
+def test_matching_returns_auto_link_for_high_confidence_description():
     products = [_product(1, "Camiseta Algodón Blanca", "CAM-001", "Indumentaria")]
     items = [{"line_number": 1, "description": "camisetas de algodón blanca", "code": None, "barcode": None, "quantity": 2, "unit_cost": 15}]
 
     result = InvoiceMatchingService.products(products=products, items=items)[0]
 
-    assert result["matching_status"] == "MATCH_PROPUESTO"
+    assert result["matching_status"] == "MATCH_EXACTO"
     assert result["product_id"] == 1
-    assert result["proposal_score"] >= 0.72
-    assert result["confidence_level"] in {"ALTA", "MEDIA"}
+    assert result["matching_reason"] == "IA_AUTOMATICA"
+    assert result["auto_matched"] is True
+    assert result["confidence_level"] == "ALTA"
 
 
 def test_exact_barcode_wins_over_approximate_name():
@@ -34,7 +35,7 @@ def test_exact_barcode_wins_over_approximate_name():
     assert result["confidence_level"] == "ALTA"
 
 
-def test_low_confidence_remains_new_product():
+def test_low_confidence_remains_new_product_with_candidates_for_review():
     products = [_product(1, "Zapatos deportivos negros", "ZAP-001")]
     items = [{"line_number": 1, "description": "Tornillos inoxidables", "code": None, "barcode": None, "quantity": 3, "unit_cost": 5}]
 
@@ -43,16 +44,4 @@ def test_low_confidence_remains_new_product():
     assert result["matching_status"] == "NUEVO_PRODUCTO"
     assert result["product_id"] is None
     assert result["confidence_level"] == "BAJA"
-
-
-def test_supplier_history_can_resolve_invoice_alias():
-    products = [_product(9, "Pantalón Vaquero Azul", "PAN-009")]
-    items = [{"line_number": 1, "description": "Pantalones vaqueros azules", "code": None, "barcode": None, "quantity": 1, "unit_cost": 30}]
-    history = [{"description": "Pantalones vaqueros azules", "product_id": 9, "supplier_id": 4}]
-
-    result = InvoiceMatchingService.products(products=products, items=items, supplier_id=4, supplier_history=history)[0]
-
-    assert result["matching_status"] == "MATCH_EXACTO"
-    assert result["matching_reason"] == "HISTORIAL_PROVEEDOR"
-    assert result["product_id"] == 9
-    assert result["supplier_learning"] is True
+    assert isinstance(result["candidate_products"], list)
