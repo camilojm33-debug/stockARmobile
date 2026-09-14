@@ -31,12 +31,15 @@ class PurchasePaymentDetail(db.Model):
 
 PAYMENT_METHODS = [("EFECTIVO", "Efectivo"), ("TRANSFERENCIA", "Transferencia bancaria"), ("TARJETA", "Tarjeta"), ("MERCADOPAGO", "Mercado Pago"), ("CHEQUE", "Cheque"), ("CUENTA_CORRIENTE", "Cuenta corriente"), ("OTROS", "Otro")]
 
+
 def _company_id():
     if getattr(current_user, "role", None) == "superadmin": return request.values.get("company_id", type=int)
     return getattr(current_user, "company_id", None)
 
+
 def _guard():
     if getattr(current_user, "role", None) not in {"admin", "superadmin"}: abort(403)
+
 
 def _purchase_context(supplier_id, purchase_id, company_id):
     from app import PurchaseOrder, Supplier
@@ -44,14 +47,17 @@ def _purchase_context(supplier_id, purchase_id, company_id):
     purchase = PurchaseOrder.query.filter_by(id=purchase_id, supplier_id=supplier.id, company_id=company_id).first_or_404()
     return supplier, purchase
 
+
 def _parse_money(value):
     try: return max(Decimal("0"), Decimal(str(value or "0").replace(",", ".")))
     except Exception: return Decimal("0")
+
 
 def _parse_due_date(value):
     if not value: return None
     try: return datetime.strptime(value, "%Y-%m-%d").date()
     except ValueError: return None
+
 
 def register_routes(bp):
     @bp.route("/proveedores/<int:supplier_id>/compras/<int:purchase_id>/pago", methods=["GET", "POST"])
@@ -68,18 +74,25 @@ def register_routes(bp):
             secondary = (request.form.get("secondary_payment_method") or "").strip().upper() or None
             paid = _parse_money(request.form.get("paid_amount")); secondary_paid = _parse_money(request.form.get("secondary_paid_amount")) if secondary else Decimal("0")
             total = Decimal(str(purchase.total_amount or 0))
+            requested_status = (request.form.get("payment_status") or "").strip().lower()
             if primary not in {key for key, _ in PAYMENT_METHODS}: primary = "OTROS"
             if secondary and secondary not in {key for key, _ in PAYMENT_METHODS}: secondary, secondary_paid = None, Decimal("0")
             if secondary and secondary == primary:
                 flash("El segundo medio de pago debe ser diferente al principal.", "warning")
                 return render_template("compras/supplier_purchase_payment.html", supplier=supplier, purchase=purchase, detail=detail, payment_methods=PAYMENT_METHODS, selected_company_id=company_id)
+
+            # If the operator explicitly marks the purchase as paid, complete the
+            # missing amount automatically. This prevents a common UI error where
+            # the status is changed to Pagada but the amount field remains zero.
+            if requested_status == "pagada" and total > 0 and paid + secondary_paid < total:
+                paid = total - secondary_paid
+
             if paid + secondary_paid > total:
                 flash("Los importes pagados no pueden superar el total de la compra.", "danger")
                 return render_template("compras/supplier_purchase_payment.html", supplier=supplier, purchase=purchase, detail=detail, payment_methods=PAYMENT_METHODS, selected_company_id=company_id)
             term_days = max(0, request.form.get("payment_term_days", type=int) or 0); due_date = _parse_due_date(request.form.get("due_date"))
             if term_days and due_date is None: due_date = (purchase.date.date() if purchase.date else date.today()) + timedelta(days=term_days)
             if due_date and not term_days: term_days = max(0, (due_date - (purchase.date.date() if purchase.date else date.today())).days)
-            # The paid amount is the source of truth. A stale/manual status cannot keep a fully paid purchase overdue.
             status = "pagada" if paid + secondary_paid >= total and total > 0 else ("parcial" if paid + secondary_paid > 0 else "pendiente")
             detail.payment_method, detail.paid_amount = primary, paid
             detail.secondary_payment_method, detail.secondary_paid_amount = secondary, secondary_paid
@@ -92,6 +105,7 @@ def register_routes(bp):
             return redirect(url_for("purchases.supplier_purchases", supplier_id=supplier.id, company_id=company_id))
         return render_template("compras/supplier_purchase_payment.html", supplier=supplier, purchase=purchase, detail=detail, payment_methods=PAYMENT_METHODS, selected_company_id=company_id)
     return bp
+
 
 def register_notification_extension():
     try: from services import notification_service
@@ -109,7 +123,6 @@ def register_notification_extension():
             rows = (db.session.query(PurchasePaymentDetail, PurchaseOrder, Supplier).join(PurchaseOrder, PurchaseOrder.id == PurchasePaymentDetail.purchase_order_id).join(Supplier, Supplier.id == PurchaseOrder.supplier_id).filter(PurchasePaymentDetail.company_id == company_id, PurchaseOrder.company_id == company_id, Supplier.company_id == company_id, PurchasePaymentDetail.payment_status.in_(["pendiente", "parcial"]), PurchasePaymentDetail.due_date.isnot(None), PurchasePaymentDetail.due_date <= horizon).order_by(PurchasePaymentDetail.due_date.asc(), PurchaseOrder.id.asc()).limit(8).all())
             for detail, purchase, supplier in rows:
                 remaining = max(Decimal("0"), Decimal(str(purchase.total_amount or 0)) - Decimal(str(detail.paid_amount or 0)) - Decimal(str(detail.secondary_paid_amount or 0)))
-                # Defensive reconciliation also handles legacy rows whose status is stale.
                 if remaining <= 0: continue
                 days = (detail.due_date - now.date()).days
                 if days < 0: label, kind = f"Vencido hace {abs(days)} día(s)", "danger"
