@@ -7,6 +7,7 @@ from services.subscription_service import SubscriptionService
 from services.ai_agent.usage_service import can_use_ai
 from stockarmobile.models.conversations import Conversation
 
+
 def stockarmobile_health():
     """Lightweight liveness/readiness endpoint for Render and uptime checks."""
     try:
@@ -68,7 +69,7 @@ def ai_invoices_workspace():
         plan_url = "/dashboard/ai-agent/planes"
 
     return render_template(
-        "ai_agents/invoices.html",
+        "ai_agents/invoices_smart.html",
         invoice_access=invoice_access,
         invoices=invoices,
         can_confirm=can_confirm,
