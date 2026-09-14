@@ -22,6 +22,27 @@ def _date_limit(days: Any, default: int) -> datetime:
     return datetime.utcnow() - timedelta(days=_days(days, default))
 
 
+def _category_period(company_id: int, start: datetime, end: datetime) -> Dict[str, Dict[str, float]]:
+    rows = SaleItem.query.join(Sale).join(Product).filter(
+        Sale.company_id == company_id,
+        Sale.date >= start,
+        Sale.date < end,
+        Sale.status.notin_(["cancelada", "anulada"]),
+        Product.company_id == company_id,
+    ).with_entities(
+        Product.category,
+        func.coalesce(func.sum(SaleItem.quantity), 0).label("units"),
+        func.coalesce(func.sum(SaleItem.quantity * SaleItem.price), 0).label("revenue"),
+    ).group_by(Product.category).all()
+    return {
+        (row.category or "Sin categoría"): {
+            "units": float(row.units or 0),
+            "revenue": float(row.revenue or 0),
+        }
+        for row in rows
+    }
+
+
 class VentasComparativaTool(AgentTool):
     name = "comparar_ventas"
     description = "Compara ventas reales de dos períodos consecutivos e identifica tendencia, categorías y oportunidades explicables."
@@ -59,33 +80,24 @@ class VentasComparativaTool(AgentTool):
         variation = None if previous["sales_total"] == 0 else round(
             ((current["sales_total"] - previous["sales_total"]) / previous["sales_total"]) * 100, 2
         )
-
-        category_rows = SaleItem.query.join(Sale).join(Product).filter(
-            Sale.company_id == self.company_id,
-            Sale.status.notin_(["cancelada", "anulada"]),
-            Sale.date >= previous_start,
-            Product.company_id == self.company_id,
-        ).with_entities(
-            Product.category,
-            func.sum(func.case((Sale.date >= current_start, SaleItem.quantity), else_=0)).label("current_units"),
-            func.sum(func.case((Sale.date < current_start, SaleItem.quantity), else_=0)).label("previous_units"),
-            func.sum(func.case((Sale.date >= current_start, SaleItem.quantity * SaleItem.price), else_=0)).label("current_revenue"),
-            func.sum(func.case((Sale.date < current_start, SaleItem.quantity * SaleItem.price), else_=0)).label("previous_revenue"),
-        ).group_by(Product.category).order_by(Product.category.asc()).limit(50).all()
-
+        current_categories = _category_period(self.company_id, current_start, now)
+        previous_categories = _category_period(self.company_id, previous_start, current_start)
+        category_names = sorted(set(current_categories) | set(previous_categories))
         categories = []
-        for row in category_rows:
-            current_revenue = float(row.current_revenue or 0)
-            previous_revenue = float(row.previous_revenue or 0)
-            cat_variation = None if previous_revenue == 0 else round(((current_revenue - previous_revenue) / previous_revenue) * 100, 2)
+        for name in category_names[:50]:
+            current_data = current_categories.get(name, {})
+            previous_data = previous_categories.get(name, {})
+            current_revenue = float(current_data.get("revenue", 0))
+            previous_revenue = float(previous_data.get("revenue", 0))
             categories.append({
-                "category": row.category or "Sin categoría",
-                "current_units": float(row.current_units or 0),
-                "previous_units": float(row.previous_units or 0),
+                "category": name,
+                "current_units": float(current_data.get("units", 0)),
+                "previous_units": float(previous_data.get("units", 0)),
                 "current_revenue": current_revenue,
                 "previous_revenue": previous_revenue,
-                "variation_percent": cat_variation,
+                "variation_percent": None if previous_revenue == 0 else round(((current_revenue - previous_revenue) / previous_revenue) * 100, 2),
             })
+        categories.sort(key=lambda item: item["current_revenue"], reverse=True)
 
         opportunities = []
         if variation is not None and variation < -5:
