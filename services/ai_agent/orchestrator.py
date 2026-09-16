@@ -4,9 +4,14 @@ from __future__ import annotations
 
 from services.ai_agent.providers.openai_compatible import OpenAICompatibleProvider
 from services.ai_agent.orchestrator_v2 import AgentRuntime
-from services.ai_agent.business_intelligence import install_ai_intelligence_tools
+from services.ai_agent.business_intelligence import install_ai_intelligence_tools, SalesAnomalyTool
 
 install_ai_intelligence_tools(AgentRuntime)
+# Provider function names should stay within conservative ASCII identifiers.
+AgentRuntime.tool_registry.pop("anomalías_ventas", None)
+AgentRuntime.tool_registry["anomalias_ventas"] = SalesAnomalyTool
+AgentRuntime.agent_tool_names.setdefault("analista", set()).discard("anomalías_ventas")
+AgentRuntime.agent_tool_names.setdefault("analista", set()).add("anomalias_ventas")
 
 LMStudioProvider = OpenAICompatibleProvider
 
