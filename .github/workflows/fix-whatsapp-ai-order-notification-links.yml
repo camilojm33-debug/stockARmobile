@@ -17,7 +17,6 @@ jobs:
         run: |
           python - <<'PY'
           from pathlib import Path
-          import re
 
           path = Path("whatsapp_agent.py")
           text = path.read_text(encoding="utf-8")
@@ -29,11 +28,11 @@ jobs:
                   raise SystemExit("expected db import not found")
               text = text.replace(old_import, new_import, 1)
 
-          for function_name in ("ai_orders", "ai_order_detail"):
-              pattern = rf'(def {function_name}\\([^\\n]*\\):\\n)(    )company_id = getattr\\(current_user, "company_id", None\\)'
-              text, count = re.subn(pattern, rf'\\1\\2company_id = get_current_company_id()', text, count=1)
-              if count != 1:
-                  raise SystemExit(f"expected exactly one tenant-context patch in {function_name}, got {count}")
+          needle = 'company_id = getattr(current_user, "company_id", None)'
+          occurrences = text.count(needle)
+          if occurrences != 2:
+              raise SystemExit(f"expected exactly 2 AI seller company_id assignments, got {occurrences}")
+          text = text.replace(needle, "company_id = get_current_company_id()")
 
           path.write_text(text, encoding="utf-8")
           PY
