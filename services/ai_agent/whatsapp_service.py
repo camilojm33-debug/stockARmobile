@@ -11,7 +11,14 @@ from .config_service import get_whatsapp_connection
 
 
 class WhatsAppService:
-    API_VERSION = os.getenv("WHATSAPP_GRAPH_API_VERSION", "v23.0")
+    # Keep the transport aligned with the Meta Graph API version used by
+    # Embedded Signup / Meta management flows, while preserving the legacy
+    # environment variable as a backward-compatible fallback.
+    API_VERSION = (
+        os.getenv("META_GRAPH_API_VERSION")
+        or os.getenv("WHATSAPP_GRAPH_API_VERSION")
+        or "v26.0"
+    ).strip()
 
     @classmethod
     def _post_message(cls, company, *, to: str, payload: Dict[str, Any]) -> Dict[str, Any]:
