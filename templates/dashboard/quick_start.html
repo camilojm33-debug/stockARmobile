@@ -1,25 +1,135 @@
 {% extends "base_master.html" %}
 
-{% block title %}Inicio rápido - StockArmobile{% endblock %}
+{% block title %}Guía rápida - StockArmobile{% endblock %}
 
 {% block content %}
 <div class="app-shell">
-  <div class="mb-4">
-    <span class="page-kicker"><i class="bi bi-lightning-charge"></i> Accesos rápidos</span>
-    <h1 class="h3 fw-bold mb-1">Inicio rápido</h1>
-    <p class="text-muted mb-0">Acciones táctiles para celular, tablet y escritorio.</p>
+  <div class="d-flex flex-wrap align-items-start justify-content-between gap-3 mb-4">
+    <div>
+      <span class="page-kicker"><i class="bi bi-journal-richtext"></i> Guía rápida</span>
+      <h1 class="h3 fw-bold mb-1">Empezá a usar StockArmobile</h1>
+      <p class="text-muted mb-0">Una ruta simple para configurar tu comercio y operar todos los días.</p>
+    </div>
+    <a class="btn btn-primary" href="{{ url_for('sales.index') }}"><i class="bi bi-cart-plus me-1"></i>Hacer una venta</a>
   </div>
-  <div class="row g-3">
-    <div class="col-6 col-md-4 col-xl-2"><a class="card app-card text-decoration-none text-reset h-100" href="{{ url_for('sales.index') }}"><div class="card-body text-center py-4"><i class="bi bi-cart-plus display-6 text-primary"></i><div class="fw-bold mt-2">Nueva venta</div></div></a></div>
-    <div class="col-6 col-md-4 col-xl-2"><a class="card app-card text-decoration-none text-reset h-100" href="{{ url_for('quotes.new_quote') }}"><div class="card-body text-center py-4"><i class="bi bi-file-earmark-text display-6 text-primary"></i><div class="fw-bold mt-2">Nuevo presupuesto</div></div></a></div>
-    <div class="col-6 col-md-4 col-xl-2"><a class="card app-card text-decoration-none text-reset h-100" href="{{ url_for('products.index') }}#productForm"><div class="card-body text-center py-4"><i class="bi bi-box-seam display-6 text-primary"></i><div class="fw-bold mt-2">Nuevo producto</div></div></a></div>
-    <div class="col-6 col-md-4 col-xl-2"><a class="card app-card text-decoration-none text-reset h-100" href="{{ url_for('clients.index') }}#clientForm"><div class="card-body text-center py-4"><i class="bi bi-person-plus display-6 text-primary"></i><div class="fw-bold mt-2">Nuevo cliente</div></div></a></div>
-    <div class="col-6 col-md-4 col-xl-2"><a class="card app-card text-decoration-none text-reset h-100" href="{{ url_for('cash.index') }}"><div class="card-body text-center py-4"><i class="bi bi-cash-coin display-6 text-primary"></i><div class="fw-bold mt-2">Caja</div></div></a></div>
-    {% if current_user.role == 'admin' %}
-    <div class="col-6 col-md-4 col-xl-2"><a class="card app-card text-decoration-none text-reset h-100" href="{{ url_for('purchases.index') }}"><div class="card-body text-center py-4"><i class="bi bi-truck display-6 text-primary"></i><div class="fw-bold mt-2">Compras</div></div></a></div>
-    {% endif %}
-    <div class="col-6 col-md-4 col-xl-2"><a class="card app-card text-decoration-none text-reset h-100" href="{{ url_for('sales.index') }}?scanner=1"><div class="card-body text-center py-4"><i class="bi bi-upc-scan display-6 text-primary"></i><div class="fw-bold mt-2">Escanear</div></div></a></div>
-    <div class="col-6 col-md-4 col-xl-2"><a class="card app-card text-decoration-none text-reset h-100" href="{{ url_for('referrals.seller_dashboard') }}"><div class="card-body text-center py-4"><i class="bi bi-megaphone display-6 text-primary"></i><div class="fw-bold mt-2">Referidos</div></div></a></div>
+
+  <div class="alert alert-primary border-0 shadow-sm mb-4">
+    <div class="d-flex gap-3 align-items-start">
+      <i class="bi bi-rocket-takeoff fs-4"></i>
+      <div>
+        <strong>Ruta recomendada:</strong> configurá tu empresa → cargá productos → agregá clientes → configurá caja/cobros → hacé la primera venta → revisá reportes.
+      </div>
+    </div>
+  </div>
+
+  <div class="row g-3 mb-4">
+    <div class="col-6 col-lg-3">
+      <a class="card app-card text-decoration-none text-reset h-100" href="{{ url_for('products.index') }}#productForm">
+        <div class="card-body"><div class="metric-icon mb-3"><i class="bi bi-box-seam"></i></div><h2 class="h6 fw-bold">1. Productos</h2><p class="small text-muted mb-0">Cargá nombre, precio, stock, código y categoría.</p></div>
+      </a>
+    </div>
+    <div class="col-6 col-lg-3">
+      <a class="card app-card text-decoration-none text-reset h-100" href="{{ url_for('clients.index') }}#clientForm">
+        <div class="card-body"><div class="metric-icon mb-3"><i class="bi bi-people"></i></div><h2 class="h6 fw-bold">2. Clientes</h2><p class="small text-muted mb-0">Registrá clientes para historial y ventas recurrentes.</p></div>
+      </a>
+    </div>
+    <div class="col-6 col-lg-3">
+      <a class="card app-card text-decoration-none text-reset h-100" href="{{ url_for('cash.index') }}">
+        <div class="card-body"><div class="metric-icon mb-3"><i class="bi bi-cash-coin"></i></div><h2 class="h6 fw-bold">3. Caja</h2><p class="small text-muted mb-0">Abrí caja, registrá movimientos y controlá el cierre.</p></div>
+      </a>
+    </div>
+    <div class="col-6 col-lg-3">
+      <a class="card app-card text-decoration-none text-reset h-100" href="{{ url_for('sales.index') }}">
+        <div class="card-body"><div class="metric-icon mb-3"><i class="bi bi-cart-check"></i></div><h2 class="h6 fw-bold">4. Primera venta</h2><p class="small text-muted mb-0">Elegí productos, cliente y medio de pago y confirmá.</p></div>
+      </a>
+    </div>
+  </div>
+
+  <div class="row g-4">
+    <div class="col-lg-7">
+      <div class="card app-card mb-4">
+        <div class="card-body p-4">
+          <h2 class="h5 fw-bold mb-3"><i class="bi bi-list-check text-primary me-2"></i>Operación diaria</h2>
+          <div class="d-flex gap-3 mb-3"><span class="badge rounded-pill text-bg-primary">01</span><div><strong>Revisá stock</strong><div class="small text-muted">Controlá existencias y productos con stock bajo antes de vender.</div></div></div>
+          <div class="d-flex gap-3 mb-3"><span class="badge rounded-pill text-bg-primary">02</span><div><strong>Vendé</strong><div class="small text-muted">Usá la venta rápida o el scanner para cargar productos.</div></div></div>
+          <div class="d-flex gap-3 mb-3"><span class="badge rounded-pill text-bg-primary">03</span><div><strong>Presupuestá cuando corresponda</strong><div class="small text-muted">Un presupuesto puede quedar pendiente, ser aceptado o convertirse posteriormente en venta.</div></div></div>
+          <div class="d-flex gap-3 mb-3"><span class="badge rounded-pill text-bg-primary">04</span><div><strong>Controlá caja</strong><div class="small text-muted">Registrá ingresos y egresos y revisá el cierre del día.</div></div></div>
+          <div class="d-flex gap-3"><span class="badge rounded-pill text-bg-primary">05</span><div><strong>Revisá información</strong><div class="small text-muted">Usá dashboard, reportes y métricas para detectar cambios en ventas, stock y clientes.</div></div></div>
+        </div>
+      </div>
+
+      <div class="card app-card mb-4">
+        <div class="card-body p-4">
+          <h2 class="h5 fw-bold mb-3"><i class="bi bi-file-earmark-text text-primary me-2"></i>Presupuestos y pedidos</h2>
+          <p class="small text-muted">Usá presupuestos cuando todavía no corresponde registrar una venta. Revisá siempre el estado antes de interpretar la operación como confirmada.</p>
+          <div class="row g-2">
+            <div class="col-sm-6"><div class="border rounded-3 p-3 h-100"><strong>Pendiente</strong><div class="small text-muted">Todavía no está confirmado.</div></div></div>
+            <div class="col-sm-6"><div class="border rounded-3 p-3 h-100"><strong>Aceptado</strong><div class="small text-muted">El cliente aceptó el presupuesto, pero no significa por sí solo que exista una venta.</div></div></div>
+            <div class="col-sm-6"><div class="border rounded-3 p-3 h-100"><strong>Pago</strong><div class="small text-muted">El pago puede estar pendiente, en proceso o aprobado.</div></div></div>
+            <div class="col-sm-6"><div class="border rounded-3 p-3 h-100"><strong>Venta confirmada</strong><div class="small text-muted">La operación fue convertida correctamente en una venta.</div></div></div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <div class="col-lg-5">
+      <div class="card app-card mb-4">
+        <div class="card-body p-4">
+          <h2 class="h5 fw-bold mb-3"><i class="bi bi-stars text-primary me-2"></i>Agentes IA</h2>
+          <p class="small text-muted">Los agentes trabajan sobre las capacidades habilitadas para tu empresa y plan.</p>
+          <div class="border rounded-3 p-3 mb-2"><strong>Vendedor 24/7</strong><div class="small text-muted">Atiende consultas comerciales, busca productos y puede armar pedidos/presupuestos según el flujo habilitado.</div></div>
+          <div class="border rounded-3 p-3 mb-2"><strong>Asistente Empresarial</strong><div class="small text-muted">Ayuda a consultar información del negocio y responder preguntas sobre ventas, stock, productos y clientes.</div></div>
+          <div class="border rounded-3 p-3 mb-2"><strong>Analista IA</strong><div class="small text-muted">Analiza información disponible para encontrar patrones y oportunidades.</div></div>
+          <div class="border rounded-3 p-3"><strong>Marketing IA</strong><div class="small text-muted">Ayuda a trabajar segmentaciones y campañas, manteniendo las campañas como borradores hasta su revisión.</div></div>
+          {% if current_user.role != 'seller' %}
+          <a class="btn btn-outline-primary w-100 mt-3" href="{{ url_for('dashboard.ai_metrics') }}"><i class="bi bi-graph-up me-1"></i>Ver IA y métricas</a>
+          {% endif %}
+        </div>
+      </div>
+
+      <div class="card app-card mb-4">
+        <div class="card-body p-4">
+          <h2 class="h5 fw-bold mb-3"><i class="bi bi-credit-card text-primary me-2"></i>Cobros y Mercado Pago</h2>
+          <p class="small text-muted mb-2">Cuando uses un pago online, distinguí claramente entre el estado del pago y la confirmación de la venta.</p>
+          <ul class="small text-muted mb-0 ps-3">
+            <li class="mb-1"><strong>Pendiente:</strong> todavía no se confirmó.</li>
+            <li class="mb-1"><strong>En proceso:</strong> Mercado Pago continúa procesándolo.</li>
+            <li class="mb-1"><strong>Aprobado:</strong> el pago fue aprobado.</li>
+            <li><strong>Confirmado:</strong> el pedido fue convertido correctamente en venta.</li>
+          </ul>
+        </div>
+      </div>
+
+      {% if current_user.role == 'admin' %}
+      <div class="card app-card mb-4">
+        <div class="card-body p-4">
+          <h2 class="h5 fw-bold mb-3"><i class="bi bi-truck text-primary me-2"></i>Compras</h2>
+          <p class="small text-muted mb-0">Registrá compras y movimientos de mercadería para mantener actualizado el stock.</p>
+          <a class="btn btn-outline-primary w-100 mt-3" href="{{ url_for('purchases.index') }}">Ir a compras</a>
+        </div>
+      </div>
+      {% endif %}
+    </div>
+  </div>
+
+  <div class="card app-card mt-1">
+    <div class="card-body p-4">
+      <div class="row g-4 align-items-center">
+        <div class="col-lg-8">
+          <h2 class="h5 fw-bold mb-2"><i class="bi bi-shield-check text-primary me-2"></i>Buenas prácticas</h2>
+          <div class="row g-2 small text-muted">
+            <div class="col-md-6">• Cada empleado debe usar su propio usuario.</div>
+            <div class="col-md-6">• Revisá permisos antes de entregar acceso.</div>
+            <div class="col-md-6">• No compartas contraseñas.</div>
+            <div class="col-md-6">• Ante un error, guardá el mensaje y la pantalla.</div>
+          </div>
+        </div>
+        <div class="col-lg-4 text-lg-end">
+          <a class="btn btn-primary me-1" href="{{ url_for('sales.index') }}"><i class="bi bi-cart-plus me-1"></i>Nueva venta</a>
+          <a class="btn btn-outline-secondary" href="{{ url_for('dashboard.index') }}"><i class="bi bi-grid-1x2 me-1"></i>Dashboard</a>
+        </div>
+      </div>
+    </div>
   </div>
 </div>
 {% endblock %}
