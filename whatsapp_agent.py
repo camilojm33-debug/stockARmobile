@@ -10,6 +10,7 @@ from flask import Blueprint, abort, current_app, jsonify, render_template, reque
 from flask_login import current_user, login_required
 from sqlalchemy.exc import IntegrityError
 from stockarmobile.extensions import db
+from app import get_current_company_id
 from stockarmobile.models.conversations import Conversation, ConversationMessage
 from services.ai_agent.config_service import company_for_whatsapp_phone_id, get_whatsapp_connection, is_ai_enabled, choose_agent
 from services.ai_agent.orchestrator_v2 import AgentRuntime
@@ -263,7 +264,7 @@ def _ai_order_row(company_id: int, quote):
 @bp.get("/pedidos-ia")
 @login_required
 def ai_orders():
-    company_id = getattr(current_user, "company_id", None)
+    company_id = get_current_company_id()
     if not company_id or getattr(current_user, "role", None) not in {"admin", "user"}:
         abort(403)
     from app import Quote
@@ -290,7 +291,7 @@ def ai_orders():
 @bp.get("/pedidos-ia/<int:quote_id>")
 @login_required
 def ai_order_detail(quote_id: int):
-    company_id = getattr(current_user, "company_id", None)
+    company_id = get_current_company_id()
     if not company_id or getattr(current_user, "role", None) not in {"admin", "user"}:
         abort(403)
     from app import Quote
