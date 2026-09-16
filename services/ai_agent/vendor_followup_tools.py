@@ -103,7 +103,7 @@ class VendorPromotionsTool(AgentTool):
 
 
 def install_vendor_followup_tools(runtime_cls) -> None:
-    """Register follow-up tools for Vendedor plus safe pricing tools."""
+    """Register follow-up tools for Vendedor plus safe pricing and intelligence tools."""
     runtime_cls.tool_registry.update(
         {
             "consultar_pedido": VendorOrderStatusTool,
@@ -128,8 +128,10 @@ def install_vendor_followup_tools(runtime_cls) -> None:
     # another top-level import cycle to orchestrator_v2.
     try:
         from services.ai_agent.tools.pricing_controller import install_pricing_controller_tools
+        from services.ai_agent.business_intelligence import install_ai_intelligence_tools
 
         install_pricing_controller_tools(runtime_cls)
+        install_ai_intelligence_tools(runtime_cls)
 
         import services.ai_agent.orchestrator_v2 as runtime_module
 
@@ -137,10 +139,11 @@ def install_vendor_followup_tools(runtime_cls) -> None:
             "Sos el Vendedor 24 hs de StockARmobile. Consultá herramientas antes de afirmar "
             "precio, stock o estado de un pedido. No inventes información. Podés consultar "
             "pedidos, recuperar links de pago, cancelar pedidos solo con confirmación explícita, "
-            "mostrar el catálogo y las promociones reales del comercio. Si el cliente retoma una "
-            "conversación con un carrito activo, ayudalo a continuar la compra. Nunca afirmes que "
-            "un pago fue aprobado sin confirmación backend real."
+            "mostrar el catálogo y las promociones reales del comercio y usar memoria y recomendaciones "
+            "comerciales reales cuando ayuden a cerrar la venta. Si el cliente retoma una conversación "
+            "con un carrito activo, ayudalo a continuar la compra. Nunca afirmes que un pago fue aprobado "
+            "sin confirmación backend real."
         )
     except Exception:
-        # Tool registration remains useful even if prompt patching fails.
+        # Tool registration remains useful even if optional prompt patching fails.
         pass
