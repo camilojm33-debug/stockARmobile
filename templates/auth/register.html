@@ -6,6 +6,82 @@
 {% block robots %}<meta name="robots" content="noindex, follow">{% endblock %}
 
 {% block content %}
+<style>
+  .register-legal {
+    margin: 0 0 1.35rem;
+    padding: 1rem 1rem 1.05rem;
+    border: 1px solid rgba(13, 110, 253, .14);
+    border-radius: 16px;
+    background: linear-gradient(135deg, rgba(13, 110, 253, .055), rgba(13, 110, 253, .018));
+  }
+  .register-legal__head {
+    display: flex;
+    align-items: center;
+    gap: .65rem;
+    margin-bottom: .65rem;
+  }
+  .register-legal__icon {
+    width: 2.1rem;
+    height: 2.1rem;
+    display: grid;
+    place-items: center;
+    flex: 0 0 auto;
+    border-radius: 11px;
+    background: #fff;
+    color: #0d6efd;
+    box-shadow: 0 4px 14px rgba(13, 110, 253, .10);
+  }
+  .register-legal__title {
+    margin: 0;
+    font-size: .92rem;
+    font-weight: 700;
+    color: #172033;
+  }
+  .register-legal__copy {
+    margin: 0 0 .85rem 2.75rem;
+    color: #667085;
+    font-size: .82rem;
+    line-height: 1.5;
+  }
+  .register-legal__check {
+    display: flex;
+    align-items: flex-start;
+    gap: .7rem;
+    margin: 0;
+    padding: .8rem .85rem;
+    border-radius: 13px;
+    background: rgba(255,255,255,.88);
+    border: 1px solid rgba(16, 24, 40, .08);
+    cursor: pointer;
+  }
+  .register-legal__check input {
+    margin-top: .18rem;
+    width: 1.05rem;
+    height: 1.05rem;
+    accent-color: #0d6efd;
+    flex: 0 0 auto;
+  }
+  .register-legal__text {
+    margin: 0;
+    color: #344054;
+    font-size: .84rem;
+    line-height: 1.5;
+  }
+  .register-legal__text a {
+    color: #0d6efd;
+    font-weight: 650;
+    text-decoration: none;
+  }
+  .register-legal__text a:hover {
+    text-decoration: underline;
+  }
+  .register-legal__hint {
+    margin: .55rem 0 0 1.75rem;
+    color: #98a2b3;
+    font-size: .72rem;
+  }
+</style>
+
 <div class="login-wrap">
   <div class="login-card">
     <div class="card app-card border-0">
@@ -15,7 +91,8 @@
           <h1 class="h3 fw-bold text-primary mb-1">{% if registration_mode == 'seller' %}Crear cuenta de vendedor{% else %}Crear cuenta{% endif %}</h1>
           <p class="text-muted mb-0">{% if registration_mode == 'seller' %}Registrate para activar tu Programa de Referidos.{% else %}Empeza en minutos con tu panel comercial.{% endif %}</p>
         </div>
-        <form method="post" action="{{ url_for('auth.register') }}">
+
+        <form method="post" action="{{ url_for('auth.register') }}" id="registerForm">
           {{ form.hidden_tag() }}
           <input type="hidden" name="selected_plan" value="{{ selected_plan or 'trial' }}">
           <input type="hidden" name="mode" value="{{ registration_mode or '' }}">
@@ -33,7 +110,26 @@
               <button class="btn btn-outline-secondary" type="button" id="toggleRegisterPassword" aria-label="Mostrar contrasena" title="Mostrar contrasena"><i class="bi bi-eye"></i></button>
             </div>
           </div>
-          <button class="btn btn-primary btn-lg w-100" type="submit">Registrarse</button>
+
+          {% if registration_mode != 'seller' %}
+          <section class="register-legal" aria-labelledby="registerLegalTitle">
+            <div class="register-legal__head">
+              <div class="register-legal__icon" aria-hidden="true"><i class="bi bi-shield-check"></i></div>
+              <h2 class="register-legal__title" id="registerLegalTitle">Antes de crear tu cuenta</h2>
+            </div>
+            <p class="register-legal__copy">Revisá las condiciones del servicio y cómo tratamos tus datos. Podés consultar ambos documentos antes de continuar.</p>
+            <label class="register-legal__check" for="acceptLegalTerms">
+              <input type="checkbox" id="acceptLegalTerms" name="accept_legal_terms" value="1" required>
+              <span class="register-legal__text">
+                Acepto los <a href="{{ url_for('static', filename='terminos-condiciones.html') }}" target="_blank" rel="noopener">Términos y Condiciones</a>
+                y declaro haber leído la <a href="{{ url_for('static', filename='politica-privacidad.html') }}" target="_blank" rel="noopener">Política de Privacidad</a>.
+              </span>
+            </label>
+            <p class="register-legal__hint">Este consentimiento es necesario para completar el registro.</p>
+          </section>
+          {% endif %}
+
+          <button class="btn btn-primary btn-lg w-100" type="submit"{% if registration_mode != 'seller' %} id="registerSubmit"{% endif %}>Registrarse</button>
         </form>
       </div>
     </div>
@@ -46,16 +142,29 @@
   document.addEventListener('DOMContentLoaded', function () {
     const passwordInput = document.getElementById('registerPassword');
     const toggleButton = document.getElementById('toggleRegisterPassword');
-    if (!passwordInput || !toggleButton) return;
+    if (passwordInput && toggleButton) {
+      toggleButton.addEventListener('click', function () {
+        const shouldShow = passwordInput.type === 'password';
+        passwordInput.type = shouldShow ? 'text' : 'password';
+        toggleButton.setAttribute('aria-label', shouldShow ? 'Ocultar contrasena' : 'Mostrar contrasena');
+        toggleButton.setAttribute('title', shouldShow ? 'Ocultar contrasena' : 'Mostrar contrasena');
+        const icon = toggleButton.querySelector('i');
+        if (icon) icon.className = shouldShow ? 'bi bi-eye-slash' : 'bi bi-eye';
+      });
+    }
 
-    toggleButton.addEventListener('click', function () {
-      const shouldShow = passwordInput.type === 'password';
-      passwordInput.type = shouldShow ? 'text' : 'password';
-      toggleButton.setAttribute('aria-label', shouldShow ? 'Ocultar contrasena' : 'Mostrar contrasena');
-      toggleButton.setAttribute('title', shouldShow ? 'Ocultar contrasena' : 'Mostrar contrasena');
-      const icon = toggleButton.querySelector('i');
-      if (icon) icon.className = shouldShow ? 'bi bi-eye-slash' : 'bi bi-eye';
-    });
+    const form = document.getElementById('registerForm');
+    const legalCheckbox = document.getElementById('acceptLegalTerms');
+    const submitButton = document.getElementById('registerSubmit');
+    if (!form || !legalCheckbox || !submitButton) return;
+
+    const syncSubmitState = function () {
+      submitButton.disabled = !legalCheckbox.checked;
+      submitButton.classList.toggle('opacity-75', !legalCheckbox.checked);
+    };
+
+    legalCheckbox.addEventListener('change', syncSubmitState);
+    syncSubmitState();
   });
 </script>
 {% endblock %}
