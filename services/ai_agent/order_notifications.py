@@ -65,7 +65,6 @@ def build_ai_order_notifications():
         number = getattr(quote, "number", None) or f"P-{quote.id:06d}"
         currency = getattr(quote, "currency", None) or "ARS"
         total = float(getattr(quote, "total_amount", 0) or 0)
-        href = url_for("whatsapp_agent.ai_order_detail", quote_id=quote.id)
 
         if getattr(quote, "converted_sale_id", None):
             items.append(
@@ -73,7 +72,7 @@ def build_ai_order_notifications():
                     "type": "success",
                     "title": "Pedido IA confirmado",
                     "body": f"{number} de {customer} · {currency} {total:.2f}. Pago aprobado y venta confirmada.",
-                    "href": href,
+                    "href": url_for("whatsapp_agent.ai_orders", status="confirmed"),
                 }
             )
             continue
@@ -85,7 +84,7 @@ def build_ai_order_notifications():
                     "type": "warning",
                     "title": "Pago aprobado · revisar pedido IA",
                     "body": f"{number} de {customer} tiene el pago aprobado, pero todavía no figura como venta confirmada.",
-                    "href": href,
+                    "href": url_for("whatsapp_agent.ai_orders", status="paid"),
                 }
             )
         elif payment_status in {"pending", "in_process", "authorized"}:
@@ -94,7 +93,7 @@ def build_ai_order_notifications():
                     "type": "primary",
                     "title": "Nuevo pedido IA",
                     "body": f"{number} de {customer} · {currency} {total:.2f}. Esperando aprobación de pago.",
-                    "href": href,
+                    "href": url_for("whatsapp_agent.ai_orders", status="pending"),
                 }
             )
         else:
@@ -103,7 +102,7 @@ def build_ai_order_notifications():
                     "type": "danger",
                     "title": "Incidencia en pedido IA",
                     "body": f"{number} de {customer} · estado de pago: {payment_status.replace('_', ' ')}.",
-                    "href": href,
+                    "href": url_for("whatsapp_agent.ai_orders", status="problem"),
                 }
             )
     return items[:6]
