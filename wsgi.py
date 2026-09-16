@@ -31,6 +31,79 @@ if not any(rule.rule == "/health" for rule in app.url_map.iter_rules()):
     )
 
 
+@app.before_request
+def enforce_registration_legal_acceptance():
+    """Enforce legal acceptance server-side and keep a durable audit record.
+
+    The registration template already requires the checkbox client-side, but the
+    browser requirement is not a security boundary. This guard rejects forged POSTs
+    without the acceptance and records the accepted policy versions in AuditLog.
+    """
+    if request.endpoint != "auth.register" or request.method != "POST":
+        return None
+
+    # Seller registration has a separate flow and currently does not render the
+    # company onboarding legal consent block.
+    if (request.form.get("mode") or "").strip().lower() == "seller":
+        return None
+
+    if request.form.get("accept_legal_terms") != "1":
+        flash("Debes aceptar los Términos y Condiciones y la Política de Privacidad para crear la cuenta.", "warning")
+        return redirect(url_for(
+            "auth.register",
+            selected_plan=(request.form.get("selected_plan") or "trial").strip().lower(),
+            mode=(request.form.get("mode") or "").strip().lower(),
+        ))
+
+    email = (request.form.get("email") or "").strip().lower()
+    if email:
+        db.session.add(
+            AuditLog(
+                action="legal_acceptance_submitted",
+                entity="registration",
+                detail=(
+                    f"Aceptación de términos enviada en registro. email={email}; "
+                    "terms_version=2026-09-16; privacy_version=2026-09-14"
+                ),
+                ip_address=(request.remote_addr or "unknown"),
+            )
+        )
+        db.session.commit()
+    return None
+
+
+@app.before_request
+def trace_mp_qr_requests():
+    path = request.path or ""
+    if not path.startswith("/ventas/api/mp-qr/"):
+        return None
+    g.mp_qr_trace_started = True
+    g.mp_qr_endpoint_entered = False
+    g.mp_qr_csrf_header_present = bool(request.headers.get("X-CSRFToken"))
+    g.mp_qr_request_method = request.method
+    g.mp_qr_request_path = path
+    g.mp_qr_request_endpoint = request.endpoint or ""
+    g.mp_qr_request_id = request.headers.get("X-Request-ID") or request.headers.get("X-Correlation-ID") or ""
+    g.mp_qr_user_id = None
+    g.mp_qr_company_id = None
+    try:
+        if current_user.is_authenticated:
+            g.mp_qr_user_id = getattr(current_user, "id", None)
+            g.mp_qr_company_id = getattr(current_user, "company_id", None)
+    except Exception as exc:
+        app.logger.warning("MP QR trace incoming user-context capture failed: %s", exc)
+    app.logger.info(
+        "MP QR trace incoming: method=%s path=%s endpoint=%s csrf_header_present=%s company_id=%s user_id=%s request_id=%s",
+        request.method,
+        path,
+        request.endpoint or "",
+        g.mp_qr_csrf_header_present,
+        getattr(g, "mp_qr_company_id", None),
+        getattr(g, "mp_qr_user_id", None),
+        g.mp_qr_request_id,
+    )
+
+
 @app.route("/dashboard/ai-agent/facturas", methods=["GET"])
 @login_required
 def ai_invoices_workspace():
