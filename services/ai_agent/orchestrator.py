@@ -4,6 +4,9 @@ from __future__ import annotations
 
 from services.ai_agent.providers.openai_compatible import OpenAICompatibleProvider
 from services.ai_agent.orchestrator_v2 import AgentRuntime
+from services.ai_agent.business_intelligence import install_ai_intelligence_tools
+
+install_ai_intelligence_tools(AgentRuntime)
 
 LMStudioProvider = OpenAICompatibleProvider
 
