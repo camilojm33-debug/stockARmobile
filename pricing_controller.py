@@ -245,10 +245,12 @@ def preview():
         flash(str(exc), "danger")
         return redirect(url_for("pricing_controller.index"))
 
+    batch_rules = dict(rules)
+    batch_rules.pop("product_query", None)
     batch = PriceControllerBatch(
         company_id=current_user.company_id,
         user_id=current_user.id,
-        **rules,
+        **batch_rules,
         status="preview",
     )
     db.session.add(batch)
