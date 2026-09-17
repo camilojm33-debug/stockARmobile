@@ -55,10 +55,12 @@ def _rules_form(rules: dict):
 
 def create_preview(*, company_id: int, user_id: int | None, rules: dict) -> dict:
     normalized = _parse_rules(_rules_form(rules))
+    batch_rules = dict(normalized)
+    batch_rules.pop("product_query", None)
     batch = PriceControllerBatch(
         company_id=company_id,
         user_id=int(user_id) if user_id else int(rules.get("actor_user_id") or 0),
-        **normalized,
+        **batch_rules,
         status="preview",
     )
     if not batch.user_id:
