@@ -183,6 +183,20 @@ def index():
     )
 
 
+@bp.get("/vendor-metrics")
+@company_admin_required
+def vendor_metrics():
+    company_id = get_current_company_id(current_user)
+    from services.ai_agent.vendor_metrics_service import build_vendor_metrics
+
+    metrics = build_vendor_metrics(company_id=company_id)
+    return render_template(
+        "ai_agent/vendor_metrics.html",
+        company=current_user.company,
+        metrics=metrics,
+    )
+
+
 @bp.post("/save")
 @company_admin_required
 def save():
