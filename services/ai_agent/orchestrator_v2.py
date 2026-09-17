@@ -387,23 +387,17 @@ class AgentRuntime:
         company = __import__("app").Company.query.filter_by(id=company_id).first()
         if company is None:
             raise ValueError("Company not found.")
-        access = can_use_ai(company, agent_key)
-        if not access.allowed:
-            raise ValueError(access.reason or "El agente IA no está disponible para este plan.")
-        if not agent.active:
-            return {
-                "status": "disabled",
-                "conversation_id": conversation.id,
-                "company_id": company_id,
-                "agent_id": agent.id,
-                "content": "",
-            }
-
+        # Un reintento idempotente de una operación ya aceptada debe poder
+        # reconstruir la respuesta original aunque el plan haya cambiado desde
+        # el primer intento. La búsqueda queda estrictamente aislada por
+        # company_id + conversation_id para evitar colisiones entre tenants o
+        # conversaciones.
         if idempotency_key:
             duplicate = (
                 db.session.query(ConversationMessage)
                 .filter(
                     ConversationMessage.company_id == company_id,
+                    ConversationMessage.conversation_id == conversation.id,
                     ConversationMessage.idempotency_key == idempotency_key,
                 )
                 .first()
@@ -427,6 +421,18 @@ class AgentRuntime:
                     "assistant_message_id": assistant_duplicate.id if assistant_duplicate else None,
                     "content": assistant_duplicate.content if assistant_duplicate else "",
                 }
+
+        access = can_use_ai(company, agent_key)
+        if not access.allowed:
+            raise ValueError(access.reason or "El agente IA no está disponible para este plan.")
+        if not agent.active:
+            return {
+                "status": "disabled",
+                "conversation_id": conversation.id,
+                "company_id": company_id,
+                "agent_id": agent.id,
+                "content": "",
+            }
 
         history = cls._history(company_id, conversation.id, 19)
         trace_id = str(uuid.uuid4())
