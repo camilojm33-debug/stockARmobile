@@ -30,6 +30,9 @@
     let currentPreview = null;
     let pickerLine = null;
     let currentCandidates = [];
+    let scannerStream = null;
+    let scannerTimer = null;
+    let scannerBusy = false;
 
     const showError = (message) => {
       if (!errorBox) return;
@@ -206,7 +209,7 @@
         const status = line.matching_status;
         const automatic = status === 'MATCH_EXACTO';
         const isNew = status === 'NUEVO_PRODUCTO';
-        const action = '<button type="button" class="btn btn-sm ' + (automatic ? 'btn-outline-secondary' : 'btn-outline-primary') + ' picker-open" data-line="' + esc(line.line_number) + '">' + (automatic ? 'Cambiar' : 'Elegir / código') + '</button>';
+        const action = '<button type="button" class="btn btn-sm ' + (automatic ? 'btn-outline-secondary' : 'btn-outline-primary') + ' picker-open" data-line="' + esc(line.line_number) + '">' + (automatic ? 'Cambiar' : 'Elegir / escanear') + '</button>';
         const product = line.product_name ? '<div class="small fw-semibold">' + esc(line.product_name) + '</div><div class="small muted">Código: ' + esc(line.product_code || 'sin código') + '</div>' : '<div class="small muted">Sin vincular' + (isNew ? ' · se crearía al aplicar' : '') + '</div>';
         const confidenceClass = line.confidence_level === 'ALTA' ? 'text-bg-success' : line.confidence_level === 'MEDIA' ? 'text-bg-warning text-dark' : 'text-bg-secondary';
         return '<tr><td><strong>' + esc(line.description || 'Sin descripción') + '</strong><div class="small muted">Código factura: ' + esc(line.code || line.barcode || 'sin código') + '</div></td><td>' + product + '</td><td><span class="badge ' + confidenceClass + '">' + esc(line.confidence_level || 'BAJA') + (line.proposal_score ? ' · ' + Math.round(line.proposal_score * 100) + '%' : '') + '</span></td><td>' + esc(line.quantity) + '</td><td>' + esc(line.unit_cost) + '</td><td class="text-end">' + action + '</td></tr>';
@@ -242,6 +245,9 @@
       $('picker-title').textContent = line.description || 'Producto';
       $('picker-query').value = '';
       $('picker-code').value = '';
+      $('picker-code').placeholder = 'Código / SKU';
+      const hint = $('picker-code-hint');
+      if (hint) hint.textContent = 'Podés escribir el código, usar la cámara o conectar un lector láser/USB/Bluetooth.';
       renderCandidates(currentCandidates);
       $('invoice-picker').classList.add('show');
       $('picker-code')?.focus();
@@ -250,7 +256,7 @@
     function renderCandidates(candidates) {
       const list = $('picker-list');
       if (!list) return;
-      list.innerHTML = candidates.length ? candidates.map((item) => '<div class="candidate"><div><strong>' + esc(item.name) + '</strong><div class="small muted">' + esc(item.code || 'Sin código') + (item.category ? ' · ' + esc(item.category) : '') + '</div></div><button type="button" class="btn btn-sm btn-primary picker-use" data-name="' + esc(item.name) + '">Usar</button></div>').join('') : '<div class="small muted">No encontramos sugerencias. Escribí el código exacto del producto.</div>';
+      list.innerHTML = candidates.length ? candidates.map((item) => '<div class="candidate"><div><strong>' + esc(item.name) + '</strong><div class="small muted">' + esc(item.code || 'Sin código') + (item.category ? ' · ' + esc(item.category) : '') + '</div></div><button type="button" class="btn btn-sm btn-primary picker-use" data-name="' + esc(item.name) + '">Usar</button></div>').join('') : '<div class="small muted">No encontramos sugerencias. Escribí el código exacto, usá la cámara o conectá el lector.</div>';
       list.querySelectorAll('.picker-use').forEach((button) => button.addEventListener('click', async () => {
         try {
           clearError();
@@ -262,17 +268,126 @@
       }));
     }
 
+    async function assignCode(code) {
+      const value = String(code || '').trim();
+      if (!value) throw new Error('Escribí o escaneá el código/SKU del producto.');
+      const data = await jsonResponse(await fetch(resolveUrl.replace('__UPLOAD_ID__', encodeURIComponent(currentUploadId)), postOptions({ line_number: pickerLine, code: value })));
+      $('invoice-picker').classList.remove('show');
+      currentPreview = data.preview || {};
+      renderReview(currentPreview, currentUploadId, 'Factura');
+    }
+
     async function useTypedCode() {
       const input = $('picker-code');
       const code = input ? input.value.trim() : '';
-      if (!code) return showError('Escribí el código o SKU del producto.');
       try {
         clearError();
-        const data = await jsonResponse(await fetch(resolveUrl.replace('__UPLOAD_ID__', encodeURIComponent(currentUploadId)), postOptions({ line_number: pickerLine, code })));
-        $('invoice-picker').classList.remove('show');
-        currentPreview = data.preview || {};
-        renderReview(currentPreview, currentUploadId, 'Factura');
+        await assignCode(code);
       } catch (error) { showError(error.message); }
+    }
+
+    function stopScanner() {
+      if (scannerTimer) {
+        clearTimeout(scannerTimer);
+        scannerTimer = null;
+      }
+      if (scannerStream) {
+        scannerStream.getTracks().forEach((track) => track.stop());
+        scannerStream = null;
+      }
+      const video = $('scanner-video');
+      if (video) {
+        video.pause();
+        video.srcObject = null;
+      }
+      scannerBusy = false;
+      const overlay = $('invoice-scanner');
+      if (overlay) {
+        overlay.classList.remove('show');
+        overlay.setAttribute('aria-hidden', 'true');
+      }
+    }
+
+    async function openScanner() {
+      clearError();
+      const overlay = $('invoice-scanner');
+      const video = $('scanner-video');
+      const status = $('scanner-status');
+      if (!overlay || !video || !status) return;
+      if (!window.isSecureContext || !navigator.mediaDevices?.getUserMedia) {
+        showError('La cámara necesita HTTPS y permisos del navegador. Podés usar el lector láser o escribir el código.');
+        return;
+      }
+      overlay.classList.add('show');
+      overlay.setAttribute('aria-hidden', 'false');
+      status.textContent = 'Solicitando acceso a la cámara…';
+      try {
+        scannerStream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: { ideal: 'environment' }, width: { ideal: 1280 }, height: { ideal: 720 } }, audio: false });
+        video.srcObject = scannerStream;
+        await video.play();
+      } catch (error) {
+        status.textContent = 'No se pudo abrir la cámara. Revisá los permisos del navegador.';
+        showError('No se pudo abrir la cámara. Revisá el permiso de cámara y probá nuevamente.');
+        return;
+      }
+
+      if (!('BarcodeDetector' in window)) {
+        status.textContent = 'Tu navegador muestra la cámara, pero no tiene escaneo de códigos integrado. Usá el lector láser o el código manual.';
+        return;
+      }
+
+      try {
+        let detector;
+        if (typeof window.BarcodeDetector.getSupportedFormats === 'function') {
+          const supported = await window.BarcodeDetector.getSupportedFormats();
+          const wanted = ['ean_13', 'ean_8', 'upc_a', 'upc_e', 'code_128', 'code_39', 'itf', 'codabar'];
+          const formats = wanted.filter((format) => supported.includes(format));
+          detector = formats.length ? new window.BarcodeDetector({ formats }) : new window.BarcodeDetector();
+        } else {
+          detector = new window.BarcodeDetector();
+        }
+        status.textContent = 'Cámara activa. Centrá el código dentro del recuadro…';
+        scanWithDetector(detector, video, status);
+      } catch (error) {
+        status.textContent = 'No se pudo iniciar el lector de códigos de este navegador. Usá el lector láser o escribí el código.';
+      }
+    }
+
+    async function scanWithDetector(detector, video, status) {
+      if (!scannerStream || scannerBusy || !video.srcObject) return;
+      try {
+        if (video.readyState >= HTMLMediaElement.HAVE_CURRENT_DATA) {
+          const results = await detector.detect(video);
+          const found = (results || []).find((item) => String(item.rawValue || '').trim());
+          if (found) {
+            scannerBusy = true;
+            const value = String(found.rawValue).trim();
+            status.textContent = 'Código detectado: ' + value;
+            stopScanner();
+            try {
+              clearError();
+              await assignCode(value);
+            } catch (error) {
+              showError(error.message);
+            }
+            return;
+          }
+        }
+      } catch (error) {
+        // Un frame no decodificable es normal; seguimos escaneando.
+      }
+      scannerTimer = setTimeout(() => scanWithDetector(detector, video, status), 180);
+    }
+
+    function focusLaserReader() {
+      const input = $('picker-code');
+      if (!input) return;
+      clearError();
+      input.value = '';
+      input.placeholder = 'Esperando lector láser…';
+      input.focus();
+      const hint = $('picker-code-hint');
+      if (hint) hint.textContent = 'Lector activo: escaneá el código de barras con el dispositivo USB/Bluetooth. Al terminar, el lector suele enviar Enter y StockAR lo asigna automáticamente.';
     }
 
     async function openInvoice(uploadId) {
@@ -290,6 +405,10 @@
     $('picker-close')?.addEventListener('click', () => $('invoice-picker').classList.remove('show'));
     $('picker-code-use')?.addEventListener('click', useTypedCode);
     $('picker-code')?.addEventListener('keydown', (event) => { if (event.key === 'Enter') { event.preventDefault(); useTypedCode(); } });
+    $('picker-camera-open')?.addEventListener('click', openScanner);
+    $('picker-laser-focus')?.addEventListener('click', focusLaserReader);
+    $('scanner-close')?.addEventListener('click', stopScanner);
+    $('scanner-stop')?.addEventListener('click', stopScanner);
     $('picker-query')?.addEventListener('input', () => {
       const query = $('picker-query').value.trim().toLowerCase();
       renderCandidates(currentCandidates.filter((item) => String(item.name || '').toLowerCase().includes(query) || String(item.code || '').toLowerCase().includes(query)));
@@ -313,6 +432,7 @@
     dropzone.addEventListener('dragover', (event) => { event.preventDefault(); dropzone.classList.add('dragover'); });
     dropzone.addEventListener('dragleave', () => dropzone.classList.remove('dragover'));
     dropzone.addEventListener('drop', (event) => { event.preventDefault(); dropzone.classList.remove('dragover'); const file = event.dataTransfer && event.dataTransfer.files ? event.dataTransfer.files[0] : null; selectFile(file); });
+    window.addEventListener('pagehide', stopScanner);
   }
 
   if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', initInvoiceAI, { once: true });
