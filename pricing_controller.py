@@ -7,7 +7,7 @@ from typing import Optional
 
 from flask import Blueprint, flash, redirect, render_template, request, url_for
 from flask_login import current_user
-from sqlalchemy import Numeric
+from sqlalchemy import Numeric, or_
 
 from app import Product, db, record_audit, scope_query_to_company, utcnow
 from stockarmobile.decorators import company_admin_required
@@ -153,6 +153,7 @@ def _parse_rules(form):
         "adjustment_type": adjustment_type,
         "direction": direction,
         "adjustment_value": value.quantize(FOURPLACES),
+        "product_query": " ".join(str(form.get("product_query") or "").strip().split())[:160] or None,
         "category": (form.get("category") or "").strip()[:100] or None,
         "brand": (form.get("brand") or "").strip()[:120] or None,
         "supplier": (form.get("supplier") or "").strip()[:160] or None,
@@ -184,6 +185,15 @@ def _calculate_new_price(old_price: Decimal, rules: dict) -> Decimal:
 
 def _products_for_rules(rules):
     query = scope_query_to_company(Product.query.filter(Product.active.is_(True)), Product)
+    if rules.get("product_query"):
+        like = f"%{rules['product_query']}%"
+        query = query.filter(
+            or_(
+                Product.name.ilike(like),
+                Product.barcode.ilike(like),
+                Product.brand.ilike(like),
+            )
+        )
     if rules["category"]:
         query = query.filter(Product.category == rules["category"])
     if rules["brand"]:
