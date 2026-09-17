@@ -166,10 +166,6 @@ def _delivery_payload(*, method: str, customer_name: str, customer_phone: str, a
         "reference": str(reference or "").strip()[:255],
         "notes": str(notes or "").strip()[:2000],
     }
-    if not values["recipient_name"]:
-        raise ValueError("Falta el nombre del comprador.")
-    if not values["phone"]:
-        raise ValueError("Falta el teléfono del comprador.")
     if normalized_method == "envio":
         for field, label in (
             ("address", "la dirección de entrega"),
