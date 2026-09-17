@@ -8,7 +8,10 @@
       <h1 class="h2 fw-bold mb-1">Publicación del Vendedor</h1>
       <p class="text-muted mb-0">Publicá un enlace propio para que tus clientes hablen con tu Vendedor IA sin WhatsApp.</p>
     </div>
-    <a class="btn btn-outline-secondary" href="{{ url_for('ai_agents.agent', agent='vendedor') }}"><i class="bi bi-arrow-left me-1"></i>Volver al Vendedor</a>
+    <div class="d-flex flex-wrap gap-2">
+      <a class="btn btn-outline-primary" href="{{ url_for('ai_admin.vendor_metrics') }}"><i class="bi bi-bar-chart-line me-1"></i>Métricas</a>
+      <a class="btn btn-outline-secondary" href="{{ url_for('ai_agents.agent', agent='vendedor') }}"><i class="bi bi-arrow-left me-1"></i>Volver al Vendedor</a>
+    </div>
   </div>
 
   {% if not access.allowed %}
