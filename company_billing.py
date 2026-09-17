@@ -1554,6 +1554,18 @@ def payment_qr_settings():
 def company_logo_upload():
     from app import db, record_audit
 
+    # Este endpoint valida el límite específico del logo (3 MB). Elevamos
+    # únicamente el límite de la request actual para que Flask/Werkzeug no
+    # corte una carga ligeramente mayor antes de que podamos devolver el
+    # mensaje controlado al usuario.
+    try:
+        current_limit = request.max_content_length
+        required_limit = MAX_LOGO_SIZE_BYTES + (1 * 1024 * 1024)
+        if current_limit is None or current_limit < required_limit:
+            request.max_content_length = required_limit
+    except (AttributeError, TypeError, ValueError):
+        pass
+
     # El company_id se obtiene siempre del tenant autenticado, nunca del formulario/frontend.
     company_id = getattr(current_user, "company_id", None)
     company = _load_company(company_id)
