@@ -22,3 +22,5 @@
 
 - No se ejecutó `pytest` localmente desde este entorno.
 - El repositorio ya tiene CI en `.github/workflows/ci.yml` que ejecuta compilación Python, validación del service worker y `pytest` en push/PR contra `main`.
+- Corrección de autorización: editar campañas IA queda reservado a administradores de la empresa; la transición ya estaba protegida por `company_admin_required`.
+- Agregado test de firma/aislamiento del enlace público del Vendedor Web.

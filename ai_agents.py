@@ -449,7 +449,7 @@ def vendor_webchat_toggle():
 
 
 @bp.post("/campanas/<int:campaign_id>/edit")
-@tenant_required
+@company_admin_required
 def campaign_edit(campaign_id):
     try:
         CampaignService.update_draft(company_id=current_user.company_id, campaign_id=campaign_id, title=request.form.get("title", ""), objective=request.form.get("objective", ""), content=request.form.get("content", ""), user_id=current_user.id)
