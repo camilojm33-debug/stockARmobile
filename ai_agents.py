@@ -64,7 +64,7 @@ def _decode_public_vendor_token(token: str):
 
 
 def _public_vendor_rate_limit(company_id: int) -> bool:
-    remote = (request.headers.get("X-Forwarded-For", "").split(",", 1)[0] or request.remote_addr or "unknown").strip()
+    remote = (request.remote_addr or "unknown").strip()
     redis_url = (os.getenv("REDIS_URL") or "").strip()
     if redis_url:
         try:

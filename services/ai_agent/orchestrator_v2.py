@@ -395,11 +395,23 @@ class AgentRuntime:
                 .first()
             )
             if duplicate:
+                assistant_duplicate = (
+                    db.session.query(ConversationMessage)
+                    .filter(
+                        ConversationMessage.company_id == company_id,
+                        ConversationMessage.conversation_id == conversation.id,
+                        ConversationMessage.trace_id == duplicate.trace_id,
+                        ConversationMessage.role == "assistant",
+                    )
+                    .order_by(ConversationMessage.id.desc())
+                    .first()
+                )
                 return {
                     "status": "duplicate",
                     "conversation_id": conversation.id,
                     "message_id": duplicate.id,
-                    "content": "",
+                    "assistant_message_id": assistant_duplicate.id if assistant_duplicate else None,
+                    "content": assistant_duplicate.content if assistant_duplicate else "",
                 }
 
         history = cls._history(company_id, conversation.id, 19)
