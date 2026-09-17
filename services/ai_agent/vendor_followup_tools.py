@@ -7,6 +7,9 @@ circular imports in the Flask application bootstrap.
 
 from __future__ import annotations
 
+import re
+import unicodedata
+
 from services.ai_agent.tools.base import AgentTool
 from services.ai_agent.vendor_order_service import VendorOrderService
 
@@ -62,6 +65,24 @@ class VendorPromotionsTool(AgentTool):
         return VendorOrderService.list_promotions(company_id=self.company_id, limit=int(kwargs.get("limit") or 12))
 
 
+def _safe_tool_name(name: str) -> str:
+    normalized = unicodedata.normalize("NFKD", str(name or ""))
+    ascii_name = normalized.encode("ascii", "ignore").decode("ascii")
+    safe = re.sub(r"[^A-Za-z0-9_]", "_", ascii_name).strip("_")
+    return re.sub(r"_+", "_", safe) or "tool"
+
+
+def _normalize_tool_contract(runtime_cls) -> None:
+    aliases = {}
+    for original, tool_class in list(runtime_cls.tool_registry.items()):
+        safe = _safe_tool_name(original)
+        if safe != original:
+            aliases[original] = safe
+            runtime_cls.tool_registry.setdefault(safe, tool_class)
+    for agent_key, names in list(runtime_cls.agent_tool_names.items()):
+        runtime_cls.agent_tool_names[agent_key] = {aliases.get(name, name) for name in names}
+
+
 def install_vendor_followup_tools(runtime_cls) -> None:
     """Register follow-up tools for Vendedor plus safe pricing and intelligence tools."""
     runtime_cls.tool_registry.update({
@@ -81,11 +102,11 @@ def install_vendor_followup_tools(runtime_cls) -> None:
 
         install_pricing_controller_tools(runtime_cls)
         install_ai_intelligence_tools(runtime_cls)
-        # Provider function names remain conservative ASCII identifiers.
         runtime_cls.tool_registry.pop("anomalías_ventas", None)
         runtime_cls.tool_registry["anomalias_ventas"] = SalesAnomalyTool
         runtime_cls.agent_tool_names.setdefault("analista", set()).discard("anomalías_ventas")
         runtime_cls.agent_tool_names.setdefault("analista", set()).add("anomalias_ventas")
+        _normalize_tool_contract(runtime_cls)
 
         import services.ai_agent.orchestrator_v2 as runtime_module
         runtime_module.VENDOR_SYSTEM_PROMPT = (
