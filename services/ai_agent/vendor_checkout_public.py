@@ -38,7 +38,7 @@ def _order_context(company, payload: dict):
 def _lock_public_conversation(company, conversation_id):
     """Serialize public mutations for the exact tenant-scoped conversation."""
     try:
-        conversation = (
+        return (
             db.session.query(Conversation)
             .filter(
                 Conversation.id == int(conversation_id),
@@ -50,7 +50,6 @@ def _lock_public_conversation(company, conversation_id):
         )
     except (TypeError, ValueError):
         return None
-    return conversation
 
 
 def _public_order_error(exc: Exception, fallback: str):
@@ -99,7 +98,6 @@ def public_vendor_retry_payment(slug: str):
     conversation, error = _order_context(company, payload)
     if error:
         return error
-    _lock_public_conversation(company, conversation.id)
     try:
         result = VendorOrderService.retry_payment(
             company_id=company.id,
@@ -124,7 +122,6 @@ def public_vendor_cancel_order(slug: str):
     conversation, error = _order_context(company, payload)
     if error:
         return error
-    _lock_public_conversation(company, conversation.id)
     try:
         confirm = bool(
             payload.get("confirm") is True
