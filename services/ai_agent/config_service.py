@@ -42,7 +42,7 @@ def decrypt_secret(value):
 
 def ensure_default_agents(company_id):
     agents={}
-    for name,description in ((VENDOR_AGENT_NAME,"Vendedor 24 hs por WhatsApp para consultas y oportunidades comerciales."),(BUSINESS_AGENT_NAME,"Asistente empresarial para métricas, stock, caja y gestión del negocio.")):
+    for name,description in ((VENDOR_AGENT_NAME,"Vendedor 24 hs multicanal para consultas, recomendaciones y oportunidades comerciales."),(BUSINESS_AGENT_NAME,"Asistente empresarial para métricas, stock, caja y gestión del negocio.")):
         agent=db.session.query(Agent).filter(Agent.company_id==company_id,Agent.name==name).order_by(Agent.id.asc()).first()
         if agent is None:
             agent=Agent(company_id=company_id,name=name,description=description,active=True); db.session.add(agent); db.session.flush()
@@ -88,4 +88,4 @@ def company_for_whatsapp_phone_id(phone_number_id):
 
 def choose_agent(company_id,*,channel):
     agents=ensure_default_agents(company_id)
-    return agents[VENDOR_AGENT_NAME] if channel=="whatsapp" else agents[BUSINESS_AGENT_NAME]
+    return agents[VENDOR_AGENT_NAME] if str(channel or "").strip().lower() in {"whatsapp","webchat"} else agents[BUSINESS_AGENT_NAME]
