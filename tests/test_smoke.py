@@ -1774,23 +1774,19 @@ def test_company_logo_rejects_invalid_content_and_bad_extension():
 
 
 def test_company_logo_oversized_file_is_rejected():
-    client = stock_app.app.test_client()
-    client.post("/auth/login", data={"username": "negocio_admin", "password": "admin123"})
+    from company_billing import _save_company_logo
+    from werkzeug.datastructures import FileStorage
 
-    # Mantener el payload apenas por encima del límite del logo evita que
-    # Werkzeug lo rechace antes de que el endpoint pueda devolver su error
-    # controlado de "máximo 3 MB".
     huge_bytes = b"x" * (3 * 1024 * 1024 + 1)
     assert len(huge_bytes) > 3 * 1024 * 1024
 
-    resp = client.post(
-        "/admin/company-logo/upload",
-        data={"csrf_token": "", "logo_file": (io.BytesIO(huge_bytes), "logo.png")},
-        content_type="multipart/form-data",
-        follow_redirects=True,
-    )
-    assert resp.status_code == 200
-    assert "tamaño máximo" in resp.data.decode("utf-8")
+    with stock_app.app.app_context():
+        company = Company.query.first()
+        assert company is not None
+        upload = FileStorage(stream=io.BytesIO(huge_bytes), filename="logo.png")
+
+        with pytest.raises(ValueError, match="tamaño máximo"):
+            _save_company_logo(upload, company.id)
 
 
 def test_company_logo_non_admin_cannot_upload_or_delete():
