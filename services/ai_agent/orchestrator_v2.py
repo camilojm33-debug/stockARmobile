@@ -9,7 +9,14 @@ from services.ai_agent.providers.openai_compatible import OpenAICompatibleProvid
 from services.ai_agent.providers.lm_studio import LMStudioProvider
 from services.ai_agent.providers.openai import OpenAIProvider
 from services.ai_agent.providers.gemini import GeminiProvider
-from services.ai_agent.config_service import BUSINESS_AGENT_NAME, VENDOR_AGENT_NAME, choose_agent
+from services.ai_agent.config_service import (
+    BUSINESS_AGENT_NAME,
+    VENDOR_AGENT_NAME,
+    build_vendor_runtime_instructions,
+    choose_agent,
+    get_vendor_options,
+    vendor_allowed_tool_names,
+)
 from services.ai_agent.tools.base import AgentTool
 from services.ai_agent.tools.business_metrics import (
     ContarClientesTool,
@@ -42,7 +49,7 @@ MAX_TOOL_TURNS = 5
 
 class VendorCartTool(AgentTool):
     name = "carrito_vendedor"
-    description = "Consulta el carrito actual del cliente de WhatsApp."
+    description = "Consulta el carrito actual del cliente."
     input_schema = {"type": "object", "properties": {}, "additionalProperties": False}
 
     def execute(self, **kwargs):
@@ -190,8 +197,10 @@ class AgentRuntime:
         ]
 
     @classmethod
-    def _tool_definitions(cls, agent_key="asistente"):
+    def _tool_definitions(cls, agent_key="asistente", allowed_tool_names=None):
         names = cls.agent_tool_names.get(agent_key, set())
+        if allowed_tool_names is not None:
+            names = names.intersection(set(allowed_tool_names))
         return [
             {
                 "type": "function",
@@ -217,9 +226,11 @@ class AgentRuntime:
         }.get(agent.name, "asistente")
 
     @classmethod
-    def _execute_tool(cls, name, *, company_id, arguments, context=None):
+    def _execute_tool(cls, name, *, company_id, arguments, context=None, allowed_tool_names=None):
         if not isinstance(arguments, dict):
             return {"success": False, "error": "arguments must be an object"}
+        if allowed_tool_names is not None and name not in set(allowed_tool_names):
+            return {"success": False, "error": "tool_not_permitted"}
         tool_class = cls.tool_registry.get(name)
         if tool_class is None:
             return {"success": False, "error": "tool_not_found"}
@@ -259,7 +270,7 @@ class AgentRuntime:
         return str(value).strip()
 
     @classmethod
-    def _run_tool_loop(cls, *, provider, messages, tools, kwargs, company_id, context):
+    def _run_tool_loop(cls, *, provider, messages, tools, kwargs, company_id, context, allowed_tool_names=None):
         working_messages = list(messages)
         response = provider.generate(messages=working_messages, tools=tools, **kwargs)
         campaign_context = None
@@ -275,7 +286,6 @@ class AgentRuntime:
 
             next_tool_round = tool_rounds + 1
             if next_tool_round > MAX_TOOL_TURNS:
-                # Give the provider one final answer-only pass using the accumulated evidence.
                 synthesis_prompt = {
                     "role": "user",
                     "content": (
@@ -314,6 +324,7 @@ class AgentRuntime:
                     company_id=company_id,
                     arguments=args,
                     context=context,
+                    allowed_tool_names=allowed_tool_names,
                 )
                 if name == "preparar_campana" and isinstance(result, dict):
                     campaign_context = result.get("campaign_context") or campaign_context
@@ -373,7 +384,10 @@ class AgentRuntime:
             db.session.flush()
 
         agent_key = cls._agent_key(agent)
-        access = can_use_ai(__import__("app").Company.query.filter_by(id=company_id).first(), agent_key)
+        company = __import__("app").Company.query.filter_by(id=company_id).first()
+        if company is None:
+            raise ValueError("Company not found.")
+        access = can_use_ai(company, agent_key)
         if not access.allowed:
             raise ValueError(access.reason or "El agente IA no está disponible para este plan.")
         if not agent.active:
@@ -439,7 +453,19 @@ class AgentRuntime:
             "analista": ANALYST_SYSTEM_PROMPT,
             "marketing": MARKETING_SYSTEM_PROMPT,
         }[agent_key]
-        if config and config.system_prompt:
+        vendor_options = None
+        allowed_tool_names = None
+        if agent_key == "vendedor":
+            vendor_options = get_vendor_options(company)
+            prompt += "\n\n" + build_vendor_runtime_instructions(
+                merchant_instructions=config.system_prompt if config else "",
+                vendor_options=vendor_options,
+                language=(config.language if config else "es-AR"),
+                channel=channel,
+                first_interaction=not history,
+            )
+            allowed_tool_names = vendor_allowed_tool_names(vendor_options)
+        elif config and config.system_prompt:
             prompt += f"\n\nInstrucciones del comercio:\n{config.system_prompt}"
 
         messages = (
@@ -464,10 +490,11 @@ class AgentRuntime:
         final_content, campaign_context, tool_rounds = cls._run_tool_loop(
             provider=provider,
             messages=messages,
-            tools=cls._tool_definitions(agent_key),
+            tools=cls._tool_definitions(agent_key, allowed_tool_names=allowed_tool_names),
             kwargs=kwargs,
             company_id=company_id,
             context=context,
+            allowed_tool_names=allowed_tool_names,
         )
 
         assistant = ConversationMessage(
