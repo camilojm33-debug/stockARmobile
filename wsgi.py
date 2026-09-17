@@ -1,3 +1,5 @@
+from decimal import Decimal, InvalidOperation
+
 from flask import flash, redirect, request, url_for, jsonify, render_template, g
 from flask_login import current_user, login_required
 from sqlalchemy import text
@@ -124,8 +126,10 @@ def ai_invoices_workspace():
 def resolve_invoice_code_direct(upload_id):
     """Assign an invoice line to a tenant-scoped product by exact SKU/barcode.
 
-    If the code does not exist yet, the product is created with zero stock from
-    the invoice line description. Stock is only increased by final confirmation.
+    A missing code creates/uses a draft product with the invoice unit cost but
+    never adds stock. If the invoice was already applied, the endpoint reuses
+    the product recorded by that purchase instead of creating a zero-cost
+    duplicate.
     """
     company_id = getattr(current_user, "company_id", None)
     if not company_id:
@@ -168,11 +172,39 @@ def resolve_invoice_code_direct(upload_id):
     active_candidates = [product for product in products if getattr(product, "active", True) and code_key(getattr(product, "barcode", None)) == query_key]
     created = False
     reactivated = False
+    reassigned_existing = False
+
+    result_items = (invoice.get("result") or {}).get("items") or []
+    result_item = next((item for item in result_items if str(item.get("line_number")) == str(line_number)), None)
+    linked_product_id = line.get("product_id") or (result_item or {}).get("product_id")
+    linked_product = None
+    if linked_product_id:
+        linked_product = Product.query.filter_by(id=linked_product_id, company_id=company_id).first()
+        if linked_product is not None and not getattr(linked_product, "active", True):
+            linked_product.active = True
+            reactivated = True
 
     if len(active_candidates) > 1:
         return jsonify({"success": False, "error": "Hay más de un producto activo con ese código/SKU en StockAR."}), 409
+
     if len(active_candidates) == 1:
         product = active_candidates[0]
+        if linked_product is not None and product.id != linked_product.id:
+            duplicate_like = (
+                Decimal(str(product.stock or 0)) == Decimal("0")
+                and Decimal(str(product.cost_price or 0)) == Decimal("0")
+                and normalize(product.name) == normalize(line.get("description"))
+            )
+            if not duplicate_like:
+                return jsonify({"success": False, "error": "Ese código ya está asignado a otro producto activo."}), 409
+            product.active = False
+            product = linked_product
+            reassigned_existing = True
+        elif linked_product is not None and product.id == linked_product.id:
+            reassigned_existing = True
+    elif linked_product is not None:
+        product = linked_product
+        reassigned_existing = True
     else:
         inactive_candidates = [product for product in products if not getattr(product, "active", True) and code_key(getattr(product, "barcode", None)) == query_key]
         if len(inactive_candidates) > 1:
@@ -182,18 +214,35 @@ def resolve_invoice_code_direct(upload_id):
             product.active = True
             reactivated = True
         else:
+            try:
+                unit_cost = Decimal(str(line.get("unit_cost") or "0"))
+            except (TypeError, ValueError, ArithmeticError):
+                unit_cost = Decimal("0")
             product = Product(
                 company_id=company_id,
                 barcode=raw_code,
                 name=str(line.get("description") or "Producto de factura")[:200],
                 stock=0,
-                cost_price=0,
+                cost_price=unit_cost,
                 price=0,
                 active=True,
             )
             db.session.add(product)
             db.session.flush()
             created = True
+
+    try:
+        unit_cost = Decimal(str(line.get("unit_cost") or "0"))
+    except (TypeError, ValueError, ArithmeticError):
+        unit_cost = Decimal(str(product.cost_price or "0"))
+
+    # Manual resolution must show the invoice cost immediately, but stock only
+    # changes when the final confirmation applies the purchase.
+    if Decimal(str(product.stock or 0)) == Decimal("0") and unit_cost >= 0:
+        product.cost_price = unit_cost
+    product.barcode = raw_code
+    product.margin = Decimal(str(product.price or 0)) - Decimal(str(product.cost_price or 0))
+    product.profit_percent = (product.margin / Decimal(str(product.cost_price)) * 100) if Decimal(str(product.cost_price or 0)) else 0
 
     line.update({
         "matching_status": "MATCH_EXACTO",
@@ -205,7 +254,13 @@ def resolve_invoice_code_direct(upload_id):
         "proposal_score": 1.0,
         "auto_matched": False,
         "created_from_manual_code": created,
+        "reassigned_existing_product": reassigned_existing,
+        "unit_cost": str(unit_cost),
     })
+    if result_item is not None:
+        result_item["product_id"] = product.id
+        result_item["product_code"] = product.barcode
+        invoice["result"]["items"] = result_items
 
     supplier_status = (invoice.get("supplier_match") or {}).get("status")
     active_lines = [item for item in matches if item.get("matching_status") != "EXCLUIDA"]
@@ -225,7 +280,20 @@ def resolve_invoice_code_direct(upload_id):
     conversation.metadata_json = metadata
     db.session.commit()
 
-    return jsonify({"success": True, "status": invoice["status"], "preview": invoice, "product": {"id": product.id, "name": product.name, "code": product.barcode, "created": created, "reactivated": reactivated}})
+    return jsonify({
+        "success": True,
+        "status": invoice["status"],
+        "preview": invoice,
+        "product": {
+            "id": product.id,
+            "name": product.name,
+            "code": product.barcode,
+            "created": created,
+            "reactivated": reactivated,
+            "reassigned_existing": reassigned_existing,
+            "unit_cost": str(unit_cost),
+        },
+    })
 
 
 @app.route("/superadmin/subscriptions/<int:subscription_id>/delete-historical", methods=["POST"])
