@@ -28,12 +28,9 @@ def _ai_access_guard():
     if request.path.startswith("/dashboard/ai-agent") and not can_access_ai(current_user):
         return jsonify({"success": False, "error": "Tu usuario no tiene habilitado el acceso a Agentes IA."}), 403
 
-# AI_ACCESS_GUARD_FINAL
-
 
 def _invoice_record(upload_id, company_id):
     for conversation in Conversation.query.filter_by(company_id=company_id).all():
-        # deepcopy: evita compartir referencias anidadas con conversation.metadata_json (rompia la deteccion de cambios).
         metadata = copy.deepcopy(conversation.metadata_json or {})
         uploads = list(metadata.get("invoice_uploads") or [])
         for index, upload in enumerate(uploads):
@@ -59,12 +56,34 @@ def _already_applied_invoice(upload_id, company_id, document_hash):
     return None
 
 
+def _invoice_ready_for_confirmation(invoice):
+    """Ready means the commercial data needed to update stock is resolved.
+
+    Missing invoice date/number/currency is informational and must not block a
+    stock receipt. Product ambiguity, missing quantity/cost, unresolved supplier
+    or inconsistent totals remain blocking.
+    """
+    invoice = invoice or {}
+    supplier_status = (invoice.get("supplier_match") or {}).get("status")
+    if supplier_status not in {"MATCH_EXACTO", "NUEVO_PROVEEDOR_CONFIRMADO"}:
+        return False
+    lines = [line for line in (invoice.get("matches") or []) if line.get("matching_status") != "EXCLUIDA"]
+    if not lines:
+        return False
+    if any(line.get("matching_status") in {"AMBIGUO", "MATCH_PROPUESTO"} for line in lines):
+        return False
+    if any(line.get("quantity") in (None, "") or line.get("unit_cost") in (None, "") for line in lines):
+        return False
+    warnings = invoice.get("warnings") or []
+    if any(str(warning).startswith(("La línea ", "Los totales de la factura")) for warning in warnings):
+        return False
+    return True
+
+
 @bp.route("/")
 @tenant_required
 def index():
     return render_template("dashboard/index.html", **build_dashboard_context())
-
-
 
 
 @bp.route("/ia")
@@ -74,28 +93,15 @@ def ai_metrics():
         flash("Tu empresa no tiene habilitado el acceso a Agentes IA.", "warning")
         return redirect(url_for("dashboard.index"))
     context = build_dashboard_context()
-    return render_template(
-        "dashboard/ai_metrics.html",
-        business_value=context.get("business_value") or {},
-        can_view_economic_metrics=context.get("can_view_economic_metrics", False),
-    )
+    return render_template("dashboard/ai_metrics.html", business_value=context.get("business_value") or {}, can_view_economic_metrics=context.get("can_view_economic_metrics", False))
+
 
 @bp.route("/stats")
 @tenant_required
 def stats():
     from app import Product, Sale, SaleItem, db, scope_query_to_company
-
     company_id = getattr(current_user, "company_id", None)
-    categories_result = (
-        scope_query_to_company(
-            db.session.query(Product.category.label("category"), db.func.sum(SaleItem.quantity).label("total_sold"))
-            .join(Product, SaleItem.product_id == Product.id)
-            .join(Sale, SaleItem.sale_id == Sale.id)
-            .filter(Sale.company_id == company_id)
-            .group_by(Product.category),
-            Product,
-        ).all()
-    )
+    categories_result = scope_query_to_company(db.session.query(Product.category.label("category"), db.func.sum(SaleItem.quantity).label("total_sold")).join(Product, SaleItem.product_id == Product.id).join(Sale, SaleItem.sale_id == Sale.id).filter(Sale.company_id == company_id).group_by(Product.category), Product).all()
     categories_list = [cat[0] or "N/A" for cat in categories_result]
     categories_data = [cat[1] or 0 for cat in categories_result]
     return render_template("dashboard/stats.html", categories=categories_list, categories_data=categories_data)
@@ -114,7 +120,6 @@ def onboarding():
     current_company_id = getattr(current_user, "company_id", None)
     if pending_company_id and int(pending_company_id) != int(current_company_id or 0):
         return redirect(url_for("dashboard.index"))
-
     steps = [
         {"step": 1, "title": "Datos del negocio", "description": "Completa información comercial, fiscal y de contacto en Mi Empresa."},
         {"step": 2, "title": "Moneda y configuración", "description": "Confirma moneda, formato y ajustes generales antes de operar."},
@@ -123,14 +128,12 @@ def onboarding():
         {"step": 5, "title": "Primera venta", "description": "Abre caja, agrega productos y registra tu primera operación."},
         {"step": 6, "title": "Caja y reporte", "description": "Cierra caja, revisa totales y valida diferencias al final del día."},
     ]
-
     if request.method == "POST":
         session.pop("post_register_onboarding_company_id", None)
         session["guided_tour_pending"] = True
         session.pop("guided_tour_seen", None)
         flash("Onboarding completado. Te mostramos el recorrido guiado.", "success")
         return redirect(url_for("dashboard.index"))
-
     return render_template("dashboard/onboarding.html", steps=steps, progress=100)
 
 
@@ -141,9 +144,7 @@ def tour_complete():
     session["guided_tour_seen"] = True
     flash("Recorrido guiado finalizado.", "info")
     next_url = (request.form.get("next") or "").strip()
-    if next_url.startswith("/"):
-        return redirect(next_url)
-    return redirect(url_for("dashboard.index"))
+    return redirect(next_url) if next_url.startswith("/") else redirect(url_for("dashboard.index"))
 
 
 @bp.route("/ai-agent/chat", methods=["POST"])
@@ -157,16 +158,12 @@ def ai_agent_chat():
     invoice_upload = request.files.get("invoice_file")
     if agent_key not in {"asistente", "vendedor", "analista", "marketing"}:
         return jsonify({"success": False, "error": "Agente inválido."}), 400
-
     if not isinstance(message, str) or not message.strip():
         return jsonify({"success": False, "error": "El mensaje es obligatorio."}), 400
-
     company_id = getattr(current_user, "company_id", None)
     if company_id in (None, ""):
         return jsonify({"success": False, "error": "No hay empresa activa para esta sesión."}), 403
-
     from app import Company
-
     company = Company.query.filter_by(id=company_id).first()
     access = can_use_ai(company, agent_key)
     if not access.allowed:
@@ -177,18 +174,12 @@ def ai_agent_chat():
         invoice_access = can_use_ai(company, "facturas")
         if not invoice_access.allowed:
             return jsonify({"success": False, "error": invoice_access.reason}), 403
-
     if conversation_id not in (None, ""):
         try:
             conversation_id = int(conversation_id)
         except (TypeError, ValueError):
             return jsonify({"success": False, "error": "Identificador de conversación inválido."}), 400
-
-        conversation = (
-            db.session.query(Conversation)
-            .filter(Conversation.id == conversation_id, Conversation.company_id == company_id)
-            .first()
-        )
+        conversation = db.session.query(Conversation).filter(Conversation.id == conversation_id, Conversation.company_id == company_id).first()
         if conversation is None:
             return jsonify({"success": False, "error": "La conversación no pertenece a tu empresa."}), 403
         if conversation.agent_id:
@@ -199,23 +190,13 @@ def ai_agent_chat():
         selected_agent = ensure_agent_for_key(company_id, agent_key)
         if selected_agent is None:
             selected_agent = __import__("services.ai_agent.config_service", fromlist=["choose_agent"]).choose_agent(company_id, channel="whatsapp" if agent_key == "vendedor" else "web")
-        conversation = Conversation(
-            company_id=company_id,
-            agent_id=selected_agent.id,
-            channel="web",
-        )
+        conversation = Conversation(company_id=company_id, agent_id=selected_agent.id, channel="web")
         db.session.add(conversation)
         db.session.flush()
-
     if invoice_upload is not None:
         upload_record = None
         try:
-            upload_record = InvoiceUploadService.receive(
-                invoice_upload,
-                company_id=company_id,
-                user_id=current_user.id,
-                conversation_id=conversation.id,
-            )
+            upload_record = InvoiceUploadService.receive(invoice_upload, company_id=company_id, user_id=current_user.id, conversation_id=conversation.id)
             conversation_metadata = dict(conversation.metadata_json or {})
             invoice_uploads = list(conversation_metadata.get("invoice_uploads") or [])
             invoice_uploads.append(upload_record)
@@ -229,69 +210,23 @@ def ai_agent_chat():
             db.session.rollback()
             if upload_record is not None:
                 InvoiceUploadService.delete(upload_record, company_id=company_id)
-            current_app.logger.exception(
-                "Error registrando factura temporal: company_id=%s conversation_id=%s",
-                company_id,
-                conversation.id,
-            )
+            current_app.logger.exception("Error registrando factura temporal: company_id=%s conversation_id=%s", company_id, conversation.id)
             return jsonify({"success": False, "error": "No se pudo recibir la factura. Intenta nuevamente."}), 500
-
-        return jsonify(
-            {
-                "success": True,
-                "conversation_id": conversation.id,
-                "document_id": upload_record["upload_id"],
-                "status": upload_record["status"],
-                "content": "Factura recibida correctamente.\n\nArchivo: "
-                f"{upload_record['original_name']}\n\nEstado: Pendiente de procesamiento.",
-            }
-        )
-
+        return jsonify({"success": True, "conversation_id": conversation.id, "document_id": upload_record["upload_id"], "status": upload_record["status"], "content": "Factura recibida correctamente.\n\nArchivo: " + f"{upload_record['original_name']}\n\nEstado: Pendiente de procesamiento."})
     try:
-        result = AgentRuntime.process(
-            company_id=company_id,
-            conversation_id=conversation.id,
-            message=message.strip(),
-            channel="web",
-            sender_id=current_user.id,
-            idempotency_key=str(uuid.uuid4()),
-            metadata={},
-            include_system_prompt=False,
-        )
+        result = AgentRuntime.process(company_id=company_id, conversation_id=conversation.id, message=message.strip(), channel="web", sender_id=current_user.id, idempotency_key=str(uuid.uuid4()), metadata={}, include_system_prompt=False)
     except ValueError as exc:
         db.session.rollback()
         return jsonify({"success": False, "error": str(exc)}), 400
     except AIProviderError as exc:
         db.session.rollback()
-        current_app.logger.warning(
-            "Proveedor IA no disponible: company_id=%s conversation_id=%s agent=%s status=%s error=%s",
-            company_id,
-            conversation.id,
-            agent_key,
-            exc.status_code,
-            str(exc),
-        )
-        error_message = str(exc) or "El servicio de IA no está disponible en este momento."
-        return jsonify({"success": False, "error": error_message}), exc.status_code
+        current_app.logger.warning("Proveedor IA no disponible: company_id=%s conversation_id=%s agent=%s status=%s error=%s", company_id, conversation.id, agent_key, exc.status_code, str(exc))
+        return jsonify({"success": False, "error": str(exc) or "El servicio de IA no está disponible en este momento."}), exc.status_code
     except Exception:
         db.session.rollback()
-        current_app.logger.exception(
-            "Error procesando chat del agente IA: company_id=%s conversation_id=%s agent=%s",
-            company_id,
-            conversation.id,
-            agent_key,
-        )
+        current_app.logger.exception("Error procesando chat del agente IA: company_id=%s conversation_id=%s agent=%s", company_id, conversation.id, agent_key)
         return jsonify({"success": False, "error": "No se pudo procesar tu solicitud."}), 500
-
-    return jsonify(
-        {
-            "success": True,
-            "conversation_id": result.get("conversation_id"),
-            "message_id": result.get("message_id"),
-            "assistant_message_id": result.get("assistant_message_id"),
-            "content": result.get("content"),
-        }
-    )
+    return jsonify({"success": True, "conversation_id": result.get("conversation_id"), "message_id": result.get("message_id"), "assistant_message_id": result.get("assistant_message_id"), "content": result.get("content")})
 
 
 csrf.exempt(ai_agent_chat)
@@ -323,8 +258,7 @@ def process_invoice(upload_id):
         suppliers = Supplier.query.filter_by(company_id=company_id, active=True).all()
         extracted["supplier_match"] = InvoiceMatchingService.supplier(suppliers=suppliers, name=(extracted.get("supplier") or {}).get("name"))
         extracted["matches"] = InvoiceMatchingService.products(products=products, items=extracted.get("items") or [])
-        extracted["status"] = "REQUIERE_REVISION" if extracted.get("requires_review") or extracted["supplier_match"].get("status") == "AMBIGUO" or any(line["matching_status"] in {"AMBIGUO", "MATCH_PROPUESTO"} for line in extracted["matches"]) else "LISTA_PARA_CONFIRMAR"
-        # metadata_json (SQLite/Postgres JSON) no serializa Decimal: se persiste una copia JSON-segura, preservando precision como string.
+        extracted["status"] = "LISTA_PARA_CONFIRMAR" if _invoice_ready_for_confirmation({**extracted, "status": ""}) else "REQUIERE_REVISION"
         upload["invoice"] = InvoiceAIService.json_safe(extracted)
         upload["status"] = extracted["status"]
         if not upload.get("usage_recorded"):
@@ -386,7 +320,6 @@ def resolve_invoice_line(upload_id):
     payload = request.get_json(silent=True) or {}
     if payload.get("target") == "supplier":
         from app import Supplier
-        # decision explicita del usuario: usar proveedor existente o proponer crear uno nuevo. No se crea ningun Supplier aqui.
         decision = payload.get("decision") or ("use_existing" if payload.get("supplier_id") else None)
         if decision == "create_new":
             proposed_name = str((invoice.get("supplier") or {}).get("name") or "").strip()
@@ -401,7 +334,7 @@ def resolve_invoice_line(upload_id):
             invoice["supplier_match"] = {"status": "MATCH_EXACTO", "supplier_id": supplier.id, "name": supplier.name, "candidates": []}
         else:
             return jsonify({"success": False, "error": "Decisión de proveedor inválida."}), 400
-        invoice["status"] = "LISTA_PARA_CONFIRMAR" if not invoice.get("requires_review") and not any(item.get("matching_status") in {"AMBIGUO", "MATCH_PROPUESTO"} for item in invoice.get("matches") or []) else "REQUIERE_REVISION"
+        invoice["status"] = "LISTA_PARA_CONFIRMAR" if _invoice_ready_for_confirmation(invoice) else "REQUIERE_REVISION"
         upload["invoice"] = invoice
         upload["status"] = invoice["status"]
         _save_invoice(conversation, metadata, uploads, index, upload)
@@ -416,11 +349,14 @@ def resolve_invoice_line(upload_id):
         from app import Product
         products = Product.query.filter_by(company_id=company_id, active=True).all()
         query = payload.get("code") or payload.get("barcode") or payload.get("description")
-        candidates = [product for product in products if normalize(product.barcode) == normalize(query) or normalize(product.name) == normalize(query)]
+        if not str(query or "").strip():
+            return jsonify({"success": False, "error": "Ingresá el código, código de barras o nombre del producto."}), 400
+        normalized_query = normalize(query)
+        candidates = [product for product in products if normalize(product.barcode) == normalized_query or normalize(getattr(product, "sku", None)) == normalized_query or normalize(product.name) == normalized_query]
         if len(candidates) != 1:
-            return jsonify({"success": False, "error": "La selección no identifica un único producto."}), 409
+            return jsonify({"success": False, "error": "El código/nombre no identifica un único producto en StockAR."}), 409
         line.update({"matching_status": "MATCH_EXACTO", "matching_reason": "SELECCION_MANUAL", "product_id": candidates[0].id, "product_name": candidates[0].name, "product_code": candidates[0].barcode})
-    invoice["status"] = "LISTA_PARA_CONFIRMAR" if not any(item.get("matching_status") in {"AMBIGUO", "MATCH_PROPUESTO"} for item in invoice.get("matches") or []) and not invoice.get("requires_review") else "REQUIERE_REVISION"
+    invoice["status"] = "LISTA_PARA_CONFIRMAR" if _invoice_ready_for_confirmation(invoice) else "REQUIERE_REVISION"
     upload["invoice"] = invoice
     upload["status"] = invoice["status"]
     _save_invoice(conversation, metadata, uploads, index, upload)
@@ -441,7 +377,12 @@ def confirm_invoice(upload_id):
         duplicate_result = _already_applied_invoice(upload_id, company_id, (upload.get("invoice") or {}).get("document_hash"))
         if duplicate_result is not None:
             return jsonify({"success": True, "status": "APLICADA", "result": duplicate_result, "duplicate": True})
-        result = InvoicePurchaseService.confirm(company_id=company_id, user_id=current_user.id, invoice=upload.get("invoice") or {}, conversation=conversation)
+        invoice = upload.get("invoice") or {}
+        if _invoice_ready_for_confirmation(invoice):
+            invoice["status"] = "LISTA_PARA_CONFIRMAR"
+            upload["invoice"] = invoice
+            upload["status"] = "LISTA_PARA_CONFIRMAR"
+        result = InvoicePurchaseService.confirm(company_id=company_id, user_id=current_user.id, invoice=invoice, conversation=conversation)
         upload["invoice"]["status"] = "APLICADA"
         upload["status"] = "APLICADA"
         upload["result"] = result
