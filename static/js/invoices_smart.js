@@ -58,13 +58,9 @@
 
     async function jsonResponse(response) {
       const type = response.headers.get('content-type') || '';
-      if (!type.includes('application/json')) {
-        throw new Error('El servidor no devolvió una respuesta válida.');
-      }
+      if (!type.includes('application/json')) throw new Error('El servidor no devolvió una respuesta válida.');
       const data = await response.json();
-      if (!response.ok || !data.success) {
-        throw new Error(data.error || 'No se pudo procesar la factura.');
-      }
+      if (!response.ok || !data.success) throw new Error(data.error || 'No se pudo procesar la factura.');
       return data;
     }
 
@@ -76,16 +72,10 @@
       const isImage = String(file.type || '').toLowerCase().startsWith('image/') || ['.jpg', '.jpeg', '.png', '.webp'].some((ext) => lower.endsWith(ext));
       if (isImage) {
         currentObjectUrl = URL.createObjectURL(file);
-        selected.innerHTML = '<div class="d-flex align-items-center gap-3 flex-wrap">' +
-          '<img src="' + currentObjectUrl + '" alt="Vista previa de la factura" style="width:96px;height:96px;object-fit:cover;border-radius:12px;border:1px solid var(--app-line);background:#f8fafc">' +
-          '<div><div class="fw-semibold">' + esc(name) + '</div><div class="small muted">' + sizeKb + ' KB · Imagen seleccionada correctamente</div><div class="small text-success mt-1"><i class="bi bi-check-circle me-1"></i>Lista para procesar con IA</div></div>' +
-          '</div>';
+        selected.innerHTML = '<div class="d-flex align-items-center gap-3 flex-wrap"><img src="' + currentObjectUrl + '" alt="Vista previa de la factura" style="width:96px;height:96px;object-fit:cover;border-radius:12px;border:1px solid var(--app-line);background:#f8fafc"><div><div class="fw-semibold">' + esc(name) + '</div><div class="small muted">' + sizeKb + ' KB · Imagen seleccionada correctamente</div><div class="small text-success mt-1"><i class="bi bi-check-circle me-1"></i>Lista para procesar con IA</div></div></div>';
         return;
       }
-      selected.innerHTML = '<div class="d-flex align-items-center gap-3 flex-wrap">' +
-        '<div style="width:64px;height:64px;display:grid;place-items:center;border-radius:12px;background:#eef4ff;color:#2563eb;font-size:1.5rem"><i class="bi bi-file-earmark-pdf"></i></div>' +
-        '<div><div class="fw-semibold">' + esc(name) + '</div><div class="small muted">' + sizeKb + ' KB · PDF seleccionado correctamente</div><div class="small text-success mt-1"><i class="bi bi-check-circle me-1"></i>Listo para procesar con IA</div></div>' +
-        '</div>';
+      selected.innerHTML = '<div class="d-flex align-items-center gap-3 flex-wrap"><div style="width:64px;height:64px;display:grid;place-items:center;border-radius:12px;background:#eef4ff;color:#2563eb;font-size:1.5rem"><i class="bi bi-file-earmark-pdf"></i></div><div><div class="fw-semibold">' + esc(name) + '</div><div class="small muted">' + sizeKb + ' KB · PDF seleccionado correctamente</div><div class="small text-success mt-1"><i class="bi bi-check-circle me-1"></i>Listo para procesar con IA</div></div></div>';
     }
 
     function selectFile(file) {
@@ -148,10 +138,7 @@
 
     async function uploadAndProcess() {
       clearError();
-      if (!currentFile) {
-        showError('Elegí una factura o sacale una foto primero.');
-        return;
-      }
+      if (!currentFile) return showError('Elegí una factura o sacale una foto primero.');
       processBtn.disabled = true;
       clearBtn.disabled = true;
       setProgress(20, true);
@@ -176,6 +163,41 @@
       }
     }
 
+    async function saveSupplierDecision(payload) {
+      const data = await jsonResponse(await fetch(resolveUrl.replace('__UPLOAD_ID__', encodeURIComponent(currentUploadId)), postOptions(payload)));
+      currentPreview = data.preview || {};
+      renderReview(currentPreview, currentUploadId, 'Factura');
+    }
+
+    function renderSupplier(preview) {
+      const target = $('review-supplier');
+      if (!target) return;
+      const supplier = preview.supplier || {};
+      const match = preview.supplier_match || {};
+      const status = match.status || 'PENDIENTE';
+      const name = match.name || supplier.name || '';
+      let html = '<div class="d-flex flex-wrap justify-content-between gap-3"><div><div class="small muted">Proveedor detectado</div><strong>' + esc(name || 'Sin reconocer') + '</strong><div class="small muted mt-1">' + esc(status.replaceAll('_', ' ')) + '</div></div>';
+      if (status === 'MATCH_EXACTO' || status === 'NUEVO_PROVEEDOR_CONFIRMADO') {
+        html += '<div class="text-end"><span class="badge text-bg-success">Proveedor listo</span></div></div>';
+        target.innerHTML = html;
+        return;
+      }
+      const candidates = Array.isArray(match.candidates) ? match.candidates : [];
+      html += '<div class="d-flex flex-column gap-2" style="min-width:min(100%,520px)">';
+      if (candidates.length) {
+        html += '<div class="small fw-semibold">Usar proveedor existente</div><div class="d-flex flex-wrap gap-2">' + candidates.map((item) => '<button type="button" class="btn btn-sm btn-outline-primary supplier-use" data-id="' + esc(item.id) + '">' + esc(item.name) + '</button>').join('') + '</div>';
+      }
+      if (name) html += '<button type="button" class="btn btn-sm btn-primary supplier-create"><i class="bi bi-plus-circle me-1"></i>Crear proveedor "' + esc(name) + '"</button>';
+      html += '</div></div>';
+      target.innerHTML = html;
+      target.querySelectorAll('.supplier-use').forEach((button) => button.addEventListener('click', async () => {
+        try { clearError(); await saveSupplierDecision({ target: 'supplier', decision: 'use_existing', supplier_id: button.dataset.id }); } catch (error) { showError(error.message); }
+      }));
+      target.querySelector('.supplier-create')?.addEventListener('click', async () => {
+        try { clearError(); await saveSupplierDecision({ target: 'supplier', decision: 'create_new' }); } catch (error) { showError(error.message); }
+      });
+    }
+
     function renderRows(preview, uploadId) {
       const target = $('review-items');
       const rows = preview.matches || [];
@@ -183,15 +205,11 @@
       target.innerHTML = rows.map((line) => {
         const status = line.matching_status;
         const automatic = status === 'MATCH_EXACTO';
-        const unresolved = ['AMBIGUO', 'MATCH_PROPUESTO'].includes(status);
         const isNew = status === 'NUEVO_PRODUCTO';
-        let action = '<span class="small text-success fw-semibold"><i class="bi bi-check-circle me-1"></i>Listo</span>';
-        if (automatic) action = '<span class="small text-success fw-semibold"><i class="bi bi-stars me-1"></i>Automático</span>';
-        if (unresolved) action = '<button type="button" class="btn btn-sm btn-outline-primary picker-open" data-line="' + esc(line.line_number) + '">Elegir producto</button>';
-        if (isNew) action = '<span class="small text-muted">Se creará al confirmar</span>';
-        const product = line.product_name ? '<div class="small">' + esc(line.product_name) + '</div>' : '<div class="small muted">Sin vincular</div>';
+        const action = '<button type="button" class="btn btn-sm ' + (automatic ? 'btn-outline-secondary' : 'btn-outline-primary') + ' picker-open" data-line="' + esc(line.line_number) + '">' + (automatic ? 'Cambiar' : 'Elegir / código') + '</button>';
+        const product = line.product_name ? '<div class="small fw-semibold">' + esc(line.product_name) + '</div><div class="small muted">Código: ' + esc(line.product_code || 'sin código') + '</div>' : '<div class="small muted">Sin vincular' + (isNew ? ' · se crearía al aplicar' : '') + '</div>';
         const confidenceClass = line.confidence_level === 'ALTA' ? 'text-bg-success' : line.confidence_level === 'MEDIA' ? 'text-bg-warning text-dark' : 'text-bg-secondary';
-        return '<tr><td><strong>' + esc(line.description || 'Sin descripción') + '</strong><div class="small muted">' + esc(line.code || line.barcode || '') + '</div></td><td>' + product + '</td><td><span class="badge ' + confidenceClass + '">' + esc(line.confidence_level || 'BAJA') + (line.proposal_score ? ' · ' + Math.round(line.proposal_score * 100) + '%' : '') + '</span></td><td>' + esc(line.quantity) + '</td><td>' + esc(line.unit_cost) + '</td><td class="text-end">' + action + '</td></tr>';
+        return '<tr><td><strong>' + esc(line.description || 'Sin descripción') + '</strong><div class="small muted">Código factura: ' + esc(line.code || line.barcode || 'sin código') + '</div></td><td>' + product + '</td><td><span class="badge ' + confidenceClass + '">' + esc(line.confidence_level || 'BAJA') + (line.proposal_score ? ' · ' + Math.round(line.proposal_score * 100) + '%' : '') + '</span></td><td>' + esc(line.quantity) + '</td><td>' + esc(line.unit_cost) + '</td><td class="text-end">' + action + '</td></tr>';
       }).join('');
       target.querySelectorAll('.picker-open').forEach((button) => button.addEventListener('click', () => openPicker(uploadId, button.dataset.line)));
     }
@@ -201,17 +219,18 @@
       currentPreview = preview;
       const box = $('invoice-review');
       if (!box) return;
-      const invoice = preview.invoice || {};
-      const supplier = preview.supplier || {};
-      const supplierMatch = preview.supplier_match || {};
+      const invoice = preview.invoice || preview || {};
+      const supplier = invoice.supplier || preview.supplier || {};
+      const supplierMatch = preview.supplier_match || invoice.supplier_match || {};
+      const status = preview.status || invoice.status || 'REQUIERE_REVISION';
       box.classList.remove('d-none');
-      $('review-title').textContent = invoice.number ? 'Factura ' + invoice.number : (name || 'Factura');
-      $('review-status').textContent = String(preview.status || 'REQUIERE_REVISION').replaceAll('_', ' ');
-      $('review-kpis').innerHTML = [['Proveedor', supplier.name || supplierMatch.name || 'Sin reconocer'], ['Fecha', invoice.date || '—'], ['Total', invoice.total ?? '—'], ['Líneas', (preview.matches || []).length]].map((item) => '<div class="col-6 col-lg-3"><div class="invoice-kpi"><div class="small muted">' + esc(item[0]) + '</div><strong>' + esc(item[1]) + '</strong></div></div>').join('');
-      $('review-supplier').innerHTML = '<div class="d-flex flex-wrap justify-content-between gap-2"><div><div class="small muted">Proveedor detectado</div><strong>' + esc(supplier.name || supplierMatch.name || 'Sin reconocer') + '</strong></div><div><div class="small muted">Estado</div><strong>' + esc(supplierMatch.status || 'Pendiente') + '</strong></div></div>';
+      $('review-title').textContent = invoice.invoice_number ? 'Factura ' + invoice.invoice_number : (name || 'Factura');
+      $('review-status').textContent = String(status).replaceAll('_', ' ');
+      $('review-kpis').innerHTML = [['Proveedor', supplier.name || supplierMatch.name || 'Sin reconocer'], ['Fecha', invoice.issue_date || '—'], ['Total', invoice.total ?? '—'], ['Líneas', (preview.matches || invoice.matches || []).length]].map((item) => '<div class="col-6 col-lg-3"><div class="invoice-kpi"><div class="small muted">' + esc(item[0]) + '</div><strong>' + esc(item[1]) + '</strong></div></div>').join('');
+      renderSupplier(preview);
       renderRows(preview, uploadId);
       const confirm = $('review-confirm');
-      if (confirm) confirm.disabled = preview.status !== 'LISTA_PARA_CONFIRMAR';
+      if (confirm) confirm.disabled = status !== 'LISTA_PARA_CONFIRMAR';
       box.scrollIntoView({ behavior: 'smooth', block: 'start' });
     }
 
@@ -222,21 +241,38 @@
       currentCandidates = line.candidate_products || [];
       $('picker-title').textContent = line.description || 'Producto';
       $('picker-query').value = '';
+      $('picker-code').value = '';
       renderCandidates(currentCandidates);
       $('invoice-picker').classList.add('show');
+      $('picker-code')?.focus();
     }
 
     function renderCandidates(candidates) {
       const list = $('picker-list');
       if (!list) return;
-      list.innerHTML = candidates.length ? candidates.map((item) => '<div class="candidate"><div><strong>' + esc(item.name) + '</strong><div class="small muted">' + esc(item.code || 'Sin código') + (item.category ? ' · ' + esc(item.category) : '') + '</div></div><button type="button" class="btn btn-sm btn-primary picker-use" data-name="' + esc(item.name) + '">Usar</button></div>').join('') : '<div class="small muted">No encontramos sugerencias para esta línea.</div>';
+      list.innerHTML = candidates.length ? candidates.map((item) => '<div class="candidate"><div><strong>' + esc(item.name) + '</strong><div class="small muted">' + esc(item.code || 'Sin código') + (item.category ? ' · ' + esc(item.category) : '') + '</div></div><button type="button" class="btn btn-sm btn-primary picker-use" data-name="' + esc(item.name) + '">Usar</button></div>').join('') : '<div class="small muted">No encontramos sugerencias. Escribí el código exacto del producto.</div>';
       list.querySelectorAll('.picker-use').forEach((button) => button.addEventListener('click', async () => {
         try {
+          clearError();
           const data = await jsonResponse(await fetch(resolveUrl.replace('__UPLOAD_ID__', encodeURIComponent(currentUploadId)), postOptions({ line_number: pickerLine, description: button.dataset.name })));
           $('invoice-picker').classList.remove('show');
-          renderReview(data.preview || {}, currentUploadId, 'Factura');
+          currentPreview = data.preview || {};
+          renderReview(currentPreview, currentUploadId, 'Factura');
         } catch (error) { showError(error.message); }
       }));
+    }
+
+    async function useTypedCode() {
+      const input = $('picker-code');
+      const code = input ? input.value.trim() : '';
+      if (!code) return showError('Escribí el código o SKU del producto.');
+      try {
+        clearError();
+        const data = await jsonResponse(await fetch(resolveUrl.replace('__UPLOAD_ID__', encodeURIComponent(currentUploadId)), postOptions({ line_number: pickerLine, code })));
+        $('invoice-picker').classList.remove('show');
+        currentPreview = data.preview || {};
+        renderReview(currentPreview, currentUploadId, 'Factura');
+      } catch (error) { showError(error.message); }
     }
 
     async function openInvoice(uploadId) {
@@ -250,9 +286,10 @@
     cameraInput.addEventListener('change', () => selectFile(cameraInput.files && cameraInput.files[0]));
     processBtn.addEventListener('click', uploadAndProcess);
     clearBtn.addEventListener('click', clearFile);
-
     document.querySelectorAll('.invoice-open').forEach((button) => button.addEventListener('click', () => openInvoice(button.dataset.uploadId)));
     $('picker-close')?.addEventListener('click', () => $('invoice-picker').classList.remove('show'));
+    $('picker-code-use')?.addEventListener('click', useTypedCode);
+    $('picker-code')?.addEventListener('keydown', (event) => { if (event.key === 'Enter') { event.preventDefault(); useTypedCode(); } });
     $('picker-query')?.addEventListener('input', () => {
       const query = $('picker-query').value.trim().toLowerCase();
       renderCandidates(currentCandidates.filter((item) => String(item.name || '').toLowerCase().includes(query) || String(item.code || '').toLowerCase().includes(query)));
@@ -260,11 +297,12 @@
     $('review-confirm')?.addEventListener('click', async () => {
       const button = $('review-confirm');
       button.disabled = true;
+      clearError();
       try {
         const data = await jsonResponse(await fetch(confirmUrl.replace('__UPLOAD_ID__', encodeURIComponent(currentUploadId)), postOptions()));
         const alert = $('review-alert');
         alert.className = 'alert alert-success';
-        alert.textContent = data.duplicate ? 'Esta factura ya estaba aplicada anteriormente.' : 'Factura confirmada. La compra y el stock fueron actualizados.';
+        alert.textContent = data.duplicate ? 'Esta factura ya estaba aplicada anteriormente.' : 'Factura confirmada. La compra, el proveedor y el stock fueron actualizados.';
         alert.classList.remove('d-none');
         setTimeout(() => window.location.reload(), 900);
       } catch (error) {
@@ -272,15 +310,9 @@
         button.disabled = false;
       }
     });
-
     dropzone.addEventListener('dragover', (event) => { event.preventDefault(); dropzone.classList.add('dragover'); });
     dropzone.addEventListener('dragleave', () => dropzone.classList.remove('dragover'));
-    dropzone.addEventListener('drop', (event) => {
-      event.preventDefault();
-      dropzone.classList.remove('dragover');
-      const file = event.dataTransfer && event.dataTransfer.files ? event.dataTransfer.files[0] : null;
-      selectFile(file);
-    });
+    dropzone.addEventListener('drop', (event) => { event.preventDefault(); dropzone.classList.remove('dragover'); const file = event.dataTransfer && event.dataTransfer.files ? event.dataTransfer.files[0] : null; selectFile(file); });
   }
 
   if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', initInvoiceAI, { once: true });
