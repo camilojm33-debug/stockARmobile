@@ -14,6 +14,7 @@ from flask_login import current_user
 from sqlalchemy import or_
 
 from stockarmobile.decorators import company_admin_required
+from stockarmobile.tenant import get_current_company_id
 from stockarmobile.extensions import db
 from stockarmobile.models.conversations import Conversation
 from services.ai_agent.config_service import (
@@ -140,6 +141,19 @@ def _public_available_company(slug: str):
     enabled = bool(get_ai_preferences(company).get("ai_agent", {}).get("public_webchat_enabled", False))
     if not publication["published"] or not enabled:
         return None
+    return company
+
+
+def _authenticated_company():
+    """Resolve the authenticated tenant without relying on a nonexistent User.company relationship."""
+    company_id = get_current_company_id(current_user)
+    if company_id is None:
+        abort(403)
+    from app import Company
+
+    company = Company.query.filter_by(id=int(company_id), active=True).first()
+    if company is None:
+        abort(403)
     return company
 
 
@@ -485,7 +499,7 @@ def public_vendor_message(slug: str):
 
 @company_admin_required
 def publication_page():
-    company = current_user.company
+    company = _authenticated_company()
     status = publication_status(company)
     access = can_use_ai(company, "vendedor")
     preview_url = url_for("vendor_publication.preview_vendor", _external=True)
@@ -501,7 +515,7 @@ def publication_page():
 
 @company_admin_required
 def publication_action(action: str):
-    company = current_user.company
+    company = _authenticated_company()
     access = can_use_ai(company, "vendedor")
     if not access.allowed:
         return jsonify({"success": False, "error": access.reason}), 403
@@ -525,7 +539,7 @@ def publication_action(action: str):
 
 @company_admin_required
 def preview_vendor():
-    company = current_user.company
+    company = _authenticated_company()
     return render_template(
         "ai_agents/public_vendor_chat.html",
         company=company,
