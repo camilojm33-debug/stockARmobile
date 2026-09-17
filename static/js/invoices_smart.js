@@ -1,324 +1,380 @@
 (() => {
-  const root = document.getElementById('invoice-ai-root');
-  if (!root) return;
+  function initInvoiceAI() {
+    const root = document.getElementById('invoice-ai-root');
+    if (!root || root.dataset.invoiceAiInitialized === '1') return;
+    root.dataset.invoiceAiInitialized = '1';
 
-  const $ = (id) => document.getElementById(id);
-  const fileInput = $('invoice-file-input');
-  const cameraInput = $('invoice-camera-input');
-  const fileTrigger = $('invoice-file-trigger');
-  const cameraTrigger = $('invoice-camera-trigger');
-  const dropzone = $('invoice-dropzone');
-  const selected = $('invoice-selected');
-  const errorBox = $('invoice-error');
-  const processBtn = $('invoice-process');
-  const clearBtn = $('invoice-clear');
-  const progress = $('invoice-progress');
-  const progressBar = $('invoice-progress-bar');
+    const $ = (id) => document.getElementById(id);
+    const fileInput = $('invoice-file-input');
+    const cameraInput = $('invoice-camera-input');
+    const fileTrigger = $('invoice-file-trigger');
+    const cameraTrigger = $('invoice-camera-trigger');
+    const dropzone = $('invoice-dropzone');
+    const selected = $('invoice-selected');
+    const errorBox = $('invoice-error');
+    const processBtn = $('invoice-process');
+    const clearBtn = $('invoice-clear');
+    const progress = $('invoice-progress');
+    const progressBar = $('invoice-progress-bar');
 
-  if (!fileInput || !cameraInput || !fileTrigger || !cameraTrigger || !selected || !processBtn || !clearBtn) return;
+    if (!fileInput || !cameraInput || !fileTrigger || !cameraTrigger || !selected || !processBtn || !clearBtn) return;
 
-  const csrfToken = root.dataset.csrf || '';
-  const uploadUrl = root.dataset.uploadUrl;
-  const previewUrl = root.dataset.previewUrl;
-  const processUrl = root.dataset.processUrl;
-  const resolveUrl = root.dataset.resolveUrl;
-  const confirmUrl = root.dataset.confirmUrl;
+    const csrfToken = root.dataset.csrf || '';
+    const uploadUrl = root.dataset.uploadUrl;
+    const previewUrl = root.dataset.previewUrl;
+    const processUrl = root.dataset.processUrl;
+    const resolveUrl = root.dataset.resolveUrl;
+    const confirmUrl = root.dataset.confirmUrl;
 
-  let currentFile = null;
-  let currentObjectUrl = null;
-  let currentUploadId = null;
-  let currentPreview = null;
-  let pickerLine = null;
-  let currentCandidates = [];
+    let currentFile = null;
+    let currentObjectUrl = null;
+    let currentUploadId = null;
+    let currentPreview = null;
+    let pickerLine = null;
+    let currentCandidates = [];
+    let cameraStream = null;
+    let cameraModal = null;
 
-  const showError = (message) => {
-    if (errorBox) {
+    const showError = (message) => {
+      if (!errorBox) return;
       errorBox.textContent = message || 'No se pudo procesar la factura.';
       errorBox.classList.remove('d-none');
-    }
-  };
+    };
 
-  const clearError = () => {
-    if (errorBox) {
+    const clearError = () => {
+      if (!errorBox) return;
       errorBox.textContent = '';
       errorBox.classList.add('d-none');
+    };
+
+    const esc = (value) => {
+      const div = document.createElement('div');
+      div.textContent = value == null ? '' : String(value);
+      return div.innerHTML;
+    };
+
+    const releasePreviewUrl = () => {
+      if (currentObjectUrl) {
+        URL.revokeObjectURL(currentObjectUrl);
+        currentObjectUrl = null;
+      }
+    };
+
+    async function jsonResponse(response) {
+      const type = response.headers.get('content-type') || '';
+      if (!type.includes('application/json')) {
+        throw new Error('El servidor no devolvió una respuesta válida.');
+      }
+      const data = await response.json();
+      if (!response.ok || !data.success) {
+        throw new Error(data.error || 'No se pudo procesar la factura.');
+      }
+      return data;
     }
-  };
 
-  const releasePreviewUrl = () => {
-    if (currentObjectUrl) {
-      URL.revokeObjectURL(currentObjectUrl);
-      currentObjectUrl = null;
-    }
-  };
+    function renderSelectedFile(file) {
+      releasePreviewUrl();
+      const name = String(file.name || 'Factura');
+      const sizeKb = Math.max(1, Math.round(file.size / 1024));
+      const lower = name.toLowerCase();
+      const isImage = String(file.type || '').toLowerCase().startsWith('image/') || ['.jpg', '.jpeg', '.png', '.webp'].some((ext) => lower.endsWith(ext));
 
-  const esc = (value) => {
-    const div = document.createElement('div');
-    div.textContent = value == null ? '' : String(value);
-    return div.innerHTML;
-  };
+      if (isImage) {
+        currentObjectUrl = URL.createObjectURL(file);
+        selected.innerHTML =
+          '<div class="d-flex align-items-center gap-3 flex-wrap">' +
+          '<img src="' + currentObjectUrl + '" alt="Vista previa de la factura" style="width:96px;height:96px;object-fit:cover;border-radius:12px;border:1px solid var(--app-line);background:#f8fafc">' +
+          '<div><div class="fw-semibold">' + esc(name) + '</div><div class="small muted">' + sizeKb + ' KB · Imagen seleccionada correctamente</div><div class="small text-success mt-1"><i class="bi bi-check-circle me-1"></i>Lista para procesar con IA</div></div>' +
+          '</div>';
+        return;
+      }
 
-  async function jsonResponse(response) {
-    const type = response.headers.get('content-type') || '';
-    if (!type.includes('application/json')) throw new Error('El servidor no devolvió una respuesta válida.');
-    const data = await response.json();
-    if (!response.ok || !data.success) throw new Error(data.error || 'No se pudo procesar la factura.');
-    return data;
-  }
-
-  function renderSelectedFile(file) {
-    releasePreviewUrl();
-    const name = String(file.name || 'Factura');
-    const sizeKb = Math.max(1, Math.round(file.size / 1024));
-    const type = String(file.type || '').toLowerCase();
-    const isImage = type.startsWith('image/') || ['.jpg', '.jpeg', '.png', '.webp'].some((ext) => name.toLowerCase().endsWith(ext));
-
-    if (isImage) {
-      currentObjectUrl = URL.createObjectURL(file);
       selected.innerHTML =
         '<div class="d-flex align-items-center gap-3 flex-wrap">' +
-        '<img src="' + currentObjectUrl + '" alt="Vista previa de la factura" style="width:96px;height:96px;object-fit:cover;border-radius:12px;border:1px solid var(--app-line);background:#f8fafc">' +
-        '<div><div class="fw-semibold">' + esc(name) + '</div><div class="small muted">' + sizeKb + ' KB · Imagen seleccionada correctamente</div><div class="small text-success mt-1"><i class="bi bi-check-circle me-1"></i>Lista para procesar con IA</div></div>' +
+        '<div style="width:64px;height:64px;display:grid;place-items:center;border-radius:12px;background:#eef4ff;color:#2563eb;font-size:1.5rem"><i class="bi bi-file-earmark-pdf"></i></div>' +
+        '<div><div class="fw-semibold">' + esc(name) + '</div><div class="small muted">' + sizeKb + ' KB · PDF seleccionado correctamente</div><div class="small text-success mt-1"><i class="bi bi-check-circle me-1"></i>Listo para procesar con IA</div></div>' +
         '</div>';
-      return;
     }
 
-    selected.innerHTML =
-      '<div class="d-flex align-items-center gap-3 flex-wrap">' +
-      '<div style="width:64px;height:64px;display:grid;place-items:center;border-radius:12px;background:#eef4ff;color:#2563eb;font-size:1.5rem"><i class="bi bi-file-earmark-pdf"></i></div>' +
-      '<div><div class="fw-semibold">' + esc(name) + '</div><div class="small muted">' + sizeKb + ' KB · PDF seleccionado correctamente</div><div class="small text-success mt-1"><i class="bi bi-check-circle me-1"></i>Listo para procesar con IA</div></div>' +
-      '</div>';
-  }
+    function selectFile(file) {
+      clearError();
+      releasePreviewUrl();
+      currentFile = file || null;
+      if (!file) {
+        selected.textContent = 'Todavía no seleccionaste una factura.';
+        processBtn.disabled = true;
+        clearBtn.disabled = true;
+        return;
+      }
 
-  function selectFile(file) {
-    clearError();
-    releasePreviewUrl();
-    currentFile = file || null;
-    if (!file) {
+      const name = String(file.name || '');
+      const ext = name.includes('.') ? name.slice(name.lastIndexOf('.')).toLowerCase() : '';
+      const allowed = ['.pdf', '.jpg', '.jpeg', '.png', '.webp'];
+      if (!allowed.includes(ext)) {
+        currentFile = null;
+        processBtn.disabled = true;
+        clearBtn.disabled = true;
+        showError('Formato no compatible. Usá PDF, JPG, JPEG, PNG o WEBP.');
+        return;
+      }
+      if (!file.size || file.size > 10 * 1024 * 1024) {
+        currentFile = null;
+        processBtn.disabled = true;
+        clearBtn.disabled = true;
+        showError('El archivo debe pesar entre 1 byte y 10 MB.');
+        return;
+      }
+
+      renderSelectedFile(file);
+      processBtn.disabled = false;
+      clearBtn.disabled = false;
+    }
+
+    function clearFile() {
+      releasePreviewUrl();
+      currentFile = null;
+      fileInput.value = '';
+      cameraInput.value = '';
       selected.textContent = 'Todavía no seleccionaste una factura.';
       processBtn.disabled = true;
       clearBtn.disabled = true;
-      return;
+      clearError();
     }
 
-    const name = String(file.name || '');
-    const ext = name.includes('.') ? name.slice(name.lastIndexOf('.')).toLowerCase() : '';
-    const allowed = ['.pdf', '.jpg', '.jpeg', '.png', '.webp'];
-    if (!allowed.includes(ext)) {
-      currentFile = null;
-      processBtn.disabled = true;
-      clearBtn.disabled = true;
-      showError('Formato no compatible. Usá PDF, JPG, JPEG, PNG o WEBP.');
-      return;
-    }
-    if (!file.size || file.size > 10 * 1024 * 1024) {
-      currentFile = null;
-      processBtn.disabled = true;
-      clearBtn.disabled = true;
-      showError('El archivo debe pesar entre 1 byte y 10 MB.');
-      return;
-    }
-
-    renderSelectedFile(file);
-    processBtn.disabled = false;
-    clearBtn.disabled = false;
-  }
-
-  function clearFile() {
-    releasePreviewUrl();
-    currentFile = null;
-    fileInput.value = '';
-    cameraInput.value = '';
-    selected.textContent = 'Todavía no seleccionaste una factura.';
-    processBtn.disabled = true;
-    clearBtn.disabled = true;
-    clearError();
-  }
-
-  function postOptions(body) {
-    const options = {
-      method: 'POST',
-      credentials: 'same-origin',
-      headers: { 'X-CSRFToken': csrfToken, 'X-Requested-With': 'XMLHttpRequest' }
-    };
-    if (body !== undefined) {
-      options.headers['Content-Type'] = 'application/json';
-      options.body = JSON.stringify(body);
-    }
-    return options;
-  }
-
-  function setProgress(value, visible = true) {
-    if (!progress || !progressBar) return;
-    progress.classList.toggle('d-none', !visible);
-    progressBar.style.width = String(value) + '%';
-  }
-
-  async function uploadAndProcess() {
-    clearError();
-    if (!currentFile) {
-      showError('Elegí una factura o sacale una foto primero.');
-      return;
-    }
-
-    processBtn.disabled = true;
-    clearBtn.disabled = true;
-    setProgress(20, true);
-
-    try {
-      const form = new FormData();
-      form.append('message', 'Cargué una factura de proveedor para procesarla con IA.');
-      form.append('agent', 'asistente');
-      form.append('invoice_file', currentFile, currentFile.name);
-
-      const uploaded = await jsonResponse(await fetch(uploadUrl, {
+    function postOptions(body) {
+      const options = {
         method: 'POST',
-        body: form,
         credentials: 'same-origin',
         headers: { 'X-CSRFToken': csrfToken, 'X-Requested-With': 'XMLHttpRequest' }
-      }));
-
-      currentUploadId = uploaded.document_id;
-      setProgress(60, true);
-      const processed = await jsonResponse(await fetch(processUrl.replace('__UPLOAD_ID__', encodeURIComponent(currentUploadId)), postOptions()));
-      setProgress(100, true);
-      renderReview(processed.preview || {}, currentUploadId, currentFile.name);
-      setTimeout(() => setProgress(0, false), 500);
-    } catch (error) {
-      showError(error.message);
-      setProgress(0, false);
-    } finally {
-      processBtn.disabled = !currentFile;
-      clearBtn.disabled = !currentFile;
+      };
+      if (body !== undefined) {
+        options.headers['Content-Type'] = 'application/json';
+        options.body = JSON.stringify(body);
+      }
+      return options;
     }
-  }
 
-  function renderRows(preview, uploadId) {
-    const target = $('review-items');
-    const rows = preview.matches || [];
-    if (!target) return;
+    function setProgress(value, visible = true) {
+      if (!progress || !progressBar) return;
+      progress.classList.toggle('d-none', !visible);
+      progressBar.style.width = String(value) + '%';
+    }
 
-    target.innerHTML = rows.map((line) => {
-      const status = line.matching_status;
-      const automatic = status === 'MATCH_EXACTO';
-      const unresolved = ['AMBIGUO', 'MATCH_PROPUESTO'].includes(status);
-      const isNew = status === 'NUEVO_PRODUCTO';
-      let action = '<span class="small text-success fw-semibold"><i class="bi bi-check-circle me-1"></i>Listo</span>';
-      if (automatic) action = '<span class="small text-success fw-semibold"><i class="bi bi-stars me-1"></i>Automático</span>';
-      if (unresolved) action = '<button type="button" class="btn btn-sm btn-outline-primary picker-open" data-line="' + esc(line.line_number) + '">Elegir producto</button>';
-      if (isNew) action = '<span class="small text-muted">Se creará al confirmar</span>';
+    function stopCamera() {
+      if (cameraStream) {
+        cameraStream.getTracks().forEach((track) => track.stop());
+        cameraStream = null;
+      }
+    }
 
-      const product = line.product_name ? '<div class="small">' + esc(line.product_name) + '</div>' : '<div class="small muted">Sin vincular</div>';
-      const confidenceClass = line.confidence_level === 'ALTA' ? 'text-bg-success' : line.confidence_level === 'MEDIA' ? 'text-bg-warning text-dark' : 'text-bg-secondary';
+    function destroyCameraModal() {
+      stopCamera();
+      if (cameraModal) {
+        cameraModal.remove();
+        cameraModal = null;
+      }
+    }
 
-      return '<tr>' +
-        '<td><strong>' + esc(line.description || 'Sin descripción') + '</strong><div class="small muted">' + esc(line.code || line.barcode || '') + '</div></td>' +
-        '<td>' + product + '</td>' +
-        '<td><span class="badge ' + confidenceClass + '">' + esc(line.confidence_level || 'BAJA') + (line.proposal_score ? ' · ' + Math.round(line.proposal_score * 100) + '%' : '') + '</span></td>' +
-        '<td>' + esc(line.quantity) + '</td>' +
-        '<td>' + esc(line.unit_cost) + '</td>' +
-        '<td class="text-end">' + action + '</td>' +
-        '</tr>';
-    }).join('');
+    async function openCamera() {
+      clearError();
+      if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
+        cameraInput.click();
+        return;
+      }
 
-    target.querySelectorAll('.picker-open').forEach((button) => {
-      button.addEventListener('click', () => openPicker(uploadId, button.dataset.line));
-    });
-  }
+      if (!cameraModal) {
+        cameraModal = document.createElement('div');
+        cameraModal.id = 'invoice-camera-modal';
+        cameraModal.style.cssText = 'position:fixed;inset:0;background:rgba(15,23,42,.72);z-index:2000;display:flex;align-items:center;justify-content:center;padding:16px;';
+        cameraModal.innerHTML =
+          '<div style="width:min(760px,100%);background:#fff;border-radius:18px;padding:16px;box-shadow:0 24px 80px rgba(15,23,42,.4)">' +
+          '<div style="display:flex;justify-content:space-between;align-items:center;gap:12px;margin-bottom:12px"><div><strong>Tomar foto de la factura</strong><div class="small text-muted">Permití el acceso a la cámara para continuar.</div></div><button type="button" id="invoice-camera-close" class="btn btn-sm btn-outline-secondary">Cerrar</button></div>' +
+          '<video id="invoice-camera-video" autoplay playsinline muted style="width:100%;max-height:62vh;object-fit:contain;background:#0f172a;border-radius:14px"></video>' +
+          '<canvas id="invoice-camera-canvas" class="d-none"></canvas>' +
+          '<div id="invoice-camera-error" class="small text-danger mt-2"></div>' +
+          '<div class="d-flex justify-content-end gap-2 mt-3"><button type="button" id="invoice-camera-capture" class="btn btn-primary"><i class="bi bi-camera me-1"></i>Capturar foto</button></div>' +
+          '</div>';
+        document.body.appendChild(cameraModal);
+        cameraModal.querySelector('#invoice-camera-close').addEventListener('click', destroyCameraModal);
+        cameraModal.querySelector('#invoice-camera-capture').addEventListener('click', () => {
+          const video = cameraModal.querySelector('#invoice-camera-video');
+          const canvas = cameraModal.querySelector('#invoice-camera-canvas');
+          if (!video.videoWidth || !video.videoHeight) {
+            cameraModal.querySelector('#invoice-camera-error').textContent = 'La cámara todavía no está lista. Esperá un segundo y probá de nuevo.';
+            return;
+          }
+          canvas.width = video.videoWidth;
+          canvas.height = video.videoHeight;
+          const ctx = canvas.getContext('2d');
+          ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
+          canvas.toBlob((blob) => {
+            if (!blob) return;
+            const stamp = new Date().toISOString().replace(/[:.]/g, '-');
+            const file = new File([blob], 'factura-' + stamp + '.jpg', { type: 'image/jpeg' });
+            selectFile(file);
+            destroyCameraModal();
+          }, 'image/jpeg', 0.92);
+        });
+      }
 
-  function renderReview(preview, uploadId, name) {
-    currentUploadId = uploadId;
-    currentPreview = preview;
-    const box = $('invoice-review');
-    if (!box) return;
-    const invoice = preview.invoice || {};
-    const supplier = preview.supplier || {};
-    const supplierMatch = preview.supplier_match || {};
-    box.classList.remove('d-none');
-
-    $('review-title').textContent = invoice.number ? 'Factura ' + invoice.number : (name || 'Factura');
-    $('review-status').textContent = String(preview.status || 'REQUIERE_REVISION').replaceAll('_', ' ');
-    $('review-kpis').innerHTML = [
-      ['Proveedor', supplier.name || supplierMatch.name || 'Sin reconocer'],
-      ['Fecha', invoice.date || '—'],
-      ['Total', invoice.total ?? '—'],
-      ['Líneas', (preview.matches || []).length]
-    ].map((item) => '<div class="col-6 col-lg-3"><div class="invoice-kpi"><div class="small muted">' + esc(item[0]) + '</div><strong>' + esc(item[1]) + '</strong></div></div>').join('');
-    $('review-supplier').innerHTML = '<div class="d-flex flex-wrap justify-content-between gap-2"><div><div class="small muted">Proveedor detectado</div><strong>' + esc(supplier.name || supplierMatch.name || 'Sin reconocer') + '</strong></div><div><div class="small muted">Estado</div><strong>' + esc(supplierMatch.status || 'Pendiente') + '</strong></div></div>';
-    renderRows(preview, uploadId);
-    const confirm = $('review-confirm');
-    if (confirm) confirm.disabled = preview.status !== 'LISTA_PARA_CONFIRMAR';
-    box.scrollIntoView({ behavior: 'smooth', block: 'start' });
-  }
-
-  function openPicker(uploadId, lineNumber) {
-    const line = (currentPreview && currentPreview.matches || []).find((item) => String(item.line_number) === String(lineNumber));
-    if (!line) return;
-    pickerLine = lineNumber;
-    currentCandidates = line.candidate_products || [];
-    $('picker-title').textContent = line.description || 'Producto';
-    $('picker-query').value = '';
-    renderCandidates(currentCandidates);
-    $('invoice-picker').classList.add('show');
-  }
-
-  function renderCandidates(candidates) {
-    const list = $('picker-list');
-    list.innerHTML = candidates.length ? candidates.map((item) => '<div class="candidate"><div><strong>' + esc(item.name) + '</strong><div class="small muted">' + esc(item.code || 'Sin código') + (item.category ? ' · ' + esc(item.category) : '') + '</div></div><button type="button" class="btn btn-sm btn-primary picker-use" data-name="' + esc(item.name) + '">Usar</button></div>').join('') : '<div class="small muted">No encontramos sugerencias para esta línea.</div>';
-    list.querySelectorAll('.picker-use').forEach((button) => button.addEventListener('click', async () => {
+      cameraModal.classList.remove('d-none');
       try {
-        const url = resolveUrl.replace('__UPLOAD_ID__', encodeURIComponent(currentUploadId));
-        const data = await jsonResponse(await fetch(url, postOptions({ line_number: pickerLine, description: button.dataset.name })));
-        $('invoice-picker').classList.remove('show');
-        renderReview(data.preview || {}, currentUploadId, 'Factura');
+        stopCamera();
+        cameraStream = await navigator.mediaDevices.getUserMedia({
+          video: { facingMode: { ideal: 'environment' } },
+          audio: false
+        });
+        const video = cameraModal.querySelector('#invoice-camera-video');
+        video.srcObject = cameraStream;
+        await video.play();
+      } catch (error) {
+        cameraModal.querySelector('#invoice-camera-error').textContent = 'No se pudo acceder a la cámara. Verificá el permiso del navegador o usá Subir archivo.';
+      }
+    }
+
+    async function uploadAndProcess() {
+      clearError();
+      if (!currentFile) {
+        showError('Elegí una factura o sacale una foto primero.');
+        return;
+      }
+
+      processBtn.disabled = true;
+      clearBtn.disabled = true;
+      setProgress(20, true);
+
+      try {
+        const form = new FormData();
+        form.append('message', 'Cargué una factura de proveedor para procesarla con IA.');
+        form.append('agent', 'asistente');
+        form.append('invoice_file', currentFile, currentFile.name);
+
+        const uploaded = await jsonResponse(await fetch(uploadUrl, {
+          method: 'POST',
+          body: form,
+          credentials: 'same-origin',
+          headers: { 'X-CSRFToken': csrfToken, 'X-Requested-With': 'XMLHttpRequest' }
+        }));
+
+        currentUploadId = uploaded.document_id;
+        setProgress(60, true);
+        const processed = await jsonResponse(await fetch(processUrl.replace('__UPLOAD_ID__', encodeURIComponent(currentUploadId)), postOptions()));
+        setProgress(100, true);
+        renderReview(processed.preview || {}, currentUploadId, currentFile.name);
+        setTimeout(() => setProgress(0, false), 500);
       } catch (error) {
         showError(error.message);
+        setProgress(0, false);
+      } finally {
+        processBtn.disabled = !currentFile;
+        clearBtn.disabled = !currentFile;
       }
-    }));
-  }
-
-  async function openInvoice(uploadId) {
-    try {
-      const data = await jsonResponse(await fetch(previewUrl.replace('__UPLOAD_ID__', encodeURIComponent(uploadId)), { credentials: 'same-origin' }));
-      renderReview(data.preview || {}, uploadId, data.original_name || 'Factura');
-    } catch (error) { showError(error.message); }
-  }
-
-  fileTrigger.addEventListener('click', () => fileInput.click());
-  cameraTrigger.addEventListener('click', () => cameraInput.click());
-  fileInput.addEventListener('change', () => selectFile(fileInput.files && fileInput.files[0]));
-  cameraInput.addEventListener('change', () => selectFile(cameraInput.files && cameraInput.files[0]));
-  processBtn.addEventListener('click', uploadAndProcess);
-  clearBtn.addEventListener('click', clearFile);
-
-  document.querySelectorAll('.invoice-open').forEach((button) => button.addEventListener('click', () => openInvoice(button.dataset.uploadId)));
-  $('picker-close')?.addEventListener('click', () => $('invoice-picker').classList.remove('show'));
-  $('picker-query')?.addEventListener('input', () => {
-    const query = $('picker-query').value.trim().toLowerCase();
-    renderCandidates(currentCandidates.filter((item) => String(item.name || '').toLowerCase().includes(query) || String(item.code || '').toLowerCase().includes(query)));
-  });
-
-  $('review-confirm')?.addEventListener('click', async () => {
-    const button = $('review-confirm');
-    button.disabled = true;
-    try {
-      const data = await jsonResponse(await fetch(confirmUrl.replace('__UPLOAD_ID__', encodeURIComponent(currentUploadId)), postOptions()));
-      const alert = $('review-alert');
-      alert.className = 'alert alert-success';
-      alert.textContent = data.duplicate ? 'Esta factura ya estaba aplicada anteriormente.' : 'Factura confirmada. La compra y el stock fueron actualizados.';
-      alert.classList.remove('d-none');
-      setTimeout(() => window.location.reload(), 900);
-    } catch (error) {
-      showError(error.message);
-      button.disabled = false;
     }
-  });
 
-  dropzone?.addEventListener('dragover', (event) => { event.preventDefault(); dropzone.classList.add('dragover'); });
-  dropzone?.addEventListener('dragleave', () => dropzone.classList.remove('dragover'));
-  dropzone?.addEventListener('drop', (event) => {
-    event.preventDefault();
-    dropzone.classList.remove('dragover');
-    selectFile(event.dataTransfer && event.dataTransfer.files && event.dataTransfer.files[0]);
-  });
+    function renderRows(preview, uploadId) {
+      const target = $('review-items');
+      const rows = preview.matches || [];
+      if (!target) return;
+      target.innerHTML = rows.map((line) => {
+        const status = line.matching_status;
+        const automatic = status === 'MATCH_EXACTO';
+        const unresolved = ['AMBIGUO', 'MATCH_PROPUESTO'].includes(status);
+        const isNew = status === 'NUEVO_PRODUCTO';
+        let action = '<span class="small text-success fw-semibold"><i class="bi bi-check-circle me-1"></i>Listo</span>';
+        if (automatic) action = '<span class="small text-success fw-semibold"><i class="bi bi-stars me-1"></i>Automático</span>';
+        if (unresolved) action = '<button type="button" class="btn btn-sm btn-outline-primary picker-open" data-line="' + esc(line.line_number) + '">Elegir producto</button>';
+        if (isNew) action = '<span class="small text-muted">Se creará al confirmar</span>';
+        const product = line.product_name ? '<div class="small">' + esc(line.product_name) + '</div>' : '<div class="small muted">Sin vincular</div>';
+        const confidenceClass = line.confidence_level === 'ALTA' ? 'text-bg-success' : line.confidence_level === 'MEDIA' ? 'text-bg-warning text-dark' : 'text-bg-secondary';
+        return '<tr><td><strong>' + esc(line.description || 'Sin descripción') + '</strong><div class="small muted">' + esc(line.code || line.barcode || '') + '</div></td><td>' + product + '</td><td><span class="badge ' + confidenceClass + '">' + esc(line.confidence_level || 'BAJA') + (line.proposal_score ? ' · ' + Math.round(line.proposal_score * 100) + '%' : '') + '</span></td><td>' + esc(line.quantity) + '</td><td>' + esc(line.unit_cost) + '</td><td class="text-end">' + action + '</td></tr>';
+      }).join('');
+      target.querySelectorAll('.picker-open').forEach((button) => button.addEventListener('click', () => openPicker(uploadId, button.dataset.line)));
+    }
+
+    function renderReview(preview, uploadId, name) {
+      currentUploadId = uploadId;
+      currentPreview = preview;
+      const box = $('invoice-review');
+      if (!box) return;
+      const invoice = preview.invoice || {};
+      const supplier = preview.supplier || {};
+      const supplierMatch = preview.supplier_match || {};
+      box.classList.remove('d-none');
+      $('review-title').textContent = invoice.number ? 'Factura ' + invoice.number : (name || 'Factura');
+      $('review-status').textContent = String(preview.status || 'REQUIERE_REVISION').replaceAll('_', ' ');
+      $('review-kpis').innerHTML = [['Proveedor', supplier.name || supplierMatch.name || 'Sin reconocer'], ['Fecha', invoice.date || '—'], ['Total', invoice.total ?? '—'], ['Líneas', (preview.matches || []).length]].map((item) => '<div class="col-6 col-lg-3"><div class="invoice-kpi"><div class="small muted">' + esc(item[0]) + '</div><strong>' + esc(item[1]) + '</strong></div></div>').join('');
+      $('review-supplier').innerHTML = '<div class="d-flex flex-wrap justify-content-between gap-2"><div><div class="small muted">Proveedor detectado</div><strong>' + esc(supplier.name || supplierMatch.name || 'Sin reconocer') + '</strong></div><div><div class="small muted">Estado</div><strong>' + esc(supplierMatch.status || 'Pendiente') + '</strong></div></div>';
+      renderRows(preview, uploadId);
+      const confirm = $('review-confirm');
+      if (confirm) confirm.disabled = preview.status !== 'LISTA_PARA_CONFIRMAR';
+      box.scrollIntoView({ behavior: 'smooth', block: 'start' });
+    }
+
+    function openPicker(uploadId, lineNumber) {
+      const line = (currentPreview && currentPreview.matches || []).find((item) => String(item.line_number) === String(lineNumber));
+      if (!line) return;
+      pickerLine = lineNumber;
+      currentCandidates = line.candidate_products || [];
+      $('picker-title').textContent = line.description || 'Producto';
+      $('picker-query').value = '';
+      renderCandidates(currentCandidates);
+      $('invoice-picker').classList.add('show');
+    }
+
+    function renderCandidates(candidates) {
+      const list = $('picker-list');
+      list.innerHTML = candidates.length ? candidates.map((item) => '<div class="candidate"><div><strong>' + esc(item.name) + '</strong><div class="small muted">' + esc(item.code || 'Sin código') + (item.category ? ' · ' + esc(item.category) : '') + '</div></div><button type="button" class="btn btn-sm btn-primary picker-use" data-name="' + esc(item.name) + '">Usar</button></div>').join('') : '<div class="small muted">No encontramos sugerencias para esta línea.</div>';
+      list.querySelectorAll('.picker-use').forEach((button) => button.addEventListener('click', async () => {
+        try {
+          const data = await jsonResponse(await fetch(resolveUrl.replace('__UPLOAD_ID__', encodeURIComponent(currentUploadId)), postOptions({ line_number: pickerLine, description: button.dataset.name })));
+          $('invoice-picker').classList.remove('show');
+          renderReview(data.preview || {}, currentUploadId, 'Factura');
+        } catch (error) { showError(error.message); }
+      }));
+    }
+
+    async function openInvoice(uploadId) {
+      try {
+        const data = await jsonResponse(await fetch(previewUrl.replace('__UPLOAD_ID__', encodeURIComponent(uploadId)), { credentials: 'same-origin' }));
+        renderReview(data.preview || {}, uploadId, data.original_name || 'Factura');
+      } catch (error) { showError(error.message); }
+    }
+
+    fileTrigger.addEventListener('click', (event) => { event.preventDefault(); fileInput.click(); });
+    cameraTrigger.addEventListener('click', (event) => { event.preventDefault(); openCamera(); });
+    fileInput.addEventListener('change', () => selectFile(fileInput.files && fileInput.files[0]));
+    cameraInput.addEventListener('change', () => selectFile(cameraInput.files && cameraInput.files[0]));
+    processBtn.addEventListener('click', uploadAndProcess);
+    clearBtn.addEventListener('click', clearFile);
+
+    document.querySelectorAll('.invoice-open').forEach((button) => button.addEventListener('click', () => openInvoice(button.dataset.uploadId)));
+    $('picker-close')?.addEventListener('click', () => $('invoice-picker').classList.remove('show'));
+    $('picker-query')?.addEventListener('input', () => {
+      const query = $('picker-query').value.trim().toLowerCase();
+      renderCandidates(currentCandidates.filter((item) => String(item.name || '').toLowerCase().includes(query) || String(item.code || '').toLowerCase().includes(query)));
+    });
+    $('review-confirm')?.addEventListener('click', async () => {
+      const button = $('review-confirm');
+      button.disabled = true;
+      try {
+        const data = await jsonResponse(await fetch(confirmUrl.replace('__UPLOAD_ID__', encodeURIComponent(currentUploadId)), postOptions()));
+        const alert = $('review-alert');
+        alert.className = 'alert alert-success';
+        alert.textContent = data.duplicate ? 'Esta factura ya estaba aplicada anteriormente.' : 'Factura confirmada. La compra y el stock fueron actualizados.';
+        alert.classList.remove('d-none');
+        setTimeout(() => window.location.reload(), 900);
+      } catch (error) {
+        showError(error.message);
+        button.disabled = false;
+      }
+    });
+
+    dropzone?.addEventListener('dragover', (event) => { event.preventDefault(); dropzone.classList.add('dragover'); });
+    dropzone?.addEventListener('dragleave', () => dropzone.classList.remove('dragover'));
+    dropzone?.addEventListener('drop', (event) => { event.preventDefault(); dropzone.classList.remove('dragover'); selectFile(event.dataTransfer && event.dataTransfer.files && event.dataTransfer.files[0]); });
+    window.addEventListener('beforeunload', destroyCameraModal);
+  }
+
+  if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', initInvoiceAI, { once: true });
+  else initInvoiceAI();
 })();
