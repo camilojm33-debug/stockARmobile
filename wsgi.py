@@ -65,6 +65,26 @@ def trace_mp_qr_requests():
     app.logger.info("MP QR trace incoming: method=%s path=%s endpoint=%s csrf_header_present=%s company_id=%s user_id=%s request_id=%s", request.method, path, request.endpoint or "", g.mp_qr_csrf_header_present, getattr(g, "mp_qr_company_id", None), getattr(g, "mp_qr_user_id", None), g.mp_qr_request_id)
 
 
+@app.after_request
+def inject_invoice_manual_code_fix(response):
+    """Load the manual-code assignment fix only in the invoice workspace."""
+    if request.path != "/dashboard/ai-agent/facturas" or not response.content_type.startswith("text/html"):
+        return response
+    try:
+        html = response.get_data(as_text=True)
+        marker = "/static/js/invoice_manual_code_fix.js"
+        if marker not in html:
+            script = '<script src="/static/js/invoice_manual_code_fix.js?v=20260917-manual-code-3" defer></script>'
+            if "</body>" in html:
+                html = html.replace("</body>", script + "</body>", 1)
+            else:
+                html += script
+            response.set_data(html)
+    except Exception:
+        app.logger.exception("Could not inject invoice manual-code fix")
+    return response
+
+
 @app.route("/dashboard/ai-agent/facturas", methods=["GET"])
 @login_required
 def ai_invoices_workspace():
