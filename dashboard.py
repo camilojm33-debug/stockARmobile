@@ -154,6 +154,7 @@ def ai_agent_chat():
     message = payload.get("message")
     conversation_id = payload.get("conversation_id")
     agent_key = str(payload.get("agent") or "asistente").strip().lower()
+    idempotency_key = str(request.headers.get("Idempotency-Key") or payload.get("idempotency_key") or uuid.uuid4()).strip()
     invoice_upload = request.files.get("invoice_file")
     if agent_key not in {"asistente", "vendedor", "analista", "marketing"}:
         return jsonify({"success": False, "error": "Agente inválido."}), 400
@@ -254,7 +255,7 @@ def ai_agent_chat():
             message=message.strip(),
             channel="web",
             sender_id=current_user.id,
-            idempotency_key=str(uuid.uuid4()),
+            idempotency_key=idempotency_key,
             metadata={},
             include_system_prompt=False,
         )

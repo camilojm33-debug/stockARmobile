@@ -4,11 +4,15 @@ from __future__ import annotations
 
 import os
 import secrets
+import time
+import uuid
+
+from itsdangerous import BadSignature, SignatureExpired, URLSafeTimedSerializer
 
 import requests
 from datetime import datetime, timedelta
 
-from flask import Blueprint, abort, current_app, flash, jsonify, redirect, render_template, request, url_for
+from flask import Blueprint, abort, current_app, flash, jsonify, redirect, render_template, request, session, url_for
 from flask_login import current_user
 
 from app import tenant_required
@@ -32,9 +36,65 @@ from services.ai_agent.campaign_service import CampaignService
 
 bp = Blueprint("ai_agents", __name__, url_prefix="/agentes-ia")
 
+PUBLIC_VENDOR_CHAT_SALT = "stockarmobile-public-vendor-v2"
+PUBLIC_VENDOR_CHAT_MAX_AGE = 60 * 60 * 24 * 365
+PUBLIC_VENDOR_CHAT_LIMIT = 12
+PUBLIC_VENDOR_CHAT_WINDOW = 60
+
+
+def _public_vendor_serializer():
+    return URLSafeTimedSerializer(current_app.config.get("SECRET_KEY", "stockarmobile-dev-secret"))
+
+
+def _public_vendor_token(company_id: int) -> str:
+    return _public_vendor_serializer().dumps({"company_id": int(company_id), "agent": "vendedor"}, salt=PUBLIC_VENDOR_CHAT_SALT)
+
+
+def _decode_public_vendor_token(token: str):
+    try:
+        payload = _public_vendor_serializer().loads(token, salt=PUBLIC_VENDOR_CHAT_SALT, max_age=PUBLIC_VENDOR_CHAT_MAX_AGE)
+    except (BadSignature, SignatureExpired, TypeError, ValueError):
+        return None
+    if not isinstance(payload, dict) or payload.get("agent") != "vendedor":
+        return None
+    try:
+        return int(payload.get("company_id"))
+    except (TypeError, ValueError):
+        return None
+
+
+def _public_vendor_rate_limit(company_id: int) -> bool:
+    remote = (request.headers.get("X-Forwarded-For", "").split(",", 1)[0] or request.remote_addr or "unknown").strip()
+    redis_url = (os.getenv("REDIS_URL") or "").strip()
+    if redis_url:
+        try:
+            import redis
+            client = redis.Redis.from_url(redis_url, socket_connect_timeout=1, socket_timeout=1, decode_responses=True)
+            key = f"stockarmobile:public-vendor:{int(company_id)}:{remote}"
+            count = int(client.incr(key))
+            if count == 1:
+                client.expire(key, PUBLIC_VENDOR_CHAT_WINDOW)
+            return count <= PUBLIC_VENDOR_CHAT_LIMIT
+        except Exception:
+            current_app.logger.warning("Public vendor Redis rate limit unavailable; using session fallback.")
+    now = int(time.time())
+    state = session.get("public_vendor_rate") or {}
+    if not isinstance(state, dict) or now - int(state.get("started_at", 0) or 0) >= PUBLIC_VENDOR_CHAT_WINDOW:
+        session["public_vendor_rate"] = {"started_at": now, "count": 1}
+        return True
+    count = int(state.get("count", 0) or 0)
+    if count >= PUBLIC_VENDOR_CHAT_LIMIT:
+        return False
+    state["count"] = count + 1
+    session["public_vendor_rate"] = state
+    session.modified = True
+    return True
+
 
 @bp.before_request
 def _require_ai_access():
+    if request.endpoint in {"ai_agents.public_vendor_chat", "ai_agents.public_vendor_chat_message"}:
+        return None
     if not can_access_ai(current_user):
         flash("Tu usuario no tiene habilitado el acceso a Agentes IA. Pedile al administrador de la empresa que lo active desde Mi Empresa.", "warning")
         return redirect(url_for("dashboard.index"))
@@ -77,7 +137,9 @@ def _context():
                 default_chat_agent = candidate
                 break
 
-    return {"company": company, "agents": agents, "preferences": preferences, "metrics": {"conversations": conversations, "clients_attended": clients_attended, "quotes": quotes, "sales": int(sales_month.count())}, "analyst": {"sales_change": sales_change, "critical_stock": critical_stock, "low_rotation": low_rotation, "opportunities": None}, "ai_status": ai_status, "ai_plans": AI_PLANS, "agent_labels": AGENT_LABELS, "ai_plan": ai_plan, "ai_usage": ai_usage, "agent_access": agent_access, "invoice_access": invoice_access, "any_chat_agent": any_chat_agent, "default_chat_agent": default_chat_agent, "plan_url": url_for("ai_agents.agent", agent="planes"), "ai_checkout_url": url_for("company_billing.create_ai_subscription_checkout"), "config_url": url_for("ai_admin.index") if current_user.role == "admin" else None, "chat_url": url_for("dashboard.ai_agent_chat")}
+    public_webchat_enabled = bool(preferences.get("ai_agent", {}).get("public_webchat_enabled", False))
+    public_vendor_url = url_for("ai_agents.public_vendor_chat", token=_public_vendor_token(company_id)) if agent_access["vendedor"].allowed else None
+    return {"company": company, "agents": agents, "preferences": preferences, "metrics": {"conversations": conversations, "clients_attended": clients_attended, "quotes": quotes, "sales": int(sales_month.count())}, "analyst": {"sales_change": sales_change, "critical_stock": critical_stock, "low_rotation": low_rotation, "opportunities": None}, "ai_status": ai_status, "ai_plans": AI_PLANS, "agent_labels": AGENT_LABELS, "ai_plan": ai_plan, "ai_usage": ai_usage, "agent_access": agent_access, "invoice_access": invoice_access, "any_chat_agent": any_chat_agent, "default_chat_agent": default_chat_agent, "public_webchat_enabled": public_webchat_enabled, "public_vendor_url": public_vendor_url, "plan_url": url_for("ai_agents.agent", agent="planes"), "ai_checkout_url": url_for("company_billing.create_ai_subscription_checkout"), "config_url": url_for("ai_admin.index") if current_user.role == "admin" else None, "chat_url": url_for("dashboard.ai_agent_chat")}
 
 
 def _campaign_rows(company_id: int):
@@ -240,6 +302,114 @@ def vendor_whatsapp_complete():
         return jsonify({"success": False, "error": "No pudimos completar la conexión de WhatsApp. Intentá nuevamente."}), 500
 
 
+@bp.get("/public/vendedor/<token>")
+def public_vendor_chat(token):
+    company_id = _decode_public_vendor_token(token)
+    if company_id is None:
+        abort(404)
+    from app import Company
+    company = Company.query.filter_by(id=company_id, active=True).first()
+    if company is None:
+        abort(404)
+    preferences = get_ai_preferences(company)
+    if not bool(preferences.get("ai_agent", {}).get("public_webchat_enabled", False)):
+        abort(404)
+    access = can_use_ai(company, "vendedor")
+    if not access.allowed:
+        return render_template("ai_agents/public_vendor_chat.html", company=company, disabled_reason=access.reason, chat_url=None)
+    visitor_session_key = f"public_vendor_visitor_{company_id}"
+    session.setdefault(visitor_session_key, uuid.uuid4().hex)
+    return render_template(
+        "ai_agents/public_vendor_chat.html",
+        company=company,
+        disabled_reason=None,
+        chat_url=url_for("ai_agents.public_vendor_chat_message", token=token),
+    )
+
+
+@bp.post("/public/vendedor/<token>/message")
+def public_vendor_chat_message(token):
+    company_id = _decode_public_vendor_token(token)
+    if company_id is None:
+        return jsonify({"success": False, "error": "Enlace de vendedor inválido o vencido."}), 404
+    from app import Company
+    company = Company.query.filter_by(id=company_id, active=True).first()
+    if company is None:
+        return jsonify({"success": False, "error": "El comercio no está disponible."}), 404
+    preferences = get_ai_preferences(company)
+    if not bool(preferences.get("ai_agent", {}).get("public_webchat_enabled", False)):
+        return jsonify({"success": False, "error": "El vendedor web no está habilitado."}), 404
+    access = can_use_ai(company, "vendedor")
+    if not access.allowed:
+        return jsonify({"success": False, "error": access.reason}), 403
+    if not _public_vendor_rate_limit(company_id):
+        return jsonify({"success": False, "error": "Hay muchas consultas en este momento. Esperá unos segundos e intentá nuevamente."}), 429, {"Retry-After": str(PUBLIC_VENDOR_CHAT_WINDOW)}
+    payload = request.get_json(silent=True) or {}
+    message = str(payload.get("message") or "").strip()
+    if not message:
+        return jsonify({"success": False, "error": "Escribí una consulta."}), 400
+    if len(message) > 500:
+        return jsonify({"success": False, "error": "La consulta es demasiado larga."}), 400
+    visitor_session_key = f"public_vendor_visitor_{company_id}"
+    visitor_id = str(session.get(visitor_session_key) or uuid.uuid4().hex)
+    session[visitor_session_key] = visitor_id
+    from services.ai_agent.config_service import VENDOR_AGENT_NAME, ensure_default_agents
+    from services.ai_agent.orchestrator_v2 import AgentRuntime
+    vendor_agent = ensure_default_agents(company_id)[VENDOR_AGENT_NAME]
+    conversation_id = payload.get("conversation_id")
+    if conversation_id not in (None, ""):
+        try:
+            conversation = Conversation.query.filter_by(
+                id=int(conversation_id),
+                company_id=company_id,
+                channel="webchat",
+                external_conversation_id=visitor_id,
+            ).first()
+        except (TypeError, ValueError):
+            conversation = None
+        if conversation is None:
+            return jsonify({"success": False, "error": "La conversación ya no es válida."}), 403
+        if conversation.agent_id != vendor_agent.id:
+            return jsonify({"success": False, "error": "La conversación no corresponde al vendedor."}), 409
+    else:
+        conversation = Conversation.query.filter_by(
+            company_id=company_id,
+            channel="webchat",
+            external_conversation_id=visitor_id,
+            agent_id=vendor_agent.id,
+        ).filter(Conversation.status == "open").order_by(Conversation.id.desc()).first()
+        if conversation is None:
+            conversation = Conversation(
+                company_id=company_id,
+                agent_id=vendor_agent.id,
+                channel="webchat",
+                external_conversation_id=visitor_id,
+                status="open",
+                metadata_json={"source": "public_webchat"},
+            )
+            db.session.add(conversation)
+            db.session.flush()
+    try:
+        result = AgentRuntime.process(
+            company_id=company_id,
+            conversation_id=conversation.id,
+            message=message,
+            channel="webchat",
+            sender_id=None,
+            idempotency_key=str(payload.get("idempotency_key") or uuid.uuid4().hex),
+            metadata={"from": visitor_id, "source": "public_webchat"},
+            include_system_prompt=True,
+        )
+        return jsonify({"success": True, "conversation_id": result.get("conversation_id"), "message_id": result.get("message_id"), "assistant_message_id": result.get("assistant_message_id"), "content": result.get("content")})
+    except ValueError as exc:
+        db.session.rollback()
+        return jsonify({"success": False, "error": str(exc)}), 400
+    except Exception:
+        db.session.rollback()
+        current_app.logger.exception("Error en vendedor web público: company_id=%s conversation_id=%s", company_id, conversation.id)
+        return jsonify({"success": False, "error": "No se pudo procesar la consulta. Intentá nuevamente."}), 500
+
+
 @bp.get("/")
 @tenant_required
 def index():
@@ -260,6 +430,22 @@ def campaign_detail(campaign_id):
         from flask import abort
         abort(404)
     return render_template("ai_agents/campaign_detail.html", campaign=campaign, **_context())
+
+
+@bp.post("/vendedor/webchat/toggle")
+@company_admin_required
+def vendor_webchat_toggle():
+    company = current_user.company
+    access = can_use_ai(company, "vendedor")
+    if not access.allowed:
+        flash(access.reason or "Tu plan no incluye el Vendedor IA.", "warning")
+        return redirect(url_for("ai_agents.agent", agent="planes"))
+    payload = request.get_json(silent=True) or request.form
+    enabled = str(payload.get("enabled") or "").strip().lower() in {"1", "true", "yes", "on", "si", "sí"}
+    update_ai_preferences(company, ai_updates={"public_webchat_enabled": enabled})
+    db.session.commit()
+    flash("Webchat público del Vendedor IA " + ("activado." if enabled else "desactivado."), "success")
+    return redirect(url_for("ai_agents.agent", agent="vendedor"))
 
 
 @bp.post("/campanas/<int:campaign_id>/edit")
@@ -298,8 +484,4 @@ def agent(agent):
         access = _context()["agent_access"][agent]
         if not access.allowed:
             return render_template("ai_agents/index.html", view="locked", locked_agent=agent, locked_reason=access.reason, **_context())
-    if agent == "vendedor":
-        whatsapp = get_whatsapp_connection(current_user.company)
-        if not (whatsapp.get("enabled") and whatsapp.get("phone_number_id")):
-            return redirect(url_for("ai_agents.vendor_whatsapp_connect"))
     return render_template("ai_agents/index.html", view=agent, **_context())
