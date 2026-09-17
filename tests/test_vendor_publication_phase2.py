@@ -88,3 +88,33 @@ def test_rate_limit_fails_closed_when_guard_unavailable(monkeypatch):
     monkeypatch.setitem(sys.modules, "ai_agents", None)
     with app.app_context():
         assert vendor_publication._rate_limit(123) is False
+
+
+def test_publication_page_resolves_company_from_authenticated_tenant(monkeypatch):
+    from types import SimpleNamespace
+    import app as stock_app
+
+    company = SimpleNamespace(id=123, active=True, name="Comercio Demo")
+    fake_query = SimpleNamespace(filter_by=lambda **kwargs: SimpleNamespace(first=lambda: company))
+    monkeypatch.setattr(stock_app, "Company", SimpleNamespace(query=fake_query))
+    monkeypatch.setattr(vendor_publication, "current_user", SimpleNamespace(company_id=123))
+    monkeypatch.setattr(vendor_publication, "get_current_company_id", lambda user: user.company_id)
+    monkeypatch.setattr(
+        vendor_publication,
+        "publication_status",
+        lambda value: {"slug": "", "published": False, "enabled": False, "available": False, "url": None},
+    )
+    monkeypatch.setattr(vendor_publication, "can_use_ai", lambda company, agent: SimpleNamespace(allowed=True, reason=""))
+    monkeypatch.setattr(vendor_publication, "url_for", lambda *args, **kwargs: "/preview")
+    monkeypatch.setattr(vendor_publication, "qr_data_uri", lambda value: "qr")
+    monkeypatch.setattr(
+        vendor_publication,
+        "render_template",
+        lambda template, **context: {"template": template, "company": context["company"]},
+    )
+
+    with stock_app.app.test_request_context("/agentes-ia/vendedor/publicacion"):
+        result = vendor_publication.publication_page.__wrapped__()
+
+    assert result["template"] == "ai_agents/vendor_publication.html"
+    assert result["company"] is company

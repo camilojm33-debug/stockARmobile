@@ -180,7 +180,11 @@ def _embedded_signup_config() -> tuple[str, str]:
 @bp.get("/vendedor/conectar-whatsapp")
 @tenant_required
 def vendor_whatsapp_connect():
-    company = current_user.company
+    from app import Company
+
+    company = Company.query.filter_by(id=current_user.company_id, active=True).first()
+    if company is None:
+        abort(403)
     whatsapp = get_whatsapp_connection(company)
     app_id, config_id = _embedded_signup_config()
     return render_template(
