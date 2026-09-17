@@ -59,6 +59,11 @@ def configure_app(app):
     # límites (por ejemplo, logos 3 MB y facturas 10 MB), por lo que el límite
     # global debe ser mayor para que puedan devolver sus errores controlados
     # en lugar de un 413 prematuro del parser.
+    # Mantener un techo razonable para peticiones multipart/HTTP. Los
+    # endpoints de carga aplican límites más estrictos por tipo de archivo.
+    app.config["MAX_CONTENT_LENGTH"] = int(
+        os.environ.get("MAX_CONTENT_LENGTH_BYTES", str(12 * 1024 * 1024))
+    )
     app.config["MAX_FORM_MEMORY_SIZE"] = int(
         os.environ.get("MAX_FORM_MEMORY_SIZE_BYTES", str(12 * 1024 * 1024))
     )
