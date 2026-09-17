@@ -156,7 +156,7 @@ def index():
     for name, agent in agents.items():
         if not ai_enabled or not agent.active:
             agent_states[name] = {"label": "Desactivado", "tone": "danger"}
-        elif not ai_key_configured or (name == VENDOR_AGENT_NAME and not whatsapp_connected):
+        elif not ai_key_configured:
             agent_states[name] = {"label": "Configuración pendiente", "tone": "warning"}
         else:
             agent_states[name] = {"label": "Activo", "tone": "success"}
@@ -180,6 +180,20 @@ def index():
         conversations=conversation_rows,
         vendor_options=vendor_options,
         ai_plans=AI_PLANS,
+    )
+
+
+@bp.get("/vendor-metrics")
+@company_admin_required
+def vendor_metrics():
+    company_id = get_current_company_id(current_user)
+    from services.ai_agent.vendor_metrics_service import build_vendor_metrics
+
+    metrics = build_vendor_metrics(company_id=company_id)
+    return render_template(
+        "ai_agent/vendor_metrics.html",
+        company=current_user.company,
+        metrics=metrics,
     )
 
 

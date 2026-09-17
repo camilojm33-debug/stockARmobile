@@ -1,0 +1,105 @@
+{% extends "base_master.html" %}
+{% block title %}Métricas del Vendedor IA | StockArMobile{% endblock %}
+{% block content %}
+<div class="container py-4" style="max-width:1100px;">
+  <div class="d-flex flex-wrap justify-content-between align-items-start gap-3 mb-4">
+    <div>
+      <div class="text-uppercase small fw-bold text-primary">Vendedor IA 24/7</div>
+      <h1 class="h2 fw-bold mb-1">Métricas y atribución</h1>
+      <p class="text-muted mb-0">Datos del Vendedor de este comercio. No se mezclan con las métricas globales.</p>
+    </div>
+    <a class="btn btn-outline-secondary" href="{{ url_for('vendor_publication.publication_page') }}"><i class="bi bi-arrow-left me-1"></i>Publicación</a>
+  </div>
+
+  <div class="alert alert-light border mb-4">
+    <i class="bi bi-shield-check me-2"></i>
+    Las visitas y acciones se registran desde el Webchat público; pedidos, pagos y ventas se toman de los registros comerciales existentes y se relacionan por comercio, conversación y pedido.
+  </div>
+
+  <div class="row g-3 mb-4">
+    {% for label, value, icon in [
+      ('Visitas', metrics.visits, 'bi-eye'),
+      ('Conversaciones', metrics.conversations, 'bi-chat-dots'),
+      ('Productos consultados', metrics.product_consultations, 'bi-search'),
+      ('Carritos activos', metrics.active_carts, 'bi-cart'),
+      ('Pedidos', metrics.orders, 'bi-bag-check'),
+      ('Pagos aprobados', metrics.approved_payments, 'bi-credit-card'),
+      ('Ventas', metrics.sales, 'bi-receipt'),
+      ('Conversión', (metrics.conversion_rate ~ '%') if metrics.conversion_rate is not none else '—', 'bi-graph-up')
+    ] %}
+      <div class="col-6 col-lg-3">
+        <div class="card border-0 shadow-sm h-100">
+          <div class="card-body">
+            <div class="d-flex justify-content-between align-items-start gap-2">
+              <div class="small text-muted">{{ label }}</div>
+              <i class="bi {{ icon }} text-primary"></i>
+            </div>
+            <div class="fs-3 fw-bold mt-2">{{ value }}</div>
+          </div>
+        </div>
+      </div>
+    {% endfor %}
+  </div>
+
+  <div class="row g-3">
+    <div class="col-lg-7">
+      <section class="card border-0 shadow-sm h-100">
+        <div class="card-body p-4">
+          <h2 class="h5 fw-bold mb-3">Resultado comercial atribuido</h2>
+          <div class="row g-3">
+            <div class="col-sm-6"><div class="border rounded-3 p-3"><div class="small text-muted">Intentos de pago</div><div class="fs-4 fw-bold">{{ metrics.payment_attempts }}</div></div></div>
+            <div class="col-sm-6"><div class="border rounded-3 p-3"><div class="small text-muted">Pedidos pagados</div><div class="fs-4 fw-bold">{{ metrics.paid_orders }}</div></div></div>
+            <div class="col-sm-6"><div class="border rounded-3 p-3"><div class="small text-muted">Ventas atribuidas</div><div class="fs-4 fw-bold">{{ metrics.sales }}</div></div></div>
+            <div class="col-sm-6"><div class="border rounded-3 p-3"><div class="small text-muted">Monto vendido</div><div class="fs-4 fw-bold">{{ "%.2f"|format(metrics.sales_amount|float) }}</div></div></div>
+          </div>
+          <div class="small text-muted mt-3">La atribución comercial usa los identificadores existentes del pedido/pago y el <code>company_id</code>. El frontend nunca marca una venta como aprobada.</div>
+        </div>
+      </section>
+    </div>
+
+    <div class="col-lg-5">
+      <section class="card border-0 shadow-sm h-100">
+        <div class="card-body p-4">
+          <h2 class="h5 fw-bold mb-3">Conversión por canal</h2>
+          {% if metrics.channels %}
+            <div class="table-responsive">
+              <table class="table align-middle mb-0">
+                <thead><tr><th>Canal</th><th>Convers.</th><th>Pedidos</th><th>Ventas</th><th>Monto</th></tr></thead>
+                <tbody>
+                {% for channel, row in metrics.channels.items() %}
+                  <tr>
+                    <td class="fw-semibold">{{ channel }}</td>
+                    <td>{{ row.conversations }}</td>
+                    <td>{{ row.orders }}</td>
+                    <td>{{ row.sales }}</td>
+                    <td>{{ "%.2f"|format(row.amount|float) }}</td>
+                  </tr>
+                {% endfor %}
+                </tbody>
+              </table>
+            </div>
+          {% else %}
+            <div class="text-muted">Todavía no hay ventas atribuidas por canal.</div>
+          {% endif %}
+        </div>
+      </section>
+    </div>
+  </div>
+
+  <section class="card border-0 shadow-sm mt-3">
+    <div class="card-body p-4">
+      <h2 class="h5 fw-bold mb-1">Productos más consultados</h2>
+      <div class="small text-muted mb-3">Se registran las respuestas del catálogo público. Las consultas realizadas exclusivamente dentro del modelo conversacional se ampliarán en una siguiente etapa.</div>
+      {% if metrics.product_frequency %}
+        <div class="row g-2">
+          {% for product_id, total in metrics.product_frequency.items() %}
+            <div class="col-sm-6 col-lg-4"><div class="border rounded-3 p-3 d-flex justify-content-between"><span>Producto #{{ product_id }}</span><strong>{{ total }}</strong></div></div>
+          {% endfor %}
+        </div>
+      {% else %}
+        <div class="text-muted">Todavía no hay consultas registradas.</div>
+      {% endif %}
+    </div>
+  </section>
+</div>
+{% endblock %}
