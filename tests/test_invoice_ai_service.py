@@ -32,7 +32,32 @@ def test_valid_invoice_is_normalized_without_calling_openai():
     normalized = InvoiceAIService.validate(valid_payload())
     assert normalized["subtotal"] == Decimal("100")
     assert normalized["items"][0]["quantity"] == Decimal("2")
+    assert normalized["issue_date"] == "2026-09-07"
     assert normalized["requires_review"] is False
+
+
+def test_common_argentine_invoice_date_formats_are_normalized():
+    cases = {
+        "16/09/2026": "2026-09-16",
+        "16-09-2026": "2026-09-16",
+        "16.09.2026": "2026-09-16",
+        "2026/09/16": "2026-09-16",
+        "2026-09-16T00:00:00Z": "2026-09-16",
+        "16 de septiembre de 2026": "2026-09-16",
+        "16/09/26": "2026-09-16",
+        "20260916": "2026-09-16",
+    }
+    for raw, expected in cases.items():
+        normalized = InvoiceAIService.validate(valid_payload(issue_date=raw))
+        assert normalized["issue_date"] == expected
+        assert normalized["requires_review"] is False
+
+
+def test_invalid_or_unreadable_invoice_date_does_not_block_processing():
+    normalized = InvoiceAIService.validate(valid_payload(issue_date="fecha borrosa"))
+    assert normalized["issue_date"] is None
+    assert normalized["requires_review"] is False
+    assert any("fecha de factura" in warning.lower() for warning in normalized["warnings"])
 
 
 def test_missing_fields_are_representable_but_empty_lines_are_rejected():
@@ -49,11 +74,9 @@ def test_negative_quantity_and_cost_are_rejected():
         InvoiceAIService.validate(valid_payload(items=[{**valid_payload()["items"][0], "unit_cost": -1}]))
 
 
-def test_invalid_currency_date_and_unreasonable_tax_are_rejected():
+def test_invalid_currency_and_unreasonable_tax_are_rejected():
     with pytest.raises(InvoiceAIError):
         InvoiceAIService.validate(valid_payload(currency="XYZ"))
-    with pytest.raises(InvoiceAIError):
-        InvoiceAIService.validate(valid_payload(issue_date="not-a-date"))
     with pytest.raises(InvoiceAIError):
         InvoiceAIService.validate(valid_payload(items=[{**valid_payload()["items"][0], "tax_rate": 101}]))
 
