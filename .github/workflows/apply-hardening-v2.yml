@@ -1,0 +1,485 @@
+name: Apply StockArMobile hardening v2
+
+on:
+  push:
+    branches:
+      - hardening/vendor-24-7-webchat
+
+permissions:
+  contents: write
+
+jobs:
+  harden:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Apply source changes
+        env:
+          HEAD_MESSAGE: ${{ github.event.head_commit.message }}
+        run: |
+          python - <<'PY'
+          import os
+          from pathlib import Path
+          from textwrap import dedent
+
+          if "chore: harden vendor 24/7 webchat" in os.environ.get("HEAD_MESSAGE", ""):
+              print("Hardening commit already applied; nothing to do.")
+              raise SystemExit(0)
+
+          def replace_once(path, old, new):
+              p = Path(path)
+              text = p.read_text(encoding="utf-8")
+              count = text.count(old)
+              if count != 1:
+                  raise SystemExit(f"{path}: expected 1 occurrence, found {count}")
+              p.write_text(text.replace(old, new), encoding="utf-8")
+
+          # Public webchat helpers and anonymous routes.
+          replace_once(
+              "ai_agents.py",
+              "import os\nimport secrets\n",
+              "import os\nimport secrets\nimport time\nimport uuid\n\nfrom itsdangerous import BadSignature, SignatureExpired, URLSafeTimedSerializer\n",
+          )
+          replace_once(
+              "ai_agents.py",
+              "from flask import Blueprint, abort, current_app, flash, jsonify, redirect, render_template, request, url_for\n",
+              "from flask import Blueprint, abort, current_app, flash, jsonify, redirect, render_template, request, session, url_for\n",
+          )
+          replace_once(
+              "ai_agents.py",
+              "bp = Blueprint(\"ai_agents\", __name__, url_prefix=\"/agentes-ia\")\n\n\n@bp.before_request\ndef _require_ai_access():\n    if not can_access_ai(current_user):\n",
+              dedent('''\
+              bp = Blueprint("ai_agents", __name__, url_prefix="/agentes-ia")
+
+              PUBLIC_VENDOR_CHAT_SALT = "stockarmobile-public-vendor-v2"
+              PUBLIC_VENDOR_CHAT_MAX_AGE = 60 * 60 * 24 * 365
+              PUBLIC_VENDOR_CHAT_LIMIT = 12
+              PUBLIC_VENDOR_CHAT_WINDOW = 60
+
+
+              def _public_vendor_serializer():
+                  return URLSafeTimedSerializer(current_app.config.get("SECRET_KEY", "stockarmobile-dev-secret"))
+
+
+              def _public_vendor_token(company_id: int) -> str:
+                  return _public_vendor_serializer().dumps({"company_id": int(company_id), "agent": "vendedor"}, salt=PUBLIC_VENDOR_CHAT_SALT)
+
+
+              def _decode_public_vendor_token(token: str):
+                  try:
+                      payload = _public_vendor_serializer().loads(token, salt=PUBLIC_VENDOR_CHAT_SALT, max_age=PUBLIC_VENDOR_CHAT_MAX_AGE)
+                  except (BadSignature, SignatureExpired, TypeError, ValueError):
+                      return None
+                  if not isinstance(payload, dict) or payload.get("agent") != "vendedor":
+                      return None
+                  try:
+                      return int(payload.get("company_id"))
+                  except (TypeError, ValueError):
+                      return None
+
+
+              def _public_vendor_rate_limit(company_id: int) -> bool:
+                  remote = (request.headers.get("X-Forwarded-For", "").split(",", 1)[0] or request.remote_addr or "unknown").strip()
+                  redis_url = (os.getenv("REDIS_URL") or "").strip()
+                  if redis_url:
+                      try:
+                          import redis
+                          client = redis.Redis.from_url(redis_url, socket_connect_timeout=1, socket_timeout=1, decode_responses=True)
+                          key = f"stockarmobile:public-vendor:{int(company_id)}:{remote}"
+                          count = int(client.incr(key))
+                          if count == 1:
+                              client.expire(key, PUBLIC_VENDOR_CHAT_WINDOW)
+                          return count <= PUBLIC_VENDOR_CHAT_LIMIT
+                      except Exception:
+                          current_app.logger.warning("Public vendor Redis rate limit unavailable; using session fallback.")
+                  now = int(time.time())
+                  state = session.get("public_vendor_rate") or {}
+                  if not isinstance(state, dict) or now - int(state.get("started_at", 0) or 0) >= PUBLIC_VENDOR_CHAT_WINDOW:
+                      session["public_vendor_rate"] = {"started_at": now, "count": 1}
+                      return True
+                  count = int(state.get("count", 0) or 0)
+                  if count >= PUBLIC_VENDOR_CHAT_LIMIT:
+                      return False
+                  state["count"] = count + 1
+                  session["public_vendor_rate"] = state
+                  session.modified = True
+                  return True
+
+
+              @bp.before_request
+              def _require_ai_access():
+                  if request.endpoint in {"ai_agents.public_vendor_chat", "ai_agents.public_vendor_chat_message"}:
+                      return None
+                  if not can_access_ai(current_user):
+              ''').rstrip() + "\n",
+          )
+
+          # Make public webchat URL available in the tenant context.
+          old_context = '    return {"company": company, "agents": agents, "preferences": preferences, "metrics": {"conversations": conversations, "clients_attended": clients_attended, "quotes": quotes, "sales": int(sales_month.count())}, "analyst": {"sales_change": sales_change, "critical_stock": critical_stock, "low_rotation": low_rotation, "opportunities": None}, "ai_status": ai_status, "ai_plans": AI_PLANS, "agent_labels": AGENT_LABELS, "ai_plan": ai_plan, "ai_usage": ai_usage, "agent_access": agent_access, "invoice_access": invoice_access, "any_chat_agent": any_chat_agent, "default_chat_agent": default_chat_agent, "plan_url": url_for("ai_agents.agent", agent="planes"), "ai_checkout_url": url_for("company_billing.create_ai_subscription_checkout"), "config_url": url_for("ai_admin.index") if current_user.role == "admin" else None, "chat_url": url_for("dashboard.ai_agent_chat")}\n'
+          new_context = '    public_webchat_enabled = bool(preferences.get("ai_agent", {}).get("public_webchat_enabled", False))\n    public_vendor_url = url_for("ai_agents.public_vendor_chat", token=_public_vendor_token(company_id)) if agent_access["vendedor"].allowed else None\n    return {"company": company, "agents": agents, "preferences": preferences, "metrics": {"conversations": conversations, "clients_attended": clients_attended, "quotes": quotes, "sales": int(sales_month.count())}, "analyst": {"sales_change": sales_change, "critical_stock": critical_stock, "low_rotation": low_rotation, "opportunities": None}, "ai_status": ai_status, "ai_plans": AI_PLANS, "agent_labels": AGENT_LABELS, "ai_plan": ai_plan, "ai_usage": ai_usage, "agent_access": agent_access, "invoice_access": invoice_access, "any_chat_agent": any_chat_agent, "default_chat_agent": default_chat_agent, "public_webchat_enabled": public_webchat_enabled, "public_vendor_url": public_vendor_url, "plan_url": url_for("ai_agents.agent", agent="planes"), "ai_checkout_url": url_for("company_billing.create_ai_subscription_checkout"), "config_url": url_for("ai_admin.index") if current_user.role == "admin" else None, "chat_url": url_for("dashboard.ai_agent_chat")}\n'
+          replace_once("ai_agents.py", old_context, new_context)
+
+          # Add anonymous public Vendedor webchat routes.
+          marker = '@bp.get("/")\n@tenant_required\ndef index():\n'
+          routes = dedent('''\
+          @bp.get("/public/vendedor/<token>")
+          def public_vendor_chat(token):
+              company_id = _decode_public_vendor_token(token)
+              if company_id is None:
+                  abort(404)
+              from app import Company
+              company = Company.query.filter_by(id=company_id, active=True).first()
+              if company is None:
+                  abort(404)
+              preferences = get_ai_preferences(company)
+              if not bool(preferences.get("ai_agent", {}).get("public_webchat_enabled", False)):
+                  abort(404)
+              access = can_use_ai(company, "vendedor")
+              if not access.allowed:
+                  return render_template("ai_agents/public_vendor_chat.html", company=company, disabled_reason=access.reason, chat_url=None)
+              visitor_session_key = f"public_vendor_visitor_{company_id}"
+              session.setdefault(visitor_session_key, uuid.uuid4().hex)
+              return render_template(
+                  "ai_agents/public_vendor_chat.html",
+                  company=company,
+                  disabled_reason=None,
+                  chat_url=url_for("ai_agents.public_vendor_chat_message", token=token),
+              )
+
+
+          @bp.post("/public/vendedor/<token>/message")
+          def public_vendor_chat_message(token):
+              company_id = _decode_public_vendor_token(token)
+              if company_id is None:
+                  return jsonify({"success": False, "error": "Enlace de vendedor inválido o vencido."}), 404
+              from app import Company
+              company = Company.query.filter_by(id=company_id, active=True).first()
+              if company is None:
+                  return jsonify({"success": False, "error": "El comercio no está disponible."}), 404
+              preferences = get_ai_preferences(company)
+              if not bool(preferences.get("ai_agent", {}).get("public_webchat_enabled", False)):
+                  return jsonify({"success": False, "error": "El vendedor web no está habilitado."}), 404
+              access = can_use_ai(company, "vendedor")
+              if not access.allowed:
+                  return jsonify({"success": False, "error": access.reason}), 403
+              if not _public_vendor_rate_limit(company_id):
+                  return jsonify({"success": False, "error": "Hay muchas consultas en este momento. Esperá unos segundos e intentá nuevamente."}), 429, {"Retry-After": str(PUBLIC_VENDOR_CHAT_WINDOW)}
+              payload = request.get_json(silent=True) or {}
+              message = str(payload.get("message") or "").strip()
+              if not message:
+                  return jsonify({"success": False, "error": "Escribí una consulta."}), 400
+              if len(message) > 500:
+                  return jsonify({"success": False, "error": "La consulta es demasiado larga."}), 400
+              visitor_session_key = f"public_vendor_visitor_{company_id}"
+              visitor_id = str(session.get(visitor_session_key) or uuid.uuid4().hex)
+              session[visitor_session_key] = visitor_id
+              from services.ai_agent.config_service import VENDOR_AGENT_NAME, ensure_default_agents
+              from services.ai_agent.orchestrator_v2 import AgentRuntime
+              vendor_agent = ensure_default_agents(company_id)[VENDOR_AGENT_NAME]
+              conversation_id = payload.get("conversation_id")
+              if conversation_id not in (None, ""):
+                  try:
+                      conversation = Conversation.query.filter_by(
+                          id=int(conversation_id),
+                          company_id=company_id,
+                          channel="webchat",
+                          external_conversation_id=visitor_id,
+                      ).first()
+                  except (TypeError, ValueError):
+                      conversation = None
+                  if conversation is None:
+                      return jsonify({"success": False, "error": "La conversación ya no es válida."}), 403
+                  if conversation.agent_id != vendor_agent.id:
+                      return jsonify({"success": False, "error": "La conversación no corresponde al vendedor."}), 409
+              else:
+                  conversation = Conversation.query.filter_by(
+                      company_id=company_id,
+                      channel="webchat",
+                      external_conversation_id=visitor_id,
+                      agent_id=vendor_agent.id,
+                  ).filter(Conversation.status == "open").order_by(Conversation.id.desc()).first()
+                  if conversation is None:
+                      conversation = Conversation(
+                          company_id=company_id,
+                          agent_id=vendor_agent.id,
+                          channel="webchat",
+                          external_conversation_id=visitor_id,
+                          status="open",
+                          metadata_json={"source": "public_webchat"},
+                      )
+                      db.session.add(conversation)
+                      db.session.flush()
+              try:
+                  result = AgentRuntime.process(
+                      company_id=company_id,
+                      conversation_id=conversation.id,
+                      message=message,
+                      channel="webchat",
+                      sender_id=None,
+                      idempotency_key=str(payload.get("idempotency_key") or uuid.uuid4().hex),
+                      metadata={"from": visitor_id, "source": "public_webchat"},
+                      include_system_prompt=True,
+                  )
+                  return jsonify({"success": True, "conversation_id": result.get("conversation_id"), "message_id": result.get("message_id"), "assistant_message_id": result.get("assistant_message_id"), "content": result.get("content")})
+              except ValueError as exc:
+                  db.session.rollback()
+                  return jsonify({"success": False, "error": str(exc)}), 400
+              except Exception:
+                  db.session.rollback()
+                  current_app.logger.exception("Error en vendedor web público: company_id=%s conversation_id=%s", company_id, conversation.id)
+                  return jsonify({"success": False, "error": "No se pudo procesar la consulta. Intentá nuevamente."}), 500
+
+
+          ''')
+          replace_once("ai_agents.py", marker, routes + marker)
+
+          # Enable/disable public webchat from the company admin area.
+          campaign_marker = '@bp.post("/campanas/<int:campaign_id>/edit")\n@tenant_required\ndef campaign_edit(campaign_id):\n'
+          toggle = dedent('''\
+          @bp.post("/vendedor/webchat/toggle")
+          @company_admin_required
+          def vendor_webchat_toggle():
+              company = current_user.company
+              access = can_use_ai(company, "vendedor")
+              if not access.allowed:
+                  flash(access.reason or "Tu plan no incluye el Vendedor IA.", "warning")
+                  return redirect(url_for("ai_agents.agent", agent="planes"))
+              payload = request.get_json(silent=True) or request.form
+              enabled = str(payload.get("enabled") or "").strip().lower() in {"1", "true", "yes", "on", "si", "sí"}
+              update_ai_preferences(company, ai_updates={"public_webchat_enabled": enabled})
+              db.session.commit()
+              flash("Webchat público del Vendedor IA " + ("activado." if enabled else "desactivado."), "success")
+              return redirect(url_for("ai_agents.agent", agent="vendedor"))
+
+
+          ''')
+          replace_once("ai_agents.py", campaign_marker, toggle + campaign_marker)
+
+          # WhatsApp is optional; do not force Meta connection before Vendedor loads.
+          replace_once(
+              "ai_agents.py",
+              '    if agent == "vendedor":\n        whatsapp = get_whatsapp_connection(current_user.company)\n        if not (whatsapp.get("enabled") and whatsapp.get("phone_number_id")):\n            return redirect(url_for("ai_agents.vendor_whatsapp_connect"))\n    return render_template("ai_agents/index.html", view=agent, **_context())\n',
+              '    return render_template("ai_agents/index.html", view=agent, **_context())\n',
+          )
+
+          # Make authenticated retries idempotent when the caller provides a stable key.
+          replace_once(
+              "dashboard.py",
+              '    agent_key = str(payload.get("agent") or "asistente").strip().lower()\n',
+              '    agent_key = str(payload.get("agent") or "asistente").strip().lower()\n    idempotency_key = str(request.headers.get("Idempotency-Key") or payload.get("idempotency_key") or uuid.uuid4()).strip()\n',
+          )
+          replace_once("dashboard.py", '            idempotency_key=str(uuid.uuid4()),\n', '            idempotency_key=idempotency_key,\n')
+
+          # Harder vendor contract across channels and commercial states.
+          replace_once(
+              "services/ai_agent/orchestrator_v2.py",
+              'VENDOR_SYSTEM_PROMPT = "Sos el Vendedor 24 hs de StockARmobile. Consultá herramientas antes de afirmar precio o stock. No inventes información."\n',
+              'VENDOR_SYSTEM_PROMPT = "Sos el Vendedor 24 hs de StockARmobile. Podés atender desde los canales conectados por el comercio. Consultá herramientas antes de afirmar precio o stock. No inventes información. Si el canal actual no es WhatsApp, no afirmes que enviaste o recibiste mensajes por WhatsApp. Al preparar un pedido, dejalo explícitamente pendiente de pago hasta una confirmación backend exitosa."\n',
+          )
+
+          # Replace the stale Vendor page copy without disturbing the rest of the AI hub.
+          replace_once(
+              "templates/ai_agents/index.html",
+              '<p class="text-muted mb-0">Tu vendedor digital 24/7.</p>',
+              '<p class="text-muted mb-0">Tu vendedor digital 24/7, independiente del canal. WhatsApp se conecta cuando esté disponible; el Vendedor también puede atender por web.</p>',
+          )
+          vendor_anchor = '  <div class="row g-4"><div class="col-lg-7"><div class="card app-card h-100"><div class="card-body"><h2 class="h5 fw-bold">Capacidades</h2>'
+          vendor_web_panel = dedent('''\
+          <div class="row g-4 mb-4">
+            <div class="col-lg-7">
+              <div class="card app-card h-100">
+                <div class="card-body">
+                  <h2 class="h5 fw-bold"><i class="bi bi-globe2 me-2"></i>Vendedor Web 24/7</h2>
+                  <p class="small text-muted">Activá un chat público para que tus clientes consulten productos, stock, precios y preparen presupuestos sin entrar al panel de StockAr.</p>
+                  {% if public_webchat_enabled and public_vendor_url %}
+                    <div class="alert alert-success"><strong>Webchat activo.</strong><div class="small mt-1">No depende de WhatsApp ni de la aprobación de Meta para funcionar.</div></div>
+                    <div class="input-group mb-2"><input class="form-control" value="{{ public_vendor_url }}" readonly aria-label="Enlace público del Vendedor IA"><button class="btn btn-outline-primary" type="button" id="copy-vendor-web-url">Copiar</button></div>
+                    <a class="btn btn-primary" target="_blank" rel="noopener" href="{{ public_vendor_url }}">Abrir chat público</a>
+                    <form method="post" action="{{ url_for('ai_agents.vendor_webchat_toggle') }}" class="d-inline"><input type="hidden" name="enabled" value="0"><input type="hidden" name="csrf_token" value="{{ csrf_token() }}"><button class="btn btn-outline-secondary ms-2" type="submit">Desactivar</button></form>
+                  {% else %}
+                    <div class="alert alert-light border"><strong>Webchat desactivado.</strong><div class="small mt-1">Al activarlo, StockAr generará un enlace público seguro para el Vendedor.</div></div>
+                    <form method="post" action="{{ url_for('ai_agents.vendor_webchat_toggle') }}"><input type="hidden" name="enabled" value="1"><input type="hidden" name="csrf_token" value="{{ csrf_token() }}"><button class="btn btn-primary" type="submit"><i class="bi bi-lightning-charge me-1"></i>Activar Vendedor Web 24/7</button></form>
+                  {% endif %}
+                  <div class="small text-muted mt-3"><i class="bi bi-shield-check me-1"></i>El enlace está firmado, aislado por empresa y limitado para reducir abuso.</div>
+                </div>
+              </div>
+            </div>
+            <div class="col-lg-5">
+              <div class="card app-card h-100">
+                <div class="card-body">
+                  <h2 class="h5 fw-bold"><i class="bi bi-whatsapp me-2"></i>WhatsApp</h2>
+                  {% if preferences.whatsapp.enabled and preferences.whatsapp.phone_number_id %}
+                    <div class="alert alert-success"><strong>WhatsApp conectado.</strong><div class="small mt-1">{{ preferences.whatsapp.display_phone_number or 'Número conectado' }}</div></div>
+                  {% else %}
+                    <div class="alert alert-light border"><strong>WhatsApp aún no conectado.</strong><div class="small mt-1">Esto no bloquea el Vendedor Web. Podés conectarlo cuando Meta termine la revisión.</div></div>
+                  {% endif %}
+                  <a class="btn btn-outline-primary" href="{{ url_for('ai_agents.vendor_whatsapp_connect') }}"><i class="bi bi-whatsapp me-1"></i>{% if preferences.whatsapp.enabled %}Administrar WhatsApp{% else %}Conectar WhatsApp{% endif %}</a>
+                </div>
+              </div>
+            </div>
+          </div>
+          ''') + vendor_anchor
+          replace_once("templates/ai_agents/index.html", vendor_anchor, vendor_web_panel)
+
+          # Public Vendedor page.
+          Path("templates/ai_agents/public_vendor_chat.html").write_text(dedent('''\
+          <!doctype html>
+          <html lang="es">
+          <head>
+            <meta charset="utf-8">
+            <meta name="viewport" content="width=device-width, initial-scale=1">
+            <meta name="robots" content="noindex,nofollow">
+            <title>Vendedor IA · {{ company.name or 'StockArMobile' }}</title>
+            <style>
+              :root { color-scheme: light; font-family: Inter, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; }
+              * { box-sizing: border-box; }
+              body { margin: 0; min-height: 100vh; background: #f5f7fb; color: #111827; }
+              .wrap { width: min(760px, calc(100% - 24px)); margin: 20px auto; }
+              .card { background: #fff; border: 1px solid #e5e7eb; border-radius: 18px; box-shadow: 0 18px 50px rgba(15,23,42,.08); overflow: hidden; }
+              .head { padding: 18px 20px; border-bottom: 1px solid #e5e7eb; background: linear-gradient(135deg,#f8fbff,#fff); }
+              .title { font-size: 1.15rem; font-weight: 800; }
+              .sub { font-size: .9rem; color: #64748b; margin-top: 4px; }
+              .status { margin-top: 10px; font-size: .8rem; color: #15803d; }
+              .messages { height: min(66vh, 620px); overflow-y: auto; padding: 18px; background: #f8fafc; }
+              .msg { max-width: 86%; margin-bottom: 12px; }
+              .msg.user { margin-left: auto; }
+              .bubble { padding: 11px 13px; border-radius: 16px; white-space: pre-wrap; word-break: break-word; line-height: 1.45; }
+              .user .bubble { background: #2563eb; color: #fff; border-bottom-right-radius: 5px; }
+              .assistant .bubble { background: #fff; border: 1px solid #e5e7eb; border-bottom-left-radius: 5px; }
+              .composer { padding: 12px; border-top: 1px solid #e5e7eb; background: #fff; }
+              .row { display: flex; gap: 8px; }
+              input { flex: 1; min-width: 0; padding: 12px 13px; border: 1px solid #cbd5e1; border-radius: 12px; font: inherit; outline: none; }
+              button { border: 0; border-radius: 12px; padding: 0 16px; background: #2563eb; color: #fff; font-weight: 700; cursor: pointer; }
+              button:disabled { opacity: .55; cursor: wait; }
+              .hint { margin-top: 8px; font-size: .72rem; color: #64748b; }
+              .error { min-height: 18px; margin-bottom: 4px; color: #b91c1c; font-size: .8rem; }
+              .empty { padding: 14px; border: 1px dashed #cbd5e1; border-radius: 14px; color: #475569; }
+              @media (max-width: 640px) { .wrap { width: 100%; margin: 0; } .card { border-radius: 0; min-height: 100vh; } .messages { height: calc(100vh - 190px); } }
+            </style>
+          </head>
+          <body>
+            <main class="wrap">
+              <section class="card">
+                <header class="head">
+                  <div class="title">🤖 Vendedor IA · {{ company.name or 'StockArMobile' }}</div>
+                  <div class="sub">Atención 24/7 · Productos, stock, precios, presupuestos y pedidos pendientes.</div>
+                  <div class="status">● Disponible</div>
+                </header>
+                <div class="messages" id="messages" aria-live="polite">
+                  {% if disabled_reason %}<div class="empty">{{ disabled_reason }}</div>{% else %}<div class="empty" id="empty">Hola 👋 ¿Qué producto estás buscando?</div>{% endif %}
+                </div>
+                {% if not disabled_reason %}
+                <div class="composer">
+                  <div class="error" id="error" role="alert"></div>
+                  <div class="row"><input id="message" maxlength="500" autocomplete="off" placeholder="Escribí tu consulta..." aria-label="Consulta al Vendedor IA"><button id="send" type="button">Enviar</button></div>
+                  <div class="hint">La conversación usa información real del comercio. Los pedidos quedan pendientes de pago hasta su confirmación.</div>
+                </div>
+                {% endif %}
+              </section>
+            </main>
+            {% if not disabled_reason %}
+            <script>
+            (function () {
+              const endpoint = {{ chat_url|tojson }};
+              const csrf = {{ csrf_token()|tojson }};
+              const messages = document.getElementById('messages');
+              const empty = document.getElementById('empty');
+              const input = document.getElementById('message');
+              const send = document.getElementById('send');
+              const error = document.getElementById('error');
+              let conversationId = null;
+              let sequence = 0;
+              function add(role, text) {
+                if (empty) empty.remove();
+                const row = document.createElement('div');
+                row.className = 'msg ' + role;
+                const bubble = document.createElement('div');
+                bubble.className = 'bubble';
+                bubble.textContent = text;
+                row.appendChild(bubble);
+                messages.appendChild(row);
+                messages.scrollTop = messages.scrollHeight;
+              }
+              async function ask() {
+                const message = input.value.trim();
+                if (!message || send.disabled) return;
+                error.textContent = '';
+                add('user', message);
+                input.value = '';
+                send.disabled = true;
+                const idempotencyKey = 'web-' + Date.now() + '-' + (++sequence) + '-' + Math.random().toString(36).slice(2);
+                try {
+                  const response = await fetch(endpoint, {
+                    method: 'POST',
+                    credentials: 'same-origin',
+                    headers: { 'Content-Type': 'application/json', 'X-CSRFToken': csrf, 'Idempotency-Key': idempotencyKey },
+                    body: JSON.stringify({ message: message, ...(conversationId ? { conversation_id: conversationId } : {}) })
+                  });
+                  const data = await response.json().catch(() => ({}));
+                  if (!response.ok || !data.success) throw new Error(data.error || 'No se pudo procesar la consulta.');
+                  conversationId = data.conversation_id;
+                  add('assistant', data.content || '');
+                } catch (err) {
+                  error.textContent = err.message || 'No se pudo procesar la consulta.';
+                } finally {
+                  send.disabled = false;
+                  input.focus();
+                }
+              }
+              send.addEventListener('click', ask);
+              input.addEventListener('keydown', (event) => { if (event.key === 'Enter') { event.preventDefault(); ask(); } });
+              input.focus();
+            })();
+            </script>
+            {% endif %}
+          </body>
+          </html>
+          ''').strip() + "\n", encoding="utf-8")
+
+          # Report what this automated pass changed.
+          Path("docs/INFORME_AUDITORIA_ENDURECIMIENTO_20260917.md").write_text(dedent('''\
+          # Informe de auditoría y endurecimiento — 2026-09-17
+
+          ## Esta pasada
+
+          - Desacopla el Vendedor IA del requisito de tener WhatsApp conectado para abrir la pantalla.
+          - Agrega Webchat público opt-in por empresa, con enlace firmado, sesión de visitante, aislamiento por `company_id`, límite de 500 caracteres y rate-limit con Redis cuando `REDIS_URL` está disponible (fallback por sesión).
+          - Reutiliza el mismo `AgentRuntime` y `VendorOrderService`; no crea un segundo motor IA.
+          - Añade `Idempotency-Key` a los mensajes del chat autenticado y al webchat público.
+          - Endurece el prompt del Vendedor para separar canal de inteligencia y para no presentar pedidos pendientes como ventas confirmadas.
+          - Muestra WhatsApp como canal opcional desde la vista del Vendedor y deja claro que el Vendedor Web no depende de Meta.
+
+          ## Hallazgos que quedaron para la siguiente pasada específica
+
+          - Auditoría E2E completa de Mercado Pago/webhooks y duplicados en todas las rutas de pago.
+          - Revisión exhaustiva de IDOR en todos los módulos no IA, no solo conversaciones/pedidos IA.
+          - Conteo real de pedidos/ventas atribuidos al Vendedor por conversación/canal; no se reutiliza el total global de ventas como “ventas derivadas”.
+          - Revisión final de copy de todos los planes y capacidades contra implementación real de cada módulo.
+          - Pasada visual móvil global fuera del módulo IA.
+          - Revisión de migraciones Alembic y despliegue de producción después de validar CI.
+
+          ## Validación
+
+          - No se ejecutó `pytest` localmente desde este entorno.
+          - El repositorio ya tiene CI en `.github/workflows/ci.yml` que ejecuta compilación Python, validación del service worker y `pytest` en push/PR contra `main`.
+          ''').strip() + "\n", encoding="utf-8")
+          PY
+
+      - name: Validate Python syntax
+        run: python -m compileall -q ai_agents.py dashboard.py services/ai_agent templates 2>/dev/null
+
+      - name: Commit hardening changes
+        env:
+          HEAD_MESSAGE: ${{ github.event.head_commit.message }}
+        run: |
+          if echo "$HEAD_MESSAGE" | grep -q "chore: harden vendor 24/7 webchat"; then
+            echo "Hardening commit already applied."
+            exit 0
+          fi
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add ai_agents.py dashboard.py services/ai_agent/orchestrator_v2.py templates/ai_agents/index.html templates/ai_agents/public_vendor_chat.html docs/INFORME_AUDITORIA_ENDURECIMIENTO_20260917.md
+          git commit -m "chore: harden vendor 24/7 webchat"
+          git push origin HEAD:hardening/vendor-24-7-webchat
