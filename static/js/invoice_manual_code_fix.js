@@ -6,6 +6,7 @@
     const codeInput = document.getElementById('picker-code');
     const codeButton = document.getElementById('picker-code-use');
     const hint = document.getElementById('picker-code-hint');
+    const cameraButton = document.getElementById('picker-camera-open');
     if (!codeInput || !codeButton || !hint) return;
     if (codeButton.dataset.manualFixInitialized === '1') return;
 
@@ -94,6 +95,55 @@
       }
     }
 
+    async function loadBarcodeScanner() {
+      if (window.StockArBarcodeScanner?.openScanner) return true;
+      if (window.__stockArBarcodeScannerLoader) return window.__stockArBarcodeScannerLoader;
+      window.__stockArBarcodeScannerLoader = new Promise((resolve) => {
+        const existing = document.querySelector('script[data-stockar-barcode-scanner="1"]');
+        if (existing) {
+          existing.addEventListener('load', () => resolve(Boolean(window.StockArBarcodeScanner?.openScanner)), { once: true });
+          existing.addEventListener('error', () => resolve(false), { once: true });
+          return;
+        }
+        const script = document.createElement('script');
+        script.src = '/static/assets/js/barcode-scanner.js?v=20260917-camera-fix';
+        script.async = true;
+        script.dataset.stockarBarcodeScanner = '1';
+        script.onload = () => resolve(Boolean(window.StockArBarcodeScanner?.openScanner));
+        script.onerror = () => resolve(false);
+        document.head.appendChild(script);
+      });
+      return window.__stockArBarcodeScannerLoader;
+    }
+
+    async function openCameraScanner() {
+      clearHint();
+      setFeedback('Preparando escáner de cámara…');
+      const ready = await loadBarcodeScanner();
+      if (!ready) {
+        setFeedback('No se pudo cargar el lector de cámara. Podés escribir el código o usar un lector láser.', 'error');
+        return;
+      }
+      window.StockArBarcodeScanner.openScanner({
+        onDetected: async (barcode) => {
+          cleanInput.value = String(barcode || '').trim();
+          setFeedback(`Código detectado: ${cleanInput.value}. Asignando…`, 'success');
+          await assignCode();
+        },
+        onError: (error) => {
+          setFeedback(error?.message || 'No se pudo abrir la cámara.', 'error');
+        },
+        onCancel: () => {
+          if (!cleanInput.value) setFeedback('Escaneo cancelado. Podés escribir el código o usar el lector láser.');
+        },
+      });
+    }
+
+    function clearHint() {
+      const scannerFeedback = document.getElementById('picker-code-feedback');
+      if (scannerFeedback) scannerFeedback.textContent = '';
+    }
+
     cleanButton.addEventListener('click', (event) => {
       event.preventDefault();
       event.stopPropagation();
@@ -119,6 +169,18 @@
       const button = event.target.closest?.('.invoice-open[data-upload-id]');
       if (button) root.dataset.activeUploadId = button.dataset.uploadId || '';
     }, true);
+
+    document.addEventListener('click', async (event) => {
+      const button = event.target.closest?.('#picker-camera-open');
+      if (!button) return;
+      event.preventDefault();
+      event.stopImmediatePropagation();
+      await openCameraScanner();
+    }, true);
+
+    hint.textContent = 'Escribí el código, escanealo con la cámara o conectá un lector láser/USB/Bluetooth. La cámara usa un lector compatible incluso en navegadores sin BarcodeDetector nativo.';
+
+    if (cameraButton) cameraButton.setAttribute('data-stockar-camera-override', '1');
   }
 
   if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', initManualCodeFix, { once: true });
