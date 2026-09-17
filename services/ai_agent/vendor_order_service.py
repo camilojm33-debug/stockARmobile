@@ -378,17 +378,6 @@ class VendorOrderService:
         if not cart["items"]:
             raise ValueError("El carrito está vacío.")
 
-        delivery = _delivery_payload(
-            method=delivery_method,
-            customer_name=customer_name,
-            customer_phone=customer_phone,
-            address=delivery_address,
-            city=delivery_city,
-            province=delivery_province,
-            postal_code=delivery_postal_code,
-            reference=delivery_reference,
-            notes=delivery_notes,
-        )
         state = _metadata(conversation)
         pending_quote_id = state.get(PENDING_QUOTE_KEY)
         if pending_quote_id:
@@ -422,6 +411,18 @@ class VendorOrderService:
                         "quote_url": _public_quote_url(existing.id),
                     }
 
+        delivery = _delivery_payload(
+            method=delivery_method,
+            customer_name=customer_name,
+            customer_phone=customer_phone,
+            address=delivery_address,
+            city=delivery_city,
+            province=delivery_province,
+            postal_code=delivery_postal_code,
+            reference=delivery_reference,
+            notes=delivery_notes,
+        )
+
         actor = None
         if actor_user_id:
             actor = User.query.filter_by(id=int(actor_user_id), company_id=company_id, active=True).first()
@@ -438,8 +439,8 @@ class VendorOrderService:
                 or_(Client.whatsapp == customer_phone, Client.phone == customer_phone, Client.whatsapp == phone, Client.phone == phone),
                 Client.active.is_(True),
             ).order_by(Client.id.asc()).first()
-        if client is None:
-            clean_name = customer_name.strip()[:200]
+        if client is None and (customer_name.strip() or phone):
+            clean_name = customer_name.strip()[:200] or "Consumidor final"
             client = Client(
                 name=clean_name,
                 phone=phone[:20] or None,
