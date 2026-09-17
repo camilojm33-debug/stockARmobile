@@ -156,7 +156,7 @@ def index():
     for name, agent in agents.items():
         if not ai_enabled or not agent.active:
             agent_states[name] = {"label": "Desactivado", "tone": "danger"}
-        elif not ai_key_configured or (name == VENDOR_AGENT_NAME and not whatsapp_connected):
+        elif not ai_key_configured:
             agent_states[name] = {"label": "Configuración pendiente", "tone": "warning"}
         else:
             agent_states[name] = {"label": "Activo", "tone": "success"}
