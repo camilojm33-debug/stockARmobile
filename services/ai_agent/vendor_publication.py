@@ -245,6 +245,7 @@ def _cart_public_state(conversation) -> dict:
         "cart": cart,
         "payment_url": payment_url or None,
         "pending_quote_id": state.get(PENDING_QUOTE_KEY),
+        "delivery": state.get("delivery") or None,
     }
 
 
