@@ -61,6 +61,8 @@
     .msg { max-width: 88%; margin-bottom: 10px; }
     .msg.user { margin-left: auto; }
     .bubble { padding: 10px 12px; border-radius: 15px; white-space: pre-wrap; word-break: break-word; line-height: 1.45; font-size: .9rem; }
+    .bubble a { color: #1d4ed8; font-weight: 800; text-decoration: underline; text-underline-offset: 2px; }
+    .user .bubble a { color: #fff; }
     .user .bubble { background: var(--brand); color: #fff; border-bottom-right-radius: 5px; }
     .assistant .bubble { background: #fff; border: 1px solid var(--line); border-bottom-left-radius: 5px; }
     .composer { padding: 12px; border-top: 1px solid var(--line); background: #fff; }
@@ -373,6 +375,47 @@
       renderCart(currentState);
     }
 
+    function paymentLinkLabel(url) {
+      try {
+        const parsed = new URL(url);
+        if (/mercadopago/i.test(parsed.hostname)) return 'Pagar ahora con Mercado Pago';
+      } catch (err) {}
+      return 'Abrir enlace';
+    }
+
+    function renderMessageContent(bubble, text) {
+      const raw = String(text || '');
+      const urlPattern = /(https?:\\/\\/[^\\s<]+)/gi;
+      let cursor = 0;
+      let match;
+      while ((match = urlPattern.exec(raw)) !== null) {
+        const urlStart = match.index;
+        let url = match[0];
+        let trailing = '';
+        while (/[.,!?;:)]$/.test(url)) {
+          trailing = url.slice(-1) + trailing;
+          url = url.slice(0, -1);
+        }
+        if (urlStart > cursor) {
+          bubble.appendChild(document.createTextNode(raw.slice(cursor, urlStart)));
+        }
+        const link = document.createElement('a');
+        link.href = url;
+        link.target = '_blank';
+        link.rel = 'noopener noreferrer';
+        link.textContent = paymentLinkLabel(url);
+        link.setAttribute('aria-label', paymentLinkLabel(url));
+        bubble.appendChild(link);
+        if (trailing) {
+          bubble.appendChild(document.createTextNode(trailing));
+        }
+        cursor = urlStart + match[0].length;
+      }
+      if (cursor < raw.length) {
+        bubble.appendChild(document.createTextNode(raw.slice(cursor)));
+      }
+    }
+
     function add(role, text) {
       if (!messages) return;
       if (empty) empty.remove();
@@ -380,7 +423,11 @@
       row.className = 'msg ' + role;
       const bubble = document.createElement('div');
       bubble.className = 'bubble';
-      bubble.textContent = text || '';
+      if (role === 'assistant') {
+        renderMessageContent(bubble, text);
+      } else {
+        bubble.textContent = text || '';
+      }
       row.appendChild(bubble);
       messages.appendChild(row);
       messages.scrollTop = messages.scrollHeight;
