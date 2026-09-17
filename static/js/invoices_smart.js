@@ -7,8 +7,6 @@
     const $ = (id) => document.getElementById(id);
     const fileInput = $('invoice-file-input');
     const cameraInput = $('invoice-camera-input');
-    const fileTrigger = $('invoice-file-trigger');
-    const cameraTrigger = $('invoice-camera-trigger');
     const dropzone = $('invoice-dropzone');
     const selected = $('invoice-selected');
     const errorBox = $('invoice-error');
@@ -17,7 +15,7 @@
     const progress = $('invoice-progress');
     const progressBar = $('invoice-progress-bar');
 
-    if (!fileInput || !cameraInput || !fileTrigger || !cameraTrigger || !selected || !processBtn || !clearBtn) return;
+    if (!fileInput || !cameraInput || !dropzone || !selected || !processBtn || !clearBtn) return;
 
     const csrfToken = root.dataset.csrf || '';
     const uploadUrl = root.dataset.uploadUrl;
@@ -32,8 +30,6 @@
     let currentPreview = null;
     let pickerLine = null;
     let currentCandidates = [];
-    let cameraStream = null;
-    let cameraModal = null;
 
     const showError = (message) => {
       if (!errorBox) return;
@@ -78,19 +74,15 @@
       const sizeKb = Math.max(1, Math.round(file.size / 1024));
       const lower = name.toLowerCase();
       const isImage = String(file.type || '').toLowerCase().startsWith('image/') || ['.jpg', '.jpeg', '.png', '.webp'].some((ext) => lower.endsWith(ext));
-
       if (isImage) {
         currentObjectUrl = URL.createObjectURL(file);
-        selected.innerHTML =
-          '<div class="d-flex align-items-center gap-3 flex-wrap">' +
+        selected.innerHTML = '<div class="d-flex align-items-center gap-3 flex-wrap">' +
           '<img src="' + currentObjectUrl + '" alt="Vista previa de la factura" style="width:96px;height:96px;object-fit:cover;border-radius:12px;border:1px solid var(--app-line);background:#f8fafc">' +
           '<div><div class="fw-semibold">' + esc(name) + '</div><div class="small muted">' + sizeKb + ' KB · Imagen seleccionada correctamente</div><div class="small text-success mt-1"><i class="bi bi-check-circle me-1"></i>Lista para procesar con IA</div></div>' +
           '</div>';
         return;
       }
-
-      selected.innerHTML =
-        '<div class="d-flex align-items-center gap-3 flex-wrap">' +
+      selected.innerHTML = '<div class="d-flex align-items-center gap-3 flex-wrap">' +
         '<div style="width:64px;height:64px;display:grid;place-items:center;border-radius:12px;background:#eef4ff;color:#2563eb;font-size:1.5rem"><i class="bi bi-file-earmark-pdf"></i></div>' +
         '<div><div class="fw-semibold">' + esc(name) + '</div><div class="small muted">' + sizeKb + ' KB · PDF seleccionado correctamente</div><div class="small text-success mt-1"><i class="bi bi-check-circle me-1"></i>Listo para procesar con IA</div></div>' +
         '</div>';
@@ -106,7 +98,6 @@
         clearBtn.disabled = true;
         return;
       }
-
       const name = String(file.name || '');
       const ext = name.includes('.') ? name.slice(name.lastIndexOf('.')).toLowerCase() : '';
       const allowed = ['.pdf', '.jpg', '.jpeg', '.png', '.webp'];
@@ -124,7 +115,6 @@
         showError('El archivo debe pesar entre 1 byte y 10 MB.');
         return;
       }
-
       renderSelectedFile(file);
       processBtn.disabled = false;
       clearBtn.disabled = false;
@@ -142,11 +132,7 @@
     }
 
     function postOptions(body) {
-      const options = {
-        method: 'POST',
-        credentials: 'same-origin',
-        headers: { 'X-CSRFToken': csrfToken, 'X-Requested-With': 'XMLHttpRequest' }
-      };
+      const options = { method: 'POST', credentials: 'same-origin', headers: { 'X-CSRFToken': csrfToken, 'X-Requested-With': 'XMLHttpRequest' } };
       if (body !== undefined) {
         options.headers['Content-Type'] = 'application/json';
         options.body = JSON.stringify(body);
@@ -160,102 +146,21 @@
       progressBar.style.width = String(value) + '%';
     }
 
-    function stopCamera() {
-      if (cameraStream) {
-        cameraStream.getTracks().forEach((track) => track.stop());
-        cameraStream = null;
-      }
-    }
-
-    function destroyCameraModal() {
-      stopCamera();
-      if (cameraModal) {
-        cameraModal.remove();
-        cameraModal = null;
-      }
-    }
-
-    async function openCamera() {
-      clearError();
-      if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
-        cameraInput.click();
-        return;
-      }
-
-      if (!cameraModal) {
-        cameraModal = document.createElement('div');
-        cameraModal.id = 'invoice-camera-modal';
-        cameraModal.style.cssText = 'position:fixed;inset:0;background:rgba(15,23,42,.72);z-index:2000;display:flex;align-items:center;justify-content:center;padding:16px;';
-        cameraModal.innerHTML =
-          '<div style="width:min(760px,100%);background:#fff;border-radius:18px;padding:16px;box-shadow:0 24px 80px rgba(15,23,42,.4)">' +
-          '<div style="display:flex;justify-content:space-between;align-items:center;gap:12px;margin-bottom:12px"><div><strong>Tomar foto de la factura</strong><div class="small text-muted">Permití el acceso a la cámara para continuar.</div></div><button type="button" id="invoice-camera-close" class="btn btn-sm btn-outline-secondary">Cerrar</button></div>' +
-          '<video id="invoice-camera-video" autoplay playsinline muted style="width:100%;max-height:62vh;object-fit:contain;background:#0f172a;border-radius:14px"></video>' +
-          '<canvas id="invoice-camera-canvas" class="d-none"></canvas>' +
-          '<div id="invoice-camera-error" class="small text-danger mt-2"></div>' +
-          '<div class="d-flex justify-content-end gap-2 mt-3"><button type="button" id="invoice-camera-capture" class="btn btn-primary"><i class="bi bi-camera me-1"></i>Capturar foto</button></div>' +
-          '</div>';
-        document.body.appendChild(cameraModal);
-        cameraModal.querySelector('#invoice-camera-close').addEventListener('click', destroyCameraModal);
-        cameraModal.querySelector('#invoice-camera-capture').addEventListener('click', () => {
-          const video = cameraModal.querySelector('#invoice-camera-video');
-          const canvas = cameraModal.querySelector('#invoice-camera-canvas');
-          if (!video.videoWidth || !video.videoHeight) {
-            cameraModal.querySelector('#invoice-camera-error').textContent = 'La cámara todavía no está lista. Esperá un segundo y probá de nuevo.';
-            return;
-          }
-          canvas.width = video.videoWidth;
-          canvas.height = video.videoHeight;
-          const ctx = canvas.getContext('2d');
-          ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
-          canvas.toBlob((blob) => {
-            if (!blob) return;
-            const stamp = new Date().toISOString().replace(/[:.]/g, '-');
-            const file = new File([blob], 'factura-' + stamp + '.jpg', { type: 'image/jpeg' });
-            selectFile(file);
-            destroyCameraModal();
-          }, 'image/jpeg', 0.92);
-        });
-      }
-
-      cameraModal.classList.remove('d-none');
-      try {
-        stopCamera();
-        cameraStream = await navigator.mediaDevices.getUserMedia({
-          video: { facingMode: { ideal: 'environment' } },
-          audio: false
-        });
-        const video = cameraModal.querySelector('#invoice-camera-video');
-        video.srcObject = cameraStream;
-        await video.play();
-      } catch (error) {
-        cameraModal.querySelector('#invoice-camera-error').textContent = 'No se pudo acceder a la cámara. Verificá el permiso del navegador o usá Subir archivo.';
-      }
-    }
-
     async function uploadAndProcess() {
       clearError();
       if (!currentFile) {
         showError('Elegí una factura o sacale una foto primero.');
         return;
       }
-
       processBtn.disabled = true;
       clearBtn.disabled = true;
       setProgress(20, true);
-
       try {
         const form = new FormData();
         form.append('message', 'Cargué una factura de proveedor para procesarla con IA.');
         form.append('agent', 'asistente');
         form.append('invoice_file', currentFile, currentFile.name);
-
-        const uploaded = await jsonResponse(await fetch(uploadUrl, {
-          method: 'POST',
-          body: form,
-          credentials: 'same-origin',
-          headers: { 'X-CSRFToken': csrfToken, 'X-Requested-With': 'XMLHttpRequest' }
-        }));
-
+        const uploaded = await jsonResponse(await fetch(uploadUrl, { method: 'POST', body: form, credentials: 'same-origin', headers: { 'X-CSRFToken': csrfToken, 'X-Requested-With': 'XMLHttpRequest' } }));
         currentUploadId = uploaded.document_id;
         setProgress(60, true);
         const processed = await jsonResponse(await fetch(processUrl.replace('__UPLOAD_ID__', encodeURIComponent(currentUploadId)), postOptions()));
@@ -323,6 +228,7 @@
 
     function renderCandidates(candidates) {
       const list = $('picker-list');
+      if (!list) return;
       list.innerHTML = candidates.length ? candidates.map((item) => '<div class="candidate"><div><strong>' + esc(item.name) + '</strong><div class="small muted">' + esc(item.code || 'Sin código') + (item.category ? ' · ' + esc(item.category) : '') + '</div></div><button type="button" class="btn btn-sm btn-primary picker-use" data-name="' + esc(item.name) + '">Usar</button></div>').join('') : '<div class="small muted">No encontramos sugerencias para esta línea.</div>';
       list.querySelectorAll('.picker-use').forEach((button) => button.addEventListener('click', async () => {
         try {
@@ -340,8 +246,6 @@
       } catch (error) { showError(error.message); }
     }
 
-    fileTrigger.addEventListener('click', (event) => { event.preventDefault(); fileInput.click(); });
-    cameraTrigger.addEventListener('click', (event) => { event.preventDefault(); openCamera(); });
     fileInput.addEventListener('change', () => selectFile(fileInput.files && fileInput.files[0]));
     cameraInput.addEventListener('change', () => selectFile(cameraInput.files && cameraInput.files[0]));
     processBtn.addEventListener('click', uploadAndProcess);
@@ -369,10 +273,14 @@
       }
     });
 
-    dropzone?.addEventListener('dragover', (event) => { event.preventDefault(); dropzone.classList.add('dragover'); });
-    dropzone?.addEventListener('dragleave', () => dropzone.classList.remove('dragover'));
-    dropzone?.addEventListener('drop', (event) => { event.preventDefault(); dropzone.classList.remove('dragover'); selectFile(event.dataTransfer && event.dataTransfer.files && event.dataTransfer.files[0]); });
-    window.addEventListener('beforeunload', destroyCameraModal);
+    dropzone.addEventListener('dragover', (event) => { event.preventDefault(); dropzone.classList.add('dragover'); });
+    dropzone.addEventListener('dragleave', () => dropzone.classList.remove('dragover'));
+    dropzone.addEventListener('drop', (event) => {
+      event.preventDefault();
+      dropzone.classList.remove('dragover');
+      const file = event.dataTransfer && event.dataTransfer.files ? event.dataTransfer.files[0] : null;
+      selectFile(file);
+    });
   }
 
   if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', initInvoiceAI, { once: true });
