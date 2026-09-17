@@ -1,4 +1,5 @@
 import json
+import sys
 
 from services.ai_agent import vendor_publication
 
@@ -78,3 +79,8 @@ def test_unpublish_disables_public_webchat(monkeypatch):
     result = vendor_publication.unpublish_vendor(company)
     assert result["published"] is False
     assert updates["public_webchat_enabled"] is False
+
+
+def test_rate_limit_fails_closed_when_guard_unavailable(monkeypatch):
+    monkeypatch.setitem(sys.modules, "ai_agents", None)
+    assert vendor_publication._rate_limit(123) is False

@@ -158,7 +158,8 @@ def _rate_limit(company_id: int) -> bool:
         from ai_agents import _public_vendor_rate_limit
         return _public_vendor_rate_limit(company_id)
     except Exception:
-        return True
+        current_app.logger.exception("Public Vendor rate limiter unavailable; failing closed.")
+        return False
 
 
 def _agent_for_company(company_id: int):
