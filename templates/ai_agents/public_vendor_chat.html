@@ -84,7 +84,15 @@
     .total-label { color: var(--muted); font-size: .78rem; }
     .total-value { font-size: 1.15rem; font-weight: 900; }
     .checkout { margin-top: 10px; display: grid; gap: 8px; }
-    .checkout input { width: 100%; padding: 10px 11px; border: 1px solid #cbd5e1; border-radius: 11px; outline: none; }
+    .checkout input, .checkout select, .checkout textarea { width: 100%; padding: 10px 11px; border: 1px solid #cbd5e1; border-radius: 11px; outline: none; background: #fff; }
+.checkout textarea { min-height: 72px; resize: vertical; }
+.delivery-fields { display: none; gap: 8px; }
+.delivery-fields.show { display: grid; }
+.delivery-note { font-size: .72rem; color: var(--muted); line-height: 1.35; }
+.checkout-summary { padding: 10px 11px; border: 1px solid var(--line); border-radius: 11px; background: var(--soft); }
+.checkout-summary-row { display:flex; justify-content:space-between; gap:12px; font-size:.78rem; }
+.checkout-summary-row + .checkout-summary-row { margin-top: 5px; }
+.checkout-summary-row.total { margin-top: 9px; padding-top: 9px; border-top:1px solid var(--line); font-weight:850; font-size:.9rem; }
     .pay-link { display: none; margin-top: 8px; }
     .pay-link.show { display: block; }
     .pay-link a { display: block; text-align: center; text-decoration: none; }
@@ -182,8 +190,26 @@
             </div>
             {% if not disabled_reason %}
             <div class="checkout">
-              <input id="customerName" maxlength="160" placeholder="Nombre (opcional)">
-              <input id="customerPhone" maxlength="40" inputmode="tel" placeholder="Teléfono (opcional)">
+              <input id="customerName" maxlength="160" placeholder="Nombre y apellido">
+              <input id="customerPhone" maxlength="40" inputmode="tel" placeholder="Teléfono">
+              <select id="deliveryMethod" aria-label="Forma de entrega">
+                <option value="retiro">Retiro en el comercio · $0</option>
+                <option value="envio">Envío a domicilio · +15%</option>
+              </select>
+              <div class="delivery-note">El envío a domicilio agrega un 15% sobre el importe de los productos. El backend vuelve a calcular el total antes de crear el pago.</div>
+              <div id="deliveryFields" class="delivery-fields">
+                <input id="deliveryAddress" maxlength="500" placeholder="Dirección de entrega">
+                <input id="deliveryCity" maxlength="100" placeholder="Localidad / ciudad">
+                <input id="deliveryProvince" maxlength="120" placeholder="Provincia">
+                <input id="deliveryPostalCode" maxlength="20" inputmode="numeric" placeholder="Código postal (opcional)">
+                <input id="deliveryReference" maxlength="255" placeholder="Referencia (opcional)">
+                <textarea id="deliveryNotes" maxlength="2000" placeholder="Observaciones de entrega (opcional)"></textarea>
+              </div>
+              <div id="checkoutSummary" class="checkout-summary">
+                <div class="checkout-summary-row"><span>Productos</span><strong id="checkoutProductsTotal">$ 0,00</strong></div>
+                <div class="checkout-summary-row"><span>Envío</span><strong id="checkoutShippingTotal">$ 0,00</strong></div>
+                <div class="checkout-summary-row total"><span>Total estimado</span><strong id="checkoutGrandTotal">$ 0,00</strong></div>
+              </div>
               <button class="btn btn-primary" id="checkoutButton" type="button" disabled>Preparar pedido y pagar</button>
               <div class="error" id="checkoutError" role="alert"></div>
               <div class="pay-link" id="payLink"><a class="btn btn-light" id="payLinkButton" href="#" target="_blank" rel="noopener noreferrer">Continuar con Mercado Pago</a></div>
@@ -223,6 +249,17 @@
     const checkoutError = document.getElementById('checkoutError');
     const customerName = document.getElementById('customerName');
     const customerPhone = document.getElementById('customerPhone');
+    const deliveryMethod = document.getElementById('deliveryMethod');
+    const deliveryFields = document.getElementById('deliveryFields');
+    const deliveryAddress = document.getElementById('deliveryAddress');
+    const deliveryCity = document.getElementById('deliveryCity');
+    const deliveryProvince = document.getElementById('deliveryProvince');
+    const deliveryPostalCode = document.getElementById('deliveryPostalCode');
+    const deliveryReference = document.getElementById('deliveryReference');
+    const deliveryNotes = document.getElementById('deliveryNotes');
+    const checkoutProductsTotal = document.getElementById('checkoutProductsTotal');
+    const checkoutShippingTotal = document.getElementById('checkoutShippingTotal');
+    const checkoutGrandTotal = document.getElementById('checkoutGrandTotal');
     const payLink = document.getElementById('payLink');
     const payLinkButton = document.getElementById('payLinkButton');
     const mobileCartCount = document.getElementById('mobileCartCount');
@@ -295,6 +332,12 @@
       const label = count === 1 ? '1 producto' : String(count) + ' productos';
       if (cartCountEl) cartCountEl.textContent = label;
       if (cartTotalEl) cartTotalEl.textContent = money(cart.total);
+      if (checkoutProductsTotal) checkoutProductsTotal.textContent = money(cart.total);
+      const checkoutShipping = deliveryMethod && deliveryMethod.value === 'envio'
+        ? Number(cart.total || 0) * 0.15
+        : 0;
+      if (checkoutShippingTotal) checkoutShippingTotal.textContent = money(checkoutShipping);
+      if (checkoutGrandTotal) checkoutGrandTotal.textContent = money(Number(cart.total || 0) + checkoutShipping);
       if (mobileCartCount) mobileCartCount.textContent = label;
       if (mobileCartTotal) mobileCartTotal.textContent = money(cart.total);
       if (checkoutButton) checkoutButton.disabled = items.length === 0;
@@ -382,6 +425,12 @@
       }
     }
 
+    function syncDeliveryFields() {
+      const isShipping = deliveryMethod && deliveryMethod.value === 'envio';
+      if (deliveryFields) deliveryFields.classList.toggle('show', Boolean(isShipping));
+      renderCart(currentState);
+    }
+
     async function checkout() {
       if (!checkoutEndpoint || checkoutButton.disabled) return;
       checkoutError.textContent = '';
@@ -391,7 +440,18 @@
           method: 'POST',
           credentials: 'same-origin',
           headers: { 'Content-Type': 'application/json', 'X-CSRFToken': csrf },
-          body: JSON.stringify({ conversation_id: conversationId, customer_name: customerName.value.trim(), customer_phone: customerPhone.value.trim() })
+          body: JSON.stringify({
+            conversation_id: conversationId,
+            customer_name: customerName.value.trim(),
+            customer_phone: customerPhone.value.trim(),
+            delivery_method: deliveryMethod.value,
+            delivery_address: deliveryAddress.value.trim(),
+            delivery_city: deliveryCity.value.trim(),
+            delivery_province: deliveryProvince.value.trim(),
+            delivery_postal_code: deliveryPostalCode.value.trim(),
+            delivery_reference: deliveryReference.value.trim(),
+            delivery_notes: deliveryNotes.value.trim(),
+          })
         });
         setState(data);
         if (data.payment_url) {
@@ -404,6 +464,9 @@
         checkoutButton.disabled = !(currentState.cart && currentState.cart.items && currentState.cart.items.length);
       }
     }
+
+    if (deliveryMethod) deliveryMethod.addEventListener('change', syncDeliveryFields);
+    syncDeliveryFields();
 
     async function ask() {
       const message = input ? input.value.trim() : '';
