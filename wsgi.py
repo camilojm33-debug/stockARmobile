@@ -117,7 +117,11 @@ def ai_invoices_workspace():
 @app.route("/dashboard/ai-agent/invoices/<upload_id>/resolve-code", methods=["POST"])
 @login_required
 def resolve_invoice_code_direct(upload_id):
-    """Assign an invoice line to a tenant-scoped product by exact SKU/barcode."""
+    """Assign an invoice line to a tenant-scoped product by exact SKU/barcode.
+
+    If the code does not exist yet, the product is created with zero stock from
+    the invoice line description. Stock is only increased by final confirmation.
+    """
     company_id = getattr(current_user, "company_id", None)
     if not company_id:
         return jsonify({"success": False, "error": "No hay una empresa activa."}), 403
@@ -155,12 +159,37 @@ def resolve_invoice_code_direct(upload_id):
     if line is None:
         return jsonify({"success": False, "error": "Línea de factura no encontrada."}), 400
 
-    products = Product.query.filter_by(company_id=company_id, active=True).all()
-    candidates = [product for product in products if code_key(getattr(product, "barcode", None)) == query_key]
-    if len(candidates) != 1:
-        return jsonify({"success": False, "error": "No hay un único producto activo con ese código/SKU en StockAR."}), 409
+    products = Product.query.filter_by(company_id=company_id).all()
+    active_candidates = [product for product in products if getattr(product, "active", True) and code_key(getattr(product, "barcode", None)) == query_key]
+    created = False
+    reactivated = False
 
-    product = candidates[0]
+    if len(active_candidates) > 1:
+        return jsonify({"success": False, "error": "Hay más de un producto activo con ese código/SKU en StockAR."}), 409
+    if len(active_candidates) == 1:
+        product = active_candidates[0]
+    else:
+        inactive_candidates = [product for product in products if not getattr(product, "active", True) and code_key(getattr(product, "barcode", None)) == query_key]
+        if len(inactive_candidates) > 1:
+            return jsonify({"success": False, "error": "Hay varios productos inactivos con ese código. Revisalos antes de continuar."}), 409
+        if len(inactive_candidates) == 1:
+            product = inactive_candidates[0]
+            product.active = True
+            reactivated = True
+        else:
+            product = Product(
+                company_id=company_id,
+                barcode=raw_code,
+                name=str(line.get("description") or "Producto de factura")[:200],
+                stock=0,
+                cost_price=0,
+                price=0,
+                active=True,
+            )
+            db.session.add(product)
+            db.session.flush()
+            created = True
+
     line.update({
         "matching_status": "MATCH_EXACTO",
         "matching_reason": "CODIGO_ESCANEADO_O_MANUAL",
@@ -170,6 +199,7 @@ def resolve_invoice_code_direct(upload_id):
         "confidence_level": "ALTA",
         "proposal_score": 1.0,
         "auto_matched": False,
+        "created_from_manual_code": created,
     })
 
     supplier_status = (invoice.get("supplier_match") or {}).get("status")
@@ -190,7 +220,7 @@ def resolve_invoice_code_direct(upload_id):
     conversation.metadata_json = metadata
     db.session.commit()
 
-    return jsonify({"success": True, "status": invoice["status"], "preview": invoice, "product": {"id": product.id, "name": product.name, "code": product.barcode}})
+    return jsonify({"success": True, "status": invoice["status"], "preview": invoice, "product": {"id": product.id, "name": product.name, "code": product.barcode, "created": created, "reactivated": reactivated}})
 
 
 @app.route("/superadmin/subscriptions/<int:subscription_id>/delete-historical", methods=["POST"])
