@@ -190,9 +190,11 @@ def vendor_metrics():
     from services.ai_agent.vendor_metrics_service import build_vendor_metrics
 
     metrics = build_vendor_metrics(company_id=company_id)
+    from app import Company
+    company = Company.query.filter_by(id=company_id, active=True).first()
     return render_template(
         "ai_agent/vendor_metrics.html",
-        company=current_user.company,
+        company=company,
         metrics=metrics,
     )
 
