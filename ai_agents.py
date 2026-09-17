@@ -396,7 +396,7 @@ def public_vendor_chat_message(token):
             message=message,
             channel="webchat",
             sender_id=None,
-            idempotency_key=str(payload.get("idempotency_key") or uuid.uuid4().hex),
+            idempotency_key=str(request.headers.get("Idempotency-Key") or payload.get("idempotency_key") or uuid.uuid4().hex),
             metadata={"from": visitor_id, "source": "public_webchat"},
             include_system_prompt=True,
         )

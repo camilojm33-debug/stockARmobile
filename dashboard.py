@@ -257,7 +257,7 @@ def ai_agent_chat():
             sender_id=current_user.id,
             idempotency_key=idempotency_key,
             metadata={},
-            include_system_prompt=False,
+            include_system_prompt=True,
         )
     except ValueError as exc:
         db.session.rollback()

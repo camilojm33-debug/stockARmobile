@@ -24,3 +24,4 @@
 - El repositorio ya tiene CI en `.github/workflows/ci.yml` que ejecuta compilación Python, validación del service worker y `pytest` en push/PR contra `main`.
 - Corrección de autorización: editar campañas IA queda reservado a administradores de la empresa; la transición ya estaba protegida por `company_admin_required`.
 - Agregado test de firma/aislamiento del enlace público del Vendedor Web.
+- Endurecida la ruta de chat autenticado para incluir siempre el system prompt del agente; el chat público también usa el prompt específico del Vendedor.

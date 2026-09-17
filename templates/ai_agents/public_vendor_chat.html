@@ -38,7 +38,7 @@
       <header class="head">
         <div class="title">🤖 Vendedor IA · {{ company.name or 'StockArMobile' }}</div>
         <div class="sub">Atención 24/7 · Productos, stock, precios, presupuestos y pedidos pendientes.</div>
-        <div class="status">● Disponible</div>
+        <div class="status">{% if disabled_reason %}● No disponible{% else %}● Disponible{% endif %}</div>
       </header>
       <div class="messages" id="messages" aria-live="polite">
         {% if disabled_reason %}<div class="empty">{{ disabled_reason }}</div>{% else %}<div class="empty" id="empty">Hola 👋 ¿Qué producto estás buscando?</div>{% endif %}
