@@ -46,7 +46,6 @@ class InvoicePurchaseService:
                 raise InvoicePurchaseError("No hay nombre de proveedor para crear.")
             create_new_supplier = True
         elif supplier_status == "NUEVO_PROVEEDOR_PROPUESTO" and proposed_supplier_name:
-            # Hay un proveedor detectado pero el usuario todavia no decidio: usar existente o crear nuevo (via /resolve).
             raise InvoicePurchaseError("Decide si usar un proveedor existente o crear uno nuevo antes de confirmar.")
         for line in lines:
             if line.get("matching_status") == "NUEVO_PRODUCTO":
@@ -58,7 +57,6 @@ class InvoicePurchaseService:
 
         try:
             if create_new_supplier:
-                # Doble chequeo tenant-scoped: no confiar en el preview previo, evitar duplicado por nombre normalizado.
                 key = normalize(proposed_supplier_name)
                 existing_suppliers = db.session.query(Supplier).filter(Supplier.company_id == company_id, Supplier.active.is_(True)).all()
                 duplicates = [item for item in existing_suppliers if normalize(item.name) == key]
@@ -69,12 +67,20 @@ class InvoicePurchaseService:
                 supplier = Supplier(name=proposed_supplier_name, company_id=company_id, active=True)
                 db.session.add(supplier)
                 db.session.flush()
-            order = PurchaseOrder(supplier_id=supplier.id if supplier else None, company_id=company_id, date=utcnow_naive(), status="recibida", subtotal=invoice.get("subtotal") or Decimal("0"), total_amount=invoice.get("total") or Decimal("0"), note=f"Carga de factura IA {invoice.get('invoice_number') or ''}".strip(), source_document_hash=invoice.get("document_hash"))
+            order = PurchaseOrder(
+                supplier_id=supplier.id if supplier else None,
+                company_id=company_id,
+                date=utcnow_naive(),
+                status="recibida",
+                subtotal=invoice.get("subtotal") or Decimal("0"),
+                total_amount=invoice.get("total") or Decimal("0"),
+                note=f"Carga de factura IA {invoice.get('invoice_number') or ''}".strip(),
+                source_document_hash=invoice.get("document_hash"),
+            )
             db.session.add(order)
             try:
                 db.session.flush()
             except IntegrityError as exc:
-                # La BD es la autoridad final: otra request ya confirmo esta misma factura (company_id + document_hash) concurrentemente.
                 db.session.rollback()
                 raise InvoicePurchaseError("Esta factura ya fue confirmada por otra solicitud.") from exc
             applied = []
@@ -88,7 +94,16 @@ class InvoicePurchaseService:
                 product = None
                 if line.get("matching_status") == "NUEVO_PRODUCTO":
                     generated_code = f"AI-{str(invoice.get('document_hash') or 'invoice')[:10]}-{index}"
-                    product = Product(company_id=company_id, supplier_id=supplier.id if supplier else None, barcode=generated_code, name=line["description"][:200], stock=0, cost_price=0, price=0, active=True)
+                    product = Product(
+                        company_id=company_id,
+                        supplier_id=supplier.id if supplier else None,
+                        barcode=generated_code,
+                        name=line["description"][:200],
+                        stock=0,
+                        cost_price=unit_cost,
+                        price=0,
+                        active=True,
+                    )
                     db.session.add(product)
                     db.session.flush()
                 else:
@@ -104,6 +119,16 @@ class InvoicePurchaseService:
                 product.margin = Decimal(str(product.price or 0)) - average_cost
                 product.profit_percent = (product.margin / average_cost * 100) if average_cost else 0
                 db.session.add(PurchaseItem(purchase_order_id=order.id, product_id=product.id, quantity=float(quantity), unit_cost=unit_cost))
+                # Preserve the definitive product linkage in the invoice preview.
+                line.update({
+                    "product_id": product.id,
+                    "product_name": product.name,
+                    "product_code": product.barcode,
+                    "unit_cost": str(unit_cost),
+                    "quantity": float(quantity),
+                    "line_total": str(quantity * unit_cost),
+                    "matching_status": "MATCH_EXACTO",
+                })
                 applied.append({"line_number": line.get("line_number"), "product_id": product.id, "quantity": float(quantity), "unit_cost": str(unit_cost)})
             db.session.add(AuditLog(user_id=user_id, company_id=company_id, action="purchase_create_from_invoice_ai", entity="purchase_order", entity_id=order.id, detail=json.dumps({"document_hash": invoice.get("document_hash"), "invoice_number": invoice.get("invoice_number"), "items": applied}, ensure_ascii=False)))
             result = {"status": "APLICADA", "purchase_order_id": order.id, "items": applied}
