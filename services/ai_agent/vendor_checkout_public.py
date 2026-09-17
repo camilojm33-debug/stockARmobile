@@ -73,7 +73,7 @@ def public_vendor_order_status(slug: str):
         create=False,
     )
     if conversation is None:
-        return jsonify({"success": True, "found": False, "conversation_id": None}), 200
+        return jsonify({"success": True, "found": False, "conversation_id": None})
 
     try:
         result = VendorOrderService.get_customer_order_status(
@@ -145,7 +145,6 @@ def _guard_public_mutations() -> object | None:
     if request.content_length is not None and request.content_length > PUBLIC_POST_MAX_BYTES:
         return jsonify({"success": False, "error": "La solicitud es demasiado grande."}), 413
 
-    # Also enforce the limit for chunked requests without Content-Length.
     raw_body = request.get_data(cache=True, as_text=False)
     if len(raw_body) > PUBLIC_POST_MAX_BYTES:
         return jsonify({"success": False, "error": "La solicitud es demasiado grande."}), 413
@@ -168,8 +167,6 @@ def _guard_public_mutations() -> object | None:
         payload = _payload()
         conversation = _public_conversation(company, payload.get("conversation_id"), create=False)
         if conversation is not None:
-            # Keep the row lock in the current SQLAlchemy transaction so concurrent
-            # public cart/checkout/retry/cancel requests for this conversation serialize.
             locked = _lock_public_conversation(company, conversation.id)
             if locked is None:
                 return jsonify({"success": False, "error": "La conversación ya no es válida."}), 403
