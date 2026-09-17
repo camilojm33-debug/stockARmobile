@@ -88,3 +88,20 @@ def test_rate_limit_fails_closed_when_guard_unavailable(monkeypatch):
     monkeypatch.setitem(sys.modules, "ai_agents", None)
     with app.app_context():
         assert vendor_publication._rate_limit(123) is False
+
+
+def test_publication_page_renders_for_company_admin():
+    import app as stock_app
+
+    client = stock_app.app.test_client()
+    login = client.post(
+        "/auth/login",
+        data={"username": "negocio_admin", "password": "admin123"},
+        follow_redirects=False,
+    )
+    assert login.status_code in (200, 302)
+
+    response = client.get("/agentes-ia/vendedor/publicacion")
+    assert response.status_code == 200
+    html = response.data.decode("utf-8")
+    assert "Publicación del Vendedor" in html
