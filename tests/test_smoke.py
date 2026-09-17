@@ -1777,11 +1777,10 @@ def test_company_logo_oversized_file_is_rejected():
     client = stock_app.app.test_client()
     client.post("/auth/login", data={"username": "negocio_admin", "password": "admin123"})
 
-    from PIL import Image as PILImage
-
-    huge_buffer = io.BytesIO()
-    PILImage.new("RGB", (4000, 4000), color=(0, 0, 255)).save(huge_buffer, format="BMP")
-    huge_bytes = huge_buffer.getvalue()
+    # Mantener el payload apenas por encima del límite del logo evita que
+    # Werkzeug lo rechace antes de que el endpoint pueda devolver su error
+    # controlado de "máximo 3 MB".
+    huge_bytes = b"x" * (3 * 1024 * 1024 + 1)
     assert len(huge_bytes) > 3 * 1024 * 1024
 
     resp = client.post(
