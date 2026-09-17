@@ -141,6 +141,50 @@ def _search_candidates(company_id: int, query: str):
     return sorted(rows, key=lambda item: (-score(item), item.name.lower()))
 
 
+SHIPPING_RATE_PERCENT = Decimal("15.00")
+
+
+def _normalize_delivery_method(value: Any) -> str:
+    normalized = _normalize_text(value)
+    if normalized in {"envio", "envío", "delivery", "shipping"}:
+        return "envio"
+    if normalized in {"retiro", "retirar", "retiro_en_comercio", "pickup"}:
+        return "retiro"
+    return "retiro"
+
+
+def _delivery_payload(*, method: str, customer_name: str, customer_phone: str, address: str, city: str, province: str, postal_code: str, reference: str, notes: str) -> Dict[str, str]:
+    normalized_method = _normalize_delivery_method(method)
+    values = {
+        "method": normalized_method,
+        "recipient_name": str(customer_name or "").strip()[:160],
+        "phone": str(customer_phone or "").strip()[:40],
+        "address": str(address or "").strip()[:500],
+        "city": str(city or "").strip()[:100],
+        "province": str(province or "").strip()[:120],
+        "postal_code": str(postal_code or "").strip()[:20],
+        "reference": str(reference or "").strip()[:255],
+        "notes": str(notes or "").strip()[:2000],
+    }
+    if normalized_method == "envio":
+        for field, label in (
+            ("address", "la dirección de entrega"),
+            ("city", "la localidad"),
+            ("province", "la provincia"),
+        ):
+            if not values[field]:
+                raise ValueError(f"Falta {label} para realizar el envío.")
+    return values
+
+
+def _shipping_calculation(cart_total: Decimal, method: str) -> Dict[str, Decimal]:
+    normalized_method = _normalize_delivery_method(method)
+    if normalized_method == "envio":
+        cost = (cart_total * SHIPPING_RATE_PERCENT / Decimal("100")).quantize(Decimal("0.01"))
+        return {"cost": cost, "rate": SHIPPING_RATE_PERCENT}
+    return {"cost": Decimal("0.00"), "rate": Decimal("0.00")}
+
+
 class VendorOrderService:
     """Owns tenant-scoped cart, quote and payment transitions."""
 
@@ -307,10 +351,17 @@ class VendorOrderService:
         conversation_id: int,
         customer_name: str = "",
         customer_phone: str = "",
+        delivery_method: str = "retiro",
+        delivery_address: str = "",
+        delivery_city: str = "",
+        delivery_province: str = "",
+        delivery_postal_code: str = "",
+        delivery_reference: str = "",
+        delivery_notes: str = "",
         actor_user_id: int | None = None,
     ) -> Dict[str, Any]:
         from stockarmobile.models.conversations import Conversation
-        from app import Client, Payment, Product, Quote, QuoteItem, User
+        from app import Client, Payment, Product, Quote, QuoteDelivery, QuoteItem, User
 
         conversation = db.session.query(Conversation).filter(
             Conversation.id == conversation_id,
@@ -356,6 +407,18 @@ class VendorOrderService:
                         "quote_url": _public_quote_url(existing.id),
                     }
 
+        delivery = _delivery_payload(
+            method=delivery_method,
+            customer_name=customer_name,
+            customer_phone=customer_phone,
+            address=delivery_address,
+            city=delivery_city,
+            province=delivery_province,
+            postal_code=delivery_postal_code,
+            reference=delivery_reference,
+            notes=delivery_notes,
+        )
+
         actor = None
         if actor_user_id:
             actor = User.query.filter_by(id=int(actor_user_id), company_id=company_id, active=True).first()
@@ -372,19 +435,35 @@ class VendorOrderService:
                 or_(Client.whatsapp == customer_phone, Client.phone == customer_phone, Client.whatsapp == phone, Client.phone == phone),
                 Client.active.is_(True),
             ).order_by(Client.id.asc()).first()
-        if client is None and customer_name.strip():
-            clean_name = customer_name.strip()[:200]
+        if client is None and (customer_name.strip() or phone):
+            clean_name = customer_name.strip()[:200] or "Consumidor final"
             client = Client(
                 name=clean_name,
                 phone=phone[:20] or None,
                 whatsapp=phone[:30] or None,
                 company_id=company_id,
                 active=True,
+                address=delivery["address"] or None,
+                city=delivery["city"] or None,
+                province=delivery["province"] or None,
+                postal_code=delivery["postal_code"] or None,
             )
             db.session.add(client)
             db.session.flush()
-        elif client is not None and customer_name.strip() and client.name == "Consumidor final":
-            client.name = customer_name.strip()[:200]
+        else:
+            if customer_name.strip() and client.name == "Consumidor final":
+                client.name = customer_name.strip()[:200]
+            if delivery["address"]:
+                client.address = delivery["address"]
+            if delivery["city"]:
+                client.city = delivery["city"]
+            if delivery["province"]:
+                client.province = delivery["province"]
+            if delivery["postal_code"]:
+                client.postal_code = delivery["postal_code"]
+            if phone:
+                client.phone = client.phone or phone[:20]
+                client.whatsapp = client.whatsapp or phone[:30]
 
         product_ids = [int(item["product_id"]) for item in cart["items"]]
         products = {
@@ -405,7 +484,19 @@ class VendorOrderService:
                 "line_discount": _money(getattr(product, "discount", 0)),
             })
 
-        totals = PricingService.calculate(lines=line_inputs, data={})
+        base_totals = PricingService.calculate(lines=line_inputs, data={})
+        shipping = _shipping_calculation(
+            _money(base_totals["total"]),
+            delivery["method"],
+        )
+        pricing_data = {}
+        if shipping["rate"] > 0:
+            pricing_data = {
+                "surcharge_type": "percentage",
+                "surcharge_value": shipping["rate"],
+                "surcharge_reason": "Envío a domicilio (15%)",
+            }
+        totals = PricingService.calculate(lines=line_inputs, data=pricing_data)
         quote = Quote(
             date=__import__("datetime").datetime.utcnow(),
             expires_at=__import__("datetime").datetime.utcnow() + timedelta(hours=24),
@@ -453,6 +544,25 @@ class VendorOrderService:
                 )
             )
         db.session.flush()
+        db.session.add(
+            QuoteDelivery(
+                quote_id=quote.id,
+                company_id=company_id,
+                method=delivery["method"],
+                recipient_name=delivery["recipient_name"],
+                phone=delivery["phone"],
+                address=delivery["address"] or None,
+                city=delivery["city"] or None,
+                province=delivery["province"] or None,
+                postal_code=delivery["postal_code"] or None,
+                reference=delivery["reference"] or None,
+                notes=delivery["notes"] or None,
+                shipping_cost=shipping["cost"],
+                shipping_rate=shipping["rate"],
+                shipping_reason="Envío a domicilio (15%)" if shipping["rate"] > 0 else None,
+            )
+        )
+        db.session.flush()
 
         external_reference = _ai_order_external_reference(
             company_id=company_id,
@@ -477,7 +587,17 @@ class VendorOrderService:
                 }
                 for item in cart["items"]
                 for product in [products[int(item["product_id"])] ]
-            ],
+            ] + (
+                [{
+                    "id": f"shipping-{quote.id}",
+                    "title": "Envío a domicilio",
+                    "description": "Recargo de envío 15%",
+                    "quantity": 1,
+                    "currency_id": quote.currency or "ARS",
+                    "unit_price": float(shipping["cost"]),
+                }]
+                if shipping["cost"] > 0 else []
+            ),
             amount=float(quote.total_amount or 0),
             currency=quote.currency or "ARS",
             external_reference=external_reference,
@@ -511,6 +631,19 @@ class VendorOrderService:
         state[PENDING_QUOTE_KEY] = quote.id
         state[PENDING_PAYMENT_KEY] = payment_url
         state["customer_phone"] = phone or customer_phone
+        state["delivery"] = {
+            "method": delivery["method"],
+            "recipient_name": delivery["recipient_name"],
+            "phone": delivery["phone"],
+            "address": delivery["address"],
+            "city": delivery["city"],
+            "province": delivery["province"],
+            "postal_code": delivery["postal_code"],
+            "reference": delivery["reference"],
+            "notes": delivery["notes"],
+            "shipping_cost": float(shipping["cost"]),
+            "shipping_rate": float(shipping["rate"]),
+        }
         if customer_name.strip():
             state["customer_name"] = customer_name.strip()[:160]
         _set_metadata(conversation, state)
@@ -525,6 +658,19 @@ class VendorOrderService:
             "payment_url": payment_url,
             "quote_url": quote_url,
             "expires_at": quote.expires_at.isoformat() if quote.expires_at else None,
+            "delivery": {
+                "method": delivery["method"],
+                "recipient_name": delivery["recipient_name"],
+                "phone": delivery["phone"],
+                "address": delivery["address"],
+                "city": delivery["city"],
+                "province": delivery["province"],
+                "postal_code": delivery["postal_code"],
+                "reference": delivery["reference"],
+                "notes": delivery["notes"],
+                "shipping_cost": float(shipping["cost"]),
+                "shipping_rate": float(shipping["rate"]),
+            },
         }
 
     @staticmethod
@@ -622,6 +768,7 @@ class VendorOrderService:
         else:
             order_status = "pendiente"
         client = getattr(quote, "client", None)
+        delivery = getattr(quote, "delivery", None)
         return {
             "quote_id": quote.id,
             "quote_number": quote.number or f"P-{quote.id:06d}",
@@ -635,6 +782,19 @@ class VendorOrderService:
             "sale_id": quote.converted_sale_id,
             "created_at": quote.date.isoformat() if getattr(quote, "date", None) else None,
             "expires_at": quote.expires_at.isoformat() if getattr(quote, "expires_at", None) else None,
+            "delivery": {
+                "method": getattr(delivery, "method", "retiro") if delivery else "retiro",
+                "recipient_name": getattr(delivery, "recipient_name", "") if delivery else "",
+                "phone": getattr(delivery, "phone", "") if delivery else "",
+                "address": getattr(delivery, "address", "") if delivery else "",
+                "city": getattr(delivery, "city", "") if delivery else "",
+                "province": getattr(delivery, "province", "") if delivery else "",
+                "postal_code": getattr(delivery, "postal_code", "") if delivery else "",
+                "reference": getattr(delivery, "reference", "") if delivery else "",
+                "notes": getattr(delivery, "notes", "") if delivery else "",
+                "shipping_cost": float(getattr(delivery, "shipping_cost", 0) or 0) if delivery else 0.0,
+                "shipping_rate": float(getattr(delivery, "shipping_rate", 0) or 0) if delivery else 0.0,
+            },
         }
 
     @staticmethod
@@ -713,7 +873,17 @@ class VendorOrderService:
                 }
                 for item in quote.items
                 for product in [products[int(item.product_id)]]
-            ],
+            ] + (
+                [{
+                    "id": f"shipping-{quote.id}",
+                    "title": "Envío a domicilio",
+                    "description": str(getattr(getattr(quote, "delivery", None), "shipping_reason", None) or "Recargo de envío 15%"),
+                    "quantity": 1,
+                    "currency_id": quote.currency or "ARS",
+                    "unit_price": float(_money(getattr(getattr(quote, "delivery", None), "shipping_cost", 0))),
+                }]
+                if _money(getattr(getattr(quote, "delivery", None), "shipping_cost", 0)) > 0 else []
+            ),
             amount=float(quote.total_amount or 0),
             currency=quote.currency or "ARS",
             external_reference=external_reference,

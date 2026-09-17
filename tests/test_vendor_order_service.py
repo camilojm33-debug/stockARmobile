@@ -6,7 +6,7 @@ os.environ.setdefault("MP_OAUTH_ENCRYPTION_KEY", "test-oauth-encryption-key")
 import pytest
 
 import app as stock_app
-from app import Client, Company, Payment, Product, Quote, User, db
+from app import Client, Company, Payment, Product, Quote, QuoteDelivery, User, db
 from services.ai_agent.orchestrator_v2 import AgentRuntime
 from services.ai_agent.vendor_order_service import (
     CART_KEY,
@@ -290,6 +290,62 @@ def test_create_pending_order_creates_quote_payment_and_mp_flow(vendor_database,
     assert checkout["access_token"] == "test-access-token"
     assert conversation.metadata_json[PENDING_QUOTE_KEY] == quote.id
     assert conversation.metadata_json[PENDING_PAYMENT_KEY] == result["payment_url"]
+
+
+def test_create_pending_order_shipping_adds_15_percent_and_registers_new_client(vendor_database, monkeypatch):
+    data = vendor_database
+    conversation = _conversation(data["company_a"].id)
+    calls = []
+    _mock_checkout(monkeypatch, calls)
+
+    VendorOrderService.update_cart(
+        company_id=data["company_a"].id,
+        conversation_id=conversation.id,
+        items=[{"product_query": "Cafe clasico", "quantity": 2}],
+    )
+
+    result = VendorOrderService.create_pending_order(
+        company_id=data["company_a"].id,
+        conversation_id=conversation.id,
+        customer_name="Nuevo Comprador",
+        customer_phone="5491119998888",
+        delivery_method="envio",
+        delivery_address="Av. Siempre Viva 123",
+        delivery_city="Resistencia",
+        delivery_province="Chaco",
+        delivery_postal_code="3500",
+        delivery_reference="Portón negro",
+        delivery_notes="Entregar por la tarde",
+        actor_user_id=data["user_a"].id,
+    )
+
+    quote = db.session.get(Quote, result["quote_id"])
+    delivery = db.session.get(QuoteDelivery, quote.id)
+    client = Client.query.filter_by(company_id=data["company_a"].id, phone="5491119998888").one()
+    checkout = next(payload for kind, payload in calls if kind == "checkout")
+
+    assert quote.total_amount == 230
+    assert quote.surcharge == 30
+    assert quote.surcharge_type == "percentage"
+    assert quote.surcharge_value == 15
+    assert quote.surcharge_reason == "Envío a domicilio (15%)"
+    assert delivery.method == "envio"
+    assert delivery.shipping_cost == 30
+    assert delivery.shipping_rate == 15
+    assert delivery.address == "Av. Siempre Viva 123"
+    assert delivery.city == "Resistencia"
+    assert delivery.province == "Chaco"
+    assert delivery.postal_code == "3500"
+    assert delivery.reference == "Portón negro"
+    assert delivery.notes == "Entregar por la tarde"
+    assert client.name == "Nuevo Comprador"
+    assert client.address == "Av. Siempre Viva 123"
+    assert client.city == "Resistencia"
+    assert client.province == "Chaco"
+    assert client.postal_code == "3500"
+    assert checkout["amount"] == 230
+    shipping_items = [item for item in checkout["items"] if item["id"] == f"shipping-{quote.id}"]
+    assert shipping_items and shipping_items[0]["unit_price"] == 30
 
 
 def test_create_pending_order_reuses_existing_pending_flow(vendor_database, monkeypatch):

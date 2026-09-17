@@ -581,6 +581,8 @@ class Client(db.Model):
     phone = db.Column(db.String(20), index=True)
     address = db.Column(db.Text)
     city = db.Column(db.String(100))
+    province = db.Column(db.String(120))
+    postal_code = db.Column(db.String(20))
     notes = db.Column(db.Text)
     whatsapp = db.Column(db.String(30))
     birthday = db.Column(db.Date)
@@ -733,6 +735,35 @@ class QuoteItem(db.Model):
     @property
     def total_amount(self):
         return self.subtotal or Decimal("0.00")
+
+
+class QuoteDelivery(db.Model):
+    __tablename__ = "quote_deliveries"
+    __table_args__ = (
+        db.Index("ix_quote_deliveries_quote", "quote_id", unique=True),
+        db.Index("ix_quote_deliveries_company", "company_id"),
+    )
+
+    id = db.Column(db.Integer, primary_key=True)
+    quote_id = db.Column(db.Integer, db.ForeignKey("quotes.id", ondelete="CASCADE"), nullable=False, unique=True)
+    company_id = db.Column(db.Integer, db.ForeignKey("companies.id"), nullable=False, index=True)
+    method = db.Column(db.String(20), nullable=False, default="retiro")
+    recipient_name = db.Column(db.String(160))
+    phone = db.Column(db.String(40))
+    address = db.Column(db.Text)
+    city = db.Column(db.String(100))
+    province = db.Column(db.String(120))
+    postal_code = db.Column(db.String(20))
+    reference = db.Column(db.String(255))
+    notes = db.Column(db.Text)
+    shipping_cost = db.Column(MONEY, nullable=False, default=Decimal("0.00"))
+    shipping_rate = db.Column(PERCENT, nullable=False, default=Decimal("0.00"))
+    shipping_reason = db.Column(db.String(255))
+    created_at = db.Column(db.DateTime, default=utcnow)
+    updated_at = db.Column(db.DateTime, default=utcnow, onupdate=utcnow)
+
+    quote = db.relationship("Quote", backref=db.backref("delivery", uselist=False, cascade="all, delete-orphan"))
+    company = db.relationship("Company")
 
 
 class BusinessDocumentSequence(db.Model):

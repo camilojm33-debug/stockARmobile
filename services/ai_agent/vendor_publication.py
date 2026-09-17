@@ -245,6 +245,7 @@ def _cart_public_state(conversation) -> dict:
         "cart": cart,
         "payment_url": payment_url or None,
         "pending_quote_id": state.get(PENDING_QUOTE_KEY),
+        "delivery": state.get("delivery") or None,
     }
 
 
@@ -425,12 +426,28 @@ def public_vendor_checkout(slug: str):
         return jsonify({"success": False, "error": "La conversación no es válida."}), 403
     customer_name = str(payload.get("customer_name") or "").strip()[:160]
     customer_phone = str(payload.get("customer_phone") or "").strip()[:40]
+    if not customer_name or not customer_phone:
+        return jsonify({"success": False, "error": "Ingresá nombre y teléfono para registrar tu pedido como cliente."}), 400
+    delivery_method = str(payload.get("delivery_method") or "retiro").strip()[:20]
+    delivery_address = str(payload.get("delivery_address") or "").strip()[:500]
+    delivery_city = str(payload.get("delivery_city") or "").strip()[:100]
+    delivery_province = str(payload.get("delivery_province") or "").strip()[:120]
+    delivery_postal_code = str(payload.get("delivery_postal_code") or "").strip()[:20]
+    delivery_reference = str(payload.get("delivery_reference") or "").strip()[:255]
+    delivery_notes = str(payload.get("delivery_notes") or "").strip()[:2000]
     try:
         result = VendorOrderService.create_pending_order(
             company_id=company.id,
             conversation_id=conversation.id,
             customer_name=customer_name,
             customer_phone=customer_phone,
+            delivery_method=delivery_method,
+            delivery_address=delivery_address,
+            delivery_city=delivery_city,
+            delivery_province=delivery_province,
+            delivery_postal_code=delivery_postal_code,
+            delivery_reference=delivery_reference,
+            delivery_notes=delivery_notes,
             actor_user_id=None,
         )
         db.session.commit()

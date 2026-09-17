@@ -58,7 +58,46 @@
     <div class="col-lg-5">
       <div class="card app-card mb-4">
         <div class="card-header bg-white fw-bold">Cliente</div>
-        <div class="card-body"><div class="fw-bold fs-5">{{ order.customer_name }}</div>{% if order.customer_phone %}<div class="text-muted mt-1"><i class="bi bi-whatsapp me-1"></i>{{ order.customer_phone }}</div>{% endif %}</div>
+        <div class="card-body">
+          <div class="fw-bold fs-5">{{ order.customer_name }}</div>
+          {% if order.customer_phone %}<div class="text-muted mt-1"><i class="bi bi-whatsapp me-1"></i>{{ order.customer_phone }}</div>{% endif %}
+          {% if order.client_id %}<div class="small text-success mt-2"><i class="bi bi-person-check me-1"></i>Cliente registrado</div>{% endif %}
+        </div>
+      </div>
+
+      <div class="card app-card mb-4">
+        <div class="card-header bg-white fw-bold">Entrega</div>
+        <div class="card-body">
+          {% set delivery = order.delivery %}
+          {% if delivery and delivery.method == 'envio' %}
+            <div class="d-flex justify-content-between align-items-center mb-3">
+              <span class="text-muted">Modalidad</span>
+              <span class="badge text-bg-primary">Envío a domicilio</span>
+            </div>
+            <div class="row g-2 small">
+              <div class="col-sm-6"><span class="text-muted d-block">Destinatario</span><strong>{{ delivery.recipient_name or order.customer_name }}</strong></div>
+              <div class="col-sm-6"><span class="text-muted d-block">Teléfono</span><strong>{{ delivery.phone or order.customer_phone or '—' }}</strong></div>
+              <div class="col-12"><span class="text-muted d-block">Dirección</span><strong>{{ delivery.address or '—' }}</strong></div>
+              <div class="col-sm-5"><span class="text-muted d-block">Localidad</span><strong>{{ delivery.city or '—' }}</strong></div>
+              <div class="col-sm-4"><span class="text-muted d-block">Provincia</span><strong>{{ delivery.province or '—' }}</strong></div>
+              <div class="col-sm-3"><span class="text-muted d-block">CP</span><strong>{{ delivery.postal_code or '—' }}</strong></div>
+              <div class="col-12"><span class="text-muted d-block">Referencia</span><strong>{{ delivery.reference or 'Sin referencia' }}</strong></div>
+              {% if delivery.notes %}<div class="col-12"><span class="text-muted d-block">Observaciones</span><strong>{{ delivery.notes }}</strong></div>{% endif %}
+            </div>
+            <div class="border-top mt-3 pt-3 d-flex justify-content-between align-items-center">
+              <span class="text-muted">Costo de envío</span>
+              <strong>{{ order.currency }} {{ '%.2f'|format(delivery.shipping_cost or 0) }}{% if delivery.shipping_rate %} ({{ '%.2f'|format(delivery.shipping_rate) }}%){% endif %}</strong>
+            </div>
+          {% else %}
+            <div class="d-flex justify-content-between align-items-center">
+              <div>
+                <div class="fw-semibold">Retiro en el comercio</div>
+                <div class="small text-muted">No se aplica recargo de envío.</div>
+              </div>
+              <span class="badge text-bg-light border">Costo $0</span>
+            </div>
+          {% endif %}
+        </div>
       </div>
 
       <div class="card app-card mb-4">
