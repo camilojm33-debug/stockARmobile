@@ -12,6 +12,8 @@ from services.ai_agent.vendor_publication import (
     _public_conversation,
     _rate_limit,
 )
+from stockarmobile.extensions import db
+from stockarmobile.models.conversations import Conversation
 
 
 PUBLIC_POST_MAX_BYTES = 16 * 1024
@@ -31,6 +33,23 @@ def _order_context(company, payload: dict):
     if conversation is None:
         return None, (jsonify({"success": False, "error": "La conversación no es válida."}), 403)
     return conversation, None
+
+
+def _lock_public_conversation(company, conversation_id):
+    """Serialize public mutations for the exact tenant-scoped conversation."""
+    try:
+        return (
+            db.session.query(Conversation)
+            .filter(
+                Conversation.id == int(conversation_id),
+                Conversation.company_id == int(company.id),
+                Conversation.channel == "webchat",
+            )
+            .with_for_update()
+            .first()
+        )
+    except (TypeError, ValueError):
+        return None
 
 
 def _public_order_error(exc: Exception, fallback: str):
@@ -122,7 +141,13 @@ def public_vendor_cancel_order(slug: str):
 def _guard_public_mutations() -> object | None:
     if request.method not in {"POST", "PUT", "PATCH", "DELETE"}:
         return None
+
     if request.content_length is not None and request.content_length > PUBLIC_POST_MAX_BYTES:
+        return jsonify({"success": False, "error": "La solicitud es demasiado grande."}), 413
+
+    # Also enforce the limit for chunked requests without Content-Length.
+    raw_body = request.get_data(cache=True, as_text=False)
+    if len(raw_body) > PUBLIC_POST_MAX_BYTES:
         return jsonify({"success": False, "error": "La solicitud es demasiado grande."}), 413
 
     parts = [part for part in request.path.strip("/").split("/") if part]
@@ -130,13 +155,27 @@ def _guard_public_mutations() -> object | None:
         return None
 
     endpoint_key = "/".join(parts[2:])
-    if endpoint_key in _PUBLIC_MUTATION_ENDPOINTS and len(parts) <= 4:
-        try:
-            company = _public_available_company(parts[1])
-            if company is not None and not _rate_limit(company.id):
-                return jsonify({"success": False, "error": "Hay muchas consultas en este momento. Esperá unos segundos e intentá nuevamente."}), 429, {"Retry-After": "60"}
-        except Exception:
-            current_app.logger.exception("No se pudo aplicar rate limit al Vendor IA público")
+    if endpoint_key not in _PUBLIC_MUTATION_ENDPOINTS:
+        return None
+
+    try:
+        company = _public_available_company(parts[1])
+        if company is None:
+            return None
+        if not _rate_limit(company.id):
+            return jsonify({"success": False, "error": "Hay muchas consultas en este momento. Esperá unos segundos e intentá nuevamente."}), 429, {"Retry-After": "60"}
+
+        payload = _payload()
+        conversation = _public_conversation(company, payload.get("conversation_id"), create=False)
+        if conversation is not None:
+            # Keep the row lock in the current SQLAlchemy transaction so concurrent
+            # public cart/checkout/retry/cancel requests for this conversation serialize.
+            locked = _lock_public_conversation(company, conversation.id)
+            if locked is None:
+                return jsonify({"success": False, "error": "La conversación ya no es válida."}), 403
+    except Exception:
+        current_app.logger.exception("No se pudo aplicar protección de concurrencia al Vendor IA público")
+        return jsonify({"success": False, "error": "El canal público no está disponible temporalmente."}), 503
     return None
 
 
