@@ -488,8 +488,9 @@ class VendorOrderService:
                 "line_discount": _money(getattr(product, "discount", 0)),
             })
 
+        base_totals = PricingService.calculate(lines=line_inputs, data={})
         shipping = _shipping_calculation(
-            _money(cart["total"]),
+            _money(base_totals["total"]),
             delivery["method"],
         )
         pricing_data = {}
