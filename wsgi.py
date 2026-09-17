@@ -2,7 +2,7 @@ from flask import flash, redirect, request, url_for, jsonify, render_template, g
 from flask_login import current_user, login_required
 from sqlalchemy import text
 
-from app import app, AuditLog, Company, Invoice, Payment, PaymentHistory, Subscription, SubscriptionCommandExecution, db
+from app import app, AuditLog, Company, Invoice, Payment, PaymentHistory, Subscription, SubscriptionCommandExecution, Supplier, db
 from services.subscription_service import SubscriptionService
 from services.ai_agent.usage_service import can_use_ai
 from stockarmobile.models.conversations import Conversation
@@ -20,54 +20,23 @@ def stockarmobile_health():
         return jsonify({"status": "error"}), 503
 
 
-# The application factory or another bootstrap path may already expose /health.
-# Detect the URL rule itself (not only the endpoint name) before adding ours.
 if not any(rule.rule == "/health" for rule in app.url_map.iter_rules()):
-    app.add_url_rule(
-        "/health",
-        endpoint="stockarmobile_health",
-        view_func=stockarmobile_health,
-        methods=["GET"],
-    )
+    app.add_url_rule("/health", endpoint="stockarmobile_health", view_func=stockarmobile_health, methods=["GET"])
 
 
 @app.before_request
 def enforce_registration_legal_acceptance():
-    """Enforce legal acceptance server-side and keep a durable audit record.
-
-    The registration template already requires the checkbox client-side, but the
-    browser requirement is not a security boundary. This guard rejects forged POSTs
-    without the acceptance and records the accepted policy versions in AuditLog.
-    """
+    """Enforce legal acceptance server-side and keep a durable audit record."""
     if request.endpoint != "auth.register" or request.method != "POST":
         return None
-
-    # Seller registration has a separate flow and currently does not render the
-    # company onboarding legal consent block.
     if (request.form.get("mode") or "").strip().lower() == "seller":
         return None
-
     if request.form.get("accept_legal_terms") != "1":
         flash("Debes aceptar los Términos y Condiciones y la Política de Privacidad para crear la cuenta.", "warning")
-        return redirect(url_for(
-            "auth.register",
-            selected_plan=(request.form.get("selected_plan") or "trial").strip().lower(),
-            mode=(request.form.get("mode") or "").strip().lower(),
-        ))
-
+        return redirect(url_for("auth.register", selected_plan=(request.form.get("selected_plan") or "trial").strip().lower(), mode=(request.form.get("mode") or "").strip().lower()))
     email = (request.form.get("email") or "").strip().lower()
     if email:
-        db.session.add(
-            AuditLog(
-                action="legal_acceptance_submitted",
-                entity="registration",
-                detail=(
-                    f"Aceptación de términos enviada en registro. email={email}; "
-                    "terms_version=2026-09-16; privacy_version=2026-09-14"
-                ),
-                ip_address=(request.remote_addr or "unknown"),
-            )
-        )
+        db.session.add(AuditLog(action="legal_acceptance_submitted", entity="registration", detail=f"Aceptación de términos enviada en registro. email={email}; terms_version=2026-09-16; privacy_version=2026-09-14", ip_address=(request.remote_addr or "unknown")))
         db.session.commit()
     return None
 
@@ -92,16 +61,7 @@ def trace_mp_qr_requests():
             g.mp_qr_company_id = getattr(current_user, "company_id", None)
     except Exception as exc:
         app.logger.warning("MP QR trace incoming user-context capture failed: %s", exc)
-    app.logger.info(
-        "MP QR trace incoming: method=%s path=%s endpoint=%s csrf_header_present=%s company_id=%s user_id=%s request_id=%s",
-        request.method,
-        path,
-        request.endpoint or "",
-        g.mp_qr_csrf_header_present,
-        getattr(g, "mp_qr_company_id", None),
-        getattr(g, "mp_qr_user_id", None),
-        g.mp_qr_request_id,
-    )
+    app.logger.info("MP QR trace incoming: method=%s path=%s endpoint=%s csrf_header_present=%s company_id=%s user_id=%s request_id=%s", request.method, path, request.endpoint or "", g.mp_qr_csrf_header_present, getattr(g, "mp_qr_company_id", None), getattr(g, "mp_qr_user_id", None), g.mp_qr_request_id)
 
 
 @app.route("/dashboard/ai-agent/facturas", methods=["GET"])
@@ -111,13 +71,10 @@ def ai_invoices_workspace():
     company_id = getattr(current_user, "company_id", None)
     if not company_id:
         return redirect(url_for("auth.login"))
-
     company = Company.query.filter_by(id=company_id).first()
-    invoice_access = can_use_ai(company, "facturas") if company is not None else type(
-        "Access", (), {"allowed": False, "reason": "No hay una empresa activa."}
-    )()
+    invoice_access = can_use_ai(company, "facturas") if company is not None else type("Access", (), {"allowed": False, "reason": "No hay una empresa activa."})()
     invoices = []
-
+    suppliers = []
     if invoice_access.allowed:
         conversations = Conversation.query.filter_by(company_id=company_id).order_by(Conversation.id.desc()).limit(100).all()
         for conversation in conversations:
@@ -125,30 +82,15 @@ def ai_invoices_workspace():
             for upload in metadata.get("invoice_uploads") or []:
                 if not isinstance(upload, dict) or not upload.get("upload_id"):
                     continue
-                invoices.append(
-                    {
-                        "upload_id": str(upload.get("upload_id")),
-                        "original_name": str(upload.get("original_name") or "Factura"),
-                        "status": str(upload.get("status") or "PENDIENTE_PROCESAMIENTO"),
-                        "invoice": upload.get("invoice") or {},
-                        "conversation_id": conversation.id,
-                    }
-                )
+                invoices.append({"upload_id": str(upload.get("upload_id")), "original_name": str(upload.get("original_name") or "Factura"), "status": str(upload.get("status") or "PENDIENTE_PROCESAMIENTO"), "invoice": upload.get("invoice") or {}, "conversation_id": conversation.id})
         invoices = invoices[:50]
-
+        suppliers = Supplier.query.filter_by(company_id=company_id, active=True).order_by(Supplier.name.asc()).all()
     can_confirm = getattr(current_user, "role", None) in {"admin", "superadmin"}
     try:
         plan_url = url_for("ai_agents.agent", agent="planes")
     except Exception:
         plan_url = "/dashboard/ai-agent/planes"
-
-    return render_template(
-        "ai_agents/invoices_smart.html",
-        invoice_access=invoice_access,
-        invoices=invoices,
-        can_confirm=can_confirm,
-        plan_url=plan_url,
-    )
+    return render_template("ai_agents/invoices_smart.html", invoice_access=invoice_access, invoices=invoices, can_confirm=can_confirm, plan_url=plan_url, suppliers=suppliers)
 
 
 @app.route("/superadmin/subscriptions/<int:subscription_id>/delete-historical", methods=["POST"])
@@ -178,8 +120,6 @@ def superadmin_delete_historical_subscription(subscription_id):
     return redirect(url_for("saas.subscriptions_panel"))
 
 
-# Pricing controller is bootstrapped here instead of altering the main app module.
-# This keeps the existing application import graph unchanged while exposing the new tenant-scoped feature.
 app.register_blueprint(pricing_controller_bp)
 
 
