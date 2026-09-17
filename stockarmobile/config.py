@@ -54,6 +54,14 @@ def configure_app(app):
     app.config["SESSION_COOKIE_SAMESITE"] = "Lax"
     app.config["REMEMBER_COOKIE_HTTPONLY"] = True
     app.config["WTF_CSRF_TIME_LIMIT"] = None
+    # Flask/Werkzeug limita por defecto el tamaño de los datos multipart
+    # procesados en memoria. Los endpoints de carga ya aplican sus propios
+    # límites (por ejemplo, logos 3 MB y facturas 10 MB), por lo que el límite
+    # global debe ser mayor para que puedan devolver sus errores controlados
+    # en lugar de un 413 prematuro del parser.
+    app.config["MAX_FORM_MEMORY_SIZE"] = int(
+        os.environ.get("MAX_FORM_MEMORY_SIZE_BYTES", str(12 * 1024 * 1024))
+    )
     if is_production_env:
         app.config["SESSION_COOKIE_SECURE"] = True
         app.config["REMEMBER_COOKIE_SECURE"] = True
