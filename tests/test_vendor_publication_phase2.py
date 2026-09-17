@@ -43,6 +43,11 @@ def test_regeneration_changes_slug(monkeypatch):
     monkeypatch.setattr(vendor_publication, "_new_slug", lambda: "new-link")
     monkeypatch.setattr(vendor_publication, "_save_publication", lambda company, publication: publication)
     monkeypatch.setattr(vendor_publication, "update_ai_preferences", lambda company, **kwargs: None)
+    monkeypatch.setattr(
+        vendor_publication,
+        "publication_status",
+        lambda company: {"slug": "new-link", "published": True, "enabled": True, "available": True, "url": "https://example.test/vendedor/new-link"},
+    )
     result = vendor_publication.regenerate_vendor_link(company)
     assert result["slug"] == "new-link"
     assert result["published"] is True
@@ -64,6 +69,11 @@ def test_unpublish_disables_public_webchat(monkeypatch):
         vendor_publication,
         "update_ai_preferences",
         lambda company, **kwargs: updates.update(kwargs.get("ai_updates") or {}),
+    )
+    monkeypatch.setattr(
+        vendor_publication,
+        "publication_status",
+        lambda company: {"slug": "demo", "published": False, "enabled": False, "available": False, "url": "https://example.test/vendedor/demo"},
     )
     result = vendor_publication.unpublish_vendor(company)
     assert result["published"] is False
