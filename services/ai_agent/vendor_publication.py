@@ -3,23 +3,38 @@ from __future__ import annotations
 
 import base64
 import io
+import json
 import secrets
 from datetime import datetime, timezone
 
 import qrcode
-from flask import jsonify, render_template, request, url_for, abort, current_app
+from flask import jsonify, render_template, request, url_for, abort, current_app, session
 from flask.signals import appcontext_pushed
 from flask_login import current_user
+from sqlalchemy import or_
 
 from stockarmobile.decorators import company_admin_required
 from stockarmobile.extensions import db
 from stockarmobile.models.conversations import Conversation
-from services.ai_agent.config_service import get_ai_preferences, update_ai_preferences, ensure_default_agents, VENDOR_AGENT_NAME
+from services.ai_agent.config_service import (
+    get_ai_preferences,
+    update_ai_preferences,
+    ensure_default_agents,
+    VENDOR_AGENT_NAME,
+    get_vendor_options,
+)
 from services.ai_agent.usage_service import can_use_ai
+from services.ai_agent.vendor_order_service import (
+    CART_KEY,
+    PENDING_PAYMENT_KEY,
+    PENDING_QUOTE_KEY,
+    VendorOrderService,
+)
 
 
 PUBLIC_VENDOR_AI_KEY = "public_vendor"
 PUBLIC_VENDOR_SLUG_SIZE = 12
+PUBLIC_VENDOR_CATALOG_LIMIT = 24
 
 
 def _now_iso() -> str:
@@ -129,9 +144,9 @@ def _public_available_company(slug: str):
 
 
 def _visitor_id(company_id: int) -> str:
-    from flask import session
     key = f"public_vendor_visitor_{int(company_id)}"
     import uuid
+
     value = str(session.get(key) or uuid.uuid4().hex)
     session[key] = value
     return value
@@ -146,20 +161,272 @@ def _rate_limit(company_id: int) -> bool:
         return True
 
 
+def _agent_for_company(company_id: int):
+    agents = ensure_default_agents(company_id)
+    return agents[VENDOR_AGENT_NAME]
+
+
+def _conversation_metadata(conversation) -> dict:
+    raw = conversation.metadata_json or {}
+    if isinstance(raw, dict):
+        return dict(raw)
+    try:
+        parsed = json.loads(raw) if isinstance(raw, str) else {}
+    except (TypeError, ValueError, json.JSONDecodeError):
+        parsed = {}
+    return parsed if isinstance(parsed, dict) else {}
+
+
+def _public_conversation(company, conversation_id=None, *, create=False):
+    visitor_id = _visitor_id(company.id)
+    vendor_agent = _agent_for_company(company.id)
+    conversation = None
+
+    if conversation_id not in (None, ""):
+        try:
+            conversation = Conversation.query.filter_by(
+                id=int(conversation_id),
+                company_id=company.id,
+                channel="webchat",
+                external_conversation_id=visitor_id,
+            ).first()
+        except (TypeError, ValueError):
+            conversation = None
+        if conversation is None or conversation.agent_id != vendor_agent.id:
+            return None
+    else:
+        conversation = (
+            Conversation.query.filter_by(
+                company_id=company.id,
+                channel="webchat",
+                external_conversation_id=visitor_id,
+                agent_id=vendor_agent.id,
+            )
+            .filter(Conversation.status == "open")
+            .order_by(Conversation.id.desc())
+            .first()
+        )
+
+    if conversation is None and create:
+        conversation = Conversation(
+            company_id=company.id,
+            agent_id=vendor_agent.id,
+            channel="webchat",
+            external_conversation_id=visitor_id,
+            status="open",
+            metadata_json={"source": "public_webchat_stable"},
+        )
+        db.session.add(conversation)
+        db.session.flush()
+    return conversation
+
+
+def _cart_public_state(conversation) -> dict:
+    cart = VendorOrderService.get_cart(company_id=conversation.company_id, conversation_id=conversation.id)
+    state = _conversation_metadata(conversation)
+    payment_url = str(state.get(PENDING_PAYMENT_KEY) or "").strip()
+    return {
+        "conversation_id": conversation.id,
+        "cart": cart,
+        "payment_url": payment_url or None,
+        "pending_quote_id": state.get(PENDING_QUOTE_KEY),
+    }
+
+
+def _product_payload(product) -> dict:
+    return {
+        "id": product.id,
+        "name": product.name,
+        "description": str(product.description or "").strip(),
+        "category": str(product.category or "").strip(),
+        "brand": str(product.brand or "").strip(),
+        "photo": str(product.photo or "").strip(),
+        "unit_measure": str(product.unit_measure or "u").strip(),
+        "price": float(product.price or 0),
+        "stock": float(product.stock or 0),
+        "discount": float(product.discount or 0),
+        "favorite": bool(product.favorite),
+        "available": float(product.stock or 0) > 0,
+    }
+
+
+def _catalog_for_company(company, query: str = "", limit: int = PUBLIC_VENDOR_CATALOG_LIMIT) -> list[dict]:
+    from app import Product
+
+    query = " ".join(str(query or "").strip().split())[:80]
+    limit = max(1, min(int(limit or PUBLIC_VENDOR_CATALOG_LIMIT), PUBLIC_VENDOR_CATALOG_LIMIT))
+    base = Product.query.filter(Product.company_id == company.id, Product.active.is_(True))
+    if query:
+        like = f"%{query}%"
+        base = base.filter(
+            or_(
+                Product.name.ilike(like),
+                Product.barcode.ilike(like),
+                Product.brand.ilike(like),
+                Product.category.ilike(like),
+            )
+        )
+    rows = (
+        base.order_by(Product.favorite.desc(), Product.stock.desc(), Product.name.asc())
+        .limit(limit)
+        .all()
+    )
+    return [_product_payload(row) for row in rows]
+
+
+def _initial_page_state(company):
+    conversation = _public_conversation(company, create=False)
+    if conversation is None:
+        return {"conversation_id": None, "cart": {"items": [], "total": 0, "currency": "ARS", "line_count": 0}, "payment_url": None}
+    try:
+        return _cart_public_state(conversation)
+    except Exception:
+        current_app.logger.exception("No se pudo cargar el carrito público company_id=%s", company.id)
+        return {"conversation_id": conversation.id, "cart": {"items": [], "total": 0, "currency": "ARS", "line_count": 0}, "payment_url": None}
+
+
 def public_vendor_page(slug: str):
     company = _public_available_company(slug)
     if company is None:
         abort(404)
     access = can_use_ai(company, "vendedor")
     if not access.allowed:
-        return render_template("ai_agents/public_vendor_chat.html", company=company, disabled_reason=access.reason, chat_url=None)
+        return render_template(
+            "ai_agents/public_vendor_chat.html",
+            company=company,
+            disabled_reason=access.reason,
+            chat_url=None,
+            catalog=[],
+            initial_state={"conversation_id": None, "cart": {"items": [], "total": 0, "currency": "ARS", "line_count": 0}, "payment_url": None},
+            greeting="",
+        )
     _visitor_id(company.id)
+    options = get_vendor_options(company)
     return render_template(
         "ai_agents/public_vendor_chat.html",
         company=company,
         disabled_reason=None,
         chat_url=url_for("vendor_publication.public_vendor_message", slug=slug, _external=True),
+        catalog=_catalog_for_company(company),
+        initial_state=_initial_page_state(company),
+        greeting=str(options.get("greeting") or "Hola 👋 ¿Qué producto estás buscando?").strip(),
     )
+
+
+def public_vendor_catalog(slug: str):
+    company = _public_available_company(slug)
+    if company is None:
+        return jsonify({"success": False, "error": "El vendedor no está publicado."}), 404
+    access = can_use_ai(company, "vendedor")
+    if not access.allowed:
+        return jsonify({"success": False, "error": access.reason}), 403
+    query = request.args.get("q", "")
+    return jsonify({"success": True, "products": _catalog_for_company(company, query=query)})
+
+
+def public_vendor_state(slug: str):
+    company = _public_available_company(slug)
+    if company is None:
+        return jsonify({"success": False, "error": "El vendedor no está publicado."}), 404
+    access = can_use_ai(company, "vendedor")
+    if not access.allowed:
+        return jsonify({"success": False, "error": access.reason}), 403
+    conversation = _public_conversation(company, request.args.get("conversation_id"), create=False)
+    if conversation is None:
+        return jsonify({
+            "success": True,
+            "conversation_id": None,
+            "cart": {"items": [], "total": 0, "currency": "ARS", "line_count": 0},
+            "payment_url": None,
+        })
+    return jsonify({"success": True, **_cart_public_state(conversation)})
+
+
+def public_vendor_cart(slug: str):
+    company = _public_available_company(slug)
+    if company is None:
+        return jsonify({"success": False, "error": "El vendedor no está publicado."}), 404
+    access = can_use_ai(company, "vendedor")
+    if not access.allowed:
+        return jsonify({"success": False, "error": access.reason}), 403
+
+    payload = request.get_json(silent=True) or {}
+    conversation = _public_conversation(company, payload.get("conversation_id"), create=True)
+    if conversation is None:
+        return jsonify({"success": False, "error": "La conversación no es válida."}), 403
+
+    action = str(payload.get("action") or "add").strip().lower()
+    try:
+        product_id = int(payload.get("product_id"))
+    except (TypeError, ValueError):
+        return jsonify({"success": False, "error": "Producto inválido."}), 400
+
+    try:
+        if action == "add":
+            try:
+                quantity = float(payload.get("quantity", 1))
+            except (TypeError, ValueError):
+                quantity = 0
+            if quantity <= 0 or quantity > 1000:
+                return jsonify({"success": False, "error": "Cantidad inválida."}), 400
+            VendorOrderService.update_cart(
+                company_id=company.id,
+                conversation_id=conversation.id,
+                items=[{"product_id": product_id, "quantity": quantity}],
+            )
+        elif action == "remove":
+            state = _conversation_metadata(conversation)
+            cart = dict(state.get(CART_KEY) or {})
+            cart.pop(str(product_id), None)
+            state[CART_KEY] = cart
+            state.pop(PENDING_QUOTE_KEY, None)
+            state.pop(PENDING_PAYMENT_KEY, None)
+            conversation.metadata_json = state
+            db.session.flush()
+        else:
+            return jsonify({"success": False, "error": "Acción inválida."}), 400
+        db.session.commit()
+        return jsonify({"success": True, **_cart_public_state(conversation)})
+    except ValueError as exc:
+        db.session.rollback()
+        return jsonify({"success": False, "error": str(exc)}), 400
+    except Exception:
+        db.session.rollback()
+        current_app.logger.exception("Public Vendor cart failed company_id=%s", company.id)
+        return jsonify({"success": False, "error": "No se pudo actualizar el carrito."}), 500
+
+
+def public_vendor_checkout(slug: str):
+    company = _public_available_company(slug)
+    if company is None:
+        return jsonify({"success": False, "error": "El vendedor no está publicado."}), 404
+    access = can_use_ai(company, "vendedor")
+    if not access.allowed:
+        return jsonify({"success": False, "error": access.reason}), 403
+
+    payload = request.get_json(silent=True) or {}
+    conversation = _public_conversation(company, payload.get("conversation_id"), create=True)
+    if conversation is None:
+        return jsonify({"success": False, "error": "La conversación no es válida."}), 403
+    customer_name = str(payload.get("customer_name") or "").strip()[:160]
+    customer_phone = str(payload.get("customer_phone") or "").strip()[:40]
+    try:
+        result = VendorOrderService.create_pending_order(
+            company_id=company.id,
+            conversation_id=conversation.id,
+            customer_name=customer_name,
+            customer_phone=customer_phone,
+            actor_user_id=None,
+        )
+        db.session.commit()
+        return jsonify({"success": True, "conversation_id": conversation.id, "cart": _cart_public_state(conversation)["cart"], **result})
+    except ValueError as exc:
+        db.session.rollback()
+        return jsonify({"success": False, "error": str(exc)}), 400
+    except Exception:
+        db.session.rollback()
+        current_app.logger.exception("Public Vendor checkout failed company_id=%s", company.id)
+        return jsonify({"success": False, "error": "No se pudo preparar el pedido para el pago."}), 500
 
 
 def public_vendor_message(slug: str):
@@ -179,46 +446,13 @@ def public_vendor_message(slug: str):
     if len(message) > 500:
         return jsonify({"success": False, "error": "La consulta es demasiado larga."}), 400
 
-    from flask import session
+    conversation = _public_conversation(company, payload.get("conversation_id"), create=True)
+    if conversation is None:
+        return jsonify({"success": False, "error": "La conversación ya no es válida."}), 403
     visitor_id = _visitor_id(company.id)
-    agents = ensure_default_agents(company.id)
-    vendor_agent = agents[VENDOR_AGENT_NAME]
-    conversation_id = payload.get("conversation_id")
-    if conversation_id not in (None, ""):
-        try:
-            conversation = Conversation.query.filter_by(
-                id=int(conversation_id),
-                company_id=company.id,
-                channel="webchat",
-                external_conversation_id=visitor_id,
-            ).first()
-        except (TypeError, ValueError):
-            conversation = None
-        if conversation is None:
-            return jsonify({"success": False, "error": "La conversación ya no es válida."}), 403
-        if conversation.agent_id != vendor_agent.id:
-            return jsonify({"success": False, "error": "La conversación no corresponde al vendedor."}), 409
-    else:
-        conversation = Conversation.query.filter_by(
-            company_id=company.id,
-            channel="webchat",
-            external_conversation_id=visitor_id,
-            agent_id=vendor_agent.id,
-        ).filter(Conversation.status == "open").order_by(Conversation.id.desc()).first()
-        if conversation is None:
-            conversation = Conversation(
-                company_id=company.id,
-                agent_id=vendor_agent.id,
-                channel="webchat",
-                external_conversation_id=visitor_id,
-                status="open",
-                metadata_json={"source": "public_webchat_stable"},
-            )
-            db.session.add(conversation)
-            db.session.flush()
-
-    from services.ai_agent.orchestrator_v2 import AgentRuntime
     try:
+        from services.ai_agent.orchestrator_v2 import AgentRuntime
+
         result = AgentRuntime.process(
             company_id=company.id,
             conversation_id=conversation.id,
@@ -229,12 +463,15 @@ def public_vendor_message(slug: str):
             metadata={"from": visitor_id, "source": "public_webchat_stable", "public_vendor_slug": slug},
             include_system_prompt=True,
         )
+        state = _cart_public_state(conversation)
         return jsonify({
             "success": True,
             "conversation_id": result.get("conversation_id"),
             "message_id": result.get("message_id"),
             "assistant_message_id": result.get("assistant_message_id"),
             "content": result.get("content"),
+            "cart": state["cart"],
+            "payment_url": state["payment_url"],
         })
     except ValueError as exc:
         db.session.rollback()
@@ -293,6 +530,9 @@ def preview_vendor():
         company=company,
         disabled_reason="Vista previa del Vendedor IA. Publicá el Vendedor para habilitar conversaciones públicas.",
         chat_url=None,
+        catalog=_catalog_for_company(company),
+        initial_state={"conversation_id": None, "cart": {"items": [], "total": 0, "currency": "ARS", "line_count": 0}, "payment_url": None},
+        greeting="Hola 👋 ¿Qué producto estás buscando?",
     )
 
 
@@ -300,6 +540,10 @@ def install_routes(app) -> None:
     if getattr(app, "_vendor_publication_routes_installed", False):
         return
     app.add_url_rule("/vendedor/<slug>", endpoint="vendor_publication.public_vendor_page", view_func=public_vendor_page, methods=["GET"])
+    app.add_url_rule("/vendedor/<slug>/catalog", endpoint="vendor_publication.public_vendor_catalog", view_func=public_vendor_catalog, methods=["GET"])
+    app.add_url_rule("/vendedor/<slug>/state", endpoint="vendor_publication.public_vendor_state", view_func=public_vendor_state, methods=["GET"])
+    app.add_url_rule("/vendedor/<slug>/cart", endpoint="vendor_publication.public_vendor_cart", view_func=public_vendor_cart, methods=["POST"])
+    app.add_url_rule("/vendedor/<slug>/checkout", endpoint="vendor_publication.public_vendor_checkout", view_func=public_vendor_checkout, methods=["POST"])
     app.add_url_rule("/vendedor/<slug>/message", endpoint="vendor_publication.public_vendor_message", view_func=public_vendor_message, methods=["POST"])
     app.add_url_rule("/agentes-ia/vendedor/publicacion", endpoint="vendor_publication.publication_page", view_func=publication_page, methods=["GET"])
     app.add_url_rule("/agentes-ia/vendedor/publicacion/<action>", endpoint="vendor_publication.publication_action", view_func=publication_action, methods=["POST"])
