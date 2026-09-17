@@ -67,21 +67,26 @@ def trace_mp_qr_requests():
 
 @app.after_request
 def inject_invoice_manual_code_fix(response):
-    """Load the manual-code assignment fix only in the invoice workspace."""
+    """Load invoice barcode/manual-code fixes only in the invoice workspace."""
     if request.path != "/dashboard/ai-agent/facturas" or not response.content_type.startswith("text/html"):
         return response
     try:
         html = response.get_data(as_text=True)
-        marker = "/static/js/invoice_manual_code_fix.js"
-        if marker not in html:
-            script = '<script src="/static/js/invoice_manual_code_fix.js?v=20260917-manual-code-3" defer></script>'
-            if "</body>" in html:
-                html = html.replace("</body>", script + "</body>", 1)
-            else:
-                html += script
-            response.set_data(html)
+        scripts = [
+            '<script src="/static/assets/js/barcode-scanner.js?v=20260917-scan-3"></script>',
+            '<script src="/static/js/invoice_manual_code_fix.js?v=20260917-manual-code-4" defer></script>',
+            '<script src="/static/js/invoice_scanner_fix.js?v=20260917-scanner-fix-1"></script>',
+        ]
+        for script in scripts:
+            marker = script.split(' src="', 1)[1].split('"', 1)[0] if ' src="' in script else script
+            if marker not in html:
+                if "</body>" in html:
+                    html = html.replace("</body>", script + "</body>", 1)
+                else:
+                    html += script
+        response.set_data(html)
     except Exception:
-        app.logger.exception("Could not inject invoice manual-code fix")
+        app.logger.exception("Could not inject invoice scanner/manual-code fixes")
     return response
 
 
