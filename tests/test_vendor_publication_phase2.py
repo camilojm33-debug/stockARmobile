@@ -1,6 +1,8 @@
 import json
 import sys
 
+from flask import Flask
+
 from services.ai_agent import vendor_publication
 
 
@@ -82,5 +84,7 @@ def test_unpublish_disables_public_webchat(monkeypatch):
 
 
 def test_rate_limit_fails_closed_when_guard_unavailable(monkeypatch):
+    app = Flask(__name__)
     monkeypatch.setitem(sys.modules, "ai_agents", None)
-    assert vendor_publication._rate_limit(123) is False
+    with app.app_context():
+        assert vendor_publication._rate_limit(123) is False
