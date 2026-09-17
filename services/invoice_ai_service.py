@@ -91,7 +91,7 @@ def _normalize_issue_date(value: Any) -> tuple[str | None, str | None]:
     for match in _DATE_NUMERIC_RE.finditer(raw):
         first, second, third = (int(match.group(index)) for index in range(1, 4))
         if len(match.group(1)) == 4:
-            normalized = _safe_date(first, second, _expand_year(third))
+            normalized = _safe_date(first, second, third)
         elif len(match.group(3)) == 4:
             normalized = _safe_date(_expand_year(third), second, first)
         else:
