@@ -74,8 +74,6 @@ def public_vendor_retry_payment(slug: str):
     access = can_use_ai(company, "vendedor")
     if not access.allowed:
         return jsonify({"success": False, "error": access.reason}), 403
-    if not _rate_limit(company.id):
-        return jsonify({"success": False, "error": "Hay muchas consultas en este momento. Esperá unos segundos e intentá nuevamente."}), 429, {"Retry-After": "60"}
 
     payload = _payload()
     conversation, error = _order_context(company, payload)
@@ -100,15 +98,16 @@ def public_vendor_cancel_order(slug: str):
     access = can_use_ai(company, "vendedor")
     if not access.allowed:
         return jsonify({"success": False, "error": access.reason}), 403
-    if not _rate_limit(company.id):
-        return jsonify({"success": False, "error": "Hay muchas consultas en este momento. Esperá unos segundos e intentá nuevamente."}), 429, {"Retry-After": "60"}
 
     payload = _payload()
     conversation, error = _order_context(company, payload)
     if error:
         return error
     try:
-        confirm = bool(payload.get("confirm") is True or str(payload.get("confirm") or "").strip().lower() in {"1", "true", "si", "sí", "yes"})
+        confirm = bool(
+            payload.get("confirm") is True
+            or str(payload.get("confirm") or "").strip().lower() in {"1", "true", "si", "sí", "yes"}
+        )
         result = VendorOrderService.cancel_order(
             company_id=company.id,
             conversation_id=conversation.id,
