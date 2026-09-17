@@ -7,7 +7,7 @@ from collections import defaultdict
 from decimal import Decimal
 from typing import Any
 
-from sqlalchemy import func
+from flask import request, session
 
 from stockarmobile.extensions import db
 from stockarmobile.models.conversations import Agent, Conversation
@@ -129,7 +129,7 @@ def _conversation_metric_totals(rows) -> dict:
         for product_id, total in products.items():
             product_frequency[str(product_id)] += int(total or 0)
         metadata = _metadata(conversation.metadata_json)
-        raw_cart = metadata.get("vendor_cart") or metadata.get("cart")
+        raw_cart = metadata.get("vendor_cart")
         if isinstance(raw_cart, dict) and raw_cart:
             active_carts += 1
         channel = str(conversation.channel or "unknown")
@@ -248,3 +248,82 @@ def build_vendor_metrics(*, company_id: int) -> dict:
             for channel, data in channel_conversion.items()
         },
     }
+
+
+def install_metrics_hooks(app) -> None:
+    """Attach lightweight attribution hooks to the already-public Vendor routes."""
+    if getattr(app, "_vendor_metrics_hooks_installed", False):
+        return
+
+    @app.after_request
+    def _record_vendor_metrics(response):
+        endpoint = str(request.endpoint or "")
+        public_endpoints = {
+            "vendor_publication.public_vendor_page",
+            "vendor_publication.public_vendor_catalog",
+            "vendor_publication.public_vendor_cart",
+            "vendor_publication.public_vendor_checkout",
+            "vendor_publication.public_vendor_message",
+        }
+        if endpoint not in public_endpoints or not 200 <= response.status_code < 300:
+            return response
+
+        try:
+            from services.ai_agent.vendor_publication import _public_available_company, _public_conversation
+
+            slug = str((request.view_args or {}).get("slug") or "").strip()
+            company = _public_available_company(slug)
+            if company is None:
+                return response
+
+            payload = request.get_json(silent=True) or {}
+            conversation_id = payload.get("conversation_id") or request.args.get("conversation_id")
+            create = endpoint != "vendor_publication.public_vendor_state"
+            conversation = _public_conversation(company, conversation_id, create=create)
+            if conversation is None:
+                return response
+
+            if endpoint == "vendor_publication.public_vendor_page":
+                visitor_key = f"vendor_visit_recorded_{int(company.id)}_{slug}"
+                if not session.get(visitor_key):
+                    record_vendor_event(
+                        conversation,
+                        "visit",
+                        unique_key=f"visit:{conversation.external_conversation_id}",
+                    )
+                    session[visitor_key] = True
+
+            elif endpoint == "vendor_publication.public_vendor_catalog":
+                data = response.get_json(silent=True) or {}
+                products = data.get("products") if isinstance(data, dict) else []
+                ids = [item.get("id") for item in products if isinstance(item, dict) and item.get("id")]
+                record_vendor_event(conversation, "product_query", product_ids=ids)
+
+            elif endpoint == "vendor_publication.public_vendor_cart":
+                action = str(payload.get("action") or "add").strip().lower()
+                if action in {"add", "remove"}:
+                    record_vendor_event(
+                        conversation,
+                        f"cart_{action}",
+                        product_ids=[payload.get("product_id")] if payload.get("product_id") else None,
+                    )
+
+            elif endpoint == "vendor_publication.public_vendor_checkout":
+                data = response.get_json(silent=True) or {}
+                if bool(data.get("success")):
+                    record_vendor_event(conversation, "order_created")
+
+            elif endpoint == "vendor_publication.public_vendor_message":
+                record_vendor_event(
+                    conversation,
+                    "conversation_started",
+                    unique_key=f"conversation_started:{conversation.id}",
+                )
+
+            db.session.commit()
+        except Exception:
+            db.session.rollback()
+            app.logger.exception("No se pudo registrar métrica del Vendedor IA.")
+        return response
+
+    app._vendor_metrics_hooks_installed = True
