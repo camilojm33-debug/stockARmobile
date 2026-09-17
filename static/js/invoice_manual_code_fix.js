@@ -9,8 +9,14 @@
     if (!codeInput || !codeButton || !hint) return;
     if (codeButton.dataset.manualFixInitialized === '1') return;
 
-    // Reemplaza los controles para evitar el listener antiguo y garantizar que
-    // la asignación manual use el endpoint robusto de código exacto.
+    const nativeFetch = window.fetch.bind(window);
+    window.fetch = async (...args) => {
+      const requestUrl = typeof args[0] === 'string' ? args[0] : (args[0] && args[0].url) || '';
+      const match = String(requestUrl).match(/\/ai-agent\/invoices\/([^/]+)\/(?:process|resolve(?:-code)?)/);
+      if (match) root.dataset.activeUploadId = decodeURIComponent(match[1]);
+      return nativeFetch(...args);
+    };
+
     const cleanButton = codeButton.cloneNode(true);
     const cleanInput = codeInput.cloneNode(true);
     cleanButton.dataset.manualFixInitialized = '1';
@@ -25,22 +31,17 @@
       hint.insertAdjacentElement('afterend', feedback);
     }
 
-    const getLine = () => {
-      const currentTitle = document.getElementById('picker-title');
-      const buttons = document.querySelectorAll('#review-items .picker-open');
-      if (!currentTitle) return null;
-      // El modal solo se abre desde una línea activa; guardamos el identificador
-      // en el botón que abrió el selector.
-      return Array.from(buttons).find((button) => button.classList.contains('manual-picker-active'));
-    };
-
     function setFeedback(message, type = 'muted') {
       feedback.className = `small mt-2 ${type === 'error' ? 'text-danger' : type === 'success' ? 'text-success' : 'muted'}`;
       feedback.textContent = message || '';
     }
 
-    function replaceResolveUrl(base) {
-      return String(base || '').replace(/\/resolve(?:-code)?$/, '/resolve-code');
+    function activeLineButton() {
+      return document.querySelector('#review-items .picker-open.manual-picker-active');
+    }
+
+    function resolveCodeUrl() {
+      return String(root.dataset.resolveUrl || '').replace(/\/resolve(?:-code)?$/, '/resolve-code');
     }
 
     async function assignCode() {
@@ -51,19 +52,11 @@
         return;
       }
 
-      const activeButton = getLine();
-      if (!activeButton) {
-        setFeedback('No pude determinar la línea de factura activa. Cerrá y volvé a abrir “Elegir producto”.', 'error');
-        return;
-      }
-
-      const uploadButton = document.querySelector('.invoice-open[data-upload-id]');
-      const uploadId = root.dataset.activeUploadId || (uploadButton && uploadButton.dataset.uploadId) || '';
-      const lineNumber = activeButton.dataset.line;
-      const baseResolveUrl = root.dataset.resolveUrl || '';
-      const endpointTemplate = replaceResolveUrl(baseResolveUrl);
-      if (!uploadId || !lineNumber || !endpointTemplate) {
-        setFeedback('No se pudo identificar la factura o la línea.', 'error');
+      const lineButton = activeLineButton();
+      const uploadId = root.dataset.activeUploadId || '';
+      const endpointTemplate = resolveCodeUrl();
+      if (!lineButton || !uploadId || !endpointTemplate) {
+        setFeedback('No pude identificar la línea o la factura activa. Cerrá y volvé a abrir “Elegir producto”.', 'error');
         return;
       }
 
@@ -71,10 +64,10 @@
       const csrfToken = root.dataset.csrf || '';
       cleanButton.disabled = true;
       cleanInput.disabled = true;
-      setFeedback('Buscando código en StockAR…');
+      setFeedback('Buscando el código en StockAR…');
 
       try {
-        const response = await fetch(endpoint, {
+        const response = await nativeFetch(endpoint, {
           method: 'POST',
           credentials: 'same-origin',
           headers: {
@@ -82,21 +75,16 @@
             'X-CSRFToken': csrfToken,
             'X-Requested-With': 'XMLHttpRequest',
           },
-          body: JSON.stringify({ line_number: lineNumber, code }),
+          body: JSON.stringify({ line_number: lineButton.dataset.line, code }),
         });
-
         const type = response.headers.get('content-type') || '';
         const data = type.includes('application/json') ? await response.json() : null;
         if (!response.ok || !data || !data.success) {
           throw new Error((data && data.error) || 'No se encontró un producto con ese código.');
         }
 
-        setFeedback('Código asignado correctamente. Actualizando la factura…', 'success');
-        const picker = document.getElementById('invoice-picker');
-        picker?.classList.remove('show');
-
-        // Recarga para que el preview y el botón Confirmar y aplicar queden
-        // sincronizados con el estado persistido en backend.
+        setFeedback(`Asignado: ${data.product?.name || code}.`, 'success');
+        document.getElementById('invoice-picker')?.classList.remove('show');
         window.setTimeout(() => window.location.reload(), 300);
       } catch (error) {
         setFeedback(error.message || 'No se pudo asignar el código.', 'error');
@@ -120,13 +108,16 @@
       }
     });
 
-    // El botón que abre el picker queda marcado para conocer la línea activa.
     document.addEventListener('click', (event) => {
       const button = event.target.closest?.('#review-items .picker-open');
       if (!button) return;
       document.querySelectorAll('#review-items .picker-open.manual-picker-active').forEach((item) => item.classList.remove('manual-picker-active'));
       button.classList.add('manual-picker-active');
-      root.dataset.activeUploadId = root.dataset.activeUploadId || '';
+    }, true);
+
+    document.addEventListener('click', (event) => {
+      const button = event.target.closest?.('.invoice-open[data-upload-id]');
+      if (button) root.dataset.activeUploadId = button.dataset.uploadId || '';
     }, true);
   }
 
