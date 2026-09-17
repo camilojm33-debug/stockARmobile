@@ -2,9 +2,10 @@ from flask import flash, redirect, request, url_for, jsonify, render_template, g
 from flask_login import current_user, login_required
 from sqlalchemy import text
 
-from app import app, AuditLog, Company, Invoice, Payment, PaymentHistory, Subscription, SubscriptionCommandExecution, Supplier, db
+from app import app, AuditLog, Company, Invoice, Payment, PaymentHistory, Subscription, SubscriptionCommandExecution, Supplier, Product, db
 from services.subscription_service import SubscriptionService
 from services.ai_agent.usage_service import can_use_ai
+from services.invoice_matching_service import normalize
 from stockarmobile.models.conversations import Conversation
 from pricing_controller import bp as pricing_controller_bp
 
@@ -91,6 +92,85 @@ def ai_invoices_workspace():
     except Exception:
         plan_url = "/dashboard/ai-agent/planes"
     return render_template("ai_agents/invoices_smart.html", invoice_access=invoice_access, invoices=invoices, can_confirm=can_confirm, plan_url=plan_url, suppliers=suppliers)
+
+
+@app.route("/dashboard/ai-agent/invoices/<upload_id>/resolve-code", methods=["POST"])
+@login_required
+def resolve_invoice_code_direct(upload_id):
+    """Assign an invoice line to a tenant-scoped product by exact SKU/barcode."""
+    company_id = getattr(current_user, "company_id", None)
+    if not company_id:
+        return jsonify({"success": False, "error": "No hay una empresa activa."}), 403
+
+    payload = request.get_json(silent=True) or {}
+    raw_code = str(payload.get("code") or "").strip()
+    line_number = payload.get("line_number")
+    if not raw_code:
+        return jsonify({"success": False, "error": "Ingresá o escaneá un código de producto."}), 400
+
+    def code_key(value):
+        normalized = normalize(value).replace(" ", "")
+        if normalized.isdigit():
+            normalized = normalized.lstrip("0") or "0"
+        return normalized
+
+    query_key = code_key(raw_code)
+    found = None
+    for conversation in Conversation.query.filter_by(company_id=company_id).all():
+        metadata = dict(conversation.metadata_json or {})
+        uploads = list(metadata.get("invoice_uploads") or [])
+        for index, upload in enumerate(uploads):
+            if str(upload.get("upload_id")) == str(upload_id):
+                found = (conversation, metadata, uploads, index, upload)
+                break
+        if found:
+            break
+    if found is None:
+        return jsonify({"success": False, "error": "Factura no encontrada."}), 404
+
+    conversation, metadata, uploads, upload_index, upload = found
+    invoice = upload.get("invoice") or {}
+    matches = invoice.get("matches") or []
+    line = next((item for item in matches if str(item.get("line_number")) == str(line_number)), None)
+    if line is None:
+        return jsonify({"success": False, "error": "Línea de factura no encontrada."}), 400
+
+    products = Product.query.filter_by(company_id=company_id, active=True).all()
+    candidates = [product for product in products if code_key(getattr(product, "barcode", None)) == query_key]
+    if len(candidates) != 1:
+        return jsonify({"success": False, "error": "No hay un único producto activo con ese código/SKU en StockAR."}), 409
+
+    product = candidates[0]
+    line.update({
+        "matching_status": "MATCH_EXACTO",
+        "matching_reason": "CODIGO_ESCANEADO_O_MANUAL",
+        "product_id": product.id,
+        "product_name": product.name,
+        "product_code": product.barcode,
+        "confidence_level": "ALTA",
+        "proposal_score": 1.0,
+        "auto_matched": False,
+    })
+
+    supplier_status = (invoice.get("supplier_match") or {}).get("status")
+    active_lines = [item for item in matches if item.get("matching_status") != "EXCLUIDA"]
+    blocking_warnings = any(str(warning).startswith(("La línea ", "Los totales de la factura")) for warning in (invoice.get("warnings") or []))
+    ready = (
+        supplier_status in {"MATCH_EXACTO", "NUEVO_PROVEEDOR_CONFIRMADO"}
+        and bool(active_lines)
+        and not any(item.get("matching_status") in {"AMBIGUO", "MATCH_PROPUESTO"} for item in active_lines)
+        and not any(item.get("quantity") in (None, "") or item.get("unit_cost") in (None, "") for item in active_lines)
+        and not blocking_warnings
+    )
+    invoice["status"] = "LISTA_PARA_CONFIRMAR" if ready else "REQUIERE_REVISION"
+    upload["invoice"] = invoice
+    upload["status"] = invoice["status"]
+    uploads[upload_index] = upload
+    metadata["invoice_uploads"] = uploads
+    conversation.metadata_json = metadata
+    db.session.commit()
+
+    return jsonify({"success": True, "status": invoice["status"], "preview": invoice, "product": {"id": product.id, "name": product.name, "code": product.barcode}})
 
 
 @app.route("/superadmin/subscriptions/<int:subscription_id>/delete-historical", methods=["POST"])
