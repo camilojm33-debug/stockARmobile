@@ -3,7 +3,9 @@
 from __future__ import annotations
 
 import json
+import os
 import re
+import time
 from datetime import date, datetime
 from decimal import Decimal, InvalidOperation
 from typing import TYPE_CHECKING, Any
@@ -145,14 +147,12 @@ def _normalize_issue_date(value: Any) -> tuple[str | None, str | None]:
     if not raw:
         return None, None
 
-    # Native ISO date/datetime values.
     iso_match = _ISO_DATETIME_RE.search(raw)
     if iso_match:
         normalized = _safe_date(*(int(part) for part in iso_match.group(1).split("-")))
         if normalized:
             return normalized, None
 
-    # Numeric formats: YYYY/MM/DD, DD/MM/YYYY, DD-MM-YYYY, DD.MM.YYYY, etc.
     for match in _DATE_NUMERIC_RE.finditer(raw):
         first, second, third = (int(match.group(index)) for index in range(1, 4))
         if len(match.group(1)) == 4:
@@ -160,13 +160,10 @@ def _normalize_issue_date(value: Any) -> tuple[str | None, str | None]:
         elif len(match.group(3)) == 4:
             normalized = _safe_date(_expand_year(third), second, first)
         else:
-            # Ambiguous two-digit dates are treated as DD/MM/YY, which is the
-            # natural convention for Argentine invoices.
             normalized = _safe_date(_expand_year(third), second, first)
         if normalized:
             return normalized, None
 
-    # Compact YYYYMMDD format sometimes returned by OCR.
     compact = _COMPACT_DATE_RE.search(raw)
     if compact:
         token = compact.group(1)
@@ -174,7 +171,6 @@ def _normalize_issue_date(value: Any) -> tuple[str | None, str | None]:
         if normalized:
             return normalized, None
 
-    # Spanish textual dates: "16 de septiembre de 2026".
     text_match = _DATE_TEXT_RE.search(raw)
     if text_match:
         month_name = text_match.group("month").lower().replace("í", "i")
@@ -206,17 +202,45 @@ class InvoiceAIService:
             return [InvoiceAIService.json_safe(item) for item in value]
         return value
 
+    def _invoice_models(self) -> list[str | None]:
+        """Return primary plus optional fallback models, without affecting other AI agents."""
+        primary = os.getenv("GEMINI_INVOICE_MODEL") or getattr(self.provider, "model", None)
+        fallback = os.getenv("GEMINI_INVOICE_FALLBACK_MODEL")
+        models: list[str | None] = [primary]
+        if fallback and fallback != primary:
+            models.append(fallback)
+        return models
+
     def extract(self, upload_record: dict[str, Any], *, company_id: int) -> dict[str, Any]:
         path = InvoiceUploadService.resolve_path(upload_record, company_id=company_id)
         suffix = path.suffix.lower()
         mime_type = "application/pdf" if suffix == ".pdf" else f"image/{'jpeg' if suffix in {'.jpg', '.jpeg'} else suffix[1:]}"
-        response = self.provider.generate_invoice(
-            file_path=path,
-            mime_type=mime_type,
-            prompt=INVOICE_EXTRACTION_PROMPT,
-            schema=INVOICE_SCHEMA,
-            model=None,
-        )
+        response = None
+        last_error: Exception | None = None
+        models = self._invoice_models()
+
+        for index, model in enumerate(models):
+            try:
+                response = self.provider.generate_invoice(
+                    file_path=path,
+                    mime_type=mime_type,
+                    prompt=INVOICE_EXTRACTION_PROMPT,
+                    schema=INVOICE_SCHEMA,
+                    model=model,
+                )
+                break
+            except Exception as exc:
+                last_error = exc
+                if index == 0:
+                    # A short retry absorbs transient provider saturation before using the fallback model.
+                    time.sleep(1.0)
+                    continue
+
+        if response is None:
+            raise InvoiceAIError(
+                "El proveedor de IA está temporalmente saturado. Intentá procesar la factura nuevamente en unos segundos."
+            ) from last_error
+
         content = response.get("content") if isinstance(response, dict) else None
         try:
             payload = json.loads(content) if isinstance(content, str) else content
@@ -302,9 +326,6 @@ class InvoiceAIService:
         if warnings:
             result["warnings"] = warnings
 
-        # The invoice date is informational for this workflow: the purchase is
-        # recorded with the confirmation timestamp. Therefore an OCR/date parsing
-        # warning must not make the whole invoice impossible to review/apply.
         blocking_warnings = [warning for warning in warnings if not warning.startswith("No se pudo normalizar la fecha de factura") and not warning.startswith("Falta determinar issue_date")]
         result["requires_review"] = bool(blocking_warnings)
         return result
