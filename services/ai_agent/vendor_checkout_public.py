@@ -175,6 +175,7 @@ def _guard_public_mutations() -> object | None:
                 return jsonify({"success": False, "error": "La conversación ya no es válida."}), 403
     except Exception:
         current_app.logger.exception("No se pudo aplicar protección de concurrencia al Vendor IA público")
+        return jsonify({"success": False, "error": "El canal público no está disponible temporalmente."}), 503
     return None
 
 
