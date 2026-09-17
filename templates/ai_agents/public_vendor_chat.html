@@ -202,11 +202,10 @@
 
   <script>
   (function () {
-    const slug = {{ request.view_args.get('slug', '')|tojson }};
-    const catalogEndpoint = {{ url_for('vendor_publication.public_vendor_catalog', slug=request.view_args.get('slug', ''))|tojson }};
-    const cartEndpoint = {{ (url_for('vendor_publication.public_vendor_cart', slug=request.view_args.get('slug', '')) if not disabled_reason else '')|tojson }};
-    const checkoutEndpoint = {{ (url_for('vendor_publication.public_vendor_checkout', slug=request.view_args.get('slug', '')) if not disabled_reason else '')|tojson }};
     const chatEndpoint = {{ (chat_url or '')|tojson }};
+    const catalogEndpoint = chatEndpoint ? chatEndpoint.replace(/\/message$/, '/catalog') : '';
+    const cartEndpoint = chatEndpoint ? chatEndpoint.replace(/\/message$/, '/cart') : '';
+    const checkoutEndpoint = chatEndpoint ? chatEndpoint.replace(/\/message$/, '/checkout') : '';
     const csrf = {{ csrf_token()|tojson }};
     const initialCatalog = {{ catalog|tojson }};
     const initialState = {{ initial_state|tojson }};
