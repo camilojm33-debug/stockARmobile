@@ -94,10 +94,26 @@ class VendorRemoveTool(AgentTool):
 
 class VendorOrderPreviewTool(AgentTool):
     name = "preparar_pedido"
-    description = "Prepara un pedido pendiente y genera un link seguro de pago."
+    description = (
+        "Prepara un pedido pendiente y genera un link seguro de pago. "
+        "Antes de prepararlo confirmá nombre y teléfono del comprador. "
+        "Preguntá si desea retiro o envío. Si elige envío, solicitá dirección, localidad "
+        "y provincia; el backend calcula automáticamente un recargo de envío del 15%."
+    )
     input_schema = {
         "type": "object",
-        "properties": {"customer_name": {"type": "string"}},
+        "properties": {
+            "customer_name": {"type": "string"},
+            "customer_phone": {"type": "string"},
+            "delivery_method": {"type": "string", "enum": ["retiro", "envio"]},
+            "delivery_address": {"type": "string"},
+            "delivery_city": {"type": "string"},
+            "delivery_province": {"type": "string"},
+            "delivery_postal_code": {"type": "string"},
+            "delivery_reference": {"type": "string"},
+            "delivery_notes": {"type": "string"},
+        },
+        "required": ["customer_name", "customer_phone", "delivery_method"],
         "additionalProperties": False,
     }
 
@@ -106,7 +122,14 @@ class VendorOrderPreviewTool(AgentTool):
             company_id=self.company_id,
             conversation_id=self._context["conversation_id"],
             customer_name=str(kwargs.get("customer_name") or ""),
-            customer_phone=str(self._context.get("customer_phone") or ""),
+            customer_phone=str(kwargs.get("customer_phone") or self._context.get("customer_phone") or ""),
+            delivery_method=str(kwargs.get("delivery_method") or "retiro"),
+            delivery_address=str(kwargs.get("delivery_address") or ""),
+            delivery_city=str(kwargs.get("delivery_city") or ""),
+            delivery_province=str(kwargs.get("delivery_province") or ""),
+            delivery_postal_code=str(kwargs.get("delivery_postal_code") or ""),
+            delivery_reference=str(kwargs.get("delivery_reference") or ""),
+            delivery_notes=str(kwargs.get("delivery_notes") or ""),
             actor_user_id=self._context.get("actor_user_id"),
         )
 
