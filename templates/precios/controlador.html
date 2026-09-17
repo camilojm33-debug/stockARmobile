@@ -49,26 +49,32 @@
                 </div>
               </div>
 
-              <div class="col-md-4">
+              <div class="col-md-6">
+                <label class="form-label">Producto / código</label>
+                <input class="form-control" name="product_query" maxlength="160" placeholder="Ej. Coca-Cola, shampoo, código 12345">
+                <div class="form-text">Filtra por nombre, código o marca. Dejalo vacío para incluir todos los productos activos.</div>
+              </div>
+              <div class="col-md-6">
                 <label class="form-label">Categoría</label>
                 <select class="form-select" name="category">
-                  <option value="">Todo</option>
+                  <option value="">Todas</option>
                   {% for value in categories %}<option value="{{ value }}">{{ value }}</option>{% endfor %}
                 </select>
               </div>
-              <div class="col-md-4">
+              <div class="col-md-6">
                 <label class="form-label">Marca</label>
                 <select class="form-select" name="brand">
                   <option value="">Todas</option>
                   {% for value in brands %}<option value="{{ value }}">{{ value }}</option>{% endfor %}
                 </select>
               </div>
-              <div class="col-md-4">
+              <div class="col-md-6">
                 <label class="form-label">Proveedor</label>
                 <select class="form-select" name="supplier">
-                  <option value="">Todos</option>
+                  <option value="">Todos los proveedores</option>
                   {% for value in suppliers %}<option value="{{ value }}">{{ value }}</option>{% endfor %}
                 </select>
+                <div class="form-text">Es un filtro opcional, no limita el controlador a productos con proveedor.</div>
               </div>
 
               <div class="col-md-4">
@@ -108,7 +114,7 @@
             <div class="alert alert-light border mt-4 mb-3">
               <div class="d-flex gap-2">
                 <i class="bi bi-shield-check text-primary"></i>
-                <div class="small">Los cambios se calculan por empresa, se muestran antes de aplicar y quedan registrados para poder revertirlos.</div>
+                <div class="small"><strong>Alcance:</strong> podés ajustar todos los productos activos o combinar filtros por producto, categoría, marca, proveedor y stock. Los filtros son opcionales.</div>
               </div>
             </div>
             <button class="btn btn-primary w-100" type="submit"><i class="bi bi-eye me-1"></i>Generar vista previa</button>
