@@ -770,6 +770,7 @@ class VendorOrderService:
         else:
             order_status = "pendiente"
         client = getattr(quote, "client", None)
+        delivery = getattr(quote, "delivery", None)
         return {
             "quote_id": quote.id,
             "quote_number": quote.number or f"P-{quote.id:06d}",
@@ -783,6 +784,19 @@ class VendorOrderService:
             "sale_id": quote.converted_sale_id,
             "created_at": quote.date.isoformat() if getattr(quote, "date", None) else None,
             "expires_at": quote.expires_at.isoformat() if getattr(quote, "expires_at", None) else None,
+            "delivery": {
+                "method": getattr(delivery, "method", "retiro") if delivery else "retiro",
+                "recipient_name": getattr(delivery, "recipient_name", "") if delivery else "",
+                "phone": getattr(delivery, "phone", "") if delivery else "",
+                "address": getattr(delivery, "address", "") if delivery else "",
+                "city": getattr(delivery, "city", "") if delivery else "",
+                "province": getattr(delivery, "province", "") if delivery else "",
+                "postal_code": getattr(delivery, "postal_code", "") if delivery else "",
+                "reference": getattr(delivery, "reference", "") if delivery else "",
+                "notes": getattr(delivery, "notes", "") if delivery else "",
+                "shipping_cost": float(getattr(delivery, "shipping_cost", 0) or 0) if delivery else 0.0,
+                "shipping_rate": float(getattr(delivery, "shipping_rate", 0) or 0) if delivery else 0.0,
+            },
         }
 
     @staticmethod
@@ -861,7 +875,17 @@ class VendorOrderService:
                 }
                 for item in quote.items
                 for product in [products[int(item.product_id)]]
-            ],
+            ] + (
+                [{
+                    "id": f"shipping-{quote.id}",
+                    "title": "Envío a domicilio",
+                    "description": str(getattr(getattr(quote, "delivery", None), "shipping_reason", None) or "Recargo de envío 15%"),
+                    "quantity": 1,
+                    "currency_id": quote.currency or "ARS",
+                    "unit_price": float(_money(getattr(getattr(quote, "delivery", None), "shipping_cost", 0))),
+                }]
+                if _money(getattr(getattr(quote, "delivery", None), "shipping_cost", 0)) > 0 else []
+            ),
             amount=float(quote.total_amount or 0),
             currency=quote.currency or "ARS",
             external_reference=external_reference,
