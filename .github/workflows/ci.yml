@@ -23,4 +23,25 @@ jobs:
       - name: Check service worker
         run: node --check static/service-worker.js
       - name: Run tests
-        run: pytest -q
+        id: tests
+        continue-on-error: true
+        shell: bash
+        run: |
+          set +e
+          pytest -q --tb=short > pytest-output.txt 2>&1
+          code=$?
+          cat pytest-output.txt
+          echo "$code" > pytest-exit-code.txt
+          exit "$code"
+      - name: Upload pytest diagnostics
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: pytest-diagnostics
+          path: |
+            pytest-output.txt
+            pytest-exit-code.txt
+          retention-days: 2
+      - name: Fail when tests fail
+        if: steps.tests.outcome == 'failure'
+        run: exit 1

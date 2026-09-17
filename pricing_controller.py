@@ -65,7 +65,6 @@ class PriceControllerItem(db.Model):
     __table_args__ = (
         db.Index("ix_price_controller_items_batch", "batch_id"),
         db.Index("ix_price_controller_items_product", "product_id"),
-        db.Index("ix_price_controller_items_status", "status"),
     )
 
     id = db.Column(db.Integer, primary_key=True)

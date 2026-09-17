@@ -1,0 +1,158 @@
+{% extends "base_master.html" %}
+{% block title %}Publicar Vendedor IA | StockArMobile{% endblock %}
+{% block content %}
+<div class="container py-4" style="max-width:980px;">
+  <div class="d-flex flex-wrap justify-content-between align-items-start gap-3 mb-4">
+    <div>
+      <div class="text-uppercase small fw-bold text-primary">Vendedor IA 24/7</div>
+      <h1 class="h2 fw-bold mb-1">Publicación del Vendedor</h1>
+      <p class="text-muted mb-0">Publicá un enlace propio para que tus clientes hablen con tu Vendedor IA sin WhatsApp.</p>
+    </div>
+    <div class="d-flex flex-wrap gap-2">
+      <a class="btn btn-outline-primary" href="{{ url_for('ai_admin.vendor_metrics') }}"><i class="bi bi-bar-chart-line me-1"></i>Métricas</a>
+      <a class="btn btn-outline-secondary" href="{{ url_for('ai_agents.agent', agent='vendedor') }}"><i class="bi bi-arrow-left me-1"></i>Volver al Vendedor</a>
+    </div>
+  </div>
+
+  {% if not access.allowed %}
+    <div class="alert alert-warning"><i class="bi bi-lock me-2"></i>{{ access.reason }}</div>
+  {% else %}
+    <div id="publication-alert" class="alert d-none" role="alert"></div>
+
+    <section class="card border-0 shadow-sm mb-3">
+      <div class="card-body p-4">
+        <div class="d-flex flex-wrap justify-content-between align-items-center gap-3 mb-3">
+          <div>
+            <div class="small text-uppercase text-muted fw-bold">Estado</div>
+            <div id="publication-state" class="fs-4 fw-bold">{{ 'Publicado' if status.available else ('Despublicado' if status.published else 'Sin publicar') }}</div>
+            <div class="text-muted small" id="publication-help">{{ 'Tu enlace público está activo.' if status.available else 'Publicá el Vendedor para habilitar el enlace.' }}</div>
+          </div>
+          <div class="d-flex flex-wrap gap-2">
+            <button class="btn btn-primary" type="button" data-publication-action="publish"><i class="bi bi-broadcast me-1"></i>Publicar</button>
+            <button class="btn btn-outline-secondary" type="button" data-publication-action="unpublish"><i class="bi bi-pause-circle me-1"></i>Despublicar</button>
+            <button class="btn btn-outline-danger" type="button" data-publication-action="regenerate"><i class="bi bi-arrow-repeat me-1"></i>Regenerar enlace</button>
+          </div>
+        </div>
+
+        <div class="row g-3">
+          <div class="col-lg-8">
+            <label class="form-label fw-semibold" for="public-url">Enlace público</label>
+            <div class="input-group">
+              <input id="public-url" class="form-control" value="{{ status.url or '' }}" readonly>
+              <button id="copy-url" class="btn btn-outline-primary" type="button" {% if not status.url %}disabled{% endif %}><i class="bi bi-copy me-1"></i>Copiar</button>
+            </div>
+            <div class="form-text">La URL no expone el <code>company_id</code>. Al regenerarla, el enlace anterior deja de ser válido.</div>
+            <div class="d-flex flex-wrap gap-2 mt-3">
+              <a id="open-url" class="btn btn-outline-primary {% if not status.url %}disabled{% endif %}" href="{{ status.url or '#' }}" target="_blank" rel="noopener"><i class="bi bi-box-arrow-up-right me-1"></i>Abrir Vendedor</a>
+              <a class="btn btn-outline-secondary" href="{{ preview_url }}" target="_blank" rel="noopener"><i class="bi bi-eye me-1"></i>Vista previa</a>
+              <button id="share-url" class="btn btn-outline-secondary" type="button" {% if not status.url %}disabled{% endif %}><i class="bi bi-share me-1"></i>Compartir</button>
+            </div>
+          </div>
+          <div class="col-lg-4 text-center">
+            <div class="small text-uppercase text-muted fw-bold mb-2">QR</div>
+            <div id="qr-wrap" class="p-2 border rounded-3 bg-white d-inline-block">
+              {% if qr %}<img id="public-qr" src="{{ qr }}" alt="QR del Vendedor IA" width="210" height="210">{% else %}<div id="qr-empty" class="text-muted small p-5">Publicá el Vendedor para generar el QR.</div>{% endif %}
+            </div>
+            <div class="mt-2"><a id="download-qr" class="btn btn-sm btn-outline-secondary {% if not qr %}disabled{% endif %}" href="{{ qr or '#' }}" download="vendedor-ia-qr.png"><i class="bi bi-download me-1"></i>Descargar QR</a></div>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <section class="card border-0 shadow-sm">
+      <div class="card-body p-4">
+        <h2 class="h5 fw-bold">Cómo funciona</h2>
+        <div class="row g-3 mt-1">
+          <div class="col-md-3"><div class="border rounded-3 p-3 h-100"><div class="fw-bold">1. Publicás</div><div class="small text-muted mt-1">El comercio activa su enlace propio.</div></div></div>
+          <div class="col-md-3"><div class="border rounded-3 p-3 h-100"><div class="fw-bold">2. Compartís</div><div class="small text-muted mt-1">Enlace, QR, web, redes o mostrador.</div></div></div>
+          <div class="col-md-3"><div class="border rounded-3 p-3 h-100"><div class="fw-bold">3. Atiende</div><div class="small text-muted mt-1">El Vendedor usa la configuración de este comercio.</div></div></div>
+          <div class="col-md-3"><div class="border rounded-3 p-3 h-100"><div class="fw-bold">4. Controlás</div><div class="small text-muted mt-1">Podés despublicar o regenerar el enlace.</div></div></div>
+        </div>
+      </div>
+    </section>
+  {% endif %}
+</div>
+{% endblock %}
+{% block extra_js %}
+<script>
+(function () {
+  const alertBox = document.getElementById('publication-alert');
+  const urlInput = document.getElementById('public-url');
+  const copyButton = document.getElementById('copy-url');
+  const shareButton = document.getElementById('share-url');
+  const openLink = document.getElementById('open-url');
+  const qrWrap = document.getElementById('qr-wrap');
+  const downloadQr = document.getElementById('download-qr');
+  const state = document.getElementById('publication-state');
+  const help = document.getElementById('publication-help');
+  if (!urlInput) return;
+
+  function showAlert(kind, text) {
+    alertBox.className = 'alert alert-' + kind;
+    alertBox.textContent = text;
+  }
+
+  function render(data) {
+    urlInput.value = data.url || '';
+    const enabled = Boolean(data.available);
+    const published = Boolean(data.published);
+    state.textContent = enabled ? 'Publicado' : (published ? 'Despublicado' : 'Sin publicar');
+    help.textContent = enabled ? 'Tu enlace público está activo.' : 'Publicá el Vendedor para habilitar el enlace.';
+    openLink.href = data.url || '#';
+    openLink.classList.toggle('disabled', !data.url);
+    copyButton.disabled = !data.url;
+    shareButton.disabled = !data.url;
+    if (data.qr) {
+      qrWrap.innerHTML = '<img id="public-qr" src="' + data.qr + '" alt="QR del Vendedor IA" width="210" height="210">';
+      downloadQr.href = data.qr;
+      downloadQr.classList.remove('disabled');
+    } else {
+      qrWrap.innerHTML = '<div class="text-muted small p-5">Publicá el Vendedor para generar el QR.</div>';
+      downloadQr.href = '#';
+      downloadQr.classList.add('disabled');
+    }
+  }
+
+  async function action(name) {
+    try {
+      const csrf = {{ csrf_token()|tojson }};
+      const response = await fetch({{ url_for('vendor_publication.publication_action', action='ACTION')|tojson }}.replace('ACTION', name), {
+        method: 'POST',
+        credentials: 'same-origin',
+        headers: { 'X-CSRFToken': csrf, 'Accept': 'application/json' }
+      });
+      const data = await response.json().catch(() => ({}));
+      if (!response.ok || !data.success) throw new Error(data.error || 'No se pudo actualizar la publicación.');
+      render(data);
+      showAlert('success', data.message || 'Publicación actualizada.');
+    } catch (err) {
+      showAlert('danger', err.message || 'No se pudo actualizar la publicación.');
+    }
+  }
+
+  document.querySelectorAll('[data-publication-action]').forEach((button) => {
+    button.addEventListener('click', () => action(button.dataset.publicationAction));
+  });
+
+  copyButton.addEventListener('click', async () => {
+    try {
+      await navigator.clipboard.writeText(urlInput.value);
+      showAlert('success', 'Enlace copiado.');
+    } catch (_) {
+      urlInput.focus(); urlInput.select(); document.execCommand('copy');
+      showAlert('success', 'Enlace copiado.');
+    }
+  });
+
+  shareButton.addEventListener('click', async () => {
+    if (!urlInput.value) return;
+    if (navigator.share) {
+      await navigator.share({ title: 'Vendedor IA', text: 'Consultá nuestro Vendedor IA', url: urlInput.value });
+      return;
+    }
+    await navigator.clipboard.writeText(urlInput.value);
+    showAlert('success', 'Tu navegador no ofrece compartir; copiamos el enlace.');
+  });
+})();
+</script>
+{% endblock %}
