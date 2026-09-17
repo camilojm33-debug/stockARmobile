@@ -15,7 +15,7 @@
   const progress = $('invoice-progress');
   const progressBar = $('invoice-progress-bar');
 
-  if (!fileInput || !cameraInput || !fileTrigger || !cameraTrigger) return;
+  if (!fileInput || !cameraInput || !fileTrigger || !cameraTrigger || !selected || !processBtn || !clearBtn) return;
 
   const csrfToken = root.dataset.csrf || '';
   const uploadUrl = root.dataset.uploadUrl;
@@ -25,6 +25,7 @@
   const confirmUrl = root.dataset.confirmUrl;
 
   let currentFile = null;
+  let currentObjectUrl = null;
   let currentUploadId = null;
   let currentPreview = null;
   let pickerLine = null;
@@ -44,6 +45,13 @@
     }
   };
 
+  const releasePreviewUrl = () => {
+    if (currentObjectUrl) {
+      URL.revokeObjectURL(currentObjectUrl);
+      currentObjectUrl = null;
+    }
+  };
+
   const esc = (value) => {
     const div = document.createElement('div');
     div.textContent = value == null ? '' : String(value);
@@ -58,8 +66,33 @@
     return data;
   }
 
+  function renderSelectedFile(file) {
+    releasePreviewUrl();
+    const name = String(file.name || 'Factura');
+    const sizeKb = Math.max(1, Math.round(file.size / 1024));
+    const type = String(file.type || '').toLowerCase();
+    const isImage = type.startsWith('image/') || ['.jpg', '.jpeg', '.png', '.webp'].some((ext) => name.toLowerCase().endsWith(ext));
+
+    if (isImage) {
+      currentObjectUrl = URL.createObjectURL(file);
+      selected.innerHTML =
+        '<div class="d-flex align-items-center gap-3 flex-wrap">' +
+        '<img src="' + currentObjectUrl + '" alt="Vista previa de la factura" style="width:96px;height:96px;object-fit:cover;border-radius:12px;border:1px solid var(--app-line);background:#f8fafc">' +
+        '<div><div class="fw-semibold">' + esc(name) + '</div><div class="small muted">' + sizeKb + ' KB · Imagen seleccionada correctamente</div><div class="small text-success mt-1"><i class="bi bi-check-circle me-1"></i>Lista para procesar con IA</div></div>' +
+        '</div>';
+      return;
+    }
+
+    selected.innerHTML =
+      '<div class="d-flex align-items-center gap-3 flex-wrap">' +
+      '<div style="width:64px;height:64px;display:grid;place-items:center;border-radius:12px;background:#eef4ff;color:#2563eb;font-size:1.5rem"><i class="bi bi-file-earmark-pdf"></i></div>' +
+      '<div><div class="fw-semibold">' + esc(name) + '</div><div class="small muted">' + sizeKb + ' KB · PDF seleccionado correctamente</div><div class="small text-success mt-1"><i class="bi bi-check-circle me-1"></i>Listo para procesar con IA</div></div>' +
+      '</div>';
+  }
+
   function selectFile(file) {
     clearError();
+    releasePreviewUrl();
     currentFile = file || null;
     if (!file) {
       selected.textContent = 'Todavía no seleccionaste una factura.';
@@ -86,12 +119,13 @@
       return;
     }
 
-    selected.innerHTML = '<i class="bi bi-file-earmark-check text-success me-1"></i><strong>' + esc(name) + '</strong> · ' + Math.max(1, Math.round(file.size / 1024)) + ' KB';
+    renderSelectedFile(file);
     processBtn.disabled = false;
     clearBtn.disabled = false;
   }
 
   function clearFile() {
+    releasePreviewUrl();
     currentFile = null;
     fileInput.value = '';
     cameraInput.value = '';
@@ -115,6 +149,7 @@
   }
 
   function setProgress(value, visible = true) {
+    if (!progress || !progressBar) return;
     progress.classList.toggle('d-none', !visible);
     progressBar.style.width = String(value) + '%';
   }
