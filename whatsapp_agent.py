@@ -258,6 +258,20 @@ def _ai_order_row(company_id: int, quote):
         "order_badge": order_badge,
         "sale_id": quote.converted_sale_id,
         "created_at": quote.date or quote.created_at,
+        "client_id": getattr(quote, "client_id", None),
+        "delivery": {
+            "method": getattr(getattr(quote, "delivery", None), "method", "retiro") if getattr(quote, "delivery", None) else "retiro",
+            "recipient_name": getattr(getattr(quote, "delivery", None), "recipient_name", "") if getattr(quote, "delivery", None) else "",
+            "phone": getattr(getattr(quote, "delivery", None), "phone", "") if getattr(quote, "delivery", None) else "",
+            "address": getattr(getattr(quote, "delivery", None), "address", "") if getattr(quote, "delivery", None) else "",
+            "city": getattr(getattr(quote, "delivery", None), "city", "") if getattr(quote, "delivery", None) else "",
+            "province": getattr(getattr(quote, "delivery", None), "province", "") if getattr(quote, "delivery", None) else "",
+            "postal_code": getattr(getattr(quote, "delivery", None), "postal_code", "") if getattr(quote, "delivery", None) else "",
+            "reference": getattr(getattr(quote, "delivery", None), "reference", "") if getattr(quote, "delivery", None) else "",
+            "notes": getattr(getattr(quote, "delivery", None), "notes", "") if getattr(quote, "delivery", None) else "",
+            "shipping_cost": float(getattr(getattr(quote, "delivery", None), "shipping_cost", 0) or 0) if getattr(quote, "delivery", None) else 0.0,
+            "shipping_rate": float(getattr(getattr(quote, "delivery", None), "shipping_rate", 0) or 0) if getattr(quote, "delivery", None) else 0.0,
+        },
     }
 
 
