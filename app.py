@@ -193,6 +193,18 @@ def _is_rate_limited(rule, scope_key: str) -> tuple[bool, int]:
     return False, 0
 
 
+@app.errorhandler(413)
+def handle_request_entity_too_large(error):
+    # La validación del logo ya limita el archivo a 3 MB. Dependiendo de la
+    # versión de Werkzeug, el parser multipart puede cortar antes de entrar
+    # al endpoint; convertir ese 413 en una respuesta controlada evita que el
+    # usuario vea un error genérico y mantiene el flujo de configuración.
+    if request.path.rstrip("/") == "/admin/company-logo/upload":
+        flash("El logo supera el tamaño máximo de 3 MB.", "danger")
+        return redirect(url_for("company_billing.company_settings", panel="company"))
+    return error
+
+
 @app.before_request
 def enforce_public_rate_limits():
     if app.config.get("TESTING") and not app.config.get("ENABLE_RATE_LIMITS_IN_TESTS", False):
