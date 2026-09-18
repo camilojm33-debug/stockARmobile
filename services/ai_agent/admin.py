@@ -23,7 +23,7 @@ from services.ai_agent.config_service import (
     get_whatsapp_connection,
     update_ai_preferences,
 )
-from services.ai_agent.usage_service import AI_PLANS
+from services.ai_agent.usage_service import AI_PLANS, can_use_ai
 
 bp = Blueprint("ai_admin", __name__, url_prefix="/dashboard/ai-agent")
 
@@ -125,6 +125,10 @@ def index():
         key: get_special_options(company, key)
         for key in ("analista", "marketing")
     }
+    special_access = {
+        key: can_use_ai(company, key)
+        for key in ("analista", "marketing")
+    }
     whatsapp = get_whatsapp_connection(company)
 
     conversations = (
@@ -191,6 +195,7 @@ def index():
         vendor_options=vendor_options,
         special_agents=special_agents,
         special_options=special_options,
+        special_access=special_access,
         ai_plans=AI_PLANS,
     )
 
