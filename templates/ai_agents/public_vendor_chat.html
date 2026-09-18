@@ -27,6 +27,10 @@
     .wrap { width: min(1280px, calc(100% - 24px)); margin: 18px auto 32px; }
     .page-head { display: flex; align-items: center; justify-content: space-between; gap: 16px; margin-bottom: 14px; }
     .brand-title { font-size: clamp(1.15rem, 2vw, 1.5rem); font-weight: 850; letter-spacing: -.02em; }
+    .merchant-brand { display:flex; align-items:center; gap:12px; min-width:0; }
+    .merchant-logo { width:52px; height:52px; border-radius:14px; border:1px solid var(--line); background:#fff; display:grid; place-items:center; overflow:hidden; flex:0 0 auto; }
+    .merchant-logo img { width:100%; height:100%; object-fit:contain; padding:6px; display:block; }
+    .merchant-logo-placeholder { color:#94a3b8; font-size:1.35rem; }
     .brand-sub { color: var(--muted); font-size: .88rem; margin-top: 4px; }
     .status-pill { display: inline-flex; align-items: center; gap: 7px; padding: 8px 11px; border: 1px solid #bbf7d0; background: #f0fdf4; color: var(--success); border-radius: 999px; font-size: .78rem; font-weight: 750; white-space: nowrap; }
     .status-pill.off { border-color: #fecaca; background: #fef2f2; color: var(--danger); }
@@ -131,9 +135,18 @@
 <body>
   <main class="wrap">
     <header class="page-head">
-      <div>
-        <div class="brand-title">🤖 Vendedor IA · {{ company.name or 'StockArMobile' }}</div>
-        <div class="brand-sub">Comprá desde el catálogo o hablá con el Vendedor IA. Atención 24/7.</div>
+      <div class="merchant-brand">
+        <div class="merchant-logo">
+          {% if company.logo %}
+            <img src="{{ company.logo if company.logo.startswith('http') or company.logo.startswith('/') else url_for('static', filename=company.logo) }}" alt="Logo de {{ company.name or 'tu comercio' }}">
+          {% else %}
+            <span class="merchant-logo-placeholder">🏪</span>
+          {% endif %}
+        </div>
+        <div>
+          <div class="brand-title">{{ company.name or 'StockArMobile' }}</div>
+          <div class="brand-sub">🤖 Vendedor IA 24/7 · Comprá desde el catálogo o hablá con nosotros.</div>
+        </div>
       </div>
       <div class="status-pill {% if disabled_reason %}off{% endif %}">
         <span>●</span> {% if disabled_reason %}No disponible{% else %}Disponible{% endif %}
