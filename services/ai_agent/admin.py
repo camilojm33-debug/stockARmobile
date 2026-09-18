@@ -126,7 +126,7 @@ def index():
         for key in ("analista", "marketing")
     }
     special_access = {
-        key: can_use_ai(company, key)
+        key: can_use_ai_feature(company, key)
         for key in ("analista", "marketing")
     }
     whatsapp = get_whatsapp_connection(company)
