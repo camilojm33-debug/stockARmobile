@@ -26,7 +26,7 @@ from services.ai_agent.config_service import (
     get_whatsapp_connection,
     update_ai_preferences,
 )
-from services.ai_agent.usage_service import AI_PLANS, AGENT_LABELS, can_use_ai, current_plan, usage_snapshot
+from services.ai_agent.usage_service import AI_PLANS, AGENT_LABELS, can_use_ai, can_use_ai_feature, current_plan, usage_snapshot
 from stockarmobile.extensions import db
 from stockarmobile.models.conversations import Conversation
 from stockarmobile.decorators import company_admin_required
@@ -425,12 +425,24 @@ def index():
 @bp.get("/campanas")
 @tenant_required
 def campaigns():
+    entitlement = can_use_ai_feature(current_user.company, "marketing")
+    if not entitlement.allowed:
+        return render_template(
+            "ai_agents/index.html",
+            view="locked",
+            locked_agent="marketing",
+            locked_reason=entitlement.reason,
+            **_context(),
+        )
     return render_template("ai_agents/campaigns.html", campaigns=_campaign_rows(current_user.company_id), campaign_summary=_campaign_summary(current_user.company_id), **_context())
 
 
 @bp.get("/campanas/<int:campaign_id>")
 @tenant_required
 def campaign_detail(campaign_id):
+    entitlement = can_use_ai_feature(current_user.company, "marketing")
+    if not entitlement.allowed:
+        abort(403)
     campaign = CampaignService._campaign(current_user.company_id, campaign_id)
     if campaign is None:
         from flask import abort
@@ -442,7 +454,7 @@ def campaign_detail(campaign_id):
 @company_admin_required
 def vendor_webchat_toggle():
     company = current_user.company
-    access = can_use_ai(company, "vendedor")
+    access = can_use_ai_feature(company, "vendedor")
     if not access.allowed:
         flash(access.reason or "Tu plan no incluye el Vendedor IA.", "warning")
         return redirect(url_for("ai_agents.agent", agent="planes"))
@@ -457,6 +469,10 @@ def vendor_webchat_toggle():
 @bp.post("/campanas/<int:campaign_id>/edit")
 @company_admin_required
 def campaign_edit(campaign_id):
+    entitlement = can_use_ai_feature(current_user.company, "marketing")
+    if not entitlement.allowed:
+        flash(entitlement.reason or "Tu plan no incluye Marketing IA.", "warning")
+        return redirect(url_for("ai_agents.agent", agent="planes"))
     try:
         CampaignService.update_draft(company_id=current_user.company_id, campaign_id=campaign_id, title=request.form.get("title", ""), objective=request.form.get("objective", ""), content=request.form.get("content", ""), user_id=current_user.id)
         db.session.commit()
@@ -470,6 +486,10 @@ def campaign_edit(campaign_id):
 @bp.post("/campanas/<int:campaign_id>/transition")
 @company_admin_required
 def campaign_transition(campaign_id):
+    entitlement = can_use_ai_feature(current_user.company, "marketing")
+    if not entitlement.allowed:
+        flash(entitlement.reason or "Tu plan no incluye Marketing IA.", "warning")
+        return redirect(url_for("ai_agents.agent", agent="planes"))
     target_status = request.form.get("status", "")
     try:
         CampaignService.transition(company_id=current_user.company_id, campaign_id=campaign_id, target_status=target_status, user_id=current_user.id)
