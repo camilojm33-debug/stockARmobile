@@ -27,7 +27,7 @@ from services.ai_agent.config_service import (
     update_ai_preferences,
 )
 from services.ai_agent.usage_service import AI_PLANS, AGENT_LABELS, can_use_ai, can_use_ai_feature, current_plan, usage_snapshot
-from stockarmobile.extensions import db
+from stockarmobile.extensions import csrf, db
 from stockarmobile.models.conversations import Conversation
 from stockarmobile.decorators import company_admin_required
 from stockarmobile.permissions import can_access_ai
@@ -423,7 +423,7 @@ def public_vendor_chat_message(token):
         return jsonify({"success": False, "error": "No se pudo procesar la consulta. Intentá nuevamente."}), 500
 
 
-@bp.get("/")
+# The legacy public Vendedor endpoint is anonymous; signed token + tenant lookup + rate limit protect it.\ncsrf.exempt(public_vendor_chat_message)\n\n@bp.get("/")
 @tenant_required
 def index():
     return render_template("ai_agents/index.html", view="dashboard", **_context())
