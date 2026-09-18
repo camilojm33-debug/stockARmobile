@@ -735,8 +735,12 @@
       {% elif current_user.role == 'seller' %}
       {% if current_user.company_id %}
       <div class="nav-section-label">Operación</div>
+      {% if current_user.role == 'admin' or current_user_has_permission('sales') %}
       <a class="nav-link {% if request.endpoint and request.endpoint.startswith('sales.') %}active{% endif %}" href="{{ url_for('sales.index') }}"><i class="bi bi-bag-check"></i><span class="nav-text">Ventas</span></a>
+      {% endif %}
+      {% if current_user.role == 'admin' or current_user_has_permission('quotes_view') %}
       <a class="nav-link {% if request.endpoint and request.endpoint.startswith('quotes.') %}active{% endif %}" href="{{ url_for('quotes.index') }}"><i class="bi bi-file-earmark-text"></i><span class="nav-text">Presupuestos</span></a>
+      {% endif %}
       {% endif %}
       <div class="nav-section-label">Referidos</div>
       <a class="nav-link {% if request.endpoint == 'referrals.seller_dashboard' %}active{% endif %}" href="{{ url_for('referrals.seller_dashboard') }}"><i class="bi bi-speedometer2"></i>Portal de Vendedor</a>
@@ -747,13 +751,25 @@
       <div class="nav-section-label">Operación</div>
       <a class="nav-link {% if request.endpoint and request.endpoint.startswith('sales.') %}active{% endif %}" href="{{ url_for('sales.index') }}"><i class="bi bi-bag-check"></i><span class="nav-text">Ventas</span></a>
       <a class="nav-link {% if request.endpoint and request.endpoint.startswith('quotes.') %}active{% endif %}" href="{{ url_for('quotes.index') }}"><i class="bi bi-file-earmark-text"></i><span class="nav-text">Presupuestos</span></a>
+      {% if current_user.role == 'admin' or current_user_has_permission('inventory') %}
       <a class="nav-link {% if request.endpoint and request.endpoint.startswith('products.') %}active{% endif %}" href="{{ url_for('products.index') }}"><i class="bi bi-box-seam"></i><span class="nav-text">Productos</span></a>
+      {% endif %}
+      {% if current_user.role == 'admin' or current_user_has_permission('cash') %}
       <a class="nav-link {% if request.endpoint and request.endpoint.startswith('cash.') %}active{% endif %}" href="{{ url_for('cash.index') }}"><i class="bi bi-cash-coin"></i><span class="nav-text">Caja</span></a>
+      {% endif %}
+      {% if current_user.role == 'admin' or current_user_has_permission('clients') %}
       <a class="nav-link {% if request.endpoint and request.endpoint.startswith('clients.') %}active{% endif %}" href="{{ url_for('clients.index') }}"><i class="bi bi-people"></i><span class="nav-text">Clientes</span></a>
+      {% endif %}
       <a class="nav-link {% if request.endpoint and request.endpoint.startswith('purchases.') %}active{% endif %}" href="{{ url_for('purchases.index') }}"><i class="bi bi-truck"></i><span class="nav-text">Compras</span></a>
+      {% if current_user.role == 'admin' or current_user_has_permission('reports') %}
       <a class="nav-link {% if request.endpoint and request.endpoint.startswith('reports.') %}active{% endif %}" href="{{ url_for('reports.index') }}"><i class="bi bi-file-earmark-bar-graph"></i><span class="nav-text">Reportes</span></a>
+      {% endif %}
+      {% if current_user.role == 'admin' %}
       <a class="nav-link {% if request.endpoint and request.endpoint.startswith('expenses.') %}active{% endif %}" href="{{ url_for('expenses.index') }}"><i class="bi bi-receipt"></i><span class="nav-text">Gastos</span></a>
+      {% endif %}
+      {% if current_user.role == 'admin' or current_user_has_permission('inventory') %}
       <a class="nav-link {% if request.endpoint and request.endpoint.startswith('qr_labels.') %}active{% endif %}" href="{{ url_for('qr_labels.generate') }}"><i class="bi bi-qr-code"></i><span class="nav-text">QR y etiquetas</span></a>
+      {% endif %}
       <div class="nav-section-label">Resumen</div>
       <a class="nav-link {% if request.endpoint == 'dashboard.index' %}active{% endif %}" href="{{ url_for('dashboard.index') }}"><i class="bi bi-grid-1x2"></i><span class="nav-text">Panel principal</span></a>
       <a class="nav-link {% if request.endpoint == 'dashboard.quick_start' %}active{% endif %}" href="{{ url_for('dashboard.quick_start') }}"><i class="bi bi-lightning-charge"></i><span class="nav-text">Inicio rápido</span></a>
@@ -761,7 +777,7 @@
       {% if current_user.is_authenticated and (current_user.role in ["admin", "superadmin"] or '"ai_access"' in _ai_permissions) %}
       <a class="nav-link {% if request.endpoint and request.endpoint.startswith('ai_agents.') %}active{% endif %}" href="{{ url_for('ai_agents.index') }}"><i class="bi bi-robot"></i><span class="nav-text">IA para tu negocio</span></a> <!-- AI_NAV_PERMISSION_FINAL -->
       {% endif %}
-      {% if current_user.role in ['admin', 'user'] %}
+      {% if current_user.role == 'admin' %}
       <a class="nav-link {% if request.endpoint == 'company_billing.company_settings' %}active{% endif %}" href="{{ url_for('company_billing.company_settings') }}"><i class="bi bi-building"></i><span class="nav-text">Mi empresa</span></a>
       {% endif %}
       {% if current_user.role == 'admin' %}
