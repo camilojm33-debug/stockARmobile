@@ -86,6 +86,7 @@ def test_plan_matrix_is_enforced_by_can_use_ai(qa_ai_database, plan_code):
 def test_plan_feature_entitlements(qa_ai_database, plan_code, pricing_allowed, invoice_allowed):
     company = qa_ai_database["companies"][plan_code]
     assert can_use_ai_feature(company, "pricing_controller").allowed is pricing_allowed
+    assert can_use_ai_feature(company, "pricing_rollback").allowed is (plan_code == "pro")
     assert can_use_ai_feature(company, "facturas").allowed is invoice_allowed
 
 
