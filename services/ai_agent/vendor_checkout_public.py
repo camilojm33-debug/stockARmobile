@@ -142,13 +142,10 @@ def _guard_public_mutations() -> object | None:
     if request.method not in {"POST", "PUT", "PATCH", "DELETE"}:
         return None
 
-    if request.content_length is not None and request.content_length > PUBLIC_POST_MAX_BYTES:
-        return jsonify({"success": False, "error": "La solicitud es demasiado grande."}), 413
-
-    raw_body = request.get_data(cache=True, as_text=False)
-    if len(raw_body) > PUBLIC_POST_MAX_BYTES:
-        return jsonify({"success": False, "error": "La solicitud es demasiado grande."}), 413
-
+    # Este guard protege únicamente las mutaciones del Vendedor público.
+    # No debe leer ni limitar el body de otros endpoints POST (por ejemplo,
+    # la carga del logo de empresa), porque esos endpoints pueden manejar
+    # multipart con archivos de varios MB.
     parts = [part for part in request.path.strip("/").split("/") if part]
     if len(parts) < 3 or parts[0] != "vendedor":
         return None
@@ -156,6 +153,13 @@ def _guard_public_mutations() -> object | None:
     endpoint_key = "/".join(parts[2:])
     if endpoint_key not in _PUBLIC_MUTATION_ENDPOINTS:
         return None
+
+    if request.content_length is not None and request.content_length > PUBLIC_POST_MAX_BYTES:
+        return jsonify({"success": False, "error": "La solicitud es demasiado grande."}), 413
+
+    raw_body = request.get_data(cache=True, as_text=False)
+    if len(raw_body) > PUBLIC_POST_MAX_BYTES:
+        return jsonify({"success": False, "error": "La solicitud es demasiado grande."}), 413
 
     try:
         company = _public_available_company(parts[1])
