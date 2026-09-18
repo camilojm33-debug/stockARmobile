@@ -166,15 +166,23 @@ def index():
         ai_key_configured = bool((os.getenv("AI_PROVIDER_API_KEY") or os.getenv("OPENAI_API_KEY") or "").strip()) or provider in {"lmstudio", "lm_studio"}
     ai_enabled = bool(prefs["ai_agent"].get("enabled", True))
     whatsapp_connected = bool(whatsapp.get("enabled") and whatsapp.get("phone_number_id"))
+    agent_key_by_name = {
+        VENDOR_AGENT_NAME: "vendedor",
+        BUSINESS_AGENT_NAME: "asistente",
+    }
     agent_states = {}
     for name, agent in agents.items():
-        if not ai_enabled or not agent.active:
+        agent_key = agent_key_by_name.get(name)
+        entitlement = can_use_ai_feature(company, agent_key) if agent_key else None
+        if entitlement is not None and not entitlement.allowed:
+            agent_states[name] = {"label": "No incluido en el plan", "tone": "secondary"}
+        elif not ai_enabled or not agent.active:
             agent_states[name] = {"label": "Desactivado", "tone": "danger"}
         elif not ai_key_configured:
             agent_states[name] = {"label": "Configuración pendiente", "tone": "warning"}
         else:
             agent_states[name] = {"label": "Activo", "tone": "success"}
-    if whatsapp_connected and ai_enabled and agents[VENDOR_AGENT_NAME].active:
+    if whatsapp_connected and ai_enabled and agents[VENDOR_AGENT_NAME].active and can_use_ai_feature(company, "vendedor").allowed:
         whatsapp_state = {"label": "Conectado", "tone": "success"}
     elif whatsapp.get("enabled"):
         whatsapp_state = {"label": "Configuración pendiente", "tone": "warning"}
