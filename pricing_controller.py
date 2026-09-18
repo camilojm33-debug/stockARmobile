@@ -393,6 +393,10 @@ def rollback(batch_id: int):
     blocked = _ai_pricing_entitlement()
     if blocked is not None:
         return blocked
+    rollback_access = can_use_ai_feature(current_user.company, "pricing_rollback")
+    if not rollback_access.allowed:
+        flash(rollback_access.reason or "El rollback de precios requiere IA PRO.", "warning")
+        return redirect(url_for("pricing_controller.index"))
     batch = PriceControllerBatch.query.filter_by(id=batch_id, company_id=current_user.company_id).first_or_404()
     if batch.status not in {"applied", "partial_rollback"}:
         flash("Ese ajuste no puede revertirse desde su estado actual.", "warning")
