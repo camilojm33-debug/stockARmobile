@@ -760,6 +760,38 @@ def test_dashboard_economic_metrics_are_permission_protected():
     assert "Ganancia hoy" in granted_html
 
 
+def test_employee_notifications_match_granted_permissions():
+    client = stock_app.app.test_client()
+
+    client.post("/auth/login", data={"username": "empresa_admin", "password": "admin123"})
+    response = client.get("/api/notifications")
+    assert response.status_code == 200
+    payload = response.get_json()
+    assert payload["items"] == []
+
+    with stock_app.app.app_context():
+        employee = User.query.filter_by(username="empresa_admin").first()
+        assert employee is not None
+        employee.permissions_json = json.dumps(["sales"])
+        db.session.commit()
+
+    granted = client.get("/api/notifications")
+    assert granted.status_code == 200
+    granted_payload = granted.get_json()
+    assert granted_payload["items"]
+    assert all(item.get("permission") == "sales" or item.get("href", "").startswith("/ventas/") for item in granted_payload["items"])
+
+    with stock_app.app.app_context():
+        employee = User.query.filter_by(username="empresa_admin").first()
+        employee.permissions_json = json.dumps(["clients"])
+        db.session.commit()
+
+    clients_only = client.get("/api/notifications")
+    assert clients_only.status_code == 200
+    clients_payload = clients_only.get_json()
+    assert all("ventas" not in (item.get("href") or "") and "ventas" not in (item.get("title") or "").lower() for item in clients_payload["items"])
+
+
 def test_exports_and_security_methods():
     client = stock_app.app.test_client()
     client.post("/auth/login", data={"username": "empresa_admin", "password": "admin123"})
