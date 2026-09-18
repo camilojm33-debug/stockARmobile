@@ -222,7 +222,7 @@ def _ai_order_channel(company_id: int, quote_id: int, payment=None) -> str:
 
     New AI order payment references contain the conversation_id, allowing us to
     read the persisted Conversation.channel instead of assuming WhatsApp.
-    Legacy records without that reference keep the historical WhatsApp fallback.
+    Legacy records without that reference are presented as Webchat because the current AI order flow is web-based.
     """
     from stockarmobile.models.conversations import Conversation
 
@@ -236,7 +236,7 @@ def _ai_order_channel(company_id: int, quote_id: int, payment=None) -> str:
         ).first()
         if conversation is not None:
             return str(conversation.channel or "unknown").strip().lower() or "unknown"
-    return "whatsapp"
+    return "webchat"
 
 
 def _ai_order_channel_meta(channel: str) -> dict:
