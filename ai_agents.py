@@ -127,7 +127,7 @@ def _context():
     ai_plan = current_plan(company)
     ai_usage = usage_snapshot(company_id)
     agent_access = {key: can_use_ai(company, key) for key in AGENT_LABELS}
-    invoice_access = can_use_ai(company, "facturas")
+    invoice_access = can_use_ai_feature(company, "facturas")
 
     any_chat_agent = any(access.allowed for access in agent_access.values())
     default_chat_agent = "asistente"
