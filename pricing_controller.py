@@ -7,7 +7,7 @@ from typing import Optional
 
 from flask import Blueprint, flash, redirect, render_template, request, url_for
 from flask_login import current_user
-from sqlalchemy import Numeric
+from sqlalchemy import Numeric, false, or_
 
 from app import Company, Product, Supplier, db, record_audit, scope_query_to_company, utcnow
 from stockarmobile.decorators import company_admin_required
@@ -202,9 +202,9 @@ def _products_for_rules(rules):
         ).first()
         if supplier_row is None:
             # Never accept a supplier value that is not part of the current tenant.
-            return query.filter(db.false())
+            return query.filter(false())
         query = query.filter(
-            db.or_(
+            or_(
                 Product.supplier_id == supplier_row.id,
                 Product.supplier == supplier_row.name,
             )
