@@ -162,3 +162,28 @@ def test_enums_keep_public_values():
     assert UserRole.ADMIN.value == "admin"
     assert SaleStatus.CONFIRMED.value == "confirmada"
     assert QuoteStatus.APROBADO.value == "APROBADO"
+
+
+
+def test_employee_endpoint_permission_matrix():
+    from stockarmobile.permissions import EMPLOYEE_ADMIN_ONLY, employee_endpoint_permission
+
+    assert employee_endpoint_permission("sales.index", "GET") == "sales"
+    assert employee_endpoint_permission("products.index", "GET") == "inventory"
+    assert employee_endpoint_permission("clients.index", "GET") == "clients"
+    assert employee_endpoint_permission("reports.index", "GET") == "reports"
+    assert employee_endpoint_permission("cash.index", "GET") == "cash"
+    assert employee_endpoint_permission("ai_agents.index", "GET") == "ai_access"
+    assert employee_endpoint_permission("whatsapp_agent.ai_orders", "GET") == "ai_access"
+    assert employee_endpoint_permission("company_billing.company_settings", "GET") == EMPLOYEE_ADMIN_ONLY
+    assert employee_endpoint_permission("quotes.index", "GET") == "quotes_view"
+    assert employee_endpoint_permission("quotes.new_quote", "GET") == "quotes_create"
+    assert employee_endpoint_permission("quotes.edit_quote", "POST") == "quotes_edit"
+    assert employee_endpoint_permission("quotes.duplicate_quote", "POST") == "quotes_duplicate"
+    assert employee_endpoint_permission("quotes.delete_quote", "POST") == "quotes_delete"
+    assert employee_endpoint_permission("quotes.quote_pdf", "GET") == "quotes_download_pdf"
+    assert employee_endpoint_permission("quotes.quote_print", "GET") == "quotes_print"
+    assert employee_endpoint_permission("quotes.convert_to_sale", "POST") == "quotes_convert"
+    assert employee_endpoint_permission("quotes.email_quote", "POST") == "quotes_email"
+    assert employee_endpoint_permission("dashboard.index", "GET") is None
+    assert employee_endpoint_permission("support.new_ticket", "GET") is None
