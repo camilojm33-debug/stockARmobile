@@ -636,39 +636,45 @@
     }
 
     async function searchProducts() {
-      const query = searchEl.value.trim();
-      if (!query) {
+      const query = searchEl ? searchEl.value.trim() : '';
+      const normalized = query.toLocaleLowerCase('es-AR');
+
+      if (!normalized) {
         renderProducts(initialCatalog);
         return;
       }
 
-      // La vista previa no tiene chat_url ni endpoints públicos porque todavía
-      // no está publicada. En ese caso, el buscador debe seguir funcionando
-      // sobre el catálogo ya renderizado, sin depender de una API inexistente.
-      if (!catalogEndpoint) {
-        const normalized = query.toLocaleLowerCase('es-AR');
-        const filtered = (Array.isArray(initialCatalog) ? initialCatalog : []).filter(function (product) {
-          return [
-            product.name,
-            product.brand,
-            product.category,
-            product.barcode,
-            product.description
-          ].some(function (value) {
-            return String(value || '').toLocaleLowerCase('es-AR').includes(normalized);
-          });
+      // Primero filtramos el catálogo ya cargado. Esto hace que el buscador
+      // funcione incluso si el endpoint HTTP de catálogo tarda o falla.
+      const localFiltered = (Array.isArray(initialCatalog) ? initialCatalog : []).filter(function (product) {
+        return [
+          product.name,
+          product.brand,
+          product.category,
+          product.barcode,
+          product.description
+        ].some(function (value) {
+          return String(value || '').toLocaleLowerCase('es-AR').includes(normalized);
         });
-        renderProducts(filtered);
+      });
+
+      if (localFiltered.length > 0 || !catalogEndpoint) {
+        renderProducts(localFiltered);
         return;
       }
 
+      // Si el producto no está entre los primeros productos cargados, buscamos
+      // en el catálogo completo del comercio como respaldo.
       try {
         const url = new URL(catalogEndpoint, window.location.origin);
         url.searchParams.set('q', query);
-        const data = await requestJson(url.toString(), { credentials: 'same-origin' });
+        const data = await requestJson(url.toString(), { credentials: 'include' });
         renderProducts(data.products || []);
       } catch (err) {
-        productsEl.innerHTML = '<div class="catalog-empty">No se pudo cargar el catálogo. Probá nuevamente.</div>';
+        renderProducts([]);
+        if (error) {
+          error.textContent = 'No se pudo consultar el catálogo completo. Probá nuevamente.';
+        }
       }
     }
 
