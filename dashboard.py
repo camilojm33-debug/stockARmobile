@@ -9,7 +9,7 @@ from stockarmobile.extensions import csrf, db
 from stockarmobile.models.conversations import Conversation
 from services.ai_agent.config_service import ensure_agent_for_key
 from services.ai_agent.providers.base import AIProviderError
-from services.ai_agent.usage_service import can_use_ai
+from services.ai_agent.usage_service import can_use_ai, can_use_ai_feature
 from stockarmobile.permissions import can_access_ai
 from services.ai_agent.orchestrator import AgentOrchestrator
 from services.ai_agent.orchestrator_v2 import AgentRuntime
@@ -307,7 +307,7 @@ def invoice_preview(upload_id):
         return jsonify({"success": False, "error": "Factura no encontrada."}), 404
     from app import Company
     company = Company.query.filter_by(id=company_id).first()
-    access = can_use_ai(company, "facturas")
+    access = can_use_ai_feature(company, "facturas")
     if not access.allowed:
         return jsonify({"success": False, "error": access.reason}), 403
     return jsonify({"success": True, "status": found[4].get("status"), "preview": found[4].get("invoice"), "original_name": found[4].get("original_name")})
@@ -322,7 +322,7 @@ def resolve_invoice_line(upload_id):
         return jsonify({"success": False, "error": "Factura no encontrada."}), 404
     from app import Company
     company = Company.query.filter_by(id=company_id).first()
-    access = can_use_ai(company, "facturas")
+    access = can_use_ai_feature(company, "facturas")
     if not access.allowed:
         return jsonify({"success": False, "error": access.reason}), 403
     conversation, metadata, uploads, index, upload = found
@@ -384,7 +384,7 @@ def confirm_invoice(upload_id):
         return jsonify({"success": False, "error": "Factura no encontrada."}), 404
     from app import Company
     company = Company.query.filter_by(id=company_id).first()
-    access = can_use_ai(company, "facturas")
+    access = can_use_ai_feature(company, "facturas")
     if not access.allowed:
         return jsonify({"success": False, "error": access.reason}), 403
     conversation, metadata, uploads, index, upload = found
