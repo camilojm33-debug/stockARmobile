@@ -1,0 +1,101 @@
+name: Production stress test (100 VUs)
+
+on:
+  push:
+    branches:
+      - stress-test/100-vusers-20260918
+
+jobs:
+  stress:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Run controlled read-only production load
+        env:
+          BASE_URL: https://stockarmobile.onrender.com
+          SLUG: rTFM60OM3xu0kHk1
+        run: |
+          python3 - <<'PY'
+          import concurrent.futures
+          import json
+          import statistics
+          import time
+          import urllib.request
+          import urllib.error
+          import os
+
+          base = os.environ["BASE_URL"].rstrip("/")
+          slug = os.environ["SLUG"]
+
+          def hit(url):
+              start = time.perf_counter()
+              status = None
+              size = 0
+              error = None
+              try:
+                  req = urllib.request.Request(
+                      url,
+                      headers={
+                          "User-Agent": "StockArmobile-StressTest/1.0",
+                          "Cache-Control": "no-cache",
+                          "Accept": "text/html,application/json,*/*",
+                      },
+                  )
+                  with urllib.request.urlopen(req, timeout=25) as resp:
+                      body = resp.read()
+                      status = resp.status
+                      size = len(body)
+              except urllib.error.HTTPError as exc:
+                  status = exc.code
+                  try:
+                      size = len(exc.read())
+                  except Exception:
+                      pass
+              except Exception as exc:
+                  error = f"{type(exc).__name__}: {exc}"
+              elapsed = (time.perf_counter() - start) * 1000.0
+              return {"status": status, "ms": elapsed, "size": size, "error": error}
+
+          tests = [
+              ("vendor_page", lambda i: f"{base}/vendedor/{slug}?vu={i}"),
+              ("catalog_query", lambda i: f"{base}/vendedor/{slug}/catalog?q=stress-{i}"),
+              ("vendor_state", lambda i: f"{base}/vendedor/{slug}/state?vu={i}"),
+          ]
+
+          all_results = {}
+
+          for name, make_url in tests:
+              # Three waves of 100 concurrent read-only virtual users.
+              results = []
+              for wave in range(3):
+                  with concurrent.futures.ThreadPoolExecutor(max_workers=100) as pool:
+                      batch = list(pool.map(lambda i: hit(make_url(i)), range(wave * 100, (wave + 1) * 100)))
+                  results.extend(batch)
+                  time.sleep(1)
+
+              latencies = sorted(r["ms"] for r in results)
+              statuses = {}
+              for r in results:
+                  statuses[str(r["status"])] = statuses.get(str(r["status"]), 0) + 1
+              failed = [r for r in results if r["error"] or (r["status"] or 0) >= 500]
+              all_results[name] = {
+                  "requests": len(results),
+                  "statuses": statuses,
+                  "errors": len(failed),
+                  "min_ms": round(min(latencies), 1),
+                  "p50_ms": round(statistics.median(latencies), 1),
+                  "p95_ms": round(latencies[max(0, int(len(latencies) * 0.95) - 1)], 1),
+                  "max_ms": round(max(latencies), 1),
+                  "avg_ms": round(statistics.mean(latencies), 1),
+                  "bytes_avg": round(statistics.mean(r["size"] for r in results), 1),
+              }
+
+          print(json.dumps(all_results, indent=2, ensure_ascii=False))
+
+          total_errors = sum(v["errors"] for v in all_results.values())
+          total_requests = sum(v["requests"] for v in all_results.values())
+          print(f"TOTAL_REQUESTS={total_requests}")
+          print(f"TOTAL_ERRORS={total_errors}")
+          if total_errors:
+              raise SystemExit(1)
+          PY
