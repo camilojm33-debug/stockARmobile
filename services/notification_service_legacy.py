@@ -314,8 +314,7 @@ def _build_user_notifications():
     company_state = get_company_access_state(company_id) if company_id else {"status": "missing", "can_access": False}
 
     items = _build_recent_quote_acceptance_notifications()
-    if getattr(current_user, "role", None) == "admin" or "sales" in _employee_permissions():
-        items.append({"type": "success", "title": "Ventas", "body": f"{sales_today} venta(s) hoy · ${float(sales_amount):.2f}", "href": "/ventas/", "permission": "sales"})
+    items.append({"type": "success", "title": "Ventas", "body": f"{sales_today} venta(s) hoy · ${float(sales_amount):.2f}", "href": "/ventas/", "permission": "sales"})
 
     if low_stock or out_stock:
         items.append(
@@ -346,7 +345,18 @@ def _build_user_notifications():
             }
         )
 
-    if open_cash or pending_purchases:
+    if getattr(current_user, "role", None) == "user":
+        if open_cash:
+            items.append(
+                {
+                    "type": "secondary",
+                    "title": "Caja",
+                    "body": f"Tu usuario tiene {open_cash} caja(s) abierta(s).",
+                    "href": "/caja/",
+                    "permission": "cash",
+                }
+            )
+    elif open_cash or pending_purchases:
         items.append(
             {
                 "type": "secondary",
