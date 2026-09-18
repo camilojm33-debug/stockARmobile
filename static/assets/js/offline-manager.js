@@ -1,5 +1,6 @@
 (function () {
   function installAiOrdersNav() {
+    if (document.body?.dataset?.aiVendorEnabled !== '1') return;
     const nav = document.querySelector('.app-nav');
     if (!nav || nav.querySelector('a[href="/pedidos-ia"]')) return;
     const links = Array.from(nav.querySelectorAll('a.nav-link'));
@@ -15,6 +16,7 @@
   }
 
   function installPricingControllerNav() {
+    if (document.body?.dataset?.aiPricingEnabled !== '1') return;
     const nav = document.querySelector('.app-nav');
     if (!nav || nav.querySelector('a[href="/precios/"]')) return;
     const links = Array.from(nav.querySelectorAll('a.nav-link'));
@@ -30,6 +32,7 @@
   }
 
   function installPricingControllerShortcut() {
+    if (document.body?.dataset?.aiPricingEnabled !== '1') return;
     if (!window.location.pathname.startsWith('/productos')) return;
     if (document.querySelector('[data-price-controller-shortcut="true"]')) return;
 
