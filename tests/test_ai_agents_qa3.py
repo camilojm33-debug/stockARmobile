@@ -235,6 +235,39 @@ def test_backend_blocks_unincluded_agent_before_provider_and_without_campaign(qa
     assert Campaign.query.filter_by(company_id=company.id).count() == 0
 
 
+def test_pricing_tools_follow_plan_entitlements(qa_ai_database):
+    expected = {
+        "inicio": set(),
+        "negocio": {
+            "consultar_precios",
+            "analizar_oportunidades_precios",
+            "previsualizar_cambio_precios",
+            "confirmar_cambio_precios",
+        },
+        "pro": {
+            "consultar_precios",
+            "analizar_oportunidades_precios",
+            "previsualizar_cambio_precios",
+            "confirmar_cambio_precios",
+            "revertir_cambio_precios",
+        },
+    }
+    for plan_code, expected_pricing_tools in expected.items():
+        company = qa_ai_database["companies"][plan_code]
+        names = {
+            item["function"]["name"]
+            for item in AgentRuntime._tool_definitions("asistente", company_id=company.id)
+        }
+        pricing_names = {name for name in names if name in {
+            "consultar_precios",
+            "analizar_oportunidades_precios",
+            "previsualizar_cambio_precios",
+            "confirmar_cambio_precios",
+            "revertir_cambio_precios",
+        }}
+        assert pricing_names == expected_pricing_tools
+
+
 def test_agent_selection_restricts_tools_and_preserves_isolation(qa_ai_database):
     company = qa_ai_database["companies"]["pro"]
     expected_tools = {
