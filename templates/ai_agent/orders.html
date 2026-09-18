@@ -13,7 +13,7 @@
         <div class="ai-orders-hero-kicker"><i class="bi bi-stars"></i> Operación con IA</div>
         <div class="d-flex flex-wrap align-items-center gap-2 mb-2">
           <h1 class="h2 fw-bold mb-0">Pedidos IA</h1>
-          <span class="ai-channel-pill"><i class="bi bi-whatsapp"></i> WhatsApp</span>
+          <span class="ai-channel-pill"><i class="bi {{ summary.channel_icon }}"></i> {{ summary.channel_label }}</span>
         </div>
         <p class="mb-0">Centralizá los pedidos generados por el Vendedor 24/7 y controlá en un solo lugar el pago, la venta y el stock.</p>
       </div>
@@ -112,7 +112,7 @@
         </div>
         <p class="small text-muted mb-0">Pedidos creados por el Vendedor IA y su estado actual.</p>
       </div>
-      <div class="ai-orders-table-channel"><i class="bi bi-whatsapp"></i> Origen WhatsApp</div>
+      <div class="ai-orders-table-channel"><i class="bi {{ summary.channel_icon }}"></i> Origen {{ summary.channel_label }}</div>
     </div>
 
     {% if orders %}
@@ -168,7 +168,7 @@
               {% if order.sale_id %}<div class="small mt-1"><a class="ai-sale-link" href="/ventas/{{ order.sale_id }}">Venta #{{ order.sale_id }}</a></div>{% endif %}
             </td>
             <td data-label="Origen">
-              <span class="ai-origin-chip"><i class="bi bi-whatsapp"></i>WhatsApp</span>
+              <span class="ai-origin-chip"><i class="bi {{ order.channel_icon }}"></i>{{ order.channel_label }}</span>
               <div class="small text-muted mt-1">Vendedor IA</div>
             </td>
             <td data-label="Fecha">
@@ -196,9 +196,9 @@
       <div class="ai-empty-icon"><i class="bi bi-bag-plus"></i></div>
       <span class="ai-empty-kicker">Tu centro de pedidos IA</span>
       <h3 class="h4 fw-bold mb-2">Todavía no hay pedidos</h3>
-      <p class="text-muted mb-4 ai-empty-description">Cuando el Vendedor 24/7 reciba una compra por WhatsApp, vas a verla acá con su pago, estado y venta vinculada.</p>
+      <p class="text-muted mb-4 ai-empty-description">Cuando el Vendedor 24/7 reciba una compra, vas a verla acá con su pago, estado y venta vinculada.</p>
       <div class="ai-empty-steps">
-        <div class="ai-empty-step"><span>1</span><div><strong>Conectá tu canal</strong><small>Configurá WhatsApp y el Vendedor.</small></div></div>
+        <div class="ai-empty-step"><span>1</span><div><strong>Publicá tu canal</strong><small>Compartí el Webchat del Vendedor IA.</small></div></div>
         <div class="ai-empty-step"><span>2</span><div><strong>El Vendedor atiende</strong><small>Busca productos y arma el pedido.</small></div></div>
         <div class="ai-empty-step"><span>3</span><div><strong>El pedido aparece acá</strong><small>Seguís pago, venta y stock.</small></div></div>
       </div>
