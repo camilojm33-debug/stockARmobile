@@ -15,7 +15,7 @@ from sqlalchemy import or_
 
 from stockarmobile.decorators import company_admin_required
 from stockarmobile.tenant import get_current_company_id
-from stockarmobile.extensions import db
+from stockarmobile.extensions import csrf, db
 from stockarmobile.models.conversations import Conversation
 from services.ai_agent.config_service import (
     get_ai_preferences,
@@ -514,7 +514,7 @@ def public_vendor_message(slug: str):
         return jsonify({"success": False, "error": "No se pudo procesar la consulta. Intentá nuevamente."}), 500
 
 
-@company_admin_required
+# Public Vendedor endpoints are intentionally accessible without authenticated CSRF sessions.\n# The signed slug, tenant scoping and rate limit remain the primary protections.\ncsrf.exempt(public_vendor_message)\ncsrf.exempt(public_vendor_catalog)\ncsrf.exempt(public_vendor_state)\ncsrf.exempt(public_vendor_cart)\ncsrf.exempt(public_vendor_checkout)\n\n@company_admin_required
 def publication_page():
     company = _authenticated_company()
     status = publication_status(company)
