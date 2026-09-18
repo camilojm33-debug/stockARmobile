@@ -9,7 +9,7 @@ from flask import Blueprint, flash, redirect, render_template, request, url_for
 from flask_login import current_user
 from sqlalchemy import Numeric
 
-from app import Company, Product, db, record_audit, scope_query_to_company, utcnow
+from app import Company, Product, Supplier, db, record_audit, scope_query_to_company, utcnow
 from stockarmobile.decorators import company_admin_required
 from stockarmobile.tenant import get_current_company_id
 from services.ai_agent.usage_service import can_use_ai_feature
@@ -191,7 +191,24 @@ def _products_for_rules(rules):
     if rules["brand"]:
         query = query.filter(Product.brand == rules["brand"])
     if rules["supplier"]:
-        query = query.filter(Product.supplier == rules["supplier"])
+        # The selector is populated only from the tenant's Supplier master.
+        # Keep compatibility with legacy products that only have the supplier
+        # name in Product.supplier and no supplier_id.
+        company_id = current_user.company_id
+        supplier_row = Supplier.query.filter_by(
+            company_id=company_id,
+            name=rules["supplier"],
+            active=True,
+        ).first()
+        if supplier_row is None:
+            # Never accept a supplier value that is not part of the current tenant.
+            return query.filter(db.false())
+        query = query.filter(
+            db.or_(
+                Product.supplier_id == supplier_row.id,
+                Product.supplier == supplier_row.name,
+            )
+        )
     if rules["only_in_stock"]:
         query = query.filter(Product.stock > 0)
     return query.order_by(Product.id)
@@ -215,7 +232,18 @@ def _form_context(preview=None):
     query = scope_query_to_company(Product.query.filter(Product.active.is_(True)), Product)
     categories = [row[0] for row in query.with_entities(Product.category).distinct().order_by(Product.category).all() if row[0]]
     brands = [row[0] for row in query.with_entities(Product.brand).distinct().order_by(Product.brand).all() if row[0]]
-    suppliers = [row[0] for row in query.with_entities(Product.supplier).distinct().order_by(Product.supplier).all() if row[0]]
+    suppliers = [
+        row[0]
+        for row in scope_query_to_company(
+            Supplier.query.filter(Supplier.active.is_(True)),
+            Supplier,
+        )
+        .with_entities(Supplier.name)
+        .distinct()
+        .order_by(Supplier.name)
+        .all()
+        if row[0]
+    ]
     history = PriceControllerBatch.query.filter_by(company_id=current_user.company_id).order_by(PriceControllerBatch.id.desc()).limit(12).all()
     preview_rows = []
     if preview is not None:
