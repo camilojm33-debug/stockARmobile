@@ -87,7 +87,9 @@
   <div class="ai-summary mb-4">
     <div class="ai-summary-card"><div class="ai-summary-icon"><i class="bi bi-shield-check"></i></div><div class="ai-summary-label">Servicio</div><div class="ai-summary-value">{{ 'Activo' if ai_enabled else 'Pausado' }}</div><div class="ai-summary-help">{{ 'Tus agentes están habilitados.' if ai_enabled else 'La configuración se conserva aunque la IA esté pausada.' }}</div></div>
     <div class="ai-summary-card"><div class="ai-summary-icon"><i class="bi bi-stars"></i></div><div class="ai-summary-label">Plan IA</div><div class="ai-summary-value">{% if prefs.ai_agent.plan_code %}{% for plan in ai_plans %}{% if plan.code == prefs.ai_agent.plan_code %}{{ plan.name }}{% endif %}{% endfor %}{% else %}Sin plan IA{% endif %}</div><div class="ai-summary-help">Las funciones se habilitan según tu plan.</div></div>
+{% if config.get("WHATSAPP_VENDOR_UI_ENABLED", False) %}
     <div class="ai-summary-card"><div class="ai-summary-icon"><i class="bi bi-chat-dots"></i></div><div class="ai-summary-label">WhatsApp</div><div class="ai-summary-value">{{ whatsapp_state.label }}</div><div class="ai-summary-help">Canal preparado para el Vendedor IA 24/7.</div></div>
+{% endif %}
   </div>
 
   <form method="post" action="{{ url_for('ai_admin.save') }}" autocomplete="off">
@@ -108,7 +110,7 @@
     <section class="ai-section mb-3">
       <div class="ai-section-head"><div><div class="ai-section-title"><i class="bi bi-cart3 text-primary me-2"></i>Vendedor IA 24/7</div><div class="ai-section-subtitle">Tu vendedor digital para atender consultas, recomendar productos y preparar pedidos.</div></div><span class="ai-state {{ agent_states['Vendedor 24 hs'].tone }}">{{ agent_states['Vendedor 24 hs'].label }}</span></div>
       <div class="ai-section-body">
-        <div class="ai-agent-top mb-3"><div><div class="fw-bold">Estado del agente</div><div class="small text-muted">{{ 'Puede atender por Webchat o WhatsApp cuando estén habilitados.' if vendor.active else 'El agente está desactivado.' }}</div></div><label class="form-check form-switch fs-5 mb-0"><input class="form-check-input" type="checkbox" name="vendor_enabled" value="1" {% if vendor.active %}checked{% endif %}><span class="visually-hidden">Activar Vendedor IA</span></label></div>
+        <div class="ai-agent-top mb-3"><div><div class="fw-bold">Estado del agente</div><div class="small text-muted">{{ 'Puede atender por Webchat.' if vendor.active else 'El agente está desactivado.' }}</div></div><label class="form-check form-switch fs-5 mb-0"><input class="form-check-input" type="checkbox" name="vendor_enabled" value="1" {% if vendor.active %}checked{% endif %}><span class="visually-hidden">Activar Vendedor IA</span></label></div>
         <div class="ai-switch-card mb-3">
           <div>
             <div class="fw-bold"><i class="bi bi-globe2 text-primary me-2"></i>Publicación web del Vendedor</div>
@@ -133,6 +135,7 @@
       </div>
     </section>
 
+{% if config.get("WHATSAPP_VENDOR_UI_ENABLED", False) %}
     <section class="ai-section mb-3" id="whatsapp-vendedor">
       <div class="ai-section-head"><div><div class="ai-section-title"><i class="bi bi-whatsapp text-success me-2"></i>WhatsApp del Vendedor IA 24/7</div><div class="ai-section-subtitle">Conectá el número comercial desde el que tu Vendedor IA atenderá a tus clientes.</div></div><span class="ai-pill"><i class="bi bi-lock"></i> Credenciales protegidas</span></div>
       <div class="ai-section-body">
@@ -152,6 +155,8 @@
         <div class="alert alert-light border mb-0"><i class="bi bi-shield-lock me-2"></i><strong>Seguridad:</strong> las credenciales quedan asociadas exclusivamente a tu empresa y el Vendedor IA no podrá utilizar WhatsApp hasta que el canal esté correctamente configurado.</div>
       </div>
     </section>
+
+{% endif %}
 
     <section class="ai-section mb-3">
       <div class="ai-section-head"><div><div class="ai-section-title"><i class="bi bi-people text-primary me-2"></i>Permisos de uso</div><div class="ai-section-subtitle">Por seguridad, la administración de IA está reservada al administrador. Los empleados necesitan autorización explícita.</div></div><a class="btn btn-outline-primary" href="{{ url_for('company_billing.company_settings', panel='employees') }}"><i class="bi bi-gear me-1"></i>Administrar permisos</a></div>
