@@ -236,7 +236,10 @@ def save():
         for key in ("analista", "marketing")
     }
     for key, field in (("analista", "analista_enabled"), ("marketing", "marketing_enabled")):
-        special_agents[key].active = request.form.get(field) == "1"
+        # Los agentes bloqueados por plan no envían controles disabled; conservar
+        # su estado evita que guardar otro agente los desactive accidentalmente.
+        if field in request.form:
+            special_agents[key].active = request.form.get(field) == "1"
 
     for name, prefix in ((VENDOR_AGENT_NAME, "vendor"), (BUSINESS_AGENT_NAME, "business")):
         config = configs[name]
