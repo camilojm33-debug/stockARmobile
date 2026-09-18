@@ -5,6 +5,7 @@ from __future__ import annotations
 import hashlib
 import hmac
 import os
+import re
 
 from flask import Blueprint, abort, current_app, jsonify, render_template, request
 from flask_login import current_user, login_required
