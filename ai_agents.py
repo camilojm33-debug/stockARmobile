@@ -508,6 +508,13 @@ def campaign_transition(campaign_id):
     return redirect(url_for("ai_agents.campaign_detail", campaign_id=campaign_id))
 
 
+@bp.get("")
+@tenant_required
+def index():
+    """Central Agentes IA hub; keep a stable endpoint for the main navigation."""
+    return render_template("ai_agents/index.html", view="dashboard", **_context())
+
+
 @bp.get("/<agent>")
 @tenant_required
 def agent(agent):
