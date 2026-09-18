@@ -13,6 +13,7 @@ from decimal import Decimal
 from sqlalchemy import func
 
 from app import Product, Sale, SaleItem, User, db, record_audit, utcnow
+from services.ai_agent.usage_service import can_use_ai_feature
 from pricing_controller import (
     PriceControllerBatch,
     PriceControllerItem,
@@ -54,6 +55,9 @@ def _rules_form(rules: dict):
 
 
 def create_preview(*, company_id: int, user_id: int | None, rules: dict) -> dict:
+    access = can_use_ai_feature(db.session.get(__import__("app").Company, int(company_id)), "pricing_controller")
+    if not access.allowed:
+        return {"success": False, "error": access.reason}
     normalized = _parse_rules(_rules_form(rules))
     batch = PriceControllerBatch(
         company_id=company_id,
@@ -146,6 +150,9 @@ def create_preview(*, company_id: int, user_id: int | None, rules: dict) -> dict
 
 
 def apply_batch(*, company_id: int, user_id: int | None, batch_id: int) -> dict:
+    access = can_use_ai_feature(db.session.get(__import__("app").Company, int(company_id)), "pricing_controller")
+    if not access.allowed:
+        return {"success": False, "error": access.reason}
     actor, error = _admin_user(company_id, user_id)
     if error:
         return {"success": False, "error": error}
@@ -221,6 +228,9 @@ def apply_batch(*, company_id: int, user_id: int | None, batch_id: int) -> dict:
 
 
 def rollback_batch(*, company_id: int, user_id: int | None, batch_id: int) -> dict:
+    access = can_use_ai_feature(db.session.get(__import__("app").Company, int(company_id)), "pricing_rollback")
+    if not access.allowed:
+        return {"success": False, "error": access.reason}
     actor, error = _admin_user(company_id, user_id)
     if error:
         return {"success": False, "error": error}
@@ -293,6 +303,9 @@ def rollback_batch(*, company_id: int, user_id: int | None, batch_id: int) -> di
 
 
 def consult_prices(*, company_id: int, query: str = "", category: str = "", brand: str = "", supplier: str = "", limit: int = 20) -> dict:
+    access = can_use_ai_feature(db.session.get(__import__("app").Company, int(company_id)), "pricing_controller")
+    if not access.allowed:
+        return {"success": False, "error": access.reason}
     limit = max(1, min(int(limit or 20), 40))
     products = Product.query.filter_by(company_id=company_id, active=True)
     if query:
@@ -327,6 +340,9 @@ def consult_prices(*, company_id: int, query: str = "", category: str = "", bran
 
 def pricing_opportunities(*, company_id: int, objective: str = "margin", days: int = 30, target_margin_percent: float = 20.0, limit: int = 20) -> dict:
     """Return evidence-based candidates; it does not change any price."""
+    access = can_use_ai_feature(db.session.get(__import__("app").Company, int(company_id)), "pricing_controller")
+    if not access.allowed:
+        return {"success": False, "error": access.reason}
     days = max(1, min(int(days or 30), 365))
     limit = max(1, min(int(limit or 20), 40))
     target = Decimal(str(target_margin_percent or 20.0))
