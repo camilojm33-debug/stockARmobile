@@ -1,6 +1,7 @@
 (function () {
   function installAiOrdersNav() {
     if (document.body?.dataset?.aiVendorEnabled !== '1') return;
+    if (document.body?.dataset?.aiEmployeeAccess !== '1') return;
     const nav = document.querySelector('.app-nav');
     if (!nav || nav.querySelector('a[href="/pedidos-ia"]')) return;
     const links = Array.from(nav.querySelectorAll('a.nav-link'));
