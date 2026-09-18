@@ -138,5 +138,5 @@ def test_special_agent_options_have_safe_defaults_and_marketing_approval():
         {"default_period": "999d", "alerts": ["critical_stock", "unexpected"], "output_style": "invalid"},
     )
     assert normalized["default_period"] == "30d"
-    assert normalized["alerts"] == ["critical_stock", "unexpected"]
+    assert normalized["alerts"] == ["critical_stock"]
     assert normalized["output_style"] == "accionable"
