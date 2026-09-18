@@ -180,6 +180,8 @@ def _embedded_signup_config() -> tuple[str, str]:
 @bp.get("/vendedor/conectar-whatsapp")
 @tenant_required
 def vendor_whatsapp_connect():
+    if not current_app.config.get("WHATSAPP_VENDOR_UI_ENABLED", False):
+        return redirect(url_for("ai_agents.agent", agent="vendedor"))
     from app import Company
 
     company = Company.query.filter_by(id=current_user.company_id, active=True).first()
