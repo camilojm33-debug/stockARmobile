@@ -4,8 +4,11 @@ from __future__ import annotations
 
 import json
 from hashlib import sha256
+from urllib.parse import urlparse
 
 from flask_login import current_user
+
+from stockarmobile.permissions import EMPLOYEE_ADMIN_ONLY, parse_permissions_json, user_role
 
 from services.notification_service_legacy import (
     _build_recent_quote_acceptance_notifications,
@@ -18,20 +21,77 @@ from services.notification_service_legacy import (
 
 
 # Keep the legacy builders import-compatible for existing extensions and tests.
+_NOTIFICATION_ROUTE_PERMISSIONS = {
+    "/ventas/": "sales",
+    "/productos/": "inventory",
+    "/clientes/": "clients",
+    "/reportes/": "reports",
+    "/caja/": "cash",
+    "/presupuestos/": "quotes_view",
+    "/agentes-ia/": "ai_access",
+    "/pedidos-ia": "ai_access",
+    "/admin/portal": EMPLOYEE_ADMIN_ONLY,
+    "/admin/company-settings": EMPLOYEE_ADMIN_ONLY,
+    "/admin": EMPLOYEE_ADMIN_ONLY,
+    "/compras/": EMPLOYEE_ADMIN_ONLY,
+    "/gastos/": EMPLOYEE_ADMIN_ONLY,
+    "/superadmin": EMPLOYEE_ADMIN_ONLY,
+}
+
+
+def _notification_required_permission(item):
+    explicit = str(item.get("permission") or "").strip()
+    if explicit:
+        return explicit
+
+    href = str(item.get("href") or "").strip()
+    path = urlparse(href).path or href.split("?", 1)[0]
+    path = "/" + path.lstrip("/")
+    for prefix, permission in sorted(_NOTIFICATION_ROUTE_PERMISSIONS.items(), key=lambda row: -len(row[0])):
+        if path.startswith(prefix):
+            return permission
+    return None
+
+
+def filter_notifications_for_user(items):
+    """Return only notifications allowed by the signed-in employee permission set.
+
+    Admins, SuperAdmins and referral sellers keep their existing notification
+    streams. Tenant employees (role=user) are fail-closed: a notification must
+    map to an explicit permission or it is hidden rather than leaking a module
+    or business information the employee cannot access.
+    """
+    if user_role(current_user) != "user":
+        return list(items or [])
+
+    permissions = parse_permissions_json(getattr(current_user, "permissions_json", None))
+    filtered = []
+    for item in items or []:
+        required = _notification_required_permission(item)
+        if required == EMPLOYEE_ADMIN_ONLY:
+            continue
+        if required and required in permissions:
+            filtered.append(item)
+    return filtered
+
+
 def build_notifications():
     if not getattr(current_user, "is_authenticated", False):
         return []
     if getattr(current_user, "role", None) == "superadmin":
-        return _build_superadmin_notifications()
+        items = _build_superadmin_notifications()
+        return filter_notifications_for_user(items)
     if getattr(current_user, "role", None) == "seller":
-        return _build_seller_notifications()
+        items = _build_seller_notifications()
+        return filter_notifications_for_user(items)
 
     # Lazy import is intentional: order_notifications imports the AI runtime,
     # which imports models that are initialized while the application is being
     # imported. Importing it at module import time creates a circular import.
     from services.ai_agent.order_notifications import build_ai_order_notifications
 
-    return build_ai_order_notifications() + _build_user_notifications()
+    items = build_ai_order_notifications() + _build_user_notifications()
+    return filter_notifications_for_user(items)
 
 
 def get_notification_payload():
