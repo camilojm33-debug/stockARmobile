@@ -12,7 +12,7 @@ from decimal import Decimal
 
 from sqlalchemy import func
 
-from app import Product, Sale, SaleItem, User, db, record_audit, utcnow
+from app import Company, Product, Sale, SaleItem, User, db, record_audit, utcnow
 from services.ai_agent.usage_service import can_use_ai_feature
 from pricing_controller import (
     PriceControllerBatch,
@@ -55,7 +55,7 @@ def _rules_form(rules: dict):
 
 
 def create_preview(*, company_id: int, user_id: int | None, rules: dict) -> dict:
-    access = can_use_ai_feature(db.session.get(__import__("app").Company, int(company_id)), "pricing_controller")
+    access = can_use_ai_feature(db.session.get(Company, int(company_id)), "pricing_controller")
     if not access.allowed:
         return {"success": False, "error": access.reason}
     normalized = _parse_rules(_rules_form(rules))
