@@ -180,6 +180,10 @@ def _embedded_signup_config() -> tuple[str, str]:
 @bp.get("/vendedor/conectar-whatsapp")
 @tenant_required
 def vendor_whatsapp_connect():
+    entitlement = can_use_ai_feature(current_user.company, "vendedor")
+    if not entitlement.allowed:
+        flash(entitlement.reason or "Tu plan no incluye el Vendedor IA.", "warning")
+        return redirect(url_for("ai_agents.agent", agent="planes"))
     if not current_app.config.get("WHATSAPP_VENDOR_UI_ENABLED", False):
         return redirect(url_for("ai_agents.agent", agent="vendedor"))
     from app import Company
@@ -202,6 +206,9 @@ def vendor_whatsapp_connect():
 @bp.post("/vendedor/conectar-whatsapp/complete")
 @tenant_required
 def vendor_whatsapp_complete():
+    entitlement = can_use_ai_feature(current_user.company, "vendedor")
+    if not entitlement.allowed:
+        return jsonify({"success": False, "error": entitlement.reason}), 403
     payload = request.get_json(silent=True) or request.form.to_dict()
     code = str(payload.get("code") or "").strip()
     waba_id = str(payload.get("waba_id") or "").strip()
