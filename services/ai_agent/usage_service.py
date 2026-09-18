@@ -19,7 +19,10 @@ AI_PLANS = (
 )
 AI_PLAN_BY_CODE = {plan["code"]: plan for plan in AI_PLANS}
 AGENT_LABELS = {"vendedor": "Vendedor IA", "asistente": "Asistente Empresarial", "analista": "Analista IA", "marketing": "Marketing IA"}
-AI_FEATURE_LABELS = {"facturas": "Reconocimiento de facturas con IA"}
+AI_FEATURE_LABELS = {
+    "facturas": "Reconocimiento de facturas con IA",
+    "pricing_controller": "Controlador global de precios con IA",
+}
 
 
 @dataclass(frozen=True)
@@ -51,6 +54,39 @@ def _effective_status(prefs: dict[str, Any], *, now: datetime) -> str:
         except (TypeError, ValueError):
             pass
     return status
+
+
+def can_use_ai_feature(company, feature: str) -> AIAccess:
+    """Validate a plan feature without consuming monthly AI interactions."""
+    key = str(feature or "").strip().lower()
+    plan = current_plan(company)
+    if plan is None:
+        return AIAccess(False, "Tu empresa todavía no tiene un plan IA asignado.", None)
+
+    prefs = _preferences(company)
+    status = _effective_status(prefs, now=utcnow_naive())
+    if status in {"SUSPENDIDA", "CANCELADA", "VENCIDA"}:
+        labels = {"SUSPENDIDA": "suspendido", "CANCELADA": "cancelado", "VENCIDA": "vencido"}
+        return AIAccess(False, f"El plan IA de tu empresa está {labels[status]}. Contactá a soporte.", plan)
+    if status == "PENDIENTE":
+        return AIAccess(False, "Tu plan IA está pendiente de activación.", plan)
+
+    if key in AI_FEATURE_LABELS:
+        if key == "facturas" and not plan.get("invoice_processing", False):
+            required = next((item["name"] for item in AI_PLANS if item.get("invoice_processing")), "un plan superior")
+            return AIAccess(False, f"{AI_FEATURE_LABELS[key]} requiere {required} o superior.", plan)
+        if key == "pricing_controller" and not plan.get("pricing_controller", False):
+            required = next((item["name"] for item in AI_PLANS if item.get("pricing_controller")), "un plan superior")
+            return AIAccess(False, f"{AI_FEATURE_LABELS[key]} requiere {required} o superior.", plan)
+        return AIAccess(True, None, plan)
+
+    if key in AGENT_LABELS:
+        if key not in plan["agents"]:
+            required = next((item["name"] for item in AI_PLANS if key in item["agents"]), "un plan superior")
+            return AIAccess(False, f"{AGENT_LABELS.get(key, 'Este agente')} requiere {required} o superior.", plan)
+        return AIAccess(True, None, plan)
+
+    return AIAccess(False, "Función IA inválida.", plan)
 
 
 def can_use_ai(company, agent: str, *, now: datetime | None = None) -> AIAccess:
