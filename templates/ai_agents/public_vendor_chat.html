@@ -42,7 +42,7 @@
     .catalog-tools { display: flex; gap: 8px; padding: 12px 14px; border-bottom: 1px solid var(--line); background: #fff; }
     .catalog-tools input { min-width: 0; width: 100%; padding: 11px 12px; border: 1px solid #cbd5e1; border-radius: 12px; outline: none; background: #fff; }
     .catalog-tools input:focus, .checkout input:focus { border-color: #93c5fd; box-shadow: 0 0 0 3px rgba(37,99,235,.10); }
-    .products { padding: 14px; display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 12px; max-height: 660px; overflow-y: auto; }
+    .products { padding: 14px; display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 12px; min-height: 180px; max-height: 660px; overflow-y: auto; }
     .product { border: 1px solid var(--line); border-radius: 16px; overflow: hidden; background: #fff; display: flex; flex-direction: column; min-width: 0; }
     .product-media { height: 150px; background: #f1f5f9; display: grid; place-items: center; overflow: hidden; }
     .product-media img { width: 100%; height: 100%; object-fit: cover; display: block; }
@@ -162,7 +162,41 @@
         <div class="catalog-tools">
           <input id="productSearch" type="search" maxlength="80" autocomplete="off" placeholder="Buscar producto, marca, código o categoría…" aria-label="Buscar productos">
         </div>
-        <div class="products" id="products" aria-live="polite"></div>
+        <div class="products" id="products" aria-live="polite">
+          {% if catalog %}
+            {% for product in catalog %}
+              <article class="product">
+                <div class="product-media">
+                  {% if product.photo and (product.photo.startswith('/') or product.photo.startswith('http://') or product.photo.startswith('https://')) %}
+                    <img src="{{ product.photo }}" alt="{{ product.name }}" loading="lazy">
+                  {% else %}
+                    <div class="placeholder">🛍️</div>
+                  {% endif %}
+                </div>
+                <div class="product-body">
+                  {% if product.category or product.brand %}
+                    <span class="product-tag">{{ product.category or product.brand }}</span>
+                  {% endif %}
+                  <div class="product-name">{{ product.name }}</div>
+                  <div class="product-desc">{{ product.description or product.brand or '' }}</div>
+                  <div class="product-bottom">
+                    <div>
+                      <div class="price">{{ product.price|float|round(2) }} ARS</div>
+                      <div class="stock {% if product.stock|float <= 0 %}out{% endif %}">
+                        {% if product.stock|float > 0 %}Stock: {{ product.stock|float }} {{ product.unit_measure or 'u' }}{% else %}Sin stock{% endif %}
+                      </div>
+                    </div>
+                    <button class="btn btn-primary add-product" data-product-id="{{ product.id }}" type="button" {% if product.stock|float <= 0 %}disabled{% endif %}>
+                      {% if product.stock|float > 0 %}Agregar{% else %}Sin stock{% endif %}
+                    </button>
+                  </div>
+                </div>
+              </article>
+            {% endfor %}
+          {% else %}
+            <div class="catalog-empty">No hay productos publicados en el catálogo.</div>
+          {% endif %}
+        </div>
       </section>
 
       <div class="right">
