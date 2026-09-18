@@ -47,6 +47,7 @@ SPECIAL_AGENT_OPTION_DEFAULTS = {
 }
 SPECIAL_AGENT_ALLOWED_PERIODS = {"7d", "30d", "90d"}
 SPECIAL_AGENT_ALLOWED_OUTPUT_STYLES = {"resumen", "accionable", "detallado"}
+ANALYST_ALLOWED_ALERTS = {"sales_drop", "critical_stock", "inactive_clients", "low_rotation"}
 MARKETING_ALLOWED_SEGMENTS = {"inactivos", "frecuentes", "todos"}
 MARKETING_ALLOWED_TONES = {"profesional", "amigable", "directo", "comercial"}
 MARKETING_ALLOWED_CAMPAIGN_TYPES = {"promocion", "reactivacion", "novedad", "stock", "fidelizacion"}
@@ -94,7 +95,11 @@ def normalize_special_options(agent_key: str, raw: Optional[Dict[str, Any]] = No
         options["default_period"] = period if period in SPECIAL_AGENT_ALLOWED_PERIODS else defaults["default_period"]
         alerts = source.get("alerts")
         if isinstance(alerts, (list, tuple, set)):
-            options["alerts"] = [str(item).strip().lower() for item in alerts if str(item).strip()][:12]
+            options["alerts"] = [
+                str(item).strip().lower()
+                for item in alerts
+                if str(item).strip().lower() in ANALYST_ALLOWED_ALERTS
+            ][:12]
         style = str(source.get("output_style") or defaults["output_style"]).strip().lower()
         options["output_style"] = style if style in SPECIAL_AGENT_ALLOWED_OUTPUT_STYLES else defaults["output_style"]
     elif key == "marketing":
