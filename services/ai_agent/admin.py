@@ -23,7 +23,7 @@ from services.ai_agent.config_service import (
     get_whatsapp_connection,
     update_ai_preferences,
 )
-from services.ai_agent.usage_service import AI_PLANS, can_use_ai
+from services.ai_agent.usage_service import AI_PLANS, can_use_ai, can_use_ai_feature, current_plan
 
 bp = Blueprint("ai_admin", __name__, url_prefix="/dashboard/ai-agent")
 
@@ -126,7 +126,7 @@ def index():
         for key in ("analista", "marketing")
     }
     special_access = {
-        key: can_use_ai(company, key)
+        key: can_use_ai_feature(company, key)
         for key in ("analista", "marketing")
     }
     whatsapp = get_whatsapp_connection(company)
@@ -166,15 +166,23 @@ def index():
         ai_key_configured = bool((os.getenv("AI_PROVIDER_API_KEY") or os.getenv("OPENAI_API_KEY") or "").strip()) or provider in {"lmstudio", "lm_studio"}
     ai_enabled = bool(prefs["ai_agent"].get("enabled", True))
     whatsapp_connected = bool(whatsapp.get("enabled") and whatsapp.get("phone_number_id"))
+    agent_key_by_name = {
+        VENDOR_AGENT_NAME: "vendedor",
+        BUSINESS_AGENT_NAME: "asistente",
+    }
     agent_states = {}
     for name, agent in agents.items():
-        if not ai_enabled or not agent.active:
+        agent_key = agent_key_by_name.get(name)
+        entitlement = can_use_ai_feature(company, agent_key) if agent_key else None
+        if entitlement is not None and not entitlement.allowed:
+            agent_states[name] = {"label": "No incluido en el plan", "tone": "secondary"}
+        elif not ai_enabled or not agent.active:
             agent_states[name] = {"label": "Desactivado", "tone": "danger"}
         elif not ai_key_configured:
             agent_states[name] = {"label": "Configuración pendiente", "tone": "warning"}
         else:
             agent_states[name] = {"label": "Activo", "tone": "success"}
-    if whatsapp_connected and ai_enabled and agents[VENDOR_AGENT_NAME].active:
+    if whatsapp_connected and ai_enabled and agents[VENDOR_AGENT_NAME].active and can_use_ai_feature(company, "vendedor").allowed:
         whatsapp_state = {"label": "Conectado", "tone": "success"}
     elif whatsapp.get("enabled"):
         whatsapp_state = {"label": "Configuración pendiente", "tone": "warning"}
@@ -204,6 +212,9 @@ def index():
 @bp.get("/vendor-metrics")
 @company_admin_required
 def vendor_metrics():
+    entitlement = can_use_ai_feature(current_user.company, "vendedor")
+    if not entitlement.allowed:
+        return redirect(url_for("ai_agents.agent", agent="planes"))
     company_id = get_current_company_id(current_user)
     from services.ai_agent.vendor_metrics_service import build_vendor_metrics
 
@@ -230,8 +241,10 @@ def save():
 
     agents = ensure_default_agents(company_id)
     configs = _ensure_configs(company_id, agents)
-    agents[VENDOR_AGENT_NAME].active = request.form.get("vendor_enabled") == "1"
-    agents[BUSINESS_AGENT_NAME].active = request.form.get("business_enabled") == "1"
+    plan = current_plan(company)
+    entitled_agents = set(plan["agents"]) if plan else set()
+    agents[VENDOR_AGENT_NAME].active = request.form.get("vendor_enabled") == "1" and "vendedor" in entitled_agents
+    agents[BUSINESS_AGENT_NAME].active = request.form.get("business_enabled") == "1" and "asistente" in entitled_agents
     special_agents = {
         key: ensure_agent_for_key(company_id, key)
         for key in ("analista", "marketing")
@@ -240,7 +253,9 @@ def save():
         # Los agentes bloqueados por plan no envían controles disabled; conservar
         # su estado evita que guardar otro agente los desactive accidentalmente.
         if field in request.form:
-            special_agents[key].active = request.form.get(field) == "1"
+            special_agents[key].active = request.form.get(field) == "1" and key in entitled_agents
+        elif key not in entitled_agents:
+            special_agents[key].active = False
 
     for name, prefix in ((VENDOR_AGENT_NAME, "vendor"), (BUSINESS_AGENT_NAME, "business")):
         config = configs[name]
@@ -375,6 +390,17 @@ def toggle():
     agent = agents.get(agent_name)
     if agent is None:
         flash("Agente inválido.", "warning")
+        return redirect(url_for("ai_admin.index"))
+    key_by_name = {
+        VENDOR_AGENT_NAME: "vendedor",
+        BUSINESS_AGENT_NAME: "asistente",
+        "Analista IA": "analista",
+        "Marketing IA": "marketing",
+    }
+    agent_key = key_by_name.get(agent.name)
+    entitlement = can_use_ai_feature(company, agent_key) if agent_key else None
+    if enabled and (entitlement is None or not entitlement.allowed):
+        flash(entitlement.reason if entitlement else "Agente inválido.", "warning")
         return redirect(url_for("ai_admin.index"))
     agent.active = enabled
     db.session.commit()

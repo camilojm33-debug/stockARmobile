@@ -36,7 +36,7 @@ from services.ai_agent.tools.analyst_marketing import (
     VentasComparativaTool,
 )
 from services.ai_agent.vendor_order_service import VendorOrderService
-from services.ai_agent.usage_service import can_use_ai, record_ai_usage
+from services.ai_agent.usage_service import can_use_ai, can_use_ai_feature, record_ai_usage
 from stockarmobile.extensions import db
 from stockarmobile.models.conversations import Agent, AgentConfiguration, Conversation, ConversationMessage
 
@@ -45,6 +45,14 @@ BUSINESS_SYSTEM_PROMPT = "Sos el Asistente empresarial de StockARmobile. Usá he
 ANALYST_SYSTEM_PROMPT = "Sos el Analista IA de StockARmobile. Usá herramientas reales. Separá DATO, CÁLCULO y RECOMENDACIÓN. No inventes predicciones ni afirmes causalidad sin evidencia."
 MARKETING_SYSTEM_PROMPT = "Sos el Marketing IA de StockARmobile. Usá productos y clientes reales. Generá propuestas en BORRADOR / PENDIENTE DE APROBACIÓN. Nunca envíes mensajes ni prometas que una campaña fue ejecutada."
 MAX_TOOL_TURNS = 5
+
+PRICING_TOOL_NAMES = {
+    "consultar_precios",
+    "analizar_oportunidades_precios",
+    "previsualizar_cambio_precios",
+    "confirmar_cambio_precios",
+    "revertir_cambio_precios",
+}
 
 
 class VendorCartTool(AgentTool):
@@ -220,10 +228,19 @@ class AgentRuntime:
         ]
 
     @classmethod
-    def _tool_definitions(cls, agent_key="asistente", allowed_tool_names=None):
-        names = cls.agent_tool_names.get(agent_key, set())
+    def _tool_definitions(cls, agent_key="asistente", allowed_tool_names=None, company_id=None):
+        names = set(cls.agent_tool_names.get(agent_key, set()))
         if allowed_tool_names is not None:
             names = names.intersection(set(allowed_tool_names))
+        if company_id is not None:
+            from app import Company
+            company = Company.query.filter_by(id=int(company_id)).first()
+            pricing_access = can_use_ai_feature(company, "pricing_controller") if company is not None else None
+            rollback_access = can_use_ai_feature(company, "pricing_rollback") if company is not None else None
+            if pricing_access is None or not pricing_access.allowed:
+                names.difference_update(PRICING_TOOL_NAMES)
+            elif rollback_access is None or not rollback_access.allowed:
+                names.discard("revertir_cambio_precios")
         return [
             {
                 "type": "function",
@@ -254,6 +271,13 @@ class AgentRuntime:
             return {"success": False, "error": "arguments must be an object"}
         if allowed_tool_names is not None and name not in set(allowed_tool_names):
             return {"success": False, "error": "tool_not_permitted"}
+        if name in PRICING_TOOL_NAMES:
+            from app import Company
+            company = Company.query.filter_by(id=int(company_id)).first()
+            feature = "pricing_rollback" if name == "revertir_cambio_precios" else "pricing_controller"
+            access = can_use_ai_feature(company, feature) if company is not None else None
+            if access is None or not access.allowed:
+                return {"success": False, "error": access.reason if access else "pricing_feature_not_permitted"}
         tool_class = cls.tool_registry.get(name)
         if tool_class is None:
             return {"success": False, "error": "tool_not_found"}
@@ -519,7 +543,7 @@ class AgentRuntime:
         final_content, campaign_context, tool_rounds = cls._run_tool_loop(
             provider=provider,
             messages=messages,
-            tools=cls._tool_definitions(agent_key, allowed_tool_names=allowed_tool_names),
+            tools=cls._tool_definitions(agent_key, allowed_tool_names=allowed_tool_names, company_id=company_id),
             kwargs=kwargs,
             company_id=company_id,
             context=context,

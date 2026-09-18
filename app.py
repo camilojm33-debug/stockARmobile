@@ -2073,6 +2073,9 @@ def inject_notifications():
     has_active_seller_profile = False
     switchable_company_users = []
     current_company_preferences = {}
+    ai_feature_pricing_allowed = False
+    ai_feature_vendor_allowed = False
+    ai_employee_access_allowed = False
     support_contact = {
         "email": app.config.get("SUPPORT_EMAIL", "stockarmobile@gmail.com"),
         "whatsapp_display": app.config.get("SUPPORT_WHATSAPP_DISPLAY", "3624228396"),
@@ -2088,6 +2091,20 @@ def inject_notifications():
                 current_company_preferences = json.loads(company.preferences_json or "{}") if company.preferences_json else {}
             except json.JSONDecodeError:
                 current_company_preferences = {}
+            try:
+                from services.ai_agent.usage_service import can_use_ai_feature
+                ai_feature_pricing_allowed = (
+                    getattr(current_user, "role", None) == "admin"
+                    and can_use_ai_feature(company, "pricing_controller").allowed
+                )
+                ai_feature_vendor_allowed = can_use_ai_feature(company, "vendedor").allowed
+                ai_employee_access_allowed = (
+                    getattr(current_user, "role", None) in {"admin", "superadmin"}
+                    or _user_has_permission(current_user, "ai_access")
+                )
+            except Exception:
+                ai_feature_pricing_allowed = False
+                ai_feature_vendor_allowed = False
         if getattr(current_user, "role", None) != "superadmin":
             has_active_seller_profile = ReferralSeller.query.filter_by(user_id=current_user.id, active=True).first() is not None
         if getattr(current_user, "role", None) == "admin" and getattr(current_user, "company_id", None):
@@ -2110,6 +2127,9 @@ def inject_notifications():
             "company_preferences": current_company_preferences,
             "company_feature_enabled": lambda key, default=False: bool(current_company_preferences.get(key, default)),
             "current_user_has_permission": lambda key: _user_has_permission(current_user, key),
+            "ai_feature_pricing_allowed": ai_feature_pricing_allowed,
+            "ai_feature_vendor_allowed": ai_feature_vendor_allowed,
+            "ai_employee_access_allowed": ai_employee_access_allowed,
         }
     return {
         "notification_items": [],

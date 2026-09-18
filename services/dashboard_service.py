@@ -13,10 +13,10 @@ from services.business_value_dashboard_service import build_business_value_metri
 
 def build_dashboard_context():
     from app import CashSession, Client, Expense, Product, Quote, Sale, SaleItem, db, model_table_exists, scope_query_to_company
-    from services.ai_agent.usage_service import can_use_ai
+    from services.ai_agent.usage_service import can_use_ai_feature
 
     company = db.session.get(__import__('app').Company, getattr(__import__('flask_login').current_user, 'company_id', None))
-    invoice_access = can_use_ai(company, "facturas") if company is not None else None
+    invoice_access = can_use_ai_feature(company, "facturas") if company is not None else None
     company_tz = getattr(company, "timezone", None) or "America/Argentina/Buenos_Aires"
     today = local_today(company_tz)
     today_start, tomorrow_start = local_day_bounds_utc_naive(today, company_tz)

@@ -7,7 +7,7 @@ import app as stock_app
 from app import Company, User, db
 from services.ai_agent.campaign_service import CampaignService
 from services.ai_agent.orchestrator_v2 import AgentRuntime
-from services.ai_agent.usage_service import AI_PLANS, can_use_ai, record_ai_usage, usage_snapshot
+from services.ai_agent.usage_service import AI_PLANS, can_use_ai, can_use_ai_feature, record_ai_usage, usage_snapshot
 from stockarmobile.helpers.dates import utcnow_naive
 from stockarmobile.models.conversations import Agent, Conversation, ConversationMessage
 
@@ -72,6 +72,46 @@ def test_plan_matrix_is_enforced_by_can_use_ai(qa_ai_database, plan_code):
     for agent_key in PLAN_AGENTS:
         access = can_use_ai(company, agent_key)
         assert access.allowed is (agent_key in PLAN_AGENTS[plan_code])
+
+
+@pytest.mark.parametrize(
+    "plan_code,pricing_allowed,invoice_allowed",
+    [
+        ("inicio", False, False),
+        ("vendedor", False, False),
+        ("negocio", True, False),
+        ("pro", True, True),
+    ],
+)
+def test_plan_feature_entitlements(qa_ai_database, plan_code, pricing_allowed, invoice_allowed):
+    company = qa_ai_database["companies"][plan_code]
+    assert can_use_ai_feature(company, "pricing_controller").allowed is pricing_allowed
+    assert can_use_ai_feature(company, "pricing_rollback").allowed is (plan_code == "pro")
+    assert can_use_ai_feature(company, "facturas").allowed is invoice_allowed
+
+
+def test_plan_feature_entitlements_do_not_depend_on_monthly_usage(qa_ai_database):
+    company = qa_ai_database["companies"]["negocio"]
+    limit = next(plan["limit"] for plan in AI_PLANS if plan["code"] == "negocio")
+    conversation = _conversation(company.id, "asistente")
+    now = utcnow_naive()
+    rows = [
+        {
+            "conversation_id": conversation.id,
+            "company_id": company.id,
+            "sender_type": "agent",
+            "role": "assistant",
+            "content": f"respuesta {index}",
+            "content_type": "text",
+            "metadata_json": {"ai_usage_recorded": True, "ai_usage_period": now.strftime("%Y-%m"), "agent_key": "asistente"},
+            "created_at": now,
+        }
+        for index in range(limit)
+    ]
+    db.session.execute(ConversationMessage.__table__.insert(), rows)
+    db.session.flush()
+    assert can_use_ai(company, "asistente").allowed is False
+    assert can_use_ai_feature(company, "pricing_controller").allowed is True
 
 
 @pytest.mark.parametrize("plan_code", [plan["code"] for plan in AI_PLANS])
@@ -193,6 +233,39 @@ def test_backend_blocks_unincluded_agent_before_provider_and_without_campaign(qa
     from app import Campaign
 
     assert Campaign.query.filter_by(company_id=company.id).count() == 0
+
+
+def test_pricing_tools_follow_plan_entitlements(qa_ai_database):
+    expected = {
+        "inicio": set(),
+        "negocio": {
+            "consultar_precios",
+            "analizar_oportunidades_precios",
+            "previsualizar_cambio_precios",
+            "confirmar_cambio_precios",
+        },
+        "pro": {
+            "consultar_precios",
+            "analizar_oportunidades_precios",
+            "previsualizar_cambio_precios",
+            "confirmar_cambio_precios",
+            "revertir_cambio_precios",
+        },
+    }
+    for plan_code, expected_pricing_tools in expected.items():
+        company = qa_ai_database["companies"][plan_code]
+        names = {
+            item["function"]["name"]
+            for item in AgentRuntime._tool_definitions("asistente", company_id=company.id)
+        }
+        pricing_names = {name for name in names if name in {
+            "consultar_precios",
+            "analizar_oportunidades_precios",
+            "previsualizar_cambio_precios",
+            "confirmar_cambio_precios",
+            "revertir_cambio_precios",
+        }}
+        assert pricing_names == expected_pricing_tools
 
 
 def test_agent_selection_restricts_tools_and_preserves_isolation(qa_ai_database):

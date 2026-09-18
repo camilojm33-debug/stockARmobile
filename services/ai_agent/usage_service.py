@@ -15,11 +15,15 @@ AI_PLANS = (
     {"code": "inicio", "name": "Inicio", "price": "$11.385 / mes", "limit": 300, "agents": ("asistente",), "tagline": "Asistente Empresarial: consultas reales sobre ventas, productos, stock, clientes y precios.", "badge": None, "invoice_processing": False},
     {"code": "vendedor", "name": "Vendedor", "price": "$27.885 / mes", "limit": 1500, "agents": ("asistente", "vendedor"), "tagline": "Asistente + Vendedor IA 24/7: atiende consultas, recomienda productos y prepara presupuestos y pedidos.", "badge": None, "invoice_processing": False},
     {"code": "negocio", "name": "Negocio IA", "price": "$45.885 / mes", "limit": 5000, "agents": ("asistente", "vendedor", "analista"), "tagline": "Sumá Analista IA: compara ventas, detecta baja rotación y clientes inactivos y encuentra oportunidades.", "badge": "RECOMENDADO", "invoice_processing": False, "pricing_controller": True},
-    {"code": "pro", "name": "IA PRO", "price": "$110.000 / mes", "limit": 15000, "agents": ("asistente", "vendedor", "analista", "marketing"), "tagline": "Equipo IA completo: ventas, análisis, Marketing IA y control global de precios con revisión y aprobación.", "badge": "PLAN PREMIUM", "invoice_processing": True, "pricing_controller": True},
+    {"code": "pro", "name": "IA PRO", "price": "$110.000 / mes", "limit": 15000, "agents": ("asistente", "vendedor", "analista", "marketing"), "tagline": "Equipo IA completo: ventas, análisis, Marketing IA y control global de precios con revisión y aprobación.", "badge": "PLAN PREMIUM", "invoice_processing": True, "pricing_controller": True, "pricing_rollback": True},
 )
 AI_PLAN_BY_CODE = {plan["code"]: plan for plan in AI_PLANS}
 AGENT_LABELS = {"vendedor": "Vendedor IA", "asistente": "Asistente Empresarial", "analista": "Analista IA", "marketing": "Marketing IA"}
-AI_FEATURE_LABELS = {"facturas": "Reconocimiento de facturas con IA"}
+AI_FEATURE_LABELS = {
+    "facturas": "Reconocimiento de facturas con IA",
+    "pricing_controller": "Controlador global de precios con IA",
+    "pricing_rollback": "Rollback de precios con IA",
+}
 
 
 @dataclass(frozen=True)
@@ -53,10 +57,53 @@ def _effective_status(prefs: dict[str, Any], *, now: datetime) -> str:
     return status
 
 
+def can_use_ai_feature(company, feature: str) -> AIAccess:
+    """Validate a plan feature without consuming monthly AI interactions."""
+    key = str(feature or "").strip().lower()
+    plan = current_plan(company)
+    if plan is None:
+        return AIAccess(False, "Tu empresa todavía no tiene un plan IA asignado.", None)
+
+    prefs = _preferences(company)
+    status = _effective_status(prefs, now=utcnow_naive())
+    if status in {"SUSPENDIDA", "CANCELADA", "VENCIDA"}:
+        labels = {"SUSPENDIDA": "suspendido", "CANCELADA": "cancelado", "VENCIDA": "vencido"}
+        return AIAccess(False, f"El plan IA de tu empresa está {labels[status]}. Contactá a soporte.", plan)
+    if status == "PENDIENTE":
+        return AIAccess(False, "Tu plan IA está pendiente de activación.", plan)
+
+    if key in AI_FEATURE_LABELS:
+        if key == "facturas" and not plan.get("invoice_processing", False):
+            required = next((item["name"] for item in AI_PLANS if item.get("invoice_processing")), "un plan superior")
+            return AIAccess(False, f"{AI_FEATURE_LABELS[key]} requiere {required} o superior.", plan)
+        if key == "pricing_controller" and not plan.get("pricing_controller", False):
+            required = next((item["name"] for item in AI_PLANS if item.get("pricing_controller")), "un plan superior")
+            return AIAccess(False, f"{AI_FEATURE_LABELS[key]} requiere {required} o superior.", plan)
+        if key == "pricing_rollback" and not plan.get("pricing_rollback", False):
+            required = next((item["name"] for item in AI_PLANS if item.get("pricing_rollback")), "un plan superior")
+            return AIAccess(False, f"{AI_FEATURE_LABELS[key]} requiere {required} o superior.", plan)
+        return AIAccess(True, None, plan)
+
+    if key in AGENT_LABELS:
+        if key not in plan["agents"]:
+            required = next((item["name"] for item in AI_PLANS if key in item["agents"]), "un plan superior")
+            return AIAccess(False, f"{AGENT_LABELS.get(key, 'Este agente')} requiere {required} o superior.", plan)
+        return AIAccess(True, None, plan)
+
+    return AIAccess(False, "Función IA inválida.", plan)
+
+
 def can_use_ai(company, agent: str, *, now: datetime | None = None) -> AIAccess:
     plan = current_plan(company)
     if plan is None:
         return AIAccess(False, "Tu empresa todavía no tiene un plan IA asignado.", None)
+
+    key = str(agent or "").strip().lower()
+    if key in {"pricing_controller", "pricing_rollback"}:
+        # Pricing controller features are not chat interactions and must not
+        # consume the monthly AI interaction quota.
+        return can_use_ai_feature(company, key)
+
     effective_now = now or utcnow_naive()
     status = _effective_status(_preferences(company), now=effective_now)
     # Compania legacy sin status asignado (nunca administrada por AISubscriptionService): permitir, no romper flujo existente.
@@ -65,11 +112,11 @@ def can_use_ai(company, agent: str, *, now: datetime | None = None) -> AIAccess:
         return AIAccess(False, f"El plan IA de tu empresa está {labels[status]}. Contactá a soporte.", plan)
     if status == "PENDIENTE":
         return AIAccess(False, "Tu plan IA está pendiente de activación.", plan)
-    if agent in AI_FEATURE_LABELS:
-        if not plan.get("invoice_processing", False):
-            required = next((item["name"] for item in AI_PLANS if item.get("invoice_processing")), "un plan superior")
-            return AIAccess(False, f"{AI_FEATURE_LABELS[agent]} requiere {required} o superior.", plan)
-    elif agent not in plan["agents"]:
+    if key == "facturas":
+        feature_access = can_use_ai_feature(company, "facturas")
+        if not feature_access.allowed:
+            return feature_access
+    elif key not in plan["agents"]:
         required = next((item["name"] for item in AI_PLANS if agent in item["agents"]), "un plan superior")
         return AIAccess(False, f"{AGENT_LABELS.get(agent, 'Este agente')} requiere {required} o superior.", plan)
     snapshot = usage_snapshot(company.id, now=now)

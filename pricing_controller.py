@@ -11,6 +11,7 @@ from sqlalchemy import Numeric
 
 from app import Product, db, record_audit, scope_query_to_company, utcnow
 from stockarmobile.decorators import company_admin_required
+from services.ai_agent.usage_service import can_use_ai_feature
 
 
 bp = Blueprint("pricing_controller", __name__, url_prefix="/precios")
@@ -195,6 +196,15 @@ def _products_for_rules(rules):
     return query.order_by(Product.id)
 
 
+
+
+def _ai_pricing_entitlement():
+    access = can_use_ai_feature(current_user.company, "pricing_controller")
+    if not access.allowed:
+        flash(access.reason or "Tu plan IA no incluye el Controlador global de precios.", "warning")
+        return redirect(url_for("ai_agents.agent", agent="planes"))
+    return None
+
 def _form_context(preview=None):
     query = scope_query_to_company(Product.query.filter(Product.active.is_(True)), Product)
     categories = [row[0] for row in query.with_entities(Product.category).distinct().order_by(Product.category).all() if row[0]]
@@ -223,12 +233,18 @@ def _form_context(preview=None):
 @bp.get("/")
 @company_admin_required
 def index():
+    blocked = _ai_pricing_entitlement()
+    if blocked is not None:
+        return blocked
     return render_template("precios/controlador.html", **_form_context())
 
 
 @bp.post("/preview")
 @company_admin_required
 def preview():
+    blocked = _ai_pricing_entitlement()
+    if blocked is not None:
+        return blocked
     try:
         rules = _parse_rules(request.form)
     except ValueError as exc:
@@ -301,6 +317,9 @@ def preview():
 @bp.post("/apply/<int:batch_id>")
 @company_admin_required
 def apply(batch_id: int):
+    blocked = _ai_pricing_entitlement()
+    if blocked is not None:
+        return blocked
     batch = PriceControllerBatch.query.filter_by(id=batch_id, company_id=current_user.company_id).first_or_404()
     if batch.status != "preview":
         flash("Ese ajuste ya fue aplicado o no está disponible para aplicar.", "warning")
@@ -371,6 +390,13 @@ def apply(batch_id: int):
 @bp.post("/rollback/<int:batch_id>")
 @company_admin_required
 def rollback(batch_id: int):
+    blocked = _ai_pricing_entitlement()
+    if blocked is not None:
+        return blocked
+    rollback_access = can_use_ai_feature(current_user.company, "pricing_rollback")
+    if not rollback_access.allowed:
+        flash(rollback_access.reason or "El rollback de precios requiere IA PRO.", "warning")
+        return redirect(url_for("pricing_controller.index"))
     batch = PriceControllerBatch.query.filter_by(id=batch_id, company_id=current_user.company_id).first_or_404()
     if batch.status not in {"applied", "partial_rollback"}:
         flash("Ese ajuste no puede revertirse desde su estado actual.", "warning")

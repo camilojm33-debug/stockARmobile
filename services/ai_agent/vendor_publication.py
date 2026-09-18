@@ -24,7 +24,7 @@ from services.ai_agent.config_service import (
     VENDOR_AGENT_NAME,
     get_vendor_options,
 )
-from services.ai_agent.usage_service import can_use_ai
+from services.ai_agent.usage_service import can_use_ai, can_use_ai_feature
 from services.ai_agent.vendor_order_service import (
     CART_KEY,
     PENDING_PAYMENT_KEY,
@@ -518,7 +518,7 @@ def public_vendor_message(slug: str):
 def publication_page():
     company = _authenticated_company()
     status = publication_status(company)
-    access = can_use_ai(company, "vendedor")
+    access = can_use_ai_feature(company, "vendedor")
     preview_url = url_for("vendor_publication.preview_vendor", _external=True)
     return render_template(
         "ai_agents/vendor_publication.html",
@@ -533,7 +533,7 @@ def publication_page():
 @company_admin_required
 def publication_action(action: str):
     company = _authenticated_company()
-    access = can_use_ai(company, "vendedor")
+    access = can_use_ai_feature(company, "vendedor")
     if not access.allowed:
         return jsonify({"success": False, "error": access.reason}), 403
     action = str(action or "").strip().lower()
