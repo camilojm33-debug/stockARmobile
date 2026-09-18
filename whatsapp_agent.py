@@ -369,6 +369,7 @@ def ai_order_detail(quote_id: int):
         "ai_agent/order_detail.html",
         order=_ai_order_row(company_id, quote),
         quote=quote,
+        items=list(getattr(quote, "items", []) or []),
         payment=_ai_order_payment(company_id, quote.id),
     )
 
