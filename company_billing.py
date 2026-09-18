@@ -1637,11 +1637,9 @@ def company_logo_upload():
         return redirect(url_for("company_billing.company_settings", panel="company"))
 
     old_logo_path = company.logo
-    token = (getattr(company, "logo_public_token", None) or "").strip()
-    if not token:
+    token = secrets.token_urlsafe(24)
+    while Company.query.filter_by(logo_public_token=token).first():
         token = secrets.token_urlsafe(24)
-        while Company.query.filter_by(logo_public_token=token).first():
-            token = secrets.token_urlsafe(24)
 
     company.logo_public_token = token
     company.logo_data = logo_bytes
