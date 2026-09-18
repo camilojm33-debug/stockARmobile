@@ -16,12 +16,14 @@ from services.ai_agent.config_service import (
     BUSINESS_AGENT_NAME,
     VENDOR_AGENT_NAME,
     configure_whatsapp_connection,
+    ensure_agent_for_key,
     ensure_default_agents,
     get_ai_preferences,
+    get_special_options,
     get_whatsapp_connection,
     update_ai_preferences,
 )
-from services.ai_agent.usage_service import AI_PLANS
+from services.ai_agent.usage_service import AI_PLANS, can_use_ai
 
 bp = Blueprint("ai_admin", __name__, url_prefix="/dashboard/ai-agent")
 
@@ -112,9 +114,21 @@ def index():
     if company is None:
         return redirect(url_for("dashboard.index"))
     agents = ensure_default_agents(company_id)
-    configs = _ensure_configs(company_id, agents)
+    special_agents = {
+        key: ensure_agent_for_key(company_id, key)
+        for key in ("analista", "marketing")
+    }
+    configs = _ensure_configs(company_id, {**agents, **special_agents})
     prefs = get_ai_preferences(company)
     vendor_options = prefs["ai_agent"].get("vendor_options") if isinstance(prefs["ai_agent"].get("vendor_options"), dict) else {}
+    special_options = {
+        key: get_special_options(company, key)
+        for key in ("analista", "marketing")
+    }
+    special_access = {
+        key: can_use_ai(company, key)
+        for key in ("analista", "marketing")
+    }
     whatsapp = get_whatsapp_connection(company)
 
     conversations = (
@@ -168,6 +182,7 @@ def index():
         whatsapp_state = {"label": "No conectado", "tone": "danger"}
     return render_template(
         "ai_agent/admin_v2.html",
+        company=company,
         agents=agents,
         configs=configs,
         prefs=prefs,
@@ -179,6 +194,9 @@ def index():
         webhook_url=url_for("whatsapp_agent.webhook", _external=True),
         conversations=conversation_rows,
         vendor_options=vendor_options,
+        special_agents=special_agents,
+        special_options=special_options,
+        special_access=special_access,
         ai_plans=AI_PLANS,
     )
 
@@ -214,6 +232,15 @@ def save():
     configs = _ensure_configs(company_id, agents)
     agents[VENDOR_AGENT_NAME].active = request.form.get("vendor_enabled") == "1"
     agents[BUSINESS_AGENT_NAME].active = request.form.get("business_enabled") == "1"
+    special_agents = {
+        key: ensure_agent_for_key(company_id, key)
+        for key in ("analista", "marketing")
+    }
+    for key, field in (("analista", "analista_enabled"), ("marketing", "marketing_enabled")):
+        # Los agentes bloqueados por plan no envían controles disabled; conservar
+        # su estado evita que guardar otro agente los desactive accidentalmente.
+        if field in request.form:
+            special_agents[key].active = request.form.get(field) == "1"
 
     for name, prefix in ((VENDOR_AGENT_NAME, "vendor"), (BUSINESS_AGENT_NAME, "business")):
         config = configs[name]
@@ -271,9 +298,40 @@ def save():
         if field in request.form:
             vendor_options[key] = (request.form.get(field) or "").strip()[:limit]
 
+    special_options = {}
+    for key in ("analista", "marketing"):
+        current = get_special_options(company, key)
+        if key == "analista":
+            alerts = [value for value in (
+                "sales_drop" if request.form.get("analista_alert_sales_drop") == "1" else "",
+                "critical_stock" if request.form.get("analista_alert_critical_stock") == "1" else "",
+                "inactive_clients" if request.form.get("analista_alert_inactive_clients") == "1" else "",
+                "low_rotation" if request.form.get("analista_alert_low_rotation") == "1" else "",
+            ) if value]
+            special_options[key] = {
+                "default_period": request.form.get("analista_default_period") or current["default_period"],
+                "alerts": alerts or current["alerts"],
+                "output_style": request.form.get("analista_output_style") or current["output_style"],
+            }
+        else:
+            campaign_types = [value for value in (
+                "promocion" if request.form.get("marketing_campaign_promocion") == "1" else "",
+                "reactivacion" if request.form.get("marketing_campaign_reactivacion") == "1" else "",
+                "novedad" if request.form.get("marketing_campaign_novedad") == "1" else "",
+                "stock" if request.form.get("marketing_campaign_stock") == "1" else "",
+                "fidelizacion" if request.form.get("marketing_campaign_fidelizacion") == "1" else "",
+            ) if value]
+            special_options[key] = {
+                "default_segment": request.form.get("marketing_default_segment") or current["default_segment"],
+                "campaign_tone": request.form.get("marketing_campaign_tone") or current["campaign_tone"],
+                "campaign_types": campaign_types or current["campaign_types"],
+                "approval_required": True,
+            }
+
     ai_updates = {
         "enabled": request.form.get("ai_enabled") == "1",
         "vendor_options": vendor_options,
+        "special_options": special_options,
     }
     if "whatsapp_enabled" in request.form:
         ai_updates["whatsapp_enabled"] = request.form.get("whatsapp_enabled") == "1"
@@ -296,7 +354,7 @@ def save():
             action="ai_agent_configuration_update",
             entity="ai_agent",
             entity_id=agents[VENDOR_AGENT_NAME].id,
-            detail="Configuración de Vendedor 24 hs y Asistente empresarial actualizada",
+            detail="Configuración de Vendedor 24 hs, Asistente empresarial, Analista IA y Marketing IA actualizada",
             company_id=company_id,
         )
     except Exception:

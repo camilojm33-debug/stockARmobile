@@ -52,6 +52,13 @@
   .ai-table table { min-width:760px; }
   .ai-save-bar { position:sticky; bottom:12px; z-index:20; display:flex; justify-content:space-between; align-items:center; gap:1rem; padding:.8rem 1rem; margin-top:1rem; border:1px solid var(--app-line); border-radius:16px; background:rgba(255,255,255,.96); box-shadow:0 12px 32px rgba(15,23,42,.12); backdrop-filter:blur(8px); }
   .ai-copy-field { cursor:pointer; }
+  .ai-identity-card { display:grid; grid-template-columns:120px 1fr; gap:1.2rem; align-items:center; padding:1rem; border:1px solid var(--app-line); border-radius:14px; background:var(--app-panel-soft); }
+  .ai-identity-logo { width:108px; height:108px; border-radius:18px; display:grid; place-items:center; overflow:hidden; background:#fff; border:1px dashed var(--app-line); }
+  .ai-identity-logo img { width:100%; height:100%; object-fit:contain; padding:10px; }
+  .ai-identity-logo-placeholder { color:var(--app-muted); font-size:.75rem; text-align:center; padding:.7rem; }
+  .ai-locked { opacity:.72; }
+  .ai-check-grid { display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:.55rem; }
+  @media (max-width:700px) { .ai-identity-card { grid-template-columns:1fr; } .ai-identity-logo { margin:auto; } .ai-check-grid { grid-template-columns:1fr; } }
   @media (max-width: 900px) { .ai-summary,.ai-agent-grid,.ai-permission-flow { grid-template-columns:1fr; } .ai-channel-fields { grid-template-columns:1fr; } }
   @media (max-width: 700px) {
     .ai-admin { max-width:none; }
@@ -81,6 +88,34 @@
         </div>
       </div>
       <div class="ai-hero-illustration" aria-hidden="true"><div class="ai-hero-orb"><span><i class="bi bi-stars"></i></span></div></div>
+    </div>
+  </section>
+
+  <section class="ai-section mb-4">
+    <div class="ai-section-head">
+      <div><div class="ai-section-title"><i class="bi bi-building text-primary me-2"></i>Identidad de tu comercio</div><div class="ai-section-subtitle">Esta identidad es compartida por tus presupuestos y por todos los agentes IA. Se configura una sola vez en Mi Empresa.</div></div>
+      <a class="btn btn-outline-primary" href="{{ url_for('company_billing.company_settings', panel='company') }}"><i class="bi bi-pencil me-1"></i>Editar en Mi Empresa</a>
+    </div>
+    <div class="ai-section-body">
+      <div class="ai-identity-card">
+        <div class="ai-identity-logo">
+          {% if company.logo %}
+            <img src="{{ company.logo if company.logo.startswith('http') or company.logo.startswith('/') else url_for('static', filename=company.logo) }}" alt="Logo de {{ company.name }}">
+          {% else %}
+            <div class="ai-identity-logo-placeholder"><i class="bi bi-image fs-3 d-block mb-1"></i>Sin logo</div>
+          {% endif %}
+        </div>
+        <div>
+          <div class="fw-bold fs-5">{{ company.name or 'Tu comercio' }}</div>
+          <div class="small text-muted mt-1">{{ company.legal_name or 'Nombre comercial' }}</div>
+          <div class="d-flex flex-wrap gap-2 mt-3">
+            {% if company.tax_id %}<span class="ai-pill">CUIT {{ company.tax_id }}</span>{% endif %}
+            {% if company.contact_email %}<span class="ai-pill">{{ company.contact_email }}</span>{% endif %}
+            {% if company.phone %}<span class="ai-pill">{{ company.phone }}</span>{% endif %}
+          </div>
+          <div class="ai-note mb-0"><i class="bi bi-info-circle me-1"></i>Al actualizar el logo o los datos de Mi Empresa, los cambios quedan disponibles para los módulos que usan la identidad del comercio.</div>
+        </div>
+      </div>
     </div>
   </section>
 
@@ -157,6 +192,55 @@
     </section>
 
 {% endif %}
+
+    <section class="ai-section mb-3">
+      <div class="ai-section-head">
+        <div><div class="ai-section-title"><i class="bi bi-bar-chart-line text-primary me-2"></i>Analista IA</div><div class="ai-section-subtitle">Definí qué indicadores prioriza y cómo presenta los análisis del negocio.</div></div>
+        <span class="ai-state {{ 'success' if special_access['analista'].allowed and special_agents['analista'].active else 'warning' }}">{{ 'Activo' if special_access['analista'].allowed and special_agents['analista'].active else ('Disponible con tu plan' if special_access['analista'].allowed else 'Plan requerido') }}</span>
+      </div>
+      <div class="ai-section-body {{ 'ai-locked' if not special_access['analista'].allowed else '' }}">
+        <div class="ai-switch-card mb-3">
+          <div><div class="fw-bold">Estado del analista</div><div class="small text-muted">{{ 'Analiza datos reales de ventas, stock y clientes.' if special_agents['analista'].active else 'El agente está desactivado.' }}</div></div>
+          <label class="form-check form-switch fs-5 mb-0"><input class="form-check-input" type="checkbox" name="analista_enabled" value="1" {% if special_agents['analista'].active %}checked{% endif %} {% if not special_access['analista'].allowed %}disabled{% endif %}><span class="visually-hidden">Activar Analista IA</span></label>
+        </div>
+        <div class="row g-3">
+          <div class="col-md-4"><label class="form-label fw-semibold">Período predeterminado</label><select class="form-select" name="analista_default_period" {% if not special_access['analista'].allowed %}disabled{% endif %}><option value="7d" {% if special_options['analista'].default_period == '7d' %}selected{% endif %}>Últimos 7 días</option><option value="30d" {% if special_options['analista'].default_period == '30d' %}selected{% endif %}>Últimos 30 días</option><option value="90d" {% if special_options['analista'].default_period == '90d' %}selected{% endif %}>Últimos 90 días</option></select></div>
+          <div class="col-md-4"><label class="form-label fw-semibold">Formato de análisis</label><select class="form-select" name="analista_output_style" {% if not special_access['analista'].allowed %}disabled{% endif %}><option value="resumen" {% if special_options['analista'].output_style == 'resumen' %}selected{% endif %}>Resumen ejecutivo</option><option value="accionable" {% if special_options['analista'].output_style == 'accionable' %}selected{% endif %}>Accionable</option><option value="detallado" {% if special_options['analista'].output_style == 'detallado' %}selected{% endif %}>Detallado</option></select></div>
+          <div class="col-md-4"><div class="small fw-bold text-uppercase text-muted mb-2">Regla de salida</div><div class="ai-pill"><i class="bi bi-check2-circle"></i>DATO → CÁLCULO → ACCIÓN</div></div>
+          <div class="col-12"><div class="small fw-bold text-uppercase text-muted mb-2">Alertas prioritarias</div><div class="ai-check-grid">
+            <label class="ai-capability"><input type="checkbox" name="analista_alert_sales_drop" value="1" class="form-check-input mt-0" {% if 'sales_drop' in special_options['analista'].alerts %}checked{% endif %} {% if not special_access['analista'].allowed %}disabled{% endif %}><span>Caída de ventas</span></label>
+            <label class="ai-capability"><input type="checkbox" name="analista_alert_critical_stock" value="1" class="form-check-input mt-0" {% if 'critical_stock' in special_options['analista'].alerts %}checked{% endif %} {% if not special_access['analista'].allowed %}disabled{% endif %}><span>Stock crítico</span></label>
+            <label class="ai-capability"><input type="checkbox" name="analista_alert_inactive_clients" value="1" class="form-check-input mt-0" {% if 'inactive_clients' in special_options['analista'].alerts %}checked{% endif %} {% if not special_access['analista'].allowed %}disabled{% endif %}><span>Clientes inactivos</span></label>
+            <label class="ai-capability"><input type="checkbox" name="analista_alert_low_rotation" value="1" class="form-check-input mt-0" {% if 'low_rotation' in special_options['analista'].alerts %}checked{% endif %} {% if not special_access['analista'].allowed %}disabled{% endif %}><span>Productos sin rotación</span></label>
+          </div></div>
+        </div>
+        {% if not special_access['analista'].allowed %}<div class="ai-note"><i class="bi bi-lock me-1"></i>{{ special_access['analista'].reason }}</div>{% endif %}
+      </div>
+    </section>
+
+    <section class="ai-section mb-3">
+      <div class="ai-section-head">
+        <div><div class="ai-section-title"><i class="bi bi-megaphone text-primary me-2"></i>Marketing IA</div><div class="ai-section-subtitle">Prepará campañas con datos reales del comercio y mantenelas como borradores hasta su aprobación.</div></div>
+        <span class="ai-state {{ 'success' if special_access['marketing'].allowed and special_agents['marketing'].active else 'warning' }}">{{ 'Activo' if special_access['marketing'].allowed and special_agents['marketing'].active else ('Disponible con tu plan' if special_access['marketing'].allowed else 'Plan requerido') }}</span>
+      </div>
+      <div class="ai-section-body {{ 'ai-locked' if not special_access['marketing'].allowed else '' }}">
+        <div class="ai-switch-card mb-3">
+          <div><div class="fw-bold">Estado de Marketing IA</div><div class="small text-muted">{{ 'Puede preparar propuestas de campaña.' if special_agents['marketing'].active else 'El agente está desactivado.' }}</div></div>
+          <label class="form-check form-switch fs-5 mb-0"><input class="form-check-input" type="checkbox" name="marketing_enabled" value="1" {% if special_agents['marketing'].active %}checked{% endif %} {% if not special_access['marketing'].allowed %}disabled{% endif %}><span class="visually-hidden">Activar Marketing IA</span></label>
+        </div>
+        <div class="row g-3">
+          <div class="col-md-4"><label class="form-label fw-semibold">Segmento predeterminado</label><select class="form-select" name="marketing_default_segment" {% if not special_access['marketing'].allowed %}disabled{% endif %}><option value="inactivos" {% if special_options['marketing'].default_segment == 'inactivos' %}selected{% endif %}>Clientes inactivos</option><option value="frecuentes" {% if special_options['marketing'].default_segment == 'frecuentes' %}selected{% endif %}>Clientes frecuentes</option><option value="todos" {% if special_options['marketing'].default_segment == 'todos' %}selected{% endif %}>Todos los clientes</option></select></div>
+          <div class="col-md-4"><label class="form-label fw-semibold">Tono</label><select class="form-select" name="marketing_campaign_tone" {% if not special_access['marketing'].allowed %}disabled{% endif %}><option value="profesional" {% if special_options['marketing'].campaign_tone == 'profesional' %}selected{% endif %}>Profesional</option><option value="amigable" {% if special_options['marketing'].campaign_tone == 'amigable' %}selected{% endif %}>Amigable</option><option value="directo" {% if special_options['marketing'].campaign_tone == 'directo' %}selected{% endif %}>Directo</option><option value="comercial" {% if special_options['marketing'].campaign_tone == 'comercial' %}selected{% endif %}>Comercial</option></select></div>
+          <div class="col-md-4"><div class="ai-pill mt-4"><i class="bi bi-shield-check"></i>Siempre requiere aprobación</div></div>
+          <div class="col-12"><div class="small fw-bold text-uppercase text-muted mb-2">Tipos de campaña</div><div class="ai-check-grid">
+            {% for key,label in [('promocion','Promoción'),('reactivacion','Reactivación'),('novedad','Novedades'),('stock','Liquidación de stock'),('fidelizacion','Fidelización')] %}
+            <label class="ai-capability"><input type="checkbox" name="marketing_campaign_{{ key }}" value="1" class="form-check-input mt-0" {% if key in special_options['marketing'].campaign_types %}checked{% endif %} {% if not special_access['marketing'].allowed %}disabled{% endif %}><span>{{ label }}</span></label>
+            {% endfor %}
+          </div></div>
+        </div>
+        {% if not special_access['marketing'].allowed %}<div class="ai-note"><i class="bi bi-lock me-1"></i>{{ special_access['marketing'].reason }}</div>{% endif %}
+      </div>
+    </section>
 
     <section class="ai-section mb-3">
       <div class="ai-section-head"><div><div class="ai-section-title"><i class="bi bi-people text-primary me-2"></i>Permisos de uso</div><div class="ai-section-subtitle">Por seguridad, la administración de IA está reservada al administrador. Los empleados necesitan autorización explícita.</div></div><a class="btn btn-outline-primary" href="{{ url_for('company_billing.company_settings', panel='employees') }}"><i class="bi bi-gear me-1"></i>Administrar permisos</a></div>

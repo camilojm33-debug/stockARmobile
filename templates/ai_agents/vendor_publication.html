@@ -21,6 +21,23 @@
 
     <section class="card border-0 shadow-sm mb-3">
       <div class="card-body p-4">
+        <div class="d-flex flex-wrap align-items-center gap-3 mb-3">
+          <div class="d-flex align-items-center gap-3">
+            <div style="width:64px;height:64px;border:1px solid var(--app-line);border-radius:14px;background:#fff;display:grid;place-items:center;overflow:hidden;">
+              {% if company.logo %}
+                <img src="{{ company.logo if company.logo.startswith('http') or company.logo.startswith('/') else url_for('static', filename=company.logo) }}" alt="Logo de {{ company.name }}" style="max-width:100%;max-height:100%;object-fit:contain;padding:7px;">
+              {% else %}
+                <i class="bi bi-building text-muted fs-3" aria-hidden="true"></i>
+              {% endif %}
+            </div>
+            <div>
+              <div class="small text-uppercase text-muted fw-bold">Identidad del comercio</div>
+              <div class="fw-bold">{{ company.name or 'Tu comercio' }}</div>
+              <div class="small text-muted">Este logo también se utiliza en tus presupuestos.</div>
+            </div>
+          </div>
+          <a class="btn btn-outline-secondary ms-lg-auto" href="{{ url_for('company_billing.company_settings', panel='company') }}"><i class="bi bi-pencil me-1"></i>Editar identidad</a>
+        </div>
         <div class="d-flex flex-wrap justify-content-between align-items-center gap-3 mb-3">
           <div>
             <div class="small text-uppercase text-muted fw-bold">Estado</div>
@@ -61,6 +78,14 @@
 
     <section class="card border-0 shadow-sm">
       <div class="card-body p-4">
+        <h2 class="h5 fw-bold">Vista pública</h2>
+        <p class="text-muted small mb-3">El Vendedor utiliza automáticamente la identidad configurada en <strong>Mi Empresa</strong>. No necesitás cargar el logo nuevamente.</p>
+        <div class="border rounded-3 p-3 mb-4 d-flex align-items-center gap-3">
+          {% if company.logo %}
+            <img src="{{ company.logo if company.logo.startswith('http') or company.logo.startswith('/') else url_for('static', filename=company.logo) }}" alt="Logo de {{ company.name }}" style="width:52px;height:52px;object-fit:contain;">
+          {% endif %}
+          <div><div class="fw-bold">{{ company.name or 'Tu comercio' }}</div><div class="small text-muted">Vendedor IA 24/7 · Webchat</div></div>
+        </div>
         <h2 class="h5 fw-bold">Cómo funciona</h2>
         <div class="row g-3 mt-1">
           <div class="col-md-3"><div class="border rounded-3 p-3 h-100"><div class="fw-bold">1. Publicás</div><div class="small text-muted mt-1">El comercio activa su enlace propio.</div></div></div>
