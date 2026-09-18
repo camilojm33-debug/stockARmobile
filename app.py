@@ -8,6 +8,8 @@ import json
 import sys
 import threading
 import time
+import mimetypes
+import secrets
 from datetime import datetime, timedelta, timezone
 from decimal import Decimal
 from urllib.parse import parse_qs, urlparse
@@ -329,6 +331,77 @@ def get_company_access_state(company_id):
         "can_access": bool(state["can_access"]),
         "reason": state["reason"],
     }
+
+
+_COMPANY_LOGO_MIGRATION_LOCK = threading.Lock()
+
+
+def _safe_company_logo_public_token(company):
+    token = (getattr(company, "logo_public_token", None) or "").strip()
+    if token:
+        return token
+    from app import Company
+    while True:
+        candidate = secrets.token_urlsafe(24)
+        if not Company.query.filter_by(logo_public_token=candidate).first():
+            company.logo_public_token = candidate
+            return candidate
+
+
+def _migrate_company_logos_to_database():
+    """One-time per worker migration of legacy filesystem logos into Postgres."""
+    if app.extensions.get("_company_logos_migrated"):
+        return
+    with _COMPANY_LOGO_MIGRATION_LOCK:
+        if app.extensions.get("_company_logos_migrated"):
+            return
+        try:
+            from app import Company
+            companies = Company.query.filter(
+                Company.logo_data.is_(None),
+                Company.logo.isnot(None),
+            ).all()
+            changed = False
+            for company in companies:
+                raw_logo = (company.logo or "").strip()
+                if not raw_logo.startswith("/static/uploads/companies/"):
+                    continue
+                prefix = f"/static/uploads/companies/{company.id}/"
+                if not raw_logo.startswith(prefix):
+                    continue
+                relative = raw_logo[len("/static/"):]
+                absolute = os.path.join(app.static_folder or "", relative)
+                if not os.path.isfile(absolute):
+                    continue
+                try:
+                    with open(absolute, "rb") as handle:
+                        payload = handle.read()
+                    if not payload or len(payload) > (3 * 1024 * 1024):
+                        continue
+                    mime = mimetypes.guess_type(absolute)[0] or "application/octet-stream"
+                    if not mime.startswith("image/"):
+                        continue
+                    token = _safe_company_logo_public_token(company)
+                    company.logo_data = payload
+                    company.logo_mime_type = mime
+                    company.logo = f"/company/logo/{token}"
+                    changed = True
+                except OSError:
+                    continue
+            if changed:
+                db.session.commit()
+            app.extensions["_company_logos_migrated"] = True
+        except Exception:
+            db.session.rollback()
+            app.logger.exception("No se pudo migrar automáticamente los logos locales a PostgreSQL.")
+            # Allow a later request to retry without making the whole application unavailable.
+            return
+
+
+@app.before_request
+def migrate_legacy_company_logos_once():
+    _migrate_company_logos_to_database()
+    return None
 
 
 @app.before_request
@@ -872,6 +945,9 @@ class Company(db.Model):
     payment_qr_text = db.Column(db.String(255))
     payment_qr_url = db.Column(db.String(255))
     logo = db.Column(db.String(255))
+    logo_data = db.Column(db.LargeBinary)
+    logo_mime_type = db.Column(db.String(100))
+    logo_public_token = db.Column(db.String(64), unique=True, index=True)
     language = db.Column(db.String(20), default="es", nullable=False)
     timezone = db.Column(db.String(80), default="America/Argentina/Buenos_Aires", nullable=False)
     currency = db.Column(db.String(10), default="ARS", nullable=False)

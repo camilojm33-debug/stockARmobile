@@ -1750,9 +1750,15 @@ def test_company_logo_upload_preview_and_delete_does_not_affect_stockarmobile_lo
     with stock_app.app.app_context():
         company = Company.query.filter_by(name="Empresa Demo").first()
         assert company.logo is not None
-        assert company.logo.startswith(f"/static/uploads/companies/{company.id}/")
-        logo_disk_path = os.path.join(stock_app.app.static_folder, company.logo[len("/static/"):])
-        assert os.path.isfile(logo_disk_path)
+        assert company.logo.startswith("/company/logo/")
+        assert company.logo_public_token
+        assert company.logo_data
+        assert company.logo_mime_type == "image/png"
+
+    logo_resp = client.get(company.logo)
+    assert logo_resp.status_code == 200
+    assert logo_resp.mimetype == "image/png"
+    assert logo_resp.data
 
     settings_resp = client.get("/admin/company-settings?panel=company")
     assert settings_resp.status_code == 200
@@ -1773,9 +1779,10 @@ def test_company_logo_upload_preview_and_delete_does_not_affect_stockarmobile_lo
     with stock_app.app.app_context():
         company = Company.query.filter_by(name="Empresa Demo").first()
         assert company.logo is None
+        assert company.logo_public_token is None
+        assert company.logo_data is None
         # Eliminar el logo de la empresa nunca debe borrar el logo de StockArmobile.
         assert os.path.isfile(stockarmobile_logo_path)
-        assert not os.path.isfile(logo_disk_path)
 
 
 def test_company_logo_rejects_invalid_content_and_bad_extension():

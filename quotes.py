@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import os
+import mimetypes
 from datetime import datetime, timedelta
 from decimal import Decimal
 from io import BytesIO
@@ -696,6 +697,23 @@ def _resolve_static_image_path(raw_path):
     return candidate if os.path.exists(candidate) else None
 
 
+def _company_logo_bytes(company):
+    payload = getattr(company, "logo_data", None) if company is not None else None
+    mime_type = (getattr(company, "logo_mime_type", None) or "").strip() if company is not None else ""
+    if payload:
+        return payload, mime_type or "image/png"
+
+    raw_path = (getattr(company, "logo", None) or "").strip() if company is not None else ""
+    local_path = _resolve_static_image_path(raw_path)
+    if local_path:
+        try:
+            with open(local_path, "rb") as handle:
+                return handle.read(), mimetypes.guess_type(local_path)[0] or "image/png"
+        except OSError:
+            pass
+    return None, None
+
+
 def _quote_pdf_response(quote, *, as_attachment=False):
     from app import Company
 
@@ -708,11 +726,19 @@ def _quote_pdf_response(quote, *, as_attachment=False):
 
     # Logo propio de la empresa (si lo cargó). NO se reemplaza por el de StockArmobile:
     # si la empresa no tiene logo, el encabezado simplemente usa su nombre como texto.
-    company_logo_path = _resolve_static_image_path(getattr(company, "logo", None))
-    if company_logo_path:
+    company_logo_bytes, company_logo_mime = _company_logo_bytes(company)
+    if company_logo_bytes:
         try:
             # Keep logo near the top edge so it does not look sunken in PDF previews.
-            pdf.drawImage(ImageReader(company_logo_path), 40, top_margin - 24, width=64, height=40, preserveAspectRatio=True, mask='auto')
+            pdf.drawImage(
+                ImageReader(BytesIO(company_logo_bytes)),
+                40,
+                top_margin - 24,
+                width=64,
+                height=40,
+                preserveAspectRatio=True,
+                mask="auto",
+            )
         except Exception:
             pass
     pdf.setFont("Helvetica-Bold", 18)

@@ -103,6 +103,53 @@ def _save_company_logo(upload, company_id):
     return f"/static/uploads/companies/{company_id}/{unique_name}"
 
 
+@bp.get("/company-logo/<token>")
+def company_logo_public(token):
+    from app import Company
+
+    normalized = (token or "").strip()
+    if not normalized:
+        return "", 404
+    company = Company.query.filter_by(logo_public_token=normalized).first()
+    if company is None:
+        return "", 404
+
+    payload = getattr(company, "logo_data", None)
+    mime_type = (getattr(company, "logo_mime_type", None) or "").strip() or "application/octet-stream"
+
+    if not payload:
+        legacy = (getattr(company, "logo", None) or "").strip()
+        prefix = f"/static/uploads/companies/{company.id}/"
+        if legacy.startswith(prefix):
+            relative = legacy[len("/static/"):]
+            candidate = Path(current_app.static_folder or "") / relative
+            try:
+                if candidate.is_file():
+                    payload = candidate.read_bytes()
+                    mime_type = _logo_mime_type_from_path(candidate)
+                else:
+                    payload = None
+            except OSError:
+                payload = None
+
+    if not payload:
+        return "", 404
+
+    response = send_file(BytesIO(payload), mimetype=mime_type, max_age=86400)
+    response.headers["Cache-Control"] = "public, max-age=86400, immutable"
+    return response
+
+
+def _logo_mime_type_from_path(path):
+    suffix = Path(path).suffix.lower()
+    return {
+        ".png": "image/png",
+        ".jpg": "image/jpeg",
+        ".jpeg": "image/jpeg",
+        ".webp": "image/webp",
+    }.get(suffix, "application/octet-stream")
+
+
 def _delete_company_logo_file(logo_path, company_id):
     if not logo_path:
         return
@@ -1552,7 +1599,7 @@ def payment_qr_settings():
 @bp.route("/company-logo/upload", methods=["POST"])
 @company_admin_required
 def company_logo_upload():
-    from app import db, record_audit
+    from app import Company, db, record_audit
 
     # Este endpoint valida el límite específico del logo (3 MB). Elevamos
     # únicamente el límite de la request actual para que Flask/Werkzeug no
@@ -1581,9 +1628,24 @@ def company_logo_upload():
         flash(str(exc), "danger")
         return redirect(url_for("company_billing.company_settings", panel="company"))
 
+    try:
+        new_logo_file = Path(current_app.static_folder or "") / new_logo_path[len("/static/"):]
+        logo_bytes = new_logo_file.read_bytes()
+    except (OSError, ValueError):
+        flash("No se pudo guardar el logo de forma persistente.", "danger")
+        _delete_company_logo_file(new_logo_path, company.id)
+        return redirect(url_for("company_billing.company_settings", panel="company"))
+
     old_logo_path = company.logo
-    company.logo = new_logo_path
-    record_audit(action="company_logo_upload", entity="company", entity_id=company.id, detail="Logo de la empresa actualizado.")
+    token = secrets.token_urlsafe(24)
+    while Company.query.filter_by(logo_public_token=token).first():
+        token = secrets.token_urlsafe(24)
+
+    company.logo_public_token = token
+    company.logo_data = logo_bytes
+    company.logo_mime_type = _logo_mime_type_from_path(new_logo_file)
+    company.logo = f"/company/logo/{token}"
+    record_audit(action="company_logo_upload", entity="company", entity_id=company.id, detail="Logo de la empresa actualizado y almacenado de forma persistente.")
     db.session.commit()
     _delete_company_logo_file(old_logo_path, company.id)
 
@@ -1601,11 +1663,14 @@ def company_logo_delete():
 
     old_logo_path = company.logo
     company.logo = None
+    company.logo_data = None
+    company.logo_mime_type = None
+    company.logo_public_token = None
     record_audit(
         action="company_logo_delete",
         entity="company",
         entity_id=company.id,
-        detail="Logo de la empresa eliminado (no afecta el logo de StockArmobile).",
+        detail="Logo de la empresa eliminado de forma persistente (no afecta el logo de StockArmobile).",
     )
     db.session.commit()
     _delete_company_logo_file(old_logo_path, company.id)
