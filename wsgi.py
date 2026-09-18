@@ -6,7 +6,7 @@ from sqlalchemy import text
 
 from app import app, AuditLog, Company, Invoice, Payment, PaymentHistory, Subscription, SubscriptionCommandExecution, Supplier, Product, db
 from services.subscription_service import SubscriptionService
-from services.ai_agent.usage_service import can_use_ai
+from services.ai_agent.usage_service import can_use_ai, can_use_ai_feature
 from services.invoice_matching_service import normalize
 from stockarmobile.models.conversations import Conversation
 from pricing_controller import bp as pricing_controller_bp
@@ -100,7 +100,7 @@ def ai_invoices_workspace():
     if not company_id:
         return redirect(url_for("auth.login"))
     company = Company.query.filter_by(id=company_id).first()
-    invoice_access = can_use_ai(company, "facturas") if company is not None else type("Access", (), {"allowed": False, "reason": "No hay una empresa activa."})()
+    invoice_access = can_use_ai_feature(company, "facturas") if company is not None else type("Access", (), {"allowed": False, "reason": "No hay una empresa activa."})()
     invoices = []
     suppliers = []
     if invoice_access.allowed:
@@ -134,6 +134,11 @@ def resolve_invoice_code_direct(upload_id):
     company_id = getattr(current_user, "company_id", None)
     if not company_id:
         return jsonify({"success": False, "error": "No hay una empresa activa."}), 403
+
+    company = Company.query.filter_by(id=company_id).first()
+    invoice_access = can_use_ai_feature(company, "facturas") if company is not None else None
+    if invoice_access is None or not invoice_access.allowed:
+        return jsonify({"success": False, "error": invoice_access.reason if invoice_access else "No hay una empresa activa."}), 403
 
     payload = request.get_json(silent=True) or {}
     raw_code = str(payload.get("code") or "").strip()
