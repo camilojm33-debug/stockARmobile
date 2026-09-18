@@ -240,13 +240,13 @@ def process_invoice(upload_id):
     if found is None:
         return jsonify({"success": False, "error": "Factura no encontrada."}), 404
     conversation, metadata, uploads, index, upload = found
-    if upload.get("status") in {"PROCESANDO", "PROCESADA", "REQUIERE_REVISION", "LISTA_PARA_CONFIRMAR", "CONFIRMADA", "APLICADA"}:
-        return jsonify({"success": True, "status": upload.get("status"), "preview": upload.get("invoice")}), 200
     from app import Company, Product, Supplier
     company = Company.query.filter_by(id=company_id).first()
     access = can_use_ai(company, "facturas")
     if not access.allowed:
         return jsonify({"success": False, "error": access.reason}), 403
+    if upload.get("status") in {"PROCESANDO", "PROCESADA", "REQUIERE_REVISION", "LISTA_PARA_CONFIRMAR", "CONFIRMADA", "APLICADA"}:
+        return jsonify({"success": True, "status": upload.get("status"), "preview": upload.get("invoice")}), 200
     upload["status"] = "PROCESANDO"
     _save_invoice(conversation, metadata, uploads, index, upload)
     try:
@@ -305,6 +305,11 @@ def invoice_preview(upload_id):
     found = _invoice_record(upload_id, company_id)
     if found is None:
         return jsonify({"success": False, "error": "Factura no encontrada."}), 404
+    from app import Company
+    company = Company.query.filter_by(id=company_id).first()
+    access = can_use_ai(company, "facturas")
+    if not access.allowed:
+        return jsonify({"success": False, "error": access.reason}), 403
     return jsonify({"success": True, "status": found[4].get("status"), "preview": found[4].get("invoice"), "original_name": found[4].get("original_name")})
 
 
@@ -315,6 +320,11 @@ def resolve_invoice_line(upload_id):
     found = _invoice_record(upload_id, company_id)
     if found is None:
         return jsonify({"success": False, "error": "Factura no encontrada."}), 404
+    from app import Company
+    company = Company.query.filter_by(id=company_id).first()
+    access = can_use_ai(company, "facturas")
+    if not access.allowed:
+        return jsonify({"success": False, "error": access.reason}), 403
     conversation, metadata, uploads, index, upload = found
     invoice = upload.get("invoice") or {}
     payload = request.get_json(silent=True) or {}
@@ -372,6 +382,11 @@ def confirm_invoice(upload_id):
     found = _invoice_record(upload_id, company_id)
     if found is None:
         return jsonify({"success": False, "error": "Factura no encontrada."}), 404
+    from app import Company
+    company = Company.query.filter_by(id=company_id).first()
+    access = can_use_ai(company, "facturas")
+    if not access.allowed:
+        return jsonify({"success": False, "error": access.reason}), 403
     conversation, metadata, uploads, index, upload = found
     try:
         duplicate_result = _already_applied_invoice(upload_id, company_id, (upload.get("invoice") or {}).get("document_hash"))
