@@ -256,6 +256,7 @@ def _product_payload(product) -> dict:
         "description": str(product.description or "").strip(),
         "category": str(product.category or "").strip(),
         "brand": str(product.brand or "").strip(),
+        "barcode": str(product.barcode or "").strip(),
         "photo": str(product.photo or "").strip(),
         "unit_measure": str(product.unit_measure or "u").strip(),
         "price": float(product.price or 0),
