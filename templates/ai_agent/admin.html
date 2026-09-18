@@ -130,6 +130,7 @@
       </div>
     </section>
 
+{% if config.get("WHATSAPP_VENDOR_UI_ENABLED", False) %}
     <section class="ai-section mb-3">
       <div class="ai-section-head"><div><div class="ai-section-title"><i class="bi bi-chat-square-text me-2 text-primary"></i>Canales de atención</div><div class="ai-section-subtitle">Conectá los canales desde los que tus agentes pueden atender consultas.</div></div><span class="ai-state {{ whatsapp_state.tone }}">{{ whatsapp_state.label }}</span></div>
       <div class="ai-section-body">
@@ -137,6 +138,8 @@
         <div class="ai-note mt-3"><i class="bi bi-shield-lock me-1"></i>La conexión y las credenciales se administran internamente. Esta pantalla solo muestra el estado funcional del canal.</div>
       </div>
     </section>
+
+{% endif %}
 
     <section class="ai-section mb-3">
       <div class="ai-section-head"><div><div class="ai-section-title"><i class="bi bi-people me-2 text-primary"></i>Permisos de uso</div><div class="ai-section-subtitle">Controlá qué personas de tu empresa pueden usar Agentes IA.</div></div><span class="ai-pill"><i class="bi bi-shield-lock"></i> Protegido</span></div>
