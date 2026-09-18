@@ -41,6 +41,7 @@ from services.referral_network_service import network_bp, install_commission_hoo
 from stockarmobile.helpers.dates import utcnow_naive
 from stockarmobile.helpers.validators import is_valid_email
 from stockarmobile.responses import api_error
+from stockarmobile.permissions import EMPLOYEE_ADMIN_ONLY, employee_endpoint_permission, user_role
 from stockarmobile.tenant import (
     get_current_company_id as _shared_get_current_company_id,
     is_control_panel_owner,
@@ -333,6 +334,35 @@ def get_company_access_state(company_id):
 @app.before_request
 def bind_tenant_context():
     bind_current_tenant_context(current_user)
+
+
+@app.before_request
+def enforce_employee_endpoint_permissions():
+    """Deny tenant modules to employees unless the matching permission was granted.
+
+    This is a defense-in-depth layer: menu visibility is not security. Direct
+    URL/API access must respect the same explicit permission matrix.
+    """
+    if not current_user.is_authenticated:
+        return None
+
+    if user_role(current_user) != "user":
+        return None
+
+    requirement = employee_endpoint_permission(request.endpoint, request.method)
+    if requirement is None:
+        return None
+
+    if requirement == EMPLOYEE_ADMIN_ONLY:
+        message = "Este módulo está reservado para el administrador de la empresa."
+    elif _user_has_permission(current_user, requirement):
+        return None
+    else:
+        message = "No tenés permiso para acceder a este módulo."
+
+    if is_api_request() or request.is_json:
+        return api_error(message, 403)
+    return abort(403)
 
 
 @app.before_request

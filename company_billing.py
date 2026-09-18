@@ -2179,7 +2179,7 @@ def company_settings_user_create():
         return redirect(url_for("company_billing.company_settings"))
 
     temp_password = _temporary_password()
-    user = User(username=username, email=email, company_id=company.id, role=role, active=True, auth_provider="local")
+    user = User(username=username, email=email, company_id=company.id, role=role, active=True, auth_provider="local", permissions_json="[]")
     if full_name:
         parts = full_name.split(" ", 1)
         user.first_name = parts[0][:80]
