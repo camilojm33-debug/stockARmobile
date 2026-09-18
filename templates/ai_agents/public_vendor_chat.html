@@ -27,10 +27,12 @@
     .wrap { width: min(1280px, calc(100% - 24px)); margin: 18px auto 32px; }
     .page-head { display: flex; align-items: center; justify-content: space-between; gap: 16px; margin-bottom: 14px; }
     .brand-title { font-size: clamp(1.15rem, 2vw, 1.5rem); font-weight: 850; letter-spacing: -.02em; }
-    .merchant-brand { display:flex; align-items:center; gap:12px; min-width:0; }
-    .merchant-logo { width:52px; height:52px; border-radius:14px; border:1px solid var(--line); background:#fff; display:grid; place-items:center; overflow:hidden; flex:0 0 auto; }
-    .merchant-logo img { width:100%; height:100%; object-fit:contain; padding:6px; display:block; }
-    .merchant-logo-placeholder { color:#94a3b8; font-size:1.35rem; }
+    .merchant-brand { display:flex; align-items:center; gap:12px; min-width:0; width:100%; }
+    .merchant-brand > div:last-child { min-width:0; }
+    .merchant-logo { width:52px; height:52px; border-radius:14px; border:1px solid var(--line); background:#fff; display:grid; place-items:center; overflow:hidden; flex:0 0 52px; }
+    .merchant-logo img { width:100%; height:100%; max-width:100%; max-height:100%; object-fit:contain; object-position:center; padding:5px; display:block; }
+    .merchant-logo-placeholder { color:#94a3b8; font-size:1.35rem; display:grid; place-items:center; width:100%; height:100%; }
+
     .brand-sub { color: var(--muted); font-size: .88rem; margin-top: 4px; }
     .status-pill { display: inline-flex; align-items: center; gap: 7px; padding: 8px 11px; border: 1px solid #bbf7d0; background: #f0fdf4; color: var(--success); border-radius: 999px; font-size: .78rem; font-weight: 750; white-space: nowrap; }
     .status-pill.off { border-color: #fecaca; background: #fef2f2; color: var(--danger); }
@@ -121,7 +123,14 @@
       .mobile-cart-bar .btn { background: #fff; color: #0f172a; }
     }
     @media (max-width: 560px) {
-      .page-head { flex-direction: column; }
+      .page-head { flex-direction: column; align-items: stretch; gap:10px; }
+      .merchant-logo { width:48px; height:48px; flex-basis:48px; border-radius:12px; }
+      .merchant-logo img { padding:4px; }
+      .brand-title { font-size:1.12rem; line-height:1.2; overflow-wrap:anywhere; }
+      .brand-sub { font-size:.75rem; line-height:1.35; }
+      .composer-row { gap:7px; }
+      .composer-row .btn { min-width:74px; padding-inline:10px; }
+
       .products { grid-template-columns: 1fr 1fr; gap: 8px; padding: 10px; }
       .product-media { height: 125px; }
       .product-body { padding: 9px; min-height: 165px; }
@@ -138,7 +147,18 @@
       <div class="merchant-brand">
         <div class="merchant-logo">
           {% if company.logo %}
-            <img src="{{ company.logo if company.logo.startswith('http') or company.logo.startswith('/') else url_for('static', filename=company.logo) }}" alt="Logo de {{ company.name or 'tu comercio' }}">
+            <img
+              src="{{ (company.logo if company.logo.startswith('http') or company.logo.startswith('/') else url_for('static', filename=company.logo)) }}?v={{ company.id }}"
+              alt="Logo de {{ company.name or 'tu comercio' }}"
+              width="52"
+              height="52"
+              loading="eager"
+              decoding="async"
+              fetchpriority="high"
+              referrerpolicy="no-referrer"
+              onerror="this.style.display='none'; this.nextElementSibling.style.display='grid';"
+            >
+            <span class="merchant-logo-placeholder" style="display:none">🏪</span>
           {% else %}
             <span class="merchant-logo-placeholder">🏪</span>
           {% endif %}
@@ -216,8 +236,8 @@
           <div class="composer">
             <div class="error" id="error" role="alert"></div>
             <div class="composer-row">
-              <input id="message" maxlength="500" autocomplete="off" placeholder="Ej.: necesito 2 unidades de…" aria-label="Consulta al Vendedor IA">
-              <button class="btn btn-primary" id="send" type="button">Enviar</button>
+              <input id="message" maxlength="500" autocomplete="off" inputmode="text" enterkeyhint="send" placeholder="Ej.: necesito 2 unidades de…" aria-label="Consulta al Vendedor IA">
+              <button class="btn btn-primary" id="send" type="button" aria-label="Enviar consulta">Enviar</button>
             </div>
             <div class="hint">Los pedidos quedan pendientes de pago hasta que Mercado Pago confirme el pago.</div>
           </div>
@@ -481,9 +501,24 @@
     }
 
     async function requestJson(url, options) {
-      const response = await fetch(url, options);
+      if (!url) throw new Error('El Vendedor IA todavía no tiene habilitado su canal público.');
+      const response = await fetch(url, {
+        credentials: 'include',
+        cache: 'no-store',
+        mode: 'same-origin',
+        headers: { 'Accept': 'application/json', ...((options && options.headers) || {}) },
+        ...(options || {})
+      });
+      const contentType = response.headers.get('content-type') || '';
+      if (!contentType.includes('application/json')) {
+        const text = await response.text().catch(function () { return ''; });
+        const statusMessage = response.status ? ' (HTTP ' + response.status + ')' : '';
+        throw new Error(text ? 'El servidor no devolvió una respuesta válida' + statusMessage + '.' : 'No se pudo conectar con el Vendedor IA' + statusMessage + '.');
+      }
       const data = await response.json().catch(function () { return {}; });
-      if (!response.ok || !data.success) throw new Error(data.error || 'No se pudo completar la operación.');
+      if (!response.ok || !data.success) {
+        throw new Error(data.error || 'No se pudo completar la operación.');
+      }
       return data;
     }
 
@@ -564,11 +599,21 @@
 
     async function ask() {
       const message = input ? input.value.trim() : '';
-      if (!message || !send || send.disabled || !chatEndpoint) return;
+      if (!input || !send || send.disabled) return;
+      if (!chatEndpoint) {
+        error.textContent = 'El Vendedor IA no tiene disponible el canal de consultas.';
+        return;
+      }
+      if (!message) {
+        input.focus();
+        return;
+      }
       error.textContent = '';
       add('user', message);
       input.value = '';
       send.disabled = true;
+      send.setAttribute('aria-busy', 'true');
+      send.textContent = 'Enviando…';
       const idempotencyKey = 'web-' + Date.now() + '-' + (++sequence) + '-' + Math.random().toString(36).slice(2);
       try {
         const data = await requestJson(chatEndpoint, {
@@ -584,6 +629,8 @@
         error.textContent = err.message || 'No se pudo procesar la consulta.';
       } finally {
         send.disabled = false;
+        send.removeAttribute('aria-busy');
+        send.textContent = 'Enviar';
         if (input) input.focus();
       }
     }
@@ -633,10 +680,16 @@
         searchTimer = window.setTimeout(searchProducts, 220);
       });
     }
-    if (send) {
-      send.addEventListener('click', ask);
+    if (send && input) {
+      send.addEventListener('click', function (event) {
+        event.preventDefault();
+        ask();
+      });
       input.addEventListener('keydown', function (event) {
-        if (event.key === 'Enter') { event.preventDefault(); ask(); }
+        if (event.key === 'Enter' && !event.shiftKey) {
+          event.preventDefault();
+          ask();
+        }
       });
       input.focus();
     }
