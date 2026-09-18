@@ -452,7 +452,7 @@
 
     function renderMessageContent(bubble, text) {
       const raw = String(text || '');
-      const urlPattern = /(https?:\\/\\/[^\\s<]+)/gi;
+      const urlPattern = /(https?:\/\/[^\s<]+)/gi;
       let cursor = 0;
       let match;
       while ((match = urlPattern.exec(raw)) !== null) {
