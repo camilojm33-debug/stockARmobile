@@ -5,6 +5,7 @@ from __future__ import annotations
 import hashlib
 import hmac
 import os
+import re
 
 from flask import Blueprint, abort, current_app, jsonify, render_template, request
 from flask_login import current_user, login_required
@@ -216,6 +217,43 @@ def _ai_order_payment(company_id: int, quote_id: int):
     )
 
 
+def _ai_order_channel(company_id: int, quote_id: int, payment=None) -> str:
+    """Resolve the real channel that created an AI order.
+
+    New AI order payment references contain the conversation_id, allowing us to
+    read the persisted Conversation.channel instead of assuming WhatsApp.
+    Legacy records without that reference keep the historical WhatsApp fallback.
+    """
+    from stockarmobile.models.conversations import Conversation
+
+    payment = payment or _ai_order_payment(company_id, quote_id)
+    external_reference = str(getattr(payment, "external_reference", "") or "")
+    match = re.search(r"(?:^|\\|)conversation_id:(\\d+)(?:\\||$)", external_reference)
+    if match:
+        conversation = Conversation.query.filter_by(
+            id=int(match.group(1)),
+            company_id=int(company_id),
+        ).first()
+        if conversation is not None:
+            return str(conversation.channel or "unknown").strip().lower() or "unknown"
+    return "whatsapp"
+
+
+def _ai_order_channel_meta(channel: str) -> dict:
+    """Return safe presentation metadata for an AI order channel."""
+    channel = str(channel or "unknown").strip().lower()
+    labels = {
+        "webchat": ("Webchat", "bi-globe2"),
+        "whatsapp": ("WhatsApp", "bi-whatsapp"),
+        "telegram": ("Telegram", "bi-telegram"),
+        "instagram": ("Instagram", "bi-instagram"),
+        "sms": ("SMS", "bi-chat-dots"),
+        "email": ("Email", "bi-envelope"),
+    }
+    label, icon = labels.get(channel, (channel.replace("_", " ").title() or "Canal", "bi-broadcast"))
+    return {"key": channel, "label": label, "icon": icon}
+
+
 def _ai_order_row(company_id: int, quote):
     payment = _ai_order_payment(company_id, quote.id)
     payment_status = str(getattr(payment, "status", "pending") or "pending").lower()
@@ -240,6 +278,7 @@ def _ai_order_row(company_id: int, quote):
     }
     payment_label, payment_badge = payment_labels.get(payment_status, (payment_status.replace("_", " ").title(), "text-bg-secondary"))
     client = getattr(quote, "client", None)
+    channel_meta = _ai_order_channel_meta(_ai_order_channel(company_id, quote.id, payment))
     return {
         "quote_id": quote.id,
         "number": quote.number or f"P-{quote.id:06d}",
@@ -259,6 +298,9 @@ def _ai_order_row(company_id: int, quote):
         "sale_id": quote.converted_sale_id,
         "created_at": quote.date or quote.created_at,
         "client_id": getattr(quote, "client_id", None),
+        "channel": channel_meta["key"],
+        "channel_label": channel_meta["label"],
+        "channel_icon": channel_meta["icon"],
         "delivery": {
             "method": getattr(getattr(quote, "delivery", None), "method", "retiro") if getattr(quote, "delivery", None) else "retiro",
             "recipient_name": getattr(getattr(quote, "delivery", None), "recipient_name", "") if getattr(quote, "delivery", None) else "",
@@ -293,11 +335,21 @@ def ai_orders():
     selected_status = (request.args.get("status") or "").strip().lower()
     allowed_filters = {"pending", "paid", "confirmed", "problem"}
     rows = [row for row in all_rows if not selected_status or selected_status not in allowed_filters or row["order_key"] == selected_status]
+    channel_keys = []
+    for row in all_rows:
+        key = row.get("channel") or "unknown"
+        if key not in channel_keys:
+            channel_keys.append(key)
+    channel_labels = [_ai_order_channel_meta(key)["label"] for key in channel_keys]
     summary = {
         "total": len(all_rows),
         "pending": sum(1 for row in all_rows if row["order_key"] == "pending"),
         "paid": sum(1 for row in all_rows if row["payment_status"] == "approved"),
         "confirmed": sum(1 for row in all_rows if row["order_key"] == "confirmed"),
+        "channel_keys": channel_keys,
+        "channel_labels": channel_labels,
+        "channel_label": channel_labels[0] if len(channel_labels) == 1 and channel_labels else ("Varios canales" if channel_labels else "Webchat"),
+        "channel_icon": _ai_order_channel_meta(channel_keys[0])["icon"] if len(channel_keys) == 1 else "bi-broadcast",
     }
     return render_template("ai_agent/orders.html", orders=rows, summary=summary, selected_status=selected_status if selected_status in allowed_filters else "")
 
