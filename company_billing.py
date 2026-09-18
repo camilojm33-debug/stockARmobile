@@ -1599,7 +1599,7 @@ def payment_qr_settings():
 @bp.route("/company-logo/upload", methods=["POST"])
 @company_admin_required
 def company_logo_upload():
-    from app import db, record_audit
+    from app import Company, db, record_audit
 
     # Este endpoint valida el límite específico del logo (3 MB). Elevamos
     # únicamente el límite de la request actual para que Flask/Werkzeug no
