@@ -182,6 +182,7 @@ def index():
         whatsapp_state = {"label": "No conectado", "tone": "danger"}
     return render_template(
         "ai_agent/admin_v2.html",
+        company=company,
         agents=agents,
         configs=configs,
         prefs=prefs,
