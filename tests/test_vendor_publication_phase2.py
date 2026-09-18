@@ -118,3 +118,25 @@ def test_publication_page_resolves_company_from_authenticated_tenant(monkeypatch
 
     assert result["template"] == "ai_agents/vendor_publication.html"
     assert result["company"] is company
+
+
+def test_special_agent_options_have_safe_defaults_and_marketing_approval():
+    from services.ai_agent.config_service import get_special_options, normalize_special_options
+
+    company = _company()
+    analyst = get_special_options(company, "analista")
+    marketing = get_special_options(company, "marketing")
+
+    assert analyst["default_period"] == "30d"
+    assert "critical_stock" in analyst["alerts"]
+    assert analyst["output_style"] == "accionable"
+    assert marketing["default_segment"] == "inactivos"
+    assert marketing["approval_required"] is True
+
+    normalized = normalize_special_options(
+        "analista",
+        {"default_period": "999d", "alerts": ["critical_stock", "unexpected"], "output_style": "invalid"},
+    )
+    assert normalized["default_period"] == "30d"
+    assert normalized["alerts"] == ["critical_stock", "unexpected"]
+    assert normalized["output_style"] == "accionable"
