@@ -204,6 +204,9 @@ def index():
 @bp.get("/vendor-metrics")
 @company_admin_required
 def vendor_metrics():
+    entitlement = can_use_ai_feature(current_user.company, "vendedor")
+    if not entitlement.allowed:
+        return redirect(url_for("ai_agents.agent", agent="planes"))
     company_id = get_current_company_id(current_user)
     from services.ai_agent.vendor_metrics_service import build_vendor_metrics
 
