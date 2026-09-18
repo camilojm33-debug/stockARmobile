@@ -6,7 +6,7 @@ from datetime import timedelta
 
 
 def build_ai_order_notifications():
-    """Build tenant notifications for recent WhatsApp AI seller orders."""
+    """Build tenant notifications for recent Webchat AI seller orders."""
     from flask import url_for
     from flask_login import current_user
 
