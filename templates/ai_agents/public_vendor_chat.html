@@ -594,6 +594,27 @@
         renderProducts(initialCatalog);
         return;
       }
+
+      // La vista previa no tiene chat_url ni endpoints públicos porque todavía
+      // no está publicada. En ese caso, el buscador debe seguir funcionando
+      // sobre el catálogo ya renderizado, sin depender de una API inexistente.
+      if (!catalogEndpoint) {
+        const normalized = query.toLocaleLowerCase('es-AR');
+        const filtered = (Array.isArray(initialCatalog) ? initialCatalog : []).filter(function (product) {
+          return [
+            product.name,
+            product.brand,
+            product.category,
+            product.barcode,
+            product.description
+          ].some(function (value) {
+            return String(value || '').toLocaleLowerCase('es-AR').includes(normalized);
+          });
+        });
+        renderProducts(filtered);
+        return;
+      }
+
       try {
         const url = new URL(catalogEndpoint, window.location.origin);
         url.searchParams.set('q', query);
