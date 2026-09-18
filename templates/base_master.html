@@ -696,7 +696,7 @@
   {% block extra_css %}{% endblock %}
   {% block extra_styles %}{% endblock %}
 </head>
-<body data-bs-theme="light"{% if current_user.is_authenticated %} data-user-id="{{ current_user.id }}" data-company-id="{{ current_user.company_id or '' }}" data-cart-tenant="{{ (current_user.company_id or 'global') ~ ':' ~ current_user.id }}" data-role="{{ current_user.role or 'user' }}" data-ai-pricing-enabled="{{ '1' if ai_feature_pricing_allowed else '0' }}" data-ai-vendor-enabled="{{ '1' if ai_feature_vendor_allowed else '0' }}"{% endif %}>
+<body data-bs-theme="light"{% if current_user.is_authenticated %} data-user-id="{{ current_user.id }}" data-company-id="{{ current_user.company_id or '' }}" data-cart-tenant="{{ (current_user.company_id or 'global') ~ ':' ~ current_user.id }}" data-role="{{ current_user.role or 'user' }}" data-ai-pricing-enabled="{{ '1' if ai_feature_pricing_allowed else '0' }}" data-ai-vendor-enabled="{{ '1' if ai_feature_vendor_allowed else '0' }}" data-ai-employee-access="{{ '1' if ai_employee_access_allowed else '0' }}"{% endif %}>
   {% if current_user.is_authenticated %}
   <div class="app-sidebar-backdrop" id="appSidebarBackdrop" aria-hidden="true"></div>
   <aside class="app-sidebar" id="appSidebar">
