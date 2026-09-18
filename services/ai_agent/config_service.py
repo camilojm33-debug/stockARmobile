@@ -32,6 +32,26 @@ VENDOR_OPTION_DEFAULTS = {
 }
 VENDOR_ALLOWED_PERSONALITIES = {"profesional", "amigable", "directo", "comercial"}
 
+SPECIAL_AGENT_OPTION_DEFAULTS = {
+    "analista": {
+        "default_period": "30d",
+        "alerts": ["sales_drop", "critical_stock", "inactive_clients", "low_rotation"],
+        "output_style": "accionable",
+    },
+    "marketing": {
+        "default_segment": "inactivos",
+        "campaign_tone": "profesional",
+        "campaign_types": ["promocion", "reactivacion", "novedad"],
+        "approval_required": True,
+    },
+}
+SPECIAL_AGENT_ALLOWED_PERIODS = {"7d", "30d", "90d"}
+SPECIAL_AGENT_ALLOWED_OUTPUT_STYLES = {"resumen", "accionable", "detallado"}
+MARKETING_ALLOWED_SEGMENTS = {"inactivos", "frecuentes", "todos"}
+MARKETING_ALLOWED_TONES = {"profesional", "amigable", "directo", "comercial"}
+MARKETING_ALLOWED_CAMPAIGN_TYPES = {"promocion", "reactivacion", "novedad", "stock", "fidelizacion"}
+
+
 
 def _company_preferences(company) -> Dict[str, Any]:
     raw = getattr(company, "preferences_json", None) or ""
@@ -60,6 +80,41 @@ def update_ai_preferences(company, *, ai_updates=None, whatsapp_updates=None):
     prefs["ai_agent"] = ai
     save_company_preferences(company, prefs)
     return prefs
+
+
+def normalize_special_options(agent_key: str, raw: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
+    key = str(agent_key or "").strip().lower()
+    defaults = SPECIAL_AGENT_OPTION_DEFAULTS.get(key)
+    if not defaults:
+        return {}
+    source = raw if isinstance(raw, dict) else {}
+    options = dict(defaults)
+    if key == "analista":
+        period = str(source.get("default_period") or defaults["default_period"]).strip().lower()
+        options["default_period"] = period if period in SPECIAL_AGENT_ALLOWED_PERIODS else defaults["default_period"]
+        alerts = source.get("alerts")
+        if isinstance(alerts, (list, tuple, set)):
+            options["alerts"] = [str(item).strip().lower() for item in alerts if str(item).strip()][:12]
+        style = str(source.get("output_style") or defaults["output_style"]).strip().lower()
+        options["output_style"] = style if style in SPECIAL_AGENT_ALLOWED_OUTPUT_STYLES else defaults["output_style"]
+    elif key == "marketing":
+        segment = str(source.get("default_segment") or defaults["default_segment"]).strip().lower()
+        options["default_segment"] = segment if segment in MARKETING_ALLOWED_SEGMENTS else defaults["default_segment"]
+        tone = str(source.get("campaign_tone") or defaults["campaign_tone"]).strip().lower()
+        options["campaign_tone"] = tone if tone in MARKETING_ALLOWED_TONES else defaults["campaign_tone"]
+        campaign_types = source.get("campaign_types")
+        if isinstance(campaign_types, (list, tuple, set)):
+            options["campaign_types"] = [str(item).strip().lower() for item in campaign_types if str(item).strip() in MARKETING_ALLOWED_CAMPAIGN_TYPES][:10]
+        options["approval_required"] = True
+    return options
+
+
+def get_special_options(company, agent_key: str) -> Dict[str, Any]:
+    prefs = _company_preferences(company)
+    ai = prefs.get("ai_agent") if isinstance(prefs.get("ai_agent"), dict) else {}
+    special = ai.get("special_options") if isinstance(ai.get("special_options"), dict) else {}
+    raw = special.get(str(agent_key or "").strip().lower())
+    return normalize_special_options(agent_key, raw)
 
 
 def _coerce_bool(value, default=False):
@@ -248,6 +303,21 @@ def ensure_agent_for_key(company_id, agent_key):
         db.session.add(agent)
         db.session.flush()
     return agent
+
+
+def update_special_options(company, agent_key: str, options: Optional[Dict[str, Any]] = None):
+    key = str(agent_key or "").strip().lower()
+    normalized = normalize_special_options(key, options)
+    if not normalized:
+        return _company_preferences(company)
+    prefs = _company_preferences(company)
+    ai = prefs.get("ai_agent") if isinstance(prefs.get("ai_agent"), dict) else {}
+    special = ai.get("special_options") if isinstance(ai.get("special_options"), dict) else {}
+    special[key] = normalized
+    ai["special_options"] = special
+    prefs["ai_agent"] = ai
+    save_company_preferences(company, prefs)
+    return prefs
 
 
 def get_ai_preferences(company):
