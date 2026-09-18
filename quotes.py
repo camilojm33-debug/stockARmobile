@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import os
+import mimetypes
 from datetime import datetime, timedelta
 from decimal import Decimal
 from io import BytesIO
