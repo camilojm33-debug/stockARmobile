@@ -383,9 +383,10 @@ def _build_user_notifications():
     # Read the persisted user row instead of relying on a possibly stale
     # Flask-Login instance. The notification endpoint must honor an explicit
     # permission matrix immediately after it is changed.
-    user_row = db.session.get(type(current_user), current_user.id)
+    login_user = current_user._get_current_object()
+    user_row = db.session.get(type(login_user), login_user.id)
     if user_row is None:
-        user_row = current_user
+        user_row = login_user
 
     role = str(getattr(user_row, "role", "") or "").strip().lower()
     permissions_json = getattr(user_row, "permissions_json", None)
