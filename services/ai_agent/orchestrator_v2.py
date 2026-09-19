@@ -391,7 +391,15 @@ class AgentRuntime:
                 capture_usage(response)
                 final_content = cls._content(response)
                 if final_content:
-                    return final_content, campaign_context, tool_rounds
+                    return final_content, campaign_context, tool_rounds, {
+                        "provider": provider.__class__.__name__.replace("Provider", "").lower(),
+                        "model": last_model or getattr(provider, "model", None) or kwargs.get("model"),
+                        "provider_calls": provider_calls,
+                        "tool_rounds": tool_rounds,
+                        "input_tokens": input_tokens,
+                        "output_tokens": output_tokens,
+                        "total_tokens": total_tokens,
+                    }
                 raise RuntimeError("El proveedor IA no pudo completar la respuesta después de consultar las herramientas.")
 
             tool_rounds = next_tool_round
