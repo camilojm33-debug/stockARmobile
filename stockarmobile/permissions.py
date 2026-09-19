@@ -71,6 +71,8 @@ def employee_endpoint_permission(endpoint: str | None, method: str = "GET"):
     if ep in {"whatsapp_agent.ai_orders", "whatsapp_agent.ai_order_detail"}:
         return "ai_access"
 
+    if ep == "company_billing.business_billing_hub":
+        return "billing"
     if ep.startswith("company_billing.company_settings"):
         return EMPLOYEE_ADMIN_ONLY
     if ep == "company_billing.subscription_portal":
