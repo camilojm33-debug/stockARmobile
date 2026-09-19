@@ -6225,6 +6225,7 @@ def test_login_redirects_each_role_to_own_panel_without_mixing():
             role="seller",
             company_id=seller_company.id,
             active=True,
+            permissions_json=json.dumps(["sales", "quotes_view"]),
         )
         seller_with_company.set_password("seller123")
         db.session.add(seller_with_company)
