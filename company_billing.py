@@ -193,6 +193,7 @@ EMPLOYEE_PERMISSIONS = [
     ("cash", "Caja"),
     ("economic_stats", "Puede visualizar estadísticas económicas"),
     ("ai_access", "Agentes IA"),
+    ("billing", "Facturación del negocio"),
 ]
 
 BILLING_DOCUMENT_TYPES = [
@@ -383,7 +384,7 @@ def _can_view_business_billing(user):
     if role != "user":
         return False
     user_permissions = set(_user_permissions(user))
-    return bool(user_permissions.intersection({"reports", "sales", "quotes_view", "cash", "economic_stats"}))
+    return "billing" in user_permissions
 
 
 def business_billing_view_required(func):
