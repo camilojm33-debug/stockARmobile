@@ -3371,12 +3371,11 @@ def test_my_company_module_requires_pin_and_shows_tenant_admin_features():
     assert lock_response.status_code in (301, 302)
     assert "/dashboard/" in (lock_response.headers.get("Location") or "")
 
-    # Usuario regular puede acceder al modulo y validar PIN.
+    # El panel de Mi Empresa es administrativo; los usuarios empleados no tienen acceso.
     client.post("/auth/logout")
     client.post("/auth/login", data={"username": "empresa_admin", "password": "admin123"})
     user_access = client.get("/admin/company-settings")
-    assert user_access.status_code == 200
-    assert "Validar PIN" in user_access.data.decode("utf-8")
+    assert user_access.status_code == 403
 
 
 def test_my_company_day_activity_is_pin_protected_and_tenant_scoped():
@@ -3655,7 +3654,7 @@ def test_subscription_option_hidden_for_non_admin_user():
     assert "Suscripción" not in html
 
     portal = client.get("/admin/portal")
-    assert portal.status_code == 200
+    assert portal.status_code == 403
 
 
 def test_my_company_module_blocks_create_when_plan_user_limit_is_reached():
@@ -3706,7 +3705,7 @@ def test_my_company_module_allows_one_time_initial_pin_generation():
         assert company is not None
         assert not company.business_pin_hash
 
-    client.post("/auth/login", data={"username": "empresa_admin", "password": "admin123"})
+    client.post("/auth/login", data={"username": "negocio_admin", "password": "admin123"})
     initial_page = client.get("/admin/company-settings")
     assert initial_page.status_code == 200
     assert "Generar PIN inicial" in initial_page.data.decode("utf-8")
@@ -4710,6 +4709,9 @@ def test_plan_limits_block_create_products_and_clients_without_breaking_portal()
     client_html = client_response.data.decode("utf-8")
     assert "Has alcanzado el limite de clientes permitido por tu plan" in client_html
 
+    client.post("/auth/logout")
+    client.post("/auth/login", data={"username": "negocio_admin", "password": "admin123"})
+
     portal = client.get("/admin/portal")
     assert portal.status_code == 200
     portal_html = portal.data.decode("utf-8")
@@ -4786,7 +4788,7 @@ def test_expired_trial_allows_subscription_portal_and_blocks_dashboard():
         subscription.next_billing_date = stock_app.utcnow() - timedelta(days=1)
         db.session.commit()
 
-    client.post("/auth/login", data={"username": "empresa_admin", "password": "admin123"})
+    client.post("/auth/login", data={"username": "negocio_admin", "password": "admin123"})
     blocked_dashboard = client.get("/dashboard/", follow_redirects=False)
     assert blocked_dashboard.status_code in (301, 302)
     assert "/access-status" in (blocked_dashboard.headers.get("Location") or "")
@@ -5144,7 +5146,7 @@ def test_subscription_portal_get_does_not_create_or_mutate_subscription():
         before_count = Subscription.query.filter_by(company_id=company.id).count()
         assert before_count == 0
 
-    login = client.post("/auth/login", data={"username": "empresa_admin", "password": "admin123"}, follow_redirects=False)
+    login = client.post("/auth/login", data={"username": "negocio_admin", "password": "admin123"}, follow_redirects=False)
     assert login.status_code in (301, 302)
 
     portal = client.get("/admin/portal", follow_redirects=False)
@@ -5882,6 +5884,12 @@ def test_business_billing_hub_allows_admin_and_shows_core_sections():
 def test_business_billing_hub_denies_user_without_billing_permissions():
     client = stock_app.app.test_client()
     client.post("/auth/login", data={"username": "empresa_admin", "password": "admin123"})
+
+    with stock_app.app.app_context():
+        employee = User.query.filter_by(username="empresa_admin").first()
+        assert employee is not None
+        employee.permissions_json = json.dumps(["inventory"])
+        db.session.commit()
 
     response = client.get("/admin/facturacion", follow_redirects=False)
     assert response.status_code == 403
