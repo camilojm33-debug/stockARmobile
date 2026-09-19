@@ -35,7 +35,7 @@ def test_run_tool_loop_supports_multiple_sequential_tool_rounds(monkeypatch):
 
     monkeypatch.setattr(AgentRuntime, "_execute_tool", fake_execute)
 
-    content, campaign_context, rounds = AgentRuntime._run_tool_loop(
+    content, campaign_context, rounds, telemetry = AgentRuntime._run_tool_loop(
         provider=provider,
         messages=[{"role": "user", "content": "Necesito datos del producto"}],
         tools=[{"type": "function", "function": {"name": "buscar_producto", "parameters": {}}}],
@@ -74,7 +74,7 @@ def test_run_tool_loop_accepts_tool_calls_list(monkeypatch):
 
     monkeypatch.setattr(AgentRuntime, "_execute_tool", fake_execute)
 
-    content, _, rounds = AgentRuntime._run_tool_loop(
+    content, _, rounds, telemetry = AgentRuntime._run_tool_loop(
         provider=provider,
         messages=[{"role": "user", "content": "Consulta"}],
         tools=[],
