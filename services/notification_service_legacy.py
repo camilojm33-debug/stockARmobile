@@ -9,6 +9,7 @@ from flask_login import current_user
 from sqlalchemy import or_
 from sqlalchemy.exc import OperationalError, ProgrammingError
 from services.sales_calculation_service import CONFIRMED_SALE_STATUSES
+from stockarmobile.permissions import EMPLOYEE_ADMIN_ONLY, parse_permissions_json
 
 
 def build_notifications():
@@ -323,6 +324,7 @@ def _build_user_notifications():
                 "title": "Stock",
                 "body": f"{low_stock} producto(s) en minimo · {out_stock} agotado(s).",
                 "href": "/productos/",
+                "permission": "inventory",
             }
         )
 
@@ -342,6 +344,7 @@ def _build_user_notifications():
                 "title": "Backups",
                 "body": f"Ultimo respaldo: {backup_status}.",
                 "href": "/admin?panel=backups",
+                "permission": EMPLOYEE_ADMIN_ONLY,
             }
         )
 
@@ -377,4 +380,13 @@ def _build_user_notifications():
             }
         )
 
+    if getattr(current_user, "role", None) == "user":
+        granted = set(parse_permissions_json(getattr(current_user, "permissions_json", None)))
+        return [
+            item
+            for item in items
+            if item.get("permission")
+            and item.get("permission") != EMPLOYEE_ADMIN_ONLY
+            and item.get("permission") in granted
+        ]
     return items
