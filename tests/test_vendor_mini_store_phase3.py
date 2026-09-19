@@ -8,6 +8,7 @@ def test_product_payload_exposes_only_customer_facing_fields():
     product = SimpleNamespace(
         id=7,
         name="Producto demo",
+        barcode="779000000007",
         description="Descripción pública",
         category="Bebidas",
         brand="Marca",
