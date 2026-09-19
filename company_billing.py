@@ -92,8 +92,14 @@ def _save_company_logo(upload, company_id):
     image = image.convert("RGBA" if has_alpha else "RGB")
     image.thumbnail((MAX_LOGO_DIMENSION_PX, MAX_LOGO_DIMENSION_PX), Image.LANCZOS)
 
-    save_format = "PNG" if has_alpha else "JPEG"
-    save_extension = ".png" if save_format == "PNG" else ".jpg"
+    # Preserve the requested PNG format so transparent and non-transparent
+    # PNG uploads keep a predictable MIME type after safe re-encoding.
+    if extension == ".png":
+        save_format, save_extension = "PNG", ".png"
+    elif extension == ".webp":
+        save_format, save_extension = "WEBP", ".webp"
+    else:
+        save_format, save_extension = "JPEG", ".jpg"
 
     upload_dir = Path(current_app.static_folder) / "uploads" / "companies" / str(company_id)
     upload_dir.mkdir(parents=True, exist_ok=True)
