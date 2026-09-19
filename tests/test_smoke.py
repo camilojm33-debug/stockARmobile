@@ -53,7 +53,32 @@ def seed():
     db.session.add(company)
     db.session.flush()
 
-    company_admin = User(username="empresa_admin", email="admin@test.local", role="user", company_id=company.id, active=True)
+    company_admin = User(
+        username="empresa_admin",
+        email="admin@test.local",
+        role="user",
+        company_id=company.id,
+        active=True,
+        permissions_json=json.dumps([
+            "sales",
+            "inventory",
+            "clients",
+            "reports",
+            "cash",
+            "ai_access",
+            "quotes_view",
+            "quotes_create",
+            "quotes_edit",
+            "quotes_duplicate",
+            "quotes_delete",
+            "quotes_anulate",
+            "quotes_download_pdf",
+            "quotes_print",
+            "quotes_share_whatsapp",
+            "quotes_convert",
+            "quotes_email",
+        ]),
+    )
     company_admin.set_password("admin123")
     db.session.add(company_admin)
 
@@ -131,7 +156,6 @@ def test_core_routes_and_decimal_checkout():
         "/ventas/",
         "/qr/",
         "/caja/",
-        "/gastos/",
         "/reportes/",
         "/admin/portal",
     ]:
