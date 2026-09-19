@@ -1917,8 +1917,8 @@ def test_company_logo_isolated_between_tenants():
     with stock_app.app.app_context():
         refreshed_a = db.session.get(Company, company_a_id)
         refreshed_b = db.session.get(Company, company_b_id)
-        assert refreshed_a.logo.startswith("/company/logo/")
-        assert refreshed_b.logo.startswith("/company/logo/")
+        assert refreshed_a.logo.startswith("/company-logo/")
+        assert refreshed_b.logo.startswith("/company-logo/")
         assert refreshed_a.logo_public_token
         assert refreshed_b.logo_public_token
         assert refreshed_a.logo_public_token != refreshed_b.logo_public_token
