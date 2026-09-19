@@ -272,6 +272,7 @@ def _build_user_notifications():
         PurchaseOrder,
         Sale,
         Subscription,
+        User,
         db,
         get_company_access_state,
         get_current_company_id,
@@ -384,16 +385,14 @@ def _build_user_notifications():
     # Flask-Login instance. The notification endpoint must honor an explicit
     # permission matrix immediately after it is changed.
     login_user = current_user._get_current_object()
-    user_row = db.session.get(type(login_user), login_user.id)
-    if user_row is None:
-        user_row = login_user
+    user_row = User.query.filter_by(id=login_user.id).first() or login_user
 
     role = str(getattr(user_row, "role", "") or "").strip().lower()
     permissions_json = getattr(user_row, "permissions_json", None)
 
     # An explicit permission matrix is authoritative for employee/admin
     # notification visibility. Only superadmin/seller bypass this function.
-    if role != "superadmin" and role != "seller" and permissions_json is not None:
+    if permissions_json is not None:
         granted = set(parse_permissions_json(permissions_json))
         return [
             item
