@@ -277,6 +277,8 @@ def record_ai_usage(
             "input_tokens": int(telemetry.get("input_tokens") or 0),
             "output_tokens": int(telemetry.get("output_tokens") or 0),
             "total_tokens": int(telemetry.get("total_tokens") or 0),
-        }\n        from services.ai_agent.cost_service import estimate_ai_cost\n        metadata["ai_usage_telemetry"]["cost"] = estimate_ai_cost(metadata["ai_usage_telemetry"])
+        }
+        from services.ai_agent.cost_service import estimate_ai_cost
+        metadata["ai_usage_telemetry"]["cost"] = estimate_ai_cost(metadata["ai_usage_telemetry"])
     message.metadata_json = metadata
     return True
