@@ -380,8 +380,13 @@ def _build_user_notifications():
             }
         )
 
-    if getattr(current_user, "role", None) == "user":
-        granted = set(parse_permissions_json(getattr(current_user, "permissions_json", None)))
+    role = str(getattr(current_user, "role", "") or "").strip().lower()
+    permissions_json = getattr(current_user, "permissions_json", None)
+
+    # Employee users (and users with an explicit permission matrix) must only
+    # receive notifications backed by a granted permission.
+    if role == "user" or permissions_json is not None:
+        granted = set(parse_permissions_json(permissions_json))
         return [
             item
             for item in items
