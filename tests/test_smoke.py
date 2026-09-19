@@ -130,6 +130,11 @@ def grant_quote_permissions(user):
         "quotes_delete",
         "quotes_convert",
         "quotes_print",
+        "quotes_download_pdf",
+        "quotes_share_whatsapp",
+        "quotes_duplicate",
+        "quotes_anulate",
+        "quotes_email",
     ])
     db.session.commit()
 
@@ -157,12 +162,12 @@ def test_core_routes_and_decimal_checkout():
         "/qr/",
         "/caja/",
         "/reportes/",
-        "/admin/portal",
     ]:
         response = client.get(path)
         assert response.status_code == 200, path
 
     assert client.get("/compras/").status_code == 403
+    assert client.get("/admin/portal").status_code == 403
 
     client.post("/auth/logout")
     client.post("/auth/login", data={"username": "negocio_admin", "password": "admin123"})
@@ -1904,9 +1909,13 @@ def test_company_logo_isolated_between_tenants():
     with stock_app.app.app_context():
         refreshed_a = db.session.get(Company, company_a_id)
         refreshed_b = db.session.get(Company, company_b_id)
-        assert refreshed_a.logo.startswith(f"/static/uploads/companies/{company_a_id}/")
-        assert refreshed_b.logo.startswith(f"/static/uploads/companies/{company_b_id}/")
-        assert refreshed_a.logo != refreshed_b.logo
+        assert refreshed_a.logo.startswith("/company/logo/")
+        assert refreshed_b.logo.startswith("/company/logo/")
+        assert refreshed_a.logo_public_token
+        assert refreshed_b.logo_public_token
+        assert refreshed_a.logo_public_token != refreshed_b.logo_public_token
+        assert refreshed_a.logo_data
+        assert refreshed_b.logo_data
         assert refreshed_a.logo in settings_a
         assert refreshed_b.logo not in settings_a
         assert refreshed_b.logo in settings_b
