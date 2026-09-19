@@ -1806,6 +1806,8 @@ app.register_blueprint(expenses_bp, url_prefix="/gastos")
 app.register_blueprint(reports_bp, url_prefix="/reportes")
 app.register_blueprint(saas_bp, url_prefix="/superadmin")
 app.register_blueprint(company_billing_bp, url_prefix="/admin")
+# Public company-logo endpoint: company logos are tenant-scoped by opaque token and must remain accessible without authentication.
+app.add_url_rule("/company-logo/<token>", endpoint="company_logo_public_root", view_func=company_billing.company_logo_public)
 app.register_blueprint(referrals_bp)
 app.register_blueprint(network_bp)
 install_commission_hook()
