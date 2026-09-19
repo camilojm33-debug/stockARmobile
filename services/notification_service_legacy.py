@@ -327,11 +327,11 @@ def _build_user_notifications():
         )
 
     if new_clients:
-        items.append({"type": "primary", "title": "Clientes", "body": f"{new_clients} cliente(s) nuevo(s) hoy.", "href": "/clientes/"})
+        items.append({"type": "primary", "title": "Clientes", "body": f"{new_clients} cliente(s) nuevo(s) hoy.", "href": "/clientes/", "permission": "clients"})
 
     if latest_subscription is not None:
         sub_status = (latest_subscription.status or "sin estado").replace("_", " ")
-        items.append({"type": "info", "title": "Suscripcion", "body": f"Estado actual: {sub_status}.", "href": _subscription_notification_target()})
+        items.append({"type": "info", "title": "Suscripcion", "body": f"Estado actual: {sub_status}.", "href": _subscription_notification_target(), "permission": EMPLOYEE_ADMIN_ONLY})
 
     if latest_backup is not None:
         backup_status = (latest_backup.status or "pendiente").lower()
@@ -373,6 +373,7 @@ def _build_user_notifications():
                 "title": "Empresa",
                 "body": company_state.get("reason", "Revisa el estado de tu empresa."),
                 "href": _subscription_notification_target(),
+                "permission": EMPLOYEE_ADMIN_ONLY,
             }
         )
 
