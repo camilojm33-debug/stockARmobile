@@ -135,6 +135,8 @@ def grant_quote_permissions(user):
         "quotes_duplicate",
         "quotes_anulate",
         "quotes_email",
+        "sales",
+        "cash",
     ])
     db.session.commit()
 
@@ -793,6 +795,12 @@ def test_employee_notifications_match_granted_permissions():
     client = stock_app.app.test_client()
 
     client.post("/auth/login", data={"username": "empresa_admin", "password": "admin123"})
+    with stock_app.app.app_context():
+        employee = User.query.filter_by(username="empresa_admin").first()
+        assert employee is not None
+        employee.permissions_json = json.dumps([])
+        db.session.commit()
+
     response = client.get("/api/notifications")
     assert response.status_code == 200
     payload = response.get_json()
@@ -4208,7 +4216,7 @@ def test_landing_and_subscription_use_same_plan_catalog():
     assert "Sumá inteligencia artificial a tu negocio" in landing_html
     assert "Vendedor IA" in landing_html
 
-    client.post("/auth/login", data={"username": "empresa_admin", "password": "admin123"})
+    client.post("/auth/login", data={"username": "negocio_admin", "password": "admin123"})
     portal = client.get("/admin/portal")
     assert portal.status_code == 200
     portal_html = portal.data.decode("utf-8")
@@ -4676,7 +4684,7 @@ def test_plan_limits_block_create_products_and_clients_without_breaking_portal()
         trial.max_clients = 1
         db.session.commit()
 
-    client.post("/auth/login", data={"username": "empresa_admin", "password": "admin123"})
+    client.post("/auth/login", data={"username": "negocio_admin", "password": "admin123"})
 
     product_response = client.post(
         "/productos/add",
