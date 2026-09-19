@@ -80,5 +80,5 @@ class OpenAICompatibleProvider(AIProvider):
                     arguments = json.loads(arguments)
                 except json.JSONDecodeError as exc:
                     raise RuntimeError("Los argumentos de la Tool no son JSON válido.") from exc
-            return {"content": content, "tool_call": {"id": first.get("id"), "name": function.get("name"), "arguments": arguments}, "usage": data.get("usage") or {}}
-        return {"content": content, "tool_call": None, "usage": data.get("usage") or {}}
+            return {"content": content, "tool_call": {"id": first.get("id"), "name": function.get("name"), "arguments": arguments}, "usage": data.get("usage") or {}, "model": model or self.model}
+        return {"content": content, "tool_call": None, "usage": data.get("usage") or {}, "model": model or self.model}

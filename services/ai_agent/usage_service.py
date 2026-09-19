@@ -163,6 +163,58 @@ def usage_snapshot(company_id: int, *, now: datetime | None = None) -> dict[str,
     }
 
 
+def cost_snapshot(company_id: int, *, now: datetime | None = None) -> dict[str, Any]:
+    """Aggregate measured token costs for the current AI usage period."""
+    period_start = _period_start(now or utcnow_naive())
+    messages = ConversationMessage.query.filter(
+        ConversationMessage.company_id == company_id,
+        ConversationMessage.role == "assistant",
+        ConversationMessage.created_at >= period_start,
+    ).all()
+    total_cost = 0.0
+    priced_interactions = 0
+    unpriced_interactions = 0
+    total_input_tokens = 0
+    total_output_tokens = 0
+    by_agent: dict[str, float] = {}
+    by_model: dict[str, float] = {}
+
+    for message in messages:
+        metadata = message.metadata_json if isinstance(message.metadata_json, dict) else {}
+        if not metadata.get("ai_usage_recorded"):
+            continue
+        telemetry = metadata.get("ai_usage_telemetry")
+        if not isinstance(telemetry, dict):
+            unpriced_interactions += 1
+            continue
+        cost = telemetry.get("cost") if isinstance(telemetry.get("cost"), dict) else {}
+        value = float(cost.get("estimated_cost_usd") or 0)
+        total_cost += value
+        total_input_tokens += int(telemetry.get("input_tokens") or 0)
+        total_output_tokens += int(telemetry.get("output_tokens") or 0)
+        if cost.get("priced"):
+            priced_interactions += 1
+        else:
+            unpriced_interactions += 1
+        agent = str(metadata.get("agent_key") or "asistente")
+        model = str(telemetry.get("model") or "unknown")
+        by_agent[agent] = by_agent.get(agent, 0.0) + value
+        by_model[model] = by_model.get(model, 0.0) + value
+
+    return {
+        "period": period_start.strftime("%Y-%m"),
+        "currency": "USD",
+        "estimated_cost_usd": round(total_cost, 8),
+        "input_tokens": total_input_tokens,
+        "output_tokens": total_output_tokens,
+        "total_tokens": total_input_tokens + total_output_tokens,
+        "priced_interactions": priced_interactions,
+        "unpriced_interactions": unpriced_interactions,
+        "by_agent": {key: round(value, 8) for key, value in by_agent.items()},
+        "by_model": {key: round(value, 8) for key, value in by_model.items()},
+    }
+
+
 def usage_history(company_id: int) -> list[dict[str, Any]]:
     """Return preserved monthly usage periods from the conversation history."""
     messages = ConversationMessage.query.filter(
@@ -182,8 +234,18 @@ def usage_history(company_id: int) -> list[dict[str, Any]]:
     return [periods[key] for key in sorted(periods, reverse=True)]
 
 
-def record_ai_usage(*, company_id: int, agent_id: int, conversation_id: int, user_id: int | None, external_actor_id: str | None = None, interaction_type: str, message_id: int) -> bool:
-    """Mark one successful assistant response as the single usage event."""
+def record_ai_usage(
+    *,
+    company_id: int,
+    agent_id: int,
+    conversation_id: int,
+    user_id: int | None,
+    external_actor_id: str | None = None,
+    interaction_type: str,
+    message_id: int,
+    telemetry: dict[str, Any] | None = None,
+) -> bool:
+    """Mark one successful response as the commercial usage event and preserve provider telemetry."""
     message = ConversationMessage.query.filter_by(
         id=message_id,
         company_id=company_id,
@@ -204,5 +266,19 @@ def record_ai_usage(*, company_id: int, agent_id: int, conversation_id: int, use
         "external_actor_id": external_actor_id,
         "interaction_type": interaction_type,
     })
+    if isinstance(telemetry, dict):
+        # Telemetry is observational only in this phase: it does not alter
+        # plan limits, billing, or access decisions.
+        metadata["ai_usage_telemetry"] = {
+            "provider": telemetry.get("provider"),
+            "model": telemetry.get("model"),
+            "provider_calls": int(telemetry.get("provider_calls") or 0),
+            "tool_rounds": int(telemetry.get("tool_rounds") or 0),
+            "input_tokens": int(telemetry.get("input_tokens") or 0),
+            "output_tokens": int(telemetry.get("output_tokens") or 0),
+            "total_tokens": int(telemetry.get("total_tokens") or 0),
+        }
+        from services.ai_agent.cost_service import estimate_ai_cost
+        metadata["ai_usage_telemetry"]["cost"] = estimate_ai_cost(metadata["ai_usage_telemetry"])
     message.metadata_json = metadata
     return True

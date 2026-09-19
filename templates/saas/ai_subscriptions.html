@@ -28,6 +28,13 @@
     <div class="col-md-2"><button class="btn btn-outline-primary w-100" type="submit">Buscar</button></div>
   </form>
 
+  <div class="row g-3 mb-4">
+    <div class="col-md-3"><div class="card app-card h-100"><div class="card-body"><div class="small text-muted">Empresas con plan IA</div><div class="h4 fw-bold mb-0">{{ profitability_totals.companies }}</div></div></div></div>
+    <div class="col-md-3"><div class="card app-card h-100"><div class="card-body"><div class="small text-muted">Precio mensual listado</div><div class="h4 fw-bold mb-0">$ {{ "%.2f"|format(profitability_totals.plan_list_price_ars) }}</div><div class="small text-muted">Base teórica, no cobro confirmado</div></div></div></div>
+    <div class="col-md-3"><div class="card app-card h-100"><div class="card-body"><div class="small text-muted">Costo IA estimado</div><div class="h4 fw-bold mb-0">USD {{ "%.4f"|format(profitability_totals.estimated_cost_usd) }}</div>{% if profitability_totals.cost_ars_available %}<div class="small text-muted">ARS {{ "%.2f"|format(profitability_totals.estimated_cost_ars) }}</div>{% else %}<div class="small text-warning">Falta cotización USD→ARS configurada</div>{% endif %}</div></div></div>
+    <div class="col-md-3"><div class="card app-card h-100"><div class="card-body"><div class="small text-muted">Margen bruto estimado</div><div class="h4 fw-bold mb-0">{% if profitability_totals.estimated_margin_percent is not none %}{{ "%.2f"|format(profitability_totals.estimated_margin_percent) }}%{% else %}—{% endif %}</div><div class="small text-muted">Usa precio listado − costo IA</div></div></div></div>
+  </div>
+
   {% for row in rows %}
   {% set company = row.company %}
   {% set status = row.status %}
@@ -49,6 +56,19 @@
             {% if status.invoice_processing %}<span class="text-success">✓ facturas</span>{% endif %}
           </div>
           <div class="small text-muted">Inicio: {{ status.starts_at or '-' }} · Vence: {{ status.ends_at or '-' }}</div>
+          {% if row.profitability.plan_code %}
+          <div class="mt-2 p-2 rounded border bg-light">
+            <div class="small fw-semibold">Economía del plan</div>
+            <div class="small text-muted">Precio listado: ${{ "%.2f"|format(row.profitability.plan_list_price_ars) }} · Costo IA: USD {{ "%.6f"|format(row.profitability.estimated_cost_usd) }}</div>
+            {% if row.profitability.estimated_cost_ars is not none %}
+              <div class="small text-muted">Costo IA: ${{ "%.2f"|format(row.profitability.estimated_cost_ars) }} · Margen bruto estimado: {{ "%.2f"|format(row.profitability.estimated_margin_percent) }}%</div>
+            {% else %}
+              <div class="small text-warning">Configurá AI_USD_TO_ARS para calcular margen en ARS.</div>
+            {% endif %}
+            {% if row.profitability.status == 'missing_provider_pricing' %}<div class="small text-warning">Falta AI_TOKEN_PRICING_JSON para costear tokens.</div>{% endif %}
+            {% if row.profitability.by_agent_usd %}<div class="small text-muted mt-1">Costo por agente: {% for agent, cost in row.profitability.by_agent_usd.items() %}{{ agent }} USD {{ "%.6f"|format(cost) }}{% if not loop.last %} · {% endif %}{% endfor %}</div>{% endif %}
+          </div>
+          {% endif %}
         </div>
         <div>
           <a class="btn btn-sm btn-primary" href="{{ url_for('saas.ai_subscription_detail', company_id=company.id) }}">Gestionar</a>
