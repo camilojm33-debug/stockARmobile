@@ -250,7 +250,8 @@ def process_invoice(upload_id):
     upload["status"] = "PROCESANDO"
     _save_invoice(conversation, metadata, uploads, index, upload)
     try:
-        extracted = InvoiceAIService(AgentRuntime.provider()).extract(upload, company_id=company_id)
+        invoice_ai = InvoiceAIService(AgentRuntime.provider())
+        extracted = invoice_ai.extract(upload, company_id=company_id)
         previous_result = _already_applied_invoice(upload_id, company_id, extracted.get("document_hash"))
         if previous_result is not None:
             raise InvoiceAIError("Esta factura ya fue aplicada anteriormente en esta empresa.")
@@ -269,7 +270,15 @@ def process_invoice(upload_id):
             db.session.flush()
             if agent:
                 from services.ai_agent.usage_service import record_ai_usage
-                record_ai_usage(company_id=company_id, agent_id=agent.id, conversation_id=conversation.id, user_id=current_user.id, interaction_type="asistente", message_id=usage_message.id)
+                record_ai_usage(
+                    company_id=company_id,
+                    agent_id=agent.id,
+                    conversation_id=conversation.id,
+                    user_id=current_user.id,
+                    interaction_type="asistente",
+                    message_id=usage_message.id,
+                    telemetry=invoice_ai.last_usage,
+                )
             upload["usage_recorded"] = True
         _save_invoice(conversation, metadata, uploads, index, upload)
         return jsonify({"success": True, "status": upload["status"], "preview": upload["invoice"]})
