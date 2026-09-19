@@ -1650,7 +1650,7 @@ def company_logo_upload():
     company.logo_public_token = token
     company.logo_data = logo_bytes
     company.logo_mime_type = _logo_mime_type_from_path(new_logo_file)
-    company.logo = f"/company/logo/{token}"
+    company.logo = f"/company-logo/{token}"
     record_audit(action="company_logo_upload", entity="company", entity_id=company.id, detail="Logo de la empresa actualizado y almacenado de forma persistente.")
     db.session.commit()
     _delete_company_logo_file(old_logo_path, company.id)
