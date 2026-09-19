@@ -100,7 +100,7 @@ def test_run_tool_loop_caps_tool_rounds_and_requests_final_synthesis(monkeypatch
 
     monkeypatch.setattr(AgentRuntime, "_execute_tool", fake_execute)
 
-    content, _, rounds = AgentRuntime._run_tool_loop(
+    content, _, rounds, telemetry = AgentRuntime._run_tool_loop(
         provider=provider,
         messages=[{"role": "user", "content": "Consulta"}],
         tools=[{"type": "function", "function": {"name": "buscar_producto", "parameters": {}}}],
