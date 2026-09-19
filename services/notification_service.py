@@ -61,10 +61,18 @@ def filter_notifications_for_user(items):
     map to an explicit permission or it is hidden rather than leaking a module
     or business information the employee cannot access.
     """
-    if user_role(current_user) != "user":
+    login_user = current_user._get_current_object()
+    try:
+        from app import User
+
+        persisted_user = User.query.filter_by(id=login_user.id).first() or login_user
+    except Exception:
+        persisted_user = login_user
+
+    if user_role(persisted_user) != "user":
         return list(items or [])
 
-    permissions = parse_permissions_json(getattr(current_user, "permissions_json", None))
+    permissions = parse_permissions_json(getattr(persisted_user, "permissions_json", None))
     filtered = []
     for item in items or []:
         required = _notification_required_permission(item)
