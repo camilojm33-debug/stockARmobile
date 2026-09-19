@@ -385,7 +385,7 @@ def _build_user_notifications():
     # Flask-Login instance. The notification endpoint must honor an explicit
     # permission matrix immediately after it is changed.
     login_user = current_user._get_current_object()
-    user_row = User.query.filter_by(id=login_user.id).first() or login_user
+    user_row = (\n        User.query\n        .populate_existing()\n        .filter_by(id=login_user.id)\n        .first()\n        or login_user\n    )
 
     role = str(getattr(user_row, "role", "") or "").strip().lower()
     permissions_json = getattr(user_row, "permissions_json", None)
