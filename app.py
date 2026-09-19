@@ -2246,7 +2246,13 @@ def api_search():
 @login_required
 def api_notifications():
     payload = get_notification_payload()
-    return jsonify({"notifications": payload["items"], "notification_count": payload["count"]})
+    # Preserve the legacy keys while exposing the canonical payload shape.
+    return jsonify({
+        "items": payload["items"],
+        "notifications": payload["items"],
+        "count": payload["count"],
+        "notification_count": payload["count"],
+    })
 
 
 @app.route("/api/notifications/mark-seen", methods=["POST"])
