@@ -1787,7 +1787,7 @@ def test_company_logo_upload_preview_and_delete_does_not_affect_stockarmobile_lo
     with stock_app.app.app_context():
         company = Company.query.filter_by(name="Empresa Demo").first()
         assert company.logo is not None
-        assert company.logo.startswith("/company/logo/")
+        assert company.logo.startswith("/company-logo/")
         assert company.logo_public_token
         assert company.logo_data
         assert company.logo_mime_type == "image/png"
