@@ -182,8 +182,18 @@ def usage_history(company_id: int) -> list[dict[str, Any]]:
     return [periods[key] for key in sorted(periods, reverse=True)]
 
 
-def record_ai_usage(*, company_id: int, agent_id: int, conversation_id: int, user_id: int | None, external_actor_id: str | None = None, interaction_type: str, message_id: int) -> bool:
-    """Mark one successful assistant response as the single usage event."""
+def record_ai_usage(
+    *,
+    company_id: int,
+    agent_id: int,
+    conversation_id: int,
+    user_id: int | None,
+    external_actor_id: str | None = None,
+    interaction_type: str,
+    message_id: int,
+    telemetry: dict[str, Any] | None = None,
+) -> bool:
+    """Mark one successful response as the commercial usage event and preserve provider telemetry."""
     message = ConversationMessage.query.filter_by(
         id=message_id,
         company_id=company_id,
@@ -204,5 +214,17 @@ def record_ai_usage(*, company_id: int, agent_id: int, conversation_id: int, use
         "external_actor_id": external_actor_id,
         "interaction_type": interaction_type,
     })
+    if isinstance(telemetry, dict):
+        # Telemetry is observational only in this phase: it does not alter
+        # plan limits, billing, or access decisions.
+        metadata["ai_usage_telemetry"] = {
+            "provider": telemetry.get("provider"),
+            "model": telemetry.get("model"),
+            "provider_calls": int(telemetry.get("provider_calls") or 0),
+            "tool_rounds": int(telemetry.get("tool_rounds") or 0),
+            "input_tokens": int(telemetry.get("input_tokens") or 0),
+            "output_tokens": int(telemetry.get("output_tokens") or 0),
+            "total_tokens": int(telemetry.get("total_tokens") or 0),
+        }
     message.metadata_json = metadata
     return True
