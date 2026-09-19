@@ -384,7 +384,7 @@ def _migrate_company_logos_to_database():
                     token = _safe_company_logo_public_token(company)
                     company.logo_data = payload
                     company.logo_mime_type = mime
-                    company.logo = f"/company/logo/{token}"
+                    company.logo = f"/company-logo/{token}"
                     changed = True
                 except OSError:
                     continue
