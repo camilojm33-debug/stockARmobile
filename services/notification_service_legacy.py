@@ -380,12 +380,19 @@ def _build_user_notifications():
             }
         )
 
-    role = str(getattr(current_user, "role", "") or "").strip().lower()
-    permissions_json = getattr(current_user, "permissions_json", None)
+    # Read the persisted user row instead of relying on a possibly stale
+    # Flask-Login instance. The notification endpoint must honor an explicit
+    # permission matrix immediately after it is changed.
+    user_row = db.session.get(type(current_user), current_user.id)
+    if user_row is None:
+        user_row = current_user
 
-    # Employee users (and users with an explicit permission matrix) must only
-    # receive notifications backed by a granted permission.
-    if role == "user" or permissions_json is not None:
+    role = str(getattr(user_row, "role", "") or "").strip().lower()
+    permissions_json = getattr(user_row, "permissions_json", None)
+
+    # An explicit permission matrix is authoritative for employee/admin
+    # notification visibility. Only superadmin/seller bypass this function.
+    if role != "superadmin" and role != "seller" and permissions_json is not None:
         granted = set(parse_permissions_json(permissions_json))
         return [
             item
