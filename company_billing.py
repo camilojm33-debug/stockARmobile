@@ -34,6 +34,7 @@ from services.subscription_service import SubscriptionService
 from services.webhook_service import WebhookService
 from stockarmobile.helpers.dates import parse_date_yyyy_mm_dd
 from stockarmobile.helpers.numbers import safe_float
+from stockarmobile.permissions import EMPLOYEE_ADMIN_ONLY
 
 bp = Blueprint("company_billing", __name__)
 
