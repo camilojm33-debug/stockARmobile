@@ -1801,6 +1801,130 @@ def ai_subscriptions_panel():
         filters={"q": q, "company_id": company_id},
     )
 
+@bp.route("/ai-profitability")
+@superadmin_required
+def ai_profitability_panel():
+    """Global current-period economics and measured AI cost center for Super Admin."""
+    from app import Company
+    from services.ai_agent.profitability_service import configured_usd_to_ars, profitability_snapshot
+    from services.ai_agent.usage_service import AGENT_LABELS
+
+    _require_superadmin()
+    companies = Company.query.order_by(Company.name.asc()).all()
+    fx = configured_usd_to_ars()
+    period = None
+    totals = {
+        "companies_with_ai": 0,
+        "companies_with_usage": 0,
+        "plan_list_price_ars": 0.0,
+        "estimated_cost_usd": 0.0,
+        "estimated_cost_ars": 0.0,
+        "estimated_gross_contribution_ars": 0.0,
+        "pricing_available": True,
+        "cost_ars_available": True,
+        "priced_interactions": 0,
+        "unpriced_interactions": 0,
+    }
+    by_provider = {}
+    by_provider_model = {}
+    by_model = {}
+    by_agent = {}
+    company_rows = []
+
+    for company in companies:
+        profitability = profitability_snapshot(company)
+        usage = profitability.get("usage") or {}
+        period = period or usage.get("period") or profitability.get("period")
+        interactions = int(usage.get("priced_interactions") or 0) + int(usage.get("unpriced_interactions") or 0)
+        if profitability.get("plan_code"):
+            totals["companies_with_ai"] += 1
+            totals["plan_list_price_ars"] += float(profitability.get("plan_list_price_ars") or 0)
+        if interactions:
+            totals["companies_with_usage"] += 1
+
+        totals["estimated_cost_usd"] += float(usage.get("estimated_cost_usd") or 0)
+        totals["priced_interactions"] += int(usage.get("priced_interactions") or 0)
+        totals["unpriced_interactions"] += int(usage.get("unpriced_interactions") or 0)
+        if profitability.get("status") == "missing_provider_pricing":
+            totals["pricing_available"] = False
+        if profitability.get("estimated_cost_ars") is None and profitability.get("plan_code"):
+            totals["cost_ars_available"] = False
+        else:
+            totals["estimated_cost_ars"] += float(profitability.get("estimated_cost_ars") or 0)
+            totals["estimated_gross_contribution_ars"] += float(profitability.get("estimated_gross_contribution_ars") or 0)
+
+        for key, value in (usage.get("by_provider") or {}).items():
+            by_provider[key] = by_provider.get(key, 0.0) + float(value or 0)
+        for key, value in (usage.get("by_provider_model") or {}).items():
+            by_provider_model[key] = by_provider_model.get(key, 0.0) + float(value or 0)
+        for key, value in (usage.get("by_model") or {}).items():
+            by_model[key] = by_model.get(key, 0.0) + float(value or 0)
+        for key, value in (usage.get("by_agent") or {}).items():
+            by_agent[key] = by_agent.get(key, 0.0) + float(value or 0)
+
+        if profitability.get("plan_code") or interactions:
+            company_rows.append({
+                "company": company,
+                "plan_name": profitability.get("plan_name"),
+                "plan_code": profitability.get("plan_code"),
+                "revenue_ars": float(profitability.get("plan_list_price_ars") or 0),
+                "cost_usd": float(usage.get("estimated_cost_usd") or 0),
+                "cost_ars": profitability.get("estimated_cost_ars"),
+                "margin_percent": profitability.get("estimated_margin_percent"),
+                "status": profitability.get("status"),
+                "priced_interactions": int(usage.get("priced_interactions") or 0),
+                "unpriced_interactions": int(usage.get("unpriced_interactions") or 0),
+                "tokens": int(usage.get("total_tokens") or 0),
+            })
+
+    total_interactions = totals["priced_interactions"] + totals["unpriced_interactions"]
+    totals["pricing_coverage_percent"] = round((totals["priced_interactions"] / total_interactions) * 100, 2) if total_interactions else 100.0
+    totals["estimated_margin_percent"] = (
+        round((totals["estimated_gross_contribution_ars"] / totals["plan_list_price_ars"]) * 100, 2)
+        if totals["cost_ars_available"] and totals["plan_list_price_ars"] > 0
+        else None
+    )
+    totals["usd_to_ars"] = float(fx) if fx > 0 else None
+
+    def _sorted_rows(values):
+        return sorted(
+            [{"name": key, "cost_usd": round(float(value or 0), 8)} for key, value in values.items()],
+            key=lambda item: (-item["cost_usd"], item["name"]),
+        )
+
+    provider_rows = _sorted_rows(by_provider)
+    model_rows = _sorted_rows(by_model)
+    provider_model_rows = _sorted_rows(by_provider_model)
+    agent_rows = []
+    for key, value in sorted(by_agent.items(), key=lambda item: (-float(item[1] or 0), item[0])):
+        agent_rows.append({
+            "name": AGENT_LABELS.get(key, key.replace("_", " ").title()),
+            "key": key,
+            "cost_usd": round(float(value or 0), 8),
+        })
+    company_rows.sort(key=lambda item: (-item["cost_usd"], item["company"].name.lower()))
+
+    warnings = []
+    if totals["unpriced_interactions"]:
+        warnings.append(f'{totals["unpriced_interactions"]} interacciones no tienen pricing de proveedor completo.')
+    if totals["plan_list_price_ars"] and not totals["cost_ars_available"]:
+        warnings.append("No se puede calcular el margen ARS de todas las empresas hasta completar pricing y/o cotización USD→ARS.")
+    if not fx:
+        warnings.append("AI_USD_TO_ARS no está configurada; los costos en ARS y el margen quedan sin calcular.")
+
+    return render_template(
+        "saas/ai_profitability.html",
+        period=period or "sin datos",
+        totals=totals,
+        provider_rows=provider_rows,
+        model_rows=model_rows,
+        provider_model_rows=provider_model_rows,
+        agent_rows=agent_rows,
+        company_rows=company_rows,
+        warnings=warnings,
+    )
+
+
 @bp.route("/ai-subscriptions/<int:company_id>")
 @superadmin_required
 def ai_subscription_detail(company_id):
