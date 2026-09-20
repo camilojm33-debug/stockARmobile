@@ -178,6 +178,8 @@ def cost_snapshot(company_id: int, *, now: datetime | None = None) -> dict[str, 
     total_output_tokens = 0
     by_agent: dict[str, float] = {}
     by_model: dict[str, float] = {}
+    by_provider: dict[str, float] = {}
+    by_provider_model: dict[str, float] = {}
 
     for message in messages:
         metadata = message.metadata_json if isinstance(message.metadata_json, dict) else {}
@@ -197,9 +199,13 @@ def cost_snapshot(company_id: int, *, now: datetime | None = None) -> dict[str, 
         else:
             unpriced_interactions += 1
         agent = str(metadata.get("agent_key") or "asistente")
-        model = str(telemetry.get("model") or "unknown")
+        provider = str(telemetry.get("provider") or "unknown").strip().lower() or "unknown"
+        model = str(telemetry.get("model") or "unknown").strip() or "unknown"
+        provider_model = f"{provider}:{model}"
         by_agent[agent] = by_agent.get(agent, 0.0) + value
         by_model[model] = by_model.get(model, 0.0) + value
+        by_provider[provider] = by_provider.get(provider, 0.0) + value
+        by_provider_model[provider_model] = by_provider_model.get(provider_model, 0.0) + value
 
     return {
         "period": period_start.strftime("%Y-%m"),
@@ -212,6 +218,8 @@ def cost_snapshot(company_id: int, *, now: datetime | None = None) -> dict[str, 
         "unpriced_interactions": unpriced_interactions,
         "by_agent": {key: round(value, 8) for key, value in by_agent.items()},
         "by_model": {key: round(value, 8) for key, value in by_model.items()},
+        "by_provider": {key: round(value, 8) for key, value in by_provider.items()},
+        "by_provider_model": {key: round(value, 8) for key, value in by_provider_model.items()},
     }
 
 
