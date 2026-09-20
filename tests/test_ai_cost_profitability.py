@@ -428,8 +428,9 @@ def test_profitability_snapshot_reports_missing_provider_pricing(app):
 
         assert snapshot["status"] == "missing_provider_pricing"
         assert snapshot["cost_pricing_configured"] is False
-        assert snapshot["estimated_cost_ars"] == 0.0
-        assert snapshot["estimated_margin_percent"] == 100.0
+        assert snapshot["estimated_cost_ars"] is None
+        assert snapshot["estimated_gross_contribution_ars"] is None
+        assert snapshot["estimated_margin_percent"] is None
 
 
 def test_profitability_snapshot_reports_no_ai_plan(app):
@@ -519,3 +520,21 @@ def test_cost_snapshot_ignores_unrecorded_assistant_responses(app):
         assert snapshot["output_tokens"] == 0
         assert snapshot["priced_interactions"] == 0
         assert snapshot["unpriced_interactions"] == 0
+
+
+def test_profitability_snapshot_reports_no_ai_usage(app):
+    with app.app_context():
+        company = _company()
+
+        snapshot = profitability_snapshot(
+            company,
+            now=datetime(2026, 9, 20),
+            usd_to_ars=1200,
+        )
+
+        assert snapshot["status"] == "no_ai_usage"
+        assert snapshot["estimated_cost_usd"] == 0.0
+        assert snapshot["estimated_cost_ars"] == 0.0
+        assert snapshot["estimated_gross_contribution_ars"] == 110000.0
+        assert snapshot["estimated_margin_percent"] == 100.0
+        assert snapshot["cost_pricing_configured"] is False
