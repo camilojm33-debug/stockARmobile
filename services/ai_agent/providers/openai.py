@@ -144,6 +144,7 @@ class OpenAIProvider(AIProvider):
             "content": getattr(response, "output_text", "") or "",
             "tool_call": self._tool_call(output),
             "usage": getattr(response, "usage", None),
+            "model": effective_model,
         }
 
     def generate_invoice(

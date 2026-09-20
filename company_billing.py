@@ -34,6 +34,7 @@ from services.subscription_service import SubscriptionService
 from services.webhook_service import WebhookService
 from stockarmobile.helpers.dates import parse_date_yyyy_mm_dd
 from stockarmobile.helpers.numbers import safe_float
+from stockarmobile.permissions import EMPLOYEE_ADMIN_ONLY
 
 bp = Blueprint("company_billing", __name__)
 
@@ -92,8 +93,14 @@ def _save_company_logo(upload, company_id):
     image = image.convert("RGBA" if has_alpha else "RGB")
     image.thumbnail((MAX_LOGO_DIMENSION_PX, MAX_LOGO_DIMENSION_PX), Image.LANCZOS)
 
-    save_format = "PNG" if has_alpha else "JPEG"
-    save_extension = ".png" if save_format == "PNG" else ".jpg"
+    # Preserve the requested PNG format so transparent and non-transparent
+    # PNG uploads keep a predictable MIME type after safe re-encoding.
+    if extension == ".png":
+        save_format, save_extension = "PNG", ".png"
+    elif extension == ".webp":
+        save_format, save_extension = "WEBP", ".webp"
+    else:
+        save_format, save_extension = "JPEG", ".jpg"
 
     upload_dir = Path(current_app.static_folder) / "uploads" / "companies" / str(company_id)
     upload_dir.mkdir(parents=True, exist_ok=True)
@@ -187,6 +194,7 @@ EMPLOYEE_PERMISSIONS = [
     ("cash", "Caja"),
     ("economic_stats", "Puede visualizar estadísticas económicas"),
     ("ai_access", "Agentes IA"),
+    ("billing", "Facturación del negocio"),
 ]
 
 BILLING_DOCUMENT_TYPES = [
@@ -377,7 +385,7 @@ def _can_view_business_billing(user):
     if role != "user":
         return False
     user_permissions = set(_user_permissions(user))
-    return bool(user_permissions.intersection({"reports", "sales", "quotes_view", "cash", "economic_stats"}))
+    return "billing" in user_permissions
 
 
 def business_billing_view_required(func):
@@ -1644,7 +1652,7 @@ def company_logo_upload():
     company.logo_public_token = token
     company.logo_data = logo_bytes
     company.logo_mime_type = _logo_mime_type_from_path(new_logo_file)
-    company.logo = f"/company/logo/{token}"
+    company.logo = f"/company-logo/{token}"
     record_audit(action="company_logo_upload", entity="company", entity_id=company.id, detail="Logo de la empresa actualizado y almacenado de forma persistente.")
     db.session.commit()
     _delete_company_logo_file(old_logo_path, company.id)

@@ -118,6 +118,7 @@ def _normalize_issue_date(value: Any) -> tuple[str | None, str | None]:
 class InvoiceAIService:
     def __init__(self, provider: AIProvider):
         self.provider = provider
+        self.last_usage: dict[str, Any] = {}
 
     @staticmethod
     def json_safe(value: Any) -> Any:
@@ -146,6 +147,31 @@ class InvoiceAIService:
         for index, model in enumerate(self._invoice_models()):
             try:
                 response = self.provider.generate_invoice(file_path=path, mime_type=mime_type, prompt=INVOICE_EXTRACTION_PROMPT, schema=INVOICE_SCHEMA, model=model)
+                if isinstance(response, dict):
+                    usage = response.get("usage")
+                    def usage_value(*names):
+                        if isinstance(usage, dict):
+                            for name in names:
+                                if usage.get(name) is not None:
+                                    return int(usage.get(name) or 0)
+                        else:
+                            for name in names:
+                                value = getattr(usage, name, None) if usage is not None else None
+                                if value is not None:
+                                    return int(value or 0)
+                        return 0
+                    input_tokens = usage_value("prompt_tokens", "input_tokens", "prompt_token_count")
+                    output_tokens = usage_value("completion_tokens", "output_tokens", "candidates_token_count")
+                    total_tokens = usage_value("total_tokens", "total_token_count") or (input_tokens + output_tokens)
+                    self.last_usage = {
+                        "provider": self.provider.__class__.__name__.replace("Provider", "").lower(),
+                        "model": response.get("model") or model or getattr(self.provider, "model", None),
+                        "provider_calls": index + 1,
+                        "tool_rounds": 0,
+                        "input_tokens": input_tokens,
+                        "output_tokens": output_tokens,
+                        "total_tokens": total_tokens,
+                    }
                 break
             except Exception as exc:
                 last_error = exc

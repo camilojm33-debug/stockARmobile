@@ -1757,6 +1757,7 @@ def toggle_company(company_id):
 def ai_subscriptions_panel():
     from app import Company
     from services.ai_agent.subscription_service import AISubscriptionService
+    from services.ai_agent.profitability_service import profitability_snapshot
     from services.ai_agent.usage_service import AI_PLANS
 
     _require_superadmin()
@@ -1768,9 +1769,37 @@ def ai_subscriptions_panel():
         query = query.filter(Company.id == company_id)
     elif q:
         query = query.filter(Company.name.ilike(f"%{q}%"))
-    rows = [{"company": company, "status": AISubscriptionService.get_status(company)} for company in query.all()]
-    return render_template("saas/ai_subscriptions.html", rows=rows, ai_plans=AI_PLANS, filters={"q": q, "company_id": company_id})
 
+    rows = []
+    profitability_totals = {"companies": 0, "plan_list_price_ars": 0.0, "estimated_cost_usd": 0.0, "estimated_cost_ars": 0.0, "estimated_gross_contribution_ars": 0.0, "cost_ars_available": True, "pricing_available": True}
+    for company in query.all():
+        status = AISubscriptionService.get_status(company)
+        profitability = profitability_snapshot(company)
+        rows.append({"company": company, "status": status, "profitability": profitability})
+        if profitability.get("plan_code"):
+            profitability_totals["companies"] += 1
+            profitability_totals["plan_list_price_ars"] += float(profitability.get("plan_list_price_ars") or 0)
+            profitability_totals["estimated_cost_usd"] += float(profitability.get("estimated_cost_usd") or 0)
+            if profitability.get("status") == "missing_provider_pricing":
+                profitability_totals["pricing_available"] = False
+            cost_ars = profitability.get("estimated_cost_ars")
+            contribution_ars = profitability.get("estimated_gross_contribution_ars")
+            if cost_ars is None or contribution_ars is None:
+                profitability_totals["cost_ars_available"] = False
+            else:
+                profitability_totals["estimated_cost_ars"] += float(cost_ars)
+                profitability_totals["estimated_gross_contribution_ars"] += float(contribution_ars)
+
+    total_revenue = profitability_totals["plan_list_price_ars"]
+    total_cost = profitability_totals["estimated_cost_ars"]
+    profitability_totals["estimated_margin_percent"] = round(((total_revenue - total_cost) / total_revenue) * 100, 2) if profitability_totals["cost_ars_available"] and total_revenue > 0 else None
+    return render_template(
+        "saas/ai_subscriptions.html",
+        rows=rows,
+        ai_plans=AI_PLANS,
+        profitability_totals=profitability_totals,
+        filters={"q": q, "company_id": company_id},
+    )
 
 @bp.route("/ai-subscriptions/<int:company_id>")
 @superadmin_required

@@ -316,19 +316,65 @@ class AgentRuntime:
             return ""
         return str(value).strip()
 
+    @staticmethod
+    def _usage_values(response):
+        usage = response.get("usage") if isinstance(response, dict) else None
+
+        def value(*names):
+            if usage is None:
+                return 0
+            if isinstance(usage, dict):
+                for name in names:
+                    if usage.get(name) is not None:
+                        return usage.get(name) or 0
+                return 0
+            for name in names:
+                candidate = getattr(usage, name, None)
+                if candidate is not None:
+                    return candidate or 0
+            return 0
+
+        input_tokens = int(value("prompt_tokens", "input_tokens", "prompt_token_count"))
+        output_tokens = int(value("completion_tokens", "output_tokens", "candidates_token_count"))
+        total_tokens = int(value("total_tokens", "total_token_count"))
+        if not total_tokens:
+            total_tokens = input_tokens + output_tokens
+        return input_tokens, output_tokens, total_tokens
+
     @classmethod
     def _run_tool_loop(cls, *, provider, messages, tools, kwargs, company_id, context, allowed_tool_names=None):
         working_messages = list(messages)
         response = provider.generate(messages=working_messages, tools=tools, **kwargs)
         campaign_context = None
         tool_rounds = 0
+        provider_calls = 1
+        input_tokens, output_tokens, total_tokens = cls._usage_values(response)
+        last_model = response.get("model") if isinstance(response, dict) else None
+
+        def capture_usage(current_response):
+            nonlocal provider_calls, input_tokens, output_tokens, total_tokens, last_model
+            provider_calls += 1
+            current_input, current_output, current_total = cls._usage_values(current_response)
+            input_tokens += current_input
+            output_tokens += current_output
+            total_tokens += current_total
+            if isinstance(current_response, dict) and current_response.get("model"):
+                last_model = current_response.get("model")
 
         while True:
             tool_calls = cls._tool_calls(response)
             final_content = cls._content(response)
             if not tool_calls:
                 if final_content:
-                    return final_content, campaign_context, tool_rounds
+                    return final_content, campaign_context, tool_rounds, {
+                        "provider": provider.__class__.__name__.replace("Provider", "").lower(),
+                        "model": last_model or getattr(provider, "model", None) or kwargs.get("model"),
+                        "provider_calls": provider_calls,
+                        "tool_rounds": tool_rounds,
+                        "input_tokens": input_tokens,
+                        "output_tokens": output_tokens,
+                        "total_tokens": total_tokens,
+                    }
                 raise RuntimeError("El proveedor IA no devolvió una respuesta.")
 
             next_tool_round = tool_rounds + 1
@@ -342,9 +388,18 @@ class AgentRuntime:
                 }
                 final_messages = working_messages + [synthesis_prompt]
                 response = provider.generate(messages=final_messages, tools=[], **kwargs)
+                capture_usage(response)
                 final_content = cls._content(response)
                 if final_content:
-                    return final_content, campaign_context, tool_rounds
+                    return final_content, campaign_context, tool_rounds, {
+                        "provider": provider.__class__.__name__.replace("Provider", "").lower(),
+                        "model": last_model or getattr(provider, "model", None) or kwargs.get("model"),
+                        "provider_calls": provider_calls,
+                        "tool_rounds": tool_rounds,
+                        "input_tokens": input_tokens,
+                        "output_tokens": output_tokens,
+                        "total_tokens": total_tokens,
+                    }
                 raise RuntimeError("El proveedor IA no pudo completar la respuesta después de consultar las herramientas.")
 
             tool_rounds = next_tool_round
@@ -392,6 +447,7 @@ class AgentRuntime:
             )
             working_messages.extend(results_to_append)
             response = provider.generate(messages=working_messages, tools=tools, **kwargs)
+            capture_usage(response)
 
     @classmethod
     def process(
@@ -540,7 +596,7 @@ class AgentRuntime:
             "customer_phone": (metadata or {}).get("from") or "",
             "actor_user_id": sender_id,
         }
-        final_content, campaign_context, tool_rounds = cls._run_tool_loop(
+        final_content, campaign_context, tool_rounds, ai_telemetry = cls._run_tool_loop(
             provider=provider,
             messages=messages,
             tools=cls._tool_definitions(agent_key, allowed_tool_names=allowed_tool_names, company_id=company_id),
@@ -564,6 +620,7 @@ class AgentRuntime:
                 "agent_name": agent.name,
                 "agent_key": agent_key,
                 "tool_rounds": tool_rounds,
+                "ai_usage_telemetry": ai_telemetry,
             },
         )
         db.session.add(assistant)
@@ -600,6 +657,7 @@ class AgentRuntime:
             external_actor_id=(metadata or {}).get("from"),
             interaction_type=agent_key,
             message_id=assistant.id,
+            telemetry=ai_telemetry,
         )
         db.session.commit()
         return {
