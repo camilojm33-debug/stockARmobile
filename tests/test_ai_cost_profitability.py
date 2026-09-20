@@ -46,7 +46,7 @@ def _assistant_message(company, conversation, *, created_at, metadata=None, cont
     return message
 
 
-def test_estimate_ai_cost_uses_provider_model_pricing(monkeypatch):
+# Final integration coverage for AI cost and profitability telemetry.\ndef test_estimate_ai_cost_uses_provider_model_pricing(monkeypatch):
     monkeypatch.setenv(
         "AI_TOKEN_PRICING_JSON",
         json.dumps({
