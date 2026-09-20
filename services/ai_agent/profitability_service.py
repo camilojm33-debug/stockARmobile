@@ -78,10 +78,14 @@ def profitability_snapshot(
     plan_price = plan_monthly_price_ars(plan)
     fx = configured_usd_to_ars(usd_to_ars)
     cost_usd = _decimal(usage.get("estimated_cost_usd"))
-    cost_priced = int(usage.get("priced_interactions") or 0) > 0
+    priced_interactions = int(usage.get("priced_interactions") or 0)
+    unpriced_interactions = int(usage.get("unpriced_interactions") or 0)
+    total_interactions = priced_interactions + unpriced_interactions
+    pricing_complete = total_interactions > 0 and unpriced_interactions == 0
     fx_configured = fx > 0
 
-    cost_ars = cost_usd * fx if fx_configured else None
+    # Never turn unknown provider pricing into a fake zero cost or 100% margin.
+    cost_ars = cost_usd * fx if fx_configured and pricing_complete else None
     contribution_ars = plan_price - cost_ars if cost_ars is not None else None
     margin_percent = (
         (contribution_ars / plan_price * Decimal("100"))
@@ -95,11 +99,13 @@ def profitability_snapshot(
     }
     by_agent_ars = (
         {key: round(float(_decimal(value) * fx), 8) for key, value in by_agent_usd.items()}
-        if fx_configured
+        if fx_configured and pricing_complete
         else None
     )
 
-    if not cost_priced:
+    if total_interactions == 0:
+        status = "no_ai_usage"
+    elif unpriced_interactions > 0:
         status = "missing_provider_pricing"
     elif not fx_configured:
         status = "missing_usd_to_ars"
@@ -122,7 +128,7 @@ def profitability_snapshot(
             round(float(margin_percent), 4) if margin_percent is not None else None
         ),
         "fx_configured": fx_configured,
-        "cost_pricing_configured": cost_priced,
+        "cost_pricing_configured": pricing_complete,
         "status": status,
         "by_agent_usd": by_agent_usd,
         "by_agent_ars": by_agent_ars,
