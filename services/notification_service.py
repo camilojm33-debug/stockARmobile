@@ -53,6 +53,25 @@ def _notification_required_permission(item):
     return None
 
 
+def _persisted_current_user():
+    """Reload the signed-in user from the database before applying permissions.
+
+    Flask-Login keeps a user object in the request context, while permission
+    changes can be committed directly through another ORM operation. Using
+    populate_existing() is intentional here: SQLAlchemy's identity map may
+    otherwise return an already-loaded User without refreshing its columns.
+    """
+    login_user = current_user._get_current_object()
+    from app import User
+
+    return (
+        User.query
+        .populate_existing()
+        .filter_by(id=login_user.id)
+        .first()
+    )
+
+
 def filter_notifications_for_user(items):
     """Return only notifications allowed by the signed-in employee permission set.
 
@@ -61,10 +80,19 @@ def filter_notifications_for_user(items):
     map to an explicit permission or it is hidden rather than leaking a module
     or business information the employee cannot access.
     """
-    if user_role(current_user) != "user":
+    persisted_user = _persisted_current_user()
+
+    # If the persisted user cannot be resolved, fail closed for the employee
+    # instead of falling back to a potentially stale Flask-Login permission set.
+    if persisted_user is None:
+        if user_role(current_user) == "user":
+            return []
         return list(items or [])
 
-    permissions = parse_permissions_json(getattr(current_user, "permissions_json", None))
+    if user_role(persisted_user) != "user":
+        return list(items or [])
+
+    permissions = parse_permissions_json(getattr(persisted_user, "permissions_json", None))
     filtered = []
     for item in items or []:
         required = _notification_required_permission(item)

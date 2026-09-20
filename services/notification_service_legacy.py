@@ -9,6 +9,7 @@ from flask_login import current_user
 from sqlalchemy import or_
 from sqlalchemy.exc import OperationalError, ProgrammingError
 from services.sales_calculation_service import CONFIRMED_SALE_STATUSES
+from stockarmobile.permissions import EMPLOYEE_ADMIN_ONLY, parse_permissions_json
 
 
 def build_notifications():
@@ -271,6 +272,7 @@ def _build_user_notifications():
         PurchaseOrder,
         Sale,
         Subscription,
+        User,
         db,
         get_company_access_state,
         get_current_company_id,
@@ -323,15 +325,16 @@ def _build_user_notifications():
                 "title": "Stock",
                 "body": f"{low_stock} producto(s) en minimo · {out_stock} agotado(s).",
                 "href": "/productos/",
+                "permission": "inventory",
             }
         )
 
     if new_clients:
-        items.append({"type": "primary", "title": "Clientes", "body": f"{new_clients} cliente(s) nuevo(s) hoy.", "href": "/clientes/"})
+        items.append({"type": "primary", "title": "Clientes", "body": f"{new_clients} cliente(s) nuevo(s) hoy.", "href": "/clientes/", "permission": "clients"})
 
     if latest_subscription is not None:
         sub_status = (latest_subscription.status or "sin estado").replace("_", " ")
-        items.append({"type": "info", "title": "Suscripcion", "body": f"Estado actual: {sub_status}.", "href": _subscription_notification_target()})
+        items.append({"type": "info", "title": "Suscripcion", "body": f"Estado actual: {sub_status}.", "href": _subscription_notification_target(), "permission": EMPLOYEE_ADMIN_ONLY})
 
     if latest_backup is not None:
         backup_status = (latest_backup.status or "pendiente").lower()
@@ -342,6 +345,7 @@ def _build_user_notifications():
                 "title": "Backups",
                 "body": f"Ultimo respaldo: {backup_status}.",
                 "href": "/admin?panel=backups",
+                "permission": EMPLOYEE_ADMIN_ONLY,
             }
         )
 
@@ -373,7 +377,34 @@ def _build_user_notifications():
                 "title": "Empresa",
                 "body": company_state.get("reason", "Revisa el estado de tu empresa."),
                 "href": _subscription_notification_target(),
+                "permission": EMPLOYEE_ADMIN_ONLY,
             }
         )
 
+    # Read the persisted user row instead of relying on a possibly stale
+    # Flask-Login instance. The notification endpoint must honor an explicit
+    # permission matrix immediately after it is changed.
+    login_user = current_user._get_current_object()
+    user_row = (
+        User.query
+        .populate_existing()
+        .filter_by(id=login_user.id)
+        .first()
+        or login_user
+    )
+
+    role = str(getattr(user_row, "role", "") or "").strip().lower()
+    permissions_json = getattr(user_row, "permissions_json", None)
+
+    # An explicit permission matrix is authoritative for employee/admin
+    # notification visibility. Only superadmin/seller bypass this function.
+    if permissions_json is not None:
+        granted = set(parse_permissions_json(permissions_json))
+        return [
+            item
+            for item in items
+            if item.get("permission")
+            and item.get("permission") != EMPLOYEE_ADMIN_ONLY
+            and item.get("permission") in granted
+        ]
     return items

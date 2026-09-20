@@ -53,7 +53,32 @@ def seed():
     db.session.add(company)
     db.session.flush()
 
-    company_admin = User(username="empresa_admin", email="admin@test.local", role="user", company_id=company.id, active=True)
+    company_admin = User(
+        username="empresa_admin",
+        email="admin@test.local",
+        role="user",
+        company_id=company.id,
+        active=True,
+        permissions_json=json.dumps([
+            "sales",
+            "inventory",
+            "clients",
+            "reports",
+            "cash",
+            "ai_access",
+            "quotes_view",
+            "quotes_create",
+            "quotes_edit",
+            "quotes_duplicate",
+            "quotes_delete",
+            "quotes_anulate",
+            "quotes_download_pdf",
+            "quotes_print",
+            "quotes_share_whatsapp",
+            "quotes_convert",
+            "quotes_email",
+        ]),
+    )
     company_admin.set_password("admin123")
     db.session.add(company_admin)
 
@@ -105,6 +130,13 @@ def grant_quote_permissions(user):
         "quotes_delete",
         "quotes_convert",
         "quotes_print",
+        "quotes_download_pdf",
+        "quotes_share_whatsapp",
+        "quotes_duplicate",
+        "quotes_anulate",
+        "quotes_email",
+        "sales",
+        "cash",
     ])
     db.session.commit()
 
@@ -131,14 +163,13 @@ def test_core_routes_and_decimal_checkout():
         "/ventas/",
         "/qr/",
         "/caja/",
-        "/gastos/",
         "/reportes/",
-        "/admin/portal",
     ]:
         response = client.get(path)
         assert response.status_code == 200, path
 
     assert client.get("/compras/").status_code == 403
+    assert client.get("/admin/portal").status_code == 403
 
     client.post("/auth/logout")
     client.post("/auth/login", data={"username": "negocio_admin", "password": "admin123"})
@@ -764,6 +795,12 @@ def test_employee_notifications_match_granted_permissions():
     client = stock_app.app.test_client()
 
     client.post("/auth/login", data={"username": "empresa_admin", "password": "admin123"})
+    with stock_app.app.app_context():
+        employee = User.query.filter_by(username="empresa_admin").first()
+        assert employee is not None
+        employee.permissions_json = json.dumps([])
+        db.session.commit()
+
     response = client.get("/api/notifications")
     assert response.status_code == 200
     payload = response.get_json()
@@ -1750,7 +1787,7 @@ def test_company_logo_upload_preview_and_delete_does_not_affect_stockarmobile_lo
     with stock_app.app.app_context():
         company = Company.query.filter_by(name="Empresa Demo").first()
         assert company.logo is not None
-        assert company.logo.startswith("/company/logo/")
+        assert company.logo.startswith("/company-logo/")
         assert company.logo_public_token
         assert company.logo_data
         assert company.logo_mime_type == "image/png"
@@ -1880,9 +1917,13 @@ def test_company_logo_isolated_between_tenants():
     with stock_app.app.app_context():
         refreshed_a = db.session.get(Company, company_a_id)
         refreshed_b = db.session.get(Company, company_b_id)
-        assert refreshed_a.logo.startswith(f"/static/uploads/companies/{company_a_id}/")
-        assert refreshed_b.logo.startswith(f"/static/uploads/companies/{company_b_id}/")
-        assert refreshed_a.logo != refreshed_b.logo
+        assert refreshed_a.logo.startswith("/company-logo/")
+        assert refreshed_b.logo.startswith("/company-logo/")
+        assert refreshed_a.logo_public_token
+        assert refreshed_b.logo_public_token
+        assert refreshed_a.logo_public_token != refreshed_b.logo_public_token
+        assert refreshed_a.logo_data
+        assert refreshed_b.logo_data
         assert refreshed_a.logo in settings_a
         assert refreshed_b.logo not in settings_a
         assert refreshed_b.logo in settings_b
@@ -3338,12 +3379,11 @@ def test_my_company_module_requires_pin_and_shows_tenant_admin_features():
     assert lock_response.status_code in (301, 302)
     assert "/dashboard/" in (lock_response.headers.get("Location") or "")
 
-    # Usuario regular puede acceder al modulo y validar PIN.
+    # El panel de Mi Empresa es administrativo; los usuarios empleados no tienen acceso.
     client.post("/auth/logout")
     client.post("/auth/login", data={"username": "empresa_admin", "password": "admin123"})
     user_access = client.get("/admin/company-settings")
-    assert user_access.status_code == 200
-    assert "Validar PIN" in user_access.data.decode("utf-8")
+    assert user_access.status_code == 403
 
 
 def test_my_company_day_activity_is_pin_protected_and_tenant_scoped():
@@ -3622,7 +3662,7 @@ def test_subscription_option_hidden_for_non_admin_user():
     assert "Suscripción" not in html
 
     portal = client.get("/admin/portal")
-    assert portal.status_code == 200
+    assert portal.status_code == 403
 
 
 def test_my_company_module_blocks_create_when_plan_user_limit_is_reached():
@@ -3673,7 +3713,7 @@ def test_my_company_module_allows_one_time_initial_pin_generation():
         assert company is not None
         assert not company.business_pin_hash
 
-    client.post("/auth/login", data={"username": "empresa_admin", "password": "admin123"})
+    client.post("/auth/login", data={"username": "negocio_admin", "password": "admin123"})
     initial_page = client.get("/admin/company-settings")
     assert initial_page.status_code == 200
     assert "Generar PIN inicial" in initial_page.data.decode("utf-8")
@@ -4176,7 +4216,7 @@ def test_landing_and_subscription_use_same_plan_catalog():
     assert "Sumá inteligencia artificial a tu negocio" in landing_html
     assert "Vendedor IA" in landing_html
 
-    client.post("/auth/login", data={"username": "empresa_admin", "password": "admin123"})
+    client.post("/auth/login", data={"username": "negocio_admin", "password": "admin123"})
     portal = client.get("/admin/portal")
     assert portal.status_code == 200
     portal_html = portal.data.decode("utf-8")
@@ -4644,7 +4684,7 @@ def test_plan_limits_block_create_products_and_clients_without_breaking_portal()
         trial.max_clients = 1
         db.session.commit()
 
-    client.post("/auth/login", data={"username": "empresa_admin", "password": "admin123"})
+    client.post("/auth/login", data={"username": "negocio_admin", "password": "admin123"})
 
     product_response = client.post(
         "/productos/add",
@@ -4676,6 +4716,9 @@ def test_plan_limits_block_create_products_and_clients_without_breaking_portal()
     assert client_response.status_code == 200
     client_html = client_response.data.decode("utf-8")
     assert "Has alcanzado el limite de clientes permitido por tu plan" in client_html
+
+    client.post("/auth/logout")
+    client.post("/auth/login", data={"username": "negocio_admin", "password": "admin123"})
 
     portal = client.get("/admin/portal")
     assert portal.status_code == 200
@@ -4753,7 +4796,7 @@ def test_expired_trial_allows_subscription_portal_and_blocks_dashboard():
         subscription.next_billing_date = stock_app.utcnow() - timedelta(days=1)
         db.session.commit()
 
-    client.post("/auth/login", data={"username": "empresa_admin", "password": "admin123"})
+    client.post("/auth/login", data={"username": "negocio_admin", "password": "admin123"})
     blocked_dashboard = client.get("/dashboard/", follow_redirects=False)
     assert blocked_dashboard.status_code in (301, 302)
     assert "/access-status" in (blocked_dashboard.headers.get("Location") or "")
@@ -5111,7 +5154,7 @@ def test_subscription_portal_get_does_not_create_or_mutate_subscription():
         before_count = Subscription.query.filter_by(company_id=company.id).count()
         assert before_count == 0
 
-    login = client.post("/auth/login", data={"username": "empresa_admin", "password": "admin123"}, follow_redirects=False)
+    login = client.post("/auth/login", data={"username": "negocio_admin", "password": "admin123"}, follow_redirects=False)
     assert login.status_code in (301, 302)
 
     portal = client.get("/admin/portal", follow_redirects=False)
@@ -5850,6 +5893,12 @@ def test_business_billing_hub_denies_user_without_billing_permissions():
     client = stock_app.app.test_client()
     client.post("/auth/login", data={"username": "empresa_admin", "password": "admin123"})
 
+    with stock_app.app.app_context():
+        employee = User.query.filter_by(username="empresa_admin").first()
+        assert employee is not None
+        employee.permissions_json = json.dumps(["inventory"])
+        db.session.commit()
+
     response = client.get("/admin/facturacion", follow_redirects=False)
     assert response.status_code == 403
 
@@ -6184,6 +6233,7 @@ def test_login_redirects_each_role_to_own_panel_without_mixing():
             role="seller",
             company_id=seller_company.id,
             active=True,
+            permissions_json=json.dumps(["sales", "quotes_view"]),
         )
         seller_with_company.set_password("seller123")
         db.session.add(seller_with_company)

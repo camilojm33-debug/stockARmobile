@@ -384,7 +384,7 @@ def _migrate_company_logos_to_database():
                     token = _safe_company_logo_public_token(company)
                     company.logo_data = payload
                     company.logo_mime_type = mime
-                    company.logo = f"/company/logo/{token}"
+                    company.logo = f"/company-logo/{token}"
                     changed = True
                 except OSError:
                     continue
@@ -1806,6 +1806,8 @@ app.register_blueprint(expenses_bp, url_prefix="/gastos")
 app.register_blueprint(reports_bp, url_prefix="/reportes")
 app.register_blueprint(saas_bp, url_prefix="/superadmin")
 app.register_blueprint(company_billing_bp, url_prefix="/admin")
+# Public company-logo endpoint: company logos are tenant-scoped by opaque token and must remain accessible without authentication.
+app.add_url_rule("/company-logo/<token>", endpoint="company_logo_public_root", view_func=company_billing.company_logo_public)
 app.register_blueprint(referrals_bp)
 app.register_blueprint(network_bp)
 install_commission_hook()
@@ -2246,7 +2248,13 @@ def api_search():
 @login_required
 def api_notifications():
     payload = get_notification_payload()
-    return jsonify({"notifications": payload["items"], "notification_count": payload["count"]})
+    # Preserve the legacy keys while exposing the canonical payload shape.
+    return jsonify({
+        "items": payload["items"],
+        "notifications": payload["items"],
+        "count": payload["count"],
+        "notification_count": payload["count"],
+    })
 
 
 @app.route("/api/notifications/mark-seen", methods=["POST"])
