@@ -488,3 +488,34 @@ def test_plan_catalog_profitability_exposes_all_plans():
     ]
     assert all(item["revenue_basis"] == "listed_plan_price" for item in catalog)
     assert all(item["usd_to_ars"] == 1200.0 for item in catalog)
+
+
+def test_cost_snapshot_ignores_unrecorded_assistant_responses(app):
+    with app.app_context():
+        company = _company()
+        conversation = Conversation(
+            company_id=company.id,
+            channel="web",
+            status="open",
+            metadata_json={},
+        )
+        db.session.add(conversation)
+        db.session.flush()
+
+        _assistant_message(
+            company,
+            conversation,
+            created_at=datetime(2026, 9, 20, 12, 0, 0),
+            metadata={},
+        )
+
+        snapshot = cost_snapshot(
+            company.id,
+            now=datetime(2026, 9, 20),
+        )
+
+        assert snapshot["estimated_cost_usd"] == 0.0
+        assert snapshot["input_tokens"] == 0
+        assert snapshot["output_tokens"] == 0
+        assert snapshot["priced_interactions"] == 0
+        assert snapshot["unpriced_interactions"] == 0
