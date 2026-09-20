@@ -2,69 +2,292 @@
 {% block title %}Centro SaaS - SuperAdmin{% endblock %}
 {% block content %}
 <div class="app-shell">
-  <div class="d-flex flex-wrap justify-content-between align-items-center gap-2 mb-3">
-    <div>
-      <span class="page-kicker"><i class="bi bi-diagram-3"></i> SuperAdmin</span>
-      <h1 class="h3 fw-bold mb-0">Centro SaaS</h1>
-      <p class="text-muted mb-0">Prospectos, tareas y alertas operativas sin tocar la lógica de tenants.</p>
+
+  <style>
+    .crm-hero{background:linear-gradient(135deg,var(--bs-primary-bg-subtle),var(--bs-body-bg));border:1px solid var(--bs-border-color);border-radius:1rem;padding:1.25rem}
+    .crm-kicker{font-size:.72rem;letter-spacing:.08em;text-transform:uppercase;font-weight:700;color:var(--bs-secondary-color)}
+    .crm-action-bar{display:flex;flex-wrap:wrap;gap:.5rem}
+    .crm-action-bar .btn{white-space:nowrap}
+    .crm-attention{border:1px solid var(--bs-border-color);border-radius:.9rem;background:var(--bs-body-bg)}
+    .crm-attention-item{display:flex;align-items:center;justify-content:space-between;gap:.75rem;padding:.8rem 1rem;border-bottom:1px solid var(--bs-border-color)}
+    .crm-attention-item:last-child{border-bottom:0}
+    .crm-attention-title{min-width:0}
+    .crm-tabs{overflow-x:auto;flex-wrap:nowrap;scrollbar-width:thin}
+    .crm-tabs .nav-link{white-space:nowrap}
+    .crm-summary-card{height:100%;border:1px solid var(--bs-border-color)}
+    .crm-summary-card .metric-value{font-size:1.8rem;line-height:1.1}
+    .crm-modal-form>.col-lg-4{width:100%;max-width:100%;flex:0 0 100%}
+    .crm-modal-form>.col-lg-4>.app-card{border:0;box-shadow:none}
+    .crm-modal-form>.col-lg-4 .card-header{display:none}
+    .crm-table-card .card-header{position:sticky;top:0;z-index:2}
+    @media(max-width:767.98px){.crm-hero{padding:1rem}.crm-attention-item{align-items:flex-start;flex-direction:column}.crm-attention-item .btn{width:100%}}
+  </style>
+
+  <section class="crm-hero mb-3">
+    <div class="d-flex flex-wrap justify-content-between align-items-start gap-3">
+      <div>
+        <div class="crm-kicker"><i class="bi bi-speedometer2 me-1"></i>Centro operativo</div>
+        <h1 class="h3 fw-bold mb-1">Centro SaaS</h1>
+        <p class="text-muted mb-0">Una vista de control para detectar lo urgente y gestionar prospectos, tareas y alertas sin recorrer una página interminable.</p>
+      </div>
+      <div class="crm-action-bar">
+        <button class="btn btn-primary" type="button" data-bs-toggle="modal" data-bs-target="#newLeadModal"><i class="bi bi-person-plus me-1"></i>Prospecto</button>
+        <button class="btn btn-outline-primary" type="button" data-bs-toggle="modal" data-bs-target="#newTaskModal"><i class="bi bi-check2-square me-1"></i>Tarea</button>
+        <button class="btn btn-outline-danger" type="button" data-bs-toggle="modal" data-bs-target="#newAlertModal"><i class="bi bi-exclamation-triangle me-1"></i>Alerta</button>
+        <a class="btn btn-outline-dark" href="{{ url_for('saas.index') }}">Panel SaaS</a>
+        <a class="btn btn-outline-secondary" href="{{ url_for('saas.companies_panel') }}">Empresas</a>
+        <a class="btn btn-outline-secondary" href="{{ url_for('saas.ai_profitability') }}"><i class="bi bi-graph-up-arrow me-1"></i>Rentabilidad IA</a>
+      </div>
     </div>
-    <div class="d-flex flex-wrap gap-2">
-      <a class="btn btn-outline-dark" href="{{ url_for('saas.index') }}">Panel SaaS</a>
-      <a class="btn btn-outline-primary" href="{{ url_for('saas.companies_panel') }}">Empresas</a>
-      <a class="btn btn-outline-secondary" href="{{ url_for('saas.users_panel') }}">Usuarios globales</a>
-    </div>
-  </div>
+  </section>
 
   <div class="card app-card mb-3">
-    <div class="card-body">
+    <div class="card-body py-3">
       <form method="get" action="{{ url_for('saas.crm_panel') }}" class="row g-2 align-items-end">
-        <div class="col-lg-4">
-          <label class="form-label small text-muted">Buscar</label>
+        <div class="col-xl-5 col-lg-4">
+          <label class="form-label small text-muted mb-1">Buscar</label>
           <input class="form-control" name="q" value="{{ filters.q }}" placeholder="Empresa, contacto, email, tarea o alerta">
         </div>
-        <div class="col-md-2">
-          <label class="form-label small text-muted">Prospectos</label>
+        <div class="col-sm-4 col-lg-2">
+          <label class="form-label small text-muted mb-1">Prospectos</label>
           <select class="form-select" name="lead_status">
             <option value="all" {% if filters.lead_status == 'all' %}selected{% endif %}>Todos</option>
-            {% for status in CRM_LEAD_STATUSES %}
-            <option value="{{ status }}" {% if filters.lead_status == status %}selected{% endif %}>{{ status|replace('_', ' ') }}</option>
-            {% endfor %}
+            {% for status in CRM_LEAD_STATUSES %}<option value="{{ status }}" {% if filters.lead_status == status %}selected{% endif %}>{{ status|replace('_', ' ') }}</option>{% endfor %}
           </select>
         </div>
-        <div class="col-md-2">
-          <label class="form-label small text-muted">Tareas</label>
+        <div class="col-sm-4 col-lg-2">
+          <label class="form-label small text-muted mb-1">Tareas</label>
           <select class="form-select" name="task_status">
             <option value="all" {% if filters.task_status == 'all' %}selected{% endif %}>Todas</option>
-            {% for status in CRM_TASK_STATUSES %}
-            <option value="{{ status }}" {% if filters.task_status == status %}selected{% endif %}>{{ status|replace('_', ' ') }}</option>
-            {% endfor %}
+            {% for status in CRM_TASK_STATUSES %}<option value="{{ status }}" {% if filters.task_status == status %}selected{% endif %}>{{ status|replace('_', ' ') }}</option>{% endfor %}
           </select>
         </div>
-        <div class="col-md-2">
-          <label class="form-label small text-muted">Alertas</label>
+        <div class="col-sm-4 col-lg-2">
+          <label class="form-label small text-muted mb-1">Alertas</label>
           <select class="form-select" name="alert_status">
             <option value="all" {% if filters.alert_status == 'all' %}selected{% endif %}>Todas</option>
-            {% for status in CRM_ALERT_STATUSES %}
-            <option value="{{ status }}" {% if filters.alert_status == status %}selected{% endif %}>{{ status|replace('_', ' ') }}</option>
-            {% endfor %}
+            {% for status in CRM_ALERT_STATUSES %}<option value="{{ status }}" {% if filters.alert_status == status %}selected{% endif %}>{{ status|replace('_', ' ') }}</option>{% endfor %}
           </select>
         </div>
-        <div class="col-lg-2 d-grid">
-          <button class="btn btn-primary" type="submit">Filtrar</button>
+        <div class="col-xl-1 col-lg-2 d-grid">
+          <button class="btn btn-primary" type="submit"><i class="bi bi-funnel me-1"></i>Filtrar</button>
         </div>
       </form>
     </div>
   </div>
 
-  <div class="row g-3 mb-4">
-    <div class="col-sm-6 col-lg-3"><div class="card app-card metric-card"><div class="card-body"><div class="text-muted small fw-semibold text-uppercase">Prospectos</div><div class="metric-value fw-bold">{{ leads|length }}</div><div class="text-muted small">Nuevo {{ lead_counts['nuevo'] }} · Ganado {{ lead_counts['ganado'] }}</div></div></div></div>
-    <div class="col-sm-6 col-lg-3"><div class="card app-card metric-card"><div class="card-body"><div class="text-muted small fw-semibold text-uppercase">Tareas</div><div class="metric-value fw-bold">{{ tasks|length }}</div><div class="text-muted small">Pendientes {{ task_counts['pendiente'] }} · Hechas {{ task_counts['hecha'] }}</div></div></div></div>
-    <div class="col-sm-6 col-lg-3"><div class="card app-card metric-card"><div class="card-body"><div class="text-muted small fw-semibold text-uppercase">Alertas</div><div class="metric-value fw-bold">{{ alerts|length }}</div><div class="text-muted small">Abiertas {{ alert_counts['abierta'] }} · Resueltas {{ alert_counts['resuelta'] }}</div></div></div></div>
-    <div class="col-sm-6 col-lg-3"><div class="card app-card metric-card"><div class="card-body"><div class="text-muted small fw-semibold text-uppercase">Cobertura</div><div class="metric-value fw-bold">{{ companies|length }}</div><div class="text-muted small">Empresas disponibles para vincular</div></div></div></div>
+  <div class="row g-3 mb-3">
+    <div class="col-6 col-xl-3"><div class="card app-card crm-summary-card"><div class="card-body"><div class="text-muted small fw-semibold text-uppercase">Prospectos</div><div class="metric-value fw-bold">{{ leads|length }}</div><div class="text-muted small">Nuevos {{ lead_counts['nuevo'] }} · Ganados {{ lead_counts['ganado'] }}</div></div></div></div>
+    <div class="col-6 col-xl-3"><div class="card app-card crm-summary-card"><div class="card-body"><div class="text-muted small fw-semibold text-uppercase">Tareas</div><div class="metric-value fw-bold">{{ tasks|length }}</div><div class="text-muted small">Pendientes {{ task_counts['pendiente'] }} · Hechas {{ task_counts['hecha'] }}</div></div></div></div>
+    <div class="col-6 col-xl-3"><div class="card app-card crm-summary-card"><div class="card-body"><div class="text-muted small fw-semibold text-uppercase">Alertas</div><div class="metric-value fw-bold">{{ alerts|length }}</div><div class="text-muted small">Abiertas {{ alert_counts['abierta'] }} · Resueltas {{ alert_counts['resuelta'] }}</div></div></div></div>
+    <div class="col-6 col-xl-3"><div class="card app-card crm-summary-card"><div class="card-body"><div class="text-muted small fw-semibold text-uppercase">Cobertura</div><div class="metric-value fw-bold">{{ companies|length }}</div><div class="text-muted small">Empresas disponibles para vincular</div></div></div></div>
   </div>
 
-  <div class="row g-3 mb-4">
-    <div class="col-lg-4">
+  <div class="card app-card mb-3">
+    <div class="card-header bg-white d-flex justify-content-between align-items-center gap-2">
+      <div><div class="fw-bold"><i class="bi bi-lightning-charge me-1 text-warning"></i>Requiere acción</div><div class="small text-muted">Priorizá lo que necesita atención antes de entrar al detalle.</div></div>
+      <span class="badge text-bg-secondary">{{ alert_counts['abierta'] + task_counts['pendiente'] + lead_counts['nuevo'] }}</span>
+    </div>
+    <div class="crm-attention">
+      {% if alert_counts['abierta'] > 0 %}<div class="crm-attention-item"><div class="crm-attention-title"><div class="fw-semibold">Alertas abiertas</div><div class="small text-muted">{{ alert_counts['abierta'] }} pendientes de resolución.</div></div><button type="button" class="btn btn-sm btn-outline-danger" data-crm-tab="alerts">Ver alertas</button></div>{% endif %}
+      {% if task_counts['pendiente'] > 0 %}<div class="crm-attention-item"><div class="crm-attention-title"><div class="fw-semibold">Tareas pendientes</div><div class="small text-muted">{{ task_counts['pendiente'] }} tareas todavía abiertas.</div></div><button type="button" class="btn btn-sm btn-outline-primary" data-crm-tab="tasks">Ver tareas</button></div>{% endif %}
+      {% if lead_counts['nuevo'] > 0 %}<div class="crm-attention-item"><div class="crm-attention-title"><div class="fw-semibold">Prospectos nuevos</div><div class="small text-muted">{{ lead_counts['nuevo'] }} prospectos listos para seguimiento.</div></div><button type="button" class="btn btn-sm btn-outline-primary" data-crm-tab="leads">Ver prospectos</button></div>{% endif %}
+      {% if alert_counts['abierta'] == 0 and task_counts['pendiente'] == 0 and lead_counts['nuevo'] == 0 %}<div class="p-4 text-center text-muted"><i class="bi bi-check-circle fs-4 d-block mb-2 text-success"></i>No hay pendientes prioritarios con los filtros actuales.</div>{% endif %}
+    </div>
+  </div>
+
+  <ul class="nav nav-tabs crm-tabs mb-3" id="crmTabs" role="tablist">
+    <li class="nav-item" role="presentation"><button class="nav-link active" id="overview-tab" data-bs-toggle="tab" data-bs-target="#crmOverview" type="button" role="tab">Resumen</button></li>
+    <li class="nav-item" role="presentation"><button class="nav-link" id="leads-tab" data-bs-toggle="tab" data-bs-target="#crmLeads" type="button" role="tab">Prospectos <span class="badge text-bg-secondary ms-1">{{ leads|length }}</span></button></li>
+    <li class="nav-item" role="presentation"><button class="nav-link" id="tasks-tab" data-bs-toggle="tab" data-bs-target="#crmTasks" type="button" role="tab">Tareas <span class="badge text-bg-secondary ms-1">{{ tasks|length }}</span></button></li>
+    <li class="nav-item" role="presentation"><button class="nav-link" id="alerts-tab" data-bs-toggle="tab" data-bs-target="#crmAlerts" type="button" role="tab">Alertas <span class="badge text-bg-secondary ms-1">{{ alerts|length }}</span></button></li>
+  </ul>
+
+  <div class="tab-content" id="crmTabContent">
+    <div class="tab-pane fade show active" id="crmOverview" role="tabpanel" aria-labelledby="overview-tab">
+      <div class="row g-3">
+        <div class="col-lg-8"><div class="card app-card h-100"><div class="card-body">
+          <div class="fw-bold mb-1">Operación comercial</div><div class="small text-muted mb-3">Entrá al flujo que necesitás sin recorrer toda la página.</div>
+          <div class="row g-2">
+            <div class="col-md-4"><button class="btn btn-outline-primary w-100 text-start h-100 p-3" type="button" data-crm-tab="leads"><div class="fw-semibold"><i class="bi bi-people me-1"></i>Prospectos</div><div class="small text-muted mt-1">{{ leads|length }} mostrados · {{ lead_counts['nuevo'] }} nuevos</div></button></div>
+            <div class="col-md-4"><button class="btn btn-outline-primary w-100 text-start h-100 p-3" type="button" data-crm-tab="tasks"><div class="fw-semibold"><i class="bi bi-check2-square me-1"></i>Tareas</div><div class="small text-muted mt-1">{{ tasks|length }} mostradas · {{ task_counts['pendiente'] }} pendientes</div></button></div>
+            <div class="col-md-4"><button class="btn btn-outline-danger w-100 text-start h-100 p-3" type="button" data-crm-tab="alerts"><div class="fw-semibold"><i class="bi bi-exclamation-triangle me-1"></i>Alertas</div><div class="small text-muted mt-1">{{ alerts|length }} mostradas · {{ alert_counts['abierta'] }} abiertas</div></button></div>
+          </div>
+        </div></div></div>
+        <div class="col-lg-4"><div class="card app-card h-100"><div class="card-body">
+          <div class="fw-bold mb-1">Herramientas relacionadas</div><div class="small text-muted mb-3">Accesos directos para la operación del SuperAdmin.</div>
+          <div class="d-grid gap-2">
+            <a class="btn btn-outline-secondary text-start" href="{{ url_for('saas.companies_panel') }}"><i class="bi bi-buildings me-2"></i>Gestionar empresas</a>
+            <a class="btn btn-outline-secondary text-start" href="{{ url_for('saas.users_panel') }}"><i class="bi bi-people me-2"></i>Usuarios globales</a>
+            <a class="btn btn-outline-secondary text-start" href="{{ url_for('saas.ai_profitability') }}"><i class="bi bi-graph-up-arrow me-2"></i>Costos y rentabilidad IA</a>
+          </div>
+        </div></div></div>
+      </div>
+    </div>
+
+    <div class="tab-pane fade" id="crmLeads" role="tabpanel" aria-labelledby="leads-tab">
+      <div class="crm-table-card">
+        <div class="card app-card">
+                <div class="card-header bg-white fw-bold d-flex justify-content-between align-items-center">
+                  <span>Prospectos</span>
+                  <small class="text-muted">{{ leads|length }} mostrados</small>
+                </div>
+                <div class="table-responsive">
+                  <table class="table mb-0 table-hover align-middle">
+                    <thead><tr><th>Empresa</th><th>Contacto</th><th>Estado</th><th>Prioridad</th><th>Seguimiento</th><th>Asignado</th><th class="text-end">Accion</th></tr></thead>
+                    <tbody>
+                      {% for lead in leads %}
+                      <tr>
+                        <td>
+                          <div class="fw-semibold">{{ lead.company_name }}</div>
+                          <div class="small text-muted">{{ lead.source }}</div>
+                        </td>
+                        <td>
+                          <div class="fw-semibold">{{ lead.contact_name }}</div>
+                          <div class="small text-muted">{{ lead.email or 'Sin email' }}{% if lead.phone %} · {{ lead.phone }}{% endif %}</div>
+                          {% if lead.notes %}
+                          <button type="button" class="btn btn-sm btn-link p-0" data-bs-toggle="modal" data-bs-target="#leadMsg{{ lead.id }}"><i class="bi bi-chat-left-text me-1"></i>Ver qué necesita</button>
+                          {% endif %}
+                        </td>
+                        <td><span class="badge text-bg-secondary">{{ lead.status|replace('_', ' ') }}</span></td>
+                        <td><span class="badge {{ 'text-bg-danger' if lead.priority == 'alta' else ('text-bg-warning' if lead.priority == 'media' else 'text-bg-secondary') }}">{{ lead.priority }}</span></td>
+                        <td>{% if lead.next_follow_up_at %}{{ lead.next_follow_up_at.strftime('%Y-%m-%d %H:%M') }}{% else %}<span class="text-muted">Sin fecha</span>{% endif %}</td>
+                        <td>{% if lead.assigned_user %}{{ lead.assigned_user.username }}{% else %}<span class="text-muted">Sin asignar</span>{% endif %}</td>
+                        <td class="text-end">
+                          <form method="post" action="{{ url_for('saas.crm_lead_status', lead_id=lead.id) }}" class="d-inline-flex gap-1 flex-wrap justify-content-end">
+                            <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                            <select class="form-select form-select-sm" name="status">
+                              {% for status in CRM_LEAD_STATUSES %}
+                              <option value="{{ status }}" {% if lead.status == status %}selected{% endif %}>{{ status|replace('_', ' ') }}</option>
+                              {% endfor %}
+                            </select>
+                            <button class="btn btn-sm btn-outline-primary" type="submit">Guardar</button>
+                          </form>
+                        </td>
+                      </tr>
+                      {% else %}
+                      <tr><td colspan="7" class="text-center text-muted py-4">Sin prospectos.</td></tr>
+                      {% endfor %}
+                    </tbody>
+                  </table>
+                </div>
+              </div>
+      </div>
+    </div>
+
+    <div class="tab-pane fade" id="crmTasks" role="tabpanel" aria-labelledby="tasks-tab">
+      <div class="crm-table-card">
+        <div class="card app-card">
+                <div class="card-header bg-white fw-bold d-flex justify-content-between align-items-center">
+                  <span>Tareas</span>
+                  <small class="text-muted">{{ tasks|length }} mostradas</small>
+                </div>
+                <div class="table-responsive">
+                  <table class="table mb-0 table-hover align-middle">
+                    <thead><tr><th>Tarea</th><th>Vinculo</th><th>Estado</th><th>Prioridad</th><th>Vencimiento</th><th>Asignado</th><th class="text-end">Accion</th></tr></thead>
+                    <tbody>
+                      {% for task in tasks %}
+                      <tr>
+                        <td>
+                          <div class="fw-semibold">{{ task.title }}</div>
+                          <div class="small text-muted">{{ task.description or 'Sin descripcion' }}</div>
+                        </td>
+                        <td>
+                          {% if task.company %}
+                          <div class="fw-semibold">{{ task.company.name }}</div>
+                          {% endif %}
+                          {% if task.lead %}
+                          <div class="small text-muted">{{ task.lead.company_name }} · {{ task.lead.contact_name }}</div>
+                          {% if task.lead.notes %}
+                          <button type="button" class="btn btn-sm btn-link p-0" data-bs-toggle="modal" data-bs-target="#taskLeadMsg{{ task.id }}"><i class="bi bi-chat-left-text me-1"></i>Ver qué necesita</button>
+                          {% endif %}
+                          {% else %}
+                          <span class="text-muted small">Sin prospecto</span>
+                          {% endif %}
+                        </td>
+                        <td><span class="badge text-bg-secondary">{{ task.status|replace('_', ' ') }}</span></td>
+                        <td><span class="badge {{ 'text-bg-danger' if task.priority == 'alta' else ('text-bg-warning' if task.priority == 'media' else 'text-bg-secondary') }}">{{ task.priority }}</span></td>
+                        <td>{% if task.due_at %}{{ task.due_at.strftime('%Y-%m-%d %H:%M') }}{% else %}<span class="text-muted">Sin fecha</span>{% endif %}</td>
+                        <td>{% if task.assigned_user %}{{ task.assigned_user.username }}{% else %}<span class="text-muted">Sin asignar</span>{% endif %}</td>
+                        <td class="text-end">
+                          <form method="post" action="{{ url_for('saas.crm_task_status', task_id=task.id) }}" class="d-inline-flex gap-1 flex-wrap justify-content-end">
+                            <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                            <select class="form-select form-select-sm" name="status">
+                              {% for status in CRM_TASK_STATUSES %}
+                              <option value="{{ status }}" {% if task.status == status %}selected{% endif %}>{{ status|replace('_', ' ') }}</option>
+                              {% endfor %}
+                            </select>
+                            <button class="btn btn-sm btn-outline-primary" type="submit">Guardar</button>
+                          </form>
+                        </td>
+                      </tr>
+                      {% else %}
+                      <tr><td colspan="7" class="text-center text-muted py-4">Sin tareas.</td></tr>
+                      {% endfor %}
+                    </tbody>
+                  </table>
+                </div>
+              </div>
+      </div>
+    </div>
+
+    <div class="tab-pane fade" id="crmAlerts" role="tabpanel" aria-labelledby="alerts-tab">
+      <div class="crm-table-card">
+        <div class="card app-card">
+                <div class="card-header bg-white fw-bold d-flex justify-content-between align-items-center">
+                  <span>Alertas</span>
+                  <small class="text-muted">{{ alerts|length }} mostradas</small>
+                </div>
+                <div class="table-responsive">
+                  <table class="table mb-0 table-hover align-middle">
+                    <thead><tr><th>Titulo</th><th>Detalle</th><th>Estado</th><th>Severidad</th><th>Vinculo</th><th class="text-end">Accion</th></tr></thead>
+                    <tbody>
+                      {% for alert in alerts %}
+                      <tr>
+                        <td>
+                          <div class="fw-semibold">{{ alert.title }}</div>
+                          <div class="small text-muted">{{ alert.category }}</div>
+                        </td>
+                        <td class="small">{{ alert.message }}</td>
+                        <td><span class="badge text-bg-secondary">{{ alert.status|replace('_', ' ') }}</span></td>
+                        <td><span class="badge {{ 'text-bg-danger' if alert.severity in ['alta', 'critica'] else ('text-bg-warning' if alert.severity == 'media' else 'text-bg-secondary') }}">{{ alert.severity }}</span></td>
+                        <td>
+                          {% if alert.company %}<div class="fw-semibold">{{ alert.company.name }}</div>{% endif %}
+                          {% if alert.lead %}<div class="small text-muted">{{ alert.lead.company_name }}</div>{% endif %}
+                          {% if alert.task %}<div class="small text-muted">{{ alert.task.title }}</div>{% endif %}
+                          {% if not alert.company and not alert.lead and not alert.task %}<span class="text-muted small">Sin vinculo</span>{% endif %}
+                        </td>
+                        <td class="text-end">
+                          <form method="post" action="{{ url_for('saas.crm_alert_status', alert_id=alert.id) }}" class="d-inline-flex gap-1 flex-wrap justify-content-end">
+                            <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                            <select class="form-select form-select-sm" name="status">
+                              {% for status in CRM_ALERT_STATUSES %}
+                              <option value="{{ status }}" {% if alert.status == status %}selected{% endif %}>{{ status|replace('_', ' ') }}</option>
+                              {% endfor %}
+                            </select>
+                            <button class="btn btn-sm btn-outline-primary" type="submit">Guardar</button>
+                          </form>
+                        </td>
+                      </tr>
+                      {% else %}
+                      <tr><td colspan="6" class="text-center text-muted py-4">Sin alertas.</td></tr>
+                      {% endfor %}
+                    </tbody>
+                  </table>
+                </div>
+              </div>
+            </div>
+          </div>
+      </div>
+    </div>
+  </div>
+</div>
+
+
+  <div class="modal fade" id="newLeadModal" tabindex="-1" aria-labelledby="newLeadModalLabel" aria-hidden="true">
+    <div class="modal-dialog modal-lg modal-dialog-scrollable"><div class="modal-content">
+      <div class="modal-header"><div><div class="small text-muted">Centro SaaS</div><h5 class="modal-title" id="newLeadModalLabel">Nuevo prospecto</h5></div><button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Cerrar"></button></div>
+      <div class="modal-body crm-modal-form p-3"><div class="col-lg-4">
       <div class="card app-card h-100">
         <div class="card-header bg-white fw-bold">Nuevo prospecto</div>
         <div class="card-body">
@@ -86,9 +309,13 @@
           </form>
         </div>
       </div>
-    </div>
-
-    <div class="col-lg-4">
+    </div></div>
+    </div></div>
+  </div>
+  <div class="modal fade" id="newTaskModal" tabindex="-1" aria-labelledby="newTaskModalLabel" aria-hidden="true">
+    <div class="modal-dialog modal-lg modal-dialog-scrollable"><div class="modal-content">
+      <div class="modal-header"><div><div class="small text-muted">Centro SaaS</div><h5 class="modal-title" id="newTaskModalLabel">Nueva tarea</h5></div><button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Cerrar"></button></div>
+      <div class="modal-body crm-modal-form p-3"><div class="col-lg-4">
       <div class="card app-card h-100">
         <div class="card-header bg-white fw-bold">Nueva tarea</div>
         <div class="card-body">
@@ -107,9 +334,13 @@
           </form>
         </div>
       </div>
-    </div>
-
-    <div class="col-lg-4">
+    </div></div>
+    </div></div>
+  </div>
+  <div class="modal fade" id="newAlertModal" tabindex="-1" aria-labelledby="newAlertModalLabel" aria-hidden="true">
+    <div class="modal-dialog modal-lg modal-dialog-scrollable"><div class="modal-content">
+      <div class="modal-header"><div><div class="small text-muted">Centro SaaS</div><h5 class="modal-title" id="newAlertModalLabel">Nueva alerta</h5></div><button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Cerrar"></button></div>
+      <div class="modal-body crm-modal-form p-3"><div class="col-lg-4">
       <div class="card app-card h-100">
         <div class="card-header bg-white fw-bold">Nueva alerta</div>
         <div class="card-body">
@@ -130,157 +361,11 @@
         </div>
       </div>
     </div>
+  </div></div>
+    </div></div>
   </div>
 
-  <div class="row g-3 mb-4">
-    <div class="col-12">
-      <div class="card app-card">
-        <div class="card-header bg-white fw-bold d-flex justify-content-between align-items-center">
-          <span>Prospectos</span>
-          <small class="text-muted">{{ leads|length }} mostrados</small>
-        </div>
-        <div class="table-responsive">
-          <table class="table mb-0 table-hover align-middle">
-            <thead><tr><th>Empresa</th><th>Contacto</th><th>Estado</th><th>Prioridad</th><th>Seguimiento</th><th>Asignado</th><th class="text-end">Accion</th></tr></thead>
-            <tbody>
-              {% for lead in leads %}
-              <tr>
-                <td>
-                  <div class="fw-semibold">{{ lead.company_name }}</div>
-                  <div class="small text-muted">{{ lead.source }}</div>
-                </td>
-                <td>
-                  <div class="fw-semibold">{{ lead.contact_name }}</div>
-                  <div class="small text-muted">{{ lead.email or 'Sin email' }}{% if lead.phone %} · {{ lead.phone }}{% endif %}</div>
-                  {% if lead.notes %}
-                  <button type="button" class="btn btn-sm btn-link p-0" data-bs-toggle="modal" data-bs-target="#leadMsg{{ lead.id }}"><i class="bi bi-chat-left-text me-1"></i>Ver qué necesita</button>
-                  {% endif %}
-                </td>
-                <td><span class="badge text-bg-secondary">{{ lead.status|replace('_', ' ') }}</span></td>
-                <td><span class="badge {{ 'text-bg-danger' if lead.priority == 'alta' else ('text-bg-warning' if lead.priority == 'media' else 'text-bg-secondary') }}">{{ lead.priority }}</span></td>
-                <td>{% if lead.next_follow_up_at %}{{ lead.next_follow_up_at.strftime('%Y-%m-%d %H:%M') }}{% else %}<span class="text-muted">Sin fecha</span>{% endif %}</td>
-                <td>{% if lead.assigned_user %}{{ lead.assigned_user.username }}{% else %}<span class="text-muted">Sin asignar</span>{% endif %}</td>
-                <td class="text-end">
-                  <form method="post" action="{{ url_for('saas.crm_lead_status', lead_id=lead.id) }}" class="d-inline-flex gap-1 flex-wrap justify-content-end">
-                    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
-                    <select class="form-select form-select-sm" name="status">
-                      {% for status in CRM_LEAD_STATUSES %}
-                      <option value="{{ status }}" {% if lead.status == status %}selected{% endif %}>{{ status|replace('_', ' ') }}</option>
-                      {% endfor %}
-                    </select>
-                    <button class="btn btn-sm btn-outline-primary" type="submit">Guardar</button>
-                  </form>
-                </td>
-              </tr>
-              {% else %}
-              <tr><td colspan="7" class="text-center text-muted py-4">Sin prospectos.</td></tr>
-              {% endfor %}
-            </tbody>
-          </table>
-        </div>
-      </div>
-    </div>
 
-    <div class="col-12">
-      <div class="card app-card">
-        <div class="card-header bg-white fw-bold d-flex justify-content-between align-items-center">
-          <span>Tareas</span>
-          <small class="text-muted">{{ tasks|length }} mostradas</small>
-        </div>
-        <div class="table-responsive">
-          <table class="table mb-0 table-hover align-middle">
-            <thead><tr><th>Tarea</th><th>Vinculo</th><th>Estado</th><th>Prioridad</th><th>Vencimiento</th><th>Asignado</th><th class="text-end">Accion</th></tr></thead>
-            <tbody>
-              {% for task in tasks %}
-              <tr>
-                <td>
-                  <div class="fw-semibold">{{ task.title }}</div>
-                  <div class="small text-muted">{{ task.description or 'Sin descripcion' }}</div>
-                </td>
-                <td>
-                  {% if task.company %}
-                  <div class="fw-semibold">{{ task.company.name }}</div>
-                  {% endif %}
-                  {% if task.lead %}
-                  <div class="small text-muted">{{ task.lead.company_name }} · {{ task.lead.contact_name }}</div>
-                  {% if task.lead.notes %}
-                  <button type="button" class="btn btn-sm btn-link p-0" data-bs-toggle="modal" data-bs-target="#taskLeadMsg{{ task.id }}"><i class="bi bi-chat-left-text me-1"></i>Ver qué necesita</button>
-                  {% endif %}
-                  {% else %}
-                  <span class="text-muted small">Sin prospecto</span>
-                  {% endif %}
-                </td>
-                <td><span class="badge text-bg-secondary">{{ task.status|replace('_', ' ') }}</span></td>
-                <td><span class="badge {{ 'text-bg-danger' if task.priority == 'alta' else ('text-bg-warning' if task.priority == 'media' else 'text-bg-secondary') }}">{{ task.priority }}</span></td>
-                <td>{% if task.due_at %}{{ task.due_at.strftime('%Y-%m-%d %H:%M') }}{% else %}<span class="text-muted">Sin fecha</span>{% endif %}</td>
-                <td>{% if task.assigned_user %}{{ task.assigned_user.username }}{% else %}<span class="text-muted">Sin asignar</span>{% endif %}</td>
-                <td class="text-end">
-                  <form method="post" action="{{ url_for('saas.crm_task_status', task_id=task.id) }}" class="d-inline-flex gap-1 flex-wrap justify-content-end">
-                    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
-                    <select class="form-select form-select-sm" name="status">
-                      {% for status in CRM_TASK_STATUSES %}
-                      <option value="{{ status }}" {% if task.status == status %}selected{% endif %}>{{ status|replace('_', ' ') }}</option>
-                      {% endfor %}
-                    </select>
-                    <button class="btn btn-sm btn-outline-primary" type="submit">Guardar</button>
-                  </form>
-                </td>
-              </tr>
-              {% else %}
-              <tr><td colspan="7" class="text-center text-muted py-4">Sin tareas.</td></tr>
-              {% endfor %}
-            </tbody>
-          </table>
-        </div>
-      </div>
-    </div>
-
-    <div class="col-12">
-      <div class="card app-card">
-        <div class="card-header bg-white fw-bold d-flex justify-content-between align-items-center">
-          <span>Alertas</span>
-          <small class="text-muted">{{ alerts|length }} mostradas</small>
-        </div>
-        <div class="table-responsive">
-          <table class="table mb-0 table-hover align-middle">
-            <thead><tr><th>Titulo</th><th>Detalle</th><th>Estado</th><th>Severidad</th><th>Vinculo</th><th class="text-end">Accion</th></tr></thead>
-            <tbody>
-              {% for alert in alerts %}
-              <tr>
-                <td>
-                  <div class="fw-semibold">{{ alert.title }}</div>
-                  <div class="small text-muted">{{ alert.category }}</div>
-                </td>
-                <td class="small">{{ alert.message }}</td>
-                <td><span class="badge text-bg-secondary">{{ alert.status|replace('_', ' ') }}</span></td>
-                <td><span class="badge {{ 'text-bg-danger' if alert.severity in ['alta', 'critica'] else ('text-bg-warning' if alert.severity == 'media' else 'text-bg-secondary') }}">{{ alert.severity }}</span></td>
-                <td>
-                  {% if alert.company %}<div class="fw-semibold">{{ alert.company.name }}</div>{% endif %}
-                  {% if alert.lead %}<div class="small text-muted">{{ alert.lead.company_name }}</div>{% endif %}
-                  {% if alert.task %}<div class="small text-muted">{{ alert.task.title }}</div>{% endif %}
-                  {% if not alert.company and not alert.lead and not alert.task %}<span class="text-muted small">Sin vinculo</span>{% endif %}
-                </td>
-                <td class="text-end">
-                  <form method="post" action="{{ url_for('saas.crm_alert_status', alert_id=alert.id) }}" class="d-inline-flex gap-1 flex-wrap justify-content-end">
-                    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
-                    <select class="form-select form-select-sm" name="status">
-                      {% for status in CRM_ALERT_STATUSES %}
-                      <option value="{{ status }}" {% if alert.status == status %}selected{% endif %}>{{ status|replace('_', ' ') }}</option>
-                      {% endfor %}
-                    </select>
-                    <button class="btn btn-sm btn-outline-primary" type="submit">Guardar</button>
-                  </form>
-                </td>
-              </tr>
-              {% else %}
-              <tr><td colspan="6" class="text-center text-muted py-4">Sin alertas.</td></tr>
-              {% endfor %}
-            </tbody>
-          </table>
-        </div>
-      </div>
-    </div>
-  </div>
 </div>
 
 {% for lead in leads %}
@@ -328,4 +413,25 @@
 </div>
 {% endif %}
 {% endfor %}
+{% endblock %}
+
+
+{% block extra_scripts_inline %}
+<script>
+  (function () {
+    const tabMap = { leads: '#crmLeads', tasks: '#crmTasks', alerts: '#crmAlerts' };
+    document.querySelectorAll('[data-crm-tab]').forEach(function (trigger) {
+      trigger.addEventListener('click', function () {
+        const target = tabMap[trigger.dataset.crmTab];
+        if (!target) return;
+        const tabButton = document.querySelector('[data-bs-target="' + target + '"]');
+        if (tabButton && window.bootstrap) {
+          bootstrap.Tab.getOrCreateInstance(tabButton).show();
+          document.getElementById('crmTabs')?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+        }
+      });
+    });
+  })();
+</script>
+{% endblock %}
 {% endblock %}
