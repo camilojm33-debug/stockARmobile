@@ -1771,7 +1771,7 @@ def ai_subscriptions_panel():
         query = query.filter(Company.name.ilike(f"%{q}%"))
 
     rows = []
-    profitability_totals = {"companies": 0, "plan_list_price_ars": 0.0, "estimated_cost_usd": 0.0, "estimated_cost_ars": 0.0, "estimated_gross_contribution_ars": 0.0, "cost_ars_available": True}
+    profitability_totals = {"companies": 0, "plan_list_price_ars": 0.0, "estimated_cost_usd": 0.0, "estimated_cost_ars": 0.0, "estimated_gross_contribution_ars": 0.0, "cost_ars_available": True, "pricing_available": True}
     for company in query.all():
         status = AISubscriptionService.get_status(company)
         profitability = profitability_snapshot(company)
@@ -1780,6 +1780,8 @@ def ai_subscriptions_panel():
             profitability_totals["companies"] += 1
             profitability_totals["plan_list_price_ars"] += float(profitability.get("plan_list_price_ars") or 0)
             profitability_totals["estimated_cost_usd"] += float(profitability.get("estimated_cost_usd") or 0)
+            if profitability.get("status") == "missing_provider_pricing":
+                profitability_totals["pricing_available"] = False
             cost_ars = profitability.get("estimated_cost_ars")
             contribution_ars = profitability.get("estimated_gross_contribution_ars")
             if cost_ars is None or contribution_ars is None:
