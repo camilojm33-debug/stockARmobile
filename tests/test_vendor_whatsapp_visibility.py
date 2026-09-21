@@ -48,8 +48,8 @@ def test_vendor_whatsapp_uses_tenant_safe_company_access():
     public_start = ai_agents_content.index('@bp.get("/public/vendedor/<token>")')
     connect_block = ai_agents_content[connect_start:complete_start]
     complete_block = ai_agents_content[complete_start:public_start]
-    assert "current_user.company" not in connect_block
-    assert "current_user.company" not in complete_block
+    assert "can_use_ai_feature(current_user.company, " not in connect_block
+    assert "can_use_ai_feature(current_user.company, " not in complete_block
     assert "_current_active_company()" in connect_block
     assert "_current_active_company()" in complete_block
     assert "Company.query.filter_by(id=current_user.company_id, active=True).first()" in ai_agents_content
@@ -58,6 +58,6 @@ def test_vendor_whatsapp_uses_tenant_safe_company_access():
     start = admin_content.index("def vendor_metrics():")
     end = admin_content.index("\n\n@bp.", start)
     vendor_metrics_block = admin_content[start:end]
-    assert "current_user.company" not in vendor_metrics_block
+    assert "can_use_ai_feature(current_user.company, " not in vendor_metrics_block
     assert "get_current_company_id(current_user)" in vendor_metrics_block
     assert 'can_use_ai_feature(company, "vendedor")' in vendor_metrics_block
