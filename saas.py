@@ -3258,11 +3258,41 @@ def renewals_panel():
 @bp.route("/logs")
 @superadmin_required
 def logs_panel():
-    from app import AuditLog
+    from app import AuditLog, Company
 
     _require_superadmin()
-    logs = AuditLog.query.order_by(AuditLog.created_at.desc()).limit(400).all()
-    return render_template("saas/logs.html", logs=logs)
+    action = (request.args.get("action") or "").strip()[:120]
+    company_id = request.args.get("company_id", type=int)
+    q = (request.args.get("q") or "").strip()[:180]
+    days = request.args.get("days", type=int) or 30
+    days = max(1, min(days, 365))
+
+    query = AuditLog.query
+    if action:
+        query = query.filter(AuditLog.action == action)
+    if company_id:
+        query = query.filter(AuditLog.company_id == company_id)
+    if q:
+        like = f"%{q}%"
+        query = query.filter(
+            db.or_(
+                AuditLog.action.ilike(like),
+                AuditLog.entity.ilike(like),
+                AuditLog.detail.ilike(like),
+            )
+        )
+    cutoff = utcnow() - timedelta(days=days)
+    query = query.filter(AuditLog.created_at >= cutoff)
+    logs = query.order_by(AuditLog.created_at.desc()).limit(500).all()
+    companies = Company.query.order_by(Company.name.asc()).all()
+    actions = [row[0] for row in db.session.query(AuditLog.action).filter(AuditLog.action.isnot(None)).distinct().order_by(AuditLog.action.asc()).limit(200).all()]
+    return render_template(
+        "saas/logs.html",
+        logs=logs,
+        companies=companies,
+        actions=actions,
+        filters={"action": action, "company_id": company_id, "q": q, "days": days},
+    )
 
 
 @bp.route("/server-status")
