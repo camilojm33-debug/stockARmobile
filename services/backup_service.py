@@ -756,6 +756,110 @@ class BackupService:
         return backup_log
 
     @staticmethod
+    def verify_restore_round_trip(backup_log, *, expected_company_id: int):
+        """Execute a full restore inside a savepoint and roll it back after validation."""
+        from app import (
+            CashMovement,
+            CashSession,
+            Client,
+            Expense,
+            Product,
+            PurchaseItem,
+            PurchaseOrder,
+            Sale,
+            SaleItem,
+            Supplier,
+            User,
+            db,
+        )
+
+        if int(backup_log.company_id or 0) != int(expected_company_id):
+            raise PermissionError("Backup fuera de alcance para la empresa solicitada.")
+
+        summary = BackupService.verify_backup(
+            backup_log,
+            expected_company_id=expected_company_id,
+        )
+
+        def counts():
+            return {
+                "products": Product.query.filter_by(company_id=expected_company_id).count(),
+                "clients": Client.query.filter_by(company_id=expected_company_id).count(),
+                "sales": Sale.query.filter_by(company_id=expected_company_id).count(),
+                "employees": User.query.filter(
+                    User.company_id == expected_company_id,
+                    User.role != "superadmin",
+                ).count(),
+                "suppliers": Supplier.query.filter_by(company_id=expected_company_id).count(),
+                "purchase_orders": PurchaseOrder.query.filter_by(company_id=expected_company_id).count(),
+                "purchase_items": (
+                    db.session.query(PurchaseItem.id)
+                    .join(PurchaseOrder, PurchaseOrder.id == PurchaseItem.purchase_order_id)
+                    .filter(PurchaseOrder.company_id == expected_company_id)
+                    .count()
+                ),
+                "sale_items": (
+                    db.session.query(SaleItem.id)
+                    .join(Sale, Sale.id == SaleItem.sale_id)
+                    .filter(Sale.company_id == expected_company_id)
+                    .count()
+                ),
+                "cash_sessions": CashSession.query.filter_by(company_id=expected_company_id).count(),
+                "cash_movements": CashMovement.query.filter_by(company_id=expected_company_id).count(),
+                "expenses": Expense.query.filter_by(company_id=expected_company_id).count(),
+            }
+
+        before = counts()
+        savepoint = db.session.begin_nested()
+        try:
+            BackupService.restore_backup(
+                backup_log,
+                expected_company_id=expected_company_id,
+                restored_by_user_id=None,
+                sections=list(BackupService.FULL_RESTORE_SECTIONS),
+            )
+            db.session.flush()
+            after = counts()
+
+            expected = {
+                "products": summary["products"],
+                "clients": summary["clients"],
+                "sales": summary["sales"],
+                "employees": summary["employees"],
+                "suppliers": len(BackupService._payload_for_company(expected_company_id).get("suppliers") or []),
+                "purchase_orders": len(BackupService._payload_for_company(expected_company_id).get("purchase_orders") or []),
+                "purchase_items": len(BackupService._payload_for_company(expected_company_id).get("purchase_items") or []),
+                "sale_items": len(BackupService._payload_for_company(expected_company_id).get("sale_items") or []),
+                "cash_sessions": len(BackupService._payload_for_company(expected_company_id).get("cash_sessions") or []),
+                "cash_movements": len(BackupService._payload_for_company(expected_company_id).get("cash_movements") or []),
+                "expenses": len(BackupService._payload_for_company(expected_company_id).get("expenses") or []),
+            }
+            mismatches = {
+                key: {"expected": value, "actual": after.get(key)}
+                for key, value in expected.items()
+                if int(after.get(key) or 0) != int(value or 0)
+            }
+            if mismatches:
+                raise ValueError(f"Round-trip restore count mismatch: {mismatches}")
+
+            savepoint.rollback()
+        except Exception:
+            if savepoint.is_active:
+                savepoint.rollback()
+            raise
+        finally:
+            db.session.expire_all()
+
+        return {
+            "valid": True,
+            "company_id": expected_company_id,
+            "backup_id": backup_log.id,
+            "counts_before": before,
+            "counts_after_restore": after,
+            "rolled_back": True,
+        }
+
+    @staticmethod
     def verify_backup(backup_log, *, expected_company_id: int):
         """Valida integridad estructural y alcance de un backup sin restaurarlo."""
         if int(backup_log.company_id or 0) != int(expected_company_id):
