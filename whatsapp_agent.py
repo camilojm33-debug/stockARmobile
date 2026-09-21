@@ -314,6 +314,10 @@ def _ai_order_row(company_id: int, quote):
             "notes": getattr(getattr(quote, "delivery", None), "notes", "") if getattr(quote, "delivery", None) else "",
             "shipping_cost": float(getattr(getattr(quote, "delivery", None), "shipping_cost", 0) or 0) if getattr(quote, "delivery", None) else 0.0,
             "shipping_rate": float(getattr(getattr(quote, "delivery", None), "shipping_rate", 0) or 0) if getattr(quote, "delivery", None) else 0.0,
+            "shipping_status": getattr(getattr(quote, "delivery", None), "shipping_status", "confirmed") if getattr(quote, "delivery", None) else "not_required",
+            "shipping_source": getattr(getattr(quote, "delivery", None), "shipping_source", "legacy_percent") if getattr(quote, "delivery", None) else "none",
+            "shipping_confirmed_by_user_id": getattr(getattr(quote, "delivery", None), "shipping_confirmed_by_user_id", None) if getattr(quote, "delivery", None) else None,
+            "shipping_confirmed_at": getattr(getattr(quote, "delivery", None), "shipping_confirmed_at", None) if getattr(quote, "delivery", None) else None,
         },
     }
 
@@ -334,8 +338,14 @@ def ai_orders():
     )
     all_rows = [_ai_order_row(company_id, quote) for quote in quotes]
     selected_status = (request.args.get("status") or "").strip().lower()
-    allowed_filters = {"pending", "paid", "confirmed", "problem"}
-    rows = [row for row in all_rows if not selected_status or selected_status not in allowed_filters or row["order_key"] == selected_status]
+    allowed_filters = {"pending", "shipping_pending", "paid", "confirmed", "problem"}
+        rows = [
+        row for row in all_rows
+        if not selected_status
+        or selected_status not in allowed_filters
+        or (selected_status == "shipping_pending" and row.get("delivery", {}).get("shipping_status") == "pending")
+        or (selected_status != "shipping_pending" and row["order_key"] == selected_status)
+    ]
     channel_keys = []
     for row in all_rows:
         key = row.get("channel") or "unknown"
@@ -345,6 +355,7 @@ def ai_orders():
     summary = {
         "total": len(all_rows),
         "pending": sum(1 for row in all_rows if row["order_key"] == "pending"),
+        "shipping_pending": sum(1 for row in all_rows if row.get("delivery", {}).get("shipping_status") == "pending"),
         "paid": sum(1 for row in all_rows if row["payment_status"] == "approved"),
         "confirmed": sum(1 for row in all_rows if row["order_key"] == "confirmed"),
         "channel_keys": channel_keys,
