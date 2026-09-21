@@ -3335,7 +3335,7 @@ def test_my_company_module_requires_pin_and_shows_tenant_admin_features():
 
     client.post("/auth/logout")
     client.post("/auth/login", data={"username": "superadmin", "password": "admin123"})
-    assign_pin = client.post(f"/superadmin/companies/{company_id}/pin/assign", data={"admin_pin": "1234"}, follow_redirects=True)
+    assign_pin = client.post(f"/superadmin/companies/{company_id}/pin/assign", data={"admin_pin": "1234", "step_up_password": "admin123"}, follow_redirects=True)
     assert assign_pin.status_code == 200
     assert "PIN asignado correctamente" in assign_pin.data.decode("utf-8")
 
