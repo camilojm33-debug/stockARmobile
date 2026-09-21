@@ -84,10 +84,30 @@
               <div class="col-12"><span class="text-muted d-block">Referencia</span><strong>{{ delivery.reference or 'Sin referencia' }}</strong></div>
               {% if delivery.notes %}<div class="col-12"><span class="text-muted d-block">Observaciones</span><strong>{{ delivery.notes }}</strong></div>{% endif %}
             </div>
+            {% if delivery.shipping_status == 'pending' %}
+            <div class="alert alert-warning mt-3 mb-0">
+              <div class="fw-bold mb-1"><i class="bi bi-hourglass-split me-1"></i>Pedido esperando cotización de envío</div>
+              <div class="small">El cliente pidió envío. El costo lo define el comercio y todavía no se generó ningún cobro.</div>
+            </div>
+            {% else %}
             <div class="border-top mt-3 pt-3 d-flex justify-content-between align-items-center">
               <span class="text-muted">Costo de envío</span>
               <strong>{{ order.currency }} {{ '%.2f'|format(delivery.shipping_cost or 0) }}{% if delivery.shipping_rate %} ({{ '%.2f'|format(delivery.shipping_rate) }}%){% endif %}</strong>
             </div>
+            {% endif %}
+
+            {% if delivery.shipping_status == 'pending' %}
+            <form class="border-top mt-3 pt-3" method="post" action="{{ url_for('whatsapp_agent.ai_order_shipping', quote_id=order.quote_id) }}">
+              <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+              <label class="form-label fw-semibold" for="shippingCost">Costo de envío</label>
+              <div class="input-group mb-2">
+                <span class="input-group-text">$</span>
+                <input id="shippingCost" class="form-control form-control-lg" type="number" min="0" step="0.01" inputmode="decimal" name="shipping_cost" required placeholder="4500">
+                <button class="btn btn-primary" type="submit"><i class="bi bi-check2-circle me-1"></i>Confirmar y generar cobro</button>
+              </div>
+              <div class="form-text">Al confirmar, se recalcula el total y se genera el enlace de Mercado Pago con productos + envío.</div>
+            </form>
+            {% endif %}
           {% else %}
             <div class="d-flex justify-content-between align-items-center">
               <div>
@@ -104,7 +124,7 @@
         <div class="card-header bg-white fw-bold">Pago</div>
         <div class="card-body">
           <div class="d-flex justify-content-between align-items-center mb-2"><span class="text-muted">Estado</span><span class="badge {{ order.payment_badge }}">{{ order.payment_label }}</span></div>
-          <div class="d-flex justify-content-between align-items-center mb-2"><span class="text-muted">Monto</span><span class="fw-bold">{{ order.currency }} {{ '%.2f'|format(order.total) }}</span></div>
+          <div class="d-flex justify-content-between align-items-center mb-2"><span class="text-muted">Monto final</span><span class="fw-bold">{{ order.currency }} {{ '%.2f'|format(order.total) }}</span></div>
           {% if order.payment_id %}<div class="d-flex justify-content-between align-items-center"><span class="text-muted">Mercado Pago</span><span class="fw-semibold">#{{ order.payment_id }}</span></div>{% endif %}
           {% if payment %}{% set payment_reference = payment.reference | default('', true) %}{% if payment_reference %}<div class="small text-muted mt-3 text-break">Referencia: {{ payment_reference }}</div>{% endif %}{% endif %}
         </div>
