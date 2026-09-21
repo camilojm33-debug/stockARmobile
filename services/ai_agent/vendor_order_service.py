@@ -911,41 +911,41 @@ class VendorOrderService:
             raise ValueError("Conversación no encontrada para esta empresa.")
         return conversation
 
-def _conversation_id_for_quote(*, company_id: int, quote_id: int) -> int | None:
-    from app import Payment, Quote
-    from stockarmobile.models.conversations import Conversation
+    def _conversation_id_for_quote(*, company_id: int, quote_id: int) -> int | None:
+        from app import Payment, Quote
+        from stockarmobile.models.conversations import Conversation
 
-    prefix = f"{FLOW_PREFIX}|company_id:{int(company_id)}|quote_id:{int(quote_id)}|"
-    payment = (
-        Payment.query.filter(
-            Payment.company_id == int(company_id),
-            Payment.provider == "mercadopago_ai_order",
-            Payment.external_reference.like(prefix + "%"),
+        prefix = f"{FLOW_PREFIX}|company_id:{int(company_id)}|quote_id:{int(quote_id)}|"
+        payment = (
+            Payment.query.filter(
+                Payment.company_id == int(company_id),
+                Payment.provider == "mercadopago_ai_order",
+                Payment.external_reference.like(prefix + "%"),
+            )
+            .order_by(Payment.id.desc())
+            .first()
         )
-        .order_by(Payment.id.desc())
-        .first()
-    )
-    if payment is not None:
-        parts = str(payment.external_reference or "").split("|")
-        for part in parts:
-            if part.startswith("conversation_id:") and part.split(":", 1)[1].isdigit():
-                return int(part.split(":", 1)[1])
+        if payment is not None:
+            parts = str(payment.external_reference or "").split("|")
+            for part in parts:
+                if part.startswith("conversation_id:") and part.split(":", 1)[1].isdigit():
+                    return int(part.split(":", 1)[1])
 
-    quote = Quote.query.filter_by(id=int(quote_id), company_id=int(company_id)).first()
-    if quote is None:
+        quote = Quote.query.filter_by(id=int(quote_id), company_id=int(company_id)).first()
+        if quote is None:
+            return None
+        conversations = (
+            Conversation.query
+            .filter_by(company_id=int(company_id))
+            .order_by(Conversation.id.desc())
+            .limit(200)
+            .all()
+        )
+        for conversation in conversations:
+            metadata = _metadata(conversation)
+            if str(metadata.get(PENDING_QUOTE_KEY) or "") == str(quote_id):
+                return conversation.id
         return None
-    conversations = (
-        Conversation.query
-        .filter_by(company_id=int(company_id))
-        .order_by(Conversation.id.desc())
-        .limit(200)
-        .all()
-    )
-    for conversation in conversations:
-        metadata = _metadata(conversation)
-        if str(metadata.get(PENDING_QUOTE_KEY) or "") == str(quote_id):
-            return conversation.id
-    return None
 
 
     @staticmethod
