@@ -71,6 +71,7 @@
         <td>{{ 'activo' if user.active else 'inactivo' }}</td>
         <td class="text-end">
           {% if user.role != 'superadmin' and user.company_id %}
+          <div class="small text-muted mb-1">Estado: <strong>{{ 'Activo' if user.active else 'Inactivo' }}</strong></div>
           <div class="d-inline-flex gap-1 flex-wrap justify-content-end">
             <form method="post" action="{{ url_for('saas.users_update_role', user_id=user.id) }}">
               <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
@@ -83,6 +84,14 @@
               <input type="hidden" name="next" value="{{ request.full_path }}">
               <input type="hidden" name="role" value="user">
               <button class="btn btn-sm {{ 'btn-secondary' if user.role == 'user' else 'btn-outline-secondary' }}" type="submit" {% if user.role == 'user' %}disabled{% endif %}>Hacer user</button>
+            </form>
+            <form method="post" action="{{ url_for('saas.users_update_status', user_id=user.id) }}" onsubmit="return confirm('{{ '¿Desactivar este usuario?' if user.active else '¿Activar este usuario?' }}')">
+              <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+              <input type="hidden" name="next" value="{{ request.full_path }}">
+              <input type="hidden" name="active" value="{{ '0' if user.active else '1' }}">
+              <button class="btn btn-sm {{ 'btn-outline-danger' if user.active else 'btn-outline-success' }}" type="submit">
+                {{ 'Desactivar' if user.active else 'Activar' }}
+              </button>
             </form>
           </div>
           {% else %}
