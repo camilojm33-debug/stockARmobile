@@ -40,6 +40,7 @@ from stockarmobile.context import bind_current_tenant_context
 from stockarmobile.decorators import company_admin_required, seller_required, superadmin_required, tenant_required, trial_required
 from stockarmobile.extensions import csrf, db, login_manager, migrate
 from services.referral_network_service import network_bp, install_commission_hook
+from maintenance import maintenance_bp
 from stockarmobile.helpers.dates import utcnow_naive
 from stockarmobile.helpers.validators import is_valid_email
 from stockarmobile.responses import api_error
@@ -1838,6 +1839,7 @@ app.register_blueprint(seo_pages_bp)
 app.register_blueprint(ai_agents_bp)
 app.register_blueprint(ai_admin_bp)
 app.register_blueprint(whatsapp_agent_bp)
+app.register_blueprint(maintenance_bp)
 
 
 def _plan_feature_flags(plan):
