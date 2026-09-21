@@ -103,7 +103,19 @@ class OneTimeSecretService:
         except Exception:
             return None
 
-        row.consumed_at = cls._now()
+        now = cls._now()
+        consumed = (
+            db_session.query(OneTimeSecret)
+            .filter(
+                OneTimeSecret.id == row.id,
+                OneTimeSecret.consumed_at.is_(None),
+                OneTimeSecret.expires_at > now,
+            )
+            .update({OneTimeSecret.consumed_at: now}, synchronize_session=False)
+        )
+        if consumed != 1:
+            return None
+
         db_session.flush()
         return secret_value
 
