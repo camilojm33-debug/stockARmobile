@@ -301,6 +301,8 @@
     const catalogEndpoint = chatEndpoint ? chatEndpoint.replace(/\/message$/, '/catalog') : '';
     const cartEndpoint = chatEndpoint ? chatEndpoint.replace(/\/message$/, '/cart') : '';
     const checkoutEndpoint = chatEndpoint ? chatEndpoint.replace(/\/message$/, '/checkout') : '';
+    const stateEndpoint = chatEndpoint ? chatEndpoint.replace(/\/message$/, '/state') : '';
+    const shippingConfig = {{ (shipping_config or {"mode": "legacy_percent", "standard_cost": 0})|tojson }};
     const csrf = {{ csrf_token()|tojson }};
     const initialCatalog = {{ catalog|tojson }};
     const initialState = {{ initial_state|tojson }};
@@ -402,14 +404,34 @@
       if (cartCountEl) cartCountEl.textContent = label;
       if (cartTotalEl) cartTotalEl.textContent = money(cart.total);
       if (checkoutProductsTotal) checkoutProductsTotal.textContent = money(cart.total);
-      const checkoutShipping = deliveryMethod && deliveryMethod.value === 'envio'
-        ? Number(cart.total || 0) * 0.15
-        : 0;
-      if (checkoutShippingTotal) checkoutShippingTotal.textContent = money(checkoutShipping);
-      if (checkoutGrandTotal) checkoutGrandTotal.textContent = money(Number(cart.total || 0) + checkoutShipping);
+      const isShipping = deliveryMethod && deliveryMethod.value === 'envio';
+      const deliveryState = currentState.delivery || {};
+      let checkoutShipping = 0;
+      let shippingLabel = money(0);
+      let grandTotalLabel = money(Number(cart.total || 0));
+      if (isShipping) {
+        if (deliveryState.shipping_status === 'confirmed') {
+          checkoutShipping = Number(deliveryState.shipping_cost || 0);
+          shippingLabel = money(checkoutShipping);
+          grandTotalLabel = money(Number(cart.total || 0) + checkoutShipping);
+        } else if (shippingConfig.mode === 'standard') {
+          checkoutShipping = Number(shippingConfig.standard_cost || 0);
+          shippingLabel = money(checkoutShipping);
+          grandTotalLabel = money(Number(cart.total || 0) + checkoutShipping);
+        } else if (shippingConfig.mode === 'legacy_percent') {
+          checkoutShipping = Number(cart.total || 0) * 0.15;
+          shippingLabel = money(checkoutShipping);
+          grandTotalLabel = money(Number(cart.total || 0) + checkoutShipping);
+        } else {
+          shippingLabel = 'A confirmar';
+          grandTotalLabel = 'A confirmar';
+        }
+      }
+      if (checkoutShippingTotal) checkoutShippingTotal.textContent = shippingLabel;
+      if (checkoutGrandTotal) checkoutGrandTotal.textContent = grandTotalLabel;
       if (mobileCartCount) mobileCartCount.textContent = label;
       if (mobileCartTotal) mobileCartTotal.textContent = money(cart.total);
-      if (checkoutButton) checkoutButton.disabled = items.length === 0;
+      if (checkoutButton) checkoutButton.disabled = items.length === 0 || Boolean(currentState.shipping_pending);
       if (cartItemsEl) {
         if (!items.length) {
           cartItemsEl.innerHTML = '<div class="cart-empty">Todavía no agregaste productos. Elegí uno del catálogo o pedile al Vendedor IA que te ayude.</div>';
@@ -583,7 +605,9 @@
           })
         });
         setState(data);
-        if (data.payment_url) {
+        if (data.shipping_pending) {
+          add('assistant', 'Recibimos tu pedido. El comercio debe confirmar el costo de envío antes de habilitar el pago.');
+        } else if (data.payment_url) {
           add('assistant', 'Tu pedido ' + (data.quote_number || '') + ' quedó preparado. Continuá con el pago seguro de Mercado Pago.');
           payLinkButton.focus();
         }
@@ -699,7 +723,27 @@
       });
       input.focus();
     }
+    async function refreshOrderState() {
+      if (!stateEndpoint || !conversationId) return;
+      try {
+        const url = new URL(stateEndpoint, window.location.origin);
+        url.searchParams.set('conversation_id', conversationId);
+        const hadPayment = Boolean(currentState.payment_url);
+        const data = await requestJson(url.toString(), { credentials: 'include' });
+        setState(data);
+        if (data.payment_url && !hadPayment) {
+          add('assistant', '¡Listo! El comercio confirmó tu envío. Ya podés pagar tu pedido desde el enlace de Mercado Pago.');
+          if (payLinkButton) payLinkButton.focus();
+        }
+      } catch (err) {
+        // Polling is best-effort; the chat remains usable if the state endpoint is temporarily unavailable.
+      }
+    }
+
     if (checkoutButton) checkoutButton.addEventListener('click', checkout);
+    if (stateEndpoint) {
+      window.setInterval(refreshOrderState, 6000);
+    }
     if (mobileCartButton) mobileCartButton.addEventListener('click', function () {
       const panel = document.querySelector('.cart-panel');
       if (panel) panel.scrollIntoView({ behavior: 'smooth', block: 'start' });
