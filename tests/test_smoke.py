@@ -1206,7 +1206,7 @@ def test_subscription_modify_never_duplicates_records():
     for target_plan_id in (plan_b_id, plan_a_id, plan_b_id):
         resp = client.post(
             f"/superadmin/subscriptions/{subscription_id}/update",
-            data={"plan_id": target_plan_id, "status": "active", "renewal_enabled": "1"},
+            data={"plan_id": target_plan_id, "status": "active", "renewal_enabled": "1", "step_up_password": "admin123"},
             follow_redirects=True,
         )
         assert resp.status_code == 200
@@ -1224,7 +1224,7 @@ def test_subscription_modify_never_duplicates_records():
     # Test 9: doble-submit (mismos datos dos veces seguidas) tampoco debe duplicar.
     resp_again = client.post(
         f"/superadmin/subscriptions/{subscription_id}/update",
-        data={"plan_id": plan_b_id, "status": "active", "renewal_enabled": "1"},
+        data={"plan_id": plan_b_id, "status": "active", "renewal_enabled": "1", "step_up_password": "admin123"},
         follow_redirects=True,
     )
     assert resp_again.status_code == 200
