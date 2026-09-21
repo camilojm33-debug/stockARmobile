@@ -3878,6 +3878,17 @@ def test_one_time_secret_reveal_is_server_side_and_single_use():
     with stock_app.app.app_context():
         user = User.query.filter_by(username="superadmin").first()
         assert user is not None
+        assert (
+            OneTimeSecretService.consume(
+                db.session,
+                user_id=user.id + 999999,
+                purpose="test_secret",
+                subject_type="test",
+                subject_id=1,
+                access_token=token,
+            )
+            is None
+        )
         revealed = OneTimeSecretService.consume(
             db.session,
             user_id=user.id,
@@ -3900,6 +3911,29 @@ def test_one_time_secret_reveal_is_server_side_and_single_use():
                 subject_type="test",
                 subject_id=1,
                 access_token=token,
+            )
+            is None
+        )
+
+        expired_row, expired_token = OneTimeSecretService.issue(
+            db.session,
+            user_id=user.id,
+            purpose="test_secret_expired",
+            subject_type="test",
+            subject_id=2,
+            secret_value="EXPIRADO-1234",
+            ttl_seconds=30,
+        )
+        expired_row.expires_at = stock_app.utcnow() - timedelta(seconds=1)
+        db.session.commit()
+        assert (
+            OneTimeSecretService.consume(
+                db.session,
+                user_id=user.id,
+                purpose="test_secret_expired",
+                subject_type="test",
+                subject_id=2,
+                access_token=expired_token,
             )
             is None
         )
