@@ -212,15 +212,19 @@ def index():
 @bp.get("/vendor-metrics")
 @company_admin_required
 def vendor_metrics():
-    entitlement = can_use_ai_feature(current_user.company, "vendedor")
+    company_id = get_current_company_id(current_user)
+    from app import Company
+
+    company = Company.query.filter_by(id=company_id, active=True).first()
+    if company is None:
+        return redirect(url_for("dashboard.index"))
+    entitlement = can_use_ai_feature(company, "vendedor")
     if not entitlement.allowed:
         return redirect(url_for("ai_agents.agent", agent="planes"))
-    company_id = get_current_company_id(current_user)
+
     from services.ai_agent.vendor_metrics_service import build_vendor_metrics
 
     metrics = build_vendor_metrics(company_id=company_id)
-    from app import Company
-    company = Company.query.filter_by(id=company_id, active=True).first()
     return render_template(
         "ai_agent/vendor_metrics.html",
         company=company,

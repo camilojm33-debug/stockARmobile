@@ -177,20 +177,24 @@ def _embedded_signup_config() -> tuple[str, str]:
     return app_id, config_id
 
 
-@bp.get("/vendedor/conectar-whatsapp")
-@tenant_required
-def vendor_whatsapp_connect():
-    entitlement = can_use_ai_feature(current_user.company, "vendedor")
-    if not entitlement.allowed:
-        flash(entitlement.reason or "Tu plan no incluye el Vendedor IA.", "warning")
-        return redirect(url_for("ai_agents.agent", agent="planes"))
-    if not current_app.config.get("WHATSAPP_VENDOR_UI_ENABLED", False):
-        return redirect(url_for("ai_agents.agent", agent="vendedor"))
+def _current_active_company():
     from app import Company
 
     company = Company.query.filter_by(id=current_user.company_id, active=True).first()
     if company is None:
         abort(403)
+    return company
+
+@bp.get("/vendedor/conectar-whatsapp")
+@tenant_required
+def vendor_whatsapp_connect():
+    company = _current_active_company()
+    entitlement = can_use_ai_feature(company, "vendedor")
+    if not entitlement.allowed:
+        flash(entitlement.reason or "Tu plan no incluye el Vendedor IA.", "warning")
+        return redirect(url_for("ai_agents.agent", agent="planes"))
+    if not current_app.config.get("WHATSAPP_VENDOR_UI_ENABLED", False):
+        return redirect(url_for("ai_agents.agent", agent="vendedor"))
     whatsapp = get_whatsapp_connection(company)
     app_id, config_id = _embedded_signup_config()
     return render_template(
@@ -206,7 +210,10 @@ def vendor_whatsapp_connect():
 @bp.post("/vendedor/conectar-whatsapp/complete")
 @tenant_required
 def vendor_whatsapp_complete():
-    entitlement = can_use_ai_feature(current_user.company, "vendedor")
+    if not current_app.config.get("WHATSAPP_VENDOR_UI_ENABLED", False):
+        return jsonify({"success": False, "error": "La conexión de WhatsApp todavía no está habilitada en StockARmobile."}), 503
+    company = _current_active_company()
+    entitlement = can_use_ai_feature(company, "vendedor")
     if not entitlement.allowed:
         return jsonify({"success": False, "error": entitlement.reason}), 403
     payload = request.get_json(silent=True) or request.form.to_dict()
@@ -286,7 +293,6 @@ def vendor_whatsapp_complete():
                 current_app.logger.warning("WhatsApp Embedded Signup phone registration failed: %s", _meta_error(register))
                 return jsonify({"success": False, "error": "El número fue autorizado, pero Meta no terminó de registrarlo para Cloud API. Revisá el estado del número en WhatsApp y volvé a conectar."}), 400
 
-        company = current_user.company
         configure_whatsapp_connection(
             company,
             phone_number_id=phone_number_id,
