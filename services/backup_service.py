@@ -750,6 +750,41 @@ class BackupService:
         return backup_log
 
     @staticmethod
+    def verify_backup(backup_log, *, expected_company_id: int):
+        """Valida integridad estructural y alcance de un backup sin restaurarlo."""
+        if int(backup_log.company_id or 0) != int(expected_company_id):
+            raise PermissionError("Backup fuera de alcance para la empresa solicitada.")
+
+        payload = BackupService._load_payload(backup_log)
+        if int(payload.get("company_id") or 0) != int(expected_company_id):
+            raise ValueError("El backup no corresponde a la empresa seleccionada.")
+
+        summary = BackupService.backup_summary_from_payload(payload)
+        required_sections = {
+            "company": payload.get("company"),
+            "products": payload.get("products"),
+            "clients": payload.get("clients"),
+            "sales": payload.get("sales"),
+        }
+        missing_sections = [key for key, value in required_sections.items() if value is None]
+        if missing_sections:
+            raise ValueError("El backup no contiene secciones obligatorias: " + ", ".join(missing_sections))
+
+        return {
+            "valid": True,
+            "backup_id": backup_log.id,
+            "company_id": expected_company_id,
+            "schema_version": summary["schema_version"],
+            "system_version": summary["system_version"],
+            "generated_at": summary["generated_at"],
+            "file_size_bytes": int(backup_log.file_size_bytes or 0),
+            "counts": {
+                key: summary[key]
+                for key in ("products", "inventory", "categories", "clients", "sales", "employees", "schedules")
+            },
+        }
+
+    @staticmethod
     def backup_download_path(backup_log) -> Path:
         path = Path(backup_log.path or "")
         if not path.exists():
