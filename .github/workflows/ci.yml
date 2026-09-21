@@ -20,6 +20,15 @@ jobs:
         run: pip install -r requirements.txt
       - name: Compile Python
         run: python -m compileall -q .
+      - name: Check single Alembic head
+        shell: bash
+        run: |
+          set -euo pipefail
+          heads="$(python -m flask db heads)"
+          printf '%s\n' "$heads"
+          head_count="$(printf '%s\n' "$heads" | grep -c '(head)' || true)"
+          test "$head_count" -eq 1
+
       - name: Check service worker
         run: node --check static/service-worker.js
       - name: Run tests
