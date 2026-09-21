@@ -665,7 +665,7 @@ def _plan_features_label(plan):
     if not raw:
         return []
     if raw == "all":
-        return ["Inventario", "Ventas", "Clientes", "Compras", "Caja", "Reportes", "Excel", "Kardex", "QR", "Etiquetas"]
+        return ["Inventario", "Ventas", "Clientes", "Compras", "Caja", "Reportes", "Excel", "Kardex", "QR", "Etiquetas", "Controlador global de precios"]
     mapping = {
         "inventario": "Inventario",
         "ventas": "Ventas",
@@ -678,6 +678,7 @@ def _plan_features_label(plan):
         "kardex": "Kardex",
         "qr": "QR",
         "etiquetas": "Etiquetas",
+        "pricing_controller": "Controlador global de precios",
     }
     return [mapping.get(item.strip(), item.strip().title()) for item in raw.split(",") if item.strip()]
 
