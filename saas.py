@@ -3734,6 +3734,8 @@ def backups_delete(backup_id):
     if not confirm_delete:
         flash("Confirmá la eliminación del backup para continuar.", "warning")
         return _redirect_back("saas.backups_panel")
+    if not _require_superadmin_step_up():
+        return _redirect_back("saas.backups_panel")
     try:
         company_id = backup.company_id
         BackupService.delete_backup(backup)
