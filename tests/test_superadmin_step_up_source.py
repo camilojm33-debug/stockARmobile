@@ -24,3 +24,34 @@ def test_superadmin_critical_action_forms_expose_reauthentication():
     assert 'name="step_up_password"' in backups
     assert 'autocomplete="current-password"' in companies
     assert 'autocomplete="current-password"' in backups
+
+
+def test_superadmin_backup_routes_are_wired_to_the_correct_handlers():
+    text = Path("saas.py").read_text(encoding="utf-8")
+
+    verify_marker = '@bp.route("/backups/<int:backup_id>/verify", methods=["POST"])\n@superadmin_required\ndef backups_verify(backup_id):'
+    restore_marker = '@bp.route("/backups/<int:backup_id>/restore", methods=["POST"])\n@superadmin_required\ndef backups_restore(backup_id):'
+
+    assert verify_marker in text
+    assert restore_marker in text
+    assert '@bp.post("/superadmin/backups/<int:backup_id>/verify")' not in text
+
+
+def test_superadmin_privileged_access_actions_require_step_up():
+    text = Path("saas.py").read_text(encoding="utf-8")
+
+    guarded_functions = [
+        "toggle_company",
+        "company_assign_pin",
+        "company_generate_pin",
+        "company_impersonate",
+        "users_update_role",
+        "users_update_status",
+        "password_recovery_company_user_reset",
+        "password_recovery_reset",
+    ]
+    for function_name in guarded_functions:
+        start = text.index(f"def {function_name}(")
+        next_def = text.find("\ndef ", start + 5)
+        block = text[start:] if next_def == -1 else text[start:next_def]
+        assert "_require_superadmin_step_up()" in block, function_name

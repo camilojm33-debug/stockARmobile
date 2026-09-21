@@ -144,11 +144,13 @@
                 <a class="btn btn-sm btn-outline-info" href="{{ url_for('saas.users_panel', company_id=company.id) }}">Ver empleados</a>
                 <form method="post" action="{{ url_for('saas.company_impersonate', company_id=company.id) }}">
                   <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                  <input type="password" name="step_up_password" class="form-control form-control-sm mt-1" autocomplete="current-password" placeholder="Contraseña si venció el step-up">
                   <button class="btn btn-sm btn-outline-dark" type="submit">Impersonar</button>
                 </form>
                 <form method="post" action="{{ url_for('saas.toggle_company', company_id=company.id) }}">
                   <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
                   <input type="hidden" name="next" value="{{ request.full_path }}">
+                  <input type="password" name="step_up_password" class="form-control form-control-sm mt-1" autocomplete="current-password" placeholder="Contraseña si venció el step-up">
                   <button class="btn btn-sm {{ 'btn-outline-danger' if company.active else 'btn-outline-success' }}" type="submit">{{ 'Suspender' if company.active else 'Reactivar' }}</button>
                 </form>
                 <button class="btn btn-sm btn-danger" type="button" data-bs-toggle="modal" data-bs-target="#hardDeleteModal{{ company.id }}">

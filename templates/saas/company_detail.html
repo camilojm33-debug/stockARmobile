@@ -72,11 +72,13 @@
               <div class="fw-semibold mb-3">{{ company.business_pin_updated_at.strftime('%Y-%m-%d %H:%M') if company.business_pin_updated_at else '-' }}</div>
               <form method="post" action="{{ url_for('saas.company_generate_pin', company_id=company.id) }}">
                 <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                <input type="password" name="step_up_password" class="form-control form-control-sm mb-2" autocomplete="current-password" placeholder="Contraseña si venció el step-up">
                 <button class="btn btn-outline-warning w-100" type="submit"><i class="bi bi-arrow-repeat me-1"></i>Regenerar PIN</button>
               </form>
               <div class="small text-muted mt-3 mb-2">O asignar uno manualmente</div>
               <form method="post" action="{{ url_for('saas.company_assign_pin', company_id=company.id) }}" class="row g-2">
                 <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                <div class="col-12"><input type="password" name="step_up_password" class="form-control form-control-sm" autocomplete="current-password" placeholder="Contraseña si venció el step-up"></div>
                 <div class="col-sm-7">
                   <input class="form-control" name="admin_pin" maxlength="4" pattern="[0-9]{4}" inputmode="numeric" placeholder="4831" required>
                 </div>
