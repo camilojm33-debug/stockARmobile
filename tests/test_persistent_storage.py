@@ -30,6 +30,8 @@ def test_persistent_services_have_render_fallbacks(monkeypatch, app):
     app.config["INVOICE_UPLOAD_DIR"] = ""
     app.config["BACKUP_UPLOAD_DIR"] = ""
 
+    monkeypatch.setattr(Path, "mkdir", lambda self, *args, **kwargs: None)
+
     with app.app_context():
         invoice_path = InvoiceUploadService._directory(7)
         backup_path = BackupService._backup_root()
