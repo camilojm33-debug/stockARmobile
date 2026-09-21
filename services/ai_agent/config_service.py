@@ -5,6 +5,7 @@ import base64
 import hashlib
 import json
 import os
+from decimal import Decimal
 from typing import Any, Dict, Optional
 
 from cryptography.fernet import Fernet, InvalidToken
