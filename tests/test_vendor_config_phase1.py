@@ -134,3 +134,16 @@ def test_vendor_configuration_navigation_and_capabilities_are_exposed():
     assert '@bp.get("/vendor-config")' in admin_service
     assert '@bp.post("/vendor-save")' in admin_service
     assert 'vendor_options[key] = "1" in request.form.getlist(field)' in admin_service
+
+
+def test_general_ai_admin_uses_canonical_vendor_context_key():
+    from pathlib import Path
+
+    root = Path(__file__).resolve().parents[1]
+    admin_service = (root / "services/ai_agent/admin.py").read_text(encoding="utf-8")
+    admin_page = (root / "templates/ai_agent/admin_v2.html").read_text(encoding="utf-8")
+
+    assert "vendor_agent = agents[VENDOR_AGENT_NAME]" in admin_service
+    assert "vendor_agent=vendor_agent" in admin_service
+    assert "agents['Vendedor IA 24/7']" not in admin_page
+    assert "vendor_agent.active" in admin_page
