@@ -168,6 +168,8 @@ def index():
         ai_key_configured = bool((os.getenv("AI_PROVIDER_API_KEY") or os.getenv("OPENAI_API_KEY") or "").strip()) or provider in {"lmstudio", "lm_studio"}
     ai_enabled = bool(prefs["ai_agent"].get("enabled", True))
     whatsapp_connected = bool(whatsapp.get("enabled") and whatsapp.get("phone_number_id"))
+    vendor_agent = agents[VENDOR_AGENT_NAME]
+    business_agent = agents[BUSINESS_AGENT_NAME]
     agent_key_by_name = {
         VENDOR_AGENT_NAME: "vendedor",
         BUSINESS_AGENT_NAME: "asistente",
@@ -194,6 +196,8 @@ def index():
         "ai_agent/admin_v2.html",
         company=company,
         agents=agents,
+        vendor_agent=vendor_agent,
+        business_agent=business_agent,
         configs=configs,
         prefs=prefs,
         whatsapp=whatsapp,
