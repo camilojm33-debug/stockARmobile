@@ -13,6 +13,130 @@ from services.product_image_service import ProductImageError, delete_product_ima
 
 bp = Blueprint("products", __name__)
 
+ALLOWED_IMAGE_EXTENSIONS = {".jpg", ".jpeg", ".png", ".webp"}
+MAX_IMAGE_SIZE_BYTES = 5 * 1024 * 1024
+
+
+def _product_to_dict(product):
+    return {
+        "id": product.id,
+        "barcode": product.barcode,
+        "codigo": product.barcode,
+        "name": product.name,
+        "nombre": product.name,
+        "description": product.description or "",
+        "category": product.category or "",
+        "categoria": product.category or "",
+        "sale_type": product.sale_type or "unidad",
+        "tipo_venta": product.sale_type or "unidad",
+        "unit_measure": product.unit_measure or "u",
+        "unidad_medida": product.unit_measure or "u",
+        "photo": product.photo or "",
+        "brand": product.brand or "",
+        "marca": product.brand or "",
+        "supplier": product.supplier or "",
+        "proveedor": product.supplier or "",
+        "cost_price": float(product.cost_price or 0),
+        "precio_costo": float(product.cost_price or 0),
+        "price": float(product.price or 0),
+        "precio_venta": float(product.price or 0),
+        "margin": float(product.margin or 0),
+        "profit_percent": float(product.profit_percent or 0),
+        "tax": float(product.tax or 0),
+        "iva": float(product.tax or 0),
+        "stock": product.stock or 0,
+        "min_stock": product.min_stock or 0,
+        "discount": float(product.discount or 0),
+        "favorite": bool(product.favorite),
+    }
+
+
+def _apply_product_form(product, form):
+    product.barcode = (form.barcode.data or product.barcode or "").strip()
+    product.name = form.name.data
+    product.description = form.description.data
+    product.category = form.category.data
+    product.sale_type = form.sale_type.data or "unidad"
+    product.unit_measure = (form.unit_measure.data or "").strip() or _default_unit(product.sale_type)
+    product.brand = form.brand.data
+    product.supplier = form.supplier.data
+    cost_price = float(form.cost_price.data or 0)
+    tax_percent = float(form.tax.data or 0)
+    raw_price = (request.form.get("price") or "").strip()
+    raw_profit_percent = (request.form.get("profit_percent") or "").strip()
+    raw_margin = (request.form.get("margin") or "").strip()
+    pricing_source = (request.form.get("pricing_source") or "").strip().lower()
+
+    if pricing_source not in {"price", "profit_percent", "margin"}:
+        if request.endpoint == "products.edit":
+            posted_price = float(form.price.data or 0)
+            posted_margin = float(form.margin.data or 0)
+            posted_profit = float(form.profit_percent.data or 0)
+            current_price = float(product.price or 0)
+            current_margin = float(product.margin or 0)
+            current_profit = float(product.profit_percent or 0)
+            if raw_margin and posted_margin != current_margin:
+                pricing_source = "margin"
+            elif raw_profit_percent and posted_profit != current_profit:
+                pricing_source = "profit_percent"
+            elif raw_price and posted_price != current_price:
+                pricing_source = "price"
+
+    pricing = calculate_product_pricing(
+        cost_price=cost_price,
+        price=form.price.data if raw_price else product.price,
+        margin=form.margin.data if raw_margin else product.margin,
+        profit_percent=form.profit_percent.data if raw_profit_percent else product.profit_percent,
+        pricing_source=pricing_source,
+    )
+    final_price = float(pricing["price"])
+    gain_amount = float(pricing["margin"])
+    margin_percent = float(pricing["profit_percent"])
+
+    product.cost_price = cost_price
+    product.price = final_price
+    product.margin = gain_amount
+    product.profit_percent = margin_percent
+    product.tax = tax_percent
+    product.stock = float(form.stock.data or 0)
+    product.min_stock = float(form.min_stock.data or 0)
+    product.discount = float(form.discount.data or 0)
+    product.favorite = bool(form.favorite.data)
+
+
+def _default_unit(sale_type):
+    return {
+        "unidad": "u",
+        "kilogramo": "kg",
+        "gramos": "g",
+        "litros": "l",
+        "mililitros": "ml",
+        "metros": "m",
+        "centimetros": "cm",
+        "caja": "caja",
+        "pack": "pack",
+        "bolsa": "bolsa",
+        "botella": "botella",
+        "paquete": "paq",
+        "docena": "doc",
+        "media_docena": "1/2 doc",
+    }.get(sale_type or "unidad", "u")
+
+
+def _float_value(value, default=0.0):
+    try:
+        return float(value if value not in (None, "") else default)
+    except (TypeError, ValueError):
+        return default
+
+
+def _require_admin_product_management():
+    if getattr(current_user, "role", None) != "admin":
+        flash("Solo el administrador puede editar precios o eliminar productos.", "warning")
+        return redirect(url_for("products.index"))
+    return None
+
+
 @bp.route("/imagen/<filename>")
 def product_image(filename):
     resolved = resolve_product_image(filename)
@@ -141,12 +265,11 @@ def edit(product_id=None, id=None):
         except ValueError as exc:
             flash(str(exc), "danger")
             return redirect(url_for("products.edit", product_id=product.id))
-        old_photo = product.photo
         upload = request.files.get("photo_file")
         if upload and (upload.filename or "").strip():
             try:
-                product.photo = save_product_image(upload)
-            except ProductImageError as exc:
+                product.photo = _save_product_image(upload)
+            except ValueError as exc:
                 flash(str(exc), "danger")
                 return redirect(url_for("products.edit", product_id=product.id))
         if old_price != float(product.price or 0) or old_cost != float(product.cost_price or 0):
