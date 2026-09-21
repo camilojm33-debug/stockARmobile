@@ -10,6 +10,8 @@ import threading
 import time
 import mimetypes
 import secrets
+
+import click
 from datetime import datetime, timedelta, timezone
 from decimal import Decimal
 from urllib.parse import parse_qs, urlparse
@@ -2564,6 +2566,67 @@ def ensure_primary_superadmin():
 def ensure_database_schema():
     """Compatibilidad retroactiva: deshabilitado para forzar migraciones Alembic."""
     app.logger.info("ensure_database_schema() deshabilitado. Usa migraciones Alembic.")
+
+
+@app.cli.command("migrate-legacy-product-images")
+def migrate_legacy_product_images_command():
+    """Move legacy /static/uploads/products images to persistent storage."""
+    from pathlib import Path
+    from services.product_image_service import _validate_image, upload_dir
+
+    legacy_root = Path(app.static_folder) / "uploads" / "products"
+    target_root = upload_dir()
+    migrated = 0
+    missing = 0
+
+    legacy_products = Product.query.filter(
+        Product.photo.isnot(None),
+        Product.photo.like("/static/uploads/products/%"),
+    ).all()
+    for product in legacy_products:
+        filename = str(product.photo).rsplit("/", 1)[-1]
+        source = legacy_root / filename
+        if not source.is_file():
+            missing += 1
+            app.logger.warning(
+                "Legacy product image missing: product_id=%s path=%s",
+                product.id,
+                source,
+            )
+            continue
+        data = source.read_bytes()
+        suffix, _mime = _validate_image(data)
+        target_root.mkdir(parents=True, exist_ok=True)
+        destination = target_root / filename
+        if not destination.exists():
+            destination.write_bytes(data)
+        product.photo = f"/productos/imagen/{filename}"
+        migrated += 1
+
+    db.session.commit()
+    click.echo(f"legacy_product_images migrated={migrated} missing={missing}")
+
+
+@app.cli.command("backup-company")
+@click.option("--company-id", type=int, required=True)
+def backup_company_command(company_id):
+    """Create and verify one tenant backup on persistent storage."""
+    from services.backup_service import BackupService
+
+    backup, plan = BackupService.create_manual_backup(
+        company_id,
+        user_id=None,
+        trigger_type="cli",
+    )
+    result = BackupService.verify_backup(
+        backup,
+        expected_company_id=company_id,
+    )
+    db.session.commit()
+    click.echo(
+        f"backup_company id={backup.id} company={company_id} "
+        f"status={backup.status} plan={plan['code']} counts={result['counts']}"
+    )
 
 
 @app.cli.command("init-db")
