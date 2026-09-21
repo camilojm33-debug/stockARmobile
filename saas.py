@@ -3338,7 +3338,18 @@ def password_recovery_panel():
         .order_by(User.company_id.asc(), User.username.asc())
         .all()
     )
-    temp_password = session.pop("password_recovery_temp_password", None)
+    from services.one_time_secret_service import OneTimeSecretService
+
+    temp_password = OneTimeSecretService.consume(
+        db.session,
+        user_id=current_user.id,
+        purpose="password_recovery_temp_password",
+        subject_type="user",
+        subject_id=request.args.get("reveal_user_id", type=int),
+        access_token=session.pop("password_recovery_temp_password", None),
+    )
+    if temp_password is not None:
+        db.session.commit()
     temp_password_user = session.pop("password_recovery_temp_password_user", None)
     return render_template(
         "saas/password_recovery.html",
@@ -3379,6 +3390,23 @@ def password_recovery_company_user_reset():
         return _redirect_back("saas.password_recovery_panel")
 
     temp_password = _temporary_password()
+    from services.one_time_secret_service import OneTimeSecretService
+
+    OneTimeSecretService.revoke(
+        db.session,
+        user_id=current_user.id,
+        purpose="password_recovery_temp_password",
+        subject_type="user",
+        subject_id=user.id,
+    )
+    _secret_row, access_token = OneTimeSecretService.issue(
+        db.session,
+        user_id=current_user.id,
+        purpose="password_recovery_temp_password",
+        subject_type="user",
+        subject_id=user.id,
+        secret_value=temp_password,
+    )
     user.set_password(temp_password)
     user.must_change_password = True
     record_audit(
@@ -3391,7 +3419,7 @@ def password_recovery_company_user_reset():
     )
     db.session.commit()
 
-    session["password_recovery_temp_password"] = temp_password
+    session["password_recovery_temp_password"] = access_token
     session["password_recovery_temp_password_user"] = user.username
     flash("Contraseña temporal generada. Copiala ahora; se mostrará una sola vez.", "warning")
     return _redirect_back("saas.password_recovery_panel")
@@ -3436,6 +3464,23 @@ def password_recovery_reset(request_id):
         return _redirect_back("saas.password_recovery_panel")
 
     temp_password = _temporary_password()
+    from services.one_time_secret_service import OneTimeSecretService
+
+    OneTimeSecretService.revoke(
+        db.session,
+        user_id=current_user.id,
+        purpose="password_recovery_temp_password",
+        subject_type="user",
+        subject_id=user.id,
+    )
+    _secret_row, access_token = OneTimeSecretService.issue(
+        db.session,
+        user_id=current_user.id,
+        purpose="password_recovery_temp_password",
+        subject_type="user",
+        subject_id=user.id,
+        secret_value=temp_password,
+    )
     user.set_password(temp_password)
     user.must_change_password = True
 
@@ -3453,8 +3498,8 @@ def password_recovery_reset(request_id):
     )
     db.session.commit()
 
-    # Mostrar una sola vez en la pantalla de recuperacion.
-    session["password_recovery_temp_password"] = temp_password
+    # La sesión conserva solo un token opaco; el secreto permanece cifrado del lado servidor.
+    session["password_recovery_temp_password"] = access_token
     session["password_recovery_temp_password_user"] = user.username
     flash("Contrasena temporal generada. Se mostrara una sola vez.", "warning")
     return _redirect_back("saas.password_recovery_panel")
