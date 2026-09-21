@@ -223,48 +223,154 @@
   <div class="card app-card"><div class="card-body text-center py-5"><i class="bi bi-lock text-secondary fs-1"></i><h2 class="h4 fw-bold mt-3">{{ agent_labels[locked_agent] }} no está incluido en tu plan</h2><p class="text-muted">{{ locked_reason }}</p><a class="btn btn-primary" href="{{ plan_url }}">Ver planes</a></div></div>
 
   {% elif view == 'vendedor' %}
-  <div class="d-flex flex-wrap justify-content-between align-items-start gap-3 mb-3">
-    <div><div class="d-flex align-items-center gap-2 flex-wrap"><h2 class="h3 fw-bold mb-0"><i class="bi bi-cart3 me-2"></i>Vendedor IA</h2><span class="badge text-bg-success fs-6"><i class="bi bi-circle-fill me-1"></i>Trabajando</span></div><p class="text-muted mb-0 mt-1">Tu vendedor digital 24/7, disponible desde el Webchat público de tu comercio.</p></div>
-    <div class="d-flex flex-wrap gap-2"><a class="btn btn-primary" href="{{ url_for('ai_admin.vendor_config') }}"><i class="bi bi-gear me-1"></i>Configurar Vendedor</a><a class="btn btn-outline-primary" href="{{ url_for('vendor_publication.publication_page') }}"><i class="bi bi-broadcast me-1"></i>Publicar y compartir</a><a class="btn btn-outline-secondary" href="{{ url_for('ai_admin.vendor_metrics') }}"><i class="bi bi-bar-chart-line me-1"></i>Métricas</a></div>
-  </div>
-  <div class="row g-3 mb-4">{% for label, value in [('Conversaciones este mes', metrics.conversations), ('Clientes atendidos', metrics.clients_attended), ('Presupuestos', metrics.quotes), ('Pedidos', 'Pendiente de integración'), ('Ventas derivadas', 'Pendiente de integración')] %}<div class="col-6 col-lg"><div class="ai-metric h-100"><div class="small text-muted">{{ label }}</div><div class="ai-metric-value">{{ value }}</div></div></div>{% endfor %}</div><div class="alert {% if ai_usage.state == 'normal' %}alert-success{% elif ai_usage.state == 'near_limit' %}alert-warning{% elif ai_usage.state == 'limit_next' %}alert-warning{% else %}alert-danger{% endif %}"><strong>Uso de IA:</strong> {{ ai_usage.used_usage }} / {{ ai_usage.included_usage or 'Pendiente de asignación' }} · {{ ai_usage.percent }}% utilizado · {{ ai_usage.remaining_usage }} restantes{% if ai_usage.state == 'near_limit' %} · Estás utilizando al menos el 80% de tu capacidad mensual.{% elif ai_usage.state == 'limit_next' %} · Te queda poca capacidad de IA este mes.{% elif ai_usage.state == 'limit_reached' %} · Alcanzaste el límite mensual de IA.{% endif %}</div>
-<div class="row g-4 mb-4">
-  <div class="col-lg-7">
-    <div class="card app-card h-100">
-      <div class="card-body">
-        <h2 class="h5 fw-bold"><i class="bi bi-globe2 me-2"></i>Vendedor Web 24/7</h2>
-        <p class="small text-muted">Activá un chat público para que tus clientes consulten productos, stock, precios y preparen presupuestos sin entrar al panel de StockAr.</p>
-        {% if public_webchat_enabled and public_vendor_url %}
-          <div class="alert alert-success"><strong>Webchat activo.</strong><div class="small mt-1">No depende de WhatsApp ni de la aprobación de Meta para funcionar.</div></div>
-          <div class="input-group mb-2"><input class="form-control" value="{{ public_vendor_url }}" readonly aria-label="Enlace público del Vendedor IA"><button class="btn btn-outline-primary" type="button" id="copy-vendor-web-url">Copiar</button></div>
-          <a class="btn btn-primary" target="_blank" rel="noopener" href="{{ public_vendor_url }}">Abrir chat público</a>
-          <form method="post" action="{{ url_for('ai_agents.vendor_webchat_toggle') }}" class="d-inline"><input type="hidden" name="enabled" value="0"><input type="hidden" name="csrf_token" value="{{ csrf_token() }}"><button class="btn btn-outline-secondary ms-2" type="submit">Desactivar</button></form>
-        {% else %}
-          <div class="alert alert-light border"><strong>Webchat desactivado.</strong><div class="small mt-1">Al activarlo, StockAr generará un enlace público seguro para el Vendedor.</div></div>
-          <form method="post" action="{{ url_for('ai_agents.vendor_webchat_toggle') }}"><input type="hidden" name="enabled" value="1"><input type="hidden" name="csrf_token" value="{{ csrf_token() }}"><button class="btn btn-primary" type="submit"><i class="bi bi-lightning-charge me-1"></i>Activar Vendedor Web 24/7</button></form>
-        {% endif %}
-        <div class="small text-muted mt-3"><i class="bi bi-shield-check me-1"></i>El enlace está firmado, aislado por empresa y limitado para reducir abuso.</div>
+  <div class="d-flex flex-wrap justify-content-between align-items-start gap-3 mb-4">
+    <div>
+      <div class="d-flex align-items-center gap-2 flex-wrap">
+        <h2 class="h3 fw-bold mb-0"><i class="bi bi-cart3 me-2"></i>Vendedor IA</h2>
+        <span class="badge text-bg-success fs-6"><i class="bi bi-circle-fill me-1"></i>Trabajando</span>
       </div>
+      <p class="text-muted mb-0 mt-1">Panel operativo de tu vendedor digital 24/7. Desde acá ves su estado y sus canales; la configuración detallada está separada.</p>
+    </div>
+    <div class="d-flex flex-wrap gap-2">
+      <a class="btn btn-primary" href="{{ url_for('ai_admin.vendor_config') }}"><i class="bi bi-gear me-1"></i>Configurar</a>
+      <a class="btn btn-outline-primary" href="{{ url_for('vendor_publication.publication_page') }}"><i class="bi bi-broadcast me-1"></i>Publicar y compartir</a>
+      <a class="btn btn-outline-secondary" href="{{ url_for('ai_admin.vendor_metrics') }}"><i class="bi bi-bar-chart-line me-1"></i>Métricas</a>
     </div>
   </div>
-  {% if config.get("WHATSAPP_VENDOR_UI_ENABLED", False) %}
-  <div class="col-lg-5">
-    <div class="card app-card h-100">
-      <div class="card-body">
-        <h2 class="h5 fw-bold"><i class="bi bi-whatsapp me-2"></i>WhatsApp</h2>
-        {% if preferences.whatsapp.enabled and preferences.whatsapp.phone_number_id %}
-          <div class="alert alert-success"><strong>WhatsApp conectado.</strong><div class="small mt-1">{{ preferences.whatsapp.display_phone_number or 'Número conectado' }}</div></div>
-        {% else %}
-          <div class="alert alert-light border"><strong>WhatsApp aún no conectado.</strong><div class="small mt-1">Esto no bloquea el Vendedor Web. Podés conectarlo cuando Meta termine la revisión.</div></div>
-        {% endif %}
-        <a class="btn btn-outline-primary" href="{{ url_for('ai_agents.vendor_whatsapp_connect') }}"><i class="bi bi-whatsapp me-1"></i>{% if preferences.whatsapp.enabled %}Administrar WhatsApp{% else %}Conectar WhatsApp{% endif %}</a>
-      </div>
-    </div>
-  </div>
-  {% endif %}
-</div>
-  <div class="row g-4"><div class="col-lg-7"><div class="card app-card h-100"><div class="card-body"><h2 class="h5 fw-bold">Capacidades</h2><div class="row g-2">{% for item, functional in [('Consultar productos', true), ('Consultar precios', true), ('Consultar stock', true), ('Recomendar productos', true), ('Ofrecer alternativas', true), ('Preparar presupuestos', true), ('Armar pedidos: presupuesto pendiente de pago', true), ('Hacer seguimiento', false), ('Detectar intención de compra', false), ('Derivar conversación a una persona', false)] %}<div class="col-sm-6"><div class="text-muted"><i class="bi {{ 'bi-check-circle-fill text-success' if functional else 'bi-dash-circle text-secondary' }} me-2"></i>{{ item }}{% if not functional %} <span class="small">(Pendiente de integración)</span>{% endif %}</div></div>{% endfor %}</div></div></div></div><div class="col-lg-5"><div class="card app-card h-100"><div class="card-body"><h2 class="h5 fw-bold">Uso de IA</h2><p class="text-muted">{{ ai_usage.used_usage }} / {{ ai_usage.included_usage or 'Pendiente de asignación' }} interacciones.</p><div class="progress" role="progressbar" aria-label="Uso de IA" aria-valuenow="{{ ai_usage.percent }}" aria-valuemin="0" aria-valuemax="100"><div class="progress-bar" style="width: {{ ai_usage.percent }}%"></div></div><div class="small text-muted mt-2">{{ ai_usage.percent }}% utilizado · {{ ai_usage.remaining_usage }} restantes</div>{% if config_url %}<a class="btn btn-outline-primary mt-3" href="{{ config_url }}"><i class="bi bi-gear me-1"></i>Configurar agente</a>{% endif %}</div></div></div></div>
 
+  <div class="row g-3 mb-4">
+    {% for label, value in [('Conversaciones este mes', metrics.conversations), ('Clientes atendidos', metrics.clients_attended), ('Presupuestos', metrics.quotes), ('Pedidos', 'Pendiente de integración'), ('Ventas derivadas', 'Pendiente de integración')] %}
+    <div class="col-6 col-lg">
+      <div class="ai-metric h-100">
+        <div class="small text-muted">{{ label }}</div>
+        <div class="ai-metric-value">{{ value }}</div>
+      </div>
+    </div>
+    {% endfor %}
+  </div>
+
+  <div class="alert {% if ai_usage.state == 'normal' %}alert-success{% elif ai_usage.state == 'near_limit' %}alert-warning{% elif ai_usage.state == 'limit_next' %}alert-warning{% else %}alert-danger{% endif %} mb-4">
+    <strong>Uso de IA:</strong> {{ ai_usage.used_usage }} / {{ ai_usage.included_usage or 'Pendiente de asignación' }} · {{ ai_usage.percent }}% utilizado · {{ ai_usage.remaining_usage }} restantes
+    {% if ai_usage.state == 'near_limit' %} · Estás utilizando al menos el 80% de tu capacidad mensual.
+    {% elif ai_usage.state == 'limit_next' %} · Te queda poca capacidad de IA este mes.
+    {% elif ai_usage.state == 'limit_reached' %} · Alcanzaste el límite mensual de IA.
+    {% endif %}
+  </div>
+
+  <div class="row g-4 mb-4">
+    <div class="col-lg-7">
+      <div class="card app-card h-100">
+        <div class="card-body">
+          <div class="d-flex justify-content-between align-items-start gap-3 mb-3">
+            <div>
+              <h2 class="h5 fw-bold mb-1"><i class="bi bi-broadcast me-2"></i>Canal público</h2>
+              <p class="small text-muted mb-0">Este es el canal con el que tus clientes pueden hablar con el Vendedor sin entrar al panel.</p>
+            </div>
+            <span class="badge {{ 'text-bg-success' if public_webchat_enabled and public_vendor_url else 'text-bg-secondary' }}">
+              {{ 'Activo' if public_webchat_enabled and public_vendor_url else 'Desactivado' }}
+            </span>
+          </div>
+
+          {% if public_webchat_enabled and public_vendor_url %}
+            <div class="alert alert-success mb-3">
+              <strong>Vendedor Web 24/7 activo.</strong>
+              <div class="small mt-1">El enlace público está listo para compartir.</div>
+            </div>
+            <div class="d-flex flex-wrap gap-2">
+              <a class="btn btn-primary" target="_blank" rel="noopener" href="{{ public_vendor_url }}"><i class="bi bi-box-arrow-up-right me-1"></i>Abrir chat público</a>
+              <a class="btn btn-outline-primary" href="{{ url_for('vendor_publication.publication_page') }}"><i class="bi bi-share me-1"></i>Administrar publicación</a>
+            </div>
+          {% else %}
+            <div class="alert alert-light border mb-3">
+              <strong>El canal público todavía no está activo.</strong>
+              <div class="small mt-1">Publicá el Vendedor para generar el enlace seguro y compartirlo.</div>
+            </div>
+            <a class="btn btn-primary" href="{{ url_for('vendor_publication.publication_page') }}"><i class="bi bi-broadcast me-1"></i>Publicar Vendedor</a>
+          {% endif %}
+
+          <div class="small text-muted mt-3">
+            <i class="bi bi-shield-check me-1"></i>El enlace público queda firmado y aislado por empresa.
+          </div>
+        </div>
+      </div>
+    </div>
+
+    {% if config.get("WHATSAPP_VENDOR_UI_ENABLED", False) %}
+    <div class="col-lg-5">
+      <div class="card app-card h-100">
+        <div class="card-body">
+          <div class="d-flex justify-content-between align-items-start gap-3 mb-3">
+            <div>
+              <h2 class="h5 fw-bold mb-1"><i class="bi bi-whatsapp me-2"></i>WhatsApp</h2>
+              <p class="small text-muted mb-0">Canal opcional para atender desde tu número comercial.</p>
+            </div>
+            <span class="badge {{ 'text-bg-success' if preferences.whatsapp.enabled and preferences.whatsapp.phone_number_id else 'text-bg-secondary' }}">
+              {{ 'Conectado' if preferences.whatsapp.enabled and preferences.whatsapp.phone_number_id else 'No conectado' }}
+            </span>
+          </div>
+          {% if preferences.whatsapp.enabled and preferences.whatsapp.phone_number_id %}
+            <div class="alert alert-success mb-3"><strong>WhatsApp conectado.</strong><div class="small mt-1">{{ preferences.whatsapp.display_phone_number or 'Número conectado' }}</div></div>
+          {% else %}
+            <div class="alert alert-light border mb-3"><strong>WhatsApp todavía no está conectado.</strong><div class="small mt-1">Esto no afecta el Vendedor Web 24/7.</div></div>
+          {% endif %}
+          <a class="btn btn-outline-primary" href="{{ url_for('ai_agents.vendor_whatsapp_connect') }}"><i class="bi bi-whatsapp me-1"></i>{% if preferences.whatsapp.enabled %}Administrar WhatsApp{% else %}Conectar WhatsApp{% endif %}</a>
+        </div>
+      </div>
+    </div>
+    {% endif %}
+  </div>
+
+  <div class="row g-4">
+    <div class="col-lg-7">
+      <div class="card app-card h-100">
+        <div class="card-body">
+          <div class="d-flex justify-content-between align-items-start gap-3 mb-3">
+            <div>
+              <h2 class="h5 fw-bold mb-1"><i class="bi bi-check2-circle me-2"></i>Qué puede hacer</h2>
+              <p class="small text-muted mb-0">Resumen de las capacidades actuales. Para modificarlas, usá Configurar.</p>
+            </div>
+            <a class="btn btn-sm btn-outline-primary" href="{{ url_for('ai_admin.vendor_config') }}">Configurar capacidades</a>
+          </div>
+          <div class="row g-2">
+            {% for item, functional in [
+              ('Consultar productos', true),
+              ('Consultar precios', true),
+              ('Consultar stock', true),
+              ('Recomendar productos', true),
+              ('Ofrecer alternativas', true),
+              ('Preparar presupuestos', true),
+              ('Armar pedidos: presupuesto pendiente de pago', true),
+              ('Hacer seguimiento', false),
+              ('Detectar intención de compra', false),
+              ('Derivar conversación a una persona', false)
+            ] %}
+            <div class="col-sm-6">
+              <div class="text-muted">
+                <i class="bi {{ 'bi-check-circle-fill text-success' if functional else 'bi-dash-circle text-secondary' }} me-2"></i>
+                {{ item }}{% if not functional %} <span class="small">(Pendiente de integración)</span>{% endif %}
+              </div>
+            </div>
+            {% endfor %}
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <div class="col-lg-5">
+      <div class="card app-card h-100">
+        <div class="card-body">
+          <h2 class="h5 fw-bold mb-1"><i class="bi bi-lightning-charge me-2"></i>Uso de IA</h2>
+          <p class="text-muted">{{ ai_usage.used_usage }} / {{ ai_usage.included_usage or 'Pendiente de asignación' }} interacciones.</p>
+          <div class="progress" role="progressbar" aria-label="Uso de IA" aria-valuenow="{{ ai_usage.percent }}" aria-valuemin="0" aria-valuemax="100">
+            <div class="progress-bar" style="width: {{ ai_usage.percent }}%"></div>
+          </div>
+          <div class="small text-muted mt-2">{{ ai_usage.percent }}% utilizado · {{ ai_usage.remaining_usage }} restantes</div>
+          <a class="btn btn-outline-secondary mt-3" href="{{ url_for('ai_admin.vendor_metrics') }}"><i class="bi bi-bar-chart-line me-1"></i>Ver métricas detalladas</a>
+        </div>
+      </div>
+    </div>
+  </div>
+  
   {% elif view == 'asistente' %}
   <div class="mb-3"><h2 class="h3 fw-bold mb-1"><i class="bi bi-lightbulb me-2"></i>Asistente Empresarial</h2><p class="text-muted mb-2">Preguntame lo que quieras sobre tu negocio.</p><ol class="assistant-capabilities text-muted small"><li><strong>Buscar Productos:</strong> puedo buscar productos por nombre, marca o código.</li><li><strong>Consultar Stock:</strong> puedo consultar el stock actual de un producto específico.</li><li><strong>Buscar Clientes:</strong> puedo buscar clientes por nombre, email, teléfono o WhatsApp.</li><li><strong>Contar Clientes:</strong> puedo contar la cantidad de clientes activos reales de la empresa.</li><li><strong>Resumen de Ventas:</strong> puedo resumir las ventas realizadas en un período específico.</li><li><strong>Productos Más Vendidos:</strong> puedo listar los productos con mayor cantidad vendida.</li><li><strong>Productos Sin Ventas Recientes:</strong> puedo listar productos que no han tenido ventas recientes.</li><li><strong>Stock Crítico:</strong> puedo listar productos cuyo stock está por debajo o igual al stock mínimo.</li><li><strong>Adjuntar Facturas:</strong> puedo recibir una factura de proveedor y dejarla preparada para su posterior procesamiento y reconocimiento de productos.</li></ol></div><div class="card app-card"><div class="card-body"><div id="ai-hub-chat" class="ai-chat-box border rounded-2 p-3 mb-3" aria-live="polite"><div class="text-muted small">Hola, ¿en qué puedo ayudarte?</div></div><div class="ai-chat-suggestions mb-3">{% for prompt in ['¿Cuánto vendimos ayer?', '¿Cuál fue nuestro producto más vendido?', '¿Qué productos tienen poco stock?', '¿Cómo fueron las ventas este mes?', '¿Qué debería reponer?'] %}<button class="btn btn-sm btn-outline-secondary ai-suggestion" type="button">{{ prompt }}</button>{% endfor %}</div><div class="input-group"><input id="ai-hub-input" class="form-control" maxlength="500" placeholder="Escribí tu consulta..." aria-label="Consulta al asistente"><button id="ai-hub-send" class="btn btn-primary" type="button"><i class="bi bi-send me-1"></i>Enviar</button></div><div class="mt-3"><label class="form-label small mb-1" for="ai-hub-invoice">Adjuntar factura</label><div class="invoice-file-control"><input id="ai-hub-invoice-camera" class="invoice-file-input" type="file" accept="image/*" capture="environment" aria-label="Sacar foto de factura con la cámara"><label class="btn btn-primary btn-sm mb-0" for="ai-hub-invoice-camera">📷 Sacar foto de factura</label><input id="ai-hub-invoice" class="invoice-file-input" name="invoice_file" type="file" accept=".jpg,.jpeg,.png,.webp,.pdf" aria-label="Adjuntar factura de proveedor"><label class="btn btn-outline-secondary btn-sm mb-0" for="ai-hub-invoice" id="ai-hub-invoice-label">📁 Elegir factura</label><span class="invoice-file-name" id="ai-hub-invoice-name">Ningún archivo seleccionado</span></div><div class="form-text">Formatos permitidos: JPG, JPEG, PNG, WEBP o PDF. Máximo 10 MB.</div></div><div id="ai-hub-error" class="small text-danger mt-2" role="alert"></div></div></div>
 
