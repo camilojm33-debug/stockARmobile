@@ -29,6 +29,9 @@
   <link href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.11.3/font/bootstrap-icons.min.css" rel="stylesheet">
   <link href="{{ url_for('static', filename='assets/css/styles.css') }}" rel="stylesheet">
   <link href="{{ url_for('static', filename='assets/css/ui-polish-pages.css') }}" rel="stylesheet">
+  {% if current_user.is_authenticated and current_user.role == 'superadmin' %}
+  <link href="{{ url_for('static', filename='assets/css/superadmin.css') }}" rel="stylesheet">
+  {% endif %}
   <style>
     :root {
       --app-bg: #f6f8fb;
@@ -715,6 +718,7 @@
       <div class="nav-section-label">Administración</div>
       <a class="nav-link {% if request.endpoint == 'saas.index' %}active{% endif %}" href="{{ url_for('saas.index') }}"><i class="bi bi-grid-1x2"></i>Panel SaaS</a>
       <a class="nav-link {% if request.endpoint == 'saas.crm_panel' or request.endpoint == 'saas.crm_lead_status' or request.endpoint == 'saas.crm_task_status' or request.endpoint == 'saas.crm_alert_status' %}active{% endif %}" href="{{ url_for('saas.crm_panel') }}"><i class="bi bi-diagram-3"></i>Centro SaaS</a>
+      <a class="nav-link {% if request.endpoint == 'saas.attention_panel' %}active{% endif %}" href="{{ url_for('saas.attention_panel') }}"><i class="bi bi-lightning-charge"></i>Atención</a>
       <a class="nav-link {% if request.endpoint == 'saas.companies_panel' %}active{% endif %}" href="{{ url_for('saas.companies_panel') }}"><i class="bi bi-buildings"></i>Empresas</a>
       <a class="nav-link {% if request.endpoint == 'saas.users_panel' %}active{% endif %}" href="{{ url_for('saas.users_panel') }}"><i class="bi bi-people"></i>Usuarios globales</a>
       <a class="nav-link {% if request.endpoint and request.endpoint.startswith('saas.password_recovery') %}active{% endif %}" href="{{ url_for('saas.password_recovery_panel') }}"><i class="bi bi-key"></i>Recuperación de contraseñas</a>
@@ -723,12 +727,16 @@
       <a class="nav-link {% if request.endpoint == 'saas.mercadopago_settings' %}active{% endif %}" href="{{ url_for('saas.mercadopago_settings') }}"><i class="bi bi-wallet2"></i>Mercado Pago</a>
       <a class="nav-link {% if request.endpoint == 'saas.billing' %}active{% endif %}" href="{{ url_for('saas.billing') }}"><i class="bi bi-receipt"></i>Facturación</a>
       <a class="nav-link {% if request.endpoint and request.endpoint.startswith('saas.backups') %}active{% endif %}" href="{{ url_for('saas.backups_panel') }}"><i class="bi bi-hdd-stack"></i>Backups</a>
+      <a class="nav-link {% if request.endpoint == 'support.admin_index' %}active{% endif %}" href="{{ url_for('support.admin_index') }}"><i class="bi bi-life-preserver"></i>Soporte</a>
       <a class="nav-link {% if request.endpoint == 'saas.trials_panel' %}active{% endif %}" href="{{ url_for('saas.trials_panel') }}"><i class="bi bi-hourglass-split"></i>Pruebas</a>
       <a class="nav-link {% if request.endpoint == 'saas.payments_panel' %}active{% endif %}" href="{{ url_for('saas.payments_panel') }}"><i class="bi bi-cash-coin"></i>Pagos</a>
       <a class="nav-link {% if request.endpoint == 'saas.renewals_panel' %}active{% endif %}" href="{{ url_for('saas.renewals_panel') }}"><i class="bi bi-arrow-repeat"></i>Renovaciones</a>
       <a class="nav-link {% if request.endpoint == 'saas.logs_panel' %}active{% endif %}" href="{{ url_for('saas.logs_panel') }}"><i class="bi bi-journal-text"></i>Registros</a>
       <a class="nav-link {% if request.endpoint == 'saas.server_status' %}active{% endif %}" href="{{ url_for('saas.server_status') }}"><i class="bi bi-hdd-network"></i>Estado servidor</a>
       <a class="nav-link {% if request.endpoint and request.endpoint.startswith('referrals.admin_') %}active{% endif %}" href="{{ url_for('referrals.admin_referrals_dashboard') }}"><i class="bi bi-megaphone"></i>Programa de Referidos</a>
+      <div class="nav-section-label">IA</div>
+      <a class="nav-link {% if request.endpoint == 'saas.ai_subscriptions_panel' or request.endpoint == 'saas.ai_subscription_detail' %}active{% endif %}" href="{{ url_for('saas.ai_subscriptions_panel') }}"><i class="bi bi-stars"></i>Suscripciones IA</a>
+      <a class="nav-link {% if request.endpoint == 'saas.ai_profitability_panel' %}active{% endif %}" href="{{ url_for('saas.ai_profitability_panel') }}"><i class="bi bi-graph-up-arrow"></i>Costos y Rentabilidad IA</a>
       <a class="nav-link {% if request.endpoint == 'saas.global_stats' %}active{% endif %}" href="{{ url_for('saas.global_stats') }}"><i class="bi bi-graph-up"></i>Estadisticas globales</a>
       <a class="nav-link {% if request.endpoint and request.endpoint.startswith('saas.landing_testimonials') %}active{% endif %}" href="{{ url_for('saas.landing_testimonials_panel') }}"><i class="bi bi-chat-left-quote"></i>Testimonios Landing</a>
       <a class="nav-link {% if request.endpoint == 'saas.global_settings' %}active{% endif %}" href="{{ url_for('saas.global_settings') }}"><i class="bi bi-gear"></i>Configuración global</a>
