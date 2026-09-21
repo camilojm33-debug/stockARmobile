@@ -5843,6 +5843,7 @@ def test_superadmin_update_subscription_date_to_past_sets_effective_expired():
             "start_date": start_local,
             "next_billing_date": past_local,
             "renewal_enabled": "1",
+            "step_up_password": "admin123",
         },
         follow_redirects=False,
     )
