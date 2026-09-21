@@ -3122,6 +3122,60 @@ def users_update_role(user_id):
     return _redirect_back("saas.users_panel")
 
 
+@bp.route("/users/<int:user_id>/status", methods=["POST"])
+@superadmin_required
+def users_update_status(user_id):
+    from app import AuditLog, User, db
+
+    _require_superadmin()
+    user = db.session.get(User, user_id)
+    if user is None:
+        abort(404)
+    if user.role == "superadmin":
+        flash("No se puede cambiar el estado de un superadmin desde este panel.", "warning")
+        return _redirect_back("saas.users_panel")
+    if user.company_id is None:
+        flash("Solo se puede cambiar el estado de usuarios asociados a una empresa.", "warning")
+        return _redirect_back("saas.users_panel")
+
+    desired = (request.form.get("active") or "").strip().lower()
+    if desired not in {"0", "1"}:
+        flash("Estado inválido.", "danger")
+        return _redirect_back("saas.users_panel")
+
+    new_active = desired == "1"
+    if user.active == new_active:
+        flash("El usuario ya tiene ese estado.", "info")
+        return _redirect_back("saas.users_panel")
+
+    if not new_active and user.role == "admin":
+        remaining_admins = User.query.filter(
+            User.company_id == user.company_id,
+            User.role == "admin",
+            User.active.is_(True),
+            User.id != user.id,
+        ).count()
+        if remaining_admins == 0:
+            flash("No se puede desactivar al único administrador activo de la empresa.", "warning")
+            return _redirect_back("saas.users_panel")
+
+    previous = bool(user.active)
+    user.active = new_active
+    db.session.add(
+        AuditLog(
+            user_id=current_user.id,
+            company_id=user.company_id,
+            action="superadmin_user_status_update",
+            entity="user",
+            entity_id=user.id,
+            detail=f"Estado actualizado de {'activo' if previous else 'inactivo'} a {'activo' if new_active else 'inactivo'} por superadmin",
+        )
+    )
+    db.session.commit()
+    flash(f"Usuario {'activado' if new_active else 'desactivado'} correctamente.", "success")
+    return _redirect_back("saas.users_panel")
+
+
 @bp.route("/password-recovery")
 @superadmin_required
 def password_recovery_panel():
