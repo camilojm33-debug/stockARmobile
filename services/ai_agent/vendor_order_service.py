@@ -879,6 +879,21 @@ class VendorOrderService:
             conversation_id=conversation_id,
             order_number=quote.number or f"P-{quote.id:06d}",
         )
+        refreshed_conversation = VendorOrderService._conversation_for_order(
+            company_id=company_id,
+            conversation_id=conversation_id,
+        )
+        state = _metadata(refreshed_conversation)
+        state["delivery"] = {
+            **dict(state.get("delivery") or {}),
+            "method": "envio",
+            "shipping_cost": float(cost),
+            "shipping_rate": 0.0,
+            "shipping_status": "confirmed",
+            "shipping_source": "manual",
+        }
+        _set_metadata(refreshed_conversation, state)
+        db.session.commit()
         result.update(
             {
                 "shipping_cost": float(cost),
