@@ -823,7 +823,19 @@ def admin_referrals_sellers_list():
         ReferralSeller.query.options(joinedload(ReferralSeller.user)).order_by(ReferralSeller.created_at.desc(), ReferralSeller.id.desc()).all()
     )
     metrics = _seller_metrics_map([row.id for row in sellers])
-    temp_password = session.pop("referral_seller_temp_password", None)
+    from services.one_time_secret_service import OneTimeSecretService
+
+    reveal_user_id = session.pop("referral_seller_temp_password_user_id", None)
+    temp_password = OneTimeSecretService.consume(
+        db.session,
+        user_id=current_user.id,
+        purpose="referral_seller_temp_password",
+        subject_type="seller_user",
+        subject_id=reveal_user_id,
+        access_token=session.pop("referral_seller_temp_password", None),
+    )
+    if temp_password is not None:
+        db.session.commit()
     temp_password_user = session.pop("referral_seller_temp_password_user", None)
     return render_template(
         "saas/referrals_sellers_list.html",
@@ -898,7 +910,27 @@ def admin_referrals_sellers_create():
             return redirect(url_for("referrals.admin_referrals_sellers_create"))
 
         ReferralService.create_or_update_seller(db.session, user=user, profile_data=profile_data, profile=None)
+        from services.one_time_secret_service import OneTimeSecretService
+
+        OneTimeSecretService.revoke(
+            db.session,
+            user_id=current_user.id,
+            purpose="referral_seller_temp_password",
+            subject_type="seller_user",
+            subject_id=user.id,
+        )
+        _secret_row, access_token = OneTimeSecretService.issue(
+            db.session,
+            user_id=current_user.id,
+            purpose="referral_seller_temp_password",
+            subject_type="seller_user",
+            subject_id=user.id,
+            secret_value=temp_password,
+        )
         db.session.commit()
+        session["referral_seller_temp_password"] = access_token
+        session["referral_seller_temp_password_user_id"] = user.id
+        session["referral_seller_temp_password_user"] = user.username
         flash("Vendedor creado correctamente.", "success")
         return redirect(url_for("referrals.admin_referrals_sellers_list"))
 
@@ -1059,7 +1091,19 @@ def admin_referrals_seller_detail(seller_id):
     last_access = (
         AuditLog.query.filter_by(user_id=user.id, action="login_success").order_by(AuditLog.created_at.desc(), AuditLog.id.desc()).first()
     )
-    temp_password = session.pop("referral_seller_temp_password", None)
+    from services.one_time_secret_service import OneTimeSecretService
+
+    reveal_user_id = session.pop("referral_seller_temp_password_user_id", None)
+    temp_password = OneTimeSecretService.consume(
+        db.session,
+        user_id=current_user.id,
+        purpose="referral_seller_temp_password",
+        subject_type="seller_user",
+        subject_id=user.id if reveal_user_id == user.id else reveal_user_id,
+        access_token=session.pop("referral_seller_temp_password", None),
+    )
+    if temp_password is not None:
+        db.session.commit()
     temp_password_user = session.pop("referral_seller_temp_password_user", None)
 
     return render_template(
@@ -1103,6 +1147,23 @@ def admin_referrals_seller_reset_password(seller_id):
         abort(404)
 
     temp_password = _temporary_password()
+    from services.one_time_secret_service import OneTimeSecretService
+
+    OneTimeSecretService.revoke(
+        db.session,
+        user_id=current_user.id,
+        purpose="referral_seller_temp_password",
+        subject_type="seller_user",
+        subject_id=user.id,
+    )
+    _secret_row, access_token = OneTimeSecretService.issue(
+        db.session,
+        user_id=current_user.id,
+        purpose="referral_seller_temp_password",
+        subject_type="seller_user",
+        subject_id=user.id,
+        secret_value=temp_password,
+    )
     user.set_password(temp_password)
     user.must_change_password = True
     user.active = True
@@ -1117,7 +1178,8 @@ def admin_referrals_seller_reset_password(seller_id):
     )
     db.session.commit()
 
-    session["referral_seller_temp_password"] = temp_password
+    session["referral_seller_temp_password"] = access_token
+    session["referral_seller_temp_password_user_id"] = user.id
     session["referral_seller_temp_password_user"] = user.username
     flash("Contrasena temporal generada. Copiala ahora; se mostrara una sola vez.", "warning")
     return redirect(url_for("referrals.admin_referrals_seller_detail", seller_id=seller_id))
