@@ -23,6 +23,11 @@ class InvoiceUploadError(ValueError):
 class InvoiceUploadService:
     @staticmethod
     def _directory(company_id: int) -> Path:
+        configured = str(current_app.config.get("INVOICE_UPLOAD_DIR") or "").strip()
+        if configured:
+            return Path(configured) / "companies" / str(company_id) / "invoices"
+        if os.environ.get("RENDER"):
+            return Path("/var/data/stockarmobile/invoices") / "companies" / str(company_id) / "invoices"
         return Path(current_app.instance_path) / "uploads" / "companies" / str(company_id) / "invoices"
 
     @staticmethod
