@@ -1,0 +1,117 @@
+{% extends "base_master.html" %}
+{% block title %}{{ company.name }} · Empresa 360{% endblock %}
+{% block extra_css %}
+<link rel="stylesheet" href="{{ url_for('static', filename='assets/css/superadmin.css') }}">
+{% endblock %}
+
+{% block content %}
+<div class="app-shell superadmin-page">
+  <div class="d-flex flex-wrap justify-content-between align-items-start gap-3 mb-4">
+    <div>
+      <div class="page-kicker"><i class="bi bi-buildings"></i> Empresa 360</div>
+      <h1 class="h2 fw-bold mb-1">{{ company.name }}</h1>
+      <p class="text-muted mb-0">Vista operativa de solo lectura. Las herramientas actuales siguen disponibles.</p>
+    </div>
+    <div class="d-flex flex-wrap gap-2">
+      <a class="btn btn-outline-secondary" href="{{ url_for('saas.company_detail', company_id=company.id) }}"><i class="bi bi-arrow-left me-1"></i>Detalle actual</a>
+      <a class="btn btn-primary" href="{{ url_for('saas.companies_panel') }}"><i class="bi bi-buildings me-1"></i>Empresas</a>
+    </div>
+  </div>
+
+  <div class="app-card p-3 p-lg-4 mb-4">
+    <div class="d-flex flex-wrap align-items-center gap-3">
+      <span class="badge rounded-pill {% if company.active %}text-bg-success{% else %}text-bg-secondary{% endif %}">{{ 'Activa' if company.active else 'Inactiva' }}</span>
+      {% if subscription %}
+      <span class="badge rounded-pill text-bg-light border">{{ subscription.plan.name if subscription.plan else 'Sin plan' }}</span>
+      <span class="small text-muted">Estado: <strong>{{ subscription.status }}</strong></span>
+      {% endif %}
+      {% if company.contact_email %}<span class="small text-muted"><i class="bi bi-envelope me-1"></i>{{ company.contact_email }}</span>{% endif %}
+    </div>
+  </div>
+
+  <div class="row g-3 mb-4">
+    {% for key,label,value,icon in [
+      ('users','Usuarios',stats.users,'bi-people'),
+      ('products','Productos',stats.products,'bi-box-seam'),
+      ('clients','Clientes',stats.clients,'bi-person-lines-fill'),
+      ('sales','Ventas',stats.sales,'bi-bag-check'),
+      ('tickets','Tickets abiertos',stats.open_tickets,'bi-life-preserver')
+    ] %}
+    <div class="col-6 col-lg">
+      <div class="sa-kpi">
+        <div class="sa-kpi-icon"><i class="bi {{ icon }}"></i></div>
+        <div><div class="small text-muted">{{ label }}</div><div class="h4 mb-0 fw-bold">{{ value }}</div></div>
+      </div>
+    </div>
+    {% endfor %}
+  </div>
+
+  <div class="row g-4">
+    <div class="col-12 col-xl-7">
+      <section class="app-card">
+        <div class="p-3 p-lg-4 border-bottom">
+          <h2 class="h5 fw-bold mb-1">Salud y actividad</h2>
+          <p class="small text-muted mb-0">Indicadores existentes, reunidos en una sola vista.</p>
+        </div>
+        <div class="p-3 p-lg-4">
+          <div class="row g-3">
+            <div class="col-md-6">
+              <div class="summary-panel h-100">
+                <div class="small text-muted">Usuarios activos</div>
+                <div class="h4 fw-bold mb-1">{{ stats.active_users }} / {{ stats.users }}</div>
+                <div class="small text-muted">Acceso disponible actualmente</div>
+              </div>
+            </div>
+            <div class="col-md-6">
+              <div class="summary-panel h-100">
+                <div class="small text-muted">Cobrado</div>
+                <div class="h4 fw-bold mb-1">$ {{ '%.2f'|format(stats.approved_payments) }}</div>
+                <div class="small text-muted">Pagos aprobados de esta empresa</div>
+              </div>
+            </div>
+            <div class="col-md-6">
+              <div class="summary-panel h-100">
+                <div class="small text-muted">Última venta</div>
+                <div class="h5 fw-bold mb-1">{{ latest_sale.date.strftime('%d/%m/%Y') if latest_sale and latest_sale.date else 'Sin ventas' }}</div>
+                <div class="small text-muted">{{ '$ %.2f'|format(latest_sale.total_amount or 0) if latest_sale else 'No hay actividad registrada' }}</div>
+              </div>
+            </div>
+            <div class="col-md-6">
+              <div class="summary-panel h-100">
+                <div class="small text-muted">Último backup</div>
+                <div class="h5 fw-bold mb-1">{{ latest_backup.status if latest_backup else 'Sin registros' }}</div>
+                <div class="small text-muted">{{ latest_backup.created_at.strftime('%d/%m/%Y %H:%M') if latest_backup and latest_backup.created_at else 'No disponible' }}</div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </section>
+    </div>
+
+    <div class="col-12 col-xl-5">
+      <section class="app-card h-100">
+        <div class="p-3 p-lg-4 border-bottom">
+          <h2 class="h5 fw-bold mb-1">Actividad reciente</h2>
+          <p class="small text-muted mb-0">Auditoría de la empresa.</p>
+        </div>
+        {% if audit %}
+        <div class="list-group list-group-flush">
+          {% for item in audit %}
+          <div class="list-group-item px-3 px-lg-4 py-3">
+            <div class="small fw-semibold">{{ item.action }}</div>
+            <div class="small text-muted mt-1">{{ item.detail or 'Sin detalle' }}</div>
+            <div class="small text-muted mt-1">{{ item.created_at.strftime('%d/%m/%Y %H:%M') if item.created_at else '' }}</div>
+          </div>
+          {% endfor %}
+        </div>
+        {% else %}
+        <div class="empty-state p-4">Sin actividad de auditoría.</div>
+        {% endif %}
+        <div class="border-top p-3">
+          <a class="btn btn-outline-secondary w-100" href="{{ url_for('saas.company_detail', company_id=company.id) }}">Abrir todas las herramientas</a>
+        </div>
+      </section>
+    </div>
+  </div>
+</div>
+{% endblock %}
