@@ -177,6 +177,9 @@ def dashboard():
 @network_bp.route("/superadmin/referrals/network/link", methods=["POST"])
 @superadmin_required
 def link_seller():
+    from saas import _require_superadmin_step_up
+    if not _require_superadmin_step_up():
+        return redirect(url_for("referral_network.dashboard"))
     try:
         child_id = int(request.form.get("child_id"))
         parent_id = int(request.form.get("parent_id"))
@@ -195,6 +198,9 @@ def link_seller():
 @network_bp.route("/superadmin/referrals/network/<int:child_id>/unlink", methods=["POST"])
 @superadmin_required
 def unlink_seller(child_id):
+    from saas import _require_superadmin_step_up
+    if not _require_superadmin_step_up():
+        return redirect(url_for("referral_network.dashboard"))
     remove_parent(child_id=child_id)
     db.session.commit()
     flash("El vendedor quedó sin padre de red. El historial de comisiones se conserva.", "success")
@@ -203,6 +209,9 @@ def unlink_seller(child_id):
 @network_bp.route("/superadmin/referrals/network/<int:child_id>/percent", methods=["POST"])
 @superadmin_required
 def set_percent(child_id):
+    from saas import _require_superadmin_step_up
+    if not _require_superadmin_step_up():
+        return redirect(url_for("referral_network.dashboard"))
     try:
         value = Decimal(request.form.get("percent", "30")) / Decimal("100")
         if value not in (Decimal("0.30"), Decimal("0.50")):
@@ -221,6 +230,9 @@ def set_percent(child_id):
 @network_bp.route("/superadmin/referrals/network/payout", methods=["POST"])
 @superadmin_required
 def payout_network():
+    from saas import _require_superadmin_step_up
+    if not _require_superadmin_step_up():
+        return redirect(url_for("referral_network.dashboard"))
     try:
         parent_id = int(request.form.get("parent_seller_id"))
         ids = [int(value) for value in request.form.getlist("commission_ids") if str(value).isdigit()]

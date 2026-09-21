@@ -194,6 +194,7 @@
                   <form method="post" action="{{ url_for('saas.backups_delete', backup_id=backup.id) }}" onsubmit="return confirm('¿Eliminar este backup?');">
                     <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
                     <input type="hidden" name="confirm_delete" value="1">
+                    <input type="password" name="step_up_password" class="form-control form-control-sm d-inline-block w-auto me-2" autocomplete="current-password" placeholder="Contraseña Super Admin" required>
                     <button class="btn btn-sm btn-outline-danger" type="submit">Eliminar</button>
                   </form>
                 </div>
