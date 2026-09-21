@@ -77,18 +77,21 @@
               <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
               <input type="hidden" name="next" value="{{ request.full_path }}">
               <input type="hidden" name="role" value="admin">
+              <input type="password" name="step_up_password" class="form-control form-control-sm" autocomplete="current-password" placeholder="Contraseña si venció">
               <button class="btn btn-sm {{ 'btn-dark' if user.role == 'admin' else 'btn-outline-dark' }}" type="submit" {% if user.role == 'admin' %}disabled{% endif %}>Hacer admin</button>
             </form>
             <form method="post" action="{{ url_for('saas.users_update_role', user_id=user.id) }}">
               <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
               <input type="hidden" name="next" value="{{ request.full_path }}">
               <input type="hidden" name="role" value="user">
+              <input type="password" name="step_up_password" class="form-control form-control-sm" autocomplete="current-password" placeholder="Contraseña si venció">
               <button class="btn btn-sm {{ 'btn-secondary' if user.role == 'user' else 'btn-outline-secondary' }}" type="submit" {% if user.role == 'user' %}disabled{% endif %}>Hacer user</button>
             </form>
             <form method="post" action="{{ url_for('saas.users_update_status', user_id=user.id) }}" onsubmit="return confirm('{{ '¿Desactivar este usuario?' if user.active else '¿Activar este usuario?' }}')">
               <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
               <input type="hidden" name="next" value="{{ request.full_path }}">
               <input type="hidden" name="active" value="{{ '0' if user.active else '1' }}">
+              <input type="password" name="step_up_password" class="form-control form-control-sm" autocomplete="current-password" placeholder="Contraseña si venció">
               <button class="btn btn-sm {{ 'btn-outline-danger' if user.active else 'btn-outline-success' }}" type="submit">
                 {{ 'Desactivar' if user.active else 'Activar' }}
               </button>
