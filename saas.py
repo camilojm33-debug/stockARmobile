@@ -3302,7 +3302,7 @@ def password_recovery_company_user_reset():
 
     _require_superadmin()
     if not _require_superadmin_step_up():
-        return _redirect_back("saas.password_recovery_panel" , company_id=company.id)
+        return _redirect_back("saas.password_recovery_panel")
     raw_user_id = request.form.get("user_id")
     try:
         user_id = int(raw_user_id)
