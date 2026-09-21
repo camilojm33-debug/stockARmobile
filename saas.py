@@ -2110,6 +2110,67 @@ def company_detail(company_id):
     )
 
 
+@bp.route("/companies/<int:company_id>/360")
+@superadmin_required
+def company_360(company_id):
+    """Read-only operational 360 view; preserves the existing company detail route."""
+    from app import AuditLog, BackupLog, Client, Company, Payment, Product, Sale, Subscription, SupportTicket, User, db, model_table_exists
+
+    company = Company.query.filter_by(id=company_id).first_or_404()
+    subscription = (
+        Subscription.query.filter_by(company_id=company.id)
+        .order_by(Subscription.start_date.desc().nullslast(), Subscription.id.desc())
+        .first()
+    )
+
+    approved_payments = float(
+        db.session.query(db.func.coalesce(db.func.sum(Payment.amount), 0))
+        .filter(Payment.company_id == company.id, subscription_revenue_payment_filter(Payment), Payment.status == "approved")
+        .scalar() or 0
+    )
+    open_tickets = (
+        SupportTicket.query.filter(
+            SupportTicket.company_id == company.id,
+            SupportTicket.status == "pendiente",
+        ).count()
+        if model_table_exists(SupportTicket)
+        else 0
+    )
+    latest_sale = (
+        Sale.query.filter(Sale.company_id == company.id)
+        .order_by(Sale.date.desc())
+        .first()
+    )
+    latest_backup = (
+        BackupLog.query.filter(BackupLog.company_id == company.id)
+        .order_by(BackupLog.created_at.desc())
+        .first()
+        if model_table_exists(BackupLog)
+        else None
+    )
+    audit = AuditLog.query.filter_by(company_id=company.id).order_by(AuditLog.created_at.desc()).limit(12).all()
+
+    stats = {
+        "users": User.query.filter_by(company_id=company.id).count(),
+        "active_users": User.query.filter_by(company_id=company.id, active=True).count(),
+        "products": Product.query.filter_by(company_id=company.id, active=True).count(),
+        "clients": Client.query.filter_by(company_id=company.id, active=True).count(),
+        "sales": Sale.query.filter_by(company_id=company.id).count(),
+        "sales_amount": float(db.session.query(db.func.coalesce(db.func.sum(Sale.total_amount), 0)).filter(Sale.company_id == company.id).scalar() or 0),
+        "approved_payments": approved_payments,
+        "open_tickets": open_tickets,
+    }
+    return render_template(
+        "saas/company_360.html",
+        company=company,
+        subscription=subscription,
+        stats=stats,
+        latest_sale=latest_sale,
+        latest_backup=latest_backup,
+        audit=audit,
+    )
+
+
 @bp.route("/companies/<int:company_id>/update", methods=["POST"])
 @superadmin_required
 def company_update(company_id):
