@@ -37,6 +37,7 @@
     <div class="card-body">
       <form method="post" action="{{ url_for('saas.subscriptions_create') }}" class="row g-2">
         <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                  <input type="password" name="step_up_password" class="form-control form-control-sm" autocomplete="current-password" placeholder="Contraseña si venció el step-up">
         <input type="hidden" name="next" value="{{ request.full_path }}">
         <div class="col-md-3">
           <select class="form-select" name="company_id" required>
@@ -89,6 +90,7 @@
          La empresa <strong>{{ selected_company.name }}</strong> no tiene suscripciones registradas. Puedes crearla desde el formulario superior para renovarla manualmente.
         <form class="mt-2" method="post" action="{{ url_for('saas.subscriptions_quick_renew_company') }}" onsubmit="return confirm('Crear y renovar ahora la suscripción para esta empresa?');">
           <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                  <input type="password" name="step_up_password" class="form-control form-control-sm" autocomplete="current-password" placeholder="Contraseña si venció el step-up">
           <input type="hidden" name="company_id" value="{{ selected_company.id }}">
           <button class="btn btn-sm btn-success" type="submit">Crear y renovar ahora</button>
         </form>
@@ -173,6 +175,7 @@
                 <span class="small text-muted align-self-center">Histórica · Sin acciones operativas</span>
                 <form method="post" action="/superadmin/subscriptions/{{ subscription.id }}/delete-historical" onsubmit="return confirm('¿Eliminar DEFINITIVAMENTE esta suscripción histórica? La empresa y sus datos actuales NO serán eliminados. Los registros financieros conservarán su historial, pero quedarán sin esta suscripción.');">
                   <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                  <input type="password" name="step_up_password" class="form-control form-control-sm" autocomplete="current-password" placeholder="Contraseña si venció el step-up">
                   <input type="hidden" name="next" value="{{ request.full_path }}">
                   <button class="btn btn-sm btn-outline-danger" data-action="delete_historical" type="submit">Eliminar histórica</button>
                 </form>
@@ -183,6 +186,7 @@
                 {% if 'cancel' in allowed_actions %}
                 <form method="post" action="{{ url_for('saas.subscriptions_action', subscription_id=subscription.id) }}">
                   <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                  <input type="password" name="step_up_password" class="form-control form-control-sm" autocomplete="current-password" placeholder="Contraseña si venció el step-up">
                   <input type="hidden" name="next" value="{{ request.full_path }}">
                   <input type="hidden" name="action" value="cancel">
                   <button class="btn btn-sm btn-outline-danger" data-action="cancel" type="submit" onclick="return confirm('¿Cancelar esta suscripción?');">Cancelar</button>
@@ -191,6 +195,7 @@
                 {% if 'reactivate' in allowed_actions %}
                 <form method="post" action="{{ url_for('saas.subscriptions_action', subscription_id=subscription.id) }}">
                   <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                  <input type="password" name="step_up_password" class="form-control form-control-sm" autocomplete="current-password" placeholder="Contraseña si venció el step-up">
                   <input type="hidden" name="next" value="{{ request.full_path }}">
                   <input type="hidden" name="action" value="reactivate">
                   <button class="btn btn-sm btn-outline-success" data-action="reactivate" type="submit">Reactivar</button>
@@ -199,6 +204,7 @@
                 {% if 'suspend' in allowed_actions %}
                 <form method="post" action="{{ url_for('saas.subscriptions_action', subscription_id=subscription.id) }}">
                   <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                  <input type="password" name="step_up_password" class="form-control form-control-sm" autocomplete="current-password" placeholder="Contraseña si venció el step-up">
                   <input type="hidden" name="next" value="{{ request.full_path }}">
                   <input type="hidden" name="action" value="suspend">
                   <button class="btn btn-sm btn-outline-warning" data-action="suspend" type="submit" onclick="return confirm('¿Suspender esta suscripción?');">Suspender</button>
@@ -207,6 +213,7 @@
                 {% if 'renew_now' in allowed_actions %}
                 <form method="post" action="{{ url_for('saas.subscriptions_action', subscription_id=subscription.id) }}">
                   <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                  <input type="password" name="step_up_password" class="form-control form-control-sm" autocomplete="current-password" placeholder="Contraseña si venció el step-up">
                   <input type="hidden" name="next" value="{{ request.full_path }}">
                   <input type="hidden" name="action" value="renew_now">
                   <button class="btn btn-sm btn-outline-dark" data-action="renew_now" type="submit">Renovar</button>
@@ -220,6 +227,7 @@
             <td colspan="8" class="bg-light-subtle">
               <form method="post" action="{{ url_for('saas.subscriptions_update', subscription_id=subscription.id) }}" class="row g-2">
                 <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                  <input type="password" name="step_up_password" class="form-control form-control-sm" autocomplete="current-password" placeholder="Contraseña si venció el step-up">
                 <input type="hidden" name="next" value="{{ request.full_path }}">
                 <div class="col-md-2">
                   <select class="form-select" name="plan_id">
@@ -258,6 +266,7 @@
               <div class="d-flex flex-wrap gap-2 mt-2">
                 <form method="post" action="{{ url_for('saas.subscriptions_action', subscription_id=subscription.id) }}" class="d-flex gap-2 align-items-center">
                   <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                  <input type="password" name="step_up_password" class="form-control form-control-sm" autocomplete="current-password" placeholder="Contraseña si venció el step-up">
                   <input type="hidden" name="next" value="{{ request.full_path }}">
                   <input type="hidden" name="action" value="extend">
                   <input class="form-control form-control-sm subscription-days-input" name="days" type="number" min="1" max="365" value="7">
@@ -265,6 +274,7 @@
                 </form>
                 <form method="post" action="{{ url_for('saas.subscriptions_action', subscription_id=subscription.id) }}" onsubmit="return confirm('Eliminar lógicamente esta suscripción?');">
                   <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                  <input type="password" name="step_up_password" class="form-control form-control-sm" autocomplete="current-password" placeholder="Contraseña si venció el step-up">
                   <input type="hidden" name="next" value="{{ request.full_path }}">
                   <input type="hidden" name="action" value="delete">
                   <button class="btn btn-sm btn-outline-danger" type="submit">Eliminar</button>

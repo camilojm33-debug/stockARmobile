@@ -2045,6 +2045,8 @@ def ai_subscriptions_action(company_id):
     company = Company.query.get(company_id)
     if company is None:
         abort(404)
+    if not _require_superadmin_step_up():
+        return redirect(url_for("saas.ai_subscription_detail", company_id=company.id))
     action = (request.form.get("action") or "").strip().lower()
     try:
         if action == "assign_plan":
@@ -2671,6 +2673,8 @@ def subscriptions_quick_renew_company():
     if company is None:
         flash("Empresa inválida.", "danger")
         return _redirect_back("saas.subscriptions_panel")
+    if not _require_superadmin_step_up():
+        return _redirect_back("saas.subscriptions_panel")
 
     try:
         latest_subscription = SubscriptionService.active_subscription_for_company(company.id)
@@ -2749,6 +2753,8 @@ def subscriptions_create():
     if company is None or plan is None:
         flash("Empresa o plan inválido.", "danger")
         return _redirect_back("saas.subscriptions_panel")
+    if not _require_superadmin_step_up():
+        return _redirect_back("saas.subscriptions_panel")
 
     try:
         SubscriptionService.run_command(
@@ -2790,6 +2796,8 @@ def subscriptions_update(subscription_id):
 
     _require_superadmin()
     subscription = Subscription.query.filter_by(id=subscription_id).first_or_404()
+    if not _require_superadmin_step_up():
+        return _redirect_back("saas.subscriptions_panel")
     plan_id = request.form.get("plan_id", type=int)
     plan = Plan.query.filter_by(id=plan_id).first() if plan_id else None
     if plan_id and plan is None:
@@ -2973,6 +2981,8 @@ def subscriptions_action(subscription_id):
 
     _require_superadmin()
     subscription = Subscription.query.filter_by(id=subscription_id).first_or_404()
+    if not _require_superadmin_step_up():
+        return _redirect_back("saas.subscriptions_panel")
     action = (request.form.get("action") or "").strip().lower()
     status_before = SubscriptionService.get_effective_subscription_status(subscription, company=subscription.company)
 

@@ -738,14 +738,18 @@ def test_superadmin_notifications_separate_standard_and_ai_payments(subscription
 
 def test_superadmin_manual_activation_updates_only_ai(subscription_app):
     company, _, _, subscription = _tenant_with_standard_subscription()
-    admin = User(username="super_ai", email="super_ai@test.local", password_hash="x", role="superadmin", active=True)
+    admin = User(username="super_ai", email="super_ai@test.local", role="superadmin", active=True)
+    admin.set_password("admin123")
     db.session.add(admin)
     db.session.commit()
     before = _standard_snapshot(subscription)
     client = subscription_app.test_client()
     _login(client, admin)
 
-    response = client.post(f"/superadmin/ai-subscriptions/{company.id}/action", data={"action": "assign_plan", "plan_code": "pro"})
+    response = client.post(
+        f"/superadmin/ai-subscriptions/{company.id}/action",
+        data={"action": "assign_plan", "plan_code": "pro", "step_up_password": "admin123"},
+    )
 
     assert response.status_code == 302
     status = AISubscriptionService.get_status(company)

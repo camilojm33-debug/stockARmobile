@@ -991,6 +991,7 @@ def test_superadmin_subscriptions_actions_visibility_and_flows():
             "plan_id": plan_basic_id,
             "status": "pending",
             "renewal_enabled": "1",
+            "step_up_password": "admin123",
         },
         follow_redirects=True,
     )
@@ -1007,6 +1008,7 @@ def test_superadmin_subscriptions_actions_visibility_and_flows():
             "plan_id": plan_pro_id,
             "status": "active",
             "renewal_enabled": "1",
+            "step_up_password": "admin123",
         },
         follow_redirects=True,
     )
@@ -1024,7 +1026,7 @@ def test_superadmin_subscriptions_actions_visibility_and_flows():
 
     suspend_resp = client.post(
         f"/superadmin/subscriptions/{active_id}/action",
-        data={"action": "suspend"},
+        data={"action": "suspend", "step_up_password": "admin123"},
         follow_redirects=True,
     )
     assert suspend_resp.status_code == 200
@@ -1032,7 +1034,7 @@ def test_superadmin_subscriptions_actions_visibility_and_flows():
 
     invalid_cancel_resp = client.post(
         f"/superadmin/subscriptions/{active_id}/action",
-        data={"action": "cancel"},
+        data={"action": "cancel", "step_up_password": "admin123"},
         follow_redirects=True,
     )
     assert invalid_cancel_resp.status_code == 200
@@ -1040,7 +1042,7 @@ def test_superadmin_subscriptions_actions_visibility_and_flows():
 
     reactivate_resp = client.post(
         f"/superadmin/subscriptions/{active_id}/action",
-        data={"action": "reactivate"},
+        data={"action": "reactivate", "step_up_password": "admin123"},
         follow_redirects=True,
     )
     assert reactivate_resp.status_code == 200
@@ -1056,7 +1058,7 @@ def test_superadmin_subscriptions_actions_visibility_and_flows():
 
     renew_resp = client.post(
         f"/superadmin/subscriptions/{active_id}/action",
-        data={"action": "renew_now"},
+        data={"action": "renew_now", "step_up_password": "admin123"},
         follow_redirects=True,
     )
     assert renew_resp.status_code == 200
@@ -1204,7 +1206,7 @@ def test_subscription_modify_never_duplicates_records():
     for target_plan_id in (plan_b_id, plan_a_id, plan_b_id):
         resp = client.post(
             f"/superadmin/subscriptions/{subscription_id}/update",
-            data={"plan_id": target_plan_id, "status": "active", "renewal_enabled": "1"},
+            data={"plan_id": target_plan_id, "status": "active", "renewal_enabled": "1", "step_up_password": "admin123"},
             follow_redirects=True,
         )
         assert resp.status_code == 200
@@ -1222,7 +1224,7 @@ def test_subscription_modify_never_duplicates_records():
     # Test 9: doble-submit (mismos datos dos veces seguidas) tampoco debe duplicar.
     resp_again = client.post(
         f"/superadmin/subscriptions/{subscription_id}/update",
-        data={"plan_id": plan_b_id, "status": "active", "renewal_enabled": "1"},
+        data={"plan_id": plan_b_id, "status": "active", "renewal_enabled": "1", "step_up_password": "admin123"},
         follow_redirects=True,
     )
     assert resp_again.status_code == 200
@@ -1399,7 +1401,7 @@ def test_subscription_lifecycle_actions_never_delete_company():
     for action in ("cancel", "suspend"):
         resp = client.post(
             f"/superadmin/subscriptions/{subscription_id}/action",
-            data={"action": "reactivate" if action == "cancel" else action},
+            data={"action": "reactivate" if action == "cancel" else action, "step_up_password": "admin123"},
             follow_redirects=True,
         )
         assert resp.status_code == 200
@@ -5406,6 +5408,7 @@ def test_superadmin_create_subscription_keeps_trial_when_company_is_new():
             "plan_id": paid_plan_id,
             "status": "pending",
             "renewal_enabled": "1",
+            "step_up_password": "admin123",
         },
         follow_redirects=False,
     )
@@ -5840,6 +5843,7 @@ def test_superadmin_update_subscription_date_to_past_sets_effective_expired():
             "start_date": start_local,
             "next_billing_date": past_local,
             "renewal_enabled": "1",
+            "step_up_password": "admin123",
         },
         follow_redirects=False,
     )

@@ -307,6 +307,9 @@ def superadmin_delete_historical_subscription(subscription_id):
     if getattr(current_user, "role", None) != "superadmin":
         return ("Forbidden", 403)
     subscription = Subscription.query.filter_by(id=subscription_id).first_or_404()
+    from saas import _require_superadmin_step_up
+    if not _require_superadmin_step_up():
+        return redirect(url_for("saas.subscriptions_panel"))
     current_subscription = SubscriptionService.active_subscription_for_company(subscription.company_id)
     if current_subscription is not None and current_subscription.id == subscription.id:
         flash("No se puede eliminar la suscripción actual de la empresa.", "warning")
