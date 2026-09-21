@@ -3817,9 +3817,15 @@ def test_support_ticket_flow_and_temp_password_generation():
     assert generate_temp.status_code == 200
     detail_html = generate_temp.data.decode("utf-8")
     assert "Contrasena temporal" in detail_html
+    match = re.search(r"<code class=\"fs-6\">([^<]+)</code>", detail_html)
+    assert match is not None
+    temp_password = match.group(1).strip()
+    assert temp_password
     with client.session_transaction() as sess:
-        raw_session = repr(dict(sess))
-        assert "contrasena" not in raw_session.lower() or "temporal" not in raw_session.lower()
+        access_token = sess.get(f"support_temp_password_{ticket_id}")
+        assert access_token
+        assert access_token != temp_password
+        assert temp_password not in repr(dict(sess))
 
     # Visible una sola vez en la siguiente carga.
     second_detail = client.get(f"/soporte/admin/{ticket_id}")
