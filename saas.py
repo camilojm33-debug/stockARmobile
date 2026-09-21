@@ -1461,6 +1461,27 @@ def index():
     )
 
 
+@bp.route("/attention")
+@superadmin_required
+def attention_panel():
+    """Unified read-only operational queue for Super Admin."""
+    from app import db
+
+    now = utcnow()
+    queue = _build_attention_queue(now)
+    critical = [row for row in queue if row.get("priority_group") == "critical"]
+    warning = [row for row in queue if row.get("priority_group") != "critical"]
+    health_snapshot = _health_check_snapshot(db.session, now)
+    return render_template(
+        "saas/attention.html",
+        attention_queue=queue,
+        critical=critical,
+        warning=warning,
+        health_snapshot=health_snapshot,
+        refreshed_at=now,
+    )
+
+
 @bp.route("/crm", methods=["GET", "POST"])
 @superadmin_required
 def crm_panel():

@@ -194,6 +194,11 @@ def test_core_routes_and_decimal_checkout():
     assert client.get("/superadmin/").status_code == 200
     assert client.get("/superadmin/billing").status_code == 200
     assert client.get("/superadmin/crm").status_code == 200
+    attention_page = client.get("/superadmin/attention")
+    assert attention_page.status_code == 200
+    attention_html = attention_page.get_data(as_text=True)
+    assert "Centro de Atención" in attention_html
+    assert "Costos y Rentabilidad IA" in attention_html or "Salud de plataforma" in attention_html
     superadmin_dashboard = client.get("/dashboard/", follow_redirects=False)
     assert superadmin_dashboard.status_code in (301, 302)
 
