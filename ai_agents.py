@@ -151,6 +151,14 @@ def _context():
 
     public_webchat_enabled = bool(preferences.get("ai_agent", {}).get("public_webchat_enabled", False))
     public_vendor_url = url_for("ai_agents.public_vendor_chat", token=_public_vendor_token(company_id)) if agent_access["vendedor"].allowed else None
+    if agent_access["vendedor"].allowed:
+        try:
+            from services.ai_agent.vendor_publication import publication_status
+            publication = publication_status(company)
+            if publication.get("available") and publication.get("url"):
+                public_vendor_url = publication["url"]
+        except Exception:
+            current_app.logger.exception("No se pudo resolver la URL estable del Vendedor público company_id=%s", company_id)
     return {"company": company, "agents": agents, "preferences": preferences, "metrics": {"conversations": conversations, "clients_attended": clients_attended, "quotes": quotes, "sales": int(sales_month.count())}, "analyst": {"sales_change": sales_change, "critical_stock": critical_stock, "low_rotation": low_rotation, "opportunities": None}, "ai_status": ai_status, "ai_plans": AI_PLANS, "agent_labels": AGENT_LABELS, "ai_plan": ai_plan, "ai_usage": ai_usage, "agent_access": agent_access, "invoice_access": invoice_access, "any_chat_agent": any_chat_agent, "default_chat_agent": default_chat_agent, "public_webchat_enabled": public_webchat_enabled, "public_vendor_url": public_vendor_url, "plan_url": url_for("ai_agents.agent", agent="planes"), "ai_checkout_url": url_for("company_billing.create_ai_subscription_checkout"), "config_url": url_for("ai_admin.index"), "chat_url": url_for("dashboard.ai_agent_chat")}
 
 
@@ -347,14 +355,39 @@ def public_vendor_chat(token):
         abort(404)
     access = can_use_ai(company, "vendedor")
     if not access.allowed:
-        return render_template("ai_agents/public_vendor_chat.html", company=company, disabled_reason=access.reason, chat_url=None)
+        return render_template(
+            "ai_agents/public_vendor_chat.html",
+            company=company,
+            disabled_reason=access.reason,
+            chat_url=None,
+            catalog=[],
+            initial_state={"conversation_id": None, "cart": {"items": [], "total": 0, "currency": "ARS", "line_count": 0}, "payment_url": None},
+            greeting="",
+        )
+
+    # Tokens issued by the legacy public endpoint remain valid, but published links
+    # are redirected to the stable publication slug so new clients use the canonical flow.
+    from services.ai_agent.vendor_publication import (
+        _catalog_for_company,
+        _initial_page_state,
+        get_vendor_options,
+        publication_status,
+    )
+    publication = publication_status(company)
+    if publication.get("available") and publication.get("url"):
+        return redirect(publication["url"], code=302)
+
     visitor_session_key = f"public_vendor_visitor_{company_id}"
     session.setdefault(visitor_session_key, uuid.uuid4().hex)
+    options = get_vendor_options(company)
     return render_template(
         "ai_agents/public_vendor_chat.html",
         company=company,
         disabled_reason=None,
         chat_url=url_for("ai_agents.public_vendor_chat_message", token=token),
+        catalog=_catalog_for_company(company),
+        initial_state=_initial_page_state(company),
+        greeting=str(options.get("greeting") or "Hola 👋 ¿Qué producto estás buscando?").strip(),
     )
 
 
