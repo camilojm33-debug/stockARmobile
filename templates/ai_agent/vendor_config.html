@@ -102,6 +102,53 @@
     <section class="vendor-section mb-3">
       <div class="vendor-head">
         <div>
+          <div class="vendor-title"><i class="bi bi-truck text-primary me-2"></i>Gestión de envíos</div>
+          <div class="vendor-subtitle">El cliente informa su dirección, pero el costo del envío siempre lo define el comercio.</div>
+        </div>
+      </div>
+      <div class="vendor-body">
+        <div class="row g-3">
+          <div class="col-md-7">
+            <label class="form-label fw-semibold">Modo de costo de envío</label>
+            <select class="form-select" name="vendor_shipping_mode" id="vendorShippingMode">
+              <option value="manual" {% if vendor_options.shipping_mode == 'manual' %}selected{% endif %}>Manual por pedido</option>
+              <option value="standard" {% if vendor_options.shipping_mode == 'standard' %}selected{% endif %}>Tarifa estándar automática</option>
+              <option value="legacy_percent" {% if vendor_options.shipping_mode == 'legacy_percent' %}selected{% endif %}>Compatibilidad anterior · 15%</option>
+            </select>
+            <div class="form-text">Manual: el pedido queda esperando hasta que el comercio cargue el costo. Estándar: el Vendedor lo aplica automáticamente.</div>
+          </div>
+          <div class="col-md-5">
+            <label class="form-label fw-semibold">Costo estándar</label>
+            <div class="input-group">
+              <span class="input-group-text">$</span>
+              <input class="form-control" inputmode="decimal" min="0" step="0.01" name="vendor_standard_shipping_cost" value="{{ vendor_options.standard_shipping_cost }}" aria-describedby="standardShippingHelp">
+            </div>
+            <div class="form-text" id="standardShippingHelp">Se usa cuando el modo es tarifa estándar.</div>
+          </div>
+          <div class="col-12">
+            <div class="vendor-switch">
+              <div>
+                <div class="fw-bold">Generar el cobro automáticamente</div>
+                <div class="small text-muted">En modo estándar, el Vendedor genera el enlace de pago cuando el pedido ya tiene todos los datos.</div>
+              </div>
+              <label class="form-check form-switch fs-5 mb-0">
+                <input class="form-check-input" type="checkbox" name="vendor_auto_generate_payment" value="1" {% if vendor_options.auto_generate_payment %}checked{% endif %} aria-label="Generar el cobro automáticamente">
+              </label>
+            </div>
+          </div>
+          <div class="col-12">
+            <div class="alert alert-info small mb-0">
+              <i class="bi bi-shield-check me-1"></i>
+              <strong>Importante:</strong> el Vendedor nunca toma el costo de envío desde el cliente. En modo manual, el pedido aparece en <strong>Pedidos IA</strong> para que el comercio lo cotice; recién después se genera el enlace de cobro.
+            </div>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <section class="vendor-section mb-3">
+      <div class="vendor-head">
+        <div>
           <div class="vendor-title"><i class="bi bi-sliders text-primary me-2"></i>Personalidad y comportamiento</div>
           <div class="vendor-subtitle">Estas preferencias cambian la forma en que el Vendedor conversa, sin reemplazar las reglas de seguridad del sistema.</div>
         </div>
