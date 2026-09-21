@@ -64,6 +64,17 @@ def test_vendor_whatsapp_uses_tenant_safe_company_access():
     assert 'can_use_ai_feature(company, "vendedor")' in vendor_metrics_block
 
 
+def test_whatsapp_webhook_has_a_scoped_csrf_exemption():
+    app_content = (REPO_ROOT / "app.py").read_text(encoding="utf-8")
+    webhook_content = (REPO_ROOT / "whatsapp_agent.py").read_text(encoding="utf-8")
+
+    assert "csrf.exempt(whatsapp_agent_bp)" not in app_content
+    route = '@bp.route("/api/whatsapp/webhook", methods=["GET", "POST"])'
+    assert route in webhook_content
+    scoped_block = webhook_content[webhook_content.index(route): webhook_content.index("def _verify_signature")]
+    assert "@csrf.exempt" in scoped_block
+
+
 def test_ai_agent_routes_do_not_use_broken_user_company_relationship():
     content = (REPO_ROOT / "ai_agents.py").read_text(encoding="utf-8")
     assert re.search(r"current_user\\.company(?!_)", content) is None
