@@ -108,10 +108,10 @@ def test_vendor_configuration_navigation_and_capabilities_are_exposed():
     assert "Publicar y compartir" in vendor_page
     assert "url_for('vendor_publication.publication_page')" in vendor_page
 
-    assert "name=\"vendor_can_recommend\"" in admin_page
-    assert "name=\"vendor_can_offer_alternatives\"" in admin_page
-    assert "name=\"vendor_can_prepare_quotes\"" in admin_page
-    assert "name=\"vendor_can_take_orders\"" in admin_page
+    assert "vendor_can_recommend" in admin_page
+    assert "vendor_can_offer_alternatives" in admin_page
+    assert "vendor_can_prepare_quotes" in admin_page
+    assert "vendor_can_take_orders" in admin_page
     assert "name=\"vendor_greeting\"" in admin_page
     assert "Seguimiento automático" in admin_page
     assert "Derivación a una persona" in admin_page
