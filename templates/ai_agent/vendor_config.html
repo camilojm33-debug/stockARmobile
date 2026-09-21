@@ -1,0 +1,188 @@
+{% extends "base_master.html" %}
+{% block title %}Configurar Vendedor IA | StockArMobile{% endblock %}
+{% block extra_css %}
+<style>
+  .vendor-config { max-width: 1040px; }
+  .vendor-hero { border:1px solid var(--app-line); border-left:4px solid var(--app-primary); background:linear-gradient(135deg,rgba(37,99,235,.07),rgba(79,70,229,.025)); }
+  .vendor-kicker { font-size:.72rem; font-weight:900; letter-spacing:.09em; text-transform:uppercase; color:var(--app-primary); }
+  .vendor-section { border:1px solid var(--app-line); border-radius:16px; background:var(--app-panel); overflow:hidden; }
+  .vendor-head { display:flex; justify-content:space-between; align-items:flex-start; gap:1rem; padding:1.1rem 1.2rem; border-bottom:1px solid var(--app-line); }
+  .vendor-title { font-size:1.05rem; font-weight:900; }
+  .vendor-subtitle { margin-top:.2rem; color:var(--app-muted); font-size:.84rem; }
+  .vendor-body { padding:1.2rem; }
+  .vendor-switch { display:flex; justify-content:space-between; align-items:center; gap:1rem; padding:1rem; border:1px solid var(--app-line); border-radius:14px; background:var(--app-panel-soft); }
+  .vendor-capability { display:flex; justify-content:space-between; align-items:center; gap:1rem; min-height:86px; padding:1rem; border:1px solid var(--app-line); border-radius:14px; background:var(--app-panel-soft); }
+  .vendor-card { height:100%; padding:1rem; border:1px solid var(--app-line); border-radius:14px; background:var(--app-panel-soft); }
+  .vendor-status { display:inline-flex; align-items:center; gap:.45rem; padding:.38rem .72rem; border-radius:999px; font-size:.76rem; font-weight:800; border:1px solid var(--app-line); background:#fff; color:var(--app-muted); }
+  .vendor-status.on { color:#15803d; }
+  .vendor-save { position:sticky; bottom:12px; z-index:20; display:flex; justify-content:space-between; align-items:center; gap:1rem; padding:.8rem 1rem; margin-top:1rem; border:1px solid var(--app-line); border-radius:16px; background:rgba(255,255,255,.96); box-shadow:0 12px 32px rgba(15,23,42,.12); backdrop-filter:blur(8px); }
+  @media (max-width:700px) {
+    .vendor-config { max-width:none; }
+    .vendor-head,.vendor-switch,.vendor-save { flex-direction:column; align-items:stretch; }
+    .vendor-save .btn { width:100%; }
+    .vendor-body { padding:1rem; }
+  }
+</style>
+{% endblock %}
+{% block content %}
+<div class="app-shell vendor-config">
+  <section class="card app-card vendor-hero mb-4">
+    <div class="card-body p-4 p-lg-5">
+      <div class="vendor-kicker mb-2"><i class="bi bi-cart3 me-1"></i> Agente de ventas</div>
+      <div class="d-flex flex-wrap justify-content-between align-items-start gap-3">
+        <div>
+          <h1 class="h2 fw-bold mb-2">Vendedor IA</h1>
+          <p class="lead text-muted mb-3">Configurá cómo atiende, vende y conversa con tus clientes.</p>
+          <div class="d-flex flex-wrap gap-2">
+            <a class="btn btn-outline-secondary" href="{{ url_for('ai_agents.agent', agent='vendedor') }}"><i class="bi bi-arrow-left me-1"></i>Volver al Vendedor</a>
+            <a class="btn btn-outline-primary" href="{{ url_for('vendor_publication.publication_page') }}"><i class="bi bi-broadcast me-1"></i>Publicar y compartir</a>
+            <a class="btn btn-outline-secondary" href="{{ url_for('ai_admin.vendor_metrics') }}"><i class="bi bi-bar-chart-line me-1"></i>Métricas</a>
+          </div>
+        </div>
+        <div class="vendor-status {{ 'on' if vendor.active else '' }}"><i class="bi bi-circle-fill"></i>{{ 'Activo' if vendor.active else 'Desactivado' }}</div>
+      </div>
+    </div>
+  </section>
+
+  <form method="post" action="{{ url_for('ai_admin.vendor_save') }}" autocomplete="off">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+
+    <section class="vendor-section mb-3">
+      <div class="vendor-head">
+        <div>
+          <div class="vendor-title"><i class="bi bi-power text-primary me-2"></i>Estado</div>
+          <div class="vendor-subtitle">Controlá si el Vendedor IA puede atender consultas dentro de tu comercio.</div>
+        </div>
+        <div class="vendor-status {{ 'on' if vendor.active else '' }}">{{ 'Puede atender' if vendor.active else 'No atenderá' }}</div>
+      </div>
+      <div class="vendor-body">
+        <div class="vendor-switch">
+          <div>
+            <div class="fw-bold">Activar Vendedor IA</div>
+            <div class="small text-muted">El cambio respeta el Vendedor incluido en tu plan IA.</div>
+          </div>
+          <label class="form-check form-switch fs-5 mb-0">
+            <input class="form-check-input" type="checkbox" name="vendor_enabled" value="1" {% if vendor.active %}checked{% endif %} aria-label="Activar Vendedor IA">
+          </label>
+        </div>
+      </div>
+    </section>
+
+    <section class="vendor-section mb-3">
+      <div class="vendor-head">
+        <div>
+          <div class="vendor-title"><i class="bi bi-stars text-primary me-2"></i>Capacidades de venta</div>
+          <div class="vendor-subtitle">Definí qué acciones comerciales puede realizar el Vendedor.</div>
+        </div>
+      </div>
+      <div class="vendor-body">
+        <div class="row g-3">
+          {% for key,field,label,description in [
+            ('can_recommend','vendor_can_recommend','Recomendar productos','Sugerir opciones según la consulta del cliente.'),
+            ('can_offer_alternatives','vendor_can_offer_alternatives','Ofrecer alternativas','Proponer productos alternativos cuando corresponda.'),
+            ('can_prepare_quotes','vendor_can_prepare_quotes','Preparar presupuestos','Armar presupuestos o pedidos sin confirmar el pago.'),
+            ('can_take_orders','vendor_can_take_orders','Tomar pedidos','Permitir agregar productos al pedido pendiente de pago.')
+          ] %}
+          <div class="col-md-6">
+            <div class="vendor-capability">
+              <div>
+                <div class="fw-bold">{{ label }}</div>
+                <div class="small text-muted">{{ description }}</div>
+              </div>
+              <div>
+                <input type="hidden" name="{{ field }}" value="0">
+                <input class="form-check-input" type="checkbox" name="{{ field }}" value="1" {% if vendor_options[key] %}checked{% endif %} aria-label="{{ label }}">
+              </div>
+            </div>
+          </div>
+          {% endfor %}
+        </div>
+        <div class="alert alert-light border small mt-3 mb-0"><i class="bi bi-info-circle me-1"></i>Seguimiento automático y derivación a una persona todavía no están habilitados para este agente.</div>
+      </div>
+    </section>
+
+    <section class="vendor-section mb-3">
+      <div class="vendor-head">
+        <div>
+          <div class="vendor-title"><i class="bi bi-sliders text-primary me-2"></i>Personalidad y comportamiento</div>
+          <div class="vendor-subtitle">Estas preferencias cambian la forma en que el Vendedor conversa, sin reemplazar las reglas de seguridad del sistema.</div>
+        </div>
+      </div>
+      <div class="vendor-body">
+        <div class="row g-3">
+          <div class="col-md-4">
+            <label class="form-label fw-semibold">Personalidad</label>
+            <select class="form-select" name="vendor_personality">
+              {% for value,label in [('profesional','Profesional'),('amigable','Amigable'),('directo','Directo'),('comercial','Comercial')] %}
+              <option value="{{ value }}" {% if vendor_options.personality == value %}selected{% endif %}>{{ label }}</option>
+              {% endfor %}
+            </select>
+          </div>
+          <div class="col-md-8">
+            <label class="form-label fw-semibold">Nombre del agente</label>
+            <input class="form-control" name="vendor_agent_name" maxlength="120" value="{{ vendor_options.agent_name }}">
+          </div>
+          <div class="col-md-4">
+            <label class="form-label fw-semibold">Idioma</label>
+            <input class="form-control" name="vendor_language" maxlength="8" value="{{ vendor_config.language or 'es-AR' }}">
+          </div>
+          <div class="col-md-8">
+            <label class="form-label fw-semibold">Horario</label>
+            <input class="form-control" name="vendor_schedule" maxlength="120" placeholder="24/7" value="{{ vendor_options.schedule }}">
+            <div class="form-text">Preferencia para la atención del canal.</div>
+          </div>
+          <div class="col-12">
+            <label class="form-label fw-semibold">Instrucciones del comercio</label>
+            <textarea class="form-control" rows="5" name="vendor_prompt" maxlength="12000">{{ vendor_config.system_prompt or '' }}</textarea>
+          </div>
+          <div class="col-md-6">
+            <label class="form-label fw-semibold">Saludo inicial</label>
+            <textarea class="form-control" rows="3" name="vendor_greeting" maxlength="1000" placeholder="Hola, ¿en qué puedo ayudarte?">{{ vendor_options.greeting }}</textarea>
+          </div>
+          <div class="col-md-6">
+            <label class="form-label fw-semibold">Mensaje fuera de horario</label>
+            <textarea class="form-control" rows="3" name="vendor_out_of_hours_message" maxlength="1000" placeholder="En este momento estamos fuera de horario...">{{ vendor_options.out_of_hours_message }}</textarea>
+          </div>
+          <div class="col-12">
+            <label class="form-label fw-semibold">Información de tu comercio</label>
+            <textarea class="form-control" rows="4" name="vendor_business_information" maxlength="4000" placeholder="Productos, envíos, formas de pago, zonas de atención...">{{ vendor_options.business_information }}</textarea>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <section class="vendor-section mb-3">
+      <div class="vendor-head">
+        <div>
+          <div class="vendor-title"><i class="bi bi-broadcast text-primary me-2"></i>Publicación</div>
+          <div class="vendor-subtitle">Publicá tu Vendedor, obtené un enlace y un QR para compartirlo con clientes.</div>
+        </div>
+      </div>
+      <div class="vendor-body">
+        <div class="row g-3">
+          <div class="col-md-8">
+            <div class="vendor-card">
+              <div class="fw-bold">{{ 'Publicado' if publication.published else 'Sin publicar' }}</div>
+              <div class="small text-muted mt-1">{{ 'El enlace público está activo.' if publication.available else 'Podés publicar el Vendedor desde la pantalla de publicación.' }}</div>
+            </div>
+          </div>
+          <div class="col-md-4 d-flex align-items-stretch">
+            <a class="btn btn-outline-primary w-100 d-flex align-items-center justify-content-center" href="{{ url_for('vendor_publication.publication_page') }}"><i class="bi bi-broadcast me-1"></i>Administrar publicación</a>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <div class="vendor-save">
+      <div>
+        <div class="fw-bold">Guardá los cambios</div>
+        <div class="small text-muted">Esta pantalla modifica únicamente la configuración del Vendedor IA.</div>
+      </div>
+      <div class="d-flex gap-2 flex-wrap">
+        <a class="btn btn-outline-secondary" href="{{ url_for('ai_agents.agent', agent='vendedor') }}">Cancelar</a>
+        <button class="btn btn-primary" type="submit"><i class="bi bi-check2-circle me-1"></i>Guardar configuración</button>
+      </div>
+    </div>
+  </form>
+</div>
+{% endblock %}
