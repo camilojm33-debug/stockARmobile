@@ -3337,9 +3337,18 @@ def test_my_company_module_requires_pin_and_shows_tenant_admin_features():
 
     client.post("/auth/logout")
     client.post("/auth/login", data={"username": "superadmin", "password": "admin123"})
-    assign_pin = client.post(f"/superadmin/companies/{company_id}/pin/assign", data={"admin_pin": "1234", "step_up_password": "admin123"}, follow_redirects=True)
-    assert assign_pin.status_code == 200
-    assert "PIN asignado correctamente" in assign_pin.data.decode("utf-8")
+    assign_pin = client.post(f"/superadmin/companies/{company_id}/pin/assign", data={"admin_pin": "1234", "step_up_password": "admin123"}, follow_redirects=False)
+    assert assign_pin.status_code in (301, 302)
+    with client.session_transaction() as sess:
+        assert sess.get(f"company_pin_reveal_{company_id}")
+        assert sess.get(f"company_pin_reveal_{company_id}") != "1234"
+        assert "1234" not in repr(dict(sess))
+
+    detail_with_pin = client.get(assign_pin.headers["Location"], follow_redirects=False)
+    assert detail_with_pin.status_code == 200
+    assert "PIN asignado correctamente" not in detail_with_pin.data.decode("utf-8")
+    detail_html = detail_with_pin.data.decode("utf-8")
+    assert "1234" in detail_html
 
     client.post("/auth/login", data={"username": "negocio_admin", "password": "admin123"})
     locked_page = client.get("/admin/company-settings")
@@ -3802,7 +3811,7 @@ def test_support_ticket_flow_and_temp_password_generation():
 
     generate_temp = client.post(
         f"/soporte/admin/{ticket_id}/temp-password",
-        data={"require_password_change": "1"},
+        data={"require_password_change": "1", "step_up_password": "admin123"},
         follow_redirects=True,
     )
     assert generate_temp.status_code == 200
@@ -3827,6 +3836,64 @@ def test_support_ticket_flow_and_temp_password_generation():
         updated = db.session.get(SupportTicket, ticket_id)
         assert updated is not None
         assert updated.status == "resuelto"
+
+
+def test_one_time_secret_reveal_is_server_side_and_single_use():
+    from services.one_time_secret_service import OneTimeSecretService
+
+    client = stock_app.app.test_client()
+    client.post("/auth/login", data={"username": "superadmin", "password": "admin123"})
+
+    with stock_app.app.app_context():
+        user = User.query.filter_by(username="superadmin").first()
+        assert user is not None
+        secret_row, access_token = OneTimeSecretService.issue(
+            db.session,
+            user_id=user.id,
+            purpose="test_secret",
+            subject_type="test",
+            subject_id=1,
+            secret_value="SECRETO-1234",
+            ttl_seconds=120,
+        )
+        db.session.commit()
+        secret_id = secret_row.id
+
+    with client.session_transaction() as sess:
+        assert "SECRETO-1234" not in repr(dict(sess))
+        sess["test_one_time_secret"] = access_token
+
+    with client.session_transaction() as sess:
+        token = sess.get("test_one_time_secret")
+
+    with stock_app.app.app_context():
+        user = User.query.filter_by(username="superadmin").first()
+        assert user is not None
+        revealed = OneTimeSecretService.consume(
+            db.session,
+            user_id=user.id,
+            purpose="test_secret",
+            subject_type="test",
+            subject_id=1,
+            access_token=token,
+        )
+        assert revealed == "SECRETO-1234"
+        db.session.commit()
+        row = db.session.get(__import__("app").OneTimeSecret, secret_id)
+        assert row is not None
+        assert row.consumed_at is not None
+
+        assert (
+            OneTimeSecretService.consume(
+                db.session,
+                user_id=user.id,
+                purpose="test_secret",
+                subject_type="test",
+                subject_id=1,
+                access_token=token,
+            )
+            is None
+        )
 
 
 def test_share_whatsapp_keeps_existing_phone_flow():
