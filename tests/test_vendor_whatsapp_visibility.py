@@ -33,6 +33,9 @@ def test_vendor_admin_templates_guard_whatsapp_ui():
         content = (REPO_ROOT / relative_path).read_text(encoding="utf-8")
         assert guard in content
         assert "WHATSAPP_VENDOR_UI_ENABLED" in content
+    admin_v2 = (REPO_ROOT / "templates/ai_agent/admin_v2.html").read_text(encoding="utf-8")
+    assert "id=\"whatsapp-vendedor\"" not in admin_v2
+    assert "name=\"whatsapp_enabled\"" not in admin_v2
 
 
 def test_vendor_page_whatsapp_ui_is_feature_flagged():
