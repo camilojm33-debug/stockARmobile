@@ -55,3 +55,23 @@ def test_superadmin_privileged_access_actions_require_step_up():
         next_def = text.find("\ndef ", start + 5)
         block = text[start:] if next_def == -1 else text[start:next_def]
         assert "_require_superadmin_step_up()" in block, function_name
+
+
+def test_superadmin_referral_network_mutations_require_step_up():
+    text = Path("services/referral_network_service.py").read_text(encoding="utf-8")
+
+    guarded_functions = [
+        "link_seller",
+        "unlink_seller",
+        "set_percent",
+        "payout_network",
+    ]
+    for function_name in guarded_functions:
+        start = text.index(f"def {function_name}(")
+        next_def = text.find("\ndef ", start + 5)
+        block = text[start:] if next_def == -1 else text[start:next_def]
+        assert "_require_superadmin_step_up()" in block, function_name
+
+    template = Path("templates/saas/referrals_network.html").read_text(encoding="utf-8")
+    assert template.count('name="step_up_password"') == 4
+    assert template.count('autocomplete="current-password"') == 4
