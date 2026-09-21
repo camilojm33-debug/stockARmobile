@@ -778,7 +778,7 @@ def admin_referrals_dashboard():
 @bp.route("/superadmin/referrals/sellers/<int:seller_id>/commission", methods=["POST"])
 @superadmin_required
 def admin_referrals_update_commission(seller_id):
-    from app import ReferralSeller, db
+    from app import ReferralSeller, db, record_audit
 
     if not _referrals_module_ready():
         flash("El programa de referidos todavía no está disponible porque faltan migraciones.", "warning")
@@ -794,6 +794,14 @@ def admin_referrals_update_commission(seller_id):
         return redirect(url_for("referrals.admin_referrals_dashboard"))
 
     seller.commission_percent = normalized_percent
+    record_audit(
+        action="referral_seller_commission_update",
+        entity="referral_seller",
+        entity_id=seller.id,
+        user_id=current_user.id,
+        company_id=None,
+        detail=f"Comisión actualizada percent={normalized_percent}",
+    )
     db.session.commit()
     display_name = seller.user.username if seller.user else f"#{seller.id}"
     flash(f"Comisión actualizada para {display_name}: {float(normalized_percent * 100):.2f}%", "success")
@@ -852,7 +860,7 @@ def admin_referrals_sellers_list():
 @bp.route("/superadmin/referrals/sellers/create", methods=["GET", "POST"])
 @superadmin_required
 def admin_referrals_sellers_create():
-    from app import User, db
+    from app import User, db, record_audit
 
     if not _referrals_module_ready():
         flash("El programa de referidos todavía no está disponible porque faltan migraciones.", "warning")
@@ -933,6 +941,14 @@ def admin_referrals_sellers_create():
             subject_id=user.id,
             secret_value=temp_password,
         )
+        record_audit(
+            action="referral_seller_created",
+            entity="referral_seller",
+            entity_id=user.id,
+            user_id=current_user.id,
+            company_id=None,
+            detail=f"Vendedor creado username={user.username}",
+        )
         db.session.commit()
         session["referral_seller_temp_password"] = access_token
         session["referral_seller_temp_password_user_id"] = user.id
@@ -946,7 +962,7 @@ def admin_referrals_sellers_create():
 @bp.route("/superadmin/referrals/sellers/<int:seller_id>/edit", methods=["GET", "POST"])
 @superadmin_required
 def admin_referrals_sellers_edit(seller_id):
-    from app import ReferralSeller, User, db
+    from app import ReferralSeller, User, db, record_audit
 
     if not _referrals_module_ready():
         flash("El programa de referidos todavía no está disponible porque faltan migraciones.", "warning")
@@ -1021,6 +1037,14 @@ def admin_referrals_sellers_edit(seller_id):
             return redirect(url_for("referrals.admin_referrals_sellers_edit", seller_id=seller_id))
 
         ReferralService.create_or_update_seller(db.session, user=user, profile_data=profile_data, profile=profile)
+        record_audit(
+            action="referral_seller_updated",
+            entity="referral_seller",
+            entity_id=profile.id,
+            user_id=current_user.id,
+            company_id=None,
+            detail=f"Vendedor actualizado username={user.username}",
+        )
         db.session.commit()
         flash("Vendedor actualizado correctamente.", "success")
         return redirect(url_for("referrals.admin_referrals_seller_detail", seller_id=seller_id))
@@ -1200,7 +1224,7 @@ def admin_referrals_seller_reset_password(seller_id):
 @bp.route("/superadmin/referrals/sellers/<int:seller_id>/delete", methods=["POST"])
 @superadmin_required
 def admin_referrals_seller_delete(seller_id):
-    from app import NotificationReadState, PasswordRecoveryRequest, PasswordResetToken, ReferralAttribution, ReferralCommission, ReferralPayout, ReferralSeller, User, db
+    from app import NotificationReadState, PasswordRecoveryRequest, PasswordResetToken, ReferralAttribution, ReferralCommission, ReferralPayout, ReferralSeller, User, db, record_audit
 
     if not _referrals_module_ready():
         flash("El programa de referidos todavía no está disponible porque faltan migraciones.", "warning")
@@ -1226,7 +1250,23 @@ def admin_referrals_seller_delete(seller_id):
         profile.active = False
         user.active = False
         user.role = "seller"
-        db.session.commit()
+        record_audit(
+            action="referral_seller_deactivated",
+            entity="referral_seller",
+            entity_id=profile.id,
+            user_id=current_user.id,
+            company_id=None,
+            detail=f"Vendedor desactivado por preservar historial seller_user_id={user.id}",
+        )
+        record_audit(
+        action="referral_seller_deleted",
+        entity="referral_seller",
+        entity_id=seller_id,
+        user_id=current_user.id,
+        company_id=None,
+        detail="Vendedor eliminado definitivamente por Super Admin.",
+    )
+    db.session.commit()
         flash("Vendedor desactivado con historial preservado.", "success")
         return redirect(url_for("referrals.admin_referrals_sellers_list"))
 
@@ -1247,7 +1287,7 @@ def admin_referrals_seller_delete(seller_id):
 @bp.route("/superadmin/referrals/sellers/<int:seller_id>/toggle", methods=["POST"])
 @superadmin_required
 def admin_referrals_seller_toggle(seller_id):
-    from app import ReferralSeller, User, db
+    from app import ReferralSeller, User, db, record_audit
 
     if not _referrals_module_ready():
         flash("El programa de referidos todavía no está disponible porque faltan migraciones.", "warning")
@@ -1263,6 +1303,14 @@ def admin_referrals_seller_toggle(seller_id):
 
     profile.active = not profile.active
     user.active = profile.active
+    record_audit(
+        action="referral_seller_toggle",
+        entity="referral_seller",
+        entity_id=profile.id,
+        user_id=current_user.id,
+        company_id=None,
+        detail=f"Estado del vendedor actualizado active={profile.active}",
+    )
     db.session.commit()
     flash("Estado del vendedor actualizado.", "success")
     return redirect(url_for("referrals.admin_referrals_sellers_list"))
@@ -1291,7 +1339,7 @@ def admin_referrals_commissions():
 @bp.route("/superadmin/referrals/payout", methods=["POST"])
 @superadmin_required
 def admin_referrals_register_payout():
-    from app import db
+    from app import db, record_audit
 
     if not _referrals_module_ready():
         flash("El programa de referidos todavía no está disponible porque faltan migraciones.", "warning")
@@ -1318,6 +1366,14 @@ def admin_referrals_register_payout():
         receipt=request.form.get("receipt"),
         transfer_number=request.form.get("transfer_number"),
         observations=request.form.get("observations"),
+    )
+    record_audit(
+        action="referral_seller_payout",
+        entity="referral_payout",
+        entity_id=getattr(locals().get("payout"), "id", None),
+        user_id=current_user.id,
+        company_id=None,
+        detail=f"Liquidación de comisión de vendedor seller_id={seller_id} commission_ids={','.join(str(item) for item in parsed_ids)}",
     )
     db.session.commit()
     flash("Pago registrado correctamente.", "success")
