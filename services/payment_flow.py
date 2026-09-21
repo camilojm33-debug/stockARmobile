@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from datetime import datetime, timedelta
 from typing import Any
 
 from sqlalchemy import and_, func, not_, or_
@@ -12,6 +13,58 @@ FLOW_AI_SUBSCRIPTION = "ai_subscription"
 FLOW_POS = "pos_sale"
 FLOW_AI_ORDER = "ai_order"
 FLOW_OTHER = "other"
+
+POS_DRAFT_TTL_HOURS = 72
+POS_DRAFT_PENDING_STATUSES = ("pending", "in_process", "authorized")
+
+
+def is_stale_pos_draft(payment, *, now: datetime | None = None, max_age_hours: int = POS_DRAFT_TTL_HOURS) -> bool:
+    if payment_flow(payment) != FLOW_POS:
+        return False
+    if _text(getattr(payment, "status", None)) not in POS_DRAFT_PENDING_STATUSES:
+        return False
+    if getattr(payment, "payment_id", None):
+        return False
+    created_at = getattr(payment, "created_at", None)
+    if created_at is None:
+        return False
+    current = now or datetime.utcnow()
+    return created_at < current - timedelta(hours=max(1, int(max_age_hours)))
+
+
+def expire_stale_pos_drafts(db_session, *, company_id: int | None = None, now: datetime | None = None, max_age_hours: int = POS_DRAFT_TTL_HOURS) -> int:
+    """Expire abandoned local POS drafts without blocking a later Mercado Pago webhook.
+
+    Webhooks identify POS drafts by draft_payment_id and may still transition an
+    expired draft to the actual Mercado Pago status when a delayed payment arrives.
+    """
+    from app import Payment, PaymentHistory
+
+    current = now or datetime.utcnow()
+    cutoff = current - timedelta(hours=max(1, int(max_age_hours)))
+    query = Payment.query.filter(
+        pos_payment_filter(Payment),
+        Payment.status.in_(POS_DRAFT_PENDING_STATUSES),
+        Payment.payment_id.is_(None),
+        Payment.created_at < cutoff,
+    )
+    if company_id is not None:
+        query = query.filter(Payment.company_id == int(company_id))
+
+    rows = query.order_by(Payment.id.asc()).all()
+    for payment in rows:
+        payment.status = "expired"
+        db_session.add(
+            PaymentHistory(
+                payment_id=payment.id,
+                company_id=payment.company_id,
+                event="expired_stale_pos_draft",
+                detail=f"POS draft expired after {max(1, int(max_age_hours))} hours without payment_id.",
+                source="system",
+                status="expired",
+            )
+        )
+    return len(rows)
 
 
 def _text(value: Any) -> str:
