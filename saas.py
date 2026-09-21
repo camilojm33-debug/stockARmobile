@@ -1465,6 +1465,8 @@ def index():
 @superadmin_required
 def attention_panel():
     """Unified read-only operational queue for Super Admin."""
+    from app import db
+
     now = utcnow()
     queue = _build_attention_queue(now)
     critical = [row for row in queue if row.get("priority_group") == "critical"]
