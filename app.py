@@ -1404,6 +1404,28 @@ class PasswordResetToken(db.Model):
     user = db.relationship("User", backref="password_reset_tokens")
 
 
+class OneTimeSecret(db.Model):
+    __tablename__ = "one_time_secrets"
+    __table_args__ = (
+        db.Index("ix_one_time_secrets_lookup", "access_token_hash", unique=True),
+        db.Index("ix_one_time_secrets_owner", "user_id", "purpose", "subject_id"),
+        db.Index("ix_one_time_secrets_expires", "expires_at"),
+    )
+
+    id = db.Column(db.Integer, primary_key=True)
+    user_id = db.Column(db.Integer, db.ForeignKey("users.id"), nullable=False, index=True)
+    purpose = db.Column(db.String(80), nullable=False, index=True)
+    subject_type = db.Column(db.String(40), nullable=False)
+    subject_id = db.Column(db.Integer, nullable=True, index=True)
+    access_token_hash = db.Column(db.String(128), nullable=False, unique=True, index=True)
+    ciphertext = db.Column(db.Text, nullable=False)
+    expires_at = db.Column(db.DateTime, nullable=False, index=True)
+    consumed_at = db.Column(db.DateTime, index=True)
+    created_at = db.Column(db.DateTime, default=utcnow, index=True)
+
+    user = db.relationship("User", backref="one_time_secrets")
+
+
 class ReferralSeller(db.Model):
     __tablename__ = "referral_sellers"
 

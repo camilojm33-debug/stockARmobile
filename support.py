@@ -109,11 +109,21 @@ def admin_index():
 @bp.route("/admin/<int:ticket_id>")
 @superadmin_required
 def admin_detail(ticket_id):
-    from app import SupportTicket
+    from app import SupportTicket, db
 
     ticket = SupportTicket.query.filter_by(id=ticket_id).first_or_404()
-    temp_password_key = f"support_temp_password_{ticket.id}"
-    temp_password = session.pop(temp_password_key, None)
+    from services.one_time_secret_service import OneTimeSecretService
+
+    temp_password = OneTimeSecretService.consume(
+        db.session,
+        user_id=current_user.id,
+        purpose="support_temp_password",
+        subject_type="support_ticket",
+        subject_id=ticket.id,
+        access_token=session.pop(f"support_temp_password_{ticket.id}", None),
+    )
+    if temp_password is not None:
+        db.session.commit()
     return render_template("saas/support_detail.html", ticket=ticket, temp_password=temp_password)
 
 
@@ -143,12 +153,33 @@ def admin_resolve(ticket_id):
 def admin_generate_temp_password(ticket_id):
     from app import SupportTicket, User, db, record_audit
 
+    from saas import _require_superadmin_step_up
+
     ticket = SupportTicket.query.filter_by(id=ticket_id).first_or_404()
+    if not _require_superadmin_step_up():
+        return redirect(url_for("support.admin_detail", ticket_id=ticket.id))
     user = User.query.filter_by(id=ticket.user_id).first()
     if user is None:
         abort(404)
 
     temporary_password = _temporary_password()
+    from services.one_time_secret_service import OneTimeSecretService
+
+    OneTimeSecretService.revoke(
+        db.session,
+        user_id=current_user.id,
+        purpose="support_temp_password",
+        subject_type="support_ticket",
+        subject_id=ticket.id,
+    )
+    _secret_row, access_token = OneTimeSecretService.issue(
+        db.session,
+        user_id=current_user.id,
+        purpose="support_temp_password",
+        subject_type="support_ticket",
+        subject_id=ticket.id,
+        secret_value=temporary_password,
+    )
     user.set_password(temporary_password)
     require_change = (request.form.get("require_password_change") or "0") == "1"
     user.must_change_password = require_change
@@ -162,7 +193,7 @@ def admin_generate_temp_password(ticket_id):
     )
     db.session.commit()
 
-    # Mostrar una sola vez: se extrae y limpia en la siguiente carga del detalle.
-    session[f"support_temp_password_{ticket.id}"] = temporary_password
+    # La sesión conserva solo un token opaco; el secreto permanece cifrado del lado servidor.
+    session[f"support_temp_password_{ticket.id}"] = access_token
     flash("Contrasena temporal generada. Copiala ahora, se mostrara una sola vez.", "warning")
     return redirect(url_for("support.admin_detail", ticket_id=ticket.id))

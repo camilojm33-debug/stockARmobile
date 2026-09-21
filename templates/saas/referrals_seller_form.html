@@ -126,6 +126,10 @@
       </div>
       {% endif %}
 
+      <div class="col-12">
+        <label class="form-label">Reautenticación Super Admin</label>
+        <input type="password" name="step_up_password" class="form-control" autocomplete="current-password" placeholder="Contraseña Super Admin" required>
+      </div>
       <div class="col-12 d-flex justify-content-end gap-2 pt-2">
         <a class="btn btn-outline-secondary" href="{{ url_for('referrals.admin_referrals_sellers_list') }}">Cancelar</a>
         <button class="btn btn-primary" type="submit">

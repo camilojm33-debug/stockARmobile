@@ -2190,7 +2190,18 @@ def company_detail(company_id):
         "payments_standard_amount": payments_standard_amount,
         "payments_ai_amount": payments_ai_amount,
     }
-    pin_revealed_once = session.pop(f"company_pin_reveal_{company.id}", None)
+    from services.one_time_secret_service import OneTimeSecretService
+
+    pin_revealed_once = OneTimeSecretService.consume(
+        db.session,
+        user_id=current_user.id,
+        purpose="company_pin_reveal",
+        subject_type="company",
+        subject_id=company.id,
+        access_token=session.pop(f"company_pin_reveal_{company.id}", None),
+    )
+    if pin_revealed_once is not None:
+        db.session.commit()
     last_payments = Payment.query.filter(Payment.company_id == company.id, subscription_revenue_payment_filter(Payment)).order_by(Payment.created_at.desc()).limit(10).all()
     audit = AuditLog.query.filter_by(company_id=company.id).order_by(AuditLog.created_at.desc()).limit(20).all()
     return render_template(
@@ -2309,8 +2320,25 @@ def company_assign_pin(company_id):
         flash("El PIN debe ser numerico y de 4 digitos.", "danger")
         return redirect(url_for("saas.company_detail", company_id=company.id))
 
+    from services.one_time_secret_service import OneTimeSecretService
+
+    OneTimeSecretService.revoke(
+        db.session,
+        user_id=current_user.id,
+        purpose="company_pin_reveal",
+        subject_type="company",
+        subject_id=company.id,
+    )
+    _secret_row, access_token = OneTimeSecretService.issue(
+        db.session,
+        user_id=current_user.id,
+        purpose="company_pin_reveal",
+        subject_type="company",
+        subject_id=company.id,
+        secret_value=raw_pin,
+    )
     CompanySecurityService.set_pin(company, raw_pin)
-    session[f"company_pin_reveal_{company.id}"] = raw_pin
+    session[f"company_pin_reveal_{company.id}"] = access_token
     db.session.add(
         AuditLog(
             user_id=current_user.id,
@@ -2339,8 +2367,25 @@ def company_generate_pin(company_id):
     had_pin = bool(company.business_pin_hash)
 
     raw_pin = f"{secrets.randbelow(10000):04d}"
+    from services.one_time_secret_service import OneTimeSecretService
+
+    OneTimeSecretService.revoke(
+        db.session,
+        user_id=current_user.id,
+        purpose="company_pin_reveal",
+        subject_type="company",
+        subject_id=company.id,
+    )
+    _secret_row, access_token = OneTimeSecretService.issue(
+        db.session,
+        user_id=current_user.id,
+        purpose="company_pin_reveal",
+        subject_type="company",
+        subject_id=company.id,
+        secret_value=raw_pin,
+    )
     CompanySecurityService.set_pin(company, raw_pin)
-    session[f"company_pin_reveal_{company.id}"] = raw_pin
+    session[f"company_pin_reveal_{company.id}"] = access_token
 
     db.session.add(
         AuditLog(
@@ -3293,7 +3338,19 @@ def password_recovery_panel():
         .order_by(User.company_id.asc(), User.username.asc())
         .all()
     )
-    temp_password = session.pop("password_recovery_temp_password", None)
+    from services.one_time_secret_service import OneTimeSecretService
+
+    reveal_user_id = session.pop("password_recovery_temp_password_user_id", None)
+    temp_password = OneTimeSecretService.consume(
+        db.session,
+        user_id=current_user.id,
+        purpose="password_recovery_temp_password",
+        subject_type="user",
+        subject_id=reveal_user_id,
+        access_token=session.pop("password_recovery_temp_password", None),
+    )
+    if temp_password is not None:
+        db.session.commit()
     temp_password_user = session.pop("password_recovery_temp_password_user", None)
     return render_template(
         "saas/password_recovery.html",
@@ -3334,6 +3391,23 @@ def password_recovery_company_user_reset():
         return _redirect_back("saas.password_recovery_panel")
 
     temp_password = _temporary_password()
+    from services.one_time_secret_service import OneTimeSecretService
+
+    OneTimeSecretService.revoke(
+        db.session,
+        user_id=current_user.id,
+        purpose="password_recovery_temp_password",
+        subject_type="user",
+        subject_id=user.id,
+    )
+    _secret_row, access_token = OneTimeSecretService.issue(
+        db.session,
+        user_id=current_user.id,
+        purpose="password_recovery_temp_password",
+        subject_type="user",
+        subject_id=user.id,
+        secret_value=temp_password,
+    )
     user.set_password(temp_password)
     user.must_change_password = True
     record_audit(
@@ -3346,7 +3420,8 @@ def password_recovery_company_user_reset():
     )
     db.session.commit()
 
-    session["password_recovery_temp_password"] = temp_password
+    session["password_recovery_temp_password"] = access_token
+    session["password_recovery_temp_password_user_id"] = user.id
     session["password_recovery_temp_password_user"] = user.username
     flash("Contraseña temporal generada. Copiala ahora; se mostrará una sola vez.", "warning")
     return _redirect_back("saas.password_recovery_panel")
@@ -3391,6 +3466,23 @@ def password_recovery_reset(request_id):
         return _redirect_back("saas.password_recovery_panel")
 
     temp_password = _temporary_password()
+    from services.one_time_secret_service import OneTimeSecretService
+
+    OneTimeSecretService.revoke(
+        db.session,
+        user_id=current_user.id,
+        purpose="password_recovery_temp_password",
+        subject_type="user",
+        subject_id=user.id,
+    )
+    _secret_row, access_token = OneTimeSecretService.issue(
+        db.session,
+        user_id=current_user.id,
+        purpose="password_recovery_temp_password",
+        subject_type="user",
+        subject_id=user.id,
+        secret_value=temp_password,
+    )
     user.set_password(temp_password)
     user.must_change_password = True
 
@@ -3408,8 +3500,9 @@ def password_recovery_reset(request_id):
     )
     db.session.commit()
 
-    # Mostrar una sola vez en la pantalla de recuperacion.
-    session["password_recovery_temp_password"] = temp_password
+    # La sesión conserva solo un token opaco; el secreto permanece cifrado del lado servidor.
+    session["password_recovery_temp_password"] = access_token
+    session["password_recovery_temp_password_user_id"] = user.id
     session["password_recovery_temp_password_user"] = user.username
     flash("Contrasena temporal generada. Se mostrara una sola vez.", "warning")
     return _redirect_back("saas.password_recovery_panel")

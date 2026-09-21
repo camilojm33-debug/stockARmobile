@@ -188,6 +188,15 @@ def link_seller():
         if override_value is not None and override_value not in (Decimal("0.30"), Decimal("0.50")):
             raise ValueError("La comisión de red solo puede ser 30% o 50%.")
         set_parent(child_id=child_id, parent_id=parent_id, override_percent=override_value)
+        from app import record_audit
+        record_audit(
+            action="referral_network_link",
+            entity="referral_network_link",
+            entity_id=child_id,
+            user_id=current_user.id,
+            company_id=None,
+            detail=f"Relación de red actualizada parent_seller_id={parent_id} child_seller_id={child_id} override_percent={override_value}",
+        )
         db.session.commit()
         flash("Relación padre → vendedor hijo guardada correctamente.", "success")
     except Exception as exc:
@@ -202,6 +211,15 @@ def unlink_seller(child_id):
     if not _require_superadmin_step_up():
         return redirect(url_for("referral_network.dashboard"))
     remove_parent(child_id=child_id)
+    from app import record_audit
+    record_audit(
+        action="referral_network_unlink",
+        entity="referral_network_link",
+        entity_id=child_id,
+        user_id=current_user.id,
+        company_id=None,
+        detail=f"Relación de red desvinculada child_seller_id={child_id}",
+    )
     db.session.commit()
     flash("El vendedor quedó sin padre de red. El historial de comisiones se conserva.", "success")
     return redirect(url_for("referral_network.dashboard"))
@@ -220,6 +238,15 @@ def set_percent(child_id):
         if link is None:
             raise ValueError("El vendedor no tiene un padre de red activo.")
         link.override_percent = None if value == DEFAULT_PARENT_PERCENT else value
+        from app import record_audit
+        record_audit(
+            action="referral_network_percent_update",
+            entity="referral_network_link",
+            entity_id=link.id,
+            user_id=current_user.id,
+            company_id=None,
+            detail=f"Comisión de red actualizada child_seller_id={child_id} percent={value}",
+        )
         db.session.commit()
         flash(f"Comisión del padre actualizada a {int(value * 100)}%.", "success")
     except Exception as exc:
@@ -238,6 +265,15 @@ def payout_network():
         ids = [int(value) for value in request.form.getlist("commission_ids") if str(value).isdigit()]
         transfer_date = datetime.strptime((request.form.get("transfer_date") or "").strip(), "%Y-%m-%d")
         payout = register_network_payout(db.session, parent_seller_id=parent_id, commission_ids=ids, processed_by_user_id=current_user.id, transfer_date=transfer_date, payment_method=request.form.get("payment_method"), receipt=request.form.get("receipt"), transfer_number=request.form.get("transfer_number"), observations=request.form.get("observations"))
+        from app import record_audit
+        record_audit(
+            action="referral_network_payout",
+            entity="referral_network_payout",
+            entity_id=payout.id,
+            user_id=current_user.id,
+            company_id=None,
+            detail=f"Liquidación de red registrada parent_seller_id={parent_id} commission_ids={','.join(str(item) for item in ids)} amount={payout.amount}",
+        )
         db.session.commit()
         flash(f"Pago de red registrado por ARS {payout.amount:.2f}.", "success")
     except Exception as exc:

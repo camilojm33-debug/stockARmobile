@@ -778,19 +778,30 @@ def admin_referrals_dashboard():
 @bp.route("/superadmin/referrals/sellers/<int:seller_id>/commission", methods=["POST"])
 @superadmin_required
 def admin_referrals_update_commission(seller_id):
-    from app import ReferralSeller, db
+    from app import ReferralSeller, db, record_audit
 
     if not _referrals_module_ready():
         flash("El programa de referidos todavía no está disponible porque faltan migraciones.", "warning")
         return redirect(url_for("referrals.admin_referrals_dashboard"))
 
     seller = ReferralSeller.query.options(joinedload(ReferralSeller.user)).filter_by(id=seller_id).first_or_404()
+    from saas import _require_superadmin_step_up
+    if not _require_superadmin_step_up():
+        return redirect(url_for("referrals.admin_referrals_dashboard"))
     normalized_percent = _parse_commission_percent(request.form.get("commission_percent"))
     if normalized_percent is None:
         flash("Porcentaje de comisión inválido. Debe estar entre 0 y 100.", "danger")
         return redirect(url_for("referrals.admin_referrals_dashboard"))
 
     seller.commission_percent = normalized_percent
+    record_audit(
+        action="referral_seller_commission_update",
+        entity="referral_seller",
+        entity_id=seller.id,
+        user_id=current_user.id,
+        company_id=None,
+        detail=f"Comisión actualizada percent={normalized_percent}",
+    )
     db.session.commit()
     display_name = seller.user.username if seller.user else f"#{seller.id}"
     flash(f"Comisión actualizada para {display_name}: {float(normalized_percent * 100):.2f}%", "success")
@@ -813,7 +824,7 @@ def admin_referrals_sellers():
 @bp.route("/superadmin/referrals/sellers/list")
 @superadmin_required
 def admin_referrals_sellers_list():
-    from app import ReferralSeller
+    from app import ReferralSeller, db
 
     if not _referrals_module_ready():
         flash("El programa de referidos todavía no está disponible porque faltan migraciones.", "warning")
@@ -823,7 +834,19 @@ def admin_referrals_sellers_list():
         ReferralSeller.query.options(joinedload(ReferralSeller.user)).order_by(ReferralSeller.created_at.desc(), ReferralSeller.id.desc()).all()
     )
     metrics = _seller_metrics_map([row.id for row in sellers])
-    temp_password = session.pop("referral_seller_temp_password", None)
+    from services.one_time_secret_service import OneTimeSecretService
+
+    reveal_user_id = session.pop("referral_seller_temp_password_user_id", None)
+    temp_password = OneTimeSecretService.consume(
+        db.session,
+        user_id=current_user.id,
+        purpose="referral_seller_temp_password",
+        subject_type="seller_user",
+        subject_id=reveal_user_id,
+        access_token=session.pop("referral_seller_temp_password", None),
+    )
+    if temp_password is not None:
+        db.session.commit()
     temp_password_user = session.pop("referral_seller_temp_password_user", None)
     return render_template(
         "saas/referrals_sellers_list.html",
@@ -837,13 +860,16 @@ def admin_referrals_sellers_list():
 @bp.route("/superadmin/referrals/sellers/create", methods=["GET", "POST"])
 @superadmin_required
 def admin_referrals_sellers_create():
-    from app import User, db
+    from app import User, db, record_audit
 
     if not _referrals_module_ready():
         flash("El programa de referidos todavía no está disponible porque faltan migraciones.", "warning")
         return redirect(url_for("referrals.admin_referrals_dashboard"))
 
     if request.method == "POST":
+        from saas import _require_superadmin_step_up
+        if not _require_superadmin_step_up():
+            return redirect(url_for("referrals.admin_referrals_sellers_create"))
         username = (request.form.get("username") or "").strip()
         email = (request.form.get("email") or "").strip().lower()
         if not username or not email:
@@ -898,7 +924,35 @@ def admin_referrals_sellers_create():
             return redirect(url_for("referrals.admin_referrals_sellers_create"))
 
         ReferralService.create_or_update_seller(db.session, user=user, profile_data=profile_data, profile=None)
+        from services.one_time_secret_service import OneTimeSecretService
+
+        OneTimeSecretService.revoke(
+            db.session,
+            user_id=current_user.id,
+            purpose="referral_seller_temp_password",
+            subject_type="seller_user",
+            subject_id=user.id,
+        )
+        _secret_row, access_token = OneTimeSecretService.issue(
+            db.session,
+            user_id=current_user.id,
+            purpose="referral_seller_temp_password",
+            subject_type="seller_user",
+            subject_id=user.id,
+            secret_value=temp_password,
+        )
+        record_audit(
+            action="referral_seller_created",
+            entity="referral_seller",
+            entity_id=user.id,
+            user_id=current_user.id,
+            company_id=None,
+            detail=f"Vendedor creado username={user.username}",
+        )
         db.session.commit()
+        session["referral_seller_temp_password"] = access_token
+        session["referral_seller_temp_password_user_id"] = user.id
+        session["referral_seller_temp_password_user"] = user.username
         flash("Vendedor creado correctamente.", "success")
         return redirect(url_for("referrals.admin_referrals_sellers_list"))
 
@@ -908,7 +962,7 @@ def admin_referrals_sellers_create():
 @bp.route("/superadmin/referrals/sellers/<int:seller_id>/edit", methods=["GET", "POST"])
 @superadmin_required
 def admin_referrals_sellers_edit(seller_id):
-    from app import ReferralSeller, User, db
+    from app import ReferralSeller, User, db, record_audit
 
     if not _referrals_module_ready():
         flash("El programa de referidos todavía no está disponible porque faltan migraciones.", "warning")
@@ -920,6 +974,9 @@ def admin_referrals_sellers_edit(seller_id):
         abort(404)
 
     if request.method == "POST":
+        from saas import _require_superadmin_step_up
+        if not _require_superadmin_step_up():
+            return redirect(url_for("referrals.admin_referrals_sellers_edit", seller_id=seller_id))
         username = (request.form.get("username") or "").strip()
         email = (request.form.get("email") or "").strip().lower()
         if not username or not email:
@@ -980,6 +1037,14 @@ def admin_referrals_sellers_edit(seller_id):
             return redirect(url_for("referrals.admin_referrals_sellers_edit", seller_id=seller_id))
 
         ReferralService.create_or_update_seller(db.session, user=user, profile_data=profile_data, profile=profile)
+        record_audit(
+            action="referral_seller_updated",
+            entity="referral_seller",
+            entity_id=profile.id,
+            user_id=current_user.id,
+            company_id=None,
+            detail=f"Vendedor actualizado username={user.username}",
+        )
         db.session.commit()
         flash("Vendedor actualizado correctamente.", "success")
         return redirect(url_for("referrals.admin_referrals_seller_detail", seller_id=seller_id))
@@ -1059,7 +1124,19 @@ def admin_referrals_seller_detail(seller_id):
     last_access = (
         AuditLog.query.filter_by(user_id=user.id, action="login_success").order_by(AuditLog.created_at.desc(), AuditLog.id.desc()).first()
     )
-    temp_password = session.pop("referral_seller_temp_password", None)
+    from services.one_time_secret_service import OneTimeSecretService
+
+    reveal_user_id = session.pop("referral_seller_temp_password_user_id", None)
+    temp_password = OneTimeSecretService.consume(
+        db.session,
+        user_id=current_user.id,
+        purpose="referral_seller_temp_password",
+        subject_type="seller_user",
+        subject_id=user.id if reveal_user_id == user.id else reveal_user_id,
+        access_token=session.pop("referral_seller_temp_password", None),
+    )
+    if temp_password is not None:
+        db.session.commit()
     temp_password_user = session.pop("referral_seller_temp_password_user", None)
 
     return render_template(
@@ -1098,11 +1175,31 @@ def admin_referrals_seller_reset_password(seller_id):
         return redirect(url_for("referrals.admin_referrals_dashboard"))
 
     profile = ReferralSeller.query.filter_by(id=seller_id).first_or_404()
+    from saas import _require_superadmin_step_up
+    if not _require_superadmin_step_up():
+        return redirect(url_for("referrals.admin_referrals_seller_detail", seller_id=seller_id))
     user = db.session.get(User, profile.user_id)
     if user is None:
         abort(404)
 
     temp_password = _temporary_password()
+    from services.one_time_secret_service import OneTimeSecretService
+
+    OneTimeSecretService.revoke(
+        db.session,
+        user_id=current_user.id,
+        purpose="referral_seller_temp_password",
+        subject_type="seller_user",
+        subject_id=user.id,
+    )
+    _secret_row, access_token = OneTimeSecretService.issue(
+        db.session,
+        user_id=current_user.id,
+        purpose="referral_seller_temp_password",
+        subject_type="seller_user",
+        subject_id=user.id,
+        secret_value=temp_password,
+    )
     user.set_password(temp_password)
     user.must_change_password = True
     user.active = True
@@ -1117,7 +1214,8 @@ def admin_referrals_seller_reset_password(seller_id):
     )
     db.session.commit()
 
-    session["referral_seller_temp_password"] = temp_password
+    session["referral_seller_temp_password"] = access_token
+    session["referral_seller_temp_password_user_id"] = user.id
     session["referral_seller_temp_password_user"] = user.username
     flash("Contrasena temporal generada. Copiala ahora; se mostrara una sola vez.", "warning")
     return redirect(url_for("referrals.admin_referrals_seller_detail", seller_id=seller_id))
@@ -1126,13 +1224,16 @@ def admin_referrals_seller_reset_password(seller_id):
 @bp.route("/superadmin/referrals/sellers/<int:seller_id>/delete", methods=["POST"])
 @superadmin_required
 def admin_referrals_seller_delete(seller_id):
-    from app import NotificationReadState, PasswordRecoveryRequest, PasswordResetToken, ReferralAttribution, ReferralCommission, ReferralPayout, ReferralSeller, User, db
+    from app import NotificationReadState, PasswordRecoveryRequest, PasswordResetToken, ReferralAttribution, ReferralCommission, ReferralPayout, ReferralSeller, User, db, record_audit
 
     if not _referrals_module_ready():
         flash("El programa de referidos todavía no está disponible porque faltan migraciones.", "warning")
         return redirect(url_for("referrals.admin_referrals_dashboard"))
 
     profile = ReferralSeller.query.filter_by(id=seller_id).first_or_404()
+    from saas import _require_superadmin_step_up
+    if not _require_superadmin_step_up():
+        return redirect(url_for("referrals.admin_referrals_seller_detail", seller_id=seller_id))
     user = db.session.get(User, profile.user_id)
     if user is None:
         abort(404)
@@ -1149,6 +1250,14 @@ def admin_referrals_seller_delete(seller_id):
         profile.active = False
         user.active = False
         user.role = "seller"
+        record_audit(
+            action="referral_seller_deactivated",
+            entity="referral_seller",
+            entity_id=profile.id,
+            user_id=current_user.id,
+            company_id=None,
+            detail=f"Vendedor desactivado por preservar historial seller_user_id={user.id}",
+        )
         db.session.commit()
         flash("Vendedor desactivado con historial preservado.", "success")
         return redirect(url_for("referrals.admin_referrals_sellers_list"))
@@ -1162,6 +1271,14 @@ def admin_referrals_seller_delete(seller_id):
         db.session.delete(user)
     else:
         user.role = "admin" if user.company_id else "user"
+    record_audit(
+        action="referral_seller_deleted",
+        entity="referral_seller",
+        entity_id=seller_id,
+        user_id=current_user.id,
+        company_id=None,
+        detail="Vendedor eliminado definitivamente por Super Admin.",
+    )
     db.session.commit()
     flash("Vendedor eliminado definitivamente.", "success")
     return redirect(url_for("referrals.admin_referrals_sellers_list"))
@@ -1170,19 +1287,30 @@ def admin_referrals_seller_delete(seller_id):
 @bp.route("/superadmin/referrals/sellers/<int:seller_id>/toggle", methods=["POST"])
 @superadmin_required
 def admin_referrals_seller_toggle(seller_id):
-    from app import ReferralSeller, User, db
+    from app import ReferralSeller, User, db, record_audit
 
     if not _referrals_module_ready():
         flash("El programa de referidos todavía no está disponible porque faltan migraciones.", "warning")
         return redirect(url_for("referrals.admin_referrals_dashboard"))
 
     profile = ReferralSeller.query.filter_by(id=seller_id).first_or_404()
+    from saas import _require_superadmin_step_up
+    if not _require_superadmin_step_up():
+        return redirect(url_for("referrals.admin_referrals_sellers_list"))
     user = db.session.get(User, profile.user_id)
     if user is None:
         abort(404)
 
     profile.active = not profile.active
     user.active = profile.active
+    record_audit(
+        action="referral_seller_toggle",
+        entity="referral_seller",
+        entity_id=profile.id,
+        user_id=current_user.id,
+        company_id=None,
+        detail=f"Estado del vendedor actualizado active={profile.active}",
+    )
     db.session.commit()
     flash("Estado del vendedor actualizado.", "success")
     return redirect(url_for("referrals.admin_referrals_sellers_list"))
@@ -1211,12 +1339,15 @@ def admin_referrals_commissions():
 @bp.route("/superadmin/referrals/payout", methods=["POST"])
 @superadmin_required
 def admin_referrals_register_payout():
-    from app import db
+    from app import db, record_audit
 
     if not _referrals_module_ready():
         flash("El programa de referidos todavía no está disponible porque faltan migraciones.", "warning")
         return redirect(url_for("referrals.admin_referrals_dashboard"))
 
+    from saas import _require_superadmin_step_up
+    if not _require_superadmin_step_up():
+        return redirect(url_for("referrals.admin_referrals_commissions"))
     seller_id = request.form.get("seller_id", type=int)
     commission_ids = request.form.getlist("commission_ids")
     parsed_ids = [int(item) for item in commission_ids if str(item).isdigit()]
@@ -1225,7 +1356,7 @@ def admin_referrals_register_payout():
         flash("Datos de pago incompletos.", "danger")
         return redirect(url_for("referrals.admin_referrals_commissions"))
 
-    ReferralService.register_payout(
+    payout = ReferralService.register_payout(
         db.session,
         seller_id=seller_id,
         commission_ids=parsed_ids,
@@ -1235,6 +1366,14 @@ def admin_referrals_register_payout():
         receipt=request.form.get("receipt"),
         transfer_number=request.form.get("transfer_number"),
         observations=request.form.get("observations"),
+    )
+    record_audit(
+        action="referral_seller_payout",
+        entity="referral_payout",
+        entity_id=getattr(payout, "id", None),
+        user_id=current_user.id,
+        company_id=None,
+        detail=f"Liquidación de comisión de vendedor seller_id={seller_id} commission_ids={','.join(str(item) for item in parsed_ids)}",
     )
     db.session.commit()
     flash("Pago registrado correctamente.", "success")

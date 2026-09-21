@@ -107,3 +107,80 @@ def test_superadmin_referral_network_mutations_require_step_up():
     template = Path("templates/saas/referrals_network.html").read_text(encoding="utf-8")
     assert template.count('name="step_up_password"') == 4
     assert template.count('autocomplete="current-password"') == 4
+
+
+def test_one_time_secret_reveals_do_not_use_client_session_plaintext():
+    service = Path("services/one_time_secret_service.py").read_text(encoding="utf-8")
+    saas = Path("saas.py").read_text(encoding="utf-8")
+    support = Path("support.py").read_text(encoding="utf-8")
+    support_template = Path("templates/saas/support_detail.html").read_text(encoding="utf-8")
+
+    assert "Fernet" in service
+    assert "ciphertext" in service
+    assert "secrets.token_urlsafe(32)" in service
+    assert 'session[f"company_pin_reveal_{company.id}"] = raw_pin' not in saas
+    assert 'session[f"support_temp_password_{ticket.id}"] = temporary_password' not in support
+    assert 'name="step_up_password"' in support_template
+    assert 'autocomplete="current-password"' in support_template
+    referrals = Path("referrals.py").read_text(encoding="utf-8")
+    saas_pattern = 'session["password_recovery_temp_password"] = temp_password'
+    assert saas_pattern not in saas
+    assert 'session["password_recovery_temp_password"] = access_token' in saas
+    assert 'session["referral_seller_temp_password"] = temp_password' not in referrals
+    assert 'session["referral_seller_temp_password"] = access_token' in referrals
+    assert 'secrets.token_urlsafe(32)' in service
+
+
+def test_superadmin_referral_seller_sensitive_actions_require_step_up():
+    text = Path("referrals.py").read_text(encoding="utf-8")
+
+    guarded_functions = [
+        "admin_referrals_sellers_create",
+        "admin_referrals_sellers_edit",
+        "admin_referrals_seller_reset_password",
+        "admin_referrals_seller_delete",
+        "admin_referrals_seller_toggle",
+        "admin_referrals_update_commission",
+        "admin_referrals_register_payout",
+    ]
+    for function_name in guarded_functions:
+        start = text.index(f"def {function_name}(")
+        next_def = text.find("\ndef ", start + 5)
+        block = text[start:] if next_def == -1 else text[start:next_def]
+        assert "_require_superadmin_step_up()" in block, function_name
+
+    templates = [
+        Path("templates/saas/referrals_seller_form.html").read_text(encoding="utf-8"),
+        Path("templates/saas/referrals_seller_detail.html").read_text(encoding="utf-8"),
+        Path("templates/saas/referrals_sellers_list.html").read_text(encoding="utf-8"),
+        Path("templates/saas/referrals_dashboard.html").read_text(encoding="utf-8"),
+        Path("templates/saas/referrals_commissions.html").read_text(encoding="utf-8"),
+    ]
+    for template in templates:
+        assert 'name="step_up_password"' in template
+        assert 'autocomplete="current-password"' in template
+
+
+def test_superadmin_sensitive_referral_mutations_are_audited():
+    referrals = Path("referrals.py").read_text(encoding="utf-8")
+    network = Path("services/referral_network_service.py").read_text(encoding="utf-8")
+
+    for action in [
+        "referral_seller_created",
+        "referral_seller_updated",
+        "referral_seller_password_reset",
+        "referral_seller_deactivated",
+        "referral_seller_deleted",
+        "referral_seller_toggle",
+        "referral_seller_commission_update",
+        "referral_seller_payout",
+    ]:
+        assert action in referrals, action
+
+    for action in [
+        "referral_network_link",
+        "referral_network_unlink",
+        "referral_network_percent_update",
+        "referral_network_payout",
+    ]:
+        assert action in network, action

@@ -3337,9 +3337,18 @@ def test_my_company_module_requires_pin_and_shows_tenant_admin_features():
 
     client.post("/auth/logout")
     client.post("/auth/login", data={"username": "superadmin", "password": "admin123"})
-    assign_pin = client.post(f"/superadmin/companies/{company_id}/pin/assign", data={"admin_pin": "1234", "step_up_password": "admin123"}, follow_redirects=True)
-    assert assign_pin.status_code == 200
-    assert "PIN asignado correctamente" in assign_pin.data.decode("utf-8")
+    assign_pin = client.post(f"/superadmin/companies/{company_id}/pin/assign", data={"admin_pin": "1234", "step_up_password": "admin123"}, follow_redirects=False)
+    assert assign_pin.status_code in (301, 302)
+    with client.session_transaction() as sess:
+        assert sess.get(f"company_pin_reveal_{company_id}")
+        assert sess.get(f"company_pin_reveal_{company_id}") != "1234"
+        assert "1234" not in repr(dict(sess))
+
+    detail_with_pin = client.get(assign_pin.headers["Location"], follow_redirects=False)
+    assert detail_with_pin.status_code == 200
+    detail_html = detail_with_pin.data.decode("utf-8")
+    assert "PIN asignado correctamente" in detail_html
+    assert "1234" in detail_html
 
     client.post("/auth/login", data={"username": "negocio_admin", "password": "admin123"})
     locked_page = client.get("/admin/company-settings")
@@ -3802,12 +3811,25 @@ def test_support_ticket_flow_and_temp_password_generation():
 
     generate_temp = client.post(
         f"/soporte/admin/{ticket_id}/temp-password",
-        data={"require_password_change": "1"},
-        follow_redirects=True,
+        data={"require_password_change": "1", "step_up_password": "admin123"},
+        follow_redirects=False,
     )
-    assert generate_temp.status_code == 200
-    detail_html = generate_temp.data.decode("utf-8")
+    assert generate_temp.status_code in (301, 302)
+    with client.session_transaction() as sess:
+        access_token = sess.get(f"support_temp_password_{ticket_id}")
+        assert access_token
+
+    detail_revealed = client.get(generate_temp.headers["Location"], follow_redirects=False)
+    assert detail_revealed.status_code == 200
+    detail_html = detail_revealed.data.decode("utf-8")
     assert "Contrasena temporal" in detail_html
+    match = re.search(r"<code class=\"fs-6\">([^<]+)</code>", detail_html)
+    assert match is not None
+    temp_password = match.group(1).strip()
+    assert temp_password
+    with client.session_transaction() as sess:
+        assert sess.get(f"support_temp_password_{ticket_id}") is None
+        assert temp_password not in repr(dict(sess))
 
     # Visible una sola vez en la siguiente carga.
     second_detail = client.get(f"/soporte/admin/{ticket_id}")
@@ -3827,6 +3849,98 @@ def test_support_ticket_flow_and_temp_password_generation():
         updated = db.session.get(SupportTicket, ticket_id)
         assert updated is not None
         assert updated.status == "resuelto"
+
+
+def test_one_time_secret_reveal_is_server_side_and_single_use():
+    from services.one_time_secret_service import OneTimeSecretService
+
+    client = stock_app.app.test_client()
+    client.post("/auth/login", data={"username": "superadmin", "password": "admin123"})
+
+    with stock_app.app.app_context():
+        user = User.query.filter_by(username="superadmin").first()
+        assert user is not None
+        secret_row, access_token = OneTimeSecretService.issue(
+            db.session,
+            user_id=user.id,
+            purpose="test_secret",
+            subject_type="test",
+            subject_id=1,
+            secret_value="SECRETO-1234",
+            ttl_seconds=120,
+        )
+        db.session.commit()
+        secret_id = secret_row.id
+
+    with client.session_transaction() as sess:
+        assert "SECRETO-1234" not in repr(dict(sess))
+        sess["test_one_time_secret"] = access_token
+
+    with client.session_transaction() as sess:
+        token = sess.get("test_one_time_secret")
+
+    with stock_app.app.app_context():
+        user = User.query.filter_by(username="superadmin").first()
+        assert user is not None
+        assert (
+            OneTimeSecretService.consume(
+                db.session,
+                user_id=user.id + 999999,
+                purpose="test_secret",
+                subject_type="test",
+                subject_id=1,
+                access_token=token,
+            )
+            is None
+        )
+        revealed = OneTimeSecretService.consume(
+            db.session,
+            user_id=user.id,
+            purpose="test_secret",
+            subject_type="test",
+            subject_id=1,
+            access_token=token,
+        )
+        assert revealed == "SECRETO-1234"
+        db.session.commit()
+        row = db.session.get(__import__("app").OneTimeSecret, secret_id)
+        assert row is not None
+        assert row.consumed_at is not None
+
+        assert (
+            OneTimeSecretService.consume(
+                db.session,
+                user_id=user.id,
+                purpose="test_secret",
+                subject_type="test",
+                subject_id=1,
+                access_token=token,
+            )
+            is None
+        )
+
+        expired_row, expired_token = OneTimeSecretService.issue(
+            db.session,
+            user_id=user.id,
+            purpose="test_secret_expired",
+            subject_type="test",
+            subject_id=2,
+            secret_value="EXPIRADO-1234",
+            ttl_seconds=30,
+        )
+        expired_row.expires_at = stock_app.utcnow() - timedelta(seconds=1)
+        db.session.commit()
+        assert (
+            OneTimeSecretService.consume(
+                db.session,
+                user_id=user.id,
+                purpose="test_secret_expired",
+                subject_type="test",
+                subject_id=2,
+                access_token=expired_token,
+            )
+            is None
+        )
 
 
 def test_share_whatsapp_keeps_existing_phone_flow():
@@ -4038,15 +4152,24 @@ def test_password_recovery_request_and_superadmin_reset_flow():
     reset = client.post(
         f"/superadmin/password-recovery/{request_id}/reset",
         data={"step_up_password": "admin123"},
-        follow_redirects=True,
+        follow_redirects=False,
     )
-    assert reset.status_code == 200
-    reset_html = reset.data.decode("utf-8")
+    assert reset.status_code in (301, 302)
+    with client.session_transaction() as sess:
+        recovery_token = sess.get("password_recovery_temp_password")
+        assert recovery_token
+
+    revealed_panel = client.get(reset.headers["Location"], follow_redirects=False)
+    assert revealed_panel.status_code == 200
+    reset_html = revealed_panel.data.decode("utf-8")
     assert "Contrasena temporal" in reset_html
     match = re.search(r"<code class=\"fs-6\">([^<]+)</code>", reset_html)
     assert match is not None
     temp_password = match.group(1).strip()
     assert temp_password
+    with client.session_transaction() as sess:
+        assert sess.get("password_recovery_temp_password") is None
+        assert temp_password not in repr(dict(sess))
 
     # Se muestra una sola vez.
     panel_again = client.get("/superadmin/password-recovery")
@@ -6439,7 +6562,7 @@ def test_superadmin_can_update_seller_commission_and_seller_cannot():
     client.post("/auth/login", data={"username": "superadmin", "password": "admin123"})
     response = client.post(
         f"/superadmin/referrals/sellers/{seller_id}/commission",
-        data={"commission_percent": "42"},
+        data={"commission_percent": "42", "step_up_password": "admin123"},
         follow_redirects=False,
     )
     assert response.status_code in (301, 302)
@@ -6608,13 +6731,14 @@ def test_superadmin_can_create_change_and_recover_seller_password():
             "dni": "33999111",
             "active": "1",
             "temp_password": "inicio123",
+            "step_up_password": "admin123",
         },
         follow_redirects=False,
     )
     assert created.status_code in (301, 302)
 
     with stock_app.app.app_context():
-        from app import ReferralSeller
+        from app import ReferralSeller, db
 
         seller_user = User.query.filter_by(username="seller_admin_abm").first()
         assert seller_user is not None
@@ -6635,6 +6759,7 @@ def test_superadmin_can_create_change_and_recover_seller_password():
             "active": "1",
             "new_password": "manual123",
             "confirm_password": "manual123",
+            "step_up_password": "admin123",
             "force_change": "1",
         },
         follow_redirects=False,
@@ -6649,15 +6774,25 @@ def test_superadmin_can_create_change_and_recover_seller_password():
 
     reset = client.post(
         f"/superadmin/referrals/sellers/{seller_id}/reset-password",
-        follow_redirects=True,
+        data={"step_up_password": "admin123"},
+        follow_redirects=False,
     )
-    assert reset.status_code == 200
-    reset_html = reset.data.decode("utf-8")
+    assert reset.status_code in (301, 302)
+    with client.session_transaction() as sess:
+        referral_token = sess.get("referral_seller_temp_password")
+        assert referral_token
+
+    revealed_detail = client.get(reset.headers["Location"], follow_redirects=False)
+    assert revealed_detail.status_code == 200
+    reset_html = revealed_detail.data.decode("utf-8")
     assert "Contraseña temporal" in reset_html
     match = re.search(r"<code class=\"fs-6\">([^<]+)</code>", reset_html)
     assert match is not None
     temp_password = match.group(1).strip()
     assert temp_password
+    with client.session_transaction() as sess:
+        assert sess.get("referral_seller_temp_password") is None
+        assert temp_password not in repr(dict(sess))
 
     with stock_app.app.app_context():
         seller_user = User.query.filter_by(username="seller_admin_abm").first()
@@ -6674,6 +6809,7 @@ def test_superadmin_can_create_change_and_recover_seller_password():
 
     deleted = client.post(
         f"/superadmin/referrals/sellers/{seller_id}/delete",
+        data={"step_up_password": "admin123"},
         follow_redirects=True,
     )
     assert deleted.status_code == 200
@@ -6692,7 +6828,7 @@ def test_superadmin_delete_seller_with_history_preserves_records_as_inactive():
     client = stock_app.app.test_client()
 
     with stock_app.app.app_context():
-        from app import Company, Plan, ReferralAttribution, ReferralCommission, ReferralSeller
+        from app import Company, Plan, ReferralAttribution, ReferralCommission, ReferralSeller, db
 
         seller_user = User(username="seller_with_history", email="seller_with_history@test.com", role="seller", active=True)
         seller_user.set_password("seller123")
@@ -6735,13 +6871,14 @@ def test_superadmin_delete_seller_with_history_preserves_records_as_inactive():
     client.post("/auth/login", data={"username": "superadmin", "password": "admin123"})
     deleted = client.post(
         f"/superadmin/referrals/sellers/{seller_id}/delete",
+        data={"step_up_password": "admin123"},
         follow_redirects=True,
     )
     assert deleted.status_code == 200
     assert "Vendedor desactivado con historial preservado." in deleted.data.decode("utf-8")
 
     with stock_app.app.app_context():
-        from app import ReferralAttribution, ReferralCommission, ReferralSeller
+        from app import ReferralAttribution, ReferralCommission, ReferralSeller, db
 
         seller_user = db.session.get(User, seller_user_id)
         seller_profile = db.session.get(ReferralSeller, seller_id)
