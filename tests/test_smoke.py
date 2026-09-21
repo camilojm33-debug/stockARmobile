@@ -8501,6 +8501,8 @@ def test_landing_advertises_global_pricing_controller_for_business_and_premium()
 
 
 def test_pricing_controller_non_business_redirects_to_standard_subscription_portal():
+    import wsgi  # noqa: F401  # registers the pricing controller blueprint on the test app
+
     from services.plan_service import PlanService
     from services.subscription_service import SubscriptionService
 
@@ -8529,7 +8531,13 @@ def test_pricing_controller_non_business_redirects_to_standard_subscription_port
             subscription.ends_at = stock_app.utcnow() + timedelta(days=30)
         db.session.commit()
 
-    client.post("/auth/login", data={"username": "empresa_admin", "password": "admin123"})
+    login_response = client.post(
+        "/auth/login",
+        data={"username": "empresa_admin", "password": "admin123"},
+        follow_redirects=False,
+    )
+    assert login_response.status_code in {302, 303}
+
     response = client.get("/precios/", follow_redirects=False)
     assert response.status_code == 302
     assert response.headers["Location"].endswith("/admin/portal")
@@ -8559,30 +8567,37 @@ def test_pricing_controller_is_visible_in_menu_for_all_standard_plans():
                 plan=entrepreneur,
                 user_id=user.id,
             )
-        else:
-            subscription.plan_id = entrepreneur.id
-            subscription.status = "active"
-            subscription.start_date = stock_app.utcnow()
-            subscription.ends_at = stock_app.utcnow() + timedelta(days=30)
+        subscription.plan_id = entrepreneur.id
+        subscription.status = "active"
+        subscription.start_date = stock_app.utcnow()
+        subscription.ends_at = stock_app.utcnow() + timedelta(days=30)
         db.session.commit()
 
-    client.post("/auth/login", data={"username": "empresa_admin", "password": "admin123"})
-    response = client.get("/dashboard/")
+    login_response = client.post(
+        "/auth/login",
+        data={"username": "empresa_admin", "password": "admin123"},
+        follow_redirects=False,
+    )
+    assert login_response.status_code in {302, 303}
+
+    response = client.get("/admin/portal")
     assert response.status_code == 200
     body = response.get_data(as_text=True)
     assert "Controlador global de precios" in body
-    assert "/admin/portal" in body
+    assert 'href="/admin/portal"' in body
+    assert ">Negocio<" in body
 
     with stock_app.app.app_context():
         subscription = SubscriptionService.active_subscription_for_company(company.id)
+        assert subscription is not None
         subscription.plan_id = business.id
         subscription.status = "active"
         subscription.start_date = stock_app.utcnow()
         subscription.ends_at = stock_app.utcnow() + timedelta(days=30)
         db.session.commit()
 
-    response = client.get("/dashboard/")
+    response = client.get("/admin/portal")
     assert response.status_code == 200
     body = response.get_data(as_text=True)
     assert "Controlador global de precios" in body
-    assert "/precios/" in body
+    assert 'href="/precios/"' in body
