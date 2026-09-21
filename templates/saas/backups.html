@@ -181,6 +181,10 @@
               <td class="text-end">
                 <div class="d-inline-flex gap-1 flex-wrap justify-content-end">
                   <a class="btn btn-sm btn-outline-primary" href="{{ url_for('saas.backups_download', backup_id=backup.id) }}">Descargar</a>
+                  <form method="post" action="{{ url_for('saas.backups_verify', backup_id=backup.id) }}" class="d-inline">
+                    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                    <button class="btn btn-sm btn-outline-success" type="submit" title="Verifica el archivo y su estructura sin restaurarlo">Verificar</button>
+                  </form>
                   <a class="btn btn-sm btn-outline-warning" href="{{ url_for('saas.backups_panel', preview_id=backup.id, company_id=filters.company_id, q=filters.q, status=filters.status, plan=filters.plan) }}">Restaurar</a>
                   <form method="post" action="{{ url_for('saas.backups_delete', backup_id=backup.id) }}" onsubmit="return confirm('¿Eliminar este backup?');">
                     <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
