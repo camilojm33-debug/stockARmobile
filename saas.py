@@ -2190,7 +2190,18 @@ def company_detail(company_id):
         "payments_standard_amount": payments_standard_amount,
         "payments_ai_amount": payments_ai_amount,
     }
-    pin_revealed_once = session.pop(f"company_pin_reveal_{company.id}", None)
+    from services.one_time_secret_service import OneTimeSecretService
+
+    pin_revealed_once = OneTimeSecretService.consume(
+        db.session,
+        user_id=current_user.id,
+        purpose="company_pin_reveal",
+        subject_type="company",
+        subject_id=company.id,
+        access_token=session.pop(f"company_pin_reveal_{company.id}", None),
+    )
+    if pin_revealed_once is not None:
+        db.session.commit()
     last_payments = Payment.query.filter(Payment.company_id == company.id, subscription_revenue_payment_filter(Payment)).order_by(Payment.created_at.desc()).limit(10).all()
     audit = AuditLog.query.filter_by(company_id=company.id).order_by(AuditLog.created_at.desc()).limit(20).all()
     return render_template(
@@ -2309,8 +2320,25 @@ def company_assign_pin(company_id):
         flash("El PIN debe ser numerico y de 4 digitos.", "danger")
         return redirect(url_for("saas.company_detail", company_id=company.id))
 
+    from services.one_time_secret_service import OneTimeSecretService
+
+    OneTimeSecretService.revoke(
+        db.session,
+        user_id=current_user.id,
+        purpose="company_pin_reveal",
+        subject_type="company",
+        subject_id=company.id,
+    )
+    _secret_row, access_token = OneTimeSecretService.issue(
+        db.session,
+        user_id=current_user.id,
+        purpose="company_pin_reveal",
+        subject_type="company",
+        subject_id=company.id,
+        secret_value=raw_pin,
+    )
     CompanySecurityService.set_pin(company, raw_pin)
-    session[f"company_pin_reveal_{company.id}"] = raw_pin
+    session[f"company_pin_reveal_{company.id}"] = access_token
     db.session.add(
         AuditLog(
             user_id=current_user.id,
@@ -2339,8 +2367,25 @@ def company_generate_pin(company_id):
     had_pin = bool(company.business_pin_hash)
 
     raw_pin = f"{secrets.randbelow(10000):04d}"
+    from services.one_time_secret_service import OneTimeSecretService
+
+    OneTimeSecretService.revoke(
+        db.session,
+        user_id=current_user.id,
+        purpose="company_pin_reveal",
+        subject_type="company",
+        subject_id=company.id,
+    )
+    _secret_row, access_token = OneTimeSecretService.issue(
+        db.session,
+        user_id=current_user.id,
+        purpose="company_pin_reveal",
+        subject_type="company",
+        subject_id=company.id,
+        secret_value=raw_pin,
+    )
     CompanySecurityService.set_pin(company, raw_pin)
-    session[f"company_pin_reveal_{company.id}"] = raw_pin
+    session[f"company_pin_reveal_{company.id}"] = access_token
 
     db.session.add(
         AuditLog(
