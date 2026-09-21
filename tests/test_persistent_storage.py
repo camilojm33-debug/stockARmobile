@@ -25,6 +25,7 @@ def test_backup_root_is_configurable(tmp_path, app):
     assert path.is_dir()
 
 
+# Render fallback paths are validated without writing to /var/data in CI.
 def test_persistent_services_have_render_fallbacks(monkeypatch, app):
     monkeypatch.setenv("RENDER", "true")
     app.config["INVOICE_UPLOAD_DIR"] = ""
