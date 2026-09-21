@@ -1856,6 +1856,7 @@ def _plan_feature_flags(plan):
         "ventas": has("ventas"),
         "caja": has("caja"),
         "reportes": has("reportes", "reportes_basicos"),
+        "controlador_precios": has("pricing_controller"),
         "qr": has("qr"),
         "etiquetas": has("etiquetas", "excel", "kardex"),
         "whatsapp": has("whatsapp"),
@@ -2192,10 +2193,10 @@ def inject_notifications():
             except json.JSONDecodeError:
                 current_company_preferences = {}
             try:
-                from services.ai_agent.usage_service import can_use_ai_feature
+                from services.ai_agent.usage_service import can_use_ai_feature, can_use_commercial_feature
                 ai_feature_pricing_allowed = (
                     getattr(current_user, "role", None) == "admin"
-                    and can_use_ai_feature(company, "pricing_controller").allowed
+                    and can_use_commercial_feature(company, "pricing_controller").allowed
                 )
                 ai_feature_vendor_allowed = can_use_ai_feature(company, "vendedor").allowed
                 ai_employee_access_allowed = (

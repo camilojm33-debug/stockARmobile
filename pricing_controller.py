@@ -12,7 +12,7 @@ from sqlalchemy import Numeric, false, or_
 from app import Company, Product, Supplier, db, record_audit, scope_query_to_company, utcnow
 from stockarmobile.decorators import company_admin_required
 from stockarmobile.tenant import get_current_company_id
-from services.ai_agent.usage_service import can_use_ai_feature
+from services.ai_agent.usage_service import can_use_commercial_feature
 
 
 bp = Blueprint("pricing_controller", __name__, url_prefix="/precios")
@@ -222,9 +222,9 @@ def _ai_pricing_entitlement():
     if company is None:
         flash("No se encontró la empresa activa.", "danger")
         return redirect(url_for("dashboard.index"))
-    access = can_use_ai_feature(company, "pricing_controller")
+    access = can_use_commercial_feature(company, "pricing_controller")
     if not access.allowed:
-        flash(access.reason or "Tu plan IA no incluye el Controlador global de precios.", "warning")
+        flash(access.reason or "El Controlador Global de Precios requiere el plan Negocio o superior.", "warning")
         return redirect(url_for("ai_agents.agent", agent="planes"))
     return None
 
@@ -429,9 +429,9 @@ def rollback(batch_id: int):
         return blocked
     company_id = get_current_company_id(current_user)
     company = Company.query.filter_by(id=company_id, active=True).first() if company_id else None
-    rollback_access = can_use_ai_feature(company, "pricing_rollback") if company is not None else None
+    rollback_access = can_use_commercial_feature(company, "pricing_controller") if company is not None else None
     if rollback_access is None or not rollback_access.allowed:
-        flash(rollback_access.reason or "El rollback de precios requiere IA PRO.", "warning")
+        flash(rollback_access.reason or "El Controlador Global de Precios requiere el plan Negocio o superior.", "warning")
         return redirect(url_for("pricing_controller.index"))
     batch = PriceControllerBatch.query.filter_by(id=batch_id, company_id=current_user.company_id).first_or_404()
     if batch.status not in {"applied", "partial_rollback"}:

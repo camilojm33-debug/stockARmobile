@@ -8451,3 +8451,50 @@ def test_support_ticket_creates_automatic_saas_ops_records():
         alert = SaaSAlert.query.filter(SaaSAlert.title.ilike("Soporte abierto:%"))\
             .order_by(SaaSAlert.id.desc()).first()
         assert alert is not None
+
+
+
+def test_global_pricing_controller_is_commercial_from_business_plan():
+    from services.ai_agent.usage_service import can_use_commercial_feature
+    from services.plan_service import PlanService
+
+    with stock_app.app.app_context():
+        company = Company.query.filter_by(name="Empresa Demo").first()
+        PlanService.ensure_defaults(db.session)
+        business = PlanService.get_plan(code="business")
+        entrepreneur = PlanService.get_plan(code="entrepreneur")
+        assert business is not None
+        assert entrepreneur is not None
+        assert "pricing_controller" in (business.features_json or "")
+
+        user = User.query.filter_by(username="empresa_admin").first()
+        assert user is not None
+        subscription = Subscription.query.filter_by(company_id=company.id).first()
+        if subscription is None:
+            from services.subscription_service import SubscriptionService
+            subscription = SubscriptionService.start_or_change_plan(
+                db.session,
+                company=company,
+                plan=business,
+                user_id=user.id,
+            )
+        else:
+            subscription.plan_id = business.id
+            subscription.status = "active"
+            subscription.start_date = stock_app.utcnow()
+            subscription.ends_at = stock_app.utcnow() + timedelta(days=30)
+        db.session.commit()
+        assert can_use_commercial_feature(company, "pricing_controller").allowed is True
+
+        subscription.plan_id = entrepreneur.id
+        db.session.commit()
+        assert can_use_commercial_feature(company, "pricing_controller").allowed is False
+
+
+def test_landing_advertises_global_pricing_controller_for_business_and_premium():
+    client = stock_app.app.test_client()
+    response = client.get("/")
+    assert response.status_code == 200
+    body = response.get_data(as_text=True)
+    assert "Controlador global de precios" in body
+    assert "Negocio" in body
