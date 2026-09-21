@@ -207,7 +207,7 @@ def build_vendor_runtime_instructions(
         f"- Ofrecer alternativas: {'sí' if options['can_offer_alternatives'] else 'no'}",
         f"- Preparar presupuestos/pedidos: {'sí' if options['can_prepare_quotes'] else 'no'}",
         f"- Tomar pedidos: {'sí' if options['can_take_orders'] else 'no'}",
-        f"- Gestión de envíos: {{'manual, requiere costo del comercio' if options['shipping_mode'] == 'manual' else 'tarifa estándar del comercio' if options['shipping_mode'] == 'standard' else 'modo legacy 15%'}}",
+        f"- Gestión de envíos: {'manual, requiere costo del comercio' if options['shipping_mode'] == 'manual' else 'tarifa estándar del comercio' if options['shipping_mode'] == 'standard' else 'modo legacy 15%'}",
         f"- Tarifa estándar de envío: ${options['standard_shipping_cost']} ARS",
         f"- Seguimiento posterior: {'sí' if options['can_follow_up'] else 'no'}",
         f"- Derivación a una persona: {'sí' if options['can_handoff'] else 'no'}",
