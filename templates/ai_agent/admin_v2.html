@@ -141,32 +141,27 @@
       </div>
     </section>
 
-    {% set vendor = agents['Vendedor 24 hs'] %}{% set business = agents['Asistente empresarial'] %}
     <section class="ai-section mb-3">
-      <div class="ai-section-head"><div><div class="ai-section-title"><i class="bi bi-cart3 text-primary me-2"></i>Vendedor IA 24/7</div><div class="ai-section-subtitle">Tu vendedor digital para atender consultas, recomendar productos y preparar pedidos.</div></div><span class="ai-state {{ agent_states['Vendedor 24 hs'].tone }}">{{ agent_states['Vendedor 24 hs'].label }}</span></div>
+      <div class="ai-section-head">
+        <div>
+          <div class="ai-section-title"><i class="bi bi-cart3 text-primary me-2"></i>Vendedor IA 24/7</div>
+          <div class="ai-section-subtitle">La configuración detallada del Vendedor se administra desde su propia pantalla.</div>
+        </div>
+      </div>
       <div class="ai-section-body">
-        <div class="ai-agent-top mb-3"><div><div class="fw-bold">Estado del agente</div><div class="small text-muted">{{ 'Puede atender por Webchat.' if vendor.active else 'El agente está desactivado.' }}</div></div><label class="form-check form-switch fs-5 mb-0"><input class="form-check-input" type="checkbox" name="vendor_enabled" value="1" {% if vendor.active %}checked{% endif %}><span class="visually-hidden">Activar Vendedor IA</span></label></div>
-        <div class="ai-switch-card mb-3">
+        <div class="ai-switch-card">
           <div>
-            <div class="fw-bold"><i class="bi bi-globe2 text-primary me-2"></i>Publicación web del Vendedor</div>
-            <div class="small text-muted">Publicá tu Vendedor IA, obtené un enlace estable y un QR para compartirlo con clientes.</div>
+            <div class="fw-bold">Configuración del Vendedor</div>
+            <div class="small text-muted">Estado, capacidades, personalidad, saludo, horario e instrucciones del comercio.</div>
           </div>
-          <div class="d-flex flex-wrap gap-2 align-items-center">
-            <span class="ai-pill"><i class="bi bi-qr-code"></i> Enlace + QR</span>
-            <a class="btn btn-outline-primary" href="{{ url_for('vendor_publication.publication_page') }}"><i class="bi bi-box-arrow-up-right me-1"></i>Publicar y compartir</a>
+          <div class="d-flex flex-wrap gap-2">
+            <a class="btn btn-primary" href="{{ url_for('ai_admin.vendor_config') }}"><i class="bi bi-gear me-1"></i>Configurar Vendedor</a>
+            <a class="btn btn-outline-primary" href="{{ url_for('vendor_publication.publication_page') }}"><i class="bi bi-broadcast me-1"></i>Publicar y compartir</a>
+            <a class="btn btn-outline-secondary" href="{{ url_for('ai_admin.vendor_metrics') }}"><i class="bi bi-bar-chart-line me-1"></i>Métricas</a>
           </div>
         </div>
-        <div class="small fw-bold text-uppercase text-muted mb-2">Qué puede hacer el Vendedor</div>
-        <div class="row g-2 mb-3">
-          {% for key,field,label,description in [('can_recommend','vendor_can_recommend','Recomendar productos','Sugerir opciones según la consulta del cliente.'),('can_offer_alternatives','vendor_can_offer_alternatives','Ofrecer alternativas','Proponer productos alternativos cuando corresponda.'),('can_prepare_quotes','vendor_can_prepare_quotes','Preparar presupuestos','Armar presupuestos/pedidos sin confirmar el pago.'),('can_take_orders','vendor_can_take_orders','Tomar pedidos','Permitir agregar productos al pedido pendiente de pago.')] %}
-          <div class="col-md-6"><div class="ai-switch-card h-100"><div><div class="fw-bold">{{ label }}</div><div class="small text-muted">{{ description }}</div></div><div><input type="hidden" name="{{ field }}" value="0"><input class="form-check-input" type="checkbox" name="{{ field }}" value="1" {% if vendor_options[key]|default(true) %}checked{% endif %} aria-label="{{ label }}"></div></div></div>
-          {% endfor %}
-        </div>
-        <div class="alert alert-light border small mb-3"><i class="bi bi-info-circle me-1"></i>Seguimiento automático y derivación a una persona todavía no están habilitados para este agente y no se muestran como configurables.</div>
-        <details class="ai-advanced" open><summary>Personalizar comportamiento</summary><div class="ai-advanced-body"><div class="row g-3 pt-2"><div class="col-md-4"><label class="form-label fw-semibold">Personalidad</label><select class="form-select" name="vendor_personality">{% for value,label in [('profesional','Profesional'),('amigable','Amigable'),('directo','Directo'),('comercial','Comercial')] %}<option value="{{ value }}" {% if vendor_options.personality|default('amigable') == value %}selected{% endif %}>{{ label }}</option>{% endfor %}</select></div><div class="col-md-8"><label class="form-label fw-semibold">Nombre del agente</label><input class="form-control" name="vendor_agent_name" maxlength="120" value="{{ vendor_options.agent_name|default('Vendedor IA') }}"></div><div class="col-md-4"><label class="form-label fw-semibold">Idioma</label><input class="form-control" name="vendor_language" maxlength="8" value="{{ configs['Vendedor 24 hs'].language or 'es-AR' }}"></div><div class="col-md-8"><label class="form-label fw-semibold">Instrucciones del comercio</label><textarea class="form-control" rows="3" name="vendor_prompt" maxlength="12000">{{ configs['Vendedor 24 hs'].system_prompt or '' }}</textarea></div><div class="col-md-4"><label class="form-label fw-semibold">Horario</label><input class="form-control" name="vendor_schedule" maxlength="120" placeholder="24/7" value="{{ vendor_options.schedule or '' }}"><div class="form-text">Preferencia para la atención del canal.</div></div><div class="col-md-8"><label class="form-label fw-semibold">Saludo inicial</label><textarea class="form-control" rows="2" name="vendor_greeting" maxlength="1000" placeholder="Hola, ¿en qué puedo ayudarte?">{{ vendor_options.greeting or '' }}</textarea></div><div class="col-md-8"><label class="form-label fw-semibold">Información de tu comercio</label><textarea class="form-control" rows="3" name="vendor_business_information" maxlength="4000" placeholder="Productos, envíos, formas de pago, zonas de atención...">{{ vendor_options.business_information or '' }}</textarea></div><div class="col-12"><label class="form-label fw-semibold">Mensaje fuera de horario</label><textarea class="form-control" rows="2" name="vendor_out_of_hours_message" maxlength="1000" placeholder="En este momento estamos fuera de horario...">{{ vendor_options.out_of_hours_message or '' }}</textarea></div></div></div></details>
       </div>
     </section>
-
     <section class="ai-section mb-3">
       <div class="ai-section-head"><div><div class="ai-section-title"><i class="bi bi-lightbulb text-primary me-2"></i>Asistente Empresarial</div><div class="ai-section-subtitle">Consultá ventas, stock, productos y clientes con información real de tu comercio.</div></div><span class="ai-state {{ agent_states['Asistente empresarial'].tone }}">{{ agent_states['Asistente empresarial'].label }}</span></div>
       <div class="ai-section-body">
