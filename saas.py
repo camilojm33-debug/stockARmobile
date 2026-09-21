@@ -3627,8 +3627,7 @@ def backups_download(backup_id):
     )
 
 
-@bp.route("/backups/<int:backup_id>/restore", methods=["POST"])
-@bp.post("/superadmin/backups/<int:backup_id>/verify")
+@bp.route("/backups/<int:backup_id>/verify", methods=["POST"])
 @superadmin_required
 def backups_verify(backup_id):
     from app import BackupLog, record_audit
@@ -3665,6 +3664,7 @@ def backups_verify(backup_id):
     return redirect(url_for("saas.backups_panel", preview_id=backup.id))
 
 
+@bp.route("/backups/<int:backup_id>/restore", methods=["POST"])
 @superadmin_required
 def backups_restore(backup_id):
     from app import BackupLog, db, record_audit
