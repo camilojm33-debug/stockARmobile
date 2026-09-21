@@ -302,7 +302,7 @@
     const cartEndpoint = chatEndpoint ? chatEndpoint.replace(/\/message$/, '/cart') : '';
     const checkoutEndpoint = chatEndpoint ? chatEndpoint.replace(/\/message$/, '/checkout') : '';
     const stateEndpoint = chatEndpoint ? chatEndpoint.replace(/\/message$/, '/state') : '';
-    const shippingConfig = {{ (shipping_config or {"mode": "legacy_percent", "standard_cost": 0})|tojson }};
+    const shippingConfig = {{ (shipping_config or {"mode": "legacy_percent", "standard_cost": 0, "legacy_percent": 15})|tojson }};
     const csrf = {{ csrf_token()|tojson }};
     const initialCatalog = {{ catalog|tojson }};
     const initialState = {{ initial_state|tojson }};
@@ -419,7 +419,8 @@
           shippingLabel = money(checkoutShipping);
           grandTotalLabel = money(Number(cart.total || 0) + checkoutShipping);
         } else if (shippingConfig.mode === 'legacy_percent') {
-          checkoutShipping = Number(cart.total || 0) * 0.15;
+          const legacyRate = Number(shippingConfig.legacy_percent || 15) / 100;
+          checkoutShipping = Number(cart.total || 0) * legacyRate;
           shippingLabel = money(checkoutShipping);
           grandTotalLabel = money(Number(cart.total || 0) + checkoutShipping);
         } else {
