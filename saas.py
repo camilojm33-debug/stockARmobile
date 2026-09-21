@@ -171,7 +171,11 @@ def _require_superadmin_step_up() -> bool:
         return False
 
     password_hash = getattr(current_user, "password_hash", None)
-    if not password_hash or not check_password_hash(password_hash, password):
+    try:
+        password_valid = bool(password_hash and check_password_hash(password_hash, password))
+    except (ValueError, TypeError):
+        password_valid = False
+    if not password_valid:
         from app import record_audit
 
         record_audit(
