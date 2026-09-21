@@ -94,6 +94,7 @@ def configure_app(app):
     app.config["SMTP_PASSWORD"] = (os.environ.get("SMTP_PASSWORD") or "").strip()
     app.config["SMTP_FROM_EMAIL"] = (os.environ.get("SMTP_FROM_EMAIL") or app.config["SUPPORT_EMAIL"] or "no-reply@stockarmobile.com").strip()
     app.config["APP_URL"] = (os.environ.get("APP_URL") or "https://www.stockarmobile.com").strip().rstrip("/")
+    app.config["PRODUCT_UPLOAD_DIR"] = (os.environ.get("PRODUCT_UPLOAD_DIR") or "").strip()
     # UI temporal: ocultar la configuración de WhatsApp del Vendedor IA hasta completar la verificación de Meta.
     app.config["WHATSAPP_VENDOR_UI_ENABLED"] = (os.environ.get("WHATSAPP_VENDOR_UI_ENABLED") or "0").strip().lower() in {"1", "true", "yes", "on"}
     app.config["COMPANY_PIN_SESSION_TTL_MINUTES"] = int(os.environ.get("COMPANY_PIN_SESSION_TTL_MINUTES", "30"))
