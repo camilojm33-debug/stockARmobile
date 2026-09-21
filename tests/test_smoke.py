@@ -8516,4 +8516,4 @@ def test_pricing_controller_menu_is_visible_and_points_to_standard_or_feature_ro
     assert "pricing_controller_href = url_for('pricing_controller.index') if ai_feature_pricing_allowed else url_for('company_billing.subscription_portal')" in source
     assert 'url_for("pricing_controller.index")' in source or "url_for('pricing_controller.index')" in source
     assert 'url_for("company_billing.subscription_portal")' in source or "url_for('company_billing.subscription_portal')" in source
-    assert "text-bg-warning ms-auto">Negocio" in source
+    assert 'text-bg-warning ms-auto">Negocio' in source
