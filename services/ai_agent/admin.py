@@ -306,7 +306,7 @@ def save():
         "can_handoff": "vendor_can_handoff",
     }.items():
         if field in request.form:
-            vendor_options[key] = request.form.get(field) == "1"
+            vendor_options[key] = "1" in request.form.getlist(field)
     for key, field, limit in (
         ("agent_name", "vendor_agent_name", 120),
         ("greeting", "vendor_greeting", 1000),
