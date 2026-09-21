@@ -225,7 +225,7 @@ def _ai_pricing_entitlement():
     access = can_use_commercial_feature(company, "pricing_controller")
     if not access.allowed:
         flash(access.reason or "El Controlador Global de Precios requiere el plan Negocio o superior.", "warning")
-        return redirect(url_for("ai_agents.agent", agent="planes"))
+        return redirect(url_for("company_billing.subscription_portal"))
     return None
 
 def _form_context(preview=None):
