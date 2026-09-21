@@ -114,7 +114,7 @@ def test_vendor_configuration_navigation_and_capabilities_are_exposed():
     assert "vendor_can_take_orders" in admin_page
     assert "name=\"vendor_greeting\"" in admin_page
     assert "Seguimiento automático" in admin_page
-    assert "Derivación a una persona" in admin_page
+    assert "derivación a una persona" in admin_page
 
     assert "Configurar Vendedor" in publication_page
     assert "url_for('ai_admin.index')" in publication_page
