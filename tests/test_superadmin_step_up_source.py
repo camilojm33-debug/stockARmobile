@@ -29,8 +29,8 @@ def test_superadmin_critical_action_forms_expose_reauthentication():
 def test_superadmin_backup_routes_are_wired_to_the_correct_handlers():
     text = Path("saas.py").read_text(encoding="utf-8")
 
-    verify_marker = '@bp.route("/backups/<int:backup_id>/verify", methods=["POST"])\\n@superadmin_required\\ndef backups_verify(backup_id):'
-    restore_marker = '@bp.route("/backups/<int:backup_id>/restore", methods=["POST"])\\n@superadmin_required\\ndef backups_restore(backup_id):'
+    verify_marker = '@bp.route("/backups/<int:backup_id>/verify", methods=["POST"])\n@superadmin_required\ndef backups_verify(backup_id):'
+    restore_marker = '@bp.route("/backups/<int:backup_id>/restore", methods=["POST"])\n@superadmin_required\ndef backups_restore(backup_id):'
 
     assert verify_marker in text
     assert restore_marker in text
