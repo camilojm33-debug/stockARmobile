@@ -121,6 +121,11 @@
           <form method="post" action="{{ url_for('saas.backups_restore', backup_id=selected_backup.id) }}">
             <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
             <input type="hidden" name="confirm_restore" value="1">
+            <div class="mb-3">
+              <label class="form-label">Contraseña de Super Admin</label>
+              <input type="password" class="form-control" name="step_up_password" autocomplete="current-password" placeholder="Solo se solicitará si la reautenticación venció">
+              <div class="form-text">Reautenticación reforzada válida por 10 minutos.</div>
+            </div>
             <div class="row g-2 mb-3">
               {% for option in backup_section_options %}
               {% if option.key != 'full' %}
