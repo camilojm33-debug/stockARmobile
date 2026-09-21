@@ -6506,7 +6506,7 @@ def test_superadmin_can_update_seller_commission_and_seller_cannot():
     client.post("/auth/login", data={"username": "superadmin", "password": "admin123"})
     response = client.post(
         f"/superadmin/referrals/sellers/{seller_id}/commission",
-        data={"commission_percent": "42"},
+        data={"commission_percent": "42", "step_up_password": "admin123"},
         follow_redirects=False,
     )
     assert response.status_code in (301, 302)
@@ -6675,6 +6675,7 @@ def test_superadmin_can_create_change_and_recover_seller_password():
             "dni": "33999111",
             "active": "1",
             "temp_password": "inicio123",
+            "step_up_password": "admin123",
         },
         follow_redirects=False,
     )
@@ -6702,6 +6703,7 @@ def test_superadmin_can_create_change_and_recover_seller_password():
             "active": "1",
             "new_password": "manual123",
             "confirm_password": "manual123",
+            "step_up_password": "admin123",
             "force_change": "1",
         },
         follow_redirects=False,
@@ -6716,6 +6718,7 @@ def test_superadmin_can_create_change_and_recover_seller_password():
 
     reset = client.post(
         f"/superadmin/referrals/sellers/{seller_id}/reset-password",
+        data={"step_up_password": "admin123"},
         follow_redirects=True,
     )
     assert reset.status_code == 200
@@ -6725,6 +6728,10 @@ def test_superadmin_can_create_change_and_recover_seller_password():
     assert match is not None
     temp_password = match.group(1).strip()
     assert temp_password
+    with client.session_transaction() as sess:
+        assert sess.get("referral_seller_temp_password")
+        assert sess.get("referral_seller_temp_password") != temp_password
+        assert temp_password not in repr(dict(sess))
 
     with stock_app.app.app_context():
         seller_user = User.query.filter_by(username="seller_admin_abm").first()
@@ -6741,6 +6748,7 @@ def test_superadmin_can_create_change_and_recover_seller_password():
 
     deleted = client.post(
         f"/superadmin/referrals/sellers/{seller_id}/delete",
+        data={"step_up_password": "admin123"},
         follow_redirects=True,
     )
     assert deleted.status_code == 200
@@ -6802,6 +6810,7 @@ def test_superadmin_delete_seller_with_history_preserves_records_as_inactive():
     client.post("/auth/login", data={"username": "superadmin", "password": "admin123"})
     deleted = client.post(
         f"/superadmin/referrals/sellers/{seller_id}/delete",
+        data={"step_up_password": "admin123"},
         follow_redirects=True,
     )
     assert deleted.status_code == 200
