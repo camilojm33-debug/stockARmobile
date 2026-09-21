@@ -8498,3 +8498,22 @@ def test_landing_advertises_global_pricing_controller_for_business_and_premium()
     body = response.get_data(as_text=True)
     assert "Controlador global de precios" in body
     assert "Negocio" in body
+
+
+def test_pricing_controller_non_business_uses_standard_subscription_redirect():
+    from pathlib import Path
+
+    source = Path("pricing_controller.py").read_text(encoding="utf-8")
+    assert 'return redirect(url_for("company_billing.subscription_portal"))' in source
+    assert 'return redirect(url_for("ai_agents.agent", agent="planes"))' not in source
+
+
+def test_pricing_controller_menu_is_visible_and_points_to_standard_or_feature_route():
+    from pathlib import Path
+
+    source = Path("templates/base_master.html").read_text(encoding="utf-8")
+    assert "Controlador global de precios" in source
+    assert "pricing_controller_href = url_for('pricing_controller.index') if ai_feature_pricing_allowed else url_for('company_billing.subscription_portal')" in source
+    assert 'url_for("pricing_controller.index")' in source or "url_for('pricing_controller.index')" in source
+    assert 'url_for("company_billing.subscription_portal")' in source or "url_for('company_billing.subscription_portal')" in source
+    assert 'text-bg-warning ms-auto">Negocio' in source

@@ -792,6 +792,14 @@
       <a class="nav-link {% if request.endpoint == 'purchases.suppliers_panel' %}active{% endif %}" href="{{ url_for('purchases.suppliers_panel') }}"><i class="bi bi-people"></i><span class="nav-text">Proveedores</span></a>
       {% endif %}
       {% if current_user.role == 'admin' %}
+      {% set pricing_controller_href = url_for('pricing_controller.index') if ai_feature_pricing_allowed else url_for('company_billing.subscription_portal') %}
+      <a class="nav-link {% if request.endpoint == 'pricing_controller.index' %}active{% endif %}" href="{{ pricing_controller_href }}">
+        <i class="bi bi-sliders2"></i>
+        <span class="nav-text">Controlador global de precios</span>
+        {% if not ai_feature_pricing_allowed %}<span class="nav-badge badge rounded-pill text-bg-warning ms-auto">Negocio</span>{% endif %}
+      </a>
+      {% endif %}
+      {% if current_user.role == 'admin' %}
       <a class="nav-link {% if request.endpoint and request.endpoint.startswith('company_billing.') %}active{% endif %}" href="{{ url_for('company_billing.subscription_portal') }}"><i class="bi bi-credit-card-2-front"></i><span class="nav-text">Suscripción</span></a>
       {% endif %}
       {% endif %}
