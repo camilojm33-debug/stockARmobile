@@ -336,9 +336,6 @@ def vendor_save():
         if value < 0:
             value = Decimal("0.00")
         vendor_options["standard_shipping_cost"] = str(value.quantize(Decimal("0.01")))
-    if "vendor_auto_generate_payment" in request.form:
-        vendor_options["auto_generate_payment"] = "1" in request.form.getlist("vendor_auto_generate_payment")
-
     update_ai_preferences(company, ai_updates={"vendor_options": vendor_options})
 
     try:
