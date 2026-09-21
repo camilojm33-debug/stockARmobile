@@ -2046,7 +2046,7 @@ def ai_subscriptions_action(company_id):
     if company is None:
         abort(404)
     if not _require_superadmin_step_up():
-        return _redirect_back("saas.ai_subscription_detail", company_id=company.id)
+        return redirect(url_for("saas.ai_subscription_detail", company_id=company.id))
     action = (request.form.get("action") or "").strip().lower()
     try:
         if action == "assign_plan":
