@@ -824,7 +824,7 @@ def admin_referrals_sellers():
 @bp.route("/superadmin/referrals/sellers/list")
 @superadmin_required
 def admin_referrals_sellers_list():
-    from app import ReferralSeller
+    from app import ReferralSeller, db
 
     if not _referrals_module_ready():
         flash("El programa de referidos todavía no está disponible porque faltan migraciones.", "warning")
