@@ -177,16 +177,25 @@ def usage_snapshot(company_id: int, *, now: datetime | None = None) -> dict[str,
         ConversationMessage.created_at >= period_start,
     )
     # Only responses marked by record_ai_usage count. Older messages remain history.
-    messages = query.all()
-    counted = [message for message in messages if isinstance(message.metadata_json, dict) and message.metadata_json.get("ai_usage_recorded")]
-    used = len(counted)
+    usage_filter = ConversationMessage.metadata_json["ai_usage_recorded"].as_boolean().is_(True)
+    used = query.filter(usage_filter).count()
     included = int(plan["limit"]) if plan else 0
     percent = min(100, round((used / included) * 100)) if included else 0
     state = "normal" if percent < 80 else "near_limit" if percent < 90 else "limit_next" if percent < 100 else "limit_reached"
-    by_agent = {}
-    for message in counted:
-        agent = (message.metadata_json or {}).get("agent_key") or "asistente"
-        by_agent[agent] = by_agent.get(agent, 0) + 1
+
+    agent_rows = (
+        query.filter(usage_filter)
+        .with_entities(
+            ConversationMessage.metadata_json["agent_key"].as_string().label("agent_key"),
+            db.func.count(ConversationMessage.id).label("count"),
+        )
+        .group_by(ConversationMessage.metadata_json["agent_key"].as_string())
+        .all()
+    )
+    by_agent = {
+        (str(row.agent_key).strip() if row.agent_key else "asistente"): int(row.count or 0)
+        for row in agent_rows
+    }
     return {
         "period": period_start.strftime("%Y-%m"),
         "included_usage": included,

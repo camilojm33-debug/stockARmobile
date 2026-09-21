@@ -1838,7 +1838,6 @@ app.register_blueprint(seo_pages_bp)
 app.register_blueprint(ai_agents_bp)
 app.register_blueprint(ai_admin_bp)
 app.register_blueprint(whatsapp_agent_bp)
-csrf.exempt(whatsapp_agent_bp)
 
 
 def _plan_feature_flags(plan):

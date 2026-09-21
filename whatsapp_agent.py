@@ -10,7 +10,7 @@ import re
 from flask import Blueprint, abort, current_app, jsonify, render_template, request
 from flask_login import current_user, login_required
 from sqlalchemy.exc import IntegrityError
-from stockarmobile.extensions import db
+from stockarmobile.extensions import csrf, db
 from app import get_current_company_id
 from stockarmobile.models.conversations import Conversation, ConversationMessage
 from services.ai_agent.config_service import company_for_whatsapp_phone_id, get_whatsapp_connection, is_ai_enabled, choose_agent
@@ -375,6 +375,7 @@ def ai_order_detail(quote_id: int):
 
 
 @bp.route("/api/whatsapp/webhook", methods=["GET", "POST"])
+@csrf.exempt
 def webhook():
     if request.method == "GET":
         mode = request.args.get("hub.mode")
