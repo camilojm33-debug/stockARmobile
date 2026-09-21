@@ -56,10 +56,12 @@
               <a class="btn btn-outline-secondary" href="{{ url_for('referrals.admin_referrals_sellers_edit', seller_id=row.id) }}"><i class="bi bi-pencil me-1"></i>Editar</a>
               <form method="post" action="{{ url_for('referrals.admin_referrals_seller_reset_password', seller_id=row.id) }}" onsubmit="return confirm('Se generara una contrasena temporal para este vendedor. Continuar?');">
                 <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                <input type="password" name="step_up_password" class="form-control form-control-sm" style="max-width:150px" autocomplete="current-password" placeholder="Contraseña" required>
                 <button class="btn btn-outline-warning" type="submit"><i class="bi bi-key me-1"></i>Recuperar</button>
               </form>
               <form method="post" action="{{ url_for('referrals.admin_referrals_seller_delete', seller_id=row.id) }}" onsubmit="return confirm('Si no tiene historial se eliminara definitivamente. Si tiene historial, se desactivara para conservarlo. Continuar?');">
                 <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                <input type="password" name="step_up_password" class="form-control form-control-sm" style="max-width:150px" autocomplete="current-password" placeholder="Contraseña" required>
                 <button class="btn btn-outline-danger" type="submit"><i class="bi bi-trash me-1"></i>Eliminar vendedor</button>
               </form>
             </div>
