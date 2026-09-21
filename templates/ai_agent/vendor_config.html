@@ -126,17 +126,6 @@
             <div class="form-text" id="standardShippingHelp">Se usa cuando el modo es tarifa estándar.</div>
           </div>
           <div class="col-12">
-            <div class="vendor-switch">
-              <div>
-                <div class="fw-bold">Generar el cobro automáticamente</div>
-                <div class="small text-muted">En modo estándar, el Vendedor genera el enlace de pago cuando el pedido ya tiene todos los datos.</div>
-              </div>
-              <label class="form-check form-switch fs-5 mb-0">
-                <input class="form-check-input" type="checkbox" name="vendor_auto_generate_payment" value="1" {% if vendor_options.auto_generate_payment %}checked{% endif %} aria-label="Generar el cobro automáticamente">
-              </label>
-            </div>
-          </div>
-          <div class="col-12">
             <div class="alert alert-info small mb-0">
               <i class="bi bi-shield-check me-1"></i>
               <strong>Importante:</strong> el Vendedor nunca toma el costo de envío desde el cliente. En modo manual, el pedido aparece en <strong>Pedidos IA</strong> para que el comercio lo cotice; recién después se genera el enlace de cobro.
