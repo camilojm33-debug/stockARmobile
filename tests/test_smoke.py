@@ -7735,6 +7735,45 @@ def test_company_backup_import_route_creates_preview():
         assert "preview_id=" in location
 
 
+def test_superadmin_backup_import_requires_step_up():
+    from services.backup_service import BackupService
+
+    with stock_app.app.app_context():
+        company = Company.query.filter_by(name="Empresa Demo").first()
+        assert company is not None
+        backup, _plan = BackupService.create_manual_backup(company.id, user_id=1)
+        with open(backup.path, "rb") as file_handle:
+            raw_bytes = file_handle.read()
+
+    client = stock_app.app.test_client()
+    client.post("/auth/login", data={"username": "superadmin", "password": "admin123"})
+
+    blocked = client.post(
+        "/superadmin/backups/import",
+        data={
+            "company_id": str(company.id),
+            "backup_file": (io.BytesIO(raw_bytes), "backup.json.gz"),
+        },
+        content_type="multipart/form-data",
+        follow_redirects=True,
+    )
+    assert blocked.status_code == 200
+    assert "reautenticación" in blocked.data.decode("utf-8").lower()
+
+    allowed = client.post(
+        "/superadmin/backups/import",
+        data={
+            "company_id": str(company.id),
+            "backup_file": (io.BytesIO(raw_bytes), "backup.json.gz"),
+            "step_up_password": "admin123",
+        },
+        content_type="multipart/form-data",
+        follow_redirects=False,
+    )
+    assert allowed.status_code in (301, 302)
+    assert "preview_id=" in (allowed.headers.get("Location") or "")
+
+
 def test_webhook_invalid_signature_is_rejected(monkeypatch):
     from services.webhook_service import WebhookService
 
