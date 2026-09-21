@@ -42,6 +42,18 @@ PUBLIC_VENDOR_CHAT_LIMIT = 12
 PUBLIC_VENDOR_CHAT_WINDOW = 60
 
 
+def _current_active_company():
+    from app import Company
+
+    company = Company.query.filter_by(
+        id=getattr(current_user, "company_id", None),
+        active=True,
+    ).first()
+    if company is None:
+        abort(403)
+    return company
+
+
 def _public_vendor_serializer():
     return URLSafeTimedSerializer(current_app.config.get("SECRET_KEY", "stockarmobile-dev-secret"))
 
@@ -438,7 +450,7 @@ def index():
 @bp.get("/campanas")
 @tenant_required
 def campaigns():
-    entitlement = can_use_ai_feature(current_user.company, "marketing")
+    entitlement = can_use_ai_feature(_current_active_company(), "marketing")
     if not entitlement.allowed:
         return render_template(
             "ai_agents/index.html",
@@ -453,7 +465,7 @@ def campaigns():
 @bp.get("/campanas/<int:campaign_id>")
 @tenant_required
 def campaign_detail(campaign_id):
-    entitlement = can_use_ai_feature(current_user.company, "marketing")
+    entitlement = can_use_ai_feature(_current_active_company(), "marketing")
     if not entitlement.allowed:
         abort(403)
     campaign = CampaignService._campaign(current_user.company_id, campaign_id)
@@ -466,7 +478,7 @@ def campaign_detail(campaign_id):
 @bp.post("/vendedor/webchat/toggle")
 @company_admin_required
 def vendor_webchat_toggle():
-    company = current_user.company
+    company = _current_active_company()
     access = can_use_ai_feature(company, "vendedor")
     if not access.allowed:
         flash(access.reason or "Tu plan no incluye el Vendedor IA.", "warning")
@@ -482,7 +494,7 @@ def vendor_webchat_toggle():
 @bp.post("/campanas/<int:campaign_id>/edit")
 @company_admin_required
 def campaign_edit(campaign_id):
-    entitlement = can_use_ai_feature(current_user.company, "marketing")
+    entitlement = can_use_ai_feature(_current_active_company(), "marketing")
     if not entitlement.allowed:
         flash(entitlement.reason or "Tu plan no incluye Marketing IA.", "warning")
         return redirect(url_for("ai_agents.agent", agent="planes"))
@@ -499,7 +511,7 @@ def campaign_edit(campaign_id):
 @bp.post("/campanas/<int:campaign_id>/transition")
 @company_admin_required
 def campaign_transition(campaign_id):
-    entitlement = can_use_ai_feature(current_user.company, "marketing")
+    entitlement = can_use_ai_feature(_current_active_company(), "marketing")
     if not entitlement.allowed:
         flash(entitlement.reason or "Tu plan no incluye Marketing IA.", "warning")
         return redirect(url_for("ai_agents.agent", agent="planes"))

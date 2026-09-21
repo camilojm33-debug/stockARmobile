@@ -1,3 +1,4 @@
+import re
 from pathlib import Path
 
 from flask import Flask
@@ -61,3 +62,10 @@ def test_vendor_whatsapp_uses_tenant_safe_company_access():
     assert "can_use_ai_feature(current_user.company, " not in vendor_metrics_block
     assert "get_current_company_id(current_user)" in vendor_metrics_block
     assert 'can_use_ai_feature(company, "vendedor")' in vendor_metrics_block
+
+
+def test_ai_agent_routes_do_not_use_broken_user_company_relationship():
+    content = (REPO_ROOT / "ai_agents.py").read_text(encoding="utf-8")
+    assert re.search(r"current_user\\.company(?!_)", content) is None
+    assert "can_use_ai_feature(_current_active_company(), \"marketing\")" in content
+    assert "company = _current_active_company()" in content
