@@ -3653,6 +3653,8 @@ def backups_import():
     from app import db, record_audit
 
     _require_superadmin()
+    if not _require_superadmin_step_up():
+        return _redirect_back("saas.backups_panel")
     company_id = request.form.get("company_id", type=int)
     backup_file = request.files.get("backup_file")
     if not company_id:
