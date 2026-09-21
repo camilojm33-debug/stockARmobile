@@ -103,7 +103,7 @@ def test_vendor_configuration_navigation_and_capabilities_are_exposed():
     publication_page = (root / "templates/ai_agents/vendor_publication.html").read_text(encoding="utf-8")
     admin_service = (root / "services/ai_agent/admin.py").read_text(encoding="utf-8")
 
-    assert 'url_for("ai_admin.index")' in vendor_page or "url_for('ai_admin.index')" in vendor_page
+    assert "config_url" in vendor_page
     assert "Configurar Vendedor" in vendor_page
     assert "Publicar y compartir" in vendor_page
     assert "url_for('vendor_publication.publication_page')" in vendor_page
