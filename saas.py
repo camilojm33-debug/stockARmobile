@@ -3502,6 +3502,7 @@ def password_recovery_reset(request_id):
 
     # La sesión conserva solo un token opaco; el secreto permanece cifrado del lado servidor.
     session["password_recovery_temp_password"] = access_token
+    session["password_recovery_temp_password_user_id"] = user.id
     session["password_recovery_temp_password_user"] = user.username
     flash("Contrasena temporal generada. Se mostrara una sola vez.", "warning")
     return _redirect_back("saas.password_recovery_panel")
