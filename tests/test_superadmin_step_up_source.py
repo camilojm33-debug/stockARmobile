@@ -22,6 +22,7 @@ def test_superadmin_critical_action_forms_expose_reauthentication():
     assert 'name="step_up_password"' in companies
     assert 'name="step_up_password"' in detail
     assert 'name="step_up_password"' in backups
+    assert 'name="step_up_password"' in backups
     assert 'autocomplete="current-password"' in companies
     assert 'autocomplete="current-password"' in backups
 
