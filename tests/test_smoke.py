@@ -6738,7 +6738,7 @@ def test_superadmin_can_create_change_and_recover_seller_password():
     assert created.status_code in (301, 302)
 
     with stock_app.app.app_context():
-        from app import ReferralSeller
+        from app import ReferralSeller, db
 
         seller_user = User.query.filter_by(username="seller_admin_abm").first()
         assert seller_user is not None
