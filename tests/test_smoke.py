@@ -8498,3 +8498,91 @@ def test_landing_advertises_global_pricing_controller_for_business_and_premium()
     body = response.get_data(as_text=True)
     assert "Controlador global de precios" in body
     assert "Negocio" in body
+
+
+def test_pricing_controller_non_business_redirects_to_standard_subscription_portal():
+    from services.plan_service import PlanService
+    from services.subscription_service import SubscriptionService
+
+    client = stock_app.app.test_client()
+    with stock_app.app.app_context():
+        company = Company.query.filter_by(name="Empresa Demo").first()
+        user = User.query.filter_by(username="empresa_admin").first()
+        assert company is not None
+        assert user is not None
+        PlanService.ensure_defaults(db.session)
+        entrepreneur = PlanService.get_plan(code="entrepreneur")
+        assert entrepreneur is not None
+
+        subscription = SubscriptionService.active_subscription_for_company(company.id)
+        if subscription is None:
+            subscription = SubscriptionService.start_or_change_plan(
+                db.session,
+                company=company,
+                plan=entrepreneur,
+                user_id=user.id,
+            )
+        else:
+            subscription.plan_id = entrepreneur.id
+            subscription.status = "active"
+            subscription.start_date = stock_app.utcnow()
+            subscription.ends_at = stock_app.utcnow() + timedelta(days=30)
+        db.session.commit()
+
+    client.post("/auth/login", data={"username": "empresa_admin", "password": "admin123"})
+    response = client.get("/precios/", follow_redirects=False)
+    assert response.status_code == 302
+    assert response.headers["Location"].endswith("/admin/portal")
+
+
+def test_pricing_controller_is_visible_in_menu_for_all_standard_plans():
+    from services.plan_service import PlanService
+    from services.subscription_service import SubscriptionService
+
+    client = stock_app.app.test_client()
+    with stock_app.app.app_context():
+        company = Company.query.filter_by(name="Empresa Demo").first()
+        user = User.query.filter_by(username="empresa_admin").first()
+        assert company is not None
+        assert user is not None
+        PlanService.ensure_defaults(db.session)
+        entrepreneur = PlanService.get_plan(code="entrepreneur")
+        business = PlanService.get_plan(code="business")
+        assert entrepreneur is not None
+        assert business is not None
+
+        subscription = SubscriptionService.active_subscription_for_company(company.id)
+        if subscription is None:
+            subscription = SubscriptionService.start_or_change_plan(
+                db.session,
+                company=company,
+                plan=entrepreneur,
+                user_id=user.id,
+            )
+        else:
+            subscription.plan_id = entrepreneur.id
+            subscription.status = "active"
+            subscription.start_date = stock_app.utcnow()
+            subscription.ends_at = stock_app.utcnow() + timedelta(days=30)
+        db.session.commit()
+
+    client.post("/auth/login", data={"username": "empresa_admin", "password": "admin123"})
+    response = client.get("/dashboard/")
+    assert response.status_code == 200
+    body = response.get_data(as_text=True)
+    assert "Controlador global de precios" in body
+    assert "/admin/portal" in body
+
+    with stock_app.app.app_context():
+        subscription = SubscriptionService.active_subscription_for_company(company.id)
+        subscription.plan_id = business.id
+        subscription.status = "active"
+        subscription.start_date = stock_app.utcnow()
+        subscription.ends_at = stock_app.utcnow() + timedelta(days=30)
+        db.session.commit()
+
+    response = client.get("/dashboard/")
+    assert response.status_code == 200
+    body = response.get_data(as_text=True)
+    assert "Controlador global de precios" in body
+    assert "/precios/" in body
