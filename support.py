@@ -109,7 +109,7 @@ def admin_index():
 @bp.route("/admin/<int:ticket_id>")
 @superadmin_required
 def admin_detail(ticket_id):
-    from app import SupportTicket
+    from app import SupportTicket, db
 
     ticket = SupportTicket.query.filter_by(id=ticket_id).first_or_404()
     from services.one_time_secret_service import OneTimeSecretService
