@@ -821,18 +821,19 @@ class BackupService:
             db.session.flush()
             after = counts()
 
+            payload = BackupService._load_payload(backup_log)
             expected = {
-                "products": summary["products"],
-                "clients": summary["clients"],
-                "sales": summary["sales"],
-                "employees": summary["employees"],
-                "suppliers": len(BackupService._payload_for_company(expected_company_id).get("suppliers") or []),
-                "purchase_orders": len(BackupService._payload_for_company(expected_company_id).get("purchase_orders") or []),
-                "purchase_items": len(BackupService._payload_for_company(expected_company_id).get("purchase_items") or []),
-                "sale_items": len(BackupService._payload_for_company(expected_company_id).get("sale_items") or []),
-                "cash_sessions": len(BackupService._payload_for_company(expected_company_id).get("cash_sessions") or []),
-                "cash_movements": len(BackupService._payload_for_company(expected_company_id).get("cash_movements") or []),
-                "expenses": len(BackupService._payload_for_company(expected_company_id).get("expenses") or []),
+                "products": len(payload.get("products") or []),
+                "clients": len(payload.get("clients") or []),
+                "sales": len(payload.get("sales") or []),
+                "employees": len(payload.get("users") or []),
+                "suppliers": len(payload.get("suppliers") or []),
+                "purchase_orders": len(payload.get("purchase_orders") or []),
+                "purchase_items": len(payload.get("purchase_items") or []),
+                "sale_items": len(payload.get("sale_items") or []),
+                "cash_sessions": len(payload.get("cash_sessions") or []),
+                "cash_movements": len(payload.get("cash_movements") or []),
+                "expenses": len(payload.get("expenses") or []),
             }
             mismatches = {
                 key: {"expected": value, "actual": after.get(key)}
