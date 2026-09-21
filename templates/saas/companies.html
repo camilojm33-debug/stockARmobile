@@ -137,6 +137,7 @@
             <td class="text-end">
               <div class="d-flex flex-wrap justify-content-end gap-1">
                 <a class="btn btn-sm btn-outline-primary" href="{{ url_for('saas.company_detail', company_id=company.id) }}">Ver empresa</a>
+                <a class="btn btn-sm btn-outline-secondary" href="{{ url_for('saas.company_360', company_id=company.id) }}">Empresa 360</a>
                 <a class="btn btn-sm btn-outline-success" href="{{ url_for('saas.subscriptions_panel', company_id=company.id) }}">Renovar manual</a>
                 <a class="btn btn-sm btn-outline-info" href="{{ url_for('saas.ai_subscription_detail', company_id=company.id) }}">Gestionar IA</a>
                 <a class="btn btn-sm btn-outline-secondary" href="{{ url_for('saas.company_detail', company_id=company.id) }}#stats">Ver estadisticas</a>
