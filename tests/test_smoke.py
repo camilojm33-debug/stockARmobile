@@ -194,6 +194,7 @@ def test_core_routes_and_decimal_checkout():
     assert client.get("/superadmin/").status_code == 200
     assert client.get("/superadmin/billing").status_code == 200
     assert client.get("/superadmin/crm").status_code == 200
+    assert client.get("/superadmin/companies/1/360").status_code == 200
     superadmin_dashboard = client.get("/dashboard/", follow_redirects=False)
     assert superadmin_dashboard.status_code in (301, 302)
 
