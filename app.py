@@ -865,6 +865,11 @@ class QuoteDelivery(db.Model):
     shipping_cost = db.Column(MONEY, nullable=False, default=Decimal("0.00"))
     shipping_rate = db.Column(PERCENT, nullable=False, default=Decimal("0.00"))
     shipping_reason = db.Column(db.String(255))
+    shipping_status = db.Column(db.String(30), nullable=False, default="confirmed", index=True)
+    shipping_source = db.Column(db.String(30), nullable=False, default="legacy_percent")
+    shipping_confirmed_by_user_id = db.Column(db.Integer, db.ForeignKey("users.id"), nullable=True)
+    shipping_confirmed_at = db.Column(db.DateTime, nullable=True)
+    shipping_confirmed_by = db.relationship("User", foreign_keys=[shipping_confirmed_by_user_id])
     created_at = db.Column(db.DateTime, default=utcnow)
     updated_at = db.Column(db.DateTime, default=utcnow, onupdate=utcnow)
 
