@@ -1129,6 +1129,7 @@ def api_mp_qr_create():
 def api_mp_qr_status():
     _mp_qr_trace_enter("sales.api_mp_qr_status")
     from app import Payment
+    from services.payment_flow import is_stale_pos_draft
 
     draft_id = request.args.get("draft_id", type=int)
     if not draft_id:
@@ -1137,11 +1138,21 @@ def api_mp_qr_status():
     payload = json.loads(payment.payload_json) if payment.payload_json else {}
     approved_at = payment.paid_at or payment.updated_at
     status = (payment.status or "pending").lower()
+    if is_stale_pos_draft(payment) and status in {"pending", "in_process", "authorized"}:
+        status = "expired"
     can_process = status == "approved"
     return jsonify({
         "payment_id": payment.id,
         "status": status,
-        "status_label": "Pago recibido" if status == "approved" else "Esperando pago" if status == "pending" else status.title(),
+        "status_label": (
+            "Pago recibido"
+            if status == "approved"
+            else "Pago pendiente"
+            if status in {"pending", "in_process", "authorized"}
+            else "Borrador expirado"
+            if status == "expired"
+            else status.title()
+        ),
         "amount": float(payment.amount or 0),
         "currency": payment.currency or "ARS",
         "payment_method": payment.payment_method or "QR Mercado Pago",
