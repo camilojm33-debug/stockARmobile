@@ -3814,7 +3814,6 @@ def test_support_ticket_flow_and_temp_password_generation():
         data={"require_password_change": "1", "step_up_password": "admin123"},
         follow_redirects=False,
     )
-    assert generate_temp.status_code == 200
     assert generate_temp.status_code in (301, 302)
     with client.session_transaction() as sess:
         access_token = sess.get(f"support_temp_password_{ticket_id}")
@@ -4155,7 +4154,6 @@ def test_password_recovery_request_and_superadmin_reset_flow():
         data={"step_up_password": "admin123"},
         follow_redirects=False,
     )
-    assert reset.status_code == 200
     assert reset.status_code in (301, 302)
     with client.session_transaction() as sess:
         recovery_token = sess.get("password_recovery_temp_password")
@@ -6779,7 +6777,6 @@ def test_superadmin_can_create_change_and_recover_seller_password():
         data={"step_up_password": "admin123"},
         follow_redirects=False,
     )
-    assert reset.status_code == 200
     assert reset.status_code in (301, 302)
     with client.session_transaction() as sess:
         referral_token = sess.get("referral_seller_temp_password")
@@ -6881,7 +6878,7 @@ def test_superadmin_delete_seller_with_history_preserves_records_as_inactive():
     assert "Vendedor desactivado con historial preservado." in deleted.data.decode("utf-8")
 
     with stock_app.app.app_context():
-        from app import ReferralAttribution, ReferralCommission, ReferralSeller
+        from app import ReferralAttribution, ReferralCommission, ReferralSeller, db
 
         seller_user = db.session.get(User, seller_user_id)
         seller_profile = db.session.get(ReferralSeller, seller_id)
