@@ -465,7 +465,7 @@ def campaigns():
 @bp.get("/campanas/<int:campaign_id>")
 @tenant_required
 def campaign_detail(campaign_id):
-    entitlement = can_use_ai_feature(current_user.company, "marketing")
+    entitlement = can_use_ai_feature(_current_active_company(), "marketing")
     if not entitlement.allowed:
         abort(403)
     campaign = CampaignService._campaign(current_user.company_id, campaign_id)
@@ -494,7 +494,7 @@ def vendor_webchat_toggle():
 @bp.post("/campanas/<int:campaign_id>/edit")
 @company_admin_required
 def campaign_edit(campaign_id):
-    entitlement = can_use_ai_feature(current_user.company, "marketing")
+    entitlement = can_use_ai_feature(_current_active_company(), "marketing")
     if not entitlement.allowed:
         flash(entitlement.reason or "Tu plan no incluye Marketing IA.", "warning")
         return redirect(url_for("ai_agents.agent", agent="planes"))
@@ -511,7 +511,7 @@ def campaign_edit(campaign_id):
 @bp.post("/campanas/<int:campaign_id>/transition")
 @company_admin_required
 def campaign_transition(campaign_id):
-    entitlement = can_use_ai_feature(current_user.company, "marketing")
+    entitlement = can_use_ai_feature(_current_active_company(), "marketing")
     if not entitlement.allowed:
         flash(entitlement.reason or "Tu plan no incluye Marketing IA.", "warning")
         return redirect(url_for("ai_agents.agent", agent="planes"))
