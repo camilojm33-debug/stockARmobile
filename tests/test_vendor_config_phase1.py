@@ -147,3 +147,19 @@ def test_general_ai_admin_uses_canonical_vendor_context_key():
     assert "vendor_agent=vendor_agent" in admin_service
     assert "agents['Vendedor IA 24/7']" not in admin_page
     assert "vendor_agent.active" in admin_page
+
+
+def test_legacy_public_vendor_route_supplies_complete_template_context_and_can_redirect_to_stable():
+    from pathlib import Path
+
+    root = Path(__file__).resolve().parents[1]
+    source = (root / "ai_agents.py").read_text(encoding="utf-8")
+
+    route_start = source.index('def public_vendor_chat(token):')
+    route_body = source[route_start:source.index('\n\n@bp.post("/public/vendedor/<token>/message")', route_start)]
+
+    assert "publication_status(company)" in route_body
+    assert 'redirect(publication["url"], code=302)' in route_body
+    assert "catalog=_catalog_for_company(company)" in route_body
+    assert "initial_state=_initial_page_state(company)" in route_body
+    assert "greeting=str(options.get(\"greeting\")" in route_body
