@@ -1,8 +1,80 @@
 {% extends "base_master.html" %}
-{% block title %}Registros - SuperAdmin{% endblock %}
+{% block title %}Auditoría · Super Admin{% endblock %}
+{% block extra_css %}
+<link rel="stylesheet" href="{{ url_for('static', filename='assets/css/superadmin.css') }}">
+{% endblock %}
 {% block content %}
-<div class="app-shell">
-  <div class="d-flex justify-content-between align-items-center mb-3"><h1 class="h3 fw-bold mb-0">Registros globales</h1><a class="btn btn-outline-secondary" href="{{ url_for('saas.index') }}">Volver</a></div>
-  <div class="card app-card"><div class="table-responsive"><table class="table mb-0 table-hover"><thead><tr><th>Fecha</th><th>Acción</th><th>Entidad</th><th>Empresa</th><th>Detalle</th></tr></thead><tbody>{% for log in logs %}<tr><td>{{ log.created_at.strftime('%Y-%m-%d %H:%M') if log.created_at else '-' }}</td><td>{{ log.action }}</td><td>{{ log.entity or '-' }}</td><td>{{ log.company_id or '-' }}</td><td>{{ log.detail or '-' }}</td></tr>{% else %}<tr><td colspan="5" class="text-center text-muted py-4">Sin registros.</td></tr>{% endfor %}</tbody></table></div></div>
+<div class="app-shell superadmin-page">
+  <div class="d-flex flex-wrap justify-content-between align-items-start gap-3 mb-4">
+    <div>
+      <div class="page-kicker"><i class="bi bi-shield-check"></i> Seguridad y auditoría</div>
+      <h1 class="h3 fw-bold mb-1">Registros globales</h1>
+      <p class="text-muted mb-0">Filtrá acciones administrativas y cambios importantes sin perder el historial actual.</p>
+    </div>
+    <a class="btn btn-outline-secondary" href="{{ url_for('saas.index') }}"><i class="bi bi-arrow-left me-1"></i>Centro de Operaciones</a>
+  </div>
+
+  <div class="app-card p-3 mb-4">
+    <form class="row g-2" method="get" action="{{ url_for('saas.logs_panel') }}">
+      <div class="col-12 col-md-4">
+        <label class="form-label small fw-semibold">Buscar</label>
+        <input class="form-control" name="q" value="{{ filters.q }}" placeholder="Acción, entidad o detalle">
+      </div>
+      <div class="col-12 col-md-3">
+        <label class="form-label small fw-semibold">Empresa</label>
+        <select class="form-select" name="company_id">
+          <option value="">Todas</option>
+          {% for company in companies %}
+          <option value="{{ company.id }}" {% if filters.company_id == company.id %}selected{% endif %}>{{ company.name }}</option>
+          {% endfor %}
+        </select>
+      </div>
+      <div class="col-12 col-md-3">
+        <label class="form-label small fw-semibold">Acción</label>
+        <select class="form-select" name="action">
+          <option value="">Todas</option>
+          {% for item in actions %}
+          <option value="{{ item }}" {% if filters.action == item %}selected{% endif %}>{{ item }}</option>
+          {% endfor %}
+        </select>
+      </div>
+      <div class="col-8 col-md-1">
+        <label class="form-label small fw-semibold">Días</label>
+        <select class="form-select" name="days">
+          {% for value in [7,30,90,180,365] %}
+          <option value="{{ value }}" {% if filters.days == value %}selected{% endif %}>{{ value }}</option>
+          {% endfor %}
+        </select>
+      </div>
+      <div class="col-4 col-md-1 d-grid align-items-end">
+        <button class="btn btn-primary" type="submit" aria-label="Filtrar"><i class="bi bi-search"></i></button>
+      </div>
+    </form>
+  </div>
+
+  <div class="app-card overflow-hidden">
+    <div class="p-3 border-bottom d-flex justify-content-between align-items-center">
+      <div><strong>Auditoría</strong><div class="small text-muted">{{ logs|length }} registros visibles</div></div>
+      <a class="btn btn-sm btn-outline-secondary" href="{{ url_for('saas.logs_panel') }}">Limpiar filtros</a>
+    </div>
+    <div class="table-responsive">
+      <table class="table table-hover mb-0">
+        <thead><tr><th>Fecha</th><th>Acción</th><th>Entidad</th><th>Empresa</th><th>Detalle</th></tr></thead>
+        <tbody>
+        {% for log in logs %}
+          <tr>
+            <td class="small text-nowrap">{{ log.created_at.strftime('%d/%m/%Y %H:%M') if log.created_at else '-' }}</td>
+            <td><span class="badge text-bg-light border">{{ log.action }}</span></td>
+            <td>{{ log.entity or '-' }}</td>
+            <td>{{ log.company_id or '-' }}</td>
+            <td class="small">{{ log.detail or '-' }}</td>
+          </tr>
+        {% else %}
+          <tr><td colspan="5" class="text-center text-muted py-5">No hay registros para los filtros seleccionados.</td></tr>
+        {% endfor %}
+        </tbody>
+      </table>
+    </div>
+  </div>
 </div>
 {% endblock %}
