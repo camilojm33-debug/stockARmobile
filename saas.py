@@ -1825,6 +1825,8 @@ def toggle_company(company_id):
     from app import AuditLog, Company, User, db
 
     _require_superadmin()
+    if not _require_superadmin_step_up():
+        return _redirect_back("saas.companies_panel" )
     company = db.session.get(Company, company_id)
     if company is None:
         abort(404)
@@ -2297,6 +2299,8 @@ def company_assign_pin(company_id):
     from services.company_security_service import CompanySecurityService
 
     _require_superadmin()
+    if not _require_superadmin_step_up():
+        return _redirect_back("saas.company_detail" , company_id=company.id)
     company = Company.query.filter_by(id=company_id).first_or_404()
     raw_pin = (request.form.get("admin_pin") or "").strip()
     if len(raw_pin) != 4 or not raw_pin.isdigit():
@@ -2327,6 +2331,8 @@ def company_generate_pin(company_id):
     from services.company_security_service import CompanySecurityService
 
     _require_superadmin()
+    if not _require_superadmin_step_up():
+        return _redirect_back("saas.company_detail" , company_id=company.id)
     company = Company.query.filter_by(id=company_id).first_or_404()
     had_pin = bool(company.business_pin_hash)
 
@@ -2407,6 +2413,8 @@ def company_impersonate(company_id):
     from app import AuditLog, Company, db
 
     _require_superadmin()
+    if not _require_superadmin_step_up():
+        return _redirect_back("saas.company_detail" , company_id=company.id)
     company = Company.query.filter_by(id=company_id).first_or_404()
     session["impersonator_user_id"] = current_user.id
     session["impersonated_company_id"] = company.id
@@ -3157,6 +3165,8 @@ def users_update_role(user_id):
     from app import AuditLog, User, db
 
     _require_superadmin()
+    if not _require_superadmin_step_up():
+        return _redirect_back("saas.users_panel" )
     user = db.session.get(User, user_id)
     if user is None:
         abort(404)
@@ -3201,6 +3211,8 @@ def users_update_status(user_id):
     from app import AuditLog, User, db
 
     _require_superadmin()
+    if not _require_superadmin_step_up():
+        return _redirect_back("saas.users_panel" )
     user = db.session.get(User, user_id)
     if user is None:
         abort(404)
@@ -3289,6 +3301,8 @@ def password_recovery_company_user_reset():
     from app import User, db, record_audit
 
     _require_superadmin()
+    if not _require_superadmin_step_up():
+        return _redirect_back("saas.password_recovery_panel" , company_id=company.id)
     raw_user_id = request.form.get("user_id")
     try:
         user_id = int(raw_user_id)
@@ -3358,6 +3372,8 @@ def password_recovery_reset(request_id):
     from app import PasswordRecoveryRequest, User, db, record_audit
 
     _require_superadmin()
+    if not _require_superadmin_step_up():
+        return _redirect_back("saas.password_recovery_panel" )
     item = PasswordRecoveryRequest.query.filter_by(id=request_id).first_or_404()
     user = db.session.get(User, item.user_id)
     if user is None:
