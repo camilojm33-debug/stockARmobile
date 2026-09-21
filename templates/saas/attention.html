@@ -1,0 +1,120 @@
+{% extends "base_master.html" %}
+{% block title %}Atención · Super Admin{% endblock %}
+{% block extra_css %}
+<link rel="stylesheet" href="{{ url_for('static', filename='assets/css/superadmin.css') }}">
+{% endblock %}
+
+{% block content %}
+<div class="app-shell superadmin-page">
+  <div class="d-flex flex-wrap justify-content-between align-items-start gap-3 mb-4">
+    <div>
+      <div class="page-kicker"><i class="bi bi-lightning-charge"></i> Operación</div>
+      <h1 class="h2 fw-bold mb-1">Centro de Atención</h1>
+      <p class="text-muted mb-0">Un solo lugar para detectar qué requiere intervención ahora.</p>
+    </div>
+    <div class="text-end">
+      <span class="badge rounded-pill text-bg-light border"><i class="bi bi-clock me-1"></i>Actualizado {{ refreshed_at.strftime('%H:%M') }}</span>
+      <div class="small text-muted mt-1">Solo lectura · las acciones abren los módulos existentes</div>
+    </div>
+  </div>
+
+  <div class="row g-3 mb-4">
+    <div class="col-12 col-md-4">
+      <div class="sa-kpi sa-kpi-danger">
+        <div class="sa-kpi-icon"><i class="bi bi-exclamation-octagon"></i></div>
+        <div><div class="small text-muted">Críticas</div><div class="h3 mb-0 fw-bold">{{ critical|length }}</div></div>
+      </div>
+    </div>
+    <div class="col-12 col-md-4">
+      <div class="sa-kpi sa-kpi-warning">
+        <div class="sa-kpi-icon"><i class="bi bi-exclamation-triangle"></i></div>
+        <div><div class="small text-muted">En seguimiento</div><div class="h3 mb-0 fw-bold">{{ warning|length }}</div></div>
+      </div>
+    </div>
+    <div class="col-12 col-md-4">
+      <div class="sa-kpi sa-kpi-neutral">
+        <div class="sa-kpi-icon"><i class="bi bi-heart-pulse"></i></div>
+        <div>
+          <div class="small text-muted">Salud técnica</div>
+          <div class="h3 mb-0 fw-bold">{{ health_snapshot.summary.ok }}/{{ health_snapshot.checks|length }}</div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div class="row g-4">
+    <div class="col-12 col-xl-8">
+      <section class="app-card p-0 overflow-hidden">
+        <div class="p-3 p-lg-4 border-bottom">
+          <div class="d-flex justify-content-between align-items-center gap-2">
+            <div>
+              <h2 class="h5 fw-bold mb-1">Requiere acción</h2>
+              <p class="small text-muted mb-0">Ordenado por severidad. No modifica datos al consultar.</p>
+            </div>
+            <a class="btn btn-sm btn-outline-secondary" href="{{ url_for('saas.index') }}"><i class="bi bi-speedometer2 me-1"></i>Centro SaaS</a>
+          </div>
+        </div>
+
+        {% if attention_queue %}
+        <div class="list-group list-group-flush">
+          {% for item in attention_queue %}
+          <div class="list-group-item px-3 px-lg-4 py-3">
+            <div class="d-flex align-items-start gap-3">
+              <div class="sa-attention-icon {% if item.priority_group == 'critical' %}danger{% else %}warning{% endif %}">{{ item.icon }}</div>
+              <div class="flex-grow-1 min-w-0">
+                <div class="d-flex flex-wrap align-items-center gap-2">
+                  <strong>{{ item.reason }}</strong>
+                  {% if item.priority_group == 'critical' %}
+                    <span class="badge text-bg-danger">Crítica</span>
+                  {% else %}
+                    <span class="badge text-bg-warning">Seguimiento</span>
+                  {% endif %}
+                </div>
+                <div class="small fw-semibold mt-1">{{ item.company_name }}</div>
+                <div class="small text-muted">{{ item.detail }}</div>
+              </div>
+              <a class="btn btn-sm btn-outline-primary flex-shrink-0" href="{{ item.action_url }}">{{ item.action_label }} <i class="bi bi-arrow-right"></i></a>
+            </div>
+          </div>
+          {% endfor %}
+        </div>
+        {% else %}
+        <div class="empty-state p-5">
+          <div>
+            <div class="display-6 mb-2">✓</div>
+            <h3 class="h5">Todo en orden</h3>
+            <p class="mb-0">No hay incidencias operativas detectadas por las reglas actuales.</p>
+          </div>
+        </div>
+        {% endif %}
+      </section>
+    </div>
+
+    <div class="col-12 col-xl-4">
+      <section class="app-card h-100">
+        <div class="p-3 p-lg-4 border-bottom">
+          <h2 class="h5 fw-bold mb-1">Salud de plataforma</h2>
+          <p class="small text-muted mb-0">Estado de los checks existentes.</p>
+        </div>
+        <div class="p-3">
+          {% for check in health_snapshot.checks %}
+          <div class="sa-health-row">
+            <div class="d-flex align-items-center gap-2 min-w-0">
+              <span class="sa-health-dot {{ check.data.status }}"></span>
+              <div class="min-w-0">
+                <div class="small fw-semibold">{{ check.name }}</div>
+                <div class="small text-muted text-truncate">{{ check.data.detail }}</div>
+              </div>
+            </div>
+            <a class="btn btn-sm btn-link px-1" href="{{ check.action.url }}">{{ check.action.label }}</a>
+          </div>
+          {% endfor %}
+        </div>
+        <div class="border-top p-3">
+          <a class="btn btn-outline-secondary w-100" href="{{ url_for('saas.server_status') }}"><i class="bi bi-hdd-network me-1"></i>Ver estado completo</a>
+        </div>
+      </section>
+    </div>
+  </div>
+</div>
+{% endblock %}
