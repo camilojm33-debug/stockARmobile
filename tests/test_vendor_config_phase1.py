@@ -109,7 +109,10 @@ def test_vendor_configuration_navigation_and_capabilities_are_exposed():
     assert "Publicar y compartir" in vendor_page
     assert "url_for('vendor_publication.publication_page')" in vendor_page
 
-    assert "url_for('ai_admin.vendor_config')" in admin_page
+    assert "url_for('ai_agents.agent', agent='vendedor')" in admin_page
+    assert "url_for('ai_admin.vendor_config')" not in admin_page
+    assert "Publicar y compartir" not in admin_page
+    assert "vendor_metrics" not in admin_page
     assert "vendor_can_recommend" not in admin_page
     assert "vendor_can_offer_alternatives" not in admin_page
     assert "vendor_can_prepare_quotes" not in admin_page
