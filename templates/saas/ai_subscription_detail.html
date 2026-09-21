@@ -71,6 +71,7 @@
           <form method="post" action="{{ url_for('saas.ai_subscriptions_action', company_id=company.id) }}" class="row g-2 align-items-end">
             <input type="hidden" name="action" value="assign_plan">
             <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                  <input type="password" name="step_up_password" class="form-control form-control-sm" autocomplete="current-password" placeholder="Contraseña si venció el step-up">
             <input type="hidden" name="next" value="{{ url_for('saas.ai_subscription_detail', company_id=company.id) }}">
             <div class="col-md-8">
               <label class="form-label small">Plan IA</label>
@@ -92,22 +93,30 @@
         <div class="card-header bg-white fw-bold">Acciones</div>
         <div class="card-body d-flex flex-wrap gap-2">
           {% if status.status == 'ACTIVA' %}
-            <form method="post" action="{{ url_for('saas.ai_subscriptions_action', company_id=company.id) }}"><input type="hidden" name="action" value="suspend"><input type="hidden" name="csrf_token" value="{{ csrf_token() }}"><input type="hidden" name="next" value="{{ request.path }}"><button class="btn btn-outline-warning" type="submit">Suspender</button></form>
-            <form method="post" action="{{ url_for('saas.ai_subscriptions_action', company_id=company.id) }}"><input type="hidden" name="action" value="cancel"><input type="hidden" name="csrf_token" value="{{ csrf_token() }}"><input type="hidden" name="next" value="{{ request.path }}"><button class="btn btn-outline-danger" type="submit" onclick="return confirm('¿Seguro que querés cancelar la suscripción IA? Esta acción no afecta la suscripción StockArMobile.');">Cancelar</button></form>
+            <form method="post" action="{{ url_for('saas.ai_subscriptions_action', company_id=company.id) }}"><input type="hidden" name="action" value="suspend"><input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                  <input type="password" name="step_up_password" class="form-control form-control-sm" autocomplete="current-password" placeholder="Contraseña si venció el step-up"><input type="hidden" name="next" value="{{ request.path }}"><button class="btn btn-outline-warning" type="submit">Suspender</button></form>
+            <form method="post" action="{{ url_for('saas.ai_subscriptions_action', company_id=company.id) }}"><input type="hidden" name="action" value="cancel"><input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                  <input type="password" name="step_up_password" class="form-control form-control-sm" autocomplete="current-password" placeholder="Contraseña si venció el step-up"><input type="hidden" name="next" value="{{ request.path }}"><button class="btn btn-outline-danger" type="submit" onclick="return confirm('¿Seguro que querés cancelar la suscripción IA? Esta acción no afecta la suscripción StockArMobile.');">Cancelar</button></form>
           {% elif status.status == 'SUSPENDIDA' %}
-            <form method="post" action="{{ url_for('saas.ai_subscriptions_action', company_id=company.id) }}"><input type="hidden" name="action" value="reactivate"><input type="hidden" name="csrf_token" value="{{ csrf_token() }}"><input type="hidden" name="next" value="{{ request.path }}"><button class="btn btn-outline-success" type="submit">Reactivar</button></form>
-            <form method="post" action="{{ url_for('saas.ai_subscriptions_action', company_id=company.id) }}"><input type="hidden" name="action" value="cancel"><input type="hidden" name="csrf_token" value="{{ csrf_token() }}"><input type="hidden" name="next" value="{{ request.path }}"><button class="btn btn-outline-danger" type="submit" onclick="return confirm('¿Seguro que querés cancelar la suscripción IA? Esta acción no afecta la suscripción StockArMobile.');">Cancelar</button></form>
+            <form method="post" action="{{ url_for('saas.ai_subscriptions_action', company_id=company.id) }}"><input type="hidden" name="action" value="reactivate"><input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                  <input type="password" name="step_up_password" class="form-control form-control-sm" autocomplete="current-password" placeholder="Contraseña si venció el step-up"><input type="hidden" name="next" value="{{ request.path }}"><button class="btn btn-outline-success" type="submit">Reactivar</button></form>
+            <form method="post" action="{{ url_for('saas.ai_subscriptions_action', company_id=company.id) }}"><input type="hidden" name="action" value="cancel"><input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                  <input type="password" name="step_up_password" class="form-control form-control-sm" autocomplete="current-password" placeholder="Contraseña si venció el step-up"><input type="hidden" name="next" value="{{ request.path }}"><button class="btn btn-outline-danger" type="submit" onclick="return confirm('¿Seguro que querés cancelar la suscripción IA? Esta acción no afecta la suscripción StockArMobile.');">Cancelar</button></form>
           {% elif status.status in ['CANCELADA', 'VENCIDA'] and status.origin == 'MERCADO_PAGO' %}
             <div class="small text-muted align-self-center">La suscripción MP terminó. Usá <strong>Tomar control manual</strong> arriba para administrarla como una suscripción manual, o contratá nuevamente por Mercado Pago.</div>
             <a class="btn btn-outline-primary" href="{{ url_for('ai_agents.agent', agent='planes') }}">Contratar nuevamente</a>
           {% elif status.status == 'CANCELADA' %}
-            <form method="post" action="{{ url_for('saas.ai_subscriptions_action', company_id=company.id) }}"><input type="hidden" name="action" value="activate"><input type="hidden" name="csrf_token" value="{{ csrf_token() }}"><input type="hidden" name="next" value="{{ request.path }}"><button class="btn btn-outline-success" type="submit">Activar</button></form>
+            <form method="post" action="{{ url_for('saas.ai_subscriptions_action', company_id=company.id) }}"><input type="hidden" name="action" value="activate"><input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                  <input type="password" name="step_up_password" class="form-control form-control-sm" autocomplete="current-password" placeholder="Contraseña si venció el step-up"><input type="hidden" name="next" value="{{ request.path }}"><button class="btn btn-outline-success" type="submit">Activar</button></form>
           {% elif status.status == 'VENCIDA' %}
-            <form method="post" action="{{ url_for('saas.ai_subscriptions_action', company_id=company.id) }}"><input type="hidden" name="action" value="renew"><input type="hidden" name="csrf_token" value="{{ csrf_token() }}"><input type="hidden" name="next" value="{{ request.path }}"><input class="form-control form-control-sm" style="max-width:120px" type="number" name="days" min="1" max="365" value="30"><button class="btn btn-outline-primary" type="submit">Renovar</button></form>
+            <form method="post" action="{{ url_for('saas.ai_subscriptions_action', company_id=company.id) }}"><input type="hidden" name="action" value="renew"><input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                  <input type="password" name="step_up_password" class="form-control form-control-sm" autocomplete="current-password" placeholder="Contraseña si venció el step-up"><input type="hidden" name="next" value="{{ request.path }}"><input class="form-control form-control-sm" style="max-width:120px" type="number" name="days" min="1" max="365" value="30"><button class="btn btn-outline-primary" type="submit">Renovar</button></form>
           {% elif status.status == 'TRIAL' %}
-            <form method="post" action="{{ url_for('saas.ai_subscriptions_action', company_id=company.id) }}"><input type="hidden" name="action" value="cancel"><input type="hidden" name="csrf_token" value="{{ csrf_token() }}"><input type="hidden" name="next" value="{{ request.path }}"><button class="btn btn-outline-danger" type="submit" onclick="return confirm('¿Seguro que querés cancelar la suscripción IA? Esta acción no afecta la suscripción StockArMobile.');">Cancelar</button></form>
+            <form method="post" action="{{ url_for('saas.ai_subscriptions_action', company_id=company.id) }}"><input type="hidden" name="action" value="cancel"><input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                  <input type="password" name="step_up_password" class="form-control form-control-sm" autocomplete="current-password" placeholder="Contraseña si venció el step-up"><input type="hidden" name="next" value="{{ request.path }}"><button class="btn btn-outline-danger" type="submit" onclick="return confirm('¿Seguro que querés cancelar la suscripción IA? Esta acción no afecta la suscripción StockArMobile.');">Cancelar</button></form>
           {% else %}
-            <form method="post" action="{{ url_for('saas.ai_subscriptions_action', company_id=company.id) }}"><input type="hidden" name="action" value="activate"><input type="hidden" name="csrf_token" value="{{ csrf_token() }}"><input type="hidden" name="next" value="{{ request.path }}"><button class="btn btn-outline-success" type="submit">Activar</button></form>
+            <form method="post" action="{{ url_for('saas.ai_subscriptions_action', company_id=company.id) }}"><input type="hidden" name="action" value="activate"><input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                  <input type="password" name="step_up_password" class="form-control form-control-sm" autocomplete="current-password" placeholder="Contraseña si venció el step-up"><input type="hidden" name="next" value="{{ request.path }}"><button class="btn btn-outline-success" type="submit">Activar</button></form>
           {% endif %}
         </div>
       </div>
@@ -121,6 +130,7 @@
               <form method="post" action="{{ url_for('saas.ai_subscriptions_action', company_id=company.id) }}" class="d-flex flex-column gap-2">
                 <input type="hidden" name="action" value="grant_trial">
                 <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                  <input type="password" name="step_up_password" class="form-control form-control-sm" autocomplete="current-password" placeholder="Contraseña si venció el step-up">
                 <input type="hidden" name="next" value="{{ request.path }}">
                 <select class="form-select form-select-sm" name="plan_code" required>
                   <option value="">Plan a probar...</option>
@@ -144,6 +154,7 @@
               <form method="post" action="{{ url_for('saas.ai_subscriptions_action', company_id=company.id) }}" class="d-flex gap-2">
                 <input type="hidden" name="action" value="renew">
                 <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                  <input type="password" name="step_up_password" class="form-control form-control-sm" autocomplete="current-password" placeholder="Contraseña si venció el step-up">
                 <input type="hidden" name="next" value="{{ request.path }}">
                 <input class="form-control form-control-sm" type="number" name="days" min="1" max="365" value="30">
                 <button class="btn btn-sm btn-outline-primary" type="submit">Renovar</button>
@@ -163,6 +174,7 @@
           <form method="post" action="{{ url_for('saas.ai_subscriptions_action', company_id=company.id) }}" class="d-flex gap-2">
             <input type="hidden" name="action" value="set_expiry">
             <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                  <input type="password" name="step_up_password" class="form-control form-control-sm" autocomplete="current-password" placeholder="Contraseña si venció el step-up">
             <input type="hidden" name="next" value="{{ request.path }}">
             <input class="form-control form-control-sm" type="date" name="ends_at" required>
             <button class="btn btn-sm btn-outline-secondary" type="submit">Guardar vencimiento</button>
