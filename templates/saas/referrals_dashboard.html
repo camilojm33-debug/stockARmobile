@@ -76,9 +76,10 @@
             <td>{{ seller.user.email if seller.user else '-' }}</td>
             <td><span class="badge text-bg-primary">{{ '%.2f'|format((seller.commission_percent or 0) * 100) }}%</span></td>
             <td>
-              <form class="d-flex gap-2" method="post" action="{{ url_for('referrals.admin_referrals_update_commission', seller_id=seller.id) }}">
+              <form class="d-flex gap-2 align-items-end flex-wrap" method="post" action="{{ url_for('referrals.admin_referrals_update_commission', seller_id=seller.id) }}">
                 <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
-                <input class="form-control" type="number" name="commission_percent" min="0" max="100" step="0.01" value="{{ '%.2f'|format((seller.commission_percent or 0) * 100) }}" aria-label="Porcentaje de comision">
+                <div><label class="form-label small">Comisión %</label><input class="form-control" type="number" name="commission_percent" min="0" max="100" step="0.01" value="{{ '%.2f'|format((seller.commission_percent or 0) * 100) }}" aria-label="Porcentaje de comision"></div>
+                <div><label class="form-label small">Super Admin</label><input type="password" name="step_up_password" class="form-control" autocomplete="current-password" placeholder="Contraseña" required></div>
                 <button class="btn btn-primary" type="submit">Guardar</button>
               </form>
             </td>
