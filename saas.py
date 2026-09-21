@@ -2301,7 +2301,7 @@ def company_assign_pin(company_id):
     _require_superadmin()
     company = Company.query.filter_by(id=company_id).first_or_404()
     if not _require_superadmin_step_up():
-        return _redirect_back("saas.company_detail", company_id=company.id)
+        return redirect(url_for("saas.company_detail", company_id=company.id))
     raw_pin = (request.form.get("admin_pin") or "").strip()
     if len(raw_pin) != 4 or not raw_pin.isdigit():
         flash("El PIN debe ser numerico y de 4 digitos.", "danger")
@@ -2333,7 +2333,7 @@ def company_generate_pin(company_id):
     _require_superadmin()
     company = Company.query.filter_by(id=company_id).first_or_404()
     if not _require_superadmin_step_up():
-        return _redirect_back("saas.company_detail", company_id=company.id)
+        return redirect(url_for("saas.company_detail", company_id=company.id))
     had_pin = bool(company.business_pin_hash)
 
     raw_pin = f"{secrets.randbelow(10000):04d}"
