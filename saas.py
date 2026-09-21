@@ -3566,18 +3566,20 @@ def backups_verify(backup_id):
     except (FileNotFoundError, PermissionError, ValueError) as exc:
         record_audit(
             action="superadmin_backup_verification_failed",
-            details={"backup_id": backup.id, "company_id": backup.company_id, "reason": str(exc)},
+            entity="backup",
+            entity_id=backup.id,
+            detail=f"Verificación fallida para company={backup.company_id}: {exc}",
         )
         flash(f"Verificación fallida: {exc}", "danger")
     else:
         record_audit(
             action="superadmin_backup_verified",
-            details={
-                "backup_id": backup.id,
-                "company_id": backup.company_id,
-                "schema_version": result["schema_version"],
-                "counts": result["counts"],
-            },
+            entity="backup",
+            entity_id=backup.id,
+            detail=(
+                f"Backup verificado company={backup.company_id} "
+                f"schema={result['schema_version']} counts={result['counts']}"
+            ),
         )
         flash(
             f"Backup #{backup.id} verificado correctamente: "
