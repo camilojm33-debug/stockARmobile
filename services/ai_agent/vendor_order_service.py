@@ -17,6 +17,7 @@ from services.mercadopago_service import MercadoPagoService
 from services.mercadopago_oauth_service import MercadoPagoOAuthService
 from services.sales.inventory_service import InventoryService
 from services.sales.pricing_service import PricingService
+from services.ai_agent.config_service import get_vendor_options
 
 
 FLOW_PREFIX = "flow:ai_order"
@@ -183,6 +184,55 @@ def _shipping_calculation(cart_total: Decimal, method: str) -> Dict[str, Decimal
         cost = (cart_total * SHIPPING_RATE_PERCENT / Decimal("100")).quantize(Decimal("0.01"))
         return {"cost": cost, "rate": SHIPPING_RATE_PERCENT}
     return {"cost": Decimal("0.00"), "rate": Decimal("0.00")}
+
+
+def _shipping_plan(company_id: int, cart_total: Decimal, method: str) -> Dict[str, Any]:
+    """Resolve shipping behavior without trusting client-supplied amounts."""
+    normalized_method = _normalize_delivery_method(method)
+    if normalized_method != "envio":
+        return {
+            "cost": Decimal("0.00"),
+            "rate": Decimal("0.00"),
+            "status": "not_required",
+            "source": "none",
+            "reason": None,
+        }
+
+    from app import Company
+    company = Company.query.filter_by(id=int(company_id), active=True).first()
+    if company is None:
+        raise ValueError("Empresa no encontrada para calcular el envío.")
+
+    options = get_vendor_options(company)
+    mode = str(options.get("shipping_mode") or "legacy_percent").strip().lower()
+    if mode == "manual":
+        return {
+            "cost": Decimal("0.00"),
+            "rate": Decimal("0.00"),
+            "status": "pending",
+            "source": "manual",
+            "reason": "Costo de envío pendiente de cotización por el comercio.",
+        }
+    if mode == "standard":
+        cost = _money(options.get("standard_shipping_cost"))
+        if cost < 0:
+            raise ValueError("La tarifa estándar de envío no puede ser negativa.")
+        return {
+            "cost": cost,
+            "rate": Decimal("0.00"),
+            "status": "confirmed",
+            "source": "standard",
+            "reason": "Envío a domicilio · tarifa estándar del comercio.",
+        }
+
+    legacy = _shipping_calculation(cart_total, "envio")
+    return {
+        "cost": legacy["cost"],
+        "rate": legacy["rate"],
+        "status": "confirmed",
+        "source": "legacy_percent",
+        "reason": "Envío a domicilio (15%)",
+    }
 
 
 class VendorOrderService:
@@ -396,6 +446,22 @@ class VendorOrderService:
                     Payment.company_id == company_id,
                     Payment.external_reference.in_([external_reference, legacy_reference]),
                 ).first()
+                existing_delivery = getattr(existing, "delivery", None)
+                if (
+                    existing_delivery is not None
+                    and getattr(existing_delivery, "shipping_status", "") == "pending"
+                    and payment is None
+                ):
+                    return {
+                        "success": True,
+                        "existing": True,
+                        "shipping_pending": True,
+                        "quote_id": existing.id,
+                        "quote_number": existing.number or f"P-{existing.id:06d}",
+                        "total": float(existing.total_amount or 0),
+                        "payment_url": None,
+                        "quote_url": _public_quote_url(existing.id),
+                    }
                 if payment is not None and payment.status in {"pending", "in_process"}:
                     return {
                         "success": True,
@@ -485,16 +551,23 @@ class VendorOrderService:
             })
 
         base_totals = PricingService.calculate(lines=line_inputs, data={})
-        shipping = _shipping_calculation(
-            _money(base_totals["total"]),
-            delivery["method"],
+        shipping = _shipping_plan(
+            company_id=company_id,
+            cart_total=_money(base_totals["total"]),
+            method=delivery["method"],
         )
         pricing_data = {}
         if shipping["rate"] > 0:
             pricing_data = {
                 "surcharge_type": "percentage",
                 "surcharge_value": shipping["rate"],
-                "surcharge_reason": "Envío a domicilio (15%)",
+                "surcharge_reason": shipping["reason"],
+            }
+        elif shipping["cost"] > 0:
+            pricing_data = {
+                "surcharge_type": "fixed",
+                "surcharge_value": shipping["cost"],
+                "surcharge_reason": shipping["reason"],
             }
         totals = PricingService.calculate(lines=line_inputs, data=pricing_data)
         quote = Quote(
@@ -559,10 +632,45 @@ class VendorOrderService:
                 notes=delivery["notes"] or None,
                 shipping_cost=shipping["cost"],
                 shipping_rate=shipping["rate"],
-                shipping_reason="Envío a domicilio (15%)" if shipping["rate"] > 0 else None,
+                shipping_reason=shipping["reason"],
+                shipping_status=shipping["status"],
+                shipping_source=shipping["source"],
             )
         )
         db.session.flush()
+
+        if shipping["status"] == "pending":
+            state[PENDING_QUOTE_KEY] = quote.id
+            state.pop(PENDING_PAYMENT_KEY, None)
+            state["customer_phone"] = phone or customer_phone
+            state["customer_name"] = customer_name.strip()[:160] if customer_name.strip() else state.get("customer_name")
+            state["delivery"] = {
+                "method": delivery["method"],
+                "recipient_name": delivery["recipient_name"],
+                "phone": delivery["phone"],
+                "address": delivery["address"],
+                "city": delivery["city"],
+                "province": delivery["province"],
+                "postal_code": delivery["postal_code"],
+                "reference": delivery["reference"],
+                "notes": delivery["notes"],
+                "shipping_cost": 0.0,
+                "shipping_rate": 0.0,
+                "shipping_status": "pending",
+            }
+            _set_metadata(conversation, state)
+            db.session.commit()
+            return {
+                "success": True,
+                "shipping_pending": True,
+                "quote_id": quote.id,
+                "quote_number": quote.number,
+                "total": float(quote.total_amount or 0),
+                "currency": quote.currency or "ARS",
+                "payment_url": None,
+                "quote_url": _public_quote_url(quote.id),
+                "delivery": state["delivery"],
+            }
 
         external_reference = _ai_order_external_reference(
             company_id=company_id,
