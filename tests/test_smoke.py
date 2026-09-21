@@ -8467,11 +8467,22 @@ def test_global_pricing_controller_is_commercial_from_business_plan():
         assert entrepreneur is not None
         assert "pricing_controller" in (business.features_json or "")
 
+        user = User.query.filter_by(username="empresa_admin").first()
+        assert user is not None
         subscription = Subscription.query.filter_by(company_id=company.id).first()
-        subscription.plan_id = business.id
-        subscription.status = "active"
-        subscription.start_date = stock_app.utcnow()
-        subscription.ends_at = stock_app.utcnow() + timedelta(days=30)
+        if subscription is None:
+            from services.subscription_service import SubscriptionService
+            subscription = SubscriptionService.start_or_change_plan(
+                db.session,
+                company=company,
+                plan=business,
+                user_id=user.id,
+            )
+        else:
+            subscription.plan_id = business.id
+            subscription.status = "active"
+            subscription.start_date = stock_app.utcnow()
+            subscription.ends_at = stock_app.utcnow() + timedelta(days=30)
         db.session.commit()
         assert can_use_commercial_feature(company, "pricing_controller").allowed is True
 
