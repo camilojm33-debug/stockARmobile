@@ -785,6 +785,9 @@ def admin_referrals_update_commission(seller_id):
         return redirect(url_for("referrals.admin_referrals_dashboard"))
 
     seller = ReferralSeller.query.options(joinedload(ReferralSeller.user)).filter_by(id=seller_id).first_or_404()
+    from saas import _require_superadmin_step_up
+    if not _require_superadmin_step_up():
+        return redirect(url_for("referrals.admin_referrals_dashboard"))
     normalized_percent = _parse_commission_percent(request.form.get("commission_percent"))
     if normalized_percent is None:
         flash("Porcentaje de comisión inválido. Debe estar entre 0 y 100.", "danger")
@@ -856,6 +859,9 @@ def admin_referrals_sellers_create():
         return redirect(url_for("referrals.admin_referrals_dashboard"))
 
     if request.method == "POST":
+        from saas import _require_superadmin_step_up
+        if not _require_superadmin_step_up():
+            return redirect(url_for("referrals.admin_referrals_sellers_create"))
         username = (request.form.get("username") or "").strip()
         email = (request.form.get("email") or "").strip().lower()
         if not username or not email:
@@ -952,6 +958,9 @@ def admin_referrals_sellers_edit(seller_id):
         abort(404)
 
     if request.method == "POST":
+        from saas import _require_superadmin_step_up
+        if not _require_superadmin_step_up():
+            return redirect(url_for("referrals.admin_referrals_sellers_edit", seller_id=seller_id))
         username = (request.form.get("username") or "").strip()
         email = (request.form.get("email") or "").strip().lower()
         if not username or not email:
@@ -1142,6 +1151,9 @@ def admin_referrals_seller_reset_password(seller_id):
         return redirect(url_for("referrals.admin_referrals_dashboard"))
 
     profile = ReferralSeller.query.filter_by(id=seller_id).first_or_404()
+    from saas import _require_superadmin_step_up
+    if not _require_superadmin_step_up():
+        return redirect(url_for("referrals.admin_referrals_seller_detail", seller_id=seller_id))
     user = db.session.get(User, profile.user_id)
     if user is None:
         abort(404)
@@ -1195,6 +1207,9 @@ def admin_referrals_seller_delete(seller_id):
         return redirect(url_for("referrals.admin_referrals_dashboard"))
 
     profile = ReferralSeller.query.filter_by(id=seller_id).first_or_404()
+    from saas import _require_superadmin_step_up
+    if not _require_superadmin_step_up():
+        return redirect(url_for("referrals.admin_referrals_seller_detail", seller_id=seller_id))
     user = db.session.get(User, profile.user_id)
     if user is None:
         abort(404)
@@ -1239,6 +1254,9 @@ def admin_referrals_seller_toggle(seller_id):
         return redirect(url_for("referrals.admin_referrals_dashboard"))
 
     profile = ReferralSeller.query.filter_by(id=seller_id).first_or_404()
+    from saas import _require_superadmin_step_up
+    if not _require_superadmin_step_up():
+        return redirect(url_for("referrals.admin_referrals_sellers_list"))
     user = db.session.get(User, profile.user_id)
     if user is None:
         abort(404)
@@ -1279,6 +1297,9 @@ def admin_referrals_register_payout():
         flash("El programa de referidos todavía no está disponible porque faltan migraciones.", "warning")
         return redirect(url_for("referrals.admin_referrals_dashboard"))
 
+    from saas import _require_superadmin_step_up
+    if not _require_superadmin_step_up():
+        return redirect(url_for("referrals.admin_referrals_commissions"))
     seller_id = request.form.get("seller_id", type=int)
     commission_ids = request.form.getlist("commission_ids")
     parsed_ids = [int(item) for item in commission_ids if str(item).isdigit()]
