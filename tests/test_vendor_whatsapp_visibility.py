@@ -24,15 +24,19 @@ def test_vendor_whatsapp_ui_can_be_reenabled_by_environment(monkeypatch):
     assert app.config[UI_FLAG] is True
 
 
-def test_vendor_admin_templates_guard_whatsapp_ui():
+def test_vendor_admin_templates_keep_whatsapp_out_of_general_v2_settings():
     guard = '{% if config.get("WHATSAPP_VENDOR_UI_ENABLED", False) %}'
-    for relative_path in (
-        "templates/ai_agent/admin_v2.html",
-        "templates/ai_agent/admin.html",
-    ):
-        content = (REPO_ROOT / relative_path).read_text(encoding="utf-8")
-        assert guard in content
-        assert "WHATSAPP_VENDOR_UI_ENABLED" in content
+    admin_v2 = (REPO_ROOT / "templates/ai_agent/admin_v2.html").read_text(encoding="utf-8")
+    assert guard not in admin_v2
+    assert "id=\"whatsapp-vendedor\"" not in admin_v2
+    assert "name=\"whatsapp_enabled\"" not in admin_v2
+
+
+def test_legacy_admin_template_still_guards_whatsapp_ui():
+    guard = '{% if config.get("WHATSAPP_VENDOR_UI_ENABLED", False) %}'
+    content = (REPO_ROOT / "templates/ai_agent/admin.html").read_text(encoding="utf-8")
+    assert guard in content
+    assert "WHATSAPP_VENDOR_UI_ENABLED" in content
 
 
 def test_vendor_page_whatsapp_ui_is_feature_flagged():

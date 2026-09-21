@@ -109,7 +109,10 @@ def test_vendor_configuration_navigation_and_capabilities_are_exposed():
     assert "Publicar y compartir" in vendor_page
     assert "url_for('vendor_publication.publication_page')" in vendor_page
 
-    assert "url_for('ai_admin.vendor_config')" in admin_page
+    assert "url_for('ai_agents.agent', agent='vendedor')" in admin_page
+    assert "url_for('ai_admin.vendor_config')" not in admin_page
+    assert "Publicar y compartir" not in admin_page
+    assert "vendor_metrics" not in admin_page
     assert "vendor_can_recommend" not in admin_page
     assert "vendor_can_offer_alternatives" not in admin_page
     assert "vendor_can_prepare_quotes" not in admin_page
@@ -123,8 +126,9 @@ def test_vendor_configuration_navigation_and_capabilities_are_exposed():
     assert "name=\"vendor_greeting\"" in vendor_config_page
     assert "Seguimiento automático" in vendor_config_page
 
-    assert "Configurar Vendedor" in publication_page
-    assert "url_for('ai_admin.vendor_config')" in publication_page
+    assert "Configurar Vendedor" not in publication_page
+    assert "url_for('ai_admin.vendor_config')" not in publication_page
+    assert "url_for('ai_agents.agent', agent='vendedor')" in publication_page
     assert "url_for('ai_admin.index')" not in publication_page
 
     assert '@bp.get("/vendor-config")' in admin_service
