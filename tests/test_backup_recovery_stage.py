@@ -58,6 +58,7 @@ def test_backup_maintenance_endpoint_accepts_valid_token_and_processes_companies
         company = Company(name="Maintenance QA", active=True)
         db.session.add(company)
         db.session.commit()
+        company_id = company.id
 
     calls = []
 
@@ -79,6 +80,6 @@ def test_backup_maintenance_endpoint_accepts_valid_token_and_processes_companies
     assert response.status_code == 200
     assert response.get_json()["ok"] is True
     assert calls
-    assert calls[0][0] == company.id
+    assert calls[0][0] == company_id
     assert calls[0][1] is None
     assert calls[0][2] == "automated_render"
