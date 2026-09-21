@@ -92,3 +92,31 @@ def test_vendor_tool_policy_blocks_order_tools_when_orders_are_disabled():
     assert "agregar_al_carrito" not in names
     assert "quitar_del_carrito" not in names
     assert "preparar_pedido" not in names
+
+
+def test_vendor_configuration_navigation_and_capabilities_are_exposed():
+    from pathlib import Path
+
+    root = Path(__file__).resolve().parents[1]
+    vendor_page = (root / "templates/ai_agents/index.html").read_text(encoding="utf-8")
+    admin_page = (root / "templates/ai_agent/admin_v2.html").read_text(encoding="utf-8")
+    publication_page = (root / "templates/ai_agents/vendor_publication.html").read_text(encoding="utf-8")
+    admin_service = (root / "services/ai_agent/admin.py").read_text(encoding="utf-8")
+
+    assert 'url_for("ai_admin.index")' in vendor_page or "url_for('ai_admin.index')" in vendor_page
+    assert "Configurar Vendedor" in vendor_page
+    assert "Publicar y compartir" in vendor_page
+    assert "url_for('vendor_publication.publication_page')" in vendor_page
+
+    assert "name=\"vendor_can_recommend\"" in admin_page
+    assert "name=\"vendor_can_offer_alternatives\"" in admin_page
+    assert "name=\"vendor_can_prepare_quotes\"" in admin_page
+    assert "name=\"vendor_can_take_orders\"" in admin_page
+    assert "name=\"vendor_greeting\"" in admin_page
+    assert "Seguimiento automático" in admin_page
+    assert "Derivación a una persona" in admin_page
+
+    assert "Configurar Vendedor" in publication_page
+    assert "url_for('ai_admin.index')" in publication_page
+
+    assert 'vendor_options[key] = "1" in request.form.getlist(field)' in admin_service
