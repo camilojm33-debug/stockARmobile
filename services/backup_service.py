@@ -154,7 +154,13 @@ class BackupService:
 
     @staticmethod
     def _backup_root() -> Path:
-        root = Path(current_app.instance_path) / "backups"
+        configured = str(current_app.config.get("BACKUP_UPLOAD_DIR") or "").strip()
+        if configured:
+            root = Path(configured)
+        elif os.environ.get("RENDER"):
+            root = Path("/var/data/stockarmobile/backups")
+        else:
+            root = Path(current_app.instance_path) / "backups"
         root.mkdir(parents=True, exist_ok=True)
         if os.name != "nt":
             try:
