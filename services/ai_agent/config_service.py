@@ -29,8 +29,14 @@ VENDOR_OPTION_DEFAULTS = {
     "schedule": "24/7",
     "out_of_hours_message": "",
     "business_information": "",
+    # Legacy keeps existing merchants on the current 15% behavior until they
+    # explicitly choose manual or standard shipping.
+    "shipping_mode": "legacy_percent",
+    "standard_shipping_cost": "0.00",
+    "auto_generate_payment": True,
 }
 VENDOR_ALLOWED_PERSONALITIES = {"profesional", "amigable", "directo", "comercial"}
+VENDOR_SHIPPING_MODES = {"manual", "standard", "legacy_percent"}
 
 SPECIAL_AGENT_OPTION_DEFAULTS = {
     "analista": {
@@ -150,6 +156,15 @@ def normalize_vendor_options(raw: Optional[Dict[str, Any]] = None) -> Dict[str, 
     ):
         options[key] = _coerce_bool(source.get(key), options[key])
 
+    shipping_mode = str(source.get("shipping_mode") or options["shipping_mode"]).strip().lower()
+    options["shipping_mode"] = shipping_mode if shipping_mode in VENDOR_SHIPPING_MODES else options["shipping_mode"]
+    try:
+        standard_cost = Decimal(str(source.get("standard_shipping_cost") or options["standard_shipping_cost"])).quantize(Decimal("0.01"))
+    except Exception:
+        standard_cost = Decimal("0.00")
+    options["standard_shipping_cost"] = str(max(standard_cost, Decimal("0.00")))[:32]
+    options["auto_generate_payment"] = _coerce_bool(source.get("auto_generate_payment"), options["auto_generate_payment"])
+
     for key, limit in (
         ("agent_name", 120),
         ("greeting", 1000),
@@ -192,6 +207,8 @@ def build_vendor_runtime_instructions(
         f"- Ofrecer alternativas: {'sí' if options['can_offer_alternatives'] else 'no'}",
         f"- Preparar presupuestos/pedidos: {'sí' if options['can_prepare_quotes'] else 'no'}",
         f"- Tomar pedidos: {'sí' if options['can_take_orders'] else 'no'}",
+        f"- Gestión de envíos: {{'manual, requiere costo del comercio' if options['shipping_mode'] == 'manual' else 'tarifa estándar del comercio' if options['shipping_mode'] == 'standard' else 'modo legacy 15%'}}",
+        f"- Tarifa estándar de envío: ${options['standard_shipping_cost']} ARS",
         f"- Seguimiento posterior: {'sí' if options['can_follow_up'] else 'no'}",
         f"- Derivación a una persona: {'sí' if options['can_handoff'] else 'no'}",
     ]
