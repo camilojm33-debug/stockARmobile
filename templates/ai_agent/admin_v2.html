@@ -145,7 +145,7 @@
       <div class="ai-section-body">
         <div class="ai-switch-card">
           <div>
-            <div class="fw-bold">{{ 'Vendedor activo' if agents['Vendedor IA 24/7'].active else 'Vendedor desactivado' }}</div>
+            <div class="fw-bold">{{ 'Vendedor activo' if vendor_agent.active else 'Vendedor desactivado' }}</div>
             <div class="small text-muted">La configuración, capacidades y publicación se administran exclusivamente desde el módulo Vendedor IA.</div>
           </div>
           <a class="btn btn-primary" href="{{ url_for('ai_agents.agent', agent='vendedor') }}"><i class="bi bi-cart3 me-1"></i>Abrir Vendedor IA</a>
