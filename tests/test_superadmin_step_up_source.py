@@ -122,3 +122,10 @@ def test_one_time_secret_reveals_do_not_use_client_session_plaintext():
     assert 'session[f"support_temp_password_{ticket.id}"] = temporary_password' not in support
     assert 'name="step_up_password"' in support_template
     assert 'autocomplete="current-password"' in support_template
+    referrals = Path("referrals.py").read_text(encoding="utf-8")
+    saas_pattern = 'session["password_recovery_temp_password"] = temp_password'
+    assert saas_pattern not in saas
+    assert 'session["password_recovery_temp_password"] = access_token' in saas
+    assert 'session["referral_seller_temp_password"] = temp_password' not in referrals
+    assert 'session["referral_seller_temp_password"] = access_token' in referrals
+    assert 'secrets.token_urlsafe(32)' in service
