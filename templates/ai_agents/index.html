@@ -244,6 +244,7 @@
       </div>
     </div>
   </div>
+  {% if config.get("WHATSAPP_VENDOR_UI_ENABLED", False) %}
   <div class="col-lg-5">
     <div class="card app-card h-100">
       <div class="card-body">
@@ -257,6 +258,7 @@
       </div>
     </div>
   </div>
+  {% endif %}
 </div>
   <div class="row g-4"><div class="col-lg-7"><div class="card app-card h-100"><div class="card-body"><h2 class="h5 fw-bold">Capacidades</h2><div class="row g-2">{% for item, functional in [('Consultar productos', true), ('Consultar precios', true), ('Consultar stock', true), ('Recomendar productos', true), ('Ofrecer alternativas', true), ('Preparar presupuestos', true), ('Armar pedidos: presupuesto pendiente de pago', true), ('Hacer seguimiento', false), ('Detectar intención de compra', false), ('Derivar conversación a una persona', false)] %}<div class="col-sm-6"><div class="text-muted"><i class="bi {{ 'bi-check-circle-fill text-success' if functional else 'bi-dash-circle text-secondary' }} me-2"></i>{{ item }}{% if not functional %} <span class="small">(Pendiente de integración)</span>{% endif %}</div></div>{% endfor %}</div></div></div></div><div class="col-lg-5"><div class="card app-card h-100"><div class="card-body"><h2 class="h5 fw-bold">Uso de IA</h2><p class="text-muted">{{ ai_usage.used_usage }} / {{ ai_usage.included_usage or 'Pendiente de asignación' }} interacciones.</p><div class="progress" role="progressbar" aria-label="Uso de IA" aria-valuenow="{{ ai_usage.percent }}" aria-valuemin="0" aria-valuemax="100"><div class="progress-bar" style="width: {{ ai_usage.percent }}%"></div></div><div class="small text-muted mt-2">{{ ai_usage.percent }}% utilizado · {{ ai_usage.remaining_usage }} restantes</div>{% if config_url %}<a class="btn btn-outline-primary mt-3" href="{{ config_url }}"><i class="bi bi-gear me-1"></i>Configurar agente</a>{% endif %}</div></div></div></div>
 
