@@ -33,7 +33,6 @@ VENDOR_OPTION_DEFAULTS = {
     # explicitly choose manual or standard shipping.
     "shipping_mode": "legacy_percent",
     "standard_shipping_cost": "0.00",
-    "auto_generate_payment": True,
 }
 VENDOR_ALLOWED_PERSONALITIES = {"profesional", "amigable", "directo", "comercial"}
 VENDOR_SHIPPING_MODES = {"manual", "standard", "legacy_percent"}
@@ -163,7 +162,6 @@ def normalize_vendor_options(raw: Optional[Dict[str, Any]] = None) -> Dict[str, 
     except Exception:
         standard_cost = Decimal("0.00")
     options["standard_shipping_cost"] = str(max(standard_cost, Decimal("0.00")))[:32]
-    options["auto_generate_payment"] = _coerce_bool(source.get("auto_generate_payment"), options["auto_generate_payment"])
 
     for key, limit in (
         ("agent_name", 120),
