@@ -4035,6 +4035,7 @@ def test_password_recovery_request_and_superadmin_reset_flow():
 
     reset = client.post(
         f"/superadmin/password-recovery/{request_id}/reset",
+        data={"step_up_password": "admin123"},
         follow_redirects=True,
     )
     assert reset.status_code == 200
