@@ -991,6 +991,7 @@ def test_superadmin_subscriptions_actions_visibility_and_flows():
             "plan_id": plan_basic_id,
             "status": "pending",
             "renewal_enabled": "1",
+            "step_up_password": "admin123",
         },
         follow_redirects=True,
     )
@@ -1007,6 +1008,7 @@ def test_superadmin_subscriptions_actions_visibility_and_flows():
             "plan_id": plan_pro_id,
             "status": "active",
             "renewal_enabled": "1",
+            "step_up_password": "admin123",
         },
         follow_redirects=True,
     )
@@ -1024,7 +1026,7 @@ def test_superadmin_subscriptions_actions_visibility_and_flows():
 
     suspend_resp = client.post(
         f"/superadmin/subscriptions/{active_id}/action",
-        data={"action": "suspend"},
+        data={"action": "suspend", "step_up_password": "admin123"},
         follow_redirects=True,
     )
     assert suspend_resp.status_code == 200
@@ -1032,7 +1034,7 @@ def test_superadmin_subscriptions_actions_visibility_and_flows():
 
     invalid_cancel_resp = client.post(
         f"/superadmin/subscriptions/{active_id}/action",
-        data={"action": "cancel"},
+        data={"action": "cancel", "step_up_password": "admin123"},
         follow_redirects=True,
     )
     assert invalid_cancel_resp.status_code == 200
@@ -1040,7 +1042,7 @@ def test_superadmin_subscriptions_actions_visibility_and_flows():
 
     reactivate_resp = client.post(
         f"/superadmin/subscriptions/{active_id}/action",
-        data={"action": "reactivate"},
+        data={"action": "reactivate", "step_up_password": "admin123"},
         follow_redirects=True,
     )
     assert reactivate_resp.status_code == 200
@@ -1056,7 +1058,7 @@ def test_superadmin_subscriptions_actions_visibility_and_flows():
 
     renew_resp = client.post(
         f"/superadmin/subscriptions/{active_id}/action",
-        data={"action": "renew_now"},
+        data={"action": "renew_now", "step_up_password": "admin123"},
         follow_redirects=True,
     )
     assert renew_resp.status_code == 200
