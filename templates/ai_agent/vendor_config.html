@@ -35,8 +35,6 @@
           <p class="lead text-muted mb-3">Configurá cómo atiende, vende y conversa con tus clientes.</p>
           <div class="d-flex flex-wrap gap-2">
             <a class="btn btn-outline-secondary" href="{{ url_for('ai_agents.agent', agent='vendedor') }}"><i class="bi bi-arrow-left me-1"></i>Volver al Vendedor</a>
-            <a class="btn btn-outline-primary" href="{{ url_for('vendor_publication.publication_page') }}"><i class="bi bi-broadcast me-1"></i>Publicar y compartir</a>
-            <a class="btn btn-outline-secondary" href="{{ url_for('ai_admin.vendor_metrics') }}"><i class="bi bi-bar-chart-line me-1"></i>Métricas</a>
           </div>
         </div>
         <div class="vendor-status {{ 'on' if vendor.active else '' }}"><i class="bi bi-circle-fill"></i>{{ 'Activo' if vendor.active else 'Desactivado' }}</div>
@@ -146,28 +144,6 @@
           <div class="col-12">
             <label class="form-label fw-semibold">Información de tu comercio</label>
             <textarea class="form-control" rows="4" name="vendor_business_information" maxlength="4000" placeholder="Productos, envíos, formas de pago, zonas de atención...">{{ vendor_options.business_information }}</textarea>
-          </div>
-        </div>
-      </div>
-    </section>
-
-    <section class="vendor-section mb-3">
-      <div class="vendor-head">
-        <div>
-          <div class="vendor-title"><i class="bi bi-broadcast text-primary me-2"></i>Publicación</div>
-          <div class="vendor-subtitle">Publicá tu Vendedor, obtené un enlace y un QR para compartirlo con clientes.</div>
-        </div>
-      </div>
-      <div class="vendor-body">
-        <div class="row g-3">
-          <div class="col-md-8">
-            <div class="vendor-card">
-              <div class="fw-bold">{{ 'Publicado' if publication.published else 'Sin publicar' }}</div>
-              <div class="small text-muted mt-1">{{ 'El enlace público está activo.' if publication.available else 'Podés publicar el Vendedor desde la pantalla de publicación.' }}</div>
-            </div>
-          </div>
-          <div class="col-md-4 d-flex align-items-stretch">
-            <a class="btn btn-outline-primary w-100 d-flex align-items-center justify-content-center" href="{{ url_for('vendor_publication.publication_page') }}"><i class="bi bi-broadcast me-1"></i>Administrar publicación</a>
           </div>
         </div>
       </div>
