@@ -107,3 +107,18 @@ def test_superadmin_referral_network_mutations_require_step_up():
     template = Path("templates/saas/referrals_network.html").read_text(encoding="utf-8")
     assert template.count('name="step_up_password"') == 4
     assert template.count('autocomplete="current-password"') == 4
+
+
+def test_one_time_secret_reveals_do_not_use_client_session_plaintext():
+    service = Path("services/one_time_secret_service.py").read_text(encoding="utf-8")
+    saas = Path("saas.py").read_text(encoding="utf-8")
+    support = Path("support.py").read_text(encoding="utf-8")
+    support_template = Path("templates/saas/support_detail.html").read_text(encoding="utf-8")
+
+    assert "Fernet" in service
+    assert "ciphertext" in service
+    assert "secrets.token_urlsafe(32)" in service
+    assert 'session[f"company_pin_reveal_{company.id}"] = raw_pin' not in saas
+    assert 'session[f"support_temp_password_{ticket.id}"] = temporary_password' not in support
+    assert 'name="step_up_password"' in support_template
+    assert 'autocomplete="current-password"' in support_template
