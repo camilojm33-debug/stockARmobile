@@ -7840,7 +7840,7 @@ def test_superadmin_backup_delete_tolerates_missing_file():
     client.post("/auth/login", data={"username": "superadmin", "password": "admin123"})
     response = client.post(
         f"/superadmin/backups/{backup_id}/delete",
-        data={"csrf_token": "", "confirm_delete": "1"},
+        data={"csrf_token": "", "confirm_delete": "1", "step_up_password": "admin123"},
         follow_redirects=True,
     )
     assert response.status_code == 200
