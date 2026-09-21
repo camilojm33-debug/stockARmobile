@@ -3346,8 +3346,8 @@ def test_my_company_module_requires_pin_and_shows_tenant_admin_features():
 
     detail_with_pin = client.get(assign_pin.headers["Location"], follow_redirects=False)
     assert detail_with_pin.status_code == 200
-    assert "PIN asignado correctamente" not in detail_with_pin.data.decode("utf-8")
     detail_html = detail_with_pin.data.decode("utf-8")
+    assert "PIN asignado correctamente" in detail_html
     assert "1234" in detail_html
 
     client.post("/auth/login", data={"username": "negocio_admin", "password": "admin123"})
