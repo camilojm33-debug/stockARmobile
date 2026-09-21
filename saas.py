@@ -3340,12 +3340,13 @@ def password_recovery_panel():
     )
     from services.one_time_secret_service import OneTimeSecretService
 
+    reveal_user_id = session.pop("password_recovery_temp_password_user_id", None)
     temp_password = OneTimeSecretService.consume(
         db.session,
         user_id=current_user.id,
         purpose="password_recovery_temp_password",
         subject_type="user",
-        subject_id=request.args.get("reveal_user_id", type=int),
+        subject_id=reveal_user_id,
         access_token=session.pop("password_recovery_temp_password", None),
     )
     if temp_password is not None:
@@ -3420,6 +3421,7 @@ def password_recovery_company_user_reset():
     db.session.commit()
 
     session["password_recovery_temp_password"] = access_token
+    session["password_recovery_temp_password_user_id"] = user.id
     session["password_recovery_temp_password_user"] = user.username
     flash("Contraseña temporal generada. Copiala ahora; se mostrará una sola vez.", "warning")
     return _redirect_back("saas.password_recovery_panel")
