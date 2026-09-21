@@ -85,7 +85,6 @@
               <input type="hidden" name="role" value="user">
               <button class="btn btn-sm {{ 'btn-secondary' if user.role == 'user' else 'btn-outline-secondary' }}" type="submit" {% if user.role == 'user' %}disabled{% endif %}>Hacer user</button>
             </form>
-          </div>
             <form method="post" action="{{ url_for('saas.users_update_status', user_id=user.id) }}" onsubmit="return confirm('{{ '¿Desactivar este usuario?' if user.active else '¿Activar este usuario?' }}')">
               <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
               <input type="hidden" name="next" value="{{ request.full_path }}">
