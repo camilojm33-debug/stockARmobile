@@ -1258,15 +1258,7 @@ def admin_referrals_seller_delete(seller_id):
             company_id=None,
             detail=f"Vendedor desactivado por preservar historial seller_user_id={user.id}",
         )
-        record_audit(
-        action="referral_seller_deleted",
-        entity="referral_seller",
-        entity_id=seller_id,
-        user_id=current_user.id,
-        company_id=None,
-        detail="Vendedor eliminado definitivamente por Super Admin.",
-    )
-    db.session.commit()
+        db.session.commit()
         flash("Vendedor desactivado con historial preservado.", "success")
         return redirect(url_for("referrals.admin_referrals_sellers_list"))
 
@@ -1279,6 +1271,14 @@ def admin_referrals_seller_delete(seller_id):
         db.session.delete(user)
     else:
         user.role = "admin" if user.company_id else "user"
+    record_audit(
+        action="referral_seller_deleted",
+        entity="referral_seller",
+        entity_id=seller_id,
+        user_id=current_user.id,
+        company_id=None,
+        detail="Vendedor eliminado definitivamente por Super Admin.",
+    )
     db.session.commit()
     flash("Vendedor eliminado definitivamente.", "success")
     return redirect(url_for("referrals.admin_referrals_sellers_list"))
@@ -1356,7 +1356,7 @@ def admin_referrals_register_payout():
         flash("Datos de pago incompletos.", "danger")
         return redirect(url_for("referrals.admin_referrals_commissions"))
 
-    ReferralService.register_payout(
+    payout = ReferralService.register_payout(
         db.session,
         seller_id=seller_id,
         commission_ids=parsed_ids,
@@ -1370,7 +1370,7 @@ def admin_referrals_register_payout():
     record_audit(
         action="referral_seller_payout",
         entity="referral_payout",
-        entity_id=getattr(locals().get("payout"), "id", None),
+        entity_id=getattr(payout, "id", None),
         user_id=current_user.id,
         company_id=None,
         detail=f"Liquidación de comisión de vendedor seller_id={seller_id} commission_ids={','.join(str(item) for item in parsed_ids)}",
