@@ -197,6 +197,7 @@ def test_core_routes_and_decimal_checkout():
     assert client.get("/superadmin/companies/1/360").status_code == 200
     assert client.get("/superadmin/logs").status_code == 200
     assert client.get("/superadmin/logs?days=7&q=company").status_code == 200
+    assert client.get("/superadmin/users").status_code == 200
     attention_page = client.get("/superadmin/attention")
     assert attention_page.status_code == 200
     attention_html = attention_page.get_data(as_text=True)
