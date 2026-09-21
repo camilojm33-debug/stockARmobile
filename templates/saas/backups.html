@@ -89,6 +89,10 @@
               <label class="form-label">Importar Backup</label>
               <input class="form-control" type="file" name="backup_file" accept=".json,.gz,.json.gz" required>
             </div>
+            <div class="col-12">
+              <label class="form-label small">Reautenticación Super Admin</label>
+              <input type="password" name="step_up_password" class="form-control" autocomplete="current-password" placeholder="Contraseña Super Admin" required>
+            </div>
             <div class="col-12 d-grid">
               <button class="btn btn-outline-primary" type="submit"><i class="bi bi-upload me-1"></i>Importar Backup</button>
             </div>
