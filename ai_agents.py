@@ -360,7 +360,7 @@ def public_vendor_chat(token):
             company=company,
             disabled_reason=access.reason,
             chat_url=None,
-            shipping_config={"mode": "manual", "standard_cost": 0},
+            shipping_config={"mode": "manual", "standard_cost": 0, "legacy_percent": 15},
             catalog=[],
             initial_state={"conversation_id": None, "cart": {"items": [], "total": 0, "currency": "ARS", "line_count": 0}, "payment_url": None},
             greeting="",
@@ -389,6 +389,7 @@ def public_vendor_chat(token):
         shipping_config={
             "mode": get_vendor_options(company).get("shipping_mode", "legacy_percent"),
             "standard_cost": float(get_vendor_options(company).get("standard_shipping_cost") or 0),
+            "legacy_percent": 15,
         },
         catalog=_catalog_for_company(company),
         initial_state=_initial_page_state(company),
