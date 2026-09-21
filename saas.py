@@ -2299,9 +2299,9 @@ def company_assign_pin(company_id):
     from services.company_security_service import CompanySecurityService
 
     _require_superadmin()
-    if not _require_superadmin_step_up():
-        return _redirect_back("saas.company_detail" , company_id=company.id)
     company = Company.query.filter_by(id=company_id).first_or_404()
+    if not _require_superadmin_step_up():
+        return _redirect_back("saas.company_detail", company_id=company.id)
     raw_pin = (request.form.get("admin_pin") or "").strip()
     if len(raw_pin) != 4 or not raw_pin.isdigit():
         flash("El PIN debe ser numerico y de 4 digitos.", "danger")
@@ -2331,9 +2331,9 @@ def company_generate_pin(company_id):
     from services.company_security_service import CompanySecurityService
 
     _require_superadmin()
-    if not _require_superadmin_step_up():
-        return _redirect_back("saas.company_detail" , company_id=company.id)
     company = Company.query.filter_by(id=company_id).first_or_404()
+    if not _require_superadmin_step_up():
+        return _redirect_back("saas.company_detail", company_id=company.id)
     had_pin = bool(company.business_pin_hash)
 
     raw_pin = f"{secrets.randbelow(10000):04d}"
@@ -2413,9 +2413,9 @@ def company_impersonate(company_id):
     from app import AuditLog, Company, db
 
     _require_superadmin()
-    if not _require_superadmin_step_up():
-        return _redirect_back("saas.company_detail" , company_id=company.id)
     company = Company.query.filter_by(id=company_id).first_or_404()
+    if not _require_superadmin_step_up():
+        return _redirect_back("saas.companies_panel")
     session["impersonator_user_id"] = current_user.id
     session["impersonated_company_id"] = company.id
 
