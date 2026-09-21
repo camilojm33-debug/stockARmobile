@@ -71,7 +71,9 @@ def test_whatsapp_webhook_has_a_scoped_csrf_exemption():
     assert "csrf.exempt(whatsapp_agent_bp)" not in app_content
     route = '@bp.route("/api/whatsapp/webhook", methods=["GET", "POST"])'
     assert route in webhook_content
-    scoped_block = webhook_content[webhook_content.index(route): webhook_content.index("def _verify_signature")]
+    route_start = webhook_content.index(route)
+    webhook_start = webhook_content.index("def webhook()", route_start)
+    scoped_block = webhook_content[route_start:webhook_start]
     assert "@csrf.exempt" in scoped_block
 
 
