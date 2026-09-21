@@ -814,6 +814,7 @@ def api_mp_qr_points():
 def api_mp_qr_create():
     _mp_qr_trace_enter("sales.api_mp_qr_create")
     from app import Payment, db, scope_query_to_company
+    from services.payment_flow import expire_stale_pos_drafts
 
     payload = request.get_json(silent=True) or {}
     request_form = request.form.to_dict(flat=False)
@@ -841,6 +842,15 @@ def api_mp_qr_create():
     expected_tenant = _cart_tenant_key()
     if incoming_tenant != expected_tenant:
         return _api_error("Carrito fuera de contexto de empresa o usuario.", status=409)
+
+    expired_drafts = expire_stale_pos_drafts(db.session, company_id=company_id)
+    if expired_drafts:
+        current_app.logger.info(
+            "MP POS stale drafts expired: company_id=%s count=%s",
+            company_id,
+            expired_drafts,
+        )
+        db.session.flush()
 
     raw_items = payload.get("items", [])
     items = {}
