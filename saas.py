@@ -22,6 +22,7 @@ from flask import send_file
 from flask_login import current_user, login_required
 from openpyxl import Workbook
 from sqlalchemy import text
+from werkzeug.security import check_password_hash
 
 from app import model_table_exists, superadmin_required, utcnow
 from config.billing_config import load_billing_config
@@ -136,6 +137,72 @@ def _temporary_password(length: int = 12) -> str:
 def _require_superadmin():
     if current_user.role != "superadmin":
         abort(403)
+
+
+SUPERADMIN_STEP_UP_TTL_SECONDS = 600
+_SUPERADMIN_STEP_UP_AT_SESSION_KEY = "superadmin_step_up_at"
+_SUPERADMIN_STEP_UP_USER_SESSION_KEY = "superadmin_step_up_user_id"
+
+
+def _superadmin_step_up_is_valid() -> bool:
+    if not getattr(current_user, "is_authenticated", False) or current_user.role != "superadmin":
+        return False
+    if session.get(_SUPERADMIN_STEP_UP_USER_SESSION_KEY) != current_user.id:
+        return False
+    try:
+        verified_at = float(session.get(_SUPERADMIN_STEP_UP_AT_SESSION_KEY) or 0)
+    except (TypeError, ValueError):
+        return False
+    return (utcnow().timestamp() - verified_at) <= SUPERADMIN_STEP_UP_TTL_SECONDS
+
+
+def _require_superadmin_step_up() -> bool:
+    """Require a recent password re-authentication for destructive Super Admin actions."""
+    _require_superadmin()
+    if _superadmin_step_up_is_valid():
+        return True
+
+    password = request.form.get("step_up_password") or ""
+    if not password:
+        flash(
+            "Esta acción requiere una reautenticación de Super Admin. Ingresá nuevamente tu contraseña.",
+            "warning",
+        )
+        return False
+
+    password_hash = getattr(current_user, "password_hash", None)
+    if not password_hash or not check_password_hash(password_hash, password):
+        from app import record_audit
+
+        record_audit(
+            action="superadmin_step_up_failed",
+            entity="superadmin_session",
+            detail="Reautenticación fallida para acción administrativa sensible.",
+            user_id=current_user.id,
+            company_id=None,
+            ip_address=request.remote_addr,
+        )
+        from app import db
+
+        db.session.commit()
+        flash("La contraseña de Super Admin no es correcta.", "danger")
+        return False
+
+    session[_SUPERADMIN_STEP_UP_USER_SESSION_KEY] = current_user.id
+    session[_SUPERADMIN_STEP_UP_AT_SESSION_KEY] = utcnow().timestamp()
+
+    from app import record_audit, db
+
+    record_audit(
+        action="superadmin_step_up_success",
+        entity="superadmin_session",
+        detail=f"Reautenticación exitosa. Vigencia={SUPERADMIN_STEP_UP_TTL_SECONDS}s.",
+        user_id=current_user.id,
+        company_id=None,
+        ip_address=request.remote_addr,
+    )
+    db.session.commit()
+    return True
 
 
 def _redirect_back(default_endpoint: str = "saas.companies_panel"):
@@ -2285,6 +2352,8 @@ def company_delete(company_id):
 
     _require_superadmin()
     company = Company.query.filter_by(id=company_id).first_or_404()
+    if not _require_superadmin_step_up():
+        return _redirect_back("saas.companies_panel")
     confirm_company_name = (request.form.get("confirm_company_name") or "").strip()
     if confirm_company_name != (company.name or ""):
         flash("Para eliminar definitivamente, escribí el nombre exacto de la empresa.", "warning")
@@ -3565,6 +3634,8 @@ def backups_restore(backup_id):
     confirm_restore = (request.form.get("confirm_restore") or "").strip() == "1"
     if not confirm_restore:
         return redirect(url_for("saas.backups_panel", preview_id=backup.id, company_id=backup.company_id))
+    if not _require_superadmin_step_up():
+        return _redirect_back("saas.backups_panel")
 
     try:
         BackupService.restore_backup(backup, expected_company_id=backup.company_id, restored_by_user_id=current_user.id, sections=sections)
