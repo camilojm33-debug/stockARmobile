@@ -20,10 +20,12 @@ from services.ai_agent.config_service import (
     ensure_default_agents,
     get_ai_preferences,
     get_special_options,
+    get_vendor_options,
     get_whatsapp_connection,
     update_ai_preferences,
 )
 from services.ai_agent.usage_service import AI_PLANS, can_use_ai, can_use_ai_feature, current_plan
+from services.ai_agent.vendor_publication import publication_status
 
 bp = Blueprint("ai_admin", __name__, url_prefix="/dashboard/ai-agent")
 
@@ -232,6 +234,110 @@ def vendor_metrics():
     )
 
 
+
+@bp.get("/vendor-config")
+@company_admin_required
+def vendor_config():
+    company_id = get_current_company_id(current_user)
+    from app import Company
+
+    company = Company.query.filter_by(id=company_id, active=True).first()
+    if company is None:
+        return redirect(url_for("dashboard.index"))
+
+    entitlement = can_use_ai_feature(company, "vendedor")
+    if not entitlement.allowed:
+        return redirect(url_for("ai_agents.agent", agent="planes"))
+
+    agents = ensure_default_agents(company_id)
+    vendor = agents[VENDOR_AGENT_NAME]
+    configs = _ensure_configs(company_id, {VENDOR_AGENT_NAME: vendor})
+    return render_template(
+        "ai_agent/vendor_config.html",
+        company=company,
+        vendor=vendor,
+        vendor_config=configs[VENDOR_AGENT_NAME],
+        vendor_options=get_vendor_options(company),
+        publication=publication_status(company),
+    )
+
+
+@bp.post("/vendor-save")
+@company_admin_required
+def vendor_save():
+    company_id = get_current_company_id(current_user)
+    from app import Company, record_audit
+
+    company = Company.query.filter_by(id=company_id, active=True).first()
+    if company is None:
+        flash("No se encontró la empresa activa.", "danger")
+        return redirect(url_for("dashboard.index"))
+
+    entitlement = can_use_ai_feature(company, "vendedor")
+    if not entitlement.allowed:
+        flash(entitlement.reason or "Tu plan no incluye el Vendedor IA.", "warning")
+        return redirect(url_for("ai_agents.agent", agent="planes"))
+
+    agents = ensure_default_agents(company_id)
+    vendor = agents[VENDOR_AGENT_NAME]
+    configs = _ensure_configs(company_id, {VENDOR_AGENT_NAME: vendor})
+    plan = current_plan(company)
+    entitled_agents = set(plan["agents"]) if plan else set()
+
+    if "vendor_enabled" in request.form:
+        vendor.active = request.form.get("vendor_enabled") == "1" and "vendedor" in entitled_agents
+
+    config = configs[VENDOR_AGENT_NAME]
+    prompt = request.form.get("vendor_prompt")
+    if prompt is not None:
+        config.system_prompt = prompt.strip()[:12000]
+    language = request.form.get("vendor_language")
+    if language is not None:
+        config.language = language.strip()[:8] or "es-AR"
+
+    vendor_options = get_vendor_options(company)
+    if "vendor_personality" in request.form:
+        vendor_options["personality"] = (request.form.get("vendor_personality") or "amigable").strip()[:30]
+
+    for key, field in {
+        "can_recommend": "vendor_can_recommend",
+        "can_offer_alternatives": "vendor_can_offer_alternatives",
+        "can_prepare_quotes": "vendor_can_prepare_quotes",
+        "can_take_orders": "vendor_can_take_orders",
+        "can_follow_up": "vendor_can_follow_up",
+        "can_handoff": "vendor_can_handoff",
+    }.items():
+        if field in request.form:
+            vendor_options[key] = "1" in request.form.getlist(field)
+
+    for key, field, limit in (
+        ("agent_name", "vendor_agent_name", 120),
+        ("greeting", "vendor_greeting", 1000),
+        ("schedule", "vendor_schedule", 120),
+        ("out_of_hours_message", "vendor_out_of_hours_message", 1000),
+        ("business_information", "vendor_business_information", 4000),
+    ):
+        if field in request.form:
+            vendor_options[key] = (request.form.get(field) or "").strip()[:limit]
+
+    update_ai_preferences(company, ai_updates={"vendor_options": vendor_options})
+
+    try:
+        record_audit(
+            action="ai_vendor_configuration_update",
+            entity="ai_agent",
+            entity_id=vendor.id,
+            detail="Configuración exclusiva del Vendedor IA actualizada",
+            company_id=company_id,
+        )
+    except Exception:
+        pass
+
+    db.session.commit()
+    flash("Configuración del Vendedor IA guardada correctamente.", "success")
+    return redirect(url_for("ai_admin.vendor_config"))
+
+
 @bp.post("/save")
 @company_admin_required
 def save():
@@ -247,7 +353,8 @@ def save():
     configs = _ensure_configs(company_id, agents)
     plan = current_plan(company)
     entitled_agents = set(plan["agents"]) if plan else set()
-    agents[VENDOR_AGENT_NAME].active = request.form.get("vendor_enabled") == "1" and "vendedor" in entitled_agents
+    if "vendor_enabled" in request.form:
+        agents[VENDOR_AGENT_NAME].active = request.form.get("vendor_enabled") == "1" and "vendedor" in entitled_agents
     agents[BUSINESS_AGENT_NAME].active = request.form.get("business_enabled") == "1" and "asistente" in entitled_agents
     special_agents = {
         key: ensure_agent_for_key(company_id, key)
@@ -261,7 +368,10 @@ def save():
         elif key not in entitled_agents:
             special_agents[key].active = False
 
+    config_fields_present = any(field in request.form for field in ("vendor_prompt", "vendor_language"))
     for name, prefix in ((VENDOR_AGENT_NAME, "vendor"), (BUSINESS_AGENT_NAME, "business")):
+        if name == VENDOR_AGENT_NAME and not config_fields_present:
+            continue
         config = configs[name]
         model = (request.form.get(f"{prefix}_model") or "").strip()[:120]
         if model:
