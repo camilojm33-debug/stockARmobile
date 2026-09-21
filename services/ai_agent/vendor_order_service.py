@@ -982,6 +982,7 @@ class VendorOrderService:
                 "price": float(product.price or 0),
                 "stock": float(product.stock or 0),
                 "unit_measure": product.unit_measure or "u",
+                "photo": product.photo or "",
             }
             for product in rows[:safe_limit]
         ]

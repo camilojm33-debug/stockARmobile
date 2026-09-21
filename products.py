@@ -1,16 +1,15 @@
 """Blueprint de productos: CRUD e inventario."""
 
-import os
 import uuid
 from datetime import datetime
 from io import BytesIO
-from pathlib import Path
 
-from flask import Blueprint, current_app, flash, jsonify, redirect, render_template, request, send_file, url_for
+from flask import Blueprint, flash, jsonify, redirect, render_template, request, send_file, url_for
 from flask_login import current_user, login_required
 from sqlalchemy.exc import IntegrityError
 from app import tenant_required, utcnow
 from services.sales_calculation_service import calculate_product_pricing
+from services.product_image_service import ProductImageError, delete_product_image, resolve_product_image, save_product_image
 
 bp = Blueprint("products", __name__)
 
@@ -138,27 +137,14 @@ def _require_admin_product_management():
     return None
 
 
-def _save_product_image(upload):
-    filename = (upload.filename or "").strip()
-    if not filename:
-        return None
-
-    extension = Path(filename).suffix.lower()
-    if extension not in ALLOWED_IMAGE_EXTENSIONS:
-        raise ValueError("Formato de imagen no permitido. Usa JPG, JPEG, PNG o WEBP.")
-
-    upload.stream.seek(0, os.SEEK_END)
-    size = upload.stream.tell()
-    upload.stream.seek(0)
-    if size > MAX_IMAGE_SIZE_BYTES:
-        raise ValueError("La imagen supera el tamaño máximo de 5 MB.")
-
-    upload_dir = Path(current_app.static_folder) / "uploads" / "products"
-    upload_dir.mkdir(parents=True, exist_ok=True)
-    unique_name = f"{uuid.uuid4().hex}{extension}"
-    destination = upload_dir / unique_name
-    upload.save(destination)
-    return f"/static/uploads/products/{unique_name}"
+@bp.route("/imagen/<filename>")
+def product_image(filename):
+    resolved = resolve_product_image(filename)
+    if resolved is None:
+        from flask import abort
+        abort(404)
+    path, mime = resolved
+    return send_file(path, mimetype=mime, max_age=86400, conditional=True)
 
 
 @bp.route("/")
@@ -218,8 +204,8 @@ def add():
         upload = request.files.get("photo_file")
         if upload and (upload.filename or "").strip():
             try:
-                product.photo = _save_product_image(upload)
-            except ValueError as exc:
+                product.photo = save_product_image(upload)
+            except ProductImageError as exc:
                 flash(str(exc), "danger")
                 return redirect(url_for("products.index"))
         try:
@@ -314,6 +300,8 @@ def edit(product_id=None, id=None):
             db.session.rollback()
             flash("No se pudo actualizar: el codigo de barras ya existe.", "danger")
             return redirect(url_for("products.index"))
+        if upload and (upload.filename or "").strip():
+            delete_product_image(old_photo)
         flash("Producto actualizado exitosamente.", "success")
         return redirect(url_for("products.index"))
 
