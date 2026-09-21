@@ -1098,7 +1098,11 @@ def test_superadmin_company_hard_delete_removes_company_tree():
 
     delete_response = client.post(
         f"/superadmin/companies/{company_id}/delete",
-        data={"next": "/superadmin/companies", "confirm_company_name": "Empresa Demo"},
+        data={
+            "next": "/superadmin/companies",
+            "confirm_company_name": "Empresa Demo",
+            "step_up_password": "admin123",
+        },
         follow_redirects=False,
     )
     assert delete_response.status_code in (302, 303)
@@ -1122,7 +1126,11 @@ def test_superadmin_company_hard_delete_requires_exact_name_match():
 
     wrong_name_resp = client.post(
         f"/superadmin/companies/{company_id}/delete",
-        data={"next": "/superadmin/companies", "confirm_company_name": "Nombre Incorrecto"},
+        data={
+            "next": "/superadmin/companies",
+            "confirm_company_name": "Nombre Incorrecto",
+            "step_up_password": "admin123",
+        },
         follow_redirects=True,
     )
     assert wrong_name_resp.status_code == 200
