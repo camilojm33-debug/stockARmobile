@@ -319,11 +319,16 @@ def public_vendor_page(slug: str):
         )
     _visitor_id(company.id)
     options = get_vendor_options(company)
+    shipping_config = {
+        "mode": options.get("shipping_mode", "legacy_percent"),
+        "standard_cost": float(options.get("standard_shipping_cost") or 0),
+    }
     return render_template(
         "ai_agents/public_vendor_chat.html",
         company=company,
         disabled_reason=None,
         chat_url=url_for("vendor_publication.public_vendor_message", slug=slug, _external=True),
+        shipping_config=shipping_config,
         catalog=_catalog_for_company(company),
         initial_state=_initial_page_state(company),
         greeting=str(options.get("greeting") or "Hola 👋 ¿Qué producto estás buscando?").strip(),
@@ -571,6 +576,7 @@ def preview_vendor():
         company=company,
         disabled_reason="Vista previa del Vendedor IA. Publicá el Vendedor para habilitar conversaciones públicas.",
         chat_url=None,
+        shipping_config={"mode": "manual", "standard_cost": 0},
         catalog=_catalog_for_company(company),
         initial_state={"conversation_id": None, "cart": {"items": [], "total": 0, "currency": "ARS", "line_count": 0}, "payment_url": None},
         greeting="Hola 👋 ¿Qué producto estás buscando?",
