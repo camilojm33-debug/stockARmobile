@@ -3258,7 +3258,7 @@ def renewals_panel():
 @bp.route("/logs")
 @superadmin_required
 def logs_panel():
-    from app import AuditLog, Company
+    from app import AuditLog, Company, db
 
     _require_superadmin()
     action = (request.args.get("action") or "").strip()[:120]
