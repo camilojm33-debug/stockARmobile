@@ -9,6 +9,8 @@ def test_superadmin_critical_actions_require_step_up():
 
     assert "_require_superadmin_step_up()" in delete_block
     assert "_require_superadmin_step_up()" in restore_block
+    delete_backup_block = text[text.index("def backups_delete("):text.index("def global_stats(")]
+    assert "_require_superadmin_step_up()" in delete_backup_block
     assert "SUPERADMIN_STEP_UP_TTL_SECONDS = 600" in text
     assert "superadmin_step_up_failed" in text
     assert "superadmin_step_up_success" in text
@@ -24,6 +26,7 @@ def test_superadmin_critical_action_forms_expose_reauthentication():
     assert 'name="step_up_password"' in backups
     assert 'autocomplete="current-password"' in companies
     assert 'autocomplete="current-password"' in backups
+    assert 'name="step_up_password"' in backups
 
 
 def test_superadmin_backup_routes_are_wired_to_the_correct_handlers():
