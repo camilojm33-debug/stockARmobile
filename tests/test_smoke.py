@@ -1399,7 +1399,7 @@ def test_subscription_lifecycle_actions_never_delete_company():
     for action in ("cancel", "suspend"):
         resp = client.post(
             f"/superadmin/subscriptions/{subscription_id}/action",
-            data={"action": "reactivate" if action == "cancel" else action},
+            data={"action": "reactivate" if action == "cancel" else action, "step_up_password": "admin123"},
             follow_redirects=True,
         )
         assert resp.status_code == 200
@@ -5406,6 +5406,7 @@ def test_superadmin_create_subscription_keeps_trial_when_company_is_new():
             "plan_id": paid_plan_id,
             "status": "pending",
             "renewal_enabled": "1",
+            "step_up_password": "admin123",
         },
         follow_redirects=False,
     )
