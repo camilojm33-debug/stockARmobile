@@ -55,3 +55,35 @@ def test_superadmin_privileged_access_actions_require_step_up():
         next_def = text.find("\ndef ", start + 5)
         block = text[start:] if next_def == -1 else text[start:next_def]
         assert "_require_superadmin_step_up()" in block, function_name
+
+
+def test_superadmin_subscription_mutations_require_step_up():
+    text = Path("saas.py").read_text(encoding="utf-8")
+
+    guarded_functions = [
+        "ai_subscriptions_action",
+        "subscriptions_quick_renew_company",
+        "subscriptions_create",
+        "subscriptions_update",
+        "subscriptions_action",
+    ]
+    for function_name in guarded_functions:
+        start = text.index(f"def {function_name}(")
+        next_def = text.find("\ndef ", start + 5)
+        block = text[start:] if next_def == -1 else text[start:next_def]
+        assert "_require_superadmin_step_up()" in block, function_name
+
+    wsgi = Path("wsgi.py").read_text(encoding="utf-8")
+    start = wsgi.index("def superadmin_delete_historical_subscription(")
+    block = wsgi[start:]
+    assert "_require_superadmin_step_up()" in block
+
+
+def test_superadmin_subscription_forms_expose_reauthentication():
+    subscriptions = Path("templates/saas/subscriptions.html").read_text(encoding="utf-8")
+    ai_detail = Path("templates/saas/ai_subscription_detail.html").read_text(encoding="utf-8")
+
+    assert 'name="step_up_password"' in subscriptions
+    assert 'autocomplete="current-password"' in subscriptions
+    assert 'name="step_up_password"' in ai_detail
+    assert 'autocomplete="current-password"' in ai_detail
