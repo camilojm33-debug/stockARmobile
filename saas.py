@@ -3628,6 +3628,43 @@ def backups_download(backup_id):
 
 
 @bp.route("/backups/<int:backup_id>/restore", methods=["POST"])
+@bp.post("/superadmin/backups/<int:backup_id>/verify")
+@superadmin_required
+def backups_verify(backup_id):
+    from app import BackupLog, record_audit
+
+    backup = BackupLog.query.filter_by(id=backup_id).first_or_404()
+    try:
+        result = BackupService.verify_backup(backup, expected_company_id=backup.company_id)
+    except (FileNotFoundError, PermissionError, ValueError) as exc:
+        record_audit(
+            action="superadmin_backup_verification_failed",
+            entity="backup",
+            entity_id=backup.id,
+            detail=f"Verificación fallida para company={backup.company_id}: {exc}",
+        )
+        flash(f"Verificación fallida: {exc}", "danger")
+    else:
+        record_audit(
+            action="superadmin_backup_verified",
+            entity="backup",
+            entity_id=backup.id,
+            detail=(
+                f"Backup verificado company={backup.company_id} "
+                f"schema={result['schema_version']} counts={result['counts']}"
+            ),
+        )
+        flash(
+            f"Backup #{backup.id} verificado correctamente: "
+            f"{result['counts']['products']} productos, "
+            f"{result['counts']['clients']} clientes y "
+            f"{result['counts']['sales']} ventas.",
+            "success",
+        )
+
+    return redirect(url_for("saas.backups_panel", preview_id=backup.id))
+
+
 @superadmin_required
 def backups_restore(backup_id):
     from app import BackupLog, db, record_audit
