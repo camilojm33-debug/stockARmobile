@@ -346,7 +346,7 @@ def ai_orders():
     all_rows = [_ai_order_row(company_id, quote) for quote in quotes]
     selected_status = (request.args.get("status") or "").strip().lower()
     allowed_filters = {"pending", "shipping_pending", "paid", "confirmed", "problem"}
-        rows = [
+    rows = [
         row for row in all_rows
         if not selected_status
         or selected_status not in allowed_filters
