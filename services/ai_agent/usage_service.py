@@ -19,6 +19,10 @@ AI_PLANS = (
 )
 AI_PLAN_BY_CODE = {plan["code"]: plan for plan in AI_PLANS}
 AGENT_LABELS = {"vendedor": "Vendedor IA", "asistente": "Asistente Empresarial", "analista": "Analista IA", "marketing": "Marketing IA"}
+COMMERCIAL_FEATURE_LABELS = {
+    "pricing_controller": "Controlador global de precios",
+}
+
 AI_FEATURE_LABELS = {
     "facturas": "Reconocimiento de facturas con IA",
     "pricing_controller": "Controlador global de precios con IA",
@@ -55,6 +59,38 @@ def _effective_status(prefs: dict[str, Any], *, now: datetime) -> str:
         except (TypeError, ValueError):
             pass
     return status
+
+
+def can_use_commercial_feature(company, feature: str) -> AIAccess:
+    """Validate a StockArMobile commercial-plan feature without requiring an AI plan."""
+    key = str(feature or "").strip().lower()
+    if company is None or not getattr(company, "active", False):
+        return AIAccess(False, "La empresa no está activa.", None)
+
+    from services.plan_service import PlanService
+    from services.subscription_service import SubscriptionService
+
+    subscription = SubscriptionService.active_subscription_for_company(int(company.id))
+    if subscription is None:
+        return AIAccess(False, "Tu empresa no tiene un plan comercial activo.", None)
+
+    status = SubscriptionService.get_effective_subscription_status(subscription, company=company)
+    normalized = SubscriptionService._normalize_state(status)
+    if normalized not in SubscriptionService.ACTIVE_STATUSES and normalized not in SubscriptionService.TRIAL_STATUSES:
+        labels = {"SUSPENDED": "suspendido", "CANCELLED": "cancelado", "EXPIRED": "vencido"}
+        return AIAccess(False, f"El plan comercial de tu empresa está {labels.get(normalized, 'inactivo')}. Contactá a soporte.", None)
+
+    plan = PlanService.get_plan(plan_id=subscription.plan_id)
+    if plan is None:
+        return AIAccess(False, "El plan comercial de tu empresa no está disponible.", None)
+
+    raw = (getattr(plan, "features_json", "") or "").strip().lower()
+    tokens = {item.strip() for item in raw.replace(";", ",").split(",") if item.strip()}
+    if key in COMMERCIAL_FEATURE_LABELS and ("all" in tokens or key in tokens):
+        return AIAccess(True, None, {"code": plan.code, "name": plan.name, "commercial": True})
+
+    required = "Negocio"
+    return AIAccess(False, f"{COMMERCIAL_FEATURE_LABELS.get(key, 'Esta función')} requiere {required} o superior.", {"code": plan.code, "name": plan.name, "commercial": True})
 
 
 def can_use_ai_feature(company, feature: str) -> AIAccess:
