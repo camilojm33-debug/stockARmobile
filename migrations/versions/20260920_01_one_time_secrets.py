@@ -1,14 +1,14 @@
 """Add encrypted server-side one-time secret storage.
 
 Revision ID: 20260920_01_one_time_secrets
-Revises: 20260918_01_ai_order_delivery
+Revises: 20260918_02_company_logo_persistence
 """
 from alembic import op
 import sqlalchemy as sa
 
 
 revision = "20260920_01_one_time_secrets"
-down_revision = "20260918_01_ai_order_delivery"
+down_revision = "20260918_02_company_logo_persistence"
 branch_labels = None
 depends_on = None
 
