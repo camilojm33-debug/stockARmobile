@@ -302,7 +302,7 @@
     const cartEndpoint = chatEndpoint ? chatEndpoint.replace(/\/message$/, '/cart') : '';
     const checkoutEndpoint = chatEndpoint ? chatEndpoint.replace(/\/message$/, '/checkout') : '';
     const stateEndpoint = chatEndpoint ? chatEndpoint.replace(/\/message$/, '/state') : '';
-    const shippingConfig = {{ (shipping_config or {"mode": "legacy_percent", "standard_cost": 0, "legacy_percent": 15})|tojson }};
+    const shippingConfig = {{ (shipping_config or {"mode": "manual", "standard_cost": 0})|tojson }};
     const csrf = {{ csrf_token()|tojson }};
     const initialCatalog = {{ catalog|tojson }};
     const initialState = {{ initial_state|tojson }};
