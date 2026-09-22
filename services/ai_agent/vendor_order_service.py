@@ -716,7 +716,7 @@ class VendorOrderService:
                     "description": product.name,
                     "quantity": int(item["quantity"]) if float(item["quantity"]).is_integer() else float(item["quantity"]),
                     "currency_id": quote.currency or "ARS",
-                    "unit_price": float((promotion_by_product_id.get(product.id).final_amount / Decimal(str(item["quantity"]))).quantize(Decimal("0.01")) if promotion_by_product_id.get(product.id) is not None and Decimal(str(item["quantity"])) > 0 else max(_money(product.price) - _money(getattr(product, "discount", 0)), Decimal("0.00"))),
+                    "unit_price": float((promotion_by_product_id.get(product.id).final_amount / Decimal(str(item["quantity"]))) if promotion_by_product_id.get(product.id) is not None and Decimal(str(item["quantity"])) > 0 else max(_money(product.price) - _money(getattr(product, "discount", 0)), Decimal("0.00"))),
                 }
                 for item in cart["items"]
                 for product in [products[int(item["product_id"])] ]
