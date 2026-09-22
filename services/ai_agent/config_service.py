@@ -233,7 +233,7 @@ def build_vendor_runtime_instructions(
         "estado real de pedidos/pagos ni otras salvaguardas del sistema.",
         "REGLA DE ENVÍO: nunca inventes porcentajes ni uses reglas históricas. "
         "Para envíos a domicilio usá exclusivamente el costo fijo configurado por el comercio. "
-        "Ese costo ya forma parte del presupuesto y del total de Mercado Pago; nunca lo dejes A CONFIRMAR ni agregues otro recargo."
+        "Ese costo ya forma parte del presupuesto y del total de Mercado Pago; no lo dejes pendiente ni agregues otro recargo."
     ])
     return "\n".join(line for line in lines if line is not None)
 
