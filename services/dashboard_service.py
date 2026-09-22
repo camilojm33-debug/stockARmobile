@@ -199,7 +199,7 @@ def _last_days_labels(days):
 
 
 def _sales_by_day(days):
-    """Return daily confirmed sales using one grouped SQL query instead of one query per day."""
+    """Return daily confirmed sales with one bounded query and local-day bucketing."""
     from app import Sale, db, scope_query_to_company, Company
     from flask_login import current_user
     from stockarmobile.helpers.dates import local_day_bounds_utc_naive, local_today
@@ -212,21 +212,37 @@ def _sales_by_day(days):
     _, end_utc = local_day_bounds_utc_naive(today, tz_name)
 
     rows = (
-        scope_query_to_company(
-            db.session.query(
-                db.func.date(Sale.date).label("day"),
-                db.func.coalesce(db.func.sum(Sale.total_amount), 0).label("total"),
-            ).filter(Sale.date >= start_utc, Sale.date < end_utc),
+        _confirmed_sales_query(
+            scope_query_to_company(
+                db.session.query(Sale.date, Sale.total_amount)
+                .filter(Sale.date >= start_utc, Sale.date < end_utc),
+                Sale,
+            ),
             Sale,
         )
-        .filter(_confirmed_sale_status_expression(Sale))
-        .group_by(db.func.date(Sale.date))
         .all()
     )
-    totals = {row.day: _to_decimal(row.total) for row in rows}
 
-    data = []
-    for offset in reversed(range(days)):
-        day = today - timedelta(days=offset)
-        data.append(totals.get(day, Decimal("0.00")))
-    return data
+    daily_totals = {}
+    for sale_date, amount in rows:
+        # Convert the stored UTC-naive timestamp back to the company's local date
+        # using the same date-boundary helper used by the rest of the dashboard.
+        local_day = next(
+            (
+                first_day + timedelta(days=offset)
+                for offset in range(days)
+                if (
+                    (lambda bounds: bounds[0] <= sale_date < bounds[1])(
+                        local_day_bounds_utc_naive(first_day + timedelta(days=offset), tz_name)
+                    )
+                )
+            ),
+            None,
+        )
+        if local_day is not None:
+            daily_totals[local_day] = daily_totals.get(local_day, Decimal("0.00")) + _to_decimal(amount)
+
+    return [
+        daily_totals.get(today - timedelta(days=offset), Decimal("0.00"))
+        for offset in reversed(range(days))
+    ]
