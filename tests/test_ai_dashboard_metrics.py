@@ -18,6 +18,7 @@ def test_vendor_dashboard_metrics_use_real_ai_orders_and_sales(app):
             company_id=company.id,
             active=True,
         )
+        user.set_password("test-password")
         db.session.add(user)
         db.session.flush()
 
