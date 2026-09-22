@@ -199,16 +199,34 @@ def _last_days_labels(days):
 
 
 def _sales_by_day(days):
+    """Return daily confirmed sales using one grouped SQL query instead of one query per day."""
     from app import Sale, db, scope_query_to_company, Company
     from flask_login import current_user
     from stockarmobile.helpers.dates import local_day_bounds_utc_naive, local_today
+
     company = db.session.get(Company, getattr(current_user, "company_id", None))
     tz_name = getattr(company, "timezone", None) or "America/Argentina/Buenos_Aires"
     today = local_today(tz_name)
+    first_day = today - timedelta(days=max(days - 1, 0))
+    start_utc, _ = local_day_bounds_utc_naive(first_day, tz_name)
+    _, end_utc = local_day_bounds_utc_naive(today, tz_name)
+
+    rows = (
+        scope_query_to_company(
+            db.session.query(
+                db.func.date(Sale.date).label("day"),
+                db.func.coalesce(db.func.sum(Sale.total_amount), 0).label("total"),
+            ).filter(Sale.date >= start_utc, Sale.date < end_utc),
+            Sale,
+        )
+        .filter(_confirmed_sale_status_expression(Sale))
+        .group_by(db.func.date(Sale.date))
+        .all()
+    )
+    totals = {row.day: _to_decimal(row.total) for row in rows}
+
     data = []
     for offset in reversed(range(days)):
         day = today - timedelta(days=offset)
-        start, end = local_day_bounds_utc_naive(day, tz_name)
-        total = _confirmed_sales_query(scope_query_to_company(db.session.query(db.func.coalesce(db.func.sum(Sale.total_amount), 0)).filter(Sale.date >= start, Sale.date < end), Sale), Sale).scalar() or 0
-        data.append(_to_decimal(total))
+        data.append(totals.get(day, Decimal("0.00")))
     return data
