@@ -142,7 +142,6 @@ def _search_candidates(company_id: int, query: str):
     return sorted(rows, key=lambda item: (-score(item), item.name.lower()))
 
 
-SHIPPING_RATE_PERCENT = Decimal("15.00")
 
 
 def _normalize_delivery_method(value: Any) -> str:
@@ -178,14 +177,6 @@ def _delivery_payload(*, method: str, customer_name: str, customer_phone: str, a
     return values
 
 
-def _shipping_calculation(cart_total: Decimal, method: str) -> Dict[str, Decimal]:
-    normalized_method = _normalize_delivery_method(method)
-    if normalized_method == "envio":
-        cost = (cart_total * SHIPPING_RATE_PERCENT / Decimal("100")).quantize(Decimal("0.01"))
-        return {"cost": cost, "rate": SHIPPING_RATE_PERCENT}
-    return {"cost": Decimal("0.00"), "rate": Decimal("0.00")}
-
-
 def _shipping_plan(company_id: int, cart_total: Decimal, method: str) -> Dict[str, Any]:
     """Resolve shipping behavior without trusting client-supplied amounts."""
     normalized_method = _normalize_delivery_method(method)
@@ -204,7 +195,9 @@ def _shipping_plan(company_id: int, cart_total: Decimal, method: str) -> Dict[st
         raise ValueError("Empresa no encontrada para calcular el envío.")
 
     options = get_vendor_options(company)
-    mode = str(options.get("shipping_mode") or "legacy_percent").strip().lower()
+    mode = str(options.get("shipping_mode") or "manual").strip().lower()
+    if mode == "legacy_percent":
+        mode = "manual"
     if mode == "manual":
         return {
             "cost": Decimal("0.00"),
@@ -225,14 +218,15 @@ def _shipping_plan(company_id: int, cart_total: Decimal, method: str) -> Dict[st
             "reason": "Envío a domicilio · tarifa estándar del comercio.",
         }
 
-    legacy = _shipping_calculation(cart_total, "envio")
+    # Any unknown/retired mode is fail-safe: shipping remains manual and must be quoted by the merchant.
     return {
-        "cost": legacy["cost"],
-        "rate": legacy["rate"],
-        "status": "confirmed",
-        "source": "legacy_percent",
-        "reason": "Envío a domicilio (15%)",
+        "cost": Decimal("0.00"),
+        "rate": Decimal("0.00"),
+        "status": "pending",
+        "source": "manual",
+        "reason": "Costo de envío pendiente de cotización por el comercio.",
     }
+
 
 
 class VendorOrderService:
@@ -1144,7 +1138,7 @@ class VendorOrderService:
                 [{
                     "id": f"shipping-{quote.id}",
                     "title": "Envío a domicilio",
-                    "description": str(getattr(getattr(quote, "delivery", None), "shipping_reason", None) or "Recargo de envío 15%"),
+                    "description": str(getattr(getattr(quote, "delivery", None), "shipping_reason", None) or "Costo de envío confirmado por el comercio"),
                     "quantity": 1,
                     "currency_id": quote.currency or "ARS",
                     "unit_price": float(_money(getattr(getattr(quote, "delivery", None), "shipping_cost", 0))),
