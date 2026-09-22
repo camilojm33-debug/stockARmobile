@@ -14,6 +14,7 @@ from .payment_service import PaymentService
 from .pricing_service import PricingService
 from .totals_service import TotalsService
 from .validation_service import ValidationService
+from services.promotion_service import PromotionEngine
 
 
 class SaleService:
@@ -55,6 +56,14 @@ class SaleService:
                     return redirect(url_for("sales.success", sale_id=existing_sale.id))
 
             lines = self._calculate_lines(items, lock_for_update=True, discount_overrides=(data.get("line_discounts") or data.get("line_discount_overrides") or {}))
+            if checkout_token and checkout_token.startswith("quote-cart-") or data.get("line_discounts") or data.get("line_discount_overrides"):
+                promotion_results = []
+            else:
+                lines, promotion_results = PromotionEngine.apply_to_lines(company_id=company_id, lines=lines)
+            promotion_names = []
+            for result in promotion_results:
+                if result.promotion_name and result.promotion_name not in promotion_names:
+                    promotion_names.append(result.promotion_name)
             sale_totals = PricingService.calculate(lines=[{"price": line["price"], "quantity": line["quantity"], "line_discount": line["discount"]} for line in lines], data=data)
             general_discount = sale_totals["general_discount"]
             surcharge = sale_totals["surcharge"]
@@ -98,7 +107,7 @@ class SaleService:
                 surcharge=surcharge,
                 discount_type=sale_totals["discount_adjustment"]["type"],
                 discount_value=sale_totals["discount_adjustment"]["value"],
-                discount_reason=sale_totals["discount_adjustment"]["reason"],
+                discount_reason=(sale_totals["discount_adjustment"]["reason"] or ("Promoción: " + ", ".join(promotion_names) if promotion_names else None)),
                 surcharge_type=sale_totals["surcharge_adjustment"]["type"],
                 surcharge_value=sale_totals["surcharge_adjustment"]["value"],
                 surcharge_reason=sale_totals["surcharge_adjustment"]["reason"],

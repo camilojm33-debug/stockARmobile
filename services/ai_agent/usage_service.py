@@ -21,6 +21,7 @@ AI_PLAN_BY_CODE = {plan["code"]: plan for plan in AI_PLANS}
 AGENT_LABELS = {"vendedor": "Vendedor IA", "asistente": "Asistente Empresarial", "analista": "Analista IA", "marketing": "Marketing IA"}
 COMMERCIAL_FEATURE_LABELS = {
     "pricing_controller": "Controlador global de precios",
+    "promotions": "Promociones comerciales",
 }
 
 AI_FEATURE_LABELS = {

@@ -800,6 +800,14 @@
       </a>
       {% endif %}
       {% if current_user.role == 'admin' %}
+      {% set promotions_href = url_for('promotions.index') if commercial_promotions_allowed else url_for('company_billing.subscription_portal') %}
+      <a class="nav-link {% if request.endpoint and request.endpoint.startswith('promotions.') %}active{% endif %}" href="{{ promotions_href }}">
+        <i class="bi bi-megaphone"></i>
+        <span class="nav-text">Promociones</span>
+        {% if not commercial_promotions_allowed %}<span class="nav-badge badge rounded-pill text-bg-warning ms-auto">Negocio</span>{% endif %}
+      </a>
+      {% endif %}
+      {% if current_user.role == 'admin' %}
       <a class="nav-link {% if request.endpoint and request.endpoint.startswith('company_billing.') %}active{% endif %}" href="{{ url_for('company_billing.subscription_portal') }}"><i class="bi bi-credit-card-2-front"></i><span class="nav-text">Suscripción</span></a>
       {% endif %}
       {% endif %}

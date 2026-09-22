@@ -679,6 +679,7 @@ def _plan_features_label(plan):
         "qr": "QR",
         "etiquetas": "Etiquetas",
         "pricing_controller": "Controlador global de precios",
+        "promotions": "Promociones comerciales",
     }
     return [mapping.get(item.strip(), item.strip().title()) for item in raw.split(",") if item.strip()]
 
