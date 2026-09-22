@@ -112,6 +112,35 @@ def _require_ai_access():
         return redirect(url_for("dashboard.index"))
 
 
+
+VENDOR_AI_ORDER_OBSERVATION = "Pedido generado por el Vendedor 24 hs de StockARmobile."
+
+
+def _vendor_dashboard_metrics(company_id: int, month_start: datetime) -> dict:
+    """Return current-month Vendor IA order and derived-sale counts for the tenant."""
+    from app import Quote, Sale
+
+    orders = Quote.query.filter(
+        Quote.company_id == int(company_id),
+        Quote.created_at >= month_start,
+        Quote.observations == VENDOR_AI_ORDER_OBSERVATION,
+    ).count()
+
+    derived_sales = (
+        db.session.query(db.func.count(Sale.id))
+        .join(Quote, Quote.converted_sale_id == Sale.id)
+        .filter(
+            Quote.company_id == int(company_id),
+            Quote.observations == VENDOR_AI_ORDER_OBSERVATION,
+            Sale.company_id == int(company_id),
+            Sale.created_at >= month_start,
+            Sale.status.notin_(["cancelada", "anulada"]),
+        )
+        .scalar()
+        or 0
+    )
+    return {"orders": int(orders), "ai_sales": int(derived_sales)}
+
 def _context():
     from app import Client, Company, Product, Quote, Sale, SaleItem
     from services.ai_agent.subscription_service import AISubscriptionService
@@ -135,6 +164,7 @@ def _context():
     critical_stock = Product.query.filter(Product.company_id == company_id, Product.active.is_(True), Product.stock <= Product.min_stock).count()
     sold_product_ids = db.session.query(SaleItem.product_id).join(Sale).filter(Sale.company_id == company_id, Sale.created_at >= now - timedelta(days=90), Sale.status.notin_(["cancelada", "anulada"])).distinct()
     low_rotation = Product.query.filter(Product.company_id == company_id, Product.active.is_(True), ~Product.id.in_(sold_product_ids)).count()
+    vendor_metrics = _vendor_dashboard_metrics(company_id, month_start)
     ai_status = AISubscriptionService.get_status(company)
     ai_plan = current_plan(company)
     ai_usage = usage_snapshot(company_id)
@@ -159,7 +189,7 @@ def _context():
                 public_vendor_url = publication["url"]
         except Exception:
             current_app.logger.exception("No se pudo resolver la URL estable del Vendedor público company_id=%s", company_id)
-    return {"company": company, "agents": agents, "preferences": preferences, "metrics": {"conversations": conversations, "clients_attended": clients_attended, "quotes": quotes, "sales": int(sales_month.count())}, "analyst": {"sales_change": sales_change, "critical_stock": critical_stock, "low_rotation": low_rotation, "opportunities": None}, "ai_status": ai_status, "ai_plans": AI_PLANS, "agent_labels": AGENT_LABELS, "ai_plan": ai_plan, "ai_usage": ai_usage, "agent_access": agent_access, "invoice_access": invoice_access, "any_chat_agent": any_chat_agent, "default_chat_agent": default_chat_agent, "public_webchat_enabled": public_webchat_enabled, "public_vendor_url": public_vendor_url, "plan_url": url_for("ai_agents.agent", agent="planes"), "ai_checkout_url": url_for("company_billing.create_ai_subscription_checkout"), "config_url": url_for("ai_admin.index"), "chat_url": url_for("dashboard.ai_agent_chat")}
+    return {"company": company, "agents": agents, "preferences": preferences, "metrics": {"conversations": conversations, "clients_attended": clients_attended, "quotes": quotes, "sales": int(sales_month.count()), "orders": vendor_metrics["orders"], "ai_sales": vendor_metrics["ai_sales"]}, "analyst": {"sales_change": sales_change, "critical_stock": critical_stock, "low_rotation": low_rotation, "opportunities": None}, "ai_status": ai_status, "ai_plans": AI_PLANS, "agent_labels": AGENT_LABELS, "ai_plan": ai_plan, "ai_usage": ai_usage, "agent_access": agent_access, "invoice_access": invoice_access, "any_chat_agent": any_chat_agent, "default_chat_agent": default_chat_agent, "public_webchat_enabled": public_webchat_enabled, "public_vendor_url": public_vendor_url, "plan_url": url_for("ai_agents.agent", agent="planes"), "ai_checkout_url": url_for("company_billing.create_ai_subscription_checkout"), "config_url": url_for("ai_admin.index"), "chat_url": url_for("dashboard.ai_agent_chat")}
 
 
 def _campaign_rows(company_id: int):

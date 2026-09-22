@@ -195,7 +195,7 @@
   <section class="card app-card mb-4">
     <div class="card-body p-4">
       <div class="d-flex flex-wrap justify-content-between align-items-end gap-3 mb-3"><div><h2 class="h5 fw-bold mb-1">Actividad de tu equipo IA</h2><p class="text-muted mb-0">Datos registrados en tu empresa durante el mes actual.</p></div><a class="btn btn-sm btn-outline-primary" href="{{ plan_url }}">Administrar plan</a></div>
-      <div class="row g-3">{% for label, value, icon in [('Conversaciones', metrics.conversations, 'bi-chat-dots'), ('Clientes atendidos', metrics.clients_attended, 'bi-people'), ('Presupuestos', metrics.quotes, 'bi-file-earmark-text'), ('Ventas', metrics.sales, 'bi-currency-dollar')] %}<div class="col-6 col-lg-3"><div class="ai-metric"><i class="bi {{ icon }} text-primary fs-5"></i><div class="small text-muted mt-2">{{ label }}</div><div class="ai-metric-value">{{ value }}</div></div></div>{% endfor %}</div>
+      <div class="row g-3">{% for label, value, icon in [('Conversaciones', metrics.conversations, 'bi-chat-dots'), ('Clientes atendidos', metrics.clients_attended, 'bi-people'), ('Presupuestos', metrics.quotes, 'bi-file-earmark-text'), ('Pedidos', metrics.orders, 'bi-bag-check'), ('Ventas derivadas', metrics.ai_sales, 'bi-currency-dollar')] %}<div class="col-6 col-lg-3"><div class="ai-metric"><i class="bi {{ icon }} text-primary fs-5"></i><div class="small text-muted mt-2">{{ label }}</div><div class="ai-metric-value">{{ value }}</div></div></div>{% endfor %}</div>
     </div>
   </section>
 
