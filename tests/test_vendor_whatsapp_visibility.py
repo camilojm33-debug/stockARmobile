@@ -95,7 +95,8 @@ def test_public_vendor_checkout_does_not_hardcode_shipping_percentage():
     public_page = (root / "templates/ai_agents/public_vendor_chat.html").read_text(encoding="utf-8")
     assert "* 0.15" not in public_page
     assert "shippingConfig" in public_page
-    assert "A confirmar" in public_page
+    assert "A confirmar" not in public_page
     assert "15%" not in public_page
     assert "legacy_percent" not in public_page
+    assert "fixed_cost" in public_page
     assert "stateEndpoint" in public_page
