@@ -106,7 +106,11 @@ def test_webhook_merchant_token_and_collector_are_tenant_scoped(monkeypatch, com
     seen = {}
 
     monkeypatch.setattr(service.mp_service, "validate_webhook_signature", lambda **kwargs: True)
-    monkeypatch.setattr(MercadoPagoOAuthService, "ensure_access_token", lambda self, *, company_id: seen.setdefault("company_id", company_id) or "token")
+    def fake_ensure_access_token(self, *, company_id):
+        seen["company_id"] = company_id
+        return "token"
+
+    monkeypatch.setattr(MercadoPagoOAuthService, "ensure_access_token", fake_ensure_access_token)
     monkeypatch.setattr(
         service.mp_service,
         "get_payment",
