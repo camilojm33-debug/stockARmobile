@@ -14,7 +14,7 @@
         <div class="mb-3"><label class="form-label">Nombre</label><input class="form-control" name="name" required placeholder="Ej. 2x1 Coca Cola"></div>
         <div class="mb-3"><label class="form-label">Producto</label><select class="form-select" name="product_id"><option value="">— Por categoría —</option>{% for product in products %}<option value="{{ product.id }}">{{ product.name }} · ${{ product.price }}</option>{% endfor %}</select></div>
         <div class="mb-3"><label class="form-label">Categoría (opcional)</label><select class="form-select" name="category"><option value="">Sin categoría</option>{% for category in categories %}<option value="{{ category }}">{{ category }}</option>{% endfor %}</select><div class="form-text">La promoción puede aplicarse a un producto o a toda una categoría.</div></div>
-        <div class="mb-3"><label class="form-label">Tipo</label><select class="form-select" name="type"><option value="bogo">Llevás X, pagás Y</option><option value="percent_quantity">Cantidad + porcenthje</option><option value="fixed_quantity">Cantidad + importe</option></select></div>
+        <div class="mb-3"><label class="form-label">Tipo</label><select class="form-select" name="type"><option value="bogo">Llevás X, pagás Y</option><option value="percent_quantity">Cantidad + porcentaje</option><option value="fixed_quantity">Cantidad + importe</option></select></div>
         <div class="row g-2">
           <div class="col-6"><label class="form-label">Mínimo</label><input class="form-control" type="number" min="0" step="0.001" name="min_quantity" placeholder="3"></div>
           <div class="col-6"><label class="form-label">% descuento</label><input class="form-control" type="number" min="0" max="100" step="0.01" name="discount_percent" placeholder="15"></div>
@@ -29,7 +29,7 @@
           <div class="col-6 d-flex align-items-end"><div class="form-check form-switch mb-2"><input class="form-check-input" type="checkbox" name="active" value="1" checked><label class="form-check-label">Activa</label></div></div>
         </div>
         <div class="mb-3 mt-2"><label class="form-label">Descripción</label><textarea class="form-control" name="description" rows="2" placeholder="Condiciones de la promoción"></textarea></div>
-        <button class="btn btn-primary w-100" type="submit"><i class="bi bi-plus-lg me-1"></i>Guardar promoción</button>
+        <button class="btn btn-primary w-100" type="submit"><i class="bi bi-plus-lg me-1"></i>Crear promoción</button>
       </form>
     </div></section></div>
     <div class="col-xl-7"><section class="card app-card"><div class="card-body p-4">

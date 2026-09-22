@@ -3,7 +3,7 @@ from decimal import Decimal
 
 from app import Company, Product, Subscription, User, db
 import pytest
-from promotions import Promotion
+from promotions import Promotion, _validate_payload
 from services.promotion_service import PromotionEngine
 
 
@@ -189,3 +189,42 @@ def test_promotions_menu_and_route_are_registered():
     assert "can_use_commercial_feature(company, \"promotions\").allowed" in Path("app.py").read_text(encoding="utf-8")
     assert "url_for('promotions.index')" in source
     assert any(rule.endpoint == "promotions.index" for rule in app.url_map.iter_rules())
+
+
+def test_promotion_rule_validation_accepts_2x1():
+    payload = _validate_payload({
+        "type": "bogo",
+        "product_id": "10",
+        "buy_quantity": "2",
+        "pay_quantity": "1",
+        "name": "2x1",
+        "active": "1",
+        "priority": "100",
+    })
+    assert payload["buy_quantity"] == Decimal("2")
+    assert payload["pay_quantity"] == Decimal("1")
+
+
+def test_promotion_rule_validation_explains_missing_bogo_rule():
+    with pytest.raises(ValueError, match="Completá la regla"):
+        _validate_payload({
+            "type": "bogo",
+            "product_id": "10",
+            "name": "2x1",
+            "active": "1",
+            "priority": "100",
+        })
+
+
+def test_promotion_rule_validation_accepts_quantity_percentage():
+    payload = _validate_payload({
+        "type": "percent_quantity",
+        "category": "Bebidas",
+        "min_quantity": "3",
+        "discount_percent": "15",
+        "name": "3 unidades 15%",
+        "active": "1",
+        "priority": "100",
+    })
+    assert payload["min_quantity"] == Decimal("3")
+    assert payload["discount_percent"] == Decimal("15")
