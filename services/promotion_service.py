@@ -47,7 +47,11 @@ class PromotionEngine:
             db.and_(Promotion.product_id.is_(None), Promotion.category.is_(None)),
             db.and_(Promotion.product_id.is_(None), Promotion.category == (product.category or "")),
         )
-        return query.filter(condition).order_by(Promotion.priority.desc(), Promotion.id.asc())
+        return query.filter(condition).order_by(
+            Promotion.priority.desc(),
+            db.case((Promotion.product_id == product.id, 1), else_=0).desc(),
+            Promotion.id.asc(),
+        )
 
     @classmethod
     def evaluate(cls, *, company_id: int, product: Product, quantity: Any, now: datetime | None = None) -> PromotionResult:
