@@ -66,6 +66,25 @@ class WebhookService:
             if ":" in segment
         }
 
+    @staticmethod
+    def _merchant_connection_for_payment_event(*, data_id: str, payload: dict, Payment, MercadoPagoConnection):
+        """Resolve the tenant before querying Mercado Pago with a seller token.
+
+        Mercado Pago webhooks include user_id, which identifies the seller for whom
+        the notification is sent. If we already persisted the payment, its company_id
+        is the stronger local binding and wins over the webhook field.
+        """
+        payment = Payment.query.filter_by(payment_id=str(data_id or "")).first() if data_id else None
+        if payment is not None and getattr(payment, "company_id", None):
+            connection = MercadoPagoConnection.query.filter_by(company_id=payment.company_id).first()
+            if connection is not None:
+                return connection
+
+        seller_id = str(payload.get("user_id") or "").strip()
+        if not seller_id:
+            return None
+        return MercadoPagoConnection.query.filter_by(mp_user_id=seller_id).first()
+
     def process(self, *, db_session, headers: dict, payload: dict) -> dict:
         from app import Payment, Subscription, User, WebhookEvent
 
@@ -85,8 +104,31 @@ class WebhookService:
             return {"status": "duplicate", "event_key": event_key}
 
         payment_data = None
+        merchant_connection = None
         if event_type in {"payment", "payment.updated", "merchant_order", "topic_payment"}:
-            payment_data = self.mp_service.get_payment(data_id)
+            from app import MercadoPagoConnection
+
+            merchant_connection = self._merchant_connection_for_payment_event(
+                data_id=data_id,
+                payload=payload,
+                Payment=Payment,
+                MercadoPagoConnection=MercadoPagoConnection,
+            )
+            merchant_access_token = None
+            if merchant_connection is not None:
+                from services.mercadopago_oauth_service import MercadoPagoOAuthService
+
+                merchant_access_token = MercadoPagoOAuthService().ensure_access_token(
+                    company_id=merchant_connection.company_id
+                )
+            payment_data = self.mp_service.get_payment(data_id, access_token=merchant_access_token)
+            if merchant_connection is not None:
+                collector_id = str(payment_data.get("collector_id") or "").strip()
+                expected_collector_id = str(merchant_connection.mp_user_id or "").strip()
+                if collector_id and expected_collector_id and collector_id != expected_collector_id:
+                    raise RuntimeError(
+                        "Webhook Mercado Pago rechazado: el collector del pago no coincide con la cuenta vinculada a la empresa."
+                    )
             event_key = self._payment_event_key(payment_data, generic_event_key)
             existing_payment_event = WebhookEvent.query.filter_by(event_key=event_key).first()
             if existing_payment_event:
@@ -201,6 +243,8 @@ class WebhookService:
                     raise RuntimeError("Webhook Mercado Pago de pedido IA sin empresa o presupuesto válido")
                 if metadata_company_id and ref_company_id and metadata_company_id != ref_company_id:
                     raise RuntimeError("Webhook Mercado Pago de pedido IA con empresa inconsistente")
+                if merchant_connection is not None and int(merchant_connection.company_id or 0) != company_id:
+                    raise RuntimeError("Webhook Mercado Pago de pedido IA con cuenta vendedora de otra empresa")
                 if payment_status == "approved":
                     result = VendorOrderService.finalize_paid_order(
                         company_id=company_id,
@@ -258,6 +302,8 @@ class WebhookService:
                 return result
 
             payment = Payment.query.filter_by(payment_id=str(payment_data.get("id"))).first()
+            if merchant_connection is not None and payment is not None and int(payment.company_id or 0) != int(merchant_connection.company_id or 0):
+                raise RuntimeError("Webhook Mercado Pago con pago perteneciente a otra empresa")
             previous_payment_status = (payment.status or "").lower() if payment is not None else ""
             if payment is None:
                 company_id = int(metadata.get("company_id") or ref_parts.get("company_id") or 0)
@@ -280,6 +326,9 @@ class WebhookService:
 
                 if not company_id:
                     raise RuntimeError("Webhook Mercado Pago sin company_id valido")
+
+                if merchant_connection is not None and int(merchant_connection.company_id or 0) != company_id:
+                    raise RuntimeError("Webhook Mercado Pago con cuenta vendedora de otra empresa")
 
                 if flow != "pos_sale" and not subscription_id:
                     raise RuntimeError("Webhook Mercado Pago sin subscription_id valido")
@@ -319,6 +368,8 @@ class WebhookService:
             else:
                 if flow == "pos_sale":
                     expected_company_id = int(payment.company_id or 0)
+                    if merchant_connection is not None and int(merchant_connection.company_id or 0) != expected_company_id:
+                        raise RuntimeError("Webhook Mercado Pago con cuenta vendedora de otra empresa")
                     if metadata_company_id and metadata_company_id != expected_company_id:
                         raise RuntimeError("Webhook Mercado Pago con company_id inconsistente en metadata para POS")
                     if ref_company_id and ref_company_id != expected_company_id:
