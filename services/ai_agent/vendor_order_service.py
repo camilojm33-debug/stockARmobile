@@ -314,19 +314,22 @@ class VendorOrderService:
             product = products.get(product_id)
             if product is None or quantity <= 0:
                 continue
-            list_price = _money(product.price)
-            discount = _money(getattr(product, "discount", 0))
-            price = max(list_price - discount, Decimal("0.00"))
-            subtotal = (price * quantity).quantize(Decimal("0.01"))
+            promotion = PromotionEngine.evaluate(company_id=company_id, product=product, quantity=quantity)
+            subtotal = promotion.final_amount
             total += subtotal
             items.append({
                 "product_id": product.id,
                 "name": product.name,
                 "quantity": float(quantity),
                 "unit_measure": product.unit_measure or "u",
-                "unit_price": float(price),
+                "unit_price": float(promotion.unit_price),
                 "stock": float(product.stock or 0),
                 "subtotal": float(subtotal),
+                "promotion_id": promotion.promotion_id,
+                "promotion_name": promotion.promotion_name,
+                "paid_quantity": float(promotion.paid_quantity),
+                "free_quantity": float(promotion.free_quantity),
+                "discount": float(promotion.discount),
             })
 
         return {"items": items, "total": float(total), "currency": "ARS", "line_count": len(items)}
