@@ -11,10 +11,12 @@ from app import Client, Company, Payment, Product, Quote, QuoteDelivery, User, d
 from services.ai_agent.orchestrator_v2 import AgentRuntime
 from services.ai_agent.vendor_order_service import (
     CART_KEY,
+    LAST_ORDER_KEY,
     PENDING_PAYMENT_KEY,
     PENDING_QUOTE_KEY,
     VendorOrderService,
 )
+from services.mercadopago_service import MercadoPagoService
 from stockarmobile.models.conversations import Conversation
 
 
@@ -291,6 +293,120 @@ def test_create_pending_order_creates_quote_payment_and_mp_flow(vendor_database,
     assert checkout["access_token"] == "test-access-token"
     assert conversation.metadata_json[PENDING_QUOTE_KEY] == quote.id
     assert conversation.metadata_json[PENDING_PAYMENT_KEY] == result["payment_url"]
+
+
+def test_checkout_uses_discounted_unit_price_in_quote_and_mercado_pago(vendor_database, monkeypatch):
+    data = vendor_database
+    data["product_a"].discount = 10
+    db.session.commit()
+    conversation = _conversation(data["company_a"].id)
+    calls = []
+    _mock_checkout(monkeypatch, calls)
+
+    VendorOrderService.update_cart(
+        company_id=data["company_a"].id,
+        conversation_id=conversation.id,
+        items=[{"product_query": "Cafe clasico", "quantity": 2}],
+    )
+    cart = VendorOrderService.get_cart(
+        company_id=data["company_a"].id,
+        conversation_id=conversation.id,
+    )
+    assert cart["total"] == 180.0
+    assert cart["items"][0]["unit_price"] == 90.0
+
+    result = VendorOrderService.create_pending_order(
+        company_id=data["company_a"].id,
+        conversation_id=conversation.id,
+        customer_name="Cliente A",
+        actor_user_id=data["user_a"].id,
+    )
+    quote = db.session.get(Quote, result["quote_id"])
+    checkout = next(payload for kind, payload in calls if kind == "checkout")
+
+    assert float(quote.total_amount) == 180.0
+    assert checkout["amount"] == 180.0
+    product_items = [item for item in checkout["items"] if not str(item["id"]).startswith("shipping-")]
+    assert product_items == [
+        {
+            "id": str(data["product_a"].id),
+            "title": data["product_a"].name,
+            "description": data["product_a"].name,
+            "quantity": 2,
+            "currency_id": "ARS",
+            "unit_price": 90.0,
+        }
+    ]
+
+
+def test_finalize_paid_order_clears_webchat_checkout_state(vendor_database, monkeypatch):
+    data = vendor_database
+    conversation = _conversation(data["company_a"].id)
+    calls = []
+    _mock_checkout(monkeypatch, calls)
+    VendorOrderService.update_cart(
+        company_id=data["company_a"].id,
+        conversation_id=conversation.id,
+        items=[{"product_query": "Cafe clasico", "quantity": 2}],
+    )
+    created = VendorOrderService.create_pending_order(
+        company_id=data["company_a"].id,
+        conversation_id=conversation.id,
+        actor_user_id=data["user_a"].id,
+    )
+    payment = Payment.query.filter_by(company_id=data["company_a"].id).one()
+    quote = db.session.get(Quote, created["quote_id"])
+    payment_data = {
+        "id": "123456",
+        "transaction_amount": float(quote.total_amount),
+        "currency_id": "ARS",
+        "external_reference": payment.external_reference,
+        "payment_method_id": "account_money",
+    }
+
+    result = VendorOrderService.finalize_paid_order(
+        company_id=data["company_a"].id,
+        quote_id=quote.id,
+        payment_data=payment_data,
+    )
+
+    db.session.refresh(conversation)
+    state = conversation.metadata_json
+    assert result["status"] == "converted"
+    assert state.get(PENDING_QUOTE_KEY) is None
+    assert state.get(PENDING_PAYMENT_KEY) is None
+    assert CART_KEY not in state
+    assert state[LAST_ORDER_KEY]["order_status"] == "confirmado"
+    assert state[LAST_ORDER_KEY]["payment_status"] == "approved"
+    assert state[LAST_ORDER_KEY]["quote_id"] == quote.id
+    assert state[LAST_ORDER_KEY]["sale_id"] == result["sale_id"]
+    assert data["product_a"].stock == 8
+
+
+def test_mercado_pago_rejects_preference_when_lines_do_not_match_total(vendor_database):
+    service = MercadoPagoService()
+    with pytest.raises(ValueError, match="no coincide con el importe del pedido"):
+        service.create_ai_order_checkout_preference(
+            title="Pedido P-000001 - StockARmobile",
+            items=[
+                {
+                    "id": "1",
+                    "title": "Cafe clasico",
+                    "description": "Cafe clasico",
+                    "quantity": 2,
+                    "currency_id": "ARS",
+                    "unit_price": 100,
+                }
+            ],
+            amount=180,
+            currency="ARS",
+            external_reference="test",
+            company_id=vendor_database["company_a"].id,
+            user_id=vendor_database["user_a"].id,
+            quote_id=1,
+            conversation_id=1,
+            return_url="http://test.local/pago",
+        )
 
 
 def test_legacy_shipping_config_normalizes_to_fixed_and_creates_both_links(vendor_database, monkeypatch):

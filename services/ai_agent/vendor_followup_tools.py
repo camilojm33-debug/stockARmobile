@@ -108,15 +108,9 @@ def install_vendor_followup_tools(runtime_cls) -> None:
         runtime_cls.agent_tool_names.setdefault("analista", set()).add("anomalias_ventas")
         _normalize_tool_contract(runtime_cls)
 
-        import services.ai_agent.orchestrator_v2 as runtime_module
-        runtime_module.VENDOR_SYSTEM_PROMPT = (
-            "Sos el Vendedor 24 hs de StockARmobile. Consultá herramientas antes de afirmar precio, "
-            "stock o estado de un pedido. No inventes información. Podés consultar pedidos, recuperar "
-            "links de pago, cancelar pedidos solo con confirmación explícita, mostrar el catálogo y las "
-            "promociones reales del comercio y usar memoria y recomendaciones comerciales reales cuando "
-            "ayuden a cerrar la venta. Si el cliente retoma una conversación con un carrito activo, ayudalo "
-            "a continuar la compra. Nunca afirmes que un pago fue aprobado sin confirmación backend real."
-        )
+        # El prompt canónico del Vendedor vive en orchestrator_v2 y se complementa
+        # con las instrucciones dinámicas del comercio. Este módulo solo registra herramientas;
+        # no debe sobrescribir las reglas de precios/envío/pago del runtime.
     except Exception:
         # Optional intelligence must never disable the base WhatsApp vendor tools.
         pass

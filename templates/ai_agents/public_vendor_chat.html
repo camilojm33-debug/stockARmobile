@@ -341,6 +341,7 @@
     let currentState = initialState || { cart: { items: [], total: 0, line_count: 0, currency: 'ARS' }, payment_url: null };
     let sequence = 0;
     let searchTimer = null;
+    let orderPollTimer = null;
 
     function escapeHtml(value) {
       return String(value == null ? '' : value)
@@ -400,6 +401,9 @@
       currentState = state || currentState;
       const cart = currentState.cart || { items: [], total: 0, line_count: 0 };
       const items = Array.isArray(cart.items) ? cart.items : [];
+      const liveShippingCost = currentState.shipping_config
+        ? Number(currentState.shipping_config.fixed_cost || 0)
+        : Number(shippingConfig.fixed_cost || 0);
       const count = items.reduce(function (sum, item) { return sum + Number(item.quantity || 0); }, 0);
       const label = count === 1 ? '1 producto' : String(count) + ' productos';
       if (cartCountEl) cartCountEl.textContent = label;
@@ -410,7 +414,7 @@
       let shippingLabel = money(0);
       let grandTotalLabel = money(Number(cart.total || 0));
       if (isShipping) {
-        checkoutShipping = Number(shippingConfig.fixed_cost || 0);
+        checkoutShipping = liveShippingCost;
         shippingLabel = money(checkoutShipping);
         grandTotalLabel = money(Number(cart.total || 0) + checkoutShipping);
       }
@@ -440,13 +444,22 @@
       if (payLink && payLinkButton && quoteLinkButton) {
         const paymentUrl = String(currentState.payment_url || '').trim();
         const quoteUrl = String(currentState.quote_url || '').trim();
-        const ready = Boolean(paymentUrl && quoteUrl);
+        const order = currentState.order || {};
+        const paid = order.order_status === 'confirmado';
+        const ready = Boolean(paymentUrl && quoteUrl && !paid);
         payLink.classList.toggle('show', ready);
         if (ready) {
           payLinkButton.href = paymentUrl;
           quoteLinkButton.href = quoteUrl;
         }
+        if (checkoutButton && paid) checkoutButton.disabled = true;
       }
+    }
+
+    function ensureOrderPolling() {
+      if (!stateEndpoint || !conversationId || orderPollTimer) return;
+      orderPollTimer = window.setInterval(refreshOrderState, 6000);
+      refreshOrderState();
     }
 
     function setState(data) {
@@ -454,6 +467,32 @@
       if (data.conversation_id) conversationId = data.conversation_id;
       currentState = { ...currentState, ...data, cart: data.cart || currentState.cart };
       renderCart(currentState);
+      ensureOrderPolling();
+    }
+
+    async function refreshOrderState() {
+      if (!stateEndpoint || !conversationId) return;
+      try {
+        const url = new URL(stateEndpoint, window.location.origin);
+        url.searchParams.set('conversation_id', String(conversationId));
+        const data = await requestJson(url.toString(), { credentials: 'include' });
+        const previousStatus = currentState.order && currentState.order.order_status;
+        setState(data);
+        const order = currentState.order || {};
+        if (order.order_status === 'confirmado') {
+          if (previousStatus !== 'confirmado' && !currentState._paymentNoticeShown) {
+            currentState._paymentNoticeShown = true;
+            add('assistant', 'Pago confirmado. Tu pedido ' + (order.quote_number ? '#' + order.quote_number : '') + ' quedó registrado y el stock fue actualizado.');
+          }
+          if (orderPollTimer) {
+            window.clearInterval(orderPollTimer);
+            orderPollTimer = null;
+          }
+        }
+      } catch (err) {
+        // Polling is intentionally silent: checkout/payment links remain usable
+        // even when a background status refresh temporarily fails.
+      }
     }
 
     function paymentLinkLabel(url) {
@@ -600,6 +639,8 @@
         if (data.payment_url && data.quote_url) {
           add('assistant', 'Tu pedido ' + (data.quote_number || '') + ' quedó preparado por ' + money(data.total || 0) + ', con el envío incluido. Te dejo el presupuesto y el pago con Mercado Pago.');
           payLinkButton.focus();
+        } else if (data.order && data.order.order_status === 'confirmado') {
+          add('assistant', 'Pago confirmado. Tu pedido quedó registrado correctamente.');
         }
       } catch (err) {
         checkoutError.textContent = err.message || 'No se pudo preparar el pedido.';
@@ -714,9 +755,7 @@
       input.focus();
     }
     if (checkoutButton) checkoutButton.addEventListener('click', checkout);
-    if (stateEndpoint) {
-      window.setInterval(refreshOrderState, 6000);
-    }
+    ensureOrderPolling();
     if (mobileCartButton) mobileCartButton.addEventListener('click', function () {
       const panel = document.querySelector('.cart-panel');
       if (panel) panel.scrollIntoView({ behavior: 'smooth', block: 'start' });

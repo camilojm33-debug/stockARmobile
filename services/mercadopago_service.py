@@ -84,12 +84,18 @@ class MercadoPagoService:
         if amount <= 0 or not items:
             raise ValueError("El pedido debe contener productos y un importe mayor a cero.")
         safe_items = []
+        computed_total = 0.0
         for item in items:
             quantity = float(item.get("quantity") or 0)
             unit_price = float(item.get("unit_price") or 0)
             if quantity <= 0 or unit_price < 0:
                 raise ValueError("Línea de pedido inválida.")
+            computed_total += quantity * unit_price
             safe_items.append({"id": str(item.get("id") or ""), "title": str(item.get("title") or "Producto")[:256], "description": str(item.get("description") or item.get("title") or "Producto")[:256], "quantity": int(quantity) if quantity.is_integer() else quantity, "currency_id": str(item.get("currency_id") or currency).upper(), "unit_price": unit_price})
+        if abs(computed_total - float(amount)) > 0.01:
+            raise ValueError(
+                f"El total de las líneas ({computed_total:.2f}) no coincide con el importe del pedido ({float(amount):.2f})."
+            )
         payload = {"items": safe_items, "external_reference": external_reference, "metadata": {"flow": "ai_order", "company_id": int(company_id), "user_id": int(user_id), "quote_id": int(quote_id), "conversation_id": int(conversation_id)}, "back_urls": {"success": return_url, "pending": return_url, "failure": return_url}, "notification_url": self.config.notification_url, "statement_descriptor": self.config.statement_descriptor, "auto_return": "approved"}
         return self._request("POST", "/checkout/preferences", payload=payload, access_token=access_token, idempotency_key=f"ai-order-preference:{external_reference}")
 
