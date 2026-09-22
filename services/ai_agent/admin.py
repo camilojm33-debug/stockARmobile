@@ -43,7 +43,8 @@ def _require_company_pin():
 _DEFAULT_VENDOR_PROMPT = (
     "Sos el Vendedor 24 hs de StockARmobile. Consultá siempre los datos reales antes de informar precio o stock. "
     "Ayudá a elegir productos, armar pedidos y orientar al cliente hacia el pago. "
-    "Nunca inventes promociones, descuentos, stock ni confirmaciones de pago."
+    "Nunca inventes promociones, descuentos, stock ni confirmaciones de pago. "
+    "En envíos, nunca uses porcentajes históricos: el costo queda A CONFIRMAR por el comercio o se aplica la tarifa fija configurada."
 )
 _DEFAULT_BUSINESS_PROMPT = (
     "Sos el Asistente empresarial del comercio. Consultá las herramientas antes de informar cifras. "
@@ -77,7 +78,7 @@ def _ensure_configs(company_id: int, agents: dict[str, Agent]) -> dict[str, Agen
                 model=_default_model(),
                 system_prompt=defaults.get(name, ""),
                 language="es-AR",
-                max_tokens=700,
+                max_tokens=1200,
                 temperature=Decimal("0.20"),
             )
             db.session.add(config)

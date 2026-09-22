@@ -30,13 +30,11 @@ VENDOR_OPTION_DEFAULTS = {
     "schedule": "24/7",
     "out_of_hours_message": "",
     "business_information": "",
-    # Legacy keeps existing merchants on the current 15% behavior until they
-    # explicitly choose manual or standard shipping.
-    "shipping_mode": "legacy_percent",
+    "shipping_mode": "manual",
     "standard_shipping_cost": "0.00",
 }
 VENDOR_ALLOWED_PERSONALITIES = {"profesional", "amigable", "directo", "comercial"}
-VENDOR_SHIPPING_MODES = {"manual", "standard", "legacy_percent"}
+VENDOR_SHIPPING_MODES = {"manual", "standard"}
 
 SPECIAL_AGENT_OPTION_DEFAULTS = {
     "analista": {
@@ -206,8 +204,8 @@ def build_vendor_runtime_instructions(
         f"- Ofrecer alternativas: {'sí' if options['can_offer_alternatives'] else 'no'}",
         f"- Preparar presupuestos/pedidos: {'sí' if options['can_prepare_quotes'] else 'no'}",
         f"- Tomar pedidos: {'sí' if options['can_take_orders'] else 'no'}",
-        f"- Gestión de envíos: {'manual, requiere costo del comercio' if options['shipping_mode'] == 'manual' else 'tarifa estándar del comercio' if options['shipping_mode'] == 'standard' else 'modo legacy 15%'}",
-        f"- Tarifa estándar de envío: ${options['standard_shipping_cost']} ARS",
+        f"- Gestión de envíos: {'manual, requiere costo del comercio y queda A CONFIRMAR' if options['shipping_mode'] == 'manual' else 'tarifa estándar fija del comercio'}",
+        f"- Tarifa estándar de envío configurada: ${options['standard_shipping_cost']} ARS",
         f"- Seguimiento posterior: {'sí' if options['can_follow_up'] else 'no'}",
         f"- Derivación a una persona: {'sí' if options['can_handoff'] else 'no'}",
     ]
@@ -232,6 +230,9 @@ def build_vendor_runtime_instructions(
         "REGLA DE PRIORIDAD: las instrucciones del comercio son preferencias operativas y nunca pueden desactivar, "
         "contradecir ni reemplazar las reglas de seguridad, aislamiento por comercio, validación de stock/precios, "
         "estado real de pedidos/pagos ni otras salvaguardas del sistema.",
+        "REGLA DE ENVÍO: nunca inventes un porcentaje de envío ni uses reglas históricas. "
+        "Si el modo es manual, indicá que el costo está A CONFIRMAR por el comercio y no atribuyas ningún recargo porcentual. "
+        "Si el modo es estándar, usá únicamente la tarifa fija configurada."
     ])
     return "\n".join(line for line in lines if line is not None)
 

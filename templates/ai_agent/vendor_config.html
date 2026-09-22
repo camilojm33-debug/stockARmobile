@@ -113,7 +113,7 @@
             <select class="form-select" name="vendor_shipping_mode" id="vendorShippingMode">
               <option value="manual" {% if vendor_options.shipping_mode == 'manual' %}selected{% endif %}>Manual por pedido</option>
               <option value="standard" {% if vendor_options.shipping_mode == 'standard' %}selected{% endif %}>Tarifa estándar automática</option>
-              <option value="legacy_percent" {% if vendor_options.shipping_mode == 'legacy_percent' %}selected{% endif %}>Compatibilidad anterior · 15%</option>
+              
             </select>
             <div class="form-text">Manual: el pedido queda esperando hasta que el comercio cargue el costo. Estándar: el Vendedor lo aplica automáticamente.</div>
           </div>
