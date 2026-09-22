@@ -123,7 +123,8 @@ class MercadoPagoService:
         except json.JSONDecodeError: payload={"raw":raw[:1200]}
         return {"path":path,"status_code":status_code,"pos_count":len(self._extract_pos_results(payload)),"response":payload}
 
-    def get_payment(self, payment_id: str) -> dict[str, Any]: return self._request("GET", f"/v1/payments/{payment_id}")
+    def get_payment(self, payment_id: str, *, access_token: str | None = None) -> dict[str, Any]:
+        return self._request("GET", f"/v1/payments/{payment_id}", access_token=access_token)
     def get_preapproval(self, preapproval_id: str) -> dict[str, Any]: return self._request("GET", f"/preapproval/{preapproval_id}")
     def get_authorized_payment(self, authorized_payment_id: str) -> dict[str, Any]: return self._request("GET", f"/authorized_payments/{authorized_payment_id}")
 
