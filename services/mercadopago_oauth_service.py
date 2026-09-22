@@ -251,14 +251,12 @@ class MercadoPagoOAuthService:
 
     def save_connection(self, *, company_id: int, token_payload: dict, profile: dict) -> MercadoPagoConnection:
         connection = self.get_connection(company_id)
-        if connection is None:
-            connection = MercadoPagoConnection(company_id=company_id)
-            db.session.add(connection)
         now = utcnow()
         expires_in = int(token_payload.get("expires_in") or 0)
         new_access_token = (token_payload.get("access_token") or "").strip()
         new_refresh_token = (token_payload.get("refresh_token") or "").strip()
-        mp_user_id = str(profile.get("id") or connection.mp_user_id or "").strip()
+        current_mp_user_id = str(getattr(connection, "mp_user_id", "") or "").strip()
+        mp_user_id = str(profile.get("id") or current_mp_user_id).strip()
         if mp_user_id:
             existing_other_company = (
                 MercadoPagoConnection.query
@@ -273,6 +271,9 @@ class MercadoPagoOAuthService:
                     "Esta cuenta de Mercado Pago ya está vinculada a otra empresa de StockArMobile. "
                     "Desvinculala primero de esa empresa para poder usarla aquí."
                 )
+        if connection is None:
+            connection = MercadoPagoConnection(company_id=company_id)
+            db.session.add(connection)
         connection.mp_user_id = mp_user_id or None
         connection.account_name = str(profile.get("first_name") or profile.get("nickname") or profile.get("username") or profile.get("id") or "").strip()[:160] or None
         connection.account_email = (profile.get("email") or connection.account_email or "").strip()[:160] or None
