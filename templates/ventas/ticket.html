@@ -23,8 +23,11 @@
       {% for row in rows %}
       <div class="ticket-line">
         <div class="ticket-line-name">{{ row.name }}</div>
-        <div class="ticket-line-detail">{{ row.quantity }} x ${{ "%.2f"|format(row.price) }}</div>
-        <div class="ticket-line-total">${{ "%.2f"|format(row.total) }}</div>
+        <div class="ticket-line-detail">{{ row.quantity }} x ${{ "%.2f"|format(row.price) }} = ${{ "%.2f"|format(row.gross) }}</div>
+        {% if row.discount > 0 %}
+        <div class="ticket-line-promo">Promoción: -${{ "%.2f"|format(row.discount) }}</div>
+        {% endif %}
+        <div class="ticket-line-total">Total línea: ${{ "%.2f"|format(row.total) }}</div>
       </div>
       {% endfor %}
     </div>
@@ -33,7 +36,7 @@
 
     <div class="ticket-totals">
       <div><span>Subtotal</span><strong>${{ "%.2f"|format(sale.subtotal) }}</strong></div>
-      <div><span>Descuento</span><strong>{% if sale.discount_type == 'percentage' and sale.discount_value is not none %}{{ "%.2f"|format(sale.discount_value) }}%{% else %}-${{ "%.2f"|format(sale.discount) }}{% endif %}</strong></div>
+      <div><span>Descuento</span><strong>-${{ "%.2f"|format(sale.discount) }}</strong></div>
       {% if sale.discount_type == 'percentage' and sale.discount_value is not none %}<div><span>Descuento aplicado</span><strong>-${{ "%.2f"|format(sale.discount) }}</strong></div>{% endif %}
       {% if sale.discount_reason %}<div><span>Motivo descuento</span><strong>{{ sale.discount_reason }}</strong></div>{% endif %}
       {% if sale.surcharge %}<div><span>Recargo</span><strong>{% if sale.surcharge_type == 'percentage' and sale.surcharge_value is not none %}{{ "%.2f"|format(sale.surcharge_value) }}%{% else %}${{ "%.2f"|format(sale.surcharge) }}{% endif %}</strong></div>{% endif %}
@@ -79,6 +82,7 @@
   .ticket-line { padding: 6px 0; border-bottom: 1px dotted #ddd; }
   .ticket-line-name { font-weight: 700; }
   .ticket-line-detail, .ticket-line-total { color: #444; }
+  .ticket-line-promo { color: #198754; font-weight: 700; }
   .ticket-line-total { font-weight: 700; }
   .ticket-totals > div { display: flex; justify-content: space-between; margin: 3px 0; }
   .ticket-total-final { font-size: 15px; font-weight: 800; padding-top: 6px; border-top: 1px solid #222; }
