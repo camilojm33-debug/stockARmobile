@@ -870,7 +870,7 @@ class VendorOrderService:
         delivery.shipping_confirmed_at = datetime.utcnow()
         db.session.flush()
 
-        conversation_id = _conversation_id_for_quote(company_id=company_id, quote_id=quote.id)
+        conversation_id = VendorOrderService._conversation_id_for_quote(company_id=company_id, quote_id=quote.id)
         if conversation_id is None:
             raise ValueError("No se encontró la conversación del pedido IA.")
 
