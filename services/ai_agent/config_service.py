@@ -30,11 +30,11 @@ VENDOR_OPTION_DEFAULTS = {
     "schedule": "24/7",
     "out_of_hours_message": "",
     "business_information": "",
-    "shipping_mode": "manual",
+    "shipping_mode": "fixed",
     "standard_shipping_cost": "0.00",
 }
 VENDOR_ALLOWED_PERSONALITIES = {"profesional", "amigable", "directo", "comercial"}
-VENDOR_SHIPPING_MODES = {"manual", "standard"}
+VENDOR_SHIPPING_MODES = {"fixed"}
 
 SPECIAL_AGENT_OPTION_DEFAULTS = {
     "analista": {
@@ -154,8 +154,9 @@ def normalize_vendor_options(raw: Optional[Dict[str, Any]] = None) -> Dict[str, 
     ):
         options[key] = _coerce_bool(source.get(key), options[key])
 
-    shipping_mode = str(source.get("shipping_mode") or options["shipping_mode"]).strip().lower()
-    options["shipping_mode"] = shipping_mode if shipping_mode in VENDOR_SHIPPING_MODES else options["shipping_mode"]
+    # El Vendedor Web utiliza una única modalidad: costo fijo configurado por el comercio.
+    # Las preferencias históricas se normalizan aquí para impedir que vuelvan a activar el flujo eliminado.
+    options["shipping_mode"] = "fixed"
     try:
         standard_cost = Decimal(str(source.get("standard_shipping_cost") or options["standard_shipping_cost"])).quantize(Decimal("0.01"))
     except Exception:
@@ -204,8 +205,8 @@ def build_vendor_runtime_instructions(
         f"- Ofrecer alternativas: {'sí' if options['can_offer_alternatives'] else 'no'}",
         f"- Preparar presupuestos/pedidos: {'sí' if options['can_prepare_quotes'] else 'no'}",
         f"- Tomar pedidos: {'sí' if options['can_take_orders'] else 'no'}",
-        f"- Gestión de envíos: {'manual, requiere costo del comercio y queda A CONFIRMAR' if options['shipping_mode'] == 'manual' else 'tarifa estándar fija del comercio'}",
-        f"- Tarifa estándar de envío configurada: ${options['standard_shipping_cost']} ARS",
+        "- Gestión de envíos: costo fijo configurado automáticamente por el comercio",
+        f"- Costo fijo de envío configurado: ${options['standard_shipping_cost']} ARS",
         f"- Seguimiento posterior: {'sí' if options['can_follow_up'] else 'no'}",
         f"- Derivación a una persona: {'sí' if options['can_handoff'] else 'no'}",
     ]
@@ -230,9 +231,9 @@ def build_vendor_runtime_instructions(
         "REGLA DE PRIORIDAD: las instrucciones del comercio son preferencias operativas y nunca pueden desactivar, "
         "contradecir ni reemplazar las reglas de seguridad, aislamiento por comercio, validación de stock/precios, "
         "estado real de pedidos/pagos ni otras salvaguardas del sistema.",
-        "REGLA DE ENVÍO: nunca inventes un porcentaje de envío ni uses reglas históricas. "
-        "Si el modo es manual, indicá que el costo está A CONFIRMAR por el comercio y no atribuyas ningún recargo porcentual. "
-        "Si el modo es estándar, usá únicamente la tarifa fija configurada."
+        "REGLA DE ENVÍO: nunca inventes porcentajes ni uses reglas históricas. "
+        "Para envíos a domicilio usá exclusivamente el costo fijo configurado por el comercio. "
+        "Ese costo ya forma parte del presupuesto y del total de Mercado Pago; nunca lo dejes A CONFIRMAR ni agregues otro recargo."
     ])
     return "\n".join(line for line in lines if line is not None)
 
