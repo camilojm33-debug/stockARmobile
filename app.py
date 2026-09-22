@@ -2212,6 +2212,7 @@ def inject_notifications():
                     and can_use_commercial_feature(company, "pricing_controller").allowed
                 )
                 ai_feature_vendor_allowed = can_use_ai_feature(company, "vendedor").allowed
+                commercial_promotions_allowed = can_use_commercial_feature(company, "promotions").allowed
                 ai_employee_access_allowed = (
                     getattr(current_user, "role", None) in {"admin", "superadmin"}
                     or _user_has_permission(current_user, "ai_access")

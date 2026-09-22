@@ -186,5 +186,6 @@ def test_promotions_menu_and_route_are_registered():
     source = Path("templates/base_master.html").read_text(encoding="utf-8")
     assert "Promociones" in source
     assert "commercial_promotions_allowed" in source
+    assert "can_use_commercial_feature(company, \"promotions\").allowed" in Path("app.py").read_text(encoding="utf-8")
     assert "url_for('promotions.index')" in source
     assert any(rule.endpoint == "promotions.index" for rule in app.url_map.iter_rules())
