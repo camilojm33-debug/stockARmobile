@@ -155,10 +155,6 @@ def normalize_vendor_options(raw: Optional[Dict[str, Any]] = None) -> Dict[str, 
         options[key] = _coerce_bool(source.get(key), options[key])
 
     shipping_mode = str(source.get("shipping_mode") or options["shipping_mode"]).strip().lower()
-    # Legacy configurations from the retired percentage workflow are migrated
-    # in-memory to manual so they can never silently reintroduce the old rule.
-    if shipping_mode == "legacy_percent":
-        shipping_mode = "manual"
     options["shipping_mode"] = shipping_mode if shipping_mode in VENDOR_SHIPPING_MODES else options["shipping_mode"]
     try:
         standard_cost = Decimal(str(source.get("standard_shipping_cost") or options["standard_shipping_cost"])).quantize(Decimal("0.01"))
