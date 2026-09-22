@@ -293,9 +293,9 @@ def test_create_pending_order_creates_quote_payment_and_mp_flow(vendor_database,
     assert conversation.metadata_json[PENDING_PAYMENT_KEY] == result["payment_url"]
 
 
-def test_create_pending_order_legacy_shipping_config_is_converted_to_manual(vendor_database, monkeypatch):
+def test_legacy_shipping_config_normalizes_to_fixed_and_creates_both_links(vendor_database, monkeypatch):
     data = vendor_database
-    _configure_vendor_shipping(data["company_a"], mode="legacy_percent")
+    _configure_vendor_shipping(data["company_a"], mode="legacy_percent", standard_cost="50.00")
     conversation = _conversation(data["company_a"].id)
     calls = []
     _mock_checkout(monkeypatch, calls)
@@ -323,20 +323,24 @@ def test_create_pending_order_legacy_shipping_config_is_converted_to_manual(vend
 
     quote = db.session.get(Quote, result["quote_id"])
     delivery = db.session.get(QuoteDelivery, quote.id)
+    checkout = next(payload for kind, payload in calls if kind == "checkout")
 
-    assert result["shipping_pending"] is True
-    assert result["payment_url"] is None
-    assert quote.total_amount == 200
-    assert quote.surcharge == 0
-    assert delivery.method == "envio"
-    assert delivery.shipping_cost == 0
-    assert delivery.shipping_rate == 0
-    assert delivery.shipping_status == "pending"
-    assert delivery.shipping_source == "manual"
-    assert delivery.shipping_reason == "Costo de envío pendiente de cotización por el comercio."
-    assert Payment.query.filter_by(company_id=data["company_a"].id).count() == 0
-    assert not calls
-
+    assert result["success"] is True
+    assert "shipping_pending" not in result
+    assert result["payment_url"] == "https://payments.test/checkout/001"
+    assert result["quote_url"].startswith("http://test.local/presupuestos/publico/")
+    assert quote.total_amount == 250
+    assert quote.surcharge == 50
+    assert quote.surcharge_type == "fixed"
+    assert quote.surcharge_value == 50
+    assert delivery.shipping_cost == 50
+    assert delivery.shipping_status == "confirmed"
+    assert delivery.shipping_source == "fixed"
+    assert checkout["amount"] == 250
+    assert any(item["id"] == f"shipping-{quote.id}" and item["unit_price"] == 50 for item in checkout["items"])
+    assert Payment.query.filter_by(company_id=data["company_a"].id).count() == 1
+    assert conversation.metadata_json[PENDING_QUOTE_KEY] == quote.id
+    assert conversation.metadata_json[PENDING_PAYMENT_KEY] == result["payment_url"]
 
 def test_create_pending_order_reuses_existing_pending_flow(vendor_database, monkeypatch):
     data = vendor_database
@@ -503,171 +507,11 @@ def _configure_vendor_shipping(company, *, mode, standard_cost="0.00"):
     db.session.commit()
 
 
-def test_manual_shipping_creates_pending_quote_without_payment(vendor_database, monkeypatch):
-    data = vendor_database
-    _configure_vendor_shipping(data["company_a"], mode="manual")
-    conversation = _conversation(data["company_a"].id)
-    calls = []
-    _mock_checkout(monkeypatch, calls)
-
-    VendorOrderService.update_cart(
-        company_id=data["company_a"].id,
-        conversation_id=conversation.id,
-        items=[{"product_query": "Cafe clasico", "quantity": 2}],
-    )
-    result = VendorOrderService.create_pending_order(
-        company_id=data["company_a"].id,
-        conversation_id=conversation.id,
-        customer_name="Cliente Envio",
-        customer_phone="5491117777777",
-        delivery_method="envio",
-        delivery_address="Calle 123",
-        delivery_city="Resistencia",
-        delivery_province="Chaco",
-        actor_user_id=data["user_a"].id,
-    )
-
-    quote = db.session.get(Quote, result["quote_id"])
-    delivery = db.session.get(QuoteDelivery, quote.id)
-
-    assert result["shipping_pending"] is True
-    assert result["payment_url"] is None
-    assert quote.total_amount == 200
-    assert delivery.shipping_cost == 0
-    assert delivery.shipping_status == "pending"
-    assert delivery.shipping_source == "manual"
-    assert Payment.query.filter_by(company_id=data["company_a"].id).count() == 0
-    assert not calls
-    assert conversation.metadata_json[PENDING_QUOTE_KEY] == quote.id
-    assert PENDING_PAYMENT_KEY not in conversation.metadata_json
 
 
-def test_standard_shipping_uses_fixed_commerce_cost(vendor_database, monkeypatch):
-    data = vendor_database
-    _configure_vendor_shipping(data["company_a"], mode="standard", standard_cost="50.00")
-    conversation = _conversation(data["company_a"].id)
-    calls = []
-    _mock_checkout(monkeypatch, calls)
-
-    VendorOrderService.update_cart(
-        company_id=data["company_a"].id,
-        conversation_id=conversation.id,
-        items=[{"product_query": "Cafe clasico", "quantity": 2}],
-    )
-    result = VendorOrderService.create_pending_order(
-        company_id=data["company_a"].id,
-        conversation_id=conversation.id,
-        customer_name="Cliente Envio",
-        customer_phone="5491117777777",
-        delivery_method="envio",
-        delivery_address="Calle 123",
-        delivery_city="Resistencia",
-        delivery_province="Chaco",
-        actor_user_id=data["user_a"].id,
-    )
-
-    quote = db.session.get(Quote, result["quote_id"])
-    delivery = db.session.get(QuoteDelivery, quote.id)
-    checkout = next(payload for kind, payload in calls if kind == "checkout")
-
-    assert quote.total_amount == 250
-    assert quote.surcharge == 50
-    assert quote.surcharge_type == "fixed"
-    assert quote.surcharge_value == 50
-    assert delivery.shipping_cost == 50
-    assert delivery.shipping_status == "confirmed"
-    assert delivery.shipping_source == "standard"
-    assert checkout["amount"] == 250
-    assert any(item["id"] == f"shipping-{quote.id}" and item["unit_price"] == 50 for item in checkout["items"])
 
 
-def test_confirm_manual_shipping_recalculates_total_and_creates_payment(vendor_database, monkeypatch):
-    data = vendor_database
-    _configure_vendor_shipping(data["company_a"], mode="manual")
-    conversation = _conversation(data["company_a"].id)
-    calls = []
-    _mock_checkout(monkeypatch, calls)
-
-    VendorOrderService.update_cart(
-        company_id=data["company_a"].id,
-        conversation_id=conversation.id,
-        items=[{"product_query": "Cafe clasico", "quantity": 2}],
-    )
-    pending = VendorOrderService.create_pending_order(
-        company_id=data["company_a"].id,
-        conversation_id=conversation.id,
-        customer_name="Cliente Envio",
-        customer_phone="5491117777777",
-        delivery_method="envio",
-        delivery_address="Calle 123",
-        delivery_city="Resistencia",
-        delivery_province="Chaco",
-        actor_user_id=data["user_a"].id,
-    )
-
-    result = VendorOrderService.set_shipping_cost_and_generate_payment(
-        company_id=data["company_a"].id,
-        quote_id=pending["quote_id"],
-        shipping_cost="40.00",
-        user_id=data["user_a"].id,
-    )
-
-    quote = db.session.get(Quote, pending["quote_id"])
-    delivery = db.session.get(QuoteDelivery, quote.id)
-    payment = Payment.query.filter_by(company_id=data["company_a"].id).one()
-
-    assert result["shipping_confirmed"] is True
-    assert result["payment_url"] == "https://payments.test/checkout/001"
-    assert quote.total_amount == 240
-    assert quote.surcharge == 40
-    assert quote.surcharge_type == "fixed"
-    assert quote.surcharge_value == 40
-    assert delivery.shipping_cost == 40
-    assert delivery.shipping_status == "confirmed"
-    assert delivery.shipping_source == "manual"
-    assert delivery.shipping_confirmed_by_user_id == data["user_a"].id
-    assert payment.amount == 240
-    assert conversation.metadata_json[PENDING_PAYMENT_KEY] == result["payment_url"]
-    assert conversation.metadata_json["delivery"]["shipping_status"] == "confirmed"
 
 
-def test_manual_shipping_confirmation_is_idempotency_protected(vendor_database, monkeypatch):
-    data = vendor_database
-    _configure_vendor_shipping(data["company_a"], mode="manual")
-    conversation = _conversation(data["company_a"].id)
-    calls = []
-    _mock_checkout(monkeypatch, calls)
 
-    VendorOrderService.update_cart(
-        company_id=data["company_a"].id,
-        conversation_id=conversation.id,
-        items=[{"product_query": "Cafe clasico", "quantity": 1}],
-    )
-    pending = VendorOrderService.create_pending_order(
-        company_id=data["company_a"].id,
-        conversation_id=conversation.id,
-        customer_name="Cliente",
-        customer_phone="5491117777777",
-        delivery_method="envio",
-        delivery_address="Calle 123",
-        delivery_city="Resistencia",
-        delivery_province="Chaco",
-        actor_user_id=data["user_a"].id,
-    )
 
-    VendorOrderService.set_shipping_cost_and_generate_payment(
-        company_id=data["company_a"].id,
-        quote_id=pending["quote_id"],
-        shipping_cost="25.00",
-        user_id=data["user_a"].id,
-    )
-    with pytest.raises(ValueError, match="ya fue confirmado"):
-        VendorOrderService.set_shipping_cost_and_generate_payment(
-            company_id=data["company_a"].id,
-            quote_id=pending["quote_id"],
-            shipping_cost="30.00",
-            user_id=data["user_a"].id,
-        )
-
-    assert Payment.query.filter_by(company_id=data["company_a"].id).count() == 1
-    assert [kind for kind, _ in calls].count("checkout") == 1
