@@ -1,11 +1,29 @@
-import json
+import os
+
+os.environ["DATABASE_URL"] = "sqlite:///:memory:"
+os.environ.setdefault("MP_OAUTH_ENCRYPTION_KEY", "test-oauth-encryption-key")
 
 import pytest
+from sqlite_test_db import clear_test_data
 
 import app as stock_app
 from app import Company, MercadoPagoConnection, Payment, db
 from services.mercadopago_oauth_service import MercadoPagoOAuthService
 from services.webhook_service import WebhookService
+
+
+@pytest.fixture(autouse=True)
+def clean_database():
+    stock_app.app.config["TESTING"] = True
+    with stock_app.app.app_context():
+        db.session.rollback()
+        db.session.remove()
+        clear_test_data(db)
+        yield
+        db.session.rollback()
+        db.session.remove()
+        clear_test_data(db)
+        db.session.remove()
 
 
 @pytest.fixture
@@ -16,7 +34,6 @@ def company_pair():
         db.session.add_all([company_a, company_b])
         db.session.flush()
         yield company_a, company_b
-        db.session.rollback()
 
 
 def test_oauth_cannot_link_same_mp_seller_to_two_companies(company_pair):
