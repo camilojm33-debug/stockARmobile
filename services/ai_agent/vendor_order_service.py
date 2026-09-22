@@ -607,6 +607,10 @@ class VendorOrderService:
             for line in line_inputs
             if line.get("promotion") is not None
         }
+        promotion_names = []
+        for result in promotion_results:
+            if result.promotion_name and result.promotion_name not in promotion_names:
+                promotion_names.append(result.promotion_name)
         base_totals = PricingService.calculate(lines=line_inputs, data={})
         shipping = _shipping_plan(
             company_id=company_id,
@@ -637,7 +641,7 @@ class VendorOrderService:
             total_amount=totals["total"],
             discount_type=totals["discount_adjustment"]["type"],
             discount_value=totals["discount_adjustment"]["value"],
-            discount_reason=totals["discount_adjustment"]["reason"],
+            discount_reason=(totals["discount_adjustment"]["reason"] or ("Promoción: " + ", ".join(promotion_names) if promotion_names else None)),
             surcharge_type=totals["surcharge_adjustment"]["type"],
             surcharge_value=totals["surcharge_adjustment"]["value"],
             surcharge_reason=totals["surcharge_adjustment"]["reason"],
