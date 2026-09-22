@@ -37,6 +37,13 @@ def upgrade():
     )
     op.create_index("ix_promotions_company_active_dates", "promotions", ["company_id", "active", "starts_at", "ends_at"])
     op.create_index("ix_promotions_company_product", "promotions", ["company_id", "product_id"])
+    bind = op.get_bind()
+    row = bind.execute(sa.text("SELECT features_json FROM plans WHERE code = :code"), {"code": "business"}).fetchone()
+    if row is not None:
+        features = str(row[0] or "")
+        if features != "all" and "promotions" not in {item.strip() for item in features.split(",") if item.strip()}:
+            features = (features + ",promotions").strip(",")
+            bind.execute(sa.text("UPDATE plans SET features_json = :features WHERE code = :code"), {"features": features, "code": "business"})
 
 def downgrade():
     op.drop_index("ix_promotions_company_product", table_name="promotions")
