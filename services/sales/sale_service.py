@@ -56,7 +56,10 @@ class SaleService:
                     return redirect(url_for("sales.success", sale_id=existing_sale.id))
 
             lines = self._calculate_lines(items, lock_for_update=True, discount_overrides=(data.get("line_discounts") or data.get("line_discount_overrides") or {}))
-            lines, promotion_results = PromotionEngine.apply_to_lines(company_id=company_id, lines=lines)
+            if checkout_token and checkout_token.startswith("quote-cart-"):
+                promotion_results = []
+            else:
+                lines, promotion_results = PromotionEngine.apply_to_lines(company_id=company_id, lines=lines)
             promotion_names = []
             for result in promotion_results:
                 if result.promotion_name and result.promotion_name not in promotion_names:
