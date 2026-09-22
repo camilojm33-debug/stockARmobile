@@ -418,11 +418,6 @@
           checkoutShipping = Number(shippingConfig.standard_cost || 0);
           shippingLabel = money(checkoutShipping);
           grandTotalLabel = money(Number(cart.total || 0) + checkoutShipping);
-        } else if (shippingConfig.mode === 'legacy_percent') {
-          const legacyRate = Number(shippingConfig.legacy_percent || 15) / 100;
-          checkoutShipping = Number(cart.total || 0) * legacyRate;
-          shippingLabel = money(checkoutShipping);
-          grandTotalLabel = money(Number(cart.total || 0) + checkoutShipping);
         } else {
           shippingLabel = 'A confirmar';
           grandTotalLabel = 'A confirmar';
