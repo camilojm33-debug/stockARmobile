@@ -863,3 +863,507 @@ class VendorOrderService:
                 ).filter(Payment.external_reference.like(f"%quote_id:{int(quote.id)}%"))
                 if owned.first() is not None:
                     return quote
+
+        state = _metadata(conversation)
+        pending_quote_id = state.get(PENDING_QUOTE_KEY)
+        if pending_quote_id:
+            try:
+                quote = query.filter(Quote.id == int(pending_quote_id)).first()
+            except (TypeError, ValueError):
+                quote = None
+            if quote is not None:
+                return quote
+
+        ref_marker = f"%conversation_id:{int(conversation.id)}%"
+        payment = (
+            Payment.query.filter(
+                Payment.company_id == int(company_id),
+                Payment.provider == "mercadopago_ai_order",
+                Payment.external_reference.like(ref_marker),
+            )
+            .order_by(Payment.id.desc())
+            .first()
+        )
+        if payment is None:
+            return None
+        parts = str(payment.external_reference or "").split("|")
+        quote_part = next(
+            (
+                part.split(":", 1)[1]
+                for part in parts
+                if part.startswith("quote_id:") and part.split(":", 1)[1].isdigit()
+            ),
+            None,
+        )
+        return query.filter(Quote.id == int(quote_part)).first() if quote_part else None
+
+    @staticmethod
+    def _order_row(*, company_id: int, quote, payment=None) -> Dict[str, Any]:
+        payment = payment or VendorOrderService._payment_for_quote(company_id=company_id, quote_id=quote.id)
+        payment_status = str(getattr(payment, "status", "pending") or "pending").lower() if payment else "pending"
+        if quote.converted_sale_id:
+            order_status = "confirmado"
+        elif payment_status == "approved":
+            order_status = "pagado"
+        elif payment_status in {"pending", "in_process", "authorized"}:
+            order_status = "pendiente_pago"
+        elif payment_status in {"cancelled", "canceled", "rejected", "refunded", "charged_back"}:
+            order_status = "pago_con_incidencia"
+        else:
+            order_status = "pendiente"
+        client = getattr(quote, "client", None)
+        delivery = getattr(quote, "delivery", None)
+        return {
+            "quote_id": quote.id,
+            "quote_number": quote.number or f"P-{quote.id:06d}",
+            "customer_name": getattr(client, "name", None) or getattr(quote, "consumer_name", None) or "Consumidor final",
+            "total": float(quote.total_amount or 0),
+            "currency": quote.currency or "ARS",
+            "order_status": order_status,
+            "payment_status": payment_status,
+            "payment_id": getattr(payment, "payment_id", None) if payment else None,
+            "payment_url": None,
+            "sale_id": quote.converted_sale_id,
+            "created_at": quote.date.isoformat() if getattr(quote, "date", None) else None,
+            "expires_at": quote.expires_at.isoformat() if getattr(quote, "expires_at", None) else None,
+            "delivery": {
+                "method": getattr(delivery, "method", "retiro") if delivery else "retiro",
+                "recipient_name": getattr(delivery, "recipient_name", "") if delivery else "",
+                "phone": getattr(delivery, "phone", "") if delivery else "",
+                "address": getattr(delivery, "address", "") if delivery else "",
+                "city": getattr(delivery, "city", "") if delivery else "",
+                "province": getattr(delivery, "province", "") if delivery else "",
+                "postal_code": getattr(delivery, "postal_code", "") if delivery else "",
+                "reference": getattr(delivery, "reference", "") if delivery else "",
+                "notes": getattr(delivery, "notes", "") if delivery else "",
+                "shipping_cost": float(getattr(delivery, "shipping_cost", 0) or 0) if delivery else 0.0,
+                "shipping_rate": float(getattr(delivery, "shipping_rate", 0) or 0) if delivery else 0.0,
+            },
+        }
+
+    @staticmethod
+    def get_customer_order_status(*, company_id: int, conversation_id: int, order_number: str = "") -> Dict[str, Any]:
+        conversation = VendorOrderService._conversation_for_order(company_id=company_id, conversation_id=conversation_id)
+        state = _metadata(conversation)
+        quote = VendorOrderService._quote_for_conversation(company_id=company_id, conversation=conversation, order_number=order_number)
+        if quote is None:
+            return {"found": False}
+        row = VendorOrderService._order_row(company_id=company_id, quote=quote)
+        row["found"] = True
+        if str(state.get(PENDING_QUOTE_KEY)) == str(quote.id):
+            row["payment_url"] = state.get(PENDING_PAYMENT_KEY)
+        return row
+
+    @staticmethod
+    def retry_payment(*, company_id: int, conversation_id: int, order_number: str = "") -> Dict[str, Any]:
+        from app import Payment, Product, Quote
+        conversation = VendorOrderService._conversation_for_order(company_id=company_id, conversation_id=conversation_id)
+        state = _metadata(conversation)
+        current = VendorOrderService.get_customer_order_status(company_id=company_id, conversation_id=conversation_id, order_number=order_number)
+        if not current.get("found"):
+            return {"success": False, "error": "pedido_no_encontrado"}
+        quote = Quote.query.filter_by(id=int(current["quote_id"]), company_id=int(company_id)).first()
+        if quote is None:
+            return {"success": False, "error": "pedido_no_encontrado"}
+        if quote.converted_sale_id:
+            return {"success": False, "error": "pedido_ya_confirmado"}
+        if quote.status in {"ANULADO", "RECHAZADO", "CONVERTIDO"}:
+            return {"success": False, "error": "pedido_no_disponible"}
+        payment = VendorOrderService._payment_for_quote(company_id=company_id, quote_id=quote.id)
+        payment_status = str(getattr(payment, "status", "") or "").lower() if payment else ""
+        if payment_status == "approved":
+            return {"success": False, "error": "pago_ya_aprobado"}
+        now = __import__("datetime").datetime.utcnow()
+        if quote.expires_at and quote.expires_at < now:
+            return {"success": False, "error": "pedido_vencido"}
+        if payment_status in {"pending", "in_process"} and state.get(PENDING_PAYMENT_KEY):
+            return {
+                "success": True,
+                "existing": True,
+                "quote_number": quote.number,
+                "payment_url": state[PENDING_PAYMENT_KEY],
+                "expires_at": quote.expires_at.isoformat() if quote.expires_at else None,
+            }
+
+        product_ids = [int(item.product_id) for item in quote.items if item.product_id]
+        products = {
+            row.id: row
+            for row in Product.query.filter(Product.company_id == company_id, Product.id.in_(product_ids), Product.active.is_(True)).all()
+        }
+        for item in quote.items:
+            product = products.get(int(item.product_id or 0))
+            if product is None or Decimal(str(product.stock or 0)) < Decimal(str(item.quantity or 0)):
+                return {"success": False, "error": "stock_no_disponible", "product": getattr(product, "name", None) or "producto"}
+
+        external_reference = _ai_order_external_reference(
+            company_id=company_id,
+            quote_id=quote.id,
+            conversation_id=conversation.id,
+            user_id=quote.created_by_user_id,
+        )
+        access_token = MercadoPagoOAuthService().ensure_access_token(company_id=company_id)
+        mp = MercadoPagoService()
+        quote_url = _public_quote_url(quote.id)
+        result = mp.create_ai_order_checkout_preference(
+            title=f"Pedido {quote.number} - StockARmobile",
+            items=[
+                {
+                    "id": str(product.id),
+                    "title": product.name,
+                    "description": product.name,
+                    "quantity": int(float(item.quantity)) if float(item.quantity).is_integer() else float(item.quantity),
+                    "currency_id": quote.currency or "ARS",
+                    "unit_price": float(max(
+                        (_money(item.unit_price) * Decimal(str(item.quantity or 0)) - _money(item.discount))
+                        / Decimal(str(item.quantity or 1)),
+                        Decimal("0.00"),
+                    )),
+                }
+                for item in quote.items
+                for product in [products[int(item.product_id)]]
+            ] + (
+                [{
+                    "id": f"shipping-{quote.id}",
+                    "title": "Envío a domicilio",
+                    "description": str(getattr(getattr(quote, "delivery", None), "shipping_reason", None) or "Costo de envío confirmado por el comercio"),
+                    "quantity": 1,
+                    "currency_id": quote.currency or "ARS",
+                    "unit_price": float(_money(getattr(getattr(quote, "delivery", None), "shipping_cost", 0))),
+                }]
+                if _money(getattr(getattr(quote, "delivery", None), "shipping_cost", 0)) > 0 else []
+            ),
+            amount=float(quote.total_amount or 0),
+            currency=quote.currency or "ARS",
+            external_reference=external_reference,
+            company_id=company_id,
+            user_id=quote.created_by_user_id,
+            quote_id=quote.id,
+            conversation_id=conversation.id,
+            return_url=_with_payment_query(quote_url, payment="completed"),
+            access_token=access_token,
+        )
+        payment_url = str(result.get("init_point") or result.get("sandbox_init_point") or "").strip()
+        if not payment_url:
+            raise RuntimeError("Mercado Pago no devolvió un nuevo link de pago.")
+        db.session.add(
+            Payment(
+                payment_id=None,
+                preference_id=str(result.get("id") or "").strip() or None,
+                external_reference=external_reference,
+                company_id=company_id,
+                subscription_id=None,
+                user_id=quote.created_by_user_id,
+                amount=quote.total_amount,
+                currency=quote.currency or "ARS",
+                status="pending",
+                payment_method="mercadopago_ai_order",
+                provider="mercadopago_ai_order",
+                reference=external_reference,
+                payload_json=json.dumps(result, ensure_ascii=False),
+            )
+        )
+        state[PENDING_QUOTE_KEY] = quote.id
+        state[PENDING_PAYMENT_KEY] = payment_url
+        _set_metadata(conversation, state)
+        db.session.commit()
+        return {
+            "success": True,
+            "existing": False,
+            "quote_number": quote.number,
+            "payment_url": payment_url,
+            "expires_at": quote.expires_at.isoformat() if quote.expires_at else None,
+        }
+
+    @staticmethod
+    def cancel_order(*, company_id: int, conversation_id: int, order_number: str = "", confirm: bool = False) -> Dict[str, Any]:
+        from app import Quote
+        conversation = VendorOrderService._conversation_for_order(company_id=company_id, conversation_id=conversation_id)
+        state = _metadata(conversation)
+        current = VendorOrderService.get_customer_order_status(company_id=company_id, conversation_id=conversation_id, order_number=order_number)
+        if not current.get("found"):
+            return {"success": False, "error": "pedido_no_encontrado"}
+        quote = Quote.query.filter_by(id=int(current["quote_id"]), company_id=int(company_id)).first()
+        if quote is None:
+            return {"success": False, "error": "pedido_no_encontrado"}
+        if quote.converted_sale_id:
+            return {"success": False, "error": "pedido_ya_confirmado"}
+        if not confirm:
+            return {
+                "success": False,
+                "confirmation_required": True,
+                "quote_number": quote.number,
+                "message": f"¿Confirmás que querés cancelar el pedido {quote.number}?",
+            }
+        if quote.status in {"ANULADO", "RECHAZADO", "CONVERTIDO"}:
+            return {"success": False, "error": "pedido_no_disponible"}
+        quote.status = "ANULADO"
+        payment = VendorOrderService._payment_for_quote(company_id=company_id, quote_id=quote.id)
+        if payment is not None and str(payment.status or "").lower() in {"pending", "in_process", "authorized"}:
+            payment.status = "cancelled"
+        if str(state.get(PENDING_QUOTE_KEY)) == str(quote.id):
+            state.pop(PENDING_QUOTE_KEY, None)
+            state.pop(PENDING_PAYMENT_KEY, None)
+        state.pop(CART_KEY, None)
+        _set_metadata(conversation, state)
+        db.session.commit()
+        return {"success": True, "quote_number": quote.number, "message": f"Pedido {quote.number} cancelado correctamente."}
+
+    @staticmethod
+    def list_catalog(*, company_id: int, query: str = "", limit: int = 20) -> Dict[str, Any]:
+        from app import Product
+        safe_limit = max(1, min(int(limit or 20), 40))
+        if query.strip():
+            rows = _search_candidates(company_id, query)
+        else:
+            rows = (
+                Product.query.filter(Product.company_id == company_id, Product.active.is_(True))
+                .order_by(Product.favorite.desc(), Product.name.asc())
+                .limit(safe_limit)
+                .all()
+            )
+        products = [
+            {
+                "product_id": product.id,
+                "name": product.name,
+                "brand": product.brand or "",
+                "category": product.category or "",
+                "price": float(product.price or 0),
+                "stock": float(product.stock or 0),
+                "unit_measure": product.unit_measure or "u",
+                "photo": product.photo or "",
+            }
+            for product in rows[:safe_limit]
+        ]
+        return {"success": True, "count": len(products), "products": products}
+
+    @staticmethod
+    def list_promotions(*, company_id: int, limit: int = 12) -> Dict[str, Any]:
+        from app import Product
+        safe_limit = max(1, min(int(limit or 12), 24))
+        rows = (
+            Product.query.filter(Product.company_id == company_id, Product.active.is_(True), Product.discount > 0)
+            .order_by(Product.favorite.desc(), Product.name.asc())
+            .limit(safe_limit)
+            .all()
+        )
+        products = []
+        for product in rows:
+            price = _money(product.price)
+            discount = _money(product.discount)
+            final_price = max(price - discount, Decimal("0.00"))
+            products.append(
+                {
+                    "product_id": product.id,
+                    "name": product.name,
+                    "price": float(price),
+                    "discount": float(discount),
+                    "final_price": float(final_price),
+                    "stock": float(product.stock or 0),
+                    "unit_measure": product.unit_measure or "u",
+                }
+            )
+        return {"success": True, "count": len(products), "products": products}
+
+    @staticmethod
+    def _clear_conversation_order_state(*, company_id: int, quote_id: int, payment_id: str | None, sale_id: int | None) -> None:
+        """Clear checkout UI state after an approved payment and keep a safe status snapshot."""
+        from stockarmobile.models.conversations import Conversation
+
+        payment_id_value = str(payment_id or "").strip()
+        if not payment_id_value:
+            return
+        payment = VendorOrderService._payment_for_quote(company_id=company_id, quote_id=quote_id)
+        reference = str(getattr(payment, "external_reference", "") or "")
+        match = re.search(r"(?:^|\|)conversation_id:(\d+)(?:\||$)", reference)
+        if not match:
+            return
+        conversation_id = int(match.group(1))
+        conversation = (
+            db.session.query(Conversation)
+            .filter(
+                Conversation.id == conversation_id,
+                Conversation.company_id == int(company_id),
+            )
+            .with_for_update()
+            .first()
+        )
+        if conversation is None:
+            return
+        state = _metadata(conversation)
+        if str(state.get(PENDING_QUOTE_KEY)) == str(quote_id):
+            state.pop(PENDING_QUOTE_KEY, None)
+            state.pop(PENDING_PAYMENT_KEY, None)
+        state.pop(CART_KEY, None)
+        state[LAST_ORDER_KEY] = {
+            "quote_id": int(quote_id),
+            "order_status": "confirmado",
+            "payment_status": "approved",
+            "payment_id": payment_id_value,
+            "sale_id": int(sale_id) if sale_id is not None else None,
+        }
+        _set_metadata(conversation, state)
+
+    @staticmethod
+    def finalize_paid_order(*, company_id: int, quote_id: int, payment_data: Dict[str, Any], commit: bool = True) -> Dict[str, Any]:
+        from app import Payment, Product, Quote, Sale, SaleItem, db as app_db
+
+        quote = (
+            Quote.query.filter_by(id=int(quote_id), company_id=int(company_id))
+            .with_for_update()
+            .first()
+        )
+        if quote is None:
+            raise ValueError("Presupuesto del pedido no encontrado para esta empresa.")
+        if quote.status in {"ANULADO", "RECHAZADO"}:
+            raise ValueError("El pedido está cancelado y no puede convertirse en venta.")
+
+        payment_id = str(payment_data.get("id") or "").strip()
+        amount = _money(payment_data.get("transaction_amount"))
+        currency = str(payment_data.get("currency_id") or quote.currency or "ARS").upper()
+        if currency != str(quote.currency or "ARS").upper():
+            raise ValueError("La moneda del pago no coincide con el pedido.")
+        expected = _money(quote.total_amount)
+        if amount != expected:
+            raise ValueError(f"El importe aprobado ({amount}) no coincide con el pedido ({expected}).")
+
+        external_reference = str(payment_data.get("external_reference") or "")
+        payment = Payment.query.filter_by(payment_id=payment_id).first() if payment_id else None
+        if payment is None and external_reference:
+            payment = Payment.query.filter_by(
+                company_id=company_id,
+                external_reference=external_reference,
+            ).first()
+        if payment is None:
+            payment = Payment(
+                payment_id=payment_id or None,
+                preference_id=str(payment_data.get("order", {}).get("id") or "") or None,
+                external_reference=external_reference,
+                company_id=company_id,
+                amount=amount,
+                currency=currency,
+                status="approved",
+                payment_method=str(payment_data.get("payment_method_id") or "mercadopago"),
+                provider="mercadopago_ai_order",
+                reference=external_reference or payment_id,
+                payload_json=json.dumps(payment_data, ensure_ascii=False),
+                paid_at=__import__("datetime").datetime.utcnow(),
+            )
+            app_db.session.add(payment)
+        else:
+            if int(payment.company_id or 0) != int(company_id):
+                raise ValueError("El pago no pertenece a la empresa del pedido.")
+            payment.status = "approved"
+            payment.amount = amount
+            payment.currency = currency
+            payment.payment_method = str(payment_data.get("payment_method_id") or payment.payment_method or "mercadopago")
+            payment.payload_json = json.dumps(payment_data, ensure_ascii=False)
+            payment.paid_at = __import__("datetime").datetime.utcnow()
+
+        if quote.converted_sale_id:
+            sale = Sale.query.filter_by(id=quote.converted_sale_id, company_id=company_id).first()
+            return {
+                "status": "already_converted",
+                "sale_id": sale.id if sale else quote.converted_sale_id,
+                "quote_id": quote.id,
+                "quote_number": quote.number,
+                "total": float(quote.total_amount or 0),
+            }
+
+        item_rows = list(quote.items)
+        if not item_rows:
+            raise ValueError("El pedido no tiene líneas.")
+        product_ids = sorted({int(item.product_id) for item in item_rows if item.product_id})
+        products = {
+            product.id: product
+            for product in Product.query.filter(Product.company_id == company_id, Product.id.in_(product_ids), Product.active.is_(True)).with_for_update().all()
+        }
+        lines = []
+        for item in item_rows:
+            product = products.get(int(item.product_id or 0))
+            if product is None:
+                raise ValueError("Uno de los productos del pedido ya no existe.")
+            quantity = Decimal(str(item.quantity or 0))
+            if quantity <= 0:
+                raise ValueError("El pedido contiene una cantidad inválida.")
+            if Decimal(str(product.stock or 0)) < quantity:
+                raise ValueError(f"Stock insuficiente para completar {product.name} después del pago.")
+            lines.append({"product": product, "quantity": float(quantity), "price": _money(item.unit_price), "discount": _money(item.discount)})
+
+        sale = Sale(
+            date=__import__("datetime").datetime.utcnow(),
+            customer=quote.client.name if quote.client is not None else (quote.consumer_name or "Consumidor final"),
+            subtotal=_money(quote.subtotal),
+            discount=_money(quote.discount),
+            tax=_money(quote.tax),
+            total_amount=expected,
+            payment_method="MERCADO_PAGO",
+            secondary_payment_method=None,
+            paid_amount=expected,
+            secondary_paid_amount=Decimal("0.00"),
+            surcharge=_money(quote.surcharge),
+            discount_type=quote.discount_type,
+            discount_value=quote.discount_value,
+            discount_reason=quote.discount_reason,
+            surcharge_type=quote.surcharge_type,
+            surcharge_value=quote.surcharge_value,
+            surcharge_reason=quote.surcharge_reason,
+            client_txn_id=f"ai-order-quote:{quote.id}",
+            document_type="venta",
+            requiere_comprobante=False,
+            comprobante_emitido=False,
+            status="confirmada",
+            note=f"Venta generada automáticamente por Vendedor 24 hs. Presupuesto {quote.number or quote.id}.",
+            client_id=quote.client_id,
+            seller_id=quote.seller_id or quote.created_by_user_id,
+            company_id=company_id,
+            cash_session_id=None,
+        )
+        app_db.session.add(sale)
+        app_db.session.flush()
+        InventoryService.apply_stock(lines=lines)
+
+        for item, line in zip(item_rows, lines):
+            app_db.session.add(
+                SaleItem(
+                    sale_id=sale.id,
+                    product_id=line["product"].id,
+                    quantity=line["quantity"],
+                    price=line["price"],
+                    cost_price=_money(line["product"].cost_price),
+                    discount=_money(item.discount),
+                )
+            )
+
+        quote.status = "CONVERTIDO"
+        quote.converted_sale_id = sale.id
+        VendorOrderService._clear_conversation_order_state(
+            company_id=company_id,
+            quote_id=quote.id,
+            payment_id=payment.payment_id or payment_id,
+            sale_id=sale.id,
+        )
+        if commit:
+            app_db.session.commit()
+        else:
+            app_db.session.flush()
+        return {
+            "status": "converted",
+            "sale_id": sale.id,
+            "quote_id": quote.id,
+            "quote_number": quote.number or f"P-{quote.id:06d}",
+            "total": float(expected),
+        }
+
+
+def _normalize_product_score(product, query: str) -> int:
+    normalized = _normalize_text(query)
+    name = _normalize_text(product.name)
+    score = 0
+    if name == normalized:
+        score += 1000
+    for token in re.findall(r"[a-z0-9áéíóúüñ]+", normalized):
+        if token in name:
+            score += 100
+        elif token in _normalize_text(product.brand):
+            score += 30
+    return score
