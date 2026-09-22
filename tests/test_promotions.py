@@ -1,9 +1,28 @@
 from datetime import datetime
 from decimal import Decimal
 
-from app import Product, db
+from app import Company, Product, Subscription, User, db
+import pytest
 from promotions import Promotion
 from services.promotion_service import PromotionEngine
+
+
+@pytest.fixture
+def promotion_database(app):
+    company = Company(name="Empresa promociones", active=True)
+    db.session.add(company)
+    db.session.flush()
+    user = User(
+        username="promo_admin",
+        email="promo-admin@test.local",
+        password_hash="test-password-hash",
+        role="admin",
+        active=True,
+        company_id=company.id,
+    )
+    db.session.add(user)
+    db.session.flush()
+    return {"company": company, "user": user}
 
 
 def make_product(company_id=1, price="1000", discount="0", category="Bebidas"):
@@ -37,7 +56,7 @@ def make_promotion(company_id=1, created_by_user_id=1, **kwargs):
     return Promotion(**values)
 
 
-def test_promotion_engine_2x1(vendor_database):
+def test_promotion_engine_2x1(promotion_database):
     company_id = vendor_database["company_a"].id
     user_id = vendor_database["user_a"].id
     product = make_product(company_id=company_id)
