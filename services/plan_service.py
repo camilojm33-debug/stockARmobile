@@ -42,7 +42,7 @@ class PlanService:
             "max_users": 8,
             "max_products": 12000,
             "max_clients": 12000,
-            "features_json": "inventario,ventas,clientes,compras,caja,reportes,excel,kardex,pricing_controller",
+            "features_json": "inventario,ventas,clientes,compras,caja,reportes,excel,kardex,pricing_controller,promotions",
             "state": "active",
         },
         {
