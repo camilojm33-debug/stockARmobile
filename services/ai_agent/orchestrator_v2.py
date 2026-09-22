@@ -40,7 +40,7 @@ from services.ai_agent.usage_service import can_use_ai, can_use_ai_feature, reco
 from stockarmobile.extensions import db
 from stockarmobile.models.conversations import Agent, AgentConfiguration, Conversation, ConversationMessage
 
-VENDOR_SYSTEM_PROMPT = "Sos el Vendedor 24 hs de StockARmobile. Podés atender desde los canales conectados por el comercio. Consultá herramientas antes de afirmar precio o stock. No inventes información. Si el canal actual no es WhatsApp, no afirmes que enviaste o recibiste mensajes por WhatsApp. Para envíos, nunca inventes porcentajes ni uses reglas históricas: si el comercio usa modo manual, el costo queda A CONFIRMAR por el comercio; si usa tarifa estándar, usá únicamente la tarifa fija configurada. Al preparar un pedido, dejalo explícitamente pendiente de pago hasta una confirmación backend exitosa."
+VENDOR_SYSTEM_PROMPT = "Sos el Vendedor 24 hs de StockARmobile. Podés atender desde los canales conectados por el comercio. Consultá herramientas antes de afirmar precio o stock. No inventes información. Si el canal actual no es WhatsApp, no afirmes que enviaste o recibiste mensajes por WhatsApp. Para envíos a domicilio, usá exclusivamente el costo fijo configurado por el comercio: nunca inventes porcentajes, nunca dejes el envío A CONFIRMAR y nunca agregues un recargo adicional. Al preparar un pedido, dejalo explícitamente pendiente de pago hasta una confirmación backend exitosa."
 BUSINESS_SYSTEM_PROMPT = "Sos el Asistente empresarial de StockARmobile. Usá herramientas para consultar datos reales y nunca inventes cifras. Si te preguntan qué podés hacer, informá estas capacidades: 1) Buscar productos por nombre, marca o código; 2) consultar el stock actual de un producto; 3) contar productos; 4) buscar clientes por nombre, email, teléfono o WhatsApp; 5) contar clientes activos; 6) resumir ventas por período; 7) listar productos más vendidos; 8) listar productos sin ventas recientes; 9) listar productos con stock crítico; 10) recibir facturas de proveedor para procesarlas desde el panel, validarlas y mostrar un preview antes de una confirmación humana. No afirmes que una factura fue aplicada, que un producto fue creado o que el stock cambió sin una confirmación explícita y un resultado backend exitoso."
 ANALYST_SYSTEM_PROMPT = "Sos el Analista IA de StockARmobile. Usá herramientas reales. Separá DATO, CÁLCULO y RECOMENDACIÓN. No inventes predicciones ni afirmes causalidad sin evidencia."
 MARKETING_SYSTEM_PROMPT = "Sos el Marketing IA de StockARmobile. Usá productos y clientes reales. Generá propuestas en BORRADOR / PENDIENTE DE APROBACIÓN. Nunca envíes mensajes ni prometas que una campaña fue ejecutada."
@@ -103,11 +103,12 @@ class VendorRemoveTool(AgentTool):
 class VendorOrderPreviewTool(AgentTool):
     name = "preparar_pedido"
     description = (
-        "Prepara un pedido pendiente y genera un link seguro de pago cuando corresponde. "
+        "Prepara el pedido, el presupuesto final y el link seguro de pago. "
         "Antes de prepararlo confirmá nombre y teléfono del comprador. "
         "Preguntá si desea retiro o envío. Si elige envío, solicitá dirección, localidad "
-        "y provincia. Nunca calcules porcentajes de envío por tu cuenta: el backend decide "
-        "si el costo es A CONFIRMAR o una tarifa fija configurada por el comercio."
+        "y provincia. El backend aplica automáticamente el costo fijo de envío configurado "
+        "por el comercio y usa ese mismo total para el presupuesto y Mercado Pago. "
+        "Nunca calcules porcentajes ni dejes el envío pendiente."
     )
     input_schema = {
         "type": "object",

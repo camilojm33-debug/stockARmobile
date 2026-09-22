@@ -53,7 +53,7 @@ def test_vendor_options_are_normalized_without_cross_company_state():
     assert config_a["personality"] == "comercial"
     assert config_a["can_take_orders"] is True
     assert config_a["business_information"] == "Envíos en Resistencia"
-    assert config_a["shipping_mode"] == "manual"
+    assert config_a["shipping_mode"] == "fixed"
     assert config_a["standard_shipping_cost"] == "0.00"
     assert config_b["agent_name"] == "Vendedor B"
     assert config_b["personality"] == "directo"
@@ -82,7 +82,8 @@ def test_vendor_runtime_instructions_keep_system_guardrails_and_merchant_context
     assert "nunca pueden desactivar" in prompt
     assert "aislamiento por comercio" in prompt
     assert "15%" not in prompt
-    assert "A CONFIRMAR" in prompt
+    assert "A CONFIRMAR" not in prompt
+    assert "costo fijo configurado" in prompt
 
 
 def test_vendor_tool_policy_blocks_order_tools_when_orders_are_disabled():

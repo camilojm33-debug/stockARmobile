@@ -30,6 +30,7 @@ from services.ai_agent.vendor_order_service import (
     PENDING_PAYMENT_KEY,
     PENDING_QUOTE_KEY,
     VendorOrderService,
+    _public_quote_url,
 )
 
 
@@ -240,11 +241,19 @@ def _cart_public_state(conversation) -> dict:
     cart = VendorOrderService.get_cart(company_id=conversation.company_id, conversation_id=conversation.id)
     state = _conversation_metadata(conversation)
     payment_url = str(state.get(PENDING_PAYMENT_KEY) or "").strip()
+    pending_quote_id = state.get(PENDING_QUOTE_KEY)
+    quote_url = None
+    if payment_url and pending_quote_id:
+        try:
+            quote_url = _public_quote_url(int(pending_quote_id))
+        except (TypeError, ValueError):
+            quote_url = None
     return {
         "conversation_id": conversation.id,
         "cart": cart,
         "payment_url": payment_url or None,
-        "pending_quote_id": state.get(PENDING_QUOTE_KEY),
+        "quote_url": quote_url,
+        "pending_quote_id": pending_quote_id,
         "delivery": state.get("delivery") or None,
     }
 
@@ -320,9 +329,8 @@ def public_vendor_page(slug: str):
     _visitor_id(company.id)
     options = get_vendor_options(company)
     shipping_config = {
-        "mode": options.get("shipping_mode", "manual"),
-        "standard_cost": float(options.get("standard_shipping_cost") or 0),
-
+        "mode": "fixed",
+        "fixed_cost": float(options.get("standard_shipping_cost") or 0),
     }
     return render_template(
         "ai_agents/public_vendor_chat.html",
@@ -511,6 +519,9 @@ def public_vendor_message(slug: str):
             "content": result.get("content"),
             "cart": state["cart"],
             "payment_url": state["payment_url"],
+            "quote_url": state.get("quote_url"),
+            "total": (state.get("delivery") or {}).get("total"),
+            "delivery": state.get("delivery"),
         })
     except ValueError as exc:
         db.session.rollback()
@@ -577,7 +588,7 @@ def preview_vendor():
         company=company,
         disabled_reason="Vista previa del Vendedor IA. Publicá el Vendedor para habilitar conversaciones públicas.",
         chat_url=None,
-        shipping_config={"mode": "manual", "standard_cost": 0},
+        shipping_config={"mode": "fixed", "fixed_cost": 0},
         catalog=_catalog_for_company(company),
         initial_state={"conversation_id": None, "cart": {"items": [], "total": 0, "currency": "ARS", "line_count": 0}, "payment_url": None},
         greeting="Hola 👋 ¿Qué producto estás buscando?",
