@@ -223,24 +223,16 @@ def _sales_by_day(days):
         .all()
     )
 
-    daily_totals = {}
+    day_bounds = [
+        (first_day + timedelta(days=offset), *local_day_bounds_utc_naive(first_day + timedelta(days=offset), tz_name))
+        for offset in range(days)
+    ]
+    daily_totals = {day: Decimal("0.00") for day, _, _ in day_bounds}
     for sale_date, amount in rows:
-        # Convert the stored UTC-naive timestamp back to the company's local date
-        # using the same date-boundary helper used by the rest of the dashboard.
-        local_day = next(
-            (
-                first_day + timedelta(days=offset)
-                for offset in range(days)
-                if (
-                    (lambda bounds: bounds[0] <= sale_date < bounds[1])(
-                        local_day_bounds_utc_naive(first_day + timedelta(days=offset), tz_name)
-                    )
-                )
-            ),
-            None,
-        )
-        if local_day is not None:
-            daily_totals[local_day] = daily_totals.get(local_day, Decimal("0.00")) + _to_decimal(amount)
+        for local_day, day_start, day_end in day_bounds:
+            if day_start <= sale_date < day_end:
+                daily_totals[local_day] += _to_decimal(amount)
+                break
 
     return [
         daily_totals.get(today - timedelta(days=offset), Decimal("0.00"))
