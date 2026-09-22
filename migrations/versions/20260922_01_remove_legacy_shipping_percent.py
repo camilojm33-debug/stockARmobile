@@ -20,9 +20,23 @@ def upgrade():
         existing_type=sa.String(length=30),
         existing_nullable=False,
     )
+    op.execute(
+        sa.text(
+            "UPDATE agent_configurations SET max_tokens = 1200 "
+            "WHERE max_tokens = 700 AND agent_id IN "
+            "(SELECT id FROM agents WHERE name = 'Vendedor 24 hs')"
+        )
+    )
 
 
 def downgrade():
+    op.execute(
+        sa.text(
+            "UPDATE agent_configurations SET max_tokens = 700 "
+            "WHERE max_tokens = 1200 AND agent_id IN "
+            "(SELECT id FROM agents WHERE name = 'Vendedor 24 hs')"
+        )
+    )
     op.alter_column(
         "quote_deliveries",
         "shipping_source",
