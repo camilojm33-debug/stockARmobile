@@ -390,7 +390,7 @@ def public_vendor_chat(token):
             company=company,
             disabled_reason=access.reason,
             chat_url=None,
-            shipping_config={"mode": "manual", "standard_cost": 0, "legacy_percent": 15},
+            shipping_config={"mode": "manual", "standard_cost": 0},
             catalog=[],
             initial_state={"conversation_id": None, "cart": {"items": [], "total": 0, "currency": "ARS", "line_count": 0}, "payment_url": None},
             greeting="",
@@ -417,7 +417,7 @@ def public_vendor_chat(token):
         disabled_reason=None,
         chat_url=url_for("ai_agents.public_vendor_chat_message", token=token),
         shipping_config={
-            "mode": get_vendor_options(company).get("shipping_mode", "legacy_percent"),
+            "mode": get_vendor_options(company).get("shipping_mode", "manual"),
             "standard_cost": float(get_vendor_options(company).get("standard_shipping_cost") or 0),
             "legacy_percent": 15,
         },
