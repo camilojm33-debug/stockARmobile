@@ -4,7 +4,9 @@ from __future__ import annotations
 import base64
 import io
 import json
+import os
 import secrets
+import time
 from datetime import datetime, timezone
 
 import qrcode
@@ -29,6 +31,7 @@ from services.ai_agent.vendor_order_service import (
     CART_KEY,
     PENDING_PAYMENT_KEY,
     PENDING_QUOTE_KEY,
+    LAST_ORDER_KEY,
     VendorOrderService,
     _public_quote_url,
 )
@@ -177,6 +180,46 @@ def _rate_limit(company_id: int) -> bool:
         return False
 
 
+def _write_rate_limit(company_id: int, action: str, *, limit: int, window: int = 60) -> bool:
+    """Rate-limit anonymous Webchat writes independently from AI chat messages."""
+    remote = (request.remote_addr or "unknown").strip()
+    bucket = str(action or "write").strip().lower()
+    redis_url = (os.getenv("REDIS_URL") or "").strip()
+    if redis_url:
+        try:
+            import redis
+            client = redis.Redis.from_url(
+                redis_url,
+                socket_connect_timeout=1,
+                socket_timeout=1,
+                decode_responses=True,
+            )
+            key = f"stockarmobile:public-vendor-write:{int(company_id)}:{bucket}:{remote}"
+            count = int(client.incr(key))
+            if count == 1:
+                client.expire(key, int(window))
+            return count <= int(limit)
+        except Exception:
+            current_app.logger.warning("Public Vendor write Redis rate limit unavailable; using session fallback.")
+    now = int(time.time())
+    state = session.get("public_vendor_write_rate") or {}
+    if not isinstance(state, dict):
+        state = {}
+    entry = state.get(bucket) or {}
+    if now - int(entry.get("started_at", 0) or 0) >= int(window):
+        state[bucket] = {"started_at": now, "count": 1}
+        session["public_vendor_write_rate"] = state
+        return True
+    count = int(entry.get("count", 0) or 0)
+    if count >= int(limit):
+        return False
+    entry["count"] = count + 1
+    state[bucket] = entry
+    session["public_vendor_write_rate"] = state
+    session.modified = True
+    return True
+
+
 def _agent_for_company(company_id: int):
     agents = ensure_default_agents(company_id)
     return agents[VENDOR_AGENT_NAME]
@@ -242,12 +285,21 @@ def _cart_public_state(conversation) -> dict:
     state = _conversation_metadata(conversation)
     payment_url = str(state.get(PENDING_PAYMENT_KEY) or "").strip()
     pending_quote_id = state.get(PENDING_QUOTE_KEY)
+    last_order = state.get(LAST_ORDER_KEY) if isinstance(state.get(LAST_ORDER_KEY), dict) else None
     quote_url = None
-    if payment_url and pending_quote_id:
+    quote_id_for_url = pending_quote_id or (last_order or {}).get("quote_id")
+    if quote_id_for_url:
         try:
-            quote_url = _public_quote_url(int(pending_quote_id))
+            quote_url = _public_quote_url(int(quote_id_for_url))
         except (TypeError, ValueError):
             quote_url = None
+    from app import Company
+    company = Company.query.filter_by(id=conversation.company_id, active=True).first()
+    options = get_vendor_options(company) if company is not None else {}
+    shipping_config = {
+        "mode": "fixed",
+        "fixed_cost": float(options.get("standard_shipping_cost") or 0),
+    }
     return {
         "conversation_id": conversation.id,
         "cart": cart,
@@ -255,6 +307,8 @@ def _cart_public_state(conversation) -> dict:
         "quote_url": quote_url,
         "pending_quote_id": pending_quote_id,
         "delivery": state.get("delivery") or None,
+        "shipping_config": shipping_config,
+        "order": last_order,
     }
 
 
@@ -369,6 +423,14 @@ def public_vendor_state(slug: str):
             "conversation_id": None,
             "cart": {"items": [], "total": 0, "currency": "ARS", "line_count": 0},
             "payment_url": None,
+            "quote_url": None,
+            "pending_quote_id": None,
+            "delivery": None,
+            "shipping_config": {
+                "mode": "fixed",
+                "fixed_cost": float(get_vendor_options(company).get("standard_shipping_cost") or 0),
+            },
+            "order": None,
         })
     return jsonify({"success": True, **_cart_public_state(conversation)})
 
@@ -380,6 +442,8 @@ def public_vendor_cart(slug: str):
     access = can_use_ai(company, "vendedor")
     if not access.allowed:
         return jsonify({"success": False, "error": access.reason}), 403
+    if not _write_rate_limit(company.id, "cart", limit=30):
+        return jsonify({"success": False, "error": "Hay demasiadas modificaciones del carrito. Esperá unos segundos."}), 429, {"Retry-After": "60"}
 
     payload = request.get_json(silent=True) or {}
     conversation = _public_conversation(company, payload.get("conversation_id"), create=True)
@@ -434,6 +498,8 @@ def public_vendor_checkout(slug: str):
     access = can_use_ai(company, "vendedor")
     if not access.allowed:
         return jsonify({"success": False, "error": access.reason}), 403
+    if not _write_rate_limit(company.id, "checkout", limit=8):
+        return jsonify({"success": False, "error": "Hay demasiados intentos de checkout. Esperá unos segundos."}), 429, {"Retry-After": "60"}
 
     payload = request.get_json(silent=True) or {}
     conversation = _public_conversation(company, payload.get("conversation_id"), create=True)
