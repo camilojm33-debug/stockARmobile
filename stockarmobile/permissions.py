@@ -68,7 +68,7 @@ def employee_endpoint_permission(endpoint: str | None, method: str = "GET"):
     if ep.startswith(("ai_agents.",)):
         return "ai_access"
 
-    if ep in {"whatsapp_agent.ai_orders", "whatsapp_agent.ai_order_detail"}:
+    if ep in {"whatsapp_agent.ai_orders", "whatsapp_agent.ai_order_detail", "whatsapp_agent.ai_order_shipping"}:
         return "ai_access"
 
     if ep == "company_billing.business_billing_hub":

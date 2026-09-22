@@ -17,6 +17,7 @@ from services.mercadopago_service import MercadoPagoService
 from services.mercadopago_oauth_service import MercadoPagoOAuthService
 from services.sales.inventory_service import InventoryService
 from services.sales.pricing_service import PricingService
+from services.ai_agent.config_service import get_vendor_options
 
 
 FLOW_PREFIX = "flow:ai_order"
@@ -183,6 +184,55 @@ def _shipping_calculation(cart_total: Decimal, method: str) -> Dict[str, Decimal
         cost = (cart_total * SHIPPING_RATE_PERCENT / Decimal("100")).quantize(Decimal("0.01"))
         return {"cost": cost, "rate": SHIPPING_RATE_PERCENT}
     return {"cost": Decimal("0.00"), "rate": Decimal("0.00")}
+
+
+def _shipping_plan(company_id: int, cart_total: Decimal, method: str) -> Dict[str, Any]:
+    """Resolve shipping behavior without trusting client-supplied amounts."""
+    normalized_method = _normalize_delivery_method(method)
+    if normalized_method != "envio":
+        return {
+            "cost": Decimal("0.00"),
+            "rate": Decimal("0.00"),
+            "status": "not_required",
+            "source": "none",
+            "reason": None,
+        }
+
+    from app import Company
+    company = Company.query.filter_by(id=int(company_id), active=True).first()
+    if company is None:
+        raise ValueError("Empresa no encontrada para calcular el envío.")
+
+    options = get_vendor_options(company)
+    mode = str(options.get("shipping_mode") or "legacy_percent").strip().lower()
+    if mode == "manual":
+        return {
+            "cost": Decimal("0.00"),
+            "rate": Decimal("0.00"),
+            "status": "pending",
+            "source": "manual",
+            "reason": "Costo de envío pendiente de cotización por el comercio.",
+        }
+    if mode == "standard":
+        cost = _money(options.get("standard_shipping_cost"))
+        if cost < 0:
+            raise ValueError("La tarifa estándar de envío no puede ser negativa.")
+        return {
+            "cost": cost,
+            "rate": Decimal("0.00"),
+            "status": "confirmed",
+            "source": "standard",
+            "reason": "Envío a domicilio · tarifa estándar del comercio.",
+        }
+
+    legacy = _shipping_calculation(cart_total, "envio")
+    return {
+        "cost": legacy["cost"],
+        "rate": legacy["rate"],
+        "status": "confirmed",
+        "source": "legacy_percent",
+        "reason": "Envío a domicilio (15%)",
+    }
 
 
 class VendorOrderService:
@@ -396,6 +446,22 @@ class VendorOrderService:
                     Payment.company_id == company_id,
                     Payment.external_reference.in_([external_reference, legacy_reference]),
                 ).first()
+                existing_delivery = getattr(existing, "delivery", None)
+                if (
+                    existing_delivery is not None
+                    and getattr(existing_delivery, "shipping_status", "") == "pending"
+                    and payment is None
+                ):
+                    return {
+                        "success": True,
+                        "existing": True,
+                        "shipping_pending": True,
+                        "quote_id": existing.id,
+                        "quote_number": existing.number or f"P-{existing.id:06d}",
+                        "total": float(existing.total_amount or 0),
+                        "payment_url": None,
+                        "quote_url": _public_quote_url(existing.id),
+                    }
                 if payment is not None and payment.status in {"pending", "in_process"}:
                     return {
                         "success": True,
@@ -485,16 +551,23 @@ class VendorOrderService:
             })
 
         base_totals = PricingService.calculate(lines=line_inputs, data={})
-        shipping = _shipping_calculation(
-            _money(base_totals["total"]),
-            delivery["method"],
+        shipping = _shipping_plan(
+            company_id=company_id,
+            cart_total=_money(base_totals["total"]),
+            method=delivery["method"],
         )
         pricing_data = {}
         if shipping["rate"] > 0:
             pricing_data = {
                 "surcharge_type": "percentage",
                 "surcharge_value": shipping["rate"],
-                "surcharge_reason": "Envío a domicilio (15%)",
+                "surcharge_reason": shipping["reason"],
+            }
+        elif shipping["cost"] > 0:
+            pricing_data = {
+                "surcharge_type": "fixed",
+                "surcharge_value": shipping["cost"],
+                "surcharge_reason": shipping["reason"],
             }
         totals = PricingService.calculate(lines=line_inputs, data=pricing_data)
         quote = Quote(
@@ -559,10 +632,45 @@ class VendorOrderService:
                 notes=delivery["notes"] or None,
                 shipping_cost=shipping["cost"],
                 shipping_rate=shipping["rate"],
-                shipping_reason="Envío a domicilio (15%)" if shipping["rate"] > 0 else None,
+                shipping_reason=shipping["reason"],
+                shipping_status=shipping["status"],
+                shipping_source=shipping["source"],
             )
         )
         db.session.flush()
+
+        if shipping["status"] == "pending":
+            state[PENDING_QUOTE_KEY] = quote.id
+            state.pop(PENDING_PAYMENT_KEY, None)
+            state["customer_phone"] = phone or customer_phone
+            state["customer_name"] = customer_name.strip()[:160] if customer_name.strip() else state.get("customer_name")
+            state["delivery"] = {
+                "method": delivery["method"],
+                "recipient_name": delivery["recipient_name"],
+                "phone": delivery["phone"],
+                "address": delivery["address"],
+                "city": delivery["city"],
+                "province": delivery["province"],
+                "postal_code": delivery["postal_code"],
+                "reference": delivery["reference"],
+                "notes": delivery["notes"],
+                "shipping_cost": 0.0,
+                "shipping_rate": 0.0,
+                "shipping_status": "pending",
+            }
+            _set_metadata(conversation, state)
+            db.session.commit()
+            return {
+                "success": True,
+                "shipping_pending": True,
+                "quote_id": quote.id,
+                "quote_number": quote.number,
+                "total": float(quote.total_amount or 0),
+                "currency": quote.currency or "ARS",
+                "payment_url": None,
+                "quote_url": _public_quote_url(quote.id),
+                "delivery": state["delivery"],
+            }
 
         external_reference = _ai_order_external_reference(
             company_id=company_id,
@@ -591,7 +699,7 @@ class VendorOrderService:
                 [{
                     "id": f"shipping-{quote.id}",
                     "title": "Envío a domicilio",
-                    "description": "Recargo de envío 15%",
+                    "description": str(shipping["reason"] or "Envío a domicilio"),
                     "quantity": 1,
                     "currency_id": quote.currency or "ARS",
                     "unit_price": float(shipping["cost"]),
@@ -674,12 +782,171 @@ class VendorOrderService:
         }
 
     @staticmethod
+    def set_shipping_cost_and_generate_payment(
+        *,
+        company_id: int,
+        quote_id: int,
+        shipping_cost: Any,
+        user_id: int,
+    ) -> Dict[str, Any]:
+        """Confirm the merchant-defined shipping cost and generate the payment link."""
+        from app import Quote, User
+        from datetime import datetime
+
+        quote = Quote.query.filter_by(
+            id=int(quote_id),
+            company_id=int(company_id),
+            observations="Pedido generado por el Vendedor 24 hs de StockARmobile.",
+        ).first()
+        if quote is None:
+            raise ValueError("Pedido IA no encontrado para esta empresa.")
+        if quote.converted_sale_id or quote.status in {"ANULADO", "RECHAZADO", "CONVERTIDO"}:
+            raise ValueError("El pedido ya no puede modificar su costo de envío.")
+
+        delivery = getattr(quote, "delivery", None)
+        if delivery is None or delivery.method != "envio":
+            raise ValueError("Este pedido no requiere un costo de envío.")
+        if getattr(delivery, "shipping_status", "") != "pending":
+            raise ValueError("El costo de envío de este pedido ya fue confirmado.")
+
+        payment = VendorOrderService._payment_for_quote(company_id=company_id, quote_id=quote.id)
+        if payment is not None:
+            payment_status = str(payment.status or "").lower()
+            if payment_status in {"approved", "pending", "in_process", "authorized"}:
+                raise ValueError("El pedido ya tiene un cobro iniciado; no se puede modificar el envío sobre ese cobro.")
+
+        cost = _money(shipping_cost)
+        if cost < 0:
+            raise ValueError("El costo de envío no puede ser negativo.")
+        if cost > Decimal("100000000.00"):
+            raise ValueError("El costo de envío supera el máximo permitido.")
+
+        items = list(quote.items or [])
+        if not items:
+            raise ValueError("El pedido no tiene productos.")
+
+        line_inputs = [
+            {
+                "price": _money(item.unit_price),
+                "quantity": Decimal(str(item.quantity or 0)),
+                "line_discount": _money(item.discount),
+            }
+            for item in items
+        ]
+        totals = PricingService.calculate(
+            lines=line_inputs,
+            data={
+                "surcharge_type": "fixed",
+                "surcharge_value": cost,
+                "surcharge_reason": "Envío a domicilio · costo definido por el comercio.",
+            },
+        )
+        quote.subtotal = totals["subtotal"]
+        quote.discount = totals["line_discount_total"] + totals["general_discount"]
+        quote.surcharge = totals["surcharge"]
+        quote.tax = totals["tax"]
+        quote.total_amount = totals["total"]
+        quote.discount_type = totals["discount_adjustment"]["type"]
+        quote.discount_value = totals["discount_adjustment"]["value"]
+        quote.discount_reason = totals["discount_adjustment"]["reason"]
+        quote.surcharge_type = totals["surcharge_adjustment"]["type"]
+        quote.surcharge_value = totals["surcharge_adjustment"]["value"]
+        quote.surcharge_reason = totals["surcharge_adjustment"]["reason"]
+
+        confirmed_by = User.query.filter_by(
+            id=int(user_id),
+            company_id=int(company_id),
+            active=True,
+        ).first()
+        if confirmed_by is None:
+            raise ValueError("El usuario que confirma el envío no pertenece a esta empresa.")
+
+        delivery.shipping_cost = cost
+        delivery.shipping_rate = Decimal("0.00")
+        delivery.shipping_reason = "Envío a domicilio · costo definido por el comercio."
+        delivery.shipping_status = "confirmed"
+        delivery.shipping_source = "manual"
+        delivery.shipping_confirmed_by_user_id = confirmed_by.id
+        delivery.shipping_confirmed_at = datetime.utcnow()
+        db.session.flush()
+
+        conversation_id = VendorOrderService._conversation_id_for_quote(company_id=company_id, quote_id=quote.id)
+        if conversation_id is None:
+            raise ValueError("No se encontró la conversación del pedido IA.")
+
+        result = VendorOrderService.retry_payment(
+            company_id=company_id,
+            conversation_id=conversation_id,
+            order_number=quote.number or f"P-{quote.id:06d}",
+        )
+        refreshed_conversation = VendorOrderService._conversation_for_order(
+            company_id=company_id,
+            conversation_id=conversation_id,
+        )
+        state = _metadata(refreshed_conversation)
+        state["delivery"] = {
+            **dict(state.get("delivery") or {}),
+            "method": "envio",
+            "shipping_cost": float(cost),
+            "shipping_rate": 0.0,
+            "shipping_status": "confirmed",
+            "shipping_source": "manual",
+        }
+        _set_metadata(refreshed_conversation, state)
+        db.session.commit()
+        result.update(
+            {
+                "shipping_cost": float(cost),
+                "total": float(quote.total_amount or 0),
+                "shipping_confirmed": True,
+            }
+        )
+        return result
+
+    @staticmethod
     def _conversation_for_order(*, company_id: int, conversation_id: int):
         from stockarmobile.models.conversations import Conversation
         conversation = Conversation.query.filter_by(id=int(conversation_id), company_id=int(company_id)).first()
         if conversation is None:
             raise ValueError("Conversación no encontrada para esta empresa.")
         return conversation
+
+    def _conversation_id_for_quote(*, company_id: int, quote_id: int) -> int | None:
+        from app import Payment, Quote
+        from stockarmobile.models.conversations import Conversation
+
+        prefix = f"{FLOW_PREFIX}|company_id:{int(company_id)}|quote_id:{int(quote_id)}|"
+        payment = (
+            Payment.query.filter(
+                Payment.company_id == int(company_id),
+                Payment.provider == "mercadopago_ai_order",
+                Payment.external_reference.like(prefix + "%"),
+            )
+            .order_by(Payment.id.desc())
+            .first()
+        )
+        if payment is not None:
+            parts = str(payment.external_reference or "").split("|")
+            for part in parts:
+                if part.startswith("conversation_id:") and part.split(":", 1)[1].isdigit():
+                    return int(part.split(":", 1)[1])
+
+        quote = Quote.query.filter_by(id=int(quote_id), company_id=int(company_id)).first()
+        if quote is None:
+            return None
+        conversations = (
+            Conversation.query
+            .filter_by(company_id=int(company_id))
+            .order_by(Conversation.id.desc())
+            .limit(200)
+            .all()
+        )
+        for conversation in conversations:
+            metadata = _metadata(conversation)
+            if str(metadata.get(PENDING_QUOTE_KEY) or "") == str(quote_id):
+                return conversation.id
+        return None
+
 
     @staticmethod
     def _payment_for_quote(*, company_id: int, quote_id: int):

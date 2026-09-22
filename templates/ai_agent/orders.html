@@ -52,6 +52,17 @@
       </a>
     </div>
     <div class="col-6 col-xl-3">
+      <a class="ai-order-stat-card ai-order-stat-shipping" href="{{ url_for('whatsapp_agent.ai_orders', status='shipping_pending') }}">
+        <div class="ai-order-stat-icon"><i class="bi bi-truck"></i></div>
+        <div class="ai-order-stat-copy">
+          <div class="ai-order-stat-label">Envío pendiente</div>
+          <div class="ai-order-stat-value">{{ summary.shipping_pending }}</div>
+          <div class="ai-order-stat-helper">Requieren cotización</div>
+        </div>
+        <i class="bi bi-arrow-up-right ai-order-stat-arrow"></i>
+      </a>
+    </div>
+    <div class="col-6 col-xl-3">
       <a class="ai-order-stat-card ai-order-stat-paid" href="{{ url_for('whatsapp_agent.ai_orders', status='paid') }}">
         <div class="ai-order-stat-icon"><i class="bi bi-credit-card-2-front"></i></div>
         <div class="ai-order-stat-copy">
@@ -88,6 +99,7 @@
     <div class="ai-orders-filter-list" role="navigation" aria-label="Filtrar pedidos IA">
       {% set filter_items = [
         ('', 'Todos', summary.total, 'bi-inboxes'),
+        ('shipping_pending', 'Envío pendiente', summary.shipping_pending, 'bi-truck'),
         ('pending', 'Esperando pago', summary.pending, 'bi-hourglass-split'),
         ('paid', 'Pagados', summary.paid, 'bi-credit-card-2-front'),
         ('confirmed', 'Confirmados', summary.confirmed, 'bi-check2-circle'),
@@ -162,9 +174,13 @@
               {% if order.payment_id %}<div class="small text-muted mt-1">MP #{{ order.payment_id }}</div>{% endif %}
             </td>
             <td data-label="Estado">
+              {% if order.delivery.shipping_status == 'pending' %}
+              <span class="ai-status-chip ai-status-order text-bg-warning"><i class="bi bi-truck"></i>Envío pendiente</span>
+              {% else %}
               <span class="ai-status-chip ai-status-order {{ order.order_badge }}">
                 <i class="bi bi-box-seam"></i>{{ order.order_label }}
               </span>
+              {% endif %}
               {% if order.sale_id %}<div class="small mt-1"><a class="ai-sale-link" href="/ventas/{{ order.sale_id }}">Venta #{{ order.sale_id }}</a></div>{% endif %}
             </td>
             <td data-label="Origen">

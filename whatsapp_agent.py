@@ -7,10 +7,11 @@ import hmac
 import os
 import re
 
-from flask import Blueprint, abort, current_app, jsonify, render_template, request
+from flask import Blueprint, abort, current_app, flash, jsonify, redirect, render_template, request, url_for
 from flask_login import current_user, login_required
 from sqlalchemy.exc import IntegrityError
 from stockarmobile.extensions import csrf, db
+from stockarmobile.decorators import company_admin_required
 from app import get_current_company_id
 from stockarmobile.models.conversations import Conversation, ConversationMessage
 from services.ai_agent.config_service import company_for_whatsapp_phone_id, get_whatsapp_connection, is_ai_enabled, choose_agent
@@ -257,7 +258,14 @@ def _ai_order_channel_meta(channel: str) -> dict:
 def _ai_order_row(company_id: int, quote):
     payment = _ai_order_payment(company_id, quote.id)
     payment_status = str(getattr(payment, "status", "pending") or "pending").lower()
-    if getattr(quote, "converted_sale_id", None):
+    delivery_for_status = getattr(quote, "delivery", None)
+    if (
+        delivery_for_status is not None
+        and getattr(delivery_for_status, "method", "retiro") == "envio"
+        and getattr(delivery_for_status, "shipping_status", "confirmed") == "pending"
+    ):
+        order_key, order_label, order_badge = "shipping_pending", "Esperando cotización de envío", "text-bg-warning"
+    elif getattr(quote, "converted_sale_id", None):
         order_key, order_label, order_badge = "confirmed", "Confirmado", "text-bg-success"
     elif payment_status == "approved":
         order_key, order_label, order_badge = "paid", "Pagado · pendiente de venta", "text-bg-warning"
@@ -313,6 +321,10 @@ def _ai_order_row(company_id: int, quote):
             "notes": getattr(getattr(quote, "delivery", None), "notes", "") if getattr(quote, "delivery", None) else "",
             "shipping_cost": float(getattr(getattr(quote, "delivery", None), "shipping_cost", 0) or 0) if getattr(quote, "delivery", None) else 0.0,
             "shipping_rate": float(getattr(getattr(quote, "delivery", None), "shipping_rate", 0) or 0) if getattr(quote, "delivery", None) else 0.0,
+            "shipping_status": getattr(getattr(quote, "delivery", None), "shipping_status", "confirmed") if getattr(quote, "delivery", None) else "not_required",
+            "shipping_source": getattr(getattr(quote, "delivery", None), "shipping_source", "legacy_percent") if getattr(quote, "delivery", None) else "none",
+            "shipping_confirmed_by_user_id": getattr(getattr(quote, "delivery", None), "shipping_confirmed_by_user_id", None) if getattr(quote, "delivery", None) else None,
+            "shipping_confirmed_at": getattr(getattr(quote, "delivery", None), "shipping_confirmed_at", None) if getattr(quote, "delivery", None) else None,
         },
     }
 
@@ -333,8 +345,14 @@ def ai_orders():
     )
     all_rows = [_ai_order_row(company_id, quote) for quote in quotes]
     selected_status = (request.args.get("status") or "").strip().lower()
-    allowed_filters = {"pending", "paid", "confirmed", "problem"}
-    rows = [row for row in all_rows if not selected_status or selected_status not in allowed_filters or row["order_key"] == selected_status]
+    allowed_filters = {"pending", "shipping_pending", "paid", "confirmed", "problem"}
+    rows = [
+        row for row in all_rows
+        if not selected_status
+        or selected_status not in allowed_filters
+        or (selected_status == "shipping_pending" and row.get("delivery", {}).get("shipping_status") == "pending")
+        or (selected_status != "shipping_pending" and row["order_key"] == selected_status)
+    ]
     channel_keys = []
     for row in all_rows:
         key = row.get("channel") or "unknown"
@@ -344,6 +362,7 @@ def ai_orders():
     summary = {
         "total": len(all_rows),
         "pending": sum(1 for row in all_rows if row["order_key"] == "pending"),
+        "shipping_pending": sum(1 for row in all_rows if row.get("delivery", {}).get("shipping_status") == "pending"),
         "paid": sum(1 for row in all_rows if row["payment_status"] == "approved"),
         "confirmed": sum(1 for row in all_rows if row["order_key"] == "confirmed"),
         "channel_keys": channel_keys,
@@ -352,6 +371,67 @@ def ai_orders():
         "channel_icon": _ai_order_channel_meta(channel_keys[0])["icon"] if len(channel_keys) == 1 else "bi-broadcast",
     }
     return render_template("ai_agent/orders.html", orders=rows, summary=summary, selected_status=selected_status if selected_status in allowed_filters else "")
+
+
+@bp.post("/pedidos-ia/<int:quote_id>/shipping")
+@company_admin_required
+def ai_order_shipping(quote_id: int):
+    company_id = get_current_company_id()
+    if not company_id:
+        abort(403)
+    raw_cost = str(request.form.get("shipping_cost") or "").strip().replace(",", ".")
+    try:
+        from decimal import Decimal, InvalidOperation
+        cost = Decimal(raw_cost)
+    except (InvalidOperation, ValueError):
+        flash("Ingresá un costo de envío válido.", "danger")
+        return redirect(url_for("whatsapp_agent.ai_order_detail", quote_id=quote_id))
+    try:
+        result = VendorOrderService.set_shipping_cost_and_generate_payment(
+            company_id=int(company_id),
+            quote_id=int(quote_id),
+            shipping_cost=cost,
+            user_id=int(current_user.id),
+        )
+        conversation_id = VendorOrderService._conversation_id_for_quote(
+            company_id=int(company_id),
+            quote_id=int(quote_id),
+        )
+        if conversation_id and result.get("payment_url"):
+            conversation = Conversation.query.filter_by(
+                id=int(conversation_id),
+                company_id=int(company_id),
+            ).first()
+            if conversation is not None and str(conversation.channel or "").lower() == "whatsapp":
+                total_text = "{:.2f}".format(float(result.get("total") or 0))
+                body = (
+                    "✅ Tu pedido "
+                    + str(result.get("quote_number") or "IA")
+                    + " ya tiene el envío confirmado. Total final: $"
+                    + total_text
+                    + " ARS. Pagalo acá: "
+                    + str(result.get("payment_url") or "")
+                )
+                try:
+                    WhatsAppService.send_text(
+                        conversation.company,
+                        to=str(conversation.external_conversation_id or "").strip(),
+                        body=body,
+                    )
+                except Exception:
+                    current_app.logger.exception(
+                        "No se pudo enviar automáticamente el link de pago por WhatsApp quote_id=%s",
+                        quote_id,
+                    )
+        flash("Costo de envío confirmado. El enlace de cobro quedó generado.", "success")
+    except ValueError as exc:
+        db.session.rollback()
+        flash(str(exc), "danger")
+    except Exception:
+        db.session.rollback()
+        current_app.logger.exception("No se pudo confirmar el costo de envío quote_id=%s", quote_id)
+        flash("No se pudo confirmar el costo de envío. Revisá el pedido y volvé a intentar.", "danger")
+    return redirect(url_for("whatsapp_agent.ai_order_detail", quote_id=quote_id))
 
 
 @bp.get("/pedidos-ia/<int:quote_id>")

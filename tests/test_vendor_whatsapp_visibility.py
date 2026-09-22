@@ -86,3 +86,14 @@ def test_ai_agent_routes_do_not_use_broken_user_company_relationship():
     assert re.search(r"current_user\\.company(?!_)", content) is None
     assert "can_use_ai_feature(_current_active_company(), \"marketing\")" in content
     assert "company = _current_active_company()" in content
+
+
+def test_public_vendor_checkout_does_not_hardcode_shipping_percentage():
+    from pathlib import Path
+
+    root = Path(__file__).resolve().parents[1]
+    public_page = (root / "templates/ai_agents/public_vendor_chat.html").read_text(encoding="utf-8")
+    assert "* 0.15" not in public_page
+    assert "shippingConfig" in public_page
+    assert "A confirmar" in public_page
+    assert "stateEndpoint" in public_page

@@ -53,6 +53,8 @@ def test_vendor_options_are_normalized_without_cross_company_state():
     assert config_a["personality"] == "comercial"
     assert config_a["can_take_orders"] is True
     assert config_a["business_information"] == "Envíos en Resistencia"
+    assert config_a["shipping_mode"] == "legacy_percent"
+    assert config_a["standard_shipping_cost"] == "0.00"
     assert config_b["agent_name"] == "Vendedor B"
     assert config_b["personality"] == "directo"
     assert config_b["can_take_orders"] is False
@@ -124,6 +126,8 @@ def test_vendor_configuration_navigation_and_capabilities_are_exposed():
     assert "vendor_can_prepare_quotes" in vendor_config_page
     assert "vendor_can_take_orders" in vendor_config_page
     assert "name=\"vendor_greeting\"" in vendor_config_page
+    assert "vendor_shipping_mode" in vendor_config_page
+    assert "vendor_standard_shipping_cost" in vendor_config_page
     assert "Seguimiento automático" in vendor_config_page
 
     assert "Configurar Vendedor" not in publication_page
@@ -163,3 +167,4 @@ def test_legacy_public_vendor_route_supplies_complete_template_context_and_can_r
     assert "catalog=_catalog_for_company(company)" in route_body
     assert "initial_state=_initial_page_state(company)" in route_body
     assert "greeting=str(options.get(\"greeting\")" in route_body
+    assert "shipping_config={" in route_body

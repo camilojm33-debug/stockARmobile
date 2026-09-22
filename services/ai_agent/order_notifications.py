@@ -65,6 +65,22 @@ def build_ai_order_notifications():
         number = getattr(quote, "number", None) or f"P-{quote.id:06d}"
         currency = getattr(quote, "currency", None) or "ARS"
         total = float(getattr(quote, "total_amount", 0) or 0)
+        delivery = getattr(quote, "delivery", None)
+        if (
+            delivery is not None
+            and getattr(delivery, "method", "retiro") == "envio"
+            and getattr(delivery, "shipping_status", "confirmed") == "pending"
+        ):
+            items.append(
+                {
+                    "type": "warning",
+                    "title": "Pedido IA · cotizar envío",
+                    "body": f"{number} de {customer} necesita costo de envío antes de generar el cobro.",
+                    "href": url_for("whatsapp_agent.ai_order_detail", quote_id=quote.id),
+                    "permission": "ai_access",
+                }
+            )
+            continue
 
         if getattr(quote, "converted_sale_id", None):
             items.append(

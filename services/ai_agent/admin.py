@@ -324,6 +324,18 @@ def vendor_save():
         if field in request.form:
             vendor_options[key] = (request.form.get(field) or "").strip()[:limit]
 
+    shipping_mode = request.form.get("vendor_shipping_mode")
+    if shipping_mode is not None:
+        vendor_options["shipping_mode"] = shipping_mode.strip()[:30]
+    standard_shipping_cost = request.form.get("vendor_standard_shipping_cost")
+    if standard_shipping_cost is not None:
+        try:
+            value = Decimal(standard_shipping_cost.replace(",", "."))
+        except (InvalidOperation, AttributeError):
+            value = Decimal("0.00")
+        if value < 0:
+            value = Decimal("0.00")
+        vendor_options["standard_shipping_cost"] = str(value.quantize(Decimal("0.01")))
     update_ai_preferences(company, ai_updates={"vendor_options": vendor_options})
 
     try:
