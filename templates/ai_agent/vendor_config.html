@@ -109,26 +109,22 @@
       <div class="vendor-body">
         <div class="row g-3">
           <div class="col-md-7">
-            <label class="form-label fw-semibold">Modo de costo de envío</label>
-            <select class="form-select" name="vendor_shipping_mode" id="vendorShippingMode">
-              <option value="manual" {% if vendor_options.shipping_mode == 'manual' %}selected{% endif %}>Manual por pedido</option>
-              <option value="standard" {% if vendor_options.shipping_mode == 'standard' %}selected{% endif %}>Tarifa estándar automática</option>
-              
-            </select>
-            <div class="form-text">Manual: el pedido queda esperando hasta que el comercio cargue el costo. Estándar: el Vendedor lo aplica automáticamente.</div>
+            <input type="hidden" name="vendor_shipping_mode" value="fixed">
+            <label class="form-label fw-semibold">Costo fijo de envío</label>
+            <div class="form-text">Este importe se suma automáticamente al presupuesto y al cobro de Mercado Pago cuando el cliente elige envío a domicilio.</div>
           </div>
           <div class="col-md-5">
-            <label class="form-label fw-semibold">Costo estándar</label>
+            <label class="form-label fw-semibold">Importe del envío</label>
             <div class="input-group">
               <span class="input-group-text">$</span>
               <input class="form-control" inputmode="decimal" min="0" step="0.01" name="vendor_standard_shipping_cost" value="{{ vendor_options.standard_shipping_cost }}" aria-describedby="standardShippingHelp">
             </div>
-            <div class="form-text" id="standardShippingHelp">Se usa cuando el modo es tarifa estándar.</div>
+            <div class="form-text" id="standardShippingHelp">Se aplica automáticamente en cada pedido con envío a domicilio.</div>
           </div>
           <div class="col-12">
             <div class="alert alert-info small mb-0">
               <i class="bi bi-shield-check me-1"></i>
-              <strong>Importante:</strong> el Vendedor nunca toma el costo de envío desde el cliente. En modo manual, el pedido aparece en <strong>Pedidos IA</strong> para que el comercio lo cotice; recién después se genera el enlace de cobro.
+              <strong>Importante:</strong> el Vendedor nunca toma el costo de envío desde el cliente. El importe configurado arriba se incorpora automáticamente al presupuesto y al enlace de cobro de Mercado Pago.
             </div>
           </div>
         </div>
