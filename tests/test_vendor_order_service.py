@@ -458,6 +458,40 @@ def test_legacy_shipping_config_normalizes_to_fixed_and_creates_both_links(vendo
     assert conversation.metadata_json[PENDING_QUOTE_KEY] == quote.id
     assert conversation.metadata_json[PENDING_PAYMENT_KEY] == result["payment_url"]
 
+def test_pending_checkout_reserves_stock_for_other_vendor_checkouts(vendor_database, monkeypatch):
+    data = vendor_database
+    first = _conversation(data["company_a"].id)
+    second = _conversation(data["company_a"].id)
+    calls = []
+    _mock_checkout(monkeypatch, calls)
+
+    VendorOrderService.update_cart(
+        company_id=data["company_a"].id,
+        conversation_id=first.id,
+        items=[{"product_query": "Cafe clasico", "quantity": 7}],
+    )
+    first_result = VendorOrderService.create_pending_order(
+        company_id=data["company_a"].id,
+        conversation_id=first.id,
+        actor_user_id=data["user_a"].id,
+    )
+    assert first_result["success"] is True
+
+    VendorOrderService.update_cart(
+        company_id=data["company_a"].id,
+        conversation_id=second.id,
+        items=[{"product_query": "Cafe clasico", "quantity": 4}],
+    )
+    with pytest.raises(ValueError, match="Stock reservado para otro pedido"):
+        VendorOrderService.create_pending_order(
+            company_id=data["company_a"].id,
+            conversation_id=second.id,
+            actor_user_id=data["user_a"].id,
+        )
+
+    assert Payment.query.filter_by(company_id=data["company_a"].id).count() == 1
+
+
 def test_create_pending_order_reuses_existing_pending_flow(vendor_database, monkeypatch):
     data = vendor_database
     conversation = _conversation(data["company_a"].id)
