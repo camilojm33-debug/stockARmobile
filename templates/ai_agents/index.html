@@ -239,7 +239,13 @@
   </div>
 
   <div class="row g-3 mb-4">
-    {% for label, value in [('Conversaciones este mes', metrics.conversations), ('Clientes atendidos', metrics.clients_attended), ('Presupuestos', metrics.quotes), ('Pedidos', 'Pendiente de integración'), ('Ventas derivadas', 'Pendiente de integración')] %}
+    {% for label, value in [
+      ('Conversaciones este mes', metrics.conversations),
+      ('Clientes atendidos', metrics.clients_attended),
+      ('Presupuestos', metrics.quotes),
+      ('Pedidos', metrics.orders),
+      ('Ventas derivadas', metrics.ai_sales)
+    ] %}
     <div class="col-6 col-lg">
       <div class="ai-metric h-100">
         <div class="small text-muted">{{ label }}</div>
@@ -336,9 +342,7 @@
               ('Ofrecer alternativas', true),
               ('Preparar presupuestos', true),
               ('Armar pedidos: presupuesto pendiente de pago', true),
-              ('Hacer seguimiento', false),
-              ('Detectar intención de compra', false),
-              ('Derivar conversación a una persona', false)
+              ('Consultar y seguir pedidos', true)
             ] %}
             <div class="col-sm-6">
               <div class="text-muted">
