@@ -24,6 +24,7 @@ FLOW_PREFIX = "flow:ai_order"
 CART_KEY = "vendor_cart"
 PENDING_QUOTE_KEY = "pending_quote_id"
 PENDING_PAYMENT_KEY = "pending_payment_url"
+LAST_ORDER_KEY = "vendor_last_order"
 MAX_CART_LINES = 30
 
 
@@ -249,7 +250,9 @@ class VendorOrderService:
             product = products.get(product_id)
             if product is None or quantity <= 0:
                 continue
-            price = _money(product.price)
+            list_price = _money(product.price)
+            discount = _money(getattr(product, "discount", 0))
+            price = max(list_price - discount, Decimal("0.00"))
             subtotal = (price * quantity).quantize(Decimal("0.01"))
             total += subtotal
             items.append({
@@ -388,7 +391,7 @@ class VendorOrderService:
         conversation = db.session.query(Conversation).filter(
             Conversation.id == conversation_id,
             Conversation.company_id == company_id,
-        ).first()
+        ).with_for_update().first()
         if conversation is None:
             raise ValueError("Conversación no encontrada para esta empresa.")
 
@@ -624,7 +627,7 @@ class VendorOrderService:
                     "description": product.name,
                     "quantity": int(item["quantity"]) if float(item["quantity"]).is_integer() else float(item["quantity"]),
                     "currency_id": quote.currency or "ARS",
-                    "unit_price": float(_money(product.price)),
+                    "unit_price": float(max(_money(product.price) - _money(getattr(product, "discount", 0)), Decimal("0.00"))),
                 }
                 for item in cart["items"]
                 for product in [products[int(item["product_id"])] ]
@@ -671,6 +674,15 @@ class VendorOrderService:
         db.session.add(payment)
         state[PENDING_QUOTE_KEY] = quote.id
         state[PENDING_PAYMENT_KEY] = payment_url
+        state[LAST_ORDER_KEY] = {
+            "quote_id": quote.id,
+            "quote_number": quote.number,
+            "order_status": "pendiente_pago",
+            "payment_status": "pending",
+            "total": float(quote.total_amount or 0),
+            "payment_id": None,
+            "sale_id": None,
+        }
         state["customer_phone"] = phone or customer_phone
         state["delivery"] = {
             "method": delivery["method"],
@@ -905,7 +917,11 @@ class VendorOrderService:
                     "description": product.name,
                     "quantity": int(float(item.quantity)) if float(item.quantity).is_integer() else float(item.quantity),
                     "currency_id": quote.currency or "ARS",
-                    "unit_price": float(_money(item.unit_price)),
+                    "unit_price": float(max(
+                        (_money(item.unit_price) * Decimal(str(item.quantity or 0)) - _money(item.discount))
+                        / Decimal(str(item.quantity or 1)),
+                        Decimal("0.00"),
+                    )),
                 }
                 for item in quote.items
                 for product in [products[int(item.product_id)]]
@@ -1053,6 +1069,45 @@ class VendorOrderService:
         return {"success": True, "count": len(products), "products": products}
 
     @staticmethod
+    def _clear_conversation_order_state(*, company_id: int, quote_id: int, payment_id: str | None, sale_id: int | None) -> None:
+        """Clear checkout UI state after an approved payment and keep a safe status snapshot."""
+        from stockarmobile.models.conversations import Conversation
+
+        payment_id_value = str(payment_id or "").strip()
+        if not payment_id_value:
+            return
+        payment = VendorOrderService._payment_for_quote(company_id=company_id, quote_id=quote_id)
+        reference = str(getattr(payment, "external_reference", "") or "")
+        match = re.search(r"(?:^|\|)conversation_id:(\d+)(?:\||$)", reference)
+        if not match:
+            return
+        conversation_id = int(match.group(1))
+        conversation = (
+            db.session.query(Conversation)
+            .filter(
+                Conversation.id == conversation_id,
+                Conversation.company_id == int(company_id),
+            )
+            .with_for_update()
+            .first()
+        )
+        if conversation is None:
+            return
+        state = _metadata(conversation)
+        if str(state.get(PENDING_QUOTE_KEY)) == str(quote_id):
+            state.pop(PENDING_QUOTE_KEY, None)
+            state.pop(PENDING_PAYMENT_KEY, None)
+        state.pop(CART_KEY, None)
+        state[LAST_ORDER_KEY] = {
+            "quote_id": int(quote_id),
+            "order_status": "confirmado",
+            "payment_status": "approved",
+            "payment_id": payment_id_value,
+            "sale_id": int(sale_id) if sale_id is not None else None,
+        }
+        _set_metadata(conversation, state)
+
+    @staticmethod
     def finalize_paid_order(*, company_id: int, quote_id: int, payment_data: Dict[str, Any], commit: bool = True) -> Dict[str, Any]:
         from app import Payment, Product, Quote, Sale, SaleItem, db as app_db
 
@@ -1181,6 +1236,12 @@ class VendorOrderService:
 
         quote.status = "CONVERTIDO"
         quote.converted_sale_id = sale.id
+        VendorOrderService._clear_conversation_order_state(
+            company_id=company_id,
+            quote_id=quote.id,
+            payment_id=payment.payment_id or payment_id,
+            sale_id=sale.id,
+        )
         if commit:
             app_db.session.commit()
         else:
