@@ -1,0 +1,49 @@
+{% extends "base_master.html" %}
+{% block title %}Promociones | StockArmobile{% endblock %}
+{% block content %}
+<div class="app-shell py-4">
+  <div class="d-flex flex-wrap justify-content-between align-items-start gap-3 mb-4">
+    <div><div class="page-kicker"><i class="bi bi-megaphone"></i>Ventas</div><h1 class="h3 fw-bold mb-1">Promociones</h1><p class="text-muted mb-0">Creá 2x1, 3x2, 4x2 y descuentos por cantidad para tu negocio.</p></div>
+    <span class="badge text-bg-success align-self-center"><i class="bi bi-check-circle me-1"></i>Plan Negocio+</span>
+  </div>
+  <div class="row g-4">
+    <div class="col-xl-5"><section class="card app-card"><div class="card-body p-4">
+      <h2 class="h5 fw-bold mb-3">Nueva promoción</h2>
+      <form method="post" action="{{ url_for('promotions.save') }}">
+        <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+        <div class="mb-3"><label class="form-label">Nombre</label><input class="form-control" name="name" required placeholder="Ej. 2x1 Coca Cola"></div>
+        <div class="mb-3"><label class="form-label">Producto</label><select class="form-select" name="product_id"><option value="">— Por categoría —</option>{% for product in products %}<option value="{{ product.id }}">{{ product.name }} · ${{ product.price }}</option>{% endfor %}</select></div>
+        <div class="mb-3"><label class="form-label">Categoría (opcional)</label><select class="form-select" name="category"><option value="">Sin categoría</option>{% for category in categories %}<option value="{{ category }}">{{ category }}</option>{% endfor %}</select><div class="form-text">La promoción puede aplicarse a un producto o a toda una categoría.</div></div>
+        <div class="mb-3"><label class="form-label">Tipo</label><select class="form-select" name="type"><option value="bogo">Llevás X, pagás Y</option><option value="percent_quantity">Cantidad + porcenthje</option><option value="fixed_quantity">Cantidad + importe</option></select></div>
+        <div class="row g-2">
+          <div class="col-6"><label class="form-label">Mínimo</label><input class="form-control" type="number" min="0" step="0.001" name="min_quantity" placeholder="3"></div>
+          <div class="col-6"><label class="form-label">% descuento</label><input class="form-control" type="number" min="0" max="100" step="0.01" name="discount_percent" placeholder="15"></div>
+          <div class="col-6"><label class="form-label">Comprás</label><input class="form-control" type="number" min="0" step="0.001" name="buy_quantity" placeholder="4"></div>
+          <div class="col-6"><label class="form-label">Pagás</label><input class="form-control" type="number" min="0" step="0.001" name="pay_quantity" placeholder="2"></div>
+          <div class="col-12"><label class="form-label">Descuento fijo por bloque</label><input class="form-control" type="number" min="0" step="0.01" name="discount_amount" placeholder="1000"></div>
+        </div>
+        <div class="row g-2 mt-1">
+          <div class="col-6"><label class="form-label">Desde</label><input class="form-control" type="date" name="starts_at"></div>
+          <div class="col-6"><label class="form-label">Hasta</label><input class="form-control" type="date" name="ends_at"></div>
+          <div class="col-6"><label class="form-label">Prioridad</label><input class="form-control" type="number" min="0" max="10000" name="priority" value="100"></div>
+          <div class="col-6 d-flex align-items-end"><div class="form-check form-switch mb-2"><input class="form-check-input" type="checkbox" name="active" value="1" checked><label class="form-check-label">Activa</label></div></div>
+        </div>
+        <div class="mb-3 mt-2"><label class="form-label">Descripción</label><textarea class="form-control" name="description" rows="2" placeholder="Condiciones de la promoción"></textarea></div>
+        <button class="btn btn-primary w-100" type="submit"><i class="bi bi-plus-lg me-1"></i>Guardar promoción</button>
+      </form>
+    </div></section></div>
+    <div class="col-xl-7"><section class="card app-card"><div class="card-body p-4">
+      <div class="d-flex justify-content-between align-items-center mb-3"><div><h2 class="h5 fw-bold mb-1">Promociones configuradas</h2><p class="small text-muted mb-0">Se aplica como máximo una promoción por producto y línea.</p></div><span class="badge text-bg-light border">{{ promotions|length }} configuradas</span></div>
+      {% if promotions %}<div class="table-responsive"><table class="table align-middle"><thead><tr><th>Promoción</th><th>Regla</th><th>Vigencia</th><th>Estado</th><th></th></tr></thead><tbody>
+      {% for promotion in promotions %}<tr>
+        <td><strong>{{ promotion.name }}</strong><div class="small text-muted">{{ promotion.product.name if promotion.product else ('Categoría: ' ~ promotion.category) }}</div></td>
+        <td>{% if promotion.type == 'bogo' %}{{ promotion.buy_quantity }}x{{ promotion.pay_quantity }}{% elif promotion.type == 'percent_quantity' %}{{ promotion.min_quantity }}+ → {{ promotion.discount_percent }}%{% else %}{{ promotion.min_quantity }}+ → ${{ promotion.discount_amount }}{% endif %}</td>
+        <td class="small">{{ promotion.starts_at.strftime('%d/%m/%Y') if promotion.starts_at else 'Siempre' }}{% if promotion.ends_at %} → {{ promotion.ends_at.strftime('%d/%m/%Y') }}{% endif %}</td>
+        <td><span class="badge {{ 'text-bg-success' if promotion.active else 'text-bg-secondary' }}">{{ 'Activa' if promotion.active else 'Inactiva' }}</span></td>
+        <td class="text-end"><form method="post" action="{{ url_for('promotions.toggle', promotion_id=promotion.id) }}"><input type="hidden" name="csrf_token" value="{{ csrf_token() }}"><button class="btn btn-sm btn-outline-secondary" type="submit">{{ 'Desactivar' if promotion.active else 'Activar'}}</button></form></td>
+      </tr>{endfor %}</tbody></table></div>
+      {% else %}<div class="text-center text-muted py-5"><i class="bi bi-megaphone fs-2 d-block mb-2"></i>Todavía no configuraste promociones.</div>{% endif %}
+    </div></section></div>
+  </div>
+</div>
+{% endblock %}
