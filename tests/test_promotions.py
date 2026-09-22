@@ -57,8 +57,8 @@ def make_promotion(company_id=1, created_by_user_id=1, **kwargs):
 
 
 def test_promotion_engine_2x1(promotion_database):
-    company_id = promotion_database["company_a"].id
-    user_id = promotion_database["user_a"].id
+    company_id = promotion_database["company"].id
+    user_id = promotion_database["user"].id
     product = make_product(company_id=company_id)
     db.session.add(product)
     db.session.add(make_promotion(company_id=company_id, created_by_user_id=user_id))
@@ -73,8 +73,8 @@ def test_promotion_engine_2x1(promotion_database):
 
 
 def test_promotion_engine_3x2_remainder(promotion_database):
-    company_id = promotion_database["company_a"].id
-    user_id = promotion_database["user_a"].id
+    company_id = promotion_database["company"].id
+    user_id = promotion_database["user"].id
     product = make_product(company_id=company_id, price="500")
     db.session.add(product)
     db.session.add(make_promotion(company_id=company_id, created_by_user_id=user_id, buy_quantity=Decimal("3"), pay_quantity=Decimal("2")))
@@ -88,14 +88,14 @@ def test_promotion_engine_3x2_remainder(promotion_database):
 
 
 def test_promotion_engine_4x2(promotion_database):
-    company_id = promotion_database["company_a"].id
-    user_id = promotion_database["user_a"].id
+    company_id = promotion_database["company"].id
+    user_id = promotion_database["user"].id
     product = make_product(company_id=company_id)
     db.session.add(product)
     db.session.add(make_promotion(company_id=company_id, created_by_user_id=user_id, buy_quantity=Decimal("4"), pay_quantity=Decimal("2")))
     db.session.commit()
 
-    result = PromotionEngine.evaluate(company_id=1, product=product, quantity=Decimal("8"))
+    result = PromotionEngine.evaluate(company_id=company_id, product=product, quantity=Decimal("8"))
 
     assert result.free_quantity == Decimal("4")
     assert result.paid_quantity == Decimal("4")
@@ -103,8 +103,8 @@ def test_promotion_engine_4x2(promotion_database):
 
 
 def test_promotion_engine_quantity_percentage(promotion_database):
-    company_id = promotion_database["company_a"].id
-    user_id = promotion_database["user_a"].id
+    company_id = promotion_database["company"].id
+    user_id = promotion_database["user"].id
     product = make_product(company_id=company_id)
     db.session.add(product)
     db.session.add(make_promotion(
@@ -119,15 +119,15 @@ def test_promotion_engine_quantity_percentage(promotion_database):
     ))
     db.session.commit()
 
-    result = PromotionEngine.evaluate(company_id=1, product=product, quantity=Decimal("3"))
+    result = PromotionEngine.evaluate(company_id=company_id, product=product, quantity=Decimal("3"))
 
     assert result.promotion_discount == Decimal("450.00")
     assert result.final_amount == Decimal("2550.00")
 
 
 def test_promotion_engine_expired_is_ignored(promotion_database):
-    company_id = promotion_database["company_a"].id
-    user_id = promotion_database["user_a"].id
+    company_id = promotion_database["company"].id
+    user_id = promotion_database["user"].id
     product = make_product(company_id=company_id)
     db.session.add(product)
     db.session.add(make_promotion(company_id=company_id, created_by_user_id=user_id, ends_at=datetime(2026, 1, 1)))
@@ -145,14 +145,14 @@ def test_promotion_engine_expired_is_ignored(promotion_database):
 
 
 def test_promotion_engine_preserves_legacy_product_discount(promotion_database):
-    company_id = promotion_database["company_a"].id
-    user_id = promotion_database["user_a"].id
+    company_id = promotion_database["company"].id
+    user_id = promotion_database["user"].id
     product = make_product(company_id=company_id, discount="100")
     db.session.add(product)
     db.session.add(make_promotion(company_id=company_id, created_by_user_id=user_id))
     db.session.commit()
 
-    result = PromotionEngine.evaluate(company_id=1, product=product, quantity=Decimal("2"))
+    result = PromotionEngine.evaluate(company_id=company_id, product=product, quantity=Decimal("2"))
 
     assert result.legacy_discount == Decimal("200.00")
     assert result.promotion_discount == Decimal("900.00")
