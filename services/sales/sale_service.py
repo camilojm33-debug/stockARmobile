@@ -104,7 +104,7 @@ class SaleService:
                 surcharge=surcharge,
                 discount_type=sale_totals["discount_adjustment"]["type"],
                 discount_value=sale_totals["discount_adjustment"]["value"],
-                discount_reason=(sale_totals["discount_adjustment"]["reason"] or (f"Promoción: {", ".join(promotion_names)}" if promotion_names else None)),
+                discount_reason=(sale_totals["discount_adjustment"]["reason"] or ("Promoción: " + ", ".join(promotion_names) if promotion_names else None)),
                 surcharge_type=sale_totals["surcharge_adjustment"]["type"],
                 surcharge_value=sale_totals["surcharge_adjustment"]["value"],
                 surcharge_reason=sale_totals["surcharge_adjustment"]["reason"],
