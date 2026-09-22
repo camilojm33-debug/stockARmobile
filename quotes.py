@@ -22,6 +22,7 @@ from app import tenant_required, utcnow
 from stockarmobile.enums import QuoteStatus
 from stockarmobile.helpers.dates import parse_date_yyyy_mm_dd
 from services.sales_calculation_service import calculate_sale_totals, to_decimal
+from services.promotion_service import PromotionEngine
 from services.whatsapp_share_service import build_whatsapp_share_url
 
 bp = Blueprint("quotes", __name__)
@@ -392,6 +393,23 @@ def _quote_from_form(*, quote=None):
     if not parsed_items:
         raise ValueError("Debes agregar al menos un producto al presupuesto.")
 
+    # Las promociones se aplican en el presupuesto estándar cuando no hay
+    # descuentos de línea explícitos. Esto mantiene intacta la intención de
+    # descuentos manuales y evita que la conversión a venta vuelva a aplicarlas.
+    promotion_results = []
+    if not any(to_decimal(item.get("discount")) > 0 for item in parsed_items if item.get("product") is not None):
+        promotable_lines = [
+            item for item in parsed_items if item.get("product") is not None
+        ]
+        if promotable_lines:
+            _enriched, promotion_results = PromotionEngine.apply_to_lines(
+                company_id=getattr(current_user, "company_id", None),
+                lines=promotable_lines,
+            )
+            for item, result in zip(promotable_lines, promotion_results):
+                item["discount"] = result.discount
+                item["promotion"] = result
+
     client_id = payload.get("client_id") or None
     consumer_name = (payload.get("consumer_name") or "").strip()
     selected_client = None
@@ -469,7 +487,21 @@ def _quote_from_form(*, quote=None):
     quote.surcharge = totals["surcharge"]
     quote.discount_type = totals["discount_adjustment"]["type"]
     quote.discount_value = totals["discount_adjustment"]["value"]
-    quote.discount_reason = totals["discount_adjustment"]["reason"]
+    promotion_names = [
+        result.promotion_name
+        for result in promotion_results
+        if result.promotion_name
+    ]
+    promotion_reason = (
+        "Promoción: " + ", ".join(dict.fromkeys(promotion_names))
+        if promotion_names
+        else None
+    )
+    base_discount_reason = totals["discount_adjustment"]["reason"]
+    if promotion_reason and base_discount_reason:
+        quote.discount_reason = f"{base_discount_reason} | {promotion_reason}"
+    else:
+        quote.discount_reason = promotion_reason or base_discount_reason
     quote.surcharge_type = totals["surcharge_adjustment"]["type"]
     quote.surcharge_value = totals["surcharge_adjustment"]["value"]
     quote.surcharge_reason = totals["surcharge_adjustment"]["reason"]

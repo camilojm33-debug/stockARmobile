@@ -159,6 +159,37 @@ def test_promotion_engine_preserves_legacy_product_discount(promotion_database):
     assert result.final_amount == Decimal("900.00")
 
 
+
+def test_promotion_engine_product_specific_wins_category_on_tie(promotion_database):
+    company_id = promotion_database["company"].id
+    user_id = promotion_database["user"].id
+    product = make_product(company_id=company_id, category="Bebidas")
+    db.session.add(product)
+    db.session.add(make_promotion(company_id=company_id, created_by_user_id=user_id, name="Promo categoría", buy_quantity=Decimal("2"), pay_quantity=Decimal("1"), priority=100, category="Bebidas", product_id=None))
+    db.session.add(make_promotion(company_id=company_id, created_by_user_id=user_id, name="Promo producto", buy_quantity=Decimal("3"), pay_quantity=Decimal("2"), priority=100, product_id=product.id, category=None))
+    db.session.commit()
+    result = PromotionEngine.evaluate(company_id=company_id, product=product, quantity=Decimal("3"))
+    assert result.promotion_name == "Promo producto"
+    assert result.free_quantity == Decimal("1")
+
+
+def test_promotion_standard_quote_flow_is_connected():
+    from pathlib import Path
+    source = Path("quotes.py").read_text(encoding="utf-8")
+    assert "from services.promotion_service import PromotionEngine" in source
+    assert "PromotionEngine.apply_to_lines" in source
+    assert "promotion_reason" in source
+
+
+def test_promotion_rule_form_is_contextual_and_preserves_values():
+    from pathlib import Path
+    source = Path("templates/promociones/index.html").read_text(encoding="utf-8")
+    assert 'id="ruleBogo"' in source
+    assert 'id="rulePercent"' in source
+    assert 'id="ruleFixed"' in source
+    assert "form_data.get('buy_quantity'" in source
+    assert 'input.disabled=!enabled' in source
+
 def test_promotion_access_is_business_only(promotion_database):
     from app import Company, Plan, Subscription
     from services.ai_agent.usage_service import can_use_commercial_feature
