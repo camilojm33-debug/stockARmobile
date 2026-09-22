@@ -30,6 +30,7 @@ from services.ai_agent.vendor_order_service import (
     PENDING_PAYMENT_KEY,
     PENDING_QUOTE_KEY,
     VendorOrderService,
+    _public_quote_url,
 )
 
 
