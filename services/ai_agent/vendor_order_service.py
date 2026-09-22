@@ -2,6 +2,69 @@
 
 from __future__ import annotations
 
+def _active_ai_reservations(
+    *,
+    company_id: int,
+    product_ids: Iterable[int],
+    exclude_quote_id: int | None = None,
+) -> Dict[int, Decimal]:
+    """Return quantities held by other active Vendedor IA checkouts."""
+    from app import Payment, Quote, QuoteItem
+
+    wanted = {int(product_id) for product_id in product_ids}
+    if not wanted:
+        return {}
+
+    payments = (
+        Payment.query.filter(
+            Payment.company_id == int(company_id),
+            Payment.provider == "mercadopago_ai_order",
+            Payment.status.in_(["pending", "in_process", "authorized"]),
+        ).all()
+    )
+    now = __import__("datetime").datetime.utcnow()
+    quote_ids: set[int] = set()
+    for payment in payments:
+        reference = str(getattr(payment, "external_reference", "") or "")
+        match = re.search(r"(?:^|\|)quote_id:(\d+)(?:\||$)", reference)
+        if match:
+            quote_ids.add(int(match.group(1)))
+
+    if exclude_quote_id is not None:
+        quote_ids.discard(int(exclude_quote_id))
+    if not quote_ids:
+        return {}
+
+    quotes = (
+        Quote.query.filter(
+            Quote.company_id == int(company_id),
+            Quote.id.in_(sorted(quote_ids)),
+            Quote.status.notin_(["ANULADO", "RECHAZADO", "CONVERTIDO", "VENCIDO"]),
+        ).all()
+    )
+    active_quote_ids = {
+        int(quote.id)
+        for quote in quotes
+        if quote.expires_at is None or quote.expires_at > now
+    }
+    if not active_quote_ids:
+        return {}
+
+    reservations: Dict[int, Decimal] = {}
+    items = QuoteItem.query.filter(
+        QuoteItem.quote_id.in_(sorted(active_quote_ids)),
+        QuoteItem.product_id.in_(sorted(wanted)),
+    ).all()
+    for item in items:
+        product_id = int(item.product_id)
+        reservations[product_id] = (
+            reservations.get(product_id, Decimal("0"))
+            + Decimal(str(item.quantity or 0))
+        )
+    return reservations
+
+
+
 import json
 import re
 from datetime import timedelta
@@ -503,15 +566,30 @@ class VendorOrderService:
         product_ids = [int(item["product_id"]) for item in cart["items"]]
         products = {
             product.id: product
-            for product in Product.query.filter(Product.company_id == company_id, Product.id.in_(product_ids), Product.active.is_(True)).all()
+            for product in Product.query.filter(
+                Product.company_id == company_id,
+                Product.id.in_(product_ids),
+                Product.active.is_(True),
+            ).with_for_update().all()
         }
+        reservations = _active_ai_reservations(
+            company_id=company_id,
+            product_ids=product_ids,
+        )
         line_inputs = []
         for item in cart["items"]:
             product = products.get(int(item["product_id"]))
             if product is None:
                 raise ValueError("Uno de los productos del carrito ya no está disponible.")
             quantity = Decimal(str(item["quantity"]))
-            if quantity <= 0 or Decimal(str(product.stock or 0)) < quantity:
+            reserved = reservations.get(product.id, Decimal("0"))
+            available_after_reservations = Decimal(str(product.stock or 0)) - reserved
+            if quantity <= 0 or available_after_reservations < quantity:
+                if reserved > 0:
+                    raise ValueError(
+                        f"Stock reservado para otro pedido de {product.name}. "
+                        f"Disponible para este pedido: {max(available_after_reservations, Decimal('0')):g}."
+                    )
                 raise ValueError(f"Stock insuficiente para {product.name}.")
             line_inputs.append({
                 "price": _money(product.price),
@@ -1113,7 +1191,11 @@ class VendorOrderService:
     def finalize_paid_order(*, company_id: int, quote_id: int, payment_data: Dict[str, Any], commit: bool = True) -> Dict[str, Any]:
         from app import Payment, Product, Quote, Sale, SaleItem, db as app_db
 
-        quote = Quote.query.filter_by(id=int(quote_id), company_id=int(company_id)).first()
+        quote = (
+            Quote.query.filter_by(id=int(quote_id), company_id=int(company_id))
+            .with_for_update()
+            .first()
+        )
         if quote is None:
             raise ValueError("Presupuesto del pedido no encontrado para esta empresa.")
         if quote.status in {"ANULADO", "RECHAZADO"}:
