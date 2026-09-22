@@ -165,6 +165,7 @@ def test_promotion_engine_product_specific_wins_category_on_tie(promotion_databa
     user_id = promotion_database["user"].id
     product = make_product(company_id=company_id, category="Bebidas")
     db.session.add(product)
+    db.session.flush()
     db.session.add(make_promotion(company_id=company_id, created_by_user_id=user_id, name="Promo categoría", buy_quantity=Decimal("2"), pay_quantity=Decimal("1"), priority=100, category="Bebidas", product_id=None))
     db.session.add(make_promotion(company_id=company_id, created_by_user_id=user_id, name="Promo producto", buy_quantity=Decimal("3"), pay_quantity=Decimal("2"), priority=100, product_id=product.id, category=None))
     db.session.commit()
