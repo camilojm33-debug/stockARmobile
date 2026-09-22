@@ -75,3 +75,20 @@ def test_vendor_dashboard_metrics_use_real_ai_orders_and_sales(app):
         metrics = _vendor_dashboard_metrics(company.id, month_start)
 
         assert metrics == {"orders": 1, "ai_sales": 1}
+
+
+def test_vendor_dashboard_has_no_stale_pending_placeholders():
+    from pathlib import Path
+
+    template = (
+        Path(__file__).resolve().parents[1]
+        / "templates"
+        / "ai_agents"
+        / "index.html"
+    ).read_text(encoding="utf-8")
+
+    assert "('Pedidos', 'Pendiente de integración')" not in template
+    assert "('Ventas derivadas', 'Pendiente de integración')" not in template
+    assert "('Pedidos', metrics.orders)" in template
+    assert "('Ventas derivadas', metrics.ai_sales)" in template
+    assert "('Hacer seguimiento', false)" not in template
