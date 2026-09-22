@@ -1802,6 +1802,7 @@ import quotes  # noqa: E402
 import support  # noqa: E402
 import seo_pages  # noqa: E402
 import ai_agents  # noqa: E402
+import promotions  # noqa: E402
 from services.ai_agent.admin import bp as ai_admin_bp  # noqa: E402
 from whatsapp_agent import bp as whatsapp_agent_bp  # noqa: E402
 
@@ -1822,6 +1823,7 @@ referrals_bp = referrals.bp
 support_bp = support.bp
 seo_pages_bp = seo_pages.bp
 ai_agents_bp = ai_agents.bp
+promotions_bp = promotions.bp
 
 app.register_blueprint(auth_bp, url_prefix="/auth")
 app.register_blueprint(dashboard_bp, url_prefix="/dashboard")
@@ -1844,6 +1846,7 @@ install_commission_hook()
 app.register_blueprint(support_bp, url_prefix="/soporte")
 app.register_blueprint(seo_pages_bp)
 app.register_blueprint(ai_agents_bp)
+app.register_blueprint(promotions_bp)
 app.register_blueprint(ai_admin_bp)
 app.register_blueprint(whatsapp_agent_bp)
 app.register_blueprint(maintenance_bp)
@@ -1865,6 +1868,7 @@ def _plan_feature_flags(plan):
         "caja": has("caja"),
         "reportes": has("reportes", "reportes_basicos"),
         "controlador_precios": has("pricing_controller"),
+        "promociones": has("promotions"),
         "qr": has("qr"),
         "etiquetas": has("etiquetas", "excel", "kardex"),
         "whatsapp": has("whatsapp"),
@@ -2184,6 +2188,7 @@ def inject_notifications():
     current_company_preferences = {}
     ai_feature_pricing_allowed = False
     ai_feature_vendor_allowed = False
+    commercial_promotions_allowed = False
     ai_employee_access_allowed = False
     support_contact = {
         "email": app.config.get("SUPPORT_EMAIL", "stockarmobile@gmail.com"),
@@ -2214,6 +2219,7 @@ def inject_notifications():
             except Exception:
                 ai_feature_pricing_allowed = False
                 ai_feature_vendor_allowed = False
+                commercial_promotions_allowed = False
         if getattr(current_user, "role", None) != "superadmin":
             has_active_seller_profile = ReferralSeller.query.filter_by(user_id=current_user.id, active=True).first() is not None
         if getattr(current_user, "role", None) == "admin" and getattr(current_user, "company_id", None):
@@ -2238,6 +2244,7 @@ def inject_notifications():
             "current_user_has_permission": lambda key: _user_has_permission(current_user, key),
             "ai_feature_pricing_allowed": ai_feature_pricing_allowed,
             "ai_feature_vendor_allowed": ai_feature_vendor_allowed,
+            "commercial_promotions_allowed": commercial_promotions_allowed,
             "ai_employee_access_allowed": ai_employee_access_allowed,
         }
     return {
