@@ -419,7 +419,6 @@ def public_vendor_chat(token):
         shipping_config={
             "mode": get_vendor_options(company).get("shipping_mode", "manual"),
             "standard_cost": float(get_vendor_options(company).get("standard_shipping_cost") or 0),
-            "legacy_percent": 15,
         },
         catalog=_catalog_for_company(company),
         initial_state=_initial_page_state(company),
