@@ -322,7 +322,7 @@ def _ai_order_row(company_id: int, quote):
             "shipping_cost": float(getattr(getattr(quote, "delivery", None), "shipping_cost", 0) or 0) if getattr(quote, "delivery", None) else 0.0,
             "shipping_rate": float(getattr(getattr(quote, "delivery", None), "shipping_rate", 0) or 0) if getattr(quote, "delivery", None) else 0.0,
             "shipping_status": getattr(getattr(quote, "delivery", None), "shipping_status", "confirmed") if getattr(quote, "delivery", None) else "not_required",
-            "shipping_source": getattr(getattr(quote, "delivery", None), "shipping_source", "legacy_percent") if getattr(quote, "delivery", None) else "none",
+            "shipping_source": getattr(getattr(quote, "delivery", None), "shipping_source", "manual") if getattr(quote, "delivery", None) else "none",
             "shipping_confirmed_by_user_id": getattr(getattr(quote, "delivery", None), "shipping_confirmed_by_user_id", None) if getattr(quote, "delivery", None) else None,
             "shipping_confirmed_at": getattr(getattr(quote, "delivery", None), "shipping_confirmed_at", None) if getattr(quote, "delivery", None) else None,
         },
