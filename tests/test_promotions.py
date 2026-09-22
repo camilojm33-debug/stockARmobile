@@ -21,7 +21,7 @@ def make_product(company_id=1, price="1000", discount="0", category="Bebidas"):
     )
 
 
-def make_promotion(company_id=1, **kwargs):
+def make_promotion(company_id=1, created_by_user_id=1, **kwargs):
     values = dict(
         company_id=company_id,
         name="Promo test",
@@ -31,16 +31,18 @@ def make_promotion(company_id=1, **kwargs):
         active=True,
         status="ACTIVA",
         priority=100,
-        created_by_user_id=1,
+        created_by_user_id=created_by_user_id,
     )
     values.update(kwargs)
     return Promotion(**values)
 
 
 def test_promotion_engine_2x1(vendor_database):
-    product = make_product()
+    company_id = vendor_database["company_a"].id
+    user_id = vendor_database["user_a"].id
+    product = make_product(company_id=company_id)
     db.session.add(product)
-    db.session.add(make_promotion())
+    db.session.add(make_promotion(company_id=company_id, created_by_user_id=user_id))
     db.session.commit()
 
     result = PromotionEngine.evaluate(company_id=1, product=product, quantity=Decimal("4"))
@@ -52,9 +54,11 @@ def test_promotion_engine_2x1(vendor_database):
 
 
 def test_promotion_engine_3x2_remainder(vendor_database):
-    product = make_product(price="500")
+    company_id = vendor_database["company_a"].id
+    user_id = vendor_database["user_a"].id
+    product = make_product(company_id=company_id, price="500")
     db.session.add(product)
-    db.session.add(make_promotion(buy_quantity=Decimal("3"), pay_quantity=Decimal("2")))
+    db.session.add(make_promotion(company_id=company_id, created_by_user_id=user_id, buy_quantity=Decimal("3"), pay_quantity=Decimal("2")))
     db.session.commit()
 
     result = PromotionEngine.evaluate(company_id=1, product=product, quantity=Decimal("7"))
@@ -65,9 +69,11 @@ def test_promotion_engine_3x2_remainder(vendor_database):
 
 
 def test_promotion_engine_4x2(vendor_database):
-    product = make_product()
+    company_id = vendor_database["company_a"].id
+    user_id = vendor_database["user_a"].id
+    product = make_product(company_id=company_id)
     db.session.add(product)
-    db.session.add(make_promotion(buy_quantity=Decimal("4"), pay_quantity=Decimal("2")))
+    db.session.add(make_promotion(company_id=company_id, created_by_user_id=user_id, buy_quantity=Decimal("4"), pay_quantity=Decimal("2")))
     db.session.commit()
 
     result = PromotionEngine.evaluate(company_id=1, product=product, quantity=Decimal("8"))
@@ -78,7 +84,9 @@ def test_promotion_engine_4x2(vendor_database):
 
 
 def test_promotion_engine_quantity_percentage(vendor_database):
-    product = make_product()
+    company_id = vendor_database["company_a"].id
+    user_id = vendor_database["user_a"].id
+    product = make_product(company_id=company_id)
     db.session.add(product)
     db.session.add(make_promotion(
         name="3 unidades 15%",
@@ -87,6 +95,8 @@ def test_promotion_engine_quantity_percentage(vendor_database):
         pay_quantity=None,
         min_quantity=Decimal("3"),
         discount_percent=Decimal("15"),
+        company_id=company_id,
+        created_by_user_id=user_id,
     ))
     db.session.commit()
 
@@ -97,9 +107,11 @@ def test_promotion_engine_quantity_percentage(vendor_database):
 
 
 def test_promotion_engine_expired_is_ignored(vendor_database):
-    product = make_product()
+    company_id = vendor_database["company_a"].id
+    user_id = vendor_database["user_a"].id
+    product = make_product(company_id=company_id)
     db.session.add(product)
-    db.session.add(make_promotion(ends_at=datetime(2026, 1, 1)))
+    db.session.add(make_promotion(company_id=company_id, created_by_user_id=user_id, ends_at=datetime(2026, 1, 1)))
     db.session.commit()
 
     result = PromotionEngine.evaluate(
@@ -114,9 +126,11 @@ def test_promotion_engine_expired_is_ignored(vendor_database):
 
 
 def test_promotion_engine_preserves_legacy_product_discount(vendor_database):
-    product = make_product(discount="100")
+    company_id = vendor_database["company_a"].id
+    user_id = vendor_database["user_a"].id
+    product = make_product(company_id=company_id, discount="100")
     db.session.add(product)
-    db.session.add(make_promotion())
+    db.session.add(make_promotion(company_id=company_id, created_by_user_id=user_id))
     db.session.commit()
 
     result = PromotionEngine.evaluate(company_id=1, product=product, quantity=Decimal("2"))
@@ -129,15 +143,16 @@ def test_promotion_engine_preserves_legacy_product_discount(vendor_database):
 def test_promotion_access_is_business_only(vendor_database):
     from app import Company, Plan, Subscription
     from services.ai_agent.usage_service import can_use_commercial_feature
+    from services.plan_service import PlanService
 
+    PlanService.ensure_defaults(db.session)
+    company = vendor_database["company_a"]
     business = Plan.query.filter_by(code="business").first()
     entrepreneur = Plan.query.filter_by(code="entrepreneur").first()
-    company = Company.query.get(1)
-    subscription = Subscription.query.filter_by(company_id=1).first()
-
-    subscription.plan_id = business.id
-    subscription.status = "active"
+    subscription = Subscription(company_id=company.id, plan_id=business.id, status="active")
+    db.session.add(subscription)
     db.session.commit()
+
     assert can_use_commercial_feature(company, "promotions").allowed is True
 
     subscription.plan_id = entrepreneur.id
