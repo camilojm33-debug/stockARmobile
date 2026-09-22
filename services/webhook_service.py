@@ -121,7 +121,10 @@ class WebhookService:
                 merchant_access_token = MercadoPagoOAuthService().ensure_access_token(
                     company_id=merchant_connection.company_id
                 )
-            payment_data = self.mp_service.get_payment(data_id, access_token=merchant_access_token)
+            if merchant_access_token:
+                payment_data = self.mp_service.get_payment(data_id, access_token=merchant_access_token)
+            else:
+                payment_data = self.mp_service.get_payment(data_id)
             if merchant_connection is not None:
                 collector_id = str(payment_data.get("collector_id") or "").strip()
                 expected_collector_id = str(merchant_connection.mp_user_id or "").strip()
