@@ -41,7 +41,7 @@
         <td class="small">{{ promotion.starts_at.strftime('%d/%m/%Y') if promotion.starts_at else 'Siempre' }}{% if promotion.ends_at %} → {{ promotion.ends_at.strftime('%d/%m/%Y') }}{% endif %}</td>
         <td><span class="badge {{ 'text-bg-success' if promotion.active else 'text-bg-secondary' }}">{{ 'Activa' if promotion.active else 'Inactiva' }}</span></td>
         <td class="text-end"><form method="post" action="{{ url_for('promotions.toggle', promotion_id=promotion.id) }}"><input type="hidden" name="csrf_token" value="{{ csrf_token() }}"><button class="btn btn-sm btn-outline-secondary" type="submit">{{ 'Desactivar' if promotion.active else 'Activar'}}</button></form></td>
-      </tr>{endfor %}</tbody></table></div>
+      </tr>{% endfor %}</tbody></table></div>
       {% else %}<div class="text-center text-muted py-5"><i class="bi bi-megaphone fs-2 d-block mb-2"></i>Todavía no configuraste promociones.</div>{% endif %}
     </div></section></div>
   </div>
