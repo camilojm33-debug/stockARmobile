@@ -217,6 +217,12 @@ class MercadoPagoOAuthService:
     def get_connection(self, company_id: int) -> MercadoPagoConnection | None:
         return MercadoPagoConnection.query.filter_by(company_id=company_id).first()
 
+    def get_connection_by_mp_user_id(self, mp_user_id: str | int | None) -> MercadoPagoConnection | None:
+        normalized = str(mp_user_id or "").strip()
+        if not normalized:
+            return None
+        return MercadoPagoConnection.query.filter_by(mp_user_id=normalized).first()
+
     def summarize_connection(self, connection: MercadoPagoConnection | None) -> dict:
         if connection is None:
             return {
@@ -252,7 +258,22 @@ class MercadoPagoOAuthService:
         expires_in = int(token_payload.get("expires_in") or 0)
         new_access_token = (token_payload.get("access_token") or "").strip()
         new_refresh_token = (token_payload.get("refresh_token") or "").strip()
-        connection.mp_user_id = str(profile.get("id") or connection.mp_user_id or "")
+        mp_user_id = str(profile.get("id") or connection.mp_user_id or "").strip()
+        if mp_user_id:
+            existing_other_company = (
+                MercadoPagoConnection.query
+                .filter(
+                    MercadoPagoConnection.mp_user_id == mp_user_id,
+                    MercadoPagoConnection.company_id != company_id,
+                )
+                .first()
+            )
+            if existing_other_company is not None:
+                raise RuntimeError(
+                    "Esta cuenta de Mercado Pago ya está vinculada a otra empresa de StockArMobile. "
+                    "Desvinculala primero de esa empresa para poder usarla aquí."
+                )
+        connection.mp_user_id = mp_user_id or None
         connection.account_name = str(profile.get("first_name") or profile.get("nickname") or profile.get("username") or profile.get("id") or "").strip()[:160] or None
         connection.account_email = (profile.get("email") or connection.account_email or "").strip()[:160] or None
         connection.country = (profile.get("country_id") or profile.get("country") or connection.country or "").strip()[:80] or None
@@ -354,6 +375,7 @@ class MercadoPagoOAuthService:
         connection.refresh_token_encrypted = None
         connection.token_expires_at = None
         connection.last_synced_at = utcnow()
+        connection.mp_user_id = None
         connection.metadata_json = json.dumps({"disconnected_at": connection.last_synced_at.isoformat() if connection.last_synced_at else None}, ensure_ascii=False)
         db.session.commit()
         return connection
