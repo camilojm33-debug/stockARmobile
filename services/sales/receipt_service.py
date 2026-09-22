@@ -122,9 +122,7 @@ class ReceiptService:
         if sale.customer:
             lines.append(f"Cliente: {sale.customer}")
         lines.append("------------------------------")
-        for item in sale.items:
-            name = item.product.name if item.product else f"Producto {item.product_id}"
-            unit_measure = item.product.unit_measure if item.product else "u"
-            lines.append(f"{name}: ${item.price:.2f} x {item.quantity:g} {unit_measure} = ${item.total_amount:.2f}")
-        lines.extend(["------------------------------", f"Subtotal: ${sale.subtotal:.2f}", *ReceiptService._adjustment_lines("Descuento", sale.discount_type, sale.discount_value, sale.discount, sale.discount_reason, "-"), *(ReceiptService._adjustment_lines("Recargo", sale.surcharge_type, sale.surcharge_value, sale.surcharge, sale.surcharge_reason) if sale.surcharge else []), f"Impuestos: ${sale.tax:.2f}", f"Total: ${sale.total_amount:.2f}", "Gracias por su compra!"])
+        lines.extend(ReceiptService._ticket_lines(sale))
+        effective_discount = ReceiptService._effective_discount(sale)
+        lines.extend(["------------------------------", f"Subtotal: ${sale.subtotal:.2f}", *ReceiptService._adjustment_lines("Descuento", sale.discount_type, sale.discount_value, effective_discount, sale.discount_reason, "-"), *(ReceiptService._adjustment_lines("Recargo", sale.surcharge_type, sale.surcharge_value, sale.surcharge, sale.surcharge_reason) if sale.surcharge else []), f"Impuestos: ${sale.tax:.2f}", f"Total: ${sale.total_amount:.2f}", "Gracias por su compra!"])
         return "\n".join(lines)
