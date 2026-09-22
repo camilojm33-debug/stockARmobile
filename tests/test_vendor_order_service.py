@@ -293,8 +293,9 @@ def test_create_pending_order_creates_quote_payment_and_mp_flow(vendor_database,
     assert conversation.metadata_json[PENDING_PAYMENT_KEY] == result["payment_url"]
 
 
-def test_create_pending_order_shipping_adds_15_percent_and_registers_new_client(vendor_database, monkeypatch):
+def test_create_pending_order_legacy_shipping_config_is_converted_to_manual(vendor_database, monkeypatch):
     data = vendor_database
+    _configure_vendor_shipping(data["company_a"], mode="legacy_percent")
     conversation = _conversation(data["company_a"].id)
     calls = []
     _mock_checkout(monkeypatch, calls)
@@ -322,31 +323,19 @@ def test_create_pending_order_shipping_adds_15_percent_and_registers_new_client(
 
     quote = db.session.get(Quote, result["quote_id"])
     delivery = db.session.get(QuoteDelivery, quote.id)
-    client = Client.query.filter_by(company_id=data["company_a"].id, phone="5491119998888").one()
-    checkout = next(payload for kind, payload in calls if kind == "checkout")
 
-    assert quote.total_amount == 230
-    assert quote.surcharge == 30
-    assert quote.surcharge_type == "percentage"
-    assert quote.surcharge_value == 15
-    assert quote.surcharge_reason == "Envío a domicilio (15%)"
+    assert result["shipping_pending"] is True
+    assert result["payment_url"] is None
+    assert quote.total_amount == 200
+    assert quote.surcharge == 0
     assert delivery.method == "envio"
-    assert delivery.shipping_cost == 30
-    assert delivery.shipping_rate == 15
-    assert delivery.address == "Av. Siempre Viva 123"
-    assert delivery.city == "Resistencia"
-    assert delivery.province == "Chaco"
-    assert delivery.postal_code == "3500"
-    assert delivery.reference == "Portón negro"
-    assert delivery.notes == "Entregar por la tarde"
-    assert client.name == "Nuevo Comprador"
-    assert client.address == "Av. Siempre Viva 123"
-    assert client.city == "Resistencia"
-    assert client.province == "Chaco"
-    assert client.postal_code == "3500"
-    assert checkout["amount"] == 230
-    shipping_items = [item for item in checkout["items"] if item["id"] == f"shipping-{quote.id}"]
-    assert shipping_items and shipping_items[0]["unit_price"] == 30
+    assert delivery.shipping_cost == 0
+    assert delivery.shipping_rate == 0
+    assert delivery.shipping_status == "pending"
+    assert delivery.shipping_source == "manual"
+    assert delivery.shipping_reason == "Costo de envío pendiente de cotización por el comercio."
+    assert Payment.query.filter_by(company_id=data["company_a"].id).count() == 0
+    assert not calls
 
 
 def test_create_pending_order_reuses_existing_pending_flow(vendor_database, monkeypatch):
