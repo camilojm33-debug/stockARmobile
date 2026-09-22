@@ -199,16 +199,42 @@ def _last_days_labels(days):
 
 
 def _sales_by_day(days):
+    """Return daily confirmed sales with one bounded query and local-day bucketing."""
     from app import Sale, db, scope_query_to_company, Company
     from flask_login import current_user
     from stockarmobile.helpers.dates import local_day_bounds_utc_naive, local_today
+
     company = db.session.get(Company, getattr(current_user, "company_id", None))
     tz_name = getattr(company, "timezone", None) or "America/Argentina/Buenos_Aires"
     today = local_today(tz_name)
-    data = []
-    for offset in reversed(range(days)):
-        day = today - timedelta(days=offset)
-        start, end = local_day_bounds_utc_naive(day, tz_name)
-        total = _confirmed_sales_query(scope_query_to_company(db.session.query(db.func.coalesce(db.func.sum(Sale.total_amount), 0)).filter(Sale.date >= start, Sale.date < end), Sale), Sale).scalar() or 0
-        data.append(_to_decimal(total))
-    return data
+    first_day = today - timedelta(days=max(days - 1, 0))
+    start_utc, _ = local_day_bounds_utc_naive(first_day, tz_name)
+    _, end_utc = local_day_bounds_utc_naive(today, tz_name)
+
+    rows = (
+        _confirmed_sales_query(
+            scope_query_to_company(
+                db.session.query(Sale.date, Sale.total_amount)
+                .filter(Sale.date >= start_utc, Sale.date < end_utc),
+                Sale,
+            ),
+            Sale,
+        )
+        .all()
+    )
+
+    day_bounds = [
+        (first_day + timedelta(days=offset), *local_day_bounds_utc_naive(first_day + timedelta(days=offset), tz_name))
+        for offset in range(days)
+    ]
+    daily_totals = {day: Decimal("0.00") for day, _, _ in day_bounds}
+    for sale_date, amount in rows:
+        for local_day, day_start, day_end in day_bounds:
+            if day_start <= sale_date < day_end:
+                daily_totals[local_day] += _to_decimal(amount)
+                break
+
+    return [
+        daily_totals.get(today - timedelta(days=offset), Decimal("0.00"))
+        for offset in reversed(range(days))
+    ]
