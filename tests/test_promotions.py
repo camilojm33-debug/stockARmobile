@@ -143,3 +143,14 @@ def test_promotion_access_is_business_only(vendor_database):
     subscription.plan_id = entrepreneur.id
     db.session.commit()
     assert can_use_commercial_feature(company, "promotions").allowed is False
+
+
+def test_promotions_menu_and_route_are_registered():
+    from pathlib import Path
+    from app import app
+
+    source = Path("templates/base_master.html").read_text(encoding="utf-8")
+    assert "Promociones" in source
+    assert "commercial_promotions_allowed" in source
+    assert "url_for('promotions.index')" in source
+    assert any(rule.endpoint == "promotions.index" for rule in app.url_map.iter_rules())
