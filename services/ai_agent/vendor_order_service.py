@@ -196,8 +196,6 @@ def _shipping_plan(company_id: int, cart_total: Decimal, method: str) -> Dict[st
 
     options = get_vendor_options(company)
     mode = str(options.get("shipping_mode") or "manual").strip().lower()
-    if mode == "legacy_percent":
-        mode = "manual"
     if mode == "manual":
         return {
             "cost": Decimal("0.00"),
