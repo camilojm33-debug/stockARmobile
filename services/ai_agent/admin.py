@@ -325,9 +325,8 @@ def vendor_save():
         if field in request.form:
             vendor_options[key] = (request.form.get(field) or "").strip()[:limit]
 
-    shipping_mode = request.form.get("vendor_shipping_mode")
-    if shipping_mode is not None:
-        vendor_options["shipping_mode"] = shipping_mode.strip()[:30]
+    # El modo dejó de ser seleccionable: el Vendedor Web siempre usa el costo fijo.
+    vendor_options["shipping_mode"] = "fixed"
     standard_shipping_cost = request.form.get("vendor_standard_shipping_cost")
     if standard_shipping_cost is not None:
         try:
