@@ -64,13 +64,19 @@ def _parse_datetime(value: str, end=False):
     raw = (value or "").strip()
     if not raw:
         return None
-    parsed = datetime.strptime(raw, "%Y-%m-%d")
+    try:
+        parsed = datetime.strptime(raw, "%Y-%m-%d")
+    except ValueError as exc:
+        raise ValueError("La fecha ingresada no es válida.") from exc
     return datetime.combine(parsed.date(), time.max if end else time.min)
 
 def _decimal(value, default=None):
     if value in (None, ""):
         return default
-    return Decimal(str(value).replace(",", "."))
+    try:
+        return Decimal(str(value).replace(",", "."))
+    except (ArithmeticError, ValueError) as exc:
+        raise ValueError("Uno de los valores numéricos de la regla no es válido.") from exc
 
 def _validate_payload(form):
     ptype = (form.get("type") or "").strip().lower()
@@ -83,8 +89,10 @@ def _validate_payload(form):
     if ptype == "bogo":
         buy = _decimal(form.get("buy_quantity"))
         pay = _decimal(form.get("pay_quantity"))
-        if buy is None or pay is None or buy <= 0 or pay < 0 or pay >= buy:
-            raise ValueError("Indicá una regla válida: comprás X y pagás Y.")
+        if buy is None or pay is None:
+            raise ValueError("Completá la regla: en Comprás indicá X y en Pagás indicá Y. Ejemplo: 2 y 1 para 2x1.")
+        if buy <= 0 or pay < 0 or pay >= buy:
+            raise ValueError("La regla debe ser válida: Comprás X debe ser mayor que Pagás Y. Ejemplo: 4 y 2 para 4x2.")
     elif ptype == "percent_quantity":
         minimum = _decimal(form.get("min_quantity"))
         percent = _decimal(form.get("discount_percent"))
@@ -93,12 +101,18 @@ def _validate_payload(form):
     else:
         minimum = _decimal(form.get("min_quantity"))
         amount = _decimal(form.get("discount_amount"))
-        if minimum is None or minimum <= 0 or amount is None or amount <= 0:
-            raise ValueError("Indicá una cantidad mínima y un importe de descuento válido.")
+        if minimum is None or amount is None:
+            raise ValueError("Completá la regla: indicá el Mínimo de unidades y el importe de descuento.")
+        if minimum <= 0 or amount <= 0:
+            raise ValueError("La regla debe tener un mínimo y un importe de descuento mayores a 0.")
     starts = _parse_datetime(form.get("starts_at"))
     ends = _parse_datetime(form.get("ends_at"), end=True)
     if starts and ends and ends < starts:
         raise ValueError("La fecha de fin no puede ser anterior al inicio.")
+    try:
+        priority = int(form.get("priority") or 100)
+    except (TypeError, ValueError) as exc:
+        raise ValueError("La prioridad debe ser un número entero.") from exc
     return {
         "product_id": int(product_id) if product_id else None,
         "category": category,
@@ -114,9 +128,25 @@ def _validate_payload(form):
         "ends_at": ends,
         "active": form.get("active") in {"1", "true", "on", "yes"},
         "status": "ACTIVA" if form.get("active") in {"1", "true", "on", "yes"} else "BORRADOR",
-        "priority": max(0, min(int(form.get("priority") or 100), 10000)),
+        "priority": max(0, min(priority, 10000)),
         "stackable": False,
     }
+
+def _index_context(company):
+    promotions = Promotion.query.filter_by(company_id=company.id).order_by(Promotion.active.desc(), Promotion.priority.desc(), Promotion.id.desc()).all()
+    products = scope_query_to_company(Product.query.filter(Product.active.is_(True)), Product).order_by(Product.name.asc()).all()
+    categories = [row[0] for row in scope_query_to_company(Product.query.with_entities(Product.category), Product).distinct().order_by(Product.category.asc()).all() if row[0]]
+    return promotions, products, categories
+
+def _render_index(company, form_data=None):
+    promotions, products, categories = _index_context(company)
+    return render_template(
+        "promociones/index.html",
+        promotions=promotions,
+        products=products,
+        categories=categories,
+        form_data=form_data or {},
+    )
 
 @bp.route("/", methods=["GET"])
 @login_required
@@ -124,10 +154,7 @@ def index():
     company, response = _require_access()
     if response:
         return response
-    promotions = Promotion.query.filter_by(company_id=company.id).order_by(Promotion.active.desc(), Promotion.priority.desc(), Promotion.id.desc()).all()
-    products = scope_query_to_company(Product.query.filter(Product.active.is_(True)), Product).order_by(Product.name.asc()).all()
-    categories = [row[0] for row in scope_query_to_company(Product.query.with_entities(Product.category), Product).distinct().order_by(Product.category.asc()).all() if row[0]]
-    return render_template("promociones/index.html", promotions=promotions, products=products, categories=categories)
+    return _render_index(company)
 
 @bp.route("/guardar", methods=["POST"])
 @login_required
@@ -157,6 +184,7 @@ def save():
     except (ValueError, TypeError, OverflowError) as exc:
         db.session.rollback()
         flash(str(exc), "danger")
+        return _render_index(company, request.form)
     return redirect(url_for("promotions.index"))
 
 @bp.route("/<int:promotion_id>/toggle", methods=["POST"])
