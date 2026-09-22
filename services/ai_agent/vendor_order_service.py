@@ -516,7 +516,9 @@ class VendorOrderService:
             line_inputs.append({
                 "price": _money(product.price),
                 "quantity": quantity,
-                "line_discount": _money(getattr(product, "discount", 0)),
+                "line_discount": (
+                    _money(getattr(product, "discount", 0)) * quantity
+                ).quantize(Decimal("0.01")),
             })
 
         base_totals = PricingService.calculate(lines=line_inputs, data={})
