@@ -758,7 +758,10 @@
       {% else %}
       <div class="nav-section-label">Operación</div>
       <a class="nav-link {% if request.endpoint and request.endpoint.startswith('sales.') %}active{% endif %}" href="{{ url_for('sales.index') }}"><i class="bi bi-bag-check"></i><span class="nav-text">Ventas</span></a>
-      <a class="nav-link {% if request.endpoint and request.endpoint.startswith('quotes.') %}active{% endif %}" href="{{ url_for('quotes.index') }}"><i class="bi bi-file-earmark-text"></i><span class="nav-text">Presupuestos</span></a>
+      <a class="nav-link {% if request.endpoint and request.endpoint.startswith('quotes.') and request.endpoint != 'quotes.quote_cleanup' %}active{% endif %}" href="{{ url_for('quotes.index') }}"><i class="bi bi-file-earmark-text"></i><span class="nav-text">Presupuestos</span></a>
+      {% if current_user.role == 'admin' %}
+      <a class="nav-link {% if request.endpoint == 'quotes.quote_cleanup' %}active{% endif %}" href="{{ url_for('quotes.quote_cleanup') }}"><i class="bi bi-trash3"></i><span class="nav-text">Limpieza presupuestos</span></a>
+      {% endif %}
       {% if current_user.role == 'admin' or current_user_has_permission('inventory') %}
       <a class="nav-link {% if request.endpoint and request.endpoint.startswith('products.') %}active{% endif %}" href="{{ url_for('products.index') }}"><i class="bi bi-box-seam"></i><span class="nav-text">Productos</span></a>
       {% endif %}

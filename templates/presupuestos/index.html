@@ -16,7 +16,12 @@
         <p class="mb-0">Creá cotizaciones, haceles seguimiento y convertí oportunidades en ventas desde un solo lugar.</p>
       </div>
     </div>
-    <a class="btn quotes-primary-btn" href="{{ url_for('quotes.new_quote') }}"><i class="bi bi-plus-lg me-2"></i>Nuevo presupuesto</a>
+    <div class="d-flex flex-wrap gap-2">
+      {% if current_user.role == 'admin' or current_user.role == 'superadmin' %}
+      <a class="btn btn-outline-secondary" href="{{ url_for('quotes.quote_cleanup') }}"><i class="bi bi-trash3 me-2"></i>Limpieza</a>
+      {% endif %}
+      <a class="btn quotes-primary-btn" href="{{ url_for('quotes.new_quote') }}"><i class="bi bi-plus-lg me-2"></i>Nuevo presupuesto</a>
+    </div>
   </section>
 
   <section class="row g-3 mb-4" aria-label="Resumen de presupuestos">
