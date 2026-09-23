@@ -19,11 +19,13 @@ from sqlalchemy.orm import selectinload
 import qrcode
 
 from app import tenant_required, utcnow
+from stockarmobile.decorators import company_admin_required
 from stockarmobile.enums import QuoteStatus
 from stockarmobile.helpers.dates import parse_date_yyyy_mm_dd
 from services.sales_calculation_service import calculate_sale_totals, to_decimal
 from services.promotion_service import PromotionEngine
 from services.whatsapp_share_service import build_whatsapp_share_url
+from services.quote_cleanup_service import QuoteCleanupService
 
 bp = Blueprint("quotes", __name__)
 
@@ -1030,6 +1032,63 @@ def index():
     )
 
 
+@bp.get("/limpieza")
+@company_admin_required
+def quote_cleanup():
+    company_id = getattr(current_user, "company_id", None)
+    if not company_id:
+        abort(403)
+    older_than_days = max(1, min(request.args.get("days", 90, type=int), 3650))
+    kind = (request.args.get("kind") or "all").strip().lower()
+    preview = QuoteCleanupService.preview(
+        company_id=int(company_id),
+        older_than_days=older_than_days,
+        kind=kind,
+        limit=500,
+    )
+    return render_template(
+        "presupuestos/limpieza.html",
+        preview=preview,
+        older_than_days=older_than_days,
+        kind=preview["kind"],
+    )
+
+
+@bp.post("/limpieza/eliminar")
+@company_admin_required
+def quote_cleanup_delete():
+    company_id = getattr(current_user, "company_id", None)
+    if not company_id:
+        abort(403)
+
+    confirmation = (request.form.get("confirmation") or "").strip().upper()
+    if confirmation != "BORRAR":
+        flash("Escribí BORRAR para confirmar la limpieza.", "warning")
+        return redirect(
+            url_for(
+                "quotes.quote_cleanup",
+                days=request.form.get("days", "90"),
+                kind=request.form.get("kind", "all"),
+            )
+        )
+
+    older_than_days = max(1, min(request.form.get("days", 90, type=int), 3650))
+    kind = (request.form.get("kind") or "all").strip().lower()
+    result = QuoteCleanupService.delete_eligible(
+        company_id=int(company_id),
+        older_than_days=older_than_days,
+        kind=kind,
+        ip_address=request.remote_addr,
+        limit=500,
+    )
+    flash(
+        f"Se eliminaron {result.get('deleted_count', 0)} presupuestos. "
+        f"Los registros protegidos por pagos, envíos o conversiones no se tocaron.",
+        "success",
+    )
+    return redirect(url_for("quotes.quote_cleanup", days=older_than_days, kind=kind))
+
+
 @bp.route("/nuevo", methods=["GET", "POST"])
 @tenant_required
 @login_required
@@ -1195,8 +1254,12 @@ def delete_quote(quote_id):
     _require_quote_permission("quotes_delete")
     quote = scope_query_to_company(db.session.query(Quote), Quote).filter(Quote.id == quote_id).first_or_404()
     _require_owned_or_authorized(quote)
-    if quote.status == "CONVERTIDO":
+    if quote.status == "CONVERTIDO" or quote.converted_sale_id:
         flash("No se puede eliminar un presupuesto convertido.", "warning")
+        return redirect(url_for("quotes.view_quote", quote_id=quote.id))
+    protection_reason = QuoteCleanupService.protection_reason(company_id=int(quote.company_id or 0), quote=quote)
+    if protection_reason in {"pago_aprobado", "pago_activo", "envio_pendiente"}:
+        flash("No se puede eliminar este pedido porque todavía tiene un proceso de pago, envío o confirmación activo.", "warning")
         return redirect(url_for("quotes.view_quote", quote_id=quote.id))
     db.session.delete(quote)
     db.session.commit()
