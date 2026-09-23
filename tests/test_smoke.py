@@ -4358,6 +4358,8 @@ def test_landing_and_subscription_use_same_plan_catalog():
     assert "Tu negocio más ordenado. Tus ventas más inteligentes." in landing_html
     assert "Sumá inteligencia artificial a tu negocio" in landing_html
     assert "Vendedor IA" in landing_html
+    # La integración WhatsApp del Vendedor IA está retenida hasta su habilitación de producción.
+    assert "<td>WhatsApp</td>" not in landing_html
 
     client.post("/auth/login", data={"username": "negocio_admin", "password": "admin123"})
     portal = client.get("/admin/portal")
