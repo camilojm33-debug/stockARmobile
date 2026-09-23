@@ -80,7 +80,7 @@ def test_cleanup_preview_is_tenant_scoped_and_conservative(cleanup_database):
     assert ai_paid.id not in ids
     assert protected[ai_paid.id] == "pago_activo"
     assert converted.id not in ids
-    assert protected[converted.id] == "convertido"
+    assert protected[converted.id] == "convertido_a_venta"
     assert recent.id not in ids
     assert other_quote.id not in ids
 
