@@ -1,6 +1,7 @@
 """Blueprint de productos: CRUD e inventario."""
 
 import uuid
+import unicodedata
 from datetime import datetime
 from io import BytesIO
 
@@ -540,7 +541,7 @@ def export_excel():
 @bp.route("/import", methods=["POST"])
 @tenant_required
 def import_excel():
-    from app import Product, ProductModification, db, scope_query_to_company
+    from app import Product, ProductModification, ProductPriceHistory, db, scope_query_to_company
     from openpyxl import load_workbook
 
     blocked = _require_admin_product_management()
@@ -552,63 +553,251 @@ def import_excel():
         flash("Subi un archivo .xlsx valido.", "danger")
         return redirect(url_for("products.index"))
 
-    workbook = load_workbook(upload, read_only=True, data_only=True)
-    sheet = workbook.active
-    rows = list(sheet.iter_rows(values_only=True))
-    if not rows:
-        flash("El archivo no contiene productos.", "warning")
-        return redirect(url_for("products.index"))
+    max_rows = 10000
+    workbook = None
+    try:
+        workbook = load_workbook(upload, read_only=True, data_only=True)
+        sheet = workbook.active
+        iterator = sheet.iter_rows(values_only=True)
+        try:
+            raw_headers = next(iterator)
+        except StopIteration:
+            flash("El archivo no contiene productos.", "warning")
+            return redirect(url_for("products.index"))
 
-    headers = [str(cell or "").strip().lower() for cell in rows[0]]
-    created = 0
-    updated = 0
-    for row in rows[1:]:
-        data = dict(zip(headers, row))
-        barcode = str(data.get("barcode") or data.get("codigo") or "").strip()
-        name = str(data.get("name") or data.get("nombre") or "").strip()
-        if not barcode or not name:
-            continue
-        product = scope_query_to_company(Product.query.filter_by(barcode=barcode), Product).first()
-        if product is None:
-            product = Product(
-                barcode=barcode,
-                name=name,
-                active=True,
-                company_id=getattr(current_user, "company_id", None),
+        def normalize_header(value):
+            text = str(value or "").strip().lower().replace("_", " ")
+            text = unicodedata.normalize("NFKD", text)
+            return "".join(char for char in text if not unicodedata.combining(char))
+
+        headers = [normalize_header(cell) for cell in raw_headers]
+        if not any(headers):
+            flash("El Excel no contiene encabezados validos.", "danger")
+            return redirect(url_for("products.index"))
+
+        aliases = {
+            "barcode": {"barcode", "codigo", "codigo de barras", "ean", "sku"},
+            "name": {"name", "nombre", "producto", "descripcion", "descripcion del producto"},
+            "category": {"category", "categoria"},
+            "brand": {"brand", "marca"},
+            "supplier": {"supplier", "proveedor"},
+            "cost_price": {"cost price", "cost_price", "precio costo", "precio de costo", "precio costo unitario"},
+            "price": {"price", "precio", "precio venta", "precio de venta"},
+            "stock": {"stock", "existencias", "cantidad"},
+            "min_stock": {"min stock", "min_stock", "stock minimo", "stock minimo"},
+            "sale_type": {"sale type", "sale_type", "tipo venta", "tipo de venta"},
+            "unit_measure": {"unit measure", "unit_measure", "unidad medida", "unidad de medida"},
+            "discount": {"discount", "descuento"},
+        }
+
+        positions = {}
+        for index, header in enumerate(headers):
+            if not header:
+                continue
+            for field, accepted in aliases.items():
+                if header in accepted and field not in positions:
+                    positions[field] = index
+                    break
+
+        if "barcode" not in positions or "name" not in positions:
+            flash("El Excel debe incluir las columnas Codigo/Barcode y Nombre/Name.", "danger")
+            return redirect(url_for("products.index"))
+
+        def cell(row, field, default=None):
+            index = positions.get(field)
+            if index is None or index >= len(row):
+                return default
+            value = row[index]
+            return default if value is None else value
+
+        def numeric(value, field, default=0.0):
+            if value in (None, ""):
+                return default
+            if isinstance(value, str):
+                normalized = value.strip().replace(" ", "")
+                if "," in normalized and "." in normalized:
+                    if normalized.rfind(",") > normalized.rfind("."):
+                        normalized = normalized.replace(".", "").replace(",", ".")
+                    else:
+                        normalized = normalized.replace(",", "")
+                else:
+                    normalized = normalized.replace(",", ".")
+                value = normalized
+            try:
+                return float(value)
+            except (TypeError, ValueError):
+                raise ValueError(f"Valor numerico invalido en {field}: {value!r}")
+
+        records = []
+        seen_barcodes = set()
+        skipped = 0
+        duplicate_rows = 0
+
+        for row_number, row in enumerate(iterator, start=2):
+            if row_number > max_rows + 1:
+                raise ValueError(f"El archivo supera el limite de {max_rows} productos por importacion.")
+
+            barcode = str(cell(row, "barcode", "")).strip()
+            name = str(cell(row, "name", "")).strip()
+            if not barcode and not name:
+                continue
+            if not barcode or not name:
+                skipped += 1
+                continue
+            if barcode in seen_barcodes:
+                duplicate_rows += 1
+                continue
+            seen_barcodes.add(barcode)
+
+            records.append(
+                {
+                    "row_number": row_number,
+                    "barcode": barcode,
+                    "name": name,
+                    "category": str(cell(row, "category", "")).strip(),
+                    "brand": str(cell(row, "brand", "")).strip(),
+                    "supplier": str(cell(row, "supplier", "")).strip(),
+                    "cost_price": numeric(cell(row, "cost_price"), "precio costo", None),
+                    "price": numeric(cell(row, "price"), "precio venta", None),
+                    "stock": numeric(cell(row, "stock"), "stock", None),
+                    "min_stock": numeric(cell(row, "min_stock"), "stock minimo", None),
+                    "sale_type": str(cell(row, "sale_type", "")).strip(),
+                    "unit_measure": str(cell(row, "unit_measure", "")).strip(),
+                    "discount": numeric(cell(row, "discount"), "descuento", None),
+                }
             )
-            db.session.add(product)
-            db.session.flush()
-            created += 1
-            action = "importacion"
-        else:
-            updated += 1
-            action = "actualizacion_importacion"
-        product.name = name
-        product.active = True
-        product.category = data.get("category") or data.get("categoria") or product.category
-        product.brand = data.get("brand") or data.get("marca") or product.brand
-        product.supplier = data.get("supplier") or data.get("proveedor") or product.supplier
-        product.cost_price = _float_value(data.get("cost_price") or data.get("precio_costo"), product.cost_price or 0)
-        product.price = _float_value(data.get("price") or data.get("precio_venta"), product.price or 0)
-        product.stock = _float_value(data.get("stock"), product.stock or 0)
-        product.min_stock = _float_value(data.get("min_stock") or data.get("stock_minimo"), product.min_stock or 0)
-        product.sale_type = data.get("sale_type") or data.get("tipo_venta") or product.sale_type or "unidad"
-        product.unit_measure = data.get("unit_measure") or data.get("unidad_medida") or product.unit_measure or _default_unit(product.sale_type)
-        product.discount = _float_value(data.get("discount") or data.get("descuento"), product.discount or 0)
-        product.margin = float(product.price or 0) - float(product.cost_price or 0)
-        product.profit_percent = (product.margin / float(product.cost_price or 1)) * 100 if product.cost_price else 0
-        db.session.add(
-            ProductModification(
-                product_id=product.id,
-                company_id=product.company_id,
-                user_id=current_user.id,
-                action=action,
-                detail="Importacion Excel",
-            )
+
+        if not records:
+            flash("No se encontraron filas validas para importar.", "warning")
+            return redirect(url_for("products.index"))
+
+        created = 0
+        updated = 0
+        price_changes = 0
+        stock_changes = 0
+
+        try:
+            for data in records:
+                product = scope_query_to_company(
+                    Product.query.filter_by(barcode=data["barcode"]), Product
+                ).first()
+
+                is_new = product is None
+                if is_new:
+                    product = Product(
+                        barcode=data["barcode"],
+                        name=data["name"],
+                        active=True,
+                        company_id=getattr(current_user, "company_id", None),
+                    )
+                    db.session.add(product)
+                    db.session.flush()
+                    created += 1
+                    action = "importacion"
+                else:
+                    updated += 1
+                    action = "actualizacion_importacion"
+
+                old_price = float(product.price or 0)
+                old_cost = float(product.cost_price or 0)
+                old_stock = float(product.stock or 0)
+
+                product.name = data["name"]
+                product.active = True
+                if data["category"]:
+                    product.category = data["category"]
+                if data["brand"]:
+                    product.brand = data["brand"]
+                if data["supplier"]:
+                    product.supplier = data["supplier"]
+                if data["cost_price"] is not None:
+                    product.cost_price = data["cost_price"]
+                if data["price"] is not None:
+                    product.price = data["price"]
+                if data["stock"] is not None:
+                    product.stock = data["stock"]
+                if data["min_stock"] is not None:
+                    product.min_stock = data["min_stock"]
+                if data["sale_type"]:
+                    product.sale_type = data["sale_type"]
+                if data["unit_measure"]:
+                    product.unit_measure = data["unit_measure"]
+                elif not product.unit_measure:
+                    product.unit_measure = _default_unit(product.sale_type)
+                if data["discount"] is not None:
+                    product.discount = data["discount"]
+
+                product.margin = float(product.price or 0) - float(product.cost_price or 0)
+                product.profit_percent = (
+                    product.margin / float(product.cost_price or 1) * 100
+                    if product.cost_price
+                    else 0
+                )
+
+                new_price = float(product.price or 0)
+                new_cost = float(product.cost_price or 0)
+                new_stock = float(product.stock or 0)
+                if old_price != new_price or old_cost != new_cost:
+                    price_changes += 1
+                    db.session.add(
+                        ProductPriceHistory(
+                            product_id=product.id,
+                            company_id=product.company_id,
+                            user_id=current_user.id,
+                            old_price=old_price,
+                            new_price=new_price,
+                            old_cost=old_cost,
+                            new_cost=new_cost,
+                        )
+                    )
+                if old_stock != new_stock:
+                    stock_changes += 1
+
+                detail = "Importacion Excel"
+                if old_stock != new_stock:
+                    detail += f" · Stock {old_stock:g} → {new_stock:g}"
+                db.session.add(
+                    ProductModification(
+                        product_id=product.id,
+                        company_id=product.company_id,
+                        user_id=current_user.id,
+                        action=action,
+                        detail=detail,
+                    )
+                )
+
+            db.session.commit()
+        except Exception:
+            db.session.rollback()
+            raise
+
+        summary = (
+            f"Importacion completada: {created} creados, {updated} actualizados, "
+            f"{price_changes} con cambios de precio/costo y {stock_changes} con cambios de stock."
         )
-    db.session.commit()
-    flash(f"Importacion completada: {created} creados, {updated} actualizados.", "success")
-    return redirect(url_for("products.index"))
+        extras = []
+        if skipped:
+            extras.append(f"{skipped} filas incompletas omitidas")
+        if duplicate_rows:
+            extras.append(f"{duplicate_rows} filas duplicadas omitidas")
+        if extras:
+            summary += " " + ", ".join(extras) + "."
+        flash(summary, "success")
+        return redirect(url_for("products.index"))
+    except ValueError as exc:
+        if workbook is not None:
+            workbook.close()
+        flash(f"No se importo el archivo: {exc}", "danger")
+        return redirect(url_for("products.index"))
+    except Exception:
+        db.session.rollback()
+        if workbook is not None:
+            workbook.close()
+        flash("No se importo el archivo. No se aplicaron cambios.", "danger")
+        return redirect(url_for("products.index"))
+    finally:
+        if workbook is not None:
+            workbook.close()
 
 
 @bp.route("/api/products")
