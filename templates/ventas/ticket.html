@@ -105,10 +105,17 @@
 {% block extra_scripts_inline %}
 <script>
   const STOCKARMOBILE_PRINT_AGENT = 'http://127.0.0.1:8765';
+  const STOCKARMOBILE_PRINTER_SETTINGS = {{ printer_settings|default({})|tojson }};
 
   function thermalTicketPayload() {
+    const settings = STOCKARMOBILE_PRINTER_SETTINGS || {};
+    const host = String(settings.printer_host || '').trim();
+    const printerName = String(settings.printer_name || '').trim();
     return {
-      printer_type: 'windows',
+      printer_type: host ? 'network' : 'windows',
+      printer_name: printerName,
+      printer_host: host,
+      printer_port: Number(settings.printer_port || 9100),
       ticket: {
         brand: {{ (ticket_brand or 'STOCK ARMOBILE')|tojson }},
         sale_id: {{ sale.id|tojson }},
@@ -147,7 +154,7 @@
       if (!response.ok || !result.ok) throw new Error(result.error || 'No se pudo imprimir');
       status.textContent = '✓ Ticket enviado a la impresora térmica.';
     } catch (error) {
-      status.textContent = 'No se pudo usar la impresora térmica: ' + (error.message || error);
+      status.textContent = 'No se pudo usar la impresora térmica: ' + (error.message || error) + '. Se abrirá la impresión del navegador.';
       setTimeout(function() { window.print(); }, 250);
     } finally {
       button.disabled = false;

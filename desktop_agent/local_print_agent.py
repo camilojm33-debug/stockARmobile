@@ -45,6 +45,12 @@ def _escpos_text(text: str) -> bytes:
     return cleaned.encode("cp1252", errors="replace")
 
 
+def _money(value: Any) -> str:
+    """Format monetary values using Argentine-style separators (1.234,56)."""
+    amount = float(value or 0)
+    return f"{amount:,.2f}".replace(",", "X").replace(".", ",").replace("X", ".")
+
+
 def _build_ticket_bytes(ticket: dict[str, Any]) -> bytes:
     lines = []
     brand = str(ticket.get("brand") or "STOCK ARMOBILE").strip()
@@ -78,10 +84,10 @@ def _build_ticket_bytes(ticket: dict[str, Any]) -> bytes:
         unit = float(item.get("unit_price") or 0)
         total = float(item.get("total") or 0)
         if qty == 1:
-            data += _escpos_text(f"{name[:30]}: ${unit:,.2f}\n".replace(",", "."))
+            data += _escpos_text(f"{name[:30]}: ${_money(unit)}\n")
         else:
             data += _escpos_text(
-                f"{name[:30]}\n{qty:g} x ${unit:,.2f} = ${total:,.2f}\n".replace(",", ".")
+                f"{name[:30]}\n{qty:g} x ${_money(unit)} = ${_money(total)}\n"
             )
 
     data += _escpos_text("--------------------------------\n")
@@ -90,15 +96,15 @@ def _build_ticket_bytes(ticket: dict[str, Any]) -> bytes:
     surcharge = float(ticket.get("surcharge") or 0)
     tax = float(ticket.get("tax") or 0)
     grand_total = float(ticket.get("total") or 0)
-    data += _escpos_text(f"Subtotal: ${subtotal:,.2f}\n".replace(",", "."))
+    data += _escpos_text(f"Subtotal: ${_money(subtotal)}\n")
     if discount:
-        data += _escpos_text(f"Descuento: -${discount:,.2f}\n".replace(",", "."))
+        data += _escpos_text(f"Descuento: -${_money(discount)}\n")
     if surcharge:
-        data += _escpos_text(f"Recargo: ${surcharge:,.2f}\n".replace(",", "."))
+        data += _escpos_text(f"Recargo: ${_money(surcharge)}\n")
     if tax:
-        data += _escpos_text(f"Impuestos: ${tax:,.2f}\n".replace(",", "."))
+        data += _escpos_text(f"Impuestos: ${_money(tax)}\n")
     data += b"\x1bE\x01"
-    data += _escpos_text(f"TOTAL: ${grand_total:,.2f}\n".replace(",", "."))
+    data += _escpos_text(f"TOTAL: ${_money(grand_total)}\n")
     data += b"\x1bE\x00"
     note = str(ticket.get("note") or "").strip()
     if note:
@@ -183,13 +189,21 @@ class Handler(BaseHTTPRequestHandler):
                 raise ValueError("Payload inválido")
 
             ticket = payload.get("ticket") or {}
-            printer_type = str(payload.get("printer_type") or "windows").strip().lower()
+            printer_type = str(payload.get("printer_type") or "").strip().lower()
             printer_name = str(payload.get("printer_name") or DEFAULT_PRINTER).strip()
             network_host = str(payload.get("printer_host") or DEFAULT_NETWORK_HOST).strip()
             network_port = int(payload.get("printer_port") or DEFAULT_NETWORK_PORT)
+
+            # "thermal" is the value stored by StockArMobile company settings.
+            # With a host we use direct TCP/9100; without it we use the Windows
+            # installed printer. Explicit "network"/"ethernet"/"tcp" and
+            # "windows" remain supported for backwards compatibility.
             raw_ticket = _build_ticket_bytes(ticket)
 
-            if printer_type in {"network", "ethernet", "tcp"}:
+            use_network = printer_type in {"network", "ethernet", "tcp"} or (
+                printer_type == "thermal" and bool(network_host)
+            )
+            if use_network:
                 if not network_host:
                     raise ValueError("Falta printer_host para impresora de red")
                 _raw_print_network(network_host, network_port, raw_ticket)
