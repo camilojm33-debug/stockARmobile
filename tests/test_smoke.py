@@ -7414,8 +7414,9 @@ def test_pos_qr_create_returns_real_exception_traceback(monkeypatch):
         data = response.get_json()
         assert data["success"] is False
         assert data["exception"] == "RuntimeError"
-        assert "MP preference failed at line test" in data["error"]
-        assert "traceback" in data and "create_pos_checkout_preference" in data["traceback"]
+        assert data["error"] == "No se pudo generar el QR de Mercado Pago"
+        assert "MP preference failed at line test" not in data["error"]
+        assert "traceback" not in data
 
 
 def test_pos_qr_create_early_exception_breaks_before_json_return():
@@ -7446,7 +7447,7 @@ def test_pos_qr_create_early_exception_breaks_before_json_return():
         assert data is not None
         assert data["success"] is False
         assert data["exception"] == "ValueError"
-        assert "traceback" in data
+        assert "traceback" not in data
 
 
 def test_pos_qr_webhook_approved_updates_single_draft_payment(monkeypatch):
