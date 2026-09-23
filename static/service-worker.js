@@ -1,11 +1,11 @@
-const CACHE_NAME = 'stockarmobile-pwa-v10';
+const CACHE_NAME = 'stockarmobile-pwa-v11';
 const STATIC_ASSETS = [
   '/',
   '/offline.html',
   '/manifest.json',
   '/static/assets/css/styles.css',
-  '/static/assets/css/landing.css',
-  '/static/assets/css/landing-v3.css',
+  '/static/assets/css/landing.css?v=20260923',
+  '/static/assets/css/landing-v3.css?v=20260923',
   '/static/assets/js/cart-manager.js',
   '/static/assets/js/landing.js',
   '/static/assets/js/edit-sale.js',
