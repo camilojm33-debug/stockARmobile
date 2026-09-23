@@ -126,6 +126,7 @@
               {% elif row.protected_reason == 'pago_activo' %}Pago en proceso
               {% elif row.protected_reason == 'envio_pendiente' %}Envío pendiente
               {% elif row.protected_reason in ['convertido', 'convertido_a_venta'] %}Convertido a venta
+              {% elif row.protected_reason == 'estado_no_elegible' %}Estado comercial protegido
               {% else %}Protegido{% endif %}
             </td>
             <td>{{ row.customer }}</td>
