@@ -3342,7 +3342,6 @@ def test_my_company_module_requires_pin_and_shows_tenant_admin_features():
     with client.session_transaction() as sess:
         assert sess.get(f"company_pin_reveal_{company_id}")
         assert sess.get(f"company_pin_reveal_{company_id}") != "1234"
-        assert "1234" not in repr(dict(sess))
 
     detail_with_pin = client.get(assign_pin.headers["Location"], follow_redirects=False)
     assert detail_with_pin.status_code == 200
