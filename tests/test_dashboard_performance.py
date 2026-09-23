@@ -66,10 +66,11 @@ def test_sales_by_day_uses_local_company_days(app):
         )
         db.session.commit()
 
-        login_user(user)
-        try:
-            values = _sales_by_day(2)
-        finally:
-            logout_user()
+        with app.test_request_context("/dashboard/"):
+            login_user(user)
+            try:
+                values = _sales_by_day(2)
+            finally:
+                logout_user()
 
         assert [float(value) for value in values] == [100.0, 250.0]
