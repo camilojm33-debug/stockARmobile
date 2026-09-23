@@ -1,4 +1,5 @@
 from datetime import timedelta
+from uuid import uuid4
 
 import pytest
 
@@ -32,7 +33,7 @@ def make_quote(company_id, user_id, *, status="BORRADOR", days_old=120, ai=False
         company_id=company_id,
         created_by_user_id=user_id,
         seller_id=user_id,
-        number=f"P-{company_id}-{status}-{days_old}-{int(ai)}-{id(object())}",
+        number=f"TEST-{uuid4().hex[:16]}",
         status=status,
         date=utcnow() - timedelta(days=days_old),
         updated_at=utcnow() - timedelta(days=days_old),
@@ -121,7 +122,7 @@ def test_cleanup_deletes_only_eligible_rows(cleanup_database):
     assert db.session.get(Quote, protected.id) is not None
 
 
-def test_cleanup_page_and_confirmation_are_admin_only(cleanup_database):
+def test_cleanup_page_and_confirmation_are_admin_only(app, cleanup_database):
     company = cleanup_database["company"]
     admin = cleanup_database["admin"]
 
@@ -129,10 +130,7 @@ def test_cleanup_page_and_confirmation_are_admin_only(cleanup_database):
     db.session.add(old_quote)
     db.session.commit()
 
-    client = cleanup_database["_client"] if "_client" in cleanup_database else None
-    if client is None:
-        pytest.importorskip("flask_login")
-    test_client = __import__("app").app.test_client()
+    test_client = app.test_client()
     with test_client.session_transaction() as session:
         session["_user_id"] = str(admin.id)
         session["_fresh"] = True
