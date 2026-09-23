@@ -6,6 +6,7 @@ Este agente es opcional y se instala únicamente en la PC del comercio. No reemp
 
 - Impresoras térmicas USB instaladas en Windows.
 - Impresoras térmicas ESC/POS por Ethernet/TCP (puerto 9100 por defecto).
+- El ticket web usa la configuración de "Mi Empresa": si hay host de impresora, usa red/TCP; si no, usa la impresora instalada en Windows.
 - Detección de impresoras Windows mediante `GET /printers`.
 - Estado del agente mediante `GET /health`.
 - Impresión RAW ESC/POS mediante `POST /print`.
@@ -19,6 +20,8 @@ Este agente es opcional y se instala únicamente en la PC del comercio. No reemp
 5. Ejecutar `py local_print_agent.py`.
 6. Verificar `http://127.0.0.1:8765/health`.
 7. Consultar `http://127.0.0.1:8765/printers` para obtener el nombre exacto de la impresora.
+8. En StockArMobile → Mi Empresa → configuración general, guardar el nombre de la impresora para USB/Windows o el host/puerto para una térmica Ethernet.
+9. Abrir una venta y usar "Imprimir en térmica". Si el agente no está disponible, el ticket web cae a la impresión normal del navegador.
 
 ## Configuración opcional
 
