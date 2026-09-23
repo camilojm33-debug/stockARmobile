@@ -40,10 +40,12 @@ def _api_exception(message, exc: Exception, status=400, **extra):
     current_app.logger.exception("%s (%s)", message, exc.__class__.__name__)
     payload = {
         "success": False,
-        "error": str(message),
         "exception": exc.__class__.__name__,
+        **extra,
     }
-    payload.update(extra)
+    # Force the public error field after merging optional metadata so a lower
+    # layer can never accidentally overwrite the safe message.
+    payload["error"] = str(message)
     return jsonify(payload), status
 
 
@@ -804,7 +806,7 @@ def api_mp_qr_points():
             "company_id": company_id,
             "user_id": user_id,
             "collector_id": collector_id,
-            "access_token": access_token_preview,
+            "access_token_present": access_token_present,
             "mp_json": raw_response,
         },
     })
