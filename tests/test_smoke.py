@@ -8554,3 +8554,88 @@ def test_pricing_controller_menu_is_visible_and_points_to_standard_or_feature_ro
     assert 'url_for("pricing_controller.index")' in source or "url_for('pricing_controller.index')" in source
     assert 'url_for("company_billing.subscription_portal")' in source or "url_for('company_billing.subscription_portal')" in source
     assert 'text-bg-warning ms-auto">Negocio' in source
+
+def _build_products_import_workbook(*, include_title=True, include_second_sheet=False):
+    from openpyxl import Workbook
+
+    workbook = Workbook()
+    sheet = workbook.active
+    if include_title:
+        sheet.append(["Listado de productos de prueba"])
+        sheet.append([])
+    sheet.append(["Código de producto", "Descripción", "Categoría", "Precio venta", "Stock"])
+    sheet.append(["IMP-001", "Producto importado", "Almacén", 2499.90, 7])
+    sheet.append(["IMP-002", "Segundo producto", "Bebidas", 1599.50, 3])
+
+    if include_second_sheet:
+        extra = workbook.create_sheet("Otra hoja")
+        extra.append(["SKU", "Nombre del producto", "Precio", "Stock"])
+        extra.append(["IMP-003", "Producto otra hoja", 999, 2])
+
+    return workbook
+
+
+def _workbook_bytes(workbook):
+    buffer = io.BytesIO()
+    workbook.save(buffer)
+    buffer.seek(0)
+    return buffer
+
+
+def test_products_import_detects_header_after_title_and_accepts_common_aliases():
+    with stock_app.app.app_context():
+        client = stock_app.app.test_client()
+        client.post("/auth/login", data={"username": "negocio_admin", "password": "admin123"})
+
+        workbook = _build_products_import_workbook()
+        response = client.post(
+            "/productos/import",
+            data={
+                "file": (_workbook_bytes(workbook), "productos_prueba.xlsx"),
+            },
+            content_type="multipart/form-data",
+            follow_redirects=True,
+        )
+
+        assert response.status_code == 200
+        assert "Importacion completada: 2 creados" in response.get_data(as_text=True)
+
+        imported = Product.query.filter_by(barcode="IMP-001").first()
+        assert imported is not None
+        assert imported.name == "Producto importado"
+        assert imported.price == pytest.approx(2499.90)
+        assert imported.stock == pytest.approx(7)
+
+
+def test_products_import_can_use_a_non_active_sheet_when_active_sheet_has_no_headers():
+    with stock_app.app.app_context():
+        client = stock_app.app.test_client()
+        client.post("/auth/login", data={"username": "negocio_admin", "password": "admin123"})
+
+        from openpyxl import Workbook
+
+        workbook = Workbook()
+        active_sheet = workbook.active
+        active_sheet.append(["Hoja auxiliar sin productos"])
+        active_sheet.append(["Notas", "Solo informacion"])
+
+        valid_sheet = workbook.create_sheet("Productos")
+        valid_sheet.append(["SKU", "Nombre del producto", "Precio", "Stock"])
+        valid_sheet.append(["IMP-003", "Producto tercera hoja", 999, 2])
+
+        response = client.post(
+            "/productos/import",
+            data={
+                "file": (_workbook_bytes(workbook), "productos_otra_hoja.xlsx"),
+            },
+            content_type="multipart/form-data",
+            follow_redirects=True,
+        )
+
+        assert response.status_code == 200
+        assert "Importacion completada: 1 creados" in response.get_data(as_text=True)
+        imported = Product.query.filter_by(barcode="IMP-003").first()
+        assert imported is not None
+        assert imported.name == "Producto tercera hoja"
+        assert imported.stock == pytest.approx(2)
+\n
