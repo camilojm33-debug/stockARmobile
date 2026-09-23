@@ -1,5 +1,6 @@
 """Blueprint de productos: CRUD e inventario."""
 
+import re
 import uuid
 import unicodedata
 from datetime import datetime
@@ -559,14 +560,16 @@ def import_excel():
         workbook = load_workbook(upload, read_only=True, data_only=True)
         aliases = {
             "barcode": {
-                "barcode", "codigo", "codigo de barras", "codigo barra", "codigo_barra",
-                "codigo producto", "codigo de producto", "codigo del producto", "codigo interno", "cod", "ean", "ean8",
-                "ean13", "ean 13", "sku",
+                "barcode", "codigo", "codigo de barras", "codigo barra", "codigo barras", "codigo_barra",
+                "codigo de barra", "codigo ean", "codigo producto", "codigo de producto",
+                "codigo del producto", "codigo interno", "codigo sku", "cod", "ean", "ean8",
+                "ean13", "ean 13", "gtin", "sku", "upc", "referencia", "referencia producto",
             },
             "name": {
                 "name", "nombre", "nombre producto", "nombre del producto",
-                "producto", "articulo", "articulo producto", "descripcion",
-                "descripcion producto", "descripcion del producto", "detalle",
+                "producto", "articulo", "articulo producto", "nombre articulo", "nombre del articulo",
+                "descripcion", "descripcion producto", "descripcion del producto", "descripcion articulo",
+                "descripcion del articulo", "detalle", "detalle producto", "item", "denominacion",
             },
             "category": {"category", "categoria", "rubro", "familia"},
             "brand": {"brand", "marca"},
@@ -590,23 +593,53 @@ def import_excel():
             text = str(value or "").strip().lower()
             text = unicodedata.normalize("NFKD", text)
             text = "".join(char for char in text if not unicodedata.combining(char))
-            return " ".join(text.replace("_", " ").replace("-", " ").split())
+            text = re.sub(r"[^a-z0-9]+", " ", text)
+            return " ".join(text.split())
 
         normalized_aliases = {
             field: {normalize_header(value) for value in accepted}
             for field, accepted in aliases.items()
         }
+        compact_aliases = {
+            field: {re.sub(r"[^a-z0-9]", "", value) for value in accepted}
+            for field, accepted in normalized_aliases.items()
+        }
+
+        def classify_flexible_header(header):
+            compact = re.sub(r"[^a-z0-9]", "", header)
+            if not compact:
+                return None
+
+            for field, accepted in compact_aliases.items():
+                if compact in accepted:
+                    return field
+
+            tokens = set(header.split())
+
+            barcode_signal = (
+                ({"codigo"} <= tokens and bool(tokens & {"barra", "barras", "ean", "sku"}))
+                or bool(tokens & {"barcode", "ean", "ean8", "ean13", "gtin", "sku", "upc"})
+                or ("referencia" in tokens and "producto" in tokens)
+            )
+            if barcode_signal:
+                return "barcode"
+
+            name_signal = (
+                bool(tokens & {"nombre", "producto", "descripcion", "articulo", "item", "denominacion"})
+                and not bool(tokens & {"precio", "costo", "stock", "existencia", "cantidad"})
+            )
+            if name_signal:
+                return "name"
+
+            return None
 
         def detect_positions(raw_headers):
             positions = {}
             for index, raw_header in enumerate(raw_headers):
                 header = normalize_header(raw_header)
-                if not header:
-                    continue
-                for field, accepted in normalized_aliases.items():
-                    if header in accepted and field not in positions:
-                        positions[field] = index
-                        break
+                field = classify_flexible_header(header)
+                if field is not None and field not in positions:
+                    positions[field] = index
             return positions
 
         header_row_number = None
