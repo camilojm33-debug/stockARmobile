@@ -10,9 +10,6 @@ import re
 from datetime import timedelta
 from typing import Any
 
-from app import Payment, Quote, db, utcnow
-
-
 AI_ORDER_MARKER = "Pedido generado por el Vendedor 24 hs de StockARmobile."
 AI_ORDER_PROVIDER = "mercadopago_ai_order"
 
@@ -40,6 +37,8 @@ class QuoteCleanupService:
 
     @staticmethod
     def _payment_state_by_quote(company_id: int) -> dict[int, set[str]]:
+        from app import Payment
+
         payments = (
             Payment.query.filter(
                 Payment.company_id == int(company_id),
@@ -99,6 +98,8 @@ class QuoteCleanupService:
     ) -> dict[str, Any]:
         safe_days = max(1, min(int(older_than_days or 90), 3650))
         safe_limit = max(1, min(int(limit or 500), 2000))
+        from app import Quote, utcnow
+
         cutoff = utcnow() - timedelta(days=safe_days)
         normalized_kind = str(kind or "all").strip().lower()
         allowed_kinds = {"all", "manual", "ai"}
@@ -193,6 +194,8 @@ class QuoteCleanupService:
         ids = [row["id"] for row in preview["eligible"]]
         if not ids:
             return {**preview, "deleted_count": 0}
+
+        from app import Quote, db
 
         quotes = (
             Quote.query.filter(
