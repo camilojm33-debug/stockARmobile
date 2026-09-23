@@ -144,7 +144,7 @@
                 {% if product.favorite %}<span class="badge text-bg-warning"><i class="bi bi-star-fill me-1"></i>Favorito</span>{% endif %}
                 {% if has_offer %}<span class="badge text-bg-info">Oferta</span>{% endif %}
                 {% if critical_stock and product.stock > 0 %}<span class="badge text-bg-warning">Stock crítico</span>{% endif %}
-                <span class="badge {{ 'text-bg-danger' if product.stock <= 0 else ('text-bg-warning' if product.stock <= product.min_stock else 'text-bg-success') }} d-block">Stock {{ "%.3g"|format(product.stock or 0) }}</span>
+                <span class="badge {{ 'text-bg-danger' if product.stock <= 0 else ('text-bg-warning' if product.stock <= product.min_stock else 'text-bg-success') }} d-block" data-live-stock="{{ product.id }}">Stock {{ "%.3g"|format(product.stock or 0) }}</span>
               </div>
             </div>
             <h2 class="h6 fw-bold mb-1 text-truncate" title="{{ product.name }}">{{ product.name }}</h2>
@@ -164,6 +164,7 @@
               data-product-name="{{ product.name|e }}"
               data-product-price="{{ product.price or 0 }}"
               data-product-stock="{{ product.stock or 0 }}"
+              data-live-stock-button="{{ product.id }}"
               data-product-barcode="{{ product.barcode|e }}"
               data-product-unit="{{ (product.unit_measure or 'u')|e }}"
               data-product-photo="{{ (product.photo or '')|e }}"
