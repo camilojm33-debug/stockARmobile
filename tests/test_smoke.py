@@ -8638,4 +8638,4 @@ def test_products_import_can_use_a_non_active_sheet_when_active_sheet_has_no_hea
         assert imported is not None
         assert imported.name == "Producto tercera hoja"
         assert imported.stock == pytest.approx(2)
-\n
+
