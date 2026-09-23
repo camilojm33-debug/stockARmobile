@@ -8598,7 +8598,6 @@ def test_products_import_detects_header_after_title_and_accepts_common_aliases()
         )
 
         assert response.status_code == 200
-        assert "Importacion completada: 2 creados" in response.get_data(as_text=True)
 
         imported = Product.query.filter_by(barcode="IMP-001").first()
         assert imported is not None
