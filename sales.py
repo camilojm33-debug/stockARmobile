@@ -1387,11 +1387,25 @@ def print_ticket(sale_id):
 @bp.route("/<int:sale_id>/ticket")
 @tenant_required
 def thermal_ticket(sale_id):
-    from app import Sale, SaleItem
+    from app import Company, Sale, SaleItem
 
+    company = Company.query.filter_by(id=getattr(current_user, "company_id", None)).first_or_404()
     sale = _sale_accessible_query(Sale.query.options(selectinload(Sale.items).selectinload(SaleItem.product)), Sale).filter(Sale.id == sale_id).first_or_404()
     ticket_brand = _ticket_brand_name()
-    return render_template("ventas/ticket.html", sale=sale, rows=_ticket_rows(sale), ticket_text=_ticket_text(sale, ticket_brand=ticket_brand), ticket_brand=ticket_brand)
+    try:
+        printer_settings = json.loads(company.printer_settings_json or "{}")
+    except (TypeError, ValueError):
+        printer_settings = {}
+    if not isinstance(printer_settings, dict):
+        printer_settings = {}
+    return render_template(
+        "ventas/ticket.html",
+        sale=sale,
+        rows=_ticket_rows(sale),
+        ticket_text=_ticket_text(sale, ticket_brand=ticket_brand),
+        ticket_brand=ticket_brand,
+        printer_settings=printer_settings,
+    )
 
 
 @bp.route("/<int:sale_id>/print-thermal", methods=["POST"])
