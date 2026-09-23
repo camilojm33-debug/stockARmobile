@@ -1440,7 +1440,73 @@ def export_sales_csv():
     return response
 
 
-@bp.route("/exportar-ventas/excel")\n@tenant_required\ndef export_sales_excel():\n    from openpyxl import Workbook\n    from app import Sale\n\n    workbook = Workbook()\n    sheet = workbook.active\n    sheet.title = "Ventas"\n    sheet.append(["ID", "Cliente", "Subtotal", "Descuento", "Total", "IVA", "Fecha"])\n    for sale in _sale_accessible_query(Sale.query, Sale).order_by(Sale.date.desc(), Sale.id.desc()).all():\n        sheet.append([\n            sale.id, sale.customer or "", float(sale.subtotal or 0), float(sale.discount or 0),\n            float(sale.total_amount or 0), float(sale.tax or 0),\n            sale.date.strftime("%Y-%m-%d %H:%M:%S") if sale.date else "",\n        ])\n    sheet.freeze_panes = "A2"\n    sheet.auto_filter.ref = sheet.dimensions\n    for column in sheet.columns:\n        width = min(max(max(len(str(cell.value or "")) for cell in column) + 2, 12), 32)\n        sheet.column_dimensions[column[0].column_letter].width = width\n    buffer = BytesIO()\n    workbook.save(buffer)\n    buffer.seek(0)\n    return make_response(buffer.getvalue(), 200, {\n        "Content-Type": "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",\n        "Content-Disposition": 'attachment; filename="ventas_{}.xlsx"'.format(utcnow().strftime("%Y%m%d")),\n    })\n\n\n@bp.route("/exportar-ventas/pdf")\n@tenant_required\ndef export_sales_pdf():\n    from reportlab.lib import colors\n    from reportlab.lib.pagesizes import A4, landscape\n    from reportlab.lib.styles import getSampleStyleSheet\n    from reportlab.lib.units import mm\n    from reportlab.platypus import SimpleDocTemplate, Table, TableStyle, Paragraph\n    from app import Sale\n\n    buffer = BytesIO()\n    document = SimpleDocTemplate(buffer, pagesize=landscape(A4), rightMargin=10 * mm, leftMargin=10 * mm, topMargin=10 * mm, bottomMargin=10 * mm)\n    styles = getSampleStyleSheet()\n    rows = [["ID", "Cliente", "Subtotal", "Descuento", "Total", "IVA", "Fecha"]]\n    for sale in _sale_accessible_query(Sale.query, Sale).order_by(Sale.date.desc(), Sale.id.desc()).all():\n        rows.append([\n            str(sale.id), sale.customer or "",\n            "${:.2f}".format(float(sale.subtotal or 0)), "${:.2f}".format(float(sale.discount or 0)),\n            "${:.2f}".format(float(sale.total_amount or 0)), "${:.2f}".format(float(sale.tax or 0)),\n            sale.date.strftime("%Y-%m-%d %H:%M:%S") if sale.date else "",\n        ])\n    table = Table(rows, repeatRows=1)\n    table.setStyle(TableStyle([\n        ("BACKGROUND", (0, 0), (-1, 0), colors.HexColor("#e9eef5")),\n        ("GRID", (0, 0), (-1, -1), 0.35, colors.grey),\n        ("FONTNAME", (0, 0), (-1, 0), "Helvetica-Bold"),\n        ("FONTSIZE", (0, 0), (-1, -1), 8),\n        ("VALIGN", (0, 0), (-1, -1), "TOP"),\n    ]))\n    document.build([Paragraph("<b>Ventas</b>", styles["Title"]), table])\n    buffer.seek(0)\n    return make_response(buffer.getvalue(), 200, {\n        "Content-Type": "application/pdf",\n        "Content-Disposition": 'attachment; filename="ventas_{}.pdf"'.format(utcnow().strftime("%Y%m%d")),\n    })\n\n@bp.route("/api/ventas/<int:sale_id>")
+@bp.route("/exportar-ventas/excel")
+@tenant_required
+def export_sales_excel():
+    from openpyxl import Workbook
+    from app import Sale
+
+    workbook = Workbook()
+    sheet = workbook.active
+    sheet.title = "Ventas"
+    sheet.append(["ID", "Cliente", "Subtotal", "Descuento", "Total", "IVA", "Fecha"])
+    for sale in _sale_accessible_query(Sale.query, Sale).order_by(Sale.date.desc(), Sale.id.desc()).all():
+        sheet.append([
+            sale.id, sale.customer or "", float(sale.subtotal or 0), float(sale.discount or 0),
+            float(sale.total_amount or 0), float(sale.tax or 0),
+            sale.date.strftime("%Y-%m-%d %H:%M:%S") if sale.date else "",
+        ])
+    sheet.freeze_panes = "A2"
+    sheet.auto_filter.ref = sheet.dimensions
+    for column in sheet.columns:
+        width = min(max(max(len(str(cell.value or "")) for cell in column) + 2, 12), 32)
+        sheet.column_dimensions[column[0].column_letter].width = width
+    buffer = BytesIO()
+    workbook.save(buffer)
+    buffer.seek(0)
+    return make_response(buffer.getvalue(), 200, {
+        "Content-Type": "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        "Content-Disposition": 'attachment; filename="ventas_{}.xlsx"'.format(utcnow().strftime("%Y%m%d")),
+    })
+
+
+@bp.route("/exportar-ventas/pdf")
+@tenant_required
+def export_sales_pdf():
+    from reportlab.lib import colors
+    from reportlab.lib.pagesizes import A4, landscape
+    from reportlab.lib.styles import getSampleStyleSheet
+    from reportlab.lib.units import mm
+    from reportlab.platypus import SimpleDocTemplate, Table, TableStyle, Paragraph
+    from app import Sale
+
+    buffer = BytesIO()
+    document = SimpleDocTemplate(buffer, pagesize=landscape(A4), rightMargin=10 * mm, leftMargin=10 * mm, topMargin=10 * mm, bottomMargin=10 * mm)
+    styles = getSampleStyleSheet()
+    rows = [["ID", "Cliente", "Subtotal", "Descuento", "Total", "IVA", "Fecha"]]
+    for sale in _sale_accessible_query(Sale.query, Sale).order_by(Sale.date.desc(), Sale.id.desc()).all():
+        rows.append([
+            str(sale.id), sale.customer or "",
+            "${:.2f}".format(float(sale.subtotal or 0)), "${:.2f}".format(float(sale.discount or 0)),
+            "${:.2f}".format(float(sale.total_amount or 0)), "${:.2f}".format(float(sale.tax or 0)),
+            sale.date.strftime("%Y-%m-%d %H:%M:%S") if sale.date else "",
+        ])
+    table = Table(rows, repeatRows=1)
+    table.setStyle(TableStyle([
+        ("BACKGROUND", (0, 0), (-1, 0), colors.HexColor("#e9eef5")),
+        ("GRID", (0, 0), (-1, -1), 0.35, colors.grey),
+        ("FONTNAME", (0, 0), (-1, 0), "Helvetica-Bold"),
+        ("FONTSIZE", (0, 0), (-1, -1), 8),
+        ("VALIGN", (0, 0), (-1, -1), "TOP"),
+    ]))
+    document.build([Paragraph("<b>Ventas</b>", styles["Title"]), table])
+    buffer.seek(0)
+    return make_response(buffer.getvalue(), 200, {
+        "Content-Type": "application/pdf",
+        "Content-Disposition": 'attachment; filename="ventas_{}.pdf"'.format(utcnow().strftime("%Y%m%d")),
+    })
+
+@bp.route("/api/ventas/<int:sale_id>")
 @tenant_required
 def api_sale(sale_id):
     from app import Sale, SaleItem
