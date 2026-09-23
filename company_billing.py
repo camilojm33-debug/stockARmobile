@@ -1185,7 +1185,7 @@ def create_checkout():
     except Exception as exc:
         db.session.rollback()
         current_app.logger.exception("Error creando checkout QR Mercado Pago: %s", exc)
-        flash(f"No se pudo generar el QR de Mercado Pago: {exc}", "danger")
+        flash("No se pudo generar el QR de Mercado Pago. Revisá la conexión y los datos configurados.", "danger")
         return redirect(url_for("company_billing.subscription_portal"))
 
     flash("QR de Mercado Pago generado. Escanealo o abrí el checkout para pagar.", "info")
@@ -3867,8 +3867,8 @@ def webhook_mercadopago():
     except IntegrityError as exc:
         current_app.logger.exception("Webhook Mercado Pago rechazado por integridad: %s", exc)
         db.session.rollback()
-        return jsonify({"ok": False, "error": str(exc)}), 400
+        return jsonify({"ok": False, "error": "No se pudo procesar la notificación por una inconsistencia interna."}), 400
     except Exception as exc:
         current_app.logger.exception("Webhook Mercado Pago rechazado: %s", exc)
         db.session.rollback()
-        return jsonify({"ok": False, "error": str(exc)}), 400
+        return jsonify({"ok": False, "error": "No se pudo procesar la notificación."}), 400
