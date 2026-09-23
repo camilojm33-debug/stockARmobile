@@ -579,10 +579,10 @@ def import_excel():
                 "precio costo unitario", "costo", "costo unitario",
             },
             "price": {
-                "price", "precio", "precio venta", "precio de venta",
-                "precio unitario", "venta",
+                "price", "precio", "precio venta", "precio de venta", "precio venta unitario",
+                "precio de venta unitario", "precio unitario", "venta",
             },
-            "stock": {"stock", "existencias", "cantidad", "stock actual", "existencia"},
+            "stock": {"stock", "existencias", "cantidad", "stock actual", "existencia", "existencia actual", "cantidad en stock"},
             "min_stock": {"min stock", "min_stock", "stock minimo", "minimo", "minimo stock"},
             "sale_type": {"sale type", "sale_type", "tipo venta", "tipo de venta"},
             "unit_measure": {"unit measure", "unit_measure", "unidad medida", "unidad de medida", "unidad"},
