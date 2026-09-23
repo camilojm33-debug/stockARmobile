@@ -36,13 +36,16 @@ def _api_error(message, status=400, **extra):
 
 
 def _api_exception(message, exc: Exception, status=400, **extra):
+    # Diagnostics stay server-side; API clients receive only a safe message.
+    current_app.logger.exception("%s (%s)", message, exc.__class__.__name__)
     payload = {
         "success": False,
-        "error": str(message),
         "exception": exc.__class__.__name__,
-        "traceback": traceback.format_exc(),
+        **extra,
     }
-    payload.update(extra)
+    # Force the public error field after merging optional metadata so a lower
+    # layer can never accidentally overwrite the safe message.
+    payload["error"] = str(message)
     return jsonify(payload), status
 
 
@@ -680,12 +683,12 @@ def api_mp_qr_points():
         access_token = oauth_service.ensure_access_token(company_id=company_id)
     except Exception as exc:
         current_app.logger.warning(
-            "MP POS list oauth error: url=%s company_id=%s user_id=%s collector_id=%s access_token=%s error=%s",
+            "MP POS list oauth error: url=%s company_id=%s user_id=%s collector_id=%s access_token_present=%s error=%s",
             request_url,
             company_id,
             user_id,
             collector_id,
-            "missing",
+            bool(access_token),
             exc,
         )
         return jsonify({
@@ -702,7 +705,7 @@ def api_mp_qr_points():
             },
         }), 400
 
-    access_token_preview = f"{str(access_token)[:8]}..." if access_token else "missing"
+    access_token_present = bool(access_token)
 
     mp_service = MercadoPagoService()
     try:
@@ -714,7 +717,7 @@ def api_mp_qr_points():
             company_id,
             user_id,
             collector_id,
-            access_token_preview,
+            access_token_present,
             exc,
         )
         return jsonify({
@@ -727,7 +730,7 @@ def api_mp_qr_points():
                 "company_id": company_id,
                 "user_id": user_id,
                 "collector_id": collector_id,
-                "access_token": access_token_preview,
+                "access_token_present": access_token_present,
             },
         }), 400
 
@@ -769,14 +772,14 @@ def api_mp_qr_points():
             zero_reason = "La cuenta conectada no tiene POS visibles para este collector_id o no hay POS creados."
 
     current_app.logger.info(
-        "MP POS list audit: url=%s mp_path=%s mp_http_status=%s company_id=%s user_id=%s collector_id=%s access_token=%s pos_count=%s mp_json=%s",
+        "MP POS list audit: url=%s mp_path=%s mp_http_status=%s company_id=%s user_id=%s collector_id=%s access_token_present=%s pos_count=%s mp_json=%s",
         request_url,
         (mp_debug or {}).get("path"),
         mp_status,
         company_id,
         user_id,
         collector_id,
-        access_token_preview,
+        access_token_present,
         pos_count,
         json.dumps(raw_response, ensure_ascii=False)[:4000],
     )
@@ -803,7 +806,7 @@ def api_mp_qr_points():
             "company_id": company_id,
             "user_id": user_id,
             "collector_id": collector_id,
-            "access_token": access_token_preview,
+            "access_token_present": access_token_present,
             "mp_json": raw_response,
         },
     })
@@ -1049,19 +1052,18 @@ def api_mp_qr_create():
                 float(amount),
                 selected_pos_id,
             )
-            return jsonify({
-                "success": False,
-                "error": str(exc),
-                "exception": exc.__class__.__name__,
-                "traceback": tb,
-                "company_id": company_id,
-                "user_id": user_id,
-                "collector_id": collector_id,
-                "external_reference": external_reference,
-                "amount": float(amount),
-                "pos_id": selected_pos_id,
-                "qr_id": selected_qr_id,
-            }), 400
+            return _api_exception(
+                "No se pudo generar el QR de Mercado Pago",
+                exc,
+                400,
+                company_id=company_id,
+                user_id=user_id,
+                collector_id=collector_id,
+                external_reference=external_reference,
+                amount=float(amount),
+                pos_id=selected_pos_id,
+                qr_id=selected_qr_id,
+            )
         draft_payment.preference_id = preference.get("id")
         draft_payment.external_reference = external_reference
         draft_payment.reference = f"pos_draft:{draft_payment.id}"
