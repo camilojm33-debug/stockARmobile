@@ -166,7 +166,15 @@ def _build_cash_close_rows(session):
 def _get_session_or_404(session_id):
     from app import CashSession, scope_query_to_company
 
-    session = scope_query_to_company(CashSession.query, CashSession).filter(CashSession.id == session_id).first_or_404()
+    # Lock the cash-session row during write operations so two computers cannot
+    # close/reopen/void the same session concurrently. PostgreSQL enforces the
+    # row lock until this request's transaction finishes.
+    session = (
+        scope_query_to_company(CashSession.query, CashSession)
+        .filter(CashSession.id == session_id)
+        .with_for_update()
+        .first_or_404()
+    )
     if not _is_admin() and session.user_id != current_user.id:
         abort(403)
     return session

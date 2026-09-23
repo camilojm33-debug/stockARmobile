@@ -315,6 +315,39 @@ def test_sales_pages_render_search_and_notifications_components():
     assert 'id="notificationCenter"' in html
 
 
+def test_multi_device_stock_api_returns_current_stock_and_live_markers():
+    client_a = stock_app.app.test_client()
+    client_b = stock_app.app.test_client()
+    client_a.post("/auth/login", data={"username": "empresa_admin", "password": "admin123"})
+    client_b.post("/auth/login", data={"username": "empresa_admin", "password": "admin123"})
+
+    first = client_a.get("/productos/api/products?_sync=1")
+    assert first.status_code == 200
+    first_product = next(item for item in first.get_json()["products"] if item["id"] == 1)
+    assert float(first_product["stock"]) == 2.5
+
+    with stock_app.app.app_context():
+        product = db.session.get(Product, 1)
+        product.stock = 1.25
+        db.session.commit()
+
+    second = client_b.get("/productos/api/products?_sync=2")
+    assert second.status_code == 200
+    second_product = next(item for item in second.get_json()["products"] if item["id"] == 1)
+    assert float(second_product["stock"]) == 1.25
+
+    products_page = client_b.get("/productos/")
+    assert products_page.status_code == 200
+    html = products_page.get_data(as_text=True)
+    assert 'data-live-stock="1"' in html
+
+    sales_page = client_b.get("/ventas/")
+    assert sales_page.status_code == 200
+    sales_html = sales_page.get_data(as_text=True)
+    assert 'data-live-stock="1"' in sales_html
+    assert 'data-live-stock-button="1"' in sales_html
+
+
 def test_checkout_requires_open_cash_session():
     client = stock_app.app.test_client()
     client.post("/auth/login", data={"username": "empresa_admin", "password": "admin123"})
