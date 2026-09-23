@@ -557,51 +557,88 @@ def import_excel():
     workbook = None
     try:
         workbook = load_workbook(upload, read_only=True, data_only=True)
-        sheet = workbook.active
-        iterator = sheet.iter_rows(values_only=True)
-        try:
-            raw_headers = next(iterator)
-        except StopIteration:
-            flash("El archivo no contiene productos.", "warning")
-            return redirect(url_for("products.index"))
-
-        def normalize_header(value):
-            text = str(value or "").strip().lower().replace("_", " ")
-            text = unicodedata.normalize("NFKD", text)
-            return "".join(char for char in text if not unicodedata.combining(char))
-
-        headers = [normalize_header(cell) for cell in raw_headers]
-        if not any(headers):
-            flash("El Excel no contiene encabezados validos.", "danger")
-            return redirect(url_for("products.index"))
-
         aliases = {
-            "barcode": {"barcode", "codigo", "codigo de barras", "ean", "sku"},
-            "name": {"name", "nombre", "producto", "descripcion", "descripcion del producto"},
-            "category": {"category", "categoria"},
+            "barcode": {
+                "barcode", "codigo", "codigo de barras", "codigo producto",
+                "codigo del producto", "codigo interno", "cod", "ean", "ean8",
+                "ean13", "ean 13", "sku",
+            },
+            "name": {
+                "name", "nombre", "nombre producto", "nombre del producto",
+                "producto", "articulo", "articulo producto", "descripcion",
+                "descripcion producto", "descripcion del producto", "detalle",
+            },
+            "category": {"category", "categoria", "rubro", "familia"},
             "brand": {"brand", "marca"},
-            "supplier": {"supplier", "proveedor"},
-            "cost_price": {"cost price", "cost_price", "precio costo", "precio de costo", "precio costo unitario"},
-            "price": {"price", "precio", "precio venta", "precio de venta"},
-            "stock": {"stock", "existencias", "cantidad"},
-            "min_stock": {"min stock", "min_stock", "stock minimo", "stock minimo"},
+            "supplier": {"supplier", "proveedor", "proveedor principal"},
+            "cost_price": {
+                "cost price", "cost_price", "precio costo", "precio de costo",
+                "precio costo unitario", "costo", "costo unitario",
+            },
+            "price": {
+                "price", "precio", "precio venta", "precio de venta",
+                "precio unitario", "venta",
+            },
+            "stock": {"stock", "existencias", "cantidad", "stock actual", "existencia"},
+            "min_stock": {"min stock", "min_stock", "stock minimo", "minimo", "minimo stock"},
             "sale_type": {"sale type", "sale_type", "tipo venta", "tipo de venta"},
-            "unit_measure": {"unit measure", "unit_measure", "unidad medida", "unidad de medida"},
+            "unit_measure": {"unit measure", "unit_measure", "unidad medida", "unidad de medida", "unidad"},
             "discount": {"discount", "descuento"},
         }
 
-        positions = {}
-        for index, header in enumerate(headers):
-            if not header:
-                continue
-            for field, accepted in aliases.items():
-                if header in accepted and field not in positions:
-                    positions[field] = index
-                    break
+        def normalize_header(value):
+            text = str(value or "").strip().lower()
+            text = unicodedata.normalize("NFKD", text)
+            text = "".join(char for char in text if not unicodedata.combining(char))
+            return " ".join(text.replace("_", " ").replace("-", " ").split())
 
-        if "barcode" not in positions or "name" not in positions:
-            flash("El Excel debe incluir las columnas Codigo/Barcode y Nombre/Name.", "danger")
+        normalized_aliases = {
+            field: {normalize_header(value) for value in accepted}
+            for field, accepted in aliases.items()
+        }
+
+        def detect_positions(raw_headers):
+            positions = {}
+            for index, raw_header in enumerate(raw_headers):
+                header = normalize_header(raw_header)
+                if not header:
+                    continue
+                for field, accepted in normalized_aliases.items():
+                    if header in accepted and field not in positions:
+                        positions[field] = index
+                        break
+            return positions
+
+        header_row_number = None
+        header_sheet = None
+        positions = {}
+
+        # Algunos Excel tienen un titulo, filas vacias o informacion comercial antes
+        # de la cabecera. Buscamos la primera fila que contenga Codigo/EAN/SKU + Nombre/Descripcion.
+        for candidate_sheet in workbook.worksheets:
+            for row_number, raw_row in enumerate(
+                candidate_sheet.iter_rows(min_row=1, max_row=20, values_only=True),
+                start=1,
+            ):
+                candidate_positions = detect_positions(raw_row)
+                if "barcode" in candidate_positions and "name" in candidate_positions:
+                    header_row_number = row_number
+                    header_sheet = candidate_sheet
+                    positions = candidate_positions
+                    break
+            if header_sheet is not None:
+                break
+
+        if header_sheet is None:
+            flash(
+                "No se encontraron encabezados validos. Se requiere una columna de Codigo/Barcode/EAN/SKU "
+                "y otra de Nombre/Descripcion/Producto.",
+                "danger",
+            )
             return redirect(url_for("products.index"))
+
+        sheet = header_sheet
+        iterator = sheet.iter_rows(min_row=header_row_number + 1, values_only=True)
 
         def cell(row, field, default=None):
             index = positions.get(field)
