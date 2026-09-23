@@ -8638,3 +8638,33 @@ def test_products_import_can_use_a_non_active_sheet_when_active_sheet_has_no_hea
         assert imported.name == "Producto tercera hoja"
         assert imported.stock == pytest.approx(2)
 
+def test_products_import_matches_stockarmobile_exported_headers():
+    from openpyxl import Workbook
+
+    with stock_app.app.app_context():
+        client = stock_app.app.test_client()
+        client.post("/auth/login", data={"username": "negocio_admin", "password": "admin123"})
+
+        workbook = Workbook()
+        sheet = workbook.active
+        sheet.append(["codigo_barra", "producto", "precio_costo", "precio_venta"])
+        sheet.append(["7790000000011", "Yerba Mate 1 kg", 2500, 3900])
+        sheet.append(["7790000000028", "Azúcar 1 kg", 900, 1450])
+
+        response = client.post(
+            "/productos/import",
+            data={"file": (_workbook_bytes(workbook), "productos_prueba_stockarmobile.xlsx")},
+            content_type="multipart/form-data",
+            follow_redirects=True,
+        )
+
+        assert response.status_code == 200
+        first = Product.query.filter_by(barcode="7790000000011").first()
+        second = Product.query.filter_by(barcode="7790000000028").first()
+        assert first is not None
+        assert second is not None
+        assert first.name == "Yerba Mate 1 kg"
+        assert float(first.cost_price or 0) == pytest.approx(2500)
+        assert float(first.price or 0) == pytest.approx(3900)
+        assert float(second.price or 0) == pytest.approx(1450)
+
