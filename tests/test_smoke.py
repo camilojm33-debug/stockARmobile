@@ -4353,6 +4353,7 @@ def test_landing_and_subscription_use_same_plan_catalog():
         "29.999",
         "54.999",
         "Elegí la capacidad que necesitás hoy",
+        "Controlador de promociones",
     ]:
         assert value in landing_html
     assert "Tu negocio más ordenado. Tus ventas más inteligentes." in landing_html
@@ -4367,6 +4368,7 @@ def test_landing_and_subscription_use_same_plan_catalog():
     assert ("Uso del plan" in portal_html or "Uso IA" in portal_html)
     assert "Plan contratado" in portal_html
     assert ("Actualizar plan" in portal_html) or ("Renovar plan" in portal_html)
+    assert "Controlador de promociones" in portal_html
 
 
 def test_landing_seo_phase2_copy_and_single_h1():
