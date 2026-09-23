@@ -560,7 +560,7 @@ def import_excel():
         aliases = {
             "barcode": {
                 "barcode", "codigo", "codigo de barras", "codigo producto",
-                "codigo del producto", "codigo interno", "cod", "ean", "ean8",
+                "codigo de producto", "codigo del producto", "codigo interno", "cod", "ean", "ean8",
                 "ean13", "ean 13", "sku",
             },
             "name": {
