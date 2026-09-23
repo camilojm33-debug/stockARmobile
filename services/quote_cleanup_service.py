@@ -70,8 +70,11 @@ class QuoteCleanupService:
     def _protected_reason(cls, quote: Quote, payment_states: dict[int, set[str]]) -> str | None:
         if getattr(quote, "converted_sale_id", None):
             return "convertido_a_venta"
-        if str(getattr(quote, "status", "") or "").upper() == "CONVERTIDO":
+        status = str(getattr(quote, "status", "") or "").upper()
+        if status == "CONVERTIDO":
             return "convertido"
+        if status not in DEFAULT_ELIGIBLE_STATUSES:
+            return "estado_no_elegible"
         if not cls.is_ai_quote(quote):
             return None
 
@@ -113,9 +116,12 @@ class QuoteCleanupService:
         }
         requested_statuses &= DEFAULT_ELIGIBLE_STATUSES
 
+        considered_statuses = sorted(
+            set(requested_statuses) | {"ENVIADO", "APROBADO", "CONVERTIDO"}
+        )
         query = Quote.query.filter(
             Quote.company_id == int(company_id),
-            Quote.status.in_(sorted(requested_statuses)),
+            Quote.status.in_(considered_statuses),
             Quote.date < cutoff,
         ).order_by(Quote.date.asc(), Quote.id.asc()).limit(safe_limit)
 
