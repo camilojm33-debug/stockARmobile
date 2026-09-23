@@ -559,8 +559,8 @@ def import_excel():
         workbook = load_workbook(upload, read_only=True, data_only=True)
         aliases = {
             "barcode": {
-                "barcode", "codigo", "codigo de barras", "codigo producto",
-                "codigo de producto", "codigo del producto", "codigo interno", "cod", "ean", "ean8",
+                "barcode", "codigo", "codigo de barras", "codigo barra", "codigo_barra",
+                "codigo producto", "codigo de producto", "codigo del producto", "codigo interno", "cod", "ean", "ean8",
                 "ean13", "ean 13", "sku",
             },
             "name": {
