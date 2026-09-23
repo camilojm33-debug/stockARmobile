@@ -4,6 +4,8 @@ const STATIC_ASSETS = [
   '/offline.html',
   '/manifest.json',
   '/static/assets/css/styles.css',
+  '/static/assets/css/landing.css',
+  '/static/assets/css/landing-v3.css',
   '/static/assets/js/cart-manager.js',
   '/static/assets/js/landing.js',
   '/static/assets/js/edit-sale.js',
