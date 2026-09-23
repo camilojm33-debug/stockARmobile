@@ -1052,19 +1052,18 @@ def api_mp_qr_create():
                 float(amount),
                 selected_pos_id,
             )
-            return jsonify({
-                "success": False,
-                "error": str(exc),
-                "exception": exc.__class__.__name__,
-                "traceback": tb,
-                "company_id": company_id,
-                "user_id": user_id,
-                "collector_id": collector_id,
-                "external_reference": external_reference,
-                "amount": float(amount),
-                "pos_id": selected_pos_id,
-                "qr_id": selected_qr_id,
-            }), 400
+            return _api_exception(
+                "No se pudo generar el QR de Mercado Pago",
+                exc,
+                400,
+                company_id=company_id,
+                user_id=user_id,
+                collector_id=collector_id,
+                external_reference=external_reference,
+                amount=float(amount),
+                pos_id=selected_pos_id,
+                qr_id=selected_qr_id,
+            )
         draft_payment.preference_id = preference.get("id")
         draft_payment.external_reference = external_reference
         draft_payment.reference = f"pos_draft:{draft_payment.id}"
