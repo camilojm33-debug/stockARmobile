@@ -60,6 +60,14 @@ class QuoteCleanupService:
         return states
 
     @classmethod
+    def protection_reason(cls, *, company_id: int, quote: Quote) -> str | None:
+        """Return a safety reason that prevents deletion, if any."""
+        if int(getattr(quote, "company_id", 0) or 0) != int(company_id):
+            return "otra_empresa"
+        payment_states = cls._payment_state_by_quote(company_id)
+        return cls._protected_reason(quote, payment_states)
+
+    @classmethod
     def _protected_reason(cls, quote: Quote, payment_states: dict[int, set[str]]) -> str | None:
         if getattr(quote, "converted_sale_id", None):
             return "convertido_a_venta"
@@ -172,7 +180,6 @@ class QuoteCleanupService:
         older_than_days: int = 90,
         kind: str = "all",
         statuses: set[str] | None = None,
-        actor_user_id: int | None = None,
         ip_address: str | None = None,
         limit: int = 500,
     ) -> dict[str, Any]:
@@ -217,36 +224,20 @@ class QuoteCleanupService:
         db.session.commit()
 
         if deleted:
-            try:
-                from app import record_audit
+            from app import record_audit
 
-                for row in deleted:
-                    record_audit(
-                        action="quote_cleanup_delete",
-                        entity="quote",
-                        entity_id=row["id"],
-                        detail=(
-                            f"Limpieza de presupuesto {row['number']} "
-                            f"tipo={row['kind']} estado={row['status']} "
-                            f"antiguedad>{preview['older_than_days']}d"
-                        ),
-                        ip_address=ip_address,
-                        user_id=actor_user_id,
-                    )
-            except TypeError:
-                # Keep compatibility with legacy record_audit signatures.
-                for row in deleted:
-                    record_audit(
-                        action="quote_cleanup_delete",
-                        entity="quote",
-                        entity_id=row["id"],
-                        detail=(
-                            f"Limpieza de presupuesto {row['number']} "
-                            f"tipo={row['kind']} estado={row['status']} "
-                            f"antiguedad>{preview['older_than_days']}d"
-                        ),
-                        ip_address=ip_address,
-                    )
+            for row in deleted:
+                record_audit(
+                    action="quote_cleanup_delete",
+                    entity="quote",
+                    entity_id=row["id"],
+                    detail=(
+                        f"Limpieza de presupuesto {row['number']} "
+                        f"tipo={row['kind']} estado={row['status']} "
+                        f"antiguedad>{preview['older_than_days']}d"
+                    ),
+                    ip_address=ip_address,
+                )
 
         return {
             **preview,
