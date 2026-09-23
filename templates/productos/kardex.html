@@ -10,7 +10,12 @@
       <h1 class="h3 fw-bold mb-0">{{ product.name }}</h1>
       <p class="text-muted mb-0">Movimientos de ventas, compras y modificaciones.</p>
     </div>
-    <a class="btn btn-outline-secondary" href="{{ url_for('products.index') }}"><i class="bi bi-arrow-left me-1"></i>Productos</a>
+    <div class="d-flex flex-wrap gap-2 no-print">
+      <a class="btn btn-outline-success" href="{{ url_for('products.kardex_export_excel', product_id=product.id) }}"><i class="bi bi-file-earmark-excel me-1"></i>Excel</a>
+      <a class="btn btn-outline-danger" href="{{ url_for('products.kardex_export_pdf', product_id=product.id) }}"><i class="bi bi-filetype-pdf me-1"></i>PDF</a>
+      <a class="btn btn-outline-primary" href="{{ url_for('products.kardex_print', product_id=product.id) }}"><i class="bi bi-printer me-1"></i>Imprimir</a>
+      <a class="btn btn-outline-secondary" href="{{ url_for('products.index') }}"><i class="bi bi-arrow-left me-1"></i>Productos</a>
+    </div>
   </div>
 
   <div class="row g-3 mb-4">
@@ -23,7 +28,7 @@
   <div class="card app-card">
     <div class="table-responsive">
       <table class="table table-hover align-middle mb-0">
-        <thead class="table-light"><tr><th>Fecha</th><th>Tipo</th><th>Detalle</th><th class="text-end">Cantidad</th><th class="text-end">Valor unit.</th></tr></thead>
+        <thead class="table-light"><tr><th>Fecha</th><th>Tipo</th><th>Detalle</th><th class="text-end">Cantidad</th><th class="text-end">Valor unit.</th><th class="text-end">Importe</th></tr></thead>
         <tbody>
           {% for movement in movements %}
           <tr>
@@ -31,10 +36,10 @@
             <td><span class="badge {{ 'text-bg-success' if movement.type == 'Compra' else ('text-bg-primary' if movement.type == 'Venta' else 'text-bg-secondary') }}">{{ movement.type }}</span></td>
             <td>{{ movement.detail }}</td>
             <td class="text-end">{{ "%.3g"|format(movement.quantity) if movement.quantity is not none else '-' }}</td>
-            <td class="text-end">{{ "$%.2f"|format(movement.unit_value) if movement.unit_value is not none else '-' }}</td>
+            <td class="text-end">{{ "$%.2f"|format(movement.unit_value) if movement.unit_value is not none else '-' }}</td>\n            <td class="text-end">{{ "$%.2f"|format(movement.quantity * movement.unit_value) if movement.quantity is not none and movement.unit_value is not none else '-' }}</td>
           </tr>
           {% else %}
-          <tr><td colspan="5" class="text-center text-muted py-5">Todavia no hay movimientos para este producto.</td></tr>
+          <tr><td colspan="6" class="text-center text-muted py-5">Todavia no hay movimientos para este producto.</td></tr>
           {% endfor %}
         </tbody>
       </table>
@@ -42,3 +47,6 @@
   </div>
 </div>
 {% endblock %}
+
+{% block extra_css %}<style>@media print { .no-print, nav, header, footer, .sidebar { display:none !important; } .app-shell { max-width:none !important; margin:0 !important; padding:0 !important; } .card { border:0 !important; box-shadow:none !important; } body { background:#fff !important; } }</style>{% endblock %}
+{% block extra_js %}{% if auto_print %}<script>window.addEventListener('load', () => window.setTimeout(() => window.print(), 150));</script>{% endif %}{% endblock %}

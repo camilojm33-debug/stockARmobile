@@ -328,15 +328,12 @@ def delete(product_id=None, id=None):
     return redirect(url_for("products.index"))
 
 
-@bp.route("/<int:product_id>/kardex")
-@tenant_required
-def kardex(product_id):
+def _get_kardex_movements(product_id):
     from app import Product, ProductModification, PurchaseItem, PurchaseOrder, Sale, SaleItem, db, scope_query_to_company
 
     product = scope_query_to_company(db.session.query(Product), Product).filter(Product.id == product_id).first()
     if product is None:
-        flash("Producto no encontrado.", "warning")
-        return redirect(url_for("products.index"))
+        return None, []
 
     movements = []
     sale_rows = (
@@ -345,8 +342,7 @@ def kardex(product_id):
             Sale,
         )
         .filter(SaleItem.product_id == product.id)
-        .order_by(Sale.date.desc())
-        .limit(100)
+        .order_by(Sale.date.desc(), Sale.id.desc())
         .all()
     )
     for sale, item in sale_rows:
@@ -354,7 +350,7 @@ def kardex(product_id):
             {
                 "date": sale.date,
                 "type": "Venta",
-                "detail": f"Venta #{sale.id} - {sale.customer or 'Consumidor final'}",
+                "detail": "Venta #{} - {}".format(sale.id, sale.customer or "Consumidor final"),
                 "quantity": -float(item.quantity or 0),
                 "unit_value": float(item.price or 0),
             }
@@ -366,8 +362,7 @@ def kardex(product_id):
             PurchaseOrder,
         )
         .filter(PurchaseItem.product_id == product.id)
-        .order_by(PurchaseOrder.date.desc())
-        .limit(100)
+        .order_by(PurchaseOrder.date.desc(), PurchaseOrder.id.desc())
         .all()
     )
     for purchase, item in purchase_rows:
@@ -375,7 +370,7 @@ def kardex(product_id):
             {
                 "date": purchase.date,
                 "type": "Compra",
-                "detail": f"Compra #{purchase.id}",
+                "detail": "Compra #{}".format(purchase.id),
                 "quantity": float(item.quantity or 0),
                 "unit_value": float(item.unit_cost or 0),
             }
@@ -384,7 +379,6 @@ def kardex(product_id):
     modifications = (
         scope_query_to_company(ProductModification.query.filter_by(product_id=product.id), ProductModification)
         .order_by(ProductModification.created_at.desc())
-        .limit(50)
         .all()
     )
     for modification in modifications:
@@ -399,8 +393,110 @@ def kardex(product_id):
         )
 
     movements.sort(key=lambda item: item["date"] or datetime.min, reverse=True)
-    return render_template("productos/kardex.html", product=product, movements=movements[:150])
+    return product, movements
 
+
+@bp.route("/<int:product_id>/kardex")
+@tenant_required
+def kardex(product_id):
+    product, movements = _get_kardex_movements(product_id)
+    if product is None:
+        flash("Producto no encontrado.", "warning")
+        return redirect(url_for("products.index"))
+    return render_template("productos/kardex.html", product=product, movements=movements, auto_print=False)
+
+
+@bp.route("/<int:product_id>/kardex/export.xlsx")
+@tenant_required
+def kardex_export_excel(product_id):
+    from openpyxl import Workbook
+
+    product, movements = _get_kardex_movements(product_id)
+    if product is None:
+        flash("Producto no encontrado.", "warning")
+        return redirect(url_for("products.index"))
+
+    workbook = Workbook()
+    sheet = workbook.active
+    sheet.title = "Kardex"
+    sheet.append(["Fecha", "Tipo", "Detalle", "Cantidad", "Valor unitario", "Importe"])
+    for movement in movements:
+        quantity = movement["quantity"]
+        unit_value = movement["unit_value"]
+        sheet.append([
+            movement["date"].strftime("%Y-%m-%d %H:%M:%S") if movement["date"] else "",
+            movement["type"], movement["detail"], quantity, unit_value,
+            (quantity * unit_value) if quantity is not None and unit_value is not None else None,
+        ])
+    sheet.freeze_panes = "A2"
+    sheet.auto_filter.ref = sheet.dimensions
+    for column in sheet.columns:
+        width = min(max(max(len(str(cell.value or "")) for cell in column) + 2, 12), 48)
+        sheet.column_dimensions[column[0].column_letter].width = width
+
+    buffer = BytesIO()
+    workbook.save(buffer)
+    buffer.seek(0)
+    return send_file(
+        buffer, mimetype="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        as_attachment=True, download_name="kardex_{}_{}.xlsx".format(product.id, utcnow().strftime("%Y%m%d")),
+    )
+
+
+@bp.route("/<int:product_id>/kardex/export.pdf")
+@tenant_required
+def kardex_export_pdf(product_id):
+    from reportlab.lib import colors
+    from reportlab.lib.pagesizes import A4, landscape
+    from reportlab.lib.styles import getSampleStyleSheet
+    from reportlab.lib.units import mm
+    from reportlab.platypus import SimpleDocTemplate, Table, TableStyle, Paragraph, Spacer
+
+    product, movements = _get_kardex_movements(product_id)
+    if product is None:
+        flash("Producto no encontrado.", "warning")
+        return redirect(url_for("products.index"))
+
+    buffer = BytesIO()
+    document = SimpleDocTemplate(buffer, pagesize=landscape(A4), rightMargin=10 * mm, leftMargin=10 * mm, topMargin=10 * mm, bottomMargin=10 * mm)
+    styles = getSampleStyleSheet()
+    rows = [["Fecha", "Tipo", "Detalle", "Cantidad", "Valor unit.", "Importe"]]
+    for movement in movements:
+        quantity = movement["quantity"]
+        unit_value = movement["unit_value"]
+        rows.append([
+            movement["date"].strftime("%Y-%m-%d %H:%M:%S") if movement["date"] else "",
+            movement["type"], movement["detail"],
+            "{:.3f}".format(quantity) if quantity is not None else "",
+            "${:.2f}".format(unit_value) if unit_value is not None else "",
+            "${:.2f}".format(quantity * unit_value) if quantity is not None and unit_value is not None else "",
+        ])
+    table = Table(rows, repeatRows=1)
+    table.setStyle(TableStyle([
+        ("BACKGROUND", (0, 0), (-1, 0), colors.HexColor("#e9eef5")),
+        ("GRID", (0, 0), (-1, -1), 0.35, colors.grey),
+        ("FONTNAME", (0, 0), (-1, 0), "Helvetica-Bold"),
+        ("FONTSIZE", (0, 0), (-1, -1), 8),
+        ("VALIGN", (0, 0), (-1, -1), "TOP"),
+    ]))
+    story = [
+        Paragraph("<b>Kardex — {}</b>".format(product.name), styles["Title"]),
+        Paragraph("Código: {} · Stock actual: {:.3f} {}".format(product.barcode or "-", float(product.stock or 0), product.unit_measure or ""), styles["Normal"]),
+        Spacer(1, 5 * mm), table,
+    ]
+    document.build(story)
+    buffer.seek(0)
+    return send_file(buffer, mimetype="application/pdf", as_attachment=True, download_name="kardex_{}_{}.pdf".format(product.id, utcnow().strftime("%Y%m%d")))
+
+
+@bp.route("/<int:product_id>/kardex/imprimir")
+@tenant_required
+def kardex_print(product_id):
+    product, movements = _get_kardex_movements(product_id)
+    if product is None:
+        flash("Producto no encontrado.", "warning")
+        return redirect(url_for("products.index"))
+    return render_template("productos/kardex.html", product=product, movements=movements, auto_print=True)
 
 @bp.route("/export.xlsx")
 @tenant_required
