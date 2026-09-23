@@ -670,7 +670,7 @@ def import_excel():
         skipped = 0
         duplicate_rows = 0
 
-        for row_number, row in enumerate(iterator, start=2):
+        for row_number, row in enumerate(iterator, start=header_row_number + 1):
             if row_number > max_rows + 1:
                 raise ValueError(f"El archivo supera el limite de {max_rows} productos por importacion.")
 
