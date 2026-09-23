@@ -8668,3 +8668,72 @@ def test_products_import_matches_stockarmobile_exported_headers():
         assert float(first.price or 0) == pytest.approx(3900)
         assert float(second.price or 0) == pytest.approx(1450)
 
+
+
+def test_products_import_accepts_shuffled_columns_and_human_headers():
+    from openpyxl import Workbook
+
+    with stock_app.app.app_context():
+        client = stock_app.app.test_client()
+        client.post("/auth/login", data={"username": "negocio_admin", "password": "admin123"})
+
+        workbook = Workbook()
+        sheet = workbook.active
+        sheet.title = "Carga"
+        sheet.append(["Precio de venta unitario", "Columna extra", "Nombre del artículo", "Existencia actual", "Código de Barra / EAN", "Costo unitario"])
+        sheet.append(["$ 4.250,50", "ignorar", "Aceite Girasol 900ml", "12", "7791234567890", "2.300,25"])
+        sheet.append(["5250.00", "ignorar", "Arroz 1 kg", "8", "7791234567891", "3100.00"])
+
+        response = client.post(
+            "/productos/import",
+            data={"file": (_workbook_bytes(workbook), "productos_columnas_desordenadas.xlsx")},
+            content_type="multipart/form-data",
+            follow_redirects=True,
+        )
+
+        assert response.status_code == 200
+
+        aceite = Product.query.filter_by(barcode="7791234567890").first()
+        arroz = Product.query.filter_by(barcode="7791234567891").first()
+        assert aceite is not None
+        assert arroz is not None
+        assert aceite.name == "Aceite Girasol 900ml"
+        assert float(aceite.cost_price or 0) == pytest.approx(2300.25)
+        assert float(aceite.price or 0) == pytest.approx(4250.50)
+        assert float(aceite.stock or 0) == pytest.approx(12)
+        assert float(arroz.price or 0) == pytest.approx(5250.00)
+
+
+def test_products_import_ignores_presentation_rows_and_uses_matching_sheet():
+    from openpyxl import Workbook
+
+    with stock_app.app.app_context():
+        client = stock_app.app.test_client()
+        client.post("/auth/login", data={"username": "negocio_admin", "password": "admin123"})
+
+        workbook = Workbook()
+        portada = workbook.active
+        portada.title = "Portada"
+        portada.append(["Lista de precios"])
+        portada.append(["Actualizada", "23/09/2026"])
+        portada.append(["Sin datos de productos"])
+
+        sheet = workbook.create_sheet("Carga masiva")
+        sheet.append(["PRODUCTOS - SEPTIEMBRE"])
+        sheet.append([])
+        sheet.append(["SKU", "Nombre del producto", "Precio de venta unitario", "Cantidad en stock"])
+        sheet.append(["SKU-900", "Galletitas surtidas", 1800, 24])
+
+        response = client.post(
+            "/productos/import",
+            data={"file": (_workbook_bytes(workbook), "productos_presentacion.xlsx")},
+            content_type="multipart/form-data",
+            follow_redirects=True,
+        )
+
+        assert response.status_code == 200
+        imported = Product.query.filter_by(barcode="SKU-900").first()
+        assert imported is not None
+        assert imported.name == "Galletitas surtidas"
+        assert float(imported.price or 0) == pytest.approx(1800)
+        assert float(imported.stock or 0) == pytest.approx(24)
