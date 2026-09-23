@@ -8602,8 +8602,8 @@ def test_products_import_detects_header_after_title_and_accepts_common_aliases()
         imported = Product.query.filter_by(barcode="IMP-001").first()
         assert imported is not None
         assert imported.name == "Producto importado"
-        assert imported.price == pytest.approx(2499.90)
-        assert imported.stock == pytest.approx(7)
+        assert float(imported.price or 0) == pytest.approx(2499.90)
+        assert float(imported.stock or 0) == pytest.approx(7)
 
 
 def test_products_import_can_use_a_non_active_sheet_when_active_sheet_has_no_headers():
