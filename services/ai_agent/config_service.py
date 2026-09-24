@@ -32,6 +32,7 @@ VENDOR_OPTION_DEFAULTS = {
     "business_information": "",
     "shipping_mode": "fixed",
     "standard_shipping_cost": "0.00",
+    "checkout_charges": [],
 }
 VENDOR_ALLOWED_PERSONALITIES = {"profesional", "amigable", "directo", "comercial"}
 VENDOR_SHIPPING_MODES = {"fixed"}
@@ -162,6 +163,40 @@ def normalize_vendor_options(raw: Optional[Dict[str, Any]] = None) -> Dict[str, 
     except Exception:
         standard_cost = Decimal("0.00")
     options["standard_shipping_cost"] = str(max(standard_cost, Decimal("0.00")))[:32]
+
+    raw_charges = source.get("checkout_charges") if isinstance(source.get("checkout_charges"), list) else []
+    normalized_charges = []
+    allowed_types = {"fixed", "percentage"}
+    allowed_bases = {"products", "products_shipping", "previous_total"}
+    for index, charge in enumerate(raw_charges[:20]):
+        if not isinstance(charge, dict):
+            continue
+        name = str(charge.get("name") or "").strip()[:120]
+        if not name:
+            continue
+        charge_type = str(charge.get("type") or "fixed").strip().lower()
+        if charge_type not in allowed_types:
+            charge_type = "fixed"
+        base = str(charge.get("base") or "products").strip().lower()
+        if base not in allowed_bases:
+            base = "products"
+        try:
+            value = Decimal(str(charge.get("value") or "0")).quantize(Decimal("0.01"))
+        except Exception:
+            value = Decimal("0.00")
+        if value < Decimal("0.00"):
+            value = Decimal("0.00")
+        if charge_type == "percentage" and value > Decimal("100.00"):
+            value = Decimal("100.00")
+        normalized_charges.append({
+            "id": str(charge.get("id") or f"charge-{index + 1}")[:64],
+            "name": name,
+            "type": charge_type,
+            "value": str(value),
+            "base": base,
+            "active": _coerce_bool(charge.get("active"), True),
+        })
+    options["checkout_charges"] = normalized_charges
 
     for key, limit in (
         ("agent_name", 120),
