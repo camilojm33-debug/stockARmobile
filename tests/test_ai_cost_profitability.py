@@ -351,7 +351,7 @@ def test_profitability_snapshot_ready_with_fx_and_agent_costs(app, monkeypatch):
 
         assert snapshot["status"] == "ready"
         assert snapshot["plan_code"] == "pro"
-        assert snapshot["plan_list_price_ars"] == 110000.0
+        assert snapshot["plan_list_price_ars"] == 172390.0
         assert snapshot["estimated_cost_usd"] == 0.2
         assert snapshot["estimated_cost_ars"] == 240.0
         assert snapshot["estimated_gross_contribution_ars"] == 109760.0
@@ -460,9 +460,9 @@ def test_profitability_snapshot_reports_no_ai_plan(app):
     ("plan_code", "expected"),
     [
         ("inicio", 11385.0),
-        ("vendedor", 27885.0),
-        ("negocio", 45885.0),
-        ("pro", 110000.0),
+        ("vendedor", 47890.0),
+        ("negocio", 67890.0),
+        ("pro", 172390.0),
     ],
 )
 def test_plan_monthly_price_ars_matches_catalog(plan_code, expected):
@@ -535,6 +535,6 @@ def test_profitability_snapshot_reports_no_ai_usage(app):
         assert snapshot["status"] == "no_ai_usage"
         assert snapshot["estimated_cost_usd"] == 0.0
         assert snapshot["estimated_cost_ars"] == 0.0
-        assert snapshot["estimated_gross_contribution_ars"] == 110000.0
+        assert snapshot["estimated_gross_contribution_ars"] == 172150.0
         assert snapshot["estimated_margin_percent"] == 100.0
         assert snapshot["cost_pricing_configured"] is False
