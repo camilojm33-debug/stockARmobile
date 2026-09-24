@@ -625,7 +625,12 @@ def checkout():
 @tenant_required
 def api_checkout():
     payload = request.get_json(silent=True) or {}
-    current_app.logger.info("[sales] carrito recibido (api_checkout): payload=%s", payload)
+    current_app.logger.info(
+        "[sales] checkout recibido: company_id=%s user_id=%s items=%s",
+        getattr(current_user, "company_id", None),
+        getattr(current_user, "id", None),
+        len(payload.get("items") or []) if isinstance(payload, dict) else 0,
+    )
     incoming_tenant = (request.headers.get("X-Cart-Tenant") or "").strip()
     expected_tenant = _cart_tenant_key()
     if incoming_tenant != expected_tenant:
