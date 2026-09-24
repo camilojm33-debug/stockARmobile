@@ -1119,3 +1119,40 @@ def test_sale_totals_support_explicit_tax_snapshot():
     assert totals["surcharge"] == 50000
     assert totals["tax"] == 30450
     assert totals["total"] == 225450
+
+
+def test_ai_order_row_does_not_show_pending_payment_after_manual_conversion(vendor_database):
+    from whatsapp_agent import _ai_order_row
+    data = vendor_database
+    conversation = _conversation(data["company_a"].id)
+    quote = Quote(
+        company_id=data["company_a"].id,
+        created_by_user_id=data["user_a"].id,
+        seller_id=data["user_a"].id,
+        client_id=data["client_a"].id,
+        number="P-MANUAL-001",
+        subtotal=100,
+        total_amount=142,
+        surcharge=0,
+        tax=42,
+        status="CONVERTIDO",
+        converted_sale_id=773,
+        observations="Pedido generado por el Vendedor 24 hs de StockARmobile.",
+    )
+    db.session.add(quote)
+    db.session.flush()
+    payment = Payment(
+        company_id=data["company_a"].id,
+        provider="mercadopago_ai_order",
+        external_reference=f"flow:ai_order|company_id:{data['company_a'].id}|quote_id:{quote.id}|conversation_id:{conversation.id}|",
+        status="pending",
+    )
+    db.session.add(payment)
+    db.session.commit()
+
+    row = _ai_order_row(data["company_a"].id, quote)
+
+    assert row["order_key"] == "confirmed"
+    assert row["order_label"] == "Confirmado · venta manual"
+    assert row["payment_status"] == "pending"
+    assert row["payment_label"] == "Cerrado por venta manual"
