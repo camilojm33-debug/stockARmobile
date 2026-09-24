@@ -5,6 +5,7 @@ from decimal import Decimal
 from flask import current_app, flash, jsonify, redirect, session, url_for
 from flask_login import current_user
 from sqlalchemy.exc import IntegrityError
+from sqlalchemy.orm import selectinload
 
 from stockarmobile.constants import SALE_STATUS_CONFIRMED
 
