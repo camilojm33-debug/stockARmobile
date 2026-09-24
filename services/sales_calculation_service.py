@@ -238,6 +238,7 @@ def calculate_sale_totals(
     surcharge_reason=None,
     discount_applied_amount=None,
     surcharge_applied_amount=None,
+    tax=0,
 ):
     normalized_lines = []
     subtotal = Decimal("0.00")
@@ -286,7 +287,8 @@ def calculate_sale_totals(
     if taxable < Decimal("0.00"):
         taxable = Decimal("0.00")
     taxable = quantize_money(taxable)
-    final_total = quantize_money(taxable + safe_surcharge)
+    tax_amount = clamp_non_negative_money(tax)
+    final_total = quantize_money(taxable + safe_surcharge + tax_amount)
 
     order_discount_adjustment = quantize_money(safe_general_discount - safe_surcharge)
 
@@ -322,7 +324,7 @@ def calculate_sale_totals(
         "surcharge": safe_surcharge,
         "discount_adjustment": discount_adjustment,
         "surcharge_adjustment": surcharge_adjustment,
-        "tax": Decimal("0.00"),
+        "tax": tax_amount,
         "total": final_total,
         "lines": normalized_lines,
     }
