@@ -862,7 +862,7 @@ def test_ai_followup_planner_pauses_when_human_attention_is_active(vendor_databa
 
     assert result["queued"] == 0
     assert result["eligible"] == 0
-(company, *, charges):
+def _configure_vendor_charges(company, *, charges):
     payload = {"ai_agent": {"vendor_options": {
         "shipping_mode": "fixed",
         "standard_shipping_cost": "0.00",
