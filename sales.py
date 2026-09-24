@@ -137,16 +137,28 @@ def _quote_id_from_checkout_token(token):
 
 
 def _mark_quote_as_converted_from_checkout_token(checkout_token, sale_id):
-    from app import Quote, db, scope_query_to_company
+    from app import Payment, Quote, db, scope_query_to_company
 
     quote_id = _quote_id_from_checkout_token(checkout_token)
     if not quote_id:
         return
-    quote = scope_query_to_company(db.session.query(Quote), Quote).filter(Quote.id == quote_id).first()
+    quote = scope_query_to_company(db.session.query(Quote), Quote).filter(Quote.id == quote_id).with_for_update().first()
     if quote is None:
         return
     quote.status = "CONVERTIDO"
     quote.converted_sale_id = sale_id
+
+    # A manual POS conversion closes the AI checkout locally. Any late Mercado
+    # Pago webhook must see the converted quote and must never create a second sale.
+    payments = Payment.query.filter(
+        Payment.company_id == quote.company_id,
+        Payment.provider == "mercadopago_ai_order",
+        Payment.external_reference.like(f"flow:ai_order|company_id:{int(quote.company_id)}|quote_id:{int(quote.id)}|%"),
+        Payment.status.in_(["pending", "in_process", "authorized"]),
+    ).all()
+    for payment in payments:
+        payment.status = "cancelled"
+        payment.reference = f"manual_conversion:sale_id:{int(sale_id)}"
 
 
 def _current_open_cash_session():
