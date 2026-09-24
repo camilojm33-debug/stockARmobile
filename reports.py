@@ -72,15 +72,15 @@ def _balance_rows(start_value=None, end_value=None):
     from app import Expense, PurchaseOrder, Sale, db, scope_query_to_company
     start_utc, end_utc, _, _, _ = _local_date_range(start_value, end_value)
 
-    def total(model, column):
+    def total(model, amount_column, date_column):
         query = scope_query_to_company(
-            db.session.query(db.func.coalesce(db.func.sum(column), 0)), model
-        ).filter(column >= start_utc, column < end_utc)
+            db.session.query(db.func.coalesce(db.func.sum(amount_column), 0)), model
+        ).filter(date_column >= start_utc, date_column < end_utc)
         return float(query.scalar() or 0)
 
-    sales_total = total(Sale, Sale.total_amount)
-    purchases_total = total(PurchaseOrder, PurchaseOrder.total_amount)
-    expenses_total = total(Expense, Expense.amount)
+    sales_total = total(Sale, Sale.total_amount, Sale.date)
+    purchases_total = total(PurchaseOrder, PurchaseOrder.total_amount, PurchaseOrder.date)
+    expenses_total = total(Expense, Expense.amount, Expense.date)
     return [("Ventas", sales_total), ("Compras", purchases_total), ("Gastos", expenses_total), ("Resultado", sales_total - purchases_total - expenses_total)]
 
 
