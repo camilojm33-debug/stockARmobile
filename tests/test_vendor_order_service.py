@@ -869,8 +869,7 @@ def test_vendor_quote_snapshot_is_rendered_in_public_pdf_detail_and_whatsapp(ven
     assert len(pdf.data) > 0
 
 
-def test_manual_quote_acceptance_keeps_quote_and_does_not_create_sale(vendor_database):
-    data = vendor_database
+def _create_manual_quote_for_public_acceptance(data):
     quote = Quote(
         company_id=data["company_a"].id,
         created_by_user_id=data["user_a"].id,
@@ -900,9 +899,31 @@ def test_manual_quote_acceptance_keeps_quote_and_does_not_create_sale(vendor_dat
         )
     )
     db.session.commit()
+    return quote
+
+
+def test_public_quote_acceptance_get_is_side_effect_free(vendor_database):
+    data = vendor_database
+    quote = _create_manual_quote_for_public_acceptance(data)
 
     client = stock_app.app.test_client()
     response = client.get(_build_public_quote_accept_url(quote.id), follow_redirects=False)
+
+    assert response.status_code in (301, 302)
+    db.session.refresh(quote)
+    assert quote.status == "ENVIADO"
+    assert quote.converted_sale_id is None
+    from app import Sale
+    assert Sale.query.filter_by(company_id=data["company_a"].id).count() == 0
+
+
+def test_manual_quote_acceptance_requires_post_and_does_not_create_sale(vendor_database):
+    data = vendor_database
+    quote = _create_manual_quote_for_public_acceptance(data)
+
+    client = stock_app.app.test_client()
+    response = client.post(_build_public_quote_accept_url(quote.id), follow_redirects=False)
+
     assert response.status_code in (301, 302)
     db.session.refresh(quote)
     assert quote.status == "APROBADO"
