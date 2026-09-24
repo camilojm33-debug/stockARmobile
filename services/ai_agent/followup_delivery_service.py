@@ -234,6 +234,9 @@ class AIFollowupDeliveryService:
             if stats["sent"] >= limit:
                 break
             metadata = _metadata(conversation)
+            attention = metadata.get("ai_attention")
+            if isinstance(attention, dict) and str(attention.get("status") or "").strip().lower() in {"human", "resolved"}:
+                continue
             outbox = _outbox(conversation, metadata)
             pending = [
                 item
