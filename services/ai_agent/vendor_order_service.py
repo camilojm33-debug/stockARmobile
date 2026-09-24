@@ -1035,7 +1035,7 @@ class VendorOrderService:
         payment = payment or VendorOrderService._payment_for_quote(company_id=company_id, quote_id=quote.id)
         payment_status = str(getattr(payment, "status", "pending") or "pending").lower() if payment else "pending"
         if quote.converted_sale_id:
-            order_status = "confirmado"
+            order_status = "confirmado_manual" if payment_status != "approved" else "confirmado"
         elif payment_status == "approved":
             order_status = "pagado"
         elif payment_status in {"pending", "in_process", "authorized"}:
