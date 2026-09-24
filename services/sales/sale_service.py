@@ -119,10 +119,9 @@ class SaleService:
                     if self._to_decimal(line["quantity"]) != expected_line["quantity"]:
                         raise ValueError("La cantidad del carrito fue modificada respecto del presupuesto.")
                     line["price"] = expected_line["price"]
-                    line["discount"] = (
-                        expected_line["discount"] / expected_line["quantity"]
-                        if expected_line["quantity"] > 0 else Decimal("0.00")
-                    )
+                    # InventoryService already stores line discount as a total
+                    # amount, not a per-unit amount.
+                    line["discount"] = expected_line["discount"]
                 promotion_results = []
             elif checkout_token and checkout_token.startswith("quote-cart-") or data.get("line_discounts") or data.get("line_discount_overrides"):
                 promotion_results = []
