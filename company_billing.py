@@ -1069,7 +1069,7 @@ def subscription_portal():
 
 
 @bp.route("/subscription/invoices/<int:invoice_id>")
-@company_member_required
+@company_admin_required
 def subscription_invoice_detail(invoice_id):
     from app import Company, Invoice
 
@@ -1080,7 +1080,7 @@ def subscription_invoice_detail(invoice_id):
 
 
 @bp.route("/subscription/invoices/<int:invoice_id>/pdf")
-@company_member_required
+@company_admin_required
 def subscription_invoice_pdf(invoice_id):
     from app import Company, Invoice
 
@@ -1100,13 +1100,13 @@ def subscription_invoice_pdf(invoice_id):
 
 
 @bp.route("/company-settings/billing/payment/<int:payment_id>/pdf")
-@company_member_required
+@company_admin_required
 def legacy_subscription_payment_pdf(payment_id):
     return subscription_payment_pdf(payment_id)
 
 
 @bp.route("/subscription/payments/<int:payment_id>/pdf")
-@company_member_required
+@company_admin_required
 def subscription_payment_pdf(payment_id):
     from app import Company, Payment
 
@@ -3111,7 +3111,7 @@ def company_settings():
 
 
 @bp.route("/company-settings/day-activity")
-@company_member_required
+@company_admin_required
 def company_settings_day_activity():
     from app import CashMovement, CashSession, Company, Expense, PurchaseOrder, Quote, Sale
     from services.sales_calculation_service import is_confirmed_sale_status
