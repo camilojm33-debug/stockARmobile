@@ -242,6 +242,7 @@ def build_vendor_runtime_instructions(
         f"- Tomar pedidos: {'sí' if options['can_take_orders'] else 'no'}",
         "- Gestión de envíos: costo fijo configurado automáticamente por el comercio",
         f"- Costo fijo de envío configurado: ${options['standard_shipping_cost']} ARS",
+        f"- Cargos configurados para el checkout: {', '.join(charge['name'] for charge in options['checkout_charges'] if charge.get('active')) or 'ninguno'}",
         f"- Seguimiento posterior: {'sí' if options['can_follow_up'] else 'no'}",
         f"- Derivación a una persona: {'sí' if options['can_handoff'] else 'no'}",
     ]
