@@ -9031,7 +9031,7 @@ def test_business_billing_filters_respect_date_and_cuit():
     client = stock_app.app.test_client()
     client.post("/auth/login", data={"username": "negocio_admin", "password": "admin123"})
     response = client.get(
-        "/admin/facturacion?tab=dashboard&date_from=2026-09-23&date_to=2026-09-23&cuit=30-12345678-9"
+        "/admin/facturacion?tab=dashboard&date_from=2026-09-23&date_to=2026-09-23"
     )
     assert response.status_code == 200
     html = response.get_data(as_text=True)
@@ -9040,3 +9040,11 @@ def test_business_billing_filters_respect_date_and_cuit():
     assert "Cliente Otro" not in html
     assert "Cliente Limite Incluido" in html
     assert "Cliente Limite Excluido" not in html
+
+    cuit_response = client.get(
+        "/admin/facturacion?tab=dashboard&date_from=2026-09-23&date_to=2026-09-23&cuit=30-12345678-9"
+    )
+    assert cuit_response.status_code == 200
+    cuit_html = cuit_response.get_data(as_text=True)
+    assert "Cliente Fiscal" in cuit_html
+    assert "Cliente Otro" not in cuit_html
