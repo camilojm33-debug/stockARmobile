@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import os
 from decimal import Decimal, InvalidOperation
 
@@ -336,6 +337,14 @@ def vendor_save():
         if value < 0:
             value = Decimal("0.00")
         vendor_options["standard_shipping_cost"] = str(value.quantize(Decimal("0.01")))
+
+    if "vendor_checkout_charges_json" in request.form:
+        try:
+            submitted_charges = json.loads(request.form.get("vendor_checkout_charges_json") or "[]")
+        except (TypeError, ValueError, json.JSONDecodeError):
+            submitted_charges = []
+        vendor_options["checkout_charges"] = submitted_charges if isinstance(submitted_charges, list) else []
+
     update_ai_preferences(company, ai_updates={"vendor_options": vendor_options})
 
     try:
