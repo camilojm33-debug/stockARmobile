@@ -10,6 +10,7 @@ import app as stock_app
 from app import Client, Company, Payment, Product, Quote, QuoteDelivery, User, db
 from quotes import _build_public_quote_accept_url, _build_public_quote_pdf_url, _build_public_quote_url, _build_quote_whatsapp_message, _quote_charge_display_rows
 from services.ai_agent.orchestrator_v2 import AgentRuntime
+from services.ai_agent.followup_service import AIFollowupService
 from services.ai_agent.vendor_order_service import (
     CART_KEY,
     LAST_ORDER_KEY,
@@ -784,7 +785,84 @@ def test_retry_payment_reuses_persisted_checkout_charges(vendor_database, monkey
     )["quote_number"]
 
 
-def _configure_vendor_charges(company, *, charges):
+
+def test_ai_order_attention_state_is_tenant_scoped_and_visible(vendor_database):
+    data = vendor_database
+    conversation = _conversation(data["company_a"].id)
+    conversation.metadata_json = {
+        "ai_attention": {
+            "status": "human",
+            "reason": "Cliente pidió hablar con una persona.",
+            "requested_at": "2026-09-24T02:00:00",
+        }
+    }
+    from app import Payment
+
+    quote = Quote(
+        company_id=data["company_a"].id,
+        created_by_user_id=data["user_a"].id,
+        seller_id=data["user_a"].id,
+        client_id=data["client_a"].id,
+        number="P-ATTN-001",
+        subtotal=100,
+        total_amount=100,
+        status="ENVIADO",
+        observations="Pedido generado por el Vendedor 24 hs de StockARmobile.",
+    )
+    db.session.add(quote)
+    db.session.flush()
+    payment = Payment(
+        company_id=data["company_a"].id,
+        provider="mercadopago_ai_order",
+        external_reference=f"flow:ai_order|company_id:{data['company_a'].id}|quote_id:{quote.id}|conversation_id:{conversation.id}|",
+        status="pending",
+    )
+    db.session.add(payment)
+    db.session.commit()
+
+    from whatsapp_agent import _ai_order_row
+
+    row = _ai_order_row(data["company_a"].id, quote)
+    assert row["conversation_id"] == conversation.id
+    assert row["attention"]["key"] == "human"
+    assert row["attention"]["label"] == "Atención humana"
+    assert row["attention"]["reason"] == "Cliente pidió hablar con una persona."
+
+
+
+def test_ai_followup_planner_pauses_when_human_attention_is_active(vendor_database):
+    data = vendor_database
+    conversation = _conversation(data["company_a"].id)
+    conversation.external_conversation_id = "5491112345678"
+    conversation.metadata_json = {
+        "ai_attention": {"status": "human", "reason": "Cliente pidió atención humana."},
+        "vendor_cart": {
+            "items": [{"product_id": data["product_a"].id, "quantity": 1, "unit_price": 100}],
+            "total": 100,
+            "currency": "ARS",
+            "line_count": 1,
+        },
+    }
+    from app import ConversationMessage
+    from datetime import datetime
+
+    db.session.add(
+        ConversationMessage(
+            company_id=conversation.company_id,
+            conversation_id=conversation.id,
+            sender_type="user",
+            role="user",
+            content="Quiero hablar con una persona",
+            created_at=datetime(2026, 9, 24, 0, 0, 0),
+        )
+    )
+    db.session.commit()
+
+    result = AIFollowupService.scan(now=datetime(2026, 9, 24, 3, 0, 0), dry_run=True)
+
+    assert result["queued"] == 0
+    assert result["eligible"] == 0
+(company, *, charges):
     payload = {"ai_agent": {"vendor_options": {
         "shipping_mode": "fixed",
         "standard_shipping_cost": "0.00",
