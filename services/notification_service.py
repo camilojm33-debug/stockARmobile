@@ -7,6 +7,7 @@ from hashlib import sha256
 from urllib.parse import urlparse
 
 from flask_login import current_user
+from sqlalchemy.exc import OperationalError, ProgrammingError
 
 from stockarmobile.permissions import EMPLOYEE_ADMIN_ONLY, parse_permissions_json, user_role
 
@@ -181,7 +182,12 @@ def _current_notification_state(items):
     from app import NotificationReadState
 
     signature = _signature_for_items(items)
-    state = NotificationReadState.query.filter_by(user_id=current_user.id).first()
+    try:
+        state = NotificationReadState.query.filter_by(user_id=current_user.id).first()
+    except (OperationalError, ProgrammingError):
+        # Keep the notification center available during legacy/test databases
+        # where the optional persistence table has not been created yet.
+        return None, signature, set()
     read_keys = set(_load_read_notification_keys(state))
     legacy_all_seen = bool(
         state
