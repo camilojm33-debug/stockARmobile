@@ -777,7 +777,10 @@ def test_retry_payment_reuses_persisted_checkout_charges(vendor_database, monkey
     retry_items = checkout_calls[1]["items"]
     assert any(item["title"] == "IVA 21%" and item["unit_price"] == 21.0 for item in retry_items)
     assert checkout_calls[1]["amount"] == 121.0
-    assert first["quote_id"] == second["quote_id"]
+    assert second["quote_number"] == VendorOrderService._order_row(
+        company_id=data["company_a"].id,
+        quote=db.session.get(Quote, first["quote_id"]),
+    )["quote_number"]
 
 
 def _configure_vendor_charges(company, *, charges):
