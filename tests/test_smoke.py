@@ -9257,6 +9257,17 @@ def test_employee_cannot_mutate_company_subscription_or_billing(monkeypatch):
     pin_regenerate = client.post("/admin/company-settings/pin/regenerate", follow_redirects=False)
     assert pin_regenerate.status_code == 403
 
+    private_billing_gets = [
+        "/admin/subscription/invoices/999999",
+        "/admin/subscription/invoices/999999/pdf",
+        "/admin/company-settings/billing/payment/999999/pdf",
+        "/admin/subscription/payments/999999/pdf",
+        "/admin/company-settings/day-activity?date=2026-09-24",
+    ]
+    for path in private_billing_gets:
+        response = client.get(path, follow_redirects=False)
+        assert response.status_code == 403, path
+
     # Permission enforcement is independent of whether the page exposes a
     # button to the employee.
     from stockarmobile.permissions import EMPLOYEE_ADMIN_ONLY, employee_endpoint_permission
