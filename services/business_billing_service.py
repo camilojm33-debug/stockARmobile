@@ -521,12 +521,15 @@ class BusinessBillingService:
             if (doc.source_type or "") == "quote" and doc.source_id not in persisted_quote:
                 persisted_quote[int(doc.source_id)] = doc
 
-        sales = (
+        sales_query = (
             Sale.query.filter_by(company_id=company_id)
             .order_by(Sale.date.desc(), Sale.id.desc())
-            .limit(600)
-            .all()
         )
+        if date_from:
+            sales_query = sales_query.filter(Sale.date >= date_from)
+        if date_to:
+            sales_query = sales_query.filter(Sale.date < date_to + timedelta(days=1))
+        sales = sales_query.limit(2000 if (date_from or date_to) else 600).all()
         for sale in sales:
             event_date = sale.date
             if not BusinessBillingService._filter_period(event_date, date_from, date_to):
@@ -546,7 +549,8 @@ class BusinessBillingService:
                 continue
             if search_client and search_client not in client_text.lower():
                 continue
-            if search_cuit and search_cuit not in client_text.lower():
+            client_tax_id = (getattr(persisted, "client_tax_id", None) or "").strip().lower() if persisted is not None else ""
+            if search_cuit and search_cuit not in client_tax_id:
                 continue
             if selected_type and selected_type != doc_type_key:
                 continue
@@ -587,12 +591,15 @@ class BusinessBillingService:
                 }
             )
 
-        quotes = (
+        quotes_query = (
             Quote.query.filter_by(company_id=company_id)
             .order_by(Quote.date.desc(), Quote.id.desc())
-            .limit(400)
-            .all()
         )
+        if date_from:
+            quotes_query = quotes_query.filter(Quote.date >= date_from)
+        if date_to:
+            quotes_query = quotes_query.filter(Quote.date < date_to + timedelta(days=1))
+        quotes = quotes_query.limit(1200 if (date_from or date_to) else 400).all()
         for quote in quotes:
             event_date = quote.date
             if not BusinessBillingService._filter_period(event_date, date_from, date_to):
@@ -616,7 +623,8 @@ class BusinessBillingService:
                 continue
             if search_client and search_client not in client_text.lower():
                 continue
-            if search_cuit and search_cuit not in client_text.lower():
+            client_tax_id = (getattr(persisted, "client_tax_id", None) or "").strip().lower() if persisted is not None else ""
+            if search_cuit and search_cuit not in client_tax_id:
                 continue
             if selected_type and selected_type != doc_type_key:
                 continue
