@@ -9154,3 +9154,74 @@ def test_operational_filters_work_for_products_sales_clients_and_cash():
     assert response.status_code == 200
     html = response.get_data(as_text=True)
     assert 'Sesiones visibles</div><div class="h4 mb-0">1</div>' in html
+
+
+def test_notifications_are_read_and_removed_individually():
+    client = stock_app.app.test_client()
+    login_response = client.post(
+        "/auth/login",
+        data={"username": "empresa_admin", "password": "admin123"},
+    )
+    assert login_response.status_code in (200, 302)
+
+    from services import notification_service
+
+    notification_items = [
+        {
+            "type": "success",
+            "title": "Venta nueva",
+            "body": "Venta #100",
+            "href": "/ventas/100",
+            "permission": "sales",
+        },
+        {
+            "type": "warning",
+            "title": "Stock bajo",
+            "body": "Producto Yerba kilo",
+            "href": "/productos/",
+            "permission": "inventory",
+        },
+    ]
+
+    original_builder = notification_service.build_notifications
+    try:
+        notification_service.build_notifications = lambda: notification_items
+
+        first = client.get("/api/notifications")
+        assert first.status_code == 200
+        first_payload = first.get_json()
+        assert first_payload["count"] == 2
+        assert len(first_payload["items"]) == 2
+
+        # Opening the center must not consume every alert. Only the notification
+        # explicitly opened by the user is marked as read.
+        second = client.get("/api/notifications")
+        assert second.get_json()["count"] == 2
+
+        first_key = first_payload["items"][0]["notification_key"]
+        first_read = client.post(
+            "/api/notifications/mark-read",
+            json={"notification_key": first_key},
+        )
+        assert first_read.status_code == 200
+        assert first_read.get_json()["ok"] is True
+        assert first_read.get_json()["count"] == 1
+
+        after_first = client.get("/api/notifications")
+        after_first_payload = after_first.get_json()
+        assert after_first_payload["count"] == 1
+        assert [item["title"] for item in after_first_payload["items"]] == ["Stock bajo"]
+
+        second_key = after_first_payload["items"][0]["notification_key"]
+        second_read = client.post(
+            "/api/notifications/mark-read",
+            json={"notification_key": second_key},
+        )
+        assert second_read.status_code == 200
+        assert second_read.get_json()["count"] == 0
+
+        empty = client.get("/api/notifications")
+        assert empty.get_json()["count"] == 0
+        assert empty.get_json()["items"] == []
+    finally:
+        notification_service.build_notifications = original_builder
