@@ -81,8 +81,6 @@ class SaleService:
                         raise ValueError("No se encontró el presupuesto de origen.")
                     if getattr(current_user, "role", None) not in {"admin", "superadmin"} and int(quote_snapshot.seller_id or 0) != int(current_user.id or 0):
                         raise ValueError("No tenés permiso para convertir este presupuesto.")
-                    if str(quote_snapshot.status or "").upper() in {"ANULADO", "RECHAZADO", "VENCIDO"}:
-                        raise ValueError("El presupuesto no está disponible para convertir.")
                     ai_payment = (
                         scope_query_to_company(Payment.query, Payment)
                         .filter(
