@@ -248,7 +248,28 @@ class WebhookService:
                     raise RuntimeError("Webhook Mercado Pago de pedido IA con empresa inconsistente")
                 if merchant_connection is not None and int(merchant_connection.company_id or 0) != company_id:
                     raise RuntimeError("Webhook Mercado Pago de pedido IA con cuenta vendedora de otra empresa")
-                if payment_status == "approved":
+                quote = Quote.query.filter_by(id=quote_id, company_id=company_id).first()
+                if quote is None:
+                    raise RuntimeError("Webhook Mercado Pago de pedido IA sin presupuesto válido")
+
+                # A manual POS conversion wins the order lifecycle. A late MP
+                # approval must not recreate the sale or double-apply stock.
+                if quote.converted_sale_id:
+                    payment = Payment.query.filter(
+                        Payment.company_id == company_id,
+                        Payment.provider == "mercadopago_ai_order",
+                        Payment.external_reference == external_reference,
+                    ).first()
+                    if payment is not None and payment.status in {"pending", "in_process", "authorized"}:
+                        payment.status = "cancelled"
+                    result = {
+                        "status": "ignored_manual_conversion",
+                        "payment_status": payment_status,
+                        "quote_id": quote_id,
+                        "sale_id": quote.converted_sale_id,
+                        "event_key": event_key,
+                    }
+                elif payment_status == "approved":
                     result = VendorOrderService.finalize_paid_order(
                         company_id=company_id,
                         quote_id=quote_id,
