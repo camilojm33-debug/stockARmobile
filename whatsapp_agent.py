@@ -499,6 +499,11 @@ def ai_order_attention(quote_id: int):
             "requested_at": now,
             "requested_by_user_id": int(current_user.id),
         }
+        for item in metadata.get("ai_outbox") or []:
+            if isinstance(item, dict) and str(item.get("status") or "pending") == "pending":
+                item["status"] = "blocked"
+                item["blocked_at"] = now
+                item["error"] = "Atención humana solicitada."
         flash("Pedido marcado para atención humana.", "success")
     elif action == "resolve":
         metadata["ai_attention"] = {
@@ -507,6 +512,11 @@ def ai_order_attention(quote_id: int):
             "resolved_at": now,
             "resolved_by_user_id": int(current_user.id),
         }
+        for item in metadata.get("ai_outbox") or []:
+            if isinstance(item, dict) and str(item.get("status") or "pending") == "pending":
+                item["status"] = "blocked"
+                item["blocked_at"] = now
+                item["error"] = "Atención humana cerrada; reanudación IA pendiente de acción."
         flash("Atención humana marcada como resuelta.", "success")
     elif action == "resume_ai":
         metadata.pop("ai_attention", None)
