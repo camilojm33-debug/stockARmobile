@@ -272,6 +272,115 @@ def _shipping_plan(company_id: int, cart_total: Decimal, method: str) -> Dict[st
     }
 
 
+def _checkout_charge_plan(company_id: int, *, product_total: Decimal, shipping_cost: Decimal) -> Dict[str, Any]:
+    """Calculate merchant-configured checkout charges on the server."""
+    from app import Company
+
+    company = Company.query.filter_by(id=int(company_id), active=True).first()
+    if company is None:
+        raise ValueError("Empresa no encontrada para calcular los cargos.")
+
+    options = get_vendor_options(company)
+    configured = options.get("checkout_charges") if isinstance(options.get("checkout_charges"), list) else []
+    product_base = _money(product_total)
+    shipping = _money(shipping_cost)
+    running_total = product_base + shipping
+    charges = []
+    fixed_total = Decimal("0.00")
+    percentage_total = Decimal("0.00")
+
+    for charge in configured[:20]:
+        if not isinstance(charge, dict) or not charge.get("active", True):
+            continue
+        name = str(charge.get("name") or "").strip()[:120]
+        if not name:
+            continue
+        charge_type = str(charge.get("type") or "fixed").strip().lower()
+        base_key = str(charge.get("base") or "products").strip().lower()
+        value = _money(charge.get("value"))
+        if value < Decimal("0.00"):
+            continue
+
+        if base_key == "products_shipping":
+            base_amount = product_base + shipping
+        elif base_key == "previous_total":
+            base_amount = running_total
+        else:
+            base_amount = product_base
+
+        amount = value if charge_type == "fixed" else _money(base_amount * value / Decimal("100.00"))
+        if amount <= Decimal("0.00"):
+            continue
+        if charge_type == "percentage":
+            percentage_total += amount
+        else:
+            fixed_total += amount
+        running_total += amount
+        charges.append({
+            "id": str(charge.get("id") or "")[:64],
+            "name": name,
+            "type": "percentage" if charge_type == "percentage" else "fixed",
+            "value": str(value),
+            "base": base_key if base_key in {"products", "products_shipping", "previous_total"} else "products",
+            "base_amount": str(base_amount.quantize(Decimal("0.01"))),
+            "amount": str(amount.quantize(Decimal("0.01"))),
+        })
+
+    snapshot = []
+    if shipping > Decimal("0.00"):
+        snapshot.append({
+            "id": "shipping",
+            "name": "Envío a domicilio",
+            "type": "fixed",
+            "value": str(shipping),
+            "base": "none",
+            "base_amount": "0.00",
+            "amount": str(shipping),
+        })
+    snapshot.extend(charges)
+    return {
+        "charges": snapshot,
+        "fixed_total": fixed_total,
+        "percentage_total": percentage_total,
+        "total": fixed_total + percentage_total,
+    }
+
+
+def _quote_checkout_items(quote) -> list[dict[str, Any]]:
+    """Build the exact Mercado Pago line items from a persisted quote snapshot."""
+    items = []
+    for item in list(getattr(quote, "items", []) or []):
+        items.append({
+            "id": str(item.product_id or item.id),
+            "title": item.description,
+            "description": item.description,
+            "quantity": int(item.quantity) if float(item.quantity).is_integer() else float(item.quantity),
+            "currency_id": quote.currency or "ARS",
+            "unit_price": float(item.unit_price),
+        })
+    try:
+        charges = json.loads(quote.charges_json or "[]")
+    except (TypeError, ValueError, json.JSONDecodeError):
+        charges = []
+    for charge in charges if isinstance(charges, list) else []:
+        amount = _money(charge.get("amount"))
+        if amount <= Decimal("0.00"):
+            continue
+        title = str(charge.get("name") or "Cargo").strip()[:256]
+        description = title
+        if charge.get("type") == "percentage":
+            description = f"{title} · {charge.get('value', '0')}% sobre base {charge.get('base', 'products')}"
+        items.append({
+            "id": f"charge-{quote.id}-{str(charge.get('id') or len(items))[:40]}",
+            "title": title,
+            "description": description[:256],
+            "quantity": 1,
+            "currency_id": quote.currency or "ARS",
+            "unit_price": float(amount),
+        })
+    return items
+
+
 class VendorOrderService:
     """Owns tenant-scoped cart, quote and payment transitions."""
 
