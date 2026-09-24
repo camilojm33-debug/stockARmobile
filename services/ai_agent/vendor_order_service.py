@@ -747,7 +747,7 @@ class VendorOrderService:
         final_total = _money(base_totals["total"] + fixed_surcharge + percentage_tax)
         fixed_names = []
         if shipping["cost"] > Decimal("0.00"):
-            fixed_names.append("Envío a domicilio")
+            fixed_names.append(str(shipping["reason"] or "Envío a domicilio"))
         fixed_names.extend(
             charge["name"]
             for charge in charge_plan["charges"]
