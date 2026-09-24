@@ -370,7 +370,22 @@ def _quote_checkout_items(quote) -> list[dict[str, Any]]:
             "currency_id": quote.currency or "ARS",
             "unit_price": float(net_unit_price),
         })
-    for charge in _quote_charge_snapshot(quote):
+    charges = _quote_charge_snapshot(quote)
+    if not charges:
+        legacy_delivery = getattr(quote, "delivery", None)
+        legacy_shipping = _money(getattr(legacy_delivery, "shipping_cost", 0) or 0) if legacy_delivery else Decimal("0.00")
+        if legacy_shipping > Decimal("0.00"):
+            charges = [{
+                "id": "shipping",
+                "name": "Envío a domicilio",
+                "type": "fixed",
+                "value": str(legacy_shipping),
+                "base": "none",
+                "base_amount": "0.00",
+                "amount": str(legacy_shipping),
+            }]
+
+    for charge in charges:
         amount = _money(charge.get("amount"))
         if amount <= Decimal("0.00"):
             continue
