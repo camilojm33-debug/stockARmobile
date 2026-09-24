@@ -9048,3 +9048,110 @@ def test_business_billing_filters_respect_date_and_cuit():
     cuit_html = cuit_response.get_data(as_text=True)
     assert "Cliente Fiscal" in cuit_html
     assert "Cliente Otro" not in cuit_html
+
+
+def test_operational_filters_work_for_products_sales_clients_and_cash():
+    from app import CashSession
+
+    with stock_app.app.app_context():
+        company = Company.query.filter_by(name="Empresa Demo").first()
+        admin = User.query.filter_by(username="negocio_admin").first()
+        assert company is not None
+        assert admin is not None
+
+        db.session.add_all(
+            [
+                Product(
+                    barcode="FLT-001",
+                    name="Filtro Bebidas Especial",
+                    category="Bebidas",
+                    price=1200,
+                    cost_price=800,
+                    stock=2,
+                    min_stock=5,
+                    active=True,
+                    company_id=company.id,
+                ),
+                Product(
+                    barcode="FLT-002",
+                    name="Otro Producto Normal",
+                    category="Almacen",
+                    price=800,
+                    cost_price=500,
+                    stock=20,
+                    min_stock=2,
+                    active=True,
+                    company_id=company.id,
+                ),
+            ]
+        )
+        db.session.add_all(
+            [
+                Client(
+                    name="Cliente Filtro Unico",
+                    email="filtro.unico@example.test",
+                    phone="1111111111",
+                    whatsapp="5491111111111",
+                    active=True,
+                    company_id=company.id,
+                ),
+                CashSession(
+                    user_id=admin.id,
+                    company_id=company.id,
+                    status="cerrada",
+                    note="CAJA FILTRO CERRADA UNICA",
+                ),
+                CashSession(
+                    user_id=admin.id,
+                    company_id=company.id,
+                    status="abierta",
+                    note="CAJA OTRA ABIERTA",
+                ),
+            ]
+        )
+        db.session.commit()
+
+    client = stock_app.app.test_client()
+    client.post("/auth/login", data={"username": "negocio_admin", "password": "admin123"})
+
+    response = client.get("/productos/?q=FLT-001")
+    assert response.status_code == 200
+    html = response.get_data(as_text=True)
+    assert "Filtro Bebidas Especial" in html
+    assert "Otro Producto Normal" not in html
+
+    response = client.get("/productos/?category=Bebidas")
+    assert response.status_code == 200
+    html = response.get_data(as_text=True)
+    assert "Filtro Bebidas Especial" in html
+    assert "Otro Producto Normal" not in html
+
+    response = client.get("/productos/?low_stock=1")
+    assert response.status_code == 200
+    html = response.get_data(as_text=True)
+    assert "Filtro Bebidas Especial" in html
+    assert "Otro Producto Normal" not in html
+
+    response = client.get("/ventas/?q=FLT-001")
+    assert response.status_code == 200
+    html = response.get_data(as_text=True)
+    assert "Filtro Bebidas Especial" in html
+    assert "Otro Producto Normal" not in html
+
+    response = client.get("/ventas/?category=Bebidas")
+    assert response.status_code == 200
+    html = response.get_data(as_text=True)
+    assert "Filtro Bebidas Especial" in html
+    assert "Otro Producto Normal" not in html
+
+    response = client.get("/clientes/?search=Filtro%20Unico")
+    assert response.status_code == 200
+    html = response.get_data(as_text=True)
+    assert "Cliente Filtro Unico" in html
+    assert "Cliente demo" not in html
+
+    response = client.get("/caja/?status=cerrada&q=UNICA")
+    assert response.status_code == 200
+    html = response.get_data(as_text=True)
+    assert "CAJA FILTRO CERRADA UNICA" in html
+    assert "CAJA OTRA ABIERTA" not in html
