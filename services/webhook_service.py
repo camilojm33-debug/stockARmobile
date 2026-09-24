@@ -248,6 +248,7 @@ class WebhookService:
                     raise RuntimeError("Webhook Mercado Pago de pedido IA con empresa inconsistente")
                 if merchant_connection is not None and int(merchant_connection.company_id or 0) != company_id:
                     raise RuntimeError("Webhook Mercado Pago de pedido IA con cuenta vendedora de otra empresa")
+                from app import Payment, Quote
                 quote = Quote.query.filter_by(id=quote_id, company_id=company_id).first()
                 if quote is None:
                     raise RuntimeError("Webhook Mercado Pago de pedido IA sin presupuesto válido")
