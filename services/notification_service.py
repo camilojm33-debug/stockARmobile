@@ -7,6 +7,7 @@ from hashlib import sha256
 from urllib.parse import urlparse
 
 from flask_login import current_user
+from sqlalchemy.exc import OperationalError, ProgrammingError
 
 from stockarmobile.permissions import EMPLOYEE_ADMIN_ONLY, parse_permissions_json, user_role
 
@@ -122,38 +123,168 @@ def build_notifications():
     return filter_notifications_for_user(items)
 
 
+def _notification_key(item):
+    """Return a stable per-notification key from the rendered notification identity."""
+    explicit = str(item.get("notification_key") or "").strip()
+    if explicit:
+        return explicit
+    normalized = {
+        "type": item.get("type"),
+        "title": item.get("title"),
+        "body": item.get("body"),
+        "href": item.get("href"),
+        "permission": item.get("permission"),
+    }
+    payload = json.dumps(normalized, sort_keys=True, ensure_ascii=False, separators=(",", ":"))
+    return sha256(payload.encode("utf-8")).hexdigest()
+
+
+def _notification_items_with_keys(items):
+    return [
+        {**item, "notification_key": _notification_key(item)}
+        for item in (items or [])
+    ]
+
+
+def _load_read_notification_keys(state):
+    if state is None:
+        return []
+    raw = getattr(state, "read_notification_keys", None)
+    if not raw:
+        return []
+    try:
+        payload = json.loads(raw)
+    except (TypeError, ValueError):
+        return []
+    if not isinstance(payload, list):
+        return []
+    return [str(value).strip() for value in payload if str(value).strip()]
+
+
+def _save_read_notification_keys(state, keys, now):
+    # Keep the persisted list bounded so a long-lived account cannot grow this
+    # field without limit. Current notification keys are always kept.
+    deduplicated = []
+    seen = set()
+    for key in keys:
+        normalized = str(key).strip()
+        if not normalized or normalized in seen:
+            continue
+        seen.add(normalized)
+        deduplicated.append(normalized)
+    state.read_notification_keys = json.dumps(deduplicated[-500:], ensure_ascii=False)
+    state.last_seen_at = now
+    state.updated_at = now
+
+
+def _current_notification_state(items):
+    """Return persisted read keys and the legacy all-seen compatibility flag."""
+    from app import NotificationReadState
+
+    signature = _signature_for_items(items)
+    try:
+        state = NotificationReadState.query.filter_by(user_id=current_user.id).first()
+    except (OperationalError, ProgrammingError):
+        # Keep the notification center available during legacy/test databases
+        # where the optional persistence table has not been created yet.
+        return None, signature, set()
+    read_keys = set(_load_read_notification_keys(state))
+    legacy_all_seen = bool(
+        state
+        and not read_keys
+        and state.last_seen_signature == signature
+    )
+    if legacy_all_seen:
+        read_keys.update(_notification_key(item) for item in items)
+    return state, signature, read_keys
+
+
 def get_notification_payload():
-    """Return the existing notification center plus AI seller orders."""
-    items = build_notifications()
+    """Return unread notifications for the current user."""
+    items = _notification_items_with_keys(build_notifications())
     if not getattr(current_user, "is_authenticated", False):
         return {"items": [], "count": 0, "signature": None}
-    signature = _signature_for_items(items)
-    if not items:
-        return {"items": [], "count": 0, "signature": signature}
-    try:
-        from app import NotificationReadState
-        state = NotificationReadState.query.filter_by(user_id=current_user.id).first()
-        is_seen = bool(state and state.last_seen_signature == signature)
-    except Exception:
-        is_seen = False
-    return {"items": items, "count": 0 if is_seen else len(items), "signature": signature}
+
+    state, signature, read_keys = _current_notification_state(items)
+    unread_items = [
+        item for item in items
+        if item["notification_key"] not in read_keys
+    ]
+    return {
+        "items": unread_items,
+        "count": len(unread_items),
+        "signature": signature,
+    }
+
+
+def mark_notification_read(notification_key):
+    """Persist one visible notification as read and return remaining unread count."""
+    if not getattr(current_user, "is_authenticated", False):
+        return {"ok": False, "count": 0}
+
+    from app import NotificationReadState, db, utcnow
+
+    requested_key = str(notification_key or "").strip()
+    if not requested_key or len(requested_key) > 128:
+        return {"ok": False, "count": 0}
+
+    items = _notification_items_with_keys(build_notifications())
+    visible_keys = {item["notification_key"] for item in items}
+    if requested_key not in visible_keys:
+        # Do not accept arbitrary keys: a user can only mark a notification
+        # that belongs to their current, already permission-filtered stream.
+        unread_count = len(items)
+        try:
+            state, signature, read_keys = _current_notification_state(items)
+            unread_count = sum(1 for item in items if item["notification_key"] not in read_keys)
+        except Exception:
+            pass
+        return {"ok": False, "count": unread_count}
+
+    state, signature, read_keys = _current_notification_state(items)
+    read_keys.add(requested_key)
+    now = utcnow()
+    if state is None:
+        state = NotificationReadState(
+            user_id=current_user.id,
+            last_seen_signature=signature,
+            last_seen_at=now,
+        )
+        db.session.add(state)
+    state.last_seen_signature = signature
+    _save_read_notification_keys(state, list(read_keys), now)
+    db.session.commit()
+
+    unread_count = sum(1 for item in items if item["notification_key"] not in read_keys)
+    return {
+        "ok": True,
+        "count": unread_count,
+        "signature": signature,
+        "notification_key": requested_key,
+    }
 
 
 def mark_notifications_seen():
-    """Persist the complete notification signature, including AI orders."""
+    """Compatibility endpoint: mark the current notification stream as read."""
     if not getattr(current_user, "is_authenticated", False):
         return {"ok": False, "count": 0}
+
     from app import NotificationReadState, db, utcnow
-    items = build_notifications()
+
+    items = _notification_items_with_keys(build_notifications())
     signature = _signature_for_items(items)
     state = NotificationReadState.query.filter_by(user_id=current_user.id).first()
     now = utcnow()
+    read_keys = set(_load_read_notification_keys(state))
+    read_keys.update(item["notification_key"] for item in items)
     if state is None:
-        state = NotificationReadState(user_id=current_user.id, last_seen_signature=signature, last_seen_at=now)
+        state = NotificationReadState(
+            user_id=current_user.id,
+            last_seen_signature=signature,
+            last_seen_at=now,
+        )
         db.session.add(state)
-    else:
-        state.last_seen_signature = signature
-        state.last_seen_at = now
-        state.updated_at = now
+    state.last_seen_signature = signature
+    _save_read_notification_keys(state, list(read_keys), now)
     db.session.commit()
-    return {"ok": True, "count": len(items), "signature": signature}
+    return {"ok": True, "count": 0, "signature": signature}
