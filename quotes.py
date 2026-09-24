@@ -1404,16 +1404,29 @@ def quote_public_pdf(token):
     return _quote_pdf_response(quote, as_attachment=False)
 
 
-@bp.route("/publico/<token>/aceptar", methods=["GET"])
+@bp.route("/publico/<token>/aceptar", methods=["GET", "POST"])
 def quote_public_accept(token):
-    """Accept a quote from its signed public customer link."""
-    from app import Quote, db
+    """Accept a quote from its signed public customer link.
+
+    GET is intentionally side-effect free so link scanners, previews and
+    crawlers cannot approve a quote just by fetching the URL. The existing
+    GET URL remains valid and redirects to the public quote page, where the
+    customer can explicitly submit the acceptance form with CSRF protection.
+    """
+    from app import Quote, db, record_audit
+
     quote_id = _quote_id_from_public_token(token)
     if not quote_id:
         abort(404)
     quote = Quote.query.filter(Quote.id == quote_id).first()
     if quote is None:
         abort(404)
+
+    # Backward compatibility: old shared acceptance URLs still resolve, but
+    # merely viewing/fetching them can no longer change business state.
+    if request.method == "GET":
+        return redirect(_build_public_quote_url(quote.id))
+
     status = (quote.status or "BORRADOR").upper()
     now = utcnow()
     if quote.expires_at is not None and quote.expires_at < now and status not in {"APROBADO", "CONVERTIDO", "RECHAZADO", "ANULADO", "VENCIDO"}:
@@ -1425,6 +1438,13 @@ def quote_public_accept(token):
     if status != "APROBADO":
         quote.status = "APROBADO"
         db.session.commit()
+        record_audit(
+            action="quote_public_accept",
+            entity="quote",
+            entity_id=quote.id,
+            detail=f"Presupuesto aceptado por cliente {quote.number or quote.id}",
+            ip_address=request.remote_addr,
+        )
     return redirect(_build_public_quote_url(quote.id))
 
 
