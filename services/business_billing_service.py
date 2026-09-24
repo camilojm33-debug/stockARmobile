@@ -13,6 +13,7 @@ from datetime import datetime, timedelta
 from decimal import Decimal
 from io import BytesIO
 import csv
+import math
 
 from sqlalchemy.exc import IntegrityError
 
@@ -525,7 +526,10 @@ class BusinessBillingService:
         selected_type = (filters.get("doc_type") or "").strip().lower()
         selected_status = (filters.get("status") or "").strip().lower()
         selected_branch = (filters.get("branch") or "").strip().lower()
-        selected_user = int(filters.get("user_id") or 0)
+        try:
+            selected_user = int(filters.get("user_id") or 0)
+        except (TypeError, ValueError):
+            selected_user = 0
         amount_min = filters.get("amount_min")
         amount_max = filters.get("amount_max")
         method = (filters.get("payment_method") or "").strip().lower()
@@ -817,9 +821,10 @@ class BusinessBillingService:
             if not raw:
                 return None
             try:
-                return float(raw)
-            except ValueError:
+                parsed = float(raw)
+            except (TypeError, ValueError):
                 return None
+            return parsed if math.isfinite(parsed) else None
 
         return {
             "number": args.get("number", ""),
