@@ -1076,6 +1076,18 @@ class VendorOrderService:
         }
 
     @staticmethod
+    def _conversation_for_order(*, company_id: int, conversation_id: int):
+        from stockarmobile.models.conversations import Conversation
+
+        conversation = Conversation.query.filter_by(
+            id=int(conversation_id),
+            company_id=int(company_id),
+        ).first()
+        if conversation is None:
+            raise ValueError("Conversación del pedido no encontrada para esta empresa.")
+        return conversation
+
+    @staticmethod
     def get_customer_order_status(*, company_id: int, conversation_id: int, order_number: str = "") -> Dict[str, Any]:
         conversation = VendorOrderService._conversation_for_order(company_id=company_id, conversation_id=conversation_id)
         state = _metadata(conversation)
