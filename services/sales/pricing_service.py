@@ -21,6 +21,7 @@ class PricingService:
             "surcharge_value": data.get("surcharge_value") if data.get("surcharge_value") not in (None, "") else surcharge.get("value"),
             "surcharge_reason": data.get("surcharge_reason") or surcharge.get("reason"),
             "surcharge_applied_amount": data.get("surcharge_applied_amount"),
+            "tax": safe_decimal(data.get("tax_amount") if data.get("tax_amount") not in (None, "") else data.get("tax")),
         }
 
     @classmethod
