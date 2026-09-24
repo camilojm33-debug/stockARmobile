@@ -346,6 +346,14 @@ def _checkout_charge_plan(company_id: int, *, product_total: Decimal, shipping_c
     }
 
 
+def _quote_charge_snapshot(quote) -> list[dict[str, Any]]:
+    try:
+        payload = json.loads(quote.charges_json or "[]")
+    except (TypeError, ValueError, json.JSONDecodeError):
+        payload = []
+    return payload if isinstance(payload, list) else []
+
+
 def _quote_checkout_items(quote) -> list[dict[str, Any]]:
     """Build the exact Mercado Pago line items from a persisted quote snapshot."""
     items = []
@@ -362,11 +370,7 @@ def _quote_checkout_items(quote) -> list[dict[str, Any]]:
             "currency_id": quote.currency or "ARS",
             "unit_price": float(net_unit_price),
         })
-    try:
-        charges = json.loads(quote.charges_json or "[]")
-    except (TypeError, ValueError, json.JSONDecodeError):
-        charges = []
-    for charge in charges if isinstance(charges, list) else []:
+    for charge in _quote_charge_snapshot(quote):
         amount = _money(charge.get("amount"))
         if amount <= Decimal("0.00"):
             continue
@@ -904,6 +908,7 @@ class VendorOrderService:
             "currency": quote.currency or "ARS",
             "payment_url": payment_url,
             "quote_url": quote_url,
+            "charges": charge_plan["charges"],
             "expires_at": quote.expires_at.isoformat() if quote.expires_at else None,
             "delivery": {
                 "method": delivery["method"],
@@ -1018,6 +1023,7 @@ class VendorOrderService:
             "payment_status": payment_status,
             "payment_id": getattr(payment, "payment_id", None) if payment else None,
             "payment_url": None,
+            "charges": _quote_charge_snapshot(quote),
             "sale_id": quote.converted_sale_id,
             "created_at": quote.date.isoformat() if getattr(quote, "date", None) else None,
             "expires_at": quote.expires_at.isoformat() if getattr(quote, "expires_at", None) else None,
