@@ -257,6 +257,7 @@ def _ai_order_channel_meta(channel: str) -> dict:
 
 def _ai_order_row(company_id: int, quote):
     payment = _ai_order_payment(company_id, quote.id)
+    conversation = _ai_order_conversation(company_id, quote.id, payment=payment)
     payment_status = str(getattr(payment, "status", "pending") or "pending").lower()
     delivery_for_status = getattr(quote, "delivery", None)
     if (
@@ -292,7 +293,9 @@ def _ai_order_row(company_id: int, quote):
     if conversation is not None:
         raw_attention = _metadata(conversation).get("ai_attention")
         attention = dict(raw_attention) if isinstance(raw_attention, dict) else {}
-    vendor_options = get_vendor_options(getattr(quote, "company", None))
+    from app import Company
+    company = Company.query.filter_by(id=int(company_id)).first()
+    vendor_options = get_vendor_options(company)
     attention_status = str(attention.get("status") or "").strip().lower()
     if attention_status == "human":
         attention_key, attention_label, attention_badge = "human", "Atención humana", "text-bg-danger"
