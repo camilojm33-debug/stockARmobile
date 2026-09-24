@@ -91,6 +91,16 @@ def employee_endpoint_permission(endpoint: str | None, method: str = "GET"):
         return EMPLOYEE_ADMIN_ONLY
     if ep.startswith("company_billing.company_settings_billing_payment_pdf"):
         return EMPLOYEE_ADMIN_ONLY
+    if ep.startswith("company_billing.subscription_invoice_detail"):
+        return EMPLOYEE_ADMIN_ONLY
+    if ep.startswith("company_billing.subscription_invoice_pdf"):
+        return EMPLOYEE_ADMIN_ONLY
+    if ep.startswith("company_billing.legacy_subscription_payment_pdf"):
+        return EMPLOYEE_ADMIN_ONLY
+    if ep.startswith("company_billing.subscription_payment_pdf"):
+        return EMPLOYEE_ADMIN_ONLY
+    if ep.startswith("company_billing.company_settings_day_activity"):
+        return EMPLOYEE_ADMIN_ONLY
 
     if ep.startswith("quotes."):
         quote_permissions = {
