@@ -1097,32 +1097,7 @@ class VendorOrderService:
         quote_url = _public_quote_url(quote.id)
         result = mp.create_ai_order_checkout_preference(
             title=f"Pedido {quote.number} - StockARmobile",
-            items=[
-                {
-                    "id": str(product.id),
-                    "title": product.name,
-                    "description": product.name,
-                    "quantity": int(float(item.quantity)) if float(item.quantity).is_integer() else float(item.quantity),
-                    "currency_id": quote.currency or "ARS",
-                    "unit_price": float(max(
-                        (_money(item.unit_price) * Decimal(str(item.quantity or 0)) - _money(item.discount))
-                        / Decimal(str(item.quantity or 1)),
-                        Decimal("0.00"),
-                    )),
-                }
-                for item in quote.items
-                for product in [products[int(item.product_id)]]
-            ] + (
-                [{
-                    "id": f"shipping-{quote.id}",
-                    "title": "Envío a domicilio",
-                    "description": str(getattr(getattr(quote, "delivery", None), "shipping_reason", None) or "Costo de envío confirmado por el comercio"),
-                    "quantity": 1,
-                    "currency_id": quote.currency or "ARS",
-                    "unit_price": float(_money(getattr(getattr(quote, "delivery", None), "shipping_cost", 0))),
-                }]
-                if _money(getattr(getattr(quote, "delivery", None), "shipping_cost", 0)) > 0 else []
-            ),
+            items=_quote_checkout_items(quote),
             amount=float(quote.total_amount or 0),
             currency=quote.currency or "ARS",
             external_reference=external_reference,
