@@ -492,6 +492,50 @@ def test_pending_checkout_reserves_stock_for_other_vendor_checkouts(vendor_datab
     assert Payment.query.filter_by(company_id=data["company_a"].id).count() == 1
 
 
+def test_retry_payment_keeps_legacy_shipping_when_snapshot_is_missing(vendor_database, monkeypatch):
+    data = vendor_database
+    company = data["company_a"]
+    _configure_vendor_shipping(company, mode="fixed", standard_cost="50.00")
+    conversation = _conversation(company.id)
+    calls = []
+    _mock_checkout(monkeypatch, calls)
+
+    VendorOrderService.update_cart(
+        company_id=company.id,
+        conversation_id=conversation.id,
+        items=[{"product_query": "Cafe clasico", "quantity": 1}],
+    )
+    first = VendorOrderService.create_pending_order(
+        company_id=company.id,
+        conversation_id=conversation.id,
+        delivery_method="envio",
+        customer_name="Comprador legado",
+        customer_phone="5491119998888",
+        delivery_address="Av. Siempre Viva 123",
+        delivery_city="Resistencia",
+        delivery_province="Chaco",
+        actor_user_id=data["user_a"].id,
+    )
+    quote = db.session.get(Quote, first["quote_id"])
+    payment = Payment.query.filter_by(company_id=company.id).one()
+    payment.status = "rejected"
+    quote.charges_json = None
+    db.session.commit()
+
+    second = VendorOrderService.retry_payment(
+        company_id=company.id,
+        conversation_id=conversation.id,
+    )
+
+    checkout_calls = [payload for kind, payload in calls if kind == "checkout"]
+    assert second["success"] is True
+    assert checkout_calls[-1]["amount"] == 150.0
+    assert any(
+        item["title"] == "Envío a domicilio" and item["unit_price"] == 50.0
+        for item in checkout_calls[-1]["items"]
+    )
+
+
 def test_create_pending_order_reuses_existing_pending_flow(vendor_database, monkeypatch):
     data = vendor_database
     conversation = _conversation(data["company_a"].id)
