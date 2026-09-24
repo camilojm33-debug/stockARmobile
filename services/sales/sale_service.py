@@ -54,6 +54,7 @@ class SaleService:
 
             checkout_token = ValidationService.sanitize_checkout_token(data.get("checkout_token") or data.get("checkoutToken"))
             company_id = getattr(current_user, "company_id", None)
+            quote_snapshot = None
             if checkout_token:
                 existing_sale = scope_query_to_company(Sale.query, Sale).filter(Sale.client_txn_id == checkout_token).first()
                 if existing_sale is not None:
@@ -61,8 +62,55 @@ class SaleService:
                         return jsonify({"sale_id": existing_sale.id, "redirect_url": url_for("sales.success", sale_id=existing_sale.id)})
                     return redirect(url_for("sales.success", sale_id=existing_sale.id))
 
+                if checkout_token.startswith("quote-cart-"):
+                    raw_quote_id = checkout_token[len("quote-cart-"):]
+                    if not raw_quote_id.isdigit():
+                        raise ValueError("Token de presupuesto inválido.")
+                    from app import Quote, QuoteItem
+                    quote_snapshot = (
+                        scope_query_to_company(
+                            Quote.query.options(selectinload(Quote.items)),
+                            Quote,
+                        )
+                        .filter(Quote.id == int(raw_quote_id))
+                        .with_for_update()
+                        .first()
+                    )
+                    if quote_snapshot is None:
+                        raise ValueError("No se encontró el presupuesto de origen.")
+                    if quote_snapshot.converted_sale_id:
+                        existing_sale = scope_query_to_company(Sale.query, Sale).filter(Sale.id == quote_snapshot.converted_sale_id).first()
+                        if existing_sale is not None:
+                            if json_response:
+                                return jsonify({"sale_id": existing_sale.id, "redirect_url": url_for("sales.success", sale_id=existing_sale.id)})
+                            return redirect(url_for("sales.success", sale_id=existing_sale.id))
+                        raise ValueError("El presupuesto ya figura convertido pero no se encontró su venta.")
+
             lines = self._calculate_lines(items, lock_for_update=True, discount_overrides=(data.get("line_discounts") or data.get("line_discount_overrides") or {}))
-            if checkout_token and checkout_token.startswith("quote-cart-") or data.get("line_discounts") or data.get("line_discount_overrides"):
+            if quote_snapshot is not None:
+                expected = {
+                    int(item.product_id): {
+                        "quantity": self._to_decimal(item.quantity),
+                        "price": self._to_decimal(item.unit_price),
+                        "discount": self._to_decimal(item.discount),
+                    }
+                    for item in quote_snapshot.items
+                    if item.product_id
+                }
+                received = {int(line["product"].id): line for line in lines}
+                if set(received) != set(expected):
+                    raise ValueError("El carrito ya no coincide con el presupuesto. Volvé a cargar el presupuesto para conservar sus cargos.")
+                for line in lines:
+                    expected_line = expected[int(line["product"].id)]
+                    if self._to_decimal(line["quantity"]) != expected_line["quantity"]:
+                        raise ValueError("La cantidad del carrito fue modificada respecto del presupuesto.")
+                    line["price"] = expected_line["price"]
+                    line["discount"] = (
+                        expected_line["discount"] / expected_line["quantity"]
+                        if expected_line["quantity"] > 0 else Decimal("0.00")
+                    )
+                promotion_results = []
+            elif checkout_token and checkout_token.startswith("quote-cart-") or data.get("line_discounts") or data.get("line_discount_overrides"):
                 promotion_results = []
             else:
                 lines, promotion_results = PromotionEngine.apply_to_lines(company_id=company_id, lines=lines)
@@ -70,7 +118,48 @@ class SaleService:
             for result in promotion_results:
                 if result.promotion_name and result.promotion_name not in promotion_names:
                     promotion_names.append(result.promotion_name)
-            sale_totals = PricingService.calculate(lines=[{"price": line["price"], "quantity": line["quantity"], "line_discount": line["discount"]} for line in lines], data=data)
+            if quote_snapshot is not None:
+                line_discount_total = sum((self._to_decimal(item.discount or 0) for item in quote_snapshot.items), Decimal("0.00"))
+                general_discount_snapshot = max(
+                    self._to_decimal(quote_snapshot.discount or 0) - line_discount_total,
+                    Decimal("0.00"),
+                )
+                pricing_data = {
+                    "general_discount": general_discount_snapshot,
+                    "discount_type": quote_snapshot.discount_type,
+                    "discount_value": quote_snapshot.discount_value,
+                    "discount_reason": quote_snapshot.discount_reason,
+                    "discount_applied_amount": general_discount_snapshot,
+                    "surcharge": quote_snapshot.surcharge,
+                    "surcharge_type": quote_snapshot.surcharge_type,
+                    "surcharge_value": quote_snapshot.surcharge_value,
+                    "surcharge_reason": quote_snapshot.surcharge_reason,
+                    "surcharge_applied_amount": quote_snapshot.surcharge,
+                    "tax_amount": quote_snapshot.tax,
+                }
+                sale_totals = PricingService.calculate(
+                    lines=[{"price": line["price"], "quantity": line["quantity"], "line_discount": line["discount"]} for line in lines],
+                    data=pricing_data,
+                )
+                expected_totals = {
+                    "subtotal": self._to_decimal(quote_snapshot.subtotal),
+                    "discount": self._to_decimal(quote_snapshot.discount),
+                    "surcharge": self._to_decimal(quote_snapshot.surcharge),
+                    "tax": self._to_decimal(quote_snapshot.tax),
+                    "total": self._to_decimal(quote_snapshot.total_amount),
+                }
+                actual_totals = {
+                    "subtotal": sale_totals["subtotal"],
+                    "discount": sale_totals["line_discount_total"] + sale_totals["general_discount"],
+                    "surcharge": sale_totals["surcharge"],
+                    "tax": sale_totals["tax"],
+                    "total": sale_totals["total"],
+                }
+                for key, expected_value in expected_totals.items():
+                    if abs(actual_totals[key] - expected_value) > Decimal("0.01"):
+                        raise ValueError(f"El total del presupuesto no coincide en {key}. Volvé a cargar el presupuesto.")
+            else:
+                sale_totals = PricingService.calculate(lines=[{"price": line["price"], "quantity": line["quantity"], "line_discount": line["discount"]} for line in lines], data=data)
             general_discount = sale_totals["general_discount"]
             surcharge = sale_totals["surcharge"]
             subtotal = sale_totals["subtotal"]
