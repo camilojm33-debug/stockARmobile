@@ -2029,7 +2029,7 @@ def company_settings_pin_change():
 
 
 @bp.route("/company-settings/pin/bootstrap", methods=["POST"])
-@company_member_required
+@company_admin_required
 def company_settings_pin_bootstrap():
     from app import db, record_audit
     from flask import session
