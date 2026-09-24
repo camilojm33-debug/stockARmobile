@@ -9248,6 +9248,15 @@ def test_employee_cannot_mutate_company_subscription_or_billing(monkeypatch):
         response = client.post(path, data=data)
         assert response.status_code == 403, path
 
+    pin_bootstrap = client.post("/admin/company-settings/pin/bootstrap", follow_redirects=False)
+    assert pin_bootstrap.status_code == 403
+
+    pin_change = client.post("/admin/company-settings/pin/change", follow_redirects=False)
+    assert pin_change.status_code == 403
+
+    pin_regenerate = client.post("/admin/company-settings/pin/regenerate", follow_redirects=False)
+    assert pin_regenerate.status_code == 403
+
     # Permission enforcement is independent of whether the page exposes a
     # button to the employee.
     from stockarmobile.permissions import EMPLOYEE_ADMIN_ONLY, employee_endpoint_permission
