@@ -312,7 +312,11 @@ def calculate_sale_totals(
         line["line_total"] = line_total
 
     rounded_sum = quantize_money(sum((line["line_total"] for line in normalized_lines), Decimal("0.00")))
-    diff = quantize_money(final_total - rounded_sum)
+    # Taxes belong to the sale total, not to individual SaleItem line totals.
+    # Keep the existing surcharge allocation semantics while excluding tax from
+    # the line reconciliation step.
+    line_total_target = quantize_money(final_total - tax_amount)
+    diff = quantize_money(line_total_target - rounded_sum)
     if normalized_lines and diff != Decimal("0.00"):
         normalized_lines[-1]["line_total"] = quantize_money(normalized_lines[-1]["line_total"] + diff)
         normalized_lines[-1]["final_discount"] = quantize_money(normalized_lines[-1]["gross"] - normalized_lines[-1]["line_total"])
