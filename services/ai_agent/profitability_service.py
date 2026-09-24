@@ -24,7 +24,7 @@ def _decimal(value: Any) -> Decimal:
 
 
 def plan_monthly_price_ars(plan: dict[str, Any] | None) -> Decimal:
-    """Parse the configured display price such as '$110.000 / mes' into ARS."""
+    """Parse the configured display price such as '$172.390 / mes' into ARS."""
     if not plan:
         return Decimal("0")
     raw = str(plan.get("price") or "")
