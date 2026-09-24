@@ -594,6 +594,7 @@ async function processCheckout() {
   }
 
   const csrf = getCsrfToken();
+  const totals = getCheckoutTotals();
   const discount = getDiscountBreakdown(getCartSubtotal());
   const surcharge = getSurchargeBreakdown(getCartSubtotal() - discount.amount);
   const payload = {
