@@ -30,6 +30,17 @@
 
   <section class="row g-3 mb-4" aria-label="Resumen de pedidos IA">
     <div class="col-6 col-xl-3">
+      <a class="ai-order-stat-card ai-order-stat-attention" href="{{ url_for('whatsapp_agent.ai_orders', status='human') }}">
+        <div class="ai-order-stat-icon"><i class="bi bi-headset"></i></div>
+        <div class="ai-order-stat-copy">
+          <div class="ai-order-stat-label">Atención humana</div>
+          <div class="ai-order-stat-value">{{ summary.human_attention }}</div>
+          <div class="ai-order-stat-helper">Pedidos en seguimiento</div>
+        </div>
+        <i class="bi bi-arrow-up-right ai-order-stat-arrow"></i>
+      </a>
+    </div>
+    <div class="col-6 col-xl-3">
       <a class="ai-order-stat-card ai-order-stat-all" href="{{ url_for('whatsapp_agent.ai_orders', status='') }}">
         <div class="ai-order-stat-icon"><i class="bi bi-inbox"></i></div>
         <div class="ai-order-stat-copy">
@@ -103,7 +114,8 @@
         ('pending', 'Esperando pago', summary.pending, 'bi-hourglass-split'),
         ('paid', 'Pagados', summary.paid, 'bi-credit-card-2-front'),
         ('confirmed', 'Confirmados', summary.confirmed, 'bi-check2-circle'),
-        ('problem', 'Con incidencia', none, 'bi-exclamation-circle')
+        ('problem', 'Con incidencia', none, 'bi-exclamation-circle'),
+        ('human', 'Atención humana', summary.human_attention, 'bi-headset')
       ] %}
       {% for key, label, count, icon in filter_items %}
       <a class="ai-order-filter {% if selected_status == key %}is-active{% endif %}" href="{{ url_for('whatsapp_agent.ai_orders', status=key) }}" {% if selected_status == key %}aria-current="page"{% endif %}>
@@ -114,6 +126,18 @@
       {% endfor %}
     </div>
   </section>
+
+  {% if summary.human_attention > 0 %}
+  <section class="card app-card border-danger-subtle mb-4">
+    <div class="card-body d-flex flex-column flex-lg-row justify-content-between align-items-lg-center gap-3">
+      <div>
+        <div class="fw-bold"><i class="bi bi-headset me-2 text-danger"></i>Hay pedidos que necesitan una persona</div>
+        <div class="small text-muted">Revisá el contexto del cliente, contactalo por el canal disponible y marcá la atención como resuelta cuando termine.</div>
+      </div>
+      <a class="btn btn-outline-danger" href="{{ url_for('whatsapp_agent.ai_orders', status='human') }}">Ver atención humana</a>
+    </div>
+  </section>
+  {% endif %}
 
   <section class="app-card ai-orders-table-card">
     <div class="ai-orders-table-head">
@@ -181,6 +205,11 @@
                 <i class="bi bi-box-seam"></i>{{ order.order_label }}
               </span>
               {% endif %}
+              {% if order.attention.key == 'human' %}
+              <span class="ai-status-chip ai-status-order text-bg-danger mt-1"><i class="bi bi-person-lines-fill"></i>Atención humana</span>
+              {% elif order.attention.key == 'followup' %}
+              <span class="ai-status-chip ai-status-order text-bg-info mt-1"><i class="bi bi-clock-history"></i>Seguimiento IA</span>
+              {% endif %}
               {% if order.sale_id %}<div class="small mt-1"><a class="ai-sale-link" href="/ventas/{{ order.sale_id }}">Venta #{{ order.sale_id }}</a></div>{% endif %}
             </td>
             <td data-label="Origen">
@@ -227,6 +256,8 @@
 
 <style>
   .ai-orders-page { padding-bottom: 32px; }
+  .ai-order-stat-attention { border-color: rgba(220,53,69,.2); }
+  .ai-order-stat-attention .ai-order-stat-icon { color:#b42318; background:rgba(220,53,69,.1); }
   .ai-orders-hero {
     position: relative;
     overflow: hidden;
