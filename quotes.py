@@ -884,21 +884,21 @@ def _quote_pdf_response(quote, *, as_attachment=False):
     if quote.discount_reason:
         pdf.drawRightString(470, y, f"Motivo descuento: {quote.discount_reason[:80]}")
         y -= 14
-    surcharge_label = f"{float(quote.surcharge_value):.2f}%" if quote.surcharge_type == "percentage" and quote.surcharge_value is not None else f"${float(quote.surcharge or 0):.2f}"
-    pdf.drawRightString(470, y, f"Recargo: {surcharge_label}")
-    y -= 14
-    if quote.surcharge_type == "percentage":
-        pdf.drawRightString(470, y, f"Recargo aplicado: ${float(quote.surcharge or 0):.2f}")
-        y -= 14
-    if quote.surcharge_reason:
-        pdf.drawRightString(470, y, f"Motivo recargo: {quote.surcharge_reason[:80]}")
-        y -= 14
     charge_rows = _quote_charge_display_rows(quote)
     if charge_rows:
         for charge in charge_rows:
             pdf.drawRightString(470, y, f"{charge['label']}: ${float(charge['amount']):.2f}")
             y -= 14
     else:
+        surcharge_label = f"{float(quote.surcharge_value):.2f}%" if quote.surcharge_type == "percentage" and quote.surcharge_value is not None else f"${float(quote.surcharge or 0):.2f}"
+        pdf.drawRightString(470, y, f"Recargo: {surcharge_label}")
+        y -= 14
+        if quote.surcharge_type == "percentage":
+            pdf.drawRightString(470, y, f"Recargo aplicado: ${float(quote.surcharge or 0):.2f}")
+            y -= 14
+        if quote.surcharge_reason:
+            pdf.drawRightString(470, y, f"Motivo recargo: {quote.surcharge_reason[:80]}")
+            y -= 14
         pdf.drawRightString(470, y, f"Impuestos: ${float(quote.tax or 0):.2f}")
         y -= 14
     pdf.setFont("Helvetica-Bold", 12)
