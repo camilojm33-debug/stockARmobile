@@ -8939,9 +8939,12 @@ def test_supplier_purchase_filters_apply_date_and_status():
     )
     assert response.status_code == 200
     html = response.get_data(as_text=True)
-    assert f"#{included_id}" in html
-    assert f"#{excluded_status_id}" not in html
-    assert f"#{excluded_date_id}" not in html
+    assert "$100.00" in html
+    assert "$200.00" not in html
+    assert "$300.00" not in html
+    assert included_id > 0
+    assert excluded_status_id > 0
+    assert excluded_date_id > 0
 
 
 def test_business_billing_filters_respect_date_and_cuit():
