@@ -11,10 +11,11 @@ from flask import Blueprint, abort, current_app, flash, jsonify, redirect, rende
 from flask_login import current_user, login_required
 from sqlalchemy.exc import IntegrityError
 from stockarmobile.extensions import csrf, db
+from stockarmobile.helpers.dates import utcnow_naive
 from stockarmobile.decorators import company_admin_required
 from app import get_current_company_id
 from stockarmobile.models.conversations import Conversation, ConversationMessage
-from services.ai_agent.config_service import company_for_whatsapp_phone_id, get_whatsapp_connection, is_ai_enabled, choose_agent
+from services.ai_agent.config_service import company_for_whatsapp_phone_id, get_whatsapp_connection, get_vendor_options, is_ai_enabled, choose_agent
 from services.ai_agent.orchestrator_v2 import AgentRuntime
 from services.ai_agent.usage_service import can_use_ai
 from services.ai_agent.vendor_followup_tools import install_vendor_followup_tools
@@ -218,25 +219,24 @@ def _ai_order_payment(company_id: int, quote_id: int):
     )
 
 
-def _ai_order_channel(company_id: int, quote_id: int, payment=None) -> str:
-    """Resolve the real channel that created an AI order.
-
-    New AI order payment references contain the conversation_id, allowing us to
-    read the persisted Conversation.channel instead of assuming WhatsApp.
-    Legacy records without that reference are presented as Webchat because the current AI order flow is web-based.
-    """
-    from stockarmobile.models.conversations import Conversation
-
+def _ai_order_conversation(company_id: int, quote_id: int, payment=None):
+    """Resolve the tenant-scoped conversation that originated an AI order."""
     payment = payment or _ai_order_payment(company_id, quote_id)
     external_reference = str(getattr(payment, "external_reference", "") or "")
-    match = re.search(r"(?:^|\\|)conversation_id:(\\d+)(?:\\||$)", external_reference)
-    if match:
-        conversation = Conversation.query.filter_by(
-            id=int(match.group(1)),
-            company_id=int(company_id),
-        ).first()
-        if conversation is not None:
-            return str(conversation.channel or "unknown").strip().lower() or "unknown"
+    match = re.search(r"(?:^|\\|)conversation_id:(\\d+)(?:\\|$)", external_reference)
+    if not match:
+        return None
+    return Conversation.query.filter_by(
+        id=int(match.group(1)),
+        company_id=int(company_id),
+    ).first()
+
+
+def _ai_order_channel(company_id: int, quote_id: int, payment=None) -> str:
+    """Resolve the real channel that created an AI order."""
+    conversation = _ai_order_conversation(company_id, quote_id, payment=payment)
+    if conversation is not None:
+        return str(conversation.channel or "unknown").strip().lower() or "unknown"
     return "webchat"
 
 
@@ -286,7 +286,22 @@ def _ai_order_row(company_id: int, quote):
     }
     payment_label, payment_badge = payment_labels.get(payment_status, (payment_status.replace("_", " ").title(), "text-bg-secondary"))
     client = getattr(quote, "client", None)
-    channel_meta = _ai_order_channel_meta(_ai_order_channel(company_id, quote.id, payment))
+    channel = _ai_order_channel(company_id, quote.id, payment)
+    channel_meta = _ai_order_channel_meta(channel)
+    attention = {}
+    if conversation is not None:
+        raw_attention = _metadata(conversation).get("ai_attention")
+        attention = dict(raw_attention) if isinstance(raw_attention, dict) else {}
+    vendor_options = get_vendor_options(getattr(quote, "company", None))
+    attention_status = str(attention.get("status") or "").strip().lower()
+    if attention_status == "human":
+        attention_key, attention_label, attention_badge = "human", "Atención humana", "text-bg-danger"
+    elif attention_status == "resolved":
+        attention_key, attention_label, attention_badge = "resolved", "Atención resuelta", "text-bg-success"
+    elif vendor_options.get("can_follow_up") and channel == "whatsapp":
+        attention_key, attention_label, attention_badge = "followup", "Seguimiento automático", "text-bg-info"
+    else:
+        attention_key, attention_label, attention_badge = "manual", "Seguimiento manual", "text-bg-secondary"
     return {
         "quote_id": quote.id,
         "number": quote.number or f"P-{quote.id:06d}",
@@ -309,6 +324,17 @@ def _ai_order_row(company_id: int, quote):
         "channel": channel_meta["key"],
         "channel_label": channel_meta["label"],
         "channel_icon": channel_meta["icon"],
+        "conversation_id": conversation.id if conversation is not None else None,
+        "attention": {
+            "key": attention_key,
+            "label": attention_label,
+            "status": attention_status or "active",
+            "reason": str(attention.get("reason") or "").strip(),
+            "requested_at": attention.get("requested_at"),
+            "resolved_at": attention.get("resolved_at"),
+            "auto_followup_enabled": bool(vendor_options.get("can_follow_up")),
+            "auto_followup_supported": channel == "whatsapp",
+        },
         "delivery": {
             "method": getattr(getattr(quote, "delivery", None), "method", "retiro") if getattr(quote, "delivery", None) else "retiro",
             "recipient_name": getattr(getattr(quote, "delivery", None), "recipient_name", "") if getattr(quote, "delivery", None) else "",
@@ -432,6 +458,62 @@ def ai_order_shipping(quote_id: int):
         current_app.logger.exception("No se pudo confirmar el costo de envío quote_id=%s", quote_id)
         flash("No se pudo confirmar el costo de envío. Revisá el pedido y volvé a intentar.", "danger")
     return redirect(url_for("whatsapp_agent.ai_order_detail", quote_id=quote_id))
+
+
+@bp.post("/pedidos-ia/<int:quote_id>/attention")
+@company_admin_required
+def ai_order_attention(quote_id: int):
+    company_id = get_current_company_id()
+    if not company_id:
+        abort(403)
+    from app import Quote
+
+    marker = "Pedido generado por el Vendedor 24 hs de StockARmobile."
+    quote = Quote.query.filter_by(
+        id=int(quote_id),
+        company_id=int(company_id),
+        observations=marker,
+    ).first()
+    if quote is None:
+        abort(404)
+
+    conversation = _ai_order_conversation(int(company_id), int(quote.id))
+    if conversation is None:
+        flash("No encuentro la conversación asociada a este pedido.", "warning")
+        return redirect(url_for("whatsapp_agent.ai_order_detail", quote_id=quote.id))
+
+    action = str(request.form.get("action") or "").strip().lower()
+    metadata = _metadata(conversation)
+    current = metadata.get("ai_attention")
+    current = dict(current) if isinstance(current, dict) else {}
+    now = utcnow_naive().isoformat()
+
+    if action == "request_human":
+        reason = str(request.form.get("reason") or "").strip()[:500]
+        metadata["ai_attention"] = {
+            "status": "human",
+            "reason": reason or "Atención solicitada desde Pedidos IA.",
+            "requested_at": now,
+            "requested_by_user_id": int(current_user.id),
+        }
+        flash("Pedido marcado para atención humana.", "success")
+    elif action == "resolve":
+        metadata["ai_attention"] = {
+            **current,
+            "status": "resolved",
+            "resolved_at": now,
+            "resolved_by_user_id": int(current_user.id),
+        }
+        flash("Atención humana marcada como resuelta.", "success")
+    elif action == "resume_ai":
+        metadata.pop("ai_attention", None)
+        flash("Seguimiento IA restablecido para esta conversación.", "success")
+    else:
+        abort(400)
+
+    _set_metadata(conversation, metadata)
+    db.session.commit()
+    return redirect(url_for("whatsapp_agent.ai_order_detail", quote_id=quote.id))
 
 
 @bp.get("/pedidos-ia/<int:quote_id>")
