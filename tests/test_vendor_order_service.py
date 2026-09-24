@@ -1097,6 +1097,9 @@ def test_manual_ai_quote_conversion_preserves_tax_and_closes_payment(vendor_data
     assert float(sale.surcharge) == pytest.approx(50)
     assert float(sale.tax) == pytest.approx(42)
     assert float(sale.total_amount) == pytest.approx(292)
+    assert len(sale.items) == 1
+    assert float(sale.items[0].discount or 0) == pytest.approx(0)
+    assert float(sale.items[0].quantity) == pytest.approx(2)
     assert quote.status == "CONVERTIDO"
     assert quote.converted_sale_id == sale.id
     assert payment.status == "cancelled"
