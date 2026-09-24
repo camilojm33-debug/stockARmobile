@@ -176,6 +176,13 @@ def test_employee_endpoint_permission_matrix():
     assert employee_endpoint_permission("ai_agents.index", "GET") == "ai_access"
     assert employee_endpoint_permission("whatsapp_agent.ai_orders", "GET") == "ai_access"
     assert employee_endpoint_permission("company_billing.company_settings", "GET") == EMPLOYEE_ADMIN_ONLY
+    assert employee_endpoint_permission("company_billing.create_checkout", "POST") == EMPLOYEE_ADMIN_ONLY
+    assert employee_endpoint_permission("company_billing.create_mercadopago_subscription", "POST") == EMPLOYEE_ADMIN_ONLY
+    assert employee_endpoint_permission("company_billing.subscription_change_confirm", "POST") == EMPLOYEE_ADMIN_ONLY
+    assert employee_endpoint_permission("company_billing.cancel_subscription", "POST") == EMPLOYEE_ADMIN_ONLY
+    assert employee_endpoint_permission("company_billing.reactivate_subscription", "POST") == EMPLOYEE_ADMIN_ONLY
+    assert employee_endpoint_permission("company_billing.company_settings_billing_invoice_pdf", "GET") == EMPLOYEE_ADMIN_ONLY
+    assert employee_endpoint_permission("company_billing.company_settings_billing_payment_pdf", "GET") == EMPLOYEE_ADMIN_ONLY
     assert employee_endpoint_permission("quotes.index", "GET") == "quotes_view"
     assert employee_endpoint_permission("quotes.new_quote", "GET") == "quotes_create"
     assert employee_endpoint_permission("quotes.edit_quote", "POST") == "quotes_edit"
