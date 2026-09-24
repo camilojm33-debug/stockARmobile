@@ -8737,3 +8737,20 @@ def test_products_import_ignores_presentation_rows_and_uses_matching_sheet():
         assert imported.name == "Galletitas surtidas"
         assert float(imported.price or 0) == pytest.approx(1800)
         assert float(imported.stock or 0) == pytest.approx(24)
+
+
+def test_balance_exports_work_for_csv_excel_and_pdf():
+    client = stock_app.app.test_client()
+    login = client.post("/auth/login", data={"username": "negocio_admin", "password": "admin123"})
+    assert login.status_code in (200, 302)
+
+    for path, content_type in [
+        ("/reportes/balance.csv", "text/csv"),
+        ("/reportes/balance.xlsx", "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"),
+        ("/reportes/balance.pdf", "application/pdf"),
+    ]:
+        response = client.get(path)
+        assert response.status_code == 200, path
+        assert response.content_type.startswith(content_type), (path, response.content_type)
+        assert len(response.data) > 0
+        assert "attachment" in response.headers.get("Content-Disposition", "")
