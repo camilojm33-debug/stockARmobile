@@ -8754,3 +8754,197 @@ def test_balance_exports_work_for_csv_excel_and_pdf():
         assert response.content_type.startswith(content_type), (path, response.content_type)
         assert len(response.data) > 0
         assert "attachment" in response.headers.get("Content-Disposition", "")
+
+
+def test_balance_exports_respect_selected_period():
+    from datetime import datetime
+    from app import Expense, PurchaseOrder
+
+    with stock_app.app.app_context():
+        company = Company.query.filter_by(name="Empresa Demo").first()
+        user = User.query.filter_by(username="negocio_admin").first()
+        assert company is not None
+        assert user is not None
+
+        db.session.add(
+            Sale(
+                company_id=company.id,
+                seller_id=user.id,
+                customer="Balance periodo incluido",
+                date=datetime(2026, 9, 23, 14, 0, 0),
+                subtotal=100,
+                total_amount=100,
+                paid_amount=100,
+                payment_method="EFECTIVO",
+                status="confirmada",
+                client_txn_id="balance-period-in",
+            )
+        )
+        db.session.add(
+            Sale(
+                company_id=company.id,
+                seller_id=user.id,
+                customer="Balance periodo excluido",
+                date=datetime(2026, 9, 22, 14, 0, 0),
+                subtotal=900,
+                total_amount=900,
+                paid_amount=900,
+                payment_method="EFECTIVO",
+                status="confirmada",
+                client_txn_id="balance-period-out",
+            )
+        )
+        db.session.add(
+            PurchaseOrder(
+                company_id=company.id,
+                date=datetime(2026, 9, 23, 15, 0, 0),
+                status="recibida",
+                subtotal=20,
+                total_amount=20,
+                note="Compra balance periodo",
+            )
+        )
+        db.session.add(
+            Expense(
+                company_id=company.id,
+                date=datetime(2026, 9, 23, 16, 0, 0),
+                category="Prueba",
+                description="Gasto balance periodo",
+                amount=5,
+            )
+        )
+        db.session.commit()
+
+    client = stock_app.app.test_client()
+    client.post("/auth/login", data={"username": "negocio_admin", "password": "admin123"})
+    query = "?desde=2026-09-23&hasta=2026-09-23"
+
+    csv_response = client.get(f"/reportes/balance.csv{query}")
+    assert csv_response.status_code == 200
+    csv_text = csv_response.get_data(as_text=True)
+    assert "Ventas,100.0" in csv_text or "Ventas,100" in csv_text
+    assert "Compras,20.0" in csv_text or "Compras,20" in csv_text
+    assert "Gastos,5.0" in csv_text or "Gastos,5" in csv_text
+    assert "Resultado,75.0" in csv_text or "Resultado,75" in csv_text
+    assert "1000" not in csv_text
+
+    excel_response = client.get(f"/reportes/balance.xlsx{query}")
+    assert excel_response.status_code == 200
+    from openpyxl import load_workbook
+
+    workbook = load_workbook(io.BytesIO(excel_response.data), data_only=True)
+    rows = list(workbook.active.iter_rows(values_only=True))
+    values = {row[0]: row[1] for row in rows if row and row[0]}
+    assert float(values["Ventas"]) == pytest.approx(100)
+    assert float(values["Compras"]) == pytest.approx(20)
+    assert float(values["Gastos"]) == pytest.approx(5)
+    assert float(values["Resultado"]) == pytest.approx(75)
+
+    pdf_response = client.get(f"/reportes/balance.pdf{query}")
+    assert pdf_response.status_code == 200
+    from pypdf import PdfReader
+
+    pdf_text = "\n".join(page.extract_text() or "" for page in PdfReader(io.BytesIO(pdf_response.data)).pages)
+    assert "100.00" in pdf_text
+    assert "20.00" in pdf_text
+    assert "5.00" in pdf_text
+    assert "75.00" in pdf_text
+    assert "900.00" not in pdf_text
+    assert "1906719.05" not in pdf_text
+
+
+def test_quotes_date_filter_respects_selected_local_day():
+    from datetime import datetime
+
+    with stock_app.app.app_context():
+        company = Company.query.filter_by(name="Empresa Demo").first()
+        user = User.query.filter_by(username="negocio_admin").first()
+        assert company is not None
+        assert user is not None
+
+        db.session.add(
+            Quote(
+                company_id=company.id,
+                created_by_user_id=user.id,
+                seller_id=user.id,
+                number="FILTRO-23",
+                date=datetime(2026, 9, 23, 14, 0, 0),
+                total_amount=230,
+                status="BORRADOR",
+            )
+        )
+        db.session.add(
+            Quote(
+                company_id=company.id,
+                created_by_user_id=user.id,
+                seller_id=user.id,
+                number="FILTRO-22",
+                date=datetime(2026, 9, 22, 14, 0, 0),
+                total_amount=220,
+                status="BORRADOR",
+            )
+        )
+        db.session.commit()
+
+    client = stock_app.app.test_client()
+    client.post("/auth/login", data={"username": "negocio_admin", "password": "admin123"})
+    response = client.get("/presupuestos/?from=2026-09-23&to=2026-09-23")
+    assert response.status_code == 200
+    html = response.get_data(as_text=True)
+    assert "FILTRO-23" in html
+    assert "FILTRO-22" not in html
+
+
+def test_supplier_purchase_filters_apply_date_and_status():
+    from datetime import datetime
+    from app import PurchaseOrder, Supplier
+
+    with stock_app.app.app_context():
+        company = Company.query.filter_by(name="Empresa Demo").first()
+        assert company is not None
+        supplier = Supplier(name="Proveedor filtro", company_id=company.id, active=True)
+        db.session.add(supplier)
+        db.session.flush()
+
+        included = PurchaseOrder(
+            company_id=company.id,
+            supplier_id=supplier.id,
+            date=datetime(2026, 9, 23, 14, 0, 0),
+            status="recibida",
+            total_amount=100,
+            subtotal=100,
+        )
+        excluded_status = PurchaseOrder(
+            company_id=company.id,
+            supplier_id=supplier.id,
+            date=datetime(2026, 9, 23, 15, 0, 0),
+            status="cancelada",
+            total_amount=200,
+            subtotal=200,
+        )
+        excluded_date = PurchaseOrder(
+            company_id=company.id,
+            supplier_id=supplier.id,
+            date=datetime(2026, 9, 22, 14, 0, 0),
+            status="recibida",
+            total_amount=300,
+            subtotal=300,
+        )
+        db.session.add_all([included, excluded_status, excluded_date])
+        db.session.commit()
+        included_id = included.id
+        excluded_status_id = excluded_status.id
+        excluded_date_id = excluded_date.id
+        supplier_id = supplier.id
+
+    client = stock_app.app.test_client()
+    client.post("/auth/login", data={"username": "negocio_admin", "password": "admin123"})
+    response = client.get(
+        f"/compras/proveedores/{supplier_id}/compras"
+        "?date_from=2026-09-23&date_to=2026-09-23&status=recibida"
+    )
+    assert response.status_code == 200
+    html = response.get_data(as_text=True)
+    assert f"#{included_id}" in html
+    assert f"#{excluded_status_id}" not in html
+    assert f"#{excluded_date_id}" not in html
