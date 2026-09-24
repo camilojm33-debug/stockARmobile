@@ -47,7 +47,10 @@
       <div class="bottom-grid"><div>
         {% if quote.observations or quote.commercial_conditions %}<div class="notes">{% if quote.commercial_conditions %}<h3>Condiciones comerciales</h3><p>{{ quote.commercial_conditions }}</p>{% endif %}{% if quote.observations %}<h3>Observaciones</h3><p>{{ quote.observations }}</p>{% endif %}</div>{% endif %}
         {% if status not in ['APROBADO','RECHAZADO','ANULADO','VENCIDO'] %}<div class="accept-box"><h2>¿Querés avanzar con este presupuesto?</h2><p>Al aceptar, la empresa recibirá la confirmación y podrá continuar con el pedido.</p>
-          <a class="btn success" style="width:100%" href="{{ accept_url }}" onclick="return confirm('¿Confirmás que querés aceptar este presupuesto?');">✅ Aceptar presupuesto</a>
+          <form method="post" action="{{ accept_url }}" onsubmit="return confirm('¿Confirmás que querés aceptar este presupuesto?');">
+            <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+            <button class="btn success" style="width:100%" type="submit">✅ Aceptar presupuesto</button>
+          </form>
           <div class="cta-row"><a class="btn secondary" style="flex:1" href="https://wa.me/?text={{ ('Hola, quisiera consultar sobre el presupuesto ' ~ (quote.number or ('P-' ~ '%06d'|format(quote.id))))|urlencode }}" target="_blank" rel="noopener">💬 Consultar por WhatsApp</a></div>
         </div>{% endif %}
       </div>
