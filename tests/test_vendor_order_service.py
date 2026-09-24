@@ -648,6 +648,104 @@ def test_runtime_rejects_company_id_supplied_by_model_for_vendor_tool(vendor_dat
     assert CART_KEY not in (conversation.metadata_json or {})
 
 
+def test_checkout_charges_are_calculated_and_sent_as_separate_mp_lines(vendor_database, monkeypatch):
+    data = vendor_database
+    company = data["company_a"]
+    _configure_vendor_charges(
+        company,
+        charges=[
+            {"id": "iva", "name": "IVA", "type": "percentage", "value": "21", "base": "products", "active": True},
+            {"id": "embalaje", "name": "Embalaje", "type": "fixed", "value": "10", "base": "products", "active": True},
+        ],
+    )
+    _configure_vendor_shipping(company, mode="fixed", standard_cost="50.00")
+
+    conversation = _conversation(company.id)
+    calls = []
+    _mock_checkout(monkeypatch, calls)
+    VendorOrderService.update_cart(
+        company_id=company.id,
+        conversation_id=conversation.id,
+        items=[{"product_query": "Cafe clasico", "quantity": 2}],
+    )
+
+    result = VendorOrderService.create_pending_order(
+        company_id=company.id,
+        conversation_id=conversation.id,
+        delivery_method="envio",
+        customer_name="Comprador",
+        customer_phone="5491119998888",
+        delivery_address="Av. Siempre Viva 123",
+        delivery_city="Resistencia",
+        delivery_province="Chaco",
+        actor_user_id=data["user_a"].id,
+    )
+
+    quote = db.session.get(Quote, result["quote_id"])
+    delivery = db.session.get(QuoteDelivery, quote.id)
+    checkout = next(payload for kind, payload in calls if kind == "checkout")
+    snapshot = json.loads(quote.charges_json or "[]")
+
+    assert result["success"] is True
+    assert quote.subtotal == 200
+    assert quote.surcharge == 60
+    assert quote.tax == 42
+    assert quote.total_amount == 302
+    assert delivery.shipping_cost == 50
+    assert [row["name"] for row in snapshot] == ["Envío a domicilio", "IVA", "Embalaje"]
+    assert [row["amount"] for row in snapshot] == ["50.00", "42.00", "10.00"]
+    assert abs(sum(float(item["quantity"]) * float(item["unit_price"]) for item in checkout["items"]) - 302.0) < 0.01
+    assert any(item["title"] == "IVA" and item["unit_price"] == 42.0 for item in checkout["items"])
+    assert any(item["title"] == "Embalaje" and item["unit_price"] == 10.0 for item in checkout["items"])
+    assert any(item["title"] == "Envío a domicilio" and item["unit_price"] == 50.0 for item in checkout["items"])
+
+
+def test_retry_payment_reuses_persisted_checkout_charges(vendor_database, monkeypatch):
+    data = vendor_database
+    _configure_vendor_charges(
+        data["company_a"],
+        charges=[{"id": "iva", "name": "IVA 21%", "type": "percentage", "value": "21", "base": "products", "active": True}],
+    )
+    conversation = _conversation(data["company_a"].id)
+    calls = []
+    _mock_checkout(monkeypatch, calls)
+    VendorOrderService.update_cart(
+        company_id=data["company_a"].id,
+        conversation_id=conversation.id,
+        items=[{"product_query": "Cafe clasico", "quantity": 1}],
+    )
+    first = VendorOrderService.create_pending_order(
+        company_id=data["company_a"].id,
+        conversation_id=conversation.id,
+        actor_user_id=data["user_a"].id,
+    )
+    payment = Payment.query.filter_by(company_id=data["company_a"].id).one()
+    payment.status = "rejected"
+    db.session.commit()
+
+    second = VendorOrderService.retry_payment(
+        company_id=data["company_a"].id,
+        conversation_id=conversation.id,
+    )
+    checkout_calls = [payload for kind, payload in calls if kind == "checkout"]
+    assert second["success"] is True
+    assert len(checkout_calls) == 2
+    retry_items = checkout_calls[1]["items"]
+    assert any(item["title"] == "IVA 21%" and item["unit_price"] == 21.0 for item in retry_items)
+    assert checkout_calls[1]["amount"] == 121.0
+    assert first["quote_id"] == second["quote_id"]
+
+
+def _configure_vendor_charges(company, *, charges):
+    payload = {"ai_agent": {"vendor_options": {
+        "shipping_mode": "fixed",
+        "standard_shipping_cost": "0.00",
+        "checkout_charges": charges,
+    }}}
+    company.preferences_json = json.dumps(payload, ensure_ascii=False)
+    db.session.commit()
+
+
 def _configure_vendor_shipping(company, *, mode, standard_cost="0.00"):
     payload = {"ai_agent": {"vendor_options": {
         "shipping_mode": mode,
