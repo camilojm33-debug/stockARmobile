@@ -463,13 +463,18 @@ async function flushQueue() {
 
 async function clearQueue() {
   const db = await openOfflineDB();
-  return new Promise((resolve, reject) => {
-    const tx = db.transaction(REQUEST_STORE, 'readwrite');
+  await new Promise((resolve, reject) => {
+    const tx = db.transaction([REQUEST_STORE, SNAPSHOT_STORE, META_STORE], 'readwrite');
     tx.objectStore(REQUEST_STORE).clear();
+    tx.objectStore(SNAPSHOT_STORE).clear();
+    tx.objectStore(META_STORE).clear();
     tx.oncomplete = resolve;
     tx.onerror = () => reject(tx.error);
-  }).then(async () => {
-    await updateMeta(LAST_ERROR_KEY, '');
-    await broadcastQueueStatus();
   });
+  try {
+    await caches.delete(CACHE_NAME);
+  } catch (error) {
+    // Cache deletion is best-effort during logout.
+  }
+  await broadcastQueueStatus();
 }

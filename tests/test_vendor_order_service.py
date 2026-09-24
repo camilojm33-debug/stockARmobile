@@ -843,7 +843,7 @@ def test_ai_followup_planner_pauses_when_human_attention_is_active(vendor_databa
             "line_count": 1,
         },
     }
-    from app import ConversationMessage
+    from stockarmobile.models.conversations import ConversationMessage
     from datetime import datetime
 
     db.session.add(

@@ -39,7 +39,13 @@ class SaleService:
         sale = None
         final_total = Decimal("0.00")
         try:
-            current_app.logger.info("[sales] carrito recibido (_create_sale_from_items): items=%s json_response=%s", items, json_response)
+            current_app.logger.info(
+                "[sales] checkout procesado: company_id=%s user_id=%s item_count=%s json_response=%s",
+                getattr(current_user, "company_id", None),
+                getattr(current_user, "id", None),
+                len(items or {}),
+                json_response,
+            )
             cash_session = self._require_open_cash_session(json_response=json_response)
             if cash_session is None:
                 return redirect(url_for("cash.index"))
