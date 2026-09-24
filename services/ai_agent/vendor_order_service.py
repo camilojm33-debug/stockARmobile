@@ -729,34 +729,37 @@ class VendorOrderService:
             cart_total=_money(base_totals["total"]),
             method=delivery["method"],
         )
-        pricing_data = {}
-        if shipping["rate"] > 0:
-            pricing_data = {
-                "surcharge_type": "percentage",
-                "surcharge_value": shipping["rate"],
-                "surcharge_reason": shipping["reason"],
-            }
-        elif shipping["cost"] > 0:
-            pricing_data = {
-                "surcharge_type": "fixed",
-                "surcharge_value": shipping["cost"],
-                "surcharge_reason": shipping["reason"],
-            }
-        totals = PricingService.calculate(lines=line_inputs, data=pricing_data)
+        charge_plan = _checkout_charge_plan(
+            company_id=company_id,
+            product_total=_money(base_totals["total"]),
+            shipping_cost=_money(shipping["cost"]),
+        )
+        fixed_surcharge = _money(shipping["cost"]) + _money(charge_plan["fixed_total"])
+        percentage_tax = _money(charge_plan["percentage_total"])
+        final_total = _money(base_totals["total"] + fixed_surcharge + percentage_tax)
+        fixed_names = []
+        if shipping["cost"] > Decimal("0.00"):
+            fixed_names.append("Envío a domicilio")
+        fixed_names.extend(
+            charge["name"]
+            for charge in charge_plan["charges"]
+            if charge.get("type") == "fixed" and charge.get("id") != "shipping"
+        )
         quote = Quote(
             date=__import__("datetime").datetime.utcnow(),
             expires_at=__import__("datetime").datetime.utcnow() + timedelta(hours=24),
-            subtotal=totals["subtotal"],
-            discount=totals["line_discount_total"] + totals["general_discount"],
-            surcharge=totals["surcharge"],
-            tax=totals["tax"],
-            total_amount=totals["total"],
-            discount_type=totals["discount_adjustment"]["type"],
-            discount_value=totals["discount_adjustment"]["value"],
-            discount_reason=(totals["discount_adjustment"]["reason"] or ("Promoción: " + ", ".join(promotion_names) if promotion_names else None)),
-            surcharge_type=totals["surcharge_adjustment"]["type"],
-            surcharge_value=totals["surcharge_adjustment"]["value"],
-            surcharge_reason=totals["surcharge_adjustment"]["reason"],
+            subtotal=base_totals["subtotal"],
+            discount=base_totals["line_discount_total"] + base_totals["general_discount"],
+            surcharge=fixed_surcharge,
+            tax=percentage_tax,
+            total_amount=final_total,
+            discount_type=base_totals["discount_adjustment"]["type"],
+            discount_value=base_totals["discount_adjustment"]["value"],
+            discount_reason=(base_totals["discount_adjustment"]["reason"] or ("Promoción: " + ", ".join(promotion_names) if promotion_names else None)),
+            surcharge_type="fixed" if fixed_surcharge > Decimal("0.00") else None,
+            surcharge_value=fixed_surcharge if fixed_surcharge > Decimal("0.00") else None,
+            surcharge_reason=" · ".join(fixed_names)[:255] if fixed_names else None,
+            charges_json=json.dumps(charge_plan["charges"], ensure_ascii=False, separators=(",", ":")),
             observations="Pedido generado por el Vendedor 24 hs de StockARmobile.",
             commercial_conditions="Pago mediante Mercado Pago. El stock se descuenta al confirmarse el pago.",
             status="ENVIADO",
@@ -825,28 +828,7 @@ class VendorOrderService:
         quote_url = _public_quote_url(quote.id)
         result = mp.create_ai_order_checkout_preference(
             title=f"Pedido {quote.number} - StockARmobile",
-            items=[
-                {
-                    "id": str(product.id),
-                    "title": product.name,
-                    "description": product.name,
-                    "quantity": int(item["quantity"]) if float(item["quantity"]).is_integer() else float(item["quantity"]),
-                    "currency_id": quote.currency or "ARS",
-                    "unit_price": float((promotion_by_product_id.get(product.id).final_amount / Decimal(str(item["quantity"]))) if promotion_by_product_id.get(product.id) is not None and Decimal(str(item["quantity"])) > 0 else max(_money(product.price) - _money(getattr(product, "discount", 0)), Decimal("0.00"))),
-                }
-                for item in cart["items"]
-                for product in [products[int(item["product_id"])] ]
-            ] + (
-                [{
-                    "id": f"shipping-{quote.id}",
-                    "title": "Envío a domicilio",
-                    "description": str(shipping["reason"] or "Envío a domicilio"),
-                    "quantity": 1,
-                    "currency_id": quote.currency or "ARS",
-                    "unit_price": float(shipping["cost"]),
-                }]
-                if shipping["cost"] > 0 else []
-            ),
+            items=_quote_checkout_items(quote),
             amount=float(quote.total_amount or 0),
             currency=quote.currency or "ARS",
             external_reference=external_reference,
