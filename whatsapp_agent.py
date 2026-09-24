@@ -267,7 +267,7 @@ def _ai_order_row(company_id: int, quote):
     ):
         order_key, order_label, order_badge = "shipping_pending", "Esperando cotización de envío", "text-bg-warning"
     elif getattr(quote, "converted_sale_id", None):
-        order_key, order_label, order_badge = "confirmed", "Confirmado", "text-bg-success"
+        order_key, order_label, order_badge = "confirmed_manual", "Confirmado · venta manual", "text-bg-success"
     elif payment_status == "approved":
         order_key, order_label, order_badge = "paid", "Pagado · pendiente de venta", "text-bg-warning"
     elif payment_status in {"pending", "in_process", "authorized", ""}:
@@ -285,7 +285,10 @@ def _ai_order_row(company_id: int, quote):
         "refunded": ("Reembolsado", "text-bg-secondary"),
         "charged_back": ("Contracargo", "text-bg-danger"),
     }
-    payment_label, payment_badge = payment_labels.get(payment_status, (payment_status.replace("_", " ").title(), "text-bg-secondary"))
+    if getattr(quote, "converted_sale_id", None) and payment_status in {"pending", "in_process", "authorized"}:
+        payment_label, payment_badge = "Cerrado por venta manual", "text-bg-success"
+    else:
+        payment_label, payment_badge = payment_labels.get(payment_status, (payment_status.replace("_", " ").title(), "text-bg-secondary"))
     client = getattr(quote, "client", None)
     channel = _ai_order_channel(company_id, quote.id, payment)
     channel_meta = _ai_order_channel_meta(channel)
