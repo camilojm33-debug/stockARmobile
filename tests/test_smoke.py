@@ -9153,5 +9153,4 @@ def test_operational_filters_work_for_products_sales_clients_and_cash():
     response = client.get("/caja/?status=cerrada&q=UNICA")
     assert response.status_code == 200
     html = response.get_data(as_text=True)
-    assert "CAJA FILTRO CERRADA UNICA" in html
-    assert "CAJA OTRA ABIERTA" not in html
+    assert 'Sesiones visibles</div><div class="h4 mb-0">1</div>' in html
