@@ -35,7 +35,7 @@ class SaleService:
         self._to_decimal = to_decimal
 
     def create_sale_from_items(self, *, items, data, json_response=False):
-        from app import CashMovement, Client, Sale, SaleItem, db, record_audit, scope_query_to_company, utcnow
+        from app import CashMovement, Client, Payment, Sale, SaleItem, db, record_audit, scope_query_to_company, utcnow
 
         sale = None
         final_total = Decimal("0.00")
@@ -79,6 +79,21 @@ class SaleService:
                     )
                     if quote_snapshot is None:
                         raise ValueError("No se encontró el presupuesto de origen.")
+                    if getattr(current_user, "role", None) not in {"admin", "superadmin"} and int(quote_snapshot.seller_id or 0) != int(current_user.id or 0):
+                        raise ValueError("No tenés permiso para convertir este presupuesto.")
+                    if str(quote_snapshot.status or "").upper() in {"ANULADO", "RECHAZADO", "VENCIDO"}:
+                        raise ValueError("El presupuesto no está disponible para convertir.")
+                    ai_payment = (
+                        scope_query_to_company(Payment.query, Payment)
+                        .filter(
+                            Payment.provider == "mercadopago_ai_order",
+                            Payment.external_reference.like(f"flow:ai_order|company_id:{int(company_id)}|quote_id:{int(quote_snapshot.id)}|%"),
+                        )
+                        .order_by(Payment.id.desc())
+                        .first()
+                    )
+                    if ai_payment is not None and str(ai_payment.status or "").lower() == "approved":
+                        raise ValueError("El pago del pedido IA ya fue aprobado; la venta debe confirmarse desde el flujo de pago.")
                     if quote_snapshot.converted_sale_id:
                         existing_sale = scope_query_to_company(Sale.query, Sale).filter(Sale.id == quote_snapshot.converted_sale_id).first()
                         if existing_sale is not None:
