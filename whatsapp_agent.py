@@ -470,7 +470,7 @@ def ai_order_attention(quote_id: int):
     company_id = get_current_company_id()
     if not company_id:
         abort(403)
-    from app import Quote
+    from app import Quote, record_audit
 
     marker = "Pedido generado por el Vendedor 24 hs de StockARmobile."
     quote = Quote.query.filter_by(
@@ -526,6 +526,13 @@ def ai_order_attention(quote_id: int):
         abort(400)
 
     _set_metadata(conversation, metadata)
+    record_audit(
+        action=f"ai_order_attention_{action}",
+        entity="quote",
+        entity_id=quote.id,
+        detail=f"Atención de pedido IA: {action}",
+        ip_address=request.remote_addr,
+    )
     db.session.commit()
     return redirect(url_for("whatsapp_agent.ai_order_detail", quote_id=quote.id))
 
