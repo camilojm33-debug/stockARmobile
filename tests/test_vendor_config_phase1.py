@@ -60,6 +60,38 @@ def test_vendor_options_are_normalized_without_cross_company_state():
     assert config_b["can_take_orders"] is False
 
 
+def test_vendor_checkout_charges_are_normalized_and_bounded():
+    company = type("Company", (), {})()
+    company.preferences_json = json.dumps(
+        {
+            "ai_agent": {
+                "vendor_options": {
+                    "checkout_charges": [
+                        {"name": "IVA", "type": "percentage", "value": "21", "base": "products", "active": True},
+                        {"name": "Embalaje", "type": "fixed", "value": "1500.50", "base": "products", "active": True},
+                        {"name": "", "type": "fixed", "value": "99", "active": True},
+                        {"name": "Invalido", "type": "weird", "value": "-50", "base": "bad", "active": True},
+                    ]
+                }
+            }
+        }
+    )
+
+    options = config_service.get_vendor_options(company)
+    charges = options["checkout_charges"]
+
+    assert len(charges) == 3
+    assert charges[0]["name"] == "IVA"
+    assert charges[0]["type"] == "percentage"
+    assert charges[0]["base"] == "products"
+    assert charges[0]["value"] == "21.00"
+    assert charges[1]["type"] == "fixed"
+    assert charges[1]["value"] == "1500.50"
+    assert charges[2]["type"] == "fixed"
+    assert charges[2]["base"] == "products"
+    assert charges[2]["value"] == "0.00"
+
+
 def test_vendor_runtime_instructions_keep_system_guardrails_and_merchant_context():
     prompt = config_service.build_vendor_runtime_instructions(
         merchant_instructions="No inventes descuentos. Priorizá envíos locales.",
@@ -131,6 +163,9 @@ def test_vendor_configuration_navigation_and_capabilities_are_exposed():
     assert "name=\"vendor_greeting\"" in vendor_config_page
     assert "vendor_shipping_mode" in vendor_config_page
     assert "vendor_standard_shipping_cost" in vendor_config_page
+    assert "vendor_checkout_charges_json" in vendor_config_page
+    assert "Agregar concepto" in vendor_config_page
+    assert "Mercado Pago" in vendor_config_page
     assert "Seguimiento automático" in vendor_config_page
 
     assert "Configurar Vendedor" not in publication_page

@@ -272,8 +272,158 @@ def _shipping_plan(company_id: int, cart_total: Decimal, method: str) -> Dict[st
     }
 
 
+def _checkout_charge_plan(company_id: int, *, product_total: Decimal, shipping_cost: Decimal) -> Dict[str, Any]:
+    """Calculate merchant-configured checkout charges on the server."""
+    from app import Company
+
+    company = Company.query.filter_by(id=int(company_id), active=True).first()
+    if company is None:
+        raise ValueError("Empresa no encontrada para calcular los cargos.")
+
+    options = get_vendor_options(company)
+    configured = options.get("checkout_charges") if isinstance(options.get("checkout_charges"), list) else []
+    product_base = _money(product_total)
+    shipping = _money(shipping_cost)
+    running_total = product_base + shipping
+    charges = []
+    fixed_total = Decimal("0.00")
+    percentage_total = Decimal("0.00")
+
+    for charge in configured[:20]:
+        if not isinstance(charge, dict) or not charge.get("active", True):
+            continue
+        name = str(charge.get("name") or "").strip()[:120]
+        if not name:
+            continue
+        charge_type = str(charge.get("type") or "fixed").strip().lower()
+        base_key = str(charge.get("base") or "products").strip().lower()
+        value = _money(charge.get("value"))
+        if value < Decimal("0.00"):
+            continue
+
+        if base_key == "products_shipping":
+            base_amount = product_base + shipping
+        elif base_key == "previous_total":
+            base_amount = running_total
+        else:
+            base_amount = product_base
+
+        amount = value if charge_type == "fixed" else _money(base_amount * value / Decimal("100.00"))
+        if amount <= Decimal("0.00"):
+            continue
+        if charge_type == "percentage":
+            percentage_total += amount
+        else:
+            fixed_total += amount
+        running_total += amount
+        charges.append({
+            "id": str(charge.get("id") or "")[:64],
+            "name": name,
+            "type": "percentage" if charge_type == "percentage" else "fixed",
+            "value": str(value),
+            "base": base_key if base_key in {"products", "products_shipping", "previous_total"} else "products",
+            "base_amount": str(base_amount.quantize(Decimal("0.01"))),
+            "amount": str(amount.quantize(Decimal("0.01"))),
+        })
+
+    snapshot = []
+    if shipping > Decimal("0.00"):
+        snapshot.append({
+            "id": "shipping",
+            "name": "Envío a domicilio",
+            "type": "fixed",
+            "value": str(shipping),
+            "base": "none",
+            "base_amount": "0.00",
+            "amount": str(shipping),
+        })
+    snapshot.extend(charges)
+    return {
+        "charges": snapshot,
+        "fixed_total": fixed_total,
+        "percentage_total": percentage_total,
+        "total": fixed_total + percentage_total,
+    }
+
+
+def _quote_charge_snapshot(quote) -> list[dict[str, Any]]:
+    try:
+        payload = json.loads(quote.charges_json or "[]")
+    except (TypeError, ValueError, json.JSONDecodeError):
+        payload = []
+    return payload if isinstance(payload, list) else []
+
+
+def _quote_checkout_items(quote) -> list[dict[str, Any]]:
+    """Build the exact Mercado Pago line items from a persisted quote snapshot."""
+    items = []
+    for item in list(getattr(quote, "items", []) or []):
+        quantity = Decimal(str(item.quantity or 0))
+        if quantity <= Decimal("0.00"):
+            continue
+        net_unit_price = _money(_money(item.subtotal) / quantity)
+        items.append({
+            "id": str(item.product_id or item.id),
+            "title": item.description,
+            "description": item.description,
+            "quantity": int(quantity) if quantity == int(quantity) else float(quantity),
+            "currency_id": quote.currency or "ARS",
+            "unit_price": float(net_unit_price),
+        })
+    charges = _quote_charge_snapshot(quote)
+    if not charges:
+        legacy_delivery = getattr(quote, "delivery", None)
+        legacy_shipping = _money(getattr(legacy_delivery, "shipping_cost", 0) or 0) if legacy_delivery else Decimal("0.00")
+        if legacy_shipping > Decimal("0.00"):
+            charges = [{
+                "id": "shipping",
+                "name": "Envío a domicilio",
+                "type": "fixed",
+                "value": str(legacy_shipping),
+                "base": "none",
+                "base_amount": "0.00",
+                "amount": str(legacy_shipping),
+            }]
+
+    for charge in charges:
+        amount = _money(charge.get("amount"))
+        if amount <= Decimal("0.00"):
+            continue
+        title = str(charge.get("name") or "Cargo").strip()[:256]
+        description = title
+        if charge.get("type") == "percentage":
+            description = f"{title} · {charge.get('value', '0')}% sobre base {charge.get('base', 'products')}"
+        charge_id = str(charge.get("id") or "").strip()
+        checkout_item_id = (
+            f"shipping-{quote.id}"
+            if charge_id == "shipping"
+            else f"charge-{quote.id}-{str(charge_id or len(items))[:40]}"
+        )
+        items.append({
+            "id": checkout_item_id,
+            "title": title,
+            "description": description[:256],
+            "quantity": 1,
+            "currency_id": quote.currency or "ARS",
+            "unit_price": float(amount),
+        })
+    return items
+
+
 class VendorOrderService:
     """Owns tenant-scoped cart, quote and payment transitions."""
+
+    @staticmethod
+    def _conversation_for_order(*, company_id: int, conversation_id: int):
+        from stockarmobile.models.conversations import Conversation
+
+        conversation = Conversation.query.filter_by(
+            id=int(conversation_id),
+            company_id=int(company_id),
+        ).first()
+        if conversation is None:
+            raise ValueError("Conversación no encontrada.")
+        return conversation
 
     @staticmethod
     def get_cart(*, company_id: int, conversation_id: int) -> Dict[str, Any]:
@@ -620,34 +770,37 @@ class VendorOrderService:
             cart_total=_money(base_totals["total"]),
             method=delivery["method"],
         )
-        pricing_data = {}
-        if shipping["rate"] > 0:
-            pricing_data = {
-                "surcharge_type": "percentage",
-                "surcharge_value": shipping["rate"],
-                "surcharge_reason": shipping["reason"],
-            }
-        elif shipping["cost"] > 0:
-            pricing_data = {
-                "surcharge_type": "fixed",
-                "surcharge_value": shipping["cost"],
-                "surcharge_reason": shipping["reason"],
-            }
-        totals = PricingService.calculate(lines=line_inputs, data=pricing_data)
+        charge_plan = _checkout_charge_plan(
+            company_id=company_id,
+            product_total=_money(base_totals["total"]),
+            shipping_cost=_money(shipping["cost"]),
+        )
+        fixed_surcharge = _money(shipping["cost"]) + _money(charge_plan["fixed_total"])
+        percentage_tax = _money(charge_plan["percentage_total"])
+        final_total = _money(base_totals["total"] + fixed_surcharge + percentage_tax)
+        fixed_names = []
+        if shipping["cost"] > Decimal("0.00"):
+            fixed_names.append(str(shipping["reason"] or "Envío a domicilio"))
+        fixed_names.extend(
+            charge["name"]
+            for charge in charge_plan["charges"]
+            if charge.get("type") == "fixed" and charge.get("id") != "shipping"
+        )
         quote = Quote(
             date=__import__("datetime").datetime.utcnow(),
             expires_at=__import__("datetime").datetime.utcnow() + timedelta(hours=24),
-            subtotal=totals["subtotal"],
-            discount=totals["line_discount_total"] + totals["general_discount"],
-            surcharge=totals["surcharge"],
-            tax=totals["tax"],
-            total_amount=totals["total"],
-            discount_type=totals["discount_adjustment"]["type"],
-            discount_value=totals["discount_adjustment"]["value"],
-            discount_reason=(totals["discount_adjustment"]["reason"] or ("Promoción: " + ", ".join(promotion_names) if promotion_names else None)),
-            surcharge_type=totals["surcharge_adjustment"]["type"],
-            surcharge_value=totals["surcharge_adjustment"]["value"],
-            surcharge_reason=totals["surcharge_adjustment"]["reason"],
+            subtotal=base_totals["subtotal"],
+            discount=base_totals["line_discount_total"] + base_totals["general_discount"],
+            surcharge=fixed_surcharge,
+            tax=percentage_tax,
+            total_amount=final_total,
+            discount_type=base_totals["discount_adjustment"]["type"],
+            discount_value=base_totals["discount_adjustment"]["value"],
+            discount_reason=(base_totals["discount_adjustment"]["reason"] or ("Promoción: " + ", ".join(promotion_names) if promotion_names else None)),
+            surcharge_type="fixed" if fixed_surcharge > Decimal("0.00") else None,
+            surcharge_value=fixed_surcharge if fixed_surcharge > Decimal("0.00") else None,
+            surcharge_reason=" · ".join(fixed_names)[:255] if fixed_names else None,
+            charges_json=json.dumps(charge_plan["charges"], ensure_ascii=False, separators=(",", ":")),
             observations="Pedido generado por el Vendedor 24 hs de StockARmobile.",
             commercial_conditions="Pago mediante Mercado Pago. El stock se descuenta al confirmarse el pago.",
             status="ENVIADO",
@@ -716,28 +869,7 @@ class VendorOrderService:
         quote_url = _public_quote_url(quote.id)
         result = mp.create_ai_order_checkout_preference(
             title=f"Pedido {quote.number} - StockARmobile",
-            items=[
-                {
-                    "id": str(product.id),
-                    "title": product.name,
-                    "description": product.name,
-                    "quantity": int(item["quantity"]) if float(item["quantity"]).is_integer() else float(item["quantity"]),
-                    "currency_id": quote.currency or "ARS",
-                    "unit_price": float((promotion_by_product_id.get(product.id).final_amount / Decimal(str(item["quantity"]))) if promotion_by_product_id.get(product.id) is not None and Decimal(str(item["quantity"])) > 0 else max(_money(product.price) - _money(getattr(product, "discount", 0)), Decimal("0.00"))),
-                }
-                for item in cart["items"]
-                for product in [products[int(item["product_id"])] ]
-            ] + (
-                [{
-                    "id": f"shipping-{quote.id}",
-                    "title": "Envío a domicilio",
-                    "description": str(shipping["reason"] or "Envío a domicilio"),
-                    "quantity": 1,
-                    "currency_id": quote.currency or "ARS",
-                    "unit_price": float(shipping["cost"]),
-                }]
-                if shipping["cost"] > 0 else []
-            ),
+            items=_quote_checkout_items(quote),
             amount=float(quote.total_amount or 0),
             currency=quote.currency or "ARS",
             external_reference=external_reference,
@@ -809,6 +941,7 @@ class VendorOrderService:
             "currency": quote.currency or "ARS",
             "payment_url": payment_url,
             "quote_url": quote_url,
+            "charges": charge_plan["charges"],
             "expires_at": quote.expires_at.isoformat() if quote.expires_at else None,
             "delivery": {
                 "method": delivery["method"],
@@ -923,6 +1056,7 @@ class VendorOrderService:
             "payment_status": payment_status,
             "payment_id": getattr(payment, "payment_id", None) if payment else None,
             "payment_url": None,
+            "charges": _quote_charge_snapshot(quote),
             "sale_id": quote.converted_sale_id,
             "created_at": quote.date.isoformat() if getattr(quote, "date", None) else None,
             "expires_at": quote.expires_at.isoformat() if getattr(quote, "expires_at", None) else None,
@@ -1006,32 +1140,7 @@ class VendorOrderService:
         quote_url = _public_quote_url(quote.id)
         result = mp.create_ai_order_checkout_preference(
             title=f"Pedido {quote.number} - StockARmobile",
-            items=[
-                {
-                    "id": str(product.id),
-                    "title": product.name,
-                    "description": product.name,
-                    "quantity": int(float(item.quantity)) if float(item.quantity).is_integer() else float(item.quantity),
-                    "currency_id": quote.currency or "ARS",
-                    "unit_price": float(max(
-                        (_money(item.unit_price) * Decimal(str(item.quantity or 0)) - _money(item.discount))
-                        / Decimal(str(item.quantity or 1)),
-                        Decimal("0.00"),
-                    )),
-                }
-                for item in quote.items
-                for product in [products[int(item.product_id)]]
-            ] + (
-                [{
-                    "id": f"shipping-{quote.id}",
-                    "title": "Envío a domicilio",
-                    "description": str(getattr(getattr(quote, "delivery", None), "shipping_reason", None) or "Costo de envío confirmado por el comercio"),
-                    "quantity": 1,
-                    "currency_id": quote.currency or "ARS",
-                    "unit_price": float(_money(getattr(getattr(quote, "delivery", None), "shipping_cost", 0))),
-                }]
-                if _money(getattr(getattr(quote, "delivery", None), "shipping_cost", 0)) > 0 else []
-            ),
+            items=_quote_checkout_items(quote),
             amount=float(quote.total_amount or 0),
             currency=quote.currency or "ARS",
             external_reference=external_reference,

@@ -802,6 +802,7 @@ class Quote(db.Model):
     surcharge_reason = db.Column(db.Text)
     tax = db.Column(MONEY, default=Decimal("0.00"))
     total_amount = db.Column(MONEY, default=Decimal("0.00"))
+    charges_json = db.Column(db.Text)
     observations = db.Column(db.Text)
     commercial_conditions = db.Column(db.Text)
     status = db.Column(db.String(30), default="BORRADOR", index=True)
