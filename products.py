@@ -685,12 +685,14 @@ def import_excel():
                 return default
             if isinstance(value, str):
                 normalized = value.strip().replace(" ", "")
+                normalized = re.sub(r"(?i)(ars|usd|eur|mxn|brl|\$|€|£)", "", normalized)
+                normalized = re.sub(r"[^0-9,.-]", "", normalized)
                 if "," in normalized and "." in normalized:
                     if normalized.rfind(",") > normalized.rfind("."):
                         normalized = normalized.replace(".", "").replace(",", ".")
                     else:
                         normalized = normalized.replace(",", "")
-                else:
+                elif "," in normalized:
                     normalized = normalized.replace(",", ".")
                 value = normalized
             try:
