@@ -8942,3 +8942,72 @@ def test_supplier_purchase_filters_apply_date_and_status():
     assert f"#{included_id}" in html
     assert f"#{excluded_status_id}" not in html
     assert f"#{excluded_date_id}" not in html
+
+
+def test_business_billing_filters_respect_date_and_cuit():
+    from datetime import datetime
+    from app import BusinessDocument
+
+    with stock_app.app.app_context():
+        company = Company.query.filter_by(name="Empresa Demo").first()
+        user = User.query.filter_by(username="negocio_admin").first()
+        assert company is not None
+        assert user is not None
+
+        sale_in = Sale(
+            company_id=company.id,
+            seller_id=user.id,
+            customer="Cliente Fiscal",
+            date=datetime(2026, 9, 23, 14, 0, 0),
+            subtotal=150,
+            total_amount=150,
+            paid_amount=150,
+            payment_method="EFECTIVO",
+            status="confirmada",
+            client_txn_id="billing-filter-in",
+        )
+        sale_out = Sale(
+            company_id=company.id,
+            seller_id=user.id,
+            customer="Cliente Otro",
+            date=datetime(2026, 9, 22, 14, 0, 0),
+            subtotal=250,
+            total_amount=250,
+            paid_amount=250,
+            payment_method="EFECTIVO",
+            status="confirmada",
+            client_txn_id="billing-filter-out",
+        )
+        db.session.add_all([sale_in, sale_out])
+        db.session.flush()
+
+        db.session.add(
+            BusinessDocument(
+                company_id=company.id,
+                source_type="sale",
+                source_id=sale_in.id,
+                doc_type="factura_b",
+                pos_number="00001",
+                seq_number=99,
+                document_number="00001-00000099",
+                status="emitido",
+                client_name="Cliente Fiscal",
+                client_tax_id="30-12345678-9",
+                total_amount=150,
+                branch_label="Casa central",
+                emitted_by_user_id=user.id,
+                issued_at=datetime(2026, 9, 23, 14, 0, 0),
+            )
+        )
+        db.session.commit()
+
+    client = stock_app.app.test_client()
+    client.post("/auth/login", data={"username": "negocio_admin", "password": "admin123"})
+    response = client.get(
+        "/admin/facturacion?tab=dashboard&date_from=2026-09-23&date_to=2026-09-23&cuit=30-12345678-9"
+    )
+    assert response.status_code == 200
+    html = response.get_data(as_text=True)
+    assert "00001-00000099" in html
+    assert "Cliente Fiscal" in html
+    assert "Cliente Otro" not in html
