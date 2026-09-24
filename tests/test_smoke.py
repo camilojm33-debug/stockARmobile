@@ -8981,7 +8981,31 @@ def test_business_billing_filters_respect_date_and_cuit():
             status="confirmada",
             client_txn_id="billing-filter-out",
         )
-        db.session.add_all([sale_in, sale_out])
+        sale_local_late = Sale(
+            company_id=company.id,
+            seller_id=user.id,
+            customer="Cliente Limite Incluido",
+            date=datetime(2026, 9, 24, 2, 30, 0),
+            subtotal=175,
+            total_amount=175,
+            paid_amount=175,
+            payment_method="EFECTIVO",
+            status="confirmada",
+            client_txn_id="billing-filter-boundary-in",
+        )
+        sale_local_next_day = Sale(
+            company_id=company.id,
+            seller_id=user.id,
+            customer="Cliente Limite Excluido",
+            date=datetime(2026, 9, 24, 3, 30, 0),
+            subtotal=275,
+            total_amount=275,
+            paid_amount=275,
+            payment_method="EFECTIVO",
+            status="confirmada",
+            client_txn_id="billing-filter-boundary-out",
+        )
+        db.session.add_all([sale_in, sale_out, sale_local_late, sale_local_next_day])
         db.session.flush()
 
         db.session.add(
@@ -9014,3 +9038,5 @@ def test_business_billing_filters_respect_date_and_cuit():
     assert "00001-00000099" in html
     assert "Cliente Fiscal" in html
     assert "Cliente Otro" not in html
+    assert "Cliente Limite Incluido" in html
+    assert "Cliente Limite Excluido" not in html
