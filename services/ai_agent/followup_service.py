@@ -191,6 +191,9 @@ class AIFollowupService:
 
         for conversation in conversations:
             metadata = _metadata(conversation)
+            attention = metadata.get("ai_attention")
+            if isinstance(attention, dict) and str(attention.get("status") or "").strip().lower() in {"human", "resolved"}:
+                continue
             raw_cart = metadata.get(CART_KEY)
             if not isinstance(raw_cart, dict) or not raw_cart:
                 continue
