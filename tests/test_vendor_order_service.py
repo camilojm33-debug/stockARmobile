@@ -8,6 +8,7 @@ import pytest
 
 import app as stock_app
 from app import Client, Company, Payment, Product, Quote, QuoteDelivery, User, db
+from quotes import _build_public_quote_accept_url, _build_public_quote_pdf_url, _build_public_quote_url, _build_quote_whatsapp_message, _quote_charge_display_rows
 from services.ai_agent.orchestrator_v2 import AgentRuntime
 from services.ai_agent.vendor_order_service import (
     CART_KEY,
@@ -818,3 +819,93 @@ def _configure_vendor_shipping(company, *, mode, standard_cost="0.00"):
 
 
 
+
+def test_vendor_quote_snapshot_is_rendered_in_public_pdf_detail_and_whatsapp(vendor_database, monkeypatch):
+    data = vendor_database
+    company = data["company_a"]
+    _configure_vendor_charges(
+        company,
+        charges=[
+            {"id": "iva", "name": "IVA", "type": "percentage", "value": "21", "base": "products", "active": True},
+            {"id": "embalaje", "name": "Embalaje", "type": "fixed", "value": "10", "base": "products", "active": True},
+        ],
+    )
+    conversation = _conversation(company.id)
+    calls = []
+    _mock_checkout(monkeypatch, calls)
+    VendorOrderService.update_cart(
+        company_id=company.id,
+        conversation_id=conversation.id,
+        items=[{"product_query": "Cafe clasico", "quantity": 1}],
+    )
+    created = VendorOrderService.create_pending_order(
+        company_id=company.id,
+        conversation_id=conversation.id,
+        actor_user_id=data["user_a"].id,
+    )
+    quote = db.session.get(Quote, created["quote_id"])
+
+    rows = _quote_charge_display_rows(quote)
+    assert [row["label"] for row in rows] == ["IVA 21%", "Embalaje"]
+    assert [float(row["amount"]) for row in rows] == [21.0, 10.0]
+
+    whatsapp = _build_quote_whatsapp_message(quote, company)
+    assert "IVA 21%: ARS 21.00" in whatsapp
+    assert "Embalaje: ARS 10.00" in whatsapp
+    assert "Impuestos:" not in whatsapp
+
+    client = stock_app.app.test_client()
+    public = client.get(_build_public_quote_url(quote.id))
+    assert public.status_code == 200
+    html = public.get_data(as_text=True)
+    assert "IVA 21%" in html
+    assert "$21.00" in html
+    assert "Embalaje" in html
+    assert "Impuestos" not in html
+
+    pdf = client.get(_build_public_quote_pdf_url(quote.id))
+    assert pdf.status_code == 200
+    assert pdf.content_type.startswith("application/pdf")
+    assert len(pdf.data) > 0
+
+
+def test_manual_quote_acceptance_keeps_quote_and_does_not_create_sale(vendor_database):
+    data = vendor_database
+    quote = Quote(
+        company_id=data["company_a"].id,
+        created_by_user_id=data["user_a"].id,
+        seller_id=data["user_a"].id,
+        client_id=data["client_a"].id,
+        number="P-MANUAL-001",
+        subtotal=100,
+        discount=0,
+        surcharge=0,
+        tax=21,
+        total_amount=121,
+        status="ENVIADO",
+    )
+    db.session.add(quote)
+    db.session.flush()
+    from app import QuoteItem
+    db.session.add(
+        QuoteItem(
+            quote_id=quote.id,
+            product_id=data["product_a"].id,
+            description=data["product_a"].name,
+            quantity=1,
+            unit_price=100,
+            discount=0,
+            subtotal=100,
+            sort_order=1,
+        )
+    )
+    db.session.commit()
+
+    client = stock_app.app.test_client()
+    response = client.get(_build_public_quote_accept_url(quote.id), follow_redirects=False)
+    assert response.status_code in (301, 302)
+    db.session.refresh(quote)
+    assert quote.status == "APROBADO"
+    assert quote.converted_sale_id is None
+    from app import Sale
+    assert Sale.query.filter_by(company_id=data["company_a"].id).count() == 0
