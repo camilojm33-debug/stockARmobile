@@ -21,7 +21,7 @@ import qrcode
 from app import tenant_required, utcnow
 from stockarmobile.decorators import company_admin_required
 from stockarmobile.enums import QuoteStatus
-from stockarmobile.helpers.dates import parse_date_yyyy_mm_dd
+from stockarmobile.helpers.dates import local_day_bounds_utc_naive, local_today, parse_date_yyyy_mm_dd
 from services.sales_calculation_service import calculate_sale_totals, to_decimal
 from services.promotion_service import PromotionEngine
 from services.whatsapp_share_service import build_whatsapp_share_url
@@ -145,6 +145,28 @@ def _normalize_status(raw_status):
 
 def _parse_date(value):
     return parse_date_yyyy_mm_dd(value)
+
+
+def _company_timezone_name():
+    from app import Company
+
+    company = Company.query.filter_by(id=getattr(current_user, "company_id", None)).first()
+    return (getattr(company, "timezone", None) or "America/Argentina/Buenos_Aires").strip() or "America/Argentina/Buenos_Aires"
+
+
+def _quote_filter_bounds(date_from, date_to):
+    timezone_name = _company_timezone_name()
+    start_utc = None
+    end_utc = None
+    parsed_from = _parse_date(date_from)
+    parsed_to = _parse_date(date_to)
+
+    if parsed_from is not None:
+        start_utc, _ = local_day_bounds_utc_naive(parsed_from.date(), timezone_name)
+    if parsed_to is not None:
+        _, end_utc = local_day_bounds_utc_naive(parsed_to.date(), timezone_name)
+
+    return start_utc, end_utc
 
 
 def _parse_items(payload):
@@ -963,7 +985,7 @@ def index():
     date_to = (request.args.get("to") or "").strip()
 
     if quick in {"today", "week", "month", "year"}:
-        today = utcnow().date()
+        today = local_today(_company_timezone_name())
         if quick == "today":
             date_from = date_to = today.isoformat()
         elif quick == "week":
@@ -1007,10 +1029,11 @@ def index():
     if product_search:
         like = f"%{product_search}%"
         query = query.join(QuoteItem, QuoteItem.quote_id == Quote.id).outerjoin(Product, Product.id == QuoteItem.product_id).filter((QuoteItem.description.ilike(like)) | (Product.name.ilike(like)) | (Product.barcode.ilike(like))).distinct()
-    if date_from:
-        query = query.filter(Quote.date >= date_from)
-    if date_to:
-        query = query.filter(Quote.date <= f"{date_to} 23:59:59")
+    date_start_utc, date_end_utc = _quote_filter_bounds(date_from, date_to)
+    if date_start_utc is not None:
+        query = query.filter(Quote.date >= date_start_utc)
+    if date_end_utc is not None:
+        query = query.filter(Quote.date < date_end_utc)
 
     quotes_rows = query.order_by(Quote.date.desc(), Quote.id.desc()).limit(100).all()
     clients = scope_query_to_company(Client.query.filter_by(active=True), Client).order_by(Client.name).all()
