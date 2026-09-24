@@ -350,13 +350,17 @@ def _quote_checkout_items(quote) -> list[dict[str, Any]]:
     """Build the exact Mercado Pago line items from a persisted quote snapshot."""
     items = []
     for item in list(getattr(quote, "items", []) or []):
+        quantity = Decimal(str(item.quantity or 0))
+        if quantity <= Decimal("0.00"):
+            continue
+        net_unit_price = _money(_money(item.subtotal) / quantity)
         items.append({
             "id": str(item.product_id or item.id),
             "title": item.description,
             "description": item.description,
-            "quantity": int(item.quantity) if float(item.quantity).is_integer() else float(item.quantity),
+            "quantity": int(quantity) if quantity == int(quantity) else float(quantity),
             "currency_id": quote.currency or "ARS",
-            "unit_price": float(item.unit_price),
+            "unit_price": float(net_unit_price),
         })
     try:
         charges = json.loads(quote.charges_json or "[]")
