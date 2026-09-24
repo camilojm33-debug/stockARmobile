@@ -9225,3 +9225,37 @@ def test_notifications_are_read_and_removed_individually():
         assert empty.get_json()["items"] == []
     finally:
         notification_service.build_notifications = original_builder
+
+
+def test_employee_cannot_mutate_company_subscription_or_billing(monkeypatch):
+    client = stock_app.app.test_client()
+    login = client.post(
+        "/auth/login",
+        data={"username": "empresa_admin", "password": "admin123"},
+    )
+    assert login.status_code in (200, 302)
+
+    # These operations change billing/subscription state and must never be
+    # reachable by a tenant employee, even through a crafted direct request.
+    blocked_posts = [
+        ("/admin/checkout", {"plan_id": "1"}),
+        ("/admin/subscription/mercadopago/create", {"plan_id": "1"}),
+        ("/admin/subscription/change", {"plan_id": "1"}),
+        ("/admin/subscription/cancel", {}),
+        ("/admin/subscription/reactivate", {}),
+    ]
+    for path, data in blocked_posts:
+        response = client.post(path, data=data)
+        assert response.status_code == 403, path
+
+    # Permission enforcement is independent of whether the page exposes a
+    # button to the employee.
+    from stockarmobile.permissions import EMPLOYEE_ADMIN_ONLY, employee_endpoint_permission
+    for endpoint in [
+        "company_billing.create_checkout",
+        "company_billing.create_mercadopago_subscription",
+        "company_billing.subscription_change_confirm",
+        "company_billing.cancel_subscription",
+        "company_billing.reactivate_subscription",
+    ]:
+        assert employee_endpoint_permission(endpoint, "POST") == EMPLOYEE_ADMIN_ONLY
