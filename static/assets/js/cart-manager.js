@@ -91,6 +91,8 @@ function updateSelectedPosBadge() {
 }
 let checkoutInFlight = false;
 let checkoutToken = null;
+let quotePricingSnapshot = null;
+let quotePrefillApplying = false;
 
 function emitPosUiEvent(name, detail = {}) {
   try {
@@ -267,6 +269,22 @@ function applyQuoteCartPrefillFromServer() {
     noteInput.value = String(payload.note);
   }
 
+  quotePricingSnapshot = {
+    quoteId: Number(payload.quote_id || 0),
+    quoteNumber: String(payload.quote_number || ''),
+    subtotal: Number(payload.quote_subtotal || 0),
+    discount: Number(payload.quote_discount || 0),
+    surcharge: Number(payload.quote_surcharge || 0),
+    tax: Number(payload.tax_amount || 0),
+    total: Number(payload.quote_total || 0),
+    charges: Array.isArray(payload.quote_charges) ? payload.quote_charges : [],
+    items: payload.items.map(item => ({
+      productId: Number(item.productId || item.product_id || 0),
+      quantity: Number(item.quantity || 0),
+      price: Number(item.price || 0),
+    })),
+  };
+  quotePrefillApplying = true;
   window.__quoteLineDiscounts = payload.line_discounts || {};
 
   const discountModeSelect = document.getElementById('checkout-discount-mode');
@@ -313,6 +331,7 @@ function applyQuoteCartPrefillFromServer() {
   }
 
   saveCart();
+  quotePrefillApplying = false;
   updateCheckoutTotals();
   showNotification(`Presupuesto ${payload.quote_number || ''} cargado al carrito`, 'info');
 
@@ -331,8 +350,29 @@ function applyQuoteCartPrefillFromServer() {
  * @param {number} stock - Stock disponible
  * @param {string} barcode - Código de barras (EAN13 o UPC)
  */
+function invalidateQuoteSnapshot() {
+  if (quotePrefillApplying || !quotePricingSnapshot) return;
+  quotePricingSnapshot = null;
+  window.__quoteLineDiscounts = {};
+  resetCheckoutToken();
+  const bannerText = document.getElementById('quote-prefill-banner-text');
+  if (bannerText) bannerText.textContent = 'El carrito fue modificado. Los cargos del presupuesto ya no se aplican; para conservar la cotización original, volvé a cargar el presupuesto.';
+  showNotification('Se desvinculó el presupuesto porque modificaste el carrito.', 'warning');
+}
+
+function quoteSnapshotMatchesCart() {
+  if (!quotePricingSnapshot || !Array.isArray(quotePricingSnapshot.items)) return false;
+  if (quotePricingSnapshot.items.length !== cart.length) return false;
+  const expected = new Map(quotePricingSnapshot.items.map(item => [Number(item.productId), item]));
+  return cart.every(item => {
+    const row = expected.get(Number(item.productId));
+    return row && Math.abs(Number(item.quantity || 0) - row.quantity) < 0.000001 && Math.abs(Number(item.price || 0) - row.price) < 0.000001;
+  });
+}
+
 function addToCart(productId, name, price, stock, barcode = '', quantity = 1, unitMeasure = 'u') {
   try {
+    invalidateQuoteSnapshot();
     const qty = Math.max(parseFloat(quantity) || 1, 0.001);
     const availableStock = parseFloat(stock) || 0;
     if (availableStock <= 0 || qty <= 0) {
@@ -373,6 +413,7 @@ function addToCart(productId, name, price, stock, barcode = '', quantity = 1, un
  * @param {number} productId - ID del producto a eliminar
  */
 function removeFromCart(productId) {
+  invalidateQuoteSnapshot();
   cart = cart.filter(item => item.productId !== productId);
   saveCart();
 }
@@ -383,6 +424,7 @@ function removeFromCart(productId) {
  * @param {number} newQuantity - Nueva cantidad
  */
 function updateQuantity(productId, newQuantity) {
+  invalidateQuoteSnapshot();
   const item = cart.find(item => item.productId === productId);
   const parsedQty = parseFloat(newQuantity);
   if (item && Number.isFinite(parsedQty) && parsedQty > 0) {
@@ -400,6 +442,8 @@ function updateQuantity(productId, newQuantity) {
 function clearCart() {
   cart = [];
   resetCheckoutToken();
+  quotePricingSnapshot = null;
+  window.__quoteLineDiscounts = {};
   saveCart();
   renderCartModal();
 }
@@ -434,6 +478,7 @@ function updateCartUI() {
       subtotal: totals.subtotal,
       discount: totals.discount,
       surcharge: totals.surcharge,
+      tax: totals.tax,
     });
   } catch (error) {
     console.error('Excepcion en updateCartUI():', error);
@@ -549,6 +594,7 @@ async function processCheckout() {
   }
 
   const csrf = getCsrfToken();
+  const totals = getCheckoutTotals();
   const discount = getDiscountBreakdown(getCartSubtotal());
   const surcharge = getSurchargeBreakdown(getCartSubtotal() - discount.amount);
   const payload = {
@@ -560,6 +606,7 @@ async function processCheckout() {
     monto_pago_2: document.getElementById('checkout-paid-amount-2')?.value || '',
     descuento_general: discount.amount,
     recargo: surcharge.amount,
+    tax_amount: totals.tax,
     discount_type: discount.mode === 'percent' ? 'percentage' : 'fixed',
     discount_value: discount.raw,
     discount_reason: document.getElementById('checkout-discount-reason')?.value || '',
@@ -608,10 +655,14 @@ function getCheckoutTotals() {
   const subtotal = getCartSubtotal();
   const discount = getDiscountBreakdown(subtotal).amount;
   const surcharge = getSurchargeBreakdown(subtotal - discount).amount;
-  const taxable = Math.max(subtotal - discount, 0);
-  const total = taxable + surcharge;
+  let tax = 0;
+  let total = Math.max(subtotal - discount, 0) + surcharge;
+  if (quoteSnapshotMatchesCart()) {
+    tax = Math.max(Number(quotePricingSnapshot.tax || 0), 0);
+    total = Math.max(Number(quotePricingSnapshot.total || 0), 0);
+  }
   const paid = readMoneyInput('checkout-paid-amount') + readMoneyInput('checkout-paid-amount-2');
-  return { subtotal, discount, surcharge, total, paid, change: Math.max(paid - total, 0) };
+  return { subtotal, discount, surcharge, tax, total, paid, change: Math.max(paid - total, 0) };
 }
 
 function getSurchargeBreakdown(baseAmount) {
@@ -669,6 +720,8 @@ function updateCheckoutTotals() {
     'pos-subtotal': totals.subtotal,
     'pos-discount': totals.discount,
     'pos-surcharge': totals.surcharge,
+    'pos-tax': totals.tax,
+    'cart-tax': totals.tax,
     'pos-total': totals.total,
     'checkout-change': totals.change
   };

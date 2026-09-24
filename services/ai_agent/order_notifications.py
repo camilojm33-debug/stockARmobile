@@ -86,8 +86,8 @@ def build_ai_order_notifications():
             items.append(
                 {
                     "type": "success",
-                    "title": "Pedido IA confirmado",
-                    "body": f"{number} de {customer} · {currency} {total:.2f}. Pago aprobado y venta confirmada.",
+                    "title": "Pedido IA · venta manual",
+                    "body": f"{number} de {customer} · {currency} {total:.2f}. Venta confirmada manualmente desde seguimiento.",
                     "href": url_for("whatsapp_agent.ai_orders", status="confirmed"),
                 }
             )

@@ -1008,3 +1008,151 @@ def test_manual_quote_acceptance_requires_post_and_does_not_create_sale(vendor_d
     assert quote.converted_sale_id is None
     from app import Sale
     assert Sale.query.filter_by(company_id=data["company_a"].id).count() == 0
+
+
+def test_manual_ai_quote_conversion_preserves_tax_and_closes_payment(vendor_database):
+    from flask_login import login_user
+    from app import CashSession, QuoteItem, Sale
+    from sales import _create_sale_from_items
+
+    data = vendor_database
+    company = data["company_a"]
+    product = data["product_a"]
+    user = data["user_a"]
+    client = data["client_a"]
+
+    quote = Quote(
+        company_id=company.id,
+        created_by_user_id=user.id,
+        seller_id=user.id,
+        client_id=client.id,
+        number="P-IVA-001",
+        subtotal=200,
+        discount=0,
+        surcharge=50,
+        tax=42,
+        total_amount=292,
+        surcharge_type="fixed",
+        surcharge_value=50,
+        status="ENVIADO",
+        observations="Pedido generado por el Vendedor 24 hs de StockARmobile.",
+        charges_json=json.dumps([
+            {"id": "shipping", "name": "Envío a domicilio", "type": "fixed", "value": "50.00", "amount": "50.00"},
+            {"id": "iva", "name": "IVA", "type": "percentage", "value": "21", "amount": "42.00"},
+        ]),
+    )
+    db.session.add(quote)
+    db.session.flush()
+    db.session.add(
+        QuoteItem(
+            quote_id=quote.id,
+            product_id=product.id,
+            description=product.name,
+            quantity=2,
+            unit_price=100,
+            discount=0,
+            subtotal=200,
+            sort_order=0,
+        )
+    )
+    payment = Payment(
+        company_id=company.id,
+        provider="mercadopago_ai_order",
+        external_reference=f"flow:ai_order|company_id:{company.id}|quote_id:{quote.id}|conversation_id:1|",
+        status="pending",
+        amount=292,
+        currency="ARS",
+    )
+    db.session.add(payment)
+    db.session.add(CashSession(user_id=user.id, company_id=company.id, status="abierta", opening_amount=0))
+    db.session.commit()
+
+    with stock_app.app.test_request_context("/ventas/"):
+        login_user(user)
+        result = _create_sale_from_items(
+            {str(product.id): 2},
+            {
+                "client_id": client.id,
+                "checkout_token": f"quote-cart-{quote.id}",
+                "metodo_pago": "EFECTIVO",
+                "monto_pago": "292",
+                "descuento_general": 0,
+                "recargo": 50,
+                "surcharge_type": "fixed",
+                "surcharge_value": 50,
+                "tax_amount": 42,
+                "line_discounts": {str(product.id): 0},
+                "document_type": "venta",
+                "note": "Conversión manual de presupuesto IA",
+            },
+            json_response=True,
+        )
+        assert result.get_json()["sale_id"]
+
+    sale = db.session.get(Sale, result.get_json()["sale_id"])
+    db.session.refresh(quote)
+    db.session.refresh(payment)
+
+    assert float(sale.subtotal) == pytest.approx(200)
+    assert float(sale.surcharge) == pytest.approx(50)
+    assert float(sale.tax) == pytest.approx(42)
+    assert float(sale.total_amount) == pytest.approx(292)
+    assert len(sale.items) == 1
+    assert float(sale.items[0].discount or 0) == pytest.approx(-50)
+    assert float(sale.items[0].quantity) == pytest.approx(2)
+    assert quote.status == "CONVERTIDO"
+    assert quote.converted_sale_id == sale.id
+    assert payment.status == "cancelled"
+    assert float(product.stock) == pytest.approx(8)
+
+
+def test_sale_totals_support_explicit_tax_snapshot():
+    from services.sales_calculation_service import calculate_sale_totals
+
+    totals = calculate_sale_totals(
+        [{"price": 5800, "quantity": 25, "line_discount": 0}],
+        surcharge=50000,
+        tax=30450,
+    )
+
+    assert totals["subtotal"] == 145000
+    assert totals["surcharge"] == 50000
+    assert totals["tax"] == 30450
+    assert totals["total"] == 225450
+
+
+def test_ai_order_row_does_not_show_pending_payment_after_manual_conversion(vendor_database):
+    from whatsapp_agent import _ai_order_row
+    data = vendor_database
+    conversation = _conversation(data["company_a"].id)
+    quote = Quote(
+        company_id=data["company_a"].id,
+        created_by_user_id=data["user_a"].id,
+        seller_id=data["user_a"].id,
+        client_id=data["client_a"].id,
+        number="P-MANUAL-001",
+        subtotal=100,
+        total_amount=142,
+        surcharge=0,
+        tax=42,
+        status="CONVERTIDO",
+        converted_sale_id=773,
+        observations="Pedido generado por el Vendedor 24 hs de StockARmobile.",
+    )
+    db.session.add(quote)
+    db.session.flush()
+    payment = Payment(
+        company_id=data["company_a"].id,
+        provider="mercadopago_ai_order",
+        external_reference=f"flow:ai_order|company_id:{data['company_a'].id}|quote_id:{quote.id}|conversation_id:{conversation.id}|",
+        status="pending",
+    )
+    db.session.add(payment)
+    db.session.commit()
+
+    row = _ai_order_row(data["company_a"].id, quote)
+
+    assert row["order_key"] == "confirmed"
+    assert row["order_label"] == "Confirmado · venta manual"
+    assert row["payment_status"] == "pending"
+    assert row["payment_label"] == "Cerrado por venta manual"

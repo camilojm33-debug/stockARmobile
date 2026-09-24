@@ -31,6 +31,8 @@ jobs:
 
       - name: Check service worker
         run: node --check static/service-worker.js
+      - name: Check cart manager
+        run: node --check static/assets/js/cart-manager.js
       - name: Run tests
         id: tests
         continue-on-error: true
