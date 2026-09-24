@@ -29,6 +29,37 @@ class BillingStatusBadge:
 
 
 class BusinessBillingService:
+    @staticmethod
+    def _company_timezone_name(company_id):
+        from app import Company
+
+        company = Company.query.filter_by(id=company_id).first()
+        return (getattr(company, "timezone", None) or "America/Argentina/Buenos_Aires").strip() or "America/Argentina/Buenos_Aires"
+
+    @staticmethod
+    def _period_bounds(company_id, date_from, date_to):
+        from stockarmobile.helpers.dates import local_day_bounds_utc_naive
+
+        timezone_name = BusinessBillingService._company_timezone_name(company_id)
+        start_utc = None
+        end_utc = None
+        if date_from is not None:
+            start_utc, _ = local_day_bounds_utc_naive(date_from.date(), timezone_name)
+        if date_to is not None:
+            _, end_utc = local_day_bounds_utc_naive(date_to.date(), timezone_name)
+        return start_utc, end_utc
+
+    @staticmethod
+    def _period_contains(value, start_utc, end_utc):
+        if value is None:
+            return False if (start_utc or end_utc) else True
+        if start_utc is not None and value < start_utc:
+            return False
+        if end_utc is not None and value >= end_utc:
+            return False
+        return True
+
+
     DOCUMENT_TYPES = [
         ("factura_a", "Factura A"),
         ("factura_b", "Factura B"),
@@ -482,19 +513,12 @@ class BusinessBillingService:
         return f"{active_pos}-{int(getattr(sale, 'id', 0)):08d}"
 
     @staticmethod
-    def _filter_period(value, date_from, date_to):
-        if date_from and value and value < date_from:
-            return False
-        if date_to and value and value >= (date_to + timedelta(days=1)):
-            return False
-        return True
-
-    @staticmethod
     def list_documents(company_id, config, filters):
         from app import BusinessDocument, Quote, Sale
 
         date_from = filters.get("date_from")
         date_to = filters.get("date_to")
+        period_start_utc, period_end_utc = BusinessBillingService._period_bounds(company_id, date_from, date_to)
         search_number = (filters.get("number") or "").strip().lower()
         search_client = (filters.get("client") or "").strip().lower()
         search_cuit = (filters.get("cuit") or "").strip().lower()
@@ -525,14 +549,14 @@ class BusinessBillingService:
             Sale.query.filter_by(company_id=company_id)
             .order_by(Sale.date.desc(), Sale.id.desc())
         )
-        if date_from:
-            sales_query = sales_query.filter(Sale.date >= date_from)
-        if date_to:
-            sales_query = sales_query.filter(Sale.date < date_to + timedelta(days=1))
+        if period_start_utc is not None:
+            sales_query = sales_query.filter(Sale.date >= period_start_utc)
+        if period_end_utc is not None:
+            sales_query = sales_query.filter(Sale.date < period_end_utc)
         sales = sales_query.limit(2000 if (date_from or date_to) else 600).all()
         for sale in sales:
             event_date = sale.date
-            if not BusinessBillingService._filter_period(event_date, date_from, date_to):
+            if not BusinessBillingService._period_contains(event_date, period_start_utc, period_end_utc):
                 continue
             amount = BusinessBillingService._safe_float(sale.total_amount)
             persisted = persisted_sale.get(int(sale.id))
@@ -595,10 +619,10 @@ class BusinessBillingService:
             Quote.query.filter_by(company_id=company_id)
             .order_by(Quote.date.desc(), Quote.id.desc())
         )
-        if date_from:
-            quotes_query = quotes_query.filter(Quote.date >= date_from)
-        if date_to:
-            quotes_query = quotes_query.filter(Quote.date < date_to + timedelta(days=1))
+        if period_start_utc is not None:
+            quotes_query = quotes_query.filter(Quote.date >= period_start_utc)
+        if period_end_utc is not None:
+            quotes_query = quotes_query.filter(Quote.date < period_end_utc)
         quotes = quotes_query.limit(1200 if (date_from or date_to) else 400).all()
         for quote in quotes:
             event_date = quote.date
