@@ -354,8 +354,8 @@ def test_profitability_snapshot_ready_with_fx_and_agent_costs(app, monkeypatch):
         assert snapshot["plan_list_price_ars"] == 172390.0
         assert snapshot["estimated_cost_usd"] == 0.2
         assert snapshot["estimated_cost_ars"] == 240.0
-        assert snapshot["estimated_gross_contribution_ars"] == 109760.0
-        assert snapshot["estimated_margin_percent"] == pytest.approx(99.7818)
+        assert snapshot["estimated_gross_contribution_ars"] == 172150.0
+        assert snapshot["estimated_margin_percent"] == pytest.approx(99.8608, abs=0.0001)
         assert snapshot["by_agent_usd"]["analista"] == 0.2
         assert snapshot["by_agent_ars"]["analista"] == 240.0
         assert snapshot["plan_revenue_basis"] == "listed_plan_price"
