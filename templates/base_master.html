@@ -937,7 +937,7 @@
     </div>
     <div class="offcanvas-body">
       {% for item in notification_items %}
-      <a class="d-block text-decoration-none text-reset border rounded-3 p-3 mb-2" href="{{ item.href }}">
+      <a class="d-block text-decoration-none text-reset border rounded-3 p-3 mb-2 js-notification-item" href="{{ item.href }}" data-notification-key="{{ item.notification_key }}">
         <span class="badge text-bg-{{ item.type }} mb-2">{{ item.title }}</span>
         <div class="small text-muted">{{ item.body }}</div>
       </a>
@@ -1036,26 +1036,58 @@
         bootstrap.Toast.getOrCreateInstance(toastEl).show();
       });
       const notificationCenter = document.getElementById('notificationCenter');
-      function clearNotificationBadges() {
+      function updateNotificationBadges(count) {
+        const normalizedCount = Number.isFinite(Number(count)) ? Number(count) : 0;
         document.querySelectorAll('.js-notification-badge').forEach(function(el) {
-          el.remove();
+          if (normalizedCount <= 0) {
+            el.remove();
+          } else {
+            el.textContent = normalizedCount;
+          }
         });
       }
-      notificationCenter?.addEventListener('shown.bs.offcanvas', function() {
-        fetch('/api/notifications/mark-seen', {
+      notificationCenter?.addEventListener('click', function(event) {
+        const link = event.target.closest('.js-notification-item');
+        if (!link || !notificationCenter.contains(link)) return;
+
+        const notificationKey = link.dataset.notificationKey;
+        const targetHref = link.href;
+        if (!notificationKey || link.dataset.processing === '1') return;
+
+        event.preventDefault();
+        link.dataset.processing = '1';
+        link.setAttribute('aria-busy', 'true');
+
+        fetch('/api/notifications/mark-read', {
           method: 'POST',
           headers: {
             'X-CSRFToken': '{{ csrf_token() }}',
             'Content-Type': 'application/json',
           },
           credentials: 'same-origin',
-          body: '{}',
+          body: JSON.stringify({ notification_key: notificationKey }),
+          keepalive: true,
         })
           .then(function(response) {
-            if (!response.ok) return;
-            clearNotificationBadges();
+            if (!response.ok) throw new Error('No se pudo marcar la notificacion como leida.');
+            return response.json();
           })
-          .catch(function() {});
+          .then(function(payload) {
+            link.remove();
+            updateNotificationBadges(payload.count);
+            if (!notificationCenter.querySelector('.js-notification-item')) {
+              const body = notificationCenter.querySelector('.offcanvas-body');
+              if (body) {
+                body.innerHTML = '<div class="empty-state">Sin alertas importantes.</div>';
+              }
+            }
+            window.location.assign(targetHref);
+          })
+          .catch(function() {
+            // Nunca bloqueamos la navegacion hacia el destino por un fallo de
+            // lectura; el usuario igualmente puede consultar la alerta.
+            window.location.assign(targetHref);
+          });
       });
       function clearCartStorage() {
         const tenantKey = document.body?.dataset.cartTenant;
