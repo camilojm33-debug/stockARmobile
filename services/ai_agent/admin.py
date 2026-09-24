@@ -429,6 +429,9 @@ def save():
         "schedule": old_vendor.get("schedule", ""),
         "out_of_hours_message": old_vendor.get("out_of_hours_message", ""),
         "business_information": old_vendor.get("business_information", ""),
+        "shipping_mode": old_vendor.get("shipping_mode", "fixed"),
+        "standard_shipping_cost": old_vendor.get("standard_shipping_cost", "0.00"),
+        "checkout_charges": old_vendor.get("checkout_charges", []),
     }
     if "vendor_personality" in request.form:
         vendor_options["personality"] = (request.form.get("vendor_personality") or "amigable").strip()[:30]
