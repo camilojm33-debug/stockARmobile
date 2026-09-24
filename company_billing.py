@@ -1126,7 +1126,7 @@ def subscription_payment_pdf(payment_id):
 
 
 @bp.route("/checkout", methods=["POST"])
-@company_member_required
+@company_admin_required
 def create_checkout():
     from flask import session
     from app import Company, db
@@ -1349,7 +1349,7 @@ def cancel_ai_subscription():
 
 
 @bp.route("/subscription/mercadopago/create", methods=["POST"])
-@company_member_required
+@company_admin_required
 def create_mercadopago_subscription():
     from flask import session
     from app import Company, db
@@ -1418,7 +1418,7 @@ def create_mercadopago_subscription():
 
 
 @bp.route("/subscription/change", methods=["POST"])
-@company_member_required
+@company_admin_required
 def subscription_change_confirm():
     from flask import session
 
@@ -1508,7 +1508,7 @@ def subscription_change_confirm():
 
 
 @bp.route("/subscription/cancel", methods=["POST"])
-@company_member_required
+@company_admin_required
 def cancel_subscription():
     from app import db, record_audit
 
@@ -1535,7 +1535,7 @@ def cancel_subscription():
 
 
 @bp.route("/subscription/reactivate", methods=["POST"])
-@company_member_required
+@company_admin_required
 def reactivate_subscription():
     from app import db, record_audit
 
@@ -2675,7 +2675,7 @@ def company_settings_security_logout_current():
 
 
 @bp.route("/company-settings/billing/invoice/<int:invoice_id>/pdf")
-@company_member_required
+@company_admin_required
 def company_settings_billing_invoice_pdf(invoice_id):
     from app import Invoice
 
@@ -2699,7 +2699,7 @@ def company_settings_billing_invoice_pdf(invoice_id):
 
 
 @bp.route("/company-settings/billing/payment/<int:payment_id>/pdf")
-@company_member_required
+@company_admin_required
 def company_settings_billing_payment_pdf(payment_id):
     from app import Payment
 

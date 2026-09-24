@@ -5292,7 +5292,7 @@ def test_checkout_during_trial_does_not_switch_to_pending_or_30_days():
         SubscriptionService.ensure_company_trial(db.session, company=company, trial_plan=trial_plan)
         db.session.commit()
 
-    login = client.post("/auth/login", data={"username": "empresa_admin", "password": "admin123"}, follow_redirects=False)
+    login = client.post("/auth/login", data={"username": "negocio_admin", "password": "admin123"}, follow_redirects=False)
     assert login.status_code in (301, 302)
 
     with stock_app.app.app_context():
@@ -5376,7 +5376,7 @@ def test_select_plan_does_not_mutate_until_confirm():
         previous_status = (subscription.status or "").lower()
         paid_plan_id = paid_plan.id
 
-    login = client.post("/auth/login", data={"username": "empresa_admin", "password": "admin123"}, follow_redirects=False)
+    login = client.post("/auth/login", data={"username": "negocio_admin", "password": "admin123"}, follow_redirects=False)
     assert login.status_code in (301, 302)
 
     select_response = client.post("/admin/checkout", data={"plan_id": paid_plan_id}, follow_redirects=False)
@@ -5436,7 +5436,7 @@ def test_subscription_change_confirm_rolls_back_on_error(monkeypatch):
 
     monkeypatch.setattr("company_billing.ReferralService.create_commission_for_sale", _raise_commission_error)
 
-    login = client.post("/auth/login", data={"username": "empresa_admin", "password": "admin123"}, follow_redirects=False)
+    login = client.post("/auth/login", data={"username": "negocio_admin", "password": "admin123"}, follow_redirects=False)
     assert login.status_code in (301, 302)
 
     response = client.post("/admin/subscription/change", data={"plan_id": backup_free_plan_id}, follow_redirects=False)
@@ -5489,7 +5489,7 @@ def test_subscription_change_confirm_double_post_is_idempotent():
         db.session.commit()
         free_plan_id = free_plan.id
 
-    login = client.post("/auth/login", data={"username": "empresa_admin", "password": "admin123"}, follow_redirects=False)
+    login = client.post("/auth/login", data={"username": "negocio_admin", "password": "admin123"}, follow_redirects=False)
     assert login.status_code in (301, 302)
 
     first = client.post("/admin/subscription/change", data={"plan_id": free_plan_id}, follow_redirects=False)
@@ -9225,3 +9225,37 @@ def test_notifications_are_read_and_removed_individually():
         assert empty.get_json()["items"] == []
     finally:
         notification_service.build_notifications = original_builder
+
+
+def test_employee_cannot_mutate_company_subscription_or_billing(monkeypatch):
+    client = stock_app.app.test_client()
+    login = client.post(
+        "/auth/login",
+        data={"username": "empresa_admin", "password": "admin123"},
+    )
+    assert login.status_code in (200, 302)
+
+    # These operations change billing/subscription state and must never be
+    # reachable by a tenant employee, even through a crafted direct request.
+    blocked_posts = [
+        ("/admin/checkout", {"plan_id": "1"}),
+        ("/admin/subscription/mercadopago/create", {"plan_id": "1"}),
+        ("/admin/subscription/change", {"plan_id": "1"}),
+        ("/admin/subscription/cancel", {}),
+        ("/admin/subscription/reactivate", {}),
+    ]
+    for path, data in blocked_posts:
+        response = client.post(path, data=data)
+        assert response.status_code == 403, path
+
+    # Permission enforcement is independent of whether the page exposes a
+    # button to the employee.
+    from stockarmobile.permissions import EMPLOYEE_ADMIN_ONLY, employee_endpoint_permission
+    for endpoint in [
+        "company_billing.create_checkout",
+        "company_billing.create_mercadopago_subscription",
+        "company_billing.subscription_change_confirm",
+        "company_billing.cancel_subscription",
+        "company_billing.reactivate_subscription",
+    ]:
+        assert employee_endpoint_permission(endpoint, "POST") == EMPLOYEE_ADMIN_ONLY
