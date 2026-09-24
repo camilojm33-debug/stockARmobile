@@ -393,8 +393,14 @@ def _quote_checkout_items(quote) -> list[dict[str, Any]]:
         description = title
         if charge.get("type") == "percentage":
             description = f"{title} · {charge.get('value', '0')}% sobre base {charge.get('base', 'products')}"
+        charge_id = str(charge.get("id") or "").strip()
+        checkout_item_id = (
+            f"shipping-{quote.id}"
+            if charge_id == "shipping"
+            else f"charge-{quote.id}-{str(charge_id or len(items))[:40]}"
+        )
         items.append({
-            "id": f"charge-{quote.id}-{str(charge.get('id') or len(items))[:40]}",
+            "id": checkout_item_id,
             "title": title,
             "description": description[:256],
             "quantity": 1,
@@ -406,6 +412,18 @@ def _quote_checkout_items(quote) -> list[dict[str, Any]]:
 
 class VendorOrderService:
     """Owns tenant-scoped cart, quote and payment transitions."""
+
+    @staticmethod
+    def _conversation_for_order(*, company_id: int, conversation_id: int):
+        from stockarmobile.models.conversations import Conversation
+
+        conversation = Conversation.query.filter_by(
+            id=int(conversation_id),
+            company_id=int(company_id),
+        ).first()
+        if conversation is None:
+            raise ValueError("Conversación no encontrada.")
+        return conversation
 
     @staticmethod
     def get_cart(*, company_id: int, conversation_id: int) -> Dict[str, Any]:
