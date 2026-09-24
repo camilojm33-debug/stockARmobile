@@ -27,7 +27,7 @@ from werkzeug.security import check_password_hash, generate_password_hash
 from wtforms import BooleanField, DateField, DecimalField, PasswordField, SelectField, StringField, SubmitField, TextAreaField
 from wtforms.validators import DataRequired, Email, Length, NumberRange, Optional
 from config.logging_config import configure_logging
-from services.notification_service import get_notification_payload, mark_notifications_seen
+from services.notification_service import get_notification_payload, mark_notification_read, mark_notifications_seen
 from services.search_service import global_search
 from stockarmobile import create_app
 from stockarmobile.audit import record_audit_entry
@@ -2305,6 +2305,16 @@ def api_notifications():
 def api_notifications_mark_seen():
     payload = mark_notifications_seen()
     return jsonify(payload)
+
+
+@app.route("/api/notifications/mark-read", methods=["POST"])
+@login_required
+def api_notifications_mark_read():
+    payload = request.get_json(silent=True) or {}
+    notification_key = str(payload.get("notification_key") or "").strip()
+    result = mark_notification_read(notification_key)
+    status_code = 200 if result.get("ok") else 400
+    return jsonify(result), status_code
 
 
 @app.route("/manifest.json")
