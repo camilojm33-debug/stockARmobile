@@ -1,95 +1,5 @@
 {% extends "base_master.html" %}
-{% block title %}Configurar Vendedor IA | StockArMobile<script>
-(function () {
-  const list = document.getElementById("checkoutChargesList");
-  const empty = document.getElementById("checkoutChargesEmpty");
-  const addButton = document.getElementById("addCheckoutCharge");
-  const hidden = document.getElementById("vendorCheckoutChargesJson");
-  const initial = {{ vendor_options.checkout_charges | tojson }};
-
-  const labels = {
-    base: { products: "Productos", products_shipping: "Productos + envío", previous_total: "Total acumulado" },
-    type: { fixed: "Importe fijo", percentage: "Porcentaje" }
-  };
-
-  function makeId() {
-    return "charge-" + Date.now() + "-" + Math.random().toString(36).slice(2, 8);
-  }
-
-  function rowTemplate(item) {
-    const row = document.createElement("div");
-    row.className = "checkout-charge-row";
-    row.dataset.chargeId = item.id || makeId();
-    row.innerHTML = [
-      '<div class="row g-2 align-items-end">',
-      '<div class="col-lg-3"><label class="form-label small fw-semibold">Concepto</label><input class="form-control js-charge-name" maxlength="120" placeholder="IVA 21%" value=""></div>',
-      '<div class="col-lg-2"><label class="form-label small fw-semibold">Tipo</label><select class="form-select js-charge-type"><option value="percentage">Porcentaje</option><option value="fixed">Importe fijo</option></select></div>',
-      '<div class="col-lg-2"><label class="form-label small fw-semibold js-charge-value-label">Valor</label><input class="form-control js-charge-value" type="number" min="0" step="0.01" inputmode="decimal"></div>',
-      '<div class="col-lg-3"><label class="form-label small fw-semibold">Base</label><select class="form-select js-charge-base"><option value="products">Productos</option><option value="products_shipping">Productos + envío</option><option value="previous_total">Total acumulado</option></select></div>',
-      '<div class="col-lg-1"><div class="form-check"><input class="form-check-input js-charge-active" type="checkbox"><label class="form-check-label small">Activo</label></div></div>',
-      '<div class="col-lg-1 text-end"><button type="button" class="btn btn-outline-danger btn-sm js-remove-charge" title="Eliminar"><i class="bi bi-trash"></i></button></div>',
-      '</div>',
-      '<div class="small text-muted mt-2 js-charge-help"></div>'
-    ].join("");
-    row.querySelector(".js-charge-name").value = item.name || "";
-    row.querySelector(".js-charge-type").value = item.type === "fixed" ? "fixed" : "percentage";
-    row.querySelector(".js-charge-value").value = item.value || "0";
-    row.querySelector(".js-charge-base").value = item.base || "products";
-    row.querySelector(".js-charge-active").checked = item.active !== false;
-
-    function refreshType() {
-      const type = row.querySelector(".js-charge-type").value;
-      row.querySelector(".js-charge-value-label").textContent = type === "percentage" ? "Porcentaje %" : "Importe";
-      row.querySelector(".js-charge-help").textContent = type === "percentage"
-        ? "Ejemplo: 21 = 21% de la base elegida."
-        : "El importe se suma una sola vez al pedido.";
-    }
-    row.querySelector(".js-charge-type").addEventListener("change", refreshType);
-    row.querySelector(".js-remove-charge").addEventListener("click", () => {
-      row.remove();
-      refreshEmpty();
-      sync();
-    });
-    refreshType();
-    return row;
-  }
-
-  function currentItems() {
-    return Array.from(list.children).map(row => ({
-      id: row.dataset.chargeId || makeId(),
-      name: row.querySelector(".js-charge-name").value.trim(),
-      type: row.querySelector(".js-charge-type").value,
-      value: row.querySelector(".js-charge-value").value || "0",
-      base: row.querySelector(".js-charge-base").value,
-      active: row.querySelector(".js-charge-active").checked
-    })).filter(item => item.name);
-  }
-
-  function sync() {
-    hidden.value = JSON.stringify(currentItems());
-  }
-
-  function refreshEmpty() {
-    empty.classList.toggle("d-none", list.children.length > 0);
-  }
-
-  addButton.addEventListener("click", () => {
-    const row = rowTemplate({ type: "percentage", value: "21", base: "products", active: true });
-    list.appendChild(row);
-    refreshEmpty();
-    sync();
-    row.querySelector(".js-charge-name").focus();
-  });
-
-  list.addEventListener("input", sync);
-  list.addEventListener("change", sync);
-  document.querySelector('form[action="{{ url_for("ai_admin.vendor_save") }}"]').addEventListener("submit", sync);
-
-  (initial || []).forEach(item => list.appendChild(rowTemplate(item)));
-  refreshEmpty();
-  sync();
-})();
-</script>
+{% block title %}Configurar Vendedor IA | StockArMobile>
 {% endblock %}
 {% block extra_css %}
 <style>
@@ -299,4 +209,95 @@
     </div>
   </form>
 </div>
+<script>
+(function () {
+  const list = document.getElementById("checkoutChargesList");
+  const empty = document.getElementById("checkoutChargesEmpty");
+  const addButton = document.getElementById("addCheckoutCharge");
+  const hidden = document.getElementById("vendorCheckoutChargesJson");
+  const initial = {{ vendor_options.checkout_charges | tojson }};
+
+  const labels = {
+    base: { products: "Productos", products_shipping: "Productos + envío", previous_total: "Total acumulado" },
+    type: { fixed: "Importe fijo", percentage: "Porcentaje" }
+  };
+
+  function makeId() {
+    return "charge-" + Date.now() + "-" + Math.random().toString(36).slice(2, 8);
+  }
+
+  function rowTemplate(item) {
+    const row = document.createElement("div");
+    row.className = "checkout-charge-row";
+    row.dataset.chargeId = item.id || makeId();
+    row.innerHTML = [
+      '<div class="row g-2 align-items-end">',
+      '<div class="col-lg-3"><label class="form-label small fw-semibold">Concepto</label><input class="form-control js-charge-name" maxlength="120" placeholder="IVA 21%" value=""></div>',
+      '<div class="col-lg-2"><label class="form-label small fw-semibold">Tipo</label><select class="form-select js-charge-type"><option value="percentage">Porcentaje</option><option value="fixed">Importe fijo</option></select></div>',
+      '<div class="col-lg-2"><label class="form-label small fw-semibold js-charge-value-label">Valor</label><input class="form-control js-charge-value" type="number" min="0" step="0.01" inputmode="decimal"></div>',
+      '<div class="col-lg-3"><label class="form-label small fw-semibold">Base</label><select class="form-select js-charge-base"><option value="products">Productos</option><option value="products_shipping">Productos + envío</option><option value="previous_total">Total acumulado</option></select></div>',
+      '<div class="col-lg-1"><div class="form-check"><input class="form-check-input js-charge-active" type="checkbox"><label class="form-check-label small">Activo</label></div></div>',
+      '<div class="col-lg-1 text-end"><button type="button" class="btn btn-outline-danger btn-sm js-remove-charge" title="Eliminar"><i class="bi bi-trash"></i></button></div>',
+      '</div>',
+      '<div class="small text-muted mt-2 js-charge-help"></div>'
+    ].join("");
+    row.querySelector(".js-charge-name").value = item.name || "";
+    row.querySelector(".js-charge-type").value = item.type === "fixed" ? "fixed" : "percentage";
+    row.querySelector(".js-charge-value").value = item.value || "0";
+    row.querySelector(".js-charge-base").value = item.base || "products";
+    row.querySelector(".js-charge-active").checked = item.active !== false;
+
+    function refreshType() {
+      const type = row.querySelector(".js-charge-type").value;
+      row.querySelector(".js-charge-value-label").textContent = type === "percentage" ? "Porcentaje %" : "Importe";
+      row.querySelector(".js-charge-help").textContent = type === "percentage"
+        ? "Ejemplo: 21 = 21% de la base elegida."
+        : "El importe se suma una sola vez al pedido.";
+    }
+    row.querySelector(".js-charge-type").addEventListener("change", refreshType);
+    row.querySelector(".js-remove-charge").addEventListener("click", () => {
+      row.remove();
+      refreshEmpty();
+      sync();
+    });
+    refreshType();
+    return row;
+  }
+
+  function currentItems() {
+    return Array.from(list.children).map(row => ({
+      id: row.dataset.chargeId || makeId(),
+      name: row.querySelector(".js-charge-name").value.trim(),
+      type: row.querySelector(".js-charge-type").value,
+      value: row.querySelector(".js-charge-value").value || "0",
+      base: row.querySelector(".js-charge-base").value,
+      active: row.querySelector(".js-charge-active").checked
+    })).filter(item => item.name);
+  }
+
+  function sync() {
+    hidden.value = JSON.stringify(currentItems());
+  }
+
+  function refreshEmpty() {
+    empty.classList.toggle("d-none", list.children.length > 0);
+  }
+
+  addButton.addEventListener("click", () => {
+    const row = rowTemplate({ type: "percentage", value: "21", base: "products", active: true });
+    list.appendChild(row);
+    refreshEmpty();
+    sync();
+    row.querySelector(".js-charge-name").focus();
+  });
+
+  list.addEventListener("input", sync);
+  list.addEventListener("change", sync);
+  document.querySelector('form[action="{{ url_for("ai_admin.vendor_save") }}"]').addEventListener("submit", sync);
+
+  (initial || []).forEach(item => list.appendChild(rowTemplate(item)));
+  refreshEmpty();
+  sync();
+})();
+</script
 {% endblock %}
