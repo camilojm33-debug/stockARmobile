@@ -260,14 +260,14 @@ def _ai_order_row(company_id: int, quote):
     conversation = _ai_order_conversation(company_id, quote.id, payment=payment)
     payment_status = str(getattr(payment, "status", "pending") or "pending").lower()
     delivery_for_status = getattr(quote, "delivery", None)
-    if (
+    if getattr(quote, "converted_sale_id", None):
+        order_key, order_label, order_badge = "confirmed", "Confirmado · venta manual", "text-bg-success"
+    elif (
         delivery_for_status is not None
         and getattr(delivery_for_status, "method", "retiro") == "envio"
         and getattr(delivery_for_status, "shipping_status", "confirmed") == "pending"
     ):
         order_key, order_label, order_badge = "shipping_pending", "Esperando cotización de envío", "text-bg-warning"
-    elif getattr(quote, "converted_sale_id", None):
-        order_key, order_label, order_badge = "confirmed", "Confirmado · venta manual", "text-bg-success"
     elif payment_status == "approved":
         order_key, order_label, order_badge = "paid", "Pagado · pendiente de venta", "text-bg-warning"
     elif payment_status in {"pending", "in_process", "authorized", ""}:
