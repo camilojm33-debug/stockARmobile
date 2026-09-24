@@ -571,7 +571,7 @@ async function processCheckout() {
     note: document.getElementById('checkout-note')?.value || '',
     checkout_token: ensureCheckoutToken()
   };
-  console.info('[sales] carrito recibido (frontend):', payload);
+  console.debug('[sales] checkout preparado; items:', Array.isArray(payload.items) ? payload.items.length : 0);
 
   try {
     const response = await fetch('/ventas/api/checkout', {
