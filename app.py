@@ -590,6 +590,9 @@ class NotificationReadState(db.Model):
     id = db.Column(db.Integer, primary_key=True)
     user_id = db.Column(db.Integer, db.ForeignKey("users.id"), nullable=False, unique=True, index=True)
     last_seen_signature = db.Column(db.String(64), nullable=False)
+    # JSON array of per-notification keys already read by this user. The legacy
+    # signature fields remain for backwards compatibility with old installs.
+    read_notification_keys = db.Column(db.Text, nullable=True)
     last_seen_at = db.Column(db.DateTime, nullable=False, default=utcnow)
     created_at = db.Column(db.DateTime, default=utcnow)
     updated_at = db.Column(db.DateTime, default=utcnow, onupdate=utcnow)
