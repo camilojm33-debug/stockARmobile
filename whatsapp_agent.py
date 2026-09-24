@@ -394,6 +394,7 @@ def ai_orders():
         "shipping_pending": sum(1 for row in all_rows if row.get("delivery", {}).get("shipping_status") == "pending"),
         "paid": sum(1 for row in all_rows if row["payment_status"] == "approved"),
         "confirmed": sum(1 for row in all_rows if row["order_key"] == "confirmed"),
+        "human_attention": sum(1 for row in all_rows if row.get("attention", {}).get("key") == "human"),
         "channel_keys": channel_keys,
         "channel_labels": channel_labels,
         "channel_label": channel_labels[0] if len(channel_labels) == 1 and channel_labels else ("Varios canales" if channel_labels else "Webchat"),
