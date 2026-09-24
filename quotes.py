@@ -1437,7 +1437,6 @@ def quote_public_accept(token):
         return redirect(_build_public_quote_url(quote.id))
     if status != "APROBADO":
         quote.status = "APROBADO"
-        db.session.commit()
         record_audit(
             action="quote_public_accept",
             entity="quote",
@@ -1445,6 +1444,7 @@ def quote_public_accept(token):
             detail=f"Presupuesto aceptado por cliente {quote.number or quote.id}",
             ip_address=request.remote_addr,
         )
+        db.session.commit()
     return redirect(_build_public_quote_url(quote.id))
 
 
