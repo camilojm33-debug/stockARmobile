@@ -304,6 +304,8 @@ class SaleService:
                 current_app.logger.exception("[sales] no se pudo persistir auditoria de error")
             if json_response:
                 message = str(exc)
+                if isinstance(exc, ValueError):
+                    current_app.logger.warning("[sales] checkout rechazado: %s", message)
                 safe_message = message if isinstance(exc, ValueError) else "No se pudo completar la venta. Revisa los datos e intenta nuevamente."
                 return jsonify({"error": safe_message}), 400
             flash(f"No se pudo completar la venta: {exc}", "danger")
