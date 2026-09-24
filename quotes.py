@@ -278,6 +278,44 @@ def _quote_number(quote):
     return quote.number or f"P-{quote.id:06d}"
 
 
+def _quote_charge_snapshot(quote):
+    """Return the immutable checkout charge snapshot stored on the quote, if any."""
+    raw = getattr(quote, "charges_json", None)
+    if not raw:
+        return []
+    try:
+        payload = json.loads(raw)
+    except (TypeError, ValueError, json.JSONDecodeError):
+        return []
+    return payload if isinstance(payload, list) else []
+
+
+def _quote_charge_display_rows(quote):
+    rows = []
+    for charge in _quote_charge_snapshot(quote):
+        if not isinstance(charge, dict):
+            continue
+        try:
+            amount = to_decimal(charge.get("amount") or 0)
+        except (TypeError, ValueError):
+            amount = Decimal("0.00")
+        if amount <= 0:
+            continue
+        name = str(charge.get("name") or "Cargo").strip()[:120]
+        charge_type = str(charge.get("type") or "").strip().lower()
+        value = charge.get("value")
+        if charge_type == "percentage" and value not in (None, ""):
+            try:
+                value_text = f"{to_decimal(value):.2f}".rstrip("0").rstrip(".")
+            except (TypeError, ValueError):
+                value_text = str(value)
+            label = f"{name} {value_text}%"
+        else:
+            label = name
+        rows.append({"label": label, "amount": amount})
+    return rows
+
+
 def _quote_money(value, currency="ARS"):
     return f"{currency or 'ARS'} {float(value or 0):.2f}"
 
@@ -323,12 +361,17 @@ def _build_quote_whatsapp_message(quote, company):
         lines.append(f"Descuento: -{_quote_money(quote.discount, currency)}")
         if quote.discount_reason:
             lines.append(f"Motivo descuento: {_plain_whatsapp_text(quote.discount_reason, max_length=180)}")
-    if float(quote.surcharge or 0) > 0:
-        lines.append(f"Recargo: {_quote_money(quote.surcharge, currency)}")
-        if quote.surcharge_reason:
-            lines.append(f"Motivo recargo: {_plain_whatsapp_text(quote.surcharge_reason, max_length=180)}")
-    if float(quote.tax or 0) > 0:
-        lines.append(f"Impuestos: {_quote_money(quote.tax, currency)}")
+    charge_rows = _quote_charge_display_rows(quote)
+    if charge_rows:
+        for charge in charge_rows:
+            lines.append(f"{charge['label']}: {_quote_money(charge['amount'], currency)}")
+    else:
+        if float(quote.surcharge or 0) > 0:
+            lines.append(f"Recargo: {_quote_money(quote.surcharge, currency)}")
+            if quote.surcharge_reason:
+                lines.append(f"Motivo recargo: {_plain_whatsapp_text(quote.surcharge_reason, max_length=180)}")
+        if float(quote.tax or 0) > 0:
+            lines.append(f"Impuestos: {_quote_money(quote.tax, currency)}")
     lines.append(f"Total: {_quote_money(quote.total_amount, currency)}")
 
     if quote.commercial_conditions:
@@ -850,8 +893,14 @@ def _quote_pdf_response(quote, *, as_attachment=False):
     if quote.surcharge_reason:
         pdf.drawRightString(470, y, f"Motivo recargo: {quote.surcharge_reason[:80]}")
         y -= 14
-    pdf.drawRightString(470, y, f"Impuestos: ${float(quote.tax or 0):.2f}")
-    y -= 18
+    charge_rows = _quote_charge_display_rows(quote)
+    if charge_rows:
+        for charge in charge_rows:
+            pdf.drawRightString(470, y, f"{charge['label']}: ${float(charge['amount']):.2f}")
+            y -= 14
+    else:
+        pdf.drawRightString(470, y, f"Impuestos: ${float(quote.tax or 0):.2f}")
+        y -= 14
     pdf.setFont("Helvetica-Bold", 12)
     pdf.drawRightString(470, y, f"Total: ${float(quote.total_amount or 0):.2f}")
     y -= 22
@@ -1177,7 +1226,7 @@ def view_quote(quote_id):
     quote = _quote_lookup(quote_id)
     _require_owned_or_authorized(quote)
     company = Company.query.filter_by(id=quote.company_id).first()
-    return render_template("presupuestos/view.html", quote=quote, rows=_quote_rows(quote), statuses=QUOTE_STATUS_OPTIONS, company=company)
+    return render_template("presupuestos/view.html", quote=quote, rows=_quote_rows(quote), statuses=QUOTE_STATUS_OPTIONS, company=company, charge_rows=_quote_charge_display_rows(quote))
 
 
 @bp.route("/<int:quote_id>/editar", methods=["GET", "POST"])
@@ -1403,6 +1452,7 @@ def quote_public_view(token):
         "presupuestos/public_view.html",
         quote=quote,
         rows=_quote_rows(quote),
+        charge_rows=_quote_charge_display_rows(quote),
         pdf_url=_build_public_quote_pdf_url(quote.id),
         accept_url=_build_public_quote_accept_url(quote.id),
     )
