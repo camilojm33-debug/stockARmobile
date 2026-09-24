@@ -267,7 +267,7 @@ def _ai_order_row(company_id: int, quote):
     ):
         order_key, order_label, order_badge = "shipping_pending", "Esperando cotización de envío", "text-bg-warning"
     elif getattr(quote, "converted_sale_id", None):
-        order_key, order_label, order_badge = "confirmed_manual", "Confirmado · venta manual", "text-bg-success"
+        order_key, order_label, order_badge = "confirmed", "Confirmado · venta manual", "text-bg-success"
     elif payment_status == "approved":
         order_key, order_label, order_badge = "paid", "Pagado · pendiente de venta", "text-bg-warning"
     elif payment_status in {"pending", "in_process", "authorized", ""}:
