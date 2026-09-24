@@ -183,6 +183,14 @@ def test_employee_endpoint_permission_matrix():
     assert employee_endpoint_permission("company_billing.reactivate_subscription", "POST") == EMPLOYEE_ADMIN_ONLY
     assert employee_endpoint_permission("company_billing.company_settings_billing_invoice_pdf", "GET") == EMPLOYEE_ADMIN_ONLY
     assert employee_endpoint_permission("company_billing.company_settings_billing_payment_pdf", "GET") == EMPLOYEE_ADMIN_ONLY
+    assert employee_endpoint_permission("company_billing.subscription_invoice_detail", "GET") == EMPLOYEE_ADMIN_ONLY
+    assert employee_endpoint_permission("company_billing.subscription_invoice_pdf", "GET") == EMPLOYEE_ADMIN_ONLY
+    assert employee_endpoint_permission("company_billing.legacy_subscription_payment_pdf", "GET") == EMPLOYEE_ADMIN_ONLY
+    assert employee_endpoint_permission("company_billing.subscription_payment_pdf", "GET") == EMPLOYEE_ADMIN_ONLY
+    assert employee_endpoint_permission("company_billing.company_settings_day_activity", "GET") == EMPLOYEE_ADMIN_ONLY
+    assert employee_endpoint_permission("company_billing.company_settings_pin_bootstrap", "POST") == EMPLOYEE_ADMIN_ONLY
+    assert employee_endpoint_permission("company_billing.company_settings_pin_change", "POST") == EMPLOYEE_ADMIN_ONLY
+    assert employee_endpoint_permission("company_billing.company_settings_pin_regenerate", "POST") == EMPLOYEE_ADMIN_ONLY
     assert employee_endpoint_permission("quotes.index", "GET") == "quotes_view"
     assert employee_endpoint_permission("quotes.new_quote", "GET") == "quotes_create"
     assert employee_endpoint_permission("quotes.edit_quote", "POST") == "quotes_edit"
