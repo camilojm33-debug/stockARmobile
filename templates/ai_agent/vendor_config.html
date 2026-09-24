@@ -1,5 +1,96 @@
 {% extends "base_master.html" %}
-{% block title %}Configurar Vendedor IA | StockArMobile{% endblock %}
+{% block title %}Configurar Vendedor IA | StockArMobile<script>
+(function () {
+  const list = document.getElementById("checkoutChargesList");
+  const empty = document.getElementById("checkoutChargesEmpty");
+  const addButton = document.getElementById("addCheckoutCharge");
+  const hidden = document.getElementById("vendorCheckoutChargesJson");
+  const initial = {{ vendor_options.checkout_charges | tojson }};
+
+  const labels = {
+    base: { products: "Productos", products_shipping: "Productos + envío", previous_total: "Total acumulado" },
+    type: { fixed: "Importe fijo", percentage: "Porcentaje" }
+  };
+
+  function makeId() {
+    return "charge-" + Date.now() + "-" + Math.random().toString(36).slice(2, 8);
+  }
+
+  function rowTemplate(item) {
+    const row = document.createElement("div");
+    row.className = "checkout-charge-row";
+    row.dataset.chargeId = item.id || makeId();
+    row.innerHTML = [
+      '<div class="row g-2 align-items-end">',
+      '<div class="col-lg-3"><label class="form-label small fw-semibold">Concepto</label><input class="form-control js-charge-name" maxlength="120" placeholder="IVA 21%" value=""></div>',
+      '<div class="col-lg-2"><label class="form-label small fw-semibold">Tipo</label><select class="form-select js-charge-type"><option value="percentage">Porcentaje</option><option value="fixed">Importe fijo</option></select></div>',
+      '<div class="col-lg-2"><label class="form-label small fw-semibold js-charge-value-label">Valor</label><input class="form-control js-charge-value" type="number" min="0" step="0.01" inputmode="decimal"></div>',
+      '<div class="col-lg-3"><label class="form-label small fw-semibold">Base</label><select class="form-select js-charge-base"><option value="products">Productos</option><option value="products_shipping">Productos + envío</option><option value="previous_total">Total acumulado</option></select></div>',
+      '<div class="col-lg-1"><div class="form-check"><input class="form-check-input js-charge-active" type="checkbox"><label class="form-check-label small">Activo</label></div></div>',
+      '<div class="col-lg-1 text-end"><button type="button" class="btn btn-outline-danger btn-sm js-remove-charge" title="Eliminar"><i class="bi bi-trash"></i></button></div>',
+      '</div>',
+      '<div class="small text-muted mt-2 js-charge-help"></div>'
+    ].join("");
+    row.querySelector(".js-charge-name").value = item.name || "";
+    row.querySelector(".js-charge-type").value = item.type === "fixed" ? "fixed" : "percentage";
+    row.querySelector(".js-charge-value").value = item.value || "0";
+    row.querySelector(".js-charge-base").value = item.base || "products";
+    row.querySelector(".js-charge-active").checked = item.active !== false;
+
+    function refreshType() {
+      const type = row.querySelector(".js-charge-type").value;
+      row.querySelector(".js-charge-value-label").textContent = type === "percentage" ? "Porcentaje %" : "Importe";
+      row.querySelector(".js-charge-help").textContent = type === "percentage"
+        ? "Ejemplo: 21 = 21% de la base elegida."
+        : "El importe se suma una sola vez al pedido.";
+    }
+    row.querySelector(".js-charge-type").addEventListener("change", refreshType);
+    row.querySelector(".js-remove-charge").addEventListener("click", () => {
+      row.remove();
+      refreshEmpty();
+      sync();
+    });
+    refreshType();
+    return row;
+  }
+
+  function currentItems() {
+    return Array.from(list.children).map(row => ({
+      id: row.dataset.chargeId || makeId(),
+      name: row.querySelector(".js-charge-name").value.trim(),
+      type: row.querySelector(".js-charge-type").value,
+      value: row.querySelector(".js-charge-value").value || "0",
+      base: row.querySelector(".js-charge-base").value,
+      active: row.querySelector(".js-charge-active").checked
+    })).filter(item => item.name);
+  }
+
+  function sync() {
+    hidden.value = JSON.stringify(currentItems());
+  }
+
+  function refreshEmpty() {
+    empty.classList.toggle("d-none", list.children.length > 0);
+  }
+
+  addButton.addEventListener("click", () => {
+    const row = rowTemplate({ type: "percentage", value: "21", base: "products", active: true });
+    list.appendChild(row);
+    refreshEmpty();
+    sync();
+    row.querySelector(".js-charge-name").focus();
+  });
+
+  list.addEventListener("input", sync);
+  list.addEventListener("change", sync);
+  document.querySelector('form[action="{{ url_for("ai_admin.vendor_save") }}"]').addEventListener("submit", sync);
+
+  (initial || []).forEach(item => list.appendChild(rowTemplate(item)));
+  refreshEmpty();
+  sync();
+})();
+</script>
+{% endblock %}
 {% block extra_css %}
 <style>
   .vendor-config { max-width: 1040px; }
@@ -13,6 +104,7 @@
   .vendor-switch { display:flex; justify-content:space-between; align-items:center; gap:1rem; padding:1rem; border:1px solid var(--app-line); border-radius:14px; background:var(--app-panel-soft); }
   .vendor-capability { display:flex; justify-content:space-between; align-items:center; gap:1rem; min-height:86px; padding:1rem; border:1px solid var(--app-line); border-radius:14px; background:var(--app-panel-soft); }
   .vendor-card { height:100%; padding:1rem; border:1px solid var(--app-line); border-radius:14px; background:var(--app-panel-soft); }
+  .checkout-charge-row { border:1px solid var(--app-line); border-radius:14px; padding:1rem; background:var(--app-panel-soft); }
   .vendor-status { display:inline-flex; align-items:center; gap:.45rem; padding:.38rem .72rem; border-radius:999px; font-size:.76rem; font-weight:800; border:1px solid var(--app-line); background:#fff; color:var(--app-muted); }
   .vendor-status.on { color:#15803d; }
   .vendor-save { position:sticky; bottom:12px; z-index:20; display:flex; justify-content:space-between; align-items:center; gap:1rem; padding:.8rem 1rem; margin-top:1rem; border:1px solid var(--app-line); border-radius:16px; background:rgba(255,255,255,.96); box-shadow:0 12px 32px rgba(15,23,42,.12); backdrop-filter:blur(8px); }
@@ -102,8 +194,8 @@
     <section class="vendor-section mb-3">
       <div class="vendor-head">
         <div>
-          <div class="vendor-title"><i class="bi bi-truck text-primary me-2"></i>Gestión de envíos</div>
-          <div class="vendor-subtitle">El cliente informa su dirección, pero el costo del envío siempre lo define el comercio.</div>
+          <div class="vendor-title"><i class="bi bi-truck text-primary me-2"></i>Gestión de envíos y cargos</div>
+          <div class="vendor-subtitle">El comercio define los importes que el Vendedor incorporará al presupuesto y al enlace de pago de Mercado Pago.</div>
         </div>
       </div>
       <div class="vendor-body">
@@ -111,7 +203,7 @@
           <div class="col-md-7">
             <input type="hidden" name="vendor_shipping_mode" value="fixed">
             <label class="form-label fw-semibold">Costo fijo de envío</label>
-            <div class="form-text">Este importe se suma automáticamente al presupuesto y al cobro de Mercado Pago cuando el cliente elige envío a domicilio.</div>
+            <div class="form-text">Se agrega automáticamente cuando el cliente elige envío a domicilio.</div>
           </div>
           <div class="col-md-5">
             <label class="form-label fw-semibold">Importe del envío</label>
@@ -119,12 +211,26 @@
               <span class="input-group-text">$</span>
               <input class="form-control" inputmode="decimal" min="0" step="0.01" name="vendor_standard_shipping_cost" value="{{ vendor_options.standard_shipping_cost }}" aria-describedby="standardShippingHelp">
             </div>
-            <div class="form-text" id="standardShippingHelp">Se aplica automáticamente en cada pedido con envío a domicilio.</div>
+            <div class="form-text" id="standardShippingHelp">El Vendedor nunca toma este costo desde el cliente.</div>
           </div>
+
+          <div class="col-12">
+            <div class="d-flex flex-wrap justify-content-between align-items-center gap-2 mb-2">
+              <div>
+                <div class="fw-bold">Cargos e impuestos del link de pago</div>
+                <div class="small text-muted">Podés crear conceptos como IVA, tasa de servicio, embalaje, percepción o cualquier otro importe que deba aparecer desglosado.</div>
+              </div>
+              <button class="btn btn-outline-primary btn-sm" type="button" id="addCheckoutCharge"><i class="bi bi-plus-lg me-1"></i>Agregar concepto</button>
+            </div>
+            <input type="hidden" name="vendor_checkout_charges_json" id="vendorCheckoutChargesJson" value="[]">
+            <div id="checkoutChargesList" class="d-grid gap-2"></div>
+            <div id="checkoutChargesEmpty" class="border rounded-3 p-3 text-center text-muted small">No hay cargos configurados. El envío sigue funcionando igual.</div>
+          </div>
+
           <div class="col-12">
             <div class="alert alert-info small mb-0">
               <i class="bi bi-shield-check me-1"></i>
-              <strong>Importante:</strong> el Vendedor nunca toma el costo de envío desde el cliente. El importe configurado arriba se incorpora automáticamente al presupuesto y al enlace de cobro de Mercado Pago.
+              <strong>Importante:</strong> estos conceptos se calculan en el servidor, quedan guardados en el pedido y se envían como líneas separadas a Mercado Pago. El cliente no puede modificar sus importes.
             </div>
           </div>
         </div>
