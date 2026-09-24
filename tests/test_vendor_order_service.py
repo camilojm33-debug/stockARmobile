@@ -791,11 +791,19 @@ def _configure_vendor_charges(company, *, charges):
 
 
 def _configure_vendor_shipping(company, *, mode, standard_cost="0.00"):
-    payload = {"ai_agent": {"vendor_options": {
+    try:
+        current = json.loads(company.preferences_json or "{}")
+    except (TypeError, ValueError, json.JSONDecodeError):
+        current = {}
+    ai = current.get("ai_agent") if isinstance(current.get("ai_agent"), dict) else {}
+    vendor_options = ai.get("vendor_options") if isinstance(ai.get("vendor_options"), dict) else {}
+    vendor_options.update({
         "shipping_mode": mode,
         "standard_shipping_cost": standard_cost,
-    }}}
-    company.preferences_json = json.dumps(payload, ensure_ascii=False)
+    })
+    ai["vendor_options"] = vendor_options
+    current["ai_agent"] = ai
+    company.preferences_json = json.dumps(current, ensure_ascii=False)
     db.session.commit()
 
 
