@@ -198,19 +198,15 @@ def usage_snapshot(company_id: int, *, now: datetime | None = None) -> dict[str,
     percent = min(100, round((used / included) * 100)) if included else 0
     state = "normal" if percent < 80 else "near_limit" if percent < 90 else "limit_next" if percent < 100 else "limit_reached"
 
-    agent_rows = (
-        query.filter(usage_filter)
-        .with_entities(
-            ConversationMessage.metadata_json["agent_key"].as_string().label("agent_key"),
-            db.func.count(ConversationMessage.id).label("count"),
-        )
-        .group_by(ConversationMessage.metadata_json["agent_key"].as_string())
-        .all()
-    )
-    by_agent = {
-        (str(row.agent_key).strip() if row.agent_key else "asistente"): int(row.count or 0)
-        for row in agent_rows
-    }
+    # Avoid PostgreSQL JSON/group-by dialect differences here. Usage is capped by
+    # the monthly plan limits, so aggregating the already-filtered usage rows in
+    # Python is small and keeps this query portable across SQLite/PostgreSQL.
+    usage_rows = query.filter(usage_filter).with_entities(ConversationMessage.metadata_json).all()
+    by_agent: dict[str, int] = {}
+    for (metadata,) in usage_rows:
+        metadata = metadata or {}
+        agent_key = str(metadata.get("agent_key") or "asistente").strip() or "asistente"
+        by_agent[agent_key] = by_agent.get(agent_key, 0) + 1
     return {
         "period": period_start.strftime("%Y-%m"),
         "included_usage": included,
