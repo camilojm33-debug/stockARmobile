@@ -23,6 +23,8 @@ openpyxl>=3.1.0
 python-escpos>=3.0.0
 
 # PostgreSQL para Render/produccion
+# Render puede entregar DATABASE_URL con dialecto postgresql+psycopg; soportamos ambos drivers.
+psycopg[binary]>=3.2.0,<4.0
 psycopg2-binary>=2.9.0
 
 # Testing
