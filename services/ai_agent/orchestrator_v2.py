@@ -37,7 +37,7 @@ from services.ai_agent.tools.analyst_marketing import (
     VentasComparativaTool,
 )
 from services.ai_agent.vendor_order_service import VendorOrderService
-from services.ai_agent.usage_service import can_use_ai, can_use_ai_feature, record_ai_usage
+from services.ai_agent.usage_service import can_use_ai, can_use_ai_feature, lock_ai_usage, record_ai_usage
 from stockarmobile.extensions import db
 from stockarmobile.models.conversations import Agent, AgentConfiguration, Conversation, ConversationMessage
 
@@ -528,6 +528,7 @@ class AgentRuntime:
                     "content": assistant_duplicate.content if assistant_duplicate else "",
                 }
 
+        lock_ai_usage(company_id)
         access = can_use_ai(company, agent_key)
         if not access.allowed:
             raise ValueError(access.reason or "El agente IA no está disponible para este plan.")
