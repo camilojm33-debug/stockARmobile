@@ -130,6 +130,20 @@ def can_use_ai_feature(company, feature: str) -> AIAccess:
     return AIAccess(False, "Función IA inválida.", plan)
 
 
+
+def lock_ai_usage(company_id: int) -> None:
+    """Serialize quota decisions per company inside the current DB transaction.
+
+    PostgreSQL advisory transaction locks close the check-then-record race without
+    introducing a new production table. SQLite/test environments remain a no-op.
+    """
+    bind = db.session.get_bind()
+    if bind is None or bind.dialect.name != "postgresql":
+        return
+    # Stable positive namespace reserved for AI quota locks.
+    lock_key = 7_301_000_000 + int(company_id)
+    db.session.execute(db.text("SELECT pg_advisory_xact_lock(:lock_key)"), {"lock_key": lock_key})
+
 def can_use_ai(company, agent: str, *, now: datetime | None = None) -> AIAccess:
     plan = current_plan(company)
     if plan is None:

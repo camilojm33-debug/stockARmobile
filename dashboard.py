@@ -29,6 +29,16 @@ def _ai_access_guard():
         return jsonify({"success": False, "error": "Tu usuario no tiene habilitado el acceso a Agentes IA."}), 403
 
 
+
+def _lock_invoice_processing(company_id, upload_id):
+    """Serialize processing of the same tenant invoice within a DB transaction."""
+    bind = db.session.get_bind()
+    if bind is None or bind.dialect.name != "postgresql":
+        return
+    lock_key = f"invoice-ai:{int(company_id)}:{str(upload_id)}"
+    db.session.execute(db.text("SELECT pg_advisory_xact_lock(hashtext(:lock_key))"), {"lock_key": lock_key})
+
+
 def _invoice_record(upload_id, company_id):
     for conversation in Conversation.query.filter_by(company_id=company_id).all():
         metadata = copy.deepcopy(conversation.metadata_json or {})
@@ -229,13 +239,13 @@ def ai_agent_chat():
     return jsonify({"success": True, "conversation_id": result.get("conversation_id"), "message_id": result.get("message_id"), "assistant_message_id": result.get("assistant_message_id"), "content": result.get("content")})
 
 
-csrf.exempt(ai_agent_chat)
 
 
 @bp.route("/ai-agent/invoices/<upload_id>/process", methods=["POST"])
 @tenant_required
 def process_invoice(upload_id):
     company_id = getattr(current_user, "company_id", None)
+    _lock_invoice_processing(company_id, upload_id)
     found = _invoice_record(upload_id, company_id)
     if found is None:
         return jsonify({"success": False, "error": "Factura no encontrada."}), 404

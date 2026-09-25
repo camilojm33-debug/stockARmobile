@@ -172,18 +172,17 @@ class ProductProfitabilityTool(AgentTool):
             Product.category,
             func.coalesce(func.sum(SaleItem.quantity), 0).label("units"),
             func.coalesce(func.sum(SaleItem.quantity * SaleItem.price), 0).label("revenue"),
-            func.coalesce(func.avg(Product.cost_price), 0).label("cost"),
+            func.coalesce(func.sum(SaleItem.quantity * SaleItem.cost_price), 0).label("historical_cost"),
         ).group_by(Product.id, Product.name, Product.category).order_by(func.sum(SaleItem.quantity * SaleItem.price).desc()).limit(limit).all()
         items = []
         for row in rows:
-            cost = float(row.cost or 0)
             units = float(row.units or 0)
             revenue = float(row.revenue or 0)
-            total_cost = cost * units
+            total_cost = float(row.historical_cost or 0)
             margin = revenue - total_cost
             margin_pct = None if revenue == 0 else round(margin / revenue * 100, 2)
             items.append({"id": row.id, "name": row.name, "category": row.category, "units": units, "revenue": revenue, "estimated_cost": total_cost, "estimated_margin": margin, "margin_percent": margin_pct})
-        return {"success": True, "days": days, "items": items, "data_quality": "real_sales_and_product_costs"}
+        return {"success": True, "days": days, "items": items, "data_quality": "real_sales_and_historical_sale_item_costs"}
 
 
 class InventoryTurnoverTool(AgentTool):

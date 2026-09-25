@@ -129,6 +129,7 @@ def _handle_vendor_command(company_id: int, conversation_id: int, sender: str, t
             if conversation is not None:
                 state = _metadata(conversation)
                 state["pending_cancel_quote_number"] = result.get("quote_number") or ""
+                state["pending_cancel_created_at"] = utcnow_naive().isoformat()
                 _set_metadata(conversation, state)
                 db.session.commit()
             return result["message"]
@@ -138,6 +139,15 @@ def _handle_vendor_command(company_id: int, conversation_id: int, sender: str, t
         conversation = Conversation.query.filter_by(id=conversation_id, company_id=company_id).first()
         state = _metadata(conversation) if conversation is not None else {}
         pending_number = str(state.pop("pending_cancel_quote_number", "") or "").strip()
+        pending_created_at = str(state.pop("pending_cancel_created_at", "") or "").strip()
+        if pending_number and pending_created_at:
+            try:
+                from datetime import datetime, timedelta
+                created_at = datetime.fromisoformat(pending_created_at)
+                if utcnow_naive() - created_at > timedelta(minutes=10):
+                    pending_number = ""
+            except (TypeError, ValueError):
+                pending_number = ""
         if not pending_number:
             if conversation is not None:
                 _set_metadata(conversation, state)

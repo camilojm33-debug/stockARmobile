@@ -37,6 +37,7 @@ class Agent(db.Model):
 
     __table_args__ = (
         sa.Index("ix_agents_company_id", "company_id"),
+        sa.Index("uq_agents_company_name", "company_id", "name", unique=True),
     )
 
 
@@ -74,6 +75,7 @@ class AgentConfiguration(db.Model):
     __table_args__ = (
         sa.Index("ix_agentcfg_agent_id", "agent_id"),
         sa.Index("ix_agentcfg_company_id", "company_id"),
+        sa.Index("uq_agentcfg_company_agent", "company_id", "agent_id", unique=True),
     )
 
 

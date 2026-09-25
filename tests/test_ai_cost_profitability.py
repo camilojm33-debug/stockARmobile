@@ -535,6 +535,6 @@ def test_profitability_snapshot_reports_no_ai_usage(app):
         assert snapshot["status"] == "no_ai_usage"
         assert snapshot["estimated_cost_usd"] == 0.0
         assert snapshot["estimated_cost_ars"] == 0.0
-        assert snapshot["estimated_gross_contribution_ars"] == 172150.0
+        assert snapshot["estimated_gross_contribution_ars"] == 172390.0
         assert snapshot["estimated_margin_percent"] == 100.0
         assert snapshot["cost_pricing_configured"] is False
