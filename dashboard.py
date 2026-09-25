@@ -229,7 +229,6 @@ def ai_agent_chat():
     return jsonify({"success": True, "conversation_id": result.get("conversation_id"), "message_id": result.get("message_id"), "assistant_message_id": result.get("assistant_message_id"), "content": result.get("content")})
 
 
-csrf.exempt(ai_agent_chat)
 
 
 @bp.route("/ai-agent/invoices/<upload_id>/process", methods=["POST"])
