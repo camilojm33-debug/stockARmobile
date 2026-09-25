@@ -15,6 +15,7 @@ from services.ai_agent.config_service import (
     build_vendor_runtime_instructions,
     choose_agent,
     get_vendor_options,
+    get_special_options,
     vendor_allowed_tool_names,
 )
 from services.ai_agent.tools.base import AgentTool
@@ -576,6 +577,29 @@ class AgentRuntime:
                 first_interaction=not history,
             )
             allowed_tool_names = vendor_allowed_tool_names(vendor_options)
+        elif agent_key in {"analista", "marketing"}:
+            special_options = get_special_options(company, agent_key)
+            if agent_key == "analista":
+                alert_labels = {"sales_drop": "caídas de ventas", "critical_stock": "stock crítico", "inactive_clients": "clientes inactivos", "low_rotation": "productos sin rotación"}
+                enabled_alerts = ", ".join(alert_labels.get(item, item) for item in special_options.get("alerts", [])) or "ninguna"
+                prompt += (
+                    "\n\nCONFIGURACIÓN DEL ANALISTA DEL COMERCIO:"
+                    f"\n- Período predeterminado: {special_options.get('default_period', '30d')}"
+                    f"\n- Formato de salida: {special_options.get('output_style', 'accionable')}"
+                    f"\n- Alertas habilitadas: {enabled_alerts}"
+                    "\nUsá estas preferencias como defaults cuando el usuario no indique otras."
+                )
+            else:
+                prompt += (
+                    "\n\nCONFIGURACIÓN DE MARKETING DEL COMERCIO:"
+                    f"\n- Segmento predeterminado: {special_options.get('default_segment', 'inactivos')}"
+                    f"\n- Tono: {special_options.get('campaign_tone', 'profesional')}"
+                    f"\n- Tipos permitidos: {', '.join(special_options.get('campaign_types', [])) or 'ninguno'}"
+                    "\n- Toda campaña requiere aprobación humana antes de cualquier envío."
+                    "\nUsá estas preferencias como defaults y mantené toda propuesta en BORRADOR."
+                )
+            if config and config.system_prompt:
+                prompt += f"\n\nInstrucciones del comercio:\n{config.system_prompt}"
         elif config and config.system_prompt:
             prompt += f"\n\nInstrucciones del comercio:\n{config.system_prompt}"
 
