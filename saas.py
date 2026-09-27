@@ -2023,7 +2023,7 @@ def crm_lead_contact_preferences(lead_id):
     if request.form.get("do_not_contact") == "1":
         lead.do_not_contact = True
         lead.do_not_contact_at = lead.do_not_contact_at or utcnow()
-    elif request.form.get("clear_do_not_contact") == "1":
+    else:
         lead.do_not_contact = False
         lead.do_not_contact_at = None
     db.session.add(consent)
