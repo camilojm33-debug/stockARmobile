@@ -340,7 +340,7 @@ def _unsubscribe_url(lead) -> str:
     from flask import current_app
     token = getattr(getattr(lead, "consent", None), "unsubscribe_token", None)
     base = _clean(current_app.config.get("APP_URL")).rstrip("/")
-    return f"{base}/crm/unsubscribe/{quote(token)}" if base and token else ""
+    return f"{base}/superadmin/crm/unsubscribe/{quote(token)}" if base and token else ""
 
 def _send_email(recipient, campaign) -> tuple[bool, str]:
     from flask import current_app
@@ -373,13 +373,19 @@ def _send_email(recipient, campaign) -> tuple[bool, str]:
 
 def dispatch_due_campaigns(db_session, *, limit: int = 20, per_campaign: int = 50) -> dict:
     from app import SaaSCampaign, SaaSCampaignEvent, SaaSCampaignRecipient, utcnow
+    from flask import current_app
+
     now = utcnow()
+    marketing_enabled = str(current_app.config.get("SAAS_MARKETING_SEND_ENABLED", "0")).lower() in {"1", "true", "yes", "on"}
     campaigns = SaaSCampaign.query.filter(
         SaaSCampaign.status == "APROBADA",
         SaaSCampaign.scheduled_at.is_(None) | (SaaSCampaign.scheduled_at <= now),
     ).order_by(SaaSCampaign.id.asc()).limit(limit).all()
-    summary = {"campaigns": 0, "sent": 0, "failed": 0, "skipped": 0}
+    summary = {"campaigns": 0, "sent": 0, "failed": 0, "skipped": 0, "disabled": 0}
     for campaign in campaigns:
+        if not marketing_enabled:
+            summary["disabled"] += 1
+            continue
         campaign.status = "ENVIANDO"
         campaign.started_at = campaign.started_at or now
         db_session.flush()
