@@ -5,6 +5,8 @@ services:
     buildCommand: pip install -r requirements.txt
     startCommand: python -m flask db upgrade && gunicorn --timeout 120 wsgi:application
     envVars:
+      - key: SAAS_MARKETING_SEND_ENABLED
+        value: "0"
       - key: SECRET_KEY
         generateValue: true
       - key: DEFAULT_SUPERADMIN_PASSWORD
@@ -58,3 +60,21 @@ databases:
   - name: stockarmobile-db
     databaseName: stockarmobile
     user: stockarmobile
+
+
+  - type: cron
+    name: stockarmobile-commercial-campaigns
+    runtime: python
+    plan: starter
+    schedule: "*/15 * * * *"
+    buildCommand: pip install -r requirements.txt
+    startCommand: python run_saas_campaigns.py
+    envVars:
+      - key: DATABASE_URL
+        fromDatabase:
+          name: stockarmobile-db
+          property: connectionString
+      - key: APP_URL
+        value: https://www.stockarmobile.com
+      - key: SAAS_MARKETING_SEND_ENABLED
+        value: "0"
