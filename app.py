@@ -1667,7 +1667,7 @@ class SaaSLeadImport(db.Model):
 
 class SaaSCampaign(db.Model):
     __tablename__ = "saas_campaigns"
-    __table_args__ = (Index("ix_saas_campaigns_status_scheduled", "status", "scheduled_at"), Index("ix_saas_campaigns_created_at", "created_at"))
+    __table_args__ = (Index("ix_saas_campaigns_status_scheduled", "status", "scheduled_at"),)
     id = db.Column(db.Integer, primary_key=True)
     name = db.Column(db.String(180), nullable=False)
     subject = db.Column(db.String(255), nullable=False)
@@ -1695,7 +1695,7 @@ class SaaSCampaign(db.Model):
 
 class SaaSCampaignRecipient(db.Model):
     __tablename__ = "saas_campaign_recipients"
-    __table_args__ = (db.UniqueConstraint("campaign_id","lead_id","channel",name="uq_saas_campaign_recipient"), Index("ix_saas_campaign_recipients_status","status"))
+    __table_args__ = (db.UniqueConstraint("campaign_id","lead_id","channel",name="uq_saas_campaign_recipient"),)
     id = db.Column(db.Integer, primary_key=True)
     campaign_id = db.Column(db.Integer, db.ForeignKey("saas_campaigns.id", ondelete="CASCADE"), nullable=False, index=True)
     lead_id = db.Column(db.Integer, db.ForeignKey("saas_leads.id", ondelete="CASCADE"), nullable=False, index=True)
