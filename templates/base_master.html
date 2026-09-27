@@ -718,6 +718,7 @@
       <div class="nav-section-label">Administración</div>
       <a class="nav-link {% if request.endpoint == 'saas.index' %}active{% endif %}" href="{{ url_for('saas.index') }}"><i class="bi bi-grid-1x2"></i>Panel SaaS</a>
       <a class="nav-link {% if request.endpoint == 'saas.crm_panel' or request.endpoint == 'saas.crm_lead_status' or request.endpoint == 'saas.crm_task_status' or request.endpoint == 'saas.crm_alert_status' %}active{% endif %}" href="{{ url_for('saas.crm_panel') }}"><i class="bi bi-diagram-3"></i>Centro SaaS</a>
+      <a class="nav-link {% if request.endpoint == 'saas.crm_campaigns' or request.endpoint == 'saas.crm_campaign_detail' %}active{% endif %}" href="{{ url_for('saas.crm_campaigns') }}"><i class="bi bi-megaphone"></i>Campañas</a>
       <a class="nav-link {% if request.endpoint == 'saas.attention_panel' %}active{% endif %}" href="{{ url_for('saas.attention_panel') }}"><i class="bi bi-lightning-charge"></i>Atención</a>
       <a class="nav-link {% if request.endpoint == 'saas.companies_panel' %}active{% endif %}" href="{{ url_for('saas.companies_panel') }}"><i class="bi bi-buildings"></i>Empresas</a>
       <a class="nav-link {% if request.endpoint == 'saas.users_panel' %}active{% endif %}" href="{{ url_for('saas.users_panel') }}"><i class="bi bi-people"></i>Usuarios globales</a>
