@@ -178,6 +178,11 @@ def login():
 
             if user and user.active and user.check_password(form.password.data):
                 _login_user_and_bind_company(user, remember=form.remember.data)
+                if getattr(user, "role", None) == "superadmin":
+                    from saas import _SUPERADMIN_AUTHENTICATED_AT_SESSION_KEY, _SUPERADMIN_STEP_UP_AT_SESSION_KEY, _SUPERADMIN_STEP_UP_USER_SESSION_KEY
+                    session[_SUPERADMIN_AUTHENTICATED_AT_SESSION_KEY] = utcnow().timestamp()
+                    session.pop(_SUPERADMIN_STEP_UP_AT_SESSION_KEY, None)
+                    session.pop(_SUPERADMIN_STEP_UP_USER_SESSION_KEY, None)
                 record_audit(action="login_success", entity="user", entity_id=user.id, detail="Inicio de sesion exitoso")
                 db.session.commit()
                 if getattr(user, "must_change_password", False):
