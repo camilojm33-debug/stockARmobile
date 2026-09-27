@@ -1993,6 +1993,52 @@ def crm_unsubscribe(token):
     return render_template("saas/crm_unsubscribe.html", ok=True, company_name=lead.company_name)
 
 
+@bp.post("/crm/leads/<int:lead_id>/contact-preferences")
+@superadmin_required
+def crm_lead_contact_preferences(lead_id):
+    from app import SaaSLead, SaaSLeadConsent, db, utcnow, record_audit
+
+    _require_superadmin()
+    lead = SaaSLead.query.filter_by(id=lead_id).first_or_404()
+    consent = lead.consent or SaaSLeadConsent(lead_id=lead.id)
+    consent.email_status = (request.form.get("email_consent_status") or "unknown").strip().lower()
+    consent.whatsapp_status = (request.form.get("whatsapp_consent_status") or "unknown").strip().lower()
+    consent.phone_status = (request.form.get("phone_consent_status") or "unknown").strip().lower()
+    if consent.email_status not in {"opted_in", "opted_out", "unknown"}:
+        consent.email_status = "unknown"
+    if consent.whatsapp_status not in {"opted_in", "opted_out", "unknown"}:
+        consent.whatsapp_status = "unknown"
+    if consent.phone_status not in {"opted_in", "opted_out", "unknown"}:
+        consent.phone_status = "unknown"
+    lead.email_consent_status = consent.email_status
+    lead.whatsapp_consent_status = consent.whatsapp_status
+    lead.phone_consent_status = consent.phone_status
+    if not consent.unsubscribe_token:
+        consent.unsubscribe_token = __import__("secrets").token_urlsafe(48)
+    if consent.email_status == "opted_out":
+        consent.revoked_at = consent.revoked_at or utcnow()
+    elif consent.email_status == "opted_in":
+        consent.granted_at = utcnow()
+        consent.revoked_at = None
+    if request.form.get("do_not_contact") == "1":
+        lead.do_not_contact = True
+        lead.do_not_contact_at = lead.do_not_contact_at or utcnow()
+    elif request.form.get("clear_do_not_contact") == "1":
+        lead.do_not_contact = False
+        lead.do_not_contact_at = None
+    db.session.add(consent)
+    record_audit(
+        action="saas_lead_contact_preferences_update",
+        entity="saas_lead",
+        entity_id=lead.id,
+        detail=f"Preferencias actualizadas: email={lead.email_consent_status}; whatsapp={lead.whatsapp_consent_status}; llamada={lead.phone_consent_status}; no_contactar={lead.do_not_contact}.",
+        user_id=current_user.id,
+    )
+    db.session.commit()
+    flash("Preferencias de contacto actualizadas.", "success")
+    return _redirect_back("saas.crm_panel")
+
+
 @bp.route("/crm/leads/<int:lead_id>/status", methods=["POST"])
 @superadmin_required
 def crm_lead_status(lead_id):
