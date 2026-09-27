@@ -1,5 +1,24 @@
 {% extends "base_master.html" %}
-{% block title %}Centro SaaS - SuperAdmin{% endblock %}
+{% block title %}Centro SaaS - SuperAdmin{% for lead in leads %}
+<div class="modal fade" id="contactPrefs{{ lead.id }}" tabindex="-1" aria-hidden="true">
+  <div class="modal-dialog"><div class="modal-content">
+    <div class="modal-header"><h5 class="modal-title">Canales · {{ lead.company_name }}</h5><button type="button" class="btn-close" data-bs-dismiss="modal"></button></div>
+    <form method="post" action="{{ url_for('saas.crm_lead_contact_preferences', lead_id=lead.id) }}">
+      <div class="modal-body"><input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+        <div class="small text-muted mb-3">Un email público no se interpreta automáticamente como permiso de marketing.</div>
+        {% for field,label,current in [('email_consent_status','Email',lead.email_consent_status),('whatsapp_consent_status','WhatsApp',lead.whatsapp_consent_status),('phone_consent_status','Llamada',lead.phone_consent_status)] %}
+        <label class="form-label fw-semibold">{{ label }}</label><select class="form-select mb-3" name="{{ field }}"><option value="unknown" {% if current == 'unknown' %}selected{% endif %}>Desconocido</option><option value="opted_in" {% if current == 'opted_in' %}selected{% endif %}>Permiso registrado</option><option value="opted_out" {% if current == 'opted_out' %}selected{% endif %}>No permitido / baja</option></select>
+        {% endfor %}
+        <div class="form-check"><input class="form-check-input" type="checkbox" name="do_not_contact" value="1" id="dnc{{ lead.id }}" {% if lead.do_not_contact %}checked{% endif %}><label class="form-check-label" for="dnc{{ lead.id }}">Bloquear todo contacto comercial</label></div>
+        {% if lead.do_not_contact %}<input type="hidden" name="clear_do_not_contact" value="0">{% endif %}
+      </div>
+      <div class="modal-footer"><button type="button" class="btn btn-outline-secondary" data-bs-dismiss="modal">Cancelar</button><button class="btn btn-primary">Guardar preferencias</button></div>
+    </form>
+  </div></div>
+</div>
+{% endfor %}
+
+{% endblock %}
 {% block content %}
 <div class="app-shell">
 
@@ -28,7 +47,7 @@
       <div>
         <div class="crm-kicker"><i class="bi bi-speedometer2 me-1"></i>Centro operativo</div>
         <h1 class="h3 fw-bold mb-1">Centro SaaS</h1>
-        <p class="text-muted mb-0">Una vista de control para detectar lo urgente y gestionar prospectos, tareas y alertas sin recorrer una página interminable.</p>
+        <p class="text-muted mb-0">Centro de control para prospectos, importación, segmentación y campañas comerciales de StockArMobile.</p>
       </div>
       <div class="crm-action-bar">
         <button class="btn btn-primary" type="button" data-bs-toggle="modal" data-bs-target="#newLeadModal"><i class="bi bi-person-plus me-1"></i>Prospecto</button>
@@ -37,6 +56,9 @@
         <a class="btn btn-outline-dark" href="{{ url_for('saas.index') }}">Panel SaaS</a>
         <a class="btn btn-outline-secondary" href="{{ url_for('saas.companies_panel') }}">Empresas</a>
         <a class="btn btn-outline-secondary" href="{{ url_for('saas.ai_profitability_panel') }}"><i class="bi bi-graph-up-arrow me-1"></i>Rentabilidad IA</a>
+        <a class="btn btn-outline-primary" href="{{ url_for('saas.crm_import') }}"><i class="bi bi-upload me-1"></i>Importar</a>
+        <a class="btn btn-outline-primary" href="{{ url_for('saas.crm_leads_export') }}"><i class="bi bi-file-earmark-excel me-1"></i>Exportar</a>
+        <a class="btn btn-primary" href="{{ url_for('saas.crm_campaigns') }}"><i class="bi bi-megaphone me-1"></i>Campañas</a>
       </div>
     </div>
   </section>
@@ -134,7 +156,7 @@
                 </div>
                 <div class="table-responsive">
                   <table class="table mb-0 table-hover align-middle">
-                    <thead><tr><th>Empresa</th><th>Contacto</th><th>Estado</th><th>Prioridad</th><th>Seguimiento</th><th>Asignado</th><th class="text-end">Accion</th></tr></thead>
+                    <thead><tr><th>Empresa</th><th>Rubro / zona</th><th>Contacto</th><th>Score</th><th>Consentimiento</th><th>Estado</th><th>Prioridad</th><th>Seguimiento</th><th>Asignado</th><th class="text-end">Accion</th></tr></thead>
                     <tbody>
                       {% for lead in leads %}
                       <tr>
@@ -142,18 +164,22 @@
                           <div class="fw-semibold">{{ lead.company_name }}</div>
                           <div class="small text-muted">{{ lead.source }}</div>
                         </td>
+                        <td><div class="fw-semibold">{{ lead.industry or 'Sin rubro' }}</div><div class="small text-muted">{{ lead.locality or '-' }}{% if lead.province %} · {{ lead.province }}{% endif %}</div></td>
                         <td>
                           <div class="fw-semibold">{{ lead.contact_name }}</div>
-                          <div class="small text-muted">{{ lead.email or 'Sin email' }}{% if lead.phone %} · {{ lead.phone }}{% endif %}</div>
+                          <div class="small text-muted">{{ lead.email or 'Sin email' }}</div><div class="small text-muted">{{ lead.whatsapp or lead.phone or 'Sin teléfono' }}</div>
                           {% if lead.notes %}
                           <button type="button" class="btn btn-sm btn-link p-0" data-bs-toggle="modal" data-bs-target="#leadMsg{{ lead.id }}"><i class="bi bi-chat-left-text me-1"></i>Ver qué necesita</button>
                           {% endif %}
                         </td>
+                        <td><span class="badge {{ 'text-bg-success' if lead.lead_score >= 70 else ('text-bg-warning' if lead.lead_score >= 45 else 'text-bg-secondary') }}">{{ lead.lead_score }}</span></td>
+                        <td><div class="small">Email: <strong>{{ lead.email_consent_status }}</strong></div><div class="small">WA: {{ lead.whatsapp_consent_status }}</div></td>
                         <td><span class="badge text-bg-secondary">{{ lead.status|replace('_', ' ') }}</span></td>
                         <td><span class="badge {{ 'text-bg-danger' if lead.priority == 'alta' else ('text-bg-warning' if lead.priority == 'media' else 'text-bg-secondary') }}">{{ lead.priority }}</span></td>
                         <td>{% if lead.next_follow_up_at %}{{ lead.next_follow_up_at.strftime('%Y-%m-%d %H:%M') }}{% else %}<span class="text-muted">Sin fecha</span>{% endif %}</td>
                         <td>{% if lead.assigned_user %}{{ lead.assigned_user.username }}{% else %}<span class="text-muted">Sin asignar</span>{% endif %}</td>
                         <td class="text-end">
+                          <div class="d-flex gap-1 flex-wrap justify-content-end">
                           <form method="post" action="{{ url_for('saas.crm_lead_status', lead_id=lead.id) }}" class="d-inline-flex gap-1 flex-wrap justify-content-end">
                             <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
                             <select class="form-select form-select-sm" name="status">
@@ -163,10 +189,12 @@
                             </select>
                             <button class="btn btn-sm btn-outline-primary" type="submit">Guardar</button>
                           </form>
+                          <button type="button" class="btn btn-sm btn-outline-secondary" data-bs-toggle="modal" data-bs-target="#contactPrefs{{ lead.id }}">Contactos</button>
+                          </div>
                         </td>
                       </tr>
                       {% else %}
-                      <tr><td colspan="7" class="text-center text-muted py-4">Sin prospectos.</td></tr>
+                      <tr><td colspan="10" class="text-center text-muted py-4">Sin prospectos.</td></tr>
                       {% endfor %}
                     </tbody>
                   </table>

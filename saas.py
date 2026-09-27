@@ -1664,7 +1664,18 @@ def crm_panel():
 
     q = (request.args.get("q") or "").strip()
     lead_status = (request.args.get("lead_status") or "all").strip().lower()
+    industry_filter = (request.args.get("industry") or "").strip()
+    province_filter = (request.args.get("province") or "").strip()
+    consent_filter = (request.args.get("consent") or "all").strip().lower()
     task_status = (request.args.get("task_status") or "all").strip().lower()
+    try:
+        page = max(1, int(request.args.get("page") or 1))
+    except (TypeError, ValueError):
+        page = 1
+    try:
+        per_page = min(100, max(20, int(request.args.get("per_page") or 50)))
+    except (TypeError, ValueError):
+        per_page = 50
     alert_status = (request.args.get("alert_status") or "all").strip().lower()
 
     lead_query = SaaSLead.query
@@ -1695,6 +1706,12 @@ def crm_panel():
             )
         )
 
+    if industry_filter:
+        lead_query = lead_query.filter(SaaSLead.industry.ilike(f"%{industry_filter}%"))
+    if province_filter:
+        lead_query = lead_query.filter(SaaSLead.province.ilike(f"%{province_filter}%"))
+    if consent_filter in {"opted_in", "opted_out", "unknown"}:
+        lead_query = lead_query.filter(SaaSLead.email_consent_status == consent_filter)
     if lead_status in CRM_LEAD_STATUSES:
         lead_query = lead_query.filter(SaaSLead.status == lead_status)
     if task_status in CRM_TASK_STATUSES:
@@ -1702,7 +1719,8 @@ def crm_panel():
     if alert_status in CRM_ALERT_STATUSES:
         alert_query = alert_query.filter(SaaSAlert.status == alert_status)
 
-    leads = lead_query.order_by(SaaSLead.updated_at.desc(), SaaSLead.id.desc()).limit(20).all()
+    lead_total = lead_query.count()
+    leads = lead_query.order_by(SaaSLead.updated_at.desc(), SaaSLead.id.desc()).offset((page - 1) * per_page).limit(per_page).all()
     tasks = task_query.order_by(SaaSTask.updated_at.desc(), SaaSTask.id.desc()).limit(20).all()
     alerts = alert_query.order_by(SaaSAlert.updated_at.desc(), SaaSAlert.id.desc()).limit(20).all()
 
@@ -1717,7 +1735,7 @@ def crm_panel():
         alerts=alerts,
         companies=companies,
         users=users,
-        filters={"q": q, "lead_status": lead_status, "task_status": task_status, "alert_status": alert_status},
+        filters={"q": q, "lead_status": lead_status, "task_status": task_status, "alert_status": alert_status, "industry": industry_filter, "province": province_filter, "consent": consent_filter},
         lead_counts=lead_counts,
         task_counts=task_counts,
         alert_counts=alert_counts,
@@ -1725,7 +1743,300 @@ def crm_panel():
         CRM_TASK_STATUSES=sorted(CRM_TASK_STATUSES),
         CRM_ALERT_STATUSES=sorted(CRM_ALERT_STATUSES),
         CRM_PRIORITIES=sorted(CRM_PRIORITIES),
+        lead_total=lead_total,
+        lead_page=page,
+        lead_per_page=per_page,
+        lead_pages=max(1, (lead_total + per_page - 1) // per_page),
     )
+
+
+
+@bp.route("/crm/import", methods=["GET", "POST"])
+@superadmin_required
+def crm_import():
+    from app import db, record_audit
+    from services.saas_commercial_service import import_prospect_rows, parse_prospect_file
+
+    _require_superadmin()
+    if request.method == "POST":
+        uploaded = request.files.get("file")
+        action = (request.form.get("action") or "preview").strip().lower()
+        if uploaded is None or not uploaded.filename:
+            flash("Seleccioná un archivo CSV o XLSX.", "danger")
+            return redirect(url_for("saas.crm_import"))
+        try:
+            payload = uploaded.read()
+            parsed = parse_prospect_file(payload, uploaded.filename)
+        except Exception as exc:
+            flash(f"No se pudo analizar el archivo: {exc}", "danger")
+            return redirect(url_for("saas.crm_import"))
+
+        if action == "preview":
+            preview = {
+                "filename": uploaded.filename,
+                "valid_count": len(parsed["rows"]),
+                "invalid_count": parsed["invalid_count"],
+                "sample": parsed["rows"][:20],
+            }
+            return render_template("saas/crm_import.html", preview=preview)
+
+        try:
+            import_row = import_prospect_rows(
+                db.session,
+                rows=parsed["rows"],
+                filename=uploaded.filename,
+                user_id=current_user.id,
+                source="import_publico",
+            )
+            import_row.invalid_count = parsed["invalid_count"]
+            record_audit(
+                action="saas_lead_import",
+                entity="saas_lead_import",
+                entity_id=import_row.id,
+                detail=(
+                    f"Importación {uploaded.filename}: insertados={import_row.inserted_count}; "
+                    f"actualizados={import_row.updated_count}; duplicados={import_row.duplicate_count}; "
+                    f"inválidos={import_row.invalid_count}."
+                ),
+                user_id=current_user.id,
+            )
+            db.session.commit()
+            flash(
+                f"Importación completada: {import_row.inserted_count} nuevos, "
+                f"{import_row.updated_count} actualizados, {import_row.duplicate_count} duplicados.",
+                "success",
+            )
+        except Exception as exc:
+            db.session.rollback()
+            flash(f"La importación no se completó: {exc}", "danger")
+        return redirect(url_for("saas.crm_panel"))
+
+    return render_template("saas/crm_import.html", preview=None)
+
+
+@bp.get("/crm/leads/export")
+@superadmin_required
+def crm_leads_export():
+    from app import SaaSLead
+    from openpyxl import Workbook
+
+    _require_superadmin()
+    workbook = Workbook()
+    sheet = workbook.active
+    sheet.title = "Prospectos"
+    sheet.append([
+        "Comercio", "Contacto", "Rubro", "Subrubro", "Provincia", "Localidad",
+        "Email", "Telefono", "WhatsApp", "Web", "Instagram", "Facebook",
+        "Fuente", "URL Fuente", "Segmento", "Score", "Email Consentimiento",
+        "WhatsApp Consentimiento", "Llamada Consentimiento", "No Contactar",
+        "Estado", "Prioridad", "Ultimo Contacto", "Proximo Seguimiento",
+    ])
+    for lead in SaaSLead.query.order_by(SaaSLead.lead_score.desc(), SaaSLead.id.asc()).all():
+        sheet.append([
+            lead.company_name, lead.contact_name, lead.industry, lead.subindustry,
+            lead.province, lead.locality, lead.email, lead.phone, lead.whatsapp,
+            lead.website, lead.instagram, lead.facebook, lead.source, lead.source_url,
+            lead.segment, lead.lead_score, lead.email_consent_status,
+            lead.whatsapp_consent_status, lead.phone_consent_status,
+            "SI" if lead.do_not_contact else "NO", lead.status, lead.priority,
+            lead.last_contacted_at, lead.next_follow_up_at,
+        ])
+    stream = BytesIO()
+    workbook.save(stream)
+    stream.seek(0)
+    return send_file(
+        stream,
+        as_attachment=True,
+        download_name=f"stockarmobile_prospectos_{utcnow().strftime('%Y%m%d_%H%M')}.xlsx",
+        mimetype="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+    )
+
+
+@bp.route("/crm/campaigns", methods=["GET", "POST"])
+@superadmin_required
+def crm_campaigns():
+    from app import SaaSCampaign, db, record_audit
+
+    _require_superadmin()
+    if request.method == "POST":
+        from services.saas_commercial_service import segment_filters_from_request
+
+        filters = segment_filters_from_request(request)
+        channel = (request.form.get("channel") or "email").strip().lower()
+        name = (request.form.get("name") or "").strip()[:180]
+        subject = (request.form.get("subject") or "").strip()[:255]
+        body_html = (request.form.get("body_html") or "").strip()
+        body_text = (request.form.get("body_text") or "").strip() or None
+        if channel not in {"email", "whatsapp"} or not name or not subject or not body_html:
+            flash("Nombre, canal, asunto y HTML son obligatorios.", "danger")
+            return redirect(url_for("saas.crm_campaigns"))
+        campaign = SaaSCampaign(
+            name=name, subject=subject, channel=channel, status="BORRADOR",
+            body_html=body_html, body_text=body_text,
+            segment_json=json.dumps(filters, ensure_ascii=False),
+            scheduled_at=_parse_dt(request.form.get("scheduled_at")),
+            created_by_user_id=current_user.id,
+        )
+        db.session.add(campaign)
+        record_audit(
+            action="saas_campaign_create", entity="saas_campaign",
+            detail=f"Borrador comercial creado: {name}.", user_id=current_user.id,
+        )
+        db.session.commit()
+        flash("Borrador de campaña creado.", "success")
+        return redirect(url_for("saas.crm_campaign_detail", campaign_id=campaign.id))
+
+    campaigns = SaaSCampaign.query.order_by(SaaSCampaign.created_at.desc(), SaaSCampaign.id.desc()).limit(100).all()
+    summary = {status: SaaSCampaign.query.filter_by(status=status).count() for status in ["BORRADOR", "APROBADA", "ENVIANDO", "ENVIADA"]}
+    return render_template("saas/crm_campaigns.html", campaigns=campaigns, summary=summary)
+
+
+@bp.get("/crm/campaigns/<int:campaign_id>")
+@superadmin_required
+def crm_campaign_detail(campaign_id):
+    from app import SaaSCampaign, db
+    from services.saas_commercial_service import campaign_metrics
+
+    _require_superadmin()
+    campaign = SaaSCampaign.query.filter_by(id=campaign_id).first_or_404()
+    return render_template(
+        "saas/crm_campaign_detail.html",
+        campaign=campaign,
+        metrics=campaign_metrics(db.session, campaign.id),
+    )
+
+
+@bp.post("/crm/campaigns/<int:campaign_id>/prepare")
+@superadmin_required
+def crm_campaign_prepare(campaign_id):
+    from app import db, record_audit
+    from services.saas_commercial_service import build_campaign_recipients
+
+    _require_superadmin()
+    try:
+        result = build_campaign_recipients(db.session, campaign_id)
+        record_audit(
+            action="saas_campaign_prepare", entity="saas_campaign", entity_id=campaign_id,
+            detail=f"Destinatarios preparados: elegibles={result['eligible']} agregados={result['added']}.",
+            user_id=current_user.id,
+        )
+        db.session.commit()
+        flash(f"Destinatarios preparados: {result['added']} nuevos.", "success")
+    except Exception as exc:
+        db.session.rollback()
+        flash(f"No se pudo preparar la campaña: {exc}", "danger")
+    return redirect(url_for("saas.crm_campaign_detail", campaign_id=campaign_id))
+
+
+@bp.post("/crm/campaigns/<int:campaign_id>/approve")
+@superadmin_required
+def crm_campaign_approve(campaign_id):
+    from app import SaaSCampaign, db, record_audit, utcnow
+
+    if not _require_superadmin_step_up():
+        return redirect(url_for("saas.crm_campaign_detail", campaign_id=campaign_id))
+    campaign = SaaSCampaign.query.filter_by(id=campaign_id).first_or_404()
+    if campaign.status != "BORRADOR":
+        flash("Solo un borrador puede aprobarse.", "warning")
+        return redirect(url_for("saas.crm_campaign_detail", campaign_id=campaign_id))
+    if campaign.target_count <= 0:
+        flash("Prepará los destinatarios antes de aprobar la campaña.", "warning")
+        return redirect(url_for("saas.crm_campaign_detail", campaign_id=campaign_id))
+    if campaign.channel == "whatsapp":
+        flash("WhatsApp comercial queda en preparación hasta completar su transporte oficial.", "warning")
+        return redirect(url_for("saas.crm_campaign_detail", campaign_id=campaign_id))
+    campaign.status = "APROBADA"
+    campaign.approved_by_user_id = current_user.id
+    campaign.approved_at = utcnow()
+    record_audit(
+        action="saas_campaign_approved", entity="saas_campaign", entity_id=campaign.id,
+        detail=f"Campaña aprobada: {campaign.name}.", user_id=current_user.id,
+    )
+    db.session.commit()
+    flash("Campaña aprobada. El worker respetará la elegibilidad vigente.", "success")
+    return redirect(url_for("saas.crm_campaign_detail", campaign_id=campaign_id))
+
+
+@bp.post("/crm/campaigns/<int:campaign_id>/cancel")
+@superadmin_required
+def crm_campaign_cancel(campaign_id):
+    from app import SaaSCampaign, db, record_audit
+
+    if not _require_superadmin_step_up():
+        return redirect(url_for("saas.crm_campaign_detail", campaign_id=campaign_id))
+    campaign = SaaSCampaign.query.filter_by(id=campaign_id).first_or_404()
+    if campaign.status not in {"BORRADOR", "APROBADA"}:
+        flash("Esta campaña ya está en ejecución o finalizada.", "warning")
+        return redirect(url_for("saas.crm_campaign_detail", campaign_id=campaign_id))
+    campaign.status = "CANCELADA"
+    record_audit(
+        action="saas_campaign_cancelled", entity="saas_campaign", entity_id=campaign.id,
+        detail=f"Campaña cancelada: {campaign.name}.", user_id=current_user.id,
+    )
+    db.session.commit()
+    flash("Campaña cancelada.", "success")
+    return redirect(url_for("saas.crm_campaign_detail", campaign_id=campaign_id))
+
+
+@bp.route("/crm/unsubscribe/<token>", methods=["GET", "POST"])
+def crm_unsubscribe(token):
+    from app import SaaSLeadConsent, db, utcnow
+
+    consent = SaaSLeadConsent.query.filter_by(unsubscribe_token=(token or "").strip()).first()
+    if consent is None:
+        return render_template("saas/crm_unsubscribe.html", ok=False), 404
+    lead = consent.lead
+    consent.email_status = "opted_out"
+    consent.revoked_at = consent.revoked_at or utcnow()
+    lead.email_consent_status = "opted_out"
+    db.session.commit()
+    return render_template("saas/crm_unsubscribe.html", ok=True, company_name=lead.company_name)
+
+
+@bp.post("/crm/leads/<int:lead_id>/contact-preferences")
+@superadmin_required
+def crm_lead_contact_preferences(lead_id):
+    from app import SaaSLead, SaaSLeadConsent, db, utcnow, record_audit
+
+    _require_superadmin()
+    lead = SaaSLead.query.filter_by(id=lead_id).first_or_404()
+    consent = lead.consent or SaaSLeadConsent(lead_id=lead.id)
+    consent.email_status = (request.form.get("email_consent_status") or "unknown").strip().lower()
+    consent.whatsapp_status = (request.form.get("whatsapp_consent_status") or "unknown").strip().lower()
+    consent.phone_status = (request.form.get("phone_consent_status") or "unknown").strip().lower()
+    if consent.email_status not in {"opted_in", "opted_out", "unknown"}:
+        consent.email_status = "unknown"
+    if consent.whatsapp_status not in {"opted_in", "opted_out", "unknown"}:
+        consent.whatsapp_status = "unknown"
+    if consent.phone_status not in {"opted_in", "opted_out", "unknown"}:
+        consent.phone_status = "unknown"
+    lead.email_consent_status = consent.email_status
+    lead.whatsapp_consent_status = consent.whatsapp_status
+    lead.phone_consent_status = consent.phone_status
+    if not consent.unsubscribe_token:
+        consent.unsubscribe_token = __import__("secrets").token_urlsafe(48)
+    if consent.email_status == "opted_out":
+        consent.revoked_at = consent.revoked_at or utcnow()
+    elif consent.email_status == "opted_in":
+        consent.granted_at = utcnow()
+        consent.revoked_at = None
+    if request.form.get("do_not_contact") == "1":
+        lead.do_not_contact = True
+        lead.do_not_contact_at = lead.do_not_contact_at or utcnow()
+    else:
+        lead.do_not_contact = False
+        lead.do_not_contact_at = None
+    db.session.add(consent)
+    record_audit(
+        action="saas_lead_contact_preferences_update",
+        entity="saas_lead",
+        entity_id=lead.id,
+        detail=f"Preferencias actualizadas: email={lead.email_consent_status}; whatsapp={lead.whatsapp_consent_status}; llamada={lead.phone_consent_status}; no_contactar={lead.do_not_contact}.",
+        user_id=current_user.id,
+    )
+    db.session.commit()
+    flash("Preferencias de contacto actualizadas.", "success")
+    return _redirect_back("saas.crm_panel")
 
 
 @bp.route("/crm/leads/<int:lead_id>/status", methods=["POST"])

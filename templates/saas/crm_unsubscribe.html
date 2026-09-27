@@ -1,0 +1,3 @@
+{% extends "base_master.html" %}
+{% block title %}Preferencias · StockArMobile{% endblock %}
+{% block content %}<div class="app-shell d-flex justify-content-center"><div class="card app-card" style="max-width:620px"><div class="card-body p-4 p-lg-5 text-center">{% if ok %}<i class="bi bi-check-circle-fill text-success fs-1"></i><h1 class="h4 fw-bold mt-3">Baja realizada</h1><p class="text-muted mb-0">No enviaremos más comunicaciones comerciales por email a {{ company_name }}.</p>{% else %}<i class="bi bi-exclamation-circle text-warning fs-1"></i><h1 class="h4 fw-bold mt-3">Enlace inválido</h1><p class="text-muted mb-0">No encontramos este enlace.</p>{% endif %}</div></div></div>{% endblock %}
