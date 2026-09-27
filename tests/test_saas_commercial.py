@@ -3,6 +3,7 @@ from io import BytesIO
 from openpyxl import Workbook
 
 from services.saas_commercial_service import (
+    build_campaign_recipients,
     lead_score,
     normalize_email,
     normalize_phone,
@@ -70,3 +71,52 @@ def test_parse_rejects_unsupported():
         assert "CSV" in str(exc)
     else:
         raise AssertionError("Expected ValueError")
+
+
+def test_campaign_recipient_selection_requires_email_opt_in(app):
+    from app import SaaSCampaign, SaaSLead, SaaSLeadConsent, User, db
+
+    with app.app_context():
+        user = User(username="commercial-admin", email="commercial-admin@example.com", role="superadmin", active=True)
+        user.set_password("test-password")
+        db.session.add(user)
+        db.session.flush()
+
+        opted = SaaSLead(
+            company_name="Optado",
+            contact_name="Contacto",
+            email="optado@example.com",
+            email_status="valid",
+            email_consent_status="opted_in",
+            created_by_user_id=user.id,
+        )
+        unknown = SaaSLead(
+            company_name="Desconocido",
+            contact_name="Contacto",
+            email="unknown@example.com",
+            email_status="valid",
+            email_consent_status="unknown",
+            created_by_user_id=user.id,
+        )
+        db.session.add_all([opted, unknown])
+        db.session.flush()
+        db.session.add_all([
+            SaaSLeadConsent(lead_id=opted.id, unsubscribe_token="token-opted"),
+            SaaSLeadConsent(lead_id=unknown.id, unsubscribe_token="token-unknown"),
+        ])
+
+        campaign = SaaSCampaign(
+            name="Prueba",
+            subject="Hola",
+            channel="email",
+            body_html="<p>Hola {{contacto}}</p>",
+            body_text="Hola {{contacto}}",
+            created_by_user_id=user.id,
+        )
+        db.session.add(campaign)
+        db.session.commit()
+
+        summary = build_campaign_recipients(db.session, campaign.id)
+        assert summary["eligible"] == 1
+        assert len(campaign.recipients) == 1
+        assert campaign.recipients[0].lead_id == opted.id
