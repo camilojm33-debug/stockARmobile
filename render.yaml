@@ -56,12 +56,6 @@ services:
           name: stockarmobile-db
           property: connectionString
 
-databases:
-  - name: stockarmobile-db
-    databaseName: stockarmobile
-    user: stockarmobile
-
-
   - type: cron
     name: stockarmobile-commercial-campaigns
     runtime: python
@@ -78,3 +72,9 @@ databases:
         value: https://www.stockarmobile.com
       - key: SAAS_MARKETING_SEND_ENABLED
         value: "0"
+
+
+databases:
+  - name: stockarmobile-db
+    databaseName: stockarmobile
+    user: stockarmobile
