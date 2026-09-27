@@ -1589,9 +1589,31 @@ class SaaSLead(db.Model):
     contact_name = db.Column(db.String(160), nullable=False, index=True)
     email = db.Column(db.String(160), index=True)
     phone = db.Column(db.String(40))
+    whatsapp = db.Column(db.String(40), index=True)
+    industry = db.Column(db.String(100), index=True)
+    subindustry = db.Column(db.String(100), index=True)
+    province = db.Column(db.String(100), index=True)
+    locality = db.Column(db.String(120), index=True)
+    address = db.Column(db.String(255))
+    website = db.Column(db.String(255))
+    instagram = db.Column(db.String(255))
+    facebook = db.Column(db.String(255))
     source = db.Column(db.String(80), default="manual", nullable=False, index=True)
-    status = db.Column(db.String(30), default="nuevo", nullable=False, index=True)
-    priority = db.Column(db.String(20), default="media", nullable=False, index=True)
+    source_url = db.Column(db.String(500))
+    segment = db.Column(db.String(100), index=True)
+    lead_score = db.Column(db.Integer, nullable=False, default=0, index=True)
+    email_status = db.Column(db.String(20), nullable=False, default="unknown", index=True)
+    phone_status = db.Column(db.String(20), nullable=False, default="unknown", index=True)
+    email_consent_status = db.Column(db.String(20), nullable=False, default="unknown", index=True)
+    whatsapp_consent_status = db.Column(db.String(20), nullable=False, default="unknown", index=True)
+    phone_consent_status = db.Column(db.String(20), nullable=False, default="unknown", index=True)
+    do_not_contact = db.Column(db.Boolean, nullable=False, default=False, index=True)
+    do_not_contact_at = db.Column(db.DateTime)
+    captured_at = db.Column(db.DateTime)
+    validated_at = db.Column(db.DateTime)
+    last_contacted_at = db.Column(db.DateTime, index=True)
+    last_contact_channel = db.Column(db.String(20))
+    contact_count = db.Column(db.Integer, nullable=False, default=0)
     next_follow_up_at = db.Column(db.DateTime, index=True)
     notes = db.Column(db.Text)
     company_id = db.Column(db.Integer, db.ForeignKey("companies.id"), index=True)
@@ -1604,6 +1626,134 @@ class SaaSLead(db.Model):
     company = db.relationship("Company", backref="saas_leads")
     assigned_user = db.relationship("User", foreign_keys=[assigned_user_id], backref="saas_leads_assigned")
     created_by = db.relationship("User", foreign_keys=[created_by_user_id], backref="saas_leads_created")
+    consent = db.relationship("SaaSLeadConsent", back_populates="lead", uselist=False, cascade="all, delete-orphan")
+
+
+class SaaSLeadConsent(db.Model):
+    __tablename__ = "saas_lead_consents"
+    id = db.Column(db.Integer, primary_key=True)
+    lead_id = db.Column(db.Integer, db.ForeignKey("saas_leads.id", ondelete="CASCADE"), nullable=False, unique=True, index=True)
+    email_status = db.Column(db.String(20), nullable=False, default="unknown", index=True)
+    whatsapp_status = db.Column(db.String(20), nullable=False, default="unknown", index=True)
+    phone_status = db.Column(db.String(20), nullable=False, default="unknown", index=True)
+    email_source = db.Column(db.String(80))
+    whatsapp_source = db.Column(db.String(80))
+    granted_at = db.Column(db.DateTime)
+    revoked_at = db.Column(db.DateTime)
+    unsubscribe_token = db.Column(db.String(96), unique=True, index=True)
+    created_at = db.Column(db.DateTime, default=utcnow, nullable=False, index=True)
+    updated_at = db.Column(db.DateTime, default=utcnow, onupdate=utcnow, nullable=False)
+    lead = db.relationship("SaaSLead", back_populates="consent")
+
+
+class SaaSLeadImport(db.Model):
+    __tablename__ = "saas_lead_imports"
+    id = db.Column(db.Integer, primary_key=True)
+    file_name = db.Column(db.String(255), nullable=False)
+    file_format = db.Column(db.String(20), nullable=False)
+    source = db.Column(db.String(80), nullable=False, default="import")
+    status = db.Column(db.String(30), nullable=False, default="completed", index=True)
+    rows_read = db.Column(db.Integer, nullable=False, default=0)
+    inserted_count = db.Column(db.Integer, nullable=False, default=0)
+    updated_count = db.Column(db.Integer, nullable=False, default=0)
+    duplicate_count = db.Column(db.Integer, nullable=False, default=0)
+    invalid_count = db.Column(db.Integer, nullable=False, default=0)
+    error_summary = db.Column(db.Text)
+    created_by_user_id = db.Column(db.Integer, db.ForeignKey("users.id"), nullable=False, index=True)
+    created_at = db.Column(db.DateTime, default=utcnow, nullable=False, index=True)
+    completed_at = db.Column(db.DateTime)
+    created_by = db.relationship("User", foreign_keys=[created_by_user_id])
+
+
+class SaaSCampaign(db.Model):
+    __tablename__ = "saas_campaigns"
+    __table_args__ = (Index("ix_saas_campaigns_status_scheduled", "status", "scheduled_at"), Index("ix_saas_campaigns_created_at", "created_at"))
+    id = db.Column(db.Integer, primary_key=True)
+    name = db.Column(db.String(180), nullable=False)
+    subject = db.Column(db.String(255), nullable=False)
+    channel = db.Column(db.String(20), nullable=False, default="email", index=True)
+    status = db.Column(db.String(30), nullable=False, default="BORRADOR", index=True)
+    body_html = db.Column(db.Text, nullable=False)
+    body_text = db.Column(db.Text)
+    segment_json = db.Column(db.Text, nullable=False, default="{}")
+    scheduled_at = db.Column(db.DateTime, index=True)
+    started_at = db.Column(db.DateTime)
+    finished_at = db.Column(db.DateTime)
+    target_count = db.Column(db.Integer, nullable=False, default=0)
+    sent_count = db.Column(db.Integer, nullable=False, default=0)
+    failed_count = db.Column(db.Integer, nullable=False, default=0)
+    skipped_count = db.Column(db.Integer, nullable=False, default=0)
+    created_by_user_id = db.Column(db.Integer, db.ForeignKey("users.id"), nullable=False, index=True)
+    approved_by_user_id = db.Column(db.Integer, db.ForeignKey("users.id"), index=True)
+    approved_at = db.Column(db.DateTime)
+    created_at = db.Column(db.DateTime, default=utcnow, nullable=False, index=True)
+    updated_at = db.Column(db.DateTime, default=utcnow, onupdate=utcnow, nullable=False)
+    recipients = db.relationship("SaaSCampaignRecipient", back_populates="campaign", cascade="all, delete-orphan")
+    created_by = db.relationship("User", foreign_keys=[created_by_user_id])
+    approved_by = db.relationship("User", foreign_keys=[approved_by_user_id])
+
+
+class SaaSCampaignRecipient(db.Model):
+    __tablename__ = "saas_campaign_recipients"
+    __table_args__ = (db.UniqueConstraint("campaign_id","lead_id","channel",name="uq_saas_campaign_recipient"), Index("ix_saas_campaign_recipients_status","status"))
+    id = db.Column(db.Integer, primary_key=True)
+    campaign_id = db.Column(db.Integer, db.ForeignKey("saas_campaigns.id", ondelete="CASCADE"), nullable=False, index=True)
+    lead_id = db.Column(db.Integer, db.ForeignKey("saas_leads.id", ondelete="CASCADE"), nullable=False, index=True)
+    channel = db.Column(db.String(20), nullable=False, default="email")
+    destination = db.Column(db.String(255), nullable=False)
+    status = db.Column(db.String(30), nullable=False, default="pending", index=True)
+    provider_message_id = db.Column(db.String(255))
+    error_reason = db.Column(db.Text)
+    sent_at = db.Column(db.DateTime)
+    delivered_at = db.Column(db.DateTime)
+    opened_at = db.Column(db.DateTime)
+    clicked_at = db.Column(db.DateTime)
+    replied_at = db.Column(db.DateTime)
+    failed_at = db.Column(db.DateTime)
+    created_at = db.Column(db.DateTime, default=utcnow, nullable=False, index=True)
+    updated_at = db.Column(db.DateTime, default=utcnow, onupdate=utcnow, nullable=False)
+    campaign = db.relationship("SaaSCampaign", back_populates="recipients")
+    lead = db.relationship("SaaSLead", backref="campaign_recipients")
+
+
+class SaaSCampaignEvent(db.Model):
+    __tablename__ = "saas_campaign_events"
+    id = db.Column(db.Integer, primary_key=True)
+    campaign_id = db.Column(db.Integer, db.ForeignKey("saas_campaigns.id", ondelete="CASCADE"), nullable=False, index=True)
+    recipient_id = db.Column(db.Integer, db.ForeignKey("saas_campaign_recipients.id", ondelete="SET NULL"), index=True)
+    event_type = db.Column(db.String(40), nullable=False, index=True)
+    metadata_json = db.Column(db.Text, nullable=False, default="{}")
+    created_at = db.Column(db.DateTime, default=utcnow, nullable=False, index=True)
+    campaign = db.relationship("SaaSCampaign")
+    recipient = db.relationship("SaaSCampaignRecipient")
+
+
+class SaaSMessageTemplate(db.Model):
+    __tablename__ = "saas_message_templates"
+    __table_args__ = (db.UniqueConstraint("name","channel",name="uq_saas_message_template"),)
+    id = db.Column(db.Integer, primary_key=True)
+    name = db.Column(db.String(120), nullable=False)
+    channel = db.Column(db.String(20), nullable=False, default="email")
+    subject = db.Column(db.String(255))
+    body_html = db.Column(db.Text, nullable=False)
+    body_text = db.Column(db.Text)
+    active = db.Column(db.Boolean, nullable=False, default=True, index=True)
+    created_by_user_id = db.Column(db.Integer, db.ForeignKey("users.id"), nullable=False, index=True)
+    created_at = db.Column(db.DateTime, default=utcnow, nullable=False, index=True)
+    updated_at = db.Column(db.DateTime, default=utcnow, onupdate=utcnow, nullable=False)
+    created_by = db.relationship("User", foreign_keys=[created_by_user_id])
+
+
+class SaaSLeadSequence(db.Model):
+    __tablename__ = "saas_lead_sequences"
+    id = db.Column(db.Integer, primary_key=True)
+    name = db.Column(db.String(160), nullable=False)
+    status = db.Column(db.String(20), nullable=False, default="active", index=True)
+    steps_json = db.Column(db.Text, nullable=False, default="[]")
+    created_by_user_id = db.Column(db.Integer, db.ForeignKey("users.id"), nullable=False, index=True)
+    created_at = db.Column(db.DateTime, default=utcnow, nullable=False, index=True)
+    updated_at = db.Column(db.DateTime, default=utcnow, onupdate=utcnow, nullable=False)
+    created_by = db.relationship("User", foreign_keys=[created_by_user_id])
 
 
 class SaaSTask(db.Model):
