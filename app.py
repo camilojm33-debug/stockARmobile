@@ -1599,6 +1599,8 @@ class SaaSLead(db.Model):
     instagram = db.Column(db.String(255))
     facebook = db.Column(db.String(255))
     source = db.Column(db.String(80), default="manual", nullable=False, index=True)
+    status = db.Column(db.String(30), default="nuevo", nullable=False, index=True)
+    priority = db.Column(db.String(20), default="media", nullable=False, index=True)
     source_url = db.Column(db.String(500))
     segment = db.Column(db.String(100), index=True)
     lead_score = db.Column(db.Integer, nullable=False, default=0, index=True)
