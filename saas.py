@@ -1939,6 +1939,12 @@ def crm_campaign_approve(campaign_id):
     if campaign.status != "BORRADOR":
         flash("Solo un borrador puede aprobarse.", "warning")
         return redirect(url_for("saas.crm_campaign_detail", campaign_id=campaign_id))
+    if campaign.target_count <= 0:
+        flash("Prepará los destinatarios antes de aprobar la campaña.", "warning")
+        return redirect(url_for("saas.crm_campaign_detail", campaign_id=campaign_id))
+    if campaign.channel == "whatsapp":
+        flash("WhatsApp comercial queda en preparación hasta completar su transporte oficial.", "warning")
+        return redirect(url_for("saas.crm_campaign_detail", campaign_id=campaign_id))
     campaign.status = "APROBADA"
     campaign.approved_by_user_id = current_user.id
     campaign.approved_at = utcnow()
