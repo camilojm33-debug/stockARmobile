@@ -1,0 +1,28 @@
+{% extends "base_master.html" %}
+{% block title %}Campañas comerciales · SuperAdmin{% endblock %}
+{% block content %}
+<div class="app-shell superadmin-page">
+  <div class="d-flex flex-wrap justify-content-between align-items-center gap-3 mb-4">
+    <div><span class="page-kicker"><i class="bi bi-megaphone"></i> Comercial</span><h1 class="h3 fw-bold mb-1">Campañas de captación</h1><p class="text-muted mb-0">Separadas del Marketing IA de los comercios clientes.</p></div>
+    <div class="d-flex gap-2"><a class="btn btn-outline-secondary" href="{{ url_for('saas.crm_panel') }}">CRM</a><button class="btn btn-primary" data-bs-toggle="modal" data-bs-target="#newCampaignModal"><i class="bi bi-plus-lg me-1"></i>Nueva campaña</button></div>
+  </div>
+  <div class="row g-3 mb-4">{% for label,value in [('Borradores',summary.BORRADOR),('Aprobadas',summary.APROBADA),('Enviando',summary.ENVIANDO),('Enviadas',summary.ENVIADA)] %}<div class="col-6 col-xl-3"><div class="card app-card h-100"><div class="card-body"><div class="small text-muted text-uppercase fw-semibold">{{ label }}</div><div class="fs-3 fw-bold">{{ value }}</div></div></div></div>{% endfor %}</div>
+  <div class="card app-card"><div class="table-responsive"><table class="table align-middle mb-0"><thead><tr><th>Campaña</th><th>Canal</th><th>Estado</th><th>Segmentación</th><th>Dest.</th><th>Enviados</th><th>Fallos</th><th></th></tr></thead><tbody>{% for c in campaigns %}<tr><td><strong>{{ c.name }}</strong><div class="small text-muted">{{ c.subject }}</div></td><td>{{ c.channel }}</td><td><span class="badge text-bg-secondary">{{ c.status }}</span></td><td><code>{{ c.segment_json }}</code></td><td>{{ c.target_count }}</td><td>{{ c.sent_count }}</td><td>{{ c.failed_count }}</td><td><a class="btn btn-sm btn-outline-primary" href="{{ url_for('saas.crm_campaign_detail',campaign_id=c.id) }}">Abrir</a></td></tr>{% else %}<tr><td colspan="8" class="text-center text-muted py-4">Todavía no hay campañas.</td></tr>{% endfor %}</tbody></table></div></div>
+</div>
+<div class="modal fade" id="newCampaignModal" tabindex="-1"><div class="modal-dialog modal-lg"><div class="modal-content"><form method="post">
+<div class="modal-header"><h5 class="modal-title">Nueva campaña</h5><button type="button" class="btn-close" data-bs-dismiss="modal"></button></div>
+<div class="modal-body"><input type="hidden" name="csrf_token" value="{{ csrf_token() }}"><div class="row g-3">
+<div class="col-md-8"><label class="form-label">Nombre</label><input class="form-control" name="name" required></div>
+<div class="col-md-4"><label class="form-label">Canal</label><select class="form-select" name="channel"><option value="email">Email</option><option value="whatsapp">WhatsApp (preparación)</option></select></div>
+<div class="col-md-8"><label class="form-label">Asunto</label><input class="form-control" name="subject" required></div><div class="col-md-4"><label class="form-label">Programar</label><input class="form-control" type="datetime-local" name="scheduled_at"></div>
+<div class="col-md-4"><label class="form-label">Rubro</label><input class="form-control" name="industry"></div><div class="col-md-4"><label class="form-label">Provincia</label><input class="form-control" name="province"></div><div class="col-md-4"><label class="form-label">Localidad</label><input class="form-control" name="locality"></div>
+<div class="col-md-6"><label class="form-label">Segmento</label><input class="form-control" name="segment"></div><div class="col-md-6"><label class="form-label">Score mínimo</label><input class="form-control" type="number" min="0" max="100" name="min_score" value="0"></div>
+<div class="col-12"><label class="form-label">Texto</label><textarea class="form-control" name="body_text" rows="5" required>Hola {{contacto}},
+
+Te presentamos StockArMobile, una plataforma para gestionar stock, ventas, clientes y presupuestos.
+
+Probalo gratis durante 10 días.</textarea></div>
+<div class="col-12"><label class="form-label">HTML</label><textarea class="form-control" name="body_html" rows="7" required><p>Hola {{contacto}},</p><p>Te presentamos <strong>StockArMobile</strong>, una plataforma para gestionar stock, ventas, clientes y presupuestos.</p><p><strong>Probalo gratis durante 10 días.</strong></p><p><a href="https://www.stockarmobile.com">Conocé StockArMobile</a></p></textarea></div>
+</div></div><div class="modal-footer"><button class="btn btn-outline-secondary" type="button" data-bs-dismiss="modal">Cancelar</button><button class="btn btn-primary">Crear borrador</button></div>
+</form></div></div></div>
+{% endblock %}
