@@ -3112,6 +3112,13 @@ def subscriptions_create():
     start_date = _parse_dt(request.form.get("start_date")) or utcnow()
     next_billing_date = _parse_dt(request.form.get("next_billing_date"))
     renewal_enabled = (request.form.get("renewal_enabled") or "1") == "1"
+    target_status = _normalized_subscription_status(request.form.get("status") or subscription.status)
+    requires_sensitive_step_up = (
+        (plan is not None and plan.id != subscription.plan_id)
+        or target_status != _normalized_subscription_status(subscription.status)
+    )
+    if requires_sensitive_step_up and not _require_superadmin_step_up():
+        return _redirect_back("saas.subscriptions_panel")
 
     company = Company.query.filter_by(id=company_id).first()
     plan = Plan.query.filter_by(id=plan_id).first()
@@ -3161,8 +3168,6 @@ def subscriptions_update(subscription_id):
 
     _require_superadmin()
     subscription = Subscription.query.filter_by(id=subscription_id).first_or_404()
-    if not _require_superadmin_step_up():
-        return _redirect_back("saas.subscriptions_panel")
     plan_id = request.form.get("plan_id", type=int)
     plan = Plan.query.filter_by(id=plan_id).first() if plan_id else None
     if plan_id and plan is None:
@@ -3216,7 +3221,7 @@ def subscriptions_update(subscription_id):
         if target_subscription.starts_at and target_subscription.ends_at and target_subscription.ends_at < target_subscription.starts_at:
             raise SubscriptionCommandError("Fechas inválidas: el vencimiento no puede ser menor al inicio.")
 
-        target_status = _normalized_subscription_status(request.form.get("status") or target_subscription.status)
+        target_status = target_status
         if target_status in {"cancelled", "suspended", "expired"}:
             if target_status == "cancelled":
                 SubscriptionService.run_command(
