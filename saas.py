@@ -3112,13 +3112,6 @@ def subscriptions_create():
     start_date = _parse_dt(request.form.get("start_date")) or utcnow()
     next_billing_date = _parse_dt(request.form.get("next_billing_date"))
     renewal_enabled = (request.form.get("renewal_enabled") or "1") == "1"
-    target_status = _normalized_subscription_status(request.form.get("status") or subscription.status)
-    requires_sensitive_step_up = (
-        (plan is not None and plan.id != subscription.plan_id)
-        or target_status != _normalized_subscription_status(subscription.status)
-    )
-    if requires_sensitive_step_up and not _require_superadmin_step_up():
-        return _redirect_back("saas.subscriptions_panel")
 
     company = Company.query.filter_by(id=company_id).first()
     plan = Plan.query.filter_by(id=plan_id).first()
@@ -3180,6 +3173,13 @@ def subscriptions_update(subscription_id):
     next_billing_date = _parse_dt(request.form.get("next_billing_date"))
     last_payment_date = _parse_dt(request.form.get("last_payment_date"))
     renewal_enabled = (request.form.get("renewal_enabled") or "1") == "1"
+    target_status = _normalized_subscription_status(request.form.get("status") or subscription.status)
+    requires_sensitive_step_up = (
+        (plan is not None and plan.id != subscription.plan_id)
+        or target_status != _normalized_subscription_status(subscription.status)
+    )
+    if requires_sensitive_step_up and not _require_superadmin_step_up():
+        return _redirect_back("saas.subscriptions_panel")
 
     try:
         # IMPORTANTE: "Modificar" siempre debe hacer UPDATE sobre esta misma fila de Subscription
