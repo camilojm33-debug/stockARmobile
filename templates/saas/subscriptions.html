@@ -225,9 +225,9 @@
           {% if can_modify %}
           <tr class="collapse" id="editSub{{ subscription.id }}">
             <td colspan="8" class="bg-light-subtle">
-              <form method="post" action="{{ url_for('saas.subscriptions_update', subscription_id=subscription.id) }}" class="row g-2">
+              <form id="editSubForm{{ subscription.id }}" method="post" action="{{ url_for('saas.subscriptions_update', subscription_id=subscription.id) }}" class="row g-2">
                 <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
-                  <input type="password" name="step_up_password" class="form-control form-control-sm" autocomplete="current-password" placeholder="Contraseña si venció el step-up">
+                <input type="password" name="step_up_password" form="editSubForm{{ subscription.id }}" class="form-control form-control-sm" autocomplete="current-password" placeholder="Contraseña si venció el step-up">
                 <input type="hidden" name="next" value="{{ request.full_path }}">
                 <div class="col-md-2">
                   <select class="form-select" name="plan_id">
