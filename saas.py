@@ -3168,8 +3168,6 @@ def subscriptions_update(subscription_id):
 
     _require_superadmin()
     subscription = Subscription.query.filter_by(id=subscription_id).first_or_404()
-    if not _require_superadmin_step_up():
-        return _redirect_back("saas.subscriptions_panel")
     plan_id = request.form.get("plan_id", type=int)
     plan = Plan.query.filter_by(id=plan_id).first() if plan_id else None
     if plan_id and plan is None:
