@@ -3174,11 +3174,8 @@ def subscriptions_update(subscription_id):
         flash("Plan inválido.", "danger")
         return _redirect_back("saas.subscriptions_panel")
 
-    effective_status = SubscriptionService.get_effective_subscription_status(subscription, company=subscription.company)
-    if not _action_allowed_for_status(effective_status, "modify"):
-        flash("No se puede modificar esta suscripción en su estado actual.", "warning")
-        return _redirect_back("saas.subscriptions_panel")
-
+    # SuperAdmin puede corregir cualquier registro existente (incluidos vencidos/cancelados)
+    # desde la edición. Las transiciones sensibles de plan/estado siguen protegidas por step-up abajo.
     start_date = _parse_dt(request.form.get("start_date"))
     next_billing_date = _parse_dt(request.form.get("next_billing_date"))
     last_payment_date = _parse_dt(request.form.get("last_payment_date"))
