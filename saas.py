@@ -3112,13 +3112,6 @@ def subscriptions_create():
     start_date = _parse_dt(request.form.get("start_date")) or utcnow()
     next_billing_date = _parse_dt(request.form.get("next_billing_date"))
     renewal_enabled = (request.form.get("renewal_enabled") or "1") == "1"
-    target_status = _normalized_subscription_status(request.form.get("status") or subscription.status)
-    requires_sensitive_step_up = (
-        (plan is not None and plan.id != subscription.plan_id)
-        or target_status != _normalized_subscription_status(subscription.status)
-    )
-    if requires_sensitive_step_up and not _require_superadmin_step_up():
-        return _redirect_back("saas.subscriptions_panel")
 
     company = Company.query.filter_by(id=company_id).first()
     plan = Plan.query.filter_by(id=plan_id).first()
@@ -3174,15 +3167,19 @@ def subscriptions_update(subscription_id):
         flash("Plan inválido.", "danger")
         return _redirect_back("saas.subscriptions_panel")
 
-    effective_status = SubscriptionService.get_effective_subscription_status(subscription, company=subscription.company)
-    if not _action_allowed_for_status(effective_status, "modify"):
-        flash("No se puede modificar esta suscripción en su estado actual.", "warning")
-        return _redirect_back("saas.subscriptions_panel")
-
+    # SuperAdmin puede corregir cualquier registro existente (incluidos vencidos/cancelados)
+    # desde la edición. Las transiciones sensibles de plan/estado siguen protegidas por step-up abajo.
     start_date = _parse_dt(request.form.get("start_date"))
     next_billing_date = _parse_dt(request.form.get("next_billing_date"))
     last_payment_date = _parse_dt(request.form.get("last_payment_date"))
     renewal_enabled = (request.form.get("renewal_enabled") or "1") == "1"
+    target_status = _normalized_subscription_status(request.form.get("status") or subscription.status)
+    requires_sensitive_step_up = (
+        (plan is not None and plan.id != subscription.plan_id)
+        or target_status != _normalized_subscription_status(subscription.status)
+    )
+    if requires_sensitive_step_up and not _require_superadmin_step_up():
+        return _redirect_back("saas.subscriptions_panel")
 
     try:
         # IMPORTANTE: "Modificar" siempre debe hacer UPDATE sobre esta misma fila de Subscription
@@ -3221,7 +3218,6 @@ def subscriptions_update(subscription_id):
         if target_subscription.starts_at and target_subscription.ends_at and target_subscription.ends_at < target_subscription.starts_at:
             raise SubscriptionCommandError("Fechas inválidas: el vencimiento no puede ser menor al inicio.")
 
-        target_status = target_status
         if target_status in {"cancelled", "suspended", "expired"}:
             if target_status == "cancelled":
                 SubscriptionService.run_command(

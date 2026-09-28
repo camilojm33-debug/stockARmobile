@@ -79,7 +79,7 @@ def test_superadmin_subscription_mutations_require_step_up():
     assert "requires_sensitive_step_up" in subscriptions_update_block
     assert "if requires_sensitive_step_up and not _require_superadmin_step_up():" in subscriptions_update_block
     assert "target_status = _normalized_subscription_status(request.form.get(\"status\") or subscription.status)" in subscriptions_update_block
-    assert 'subscription = Subscription.query.filter_by(id=subscription_id).first_or_404()\\n    if not _require_superadmin_step_up()' not in subscriptions_update_block
+    assert "_require_superadmin_step_up()" not in subscriptions_update_block.split("requires_sensitive_step_up", 1)[0]
 
     wsgi = Path("wsgi.py").read_text(encoding="utf-8")
     start = wsgi.index("def superadmin_delete_historical_subscription(")
