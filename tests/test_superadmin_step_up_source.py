@@ -85,6 +85,8 @@ def test_superadmin_subscription_forms_expose_reauthentication():
 
     assert 'name="step_up_password"' in subscriptions
     assert 'autocomplete="current-password"' in subscriptions
+    assert 'id="editSub{{ subscription.id }}"' in subscriptions
+    assert 'name="step_up_password" form="editSubForm{{ subscription.id }}"' in subscriptions
     assert 'name="step_up_password"' in ai_detail
     assert 'autocomplete="current-password"' in ai_detail
 
