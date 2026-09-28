@@ -73,6 +73,13 @@ def test_superadmin_subscription_mutations_require_step_up():
         block = text[start:] if next_def == -1 else text[start:next_def]
         assert "_require_superadmin_step_up()" in block, function_name
 
+    subscriptions_update_start = text.index("def subscriptions_update(")
+    subscriptions_update_end = text.find("\ndef ", subscriptions_update_start + 5)
+    subscriptions_update_block = text[subscriptions_update_start:] if subscriptions_update_end == -1 else text[subscriptions_update_start:subscriptions_update_end]
+    assert "requires_sensitive_step_up" in subscriptions_update_block
+    assert "if requires_sensitive_step_up and not _require_superadmin_step_up():" in subscriptions_update_block
+    assert "target_status = _normalized_subscription_status(request.form.get(\"status\") or subscription.status)" in subscriptions_update_block
+
     wsgi = Path("wsgi.py").read_text(encoding="utf-8")
     start = wsgi.index("def superadmin_delete_historical_subscription(")
     block = wsgi[start:]
