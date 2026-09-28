@@ -142,18 +142,28 @@ def _require_superadmin():
 SUPERADMIN_STEP_UP_TTL_SECONDS = 600
 _SUPERADMIN_STEP_UP_AT_SESSION_KEY = "superadmin_step_up_at"
 _SUPERADMIN_STEP_UP_USER_SESSION_KEY = "superadmin_step_up_user_id"
+_SUPERADMIN_AUTHENTICATED_AT_SESSION_KEY = "superadmin_authenticated_at"
 
 
 def _superadmin_step_up_is_valid() -> bool:
     if not getattr(current_user, "is_authenticated", False) or current_user.role != "superadmin":
         return False
+
+    now_ts = utcnow().timestamp()
+    try:
+        authenticated_at = float(session.get(_SUPERADMIN_AUTHENTICATED_AT_SESSION_KEY) or 0)
+    except (TypeError, ValueError):
+        authenticated_at = 0
+    if authenticated_at and 0 <= (now_ts - authenticated_at) <= SUPERADMIN_STEP_UP_TTL_SECONDS:
+        return True
+
     if session.get(_SUPERADMIN_STEP_UP_USER_SESSION_KEY) != current_user.id:
         return False
     try:
         verified_at = float(session.get(_SUPERADMIN_STEP_UP_AT_SESSION_KEY) or 0)
     except (TypeError, ValueError):
         return False
-    return (utcnow().timestamp() - verified_at) <= SUPERADMIN_STEP_UP_TTL_SECONDS
+    return 0 <= (now_ts - verified_at) <= SUPERADMIN_STEP_UP_TTL_SECONDS
 
 
 def _require_superadmin_step_up() -> bool:
@@ -170,10 +180,9 @@ def _require_superadmin_step_up() -> bool:
         )
         return False
 
-    password_hash = getattr(current_user, "password_hash", None)
     try:
-        password_valid = bool(password_hash and check_password_hash(password_hash, password))
-    except (ValueError, TypeError):
+        password_valid = bool(password and current_user.check_password(password))
+    except (AttributeError, ValueError, TypeError):
         password_valid = False
     if not password_valid:
         from app import record_audit

@@ -184,3 +184,12 @@ def test_superadmin_sensitive_referral_mutations_are_audited():
         "referral_network_payout",
     ]:
         assert action in network, action
+
+
+def test_superadmin_step_up_uses_fresh_authentication_window():
+    saas = Path("saas.py").read_text(encoding="utf-8")
+    auth = Path("auth.py").read_text(encoding="utf-8")
+
+    assert '_SUPERADMIN_AUTHENTICATED_AT_SESSION_KEY = "superadmin_authenticated_at"' in saas
+    assert 'current_user.check_password(password)' in saas
+    assert "session[_SUPERADMIN_AUTHENTICATED_AT_SESSION_KEY] = utcnow().timestamp()" in auth
