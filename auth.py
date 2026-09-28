@@ -155,7 +155,7 @@ def _ensure_demo_account():
 @bp.route("/login", methods=["GET", "POST"])
 def login():
     """Login de usuario local."""
-    from app import LoginForm, User, db, record_audit
+    from app import LoginForm, User, db, record_audit, utcnow
 
     login_mode = _login_mode_from_request()
 
