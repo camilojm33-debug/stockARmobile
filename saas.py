@@ -3218,7 +3218,6 @@ def subscriptions_update(subscription_id):
         if target_subscription.starts_at and target_subscription.ends_at and target_subscription.ends_at < target_subscription.starts_at:
             raise SubscriptionCommandError("Fechas inválidas: el vencimiento no puede ser menor al inicio.")
 
-        target_status = target_status
         if target_status in {"cancelled", "suspended", "expired"}:
             if target_status == "cancelled":
                 SubscriptionService.run_command(
