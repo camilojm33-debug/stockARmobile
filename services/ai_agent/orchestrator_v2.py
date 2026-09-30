@@ -45,6 +45,16 @@ VENDOR_SYSTEM_PROMPT = "Sos el Vendedor 24 hs de StockARmobile. Podés atender d
 BUSINESS_SYSTEM_PROMPT = "Sos el Asistente empresarial de StockARmobile. Usá herramientas para consultar datos reales y nunca inventes cifras. Si te preguntan qué podés hacer, informá estas capacidades: 1) Buscar productos por nombre, marca o código; 2) consultar el stock actual de un producto; 3) contar productos; 4) buscar clientes por nombre, email, teléfono o WhatsApp; 5) contar clientes activos; 6) resumir ventas por período; 7) listar productos más vendidos; 8) listar productos sin ventas recientes; 9) listar productos con stock crítico; 10) recibir facturas de proveedor para procesarlas desde el panel, validarlas y mostrar un preview antes de una confirmación humana. No afirmes que una factura fue aplicada, que un producto fue creado o que el stock cambió sin una confirmación explícita y un resultado backend exitoso."
 ANALYST_SYSTEM_PROMPT = "Sos el Analista IA de StockARmobile. Usá herramientas reales. Separá DATO, CÁLCULO y RECOMENDACIÓN. No inventes predicciones ni afirmes causalidad sin evidencia."
 MARKETING_SYSTEM_PROMPT = "Sos el Marketing IA de StockARmobile. Usá productos y clientes reales. Generá propuestas en BORRADOR / PENDIENTE DE APROBACIÓN. Nunca envíes mensajes ni prometas que una campaña fue ejecutada."
+COMMERCIAL_SYSTEM_PROMPT = (
+    "Sos el Comercial IA de StockArMobile. Atendés únicamente consultas de prospectos que llegan por el WhatsApp comercial "
+    "del propio StockArMobile. Tu objetivo es explicar el producto, funcionalidades, planes y próximos pasos de contratación "
+    "con información verificable. Nunca accedas ni describas productos, clientes, stock, ventas, pedidos o datos de ningún tenant. "
+    "Usá la herramienta consultar_oferta_stockarmobile para consultar precios y planes vigentes antes de afirmar importes o características "
+    "comerciales que puedan cambiar. La oferta incluye una prueba gratuita de 10 días y el programa de referidos paga 30% de cada "
+    "comercio referido mientras permanezca activo, según la oferta vigente. También podés explicar que StockArMobile integra Mercado Pago "
+    "y dispone de agentes IA para ventas, asistencia empresarial, análisis y marketing. No inventes descuentos, integraciones, límites ni "
+    "condiciones. Nunca generes pedidos ni cobros en este canal."
+)
 MAX_TOOL_TURNS = 5
 
 PRICING_TOOL_NAMES = {
@@ -99,6 +109,45 @@ class VendorRemoveTool(AgentTool):
             conversation_id=self._context["conversation_id"],
             product_query=kwargs["product_query"],
         )
+
+
+class CommercialOfferTool(AgentTool):
+    name = "consultar_oferta_stockarmobile"
+    description = "Consulta los planes y la oferta comercial vigente de StockArMobile. No consulta datos de comercios clientes."
+    input_schema = {"type": "object", "properties": {}, "additionalProperties": False}
+
+    def execute(self, **kwargs):
+        from services.ai_agent.usage_service import AI_PLANS
+        from services.plan_service import PlanService
+
+        plans = PlanService.all_commercial_plans()
+        return {
+            "saas_plans": [
+                {
+                    "code": getattr(plan, "code", None),
+                    "name": getattr(plan, "name", None),
+                    "price": float(getattr(plan, "price", 0) or 0),
+                    "currency": getattr(plan, "currency", "ARS") or "ARS",
+                    "duration_days": getattr(plan, "duration_days", 30) or 30,
+                    "features": str(getattr(plan, "features_json", "") or ""),
+                }
+                for plan in plans
+            ],
+            "ai_plans": [
+                {
+                    "code": plan["code"],
+                    "name": plan["name"],
+                    "price": plan["price"],
+                    "limit": plan["limit"],
+                    "agents": list(plan.get("agents") or ()),
+                    "tagline": plan.get("tagline", ""),
+                }
+                for plan in AI_PLANS
+            ],
+            "trial_days": 10,
+            "referral_percent": 30,
+            "mercado_pago": True,
+        }
 
 
 class VendorOrderPreviewTool(AgentTool):
@@ -164,6 +213,7 @@ class AgentRuntime:
         "agregar_al_carrito": VendorAddTool,
         "quitar_del_carrito": VendorRemoveTool,
         "preparar_pedido": VendorOrderPreviewTool,
+        "consultar_oferta_stockarmobile": CommercialOfferTool,
     }
     agent_tool_names = {
         "asistente": {
@@ -183,6 +233,7 @@ class AgentRuntime:
             "buscar_producto", "consultar_stock", "buscar_cliente", "clientes_inactivos",
             "productos_promocionables", "preparar_campana",
         },
+        "comercial": {"consultar_oferta_stockarmobile"},
     }
 
     @classmethod
@@ -266,6 +317,7 @@ class AgentRuntime:
             BUSINESS_AGENT_NAME: "asistente",
             "Analista IA": "analista",
             "Marketing IA": "marketing",
+            "Comercial IA": "comercial",
         }.get(agent.name, "asistente")
 
     @classmethod
@@ -565,6 +617,7 @@ class AgentRuntime:
             "asistente": BUSINESS_SYSTEM_PROMPT,
             "analista": ANALYST_SYSTEM_PROMPT,
             "marketing": MARKETING_SYSTEM_PROMPT,
+            "comercial": COMMERCIAL_SYSTEM_PROMPT,
         }[agent_key]
         vendor_options = None
         allowed_tool_names = None
