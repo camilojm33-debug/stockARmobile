@@ -18,7 +18,7 @@ AI_PLANS = (
     {"code": "pro", "name": "IA PRO", "price": "$172.390 / mes", "limit": 15000, "agents": ("asistente", "vendedor", "analista", "marketing"), "tagline": "Equipo IA completo: ventas, análisis, Marketing IA y control global de precios con revisión y aprobación.", "badge": "PLAN PREMIUM", "invoice_processing": True, "pricing_controller": True, "pricing_rollback": True},
 )
 AI_PLAN_BY_CODE = {plan["code"]: plan for plan in AI_PLANS}
-AGENT_LABELS = {"vendedor": "Vendedor IA", "asistente": "Asistente Empresarial", "analista": "Analista IA", "marketing": "Marketing IA"}
+AGENT_LABELS = {"vendedor": "Vendedor IA", "asistente": "Asistente Empresarial", "analista": "Analista IA", "marketing": "Marketing IA", "comercial": "Comercial IA"}
 COMMERCIAL_FEATURE_LABELS = {
     "pricing_controller": "Controlador global de precios",
     "promotions": "Promociones comerciales",
@@ -167,8 +167,9 @@ def can_use_ai(company, agent: str, *, now: datetime | None = None) -> AIAccess:
         feature_access = can_use_ai_feature(company, "facturas")
         if not feature_access.allowed:
             return feature_access
-    elif key not in plan["agents"]:
-        required = next((item["name"] for item in AI_PLANS if agent in item["agents"]), "un plan superior")
+    elif ((key == "comercial" and "vendedor" not in plan["agents"]) or (key != "comercial" and key not in plan["agents"])):
+        required_key = "vendedor" if key == "comercial" else key
+        required = next((item["name"] for item in AI_PLANS if required_key in item["agents"]), "un plan superior")
         return AIAccess(False, f"{AGENT_LABELS.get(agent, 'Este agente')} requiere {required} o superior.", plan)
     snapshot = usage_snapshot(company.id, now=now)
     if snapshot["used_usage"] >= snapshot["included_usage"]:
