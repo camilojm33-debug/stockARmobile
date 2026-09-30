@@ -15,6 +15,8 @@ from stockarmobile.models.conversations import Agent
 
 VENDOR_AGENT_NAME = "Vendedor 24 hs"
 BUSINESS_AGENT_NAME = "Asistente empresarial"
+COMMERCIAL_AGENT_NAME = "Comercial IA"
+COMMERCIAL_COMPANY_MARKER = "whatsapp_commercial"
 SPECIAL_AGENT_NAMES = {"analista": "Analista IA", "marketing": "Marketing IA"}
 
 VENDOR_OPTION_DEFAULTS = {
@@ -391,8 +393,26 @@ def is_ai_enabled(company):
     return bool(configured) if configured is not None else os.getenv("AI_AGENT_ENABLED", "true").strip().lower() in {"1", "true", "yes", "on"}
 
 
+def is_commercial_company(company) -> bool:
+    prefs = _company_preferences(company)
+    return str(prefs.get("internal_channel") or "").strip().lower() == COMMERCIAL_COMPANY_MARKER
+
+
 def get_whatsapp_connection(company):
     data = get_ai_preferences(company)["whatsapp"]
+    if is_commercial_company(company):
+        commercial_enabled = _coerce_bool(os.getenv("WHATSAPP_COMMERCIAL_ENABLED"), False)
+        commercial_phone = str(os.getenv("WHATSAPP_COMMERCIAL_PHONE_NUMBER_ID") or "").strip()
+        if commercial_enabled and commercial_phone:
+            return {
+                "enabled": True,
+                "phone_number_id": commercial_phone,
+                "business_account_id": str(os.getenv("WHATSAPP_COMMERCIAL_WABA_ID") or "").strip(),
+                "display_phone_number": str(os.getenv("WHATSAPP_COMMERCIAL_DISPLAY_PHONE_NUMBER") or "").strip(),
+                "access_token": str(os.getenv("WHATSAPP_COMMERCIAL_ACCESS_TOKEN") or "").strip(),
+                "template_name": str(os.getenv("WHATSAPP_COMMERCIAL_TEMPLATE_NAME") or "").strip(),
+                "template_language": str(os.getenv("WHATSAPP_COMMERCIAL_TEMPLATE_LANGUAGE") or "es_AR").strip(),
+            }
     return {
         "enabled": bool(data.get("enabled", False)),
         "phone_number_id": str(data.get("phone_number_id") or "").strip(),
