@@ -21,6 +21,7 @@ from services.ai_agent.usage_service import can_use_ai
 from services.ai_agent.vendor_followup_tools import install_vendor_followup_tools
 from services.ai_agent.vendor_order_service import VendorOrderService, _metadata, _set_metadata
 from services.ai_agent.whatsapp_service import WhatsAppService
+from services.saas_commercial_whatsapp import is_commercial_phone_number_id, process_commercial_message
 
 install_vendor_followup_tools(AgentRuntime)
 
@@ -589,6 +590,25 @@ def webhook():
     processed, errors = 0, []
     for phone_number_id, sender, external_id, text in _extract_messages(payload):
         try:
+            if is_commercial_phone_number_id(phone_number_id):
+                try:
+                    commercial_result = process_commercial_message(
+                        phone_number_id=phone_number_id,
+                        sender=sender,
+                        external_id=external_id,
+                        text=text,
+                    )
+                    if commercial_result.get("status") in {"completed", "duplicate"}:
+                        processed += 1
+                except Exception:
+                    db.session.rollback()
+                    current_app.logger.exception(
+                        "Commercial WhatsApp agent error external_message_id=%s",
+                        external_id,
+                    )
+                    errors.append({"external_message_id": external_id, "error": "commercial_internal_error"})
+                continue
+
             company = company_for_whatsapp_phone_id(phone_number_id)
             if company is None:
                 errors.append({"external_message_id": external_id, "error": "company_not_configured"})
