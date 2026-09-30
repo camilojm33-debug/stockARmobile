@@ -131,7 +131,7 @@ def test_run_tool_loop_does_not_accept_empty_provider_response():
 
 def test_every_agent_exposes_its_declared_tools():
     # Regression marker: this suite must run from a clean branch before deployment.
-    expected_agents = {"asistente", "vendedor", "analista", "marketing"}
+    expected_agents = {"asistente", "vendedor", "analista", "marketing", "comercial"}
     assert set(AgentRuntime.agent_tool_names) == expected_agents
 
     for agent_key in expected_agents:
