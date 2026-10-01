@@ -747,7 +747,7 @@ def clear_commercial_attention(conversation) -> None:
 
 
 def process_commercial_message(*, phone_number_id: str, sender: str, external_id: str, text: str) -> dict:
-    """Process one inbound commercial message with strict internal-company isolation."""
+    """Process one inbound commercial message with AI/human handoff support."""
     from services.ai_agent.config_service import get_whatsapp_connection
     from services.ai_agent.orchestrator_v2 import AgentRuntime
     from services.ai_agent.usage_service import can_use_ai
@@ -767,8 +767,73 @@ def process_commercial_message(*, phone_number_id: str, sender: str, external_id
     lead_id = capture_inbound_lead(sender, text)
     conversation = get_commercial_conversation(company.id, sender)
 
+    # Always persist the inbound turn first so human operators can see the
+    # complete context, even when the AI is paused.
+    inbound = _persist_commercial_inbound_message(
+        conversation,
+        external_id=external_id,
+        sender=sender,
+        text=text,
+    )
+
+    attention = commercial_conversation_attention(conversation)
+    if attention["status"] == "human":
+        db.session.commit()
+        return {
+            "status": "human_paused",
+            "content": "",
+            "company_id": company.id,
+            "conversation_id": conversation.id,
+            "lead_id": lead_id,
+            "message_id": inbound.id,
+        }
+
+    # A resolved human session returns control to IA only when the prospect
+    # writes again.
+    if attention["status"] == "resolved":
+        clear_commercial_attention(conversation)
+
+    # Detect an explicit request for a person before invoking the model.
+    if commercial_human_requested(text):
+        _set_commercial_attention(
+            conversation,
+            status="human",
+            reason="El prospecto solicitó atención humana.",
+        )
+        handoff_message = (
+            "Claro. Te voy a pasar con una persona del equipo de StockArMobile. "
+            "Podés continuar por este mismo WhatsApp."
+        )
+        WhatsAppService.send_text(company, to=sender, body=handoff_message)
+
+        operator_message = ConversationMessage(
+            company_id=company.id,
+            conversation_id=conversation.id,
+            sender_type="agent",
+            sender_id=conversation.agent_id,
+            role="assistant",
+            content=handoff_message,
+            content_type="text",
+            external_message_id=f"handoff:{uuid.uuid4().hex}",
+            metadata_json={
+                "channel": COMMERCIAL_CHANNEL,
+                "commercial_acquisition": True,
+                "human_handoff": True,
+            },
+        )
+        db.session.add(operator_message)
+        db.session.commit()
+        return {
+            "status": "human",
+            "content": handoff_message,
+            "company_id": company.id,
+            "conversation_id": conversation.id,
+            "lead_id": lead_id,
+        }
+
     access = can_use_ai(company, "comercial")
     if not access.allowed:
+        db.session.commit()
         raise RuntimeError(access.reason or "El Comercial IA no está disponible.")
 
     result = AgentRuntime.process(
