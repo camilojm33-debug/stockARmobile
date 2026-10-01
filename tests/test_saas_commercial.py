@@ -161,7 +161,6 @@ def test_campaign_both_prepares_independent_channel_recipients(app):
             company_name="Solo WhatsApp",
             contact_name="Willy",
             whatsapp="5492222222222",
-            whatsapp_status="valid",
             email_consent_status="unknown",
             whatsapp_consent_status="opted_in",
             created_by_user_id=user.id,
@@ -238,6 +237,7 @@ def test_campaign_dispatch_continues_enviando_batches(app, monkeypatch):
             name="Batch test",
             subject="Hola",
             channel="email",
+            status="APROBADA",
             body_html="<p>Hola {{contacto}}</p>",
             body_text="Hola {{contacto}}",
             created_by_user_id=user.id,
@@ -282,7 +282,6 @@ def test_whatsapp_campaign_dispatch_uses_prepared_whatsapp_recipient(app, monkey
             company_name="WhatsApp Test",
             contact_name="Wanda",
             whatsapp="5493333333333",
-            whatsapp_status="valid",
             whatsapp_consent_status="opted_in",
             created_by_user_id=user.id,
         )
@@ -294,6 +293,7 @@ def test_whatsapp_campaign_dispatch_uses_prepared_whatsapp_recipient(app, monkey
             name="WhatsApp test",
             subject="Hola",
             channel="whatsapp",
+            status="APROBADA",
             body_html="<p>Solo se usa para detalle.</p>",
             body_text="Hola",
             whatsapp_template_name="stockarmobile_prospecto_01",
@@ -332,6 +332,7 @@ def test_email_tracking_html_contains_open_pixel_and_tracked_links(app):
             role="superadmin",
             active=True,
         )
+        user.set_password("test-password")
         db.session.add(user)
         db.session.flush()
         lead = SaaSLead(
