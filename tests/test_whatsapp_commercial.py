@@ -11,12 +11,13 @@ from services.saas_commercial_whatsapp import (
     COMMERCIAL_AGENT_NAME,
     COMMERCIAL_COMPANY_MARKER,
     capture_inbound_lead,
+    delete_commercial_conversation,
     get_commercial_company,
     get_commercial_conversation,
     is_commercial_phone_number_id,
     process_commercial_message,
 )
-from stockarmobile.models.conversations import Agent, AgentConfiguration, ConversationMessage
+from stockarmobile.models.conversations import Agent, AgentConfiguration, ConversationMessage, ConversationParticipant, Conversation
 
 
 @pytest.fixture
@@ -308,3 +309,76 @@ def test_commercial_human_operator_can_reply_and_resume_ai(commercial_database):
 
     assert resumed["status"] == "completed"
     assert runtime.called
+
+
+def test_delete_commercial_conversation_removes_chat_only(commercial_database):
+    company = commercial_database["company"]
+    commercial = get_commercial_conversation(company.id, "549999000333")
+    commercial.metadata_json = {"commercial_acquisition": True}
+
+    first_message = ConversationMessage(
+        company_id=company.id,
+        conversation_id=commercial.id,
+        sender_type="user",
+        role="user",
+        content="Mensaje a borrar",
+        external_message_id="wamid.DELETE.001",
+    )
+    second_message = ConversationMessage(
+        company_id=company.id,
+        conversation_id=commercial.id,
+        sender_type="agent",
+        role="assistant",
+        content="Respuesta a borrar",
+        external_message_id="wamid.DELETE.002",
+    )
+    participant = ConversationParticipant(
+        company_id=company.id,
+        conversation_id=commercial.id,
+        participant_type="prospect",
+        display_name="Prospecto QA",
+    )
+    db.session.add_all([first_message, second_message, participant])
+
+    other = Conversation(
+        company_id=company.id,
+        channel="whatsapp",
+        external_conversation_id="549999000444",
+        status="open",
+        metadata_json={},
+    )
+    db.session.add(other)
+    db.session.commit()
+
+    lead_id = capture_inbound_lead("549999000333", "No borrar este lead")
+    result = delete_commercial_conversation(commercial.id)
+    db.session.commit()
+
+    assert result["conversation_id"] == commercial.id
+    assert result["messages_deleted"] == 2
+    assert result["participants_deleted"] == 1
+
+    assert Conversation.query.filter_by(id=commercial.id).first() is None
+    assert ConversationMessage.query.filter_by(conversation_id=commercial.id).count() == 0
+    assert ConversationParticipant.query.filter_by(conversation_id=commercial.id).count() == 0
+
+    assert Conversation.query.filter_by(id=other.id, company_id=company.id, channel="whatsapp").first() is not None
+    assert SaaSLead.query.filter_by(id=lead_id).first() is not None
+
+
+def test_delete_commercial_conversation_cannot_delete_tenant_conversation(commercial_database):
+    company = commercial_database["company"]
+    tenant_like = Conversation(
+        company_id=company.id,
+        channel="whatsapp",
+        external_conversation_id="549999000555",
+        status="open",
+        metadata_json={},
+    )
+    db.session.add(tenant_like)
+    db.session.commit()
+
+    with pytest.raises(ValueError):
+        delete_commercial_conversation(tenant_like.id)
+
+    assert Conversation.query.filter_by(id=tenant_like.id, channel="whatsapp").first() is not None
