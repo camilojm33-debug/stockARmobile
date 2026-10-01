@@ -145,7 +145,7 @@ def test_commercial_runtime_exposes_only_offer_tool(commercial_database):
     company = commercial_database["company"]
     definitions = AgentRuntime._tool_definitions("comercial", company_id=company.id)
     names = {item["function"]["name"] for item in definitions}
-    assert names == {"consultar_oferta_stockarmobile"}
+    assert names == {"consultar_oferta_stockarmobile", "iniciar_contratacion_stockarmobile"}
     assert "buscar_producto" not in names
     assert "buscar_cliente" not in names
     assert "preparar_pedido" not in names
