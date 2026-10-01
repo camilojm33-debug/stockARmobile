@@ -523,7 +523,8 @@ def test_landing_contact_can_record_explicit_email_consent(app):
         )
         user.set_password("test-password")
         db.session.add(user)
-        db.session.flush()
+        db.session.commit()
+        user_id = int(user.id)
 
         lead = SaaSOpsService.register_landing_contact(
             db.session,
@@ -531,7 +532,7 @@ def test_landing_contact_can_record_explicit_email_consent(app):
             email="contacto@consentido.com",
             message="Quiero conocer StockArmobile.",
             email_consent=True,
-            preferred_user_id=user.id,
+            preferred_user_id=user_id,
         )
         db.session.commit()
 
