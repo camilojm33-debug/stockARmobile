@@ -247,8 +247,16 @@ class SaaSOpsService:
         )
 
     @classmethod
-    def register_landing_contact(cls, db_session, *, name: str, email: str, message: str):
-        from app import record_audit
+    def register_landing_contact(
+        cls,
+        db_session,
+        *,
+        name: str,
+        email: str,
+        message: str,
+        email_consent: bool = False,
+    ):
+        from app import SaaSLeadConsent, record_audit, utcnow
 
         lead = cls.create_or_update_lead(
             db_session,
@@ -261,6 +269,16 @@ class SaaSOpsService:
             company_id=None,
             preferred_user_id=None,
         )
+        if lead is not None and email_consent:
+            consent = lead.consent or SaaSLeadConsent(lead_id=lead.id)
+            consent.email_status = "opted_in"
+            consent.email_source = "landing_contact"
+            consent.granted_at = utcnow()
+            consent.revoked_at = None
+            if not consent.unsubscribe_token:
+                consent.unsubscribe_token = __import__("secrets").token_urlsafe(48)
+            lead.email_consent_status = "opted_in"
+            db_session.add(consent)
         task = cls.create_task(
             db_session,
             company_id=None,
