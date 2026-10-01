@@ -7,6 +7,7 @@ import re
 import secrets
 import smtplib
 from email.message import EmailMessage
+from html import escape
 from io import BytesIO, StringIO
 from urllib.parse import quote
 
@@ -283,6 +284,7 @@ def segment_filters_from_request(request) -> dict:
         "min_score": score,
     }
 
+
 def parse_segment_json(raw: str | None) -> dict:
     try:
         value = json.loads(raw or "{}")
@@ -290,67 +292,205 @@ def parse_segment_json(raw: str | None) -> dict:
         return {}
     return value if isinstance(value, dict) else {}
 
-def build_campaign_recipients(db_session, campaign_id: int) -> dict:
-    from app import SaaSCampaign, SaaSCampaignEvent, SaaSCampaignRecipient, SaaSLead, utcnow
-    campaign = db_session.get(SaaSCampaign, campaign_id)
-    if campaign is None:
-        raise ValueError("Campaña no encontrada.")
-    filters = parse_segment_json(campaign.segment_json)
+
+def _eligible_leads_query(channel: str, filters: dict):
+    from app import SaaSLead
+
     query = SaaSLead.query.filter(SaaSLead.do_not_contact.is_(False))
-    for field in ("industry","province","locality","segment"):
+    for field in ("industry", "province", "locality", "segment"):
         if filters.get(field):
             query = query.filter(getattr(SaaSLead, field).ilike(f"%{filters[field]}%"))
     if int(filters.get("min_score") or 0):
         query = query.filter(SaaSLead.lead_score >= int(filters["min_score"]))
-    if campaign.channel == "email":
-        query = query.filter(SaaSLead.email.isnot(None), SaaSLead.email_status != "invalid", SaaSLead.email_consent_status == "opted_in")
-    elif campaign.channel == "whatsapp":
-        query = query.filter((SaaSLead.whatsapp.isnot(None) | SaaSLead.phone.isnot(None)), SaaSLead.whatsapp_consent_status == "opted_in")
-    else:
+    if channel == "email":
+        return query.filter(
+            SaaSLead.email.isnot(None),
+            SaaSLead.email_status != "invalid",
+            SaaSLead.email_consent_status == "opted_in",
+        )
+    if channel == "whatsapp":
+        return query.filter(
+            SaaSLead.whatsapp.isnot(None),
+            SaaSLead.whatsapp_status != "invalid",
+            SaaSLead.whatsapp_consent_status == "opted_in",
+        )
+    raise ValueError("Canal de campaña no soportado.")
+
+
+def campaign_audience_metrics(db_session, campaign) -> dict:
+    """Return an auditable audience breakdown using the exact campaign filters."""
+    from app import SaaSLead
+
+    filters = parse_segment_json(campaign.segment_json)
+    query = SaaSLead.query.filter(SaaSLead.do_not_contact.is_(False))
+    for field in ("industry", "province", "locality", "segment"):
+        if filters.get(field):
+            query = query.filter(getattr(SaaSLead, field).ilike(f"%{filters[field]}%"))
+    if int(filters.get("min_score") or 0):
+        query = query.filter(SaaSLead.lead_score >= int(filters["min_score"]))
+
+    total = query.count()
+    blocked = SaaSLead.query.filter(
+        SaaSLead.do_not_contact.is_(True)
+    ).count()
+    email_available = query.filter(
+        SaaSLead.email.isnot(None),
+        SaaSLead.email_status != "invalid",
+    ).count()
+    whatsapp_available = query.filter(
+        SaaSLead.whatsapp.isnot(None),
+        SaaSLead.whatsapp_status != "invalid",
+    ).count()
+    email_optin = query.filter(SaaSLead.email_consent_status == "opted_in").count()
+    whatsapp_optin = query.filter(SaaSLead.whatsapp_consent_status == "opted_in").count()
+    return {
+        "total": total,
+        "blocked": blocked,
+        "email_available": email_available,
+        "whatsapp_available": whatsapp_available,
+        "email_optin": email_optin,
+        "whatsapp_optin": whatsapp_optin,
+        "eligible_email": email_optin if campaign.channel in {"email", "both"} else 0,
+        "eligible_whatsapp": whatsapp_optin if campaign.channel in {"whatsapp", "both"} else 0,
+    }
+
+
+def build_campaign_recipients(db_session, campaign_id: int) -> dict:
+    from app import SaaSCampaign, SaaSCampaignEvent, SaaSCampaignRecipient, utcnow
+
+    campaign = db_session.get(SaaSCampaign, campaign_id)
+    if campaign is None:
+        raise ValueError("Campaña no encontrada.")
+    if campaign.channel not in {"email", "whatsapp", "both"}:
         raise ValueError("Canal de campaña no soportado.")
-    leads = query.order_by(SaaSLead.lead_score.desc(), SaaSLead.id.asc()).all()
-    existing = {(r.lead_id, r.channel) for r in SaaSCampaignRecipient.query.filter_by(campaign_id=campaign.id).all()}
+
+    filters = parse_segment_json(campaign.segment_json)
+    channels = ["email", "whatsapp"] if campaign.channel == "both" else [campaign.channel]
+    existing = {
+        (r.lead_id, r.channel)
+        for r in SaaSCampaignRecipient.query.filter_by(campaign_id=campaign.id).all()
+    }
     added = 0
+    eligible = {}
     now = utcnow()
-    for lead in leads:
-        destination = lead.email if campaign.channel == "email" else (lead.whatsapp or lead.phone)
-        key = (lead.id, campaign.channel)
-        if not destination or key in existing:
-            continue
-        recipient = SaaSCampaignRecipient(campaign_id=campaign.id, lead_id=lead.id, channel=campaign.channel, destination=destination, status="pending")
-        db_session.add(recipient)
-        db_session.add(SaaSCampaignEvent(campaign_id=campaign.id, recipient=recipient, event_type="recipient_prepared", metadata_json=json.dumps({"lead_score": lead.lead_score}, ensure_ascii=False), created_at=now))
-        existing.add(key)
-        added += 1
+
+    for channel in channels:
+        leads = _eligible_leads_query(channel, filters).order_by(
+            SaaSCampaignRecipient.id.asc() if False else __import__("app").SaaSLead.lead_score.desc(),
+            __import__("app").SaaSLead.id.asc(),
+        ).all()
+        eligible[channel] = len(leads)
+        for lead in leads:
+            destination = lead.email if channel == "email" else lead.whatsapp
+            key = (lead.id, channel)
+            if not destination or key in existing:
+                continue
+            recipient = SaaSCampaignRecipient(
+                campaign_id=campaign.id,
+                lead_id=lead.id,
+                channel=channel,
+                destination=destination,
+                status="pending",
+            )
+            db_session.add(recipient)
+            db_session.add(
+                SaaSCampaignEvent(
+                    campaign_id=campaign.id,
+                    recipient=recipient,
+                    event_type="recipient_prepared",
+                    metadata_json=json.dumps(
+                        {"lead_score": lead.lead_score, "channel": channel},
+                        ensure_ascii=False,
+                    ),
+                    created_at=now,
+                )
+            )
+            existing.add(key)
+            added += 1
+
     campaign.target_count = len(existing)
     db_session.flush()
-    return {"eligible": len(leads), "added": added, "target_count": campaign.target_count}
+    return {
+        "eligible": sum(eligible.values()),
+        "eligible_email": eligible.get("email", 0),
+        "eligible_whatsapp": eligible.get("whatsapp", 0),
+        "added": added,
+        "target_count": campaign.target_count,
+    }
+
 
 def render_merge(text: str, lead) -> str:
     rendered = text or ""
     for source, value in {
-        "{{empresa}}": _clean(lead.company_name), "{{comercio}}": _clean(lead.company_name),
-        "{{contacto}}": _clean(lead.contact_name), "{{rubro}}": _clean(lead.industry),
+        "{{empresa}}": _clean(lead.company_name),
+        "{{comercio}}": _clean(lead.company_name),
+        "{{contacto}}": _clean(lead.contact_name),
+        "{{rubro}}": _clean(lead.industry),
         "{{localidad}}": _clean(lead.locality),
     }.items():
         rendered = rendered.replace(source, value)
     return rendered
 
+
 def _unsubscribe_url(lead) -> str:
     from flask import current_app
+
     token = getattr(getattr(lead, "consent", None), "unsubscribe_token", None)
     base = _clean(current_app.config.get("APP_URL")).rstrip("/")
     return f"{base}/superadmin/crm/unsubscribe/{quote(token)}" if base and token else ""
 
+
+def _tracking_open_url(recipient) -> str:
+    from flask import current_app
+
+    base = _clean(current_app.config.get("APP_URL")).rstrip("/")
+    return f"{base}/superadmin/crm/email/open/{quote(recipient.tracking_token)}" if base and recipient.tracking_token else ""
+
+
+def _tracking_click_url(recipient, target_url: str) -> str:
+    from flask import current_app
+
+    base = _clean(current_app.config.get("APP_URL")).rstrip("/")
+    if not base or not recipient.tracking_token:
+        return target_url
+    return f"{base}/superadmin/crm/email/click/{quote(recipient.tracking_token)}?url={quote(target_url, safe='')}"
+
+
+def _render_tracking_html(html: str, recipient) -> str:
+    rendered = html or ""
+
+    def replace_href(match):
+        raw = match.group(1).strip()
+        lowered = raw.lower()
+        if not raw or lowered.startswith(("mailto:", "tel:", "javascript:", "#")):
+            return match.group(0)
+        tracked = _tracking_click_url(recipient, raw)
+        return f'href="{escape(tracked, quote=True)}"'
+
+    rendered = re.sub(r'href=["\']([^"\']+)["\']', replace_href, rendered, flags=re.IGNORECASE)
+    beacon = _tracking_open_url(recipient)
+    if beacon:
+        rendered += (
+            f'<img src="{escape(beacon, quote=True)}" width="1" height="1" '
+            'alt="" style="display:block;border:0;width:1px;height:1px;">'
+        )
+    return rendered
+
+
 def _send_email(recipient, campaign) -> tuple[bool, str]:
     from flask import current_app
-    enabled = str(current_app.config.get("SAAS_MARKETING_SEND_ENABLED", "0")).lower() in {"1","true","yes","on"}
+
+    enabled = str(current_app.config.get("SAAS_MARKETING_SEND_ENABLED", "0")).lower() in {"1", "true", "yes", "on"}
     if not enabled:
         return False, "Envío comercial deshabilitado."
     host = _clean(current_app.config.get("SMTP_HOST"))
     user = _clean(current_app.config.get("SMTP_USER"))
     if not host or not user:
         return False, "SMTP comercial no configurado."
+
+    if not recipient.tracking_token:
+        recipient.tracking_token = secrets.token_urlsafe(32)
+
     msg = EmailMessage()
     msg["Subject"] = render_merge(campaign.subject, recipient.lead)[:255]
     msg["From"] = _clean(current_app.config.get("SMTP_FROM_EMAIL")) or user
@@ -363,13 +503,84 @@ def _send_email(recipient, campaign) -> tuple[bool, str]:
     msg["X-StockArMobile-Campaign"] = str(campaign.id)
     msg["X-StockArMobile-Recipient"] = str(recipient.id)
     msg.set_content(render_merge(campaign.body_text or campaign.body_html, recipient.lead))
-    msg.add_alternative(render_merge(campaign.body_html, recipient.lead), subtype="html")
-    with smtplib.SMTP(host, int(current_app.config.get("SMTP_PORT") or 587), timeout=30) as server:
-        if bool(current_app.config.get("SMTP_USE_TLS", True)):
-            server.starttls()
-        server.login(user, current_app.config.get("SMTP_PASSWORD") or "")
-        server.send_message(msg)
+    msg.add_alternative(_render_tracking_html(render_merge(campaign.body_html, recipient.lead), recipient), subtype="html")
+
+    try:
+        with smtplib.SMTP(
+            host,
+            int(current_app.config.get("SMTP_PORT") or 587),
+            timeout=30,
+        ) as server:
+            if bool(current_app.config.get("SMTP_USE_TLS", True)):
+                server.starttls()
+            server.login(user, current_app.config.get("SMTP_PASSWORD") or "")
+            server.send_message(msg)
+    except Exception:
+        # The caller handles the exception and records the failure without
+        # exposing SMTP credentials.
+        raise
     return True, "sent"
+
+
+def _whatsapp_template_parameters(campaign, lead) -> list[str]:
+    from flask import current_app
+
+    values = {
+        "empresa": _clean(lead.company_name),
+        "comercio": _clean(lead.company_name),
+        "contacto": _clean(lead.contact_name),
+        "rubro": _clean(lead.industry),
+        "localidad": _clean(lead.locality),
+        "trial_url": (
+            f"{_clean(current_app.config.get('APP_URL')).rstrip('/')}/auth/register?selected_plan=trial"
+            if _clean(current_app.config.get("APP_URL"))
+            else ""
+        ),
+    }
+    fields = [
+        part.strip().lower()
+        for part in _clean(campaign.whatsapp_parameter_fields).split(",")
+        if part.strip()
+    ]
+    if fields == ["none"]:
+        return []
+    unknown = [field for field in fields if field not in values]
+    if unknown:
+        raise ValueError(f"Campos de plantilla WhatsApp no soportados: {', '.join(unknown)}")
+    return [values[field] for field in fields]
+
+
+def _send_whatsapp(recipient, campaign) -> tuple[bool, str, str]:
+    from services.ai_agent.whatsapp_service import WhatsAppService
+    from services.ai_agent.config_service import get_whatsapp_connection
+    from services.saas_commercial_whatsapp import get_commercial_company
+
+    company = get_commercial_company()
+    if company is None:
+        return False, "Canal WhatsApp Comercial no inicializado.", ""
+    connection = get_whatsapp_connection(company)
+    if not connection.get("enabled") or not connection.get("phone_number_id") or not connection.get("access_token"):
+        return False, "WhatsApp Comercial no está configurado para envío.", ""
+
+    template_name = _clean(campaign.whatsapp_template_name) or _clean(connection.get("template_name"))
+    template_language = _clean(campaign.whatsapp_template_language) or _clean(connection.get("template_language")) or "es_AR"
+    if not template_name:
+        return False, "No hay una plantilla WhatsApp aprobada configurada.", ""
+
+    parameters = _whatsapp_template_parameters(campaign, recipient.lead)
+    result = WhatsAppService.send_template(
+        company,
+        to=recipient.destination,
+        template_name=template_name,
+        template_language=template_language,
+        body_parameters=parameters,
+    )
+    messages = result.get("messages") if isinstance(result, dict) else None
+    provider_id = ""
+    if isinstance(messages, list) and messages and isinstance(messages[0], dict):
+        provider_id = str(messages[0].get("id") or "").strip()
+    return True, "sent", provider_id
+
 
 def dispatch_due_campaigns(db_session, *, limit: int = 20, per_campaign: int = 50) -> dict:
     from app import SaaSCampaign, SaaSCampaignEvent, SaaSCampaignRecipient, utcnow
@@ -378,61 +589,115 @@ def dispatch_due_campaigns(db_session, *, limit: int = 20, per_campaign: int = 5
     now = utcnow()
     marketing_enabled = str(current_app.config.get("SAAS_MARKETING_SEND_ENABLED", "0")).lower() in {"1", "true", "yes", "on"}
     campaigns = SaaSCampaign.query.filter(
-        SaaSCampaign.status == "APROBADA",
+        SaaSCampaign.status.in_({"APROBADA", "ENVIANDO"}),
         SaaSCampaign.scheduled_at.is_(None) | (SaaSCampaign.scheduled_at <= now),
     ).order_by(SaaSCampaign.id.asc()).limit(limit).all()
     summary = {"campaigns": 0, "sent": 0, "failed": 0, "skipped": 0, "disabled": 0}
+
     for campaign in campaigns:
         if not marketing_enabled:
             summary["disabled"] += 1
             continue
+
         campaign.status = "ENVIANDO"
         campaign.started_at = campaign.started_at or now
         db_session.flush()
-        recipients = SaaSCampaignRecipient.query.filter_by(campaign_id=campaign.id, status="pending").order_by(SaaSCampaignRecipient.id.asc()).limit(per_campaign).all()
+        recipients = (
+            SaaSCampaignRecipient.query
+            .filter_by(campaign_id=campaign.id, status="pending")
+            .order_by(SaaSCampaignRecipient.id.asc())
+            .limit(per_campaign)
+            .all()
+        )
+
         for recipient in recipients:
-            if recipient.lead.do_not_contact or (recipient.channel == "email" and recipient.lead.email_consent_status != "opted_in"):
+            lead = recipient.lead
+            if lead.do_not_contact:
                 recipient.status = "skipped"
-                recipient.error_reason = "Lead no elegible en el momento del envío."
+                recipient.error_reason = "Lead bloqueado en el momento del envío."
                 recipient.updated_at = utcnow()
                 campaign.skipped_count += 1
                 summary["skipped"] += 1
                 continue
-            if recipient.channel == "whatsapp":
+
+            if recipient.channel == "email" and lead.email_consent_status != "opted_in":
+                recipient.status = "skipped"
+                recipient.error_reason = "Consentimiento email no vigente."
+                recipient.updated_at = utcnow()
+                campaign.skipped_count += 1
+                summary["skipped"] += 1
+                continue
+
+            if recipient.channel == "whatsapp" and lead.whatsapp_consent_status != "opted_in":
+                recipient.status = "skipped"
+                recipient.error_reason = "Consentimiento WhatsApp no vigente."
+                recipient.updated_at = utcnow()
+                campaign.skipped_count += 1
+                summary["skipped"] += 1
+                continue
+
+            try:
+                if recipient.channel == "email":
+                    ok, detail = _send_email(recipient, campaign)
+                    provider_id = ""
+                else:
+                    ok, detail, provider_id = _send_whatsapp(recipient, campaign)
+
+                if not ok:
+                    recipient.status = "failed"
+                    recipient.error_reason = detail
+                    recipient.failed_at = utcnow()
+                    campaign.failed_count += 1
+                    summary["failed"] += 1
+                else:
+                    recipient.status = "sent"
+                    recipient.provider_message_id = provider_id or recipient.provider_message_id
+                    recipient.provider_status = "accepted" if provider_id else "sent"
+                    recipient.sent_at = utcnow()
+                    recipient.lead.last_contacted_at = recipient.sent_at
+                    recipient.lead.last_contact_channel = recipient.channel
+                    recipient.lead.contact_count = (recipient.lead.contact_count or 0) + 1
+                    campaign.sent_count += 1
+                    summary["sent"] += 1
+                    db_session.add(
+                        SaaSCampaignEvent(
+                            campaign_id=campaign.id,
+                            recipient_id=recipient.id,
+                            event_type="sent",
+                            metadata_json=json.dumps(
+                                {"channel": recipient.channel, "provider_message_id": provider_id},
+                                ensure_ascii=False,
+                            ),
+                            created_at=utcnow(),
+                        )
+                    )
+            except Exception as exc:
                 recipient.status = "failed"
-                recipient.error_reason = "Transporte WhatsApp comercial no habilitado."
+                recipient.error_reason = str(exc)[:2000]
                 recipient.failed_at = utcnow()
                 campaign.failed_count += 1
                 summary["failed"] += 1
-                continue
-            try:
-                ok, detail = _send_email(recipient, campaign)
-                if not ok:
-                    recipient.status = "failed"; recipient.error_reason = detail; recipient.failed_at = utcnow()
-                    campaign.failed_count += 1; summary["failed"] += 1
-                else:
-                    recipient.status = "sent"; recipient.sent_at = utcnow()
-                    recipient.lead.last_contacted_at = recipient.sent_at
-                    recipient.lead.last_contact_channel = "email"
-                    recipient.lead.contact_count = (recipient.lead.contact_count or 0) + 1
-                    campaign.sent_count += 1; summary["sent"] += 1
-                    db_session.add(SaaSCampaignEvent(campaign_id=campaign.id, recipient_id=recipient.id, event_type="sent", metadata_json="{}"))
-            except Exception as exc:
-                recipient.status = "failed"; recipient.error_reason = str(exc)[:2000]; recipient.failed_at = utcnow()
-                campaign.failed_count += 1; summary["failed"] += 1
             db_session.flush()
-        remaining = SaaSCampaignRecipient.query.filter_by(campaign_id=campaign.id, status="pending").count()
+
+        remaining = SaaSCampaignRecipient.query.filter_by(
+            campaign_id=campaign.id, status="pending"
+        ).count()
         if remaining == 0:
             campaign.status = "ENVIADA"
             campaign.finished_at = utcnow()
-        campaign.target_count = SaaSCampaignRecipient.query.filter_by(campaign_id=campaign.id).count()
+        campaign.target_count = SaaSCampaignRecipient.query.filter_by(
+            campaign_id=campaign.id
+        ).count()
         db_session.flush()
         summary["campaigns"] += 1
+
     db_session.commit()
     return summary
 
+
 def campaign_metrics(db_session, campaign_id: int) -> dict:
     from app import SaaSCampaignRecipient
+
     base = SaaSCampaignRecipient.query.filter_by(campaign_id=campaign_id)
     return {
         "total": base.count(),
@@ -440,4 +705,8 @@ def campaign_metrics(db_session, campaign_id: int) -> dict:
         "sent": base.filter_by(status="sent").count(),
         "failed": base.filter_by(status="failed").count(),
         "skipped": base.filter_by(status="skipped").count(),
+        "opened": base.filter(SaaSCampaignRecipient.opened_at.isnot(None)).count(),
+        "clicked": base.filter(SaaSCampaignRecipient.clicked_at.isnot(None)).count(),
+        "delivered": base.filter(SaaSCampaignRecipient.delivered_at.isnot(None)).count(),
+        "replied": base.filter(SaaSCampaignRecipient.replied_at.isnot(None)).count(),
     }
