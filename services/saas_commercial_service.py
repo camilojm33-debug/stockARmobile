@@ -15,7 +15,7 @@ from openpyxl import load_workbook
 
 EMAIL_RE = re.compile(r"^[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}$", re.IGNORECASE)
 MAX_IMPORT_ROWS = 10000
-VALID_CHANNELS = {"email", "whatsapp"}
+VALID_CHANNELS = {"email", "whatsapp", "both"}
 CONSENT_VALUES = {"opted_in", "opted_out", "unknown"}
 
 HEADER_ALIASES = {
