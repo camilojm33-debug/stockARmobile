@@ -825,6 +825,36 @@ def process_commercial_message(*, phone_number_id: str, sender: str, external_id
     lead_id = capture_inbound_lead(sender, text)
     conversation = get_commercial_conversation(company.id, sender)
 
+    # An inbound reply is a concrete engagement signal for the latest
+    # commercial WhatsApp campaign. It also becomes the stop signal for any
+    # future follow-up sequence built on top of this campaign.
+    if lead_id:
+        from app import SaaSCampaignEvent, SaaSCampaignRecipient
+        latest_recipient = (
+            SaaSCampaignRecipient.query
+            .join(SaaSCampaignEvent, SaaSCampaignEvent.recipient_id == SaaSCampaignRecipient.id, isouter=True)
+            .filter(
+                SaaSCampaignRecipient.lead_id == int(lead_id),
+                SaaSCampaignRecipient.channel == "whatsapp",
+                SaaSCampaignRecipient.status == "sent",
+            )
+            .order_by(SaaSCampaignRecipient.sent_at.desc(), SaaSCampaignRecipient.id.desc())
+            .first()
+        )
+        if latest_recipient is not None and latest_recipient.replied_at is None:
+            now = _utcnow()
+            latest_recipient.replied_at = now
+            latest_recipient.provider_status = latest_recipient.provider_status or "replied"
+            latest_recipient.campaign.replied_count = int(latest_recipient.campaign.replied_count or 0) + 1
+            db.session.add(SaaSCampaignEvent(
+                campaign_id=latest_recipient.campaign_id,
+                recipient_id=latest_recipient.id,
+                event_type="replied",
+                metadata_json=json.dumps({"channel": "whatsapp", "from": sender}, ensure_ascii=False),
+                created_at=now,
+            ))
+            db.session.flush()
+
     attention = commercial_conversation_attention(conversation)
     if attention["status"] == "human":
         inbound = _persist_commercial_inbound_message(
