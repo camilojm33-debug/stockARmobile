@@ -4331,21 +4331,31 @@ def whatsapp_commercial_migrate_connection():
 
     source, source_prefs, source_wa = candidates[0]
     try:
-        destination_prefs = get_ai_preferences(destination)
-        destination_ai = destination_prefs.get("ai_agent") if isinstance(destination_prefs.get("ai_agent"), dict) else {}
+        destination_full = json.loads(destination.preferences_json or "{}") if isinstance(destination.preferences_json, str) else {}
+        if not isinstance(destination_full, dict):
+            destination_full = {}
+        destination_ai = destination_full.get("ai_agent") if isinstance(destination_full.get("ai_agent"), dict) else {}
         destination_whatsapp = dict(source_wa)
         destination_whatsapp["enabled"] = True
         destination_ai["whatsapp"] = destination_whatsapp
-        destination_prefs["ai_agent"] = destination_ai
-        save_company_preferences(destination, destination_prefs)
+        destination_full["internal_channel"] = COMMERCIAL_COMPANY_MARKER
+        destination_full["ai_agent"] = destination_ai
+        save_company_preferences(destination, destination_full)
 
-        source_ai = source_prefs.get("ai_agent") if isinstance(source_prefs.get("ai_agent"), dict) else {}
+        source_full = json.loads(source.preferences_json or "{}") if isinstance(source.preferences_json, str) else {}
+        if not isinstance(source_full, dict):
+            source_full = dict(source_prefs or {})
+        source_ai = source_full.get("ai_agent") if isinstance(source_full.get("ai_agent"), dict) else {}
         source_whatsapp = dict(source_wa)
         source_whatsapp["enabled"] = False
         source_whatsapp["phone_number_id"] = ""
+        source_whatsapp["business_account_id"] = ""
+        source_whatsapp["display_phone_number"] = ""
+        source_whatsapp.pop("access_token_encrypted", None)
         source_ai["whatsapp"] = source_whatsapp
-        source_prefs["ai_agent"] = source_ai
-        save_company_preferences(source, source_prefs)
+        source_ai["whatsapp_enabled"] = False
+        source_full["ai_agent"] = source_ai
+        save_company_preferences(source, source_full)
 
         record_audit(
             action="superadmin_whatsapp_commercial_migrated",
