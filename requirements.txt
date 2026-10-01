@@ -29,3 +29,8 @@ psycopg2-binary>=2.9.0
 
 # Testing
 pytest>=8.0.0
+
+# Gmail API / OAuth
+Google-api-python-client>=2.180.0
+Google-auth>=2.40.0
+Google-auth-oauthlib>=1.2.2
