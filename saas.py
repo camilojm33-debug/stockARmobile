@@ -10,6 +10,7 @@ from datetime import datetime, timedelta, timezone
 from io import BytesIO
 from math import ceil
 from time import monotonic
+from urllib.parse import urlparse
 from zoneinfo import ZoneInfo
 
 try:
@@ -2036,6 +2037,13 @@ def crm_email_click(tracking_token):
     recipient = SaaSCampaignRecipient.query.filter_by(tracking_token=(tracking_token or "").strip()).first()
     if recipient is None or not target:
         abort(404)
+    parsed = urlparse(target)
+    allowed_hosts = {
+        current_app.config.get("APP_URL", "").replace("https://", "").replace("http://", "").split("/", 1)[0],
+        request.host,
+    }
+    if parsed.scheme not in {"http", "https"} or parsed.netloc not in {host for host in allowed_hosts if host}:
+        abort(400)
     if recipient.clicked_at is None:
         now = utcnow()
         recipient.clicked_at = now
