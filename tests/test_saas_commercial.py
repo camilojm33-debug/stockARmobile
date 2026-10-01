@@ -361,7 +361,7 @@ def test_email_tracking_html_contains_open_pixel_and_tracked_links(app):
 
 def test_delete_saas_lead_removes_crm_children_and_detaches_checkout(app):
     from app import (
-        Plan, SaaSAlert, SaaSCampaign, SaaSCampaignRecipient, SaaSCommercialCheckout,
+        Plan, SaaSAlert, SaaSCampaign, SaaSCampaignEvent, SaaSCampaignRecipient, SaaSCommercialCheckout,
         SaaSLead, SaaSLeadConsent, SaaSTask, User, db
     )
     from services.saas_commercial_service import delete_saas_lead
@@ -444,6 +444,14 @@ def test_delete_saas_lead_removes_crm_children_and_detaches_checkout(app):
             destination=lead.email,
             status="pending",
         )
+        db.session.add(recipient)
+        db.session.flush()
+        campaign_event = SaaSCampaignEvent(
+            campaign_id=campaign.id,
+            recipient_id=recipient.id,
+            event_type="opened",
+            metadata_json='{"channel":"email"}',
+        )
         checkout = SaaSCommercialCheckout(
             lead_id=lead.id,
             plan_id=plan.id,
@@ -454,7 +462,7 @@ def test_delete_saas_lead_removes_crm_children_and_detaches_checkout(app):
             external_reference="delete-test-checkout",
             status="pending",
         )
-        db.session.add_all([recipient, checkout])
+        db.session.add_all([campaign_event, checkout])
         db.session.commit()
 
         result = delete_saas_lead(db.session, lead.id)
@@ -464,6 +472,7 @@ def test_delete_saas_lead_removes_crm_children_and_detaches_checkout(app):
         assert result["tasks_deleted"] == 1
         assert result["alerts_deleted"] == 1
         assert result["campaign_recipients_deleted"] == 1
+        assert result["campaign_events_deleted"] == 1
         assert result["consents_deleted"] == 1
         assert result["checkouts_detached"] == 1
 
@@ -472,6 +481,7 @@ def test_delete_saas_lead_removes_crm_children_and_detaches_checkout(app):
         assert db.session.query(SaaSTask).filter_by(id=task.id).count() == 0
         assert db.session.query(SaaSAlert).filter_by(id=alert.id).count() == 0
         assert db.session.query(SaaSCampaignRecipient).filter_by(id=recipient.id).count() == 0
+        assert db.session.query(SaaSCampaignEvent).filter_by(id=campaign_event.id).count() == 0
 
         detached = db.session.get(SaaSCommercialCheckout, checkout.id)
         assert detached is not None
