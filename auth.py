@@ -383,6 +383,7 @@ def activate_commercial(token):
         user.must_change_password = False
         user.active = True
         checkout.activation_token_hash = None
+        checkout.activation_token_encrypted = None
         checkout.updated_at = _utcnow()
         db.session.commit()
         _login_user_and_bind_company(user, remember=True)
