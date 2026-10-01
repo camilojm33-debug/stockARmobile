@@ -112,6 +112,9 @@ def _record_commercial_campaign_status(status_rows):
             )[:2000] if errors else "WhatsApp rechazó el mensaje."
             if recipient.failed_at is None:
                 recipient.failed_at = now
+                if recipient.status == "sent":
+                    recipient.status = "failed"
+                    recipient.campaign.failed_count = int(recipient.campaign.failed_count or 0) + 1
                 db.session.add(SaaSCampaignEvent(
                     campaign_id=recipient.campaign_id,
                     recipient_id=recipient.id,
@@ -119,7 +122,7 @@ def _record_commercial_campaign_status(status_rows):
                     metadata_json='{"channel":"whatsapp"}',
                     created_at=now,
                 ))
-            updated += 1
+                updated += 1
     return updated
 
 
