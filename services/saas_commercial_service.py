@@ -285,6 +285,66 @@ def segment_filters_from_request(request) -> dict:
     }
 
 
+def delete_saas_lead(db_session, lead_id: int) -> dict:
+    """Permanently remove one SuperAdmin CRM lead and its CRM-only children.
+
+    Commercial checkout records are retained as billing history; their lead
+    reference is detached so deleting a CRM prospect never breaks activation or
+    Mercado Pago reconciliation.
+    """
+    from app import SaaSAlert, SaaSCampaignRecipient, SaaSCommercialCheckout, SaaSLead, SaaSLeadConsent, SaaSTask
+
+    lead = db_session.get(SaaSLead, int(lead_id))
+    if lead is None:
+        raise ValueError("Prospecto no encontrado.")
+
+    lead_id = int(lead.id)
+    checkout_query = SaaSCommercialCheckout.query.filter_by(lead_id=lead_id)
+    checkout_count = checkout_query.count()
+
+    task_ids = [
+        row.id
+        for row in db_session.query(SaaSTask.id).filter(SaaSTask.lead_id == lead_id).all()
+    ]
+    alert_count = SaaSAlert.query.filter(SaaSAlert.lead_id == lead_id).count()
+    if task_ids:
+        alert_count += SaaSAlert.query.filter(SaaSAlert.task_id.in_(task_ids)).count()
+
+    recipient_count = SaaSCampaignRecipient.query.filter_by(lead_id=lead_id).count()
+    consent_count = SaaSLeadConsent.query.filter_by(lead_id=lead_id).count()
+
+    # Campaign events reference recipients with SET NULL, so removing the
+    # recipient rows keeps the delivery history table consistent.
+    db_session.query(SaaSAlert).filter(SaaSAlert.lead_id == lead_id).delete(synchronize_session=False)
+    if task_ids:
+        db_session.query(SaaSAlert).filter(SaaSAlert.task_id.in_(task_ids)).delete(synchronize_session=False)
+        db_session.query(SaaSTask).filter(SaaSTask.id.in_(task_ids)).delete(synchronize_session=False)
+    db_session.query(SaaSCampaignRecipient).filter(
+        SaaSCampaignRecipient.lead_id == lead_id
+    ).delete(synchronize_session=False)
+    if consent_count:
+        db_session.query(SaaSLeadConsent).filter(
+            SaaSLeadConsent.lead_id == lead_id
+        ).delete(synchronize_session=False)
+
+    if checkout_count:
+        checkout_query.update(
+            {SaaSCommercialCheckout.lead_id: None},
+            synchronize_session=False,
+        )
+
+    db_session.delete(lead)
+    db_session.flush()
+    return {
+        "lead_id": lead_id,
+        "tasks_deleted": len(task_ids),
+        "alerts_deleted": alert_count,
+        "campaign_recipients_deleted": recipient_count,
+        "consents_deleted": consent_count,
+        "checkouts_detached": checkout_count,
+    }
+
+
 def parse_segment_json(raw: str | None) -> dict:
     try:
         value = json.loads(raw or "{}")
