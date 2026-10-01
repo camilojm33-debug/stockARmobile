@@ -55,6 +55,74 @@ def _extract_messages(payload):
                     yield phone_number_id, sender, external_id, text
 
 
+def _extract_statuses(payload):
+    for entry in payload.get("entry") or []:
+        for change in entry.get("changes") or []:
+            value = change.get("value") or {}
+            metadata = value.get("metadata") or {}
+            phone_number_id = str(metadata.get("phone_number_id") or "").strip()
+            for status in value.get("statuses") or []:
+                message_id = str(status.get("id") or "").strip()
+                state = str(status.get("status") or "").strip().lower()
+                recipient_id = str(status.get("recipient_id") or "").strip()
+                if phone_number_id and message_id and state:
+                    yield phone_number_id, message_id, state, recipient_id, status
+
+
+def _record_commercial_campaign_status(status_rows):
+    from app import SaaSCampaignEvent, SaaSCampaignRecipient
+
+    updated = 0
+    for phone_number_id, message_id, state, recipient_id, raw_status in status_rows:
+        if not is_commercial_phone_number_id(phone_number_id):
+            continue
+        recipient = SaaSCampaignRecipient.query.filter_by(
+            provider_message_id=message_id,
+            channel="whatsapp",
+        ).first()
+        if recipient is None:
+            continue
+
+        now = utcnow_naive()
+        recipient.provider_status = state
+        if state == "delivered" and recipient.delivered_at is None:
+            recipient.delivered_at = now
+            db.session.add(SaaSCampaignEvent(
+                campaign_id=recipient.campaign_id,
+                recipient_id=recipient.id,
+                event_type="delivered",
+                metadata_json='{"channel":"whatsapp"}',
+                created_at=now,
+            ))
+            updated += 1
+        elif state == "read" and recipient.opened_at is None:
+            recipient.opened_at = now
+            db.session.add(SaaSCampaignEvent(
+                campaign_id=recipient.campaign_id,
+                recipient_id=recipient.id,
+                event_type="read",
+                metadata_json='{"channel":"whatsapp"}',
+                created_at=now,
+            ))
+            updated += 1
+        elif state == "failed":
+            errors = raw_status.get("errors") or []
+            recipient.error_reason = str(
+                errors[0].get("title") or errors[0].get("message") or "WhatsApp rechazó el mensaje."
+            )[:2000] if errors else "WhatsApp rechazó el mensaje."
+            if recipient.failed_at is None:
+                recipient.failed_at = now
+                db.session.add(SaaSCampaignEvent(
+                    campaign_id=recipient.campaign_id,
+                    recipient_id=recipient.id,
+                    event_type="failed",
+                    metadata_json='{"channel":"whatsapp"}',
+                    created_at=now,
+                ))
+            updated += 1
+    return updated
+
+
 def _get_or_create_conversation(company_id: int, sender: str):
     agent = choose_agent(company_id, channel="whatsapp")
     conversation = db.session.query(Conversation).filter(
@@ -588,6 +656,14 @@ def webhook():
         return jsonify({"success": False, "error": "invalid_signature"}), 401
     payload = request.get_json(silent=True) or {}
     processed, errors = 0, []
+    try:
+        _record_commercial_campaign_status(_extract_statuses(payload))
+        db.session.commit()
+    except Exception:
+        db.session.rollback()
+        current_app.logger.exception("Commercial WhatsApp campaign status processing failed")
+        errors.append({"error": "commercial_campaign_status_internal_error"})
+
     for phone_number_id, sender, external_id, text in _extract_messages(payload):
         try:
             if is_commercial_phone_number_id(phone_number_id):
