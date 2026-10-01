@@ -275,6 +275,7 @@ def create_commercial_checkout(*, sender: str, plan_code: str, payer_email: str,
         }
 
     token_raw, token_hash = _make_activation_token()
+    from services.ai_agent.config_service import encrypt_secret, decrypt_secret
     external_reference = (
         f"stockarmobile|flow:commercial_checkout|lead_id:{lead.id}|"
         f"plan_code:{normalized_plan}|checkout_id:pending|nonce:{uuid.uuid4().hex}"
@@ -309,6 +310,7 @@ def create_commercial_checkout(*, sender: str, plan_code: str, payer_email: str,
         checkout_url=checkout_url,
         status="pending",
         activation_token_hash=token_hash,
+        activation_token_encrypted=encrypt_secret(token_raw),
     )
     db.session.add(checkout)
     lead.company_name = normalized_name[:160]
@@ -365,7 +367,7 @@ def activate_commercial_checkout(*, preapproval: dict) -> dict | None:
             "status": "activated",
             "checkout_id": checkout.id,
             "company_id": company.id if company else None,
-            "activation_token_hash": checkout.activation_token_hash,
+            "activation_url": None,
         }
 
     existing_company = (
@@ -471,6 +473,16 @@ def activate_commercial_checkout(*, preapproval: dict) -> dict | None:
     checkout.user_id = user.id
     checkout.activated_at = now
 
+    activation_url = None
+    token_cipher = str(checkout.activation_token_encrypted or "").strip()
+    if token_cipher:
+        from services.ai_agent.config_service import decrypt_secret
+        raw_token = decrypt_secret(token_cipher)
+        if raw_token:
+            from flask import url_for
+            activation_url = url_for("auth.activate_commercial", token=raw_token, _external=True)
+            checkout.activation_token_encrypted = None
+
     lead = checkout.lead
     lead.company_id = company.id
     lead.assigned_user_id = user.id
@@ -486,6 +498,7 @@ def activate_commercial_checkout(*, preapproval: dict) -> dict | None:
         "company_id": company.id,
         "user_id": user.id,
         "payer_email": checkout.payer_email,
+        "activation_url": activation_url,
     }
 
 
