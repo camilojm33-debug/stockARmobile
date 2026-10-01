@@ -255,6 +255,7 @@ class SaaSOpsService:
         email: str,
         message: str,
         email_consent: bool = False,
+        preferred_user_id: int | None = None,
     ):
         from app import SaaSLeadConsent, record_audit, utcnow
 
@@ -267,7 +268,7 @@ class SaaSOpsService:
             source="landing_form",
             notes=(message or "").strip()[:2000],
             company_id=None,
-            preferred_user_id=None,
+            preferred_user_id=preferred_user_id,
         )
         if lead is not None and email_consent:
             consent = lead.consent or SaaSLeadConsent(lead_id=lead.id)
