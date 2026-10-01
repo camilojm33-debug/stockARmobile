@@ -16,7 +16,7 @@ from services.saas_commercial_whatsapp import (
     is_commercial_phone_number_id,
     process_commercial_message,
 )
-from stockarmobile.models.conversations import Agent, AgentConfiguration
+from stockarmobile.models.conversations import Agent, AgentConfiguration, ConversationMessage
 
 
 @pytest.fixture
@@ -229,9 +229,9 @@ def test_commercial_human_request_pauses_ai_and_persists_turn(commercial_databas
         "549999000111",
     )
     messages = (
-        db.session.query(__import__("stockarmobile.models.conversations", fromlist=["ConversationMessage"]).ConversationMessage)
+        db.session.query(ConversationMessage)
         .filter_by(conversation_id=conversation.id)
-        .order_by(__import__("stockarmobile.models.conversations", fromlist=["ConversationMessage"]).ConversationMessage.id.asc())
+        .order_by(ConversationMessage.id.asc())
         .all()
     )
     assert [message.sender_type for message in messages] == ["user", "agent"]
@@ -282,9 +282,9 @@ def test_commercial_human_operator_can_reply_and_resume_ai(commercial_database):
 
     assert result["status"] == "sent"
     human_message = (
-        db.session.query(__import__("stockarmobile.models.conversations", fromlist=["ConversationMessage"]).ConversationMessage)
+        db.session.query(ConversationMessage)
         .filter_by(conversation_id=conversation.id, sender_type="human")
-        .order_by(__import__("stockarmobile.models.conversations", fromlist=["ConversationMessage"]).ConversationMessage.id.desc())
+        .order_by(ConversationMessage.id.desc())
         .first()
     )
     assert human_message is not None
