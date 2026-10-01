@@ -2007,6 +2007,34 @@ def crm_campaign_cancel(campaign_id):
     return redirect(url_for("saas.crm_campaign_detail", campaign_id=campaign_id))
 
 
+@bp.post("/crm/email/inbound")
+def crm_email_inbound():
+    """Webhook for replies to the commercial acquisition mailbox."""
+    expected = str(current_app.config.get("SAAS_CRM_EMAIL_INBOUND_SECRET") or current_app.config.get("CRM_EMAIL_INBOUND_SECRET") or "").strip()
+    provided = str(request.headers.get("X-CRM-Email-Secret") or request.args.get("secret") or "").strip()
+    if not expected or not provided or not secrets.compare_digest(provided, expected):
+        abort(401)
+
+    payload = request.get_json(silent=True) or request.form
+    sender = str(payload.get("from") or payload.get("sender") or payload.get("sender_email") or "").strip()
+    if "<" in sender and ">" in sender:
+        sender = sender.rsplit("<", 1)[1].split(">", 1)[0].strip()
+    subject = str(payload.get("subject") or "").strip()
+    text = str(payload.get("text") or payload.get("text_body") or payload.get("body") or "").strip()
+    html = str(payload.get("html") or payload.get("html_body") or "").strip()
+    message_id = str(payload.get("message_id") or payload.get("Message-Id") or payload.get("id") or "").strip()
+    recipient = str(payload.get("to") or payload.get("recipient") or payload.get("recipient_email") or "").strip()
+
+    from services.saas_commercial_service import capture_inbound_email
+    try:
+        result = capture_inbound_email(sender_email=sender, subject=subject, text=text, html=html, external_message_id=message_id, recipient_email=recipient)
+    except ValueError as exc:
+        return {"success": False, "error": str(exc)}, 400
+    except RuntimeError as exc:
+        return {"success": False, "error": str(exc)}, 503
+    return {"success": True, **result}, 200
+
+
 @bp.get("/crm/email/open/<tracking_token>")
 def crm_email_open(tracking_token):
     from app import SaaSCampaignEvent, SaaSCampaignRecipient, db, utcnow
