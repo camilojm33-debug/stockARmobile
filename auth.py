@@ -350,6 +350,48 @@ def force_password_change():
     return render_template("auth/force_password_change.html")
 
 
+@bp.route("/activar-empresa/<token>", methods=["GET", "POST"])
+def activate_commercial(token):
+    """One-time activation form for a paid Comercial IA signup."""
+    import hashlib
+    from app import SaaSCommercialCheckout, db
+    from services.saas_commercial_whatsapp import _utcnow
+
+    token_hash = hashlib.sha256(str(token or "").encode("utf-8")).hexdigest()
+    checkout = (
+        SaaSCommercialCheckout.query
+        .filter_by(activation_token_hash=token_hash, status="activated")
+        .filter(SaaSCommercialCheckout.user_id.isnot(None))
+        .order_by(SaaSCommercialCheckout.id.desc())
+        .first()
+    )
+    if checkout is None or checkout.user is None or checkout.company is None:
+        return render_template("auth/commercial_activation.html", valid=False), 404
+
+    if request.method == "POST":
+        password = str(request.form.get("password") or "")
+        password_confirm = str(request.form.get("password_confirm") or "")
+        if len(password) < 8:
+            flash("La contraseña debe tener al menos 8 caracteres.", "danger")
+            return render_template("auth/commercial_activation.html", valid=True, checkout=checkout), 400
+        if password != password_confirm:
+            flash("Las contraseñas no coinciden.", "danger")
+            return render_template("auth/commercial_activation.html", valid=True, checkout=checkout), 400
+
+        user = checkout.user
+        user.set_password(password)
+        user.must_change_password = False
+        user.active = True
+        checkout.activation_token_hash = None
+        checkout.updated_at = _utcnow()
+        db.session.commit()
+        _login_user_and_bind_company(user, remember=True)
+        flash("Tu empresa fue activada. Bienvenido a StockArMobile.", "success")
+        return redirect(url_for("dashboard.index"))
+
+    return render_template("auth/commercial_activation.html", valid=True, checkout=checkout)
+
+
 @bp.route("/register", methods=["GET", "POST"])
 def register():
     """Registro de usuario nuevo."""
