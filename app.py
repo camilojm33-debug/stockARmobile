@@ -2258,6 +2258,7 @@ def landing_contact():
     name = (request.form.get("name") or "").strip()
     email = (request.form.get("email") or "").strip().lower()
     message = (request.form.get("message") or "").strip()
+    email_consent = request.form.get("email_consent") == "1"
 
     if not name or not email or not message:
         flash("Completa nombre, email y mensaje para enviarnos tu consulta.", "warning")
@@ -2280,7 +2281,13 @@ def landing_contact():
         email,
         len(message),
     )
-    SaaSOpsService.register_landing_contact(db.session, name=name, email=email, message=message)
+    SaaSOpsService.register_landing_contact(
+        db.session,
+        name=name,
+        email=email,
+        message=message,
+        email_consent=email_consent,
+    )
     db.session.commit()
     flash(
         "Gracias por comunicarte con StockArmobile. Nuestro equipo respondera tu consulta a la brevedad.",

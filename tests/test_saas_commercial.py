@@ -508,3 +508,39 @@ def test_delete_saas_lead_removes_crm_children_and_detaches_checkout(app):
             delete_saas_lead(db.session, 999999)
 
         assert db.session.get(SaaSLead, other_lead.id) is not None
+
+
+def test_landing_contact_can_record_explicit_email_consent(app):
+    from app import SaaSLead, SaaSLeadConsent, User, db
+    from services.saas_ops_service import SaaSOpsService
+
+    with app.app_context():
+        user = User(
+            username="landing-consent-admin",
+            email="landing-consent-admin@example.com",
+            role="superadmin",
+            active=True,
+        )
+        user.set_password("test-password")
+        db.session.add(user)
+        db.session.commit()
+        user_id = int(user.id)
+
+        lead = SaaSOpsService.register_landing_contact(
+            db.session,
+            name="Comercio Consentido",
+            email="contacto@consentido.com",
+            message="Quiero conocer StockArmobile.",
+            email_consent=True,
+            preferred_user_id=user_id,
+        )
+        db.session.commit()
+
+        stored = db.session.get(SaaSLead, lead.id)
+        assert stored is not None
+        assert stored.email_consent_status == "opted_in"
+        assert stored.consent is not None
+        assert stored.consent.email_status == "opted_in"
+        assert stored.consent.email_source == "landing_contact"
+        assert stored.consent.unsubscribe_token
+        assert stored.consent.granted_at is not None
