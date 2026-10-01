@@ -2120,6 +2120,50 @@ def crm_lead_contact_preferences(lead_id):
     return _redirect_back("saas.crm_panel")
 
 
+@bp.post("/crm/leads/<int:lead_id>/delete")
+@superadmin_required
+def crm_lead_delete(lead_id):
+    from app import SaaSLead, db, record_audit
+    from services.saas_commercial_service import delete_saas_lead
+
+    if not _require_superadmin_step_up():
+        return _redirect_back("saas.crm_panel")
+
+    lead = SaaSLead.query.filter_by(id=lead_id).first_or_404()
+    company_name = lead.company_name
+    contact_name = lead.contact_name
+    try:
+        result = delete_saas_lead(db.session, lead_id)
+        record_audit(
+            action="saas_lead_delete",
+            entity="saas_lead",
+            entity_id=lead_id,
+            detail=(
+                f"Prospecto eliminado permanentemente: {company_name} / {contact_name}. "
+                f"tareas={result['tasks_deleted']}; alertas={result['alerts_deleted']}; "
+                f"destinatarios={result['campaign_recipients_deleted']}; "
+                f"consentimientos={result['consents_deleted']}; "
+                f"checkouts_desvinculados={result['checkouts_detached']}."
+            ),
+            user_id=current_user.id,
+        )
+        db.session.commit()
+        flash(
+            "Prospecto eliminado. El historial de cobros queda conservado y desvinculado del CRM."
+            if result["checkouts_detached"]
+            else "Prospecto eliminado permanentemente.",
+            "success",
+        )
+    except ValueError as exc:
+        db.session.rollback()
+        flash(str(exc), "warning")
+    except Exception:
+        db.session.rollback()
+        current_app.logger.exception("No se pudo eliminar el prospecto CRM id=%s", lead_id)
+        flash("No se pudo eliminar el prospecto. No se realizaron cambios.", "danger")
+    return _redirect_back("saas.crm_panel")
+
+
 @bp.route("/crm/leads/<int:lead_id>/status", methods=["POST"])
 @superadmin_required
 def crm_lead_status(lead_id):
