@@ -468,7 +468,7 @@ def test_delete_saas_lead_removes_crm_children_and_detaches_checkout(app):
         result = delete_saas_lead(db.session, lead.id)
         db.session.commit()
 
-        assert result["lead_id"] == lead.id
+        assert result["lead_id"] == lead_pk
         assert result["tasks_deleted"] == 1
         assert result["alerts_deleted"] == 1
         assert result["campaign_recipients_deleted"] == 1
@@ -476,14 +476,14 @@ def test_delete_saas_lead_removes_crm_children_and_detaches_checkout(app):
         assert result["consents_deleted"] == 1
         assert result["checkouts_detached"] == 1
 
-        assert db.session.get(SaaSLead, lead.id) is None
-        assert db.session.query(SaaSLeadConsent).filter_by(lead_id=lead.id).count() == 0
-        assert db.session.query(SaaSTask).filter_by(id=task.id).count() == 0
-        assert db.session.query(SaaSAlert).filter_by(id=alert.id).count() == 0
-        assert db.session.query(SaaSCampaignRecipient).filter_by(id=recipient.id).count() == 0
+        assert db.session.get(SaaSLead, lead_pk) is None
+        assert db.session.query(SaaSLeadConsent).filter_by(lead_id=lead_pk).count() == 0
+        assert db.session.query(SaaSTask).filter_by(id=task_pk).count() == 0
+        assert db.session.query(SaaSAlert).filter_by(id=alert_pk).count() == 0
+        assert db.session.query(SaaSCampaignRecipient).filter_by(id=recipient_pk).count() == 0
         assert db.session.query(SaaSCampaignEvent).filter_by(id=campaign_event.id).count() == 0
 
-        detached = db.session.get(SaaSCommercialCheckout, checkout.id)
+        detached = db.session.get(SaaSCommercialCheckout, checkout_pk)
         assert detached is not None
         assert detached.lead_id is None
 
