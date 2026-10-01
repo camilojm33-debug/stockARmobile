@@ -1581,6 +1581,38 @@ class ResourceMessage(db.Model):
     updated_at = db.Column(db.DateTime, default=utcnow, onupdate=utcnow)
 
 
+class SaaSCommercialCheckout(db.Model):
+    """Pending commercial purchase created by Comercial IA and finalized after MP authorization."""
+    __tablename__ = "saas_commercial_checkouts"
+    __table_args__ = (
+        db.UniqueConstraint("preapproval_id", name="uq_saas_commercial_checkout_preapproval"),
+        db.UniqueConstraint("activation_token_hash", name="uq_saas_commercial_checkout_activation"),
+    )
+
+    id = db.Column(db.Integer, primary_key=True)
+    lead_id = db.Column(db.Integer, db.ForeignKey("saas_leads.id"), nullable=False, index=True)
+    plan_id = db.Column(db.Integer, db.ForeignKey("plans.id"), nullable=False, index=True)
+    plan_code = db.Column(db.String(40), nullable=False, index=True)
+    company_name = db.Column(db.String(160), nullable=False)
+    payer_email = db.Column(db.String(160), nullable=False, index=True)
+    phone = db.Column(db.String(40), nullable=False)
+    preapproval_id = db.Column(db.String(120), index=True)
+    external_reference = db.Column(db.String(255), nullable=False, unique=True, index=True)
+    checkout_url = db.Column(db.Text)
+    status = db.Column(db.String(30), nullable=False, default="pending", index=True)
+    activation_token_hash = db.Column(db.String(64), index=True)
+    activated_at = db.Column(db.DateTime)
+    company_id = db.Column(db.Integer, db.ForeignKey("companies.id"), index=True)
+    user_id = db.Column(db.Integer, db.ForeignKey("users.id"), index=True)
+    created_at = db.Column(db.DateTime, default=utcnow, nullable=False, index=True)
+    updated_at = db.Column(db.DateTime, default=utcnow, onupdate=utcnow)
+
+    lead = db.relationship("SaaSLead", backref=db.backref("commercial_checkouts", lazy="dynamic"))
+    plan = db.relationship("Plan")
+    company = db.relationship("Company", foreign_keys=[company_id])
+    user = db.relationship("User", foreign_keys=[user_id])
+
+
 class SaaSLead(db.Model):
     __tablename__ = "saas_leads"
 
