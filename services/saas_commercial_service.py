@@ -747,6 +747,8 @@ def dispatch_due_campaigns(db_session, *, limit: int = 20, per_campaign: int = 5
                     recipient.lead.last_contacted_at = recipient.sent_at
                     recipient.lead.last_contact_channel = recipient.channel
                     recipient.lead.contact_count = (recipient.lead.contact_count or 0) + 1
+                    if recipient.lead.status == "nuevo":
+                        recipient.lead.status = "contactado"
                     campaign.sent_count += 1
                     summary["sent"] += 1
                     db_session.add(
