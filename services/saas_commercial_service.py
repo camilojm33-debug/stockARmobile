@@ -6,6 +6,7 @@ import json
 import re
 import secrets
 import smtplib
+from datetime import datetime, timezone
 from email.message import EmailMessage
 from html import escape
 from io import BytesIO, StringIO
@@ -808,7 +809,7 @@ def campaign_metrics(db_session, campaign_id: int) -> dict:
 def capture_inbound_email(*, sender_email: str, subject: str = "", text: str = "", html: str = "", external_message_id: str = "", recipient_email: str = "") -> dict:
     """Register an inbound commercial email against the SaaS CRM and conversation."""
     from stockarmobile.models.conversations import Conversation, ConversationMessage, ConversationParticipant
-    from app import SaaSLead, SaaSLeadConsent
+    from app import SaaSLead, SaaSLeadConsent, db
     from services.saas_commercial_whatsapp import ensure_commercial_agent, get_commercial_company, _superadmin_actor_id
 
     email = str(sender_email or "").strip().lower()
