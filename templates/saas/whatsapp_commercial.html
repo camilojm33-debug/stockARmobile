@@ -1,0 +1,203 @@
+{% extends "base_master.html" %}
+{% block title %}WhatsApp Comercial · SuperAdmin | StockArmobile{% endblock %}
+{% block extra_css %}
+<style>
+  .wa-admin-wrap { max-width: 1180px; margin: 0 auto; }
+  .wa-admin-hero {
+    border: 1px solid var(--app-line);
+    border-radius: 22px;
+    padding: 1.5rem;
+    background: linear-gradient(135deg, rgba(37,99,235,.08), rgba(34,197,94,.06));
+    box-shadow: var(--app-shadow-soft);
+  }
+  .wa-admin-icon {
+    width: 52px; height: 52px; border-radius: 16px;
+    display:grid; place-items:center; flex:0 0 52px;
+    background:#25D366; color:#fff; font-size:1.5rem;
+  }
+  .wa-admin-card { border:1px solid var(--app-line); border-radius:18px; background:var(--app-panel); }
+  .wa-kpi {
+    border:1px solid var(--app-line); border-radius:14px; padding:1rem;
+    background:var(--app-panel-soft); height:100%;
+  }
+  .wa-kpi .value { font-size:1.15rem; font-weight:800; margin-top:.2rem; }
+  .wa-code { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size:.82rem; word-break:break-all; }
+  .wa-muted-box { border:1px dashed var(--app-line); border-radius:14px; padding:1rem; background:var(--app-panel-soft); }
+</style>
+{% endblock %}
+{% block content %}
+<div class="app-shell wa-admin-wrap py-4">
+  <div class="d-flex flex-wrap justify-content-between align-items-center gap-2 mb-3">
+    <a class="text-decoration-none" href="{{ url_for('saas.index') }}"><i class="bi bi-arrow-left me-1"></i>Volver al Panel SaaS</a>
+    <a class="btn btn-outline-secondary" href="https://business.facebook.com/" target="_blank" rel="noopener noreferrer">
+      <i class="bi bi-box-arrow-up-right me-1"></i>Meta Business
+    </a>
+  </div>
+
+  <section class="wa-admin-hero mb-4">
+    <div class="d-flex align-items-center gap-3">
+      <div class="wa-admin-icon"><i class="bi bi-whatsapp"></i></div>
+      <div>
+        <div class="small text-uppercase fw-bold text-primary">Super Admin</div>
+        <h1 class="h3 fw-bold mb-1">WhatsApp Comercial</h1>
+        <p class="text-muted mb-0">Configuración del canal de captación de StockArMobile. Este canal utiliza la empresa interna <strong>StockArMobile Comercial</strong> y el agente <strong>Comercial IA</strong>.</p>
+      </div>
+    </div>
+  </section>
+
+  {% if not company %}
+    <div class="alert alert-danger">
+      <div class="fw-bold mb-1"><i class="bi bi-exclamation-triangle me-1"></i>Canal interno no inicializado</div>
+      <div>La empresa interna <strong>StockArMobile Comercial</strong> todavía no fue creada en la base de datos. Aplicá primero la migración <code>20260930_01_commercial_whatsapp</code>.</div>
+    </div>
+  {% else %}
+    <div class="row g-3 mb-4">
+      <div class="col-6 col-xl-3">
+        <div class="wa-kpi">
+          <div class="small text-muted">Estado</div>
+          <div class="value {{ 'text-success' if connection.enabled and connection.phone_number_id else 'text-secondary' }}">
+            {{ 'ACTIVO' if connection.enabled and connection.phone_number_id else 'NO CONFIGURADO' }}
+          </div>
+        </div>
+      </div>
+      <div class="col-6 col-xl-3">
+        <div class="wa-kpi">
+          <div class="small text-muted">Phone Number ID</div>
+          <div class="value wa-code">{{ connection.phone_number_id or '—' }}</div>
+        </div>
+      </div>
+      <div class="col-6 col-xl-3">
+        <div class="wa-kpi">
+          <div class="small text-muted">WABA ID</div>
+          <div class="value wa-code">{{ connection.business_account_id or '—' }}</div>
+        </div>
+      </div>
+      <div class="col-6 col-xl-3">
+        <div class="wa-kpi">
+          <div class="small text-muted">Token</div>
+          <div class="value">{{ 'Configurado' if token_configured else 'Faltante' }}</div>
+        </div>
+      </div>
+    </div>
+
+    <div class="row g-4">
+      <div class="col-lg-7">
+        <section class="wa-admin-card p-4">
+          <div class="d-flex justify-content-between align-items-start gap-3 mb-3">
+            <div>
+              <h2 class="h5 fw-bold mb-1">Conexión de Meta</h2>
+              <p class="text-muted small mb-0">Guardamos el access token cifrado. Nunca se muestra en pantalla.</p>
+            </div>
+            <span class="badge {{ 'text-bg-success' if connection.enabled else 'text-bg-secondary' }}">
+              {{ 'Canal habilitado' if connection.enabled else 'Canal deshabilitado' }}
+            </span>
+          </div>
+
+          <form method="post" action="{{ url_for('saas.whatsapp_commercial_settings') }}">
+            <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+
+            <div class="row g-3">
+              <div class="col-md-6">
+                <label class="form-label fw-semibold">WABA ID</label>
+                <input class="form-control" name="waba_id" value="{{ connection.business_account_id or '' }}" placeholder="Ej. 1065968412820299" inputmode="numeric">
+              </div>
+              <div class="col-md-6">
+                <label class="form-label fw-semibold">Phone Number ID</label>
+                <input class="form-control" name="phone_number_id" value="{{ connection.phone_number_id or '' }}" placeholder="Ej. 1213985218475043" inputmode="numeric">
+              </div>
+              <div class="col-md-6">
+                <label class="form-label fw-semibold">Número visible</label>
+                <input class="form-control" name="display_phone_number" value="{{ connection.display_phone_number or '' }}" placeholder="+54 9 362 420-2415">
+              </div>
+              <div class="col-md-6">
+                <label class="form-label fw-semibold">Business ID <span class="text-muted fw-normal">(opcional)</span></label>
+                <input class="form-control" name="business_id" value="{{ stored.get('business_id', '') }}" placeholder="Business ID de Meta">
+              </div>
+              <div class="col-12">
+                <label class="form-label fw-semibold">Access Token</label>
+                <input class="form-control" type="password" name="access_token" value="" placeholder="{{ 'Dejar vacío para conservar el token actual' if token_configured else 'Pegá el token de acceso de Meta' }}" autocomplete="new-password">
+              </div>
+              <div class="col-md-8">
+                <label class="form-label fw-semibold">Plantilla de mensaje</label>
+                <input class="form-control" name="template_name" value="{{ connection.template_name or '' }}" placeholder="Opcional">
+              </div>
+              <div class="col-md-4">
+                <label class="form-label fw-semibold">Idioma</label>
+                <input class="form-control" name="template_language" value="{{ connection.template_language or 'es_AR' }}" placeholder="es_AR">
+              </div>
+              <div class="col-12">
+                <div class="form-check form-switch">
+                  <input class="form-check-input" type="checkbox" name="enabled" value="1" id="commercialWaEnabled" {% if connection.enabled %}checked{% endif %}>
+                  <label class="form-check-label fw-semibold" for="commercialWaEnabled">Habilitar WhatsApp Comercial</label>
+                </div>
+              </div>
+            </div>
+
+            <div class="d-flex flex-wrap gap-2 mt-4">
+              <button class="btn btn-primary" type="submit"><i class="bi bi-check2-circle me-1"></i>Guardar configuración</button>
+              <a class="btn btn-outline-secondary" href="{{ url_for('saas.whatsapp_commercial_settings') }}">Recargar estado</a>
+            </div>
+          </form>
+        </section>
+      </div>
+
+      <div class="col-lg-5">
+        <section class="wa-admin-card p-4 mb-4">
+          <h2 class="h5 fw-bold mb-3">Webhook</h2>
+          <div class="small text-muted mb-2">URL que debe estar configurada en Meta para esta aplicación.</div>
+          <div class="wa-code border rounded p-3 mb-3">{{ webhook_url }}</div>
+          <div class="wa-muted-box small">
+            <div><strong>Canal:</strong> <code>whatsapp_commercial</code></div>
+            <div class="mt-1"><strong>Empresa interna:</strong> {{ company.name }}</div>
+            <div class="mt-1"><strong>Agente:</strong> Comercial IA</div>
+          </div>
+        </section>
+
+        <section class="wa-admin-card p-4">
+          <h2 class="h5 fw-bold mb-3">Origen de configuración</h2>
+          {% if env_enabled and env_phone %}
+            <div class="alert alert-info small mb-0">
+              <strong>Variables de entorno activas.</strong><br>
+              El runtime está priorizando la configuración de Render/entorno.
+              Phone Number ID: <code>{{ env_phone }}</code>{% if env_waba %} · WABA ID: <code>{{ env_waba }}</code>{% endif %}.
+            </div>
+          {% else %}
+            <div class="alert alert-light border small mb-0">
+              <strong>Configuración desde Super Admin.</strong><br>
+              El runtime utiliza los datos guardados en la empresa interna cuando no hay override por variables de entorno.
+            </div>
+          {% endif %}
+        </section>
+
+        <section class="wa-admin-card p-4 mt-4">
+          <h2 class="h5 fw-bold mb-1">Migrar la conexión actual del Vendedor IA</h2>
+          <p class="text-muted small">
+            Esta opción mueve <strong>la configuración dentro de StockArMobile</strong> hacia la empresa interna de Super Admin.
+            No elimina ni transfiere el número en Meta.
+          </p>
+          <form method="post" action="{{ url_for('saas.whatsapp_commercial_migrate_connection') }}">
+            <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+            <div class="mb-3">
+              <label class="form-label fw-semibold">Phone Number ID actual</label>
+              <input class="form-control" name="phone_number_id" value="{{ connection.phone_number_id or '' }}" placeholder="Ej. 1213985218475043" inputmode="numeric" required>
+              <div class="form-text">Debe ser el Phone Number ID que hoy tiene configurado el Vendedor IA.</div>
+            </div>
+            <div class="alert alert-warning small">
+              <strong>Importante:</strong> al confirmar, la empresa origen quedará sin ese número para el Vendedor IA y el webhook pasará a procesarlo como <strong>Comercial IA de Super Admin</strong>.
+            </div>
+            <div class="form-check mb-3">
+              <input class="form-check-input" type="checkbox" name="confirm_migration" value="1" id="confirmWaMigration" required>
+              <label class="form-check-label small" for="confirmWaMigration">
+                Confirmo que este es el número de StockArMobile que quiero pasar a Super Admin.
+              </label>
+            </div>
+            <button class="btn btn-outline-warning" type="submit">
+              <i class="bi bi-arrow-left-right me-1"></i>Migrar conexión a Super Admin
+            </button>
+          </form>
+        </section>
+      </div>
+    </div>
+  {% endif %}
+</div>
+{% endblock %}
