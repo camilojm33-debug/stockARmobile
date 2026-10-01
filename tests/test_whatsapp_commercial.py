@@ -191,3 +191,120 @@ def test_commercial_message_can_retry_send_after_runtime_duplicate(commercial_da
     assert runtime_calls[0]["company_id"] == commercial_database["company"].id
     assert runtime_calls[0]["channel"] == "whatsapp_commercial"
     assert runtime_calls[0]["metadata"]["commercial_acquisition"] is True
+
+
+def test_commercial_human_request_pauses_ai_and_persists_turn(commercial_database):
+    sends = []
+    runtime_calls = []
+
+    def fake_runtime(**kwargs):
+        runtime_calls.append(kwargs)
+        return {"status": "completed", "content": "Respuesta IA inesperada"}
+
+    def fake_send(company, *, to, body):
+        sends.append((company.id, to, body))
+        return {"status": "accepted"}
+
+    with patch(
+        "services.ai_agent.orchestrator_v2.AgentRuntime.process",
+        side_effect=fake_runtime,
+    ), patch(
+        "services.ai_agent.whatsapp_service.WhatsAppService.send_text",
+        side_effect=fake_send,
+    ):
+        result = process_commercial_message(
+            phone_number_id="COMMERCIAL_PHONE_QA",
+            sender="549999000111",
+            external_id="wamid.QA.HUMAN.001",
+            text="Quiero hablar con una persona",
+        )
+
+    assert result["status"] == "human"
+    assert runtime_calls == []
+    assert len(sends) == 1
+    assert "persona" in sends[0][2].lower()
+
+    conversation = get_commercial_conversation(
+        commercial_database["company"].id,
+        "549999000111",
+    )
+    messages = (
+        db.session.query(__import__("stockarmobile.models.conversations", fromlist=["ConversationMessage"]).ConversationMessage)
+        .filter_by(conversation_id=conversation.id)
+        .order_by(__import__("stockarmobile.models.conversations", fromlist=["ConversationMessage"]).ConversationMessage.id.asc())
+        .all()
+    )
+    assert [message.sender_type for message in messages] == ["user", "agent"]
+    assert messages[0].external_message_id == "wamid.QA.HUMAN.001"
+
+    with patch(
+        "services.ai_agent.orchestrator_v2.AgentRuntime.process",
+        side_effect=fake_runtime,
+    ), patch(
+        "services.ai_agent.whatsapp_service.WhatsAppService.send_text",
+        side_effect=fake_send,
+    ):
+        paused = process_commercial_message(
+            phone_number_id="COMMERCIAL_PHONE_QA",
+            sender="549999000111",
+            external_id="wamid.QA.HUMAN.002",
+            text="Sigo esperando al asesor",
+        )
+
+    assert paused["status"] == "human_paused"
+    assert runtime_calls == []
+    assert len(sends) == 1
+
+
+def test_commercial_human_operator_can_reply_and_resume_ai(commercial_database):
+    company = commercial_database["company"]
+    conversation = get_commercial_conversation(company.id, "549999000222")
+    db.session.commit()
+
+    with patch(
+        "services.ai_agent.whatsapp_service.WhatsAppService.send_text",
+        return_value={"status": "accepted"},
+    ):
+        from services.saas_commercial_whatsapp import _set_commercial_attention, send_commercial_human_message, clear_commercial_attention
+        _set_commercial_attention(
+            conversation,
+            status="human",
+            user_id=commercial_database["actor"].id,
+            reason="Prueba de atención humana",
+        )
+        db.session.commit()
+        result = send_commercial_human_message(
+            company=company,
+            conversation=conversation,
+            body="Hola, soy del equipo de StockArMobile.",
+            user_id=commercial_database["actor"].id,
+        )
+
+    assert result["status"] == "sent"
+    human_message = (
+        db.session.query(__import__("stockarmobile.models.conversations", fromlist=["ConversationMessage"]).ConversationMessage)
+        .filter_by(conversation_id=conversation.id, sender_type="human")
+        .order_by(__import__("stockarmobile.models.conversations", fromlist=["ConversationMessage"]).ConversationMessage.id.desc())
+        .first()
+    )
+    assert human_message is not None
+    assert human_message.content == "Hola, soy del equipo de StockArMobile."
+    clear_commercial_attention(conversation)
+    db.session.commit()
+
+    with patch(
+        "services.ai_agent.orchestrator_v2.AgentRuntime.process",
+        return_value={"status": "completed", "content": "Ahora sigue Comercial IA."},
+    ) as runtime, patch(
+        "services.ai_agent.whatsapp_service.WhatsAppService.send_text",
+        return_value={"status": "accepted"},
+    ):
+        resumed = process_commercial_message(
+            phone_number_id="COMMERCIAL_PHONE_QA",
+            sender="549999000222",
+            external_id="wamid.QA.HUMAN.003",
+            text="Volví, quiero continuar con la información",
+        )
+
+    assert resumed["status"] == "completed"
+    assert runtime.called
