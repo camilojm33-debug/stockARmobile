@@ -4257,10 +4257,6 @@ def whatsapp_commercial_attention():
     # The default queue is human-pending. Other tabs are available without
     # changing any conversation state.
     rows = _commercial_inbox_rows(company, q=q, state=state)
-    if state == "all" and q:
-        pass
-    elif state == "all":
-        rows = _commercial_inbox_rows(company, q=q, state="all")
 
     total_rows = _commercial_inbox_rows(company, q="", state="all")
     pending_count = sum(1 for row in total_rows if row["attention"]["pending"])
@@ -4423,7 +4419,8 @@ def whatsapp_commercial_attention_action(conversation_id: int):
 @bp.post("/whatsapp-comercial/atencion/<int:conversation_id>/mensaje")
 @superadmin_required
 def whatsapp_commercial_attention_message(conversation_id: int):
-    from app import Conversation, db, record_audit
+    from app import db, record_audit
+    from stockarmobile.models.conversations import Conversation
     from services.saas_commercial_whatsapp import (
         COMMERCIAL_CHANNEL,
         _set_commercial_attention,
