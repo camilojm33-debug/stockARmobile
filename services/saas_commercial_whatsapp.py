@@ -767,17 +767,14 @@ def process_commercial_message(*, phone_number_id: str, sender: str, external_id
     lead_id = capture_inbound_lead(sender, text)
     conversation = get_commercial_conversation(company.id, sender)
 
-    # Always persist the inbound turn first so human operators can see the
-    # complete context, even when the AI is paused.
-    inbound = _persist_commercial_inbound_message(
-        conversation,
-        external_id=external_id,
-        sender=sender,
-        text=text,
-    )
-
     attention = commercial_conversation_attention(conversation)
     if attention["status"] == "human":
+        inbound = _persist_commercial_inbound_message(
+            conversation,
+            external_id=external_id,
+            sender=sender,
+            text=text,
+        )
         db.session.commit()
         return {
             "status": "human_paused",
@@ -795,6 +792,12 @@ def process_commercial_message(*, phone_number_id: str, sender: str, external_id
 
     # Detect an explicit request for a person before invoking the model.
     if commercial_human_requested(text):
+        inbound = _persist_commercial_inbound_message(
+            conversation,
+            external_id=external_id,
+            sender=sender,
+            text=text,
+        )
         _set_commercial_attention(
             conversation,
             status="human",
