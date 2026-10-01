@@ -336,3 +336,90 @@ class SaaSOpsService:
             user_id=getattr(user, "id", None),
             company_id=getattr(ticket, "company_id", None),
         )
+
+
+    @classmethod
+    def delete_lead_permanently(cls, db_session, lead_id: int) -> dict:
+        """Permanently remove one SaaS CRM prospect and its CRM communication artifacts.
+
+        The linked company, user, subscription and commercial checkout history are
+        intentionally preserved. A checkout is detached from the deleted lead so
+        billing history remains consistent without keeping the CRM relationship.
+        """
+        import sqlalchemy as sa
+
+        from app import (
+            SaaSCampaignEvent,
+            SaaSCampaignRecipient,
+            SaaSAlert,
+            SaaSCommercialCheckout,
+            SaaSLead,
+            SaaSLeadConsent,
+            SaaSTask,
+        )
+
+        lead = db_session.get(SaaSLead, int(lead_id))
+        if lead is None:
+            raise ValueError("Prospecto no encontrado.")
+
+        task_ids = [
+            task_id
+            for (task_id,) in db_session.query(SaaSTask.id)
+            .filter(SaaSTask.lead_id == lead.id)
+            .all()
+        ]
+        alert_query = db_session.query(SaaSAlert).filter(
+            (SaaSAlert.lead_id == lead.id)
+            | (SaaSAlert.task_id.in_(task_ids) if task_ids else sa.false())
+        )
+
+        recipient_ids = [
+            recipient_id
+            for (recipient_id,) in db_session.query(SaaSCampaignRecipient.id)
+            .filter(SaaSCampaignRecipient.lead_id == lead.id)
+            .all()
+        ]
+
+        counts = {
+            "tasks": len(task_ids),
+            "alerts": alert_query.count(),
+            "campaign_recipients": len(recipient_ids),
+            "campaign_events": 0,
+            "consents": db_session.query(SaaSLeadConsent).filter(
+                SaaSLeadConsent.lead_id == lead.id
+            ).count(),
+            "checkouts_detached": db_session.query(SaaSCommercialCheckout).filter(
+                SaaSCommercialCheckout.lead_id == lead.id
+            ).count(),
+        }
+
+        if recipient_ids:
+            counts["campaign_events"] = db_session.query(SaaSCampaignEvent).filter(
+                SaaSCampaignEvent.recipient_id.in_(recipient_ids)
+            ).count()
+            db_session.query(SaaSCampaignEvent).filter(
+                SaaSCampaignEvent.recipient_id.in_(recipient_ids)
+            ).delete(synchronize_session=False)
+            db_session.query(SaaSCampaignRecipient).filter(
+                SaaSCampaignRecipient.id.in_(recipient_ids)
+            ).delete(synchronize_session=False)
+
+        alert_query.delete(synchronize_session=False)
+        if task_ids:
+            db_session.query(SaaSTask).filter(
+                SaaSTask.id.in_(task_ids)
+            ).delete(synchronize_session=False)
+
+        db_session.query(SaaSLeadConsent).filter(
+            SaaSLeadConsent.lead_id == lead.id
+        ).delete(synchronize_session=False)
+
+        db_session.query(SaaSCommercialCheckout).filter(
+            SaaSCommercialCheckout.lead_id == lead.id
+        ).update({"lead_id": None}, synchronize_session=False)
+
+        db_session.delete(lead)
+        db_session.flush()
+
+        counts["lead_id"] = int(lead_id)
+        return counts
