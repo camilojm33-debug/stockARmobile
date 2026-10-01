@@ -1590,7 +1590,7 @@ class SaaSCommercialCheckout(db.Model):
     )
 
     id = db.Column(db.Integer, primary_key=True)
-    lead_id = db.Column(db.Integer, db.ForeignKey("saas_leads.id"), nullable=False, index=True)
+    lead_id = db.Column(db.Integer, db.ForeignKey("saas_leads.id", ondelete="SET NULL"), index=True)
     plan_id = db.Column(db.Integer, db.ForeignKey("plans.id"), nullable=False, index=True)
     plan_code = db.Column(db.String(40), nullable=False, index=True)
     company_name = db.Column(db.String(160), nullable=False)
