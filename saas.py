@@ -2007,6 +2007,130 @@ def crm_campaign_cancel(campaign_id):
     return redirect(url_for("saas.crm_campaign_detail", campaign_id=campaign_id))
 
 
+@bp.get("/crm/email/gmail/connect")
+@superadmin_required
+def crm_email_gmail_connect():
+    """Start the one-time OAuth authorization for stockarmobile@gmail.com."""
+    from services.gmail_commercial_service import authorization_url
+
+    _require_superadmin()
+    state = secrets.token_urlsafe(32)
+    session["gmail_commercial_oauth_state"] = state
+    try:
+        return redirect(authorization_url(state))
+    except RuntimeError as exc:
+        flash(str(exc), "danger")
+        return redirect(url_for("saas.crm_panel"))
+
+
+@bp.get("/crm/email/gmail/callback")
+@superadmin_required
+def crm_email_gmail_callback():
+    """Exchange Gmail OAuth code and display the refresh token for Render."""
+    from services.gmail_commercial_service import exchange_code
+
+    _require_superadmin()
+    state = (request.args.get("state") or "").strip()
+    expected_state = session.pop("gmail_commercial_oauth_state", "")
+    if not state or not expected_state or not secrets.compare_digest(state, expected_state):
+        abort(400, description="Estado OAuth de Gmail inválido.")
+    error = (request.args.get("error") or "").strip()
+    if error:
+        return current_app.response_class(
+            f"Autorización de Gmail cancelada: {escape(error)}",
+            mimetype="text/plain",
+        ), 400
+    code = (request.args.get("code") or "").strip()
+    if not code:
+        abort(400, description="Google no devolvió un código OAuth.")
+    try:
+        refresh_token = exchange_code(code)
+    except Exception as exc:
+        current_app.logger.exception("Gmail OAuth callback failed: %s", exc)
+        return current_app.response_class(
+            "No se pudo completar la autorización de Gmail. Revisá la configuración OAuth y los logs.",
+            mimetype="text/plain",
+        ), 502
+
+    safe_token = escape(refresh_token)
+    html = (
+        "<h1>Gmail autorizado</h1>"
+        "<p>Cuenta: <strong>stockarmobile@gmail.com</strong></p>"
+        "<p>Guardá este refresh token como secreto de Render en "
+        "<code>GMAIL_COMMERCIAL_REFRESH_TOKEN</code>. No lo publiques ni lo compartas.</p>"
+        f"<textarea style='width:100%;height:120px'>{safe_token}</textarea>"
+        "<p>Después de cargarlo en Render, configurá el topic de Google Cloud Pub/Sub "
+        "y ejecutá la renovación de watch desde el CRM.</p>"
+    )
+    return current_app.response_class(html, mimetype="text/html")
+
+
+@bp.post("/crm/email/gmail/watch")
+@superadmin_required
+def crm_email_gmail_watch():
+    from services.gmail_commercial_service import renew_watch
+
+    _require_superadmin()
+    try:
+        result = renew_watch()
+    except Exception as exc:
+        current_app.logger.exception("Gmail watch renewal failed: %s", exc)
+        flash(f"No se pudo activar la escucha de Gmail: {exc}", "danger")
+        return redirect(url_for("saas.crm_panel"))
+    flash(
+        f"Gmail conectado. Watch activo hasta {result.get('expiration') or 'la fecha informada por Google'}.",
+        "success",
+    )
+    return redirect(url_for("saas.crm_panel"))
+
+
+@bp.post("/crm/email/gmail/sync")
+@superadmin_required
+def crm_email_gmail_sync():
+    from services.gmail_commercial_service import sync_recent_messages
+
+    _require_superadmin()
+    try:
+        result = sync_recent_messages(hours=48)
+    except Exception as exc:
+        current_app.logger.exception("Gmail manual sync failed: %s", exc)
+        flash(f"No se pudo sincronizar Gmail: {exc}", "danger")
+        return redirect(url_for("saas.crm_panel"))
+    flash(
+        f"Gmail sincronizado: {result.get('received', 0)} nuevos, "
+        f"{result.get('duplicates', 0)} duplicados.",
+        "success",
+    )
+    return redirect(url_for("saas.crm_panel"))
+
+
+@bp.post("/crm/email/gmail/pubsub")
+def crm_email_gmail_pubsub():
+    """Receive Gmail change notifications delivered by Google Cloud Pub/Sub."""
+    expected = str(
+        current_app.config.get("GMAIL_COMMERCIAL_PUBSUB_SECRET")
+        or os.getenv("GMAIL_COMMERCIAL_PUBSUB_SECRET")
+        or ""
+    ).strip()
+    provided = str(
+        request.headers.get("X-Gmail-PubSub-Secret")
+        or request.args.get("secret")
+        or ""
+    ).strip()
+    if not expected or not provided or not secrets.compare_digest(provided, expected):
+        abort(401)
+
+    payload = request.get_json(silent=True) or {}
+    try:
+        from services.gmail_commercial_service import process_pubsub_notification
+
+        result = process_pubsub_notification(payload)
+    except Exception as exc:
+        current_app.logger.exception("Gmail Pub/Sub processing failed: %s", exc)
+        return {"success": False, "error": "No se pudo procesar la notificación."}, 500
+    return {"success": True, **result}, 200
+
+
 @bp.post("/crm/email/inbound")
 def crm_email_inbound():
     """Webhook for replies to the commercial acquisition mailbox."""
