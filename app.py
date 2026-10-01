@@ -1601,6 +1601,7 @@ class SaaSCommercialCheckout(db.Model):
     checkout_url = db.Column(db.Text)
     status = db.Column(db.String(30), nullable=False, default="pending", index=True)
     activation_token_hash = db.Column(db.String(64), index=True)
+    activation_token_encrypted = db.Column(db.Text)
     activated_at = db.Column(db.DateTime)
     company_id = db.Column(db.Integer, db.ForeignKey("companies.id"), index=True)
     user_id = db.Column(db.Integer, db.ForeignKey("users.id"), index=True)
