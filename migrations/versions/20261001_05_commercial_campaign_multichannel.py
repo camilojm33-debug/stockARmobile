@@ -23,9 +23,16 @@ def upgrade():
         ["tracking_token"],
         unique=True,
     )
+    op.create_index(
+        "ix_saas_campaign_recipients_provider_message_id",
+        "saas_campaign_recipients",
+        ["provider_message_id"],
+        unique=False,
+    )
 
 
 def downgrade():
+    op.drop_index("ix_saas_campaign_recipients_provider_message_id", table_name="saas_campaign_recipients")
     op.drop_index("ix_saas_campaign_recipients_tracking_token", table_name="saas_campaign_recipients")
     op.drop_column("saas_campaign_recipients", "provider_status")
     op.drop_column("saas_campaign_recipients", "tracking_token")
