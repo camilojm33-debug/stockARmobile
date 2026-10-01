@@ -1741,7 +1741,7 @@ class SaaSCampaignRecipient(db.Model):
     channel = db.Column(db.String(20), nullable=False, default="email")
     destination = db.Column(db.String(255), nullable=False)
     status = db.Column(db.String(30), nullable=False, default="pending", index=True)
-    provider_message_id = db.Column(db.String(255))
+    provider_message_id = db.Column(db.String(255), index=True)
     provider_status = db.Column(db.String(40))
     tracking_token = db.Column(db.String(96), unique=True, index=True)
     error_reason = db.Column(db.Text)
