@@ -2130,8 +2130,7 @@ def crm_lead_delete(lead_id):
         return _redirect_back("saas.crm_panel")
 
     lead = SaaSLead.query.filter_by(id=lead_id).first_or_404()
-    company_name = lead.company_name
-    contact_name = lead.contact_name
+    lead_company_id = lead.company_id
     try:
         result = delete_saas_lead(db.session, lead_id)
         record_audit(
@@ -2139,13 +2138,15 @@ def crm_lead_delete(lead_id):
             entity="saas_lead",
             entity_id=lead_id,
             detail=(
-                f"Prospecto eliminado permanentemente: {company_name} / {contact_name}. "
+                f"Prospecto CRM {lead_id} eliminado permanentemente. "
                 f"tareas={result['tasks_deleted']}; alertas={result['alerts_deleted']}; "
                 f"destinatarios={result['campaign_recipients_deleted']}; "
                 f"consentimientos={result['consents_deleted']}; "
+                f"eventos_campaña_desvinculados={result.get('campaign_events_unlinked', 0)}; "
                 f"checkouts_desvinculados={result['checkouts_detached']}."
             ),
             user_id=current_user.id,
+            company_id=lead_company_id,
         )
         db.session.commit()
         flash(
