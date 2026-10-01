@@ -802,3 +802,58 @@ def campaign_metrics(db_session, campaign_id: int) -> dict:
         "delivered": base.filter(SaaSCampaignRecipient.delivered_at.isnot(None)).count(),
         "replied": base.filter(SaaSCampaignRecipient.replied_at.isnot(None)).count(),
     }
+
+
+
+def capture_inbound_email(*, sender_email: str, subject: str = "", text: str = "", html: str = "", external_message_id: str = "", recipient_email: str = "") -> dict:
+    """Register an inbound commercial email against the SaaS CRM and conversation."""
+    from stockarmobile.models.conversations import Conversation, ConversationMessage, ConversationParticipant
+    from app import SaaSLead, SaaSLeadConsent
+    from services.saas_commercial_whatsapp import ensure_commercial_agent, get_commercial_company, _superadmin_actor_id
+
+    email = str(sender_email or "").strip().lower()
+    if not email or not EMAIL_RE.match(email):
+        raise ValueError("El remitente del email no es válido.")
+    company = get_commercial_company()
+    if company is None:
+        raise RuntimeError("El canal Comercial no está inicializado.")
+    agent = ensure_commercial_agent(company.id)
+    now = datetime.now(timezone.utc).replace(tzinfo=None)
+    message_id = str(external_message_id or "").strip()[:255] or None
+
+    lead = (SaaSLead.query.filter(db.func.lower(SaaSLead.email) == email).order_by(SaaSLead.id.desc()).first())
+    if lead is None:
+        actor_id = _superadmin_actor_id()
+        if actor_id is None:
+            raise RuntimeError("No existe un usuario SuperAdmin activo para registrar el lead.")
+        lead = SaaSLead(company_name="Prospecto Email", contact_name=email.split("@", 1)[0][:160], email=email[:160], source="email_comercial", status="nuevo", priority="media", notes="", whatsapp_consent_status="unknown", email_consent_status="unknown", phone_consent_status="unknown", do_not_contact=False, created_by_user_id=actor_id, company_id=None, captured_at=now, validated_at=now)
+        db.session.add(lead)
+        db.session.flush()
+        db.session.add(SaaSLeadConsent(lead_id=lead.id, whatsapp_status="unknown", email_status="unknown", phone_status="unknown", unsubscribe_token=secrets.token_urlsafe(36), created_at=now, updated_at=now))
+
+    external_conversation_id = f"email:{email}"
+    conversation = (Conversation.query.filter_by(company_id=company.id, channel="email_commercial", external_conversation_id=external_conversation_id).order_by(Conversation.id.desc()).first())
+    if conversation is None:
+        conversation = Conversation(company_id=company.id, agent_id=agent.id, channel="email_commercial", external_conversation_id=external_conversation_id, status="open", metadata_json={"lead_id": lead.id, "sender_email": email, "recipient_email": str(recipient_email or "")[:160]}, created_at=now, updated_at=now)
+        db.session.add(conversation)
+        db.session.flush()
+        db.session.add(ConversationParticipant(conversation_id=conversation.id, company_id=company.id, participant_type="prospect", participant_id=lead.id, display_name=lead.contact_name or email, created_at=now))
+
+    if message_id:
+        duplicate = ConversationMessage.query.filter_by(company_id=company.id, conversation_id=conversation.id, external_message_id=message_id).first()
+        if duplicate is not None:
+            return {"status": "duplicate", "lead_id": lead.id, "conversation_id": conversation.id, "message_id": duplicate.id}
+
+    body = (str(text or "").strip() or str(html or "").strip())[:20000] or "(Email sin contenido de texto)"
+    content = f"Asunto: {str(subject or '').strip()[:500]}\\n\\n{body}".strip()
+    message = ConversationMessage(company_id=company.id, conversation_id=conversation.id, sender_type="user", sender_id=None, role="user", content=content, content_type="email", external_message_id=message_id, idempotency_key=f"email-inbound:{message_id}" if message_id else None, metadata_json={"channel": "email_commercial", "sender_email": email, "recipient_email": str(recipient_email or "")[:160]}, created_at=now)
+    db.session.add(message)
+    lead.last_contacted_at = now
+    lead.last_contact_channel = "email"
+    lead.contact_count = int(lead.contact_count or 0) + 1
+    if lead.status == "nuevo":
+        lead.status = "contactado"
+    lead.updated_at = now
+    conversation.updated_at = now
+    db.session.commit()
+    return {"status": "received", "lead_id": lead.id, "conversation_id": conversation.id, "message_id": message.id}
