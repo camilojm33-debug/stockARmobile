@@ -169,6 +169,29 @@
         <div class="col-lg-4"><div class="card app-card h-100"><div class="card-body">
           <div class="fw-bold mb-1">Herramientas relacionadas</div><div class="small text-muted mb-3">Accesos directos para la operación del SuperAdmin.</div>
           <div class="d-grid gap-2">
+            <div class="border rounded p-3">
+              <div class="fw-semibold"><i class="bi bi-envelope-at me-2"></i>Gmail Comercial</div>
+              <div class="small text-muted mb-2">stockarmobile@gmail.com · recepción automática en el CRM.</div>
+              <div class="small mb-2">
+                OAuth:
+                {% if gmail_oauth_configured %}<span class="badge text-bg-success">configurado</span>{% else %}<span class="badge text-bg-warning">falta configurar</span>{% endif %}
+                Token:
+                {% if gmail_refresh_configured %}<span class="badge text-bg-success">conectado</span>{% else %}<span class="badge text-bg-secondary">pendiente</span>{% endif %}
+                Push:
+                {% if gmail_pubsub_configured %}<span class="badge text-bg-success">configurado</span>{% else %}<span class="badge text-bg-secondary">pendiente</span>{% endif %}
+              </div>
+              <div class="d-flex flex-wrap gap-2">
+                <a class="btn btn-sm btn-outline-primary" href="{{ url_for('saas.crm_email_gmail_connect') }}"><i class="bi bi-google me-1"></i>Conectar Gmail</a>
+                <form method="post" action="{{ url_for('saas.crm_email_gmail_sync') }}" class="d-inline">
+                  <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                  <button class="btn btn-sm btn-outline-secondary"><i class="bi bi-arrow-repeat me-1"></i>Sincronizar</button>
+                </form>
+                <form method="post" action="{{ url_for('saas.crm_email_gmail_watch') }}" class="d-inline">
+                  <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                  <button class="btn btn-sm btn-outline-success"><i class="bi bi-broadcast me-1"></i>Activar escucha</button>
+                </form>
+              </div>
+            </div>
             <a class="btn btn-outline-secondary text-start" href="{{ url_for('saas.companies_panel') }}"><i class="bi bi-buildings me-2"></i>Gestionar empresas</a>
             <a class="btn btn-outline-secondary text-start" href="{{ url_for('saas.users_panel') }}"><i class="bi bi-people me-2"></i>Usuarios globales</a>
             <a class="btn btn-outline-secondary text-start" href="{{ url_for('saas.ai_profitability_panel') }}"><i class="bi bi-graph-up-arrow me-2"></i>Costos y rentabilidad IA</a>
