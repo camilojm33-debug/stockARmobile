@@ -464,8 +464,14 @@ def test_delete_saas_lead_removes_crm_children_and_detaches_checkout(app):
         )
         db.session.add_all([campaign_event, checkout])
         db.session.commit()
+        lead_pk = lead.id
+        task_pk = task.id
+        alert_pk = alert.id
+        recipient_pk = recipient.id
+        campaign_event_pk = campaign_event.id
+        checkout_pk = checkout.id
 
-        result = delete_saas_lead(db.session, lead.id)
+        result = delete_saas_lead(db.session, lead_pk)
         db.session.commit()
 
         assert result["lead_id"] == lead_pk
@@ -481,7 +487,7 @@ def test_delete_saas_lead_removes_crm_children_and_detaches_checkout(app):
         assert db.session.query(SaaSTask).filter_by(id=task_pk).count() == 0
         assert db.session.query(SaaSAlert).filter_by(id=alert_pk).count() == 0
         assert db.session.query(SaaSCampaignRecipient).filter_by(id=recipient_pk).count() == 0
-        assert db.session.query(SaaSCampaignEvent).filter_by(id=campaign_event.id).count() == 0
+        assert db.session.query(SaaSCampaignEvent).filter_by(id=campaign_event_pk).count() == 0
 
         detached = db.session.get(SaaSCommercialCheckout, checkout_pk)
         assert detached is not None
