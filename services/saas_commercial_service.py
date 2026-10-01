@@ -294,8 +294,6 @@ def parse_segment_json(raw: str | None) -> dict:
 
 
 def _eligible_leads_query(channel: str, filters: dict):
-    from app import SaaSLead
-
     query = SaaSLead.query.filter(SaaSLead.do_not_contact.is_(False))
     for field in ("industry", "province", "locality", "segment"):
         if filters.get(field):
@@ -330,9 +328,13 @@ def campaign_audience_metrics(db_session, campaign) -> dict:
         query = query.filter(SaaSLead.lead_score >= int(filters["min_score"]))
 
     total = query.count()
-    blocked = SaaSLead.query.filter(
-        SaaSLead.do_not_contact.is_(True)
-    ).count()
+    blocked_query = SaaSLead.query.filter(SaaSLead.do_not_contact.is_(True))
+    for field in ("industry", "province", "locality", "segment"):
+        if filters.get(field):
+            blocked_query = blocked_query.filter(getattr(SaaSLead, field).ilike(f"%{filters[field]}%"))
+    if int(filters.get("min_score") or 0):
+        blocked_query = blocked_query.filter(SaaSLead.lead_score >= int(filters["min_score"]))
+    blocked = blocked_query.count()
     email_available = query.filter(
         SaaSLead.email.isnot(None),
         SaaSLead.email_status != "invalid",
@@ -356,7 +358,7 @@ def campaign_audience_metrics(db_session, campaign) -> dict:
 
 
 def build_campaign_recipients(db_session, campaign_id: int) -> dict:
-    from app import SaaSCampaign, SaaSCampaignEvent, SaaSCampaignRecipient, utcnow
+    from app import SaaSCampaign, SaaSCampaignEvent, SaaSCampaignRecipient, SaaSLead, utcnow
 
     campaign = db_session.get(SaaSCampaign, campaign_id)
     if campaign is None:
@@ -376,8 +378,8 @@ def build_campaign_recipients(db_session, campaign_id: int) -> dict:
 
     for channel in channels:
         leads = _eligible_leads_query(channel, filters).order_by(
-            SaaSCampaignRecipient.id.asc() if False else __import__("app").SaaSLead.lead_score.desc(),
-            __import__("app").SaaSLead.id.asc(),
+            SaaSLead.lead_score.desc(),
+            SaaSLead.id.asc(),
         ).all()
         eligible[channel] = len(leads)
         for lead in leads:
