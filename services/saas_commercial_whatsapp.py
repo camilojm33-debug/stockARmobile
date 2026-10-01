@@ -275,7 +275,7 @@ def create_commercial_checkout(*, sender: str, plan_code: str, payer_email: str,
         }
 
     token_raw, token_hash = _make_activation_token()
-    from services.ai_agent.config_service import encrypt_secret, decrypt_secret
+    from services.ai_agent.config_service import encrypt_secret
     external_reference = (
         f"stockarmobile|flow:commercial_checkout|lead_id:{lead.id}|"
         f"plan_code:{normalized_plan}|checkout_id:pending|nonce:{uuid.uuid4().hex}"
@@ -338,7 +338,6 @@ def activate_commercial_checkout(*, preapproval: dict) -> dict | None:
         Subscription,
         User,
     )
-    from services.referral_service import ReferralService
     from services.saas_ops_service import SaaSOpsService
     from services.subscription_service import SubscriptionService
 
@@ -384,8 +383,8 @@ def activate_commercial_checkout(*, preapproval: dict) -> dict | None:
         .order_by(Company.id.asc())
         .first()
     )
-    if existing_company is not None and existing_company.id != 18:
-        raise RuntimeError("Ya existe una empresa con ese nombre.")
+    if existing_company is not None:
+        raise RuntimeError("Ya existe una empresa con ese nombre. El alta automática no reutiliza empresas existentes.")
 
     now = _utcnow()
     company = existing_company
@@ -399,6 +398,8 @@ def activate_commercial_checkout(*, preapproval: dict) -> dict | None:
         db.session.flush()
 
     existing_user = User.query.filter(db.func.lower(User.email) == checkout.payer_email.lower()).first()
+    if existing_user is not None and (existing_user.role or "").strip().lower() == "superadmin":
+        raise RuntimeError("El email de contratación pertenece a un usuario Super Admin y no puede reutilizarse para un alta comercial.")
     if existing_user is not None and existing_user.company_id not in {None, company.id}:
         raise RuntimeError("El email de contratación ya pertenece a otra empresa.")
 
