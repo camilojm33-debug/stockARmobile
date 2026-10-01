@@ -294,6 +294,8 @@ def parse_segment_json(raw: str | None) -> dict:
 
 
 def _eligible_leads_query(channel: str, filters: dict):
+    from app import SaaSLead
+
     query = SaaSLead.query.filter(SaaSLead.do_not_contact.is_(False))
     for field in ("industry", "province", "locality", "segment"):
         if filters.get(field):
