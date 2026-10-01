@@ -1,9 +1,12 @@
 """Isolated WhatsApp acquisition channel for SuperAdmin commercial leads."""
 from __future__ import annotations
 
+import hashlib
 import json
 import os
-from datetime import datetime, timezone
+import secrets
+import uuid
+from datetime import datetime, timezone, timedelta
 
 from sqlalchemy import or_
 
@@ -200,6 +203,298 @@ def capture_inbound_lead(sender: str, text: str):
         db.session.add(consent)
     db.session.commit()
     return lead.id
+
+
+
+def _normalized_lead_email(email: str) -> str:
+    return str(email or "").strip().lower()
+
+
+def _make_activation_token() -> tuple[str, str]:
+    raw = secrets.token_urlsafe(36)
+    return raw, hashlib.sha256(raw.encode("utf-8")).hexdigest()
+
+
+def create_commercial_checkout(*, sender: str, plan_code: str, payer_email: str, company_name: str, back_url: str, notification_url: str) -> dict:
+    """Create/reuse a paid SaaS checkout for the current WhatsApp prospect."""
+    from app import Plan, SaaSCommercialCheckout, SaaSLead
+    from services.mercadopago_service import MercadoPagoService
+
+    company = get_commercial_company()
+    if company is None:
+        raise RuntimeError("El canal Comercial IA no está inicializado.")
+
+    normalized_plan = str(plan_code or "").strip().lower()
+    normalized_email = _normalized_lead_email(payer_email)
+    normalized_name = str(company_name or "").strip()
+    if not normalized_name or len(normalized_name) < 2:
+        raise ValueError("Necesito el nombre de la empresa.")
+    if not normalized_email or "@" not in normalized_email:
+        raise ValueError("Necesito un email válido para iniciar el pago.")
+
+    plan = Plan.query.filter_by(code=normalized_plan, active=True).first()
+    if plan is None or str(plan.code).strip().lower() == "trial":
+        raise ValueError("Seleccioná un plan pago vigente.")
+    amount = float(plan.price or 0)
+    if amount <= 0:
+        raise ValueError("El plan seleccionado no tiene un importe válido.")
+
+    normalized_phone = "".join(ch for ch in str(sender or "") if ch.isdigit())[:40]
+    lead = (
+        SaaSLead.query
+        .filter(SaaSLead.whatsapp == normalized_phone)
+        .order_by(SaaSLead.id.desc())
+        .first()
+    )
+    if lead is None:
+        lead_id = capture_inbound_lead(sender, "")
+        lead = SaaSLead.query.filter_by(id=lead_id).first() if lead_id else None
+    if lead is None:
+        raise RuntimeError("No pude asociar el checkout con el prospecto de WhatsApp.")
+
+    pending = (
+        SaaSCommercialCheckout.query
+        .filter(
+            SaaSCommercialCheckout.lead_id == lead.id,
+            SaaSCommercialCheckout.plan_code == normalized_plan,
+            SaaSCommercialCheckout.status == "pending",
+        )
+        .order_by(SaaSCommercialCheckout.id.desc())
+        .first()
+    )
+    if pending is not None and pending.checkout_url and pending.preapproval_id:
+        return {
+            "success": True,
+            "status": "pending",
+            "checkout_url": pending.checkout_url,
+            "preapproval_id": pending.preapproval_id,
+            "amount": amount,
+            "currency": plan.currency or "ARS",
+            "plan_name": plan.name,
+            "checkout_id": pending.id,
+        }
+
+    token_raw, token_hash = _make_activation_token()
+    external_reference = (
+        f"stockarmobile|flow:commercial_checkout|lead_id:{lead.id}|"
+        f"plan_code:{normalized_plan}|checkout_id:pending|nonce:{uuid.uuid4().hex}"
+    )
+
+    response = MercadoPagoService().create_preapproval(
+        reason=f"StockArMobile - Plan {plan.name}",
+        payer_email=normalized_email,
+        external_reference=external_reference,
+        amount=amount,
+        currency=plan.currency or "ARS",
+        frequency=1,
+        frequency_type="months",
+        notification_url=notification_url,
+        back_url=back_url,
+    )
+    preapproval_id = str(response.get("id") or "").strip()
+    checkout_url = str(response.get("init_point") or "").strip()
+    if not preapproval_id or not checkout_url:
+        raise RuntimeError("Mercado Pago no devolvió un enlace de pago válido.")
+
+    external_reference = external_reference.replace("checkout_id:pending", f"checkout_id:{preapproval_id}")
+    checkout = SaaSCommercialCheckout(
+        lead_id=lead.id,
+        plan_id=plan.id,
+        plan_code=normalized_plan,
+        company_name=normalized_name[:160],
+        payer_email=normalized_email[:160],
+        phone=normalized_phone,
+        preapproval_id=preapproval_id,
+        external_reference=external_reference,
+        checkout_url=checkout_url,
+        status="pending",
+        activation_token_hash=token_hash,
+    )
+    db.session.add(checkout)
+    lead.company_name = normalized_name[:160]
+    lead.email = normalized_email[:160]
+    lead.phone = normalized_phone
+    lead.status = "propuesta"
+    db.session.commit()
+    return {
+        "success": True,
+        "status": "pending",
+        "checkout_url": checkout_url,
+        "preapproval_id": preapproval_id,
+        "amount": amount,
+        "currency": plan.currency or "ARS",
+        "plan_name": plan.name,
+        "checkout_id": checkout.id,
+    }
+
+
+def activate_commercial_checkout(*, preapproval: dict) -> dict | None:
+    """Create the tenant account after Mercado Pago authorizes the commercial preapproval."""
+    from app import (
+        Company,
+        SaaSCommercialCheckout,
+        Subscription,
+        User,
+    )
+    from services.referral_service import ReferralService
+    from services.saas_ops_service import SaaSOpsService
+    from services.subscription_service import SubscriptionService
+
+    preapproval_id = str((preapproval or {}).get("id") or "").strip()
+    if not preapproval_id:
+        return None
+    checkout = (
+        SaaSCommercialCheckout.query
+        .filter_by(preapproval_id=preapproval_id)
+        .order_by(SaaSCommercialCheckout.id.asc())
+        .first()
+    )
+    if checkout is None:
+        return None
+
+    status = str((preapproval or {}).get("status") or "").strip().lower()
+    if status not in {"authorized", "approved"}:
+        if status in {"cancelled", "canceled", "expired", "paused"}:
+            checkout.status = status
+            db.session.commit()
+        return {"status": status or "pending", "checkout_id": checkout.id}
+
+    if checkout.status == "activated" and checkout.company_id:
+        company = Company.query.get(checkout.company_id)
+        return {
+            "status": "activated",
+            "checkout_id": checkout.id,
+            "company_id": company.id if company else None,
+            "activation_token_hash": checkout.activation_token_hash,
+        }
+
+    existing_company = (
+        Company.query
+        .filter(db.func.lower(Company.name) == checkout.company_name.lower())
+        .order_by(Company.id.asc())
+        .first()
+    )
+    if existing_company is not None and existing_company.id != 18:
+        raise RuntimeError("Ya existe una empresa con ese nombre.")
+
+    now = _utcnow()
+    company = existing_company
+    if company is None:
+        company = Company(
+            name=checkout.company_name[:160],
+            active=True,
+            created_at=now,
+        )
+        db.session.add(company)
+        db.session.flush()
+
+    existing_user = User.query.filter(db.func.lower(User.email) == checkout.payer_email.lower()).first()
+    if existing_user is not None and existing_user.company_id not in {None, company.id}:
+        raise RuntimeError("El email de contratación ya pertenece a otra empresa.")
+
+    user = existing_user
+    if user is None:
+        username_base = "".join(ch.lower() if ch.isalnum() else "-" for ch in checkout.payer_email.split("@")[0]).strip("-") or "cliente"
+        username = username_base
+        suffix = 2
+        while User.query.filter_by(username=username).first() is not None:
+            username = f"{username_base}-{suffix}"
+            suffix += 1
+        user = User(username=username, email=checkout.payer_email, company_id=company.id, role="admin", active=True, auth_provider="local")
+        user.set_password(secrets.token_urlsafe(20))
+        db.session.add(user)
+        db.session.flush()
+    else:
+        user.company_id = company.id
+        user.role = "admin"
+        user.active = True
+
+    plan = db.session.get(__import__("app").Plan, checkout.plan_id)
+    if plan is None:
+        raise RuntimeError("El plan contratado ya no está disponible.")
+
+    subscription = (
+        Subscription.query
+        .filter_by(company_id=company.id, status="active")
+        .order_by(Subscription.id.asc())
+        .first()
+    )
+    if subscription is None:
+        result = SubscriptionService.run_command(
+            db.session,
+            SubscriptionService.CreateSubscriptionCommand(
+                company_id=company.id,
+                actor_user_id=None,
+                actor_role="system",
+                origin="commercial_checkout",
+                idempotency_key=f"commercial-activate:{checkout.id}",
+                plan_id=plan.id,
+                status="active",
+                start_date=now,
+                next_billing_date=now + timedelta(days=int(plan.duration_days or 30)),
+                renewal_enabled=True,
+                metadata={
+                    "commercial_checkout_id": checkout.id,
+                    "mercadopago_preapproval_id": preapproval_id,
+                    "payer_email": checkout.payer_email,
+                },
+            ),
+        )
+        subscription = db.session.get(Subscription, result.subscription_id)
+    else:
+        subscription.plan_id = plan.id
+        subscription.status = "active"
+        subscription.start_date = now
+        subscription.starts_at = now
+        subscription.next_billing_date = now + timedelta(days=int(plan.duration_days or 30))
+        subscription.ends_at = subscription.next_billing_date
+        subscription.renewal_enabled = True
+        subscription.auto_renew = True
+
+    subscription.mercadopago_subscription_id = preapproval_id
+    subscription.external_reference = checkout.external_reference
+    metadata = {}
+    try:
+        metadata = json.loads(subscription.metadata_json or "{}")
+    except (TypeError, ValueError):
+        metadata = {}
+    metadata.update({
+        "commercial_checkout_id": checkout.id,
+        "mercadopago_preapproval_id": preapproval_id,
+        "mercadopago_status": status,
+        "payer_email": checkout.payer_email,
+    })
+    subscription.metadata_json = json.dumps(metadata, ensure_ascii=False)
+
+    checkout.status = "activated"
+    checkout.company_id = company.id
+    checkout.user_id = user.id
+    checkout.activated_at = now
+
+    lead = checkout.lead
+    lead.company_id = company.id
+    lead.assigned_user_id = user.id
+    lead.status = "ganado"
+    lead.converted_at = now
+    lead.updated_at = now
+
+    SaaSOpsService.register_signup(db.session, company=company, user=user)
+    db.session.commit()
+    return {
+        "status": "activated",
+        "checkout_id": checkout.id,
+        "company_id": company.id,
+        "user_id": user.id,
+        "payer_email": checkout.payer_email,
+    }
+
+
+def activation_token_for_checkout(checkout) -> str | None:
+    if not checkout or checkout.status != "activated":
+        return None
+    # The raw token is intentionally never persisted; activation link must be
+    # delivered before this request reaches activation or regenerated by support.
+    return None
 
 
 def get_commercial_conversation(company_id: int, sender: str) -> Conversation:
