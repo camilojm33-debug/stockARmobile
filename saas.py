@@ -1758,6 +1758,9 @@ def crm_panel():
         lead_page=page,
         lead_per_page=per_page,
         lead_pages=max(1, (lead_total + per_page - 1) // per_page),
+        gmail_oauth_configured=bool(os.getenv("GOOGLE_GMAIL_CLIENT_ID") and os.getenv("GOOGLE_GMAIL_CLIENT_SECRET")),
+        gmail_refresh_configured=bool(os.getenv("GMAIL_COMMERCIAL_REFRESH_TOKEN")),
+        gmail_pubsub_configured=bool(os.getenv("GMAIL_COMMERCIAL_PUBSUB_TOPIC") and os.getenv("GMAIL_COMMERCIAL_PUBSUB_SECRET")),
     )
 
 
