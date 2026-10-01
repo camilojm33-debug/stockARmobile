@@ -306,9 +306,16 @@ def delete_saas_lead(db_session, lead_id: int) -> dict:
         row.id
         for row in db_session.query(SaaSTask.id).filter(SaaSTask.lead_id == lead_id).all()
     ]
-    alert_count = SaaSAlert.query.filter(SaaSAlert.lead_id == lead_id).count()
+    alert_ids = {
+        row.id
+        for row in SaaSAlert.query.filter(SaaSAlert.lead_id == lead_id).all()
+    }
     if task_ids:
-        alert_count += SaaSAlert.query.filter(SaaSAlert.task_id.in_(task_ids)).count()
+        alert_ids.update(
+            row.id
+            for row in SaaSAlert.query.filter(SaaSAlert.task_id.in_(task_ids)).all()
+        )
+    alert_count = len(alert_ids)
 
     recipient_count = SaaSCampaignRecipient.query.filter_by(lead_id=lead_id).count()
     consent_count = SaaSLeadConsent.query.filter_by(lead_id=lead_id).count()
