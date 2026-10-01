@@ -832,7 +832,6 @@ def process_commercial_message(*, phone_number_id: str, sender: str, external_id
         from app import SaaSCampaignEvent, SaaSCampaignRecipient
         latest_recipient = (
             SaaSCampaignRecipient.query
-            .join(SaaSCampaignEvent, SaaSCampaignEvent.recipient_id == SaaSCampaignRecipient.id, isouter=True)
             .filter(
                 SaaSCampaignRecipient.lead_id == int(lead_id),
                 SaaSCampaignRecipient.channel == "whatsapp",
