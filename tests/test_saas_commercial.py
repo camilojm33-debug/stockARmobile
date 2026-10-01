@@ -357,3 +357,136 @@ def test_email_tracking_html_contains_open_pixel_and_tracked_links(app):
         assert "/superadmin/crm/email/open/track-token-123" in html
         assert "/superadmin/crm/email/click/track-token-123" in html
         assert "%2Fauth%2Fregister" in html
+
+
+def test_delete_saas_lead_removes_crm_children_and_detaches_checkout(app):
+    from app import (
+        Plan, SaaSAlert, SaaSCampaign, SaaSCampaignRecipient, SaaSCommercialCheckout,
+        SaaSLead, SaaSLeadConsent, SaaSTask, User, db
+    )
+    from services.saas_commercial_service import delete_saas_lead
+
+    with app.app_context():
+        user = User(
+            username="delete-lead-admin",
+            email="delete-lead-admin@example.com",
+            role="superadmin",
+            active=True,
+        )
+        user.set_password("test-password")
+        db.session.add(user)
+
+        plan = Plan(
+            code="delete-test-plan",
+            name="Delete Test Plan",
+            price=100,
+            currency="ARS",
+            duration_days=30,
+            active=True,
+        )
+        db.session.add(plan)
+        db.session.flush()
+
+        lead = SaaSLead(
+            company_name="Borrar CRM",
+            contact_name="Contacto Borrar",
+            email="borrar@example.com",
+            whatsapp="549999001111",
+            email_consent_status="opted_in",
+            whatsapp_consent_status="opted_in",
+            created_by_user_id=user.id,
+        )
+        db.session.add(lead)
+        db.session.flush()
+
+        consent = SaaSLeadConsent(
+            lead_id=lead.id,
+            unsubscribe_token="delete-lead-token",
+            email_status="opted_in",
+            whatsapp_status="opted_in",
+        )
+        task = SaaSTask(
+            lead_id=lead.id,
+            company_id=None,
+            title="Seguimiento a borrar",
+            status="pendiente",
+            priority="media",
+            created_by_user_id=user.id,
+        )
+        db.session.add_all([consent, task])
+        db.session.flush()
+
+        alert = SaaSAlert(
+            lead_id=lead.id,
+            task_id=task.id,
+            title="Alerta a borrar",
+            message="Alerta CRM",
+            category="comercial",
+            severity="media",
+            status="abierta",
+            created_by_user_id=user.id,
+        )
+        campaign = SaaSCampaign(
+            name="Lead delete campaign",
+            subject="Hola",
+            channel="email",
+            status="BORRADOR",
+            body_html="<p>Hola</p>",
+            created_by_user_id=user.id,
+        )
+        db.session.add_all([alert, campaign])
+        db.session.flush()
+
+        recipient = SaaSCampaignRecipient(
+            campaign_id=campaign.id,
+            lead_id=lead.id,
+            channel="email",
+            destination=lead.email,
+            status="pending",
+        )
+        checkout = SaaSCommercialCheckout(
+            lead_id=lead.id,
+            plan_id=plan.id,
+            plan_code=plan.code,
+            company_name=lead.company_name,
+            payer_email=lead.email,
+            phone=lead.whatsapp,
+            external_reference="delete-test-checkout",
+            status="pending",
+        )
+        db.session.add_all([recipient, checkout])
+        db.session.commit()
+
+        result = delete_saas_lead(db.session, lead.id)
+        db.session.commit()
+
+        assert result["lead_id"] == lead.id
+        assert result["tasks_deleted"] == 1
+        assert result["alerts_deleted"] == 1
+        assert result["campaign_recipients_deleted"] == 1
+        assert result["consents_deleted"] == 1
+        assert result["checkouts_detached"] == 1
+
+        assert db.session.get(SaaSLead, lead.id) is None
+        assert db.session.query(SaaSLeadConsent).filter_by(lead_id=lead.id).count() == 0
+        assert db.session.query(SaaSTask).filter_by(id=task.id).count() == 0
+        assert db.session.query(SaaSAlert).filter_by(id=alert.id).count() == 0
+        assert db.session.query(SaaSCampaignRecipient).filter_by(id=recipient.id).count() == 0
+
+        detached = db.session.get(SaaSCommercialCheckout, checkout.id)
+        assert detached is not None
+        assert detached.lead_id is None
+
+        other_lead = SaaSLead(
+            company_name="No borrar",
+            contact_name="Otro",
+            email="otro@example.com",
+            created_by_user_id=user.id,
+        )
+        db.session.add(other_lead)
+        db.session.commit()
+
+        with pytest.raises(ValueError):
+            delete_saas_lead(db.session, 999999)
+
+        assert db.session.get(SaaSLead, other_lead.id) is not None
