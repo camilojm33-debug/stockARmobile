@@ -721,6 +721,7 @@
       <a class="nav-link {% if request.endpoint == 'saas.crm_campaigns' or request.endpoint == 'saas.crm_campaign_detail' %}active{% endif %}" href="{{ url_for('saas.crm_campaigns') }}"><i class="bi bi-megaphone"></i>Campañas</a>
       <a class="nav-link {% if request.endpoint == 'saas.attention_panel' %}active{% endif %}" href="{{ url_for('saas.attention_panel') }}"><i class="bi bi-lightning-charge"></i>Atención</a>
       <a class="nav-link {% if request.endpoint == 'saas.whatsapp_commercial_settings' %}active{% endif %}" href="{{ url_for('saas.whatsapp_commercial_settings') }}"><i class="bi bi-whatsapp"></i>WhatsApp Comercial</a>
+      <a class="nav-link {% if request.endpoint == 'saas.whatsapp_commercial_attention' %}active{% endif %}" href="{{ url_for('saas.whatsapp_commercial_attention') }}"><i class="bi bi-chat-dots"></i>Atención Comercial</a>
       <a class="nav-link {% if request.endpoint == 'saas.companies_panel' %}active{% endif %}" href="{{ url_for('saas.companies_panel') }}"><i class="bi bi-buildings"></i>Empresas</a>
       <a class="nav-link {% if request.endpoint == 'saas.users_panel' %}active{% endif %}" href="{{ url_for('saas.users_panel') }}"><i class="bi bi-people"></i>Usuarios globales</a>
       <a class="nav-link {% if request.endpoint and request.endpoint.startswith('saas.password_recovery') %}active{% endif %}" href="{{ url_for('saas.password_recovery_panel') }}"><i class="bi bi-key"></i>Recuperación de contraseñas</a>

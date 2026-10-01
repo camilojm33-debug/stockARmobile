@@ -1,0 +1,198 @@
+{% extends "base_master.html" %}
+{% block title %}Atención Comercial · WhatsApp | StockArmobile{% endblock %}
+{% block extra_css %}
+<style>
+  .commercial-inbox { max-width: 1320px; margin: 0 auto; }
+  .commercial-layout { min-height: 680px; }
+  .commercial-list { border: 1px solid var(--app-line); border-radius: 18px; overflow: hidden; background: var(--app-panel); }
+  .commercial-item { display:block; padding: 14px 16px; border-bottom:1px solid var(--app-line); text-decoration:none; color:inherit; }
+  .commercial-item:last-child { border-bottom:0; }
+  .commercial-item:hover, .commercial-item.active { background: var(--app-panel-soft); }
+  .commercial-item.active { box-shadow: inset 3px 0 0 var(--app-primary); }
+  .commercial-avatar { width:42px; height:42px; border-radius:14px; display:grid; place-items:center; background:#eaf2ff; color:var(--app-primary); flex:0 0 42px; font-weight:800; }
+  .commercial-message-pane { border:1px solid var(--app-line); border-radius:18px; background:var(--app-panel); min-height:680px; display:flex; flex-direction:column; overflow:hidden; }
+  .commercial-messages { flex:1; overflow:auto; padding:18px; background:linear-gradient(180deg, var(--app-panel-soft), var(--app-panel)); }
+  .commercial-bubble { max-width:min(78%, 720px); padding:10px 13px; border-radius:15px; margin-bottom:10px; white-space:pre-wrap; word-break:break-word; }
+  .commercial-bubble.user { background:#eef2f7; border:1px solid var(--app-line); margin-right:auto; }
+  .commercial-bubble.ai { background:#eaf2ff; border:1px solid rgba(37,99,235,.12); margin-left:auto; }
+  .commercial-bubble.human { background:#eafaf0; border:1px solid rgba(25,135,84,.16); margin-left:auto; }
+  [data-bs-theme="dark"] .commercial-bubble.user { background:#1c283b; }
+  [data-bs-theme="dark"] .commercial-bubble.ai { background:rgba(37,99,235,.18); }
+  [data-bs-theme="dark"] .commercial-bubble.human { background:rgba(25,135,84,.18); }
+  .commercial-compose { padding:14px; border-top:1px solid var(--app-line); background:var(--app-panel); }
+  .commercial-tabs { overflow-x:auto; flex-wrap:nowrap; }
+  .commercial-tabs .btn { white-space:nowrap; }
+  .commercial-code { font-family:ui-monospace,SFMono-Regular,Menlo,monospace; }
+  @media (max-width: 991.98px) {
+    .commercial-layout { min-height:unset; }
+    .commercial-message-pane { min-height:600px; }
+    .commercial-bubble { max-width:88%; }
+  }
+</style>
+{% endblock %}
+{% block content %}
+<div class="app-shell commercial-inbox py-4">
+  <div class="d-flex flex-wrap justify-content-between align-items-start gap-3 mb-3">
+    <div>
+      <div class="page-kicker"><i class="bi bi-whatsapp"></i> WhatsApp Comercial</div>
+      <h1 class="h2 fw-bold mb-1">Atención humana</h1>
+      <p class="text-muted mb-0">Tomá conversaciones de Comercial IA, respondé desde StockArMobile y devolvé el control a la IA cuando termines.</p>
+    </div>
+    <div class="d-flex flex-wrap gap-2">
+      <a class="btn btn-outline-secondary" href="{{ url_for('saas.whatsapp_commercial_settings') }}"><i class="bi bi-gear me-1"></i>Configurar WhatsApp</a>
+      <a class="btn btn-primary" href="{{ url_for('saas.whatsapp_commercial_attention', state='pending') }}"><i class="bi bi-arrow-clockwise me-1"></i>Actualizar</a>
+    </div>
+  </div>
+
+  <div class="row g-2 mb-3">
+    <div class="col-6 col-lg-3"><a class="btn {{ 'btn-danger' if state == 'pending' else 'btn-outline-danger' }} w-100" href="{{ url_for('saas.whatsapp_commercial_attention', state='pending') }}">Pendientes <span class="badge text-bg-light ms-1">{{ counts.pending }}</span></a></div>
+    <div class="col-6 col-lg-3"><a class="btn {{ 'btn-success' if state == 'human' else 'btn-outline-success' }} w-100" href="{{ url_for('saas.whatsapp_commercial_attention', state='human') }}">En atención <span class="badge text-bg-light ms-1">{{ counts.human }}</span></a></div>
+    <div class="col-6 col-lg-3"><a class="btn {{ 'btn-primary' if state == 'ai' else 'btn-outline-primary' }} w-100" href="{{ url_for('saas.whatsapp_commercial_attention', state='ai') }}">Con IA <span class="badge text-bg-light ms-1">{{ counts.ai }}</span></a></div>
+    <div class="col-6 col-lg-3"><a class="btn {{ 'btn-secondary' if state == 'resolved' else 'btn-outline-secondary' }} w-100" href="{{ url_for('saas.whatsapp_commercial_attention', state='resolved') }}">Resueltas <span class="badge text-bg-light ms-1">{{ counts.resolved }}</span></a></div>
+  </div>
+
+  <form class="d-flex gap-2 mb-3" method="get" action="{{ url_for('saas.whatsapp_commercial_attention') }}">
+    <input type="hidden" name="state" value="{{ state }}">
+    <input class="form-control" name="q" value="{{ q }}" placeholder="Buscar por número de WhatsApp">
+    <button class="btn btn-outline-secondary" type="submit"><i class="bi bi-search me-1"></i>Buscar</button>
+  </form>
+
+  <div class="row g-3 commercial-layout">
+    <div class="col-12 col-lg-4">
+      <section class="commercial-list">
+        {% if rows %}
+          {% for row in rows %}
+            <a class="commercial-item {% if selected and selected.conversation_id == row.conversation_id %}active{% endif %}" href="{{ url_for('saas.whatsapp_commercial_attention', state=state, q=q, conversation_id=row.conversation_id) }}">
+              <div class="d-flex gap-3 align-items-start">
+                <div class="commercial-avatar"><i class="bi bi-person"></i></div>
+                <div class="min-w-0 flex-grow-1">
+                  <div class="d-flex align-items-center gap-2">
+                    <strong class="text-truncate">{{ row.contact_name }}</strong>
+                    {% if row.attention.pending %}<span class="badge text-bg-danger">Pendiente</span>{% elif row.attention.status == 'human' %}<span class="badge text-bg-success">Humano</span>{% elif row.attention.status == 'resolved' %}<span class="badge text-bg-secondary">Resuelta</span>{% else %}<span class="badge text-bg-primary">IA</span>{% endif %}
+                  </div>
+                  <div class="small commercial-code text-muted">{{ row.phone }}</div>
+                  <div class="small text-muted text-truncate mt-1">{{ row.latest_text or 'Sin mensajes' }}</div>
+                  <div class="small text-muted mt-1">{{ row.latest_at }}</div>
+                </div>
+              </div>
+            </a>
+          {% endfor %}
+        {% else %}
+          <div class="p-4 text-center">
+            <div class="display-6 mb-2">💬</div>
+            <h2 class="h6 fw-bold">No hay conversaciones en esta vista</h2>
+            <p class="small text-muted mb-0">Cuando un prospecto escriba al WhatsApp comercial, aparecerá aquí.</p>
+          </div>
+        {% endif %}
+      </section>
+    </div>
+
+    <div class="col-12 col-lg-8">
+      <section class="commercial-message-pane">
+        {% if selected %}
+          <div class="p-3 border-bottom">
+            <div class="d-flex flex-wrap justify-content-between align-items-start gap-3">
+              <div>
+                <div class="small text-muted">Prospecto</div>
+                <h2 class="h5 fw-bold mb-1">{{ selected.contact_name }}</h2>
+                <div class="small text-muted">{{ selected.company_name }}{% if selected.email %} · {{ selected.email }}{% endif %}</div>
+                <div class="small commercial-code mt-1">{{ selected.phone }}</div>
+              </div>
+              <div class="text-end">
+                {% if selected.attention.status == 'human' %}
+                  {% if selected.attention.taken_by_user_id == current_user.id %}
+                    <span class="badge text-bg-success">Vos estás atendiendo</span>
+                  {% elif selected.attention.taken_by_user_id %}
+                    <span class="badge text-bg-warning">Tomada por otro operador</span>
+                  {% else %}
+                    <span class="badge text-bg-danger">Requiere humano</span>
+                  {% endif %}
+                {% elif selected.attention.status == 'resolved' %}
+                  <span class="badge text-bg-secondary">Resuelta</span>
+                {% else %}
+                  <span class="badge text-bg-primary">Comercial IA activo</span>
+                {% endif %}
+              </div>
+            </div>
+            {% if selected.attention.reason %}
+              <div class="alert alert-warning small mt-3 mb-0"><strong>Motivo:</strong> {{ selected.attention.reason }}</div>
+            {% endif %}
+          </div>
+
+          <div class="commercial-messages">
+            {% for msg in selected.messages %}
+              {% set bubble_class = 'user' if msg.sender_type == 'user' else ('human' if msg.sender_type == 'human' else 'ai') %}
+              <div class="commercial-bubble {{ bubble_class }}">
+                <div class="small fw-bold mb-1">
+                  {% if msg.sender_type == 'user' %}Cliente{% elif msg.sender_type == 'human' %}Vos{% else %}Comercial IA{% endif %}
+                  <span class="fw-normal text-muted ms-1">{{ msg.created_at }}</span>
+                </div>
+                <div>{{ msg.content }}</div>
+              </div>
+            {% else %}
+              <div class="text-center text-muted py-5">Todavía no hay mensajes.</div>
+            {% endfor %}
+          </div>
+
+          <div class="commercial-compose">
+            {% if selected.attention.status != 'human' %}
+              <div class="d-flex flex-wrap justify-content-between align-items-center gap-2 mb-2">
+                <span class="small text-muted">Al enviar, la conversación se toma automáticamente en modo humano.</span>
+              </div>
+            {% endif %}
+            <form method="post" action="{{ url_for('saas.whatsapp_commercial_attention_message', conversation_id=selected.conversation_id) }}">
+              <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+              <div class="input-group">
+                <textarea class="form-control" name="body" rows="3" maxlength="4096" placeholder="Escribí la respuesta al prospecto..." required></textarea>
+                <button class="btn btn-success px-4" type="submit"><i class="bi bi-send me-1"></i>Enviar</button>
+              </div>
+            </form>
+
+            <div class="d-flex flex-wrap gap-2 mt-3">
+              {% if selected.attention.status == 'human' and not selected.attention.taken_by_user_id %}
+                <form method="post" action="{{ url_for('saas.whatsapp_commercial_attention_action', conversation_id=selected.conversation_id) }}">
+                  <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                  <input type="hidden" name="action" value="take">
+                  <button class="btn btn-primary" type="submit"><i class="bi bi-person-check me-1"></i>Tomar conversación</button>
+                </form>
+              {% endif %}
+              {% if selected.attention.status == 'human' %}
+                {% if selected.attention.taken_by_user_id == current_user.id %}
+                  <form method="post" action="{{ url_for('saas.whatsapp_commercial_attention_action', conversation_id=selected.conversation_id) }}">
+                    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                    <input type="hidden" name="action" value="resolve">
+                    <button class="btn btn-outline-secondary" type="submit"><i class="bi bi-check2-circle me-1"></i>Marcar resuelta</button>
+                  </form>
+                  <form method="post" action="{{ url_for('saas.whatsapp_commercial_attention_action', conversation_id=selected.conversation_id) }}">
+                    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                    <input type="hidden" name="action" value="resume_ai">
+                    <button class="btn btn-outline-primary" type="submit"><i class="bi bi-stars me-1"></i>Liberar a Comercial IA</button>
+                  </form>
+                {% endif %}
+              {% elif selected.attention.status == 'resolved' %}
+                <form method="post" action="{{ url_for('saas.whatsapp_commercial_attention_action', conversation_id=selected.conversation_id) }}">
+                  <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                  <input type="hidden" name="action" value="resume_ai">
+                  <button class="btn btn-outline-primary" type="submit"><i class="bi bi-stars me-1"></i>Reanudar IA</button>
+                </form>
+              {% else %}
+                <form method="post" action="{{ url_for('saas.whatsapp_commercial_attention_action', conversation_id=selected.conversation_id) }}">
+                  <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                  <input type="hidden" name="action" value="take">
+                  <button class="btn btn-outline-success" type="submit"><i class="bi bi-person-check me-1"></i>Tomar manualmente</button>
+                </form>
+              {% endif %}
+            </div>
+          </div>
+        {% else %}
+          <div class="d-flex flex-column justify-content-center align-items-center text-center h-100 p-5">
+            <div class="display-3 mb-3">💬</div>
+            <h2 class="h5 fw-bold">Seleccioná una conversación</h2>
+            <p class="text-muted mb-0">Las conversaciones de WhatsApp Comercial se muestran aquí.</p>
+          </div>
+        {% endif %}
+      </section>
+    </div>
+  </div>
+</div>
+{% endblock %}
