@@ -2010,7 +2010,7 @@ def crm_campaign_cancel(campaign_id):
 @bp.post("/crm/email/inbound")
 def crm_email_inbound():
     """Webhook for replies to the commercial acquisition mailbox."""
-    expected = str(current_app.config.get("SAAS_CRM_EMAIL_INBOUND_SECRET") or current_app.config.get("CRM_EMAIL_INBOUND_SECRET") or "").strip()
+    expected = str(current_app.config.get("SAAS_CRM_EMAIL_INBOUND_SECRET") or current_app.config.get("CRM_EMAIL_INBOUND_SECRET") or os.getenv("SAAS_CRM_EMAIL_INBOUND_SECRET") or os.getenv("CRM_EMAIL_INBOUND_SECRET") or "").strip()
     provided = str(request.headers.get("X-CRM-Email-Secret") or request.args.get("secret") or "").strip()
     if not expected or not provided or not secrets.compare_digest(provided, expected):
         abort(401)
