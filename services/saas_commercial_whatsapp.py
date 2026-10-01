@@ -363,11 +363,19 @@ def activate_commercial_checkout(*, preapproval: dict) -> dict | None:
 
     if checkout.status == "activated" and checkout.company_id:
         company = Company.query.get(checkout.company_id)
+        activation_url = None
+        token_cipher = str(checkout.activation_token_encrypted or "").strip()
+        if token_cipher:
+            from services.ai_agent.config_service import decrypt_secret
+            raw_token = decrypt_secret(token_cipher)
+            if raw_token:
+                from flask import url_for
+                activation_url = url_for("auth.activate_commercial", token=raw_token, _external=True)
         return {
             "status": "activated",
             "checkout_id": checkout.id,
             "company_id": company.id if company else None,
-            "activation_url": None,
+            "activation_url": activation_url,
         }
 
     existing_company = (
@@ -481,7 +489,6 @@ def activate_commercial_checkout(*, preapproval: dict) -> dict | None:
         if raw_token:
             from flask import url_for
             activation_url = url_for("auth.activate_commercial", token=raw_token, _external=True)
-            checkout.activation_token_encrypted = None
 
     lead = checkout.lead
     lead.company_id = company.id
