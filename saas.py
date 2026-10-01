@@ -4197,6 +4197,113 @@ def global_settings():
     return render_template("saas/settings.html", settings_snapshot=settings_snapshot)
 
 
+@bp.route("/whatsapp-comercial", methods=["GET", "POST"])
+@superadmin_required
+def whatsapp_commercial_settings():
+    """Configure the isolated StockArMobile commercial WhatsApp channel."""
+    from app import Company, db, record_audit
+    from services.ai_agent.config_service import (
+        COMMERCIAL_COMPANY_MARKER,
+        configure_whatsapp_connection,
+        get_ai_preferences,
+        get_whatsapp_connection,
+    )
+
+    _require_superadmin()
+
+    company = None
+    for candidate in (
+        Company.query
+        .filter(Company.active.is_(True), Company.preferences_json.contains(COMMERCIAL_COMPANY_MARKER))
+        .order_by(Company.id.asc())
+        .all()
+    ):
+        try:
+            prefs = json.loads(candidate.preferences_json or "{}")
+        except (TypeError, ValueError):
+            prefs = {}
+        if isinstance(prefs, dict) and str(prefs.get("internal_channel") or "").strip().lower() == COMMERCIAL_COMPANY_MARKER:
+            company = candidate
+            break
+
+    if request.method == "POST":
+        if company is None:
+            flash("La empresa interna StockArMobile Comercial todavía no está creada. Aplicá la migración de WhatsApp comercial antes de configurar el canal.", "danger")
+            return redirect(url_for("saas.whatsapp_commercial_settings"))
+
+        phone_number_id = (request.form.get("phone_number_id") or "").strip()
+        waba_id = (request.form.get("waba_id") or "").strip()
+        display_phone_number = (request.form.get("display_phone_number") or "").strip()
+        access_token = (request.form.get("access_token") or "").strip()
+        template_name = (request.form.get("template_name") or "").strip()
+        template_language = (request.form.get("template_language") or "es_AR").strip() or "es_AR"
+        enabled = (request.form.get("enabled") or "") == "1"
+        business_id = (request.form.get("business_id") or "").strip()
+
+        if enabled and not phone_number_id:
+            flash("Para activar WhatsApp Comercial necesitás informar el Phone Number ID.", "danger")
+            return redirect(url_for("saas.whatsapp_commercial_settings"))
+
+        try:
+            configure_whatsapp_connection(
+                company,
+                phone_number_id=phone_number_id,
+                access_token=access_token or None,
+                business_account_id=waba_id,
+                display_phone_number=display_phone_number,
+                enabled=enabled,
+                template_name=template_name,
+                template_language=template_language,
+            )
+            whatsapp_updates = {"waba_id": waba_id}
+            if business_id:
+                whatsapp_updates["business_id"] = business_id
+            elif "business_id" in get_ai_preferences(company)["whatsapp"]:
+                whatsapp_updates["business_id"] = ""
+            from services.ai_agent.config_service import update_ai_preferences
+            update_ai_preferences(company, whatsapp_updates=whatsapp_updates)
+            record_audit(
+                action="superadmin_whatsapp_commercial_configured",
+                entity="whatsapp_commercial",
+                entity_id=company.id,
+                company_id=company.id,
+                detail=f"WhatsApp Comercial configurado. enabled={enabled}, phone_number_id={phone_number_id}, waba_id={waba_id}.",
+                user_id=current_user.id,
+            )
+            db.session.commit()
+            flash("Configuración de WhatsApp Comercial guardada.", "success")
+        except Exception:
+            db.session.rollback()
+            current_app.logger.exception("No se pudo guardar la configuración de WhatsApp Comercial.")
+            flash("No se pudo guardar la configuración de WhatsApp Comercial.", "danger")
+        return redirect(url_for("saas.whatsapp_commercial_settings"))
+
+    connection = get_whatsapp_connection(company) if company is not None else {
+        "enabled": False,
+        "phone_number_id": "",
+        "business_account_id": "",
+        "display_phone_number": "",
+        "template_name": "",
+        "template_language": "es_AR",
+    }
+    stored = get_ai_preferences(company)["whatsapp"] if company is not None else {}
+    env_enabled = str(os.getenv("WHATSAPP_COMMERCIAL_ENABLED") or "").strip().lower() in {"1", "true", "yes", "on"}
+    env_phone = str(os.getenv("WHATSAPP_COMMERCIAL_PHONE_NUMBER_ID") or "").strip()
+    env_waba = str(os.getenv("WHATSAPP_COMMERCIAL_WABA_ID") or "").strip()
+    token_configured = bool(str(connection.get("access_token") or "").strip())
+    return render_template(
+        "saas/whatsapp_commercial.html",
+        company=company,
+        connection=connection,
+        stored=stored,
+        env_enabled=env_enabled,
+        env_phone=env_phone,
+        env_waba=env_waba,
+        token_configured=token_configured,
+        webhook_url=url_for("whatsapp_agent.webhook", _external=True),
+    )
+
+
 @bp.route("/landing/testimonials", methods=["GET", "POST"])
 @superadmin_required
 def landing_testimonials_panel():
