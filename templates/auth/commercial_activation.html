@@ -1,0 +1,38 @@
+{% extends "base_auth.html" if false else "base.html" %}
+{% block title %}Activar empresa · StockArmobile{% endblock %}
+{% block content %}
+<div class="container py-5" style="max-width:560px">
+  <div class="card border-0 shadow-sm rounded-4">
+    <div class="card-body p-4 p-md-5">
+      {% if not valid %}
+        <div class="text-center">
+          <div class="display-6 mb-3">Enlace no válido</div>
+          <p class="text-muted">Este enlace de activación ya no es válido.</p>
+        </div>
+      {% else %}
+        <div class="text-center mb-4">
+          <div class="display-6 fw-bold">Activá tu empresa</div>
+          <p class="text-muted mb-0">Tu pago fue autorizado. Completá tu contraseña para ingresar a StockArMobile.</p>
+        </div>
+        <div class="alert alert-light border rounded-3">
+          <div><strong>Empresa:</strong> {{ checkout.company.name }}</div>
+          <div><strong>Plan:</strong> {{ checkout.plan.name }}</div>
+          <div><strong>Email:</strong> {{ checkout.user.email }}</div>
+        </div>
+        <form method="post">
+          <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+          <div class="mb-3">
+            <label class="form-label fw-semibold">Nueva contraseña</label>
+            <input class="form-control" type="password" name="password" minlength="8" required autocomplete="new-password">
+          </div>
+          <div class="mb-4">
+            <label class="form-label fw-semibold">Repetir contraseña</label>
+            <input class="form-control" type="password" name="password_confirm" minlength="8" required autocomplete="new-password">
+          </div>
+          <button class="btn btn-primary w-100" type="submit">Activar y entrar</button>
+        </form>
+      {% endif %}
+    </div>
+  </div>
+</div>
+{% endblock %}
