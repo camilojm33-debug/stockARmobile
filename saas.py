@@ -10,6 +10,7 @@ from datetime import datetime, timedelta, timezone
 from io import BytesIO
 from math import ceil
 from time import monotonic
+from urllib.parse import urlparse
 from zoneinfo import ZoneInfo
 
 try:
@@ -1876,12 +1877,18 @@ def crm_campaigns():
         subject = (request.form.get("subject") or "").strip()[:255]
         body_html = (request.form.get("body_html") or "").strip()
         body_text = (request.form.get("body_text") or "").strip() or None
-        if channel not in {"email", "whatsapp"} or not name or not subject or not body_html:
+        whatsapp_template_name = (request.form.get("whatsapp_template_name") or "").strip()[:120] or None
+        whatsapp_template_language = (request.form.get("whatsapp_template_language") or "es_AR").strip()[:20] or "es_AR"
+        whatsapp_parameter_fields = (request.form.get("whatsapp_parameter_fields") or "contacto,empresa").strip()[:500] or "contacto,empresa"
+        if channel not in {"email", "whatsapp", "both"} or not name or not subject or not body_html:
             flash("Nombre, canal, asunto y HTML son obligatorios.", "danger")
             return redirect(url_for("saas.crm_campaigns"))
         campaign = SaaSCampaign(
             name=name, subject=subject, channel=channel, status="BORRADOR",
             body_html=body_html, body_text=body_text,
+            whatsapp_template_name=whatsapp_template_name,
+            whatsapp_template_language=whatsapp_template_language,
+            whatsapp_parameter_fields=whatsapp_parameter_fields,
             segment_json=json.dumps(filters, ensure_ascii=False),
             scheduled_at=_parse_dt(request.form.get("scheduled_at")),
             created_by_user_id=current_user.id,
@@ -1904,7 +1911,7 @@ def crm_campaigns():
 @superadmin_required
 def crm_campaign_detail(campaign_id):
     from app import SaaSCampaign, db
-    from services.saas_commercial_service import campaign_metrics
+    from services.saas_commercial_service import campaign_audience_metrics, campaign_metrics
 
     _require_superadmin()
     campaign = SaaSCampaign.query.filter_by(id=campaign_id).first_or_404()
@@ -1912,6 +1919,9 @@ def crm_campaign_detail(campaign_id):
         "saas/crm_campaign_detail.html",
         campaign=campaign,
         metrics=campaign_metrics(db.session, campaign.id),
+        audience=campaign_audience_metrics(db.session, campaign),
+        marketing_send_enabled=str(current_app.config.get("SAAS_MARKETING_SEND_ENABLED", "0")).lower() in {"1", "true", "yes", "on"},
+        smtp_configured=bool(current_app.config.get("SMTP_HOST") and current_app.config.get("SMTP_USER")),
     )
 
 
@@ -1951,9 +1961,19 @@ def crm_campaign_approve(campaign_id):
     if campaign.target_count <= 0:
         flash("Prepará los destinatarios antes de aprobar la campaña.", "warning")
         return redirect(url_for("saas.crm_campaign_detail", campaign_id=campaign_id))
-    if campaign.channel == "whatsapp":
-        flash("WhatsApp comercial queda en preparación hasta completar su transporte oficial.", "warning")
-        return redirect(url_for("saas.crm_campaign_detail", campaign_id=campaign_id))
+    if campaign.channel in {"whatsapp", "both"}:
+        from app import SaaSCampaignRecipient
+        whatsapp_targets = SaaSCampaignRecipient.query.filter_by(
+            campaign_id=campaign.id, channel="whatsapp"
+        ).count()
+        if whatsapp_targets and not (campaign.whatsapp_template_name or "").strip():
+            from services.ai_agent.config_service import get_whatsapp_connection
+            from services.saas_commercial_whatsapp import get_commercial_company
+            commercial_company = get_commercial_company()
+            connection = get_whatsapp_connection(commercial_company) if commercial_company else {}
+            if not connection.get("template_name"):
+                flash("La campaña incluye WhatsApp pero no tiene una plantilla aprobada configurada.", "warning")
+                return redirect(url_for("saas.crm_campaign_detail", campaign_id=campaign_id))
     campaign.status = "APROBADA"
     campaign.approved_by_user_id = current_user.id
     campaign.approved_at = utcnow()
@@ -1985,6 +2005,58 @@ def crm_campaign_cancel(campaign_id):
     db.session.commit()
     flash("Campaña cancelada.", "success")
     return redirect(url_for("saas.crm_campaign_detail", campaign_id=campaign_id))
+
+
+@bp.get("/crm/email/open/<tracking_token>")
+def crm_email_open(tracking_token):
+    from app import SaaSCampaignEvent, SaaSCampaignRecipient, db, utcnow
+
+    recipient = SaaSCampaignRecipient.query.filter_by(tracking_token=(tracking_token or "").strip()).first()
+    if recipient is not None and recipient.opened_at is None:
+        now = utcnow()
+        recipient.opened_at = now
+        recipient.provider_status = recipient.provider_status or "opened"
+        db.session.add(SaaSCampaignEvent(
+            campaign_id=recipient.campaign_id,
+            recipient_id=recipient.id,
+            event_type="opened",
+            metadata_json=json.dumps({"channel": "email"}, ensure_ascii=False),
+            created_at=now,
+        ))
+        db.session.commit()
+
+    pixel = b"\\x47\\x49\\x46\\x38\\x39\\x61\\x01\\x00\\x01\\x00\\x80\\x00\\x00\\x00\\x00\\x00\\xff\\xff\\xff\\x21\\xf9\\x04\\x01\\x00\\x00\\x00\\x00\\x2c\\x00\\x00\\x00\\x00\\x01\\x00\\x01\\x00\\x00\\x02\\x02\\x44\\x01\\x00\\x3b"
+    return current_app.response_class(pixel, mimetype="image/gif")
+
+
+@bp.get("/crm/email/click/<tracking_token>")
+def crm_email_click(tracking_token):
+    from app import SaaSCampaignEvent, SaaSCampaignRecipient, db, utcnow
+
+    target = (request.args.get("url") or "").strip()
+    recipient = SaaSCampaignRecipient.query.filter_by(tracking_token=(tracking_token or "").strip()).first()
+    if recipient is None or not target:
+        abort(404)
+    parsed = urlparse(target)
+    allowed_hosts = {
+        current_app.config.get("APP_URL", "").replace("https://", "").replace("http://", "").split("/", 1)[0],
+        request.host,
+    }
+    if parsed.scheme not in {"http", "https"} or parsed.netloc not in {host for host in allowed_hosts if host}:
+        abort(400)
+    if recipient.clicked_at is None:
+        now = utcnow()
+        recipient.clicked_at = now
+        recipient.provider_status = recipient.provider_status or "clicked"
+        db.session.add(SaaSCampaignEvent(
+            campaign_id=recipient.campaign_id,
+            recipient_id=recipient.id,
+            event_type="clicked",
+            metadata_json=json.dumps({"channel": "email", "target": target[:1000]}, ensure_ascii=False),
+            created_at=now,
+        ))
+        db.session.commit()
+    return redirect(target)
 
 
 @bp.route("/crm/unsubscribe/<token>", methods=["GET", "POST"])
@@ -2045,6 +2117,51 @@ def crm_lead_contact_preferences(lead_id):
     )
     db.session.commit()
     flash("Preferencias de contacto actualizadas.", "success")
+    return _redirect_back("saas.crm_panel")
+
+
+@bp.post("/crm/leads/<int:lead_id>/delete")
+@superadmin_required
+def crm_lead_delete(lead_id):
+    from app import SaaSLead, db, record_audit
+    from services.saas_commercial_service import delete_saas_lead
+
+    if not _require_superadmin_step_up():
+        return _redirect_back("saas.crm_panel")
+
+    lead = SaaSLead.query.filter_by(id=lead_id).first_or_404()
+    lead_company_id = lead.company_id
+    try:
+        result = delete_saas_lead(db.session, lead_id)
+        record_audit(
+            action="saas_lead_delete",
+            entity="saas_lead",
+            entity_id=lead_id,
+            detail=(
+                f"Prospecto CRM {lead_id} eliminado permanentemente. "
+                f"tareas={result['tasks_deleted']}; alertas={result['alerts_deleted']}; "
+                f"destinatarios={result['campaign_recipients_deleted']}; "
+                f"consentimientos={result['consents_deleted']}; "
+                f"eventos_campaña_eliminados={result.get('campaign_events_deleted', 0)}; "
+                f"checkouts_desvinculados={result['checkouts_detached']}."
+            ),
+            user_id=current_user.id,
+            company_id=lead_company_id,
+        )
+        db.session.commit()
+        flash(
+            "Prospecto eliminado. El historial de cobros queda conservado y desvinculado del CRM."
+            if result["checkouts_detached"]
+            else "Prospecto eliminado permanentemente.",
+            "success",
+        )
+    except ValueError as exc:
+        db.session.rollback()
+        flash(str(exc), "warning")
+    except Exception:
+        db.session.rollback()
+        current_app.logger.exception("No se pudo eliminar el prospecto CRM id=%s", lead_id)
+        flash("No se pudo eliminar el prospecto. No se realizaron cambios.", "danger")
     return _redirect_back("saas.crm_panel")
 
 

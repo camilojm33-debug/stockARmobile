@@ -13,8 +13,9 @@
 <div class="modal-header"><h5 class="modal-title">Nueva campaña</h5><button type="button" class="btn-close" data-bs-dismiss="modal"></button></div>
 <div class="modal-body"><input type="hidden" name="csrf_token" value="{{ csrf_token() }}"><div class="row g-3">
 <div class="col-md-8"><label class="form-label">Nombre</label><input class="form-control" name="name" required></div>
-<div class="col-md-4"><label class="form-label">Canal</label><select class="form-select" name="channel"><option value="email">Email</option><option value="whatsapp">WhatsApp (preparación)</option></select></div>
-<div class="col-md-8"><label class="form-label">Asunto</label><input class="form-control" name="subject" required></div><div class="col-md-4"><label class="form-label">Programar</label><input class="form-control" type="datetime-local" name="scheduled_at"></div>
+<div class="col-md-4"><label class="form-label">Canal</label><select class="form-select" name="channel"><option value="email">Email</option><option value="whatsapp">WhatsApp</option><option value="both">Email + WhatsApp</option></select></div>
+<div class="col-md-8"><label class="form-label">Asunto / título</label><input class="form-control" name="subject" required></div><div class="col-md-4"><label class="form-label">Programar</label><input class="form-control" type="datetime-local" name="scheduled_at"></div>
+<div class="col-12"><div class="alert alert-info small mb-0"><strong>Consentimiento por canal:</strong> la campaña solo prepara y envía email a prospectos con permiso registrado para email y WhatsApp a prospectos con permiso registrado para WhatsApp. Un dato público no crea consentimiento.</div></div>
 <div class="col-md-4"><label class="form-label">Rubro</label><input class="form-control" name="industry"></div><div class="col-md-4"><label class="form-label">Provincia</label><input class="form-control" name="province"></div><div class="col-md-4"><label class="form-label">Localidad</label><input class="form-control" name="locality"></div>
 <div class="col-md-6"><label class="form-label">Segmento</label><input class="form-control" name="segment"></div><div class="col-md-6"><label class="form-label">Score mínimo</label><input class="form-control" type="number" min="0" max="100" name="min_score" value="0"></div>
 <div class="col-12"><label class="form-label">Texto</label><textarea class="form-control" name="body_text" rows="5" required>Hola {{contacto}},
@@ -22,6 +23,7 @@
 Te presentamos StockArMobile, una plataforma para gestionar stock, ventas, clientes y presupuestos.
 
 Probalo gratis durante 10 días.</textarea></div>
+<div class="col-md-8"><label class="form-label">Plantilla WhatsApp (opcional)</label><input class="form-control" name="whatsapp_template_name" placeholder="Nombre exacto de la plantilla aprobada en Meta"></div><div class="col-md-2"><label class="form-label">Idioma</label><input class="form-control" name="whatsapp_template_language" value="es_AR"></div><div class="col-md-2"><label class="form-label">Parámetros</label><input class="form-control" name="whatsapp_parameter_fields" value="contacto,empresa" title="Campos: contacto, empresa, rubro, localidad, trial_url o none"></div>
 <div class="col-12"><label class="form-label">HTML</label><textarea class="form-control" name="body_html" rows="7" required><p>Hola {{contacto}},</p><p>Te presentamos <strong>StockArMobile</strong>, una plataforma para gestionar stock, ventas, clientes y presupuestos.</p><p><strong>Probalo gratis durante 10 días.</strong></p><p><a href="https://www.stockarmobile.com">Conocé StockArMobile</a></p></textarea></div>
 </div></div><div class="modal-footer"><button class="btn btn-outline-secondary" type="button" data-bs-dismiss="modal">Cancelar</button><button class="btn btn-primary">Crear borrador</button></div>
 </form></div></div></div>
