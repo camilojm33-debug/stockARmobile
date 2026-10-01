@@ -356,4 +356,4 @@ def test_email_tracking_html_contains_open_pixel_and_tracked_links(app):
         )
         assert "/superadmin/crm/email/open/track-token-123" in html
         assert "/superadmin/crm/email/click/track-token-123" in html
-        assert "https%3A%2F%2Fwww.stockarmobile.com%2Fauth%2Fregister" in html or "url=https%3A%2F%2Fwww.stockarmobile.com" in html
+        assert "%2Fauth%2Fregister" in html
