@@ -455,6 +455,9 @@ def _tracking_click_url(recipient, target_url: str) -> str:
     base = _clean(current_app.config.get("APP_URL")).rstrip("/")
     if not base or not recipient.tracking_token:
         return target_url
+    raw = str(target_url or "").strip()
+    if raw.startswith("/"):
+        target_url = f"{base}{raw}"
     return f"{base}/superadmin/crm/email/click/{quote(recipient.tracking_token)}?url={quote(target_url, safe='')}"
 
 
