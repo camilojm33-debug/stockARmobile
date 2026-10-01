@@ -55,12 +55,23 @@ def get_commercial_company():
 
 
 def commercial_phone_number_id() -> str:
-    return str(os.getenv("WHATSAPP_COMMERCIAL_PHONE_NUMBER_ID") or "").strip()
+    """Return the SuperAdmin commercial phone ID from env or the internal company."""
+    env_enabled = str(os.getenv("WHATSAPP_COMMERCIAL_ENABLED") or "").strip().lower() in {"1", "true", "yes", "on"}
+    env_phone = str(os.getenv("WHATSAPP_COMMERCIAL_PHONE_NUMBER_ID") or "").strip()
+    if env_enabled and env_phone:
+        return env_phone
+    try:
+        company = get_commercial_company()
+        if company is not None:
+            from services.ai_agent.config_service import get_ai_preferences
+            stored = get_ai_preferences(company)["whatsapp"]
+            return str(stored.get("phone_number_id") or "").strip()
+    except Exception:
+        return ""
+    return ""
 
 
 def is_commercial_phone_number_id(phone_number_id: str) -> bool:
-    if str(os.getenv("WHATSAPP_COMMERCIAL_ENABLED") or "").strip().lower() not in {"1", "true", "yes", "on"}:
-        return False
     configured = commercial_phone_number_id()
     return bool(configured and configured == str(phone_number_id or "").strip())
 
