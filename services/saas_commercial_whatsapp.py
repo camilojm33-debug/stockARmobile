@@ -549,6 +549,203 @@ def get_commercial_conversation(company_id: int, sender: str) -> Conversation:
     return conversation
 
 
+
+_HUMAN_REQUEST_PHRASES = (
+    "hablar con una persona",
+    "hablar con alguien",
+    "hablar con un asesor",
+    "hablar con una asesora",
+    "quiero un asesor",
+    "quiero una asesora",
+    "quiero hablar con un humano",
+    "quiero hablar con una persona",
+    "atencion humana",
+    "atención humana",
+    "persona real",
+    "asesor humano",
+    "asesora humana",
+    "operador humano",
+    "operadora humana",
+)
+
+
+def _commercial_attention(conversation) -> dict:
+    metadata = conversation.metadata_json or {}
+    if not isinstance(metadata, dict):
+        return {}
+    raw = metadata.get("ai_attention")
+    return dict(raw) if isinstance(raw, dict) else {}
+
+
+def commercial_human_requested(text: str) -> bool:
+    normalized = str(text or "").strip().lower()
+    if not normalized:
+        return False
+    return any(phrase in normalized for phrase in _HUMAN_REQUEST_PHRASES)
+
+
+def _persist_commercial_inbound_message(conversation, *, external_id: str, sender: str, text: str):
+    existing = (
+        ConversationMessage.query
+        .filter(
+            ConversationMessage.company_id == conversation.company_id,
+            ConversationMessage.conversation_id == conversation.id,
+            ConversationMessage.external_message_id == str(external_id or "").strip(),
+        )
+        .first()
+    )
+    if existing is not None:
+        return existing
+
+    message = ConversationMessage(
+        company_id=conversation.company_id,
+        conversation_id=conversation.id,
+        sender_type="user",
+        sender_id=None,
+        role="user",
+        content=str(text or "").strip()[:4096],
+        content_type="text",
+        external_message_id=str(external_id or "").strip()[:255] or None,
+        metadata_json={
+            "channel": COMMERCIAL_CHANNEL,
+            "from": str(sender or "").strip()[:80],
+            "commercial_acquisition": True,
+        },
+    )
+    db.session.add(message)
+    db.session.flush()
+    return message
+
+
+def _set_commercial_attention(conversation, *, status: str, user_id: int | None = None, reason: str = ""):
+    metadata = dict(conversation.metadata_json or {})
+    now = _utcnow().isoformat(timespec="seconds")
+    current = _commercial_attention(conversation)
+    payload = dict(current)
+    payload["status"] = status
+
+    if status == "human":
+        payload.setdefault("requested_at", now)
+        if reason:
+            payload["reason"] = str(reason)[:500]
+        if user_id is not None:
+            payload["taken_by_user_id"] = int(user_id)
+            payload["taken_at"] = now
+    elif status == "resolved":
+        payload["resolved_at"] = now
+        if user_id is not None:
+            payload["resolved_by_user_id"] = int(user_id)
+    else:
+        payload = {"status": status}
+
+    metadata["ai_attention"] = payload
+    conversation.metadata_json = metadata
+    conversation.updated_at = _utcnow()
+
+
+def commercial_conversation_attention(conversation) -> dict:
+    attention = _commercial_attention(conversation)
+    status = str(attention.get("status") or "").strip().lower()
+    return {
+        "status": status or "ai",
+        "pending": status == "human" and not attention.get("taken_by_user_id"),
+        "taken_by_user_id": attention.get("taken_by_user_id"),
+        "requested_at": attention.get("requested_at"),
+        "taken_at": attention.get("taken_at"),
+        "resolved_at": attention.get("resolved_at"),
+        "reason": str(attention.get("reason") or "").strip(),
+    }
+
+
+def send_commercial_human_message(*, company, conversation, body: str, user_id: int) -> dict:
+    from services.ai_agent.whatsapp_service import WhatsAppService
+
+    if conversation.company_id != company.id or conversation.channel != COMMERCIAL_CHANNEL:
+        raise PermissionError("La conversación no pertenece al canal comercial.")
+
+    recipient = str(conversation.external_conversation_id or "").strip()
+    content = str(body or "").strip()
+    if not recipient:
+        raise ValueError("La conversación no tiene un destinatario de WhatsApp.")
+    if not content:
+        raise ValueError("El mensaje no puede estar vacío.")
+    if len(content) > 4096:
+        raise ValueError("El mensaje no puede superar 4096 caracteres.")
+
+    attention = commercial_conversation_attention(conversation)
+    if attention["status"] != "human":
+        raise ValueError("Tomá la conversación antes de enviar un mensaje humano.")
+
+    WhatsAppService.send_text(company, to=recipient, body=content)
+
+    message_id = f"human:{uuid.uuid4().hex}"
+    outgoing = ConversationMessage(
+        company_id=company.id,
+        conversation_id=conversation.id,
+        sender_type="human",
+        sender_id=int(user_id),
+        role="assistant",
+        content=content,
+        content_type="text",
+        external_message_id=message_id,
+        metadata_json={
+            "channel": COMMERCIAL_CHANNEL,
+            "human_operator": True,
+            "human_operator_user_id": int(user_id),
+        },
+    )
+    db.session.add(outgoing)
+    metadata = dict(conversation.metadata_json or {})
+    ai_attention = dict(_commercial_attention(conversation))
+    ai_attention.update({
+        "status": "human",
+        "taken_by_user_id": int(user_id),
+        "taken_at": ai_attention.get("taken_at") or _utcnow().isoformat(timespec="seconds"),
+        "last_human_message_at": _utcnow().isoformat(timespec="seconds"),
+    })
+    metadata["ai_attention"] = ai_attention
+    conversation.metadata_json = metadata
+    conversation.updated_at = _utcnow()
+
+    from app import SaaSLead
+    normalized_phone = "".join(ch for ch in recipient if ch.isdigit())[:40]
+    lead = (
+        SaaSLead.query.filter_by(whatsapp=normalized_phone)
+        .order_by(SaaSLead.id.desc())
+        .first()
+    )
+    if lead is not None:
+        lead.last_contacted_at = _utcnow()
+        lead.last_contact_channel = "whatsapp"
+        lead.contact_count = int(lead.contact_count or 0) + 1
+
+    db.session.commit()
+    return {
+        "status": "sent",
+        "conversation_id": conversation.id,
+        "message_id": outgoing.id,
+        "content": content,
+    }
+
+
+def resume_commercial_ai(conversation, *, user_id: int) -> None:
+    metadata = dict(conversation.metadata_json or {})
+    metadata["ai_attention"] = {
+        "status": "resolved",
+        "resolved_at": _utcnow().isoformat(timespec="seconds"),
+        "resolved_by_user_id": int(user_id),
+    }
+    conversation.metadata_json = metadata
+    conversation.updated_at = _utcnow()
+
+
+def clear_commercial_attention(conversation) -> None:
+    metadata = dict(conversation.metadata_json or {})
+    metadata.pop("ai_attention", None)
+    conversation.metadata_json = metadata
+    conversation.updated_at = _utcnow()
+
+
 def process_commercial_message(*, phone_number_id: str, sender: str, external_id: str, text: str) -> dict:
     """Process one inbound commercial message with strict internal-company isolation."""
     from services.ai_agent.config_service import get_whatsapp_connection
