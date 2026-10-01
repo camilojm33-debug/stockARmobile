@@ -311,7 +311,6 @@ def _eligible_leads_query(channel: str, filters: dict):
     if channel == "whatsapp":
         return query.filter(
             SaaSLead.whatsapp.isnot(None),
-            SaaSLead.whatsapp_status != "invalid",
             SaaSLead.whatsapp_consent_status == "opted_in",
         )
     raise ValueError("Canal de campaña no soportado.")
@@ -343,7 +342,6 @@ def campaign_audience_metrics(db_session, campaign) -> dict:
     ).count()
     whatsapp_available = query.filter(
         SaaSLead.whatsapp.isnot(None),
-        SaaSLead.whatsapp_status != "invalid",
     ).count()
     email_optin = query.filter(SaaSLead.email_consent_status == "opted_in").count()
     whatsapp_optin = query.filter(SaaSLead.whatsapp_consent_status == "opted_in").count()
