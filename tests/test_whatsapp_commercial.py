@@ -382,3 +382,70 @@ def test_delete_commercial_conversation_cannot_delete_tenant_conversation(commer
         delete_commercial_conversation(tenant_like.id)
 
     assert Conversation.query.filter_by(id=tenant_like.id, channel="whatsapp").first() is not None
+
+
+def test_commercial_campaign_status_webhook_updates_delivery_read_and_failure(commercial_database):
+    from app import SaaSCampaign, SaaSCampaignRecipient, SaaSLead, db
+    from whatsapp_agent import _record_commercial_campaign_status
+
+    company = commercial_database["company"]
+    lead = SaaSLead(
+        company_name="Status Test",
+        contact_name="Contacto",
+        whatsapp="549999000777",
+        whatsapp_consent_status="opted_in",
+        created_by_user_id=commercial_database["actor"].id,
+    )
+    db.session.add(lead)
+    db.session.flush()
+
+    campaign = SaaSCampaign(
+        name="Status campaign",
+        subject="Hola",
+        channel="whatsapp",
+        status="ENVIANDO",
+        body_html="<p>Hola</p>",
+        created_by_user_id=commercial_database["actor"].id,
+        target_count=1,
+        sent_count=1,
+    )
+    db.session.add(campaign)
+    db.session.flush()
+
+    recipient = SaaSCampaignRecipient(
+        campaign_id=campaign.id,
+        lead_id=lead.id,
+        channel="whatsapp",
+        destination=lead.whatsapp,
+        status="sent",
+        provider_message_id="wamid.status.001",
+    )
+    db.session.add(recipient)
+    db.session.commit()
+
+    delivered = _record_commercial_campaign_status([
+        ("COMMERCIAL_PHONE_QA", "wamid.status.001", "delivered", "549999000777", {}),
+    ])
+    db.session.commit()
+    assert delivered == 1
+    assert recipient.delivered_at is not None
+    assert recipient.provider_status == "delivered"
+
+    read = _record_commercial_campaign_status([
+        ("COMMERCIAL_PHONE_QA", "wamid.status.001", "read", "549999000777", {}),
+    ])
+    db.session.commit()
+    assert read == 1
+    assert recipient.opened_at is not None
+    assert recipient.provider_status == "read"
+
+    failed = _record_commercial_campaign_status([
+        ("COMMERCIAL_PHONE_QA", "wamid.status.001", "failed", "549999000777", {
+            "errors": [{"title": "Undeliverable"}],
+        }),
+    ])
+    db.session.commit()
+    assert failed == 1
+    assert recipient.status == "failed"
+    assert recipient.provider_status == "failed"
+    assert campaign.failed_count == 1
