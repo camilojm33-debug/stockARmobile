@@ -531,6 +531,7 @@ def test_landing_contact_can_record_explicit_email_consent(app):
             email="contacto@consentido.com",
             message="Quiero conocer StockArmobile.",
             email_consent=True,
+            preferred_user_id=user.id,
         )
         db.session.commit()
 
