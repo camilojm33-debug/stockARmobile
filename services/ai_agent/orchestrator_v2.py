@@ -150,6 +150,43 @@ class CommercialOfferTool(AgentTool):
         }
 
 
+class CommercialCheckoutTool(AgentTool):
+    name = "iniciar_contratacion_stockarmobile"
+    description = "Inicia el alta y cobro de un plan SaaS pago para el prospecto actual de WhatsApp y devuelve el enlace seguro de Mercado Pago."
+    input_schema = {
+        "type": "object",
+        "properties": {
+            "plan_code": {"type": "string", "description": "Código exacto del plan SaaS pago devuelto por consultar_oferta_stockarmobile."},
+            "payer_email": {"type": "string", "description": "Email del responsable que realizará el pago y quedará como administrador."},
+            "company_name": {"type": "string", "description": "Nombre comercial de la empresa."},
+        },
+        "required": ["plan_code", "payer_email", "company_name"],
+        "additionalProperties": False,
+    }
+
+    def execute(self, **kwargs):
+        from flask import current_app, url_for
+        from services.saas_commercial_whatsapp import create_commercial_checkout
+
+        base_url = current_app.config.get("EXTERNAL_BASE_URL") or None
+        if base_url:
+            base_url = str(base_url).rstrip("/")
+            back_url = f"{base_url}/"
+            notification_url = f"{base_url}/api/mercadopago/webhook"
+        else:
+            back_url = url_for("auth.login", _external=True)
+            notification_url = url_for("webhook.mercadopago_webhook", _external=True)
+
+        return create_commercial_checkout(
+            sender=str(self._context.get("customer_phone") or ""),
+            plan_code=kwargs["plan_code"],
+            payer_email=kwargs["payer_email"],
+            company_name=kwargs["company_name"],
+            back_url=back_url,
+            notification_url=notification_url,
+        )
+
+
 class VendorOrderPreviewTool(AgentTool):
     name = "preparar_pedido"
     description = (
@@ -214,6 +251,7 @@ class AgentRuntime:
         "quitar_del_carrito": VendorRemoveTool,
         "preparar_pedido": VendorOrderPreviewTool,
         "consultar_oferta_stockarmobile": CommercialOfferTool,
+        "iniciar_contratacion_stockarmobile": CommercialCheckoutTool,
     }
     agent_tool_names = {
         "asistente": {
@@ -233,7 +271,7 @@ class AgentRuntime:
             "buscar_producto", "consultar_stock", "buscar_cliente", "clientes_inactivos",
             "productos_promocionables", "preparar_campana",
         },
-        "comercial": {"consultar_oferta_stockarmobile"},
+        "comercial": {"consultar_oferta_stockarmobile", "iniciar_contratacion_stockarmobile"},
     }
 
     @classmethod
