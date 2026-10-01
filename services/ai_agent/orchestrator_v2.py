@@ -175,7 +175,7 @@ class CommercialCheckoutTool(AgentTool):
             notification_url = f"{base_url}/api/mercadopago/webhook"
         else:
             back_url = url_for("auth.login", _external=True)
-            notification_url = url_for("webhook.mercadopago_webhook", _external=True)
+            notification_url = url_for("company_billing.mercadopago_webhook", _external=True)
 
         return create_commercial_checkout(
             sender=str(self._context.get("customer_phone") or ""),
