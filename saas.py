@@ -4170,6 +4170,321 @@ def backups_delete(backup_id):
     return _redirect_back("saas.backups_panel")
 
 
+
+
+def _commercial_inbox_rows(company, *, q: str = "", state: str = "pending"):
+    from app import Conversation, ConversationMessage, SaaSLead, db
+    from services.saas_commercial_whatsapp import commercial_conversation_attention
+
+    conversations = (
+        Conversation.query
+        .filter(
+            Conversation.company_id == int(company.id),
+            Conversation.channel == "whatsapp_commercial",
+        )
+        .order_by(Conversation.updated_at.desc(), Conversation.id.desc())
+        .limit(200)
+        .all()
+    )
+    query_text = (q or "").strip().lower()
+    rows = []
+    for conversation in conversations:
+        phone = str(conversation.external_conversation_id or "").strip()
+        attention = commercial_conversation_attention(conversation)
+        attention_state = attention["status"]
+        if state == "pending" and not attention["pending"]:
+            continue
+        if state == "human" and attention_state != "human":
+            continue
+        if state == "ai" and attention_state not in {"", "ai"}:
+            continue
+        if state == "resolved" and attention_state != "resolved":
+            continue
+        if query_text and query_text not in phone.lower():
+            continue
+
+        normalized_phone = "".join(ch for ch in phone if ch.isdigit())[:40]
+        lead = (
+            SaaSLead.query
+            .filter(db.or_(SaaSLead.whatsapp == normalized_phone, SaaSLead.phone == normalized_phone))
+            .order_by(SaaSLead.id.desc())
+            .first()
+        )
+        latest = (
+            ConversationMessage.query
+            .filter(ConversationMessage.company_id == int(company.id), ConversationMessage.conversation_id == int(conversation.id))
+            .order_by(ConversationMessage.id.desc())
+            .first()
+        )
+        rows.append({
+            "conversation_id": conversation.id,
+            "phone": phone or "Sin número",
+            "contact_name": (getattr(lead, "contact_name", None) or getattr(lead, "company_name", None) or "Prospecto"),
+            "company_name": getattr(lead, "company_name", None) or "Prospecto de WhatsApp",
+            "lead_id": getattr(lead, "id", None),
+            "attention": attention,
+            "latest_text": (latest.content if latest is not None else ""),
+            "latest_sender_type": (latest.sender_type if latest is not None else ""),
+            "latest_at": _format_admin_datetime_local(getattr(latest, "created_at", None), "%d/%m %H:%M") if latest is not None else "",
+            "updated_at": _format_admin_datetime_local(getattr(conversation, "updated_at", None), "%d/%m %H:%M"),
+        })
+    return rows
+
+
+@bp.route("/whatsapp-comercial/atencion", methods=["GET"])
+@superadmin_required
+def whatsapp_commercial_attention():
+    from app import Conversation, ConversationMessage, SaaSLead, db
+    from services.saas_commercial_whatsapp import (
+        COMMERCIAL_CHANNEL,
+        commercial_conversation_attention,
+        get_commercial_company,
+    )
+
+    _require_superadmin()
+    company = get_commercial_company()
+    if company is None:
+        flash("La empresa interna StockArMobile Comercial no está inicializada.", "danger")
+        return redirect(url_for("saas.whatsapp_commercial_settings"))
+
+    q = (request.args.get("q") or "").strip()
+    state = (request.args.get("state") or "pending").strip().lower()
+    if state not in {"all", "pending", "human", "ai", "resolved"}:
+        state = "pending"
+
+    # The default queue is human-pending. Other tabs are available without
+    # changing any conversation state.
+    rows = _commercial_inbox_rows(company, q=q, state=state)
+    if state == "all" and q:
+        pass
+    elif state == "all":
+        rows = _commercial_inbox_rows(company, q=q, state="all")
+
+    total_rows = _commercial_inbox_rows(company, q="", state="all")
+    pending_count = sum(1 for row in total_rows if row["attention"]["pending"])
+    human_count = sum(1 for row in total_rows if row["attention"]["status"] == "human")
+    ai_count = sum(1 for row in total_rows if row["attention"]["status"] in {"", "ai"})
+    resolved_count = sum(1 for row in total_rows if row["attention"]["status"] == "resolved")
+
+    selected_id = request.args.get("conversation_id", type=int)
+    selected = None
+    selected_messages = []
+    if selected_id:
+        selected = (
+            Conversation.query
+            .filter_by(
+                id=int(selected_id),
+                company_id=int(company.id),
+                channel=COMMERCIAL_CHANNEL,
+            )
+            .first()
+        )
+    if selected is None:
+        preferred = next((row for row in rows if row["attention"]["pending"]), None) or (rows[0] if rows else None)
+        if preferred:
+            selected = (
+                Conversation.query
+                .filter_by(
+                    id=int(preferred["conversation_id"]),
+                    company_id=int(company.id),
+                    channel=COMMERCIAL_CHANNEL,
+                )
+                .first()
+            )
+
+    selected_view = None
+    if selected is not None:
+        normalized_phone = "".join(ch for ch in str(selected.external_conversation_id or "") if ch.isdigit())[:40]
+        lead = (
+            SaaSLead.query
+            .filter(db.or_(SaaSLead.whatsapp == normalized_phone, SaaSLead.phone == normalized_phone))
+            .order_by(SaaSLead.id.desc())
+            .first()
+        )
+        selected_messages = (
+            ConversationMessage.query
+            .filter(
+                ConversationMessage.company_id == int(company.id),
+                ConversationMessage.conversation_id == int(selected.id),
+            )
+            .order_by(ConversationMessage.id.desc())
+            .limit(200)
+            .all()
+        )
+        selected_messages.reverse()
+        selected_view = {
+            "conversation_id": selected.id,
+            "phone": str(selected.external_conversation_id or ""),
+            "contact_name": getattr(lead, "contact_name", None) or "Prospecto",
+            "company_name": getattr(lead, "company_name", None) or "Prospecto de WhatsApp",
+            "email": getattr(lead, "email", None) or "",
+            "attention": commercial_conversation_attention(selected),
+            "created_at": _format_admin_datetime_local(selected.created_at, "%d/%m/%Y %H:%M"),
+            "messages": [
+                {
+                    "id": msg.id,
+                    "sender_type": msg.sender_type,
+                    "content": msg.content,
+                    "created_at": _format_admin_datetime_local(msg.created_at, "%d/%m/%Y %H:%M"),
+                }
+                for msg in selected_messages
+            ],
+        }
+
+    return render_template(
+        "saas/whatsapp_commercial_attention.html",
+        company=company,
+        rows=rows,
+        selected=selected_view,
+        q=q,
+        state=state,
+        counts={
+            "pending": pending_count,
+            "human": human_count,
+            "ai": ai_count,
+            "resolved": resolved_count,
+        },
+    )
+
+
+@bp.post("/whatsapp-comercial/atencion/<int:conversation_id>/action")
+@superadmin_required
+def whatsapp_commercial_attention_action(conversation_id: int):
+    from app import Conversation, db, record_audit
+    from services.saas_commercial_whatsapp import (
+        COMMERCIAL_CHANNEL,
+        _set_commercial_attention,
+        clear_commercial_attention,
+        commercial_conversation_attention,
+        get_commercial_company,
+        resume_commercial_ai,
+    )
+
+    _require_superadmin()
+    company = get_commercial_company()
+    conversation = (
+        Conversation.query
+        .filter_by(
+            id=int(conversation_id),
+            company_id=int(company.id) if company is not None else -1,
+            channel=COMMERCIAL_CHANNEL,
+        )
+        .first()
+        if company is not None
+        else None
+    )
+    if company is None or conversation is None:
+        abort(404)
+
+    action = (request.form.get("action") or "").strip().lower()
+    attention = commercial_conversation_attention(conversation)
+    reason = (request.form.get("reason") or "").strip()[:500]
+
+    if action == "take":
+        taken_by = attention.get("taken_by_user_id")
+        if taken_by and int(taken_by) != int(current_user.id):
+            flash("La conversación ya fue tomada por otro operador.", "warning")
+            return redirect(url_for("saas.whatsapp_commercial_attention", conversation_id=conversation.id))
+        _set_commercial_attention(
+            conversation,
+            status="human",
+            user_id=int(current_user.id),
+            reason=reason or attention.get("reason") or "Tomada desde Atención Comercial.",
+        )
+        message = "Conversación tomada. Comercial IA queda pausado para este prospecto."
+        audit_action = "commercial_whatsapp_take_human"
+    elif action == "resolve":
+        resume_commercial_ai(conversation, user_id=int(current_user.id))
+        message = "Atención humana marcada como resuelta. La próxima consulta del prospecto podrá retomar Comercial IA."
+        audit_action = "commercial_whatsapp_resolve_human"
+    elif action == "resume_ai":
+        clear_commercial_attention(conversation)
+        message = "Comercial IA reanudado para esta conversación."
+        audit_action = "commercial_whatsapp_resume_ai"
+    else:
+        abort(400)
+
+    record_audit(
+        action=audit_action,
+        entity="conversation",
+        entity_id=conversation.id,
+        company_id=company.id,
+        detail=message,
+        user_id=current_user.id,
+    )
+    db.session.commit()
+    flash(message, "success")
+    return redirect(url_for("saas.whatsapp_commercial_attention", conversation_id=conversation.id))
+
+
+@bp.post("/whatsapp-comercial/atencion/<int:conversation_id>/mensaje")
+@superadmin_required
+def whatsapp_commercial_attention_message(conversation_id: int):
+    from app import Conversation, db, record_audit
+    from services.saas_commercial_whatsapp import (
+        COMMERCIAL_CHANNEL,
+        _set_commercial_attention,
+        commercial_conversation_attention,
+        get_commercial_company,
+        send_commercial_human_message,
+    )
+
+    _require_superadmin()
+    company = get_commercial_company()
+    if company is None:
+        abort(404)
+    conversation = (
+        Conversation.query
+        .filter_by(
+            id=int(conversation_id),
+            company_id=int(company.id),
+            channel=COMMERCIAL_CHANNEL,
+        )
+        .first()
+    )
+    if conversation is None:
+        abort(404)
+
+    if commercial_conversation_attention(conversation)["status"] != "human":
+        _set_commercial_attention(
+            conversation,
+            status="human",
+            user_id=int(current_user.id),
+            reason="Tomada al enviar respuesta desde Atención Comercial.",
+        )
+        db.session.flush()
+
+    body = (request.form.get("body") or "").strip()
+    try:
+        result = send_commercial_human_message(
+            company=company,
+            conversation=conversation,
+            body=body,
+            user_id=int(current_user.id),
+        )
+        record_audit(
+            action="commercial_whatsapp_human_message",
+            entity="conversation",
+            entity_id=conversation.id,
+            company_id=company.id,
+            detail=f"Mensaje humano enviado por SuperAdmin. message_id={result.get('message_id')}.",
+            user_id=current_user.id,
+        )
+        flash("Mensaje enviado por WhatsApp.", "success")
+    except ValueError as exc:
+        db.session.rollback()
+        flash(str(exc), "warning")
+    except PermissionError as exc:
+        db.session.rollback()
+        flash(str(exc), "danger")
+    except Exception:
+        db.session.rollback()
+        current_app.logger.exception("No se pudo enviar mensaje humano de WhatsApp comercial.")
+        flash("No se pudo enviar el mensaje. Revisá la conexión de WhatsApp.", "danger")
+    return redirect(url_for("saas.whatsapp_commercial_attention", conversation_id=conversation.id))
+
+
+
 @bp.route("/stats")
 @superadmin_required
 def global_stats():
