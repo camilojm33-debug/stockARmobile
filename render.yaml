@@ -51,6 +51,20 @@ services:
         value: gemini-3.6-flash
       - key: GEMINI_TIMEOUT
         value: "25"
+      - key: GOOGLE_GMAIL_CLIENT_ID
+        sync: false
+      - key: GOOGLE_GMAIL_CLIENT_SECRET
+        sync: false
+      - key: GOOGLE_GMAIL_REDIRECT_URI
+        value: https://www.stockarmobile.com/superadmin/crm/email/gmail/callback
+      - key: GMAIL_COMMERCIAL_REFRESH_TOKEN
+        sync: false
+      - key: GMAIL_COMMERCIAL_PUBSUB_TOPIC
+        sync: false
+      - key: GMAIL_COMMERCIAL_PUBSUB_SECRET
+        sync: false
+      - key: GMAIL_COMMERCIAL_MAILBOX
+        value: stockarmobile@gmail.com
       - key: DATABASE_URL
         fromDatabase:
           name: stockarmobile-db
