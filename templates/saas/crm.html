@@ -18,6 +18,36 @@
 </div>
 {% endfor %}
 
+{% for lead in leads %}
+<div class="modal fade" id="deleteLead{{ lead.id }}" tabindex="-1" aria-hidden="true">
+  <div class="modal-dialog">
+    <div class="modal-content">
+      <div class="modal-header">
+        <h5 class="modal-title text-danger"><i class="bi bi-trash3 me-1"></i>Eliminar prospecto</h5>
+        <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Cerrar"></button>
+      </div>
+      <form method="post" action="{{ url_for('saas.crm_lead_delete', lead_id=lead.id) }}">
+        <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+        <div class="modal-body">
+          <p class="mb-2">Vas a eliminar permanentemente el prospecto <strong>{{ lead.company_name }}</strong> · {{ lead.contact_name }}.</p>
+          <div class="alert alert-warning small mb-3">
+            Se eliminan sus datos CRM, consentimiento, tareas, alertas y destinatarios de campañas.
+            {% if lead.source == 'whatsapp_comercial' %}La conversación de WhatsApp no se elimina desde aquí; la acción de conversaciones es independiente.{% endif %}
+            Cualquier historial de contratación de Mercado Pago se conserva y queda desvinculado del prospecto.
+          </div>
+          <label class="form-label fw-semibold">Contraseña de Super Admin</label>
+          <input type="password" class="form-control" name="step_up_password" autocomplete="current-password" required>
+        </div>
+        <div class="modal-footer">
+          <button type="button" class="btn btn-outline-secondary" data-bs-dismiss="modal">Cancelar</button>
+          <button type="submit" class="btn btn-danger"><i class="bi bi-trash3 me-1"></i>Eliminar definitivamente</button>
+        </div>
+      </form>
+    </div>
+  </div>
+</div>
+{% endfor %}
+
 {% endblock %}
 {% block content %}
 <div class="app-shell">
@@ -190,6 +220,7 @@
                             <button class="btn btn-sm btn-outline-primary" type="submit">Guardar</button>
                           </form>
                           <button type="button" class="btn btn-sm btn-outline-secondary" data-bs-toggle="modal" data-bs-target="#contactPrefs{{ lead.id }}">Contactos</button>
+                          <button type="button" class="btn btn-sm btn-outline-danger" data-bs-toggle="modal" data-bs-target="#deleteLead{{ lead.id }}">Eliminar</button>
                           </div>
                         </td>
                       </tr>
