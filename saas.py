@@ -2142,7 +2142,7 @@ def crm_lead_delete(lead_id):
                 f"tareas={result['tasks_deleted']}; alertas={result['alerts_deleted']}; "
                 f"destinatarios={result['campaign_recipients_deleted']}; "
                 f"consentimientos={result['consents_deleted']}; "
-                f"eventos_campaña_desvinculados={result.get('campaign_events_unlinked', 0)}; "
+                f"eventos_campaña_eliminados={result.get('campaign_events_deleted', 0)}; "
                 f"checkouts_desvinculados={result['checkouts_detached']}."
             ),
             user_id=current_user.id,
