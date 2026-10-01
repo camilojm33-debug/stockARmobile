@@ -292,7 +292,7 @@ def delete_saas_lead(db_session, lead_id: int) -> dict:
     reference is detached so deleting a CRM prospect never breaks activation or
     Mercado Pago reconciliation.
     """
-    from app import SaaSAlert, SaaSCampaignRecipient, SaaSCommercialCheckout, SaaSLead, SaaSLeadConsent, SaaSTask
+    from app import SaaSAlert, SaaSCampaignEvent, SaaSCampaignRecipient, SaaSCommercialCheckout, SaaSLead, SaaSLeadConsent, SaaSTask
 
     lead = db_session.get(SaaSLead, int(lead_id))
     if lead is None:
@@ -317,18 +317,35 @@ def delete_saas_lead(db_session, lead_id: int) -> dict:
         )
     alert_count = len(alert_ids)
 
-    recipient_count = SaaSCampaignRecipient.query.filter_by(lead_id=lead_id).count()
+    recipient_ids = [
+        row.id
+        for row in db_session.query(SaaSCampaignRecipient.id)
+        .filter(SaaSCampaignRecipient.lead_id == lead_id)
+        .all()
+    ]
+    recipient_count = len(recipient_ids)
+    campaign_event_count = (
+        db_session.query(SaaSCampaignEvent).filter(
+            SaaSCampaignEvent.recipient_id.in_(recipient_ids)
+        ).count()
+        if recipient_ids
+        else 0
+    )
     consent_count = SaaSLeadConsent.query.filter_by(lead_id=lead_id).count()
 
-    # Campaign events reference recipients with SET NULL, so removing the
-    # recipient rows keeps the delivery history table consistent.
+    # Campaign analytics tied to the deleted prospect are removed with the
+    # recipient row instead of being retained as orphaned contact history.
     db_session.query(SaaSAlert).filter(SaaSAlert.lead_id == lead_id).delete(synchronize_session=False)
     if task_ids:
         db_session.query(SaaSAlert).filter(SaaSAlert.task_id.in_(task_ids)).delete(synchronize_session=False)
         db_session.query(SaaSTask).filter(SaaSTask.id.in_(task_ids)).delete(synchronize_session=False)
-    db_session.query(SaaSCampaignRecipient).filter(
-        SaaSCampaignRecipient.lead_id == lead_id
-    ).delete(synchronize_session=False)
+    if recipient_ids:
+        db_session.query(SaaSCampaignEvent).filter(
+            SaaSCampaignEvent.recipient_id.in_(recipient_ids)
+        ).delete(synchronize_session=False)
+        db_session.query(SaaSCampaignRecipient).filter(
+            SaaSCampaignRecipient.id.in_(recipient_ids)
+        ).delete(synchronize_session=False)
     if consent_count:
         db_session.query(SaaSLeadConsent).filter(
             SaaSLeadConsent.lead_id == lead_id
@@ -347,6 +364,7 @@ def delete_saas_lead(db_session, lead_id: int) -> dict:
         "tasks_deleted": len(task_ids),
         "alerts_deleted": alert_count,
         "campaign_recipients_deleted": recipient_count,
+        "campaign_events_deleted": campaign_event_count,
         "consents_deleted": consent_count,
         "checkouts_detached": checkout_count,
     }
