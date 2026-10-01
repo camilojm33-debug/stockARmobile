@@ -1,5 +1,34 @@
 {% extends "base_master.html" %}
-{% block title %}Atención Comercial · WhatsApp | StockArmobile{% endblock %}
+{% block title %}Atención Comercial · WhatsApp | StockArmobile
+{% if selected %}
+<div class="modal fade" id="deleteCommercialConversationModal" tabindex="-1" aria-labelledby="deleteCommercialConversationModalLabel" aria-hidden="true">
+  <div class="modal-dialog modal-dialog-centered">
+    <div class="modal-content">
+      <div class="modal-header">
+        <h2 class="modal-title h5 fw-bold" id="deleteCommercialConversationModalLabel"><i class="bi bi-trash3 text-danger me-2"></i>Eliminar conversación</h2>
+        <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Cerrar"></button>
+      </div>
+      <form method="post" action="{{ url_for('saas.whatsapp_commercial_attention_delete', conversation_id=selected.conversation_id) }}">
+        <div class="modal-body">
+          <div class="alert alert-warning small">
+            Se eliminará permanentemente el historial de esta conversación de WhatsApp Comercial.
+            <strong>El prospecto seguirá existiendo en el CRM.</strong>
+          </div>
+          <label class="form-label fw-semibold" for="commercialDeletePassword">Contraseña de Super Admin</label>
+          <input class="form-control" id="commercialDeletePassword" name="step_up_password" type="password" autocomplete="current-password" placeholder="Ingresá tu contraseña para confirmar">
+          <div class="form-text">La reautenticación queda habilitada durante 10 minutos para acciones sensibles.</div>
+          <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+        </div>
+        <div class="modal-footer">
+          <button type="button" class="btn btn-outline-secondary" data-bs-dismiss="modal">Cancelar</button>
+          <button type="submit" class="btn btn-danger"><i class="bi bi-trash3 me-1"></i>Eliminar definitivamente</button>
+        </div>
+      </form>
+    </div>
+  </div>
+</div>
+{% endif %}
+{% endblock %}
 {% block extra_css %}
 <style>
   .commercial-inbox { max-width: 1320px; margin: 0 auto; }
@@ -99,6 +128,10 @@
                 <div class="small commercial-code mt-1">{{ selected.phone }}</div>
               </div>
               <div class="text-end">
+                <button class="btn btn-outline-danger btn-sm" type="button" data-bs-toggle="modal" data-bs-target="#deleteCommercialConversationModal">
+                  <i class="bi bi-trash3 me-1"></i>Eliminar conversación
+                </button>
+                <div class="mt-2">
                 {% if selected.attention.status == 'human' %}
                   {% if selected.attention.taken_by_user_id == current_user.id %}
                     <span class="badge text-bg-success">Vos estás atendiendo</span>
@@ -117,6 +150,8 @@
             {% if selected.attention.reason %}
               <div class="alert alert-warning small mt-3 mb-0"><strong>Motivo:</strong> {{ selected.attention.reason }}</div>
             {% endif %}
+                </div>
+              </div>
           </div>
 
           <div class="commercial-messages">
