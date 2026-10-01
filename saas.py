@@ -4173,7 +4173,8 @@ def backups_delete(backup_id):
 
 
 def _commercial_inbox_rows(company, *, q: str = "", state: str = "pending"):
-    from app import Conversation, ConversationMessage, SaaSLead, db
+    from app import SaaSLead, db
+    from stockarmobile.models.conversations import Conversation, ConversationMessage
     from services.saas_commercial_whatsapp import commercial_conversation_attention
 
     conversations = (
@@ -4234,7 +4235,8 @@ def _commercial_inbox_rows(company, *, q: str = "", state: str = "pending"):
 @bp.route("/whatsapp-comercial/atencion", methods=["GET"])
 @superadmin_required
 def whatsapp_commercial_attention():
-    from app import Conversation, ConversationMessage, SaaSLead, db
+    from app import SaaSLead, db
+    from stockarmobile.models.conversations import Conversation, ConversationMessage
     from services.saas_commercial_whatsapp import (
         COMMERCIAL_CHANNEL,
         commercial_conversation_attention,
@@ -4350,7 +4352,8 @@ def whatsapp_commercial_attention():
 @bp.post("/whatsapp-comercial/atencion/<int:conversation_id>/action")
 @superadmin_required
 def whatsapp_commercial_attention_action(conversation_id: int):
-    from app import Conversation, db, record_audit
+    from app import db, record_audit
+    from stockarmobile.models.conversations import Conversation
     from services.saas_commercial_whatsapp import (
         COMMERCIAL_CHANNEL,
         _set_commercial_attention,
