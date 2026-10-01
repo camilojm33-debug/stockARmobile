@@ -523,20 +523,81 @@ class WebhookService:
 
         elif event_type in {"preapproval", "subscription_preapproval"}:
             preapproval_data = self.mp_service.get_preapproval(data_id)
-            subscription_id = preapproval_data.get("external_reference")
-            subscription = None
-            if subscription_id and str(subscription_id).isdigit():
-                subscription = Subscription.query.filter_by(id=int(subscription_id)).first()
-            if subscription:
-                status = (preapproval_data.get("status") or "pending").lower()
-                SubscriptionService.run_command(db_session, SubscriptionService.ChangePaymentMethodCommand(company_id=subscription.company_id, subscription_id=subscription.id, actor_user_id=None, actor_role="system", origin="webhook", idempotency_key=f"webhook-preapproval-meta:{event_key}:{subscription.id}", payment_method="mercadopago_subscription", metadata={"mercadopago_subscription_id": str(preapproval_data.get("id") or "")}))
-                if status in {"authorized", "pending", "in_process"}:
-                    SubscriptionService.apply_payment_status(subscription, status)
-                elif status in {"approved"}:
-                    SubscriptionService.run_command(db_session, SubscriptionService.ReactivateSubscriptionCommand(company_id=subscription.company_id, subscription_id=subscription.id, actor_user_id=None, actor_role="system", origin="webhook", idempotency_key=f"webhook-preapproval-reactivate:{event_key}:{subscription.id}"))
-                elif status in {"cancelled", "paused"}:
-                    SubscriptionService.run_command(db_session, SubscriptionService.CancelSubscriptionCommand(company_id=subscription.company_id, subscription_id=subscription.id, actor_user_id=None, actor_role="system", origin="webhook", idempotency_key=f"webhook-preapproval-cancel:{event_key}:{subscription.id}", cancel_at_period_end=False))
-            result = {"status": "processed_preapproval", "event_key": event_key}
+
+            from app import SaaSCommercialCheckout
+            from services.saas_commercial_whatsapp import activate_commercial_checkout, get_commercial_company
+            from services.ai_agent.whatsapp_service import WhatsAppService
+
+            commercial = activate_commercial_checkout(preapproval=preapproval_data)
+            if commercial is not None:
+                if commercial.get("activation_url"):
+                    checkout_id = commercial.get("checkout_id")
+                    checkout = db_session.get(SaaSCommercialCheckout, checkout_id) if checkout_id else None
+                    if checkout is not None:
+                        message = (
+                            "✅ Pago autorizado. Tu empresa de StockArMobile ya está creada. "
+                            "Completá tu contraseña para ingresar: "
+                            f"{commercial['activation_url']}"
+                        )
+                        WhatsAppService.send_text(
+                            get_commercial_company(),
+                            to=checkout.phone,
+                            body=message,
+                        )
+                result = {
+                    "status": "processed_commercial_checkout",
+                    "event_key": event_key,
+                    "checkout_status": commercial.get("status"),
+                    "company_id": commercial.get("company_id"),
+                }
+            else:
+                subscription_id = preapproval_data.get("external_reference")
+                subscription = None
+                if subscription_id and str(subscription_id).isdigit():
+                    subscription = Subscription.query.filter_by(id=int(subscription_id)).first()
+                if subscription:
+                    status = (preapproval_data.get("status") or "pending").lower()
+                    SubscriptionService.run_command(
+                        db_session,
+                        SubscriptionService.ChangePaymentMethodCommand(
+                            company_id=subscription.company_id,
+                            subscription_id=subscription.id,
+                            actor_user_id=None,
+                            actor_role="system",
+                            origin="webhook",
+                            idempotency_key=f"webhook-preapproval-meta:{event_key}:{subscription.id}",
+                            payment_method="mercadopago_subscription",
+                            metadata={"mercadopago_subscription_id": str(preapproval_data.get("id") or "")},
+                        ),
+                    )
+                    if status in {"authorized", "pending", "in_process"}:
+                        SubscriptionService.apply_payment_status(subscription, status)
+                    elif status in {"approved"}:
+                        SubscriptionService.run_command(
+                            db_session,
+                            SubscriptionService.ReactivateSubscriptionCommand(
+                                company_id=subscription.company_id,
+                                subscription_id=subscription.id,
+                                actor_user_id=None,
+                                actor_role="system",
+                                origin="webhook",
+                                idempotency_key=f"webhook-preapproval-reactivate:{event_key}:{subscription.id}",
+                            ),
+                        )
+                    elif status in {"cancelled", "paused"}:
+                        SubscriptionService.run_command(
+                            db_session,
+                            SubscriptionService.CancelSubscriptionCommand(
+                                company_id=subscription.company_id,
+                                subscription_id=subscription.id,
+                                actor_user_id=None,
+                                actor_role="system",
+                                origin="webhook",
+                                idempotency_key=f"webhook-preapproval-cancel:{event_key}:{subscription.id}",
+                                cancel_at_period_end=False,
+                            ),
+                        )
+                result = {"status": "processed_preapproval", "event_key": event_key}
 
         event_row.status = result.get("status")
         ReferralService.refresh_commission_states(db_session)
