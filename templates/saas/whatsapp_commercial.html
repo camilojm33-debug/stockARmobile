@@ -168,6 +168,34 @@
             </div>
           {% endif %}
         </section>
+
+        <section class="wa-admin-card p-4 mt-4">
+          <h2 class="h5 fw-bold mb-1">Migrar la conexión actual del Vendedor IA</h2>
+          <p class="text-muted small">
+            Esta opción mueve <strong>la configuración dentro de StockArMobile</strong> hacia la empresa interna de Super Admin.
+            No elimina ni transfiere el número en Meta.
+          </p>
+          <form method="post" action="{{ url_for('saas.whatsapp_commercial_migrate_connection') }}">
+            <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+            <div class="mb-3">
+              <label class="form-label fw-semibold">Phone Number ID actual</label>
+              <input class="form-control" name="phone_number_id" value="{{ connection.phone_number_id or '' }}" placeholder="Ej. 1213985218475043" inputmode="numeric" required>
+              <div class="form-text">Debe ser el Phone Number ID que hoy tiene configurado el Vendedor IA.</div>
+            </div>
+            <div class="alert alert-warning small">
+              <strong>Importante:</strong> al confirmar, la empresa origen quedará sin ese número para el Vendedor IA y el webhook pasará a procesarlo como <strong>Comercial IA de Super Admin</strong>.
+            </div>
+            <div class="form-check mb-3">
+              <input class="form-check-input" type="checkbox" name="confirm_migration" value="1" id="confirmWaMigration" required>
+              <label class="form-check-label small" for="confirmWaMigration">
+                Confirmo que este es el número de StockArMobile que quiero pasar a Super Admin.
+              </label>
+            </div>
+            <button class="btn btn-outline-warning" type="submit">
+              <i class="bi bi-arrow-left-right me-1"></i>Migrar conexión a Super Admin
+            </button>
+          </form>
+        </section>
       </div>
     </div>
   {% endif %}
