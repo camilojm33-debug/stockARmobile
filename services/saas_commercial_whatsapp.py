@@ -11,7 +11,7 @@ from datetime import datetime, timezone, timedelta
 from sqlalchemy import or_
 
 from stockarmobile.extensions import db
-from stockarmobile.models.conversations import Agent, AgentConfiguration, Conversation, ConversationMessage
+from stockarmobile.models.conversations import Agent, AgentConfiguration, Conversation, ConversationMessage, ConversationParticipant
 
 
 COMMERCIAL_COMPANY_MARKER = "whatsapp_commercial"
@@ -744,6 +744,64 @@ def clear_commercial_attention(conversation) -> None:
     metadata.pop("ai_attention", None)
     conversation.metadata_json = metadata
     conversation.updated_at = _utcnow()
+
+
+
+def delete_commercial_conversation(conversation_id: int) -> dict:
+    """Permanently delete one conversation from the isolated commercial channel."""
+    company = get_commercial_company()
+    if company is None:
+        raise RuntimeError("No existe la empresa interna de WhatsApp comercial.")
+
+    conversation = (
+        Conversation.query
+        .filter(
+            Conversation.id == int(conversation_id),
+            Conversation.company_id == int(company.id),
+            Conversation.channel == COMMERCIAL_CHANNEL,
+        )
+        .first()
+    )
+    if conversation is None:
+        raise ValueError("La conversación comercial no existe o no pertenece al canal comercial.")
+
+    # Child rows are removed explicitly because the models intentionally keep
+    # these FKs restrictive for tenant data integrity. The SaaS lead remains:
+    # deleting chat history must not delete the CRM prospect.
+    participant_count = (
+        ConversationParticipant.query
+        .filter(
+            ConversationParticipant.company_id == int(company.id),
+            ConversationParticipant.conversation_id == int(conversation.id),
+        )
+        .count()
+    )
+    message_count = (
+        ConversationMessage.query
+        .filter(
+            ConversationMessage.company_id == int(company.id),
+            ConversationMessage.conversation_id == int(conversation.id),
+        )
+        .count()
+    )
+
+    ConversationParticipant.query.filter(
+        ConversationParticipant.company_id == int(company.id),
+        ConversationParticipant.conversation_id == int(conversation.id),
+    ).delete(synchronize_session=False)
+    ConversationMessage.query.filter(
+        ConversationMessage.company_id == int(company.id),
+        ConversationMessage.conversation_id == int(conversation.id),
+    ).delete(synchronize_session=False)
+    db.session.delete(conversation)
+    db.session.flush()
+
+    return {
+        "conversation_id": int(conversation_id),
+        "messages_deleted": int(message_count),
+        "participants_deleted": int(participant_count),
+        "company_id": int(company.id),
+    }
 
 
 def process_commercial_message(*, phone_number_id: str, sender: str, external_id: str, text: str) -> dict:
