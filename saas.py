@@ -4201,30 +4201,17 @@ def global_settings():
 @superadmin_required
 def whatsapp_commercial_settings():
     """Configure the isolated StockArMobile commercial WhatsApp channel."""
-    from app import Company, db, record_audit
+    from app import db, record_audit
     from services.ai_agent.config_service import (
-        COMMERCIAL_COMPANY_MARKER,
         configure_whatsapp_connection,
         get_ai_preferences,
         get_whatsapp_connection,
+        update_ai_preferences,
     )
+    from services.saas_commercial_whatsapp import get_commercial_company
 
     _require_superadmin()
-
-    company = None
-    for candidate in (
-        Company.query
-        .filter(Company.active.is_(True), Company.preferences_json.contains(COMMERCIAL_COMPANY_MARKER))
-        .order_by(Company.id.asc())
-        .all()
-    ):
-        try:
-            prefs = json.loads(candidate.preferences_json or "{}")
-        except (TypeError, ValueError):
-            prefs = {}
-        if isinstance(prefs, dict) and str(prefs.get("internal_channel") or "").strip().lower() == COMMERCIAL_COMPANY_MARKER:
-            company = candidate
-            break
+    company = get_commercial_company()
 
     if request.method == "POST":
         if company is None:
@@ -4240,8 +4227,8 @@ def whatsapp_commercial_settings():
         enabled = (request.form.get("enabled") or "") == "1"
         business_id = (request.form.get("business_id") or "").strip()
 
-        if enabled and not phone_number_id:
-            flash("Para activar WhatsApp Comercial necesitás informar el Phone Number ID.", "danger")
+        if enabled and (not phone_number_id or not waba_id):
+            flash("Para activar WhatsApp Comercial necesitás informar el Phone Number ID y el WABA ID.", "danger")
             return redirect(url_for("saas.whatsapp_commercial_settings"))
 
         try:
@@ -4255,12 +4242,7 @@ def whatsapp_commercial_settings():
                 template_name=template_name,
                 template_language=template_language,
             )
-            whatsapp_updates = {"waba_id": waba_id}
-            if business_id:
-                whatsapp_updates["business_id"] = business_id
-            elif "business_id" in get_ai_preferences(company)["whatsapp"]:
-                whatsapp_updates["business_id"] = ""
-            from services.ai_agent.config_service import update_ai_preferences
+            whatsapp_updates = {"waba_id": waba_id, "business_id": business_id}
             update_ai_preferences(company, whatsapp_updates=whatsapp_updates)
             record_audit(
                 action="superadmin_whatsapp_commercial_configured",
@@ -4285,6 +4267,7 @@ def whatsapp_commercial_settings():
         "display_phone_number": "",
         "template_name": "",
         "template_language": "es_AR",
+        "access_token": "",
     }
     stored = get_ai_preferences(company)["whatsapp"] if company is not None else {}
     env_enabled = str(os.getenv("WHATSAPP_COMMERCIAL_ENABLED") or "").strip().lower() in {"1", "true", "yes", "on"}
@@ -4302,6 +4285,91 @@ def whatsapp_commercial_settings():
         token_configured=token_configured,
         webhook_url=url_for("whatsapp_agent.webhook", _external=True),
     )
+
+
+@bp.post("/whatsapp-comercial/migrar-conexion")
+@superadmin_required
+def whatsapp_commercial_migrate_connection():
+    """Move an existing tenant WhatsApp connection into SuperAdmin safely."""
+    from app import Company, db, record_audit
+    from services.ai_agent.config_service import get_ai_preferences, save_company_preferences
+    from services.saas_commercial_whatsapp import get_commercial_company
+
+    _require_superadmin()
+    destination = get_commercial_company()
+    phone_number_id = (request.form.get("phone_number_id") or "").strip()
+    confirm = (request.form.get("confirm_migration") or "") == "1"
+
+    if destination is None:
+        flash("La empresa interna StockArMobile Comercial no está inicializada.", "danger")
+        return redirect(url_for("saas.whatsapp_commercial_settings"))
+    if not phone_number_id:
+        flash("Informá el Phone Number ID del número que hoy usa el Vendedor IA.", "danger")
+        return redirect(url_for("saas.whatsapp_commercial_settings"))
+    if not confirm:
+        flash("Confirmá la migración de la conexión para continuar.", "warning")
+        return redirect(url_for("saas.whatsapp_commercial_settings"))
+
+    candidates = []
+    for source in Company.query.filter(Company.active.is_(True)).order_by(Company.id.asc()).all():
+        if int(source.id) == int(destination.id):
+            continue
+        prefs = get_ai_preferences(source)
+        wa = prefs.get("whatsapp") if isinstance(prefs.get("whatsapp"), dict) else {}
+        if str(wa.get("phone_number_id") or "").strip() != phone_number_id:
+            continue
+        if not str(wa.get("access_token_encrypted") or "").strip():
+            continue
+        candidates.append((source, prefs, wa))
+
+    if len(candidates) != 1:
+        if not candidates:
+            flash("No encontré una conexión activa de Vendedor IA con ese Phone Number ID.", "danger")
+        else:
+            flash("Encontré más de una conexión con ese Phone Number ID. No migré nada por seguridad.", "danger")
+        return redirect(url_for("saas.whatsapp_commercial_settings"))
+
+    source, source_prefs, source_wa = candidates[0]
+    try:
+        destination_prefs = get_ai_preferences(destination)
+        destination_ai = destination_prefs.get("ai_agent") if isinstance(destination_prefs.get("ai_agent"), dict) else {}
+        destination_whatsapp = dict(source_wa)
+        destination_whatsapp["enabled"] = True
+        destination_ai["whatsapp"] = destination_whatsapp
+        destination_prefs["ai_agent"] = destination_ai
+        save_company_preferences(destination, destination_prefs)
+
+        source_ai = source_prefs.get("ai_agent") if isinstance(source_prefs.get("ai_agent"), dict) else {}
+        source_whatsapp = dict(source_wa)
+        source_whatsapp["enabled"] = False
+        source_whatsapp["phone_number_id"] = ""
+        source_ai["whatsapp"] = source_whatsapp
+        source_prefs["ai_agent"] = source_ai
+        save_company_preferences(source, source_prefs)
+
+        record_audit(
+            action="superadmin_whatsapp_commercial_migrated",
+            entity="whatsapp_commercial",
+            entity_id=destination.id,
+            company_id=destination.id,
+            detail=f"Conexión WhatsApp migrada desde company_id={source.id}. phone_number_id={phone_number_id}.",
+            user_id=current_user.id,
+        )
+        record_audit(
+            action="tenant_whatsapp_connection_moved_to_superadmin",
+            entity="whatsapp_connection",
+            entity_id=source.id,
+            company_id=source.id,
+            detail=f"Conexión WhatsApp movida a SuperAdmin. destination_company_id={destination.id}.",
+            user_id=current_user.id,
+        )
+        db.session.commit()
+        flash(f"Conexión migrada desde '{source.name}' a WhatsApp Comercial de Super Admin.", "success")
+    except Exception:
+        db.session.rollback()
+        current_app.logger.exception("No se pudo migrar la conexión WhatsApp al SuperAdmin.")
+        flash("No se pudo completar la migración. No se aplicaron cambios.", "danger")
+    return redirect(url_for("saas.whatsapp_commercial_settings"))
 
 
 @bp.route("/landing/testimonials", methods=["GET", "POST"])
