@@ -4416,6 +4416,46 @@ def whatsapp_commercial_attention_action(conversation_id: int):
     return redirect(url_for("saas.whatsapp_commercial_attention", conversation_id=conversation.id))
 
 
+@bp.post("/whatsapp-comercial/atencion/<int:conversation_id>/delete")
+@superadmin_required
+def whatsapp_commercial_attention_delete(conversation_id: int):
+    from app import db, record_audit
+    from services.saas_commercial_whatsapp import delete_commercial_conversation
+
+    if not _require_superadmin_step_up():
+        return redirect(url_for("saas.whatsapp_commercial_attention", conversation_id=conversation_id))
+
+    try:
+        result = delete_commercial_conversation(conversation_id)
+        record_audit(
+            action="commercial_whatsapp_conversation_delete",
+            entity="conversation",
+            entity_id=conversation_id,
+            detail=(
+                f"Conversación comercial eliminada. "
+                f"messages_deleted={result['messages_deleted']} "
+                f"participants_deleted={result['participants_deleted']}."
+            ),
+            user_id=current_user.id,
+            company_id=result["company_id"],
+            ip_address=request.remote_addr,
+        )
+        db.session.commit()
+        flash("Conversación eliminada. El prospecto de CRM se conservó.", "warning")
+    except ValueError as exc:
+        db.session.rollback()
+        flash(str(exc), "warning")
+    except Exception:
+        db.session.rollback()
+        current_app.logger.exception(
+            "No se pudo eliminar conversación de WhatsApp comercial conversation_id=%s",
+            conversation_id,
+        )
+        flash("No se pudo eliminar la conversación. No se aplicaron cambios.", "danger")
+
+    return redirect(url_for("saas.whatsapp_commercial_attention"))
+
+
 @bp.post("/whatsapp-comercial/atencion/<int:conversation_id>/mensaje")
 @superadmin_required
 def whatsapp_commercial_attention_message(conversation_id: int):
