@@ -341,27 +341,5 @@ def products_pricing_shortcut():
 
 
 
-# TEMP MP ACCOUNT AUDIT — remove after verification
-# Uses the existing production MP_ACCESS_TOKEN without printing or exposing the credential.
-try:
-    from services.mercadopago_service import MercadoPagoService
-    _mp_audit = MercadoPagoService()._request("GET", "/users/me")
-    _mp_audit_email = str(_mp_audit.get("email") or "").strip()
-    if _mp_audit_email:
-        if "@" in _mp_audit_email:
-            _local, _domain = _mp_audit_email.split("@", 1)
-            _mp_audit_email = (_local[:2] + "***@" + _domain) if _local else "***@" + _domain
-        else:
-            _mp_audit_email = "***"
-    app.logger.warning(
-        "[MP_ACCOUNT_AUDIT] id=%s nickname=%s email=%s country=%s site_id=%s",
-        _mp_audit.get("id"),
-        _mp_audit.get("nickname"),
-        _mp_audit_email,
-        _mp_audit.get("country_id"),
-        _mp_audit.get("site_id"),
-    )
-except Exception as _mp_audit_exc:
-    app.logger.error("[MP_ACCOUNT_AUDIT] failed type=%s message=%s", type(_mp_audit_exc).__name__, str(_mp_audit_exc)[:400])
 
 application = app
