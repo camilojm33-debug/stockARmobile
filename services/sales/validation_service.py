@@ -79,3 +79,18 @@ class ValidationService:
         current = (status or "").strip().lower()
         if current in {"anulada", "cancelada", "rechazada"}:
             raise ValueError("La venta ya se encuentra anulada.")
+
+    @staticmethod
+    def validate_annul_status(status, *, comprobante_emitido=False):
+        current = (status or "").strip().lower()
+        if current in {"anulada", "cancelada", "rechazada"}:
+            raise ValueError("La venta ya se encuentra anulada.")
+        if comprobante_emitido:
+            raise ValueError(
+                "La venta tiene un comprobante marcado como emitido y no puede anularse "
+                "desde este módulo hasta completar la integración fiscal."
+            )
+
+    @staticmethod
+    def can_hard_delete(status):
+        return (status or "").strip().lower() in {"borrador", "draft"}
