@@ -371,6 +371,69 @@ def delete_saas_lead(db_session, lead_id: int) -> dict:
     }
 
 
+def delete_commercial_conversation_message(db_session, *, message_id: int, company_id: int) -> dict:
+    """Delete one message from the dedicated commercial CRM without touching the provider copy."""
+    from stockarmobile.models.conversations import Conversation, ConversationMessage
+
+    message = (
+        db_session.query(ConversationMessage)
+        .filter(
+            ConversationMessage.id == int(message_id),
+            ConversationMessage.company_id == int(company_id),
+        )
+        .first()
+    )
+    if message is None:
+        raise ValueError("Mensaje comercial no encontrado.")
+
+    conversation = (
+        db_session.query(Conversation)
+        .filter(
+            Conversation.id == int(message.conversation_id),
+            Conversation.company_id == int(company_id),
+            Conversation.channel.in_({"email_commercial", "whatsapp_commercial"}),
+        )
+        .first()
+    )
+    if conversation is None:
+        raise ValueError("El mensaje no pertenece a una conversación comercial.")
+
+    original_external_id = str(message.external_message_id or "").strip()[:255] or None
+    email_tombstone = False
+
+    if conversation.channel == "email_commercial" and original_external_id:
+        metadata = conversation.metadata_json if isinstance(conversation.metadata_json, dict) else {}
+        deleted_ids = metadata.get("crm_deleted_external_message_ids")
+        deleted_ids = list(deleted_ids) if isinstance(deleted_ids, list) else []
+        if original_external_id not in deleted_ids:
+            deleted_ids.append(original_external_id)
+        metadata["crm_deleted_external_message_ids"] = deleted_ids[-200:]
+        conversation.metadata_json = metadata
+        email_tombstone = True
+
+    db_session.delete(message)
+    db_session.flush()
+
+    latest = (
+        db_session.query(ConversationMessage)
+        .filter(
+            ConversationMessage.company_id == int(company_id),
+            ConversationMessage.conversation_id == int(conversation.id),
+        )
+        .order_by(ConversationMessage.id.desc())
+        .first()
+    )
+    conversation.updated_at = latest.created_at if latest is not None else conversation.created_at
+    db_session.flush()
+
+    return {
+        "message_id": int(message_id),
+        "conversation_id": int(conversation.id),
+        "channel": conversation.channel,
+        "email_tombstone": email_tombstone,
+    }
+
+
 def parse_segment_json(raw: str | None) -> dict:
     try:
         value = json.loads(raw or "{}")
@@ -841,6 +904,11 @@ def capture_inbound_email(*, sender_email: str, subject: str = "", text: str = "
         db.session.add(ConversationParticipant(conversation_id=conversation.id, company_id=company.id, participant_type="prospect", participant_id=lead.id, display_name=lead.contact_name or email, created_at=now))
 
     if message_id:
+        metadata = conversation.metadata_json if isinstance(conversation.metadata_json, dict) else {}
+        deleted_ids = metadata.get("crm_deleted_external_message_ids")
+        if isinstance(deleted_ids, list) and message_id in deleted_ids:
+            return {"status": "ignored_deleted", "lead_id": lead.id, "conversation_id": conversation.id}
+
         duplicate = ConversationMessage.query.filter_by(company_id=company.id, conversation_id=conversation.id, external_message_id=message_id).first()
         if duplicate is not None:
             return {"status": "duplicate", "lead_id": lead.id, "conversation_id": conversation.id, "message_id": duplicate.id}
