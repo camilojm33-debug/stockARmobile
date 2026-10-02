@@ -2019,9 +2019,11 @@ def crm_email_gmail_connect():
 
     _require_superadmin()
     state = secrets.token_urlsafe(32)
+    code_verifier = secrets.token_urlsafe(64)
     session["gmail_commercial_oauth_state"] = state
+    session["gmail_commercial_oauth_code_verifier"] = code_verifier
     try:
-        return redirect(authorization_url(state))
+        return redirect(authorization_url(state, code_verifier))
     except RuntimeError as exc:
         flash(str(exc), "danger")
         return redirect(url_for("saas.crm_panel"))
@@ -2036,6 +2038,7 @@ def crm_email_gmail_callback():
     _require_superadmin()
     state = (request.args.get("state") or "").strip()
     expected_state = session.pop("gmail_commercial_oauth_state", "")
+    code_verifier = session.pop("gmail_commercial_oauth_code_verifier", "")
     if not state or not expected_state or not secrets.compare_digest(state, expected_state):
         abort(400, description="Estado OAuth de Gmail inválido.")
     error = (request.args.get("error") or "").strip()
@@ -2048,7 +2051,7 @@ def crm_email_gmail_callback():
     if not code:
         abort(400, description="Google no devolvió un código OAuth.")
     try:
-        refresh_token = exchange_code(code)
+        refresh_token = exchange_code(code, code_verifier)
     except Exception as exc:
         current_app.logger.exception("Gmail OAuth callback failed: %s", exc)
         return current_app.response_class(
