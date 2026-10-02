@@ -23,6 +23,16 @@ def _authorized() -> bool:
     return bool(expected) and bool(supplied) and hmac.compare_digest(supplied, expected)
 
 
+def _gmail_watch_expected_token() -> str:
+    return str(os.environ.get("GMAIL_WATCH_AUTOMATION_TOKEN") or "").strip()
+
+
+def _gmail_watch_authorized() -> bool:
+    expected = _gmail_watch_expected_token()
+    supplied = str(request.headers.get("X-Gmail-Watch-Automation-Token") or "").strip()
+    return bool(expected) and bool(supplied) and hmac.compare_digest(supplied, expected)
+
+
 def _company_id_from_env() -> int | None:
     raw = str(os.environ.get("BACKUP_VERIFY_COMPANY_ID") or "").strip()
     if not raw:
@@ -32,6 +42,23 @@ def _company_id_from_env() -> int | None:
     except ValueError:
         return None
     return value if value > 0 else None
+
+
+@maintenance_bp.post("/internal/maintenance/gmail/watch")
+def run_gmail_watch_maintenance():
+    if not _gmail_watch_authorized():
+        return jsonify({"ok": False, "error": "forbidden"}), 403
+
+    try:
+        from services.gmail_commercial_service import renew_watch
+
+        result = renew_watch()
+        ok = result.get("status") in {"renewed", "skipped"}
+        current_app.logger.info("Automated Gmail watch renewal: %s", result)
+        return jsonify({"ok": ok, **result}), 200 if ok else 500
+    except Exception as exc:
+        current_app.logger.exception("Automated Gmail watch renewal failed: %s", exc)
+        return jsonify({"ok": False, "error": "gmail_watch_renewal_failed"}), 500
 
 
 @maintenance_bp.post("/internal/maintenance/backups/run")
