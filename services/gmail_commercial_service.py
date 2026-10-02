@@ -59,7 +59,7 @@ def gmail_service():
     return build("gmail", "v1", credentials=credentials, cache_discovery=False)
 
 
-def authorization_url(state: str):
+def authorization_url(state: str, code_verifier: str):
     from google_auth_oauthlib.flow import Flow
 
     settings = _require_client()
@@ -75,6 +75,8 @@ def authorization_url(state: str):
         },
         scopes=[GMAIL_SCOPE],
         state=state,
+        code_verifier=code_verifier,
+        autogenerate_code_verifier=False,
     )
     flow.redirect_uri = settings["redirect_uri"]
     url, _ = flow.authorization_url(
@@ -85,10 +87,13 @@ def authorization_url(state: str):
     return url
 
 
-def exchange_code(code: str):
+def exchange_code(code: str, code_verifier: str):
     from google_auth_oauthlib.flow import Flow
 
     settings = _require_client()
+    verifier = str(code_verifier or "").strip()
+    if not verifier:
+        raise RuntimeError("Falta el code_verifier de la autorización OAuth.")
     flow = Flow.from_client_config(
         {
             "web": {
@@ -101,13 +106,14 @@ def exchange_code(code: str):
         },
         scopes=[GMAIL_SCOPE],
         state=None,
+        code_verifier=verifier,
+        autogenerate_code_verifier=False,
     )
     flow.redirect_uri = settings["redirect_uri"]
-    flow.fetch_token(code=code)
+    flow.fetch_token(code=code, code_verifier=verifier)
     if not flow.credentials.refresh_token:
         raise RuntimeError("Google no devolvió refresh_token. Volvé a autorizar con consentimiento.")
     return flow.credentials.refresh_token
-
 
 def renew_watch() -> dict:
     settings = _settings()
