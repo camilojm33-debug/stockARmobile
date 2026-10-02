@@ -67,6 +67,16 @@ services:
         sync: false
       - key: GMAIL_COMMERCIAL_MAILBOX
         value: stockarmobile@gmail.com
+      - key: BACKUP_AUTOMATION_TOKEN
+        sync: false
+      - key: BACKUP_VERIFY_COMPANY_ID
+        sync: false
+      - key: GMAIL_WATCH_AUTOMATION_TOKEN
+        sync: false
+      - key: TRUST_PROXY_HOPS
+        value: "1"
+      - key: REDIS_URL
+        sync: false
       - key: DATABASE_URL
         fromDatabase:
           name: stockarmobile-db
