@@ -1569,7 +1569,7 @@ COMMERCIAL_CRM_CHANNELS = {"email_commercial", "whatsapp_commercial"}
 
 def _crm_inbox_rows(company, *, q: str = "", channel: str = "all", state: str = "all", limit: int = 100):
     """Return a unified, human-readable inbox for StockArMobile commercial conversations."""
-    from app import SaaSLead, db
+    from app import SaaSLead
     from stockarmobile.models.conversations import Conversation, ConversationMessage, ConversationParticipant
     from services.saas_commercial_whatsapp import commercial_conversation_attention
 
@@ -1702,7 +1702,6 @@ def _crm_inbox_rows(company, *, q: str = "", channel: str = "all", state: str = 
 @bp.route("/crm/inbox", methods=["GET"])
 @superadmin_required
 def crm_inbox():
-    from app import db
     from stockarmobile.models.conversations import Conversation, ConversationMessage
     from services.saas_commercial_whatsapp import get_commercial_company
 
@@ -2052,11 +2051,11 @@ def crm_panel():
     try:
         from services.saas_commercial_whatsapp import get_commercial_company
         commercial_company = get_commercial_company()
-        recent_conversations_all = _crm_inbox_rows(commercial_company, q="", channel="all", state="all", limit=8)
-        recent_conversations = recent_conversations_all[:8]
+        inbox_rows = _crm_inbox_rows(commercial_company, q="", channel="all", state="all", limit=200)
+        recent_conversations = inbox_rows[:8]
         inbox_counts = {
-            "total": len(_crm_inbox_rows(commercial_company, q="", channel="all", state="all", limit=200)),
-            "pending": sum(1 for row in _crm_inbox_rows(commercial_company, q="", channel="all", state="all", limit=200) if row["needs_reply"]),
+            "total": len(inbox_rows),
+            "pending": sum(1 for row in inbox_rows if row["needs_reply"]),
         }
     except Exception:
         current_app.logger.exception("No se pudo cargar la bandeja comercial para el Centro CRM.")
