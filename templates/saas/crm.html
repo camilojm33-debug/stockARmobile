@@ -1,5 +1,7 @@
 {% extends "base_master.html" %}
-{% block title %}Centro SaaS - SuperAdmin{% for lead in leads %}
+{% block title %}Centro SaaS - SuperAdmin{% endblock %}
+{% block content %}
+{% for lead in leads %}
 <div class="modal fade" id="contactPrefs{{ lead.id }}" tabindex="-1" aria-hidden="true">
   <div class="modal-dialog"><div class="modal-content">
     <div class="modal-header"><h5 class="modal-title">Canales · {{ lead.company_name }}</h5><button type="button" class="btn-close" data-bs-dismiss="modal"></button></div>
@@ -48,8 +50,7 @@
 </div>
 {% endfor %}
 
-{% endblock %}
-{% block content %}
+
 <div class="app-shell">
   <style>
     .crm-home{max-width:1440px;margin:0 auto}
@@ -401,22 +402,21 @@
 {% endfor %}
 {% endblock %}
 
-
 {% block extra_scripts_inline %}
 <script>
-  (function () {
-    const tabMap = { leads: '#crmLeads', tasks: '#crmTasks', alerts: '#crmAlerts' };
-    document.querySelectorAll('[data-crm-tab]').forEach(function (trigger) {
-      trigger.addEventListener('click', function () {
-        const target = tabMap[trigger.dataset.crmTab];
-        if (!target) return;
-        const tabButton = document.querySelector('[data-bs-target="' + target + '"]');
-        if (tabButton && window.bootstrap) {
-          bootstrap.Tab.getOrCreateInstance(tabButton).show();
-          document.getElementById('crmTabs')?.scrollIntoView({ behavior: 'smooth', block: 'start' });
-        }
-      });
-    });
-  })();
+(function () {
+  const hashMap = {
+    "#crmLeads": "#leads-tab",
+    "#crmTasks": "#tasks-tab",
+    "#crmAlerts": "#alerts-tab"
+  };
+  function activateFromHash() {
+    const trigger = document.querySelector(hashMap[window.location.hash]);
+    if (!trigger || !window.bootstrap) return;
+    bootstrap.Tab.getOrCreateInstance(trigger).show();
+  }
+  activateFromHash();
+  window.addEventListener("hashchange", activateFromHash);
+})();
 </script>
 {% endblock %}
