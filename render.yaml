@@ -61,7 +61,9 @@ services:
         sync: false
       - key: GMAIL_COMMERCIAL_PUBSUB_TOPIC
         sync: false
-      - key: GMAIL_COMMERCIAL_PUBSUB_SECRET
+      - key: GMAIL_COMMERCIAL_PUBSUB_AUDIENCE
+        value: https://www.stockarmobile.com/superadmin/crm/email/gmail/pubsub
+      - key: GMAIL_COMMERCIAL_PUBSUB_SERVICE_ACCOUNT
         sync: false
       - key: GMAIL_COMMERCIAL_MAILBOX
         value: stockarmobile@gmail.com
