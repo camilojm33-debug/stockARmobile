@@ -605,6 +605,26 @@ def _redis_service_status():
         return _service_status(False, False, f"No conecta: {exc.__class__.__name__}")
 
 
+def _smtp_service_status(*, host: str | None, user: str | None, password: str | None):
+    """Evalúa SMTP real; SUPPORT_EMAIL por sí solo no habilita el envío."""
+    configured = all(str(value or "").strip() for value in (host, user, password))
+    partial = any(str(value or "").strip() for value in (host, user, password)) and not configured
+    if configured:
+        return _service_status(True, False, "SMTP configurado")
+    if partial:
+        return _service_status(False, False, "Configuración SMTP incompleta")
+    return _service_status(True, True, "SMTP no configurado (opcional)")
+
+
+def _backup_health_status(total: int, failed: int):
+    """No marca rojo un sistema mensual simplemente porque aún no ejecutó su primer ciclo."""
+    if failed > 0:
+        return _service_status(False, False, f"{total} backups / {failed} con error")
+    if total > 0:
+        return _service_status(True, False, f"{total} backups / 0 con error")
+    return _service_status(True, True, "Sin backups registrados todavía; política mensual activa")
+
+
 def _health_check_snapshot(db_session, now):
     from app import BackupLog, Company, MercadoPagoConnection, Subscription, User, WebhookEvent, db, model_table_exists
 
@@ -616,8 +636,11 @@ def _health_check_snapshot(db_session, now):
         db_ok = False
         db_detail = str(exc)
 
-    smtp_ok = bool(os.environ.get("SUPPORT_EMAIL"))
-    smtp_warning = not bool(os.environ.get("SUPPORT_EMAIL"))
+    smtp_status = _smtp_service_status(
+        host=current_app.config.get("SMTP_HOST"),
+        user=current_app.config.get("SMTP_USER"),
+        password=current_app.config.get("SMTP_PASSWORD"),
+    )
 
     mp_connected = 0
     mp_total = 0
@@ -656,12 +679,12 @@ def _health_check_snapshot(db_session, now):
         {
             "name": "Correo SMTP",
             "key": "smtp",
-            "data": _service_status(smtp_ok, smtp_warning, "SUPPORT_EMAIL configurado" if smtp_ok else "Falta SUPPORT_EMAIL"),
+            "data": smtp_status,
         },
         {
             "name": "Backups",
             "key": "backups",
-            "data": _service_status(backup_total > 0 and backup_failed == 0, backup_total > 0 and backup_failed > 0, f"{backup_total} backups / {backup_failed} con error"),
+            "data": _backup_health_status(backup_total, backup_failed),
         },
         {
             "name": "Storage",
