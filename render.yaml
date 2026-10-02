@@ -112,6 +112,35 @@ services:
         sync: false
 
 
+  - type: cron
+    name: stockarmobile-daily-backup
+    runtime: python
+    plan: starter
+    schedule: "15 3 * * *"
+    buildCommand: pip install -r requirements.txt
+    startCommand: python scripts/run_backup_maintenance.py
+    envVars:
+      - key: STOCKARMOBILE_BASE_URL
+        value: https://www.stockarmobile.com
+      - key: BACKUP_AUTOMATION_TOKEN
+        sync: false
+      - key: BACKUP_VERIFY_COMPANY_ID
+        sync: false
+
+  - type: cron
+    name: stockarmobile-gmail-watch
+    runtime: python
+    plan: starter
+    schedule: "0 4 * * *"
+    buildCommand: pip install -r requirements.txt
+    startCommand: python scripts/run_gmail_watch_maintenance.py
+    envVars:
+      - key: STOCKARMOBILE_BASE_URL
+        value: https://www.stockarmobile.com
+      - key: GMAIL_WATCH_AUTOMATION_TOKEN
+        sync: false
+
+
 databases:
   - name: stockarmobile-db
     databaseName: stockarmobile
