@@ -406,7 +406,9 @@ def delete_commercial_conversation_message(db_session, *, message_id: int, compa
     email_tombstone = False
 
     if conversation.channel == "email_commercial" and original_external_id:
-        metadata = conversation.metadata_json if isinstance(conversation.metadata_json, dict) else {}
+        # Work on a copy: JSON columns are not SQLAlchemy-mutable here, so mutating
+        # the loaded dict in place can avoid marking the column dirty.
+        metadata = dict(conversation.metadata_json) if isinstance(conversation.metadata_json, dict) else {}
         deleted_ids = metadata.get("crm_deleted_external_message_ids")
         deleted_ids = list(deleted_ids) if isinstance(deleted_ids, list) else []
         if original_external_id not in deleted_ids:
