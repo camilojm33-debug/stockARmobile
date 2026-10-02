@@ -229,6 +229,14 @@ def test_validation_service_lifecycle_rules():
     except ValueError as exc:
         assert "ya se encuentra anulada" in str(exc)
 
+    assert ValidationService.can_hard_delete("borrador") is True
+    assert ValidationService.can_hard_delete("confirmada") is False
+    try:
+        ValidationService.validate_annul_status("confirmada", comprobante_emitido=True)
+        assert False, "Expected fiscalized sale protection"
+    except ValueError as exc:
+        assert "comprobante" in str(exc)
+
 
 def test_sale_service_update_sale_rejects_missing_reason_early():
     service = SaleService(
