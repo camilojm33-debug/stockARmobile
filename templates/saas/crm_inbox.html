@@ -1,0 +1,201 @@
+{% extends "base_master.html" %}
+{% block title %}Bandeja Comercial · SuperAdmin{% endblock %}
+{% block extra_css %}
+<style>
+  .crm-inbox-shell{max-width:1440px;margin:0 auto}
+  .crm-inbox-hero{padding:1.2rem 1.3rem;border:1px solid var(--app-line);border-radius:20px;background:linear-gradient(135deg,var(--bs-primary-bg-subtle),var(--app-panel))}
+  .crm-inbox-hero .kicker{font-size:.74rem;letter-spacing:.08em;text-transform:uppercase;font-weight:800;color:var(--bs-secondary-color)}
+  .crm-stat{height:100%;border:1px solid var(--app-line);border-radius:18px;background:var(--app-panel)}
+  .crm-stat .value{font-size:1.7rem;line-height:1.1;font-weight:800}
+  .crm-inbox-layout{min-height:700px}
+  .crm-conversation-list,.crm-conversation-pane{border:1px solid var(--app-line);border-radius:20px;background:var(--app-panel);overflow:hidden}
+  .crm-conversation-list{height:700px;overflow:auto}
+  .crm-conversation-pane{height:700px;display:flex;flex-direction:column}
+  .crm-conv-row{display:block;text-decoration:none;color:inherit;padding:15px 16px;border-bottom:1px solid var(--app-line)}
+  .crm-conv-row:hover,.crm-conv-row.active{background:var(--app-panel-soft)}
+  .crm-conv-row.active{box-shadow:inset 3px 0 0 var(--app-primary)}
+  .crm-avatar{width:44px;height:44px;border-radius:14px;display:grid;place-items:center;flex:0 0 44px;background:var(--bs-primary-bg-subtle);color:var(--app-primary);font-weight:800}
+  .crm-message-scroll{flex:1;overflow:auto;padding:20px;background:linear-gradient(180deg,var(--app-panel-soft),var(--app-panel))}
+  .crm-message{position:relative;max-width:min(82%,760px);margin-bottom:14px;padding:12px 14px;border-radius:17px;border:1px solid var(--app-line);white-space:pre-wrap;word-break:break-word}
+  .crm-message.inbound{margin-right:auto;background:var(--app-panel)}
+  .crm-message.outbound{margin-left:auto;background:var(--bs-primary-bg-subtle)}
+  .crm-message-actions{opacity:.75}
+  .crm-message:hover .crm-message-actions{opacity:1}
+  .crm-channel-pill{font-size:.72rem}
+  .crm-empty{min-height:100%;display:flex;align-items:center;justify-content:center;text-align:center;padding:2rem}
+  @media(max-width:991.98px){
+    .crm-conversation-list,.crm-conversation-pane{height:auto;min-height:420px}
+    .crm-message{max-width:92%}
+  }
+</style>
+{% endblock %}
+{% block content %}
+<div class="app-shell crm-inbox-shell py-4">
+  <section class="crm-inbox-hero mb-3">
+    <div class="d-flex flex-wrap justify-content-between align-items-start gap-3">
+      <div>
+        <div class="kicker"><i class="bi bi-inbox me-1"></i>Centro Comercial</div>
+        <h1 class="h2 fw-bold mb-1">Bandeja de conversaciones</h1>
+        <p class="text-muted mb-0">Acá están juntos los contactos comerciales que llegan por Gmail y WhatsApp.</p>
+      </div>
+      <div class="d-flex flex-wrap gap-2">
+        <a class="btn btn-outline-secondary" href="{{ url_for('saas.crm_panel') }}"><i class="bi bi-arrow-left me-1"></i>Centro Comercial</a>
+        <a class="btn btn-primary" href="{{ url_for('saas.crm_panel') }}#crmLeads"><i class="bi bi-people me-1"></i>Prospectos</a>
+      </div>
+    </div>
+  </section>
+
+  <div class="row g-2 mb-3">
+    <div class="col-6 col-lg-3"><div class="crm-stat p-3"><div class="text-muted small">Conversaciones</div><div class="value">{{ counts.total }}</div><div class="small text-muted">Gmail + WhatsApp</div></div></div>
+    <div class="col-6 col-lg-3"><div class="crm-stat p-3"><div class="text-muted small">Requieren respuesta</div><div class="value">{{ counts.pending }}</div><div class="small text-muted">Último mensaje del prospecto</div></div></div>
+    <div class="col-6 col-lg-3"><div class="crm-stat p-3"><div class="text-muted small">Gmail</div><div class="value">{{ counts.email }}</div><div class="small text-muted">Conversaciones por correo</div></div></div>
+    <div class="col-6 col-lg-3"><div class="crm-stat p-3"><div class="text-muted small">WhatsApp</div><div class="value">{{ counts.whatsapp }}</div><div class="small text-muted">Conversaciones comerciales</div></div></div>
+  </div>
+
+  <form class="row g-2 mb-3" method="get" action="{{ url_for('saas.crm_inbox') }}">
+    <div class="col-lg-6">
+      <input class="form-control form-control-lg" name="q" value="{{ q }}" placeholder="Buscar empresa, contacto, email, teléfono o mensaje">
+    </div>
+    <div class="col-sm-6 col-lg-2">
+      <select class="form-select form-select-lg" name="channel">
+        <option value="all" {% if channel == 'all' %}selected{% endif %}>Todos los canales</option>
+        <option value="email" {% if channel == 'email' %}selected{% endif %}>Gmail</option>
+        <option value="whatsapp" {% if channel == 'whatsapp' %}selected{% endif %}>WhatsApp</option>
+      </select>
+    </div>
+    <div class="col-sm-6 col-lg-2">
+      <select class="form-select form-select-lg" name="state">
+        <option value="all" {% if state == 'all' %}selected{% endif %}>Todas</option>
+        <option value="pending" {% if state == 'pending' %}selected{% endif %}>Requieren respuesta</option>
+        <option value="waiting" {% if state == 'waiting' %}selected{% endif %}>En espera</option>
+      </select>
+    </div>
+    <div class="col-6 col-lg-1 d-grid"><button class="btn btn-primary btn-lg" type="submit" title="Buscar"><i class="bi bi-search"></i></button></div>
+    <div class="col-6 col-lg-1 d-grid"><a class="btn btn-outline-secondary btn-lg" href="{{ url_for('saas.crm_inbox') }}" title="Limpiar filtros"><i class="bi bi-x-lg"></i></a></div>
+  </form>
+
+  <div class="row g-3 crm-inbox-layout">
+    <div class="col-12 col-lg-5">
+      <section class="crm-conversation-list">
+        {% for row in rows %}
+        <a class="crm-conv-row {% if selected and selected.conversation_id == row.conversation_id %}active{% endif %}" href="{{ url_for('saas.crm_inbox', q=q, channel=channel, state=state, conversation_id=row.conversation_id) }}">
+          <div class="d-flex gap-3">
+            <div class="crm-avatar"><i class="bi {{ 'bi-envelope-at' if row.channel == 'email_commercial' else 'bi-whatsapp' }}"></i></div>
+            <div class="min-w-0 flex-grow-1">
+              <div class="d-flex justify-content-between align-items-start gap-2">
+                <div class="fw-bold text-truncate">{{ row.contact_name }}</div>
+                {% if row.needs_reply %}<span class="badge text-bg-danger crm-channel-pill">Responder</span>{% else %}<span class="badge text-bg-light border crm-channel-pill">{{ row.channel_label }}</span>{% endif %}
+              </div>
+              <div class="small text-muted text-truncate">{{ row.company_name }}</div>
+              <div class="small mt-1 text-truncate">{{ row.latest_text or 'Sin mensajes' }}</div>
+              <div class="small text-muted mt-1">{{ row.latest_at }} · {{ row.channel_label }}</div>
+            </div>
+          </div>
+        </a>
+        {% else %}
+        <div class="crm-empty">
+          <div>
+            <div class="display-5 mb-3">💬</div>
+            <h2 class="h5 fw-bold">Todavía no hay conversaciones visibles</h2>
+            <p class="text-muted mb-0">Cuando entre un correo o mensaje comercial, aparecerá acá.</p>
+          </div>
+        </div>
+        {% endfor %}
+      </section>
+    </div>
+
+    <div class="col-12 col-lg-7">
+      <section class="crm-conversation-pane">
+        {% if selected %}
+        <div class="p-3 border-bottom">
+          <div class="d-flex flex-wrap justify-content-between align-items-start gap-3">
+            <div class="d-flex gap-3 min-w-0">
+              <div class="crm-avatar"><i class="bi {{ 'bi-envelope-at' if selected.channel == 'email_commercial' else 'bi-whatsapp' }}"></i></div>
+              <div class="min-w-0">
+                <div class="d-flex flex-wrap align-items-center gap-2">
+                  <h2 class="h5 fw-bold mb-0">{{ selected.contact_name }}</h2>
+                  <span class="badge text-bg-light border">{{ selected.channel_label }}</span>
+                  {% if selected.needs_reply %}<span class="badge text-bg-danger">Necesita respuesta</span>{% endif %}
+                </div>
+                <div class="small text-muted mt-1">{{ selected.company_name }}</div>
+                {% if selected.email %}<div class="small text-muted">{{ selected.email }}</div>{% endif %}
+                {% if selected.phone %}<div class="small text-muted">{{ selected.phone }}</div>{% endif %}
+              </div>
+            </div>
+            {% if selected.channel == 'whatsapp_commercial' %}
+            <a class="btn btn-outline-success btn-sm" href="{{ url_for('saas.whatsapp_commercial_attention', conversation_id=selected.conversation_id) }}"><i class="bi bi-whatsapp me-1"></i>Abrir atención</a>
+            {% endif %}
+          </div>
+          {% if selected.channel == 'email_commercial' %}
+          <div class="alert alert-info small mt-3 mb-0"><i class="bi bi-info-circle me-1"></i>Los correos recibidos se guardan en el CRM. Para responder, usá Gmail mientras terminamos la salida de correo desde StockArMobile.</div>
+          {% endif %}
+        </div>
+
+        <div class="crm-message-scroll">
+          {% for msg in selected.messages %}
+          {% set inbound = msg.sender_type == 'user' %}
+          <div class="crm-message {{ 'inbound' if inbound else 'outbound' }}">
+            <div class="d-flex justify-content-between align-items-start gap-2 mb-1">
+              <div class="small fw-bold">{{ msg.sender_label }} <span class="fw-normal text-muted ms-1">{{ msg.created_at }}</span></div>
+              <button class="btn btn-sm btn-link text-danger p-0 crm-message-actions" type="button" data-bs-toggle="modal" data-bs-target="#deleteCrmMessageModal" data-message-id="{{ msg.id }}" data-message-preview="{{ msg.preview|e }}" title="Eliminar mensaje" aria-label="Eliminar mensaje"><i class="bi bi-trash3"></i></button>
+            </div>
+            <div>{{ msg.content }}</div>
+          </div>
+          {% else %}
+          <div class="crm-empty"><div><div class="display-6 mb-2">📭</div><h3 class="h6 fw-bold">Sin mensajes</h3><p class="text-muted mb-0">La conversación existe, pero todavía no tiene mensajes.</p></div></div>
+          {% endfor %}
+        </div>
+
+        <div class="p-3 border-top">
+          <div class="small text-muted"><i class="bi bi-shield-check me-1"></i>Eliminar un mensaje solo lo quita del CRM. No borra el correo original de Gmail.</div>
+        </div>
+        {% else %}
+        <div class="crm-empty"><div><div class="display-1 mb-3">📨</div><h2 class="h5 fw-bold">Seleccioná una conversación</h2><p class="text-muted mb-0">Elegí un prospecto de la izquierda para ver todo el historial.</p></div></div>
+        {% endif %}
+      </section>
+    </div>
+  </div>
+</div>
+
+<div class="modal fade" id="deleteCrmMessageModal" tabindex="-1" aria-labelledby="deleteCrmMessageModalLabel" aria-hidden="true">
+  <div class="modal-dialog modal-dialog-centered">
+    <div class="modal-content">
+      <div class="modal-header">
+        <h2 class="modal-title h5 fw-bold" id="deleteCrmMessageModalLabel"><i class="bi bi-trash3 text-danger me-2"></i>Eliminar mensaje</h2>
+        <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Cerrar"></button>
+      </div>
+      <form method="post" action="{{ url_for('saas.crm_inbox_message_delete') }}">
+        <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+        <input type="hidden" name="message_id" id="crmDeleteMessageId">
+        {% if selected %}<input type="hidden" name="conversation_id" value="{{ selected.conversation_id }}">{% endif %}
+        <div class="modal-body">
+          <div class="alert alert-warning small">El mensaje se eliminará del CRM de forma permanente. Para un mensaje de Gmail, además se registrará la eliminación para evitar que vuelva a aparecer en una futura sincronización.</div>
+          <div class="border rounded p-3 bg-body-tertiary"><div class="small text-muted mb-1">Mensaje seleccionado</div><div id="crmDeleteMessagePreview" class="small">—</div></div>
+          <label class="form-label fw-semibold mt-3" for="crmDeleteMessagePassword">Contraseña de Super Admin</label>
+          <input class="form-control" id="crmDeleteMessagePassword" name="step_up_password" type="password" autocomplete="current-password" placeholder="Ingresá tu contraseña para confirmar">
+          <div class="form-text">La reautenticación se reutiliza durante unos minutos para acciones sensibles.</div>
+        </div>
+        <div class="modal-footer">
+          <button type="button" class="btn btn-outline-secondary" data-bs-dismiss="modal">Cancelar</button>
+          <button type="submit" class="btn btn-danger"><i class="bi bi-trash3 me-1"></i>Eliminar mensaje</button>
+        </div>
+      </form>
+    </div>
+  </div>
+</div>
+{% endblock %}
+{% block extra_scripts_inline %}
+<script>
+(function () {
+  const modal = document.getElementById("deleteCrmMessageModal");
+  if (!modal) return;
+  modal.addEventListener("show.bs.modal", function (event) {
+    const trigger = event.relatedTarget;
+    const id = trigger?.dataset?.messageId || "";
+    const preview = trigger?.dataset?.messagePreview || "";
+    document.getElementById("crmDeleteMessageId").value = id;
+    document.getElementById("crmDeleteMessagePreview").textContent = preview || "Mensaje seleccionado";
+  });
+})();
+</script>
+{% endblock %}
