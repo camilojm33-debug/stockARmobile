@@ -449,3 +449,94 @@ def test_commercial_campaign_status_webhook_updates_delivery_read_and_failure(co
     assert recipient.status == "failed"
     assert recipient.provider_status == "failed"
     assert campaign.failed_count == 1
+
+
+def test_crm_email_message_delete_is_tenant_scoped_and_prevents_reimport(commercial_database):
+    from services.saas_commercial_service import (
+        capture_inbound_email,
+        delete_commercial_conversation_message,
+    )
+    from stockarmobile.models.conversations import ConversationMessage
+
+    company = commercial_database["company"]
+    captured = capture_inbound_email(
+        sender_email="prospect@example.com",
+        subject="Consulta StockArMobile",
+        text="Quiero conocer los planes.",
+        external_message_id="<crm-delete-001@example.com>",
+        recipient_email="stockarmobile@gmail.com",
+    )
+    assert captured["status"] == "received"
+
+    rows = __import__("saas")._crm_inbox_rows(company, state="all")
+    row = next(item for item in rows if item["conversation_id"] == captured["conversation_id"])
+    assert row["channel"] == "email_commercial"
+    assert row["email"] == "prospect@example.com"
+    assert "Quiero conocer los planes." in row["latest_text"]
+
+    message = (
+        ConversationMessage.query
+        .filter_by(id=captured["message_id"], company_id=company.id)
+        .first()
+    )
+    assert message is not None
+
+    deleted = delete_commercial_conversation_message(
+        db.session,
+        message_id=message.id,
+        company_id=company.id,
+    )
+    db.session.commit()
+
+    assert deleted["conversation_id"] == captured["conversation_id"]
+    assert deleted["channel"] == "email_commercial"
+    assert deleted["email_tombstone"] is True
+    assert ConversationMessage.query.filter_by(id=message.id).first() is None
+
+    repeated = capture_inbound_email(
+        sender_email="prospect@example.com",
+        subject="Consulta StockArMobile",
+        text="Quiero conocer los planes.",
+        external_message_id="<crm-delete-001@example.com>",
+        recipient_email="stockarmobile@gmail.com",
+    )
+    assert repeated["status"] == "ignored_deleted"
+    assert ConversationMessage.query.filter_by(
+        company_id=company.id,
+        conversation_id=captured["conversation_id"],
+        external_message_id="<crm-delete-001@example.com>",
+    ).count() == 0
+
+
+def test_crm_message_delete_rejects_non_commercial_conversation(commercial_database):
+    from services.saas_commercial_service import delete_commercial_conversation_message
+    from stockarmobile.models.conversations import Conversation, ConversationMessage
+
+    company = commercial_database["company"]
+    conversation = Conversation(
+        company_id=company.id,
+        channel="whatsapp",
+        external_conversation_id="549999001234",
+        status="open",
+        metadata_json={},
+    )
+    db.session.add(conversation)
+    db.session.flush()
+    message = ConversationMessage(
+        company_id=company.id,
+        conversation_id=conversation.id,
+        sender_type="user",
+        role="user",
+        content="No tocar esta conversación",
+    )
+    db.session.add(message)
+    db.session.commit()
+
+    with pytest.raises(ValueError):
+        delete_commercial_conversation_message(
+            db.session,
+            message_id=message.id,
+            company_id=company.id,
+        )
+
+    assert ConversationMessage.query.filter_by(id=message.id).first() is not None
