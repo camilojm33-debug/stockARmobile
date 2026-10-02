@@ -33,7 +33,6 @@ def test_purchase_totals_lock_product_rows_before_mutation(monkeypatch):
     locked = SimpleNamespace(id=1, stock=20.0, cost_price=6.0, price=10.0, margin=0.0, profit_percent=0.0)
     session = _FakeSession([locked])
     monkeypatch.setattr(stock_app, "db", SimpleNamespace(session=session))
-    monkeypatch.setattr(stock_app, "Product", SimpleNamespace)
 
     _apply_product_purchase_totals({
         1: [stale, 2.0, 20.0],
