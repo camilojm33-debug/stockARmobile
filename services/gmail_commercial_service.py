@@ -182,21 +182,21 @@ def sync_recent_messages(hours: int = 48) -> dict:
 
     service = gmail_service()
     settings = _settings()
-    cutoff = int((datetime.now(timezone.utc) - timedelta(hours=hours)).timestamp())
-    query = f"in:inbox to:{settings['mailbox']} after:{cutoff}"
+    query = f"in:anywhere newer_than:{max(1, int(hours / 24))}d -from:{settings['mailbox']}"
     response = service.users().messages().list(
         userId="me", q=query, maxResults=100
     ).execute()
 
+    items = response.get("messages") or []
     received = 0
     duplicates = 0
     skipped = 0
-    for item in response.get("messages") or []:
+    for item in items:
         message = service.users().messages().get(
             userId="me", id=item["id"], format="full"
         ).execute()
         headers = _headers(message)
-        sender_name, sender_email = parseaddr(headers.get("from", ""))
+        _, sender_email = parseaddr(headers.get("from", ""))
         sender_email = sender_email.strip().lower()
         if not sender_email or sender_email == settings["mailbox"]:
             skipped += 1
@@ -221,9 +221,10 @@ def sync_recent_messages(hours: int = 48) -> dict:
         "received": received,
         "duplicates": duplicates,
         "skipped": skipped,
+        "found": len(items),
         "checked_hours": hours,
+        "query": query,
     }
-
 
 def process_pubsub_notification(payload: dict) -> dict:
     settings = _settings()
@@ -234,4 +235,14 @@ def process_pubsub_notification(payload: dict) -> dict:
         email_address = str(decoded.get("emailAddress") or "").strip().lower()
         if email_address and email_address != settings["mailbox"]:
             return {"status": "ignored", "email_address": email_address}
-    return sync_recent_messages(hours=48)
+    result = sync_recent_messages(hours=48)
+    import logging
+    logging.getLogger(__name__).info(
+        "Gmail Pub/Sub processed notification: status=%s found=%s received=%s duplicates=%s skipped=%s",
+        result.get("status"),
+        result.get("found"),
+        result.get("received"),
+        result.get("duplicates"),
+        result.get("skipped"),
+    )
+    return result
