@@ -1565,6 +1565,315 @@ def attention_panel():
     )
 
 
+COMMERCIAL_CRM_CHANNELS = {"email_commercial", "whatsapp_commercial"}
+
+def _crm_inbox_rows(company, *, q: str = "", channel: str = "all", state: str = "all", limit: int = 100):
+    """Return a unified, human-readable inbox for StockArMobile commercial conversations."""
+    from app import SaaSLead, db
+    from stockarmobile.models.conversations import Conversation, ConversationMessage, ConversationParticipant
+    from services.saas_commercial_whatsapp import commercial_conversation_attention
+
+    if company is None:
+        return []
+
+    conversations = (
+        Conversation.query
+        .filter(
+            Conversation.company_id == int(company.id),
+            Conversation.channel.in_(COMMERCIAL_CRM_CHANNELS),
+        )
+        .order_by(Conversation.updated_at.desc(), Conversation.id.desc())
+        .limit(max(1, min(int(limit or 100), 200)))
+        .all()
+    )
+
+    q_text = str(q or "").strip().lower()
+    channel = channel if channel in {"all", "email", "whatsapp"} else "all"
+    state = state if state in {"all", "pending", "waiting"} else "all"
+    rows = []
+
+    for conversation in conversations:
+        latest = (
+            ConversationMessage.query
+            .filter(
+                ConversationMessage.company_id == int(company.id),
+                ConversationMessage.conversation_id == int(conversation.id),
+            )
+            .order_by(ConversationMessage.id.desc())
+            .first()
+        )
+
+        metadata = conversation.metadata_json if isinstance(conversation.metadata_json, dict) else {}
+        lead = None
+        lead_id = metadata.get("lead_id")
+        if str(lead_id or "").isdigit():
+            lead = SaaSLead.query.filter_by(id=int(lead_id)).first()
+
+        if lead is None:
+            participant = (
+                ConversationParticipant.query
+                .filter_by(
+                    company_id=int(company.id),
+                    conversation_id=int(conversation.id),
+                    participant_type="prospect",
+                )
+                .order_by(ConversationParticipant.id.desc())
+                .first()
+            )
+            participant_id = getattr(participant, "participant_id", None)
+            if participant_id:
+                lead = SaaSLead.query.filter_by(id=int(participant_id)).first()
+
+        raw_external = str(conversation.external_conversation_id or "")
+        phone = ""
+        if conversation.channel == "whatsapp_commercial":
+            phone = "".join(ch for ch in raw_external if ch.isdigit())[:40]
+        email = str((metadata or {}).get("sender_email") or "")[:160]
+        if conversation.channel == "email_commercial" and not email:
+            email = str(getattr(lead, "email", None) or "")[:160]
+
+        channel_label = "Gmail" if conversation.channel == "email_commercial" else "WhatsApp"
+        attention = commercial_conversation_attention(conversation) if conversation.channel == "whatsapp_commercial" else {
+            "status": "email",
+            "pending": False,
+        }
+        needs_reply = bool(latest is not None and latest.sender_type == "user")
+        if conversation.channel == "whatsapp_commercial":
+            needs_reply = bool(attention.get("pending") or needs_reply)
+
+        if channel == "email" and conversation.channel != "email_commercial":
+            continue
+        if channel == "whatsapp" and conversation.channel != "whatsapp_commercial":
+            continue
+        if state == "pending" and not needs_reply:
+            continue
+        if state == "waiting" and needs_reply:
+            continue
+
+        latest_text = str(latest.content or "").strip() if latest is not None else ""
+        contact_name = (
+            getattr(lead, "contact_name", None)
+            or getattr(lead, "company_name", None)
+            or email
+            or phone
+            or "Prospecto"
+        )
+        company_name = getattr(lead, "company_name", None) or (
+            email if conversation.channel == "email_commercial" else "Prospecto de WhatsApp"
+        )
+
+        searchable = " ".join(
+            [
+                str(contact_name or ""),
+                str(company_name or ""),
+                str(email or ""),
+                str(phone or ""),
+                latest_text,
+            ]
+        ).lower()
+        if q_text and q_text not in searchable:
+            continue
+
+        rows.append(
+            {
+                "conversation_id": conversation.id,
+                "channel": conversation.channel,
+                "channel_label": channel_label,
+                "contact_name": str(contact_name)[:160],
+                "company_name": str(company_name)[:160],
+                "email": email,
+                "phone": phone,
+                "latest_text": latest_text[:240],
+                "latest_sender_type": getattr(latest, "sender_type", "") if latest is not None else "",
+                "latest_at": (
+                    _format_admin_datetime_local(latest.created_at, "%d/%m %H:%M")
+                    if latest is not None
+                    else _format_admin_datetime_local(conversation.updated_at, "%d/%m %H:%M")
+                ),
+                "updated_at": _format_admin_datetime_local(conversation.updated_at, "%d/%m %H:%M"),
+                "needs_reply": needs_reply,
+                "attention": attention,
+            }
+        )
+
+    return rows
+
+
+@bp.route("/crm/inbox", methods=["GET"])
+@superadmin_required
+def crm_inbox():
+    from app import db
+    from stockarmobile.models.conversations import Conversation, ConversationMessage
+    from services.saas_commercial_whatsapp import get_commercial_company
+
+    _require_superadmin()
+    company = get_commercial_company()
+    q = (request.args.get("q") or "").strip()
+    channel = (request.args.get("channel") or "all").strip().lower()
+    state = (request.args.get("state") or "all").strip().lower()
+    if channel not in {"all", "email", "whatsapp"}:
+        channel = "all"
+    if state not in {"all", "pending", "waiting"}:
+        state = "all"
+
+    all_rows = _crm_inbox_rows(company, q="", channel="all", state="all", limit=200)
+    rows = _crm_inbox_rows(company, q=q, channel=channel, state=state, limit=200)
+
+    counts = {
+        "total": len(all_rows),
+        "pending": sum(1 for row in all_rows if row["needs_reply"]),
+        "email": sum(1 for row in all_rows if row["channel"] == "email_commercial"),
+        "whatsapp": sum(1 for row in all_rows if row["channel"] == "whatsapp_commercial"),
+    }
+
+    selected_id = request.args.get("conversation_id", type=int)
+    selected = None
+    if company is not None and selected_id:
+        selected = (
+            Conversation.query
+            .filter(
+                Conversation.id == int(selected_id),
+                Conversation.company_id == int(company.id),
+                Conversation.channel.in_(COMMERCIAL_CRM_CHANNELS),
+            )
+            .first()
+        )
+
+    if selected is None and rows:
+        preferred = next((row for row in rows if row["needs_reply"]), None) or rows[0]
+        selected = Conversation.query.filter(
+            Conversation.id == int(preferred["conversation_id"]),
+            Conversation.company_id == int(company.id),
+        ).first()
+
+    selected_view = None
+    if selected is not None and company is not None:
+        metadata = selected.metadata_json if isinstance(selected.metadata_json, dict) else {}
+        lead = None
+        lead_id = metadata.get("lead_id")
+        if str(lead_id or "").isdigit():
+            from app import SaaSLead
+            lead = SaaSLead.query.filter_by(id=int(lead_id)).first()
+
+        selected_messages = (
+            ConversationMessage.query
+            .filter(
+                ConversationMessage.company_id == int(company.id),
+                ConversationMessage.conversation_id == int(selected.id),
+            )
+            .order_by(ConversationMessage.id.desc())
+            .limit(200)
+            .all()
+        )
+        selected_messages.reverse()
+
+        if lead is None:
+            from stockarmobile.models.conversations import ConversationParticipant
+            participant = (
+                ConversationParticipant.query
+                .filter_by(
+                    company_id=int(company.id),
+                    conversation_id=int(selected.id),
+                    participant_type="prospect",
+                )
+                .order_by(ConversationParticipant.id.desc())
+                .first()
+            )
+            if participant and participant.participant_id:
+                from app import SaaSLead
+                lead = SaaSLead.query.filter_by(id=int(participant.participant_id)).first()
+
+        selected_email = str(metadata.get("sender_email") or getattr(lead, "email", None) or "")[:160]
+        selected_phone = ""
+        if selected.channel == "whatsapp_commercial":
+            selected_phone = "".join(ch for ch in str(selected.external_conversation_id or "") if ch.isdigit())[:40]
+
+        selected_view = {
+            "conversation_id": selected.id,
+            "channel": selected.channel,
+            "channel_label": "Gmail" if selected.channel == "email_commercial" else "WhatsApp",
+            "contact_name": getattr(lead, "contact_name", None) or getattr(lead, "company_name", None) or selected_email or selected_phone or "Prospecto",
+            "company_name": getattr(lead, "company_name", None) or (selected_email if selected.channel == "email_commercial" else "Prospecto de WhatsApp"),
+            "email": selected_email,
+            "phone": selected_phone,
+            "needs_reply": bool(selected_messages and selected_messages[-1].sender_type == "user"),
+            "messages": [
+                {
+                    "id": msg.id,
+                    "sender_type": msg.sender_type,
+                    "sender_label": "Cliente" if msg.sender_type == "user" else ("Vos" if msg.sender_type == "human" else "Comercial IA"),
+                    "content": str(msg.content or ""),
+                    "preview": str(msg.content or "").replace("\n", " ")[:120],
+                    "created_at": _format_admin_datetime_local(msg.created_at, "%d/%m/%Y %H:%M"),
+                }
+                for msg in selected_messages
+            ],
+        }
+
+    return render_template(
+        "saas/crm_inbox.html",
+        rows=rows,
+        selected=selected_view,
+        q=q,
+        channel=channel,
+        state=state,
+        counts=counts,
+    )
+
+
+@bp.route("/crm/inbox/messages/delete", methods=["POST"])
+@superadmin_required
+def crm_inbox_message_delete():
+    from app import db, record_audit
+    from services.saas_commercial_service import delete_commercial_conversation_message
+    from services.saas_commercial_whatsapp import get_commercial_company
+
+    _require_superadmin()
+    company = get_commercial_company()
+    message_id = request.form.get("message_id", type=int)
+    conversation_id = request.form.get("conversation_id", type=int)
+    if company is None or not message_id:
+        abort(404)
+
+    if not _require_superadmin_step_up():
+        target = {"conversation_id": conversation_id} if conversation_id else {}
+        return redirect(url_for("saas.crm_inbox", **target))
+
+    try:
+        result = delete_commercial_conversation_message(
+            db.session,
+            message_id=message_id,
+            company_id=company.id,
+        )
+        record_audit(
+            action="commercial_crm_message_delete",
+            entity="conversation_message",
+            entity_id=message_id,
+            company_id=company.id,
+            detail=(
+                f"Mensaje comercial eliminado del CRM. conversation_id={result['conversation_id']}; "
+                f"channel={result['channel']}; email_tombstone={result['email_tombstone']}."
+            ),
+            user_id=current_user.id,
+        )
+        db.session.commit()
+        flash(
+            "Mensaje eliminado del CRM. El origen externo no fue borrado."
+            if not result["email_tombstone"]
+            else "Mensaje eliminado del CRM y marcado para no volver a importarlo desde Gmail.",
+            "success",
+        )
+    except ValueError as exc:
+        db.session.rollback()
+        flash(str(exc), "warning")
+    except Exception:
+        db.session.rollback()
+        current_app.logger.exception("No se pudo eliminar mensaje comercial id=%s", message_id)
+        flash("No se pudo eliminar el mensaje. No se realizaron cambios.", "danger")
+
+    return redirect(url_for("saas.crm_inbox", conversation_id=conversation_id) if conversation_id else url_for("saas.crm_inbox"))
+
+
 @bp.route("/crm", methods=["GET", "POST"])
 @superadmin_required
 def crm_panel():
@@ -1740,6 +2049,20 @@ def crm_panel():
     task_counts = {status: SaaSTask.query.filter(SaaSTask.status == status).count() for status in CRM_TASK_STATUSES}
     alert_counts = {status: SaaSAlert.query.filter(SaaSAlert.status == status).count() for status in CRM_ALERT_STATUSES}
 
+    try:
+        from services.saas_commercial_whatsapp import get_commercial_company
+        commercial_company = get_commercial_company()
+        recent_conversations_all = _crm_inbox_rows(commercial_company, q="", channel="all", state="all", limit=8)
+        recent_conversations = recent_conversations_all[:8]
+        inbox_counts = {
+            "total": len(_crm_inbox_rows(commercial_company, q="", channel="all", state="all", limit=200)),
+            "pending": sum(1 for row in _crm_inbox_rows(commercial_company, q="", channel="all", state="all", limit=200) if row["needs_reply"]),
+        }
+    except Exception:
+        current_app.logger.exception("No se pudo cargar la bandeja comercial para el Centro CRM.")
+        recent_conversations = []
+        inbox_counts = {"total": 0, "pending": 0}
+
     return render_template(
         "saas/crm.html",
         leads=leads,
@@ -1751,6 +2074,8 @@ def crm_panel():
         lead_counts=lead_counts,
         task_counts=task_counts,
         alert_counts=alert_counts,
+        recent_conversations=recent_conversations,
+        inbox_counts=inbox_counts,
         CRM_LEAD_STATUSES=sorted(CRM_LEAD_STATUSES),
         CRM_TASK_STATUSES=sorted(CRM_TASK_STATUSES),
         CRM_ALERT_STATUSES=sorted(CRM_ALERT_STATUSES),
