@@ -229,6 +229,14 @@ def test_validation_service_lifecycle_rules():
     except ValueError as exc:
         assert "ya se encuentra anulada" in str(exc)
 
+    assert ValidationService.can_hard_delete("borrador") is True
+    assert ValidationService.can_hard_delete("confirmada") is False
+    try:
+        ValidationService.validate_annul_status("confirmada", comprobante_emitido=True)
+        assert False, "Expected fiscalized sale protection"
+    except ValueError as exc:
+        assert "comprobante" in str(exc)
+
 
 def test_sale_service_update_sale_rejects_missing_reason_early():
     service = SaleService(
@@ -299,11 +307,39 @@ def test_sale_service_cancel_sale_and_delete_sale_unit(monkeypatch):
 
     product = _FakeProduct(1, stock=3)
     item = SimpleNamespace(product_id=1, quantity=2, product=product)
-    sale_delete = SimpleNamespace(id=8, total_amount=Decimal("22.00"), items=[item])
-    deleted = service.delete_sale(sale=sale_delete, resolve_product_for_item=lambda _item: _item.product)
-    assert deleted.id == 8
+    sale_annul = SimpleNamespace(
+        id=8,
+        total_amount=Decimal("22.00"),
+        status="confirmada",
+        comprobante_emitido=False,
+        items=[item],
+    )
+    annulled = service.annul_sale(
+        sale=sale_annul,
+        resolve_product_for_item=lambda _item: _item.product,
+        detail="Anulación de prueba",
+    )
+    assert annulled.id == 8
+    assert annulled.status == "anulada"
     assert float(product.stock) == 5.0
-    assert sale_delete in session.deleted
+    assert sale_annul not in session.deleted
     assert session.commits >= 2
     assert any(call.get("action") == "sale_cancel" for call in audit_calls)
+    
+    draft_product = _FakeProduct(2, stock=3)
+    draft_item = SimpleNamespace(product_id=2, quantity=1, product=draft_product)
+    sale_delete = SimpleNamespace(
+        id=9,
+        total_amount=Decimal("22.00"),
+        status="borrador",
+        comprobante_emitido=False,
+        items=[draft_item],
+    )
+    deleted = service.delete_sale(
+        sale=sale_delete,
+        resolve_product_for_item=lambda _item: _item.product,
+    )
+    assert deleted.id == 9
+    assert float(draft_product.stock) == 4.0
+    assert sale_delete in session.deleted
     assert any(call.get("action") == "sale_delete" for call in audit_calls)

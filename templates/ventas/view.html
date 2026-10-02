@@ -40,9 +40,9 @@
           </form>
           <a class="btn btn-outline-dark w-100 w-md-auto" href="{{ url_for('sales.thermal_ticket', sale_id=sale.id) }}" target="_blank"><i class="bi bi-printer me-1"></i>Ticket térmico</a>
           {% if current_user.role == 'admin' %}
-          <form class="w-100 w-md-auto" method="post" action="{{ url_for('sales.delete_sale', sale_id=sale.id) }}" onsubmit="return confirm('Eliminar la venta #{{ sale.id }}? Se restituirá el stock.');">
+          <form class="w-100 w-md-auto" method="post" action="{{ url_for('sales.delete_sale', sale_id=sale.id) }}" onsubmit="return confirm('¿Anular la venta #{{ sale.id }}? Se conservará el historial y se restaurará el stock.');">
             <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
-            <button class="btn btn-outline-danger w-100" type="submit">Eliminar</button>
+            <button class="btn btn-outline-danger w-100" type="submit"><i class="bi bi-x-circle me-1"></i>Anular venta</button>
           </form>
           {% endif %}
           <a class="btn btn-outline-secondary w-100 w-md-auto" href="{{ url_for('sales.index') }}">Volver</a>

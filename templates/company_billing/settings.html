@@ -1470,9 +1470,9 @@
                 <td>${{ '%.2f'|format(sale.total_amount) }}</td>
                 <td class="text-end">
                   {% if current_user.role == 'admin' %}
-                  <form method="post" action="{{ url_for('sales.delete_sale', sale_id=sale.id) }}" class="d-inline" onsubmit="return confirm('Eliminar la venta #{{ sale.id }}? Se restituirá el stock.');">
+                  <form method="post" action="{{ url_for('sales.delete_sale', sale_id=sale.id) }}" class="d-inline" onsubmit="return confirm('¿Anular la venta #{{ sale.id }}? Se conservará el historial y se restaurará el stock.');">
                     <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
-                    <button class="btn btn-sm btn-outline-danger" type="submit"><i class="bi bi-trash me-1"></i>Eliminar</button>
+                    <button class="btn btn-sm btn-outline-danger" type="submit"><i class="bi bi-x-circle me-1"></i>Anular</button>
                   </form>
                   {% else %}
                   <span class="text-muted small">Solo administradores</span>

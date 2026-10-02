@@ -83,3 +83,32 @@ def test_backup_maintenance_endpoint_accepts_valid_token_and_processes_companies
     assert calls[0][0] == company_id
     assert calls[0][1] is None
     assert calls[0][2] == "automated_render"
+
+
+def test_gmail_watch_maintenance_requires_token(app, monkeypatch):
+    monkeypatch.delenv("GMAIL_WATCH_AUTOMATION_TOKEN", raising=False)
+    client = app.test_client()
+    response = client.post("/internal/maintenance/gmail/watch")
+    assert response.status_code == 403
+
+
+def test_gmail_watch_maintenance_renews_with_valid_token(app, monkeypatch):
+    monkeypatch.setenv("GMAIL_WATCH_AUTOMATION_TOKEN", "gmail-test-token")
+    calls = []
+
+    def fake_renew_watch():
+        calls.append(True)
+        return {"status": "renewed", "history_id": "123", "expiration": "456"}
+
+    monkeypatch.setattr(
+        "services.gmail_commercial_service.renew_watch",
+        fake_renew_watch,
+    )
+    client = app.test_client()
+    response = client.post(
+        "/internal/maintenance/gmail/watch",
+        headers={"X-Gmail-Watch-Automation-Token": "gmail-test-token"},
+    )
+    assert response.status_code == 200
+    assert response.get_json()["ok"] is True
+    assert calls == [True]

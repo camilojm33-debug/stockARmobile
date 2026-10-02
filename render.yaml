@@ -67,6 +67,16 @@ services:
         sync: false
       - key: GMAIL_COMMERCIAL_MAILBOX
         value: stockarmobile@gmail.com
+      - key: BACKUP_AUTOMATION_TOKEN
+        sync: false
+      - key: BACKUP_VERIFY_COMPANY_ID
+        sync: false
+      - key: GMAIL_WATCH_AUTOMATION_TOKEN
+        sync: false
+      - key: TRUST_PROXY_HOPS
+        value: "1"
+      - key: REDIS_URL
+        sync: false
       - key: DATABASE_URL
         fromDatabase:
           name: stockarmobile-db
@@ -99,6 +109,35 @@ services:
       - key: SMTP_PASSWORD
         sync: false
       - key: SMTP_FROM_EMAIL
+        sync: false
+
+
+  - type: cron
+    name: stockarmobile-daily-backup
+    runtime: python
+    plan: starter
+    schedule: "15 3 * * *"
+    buildCommand: pip install -r requirements.txt
+    startCommand: python scripts/run_backup_maintenance.py
+    envVars:
+      - key: STOCKARMOBILE_BASE_URL
+        value: https://www.stockarmobile.com
+      - key: BACKUP_AUTOMATION_TOKEN
+        sync: false
+      - key: BACKUP_VERIFY_COMPANY_ID
+        sync: false
+
+  - type: cron
+    name: stockarmobile-gmail-watch
+    runtime: python
+    plan: starter
+    schedule: "0 4 * * *"
+    buildCommand: pip install -r requirements.txt
+    startCommand: python scripts/run_gmail_watch_maintenance.py
+    envVars:
+      - key: STOCKARMOBILE_BASE_URL
+        value: https://www.stockarmobile.com
+      - key: GMAIL_WATCH_AUTOMATION_TOKEN
         sync: false
 
 

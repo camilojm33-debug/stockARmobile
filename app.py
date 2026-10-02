@@ -152,9 +152,14 @@ def is_api_request() -> bool:
 
 
 def _request_client_ip() -> str:
-    forwarded_for = (request.headers.get("X-Forwarded-For") or "").split(",")
-    if forwarded_for and forwarded_for[0].strip():
-        return forwarded_for[0].strip()
+    """Resolve the client IP using an explicit trusted proxy hop count."""
+    try:
+        trusted_hops = max(0, int(os.environ.get("TRUST_PROXY_HOPS", "1")))
+    except (TypeError, ValueError):
+        trusted_hops = 1
+    forwarded = [item.strip() for item in (request.headers.get("X-Forwarded-For") or "").split(",") if item.strip()]
+    if trusted_hops and len(forwarded) >= trusted_hops:
+        return forwarded[-trusted_hops]
     return (request.remote_addr or "unknown").strip()
 
 
@@ -173,8 +178,36 @@ def _find_rate_limit_rule(method: str, path: str):
     return None
 
 
+def _redis_rate_limit_client():
+    redis_url = (os.environ.get("REDIS_URL") or "").strip()
+    if not redis_url:
+        return None
+    try:
+        import redis
+        return redis.Redis.from_url(redis_url, socket_connect_timeout=1, socket_timeout=1, decode_responses=True)
+    except Exception:
+        return None
+
+
 def _is_rate_limited(rule, scope_key: str) -> tuple[bool, int]:
     now_ts = time.time()
+    redis_client = _redis_rate_limit_client()
+    if redis_client is not None:
+        try:
+            window = int(rule["window"])
+            limit = int(rule["limit"])
+            bucket_name = rule.get("path") or rule.get("path_prefix")
+            bucket_start = int(now_ts // window) * window
+            key = f"stockarmobile:public-rate:{bucket_name}:{scope_key}:{bucket_start}"
+            count = int(redis_client.incr(key))
+            if count == 1:
+                redis_client.expire(key, window + 5)
+            if count > limit:
+                retry_after = max(1, int(window - (now_ts - bucket_start)))
+                return True, retry_after
+            return False, 0
+        except Exception:
+            current_app.logger.exception("Shared Redis rate limiter unavailable; falling back to process memory.")
     window = int(rule["window"])
     limit = int(rule["limit"])
     bucket_key = f"{scope_key}:{rule.get('path') or rule.get('path_prefix')}"

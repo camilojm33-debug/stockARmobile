@@ -20,6 +20,24 @@ jobs:
         run: pip install -r requirements.txt
       - name: Compile Python
         run: python -m compileall -q .
+
+      - name: Security audit (report-only)
+        continue-on-error: true
+        shell: bash
+        run: |
+          python -m pip install --disable-pip-version-check pip-audit bandit
+          pip-audit -r requirements.txt > pip-audit.txt 2>&1 || true
+          bandit -r . -x tests,instance,.git -f txt -o bandit.txt || true
+
+      - name: Upload security diagnostics
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: security-diagnostics
+          path: |
+            pip-audit.txt
+            bandit.txt
+          retention-days: 7
       - name: Check single Alembic head
         shell: bash
         run: |

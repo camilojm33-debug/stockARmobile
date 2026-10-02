@@ -96,10 +96,27 @@ def _parse_purchase_lines():
 
 
 def _apply_product_purchase_totals(product_totals):
-    """Apply stock and moving-average cost for aggregated purchase quantities."""
-    from app import Product
+    """Apply stock and moving-average cost while serializing concurrent purchases."""
+    from app import Product, db
 
-    for product, purchase_quantity, purchase_value in product_totals.values():
+    if not product_totals:
+        return
+
+    product_ids = sorted(int(product_id) for product_id in product_totals)
+    locked_products = {
+        int(product.id): product
+        for product in db.session.query(Product)
+        .filter(Product.id.in_(product_ids))
+        .with_for_update()
+        .all()
+    }
+
+    if set(locked_products) != set(product_ids):
+        missing = sorted(set(product_ids) - set(locked_products))
+        raise ValueError(f"Productos no encontrados para actualizar stock: {missing}")
+
+    for product_id, (_, purchase_quantity, purchase_value) in product_totals.items():
+        product = locked_products[int(product_id)]
         previous_stock = float(product.stock or 0)
         previous_cost = float(product.cost_price or 0)
         new_stock = previous_stock + purchase_quantity
