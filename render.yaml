@@ -116,7 +116,7 @@ services:
     name: stockarmobile-daily-backup
     runtime: python
     plan: starter
-    schedule: "15 3 * * *"
+    schedule: "15 3 1,10,15,20 * *"
     buildCommand: pip install -r requirements.txt
     startCommand: python scripts/run_backup_maintenance.py
     envVars:
