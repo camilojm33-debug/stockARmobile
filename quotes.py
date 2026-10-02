@@ -1643,6 +1643,56 @@ def email_quote(quote_id):
         flash("El cliente no tiene email registrado.", "warning")
         return redirect(url_for("quotes.view_quote", quote_id=quote.id))
     from app import record_audit
-    record_audit(action="quote_email_ready", entity="quote", entity_id=quote.id, detail=f"Estructura de email preparada {quote.number or quote.id}", ip_address=request.remote_addr)
-    flash("Estructura de envío por email preparada. Integrar provider configurado para adjuntar el PDF.", "info")
+
+    smtp_host = (current_app.config.get("SMTP_HOST") or "").strip()
+    smtp_user = (current_app.config.get("SMTP_USER") or "").strip()
+    smtp_password = current_app.config.get("SMTP_PASSWORD") or ""
+    smtp_port = int(current_app.config.get("SMTP_PORT") or 587)
+    smtp_use_tls = bool(current_app.config.get("SMTP_USE_TLS", True))
+    smtp_from = (current_app.config.get("SMTP_FROM_EMAIL") or smtp_user or "no-reply@stockarmobile.com").strip()
+
+    if not smtp_host:
+        flash("El envío de presupuestos por email no está configurado. Configurá SMTP antes de usar esta acción.", "warning")
+        return redirect(url_for("quotes.view_quote", quote_id=quote.id))
+
+    try:
+        pdf_response = _quote_pdf_response(quote, as_attachment=False)
+        pdf_bytes = pdf_response.get_data()
+        message = EmailMessage()
+        message["Subject"] = f"Presupuesto {quote.number or f'P-{quote.id:06d}'} - {getattr(quote.company, 'name', 'StockArmobile')}"
+        message["From"] = smtp_from
+        message["To"] = quote.client.email
+        message.set_content(
+            f"Hola {getattr(quote.client, 'name', '')},\n\n"
+            f"Adjuntamos el presupuesto {quote.number or f'P-{quote.id:06d}'}. "
+            "También podés consultarlo desde el enlace incluido en el PDF.\n\n"
+            "Saludos."
+        )
+        message.add_attachment(
+            pdf_bytes,
+            maintype="application",
+            subtype="pdf",
+            filename=f"presupuesto_{quote.id}.pdf",
+        )
+        with smtplib.SMTP(smtp_host, smtp_port, timeout=20) as smtp:
+            smtp.ehlo()
+            if smtp_use_tls:
+                smtp.starttls()
+                smtp.ehlo()
+            if smtp_user:
+                smtp.login(smtp_user, smtp_password)
+            smtp.send_message(message)
+    except Exception:
+        current_app.logger.exception("No se pudo enviar presupuesto por email: quote_id=%s", quote.id)
+        flash("No se pudo enviar el presupuesto por email. Revisá la configuración SMTP.", "danger")
+        return redirect(url_for("quotes.view_quote", quote_id=quote.id))
+
+    record_audit(
+        action="quote_email_sent",
+        entity="quote",
+        entity_id=quote.id,
+        detail=f"Presupuesto enviado por email a {quote.client.email}",
+        ip_address=request.remote_addr,
+    )
+    flash(f"Presupuesto enviado a {quote.client.email}.", "success")
     return redirect(url_for("quotes.view_quote", quote_id=quote.id))
