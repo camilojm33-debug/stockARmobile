@@ -2111,17 +2111,38 @@ def crm_email_gmail_sync():
 @bp.post("/crm/email/gmail/pubsub")
 def crm_email_gmail_pubsub():
     """Receive Gmail change notifications delivered by Google Cloud Pub/Sub."""
-    expected = str(
-        current_app.config.get("GMAIL_COMMERCIAL_PUBSUB_SECRET")
-        or os.getenv("GMAIL_COMMERCIAL_PUBSUB_SECRET")
-        or ""
+    authorization = str(request.headers.get("Authorization") or "").strip()
+    if not authorization.lower().startswith("bearer "):
+        abort(401)
+    token = authorization.split(" ", 1)[1].strip()
+    audience = (
+        current_app.config.get("GMAIL_COMMERCIAL_PUBSUB_AUDIENCE")
+        or os.getenv(
+            "GMAIL_COMMERCIAL_PUBSUB_AUDIENCE",
+            "https://www.stockarmobile.com/superadmin/crm/email/gmail/pubsub",
+        )
     ).strip()
-    provided = str(
-        request.headers.get("X-Gmail-PubSub-Secret")
-        or request.args.get("secret")
+    expected_service_account = str(
+        current_app.config.get("GMAIL_COMMERCIAL_PUBSUB_SERVICE_ACCOUNT")
+        or os.getenv("GMAIL_COMMERCIAL_PUBSUB_SERVICE_ACCOUNT")
         or ""
-    ).strip()
-    if not expected or not provided or not secrets.compare_digest(provided, expected):
+    ).strip().lower()
+    if not expected_service_account:
+        abort(503, description="Gmail Pub/Sub service account no configurada.")
+    try:
+        from google.auth.transport import requests as google_auth_requests
+        from google.oauth2 import id_token
+
+        claims = id_token.verify_oauth2_token(
+            token,
+            google_auth_requests.Request(),
+            audience=audience,
+        )
+        token_email = str(claims.get("email") or "").strip().lower()
+        if token_email != expected_service_account or claims.get("email_verified") is not True:
+            abort(403)
+    except Exception:
+        current_app.logger.exception("Gmail Pub/Sub OIDC authentication failed.")
         abort(401)
 
     payload = request.get_json(silent=True) or {}
