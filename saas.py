@@ -1703,7 +1703,7 @@ def _crm_inbox_rows(company, *, q: str = "", channel: str = "all", state: str = 
 @superadmin_required
 def crm_inbox():
     from stockarmobile.models.conversations import Conversation, ConversationMessage
-    from services.saas_commercial_whatsapp import get_commercial_company
+    from services.saas_commercial_whatsapp import commercial_conversation_attention, get_commercial_company
 
     _require_superadmin()
     company = get_commercial_company()
@@ -1787,6 +1787,12 @@ def crm_inbox():
         if selected.channel == "whatsapp_commercial":
             selected_phone = "".join(ch for ch in str(selected.external_conversation_id or "") if ch.isdigit())[:40]
 
+        selected_needs_reply = bool(selected_messages and selected_messages[-1].sender_type == "user")
+        if selected.channel == "whatsapp_commercial":
+            selected_needs_reply = bool(
+                commercial_conversation_attention(selected).get("pending") or selected_needs_reply
+            )
+
         selected_view = {
             "conversation_id": selected.id,
             "channel": selected.channel,
@@ -1795,7 +1801,7 @@ def crm_inbox():
             "company_name": getattr(lead, "company_name", None) or (selected_email if selected.channel == "email_commercial" else "Prospecto de WhatsApp"),
             "email": selected_email,
             "phone": selected_phone,
-            "needs_reply": bool(selected_messages and selected_messages[-1].sender_type == "user"),
+            "needs_reply": selected_needs_reply,
             "messages": [
                 {
                     "id": msg.id,
