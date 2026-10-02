@@ -517,10 +517,33 @@ class SaleService:
         db.session.commit()
         return sale
 
+    def annul_sale(self, *, sale, resolve_product_for_item, detail):
+        from app import CashMovement, db, record_audit
+
+        ValidationService.validate_delete_role(getattr(current_user, "role", None))
+        ValidationService.validate_annul_status(
+            getattr(sale, "status", None),
+            comprobante_emitido=bool(getattr(sale, "comprobante_emitido", False)),
+        )
+        CashMovement.query.filter_by(sale_id=sale.id).delete(synchronize_session=False)
+        InventoryService.reverse_stock(sale_items=sale.items, resolve_product_func=resolve_product_for_item)
+        sale.status = "anulada"
+        AuditService.record_cancel(
+            record_audit,
+            sale_id=sale.id,
+            detail=detail or f"Venta #{sale.id} anulada por administrador.",
+        )
+        db.session.commit()
+        return sale
+
     def delete_sale(self, *, sale, resolve_product_for_item):
         from app import CashMovement, db, record_audit
 
         ValidationService.validate_delete_role(getattr(current_user, "role", None))
+        if not ValidationService.can_hard_delete(getattr(sale, "status", None)):
+            raise ValueError(
+                "Las ventas confirmadas no se eliminan físicamente. Deben anularse para conservar el historial."
+            )
         CashMovement.query.filter_by(sale_id=sale.id).delete(synchronize_session=False)
         InventoryService.reverse_stock(sale_items=sale.items, resolve_product_func=resolve_product_for_item)
         AuditService.record_delete(record_audit, sale_id=sale.id, total_amount=sale.total_amount)
