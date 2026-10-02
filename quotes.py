@@ -7,7 +7,9 @@ import os
 import mimetypes
 from datetime import datetime, timedelta
 from decimal import Decimal
+from email.message import EmailMessage
 from io import BytesIO
+import smtplib
 
 from flask import Blueprint, abort, current_app, flash, jsonify, redirect, render_template, request, send_file, url_for
 from flask_login import current_user, login_required
