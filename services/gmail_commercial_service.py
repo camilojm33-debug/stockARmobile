@@ -190,6 +190,7 @@ def sync_recent_messages(hours: int = 48) -> dict:
     items = response.get("messages") or []
     received = 0
     duplicates = 0
+    deleted_ignored = 0
     skipped = 0
     for item in items:
         message = service.users().messages().get(
@@ -213,6 +214,8 @@ def sync_recent_messages(hours: int = 48) -> dict:
         )
         if result.get("status") == "duplicate":
             duplicates += 1
+        elif result.get("status") == "ignored_deleted":
+            deleted_ignored += 1
         else:
             received += 1
 
@@ -220,6 +223,7 @@ def sync_recent_messages(hours: int = 48) -> dict:
         "status": "synced",
         "received": received,
         "duplicates": duplicates,
+        "deleted_ignored": deleted_ignored,
         "skipped": skipped,
         "found": len(items),
         "checked_hours": hours,
@@ -238,11 +242,12 @@ def process_pubsub_notification(payload: dict) -> dict:
     result = sync_recent_messages(hours=48)
     import logging
     logging.getLogger(__name__).info(
-        "Gmail Pub/Sub processed notification: status=%s found=%s received=%s duplicates=%s skipped=%s",
+        "Gmail Pub/Sub processed notification: status=%s found=%s received=%s duplicates=%s deleted_ignored=%s skipped=%s",
         result.get("status"),
         result.get("found"),
         result.get("received"),
         result.get("duplicates"),
+        result.get("deleted_ignored"),
         result.get("skipped"),
     )
     return result
