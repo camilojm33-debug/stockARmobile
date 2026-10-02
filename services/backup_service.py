@@ -25,6 +25,12 @@ class BackupService:
         "premium": 3,
         "trial": 1,
     }
+    PLAN_MONTHLY_SLOTS = {
+        "trial": (1,),
+        "entrepreneur": (1,),
+        "business": (1, 15),
+        "premium": (1, 10, 20),
+    }
 
     COMPANY_FIELDS = [
         "id",
@@ -151,6 +157,20 @@ class BackupService:
             "name": plan_name,
             "limit": int(limit),
         }
+
+    @staticmethod
+    def monthly_backup_slots(plan_code: str):
+        """Devuelve los días del mes reservados para backups automáticos."""
+        normalized = str(plan_code or "trial").strip().lower()
+        return BackupService.PLAN_MONTHLY_SLOTS.get(normalized, (1,))
+
+    @staticmethod
+    def automated_backup_due(company_id: int, *, day_of_month: int | None = None):
+        """Indica si el backup automático de la empresa corresponde hoy."""
+        plan = BackupService._plan_context(company_id)
+        if day_of_month is None:
+            day_of_month = datetime.utcnow().day
+        return int(day_of_month) in BackupService.monthly_backup_slots(plan["code"])
 
     @staticmethod
     def _backup_root() -> Path:
