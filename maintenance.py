@@ -70,8 +70,19 @@ def run_backup_maintenance():
 
     results = []
     companies = Company.query.filter_by(active=True).order_by(Company.id.asc()).all()
+    today = __import__("datetime").datetime.utcnow().date()
     for company in companies:
         try:
+            if not BackupService.automated_backup_due(company.id, day_of_month=today.day):
+                plan = BackupService._plan_context(company.id)
+                results.append({
+                    "company_id": company.id,
+                    "status": "skipped",
+                    "plan": plan["code"],
+                    "reason": "not_due_this_month_slot",
+                })
+                continue
+
             backup, plan = BackupService.create_manual_backup(
                 company.id,
                 user_id=None,
@@ -127,7 +138,7 @@ def run_backup_maintenance():
                 "error": str(exc),
             }
 
-    ok = all(item["status"] == "ready" for item in results) and (
+    ok = all(item["status"] in {"ready", "skipped"} for item in results) and (
         verification is None or bool(verification.get("valid"))
     )
     return jsonify(

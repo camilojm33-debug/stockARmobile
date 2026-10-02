@@ -70,6 +70,11 @@ def test_backup_maintenance_endpoint_accepts_valid_token_and_processes_companies
         calls.append((company_id, user_id, trigger_type))
         return FakeBackup(), {"code": "trial"}
 
+    monkeypatch.setattr(
+        BackupService,
+        "automated_backup_due",
+        staticmethod(lambda company_id, *, day_of_month=None: True),
+    )
     monkeypatch.setattr(BackupService, "create_manual_backup", staticmethod(fake_backup))
     client = app.test_client()
     response = client.post(
@@ -112,3 +117,27 @@ def test_gmail_watch_maintenance_renews_with_valid_token(app, monkeypatch):
     assert response.status_code == 200
     assert response.get_json()["ok"] is True
     assert calls == [True]
+
+    
+def test_backup_monthly_slots_match_subscription_tiers():
+    assert BackupService.monthly_backup_slots("trial") == (1,)
+    assert BackupService.monthly_backup_slots("entrepreneur") == (1,)
+    assert BackupService.monthly_backup_slots("business") == (1, 15)
+    assert BackupService.monthly_backup_slots("premium") == (1, 10, 20)
+
+
+def test_backup_due_only_on_plan_monthly_slots(app, monkeypatch):
+    with app.app_context():
+        company = Company(name="Schedule QA", active=True)
+        db.session.add(company)
+        db.session.commit()
+
+        monkeypatch.setattr(
+            BackupService,
+            "_plan_context",
+            staticmethod(lambda company_id: {"code": "business", "name": "Negocio", "limit": 2}),
+        )
+
+        assert BackupService.automated_backup_due(company.id, day_of_month=1) is True
+        assert BackupService.automated_backup_due(company.id, day_of_month=15) is True
+        assert BackupService.automated_backup_due(company.id, day_of_month=10) is False
