@@ -540,3 +540,38 @@ def test_crm_message_delete_rejects_non_commercial_conversation(commercial_datab
         )
 
     assert ConversationMessage.query.filter_by(id=message.id).first() is not None
+
+
+def test_crm_message_delete_does_not_remove_recorded_ai_usage(commercial_database):
+    from services.saas_commercial_service import delete_commercial_conversation_message
+    from stockarmobile.models.conversations import ConversationMessage
+
+    company = commercial_database["company"]
+    conversation = Conversation(
+        company_id=company.id,
+        channel="whatsapp_commercial",
+        external_conversation_id="549999008888",
+        status="open",
+        metadata_json={},
+    )
+    db.session.add(conversation)
+    db.session.flush()
+    message = ConversationMessage(
+        company_id=company.id,
+        conversation_id=conversation.id,
+        sender_type="agent",
+        role="assistant",
+        content="Respuesta de IA",
+        metadata_json={"ai_usage_recorded": True},
+    )
+    db.session.add(message)
+    db.session.commit()
+
+    with pytest.raises(ValueError):
+        delete_commercial_conversation_message(
+            db.session,
+            message_id=message.id,
+            company_id=company.id,
+        )
+
+    assert ConversationMessage.query.filter_by(id=message.id).first() is not None
