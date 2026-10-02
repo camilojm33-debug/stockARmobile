@@ -8330,15 +8330,16 @@ def test_sales_edit_delete_lifecycle_preserves_audit_stock_and_views():
     with stock_app.app.app_context():
         from app import AuditLog
 
-        deleted_sale = db.session.get(Sale, sale_id)
-        assert deleted_sale is None
+        annulled_sale = db.session.get(Sale, sale_id)
+        assert annulled_sale is not None
+        assert (annulled_sale.status or "").lower() == "anulada"
 
         product = db.session.get(Product, 1)
         assert product is not None
         assert round(float(product.stock or 0), 3) == 2.5
 
-        delete_log = AuditLog.query.filter_by(action="sale_delete", entity_id=sale_id).first()
-        assert delete_log is not None
+        cancel_log = AuditLog.query.filter_by(action="sale_cancel", entity_id=sale_id).first()
+        assert cancel_log is not None
 
     dashboard = client.get("/dashboard/")
     reports = client.get("/reportes/")
