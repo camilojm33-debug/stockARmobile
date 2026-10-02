@@ -1383,12 +1383,23 @@ def delete_sale(sale_id):
         cart_key=_cart_key,
         to_decimal=to_decimal,
     )
-    service.delete_sale(
-        sale=sale,
-        resolve_product_for_item=lambda item: item.product
-        or scope_query_to_company(db.session.query(Product), Product).filter(Product.id == item.product_id).first(),
-    )
-    flash("Venta eliminada correctamente y stock restaurado.", "success")
+    resolve_product = lambda item: item.product or scope_query_to_company(
+        db.session.query(Product), Product
+    ).filter(Product.id == item.product_id).first()
+
+    if ValidationService.can_hard_delete(getattr(sale, "status", None)):
+        service.delete_sale(
+            sale=sale,
+            resolve_product_for_item=resolve_product,
+        )
+        flash("Borrador de venta eliminado y stock restaurado.", "success")
+    else:
+        service.annul_sale(
+            sale=sale,
+            resolve_product_for_item=resolve_product,
+            detail=f"Venta #{sale.id} anulada desde el panel administrativo.",
+        )
+        flash("Venta anulada correctamente. Se conservó el historial y se restauró el stock.", "success")
     return redirect(request.referrer or url_for("company_billing.company_settings", panel="stats"))
 
 
