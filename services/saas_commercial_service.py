@@ -398,6 +398,10 @@ def delete_commercial_conversation_message(db_session, *, message_id: int, compa
     if conversation is None:
         raise ValueError("El mensaje no pertenece a una conversación comercial.")
 
+    message_metadata = message.metadata_json if isinstance(message.metadata_json, dict) else {}
+    if message.role == "assistant" and message_metadata.get("ai_usage_recorded") is True:
+        raise ValueError("Los mensajes de IA con consumo registrado no se pueden eliminar para preservar la contabilidad de uso.")
+
     original_external_id = str(message.external_message_id or "").strip()[:255] or None
     email_tombstone = False
 
