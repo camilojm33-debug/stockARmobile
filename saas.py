@@ -27,6 +27,7 @@ from sqlalchemy import text
 from werkzeug.security import check_password_hash
 
 from app import model_table_exists, superadmin_required, utcnow
+from stockarmobile.extensions import csrf
 from config.billing_config import load_billing_config
 from services.backup_service import BackupService
 from services.payment_flow import (
@@ -2112,6 +2113,7 @@ def crm_email_gmail_sync():
 
 
 @bp.post("/crm/email/gmail/pubsub")
+@csrf.exempt
 def crm_email_gmail_pubsub():
     """Receive Gmail change notifications delivered by Google Cloud Pub/Sub."""
     authorization = str(request.headers.get("Authorization") or "").strip()
