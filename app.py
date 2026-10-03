@@ -1712,6 +1712,7 @@ class SaaSLeadConsent(db.Model):
     granted_at = db.Column(db.DateTime)
     revoked_at = db.Column(db.DateTime)
     unsubscribe_token = db.Column(db.String(96), unique=True, index=True)
+    consent_token = db.Column(db.String(96), unique=True, index=True)
     created_at = db.Column(db.DateTime, default=utcnow, nullable=False, index=True)
     updated_at = db.Column(db.DateTime, default=utcnow, onupdate=utcnow, nullable=False)
     lead = db.relationship("SaaSLead", back_populates="consent")
