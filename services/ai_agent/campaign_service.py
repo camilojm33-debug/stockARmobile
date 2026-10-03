@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+from datetime import datetime
 
 from stockarmobile.extensions import db
 from stockarmobile.helpers.dates import utcnow_naive
@@ -32,6 +33,17 @@ class CampaignService:
             creator = User.query.filter(User.company_id == company_id, User.active.is_(True), User.role.in_(["admin", "user"])).order_by(User.id.asc()).first()
         if creator is None:
             raise ValueError("No hay un usuario activo para crear la campaña.")
+        context = system_data if isinstance(system_data, dict) else {}
+        channel = str(context.get("channel") or "email").strip().lower()
+        if channel not in {"email", "whatsapp", "both"}:
+            channel = "email"
+        scheduled_at = None
+        raw_schedule = str(context.get("scheduled_at") or "").strip()
+        if raw_schedule:
+            try:
+                scheduled_at = datetime.fromisoformat(raw_schedule.replace("Z", "+00:00")).replace(tzinfo=None)
+            except ValueError:
+                scheduled_at = None
         campaign = Campaign(
             company_id=company_id,
             title=(title or "Campaña propuesta")[:180],
@@ -39,9 +51,11 @@ class CampaignService:
             campaign_type=(campaign_type or "general")[:80],
             status="BORRADOR",
             content=content or "",
-            system_data_json=json.dumps(system_data or {}, ensure_ascii=False),
+            system_data_json=json.dumps(context, ensure_ascii=False),
             audience_segment=(audience_segment or "No definido")[:120],
             audience_count=max(0, int(audience_count or 0)),
+            channel=channel,
+            scheduled_at=scheduled_at,
             product_id=product.id if product else None,
             created_by_user_id=creator.id,
         )
