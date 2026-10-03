@@ -2695,34 +2695,29 @@ def crm_consent(token):
         lead.whatsapp_consent_status = "opted_out"
         lead.phone_consent_status = "opted_out"
         lead.do_not_contact = True
-        lead.do_not_contact_at = lead.do_not_contact_at or utcnow()
+        lead.do_not_contact_at = utcnow()
         consent.revoked_at = utcnow()
     else:
-        changed = False
-        if email_opted_in:
-            consent.email_status = "opted_in"
-            lead.email_consent_status = "opted_in"
-            consent.email_source = "public_consent_link"
-            changed = True
-        if whatsapp_opted_in:
-            consent.whatsapp_status = "opted_in"
-            lead.whatsapp_consent_status = "opted_in"
-            consent.whatsapp_source = "public_consent_link"
-            changed = True
-        if phone_opted_in:
-            consent.phone_status = "opted_in"
-            lead.phone_consent_status = "opted_in"
-            changed = True
-        if changed:
-            consent.granted_at = utcnow()
+        # The form represents the prospect's complete current preferences:
+        # checked means opted-in; unchecked means opted-out for that channel.
+        consent.email_status = "opted_in" if email_opted_in else "opted_out"
+        consent.whatsapp_status = "opted_in" if whatsapp_opted_in else "opted_out"
+        consent.phone_status = "opted_in" if phone_opted_in else "opted_out"
+        lead.email_consent_status = consent.email_status
+        lead.whatsapp_consent_status = consent.whatsapp_status
+        lead.phone_consent_status = consent.phone_status
+        consent.email_source = "public_consent_link" if email_opted_in else consent.email_source
+        consent.whatsapp_source = "public_consent_link" if whatsapp_opted_in else consent.whatsapp_source
+        now = utcnow()
+        if email_opted_in or whatsapp_opted_in or phone_opted_in:
+            consent.granted_at = now
             consent.revoked_at = None
-            # Explicit opt-in on at least one channel removes a previous global block;
-            # channel eligibility is still enforced independently by the dispatcher.
             lead.do_not_contact = False
             lead.do_not_contact_at = None
         else:
-            flash("Seleccioná al menos un canal o elegí no recibir comunicaciones.", "warning")
-            return render_template("saas/crm_consent.html", ok=True, lead=lead, consent=consent, saved=False), 400
+            consent.revoked_at = now
+            lead.do_not_contact = True
+            lead.do_not_contact_at = now
 
     record_audit(
         action="saas_lead_public_consent_update",
