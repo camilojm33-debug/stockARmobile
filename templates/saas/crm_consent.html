@@ -1,0 +1,26 @@
+{% extends "base_master.html" %}
+{% block title %}Consentimiento comercial{% endblock %}
+{% block content %}
+<div class="container py-4" style="max-width:760px">
+  {% if not ok %}
+    <div class="card shadow-sm border-0"><div class="card-body p-4 p-md-5 text-center"><div class="display-6 mb-3">🔒</div><h1 class="h3">Enlace no válido</h1><p class="text-muted mb-0">El enlace de consentimiento no existe o ya no está disponible.</p></div></div>
+  {% elif saved %}
+    <div class="card shadow-sm border-0"><div class="card-body p-4 p-md-5 text-center"><div class="display-6 mb-3">✓</div><h1 class="h3">Preferencias guardadas</h1><p class="text-muted">Tu decisión quedó registrada. Podés revocar o modificar estas preferencias contactando a StockArMobile.</p></div></div>
+  {% else %}
+    <div class="card shadow-sm border-0"><div class="card-body p-4 p-md-5">
+      <div class="small text-uppercase fw-bold text-muted mb-2">StockArMobile · Preferencias de contacto</div>
+      <h1 class="h3 fw-bold">Elegí cómo querés recibir información</h1>
+      <p class="text-muted">Este formulario es opcional. Podés autorizar uno o varios canales para recibir información comercial, novedades y propuestas de StockArMobile.</p>
+      <div class="alert alert-light border small"><strong>Información:</strong> tus datos serán utilizados para contacto comercial de StockArMobile. Podés retirar o modificar tu autorización posteriormente. Responsable: StockArMobile · <a href="mailto:{{ config.get('SUPPORT_EMAIL', 'stockarmobile@gmail.com') }}">{{ config.get('SUPPORT_EMAIL', 'stockarmobile@gmail.com') }}</a>.</div>
+      <form method="post" class="mt-4">
+        <div class="form-check border rounded-3 p-3 mb-2"><input class="form-check-input ms-0 me-2" type="checkbox" name="email_opted_in" value="1" id="consentEmail" {% if consent.email_status == 'opted_in' %}checked{% endif %}><label class="form-check-label" for="consentEmail"><strong>Email</strong><div class="small text-muted">Novedades, información comercial y propuestas.</div></label></div>
+        <div class="form-check border rounded-3 p-3 mb-2"><input class="form-check-input ms-0 me-2" type="checkbox" name="whatsapp_opted_in" value="1" id="consentWhatsapp" {% if consent.whatsapp_status == 'opted_in' %}checked{% endif %}><label class="form-check-label" for="consentWhatsapp"><strong>WhatsApp</strong><div class="small text-muted">Mensajes comerciales y seguimiento.</div></label></div>
+        <div class="form-check border rounded-3 p-3 mb-3"><input class="form-check-input ms-0 me-2" type="checkbox" name="phone_opted_in" value="1" id="consentPhone" {% if consent.phone_status == 'opted_in' %}checked{% endif %}><label class="form-check-label" for="consentPhone"><strong>Llamadas</strong><div class="small text-muted">Contacto telefónico comercial.</div></label></div>
+        <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+        <button class="btn btn-primary w-100" type="submit">Guardar preferencias</button>
+      </form>
+      <form method="post" class="mt-2" onsubmit="return confirm('¿Querés rechazar todas las comunicaciones comerciales?');"><input type="hidden" name="reject_all" value="1"><input type="hidden" name="csrf_token" value="{{ csrf_token() }}"><button class="btn btn-link text-muted w-100" type="submit">No quiero recibir comunicaciones comerciales</button></form>
+    </div></div>
+  {% endif %}
+</div>
+{% endblock %}
