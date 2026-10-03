@@ -216,11 +216,12 @@ def refresh_attribution(company_id=None):
         query = query.filter(TenantCampaignRecipient.company_id == int(company_id))
     recipients = query.all()
     for recipient in recipients:
+        tenant_id = recipient.company_id
         client = recipient.client
         phone = _client_phone(client)
         if phone:
             conversation = Conversation.query.filter(
-                Conversation.company_id == company_id,
+                Conversation.company_id == tenant_id,
                 Conversation.external_conversation_id == phone,
                 Conversation.created_at >= recipient.sent_at,
                 Conversation.created_at <= _now(),
@@ -232,7 +233,7 @@ def refresh_attribution(company_id=None):
                 ).first():
                     db.session.add(TenantCampaignAttribution(
                         campaign_id=recipient.campaign_id,
-                        company_id=company_id,
+                        company_id=tenant_id,
                         client_id=client.id,
                         recipient_id=recipient.id,
                         conversation_id=conversation.id,
@@ -242,7 +243,7 @@ def refresh_attribution(company_id=None):
                     ))
         if recipient.sent_at:
             sales = Sale.query.filter(
-                Sale.company_id == company_id,
+                Sale.company_id == tenant_id,
                 Sale.client_id == client.id,
                 Sale.date >= recipient.sent_at,
                 Sale.date <= recipient.sent_at + timedelta(days=ATTRIBUTION_DAYS),
