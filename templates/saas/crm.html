@@ -188,7 +188,7 @@
                       </select>
                       <button class="btn btn-sm btn-outline-primary" type="submit">Guardar</button>
                     </form>
-                    <button type="button" class="btn btn-sm btn-outline-secondary" data-bs-toggle="modal" data-bs-target="#contactPrefs{{ lead.id }}">Canales</button>
+                    <button type="button" class="btn btn-sm btn-outline-secondary" data-bs-toggle="modal" data-bs-target="#contactPrefs{{ lead.id }}">Canales</button>\n                    <form method="post" action="{{ url_for('saas.crm_lead_consent_link', lead_id=lead.id) }}" class="d-inline"><input type="hidden" name="csrf_token" value="{{ csrf_token() }}"><button class="btn btn-sm btn-outline-success" type="submit" title="Generar enlace de consentimiento"><i class="bi bi-link-45deg"></i></button></form>
                     <button type="button" class="btn btn-sm btn-outline-danger" data-bs-toggle="modal" data-bs-target="#deleteLead{{ lead.id }}" title="Eliminar prospecto"><i class="bi bi-trash3"></i></button>
                   </div>
                 </td>
