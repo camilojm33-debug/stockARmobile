@@ -32,6 +32,7 @@ from stockarmobile.models.conversations import Conversation
 from stockarmobile.decorators import company_admin_required
 from stockarmobile.permissions import can_access_ai
 from services.ai_agent.campaign_service import CampaignService
+from services.ai_agent.tenant_campaign_service import campaign_metrics, prepare_recipients
 
 
 bp = Blueprint("ai_agents", __name__, url_prefix="/agentes-ia")
@@ -530,6 +531,18 @@ def campaigns():
     return render_template("ai_agents/campaigns.html", campaigns=_campaign_rows(current_user.company_id), campaign_summary=_campaign_summary(current_user.company_id), **_context())
 
 
+@bp.get("/campanas/unsubscribe/<token>")
+def campaign_unsubscribe(token):
+    from app import Client
+    client = Client.query.filter_by(marketing_unsubscribe_token=str(token or "").strip()).first()
+    if client is None:
+        return render_template("ai_agents/campaign_unsubscribe.html", success=False), 404
+    client.email_marketing_consent = "opted_out"
+    client.whatsapp_marketing_consent = "opted_out"
+    db.session.commit()
+    return render_template("ai_agents/campaign_unsubscribe.html", success=True)
+
+
 @bp.get("/campanas/<int:campaign_id>")
 @tenant_required
 def campaign_detail(campaign_id):
@@ -540,7 +553,7 @@ def campaign_detail(campaign_id):
     if campaign is None:
         from flask import abort
         abort(404)
-    return render_template("ai_agents/campaign_detail.html", campaign=campaign, **_context())
+    return render_template("ai_agents/campaign_detail.html", campaign=campaign, campaign_metrics=campaign_metrics(current_user.company_id, campaign.id), **_context())
 
 
 @bp.post("/vendedor/webchat/toggle")
@@ -567,7 +580,19 @@ def campaign_edit(campaign_id):
         flash(entitlement.reason or "Tu plan no incluye Marketing IA.", "warning")
         return redirect(url_for("ai_agents.agent", agent="planes"))
     try:
-        CampaignService.update_draft(company_id=current_user.company_id, campaign_id=campaign_id, title=request.form.get("title", ""), objective=request.form.get("objective", ""), content=request.form.get("content", ""), user_id=current_user.id)
+        campaign = CampaignService.update_draft(company_id=current_user.company_id, campaign_id=campaign_id, title=request.form.get("title", ""), objective=request.form.get("objective", ""), content=request.form.get("content", ""), user_id=current_user.id)
+        if campaign.status in {"BORRADOR", "PENDIENTE_APROBACION"}:
+            channel = str(request.form.get("channel") or campaign.channel or "email").strip().lower()
+            if channel in {"email", "whatsapp", "both"}:
+                campaign.channel = channel
+            raw_schedule = str(request.form.get("scheduled_at") or "").strip()
+            if raw_schedule:
+                try:
+                    campaign.scheduled_at = datetime.fromisoformat(raw_schedule).replace(tzinfo=None)
+                except ValueError:
+                    raise ValueError("La fecha de programación no es válida.")
+            else:
+                campaign.scheduled_at = None
         db.session.commit()
         flash("Campaña actualizada.", "success")
     except ValueError as exc:
@@ -585,9 +610,15 @@ def campaign_transition(campaign_id):
         return redirect(url_for("ai_agents.agent", agent="planes"))
     target_status = request.form.get("status", "")
     try:
-        CampaignService.transition(company_id=current_user.company_id, campaign_id=campaign_id, target_status=target_status, user_id=current_user.id)
-        db.session.commit()
-        flash("Estado de campaña actualizado.", "success")
+        campaign = CampaignService.transition(company_id=current_user.company_id, campaign_id=campaign_id, target_status=target_status, user_id=current_user.id)
+        if target_status.upper() == "APROBADA":
+            prepare_recipients(campaign.id, company_id=current_user.company_id)
+            CampaignService.transition(company_id=current_user.company_id, campaign_id=campaign.id, target_status="EN_PREPARACION", user_id=current_user.id)
+            db.session.commit()
+            flash("Campaña aprobada y puesta en cola de envío. El cron la enviará respetando consentimiento.", "success")
+        else:
+            db.session.commit()
+            flash("Estado de campaña actualizado.", "success")
     except ValueError as exc:
         db.session.rollback()
         flash(str(exc), "warning")
