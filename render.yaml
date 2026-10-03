@@ -147,7 +147,7 @@ services:
 
 
   - type: cron
-    name: stockarmobile-daily-backup
+    name: stockarmobile-monthly-backup
     runtime: python
     plan: starter
     schedule: "15 3 1,10,15,20 * *"
