@@ -6,6 +6,7 @@ def test_superadmin_dashboard_exposes_commercial_data_quality():
     template = Path("templates/saas/index.html").read_text(encoding="utf-8")
 
     assert "commercial_data_quality" in source
+    assert "commercial_data_quality=commercial_data_quality" in source
     assert 'Payment.status == "approved"' in source
     assert 'Payment.status.in_(["pending", "authorized", "in_process"])' in source
     assert 'Payment.status.in_(["rejected", "cancelled", "expired", "charged_back"])' in source
