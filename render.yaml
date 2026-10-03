@@ -97,7 +97,7 @@ services:
       - key: APP_URL
         value: https://www.stockarmobile.com
       - key: SAAS_MARKETING_SEND_ENABLED
-        value: "0"
+        value: "1"
       - key: SMTP_HOST
         sync: false
       - key: SMTP_PORT
