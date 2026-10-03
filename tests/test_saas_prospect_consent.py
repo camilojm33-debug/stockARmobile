@@ -9,6 +9,8 @@ def test_consent_model_and_public_workflow_contract():
     assert 'phone_opted_in' in source
     assert 'reject_all' in source
     assert 'public_consent_link' in source
+    assert 'consent.email_status = "opted_in" if email_opted_in else "opted_out"' in source
+    assert 'lead.do_not_contact = True' in source
 
 
 def test_consent_migration_is_separate_from_unsubscribe_token():
