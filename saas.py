@@ -1589,6 +1589,7 @@ def index():
         attention_grouped=attention_grouped,
         funnel=funnel,
         saas_metrics=saas_metrics,
+        commercial_data_quality=commercial_data_quality,
         renewals_buckets=renewals_buckets,
         support_metrics=support_metrics,
         activity_timeline=activity_timeline,
