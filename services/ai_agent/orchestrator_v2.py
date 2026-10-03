@@ -32,6 +32,7 @@ from services.ai_agent.tools.product_search import BuscarProductoTool
 from services.ai_agent.tools.stock_query import ConsultarStockTool
 from services.ai_agent.tools.analyst_marketing import (
     ClientesInactivosTool,
+    OportunidadesMarketingTool,
     PrepararCampanaTool,
     ProductosPromocionablesTool,
     VentasComparativaTool,
@@ -44,7 +45,7 @@ from stockarmobile.models.conversations import Agent, AgentConfiguration, Conver
 VENDOR_SYSTEM_PROMPT = "Sos el Vendedor 24 hs de StockARmobile. Podés atender desde los canales conectados por el comercio. Consultá herramientas antes de afirmar precio o stock. No inventes información. Si el canal actual no es WhatsApp, no afirmes que enviaste o recibiste mensajes por WhatsApp. Para envíos a domicilio, usá exclusivamente el costo fijo configurado por el comercio: nunca inventes porcentajes, nunca dejes el envío A CONFIRMAR y nunca agregues un recargo adicional. Al preparar un pedido, dejalo explícitamente pendiente de pago hasta una confirmación backend exitosa."
 BUSINESS_SYSTEM_PROMPT = "Sos el Asistente empresarial de StockARmobile. Usá herramientas para consultar datos reales y nunca inventes cifras. Si te preguntan qué podés hacer, informá estas capacidades: 1) Buscar productos por nombre, marca o código; 2) consultar el stock actual de un producto; 3) contar productos; 4) buscar clientes por nombre, email, teléfono o WhatsApp; 5) contar clientes activos; 6) resumir ventas por período; 7) listar productos más vendidos; 8) listar productos sin ventas recientes; 9) listar productos con stock crítico; 10) recibir facturas de proveedor para procesarlas desde el panel, validarlas y mostrar un preview antes de una confirmación humana. No afirmes que una factura fue aplicada, que un producto fue creado o que el stock cambió sin una confirmación explícita y un resultado backend exitoso."
 ANALYST_SYSTEM_PROMPT = "Sos el Analista IA de StockARmobile. Usá herramientas reales. Separá DATO, CÁLCULO y RECOMENDACIÓN. No inventes predicciones ni afirmes causalidad sin evidencia."
-MARKETING_SYSTEM_PROMPT = "Sos el Marketing IA de StockARmobile. Usá productos y clientes reales. Generá propuestas en BORRADOR / PENDIENTE DE APROBACIÓN. Nunca envíes mensajes ni prometas que una campaña fue ejecutada."
+MARKETING_SYSTEM_PROMPT = "Sos el Marketing IA de StockARmobile. Usá productos y clientes reales. Detectá oportunidades con herramientas reales, separá DATO, EVIDENCIA y PROPUESTA, y generá campañas en BORRADOR / PENDIENTE DE APROBACIÓN. Nunca envíes mensajes ni prometas que una campaña fue ejecutada; el envío ocurre únicamente después de aprobación humana y por el motor backend."
 COMMERCIAL_SYSTEM_PROMPT = (
     "Sos el Comercial IA de StockArMobile. Atendés únicamente consultas de prospectos que llegan por el WhatsApp comercial "
     "del propio StockArMobile. Tu objetivo es explicar el producto, funcionalidades, planes y próximos pasos de contratación "
@@ -246,6 +247,7 @@ class AgentRuntime:
         "clientes_inactivos": ClientesInactivosTool,
         "productos_promocionables": ProductosPromocionablesTool,
         "preparar_campana": PrepararCampanaTool,
+        "oportunidades_marketing": OportunidadesMarketingTool,
         "carrito_vendedor": VendorCartTool,
         "agregar_al_carrito": VendorAddTool,
         "quitar_del_carrito": VendorRemoveTool,
@@ -269,7 +271,7 @@ class AgentRuntime:
         },
         "marketing": {
             "buscar_producto", "consultar_stock", "buscar_cliente", "clientes_inactivos",
-            "productos_promocionables", "preparar_campana",
+            "productos_promocionables", "oportunidades_marketing", "preparar_campana",
         },
         "comercial": {"consultar_oferta_stockarmobile", "iniciar_contratacion_stockarmobile"},
     }

@@ -103,6 +103,8 @@ def post():
         email=request.form.get("email") or None,
         phone=request.form.get("phone") or None,
         whatsapp=request.form.get("whatsapp") or None,
+        email_marketing_consent=request.form.get("email_marketing_consent") or "unknown",
+        whatsapp_marketing_consent=request.form.get("whatsapp_marketing_consent") or "unknown",
         birthday=_date_form("birthday"),
         balance=_float_form("balance"),
         credit_limit=_float_form("credit_limit"),
@@ -136,6 +138,8 @@ def edit(client_id=None, id=None):
         client.email = request.form.get("email") or None
         client.phone = request.form.get("phone") or None
         client.whatsapp = request.form.get("whatsapp") or None
+        client.email_marketing_consent = request.form.get("email_marketing_consent") or "unknown"
+        client.whatsapp_marketing_consent = request.form.get("whatsapp_marketing_consent") or "unknown"
         client.birthday = _date_form("birthday")
         client.balance = _float_form("balance")
         client.credit_limit = _float_form("credit_limit")

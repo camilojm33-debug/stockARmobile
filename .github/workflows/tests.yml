@@ -1,0 +1,28 @@
+name: StockArMobile tests
+
+on:
+  push:
+    branches:
+      - main
+      - "feat/**"
+  pull_request:
+    branches:
+      - main
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    env:
+      FLASK_ENV: testing
+      TESTING: "1"
+      SECRET_KEY: test-secret-key
+      DATABASE_URL: sqlite:////tmp/stockarmobile-test.db
+      AI_PROVIDER: lm_studio
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: pip install -r requirements.txt
+      - run: python -m compileall -q app.py ai_agents.py clients.py services
+      - run: pytest -q tests/test_ai_marketing_campaigns.py tests/test_saas_commercial.py tests/test_ai_agents_qa3.py

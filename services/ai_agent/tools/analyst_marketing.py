@@ -250,6 +250,27 @@ class ProductosPromocionablesTool(AgentTool):
         }
 
 
+class OportunidadesMarketingTool(AgentTool):
+    name = "oportunidades_marketing"
+    description = "Detecta oportunidades comerciales reales para Marketing IA combinando clientes inactivos y productos con stock sin ventas recientes."
+    input_schema = {"type": "object", "properties": {"days": {"type": "integer", "minimum": 1, "maximum": 365}, "limit": {"type": "integer", "minimum": 1, "maximum": 50}}, "required": []}
+
+    def execute(self, *, days=90, limit=20, **kwargs: Any) -> Dict[str, Any]:
+        days = _days(days, 90)
+        try:
+            limit = max(1, min(int(limit or 20), 50))
+        except (TypeError, ValueError):
+            limit = 20
+        inactive = ClientesInactivosTool(self.company_id).execute(days=days, limit=limit)
+        products = ProductosPromocionablesTool(self.company_id).execute(days=days, limit=limit)
+        opportunities = []
+        for item in inactive.get("items", [])[:limit]:
+            opportunities.append({"type": "recuperacion_cliente", "client_id": item["id"], "client_name": item["name"], "evidence": {"days_since_last_purchase": item["days_since_last_purchase"], "historical_revenue": item["historical_revenue"], "purchase_count": item["purchase_count"]}})
+        for item in products.get("items", [])[:limit]:
+            opportunities.append({"type": "producto_sin_movimiento", "product_id": item["id"], "product_name": item["name"], "evidence": {"stock": item["stock"], "stock_value_at_cost": item["stock_value_at_cost"], "days_without_sales": days}})
+        return {"success": True, "days": days, "count": len(opportunities[:limit]), "opportunities": opportunities[:limit], "data_quality": "real_db_aggregates"}
+
+
 class PrepararCampanaTool(AgentTool):
     name = "preparar_campana"
     description = "Recopila contexto real de productos y clientes y prepara una campaña como BORRADOR, incluyendo señales de oportunidad, sin enviarla."
@@ -259,11 +280,12 @@ class PrepararCampanaTool(AgentTool):
             "campaign_type": {"type": "string", "enum": ["promocion_producto", "recuperacion_clientes_inactivos", "productos_sin_ventas", "general"]},
             "product_query": {"type": "string"},
             "days": {"type": "integer", "minimum": 1, "maximum": 365},
+            "channel": {"type": "string", "enum": ["email", "whatsapp", "both"]},
         },
         "required": ["campaign_type"],
     }
 
-    def execute(self, *, campaign_type="general", product_query="", days=90, **kwargs: Any) -> Dict[str, Any]:
+    def execute(self, *, campaign_type="general", product_query="", days=90, channel="email", **kwargs: Any) -> Dict[str, Any]:
         days = _days(days, 90)
         cutoff = datetime.utcnow() - timedelta(days=days)
         product = None
@@ -316,6 +338,7 @@ class PrepararCampanaTool(AgentTool):
                 "success": True,
                 "campaign_context": {
                     "campaign_type": campaign_type,
+                    "channel": channel if channel in {"email", "whatsapp", "both"} else "email",
                     "audience_segment": audience_segment,
                     "audience_count": audience_count,
                     "products": [
@@ -350,6 +373,7 @@ class PrepararCampanaTool(AgentTool):
             "success": True,
             "campaign_context": {
                 "campaign_type": campaign_type,
+                "channel": channel if channel in {"email", "whatsapp", "both"} else "email",
                 "audience_segment": audience_segment,
                 "audience_count": audience_count,
                 "product": product_payload,
