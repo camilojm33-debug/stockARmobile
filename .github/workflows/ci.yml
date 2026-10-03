@@ -21,13 +21,12 @@ jobs:
       - name: Compile Python
         run: python -m compileall -q .
 
-      - name: Security audit (report-only)
-        continue-on-error: true
+      - name: Security audit
         shell: bash
         run: |
           python -m pip install --disable-pip-version-check pip-audit bandit
-          pip-audit -r requirements.txt > pip-audit.txt 2>&1 || true
-          bandit -r . -x tests,instance,.git -f txt -o bandit.txt || true
+          pip-audit -r requirements.txt
+          bandit -r . -x tests,instance,.git -ll
 
       - name: Upload security diagnostics
         if: always()
@@ -53,15 +52,8 @@ jobs:
         run: node --check static/assets/js/cart-manager.js
       - name: Run tests
         id: tests
-        continue-on-error: true
         shell: bash
-        run: |
-          set +e
-          pytest -q --tb=short > pytest-output.txt 2>&1
-          code=$?
-          cat pytest-output.txt
-          echo "$code" > pytest-exit-code.txt
-          exit "$code"
+        run: pytest -q --tb=short
       - name: Upload pytest diagnostics
         if: always()
         uses: actions/upload-artifact@v4
@@ -71,6 +63,3 @@ jobs:
             pytest-output.txt
             pytest-exit-code.txt
           retention-days: 2
-      - name: Fail when tests fail
-        if: steps.tests.outcome == 'failure'
-        run: exit 1
