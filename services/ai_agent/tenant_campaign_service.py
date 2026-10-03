@@ -208,10 +208,13 @@ def _send_whatsapp(recipient, campaign) -> tuple[bool, str, str]:
     return True, "sent", provider_id
 
 
-def _mark_replies_and_attribute(company_id: int):
+def refresh_attribution(company_id=None):
     from app import Campaign, Client, Sale
     from stockarmobile.models.conversations import Conversation
-    recipients = TenantCampaignRecipient.query.filter_by(company_id=company_id, status="sent").all()
+    query = TenantCampaignRecipient.query.filter_by(status="sent")
+    if company_id is not None:
+        query = query.filter(TenantCampaignRecipient.company_id == int(company_id))
+    recipients = query.all()
     for recipient in recipients:
         client = recipient.client
         phone = _client_phone(client)
@@ -309,7 +312,8 @@ def dispatch_due_campaigns(db_session, *, company_id=None, limit=10, per_campaig
             campaign.status = "ENVIADA"
             campaign.finished_at = _now()
         summary["campaigns"] += 1
-        _mark_replies_and_attribute(campaign.company_id)
+        refresh_attribution(company_id=campaign.company_id)
+    refresh_attribution(company_id=company_id)
     db_session.commit()
     return summary
 
