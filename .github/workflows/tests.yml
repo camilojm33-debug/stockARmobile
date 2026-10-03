@@ -26,4 +26,4 @@ jobs:
           python-version: "3.12"
       - run: pip install -r requirements.txt
       - run: python -m compileall -q app.py ai_agents.py clients.py services
-      - run: pytest -q tests/test_ai_marketing_campaigns.py tests/test_saas_commercial.py tests/test_ai_agents_qa3.py
+      - run: pytest -q tests/test_ai_marketing_campaigns.py tests/test_saas_commercial.py tests/test_ai_agents_qa3.py tests/test_superadmin_commercial_dashboard.py
