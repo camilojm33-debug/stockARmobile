@@ -12,6 +12,6 @@ def test_backup_schedule_is_monthly_and_plan_based():
 
 def test_render_backup_cron_is_not_daily():
     render = Path("render.yaml").read_text(encoding="utf-8")
-    assert 'name: stockarmobile-daily-backup' in render
+    assert 'name: stockarmobile-monthly-backup' in render
     assert 'schedule: "15 3 1,10,15,20 * *"' in render
     assert 'schedule: "15 3 * * *"' not in render
