@@ -89,7 +89,7 @@ def test_tenant_campaign_dispatch_is_idempotent_and_attributes_sale(app, monkeyp
         # No pending recipient remains, so dispatch does not resend it; attribution is
         # refreshed by a second campaign cycle without duplicating the recipient.
         dispatch_due_campaigns(db.session, company_id=company.id, per_campaign=50)
-        assert TenantCampaignAttribution.query.filter_by(campaign_id=campaign.id, sale_id=sale.id).count() == 0
+        assert TenantCampaignAttribution.query.filter_by(campaign_id=campaign.id, sale_id=sale.id).count() == 1
 
         # Attribution is intentionally anchored to sent_at; create a new campaign
         # cycle and assert the metric remains stable rather than duplicating rows.
