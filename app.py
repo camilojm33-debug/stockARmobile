@@ -2917,5 +2917,7 @@ with app.app_context():
 
 
 if __name__ == "__main__":
-    app.run(debug=True, host="0.0.0.0", port=int(os.environ.get("PORT", 5000)))
+    debug_enabled = str(os.environ.get("FLASK_DEBUG", "")).strip().lower() in {"1", "true", "yes", "on"}
+    host = (os.environ.get("FLASK_RUN_HOST") or "127.0.0.1").strip()
+    app.run(debug=debug_enabled, host=host, port=int(os.environ.get("PORT", 5000)))
 
