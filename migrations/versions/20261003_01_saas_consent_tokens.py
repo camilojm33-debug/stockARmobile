@@ -3,7 +3,7 @@ from alembic import op
 import sqlalchemy as sa
 
 revision = "20261003_01_saas_consent_tokens"
-down_revision = "20260927_01_saas_commercial_crm"
+down_revision = "20261002_01_ai_marketing_campaign_delivery"
 branch_labels = None
 depends_on = None
 
