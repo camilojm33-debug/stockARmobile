@@ -2427,6 +2427,7 @@ def inject_notifications():
     current_company_preferences = {}
     ai_feature_pricing_allowed = False
     ai_feature_vendor_allowed = False
+    ai_feature_marketing_allowed = False
     commercial_promotions_allowed = False
     ai_employee_access_allowed = False
     support_contact = {
@@ -2451,6 +2452,7 @@ def inject_notifications():
                     and can_use_commercial_feature(company, "pricing_controller").allowed
                 )
                 ai_feature_vendor_allowed = can_use_ai_feature(company, "vendedor").allowed
+                ai_feature_marketing_allowed = can_use_ai_feature(company, "marketing").allowed
                 commercial_promotions_allowed = can_use_commercial_feature(company, "promotions").allowed
                 ai_employee_access_allowed = (
                     getattr(current_user, "role", None) in {"admin", "superadmin"}
@@ -2459,6 +2461,7 @@ def inject_notifications():
             except Exception:
                 ai_feature_pricing_allowed = False
                 ai_feature_vendor_allowed = False
+                ai_feature_marketing_allowed = False
                 commercial_promotions_allowed = False
         if getattr(current_user, "role", None) != "superadmin":
             has_active_seller_profile = ReferralSeller.query.filter_by(user_id=current_user.id, active=True).first() is not None
@@ -2484,6 +2487,7 @@ def inject_notifications():
             "current_user_has_permission": lambda key: _user_has_permission(current_user, key),
             "ai_feature_pricing_allowed": ai_feature_pricing_allowed,
             "ai_feature_vendor_allowed": ai_feature_vendor_allowed,
+            "ai_feature_marketing_allowed": ai_feature_marketing_allowed,
             "commercial_promotions_allowed": commercial_promotions_allowed,
             "ai_employee_access_allowed": ai_employee_access_allowed,
         }

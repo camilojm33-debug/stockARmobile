@@ -790,6 +790,9 @@
       {% set _ai_permissions = (current_user.permissions_json or "") %}
       {% if current_user.is_authenticated and (current_user.role in ["admin", "superadmin"] or '"ai_access"' in _ai_permissions) %}
       <a class="nav-link {% if request.endpoint and request.endpoint.startswith('ai_agents.') %}active{% endif %}" href="{{ url_for('ai_agents.index') }}"><i class="bi bi-robot"></i><span class="nav-text">IA para tu negocio</span></a> <!-- AI_NAV_PERMISSION_FINAL -->
+      {% if current_user.is_authenticated and (current_user.role in ["admin", "superadmin"] or '"ai_access"' in _ai_permissions) %}
+      <a class="nav-link {% if request.endpoint in ['ai_agents.campaigns', 'ai_agents.campaign_detail'] %}active{% endif %}" href="{{ url_for('ai_agents.campaigns') }}"><i class="bi bi-diagram-3"></i><span class="nav-text">CRM Inteligente</span>{% if not ai_feature_marketing_allowed %}<span class="nav-badge badge rounded-pill text-bg-warning ms-auto">IA PRO</span>{% endif %}</a>
+      {% endif %}
       {% endif %}
       {% if current_user.role == 'admin' %}
       <a class="nav-link {% if request.endpoint == 'company_billing.company_settings' %}active{% endif %}" href="{{ url_for('company_billing.company_settings') }}"><i class="bi bi-building"></i><span class="nav-text">Mi empresa</span></a>
