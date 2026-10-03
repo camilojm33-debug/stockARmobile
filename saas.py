@@ -1452,6 +1452,37 @@ def index():
         "trial_conversion": _safe_pct(float(active_subscriptions), float(trial_companies or 1)),
     }
 
+    # Commercial data-quality controls: keep cash, pending collections and invoicing
+    # explicitly separated so the SuperAdmin never interprets initiated/pending payments as revenue.
+    approved_subscription_payments = Payment.query.filter(
+        subscription_revenue_payment_filter(Payment), Payment.status == "approved"
+    ).count()
+    pending_subscription_payments = Payment.query.filter(
+        subscription_revenue_payment_filter(Payment), Payment.status.in_(["pending", "authorized", "in_process"])
+    ).count()
+    rejected_subscription_payments = Payment.query.filter(
+        subscription_revenue_payment_filter(Payment), Payment.status.in_(["rejected", "cancelled", "expired", "charged_back"])
+    ).count()
+    issued_invoices = Invoice.query.count()
+    subscriptions_with_future_billing = Subscription.query.filter(
+        Subscription.next_billing_date.isnot(None),
+        Subscription.next_billing_date > now + timedelta(days=366),
+    ).count()
+    subscriptions_invalid_dates = Subscription.query.filter(
+        Subscription.starts_at.isnot(None),
+        Subscription.ends_at.isnot(None),
+        Subscription.ends_at < Subscription.starts_at,
+    ).count()
+    commercial_data_quality = {
+        "approved_payments": int(approved_subscription_payments),
+        "pending_payments": int(pending_subscription_payments),
+        "rejected_payments": int(rejected_subscription_payments),
+        "issued_invoices": int(issued_invoices),
+        "future_billing_anomalies": int(subscriptions_with_future_billing),
+        "invalid_date_anomalies": int(subscriptions_invalid_dates),
+        "status": "ok" if subscriptions_invalid_dates == 0 and subscriptions_with_future_billing == 0 else "warning",
+    }
+
     # Renewal buckets
     renewals_buckets = {
         "today": Subscription.query.filter(Subscription.next_billing_date >= datetime(now.year, now.month, now.day), Subscription.next_billing_date < datetime(now.year, now.month, now.day) + timedelta(days=1)).count(),
