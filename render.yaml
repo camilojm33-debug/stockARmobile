@@ -67,6 +67,12 @@ services:
         sync: false
       - key: GMAIL_COMMERCIAL_MAILBOX
         value: stockarmobile@gmail.com
+      - key: SUPPORT_EMAIL
+        value: stockarmobile@gmail.com
+      - key: SUPPORT_WHATSAPP_DISPLAY
+        value: "+54 9 3624 202415"
+      - key: SUPPORT_WHATSAPP_NUMBER
+        value: "5493624202415"
       - key: BACKUP_AUTOMATION_TOKEN
         sync: false
       - key: BACKUP_VERIFY_COMPANY_ID
