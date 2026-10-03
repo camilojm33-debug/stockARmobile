@@ -2640,6 +2640,106 @@ def crm_unsubscribe(token):
     return render_template("saas/crm_unsubscribe.html", ok=True, company_name=lead.company_name)
 
 
+@bp.post("/crm/leads/<int:lead_id>/consent-link")
+@superadmin_required
+def crm_lead_consent_link(lead_id):
+    from app import SaaSLead, SaaSLeadConsent, db, utcnow, record_audit
+
+    _require_superadmin()
+    lead = SaaSLead.query.filter_by(id=lead_id).first_or_404()
+    consent = lead.consent or SaaSLeadConsent(lead_id=lead.id)
+    if not consent.consent_token:
+        consent.consent_token = secrets.token_urlsafe(48)
+    db.session.add(consent)
+    record_audit(
+        action="saas_lead_consent_link_generated",
+        entity="saas_lead",
+        entity_id=lead.id,
+        detail="Enlace individual de consentimiento generado o recuperado.",
+        user_id=current_user.id,
+        company_id=lead.company_id,
+    )
+    db.session.commit()
+    flash("Enlace de consentimiento generado. Podés copiarlo desde la ficha del prospecto.", "success")
+    return _redirect_back("saas.crm_panel")
+
+
+@bp.route("/crm/consent/<token>", methods=["GET", "POST"])
+def crm_consent(token):
+    from app import SaaSLeadConsent, db, utcnow, record_audit
+
+    consent = SaaSLeadConsent.query.filter_by(consent_token=(token or "").strip()).first()
+    if consent is None or not consent.lead:
+        return render_template("saas/crm_consent.html", ok=False), 404
+
+    lead = consent.lead
+    if request.method == "GET":
+        return render_template(
+            "saas/crm_consent.html",
+            ok=True,
+            lead=lead,
+            consent=consent,
+            saved=False,
+        )
+
+    email_opted_in = request.form.get("email_opted_in") == "1"
+    whatsapp_opted_in = request.form.get("whatsapp_opted_in") == "1"
+    phone_opted_in = request.form.get("phone_opted_in") == "1"
+    reject_all = request.form.get("reject_all") == "1"
+
+    if reject_all:
+        consent.email_status = "opted_out"
+        consent.whatsapp_status = "opted_out"
+        consent.phone_status = "opted_out"
+        lead.email_consent_status = "opted_out"
+        lead.whatsapp_consent_status = "opted_out"
+        lead.phone_consent_status = "opted_out"
+        lead.do_not_contact = True
+        lead.do_not_contact_at = lead.do_not_contact_at or utcnow()
+        consent.revoked_at = utcnow()
+    else:
+        changed = False
+        if email_opted_in:
+            consent.email_status = "opted_in"
+            lead.email_consent_status = "opted_in"
+            consent.email_source = "public_consent_link"
+            changed = True
+        if whatsapp_opted_in:
+            consent.whatsapp_status = "opted_in"
+            lead.whatsapp_consent_status = "opted_in"
+            consent.whatsapp_source = "public_consent_link"
+            changed = True
+        if phone_opted_in:
+            consent.phone_status = "opted_in"
+            lead.phone_consent_status = "opted_in"
+            changed = True
+        if changed:
+            consent.granted_at = utcnow()
+            consent.revoked_at = None
+            # Explicit opt-in on at least one channel removes a previous global block;
+            # channel eligibility is still enforced independently by the dispatcher.
+            lead.do_not_contact = False
+            lead.do_not_contact_at = None
+        else:
+            flash("Seleccioná al menos un canal o elegí no recibir comunicaciones.", "warning")
+            return render_template("saas/crm_consent.html", ok=True, lead=lead, consent=consent, saved=False), 400
+
+    record_audit(
+        action="saas_lead_public_consent_update",
+        entity="saas_lead",
+        entity_id=lead.id,
+        detail=(
+            f"Consentimiento público actualizado: email={lead.email_consent_status}; "
+            f"whatsapp={lead.whatsapp_consent_status}; llamada={lead.phone_consent_status}; "
+            f"no_contactar={lead.do_not_contact}."
+        ),
+        company_id=lead.company_id,
+        ip_address=request.remote_addr,
+    )
+    db.session.commit()
+    return render_template("saas/crm_consent.html", ok=True, lead=lead, consent=consent, saved=True)
+
+
 @bp.post("/crm/leads/<int:lead_id>/contact-preferences")
 @superadmin_required
 def crm_lead_contact_preferences(lead_id):
