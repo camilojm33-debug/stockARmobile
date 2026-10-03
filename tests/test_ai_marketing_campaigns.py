@@ -7,6 +7,7 @@ from services.ai_agent.tenant_campaign_service import (
     campaign_metrics,
     dispatch_due_campaigns,
     prepare_recipients,
+    refresh_attribution,
 )
 
 
@@ -83,16 +84,13 @@ def test_tenant_campaign_dispatch_is_idempotent_and_attributes_sale(app, monkeyp
         db.session.add(sale)
         db.session.commit()
 
-        refreshed.status = "EN_PREPARACION"
-        refreshed.scheduled_at = None
-        db.session.commit()
-        # No pending recipient remains, so dispatch does not resend it; attribution is
-        # refreshed by a second campaign cycle without duplicating the recipient.
-        dispatch_due_campaigns(db.session, company_id=company.id, per_campaign=50)
+        # Attribution is refreshed independently of the campaign queue, so a sale
+        # occurring after the campaign is ENVIADA is still attributed within the window.
+        refresh_attribution(company_id=company.id)
+        refresh_attribution(company_id=company.id)
         assert TenantCampaignAttribution.query.filter_by(campaign_id=campaign.id, sale_id=sale.id).count() == 1
 
-        # Attribution is intentionally anchored to sent_at; create a new campaign
-        # cycle and assert the metric remains stable rather than duplicating rows.
+        # Repeating attribution is idempotent.
         metrics = campaign_metrics(company.id, campaign.id)
         assert metrics["sent"] == 1
         assert metrics["failed"] == 0
