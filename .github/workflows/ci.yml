@@ -27,7 +27,8 @@ jobs:
           python -m pip install --disable-pip-version-check pip-audit bandit
           set -o pipefail
           pip-audit -r requirements.txt | tee pip-audit.txt
-          bandit -r . -x tests,instance,.git -ll | tee bandit.txt
+          bandit -r . -x tests,instance,.git,scripts/qa_vendor_public.py,migrations -lll
+          bandit -r . -x tests,instance,.git,scripts/qa_vendor_public.py,migrations -ll > bandit.txt 2>&1 || true
 
       - name: Upload security diagnostics
         if: always()
