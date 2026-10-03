@@ -271,7 +271,7 @@ class AgentRuntime:
         },
         "marketing": {
             "buscar_producto", "consultar_stock", "buscar_cliente", "clientes_inactivos",
-            "productos_promocionables", "preparar_campana",
+            "productos_promocionables", "oportunidades_marketing", "preparar_campana",
         },
         "comercial": {"consultar_oferta_stockarmobile", "iniciar_contratacion_stockarmobile"},
     }
