@@ -200,7 +200,7 @@ def _campaign_rows(company_id: int):
 
 def _campaign_summary(company_id: int):
     rows = _campaign_rows(company_id)
-    return {status: sum(1 for row in rows if row.status == status) for status in ("BORRADOR", "PENDIENTE_APROBACION", "APROBADA")}
+    return {status: sum(1 for row in rows if row.status == status) for status in ("BORRADOR", "PENDIENTE_APROBACION", "APROBADA", "EN_PREPARACION", "ENVIADA", "CANCELADA")}
 
 
 def _meta_graph_version() -> str:

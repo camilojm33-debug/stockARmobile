@@ -18,6 +18,7 @@ jobs:
       SECRET_KEY: test-secret-key
       DATABASE_URL: sqlite:////tmp/stockarmobile-test.db
       AI_PROVIDER: lm_studio
+      PYTHONPATH: .
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
