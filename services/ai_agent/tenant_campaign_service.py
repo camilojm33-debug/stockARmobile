@@ -255,7 +255,7 @@ def refresh_attribution(company_id=None):
                 ).first():
                     db.session.add(TenantCampaignAttribution(
                         campaign_id=recipient.campaign_id,
-                        company_id=company_id,
+                        company_id=tenant_id,
                         client_id=client.id,
                         recipient_id=recipient.id,
                         revenue=sale.total_amount or 0,
