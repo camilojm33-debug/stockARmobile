@@ -166,6 +166,33 @@
     </div>
   </div>
 
+  <div class="card app-card mb-4">
+    <div class="card-header bg-white fw-bold d-flex justify-content-between align-items-center">
+      <span>Control comercial y calidad de datos</span>
+      <span class="badge text-bg-{{ 'success' if commercial_data_quality.status == 'ok' else 'warning' }}">
+        {{ 'OK' if commercial_data_quality.status == 'ok' else 'Revisar' }}
+      </span>
+    </div>
+    <div class="card-body">
+      <div class="row g-2">
+        <div class="col-6 col-md-3"><div class="border rounded p-2 h-100"><div class="small text-muted">Pagos aprobados</div><div class="fs-5 fw-bold">{{ commercial_data_quality.approved_payments }}</div><div class="small text-muted">Ingreso cobrado</div></div></div>
+        <div class="col-6 col-md-3"><div class="border rounded p-2 h-100"><div class="small text-muted">Pagos pendientes</div><div class="fs-5 fw-bold">{{ commercial_data_quality.pending_payments }}</div><div class="small text-muted">No contar como cobrado</div></div></div>
+        <div class="col-6 col-md-3"><div class="border rounded p-2 h-100"><div class="small text-muted">Pagos rechazados</div><div class="fs-5 fw-bold">{{ commercial_data_quality.rejected_payments }}</div></div></div>
+        <div class="col-6 col-md-3"><div class="border rounded p-2 h-100"><div class="small text-muted">Facturas emitidas</div><div class="fs-5 fw-bold">{{ commercial_data_quality.issued_invoices }}</div></div></div>
+      </div>
+      {% if commercial_data_quality.future_billing_anomalies or commercial_data_quality.invalid_date_anomalies %}
+      <div class="alert alert-warning mt-3 mb-0">
+        <strong>Revisión necesaria:</strong>
+        {{ commercial_data_quality.future_billing_anomalies }} suscripciones con vencimiento a más de 12 meses
+        y {{ commercial_data_quality.invalid_date_anomalies }} con fechas inválidas.
+        <a href="{{ url_for('saas.subscriptions_panel') }}" class="alert-link">Revisar suscripciones</a>
+      </div>
+      {% else %}
+      <div class="small text-success mt-3"><i class="bi bi-check-circle"></i> No se detectaron anomalías básicas de fechas de suscripción.</div>
+      {% endif %}
+    </div>
+  </div>
+
   <div class="row g-3 mb-4">
     <div class="col-xl-12">
       <div class="card app-card h-100">
