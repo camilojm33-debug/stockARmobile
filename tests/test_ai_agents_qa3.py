@@ -369,3 +369,31 @@ def test_marketing_opportunities_tool_respects_keyword_only_scope(qa_ai_database
     result = OportunidadesMarketingTool(company_id=company.id).execute(days=90, limit=20)
     assert result["success"] is True
     assert result["data_quality"] == "real_db_aggregates"
+
+
+def test_marketing_prompt_uses_tenant_business_name(qa_ai_database):
+    company = qa_ai_database["companies"]["pro"]
+    user = qa_ai_database["users"]["pro"]
+    conversation = _conversation(company.id, "marketing")
+    calls = []
+
+    class Provider:
+        def generate(self, *, messages, tools=None, **kwargs):
+            calls.append(list(messages))
+            return {"content": "Propuesta preparada.", "tool_call": None}
+
+    result = AgentRuntime.process(
+        company_id=company.id,
+        conversation_id=conversation.id,
+        message="haceme una propuesta",
+        channel="web",
+        sender_id=user.id,
+        provider_override=Provider(),
+        include_system_prompt=True,
+    )
+
+    assert result["content"] == "Propuesta preparada."
+    system = calls[0][0]["content"]
+    assert company.name in system
+    assert f"El equipo de {company.name}" in system
+    assert "No firmes ni presentes la comunicación como StockArmobile" in system
