@@ -9,7 +9,7 @@ from stockarmobile.extensions import db
 from stockarmobile.helpers.dates import utcnow_naive
 
 
-CAMPAIGN_STATUSES = {"BORRADOR", "PENDIENTE_APROBACION", "APROBADA", "EN_PREPARACION", "ENVIADA", "CANCELADA"}
+CAMPAIGN_STATUSES = {"BORRADOR", "PENDIENTE_APROBACION", "APROBADA", "EN_PREPARACION", "ENVIADA", "ENVIADA_PARCIAL", "FALLIDA", "SIN_ENVIO", "CANCELADA"}
 
 
 class CampaignService:
@@ -73,7 +73,7 @@ class CampaignService:
         campaign.title = (title or campaign.title)[:180]
         campaign.objective = (objective or campaign.objective)[:120]
         campaign.content = content or campaign.content
-        campaign.created_by_user_id = user_id
+        # La autoría original permanece estable; el editor no reemplaza al creador.
         db.session.flush()
         return campaign
 
@@ -83,7 +83,7 @@ class CampaignService:
         if campaign is None:
             raise ValueError("Campaña no encontrada para esta empresa.")
         target_status = str(target_status or "").upper()
-        transitions = {"BORRADOR": {"PENDIENTE_APROBACION", "CANCELADA"}, "PENDIENTE_APROBACION": {"APROBADA", "BORRADOR", "CANCELADA"}, "APROBADA": {"EN_PREPARACION", "CANCELADA"}, "EN_PREPARACION": set(), "ENVIADA": set(), "CANCELADA": set()}
+        transitions = {"BORRADOR": {"PENDIENTE_APROBACION", "CANCELADA"}, "PENDIENTE_APROBACION": {"APROBADA", "BORRADOR", "CANCELADA"}, "APROBADA": {"EN_PREPARACION", "CANCELADA"}, "EN_PREPARACION": set(), "ENVIADA": set(), "ENVIADA_PARCIAL": set(), "FALLIDA": set(), "SIN_ENVIO": set(), "CANCELADA": set()}
         if target_status not in transitions.get(campaign.status, set()):
             raise ValueError(f"Transición no permitida: {campaign.status} → {target_status}.")
         campaign.status = target_status
