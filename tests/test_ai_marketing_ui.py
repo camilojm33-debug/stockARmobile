@@ -10,5 +10,5 @@ def test_tenant_marketing_campaigns_screen_has_crm_visual_hierarchy():
     assert "crm-section-card" in template
     assert "crm-status" in template
     assert "Crear una propuesta" in template
-    assert "No se envía automáticamente" in template
+    assert "Sin envíos automáticos" in template
     assert "campaign_detail" in template
