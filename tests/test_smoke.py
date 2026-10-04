@@ -1672,14 +1672,16 @@ def test_quotes_create_convert_pdf_and_stock_flow():
         assert quote.status == "BORRADOR"
         assert float(quote.total_amount) == 35875.0
         assert float(Product.query.get(1).stock) == float(initial_stock)
+        quote_id = quote_id
         quote.status = "APROBADO"
+        quote.expires_at = stock_app.utcnow() + timedelta(days=5)
         db.session.commit()
 
-    pdf_response = client.get(f"/presupuestos/{quote.id}/pdf")
+    pdf_response = client.get(f"/presupuestos/{quote_id}/pdf")
     assert pdf_response.status_code == 200
     assert pdf_response.mimetype == "application/pdf"
 
-    convert_response = client.post(f"/presupuestos/{quote.id}/convertir", follow_redirects=False)
+    convert_response = client.post(f"/presupuestos/{quote_id}/convertir", follow_redirects=False)
     assert convert_response.status_code in {302, 303}
     assert "/ventas/" in (convert_response.headers.get("Location") or "")
 
@@ -1687,8 +1689,8 @@ def test_quotes_create_convert_pdf_and_stock_flow():
         prefill_key = f"quote_cart_prefill_{tenant_header}"
         prefill = session_payload.get(prefill_key)
         assert isinstance(prefill, dict)
-        assert prefill.get("quote_id") == quote.id
-        assert prefill.get("checkout_token") == f"quote-cart-{quote.id}"
+        assert prefill.get("quote_id") == quote_id
+        assert prefill.get("checkout_token") == f"quote-cart-{quote_id}"
         assert isinstance(prefill.get("items"), list)
         assert len(prefill["items"]) == 1
 
@@ -1711,7 +1713,7 @@ def test_quotes_create_convert_pdf_and_stock_flow():
     sale_id = checkout_response.get_json()["sale_id"]
 
     with stock_app.app.app_context():
-        quote = Quote.query.get(quote.id)
+        quote = Quote.query.get(quote_id)
         sale = Sale.query.get(sale_id)
         assert quote is not None
         assert sale is not None
@@ -2075,6 +2077,7 @@ def test_quote_conversion_preserves_structured_adjustments_without_double_discou
         quote_id = quote.id
         quote_total = float(quote.total_amount)
         quote.status = "APROBADO"
+        quote.expires_at = stock_app.utcnow() + timedelta(days=5)
         db.session.commit()
 
     client.post(f"/presupuestos/{quote_id}/convertir", follow_redirects=False)
@@ -2134,10 +2137,12 @@ def test_quotes_convert_redirects_to_sales_and_prefills_cart_without_open_cash()
     with stock_app.app.app_context():
         quote = Quote.query.order_by(Quote.id.desc()).first()
         assert quote is not None
+        quote_id = quote_id
         quote.status = "APROBADO"
+        quote.expires_at = stock_app.utcnow() + timedelta(days=5)
         db.session.commit()
 
-    convert_response = client.post(f"/presupuestos/{quote.id}/convertir", follow_redirects=False)
+    convert_response = client.post(f"/presupuestos/{quote_id}/convertir", follow_redirects=False)
     assert convert_response.status_code in {302, 303}
     assert "/ventas/" in (convert_response.headers.get("Location") or "")
 
@@ -2145,7 +2150,7 @@ def test_quotes_convert_redirects_to_sales_and_prefills_cart_without_open_cash()
         prefill_key = f"quote_cart_prefill_{tenant_header}"
         prefill = session_payload.get(prefill_key)
         assert isinstance(prefill, dict)
-        assert prefill.get("quote_id") == quote.id
+        assert prefill.get("quote_id") == quote_id
         assert len(prefill.get("items") or []) == 1
 
 
@@ -2180,10 +2185,12 @@ def test_quotes_convert_rejects_when_no_stock_available_for_all_lines():
     with stock_app.app.app_context():
         quote = Quote.query.order_by(Quote.id.desc()).first()
         assert quote is not None
+        quote_id = quote.id
         quote.status = "APROBADO"
+        quote.expires_at = stock_app.utcnow() + timedelta(days=5)
         db.session.commit()
 
-    convert_response = client.post(f"/presupuestos/{quote.id}/convertir", follow_redirects=True)
+    convert_response = client.post(f"/presupuestos/{quote_id}/convertir", follow_redirects=True)
     assert convert_response.status_code == 200
     html = convert_response.data.decode("utf-8")
     assert "stock actual no alcanza" in html.lower()
