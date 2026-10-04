@@ -531,16 +531,27 @@ def campaigns():
     return render_template("ai_agents/campaigns.html", campaigns=_campaign_rows(current_user.company_id), campaign_summary=_campaign_summary(current_user.company_id), **_context())
 
 
-@bp.get("/campanas/unsubscribe/<token>")
+@bp.route("/campanas/unsubscribe/<token>", methods=["GET", "POST"])
+@csrf.exempt
 def campaign_unsubscribe(token):
     from app import Client
     client = Client.query.filter_by(marketing_unsubscribe_token=str(token or "").strip()).first()
     if client is None:
-        return render_template("ai_agents/campaign_unsubscribe.html", success=False), 404
-    client.email_marketing_consent = "opted_out"
-    client.whatsapp_marketing_consent = "opted_out"
-    db.session.commit()
-    return render_template("ai_agents/campaign_unsubscribe.html", success=True)
+        return render_template("ai_agents/campaign_unsubscribe.html", valid=False, confirmed=False), 404
+
+    confirmed = request.method == "POST"
+    if confirmed:
+        # El token opaco autentica la solicitud de baja; el POST es idempotente
+        # para clientes de correo que reintentan One-Click.
+        client.email_marketing_consent = "opted_out"
+        client.whatsapp_marketing_consent = "opted_out"
+        db.session.commit()
+
+    return render_template(
+        "ai_agents/campaign_unsubscribe.html",
+        valid=True,
+        confirmed=confirmed,
+    )
 
 
 @bp.get("/campanas/<int:campaign_id>")
