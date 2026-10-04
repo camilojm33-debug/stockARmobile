@@ -726,6 +726,20 @@ class AgentRuntime:
             "customer_phone": (metadata or {}).get("from") or "",
             "actor_user_id": sender_id,
         }
+        if agent_key == "marketing":
+            merchant_name = str(getattr(company, "name", "") or getattr(company, "legal_name", "") or "").strip() or "tu comercio"
+            final_content = (
+                str(final_content or "")
+                .replace("En StockARmobile", f"En {merchant_name}")
+                .replace("En StockArMobile", f"En {merchant_name}")
+                .replace("en StockARmobile", f"en {merchant_name}")
+                .replace("en StockArMobile", f"en {merchant_name}")
+                .replace("El equipo de StockARmobile", f"El equipo de {merchant_name}")
+                .replace("El equipo de StockArMobile", f"El equipo de {merchant_name}")
+                .replace("Equipo de StockARmobile", f"Equipo de {merchant_name}")
+                .replace("Equipo de StockArMobile", f"Equipo de {merchant_name}")
+            )
+
         final_content, campaign_context, tool_rounds, ai_telemetry = cls._run_tool_loop(
             provider=provider,
             messages=messages,
