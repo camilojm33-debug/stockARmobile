@@ -392,7 +392,8 @@ def test_marketing_prompt_uses_tenant_business_name(qa_ai_database):
         include_system_prompt=True,
     )
 
-    assert result["content"] == "Propuesta preparada."
+    assert result["content"].startswith("Propuesta preparada.")
+    assert "Campaña #" in result["content"]
     system = calls[0][0]["content"]
     assert company.name in system
     assert f"El equipo de {company.name}" in system
