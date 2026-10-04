@@ -375,11 +375,10 @@
             </div>
             <div class="col-6">
               <label class="form-label" for="quoteStatusSelect">Estado</label>
-              <select class="form-select focus-ring" id="quoteStatusSelect" name="status">
-                {% for item in statuses %}
-                <option value="{{ item }}" {% if quote and quote.status == item %}selected{% elif not quote and item == 'BORRADOR' %}selected{% endif %}>{{ item }}</option>
-                {% endfor %}
-              </select>
+              <div id="quoteStatusSelect" class="form-control bg-body-secondary" aria-readonly="true">
+                {{ quote.status if quote else 'BORRADOR' }}
+              </div>
+              <div class="form-text">El estado cambia únicamente mediante las acciones del flujo.</div>
             </div>
             <div class="col-6">
               <label class="form-label" for="quoteCurrency">Moneda</label>
