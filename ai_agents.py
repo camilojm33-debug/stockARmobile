@@ -106,7 +106,7 @@ def _public_vendor_rate_limit(company_id: int) -> bool:
 
 @bp.before_request
 def _require_ai_access():
-    if request.endpoint in {"ai_agents.public_vendor_chat", "ai_agents.public_vendor_chat_message"}:
+    if request.endpoint in {"ai_agents.public_vendor_chat", "ai_agents.public_vendor_chat_message", "ai_agents.campaign_unsubscribe"}:
         return None
     if not can_access_ai(current_user):
         flash("Tu usuario no tiene habilitado el acceso a Agentes IA. Pedile al administrador de la empresa que lo active desde Mi Empresa.", "warning")
