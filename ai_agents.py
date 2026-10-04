@@ -553,7 +553,23 @@ def campaign_detail(campaign_id):
     if campaign is None:
         from flask import abort
         abort(404)
-    return render_template("ai_agents/campaign_detail.html", campaign=campaign, campaign_metrics=campaign_metrics(current_user.company_id, campaign.id), **_context())
+    import json
+    try:
+        campaign_system_data = json.loads(campaign.system_data_json or "{}")
+    except (TypeError, ValueError):
+        campaign_system_data = {}
+    detected_audience_count = int(
+        campaign_system_data.get("audience_count")
+        or campaign.audience_count
+        or 0
+    )
+    return render_template(
+        "ai_agents/campaign_detail.html",
+        campaign=campaign,
+        campaign_metrics=campaign_metrics(current_user.company_id, campaign.id),
+        detected_audience_count=detected_audience_count,
+        **_context(),
+    )
 
 
 @bp.post("/vendedor/webchat/toggle")
