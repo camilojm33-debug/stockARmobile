@@ -224,7 +224,7 @@ def ai_agent_chat():
             return jsonify({"success": False, "error": "No se pudo recibir la factura. Intenta nuevamente."}), 500
         return jsonify({"success": True, "conversation_id": conversation.id, "document_id": upload_record["upload_id"], "status": upload_record["status"], "content": "Factura recibida correctamente.\n\nArchivo: " + f"{upload_record['original_name']}\n\nEstado: Pendiente de procesamiento."})
     try:
-        result = AgentRuntime.process(company_id=company_id, conversation_id=conversation.id, message=message.strip(), channel="web", sender_id=current_user.id, idempotency_key=str(uuid.uuid4()), metadata={}, include_system_prompt=agent_key in {"analista", "marketing"})
+        result = AgentRuntime.process(company_id=company_id, conversation_id=conversation.id, message=message.strip(), channel="web", sender_id=current_user.id, idempotency_key=str(uuid.uuid4()), metadata={}, include_system_prompt=agent_key in {"vendedor", "asistente", "analista", "marketing"})
     except ValueError as exc:
         db.session.rollback()
         return jsonify({"success": False, "error": str(exc)}), 400

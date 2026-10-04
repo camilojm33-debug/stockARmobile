@@ -279,7 +279,7 @@ def dispatch_due_campaigns(db_session, *, company_id=None, limit=10, per_campaig
     summary = {"campaigns": 0, "sent": 0, "failed": 0, "skipped": 0, "attributed_sales": 0}
     for campaign in campaigns:
         campaign.started_at = campaign.started_at or now
-        recipients = TenantCampaignRecipient.query.filter_by(campaign_id=campaign.id, status="pending").order_by(TenantCampaignRecipient.id.asc()).limit(per_campaign).all()
+        recipients = TenantCampaignRecipient.query.filter_by(campaign_id=campaign.id, status="pending").order_by(TenantCampaignRecipient.id.asc()).limit(per_campaign).with_for_update(skip_locked=True).all()
         for recipient in recipients:
             consent = (
                 recipient.client.email_marketing_consent if recipient.channel == "email"
@@ -310,7 +310,21 @@ def dispatch_due_campaigns(db_session, *, company_id=None, limit=10, per_campaig
             db_session.flush()
         remaining = TenantCampaignRecipient.query.filter_by(campaign_id=campaign.id, status="pending").count()
         if remaining == 0:
-            campaign.status = "ENVIADA"
+            counts = {
+                status: TenantCampaignRecipient.query.filter_by(campaign_id=campaign.id, status=status).count()
+                for status in ("sent", "failed", "skipped")
+            }
+            campaign.sent_count = counts["sent"]
+            campaign.failed_count = counts["failed"]
+            campaign.skipped_count = counts["skipped"]
+            if counts["sent"] > 0 and (counts["failed"] > 0 or counts["skipped"] > 0):
+                campaign.status = "ENVIADA_PARCIAL"
+            elif counts["sent"] > 0:
+                campaign.status = "ENVIADA"
+            elif counts["failed"] > 0:
+                campaign.status = "FALLIDA"
+            else:
+                campaign.status = "SIN_ENVIO"
             campaign.finished_at = _now()
         summary["campaigns"] += 1
         refresh_attribution(company_id=campaign.company_id)

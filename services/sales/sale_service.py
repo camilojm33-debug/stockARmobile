@@ -225,7 +225,7 @@ class SaleService:
                 tipo_comprobante=tipo_comprobante,
                 observacion_comprobante=observacion_comprobante or None,
                 comprobante_emitido=False,
-                status=data.get("status") or SALE_STATUS_CONFIRMED,
+                status=SALE_STATUS_CONFIRMED,
                 qr_reference=data.get("qr_reference"),
                 note=data.get("note"),
                 client_id=client.id if client else None,

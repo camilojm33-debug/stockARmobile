@@ -527,9 +527,15 @@ def _quote_from_form(*, quote=None):
         surcharge_value=surcharge_value,
         surcharge_reason=surcharge_reason,
     )
-    status = _normalize_status(payload.get("status") or (quote.status if quote else "BORRADOR"))
-    if payload.get("submit_action") == "send":
-        status = "ENVIADO"
+    # El estado es una consecuencia del flujo backend. El navegador no puede
+    # aprobar, convertir ni anular un presupuesto enviando un status arbitrario.
+    if quote is None:
+        status = "BORRADOR"
+    else:
+        current_status = (quote.status or "BORRADOR").strip().upper()
+        status = current_status if current_status in QUOTE_STATUS_OPTIONS else "BORRADOR"
+        if payload.get("submit_action") == "send" and current_status in {"BORRADOR", "PENDIENTE", "ENVIADO"}:
+            status = "ENVIADO"
 
     if quote is None:
         quote = Quote(
@@ -641,7 +647,7 @@ def _duplicate_commercial_quote(original):
         seller_id=original.seller_id,
         company_id=original.company_id,
         branch_id=original.branch_id,
-        expires_at=original.expires_at,
+        expires_at=(utcnow() + timedelta(days=5)).replace(hour=23, minute=59, second=59, microsecond=0),
         subtotal=original.subtotal,
         discount=original.discount,
         surcharge=original.surcharge,
@@ -1523,8 +1529,17 @@ def convert_to_sale(quote_id):
     _require_quote_permission("quotes_convert")
     quote = scope_query_to_company(db.session.query(Quote).options(selectinload(Quote.items)), Quote).filter(Quote.id == quote_id).first_or_404()
     _require_owned_or_authorized(quote)
-    if quote.status == "CONVERTIDO" and quote.converted_sale_id:
+    status = (quote.status or "BORRADOR").strip().upper()
+    if status == "CONVERTIDO" and quote.converted_sale_id:
         return redirect(url_for("sales.view_sale", sale_id=quote.converted_sale_id))
+    if status != "APROBADO":
+        flash("Solo se puede convertir un presupuesto aprobado.", "warning")
+        return redirect(url_for("quotes.view_quote", quote_id=quote.id))
+    if quote.expires_at is not None and quote.expires_at < utcnow():
+        quote.status = "VENCIDO"
+        db.session.commit()
+        flash("El presupuesto está vencido. Revisá el presupuesto antes de convertirlo.", "warning")
+        return redirect(url_for("quotes.view_quote", quote_id=quote.id))
 
     payload_items = []
     product_ids = []
@@ -1556,6 +1571,7 @@ def convert_to_sale(quote_id):
         .all()
     }
     cart_items = []
+    stock_shortages = []
     skipped_lines = 0
     for row in payload_items:
         product = products.get(int(row["productId"]))
@@ -1564,8 +1580,12 @@ def convert_to_sale(quote_id):
             continue
         max_stock = max(float(product.stock or 0), 0.0)
         requested_qty = max(float(row["quantity"] or 0), 0.0)
-        final_qty = min(requested_qty, max_stock)
-        if final_qty <= 0:
+        if requested_qty > max_stock:
+            stock_shortages.append(
+                f"{product.name}: solicitado {requested_qty:g}, disponible {max_stock:g}"
+            )
+            continue
+        if requested_qty <= 0:
             skipped_lines += 1
             continue
         cart_items.append(
@@ -1573,12 +1593,22 @@ def convert_to_sale(quote_id):
                 "productId": int(product.id),
                 "name": row["name"],
                 "price": float(row["price"]),
-                "quantity": final_qty,
+                "quantity": requested_qty,
                 "stock": max_stock,
                 "barcode": (product.barcode or "")[:80],
                 "unitMeasure": (product.unit_measure or "u")[:20],
             }
         )
+
+    if stock_shortages:
+        preview = "; ".join(stock_shortages[:5])
+        extra = f" Otros faltantes: {len(stock_shortages) - 5}." if len(stock_shortages) > 5 else ""
+        flash(
+            "No se puede convertir porque el stock actual no alcanza lo cotizado: "
+            + preview + extra + " Modificá el presupuesto y volvé a intentar.",
+            "warning",
+        )
+        return redirect(url_for("quotes.view_quote", quote_id=quote.id))
 
     if not cart_items:
         flash("No se pudo cargar el presupuesto al carrito porque no hay stock disponible.", "warning")

@@ -280,6 +280,12 @@
                   <span class="crm-status crm-status-approved"><i class="bi bi-check-circle"></i>Aprobada</span>
                 {% elif campaign.status == 'EN_PREPARACION' %}
                   <span class="crm-status crm-status-queued"><i class="bi bi-send-check"></i>En cola</span>
+                {% elif campaign.status == 'ENVIADA_PARCIAL' %}
+                  <span class="crm-status crm-status-pending"><i class="bi bi-exclamation-circle"></i>Envío parcial</span>
+                {% elif campaign.status == 'FALLIDA' %}
+                  <span class="crm-status crm-status-cancelled"><i class="bi bi-x-octagon"></i>Fallida</span>
+                {% elif campaign.status == 'SIN_ENVIO' %}
+                  <span class="crm-status crm-status-other"><i class="bi bi-slash-circle"></i>Sin envío</span>
                 {% elif campaign.status == 'CANCELADA' %}
                   <span class="crm-status crm-status-cancelled"><i class="bi bi-x-circle"></i>Cancelada</span>
                 {% else %}

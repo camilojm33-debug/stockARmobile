@@ -376,6 +376,29 @@ class AgentRuntime:
         tool_class = cls.tool_registry.get(name)
         if tool_class is None:
             return {"success": False, "error": "tool_not_found"}
+
+        if name == "preparar_campana":
+            from app import Company
+            company = Company.query.filter_by(id=int(company_id)).first()
+            marketing_options = get_special_options(company, "marketing") if company is not None else {}
+            configured_types = set(marketing_options.get("campaign_types") or [])
+            tool_type_to_preference = {
+                "promocion_producto": "promocion",
+                "recuperacion_clientes_inactivos": "reactivacion",
+                "productos_sin_ventas": "stock",
+                "general": "novedad",
+            }
+            requested_type = str(arguments.get("campaign_type") or "general").strip().lower()
+            required_preference = tool_type_to_preference.get(requested_type)
+            if required_preference and required_preference not in configured_types:
+                return {
+                    "success": False,
+                    "error": (
+                        f"El tipo de campaña '{requested_type}' no está habilitado por la configuración de Marketing. "
+                        f"Tipos habilitados: {', '.join(sorted(configured_types)) or 'ninguno'}."
+                    ),
+                }
+
         if "company_id" in arguments:
             return {"success": False, "error": "company_id must be passed explicitly"}
         result = tool_class(company_id=company_id, **(context or {})).execute(**arguments)
@@ -735,6 +758,46 @@ class AgentRuntime:
             context=context,
             allowed_tool_names=allowed_tool_names,
         )
+
+        # Una solicitud explícita de propuesta/campaña no queda como simple texto:
+        # si el modelo omitió la herramienta, el backend intenta preparar igualmente
+        # un borrador usando el tipo permitido por la configuración del comercio.
+        if agent_key == "marketing" and campaign_context is None:
+            normalized_request = " ".join(str(message or "").strip().lower().split())
+            proposal_request = (
+                "propuesta" in normalized_request
+                or "crear campaña" in normalized_request
+                or "crear una campaña" in normalized_request
+                or "armame una campaña" in normalized_request
+                or "haceme una campaña" in normalized_request
+            )
+            if proposal_request:
+                marketing_options = get_special_options(company, "marketing")
+                configured_types = set(marketing_options.get("campaign_types") or [])
+                fallback_type = next(
+                    (
+                        candidate
+                        for candidate in ("promocion", "reactivacion", "stock", "novedad")
+                        if candidate in configured_types
+                    ),
+                    None,
+                )
+                fallback_tool_type = {
+                    "promocion": "promocion_producto",
+                    "reactivacion": "recuperacion_clientes_inactivos",
+                    "stock": "productos_sin_ventas",
+                    "novedad": "general",
+                }.get(fallback_type)
+                if fallback_tool_type:
+                    fallback_result = cls._execute_tool(
+                        "preparar_campana",
+                        company_id=company_id,
+                        arguments={"campaign_type": fallback_tool_type, "channel": "email"},
+                        context=context,
+                        allowed_tool_names=allowed_tool_names,
+                    )
+                    if isinstance(fallback_result, dict):
+                        campaign_context = fallback_result.get("campaign_context") or campaign_context
 
         if agent_key == "marketing":
             merchant_name = str(getattr(company, "name", "") or getattr(company, "legal_name", "") or "").strip() or "tu comercio"
