@@ -359,3 +359,13 @@ def test_marketing_proposal_chat_uses_prompt_and_persists_draft(qa_ai_database):
     assert campaign.status == "BORRADOR"
     assert campaign.created_by_user_id == user.id
     assert "Campaña #" in result["content"]
+
+
+
+def test_marketing_opportunities_tool_respects_keyword_only_scope(qa_ai_database):
+    from services.ai_agent.tools.analyst_marketing import OportunidadesMarketingTool
+
+    company = qa_ai_database["companies"]["pro"]
+    result = OportunidadesMarketingTool(company_id=company.id).execute(days=90, limit=20)
+    assert result["success"] is True
+    assert result["data_quality"] == "real_db_aggregates"
