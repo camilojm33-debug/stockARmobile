@@ -316,3 +316,46 @@ def test_campaigns_are_tenant_isolated(qa_ai_database):
     db.session.commit()
     assert CampaignService._campaign(companies["pro"].id, campaign.id) is not None
     assert CampaignService._campaign(companies["inicio"].id, campaign.id) is None
+
+
+
+def test_marketing_proposal_chat_uses_prompt_and_persists_draft(qa_ai_database):
+    from app import Campaign, db
+
+    company = qa_ai_database["companies"]["pro"]
+    user = qa_ai_database["users"]["pro"]
+    conversation = _conversation(company.id, "marketing")
+    calls = []
+
+    class Provider:
+        def generate(self, *, messages, tools=None, **kwargs):
+            calls.append({"messages": list(messages), "tools": tools, "kwargs": kwargs})
+            if len(calls) == 1:
+                return {
+                    "content": "",
+                    "tool_call": {
+                        "id": "proposal-1",
+                        "name": "preparar_campana",
+                        "arguments": {"campaign_type": "general", "channel": "email"},
+                    },
+                }
+            return {"content": "Te preparé una propuesta para tu negocio.", "tool_call": None}
+
+    result = AgentRuntime.process(
+        company_id=company.id,
+        conversation_id=conversation.id,
+        message="haceme una propuesta",
+        channel="web",
+        sender_id=user.id,
+        provider_override=Provider(),
+        include_system_prompt=True,
+    )
+
+    assert result["content"].startswith("Te preparé una propuesta")
+    assert calls[0]["messages"][0]["role"] == "system"
+    assert "marketing ia" in calls[0]["messages"][0]["content"].lower()
+    assert "preparar_campana" in {item["function"]["name"] for item in calls[0]["tools"]}
+    campaign = Campaign.query.filter_by(company_id=company.id).one()
+    assert campaign.status == "BORRADOR"
+    assert campaign.created_by_user_id == user.id
+    assert "Campaña #" in result["content"]
