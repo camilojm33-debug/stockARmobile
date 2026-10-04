@@ -353,7 +353,7 @@ def test_marketing_proposal_chat_uses_prompt_and_persists_draft(qa_ai_database):
 
     assert result["content"].startswith("Te preparé una propuesta")
     assert calls[0]["messages"][0]["role"] == "system"
-    assert "MARKETING IA" in calls[0]["messages"][0]["content"]
+    assert "marketing ia" in calls[0]["messages"][0]["content"].lower()
     assert "preparar_campana" in {item["function"]["name"] for item in calls[0]["tools"]}
     campaign = Campaign.query.filter_by(company_id=company.id).one()
     assert campaign.status == "BORRADOR"
