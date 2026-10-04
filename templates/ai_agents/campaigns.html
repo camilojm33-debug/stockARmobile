@@ -1,5 +1,320 @@
 {% extends "base_master.html" %}
-{% block title %}Campañas IA - StockArmobile{% endblock %}
+{% block title %}CRM Inteligente · StockArmobile{% endblock %}
+
 {% block content %}
-<div class="app-shell ai-hub"><div class="d-flex flex-wrap justify-content-between align-items-center gap-3 mb-4"><div><span class="page-kicker"><i class="bi bi-megaphone"></i> Marketing IA</span><h1 class="h3 fw-bold mb-1">Campañas</h1><p class="text-muted mb-0">Propuestas creadas para tu empresa. Aprobar no realiza ningún envío.</p></div><a class="btn btn-outline-secondary" href="{{ url_for('ai_agents.agent', agent='marketing') }}"><i class="bi bi-arrow-left me-1"></i>Marketing IA</a></div><div class="row g-3 mb-4">{% for label, status in [('Campañas creadas', None), ('Borradores', 'BORRADOR'), ('Pendientes de aprobación', 'PENDIENTE_APROBACION'), ('En cola', 'EN_PREPARACION')] %}<div class="col-6 col-lg-3"><div class="ai-metric h-100"><div class="small text-muted">{{ label }}</div><div class="ai-metric-value">{{ campaigns|length if status is none else campaign_summary[status] }}</div></div></div>{% endfor %}</div><div class="card app-card"><div class="card-body"><div class="table-responsive"><table class="table align-middle"><thead><tr><th>Nombre</th><th>Objetivo</th><th>Tipo</th><th>Segmento</th><th>Clientes</th><th>Producto</th><th>Estado</th><th>Canal</th><th></th></tr></thead><tbody>{% for campaign in campaigns %}<tr><td class="fw-semibold">{{ campaign.title }}</td><td>{{ campaign.objective }}</td><td>{{ campaign.campaign_type }}</td><td>{{ campaign.audience_segment or 'No definido' }}</td><td>{{ campaign.audience_count }}</td><td>{{ campaign.product.name if campaign.product else 'Varios / no definido' }}</td><td><span class="badge text-bg-secondary">{% if campaign.status == 'BORRADOR' %}📝 BORRADOR{% elif campaign.status == 'PENDIENTE_APROBACION' %}⏳ PENDIENTE DE APROBACIÓN{% elif campaign.status == 'APROBADA' %}✅ APROBADA{% elif campaign.status == 'CANCELADA' %}❌ CANCELADA{% else %}{{ campaign.status }}{% endif %}</span></td><td>{{ campaign.channel }}</td><td><a class="btn btn-sm btn-outline-primary" href="{{ url_for('ai_agents.campaign_detail', campaign_id=campaign.id) }}">Abrir</a></td></tr>{% else %}<tr><td colspan="9" class="text-center text-muted py-4">Todavía no hay campañas guardadas.</td></tr>{% endfor %}</tbody></table></div></div></div></div>
+<style>
+  .crm-campaigns-page { max-width: 1320px; }
+  .crm-hero {
+    position: relative;
+    overflow: hidden;
+    border: 1px solid var(--app-line);
+    border-radius: 20px;
+    background:
+      radial-gradient(circle at 92% 12%, rgba(37,99,235,.12), transparent 30%),
+      radial-gradient(circle at 12% 100%, rgba(14,165,233,.08), transparent 28%),
+      var(--app-panel);
+    box-shadow: 0 14px 34px rgba(15,23,42,.06);
+  }
+  .crm-hero::after {
+    content: "";
+    position: absolute;
+    width: 180px;
+    height: 180px;
+    right: -70px;
+    bottom: -90px;
+    border-radius: 50%;
+    border: 1px solid rgba(37,99,235,.12);
+    box-shadow: 0 0 0 18px rgba(37,99,235,.025), 0 0 0 38px rgba(37,99,235,.02);
+    pointer-events: none;
+  }
+  .crm-hero-copy { max-width: 760px; position: relative; z-index: 1; }
+  .crm-hero-title { letter-spacing: -.035em; }
+  .crm-hero-subtitle { max-width: 680px; }
+  .crm-hero-actions { position: relative; z-index: 2; }
+  .crm-trust-row { display: flex; flex-wrap: wrap; gap: .55rem; margin-top: 1rem; }
+  .crm-trust-pill {
+    display: inline-flex;
+    align-items: center;
+    gap: .38rem;
+    padding: .42rem .68rem;
+    border: 1px solid var(--app-line);
+    border-radius: 999px;
+    background: rgba(255,255,255,.72);
+    color: var(--app-muted);
+    font-size: .78rem;
+    font-weight: 700;
+  }
+  .crm-kpi {
+    height: 100%;
+    border: 1px solid var(--app-line);
+    border-radius: 16px;
+    padding: 1rem 1.05rem;
+    background: var(--app-panel);
+    box-shadow: 0 8px 22px rgba(15,23,42,.04);
+    transition: transform .18s ease, box-shadow .18s ease;
+  }
+  .crm-kpi:hover { transform: translateY(-2px); box-shadow: 0 12px 28px rgba(15,23,42,.07); }
+  .crm-kpi-top { display: flex; align-items: center; justify-content: space-between; gap: .75rem; }
+  .crm-kpi-icon {
+    width: 38px;
+    height: 38px;
+    border-radius: 11px;
+    display: grid;
+    place-items: center;
+    background: var(--app-panel-soft);
+    border: 1px solid var(--app-line);
+    color: var(--bs-primary);
+    font-size: 1rem;
+  }
+  .crm-kpi-label { font-size: .76rem; color: var(--app-muted); text-transform: uppercase; letter-spacing: .08em; font-weight: 800; }
+  .crm-kpi-value { font-size: 1.65rem; line-height: 1; font-weight: 900; letter-spacing: -.03em; margin-top: .45rem; }
+  .crm-section-card {
+    border: 1px solid var(--app-line);
+    border-radius: 18px;
+    background: var(--app-panel);
+    box-shadow: 0 10px 28px rgba(15,23,42,.045);
+    overflow: hidden;
+  }
+  .crm-section-head {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 1rem;
+    padding: 1.1rem 1.2rem;
+    border-bottom: 1px solid var(--app-line);
+    background: linear-gradient(180deg, rgba(248,250,252,.7), rgba(255,255,255,.35));
+  }
+  .crm-section-title { display: flex; align-items: center; gap: .7rem; }
+  .crm-section-title-icon {
+    width: 38px;
+    height: 38px;
+    border-radius: 11px;
+    display: grid;
+    place-items: center;
+    background: var(--app-panel-soft);
+    border: 1px solid var(--app-line);
+    color: var(--bs-primary);
+  }
+  .crm-table-wrap { padding: 0 .55rem .55rem; }
+  .crm-table { margin: 0; }
+  .crm-table thead th {
+    border-bottom: 1px solid var(--app-line);
+    color: var(--app-muted);
+    font-size: .72rem;
+    text-transform: uppercase;
+    letter-spacing: .07em;
+    font-weight: 800;
+    white-space: nowrap;
+    padding: .95rem .7rem;
+    background: rgba(248,250,252,.55);
+  }
+  .crm-table tbody td {
+    padding: 1rem .7rem;
+    border-color: rgba(226,232,240,.72);
+    vertical-align: middle;
+  }
+  .crm-table tbody tr:last-child td { border-bottom: 0; }
+  .crm-table tbody tr { transition: background .15s ease; }
+  .crm-table tbody tr:hover { background: rgba(248,250,252,.7); }
+  .crm-campaign-name { font-weight: 800; color: var(--app-text); }
+  .crm-campaign-meta { font-size: .75rem; color: var(--app-muted); margin-top: .25rem; }
+  .crm-tag {
+    display: inline-flex;
+    align-items: center;
+    gap: .35rem;
+    border: 1px solid var(--app-line);
+    border-radius: 999px;
+    padding: .34rem .55rem;
+    background: var(--app-panel-soft);
+    color: var(--app-muted);
+    font-size: .74rem;
+    font-weight: 700;
+    white-space: nowrap;
+  }
+  .crm-status {
+    display: inline-flex;
+    align-items: center;
+    gap: .4rem;
+    border-radius: 999px;
+    padding: .38rem .62rem;
+    font-size: .72rem;
+    font-weight: 850;
+    border: 1px solid transparent;
+    white-space: nowrap;
+  }
+  .crm-status-draft { background: rgba(100,116,139,.10); color: #475569; border-color: rgba(100,116,139,.16); }
+  .crm-status-pending { background: rgba(245,158,11,.11); color: #a16207; border-color: rgba(245,158,11,.18); }
+  .crm-status-approved { background: rgba(34,197,94,.10); color: #15803d; border-color: rgba(34,197,94,.18); }
+  .crm-status-queued { background: rgba(59,130,246,.10); color: #1d4ed8; border-color: rgba(59,130,246,.16); }
+  .crm-status-cancelled { background: rgba(239,68,68,.09); color: #b91c1c; border-color: rgba(239,68,68,.16); }
+  .crm-status-other { background: rgba(148,163,184,.10); color: #475569; border-color: rgba(148,163,184,.16); }
+  .crm-empty {
+    padding: 3.5rem 1.5rem;
+    text-align: center;
+  }
+  .crm-empty-icon {
+    width: 64px;
+    height: 64px;
+    margin: 0 auto 1rem;
+    border-radius: 18px;
+    display: grid;
+    place-items: center;
+    background: var(--app-panel-soft);
+    border: 1px solid var(--app-line);
+    color: var(--bs-primary);
+    font-size: 1.35rem;
+  }
+  .crm-empty-title { font-weight: 850; font-size: 1.05rem; }
+  .crm-empty-copy { max-width: 520px; margin: .4rem auto 1.1rem; color: var(--app-muted); }
+  @media (max-width: 991.98px) {
+    .crm-hero { border-radius: 16px; }
+    .crm-section-head { align-items: flex-start; flex-direction: column; }
+    .crm-table-wrap { padding: 0 .25rem .25rem; }
+  }
+  @media (max-width: 575.98px) {
+    .crm-hero .card-body { padding: 1.15rem !important; }
+    .crm-kpi { padding: .9rem; }
+    .crm-kpi-value { font-size: 1.45rem; }
+    .crm-section-head { padding: 1rem; }
+    .crm-table thead th, .crm-table tbody td { padding-left: .55rem; padding-right: .55rem; }
+  }
+</style>
+
+<div class="app-shell ai-hub crm-campaigns-page">
+  <section class="crm-hero mb-4">
+    <div class="card-body p-4 p-lg-5">
+      <div class="d-flex flex-wrap justify-content-between align-items-start gap-4">
+        <div class="crm-hero-copy">
+          <span class="page-kicker"><i class="bi bi-stars me-1"></i> Marketing IA</span>
+          <h1 class="display-6 fw-bold crm-hero-title mb-2">CRM Inteligente</h1>
+          <p class="lead text-muted crm-hero-subtitle mb-0">
+            Tus propuestas de marketing en un solo lugar: preparadas con datos reales de tu negocio, listas para revisar y aprobar.
+          </p>
+          <div class="crm-trust-row">
+            <span class="crm-trust-pill"><i class="bi bi-database-check"></i>Datos reales del comercio</span>
+            <span class="crm-trust-pill"><i class="bi bi-pencil-square"></i>Editable antes de aprobar</span>
+            <span class="crm-trust-pill"><i class="bi bi-shield-check"></i>Sin envíos automáticos</span>
+          </div>
+        </div>
+        <div class="crm-hero-actions">
+          <a class="btn btn-primary px-3" href="{{ url_for('ai_agents.agent', agent='marketing') }}">
+            <i class="bi bi-megaphone me-1"></i>Volver a Marketing IA
+          </a>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <section class="row g-3 mb-4" aria-label="Resumen de campañas">
+    {% for label, status, icon in [
+      ('Campañas creadas', None, 'bi-grid-1x2-fill'),
+      ('Borradores', 'BORRADOR', 'bi-pencil-square'),
+      ('Pendientes de aprobación', 'PENDIENTE_APROBACION', 'bi-hourglass-split'),
+      ('En cola', 'EN_PREPARACION', 'bi-send-check')
+    ] %}
+    <div class="col-6 col-xl-3">
+      <div class="crm-kpi">
+        <div class="crm-kpi-top">
+          <div class="crm-kpi-label">{{ label }}</div>
+          <div class="crm-kpi-icon"><i class="bi {{ icon }}"></i></div>
+        </div>
+        <div class="crm-kpi-value">{{ campaigns|length if status is none else campaign_summary[status] }}</div>
+      </div>
+    </div>
+    {% endfor %}
+  </section>
+
+  <section class="crm-section-card">
+    <div class="crm-section-head">
+      <div class="crm-section-title">
+        <div class="crm-section-title-icon"><i class="bi bi-kanban"></i></div>
+        <div>
+          <h2 class="h5 fw-bold mb-1">Tus campañas</h2>
+          <p class="small text-muted mb-0">Revisá cada propuesta y elegí cuándo pasarla a aprobación.</p>
+        </div>
+      </div>
+      {% if campaigns %}
+      <span class="crm-tag"><i class="bi bi-collection"></i>{{ campaigns|length }} propuesta{{ '' if campaigns|length == 1 else 's' }}</span>
+      {% endif %}
+    </div>
+
+    {% if campaigns %}
+    <div class="crm-table-wrap">
+      <div class="table-responsive">
+        <table class="table align-middle crm-table">
+          <thead>
+            <tr>
+              <th>Campaña</th>
+              <th>Objetivo</th>
+              <th>Segmento</th>
+              <th class="text-center">Clientes</th>
+              <th>Producto</th>
+              <th>Estado</th>
+              <th>Canal</th>
+              <th class="text-end"></th>
+            </tr>
+          </thead>
+          <tbody>
+            {% for campaign in campaigns %}
+            <tr>
+              <td>
+                <div class="crm-campaign-name">{{ campaign.title }}</div>
+                <div class="crm-campaign-meta">Propuesta #{{ campaign.id }}</div>
+              </td>
+              <td>
+                <span class="crm-tag">{{ campaign.objective or 'Sin objetivo' }}</span>
+              </td>
+              <td>
+                <span class="crm-campaign-meta">{{ campaign.audience_segment or 'No definido' }}</span>
+              </td>
+              <td class="text-center fw-semibold">{{ campaign.audience_count }}</td>
+              <td>
+                <span class="crm-campaign-name fw-semibold">{{ campaign.product.name if campaign.product else 'Varios / no definido' }}</span>
+              </td>
+              <td>
+                {% if campaign.status == 'BORRADOR' %}
+                  <span class="crm-status crm-status-draft"><i class="bi bi-pencil"></i>Borrador</span>
+                {% elif campaign.status == 'PENDIENTE_APROBACION' %}
+                  <span class="crm-status crm-status-pending"><i class="bi bi-hourglass-split"></i>Pendiente</span>
+                {% elif campaign.status == 'APROBADA' %}
+                  <span class="crm-status crm-status-approved"><i class="bi bi-check-circle"></i>Aprobada</span>
+                {% elif campaign.status == 'EN_PREPARACION' %}
+                  <span class="crm-status crm-status-queued"><i class="bi bi-send-check"></i>En cola</span>
+                {% elif campaign.status == 'CANCELADA' %}
+                  <span class="crm-status crm-status-cancelled"><i class="bi bi-x-circle"></i>Cancelada</span>
+                {% else %}
+                  <span class="crm-status crm-status-other"><i class="bi bi-dot"></i>{{ campaign.status }}</span>
+                {% endif %}
+              </td>
+              <td>
+                <span class="crm-tag text-lowercase">
+                  {% if campaign.channel == 'both' %}<i class="bi bi-layers"></i>Email + WhatsApp
+                  {% elif campaign.channel == 'whatsapp' %}<i class="bi bi-whatsapp"></i>WhatsApp
+                  {% else %}<i class="bi bi-envelope"></i>Email
+                  {% endif %}
+                </span>
+              </td>
+              <td class="text-end">
+                <a class="btn btn-sm btn-outline-primary px-3" href="{{ url_for('ai_agents.campaign_detail', campaign_id=campaign.id) }}">
+                  Abrir <i class="bi bi-arrow-right ms-1"></i>
+                </a>
+              </td>
+            </tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      </div>
+    </div>
+    {% else %}
+    <div class="crm-empty">
+      <div class="crm-empty-icon"><i class="bi bi-megaphone"></i></div>
+      <div class="crm-empty-title">Todavía no tenés campañas</div>
+      <p class="crm-empty-copy">Pedile a Marketing IA que prepare una propuesta. Va a quedar guardada como borrador para que la revises antes de aprobar.</p>
+      <a class="btn btn-primary px-3" href="{{ url_for('ai_agents.agent', agent='marketing') }}">
+        <i class="bi bi-stars me-1"></i>Crear una propuesta
+      </a>
+    </div>
+    {% endif %}
+  </section>
+</div>
 {% endblock %}
