@@ -1672,7 +1672,7 @@ def test_quotes_create_convert_pdf_and_stock_flow():
         assert quote.status == "BORRADOR"
         assert float(quote.total_amount) == 35875.0
         assert float(Product.query.get(1).stock) == float(initial_stock)
-        quote_id = quote_id
+        quote_id = quote.id
         quote.status = "APROBADO"
         quote.expires_at = stock_app.utcnow() + timedelta(days=5)
         db.session.commit()
@@ -2137,7 +2137,7 @@ def test_quotes_convert_redirects_to_sales_and_prefills_cart_without_open_cash()
     with stock_app.app.app_context():
         quote = Quote.query.order_by(Quote.id.desc()).first()
         assert quote is not None
-        quote_id = quote_id
+        quote_id = quote.id
         quote.status = "APROBADO"
         quote.expires_at = stock_app.utcnow() + timedelta(days=5)
         db.session.commit()
