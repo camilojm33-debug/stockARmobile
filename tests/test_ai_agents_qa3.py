@@ -397,3 +397,31 @@ def test_marketing_prompt_uses_tenant_business_name(qa_ai_database):
     assert company.name in system
     assert f"El equipo de {company.name}" in system
     assert "No firmes ni presentes la comunicación como StockArmobile" in system
+
+
+def test_marketing_output_replaces_platform_identity_with_tenant_name(qa_ai_database):
+    company = qa_ai_database["companies"]["pro"]
+    user = qa_ai_database["users"]["pro"]
+    conversation = _conversation(company.id, "marketing")
+
+    class Provider:
+        def generate(self, *, messages, tools=None, **kwargs):
+            return {
+                "content": "En StockARmobile queremos acompañarte. Saludos, El equipo de StockArMobile.",
+                "tool_call": None,
+            }
+
+    result = AgentRuntime.process(
+        company_id=company.id,
+        conversation_id=conversation.id,
+        message="haceme una propuesta",
+        channel="web",
+        sender_id=user.id,
+        provider_override=Provider(),
+        include_system_prompt=True,
+    )
+
+    assert company.name in result["content"]
+    assert "StockARmobile" not in result["content"]
+    assert "StockArMobile" not in result["content"]
+    assert f"El equipo de {company.name}" in result["content"]
