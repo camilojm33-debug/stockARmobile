@@ -261,8 +261,8 @@ class OportunidadesMarketingTool(AgentTool):
             limit = max(1, min(int(limit or 20), 50))
         except (TypeError, ValueError):
             limit = 20
-        inactive = ClientesInactivosTool(self.company_id).execute(days=days, limit=limit)
-        products = ProductosPromocionablesTool(self.company_id).execute(days=days, limit=limit)
+        inactive = ClientesInactivosTool(company_id=self.company_id).execute(days=days, limit=limit)
+        products = ProductosPromocionablesTool(company_id=self.company_id).execute(days=days, limit=limit)
         opportunities = []
         for item in inactive.get("items", [])[:limit]:
             opportunities.append({"type": "recuperacion_cliente", "client_id": item["id"], "client_name": item["name"], "evidence": {"days_since_last_purchase": item["days_since_last_purchase"], "historical_revenue": item["historical_revenue"], "purchase_count": item["purchase_count"]}})
