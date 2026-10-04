@@ -4,13 +4,20 @@
 <div class="app-shell py-5">
   <div class="card app-card mx-auto" style="max-width:620px">
     <div class="card-body p-4 p-lg-5 text-center">
-      {% if success %}
+      {% if not valid %}
+      <h1 class="h4 fw-bold">Enlace no válido</h1>
+      <p class="text-muted mb-0">El enlace de baja ya no está disponible.</p>
+      {% elif confirmed %}
       <div class="display-6 mb-3">✓</div>
       <h1 class="h4 fw-bold">Preferencias actualizadas</h1>
       <p class="text-muted mb-0">No volveremos a usar este contacto para campañas de email o WhatsApp de esta empresa, salvo que vuelvas a dar permiso.</p>
       {% else %}
-      <h1 class="h4 fw-bold">Enlace no válido</h1>
-      <p class="text-muted mb-0">El enlace de baja ya no está disponible.</p>
+      <div class="display-6 mb-3">✓</div>
+      <h1 class="h4 fw-bold">Cancelar comunicaciones</h1>
+      <p class="text-muted mb-3">Podés confirmar la baja de campañas de email y WhatsApp para este contacto.</p>
+      <form method="post">
+        <button class="btn btn-danger" type="submit">Confirmar baja</button>
+      </form>
       {% endif %}
     </div>
   </div>
