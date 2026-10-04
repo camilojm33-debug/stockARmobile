@@ -172,6 +172,18 @@ def test_inactive_audience_is_distinct_from_channel_eligible_targets(app, monkey
             audience_count=1,
         )
         db.session.commit()
+        CampaignService.transition(
+            company_id=company.id,
+            campaign_id=campaign.id,
+            target_status="PENDIENTE_APROBACION",
+            user_id=user.id,
+        )
+        CampaignService.transition(
+            company_id=company.id,
+            campaign_id=campaign.id,
+            target_status="APROBADA",
+            user_id=user.id,
+        )
         prepare_recipients(campaign.id, company_id=company.id)
 
         db.session.refresh(campaign)
@@ -209,6 +221,18 @@ def test_whatsapp_campaign_requires_connection_before_queue(app):
             audience_count=1,
         )
         db.session.commit()
+        CampaignService.transition(
+            company_id=company.id,
+            campaign_id=campaign.id,
+            target_status="PENDIENTE_APROBACION",
+            user_id=user.id,
+        )
+        CampaignService.transition(
+            company_id=company.id,
+            campaign_id=campaign.id,
+            target_status="APROBADA",
+            user_id=user.id,
+        )
 
         with pytest.raises(ValueError, match="WhatsApp no está conectado"):
             prepare_recipients(campaign.id, company_id=company.id)
