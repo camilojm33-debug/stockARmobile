@@ -659,6 +659,16 @@ class AgentRuntime:
             "marketing": MARKETING_SYSTEM_PROMPT,
             "comercial": COMMERCIAL_SYSTEM_PROMPT,
         }[agent_key]
+        if agent_key in {"vendedor", "asistente", "analista", "marketing"}:
+            merchant_name = str(getattr(company, "name", "") or getattr(company, "legal_name", "") or "").strip() or "tu comercio"
+            prompt += (
+                "\n\nIDENTIDAD DEL COMERCIO:"
+                f"\n- Nombre del comercio: {merchant_name}"
+                "\n- Este agente trabaja para el comercio del usuario, no para StockArmobile."
+                "\n- En mensajes, propuestas, campañas y firmas, usá el nombre real del comercio."
+                f"\n- Si necesitás firmar una comunicación, firmá como: El equipo de {merchant_name}."
+                "\n- No firmes ni presentes la comunicación como StockArmobile, salvo que el usuario lo pida explícitamente."
+            )
         vendor_options = None
         allowed_tool_names = None
         if agent_key == "vendedor":
