@@ -15,4 +15,4 @@ def test_direct_agent_views_have_ai_error_helper_outside_dashboard_block():
     assert special_pos >= 0
     assert helper_pos < dashboard_pos
     assert helper_pos < special_pos
-    assert "throw new Error(publicAiError(data.error" in extra_js
+    assert "throw new Error(window.publicAiError(data.error" in extra_js
