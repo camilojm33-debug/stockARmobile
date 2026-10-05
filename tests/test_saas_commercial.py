@@ -746,3 +746,56 @@ def test_campaign_preflight_blocks_unknown_consent_and_is_channel_specific(app):
         assert report["ready"] is False
         assert any(item["code"] == "audience" for item in report["issues"])
         assert report["audience"]["eligible_email"] == 0
+
+
+def test_delete_saas_lead_creates_permanent_suppression(app):
+    from app import SaaSLead, SaaSLeadSuppression, User, db
+    from services.saas_commercial_service import delete_saas_lead
+    from services.saas_ops_service import SaaSOpsService
+
+    with app.app_context():
+        user = User(username="suppression-admin", email="suppression@example.com", role="superadmin", active=True)
+        user.set_password("test-password")
+        db.session.add(user)
+        db.session.flush()
+        lead = SaaSLead(
+            company_name="No Volver",
+            contact_name="Contacto",
+            email="novolver@example.com",
+            phone="+54 9 343 1234567",
+            created_by_user_id=user.id,
+        )
+        db.session.add(lead)
+        db.session.commit()
+        lead_id = lead.id
+
+        delete_saas_lead(db.session, lead_id, suppressing_user_id=user.id)
+        db.session.commit()
+
+        suppression = SaaSLeadSuppression.query.filter_by(email="novolver@example.com").first()
+        assert suppression is not None
+        assert suppression.created_by_user_id == user.id
+
+        recreated = SaaSOpsService.create_or_update_lead(
+            db.session,
+            company_name="No Volver",
+            contact_name="Contacto Nuevo",
+            email="novolver@example.com",
+            phone="+54 9 343 1234567",
+            source="ops_auto",
+            notes="reingreso",
+            company_id=None,
+            preferred_user_id=user.id,
+        )
+        assert recreated is None
+
+
+def test_campaign_detail_has_rapid_consent_flow():
+    template = open("templates/saas/crm_campaign_detail.html", encoding="utf-8").read()
+    source = open("saas.py", encoding="utf-8").read()
+    assert "Autorización rápida de esta campaña" in template
+    assert "crm_campaign_bulk_consent" in template
+    assert '/crm/campaigns/<int:campaign_id>/bulk-consent' in source
+    assert "campaign.status != \"BORRADOR\"" in source
+
+
