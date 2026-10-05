@@ -1605,7 +1605,7 @@ def test_quotes_builder_form_renders_productive_layout():
 
     payload = {
         "client_id": 1,
-        "expires_at": "2026-08-05",
+        "expires_at": (datetime.utcnow() + timedelta(days=30)).strftime("%Y-%m-%d"),
         "status": "BORRADOR",
         "items_json": json.dumps([
             {"product_id": 1, "description": "Yerba kilo", "quantity": 1, "unit_price": 18000, "discount": 0},
