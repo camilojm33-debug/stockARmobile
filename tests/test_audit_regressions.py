@@ -102,6 +102,7 @@ def test_campaign_all_failures_are_not_marked_as_sent(app, monkeypatch):
     from app import Campaign, Client, Company, User, db
 
     with app.app_context():
+        app.config["AI_MARKETING_SEND_ENABLED"] = True
         company = Company(name="Delivery QA", active=True)
         db.session.add(company)
         db.session.flush()
