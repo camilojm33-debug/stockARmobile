@@ -46,7 +46,14 @@
           {% endif %}
         </div>
       </div>
-      <a class="btn btn-outline-secondary" href="{{ url_for('saas.crm_campaigns') }}"><i class="bi bi-arrow-left me-1"></i>Campañas</a>
+      <div class="d-flex flex-wrap gap-2">
+        {% if campaign.status == 'BORRADOR' %}
+          <button class="btn btn-primary" type="button" data-bs-toggle="modal" data-bs-target="#editCampaignModal">
+            <i class="bi bi-pencil-square me-1"></i>Editar campaña
+          </button>
+        {% endif %}
+        <a class="btn btn-outline-secondary" href="{{ url_for('saas.crm_campaigns') }}"><i class="bi bi-arrow-left me-1"></i>Campañas</a>
+      </div>
     </div>
   </section>
 
@@ -262,4 +269,94 @@
     </div>
   </section>
 </div>
+<div class="modal fade" id="editCampaignModal" tabindex="-1" aria-labelledby="editCampaignModalLabel" aria-hidden="true">
+  <div class="modal-dialog modal-xl modal-dialog-scrollable">
+    <div class="modal-content border-0 shadow-lg">
+      <form method="post" action="{{ url_for('saas.crm_campaign_edit', campaign_id=campaign.id) }}">
+        <div class="modal-header px-4 py-3">
+          <div>
+            <div class="page-kicker mb-1"><i class="bi bi-pencil-square"></i> Editar campaña</div>
+            <h2 class="modal-title h5 fw-bold mb-0" id="editCampaignModalLabel">Modificar campaña</h2>
+            <div class="small text-muted mt-1">Solo los borradores pueden editarse. Al guardar, la audiencia se recalcula.</div>
+          </div>
+          <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Cerrar"></button>
+        </div>
+        <div class="modal-body px-4">
+          <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+
+          <div class="campaign-form-section">
+            <div class="campaign-section-title"><span class="section-dot"></span>Identidad y canal</div>
+            <div class="row g-3">
+              <div class="col-lg-8">
+                <label class="form-label fw-semibold">Nombre interno</label>
+                <input class="form-control" name="name" required value="{{ campaign.name }}" maxlength="180">
+              </div>
+              <div class="col-lg-4">
+                <label class="form-label fw-semibold">Canal</label>
+                <select class="form-select" name="channel">
+                  <option value="email" {{ 'selected' if campaign.channel == 'email' else '' }}>Email</option>
+                  <option value="whatsapp" {{ 'selected' if campaign.channel == 'whatsapp' else '' }}>WhatsApp</option>
+                  <option value="both" {{ 'selected' if campaign.channel == 'both' else '' }}>Email + WhatsApp</option>
+                </select>
+              </div>
+              <div class="col-lg-8">
+                <label class="form-label fw-semibold">Asunto / título</label>
+                <input class="form-control" name="subject" required value="{{ campaign.subject }}" maxlength="255">
+              </div>
+              <div class="col-lg-4">
+                <label class="form-label fw-semibold">Programar envío</label>
+                <input class="form-control" type="datetime-local" name="scheduled_at" value="{{ campaign_scheduled_local }}">
+              </div>
+            </div>
+          </div>
+
+          <div class="campaign-form-section">
+            <div class="campaign-section-title"><span class="section-dot"></span>Audiencia</div>
+            <div class="alert alert-info campaign-alert small mb-3">
+              <i class="bi bi-shield-check fs-5 me-1"></i>
+              Los filtros se vuelven a aplicar y los destinatarios anteriores se descartan al guardar.
+            </div>
+            <div class="row g-3">
+              <div class="col-md-4"><label class="form-label fw-semibold">Rubro</label><input class="form-control" name="industry" value="{{ segment_filters.get('industry','') }}" placeholder="Ferretería"></div>
+              <div class="col-md-4"><label class="form-label fw-semibold">Provincia</label><input class="form-control" name="province" value="{{ segment_filters.get('province','') }}" placeholder="Chaco"></div>
+              <div class="col-md-4"><label class="form-label fw-semibold">Localidad</label><input class="form-control" name="locality" value="{{ segment_filters.get('locality','') }}" placeholder="Resistencia"></div>
+              <div class="col-md-6"><label class="form-label fw-semibold">Segmento</label><input class="form-control" name="segment" value="{{ segment_filters.get('segment','') }}" placeholder="captacion"></div>
+              <div class="col-md-6"><label class="form-label fw-semibold">Score mínimo</label><input class="form-control" type="number" min="0" max="100" name="min_score" value="{{ segment_filters.get('min_score',0) }}"></div>
+            </div>
+          </div>
+
+          <div class="campaign-form-section">
+            <div class="campaign-section-title"><span class="section-dot"></span>Contenido del mensaje</div>
+            <div class="row g-3">
+              <div class="col-12">
+                <label class="form-label fw-semibold">Texto</label>
+                <textarea class="form-control" name="body_text" rows="7" required>{{ campaign.body_text or '' }}</textarea>
+              </div>
+              <div class="col-12">
+                <label class="form-label fw-semibold">HTML para Email</label>
+                <textarea class="form-control font-monospace" name="body_html" rows="9" required>{{ campaign.body_html }}</textarea>
+              </div>
+            </div>
+          </div>
+
+          <div class="campaign-form-section">
+            <div class="campaign-section-title"><span class="section-dot"></span>WhatsApp</div>
+            <div class="row g-3">
+              <div class="col-lg-7"><label class="form-label fw-semibold">Plantilla aprobada</label><input class="form-control" name="whatsapp_template_name" value="{{ campaign.whatsapp_template_name or '' }}"></div>
+              <div class="col-lg-2"><label class="form-label fw-semibold">Idioma</label><input class="form-control" name="whatsapp_template_language" value="{{ campaign.whatsapp_template_language or 'es_AR' }}"></div>
+              <div class="col-lg-3"><label class="form-label fw-semibold">Parámetros</label><input class="form-control" name="whatsapp_parameter_fields" value="{{ campaign.whatsapp_parameter_fields or 'contacto,empresa' }}"></div>
+            </div>
+            <div class="small text-muted mt-2">La plantilla y sus parámetros se validan al aprobar.</div>
+          </div>
+        </div>
+        <div class="modal-footer px-4 gap-2">
+          <div class="campaign-submit-help"><i class="bi bi-info-circle me-1"></i>Guardar cambios deja la campaña en Borrador y exige preparar nuevamente la audiencia.</div>
+          <button class="btn btn-outline-secondary" type="button" data-bs-dismiss="modal">Cerrar</button>
+          <button class="btn btn-primary px-4" type="submit"><i class="bi bi-check2 me-1"></i>Guardar cambios</button>
+        </div>
+      </form>
+    </div>
+  </div>
+</div>
+
 {% endblock %}
