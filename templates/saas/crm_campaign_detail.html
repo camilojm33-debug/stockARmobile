@@ -368,9 +368,23 @@
         {% elif campaign.status == 'ENVIADA' %}
           <div class="alert alert-success campaign-alert small mb-0"><i class="bi bi-check2-all me-1"></i>Envío finalizado correctamente.</div>
         {% elif campaign.status == 'ENVIADA_PARCIAL' %}
-          <div class="alert alert-warning campaign-alert small mb-0"><i class="bi bi-exclamation-triangle me-1"></i>Envío parcial. Revisá los fallos y omitidos.</div>
+          <div class="alert alert-warning campaign-alert small mb-2"><i class="bi bi-exclamation-triangle me-1"></i>Envío parcial. Revisá los fallos y omitidos.</div>
+          {% if metrics.failed %}
+          <form method="post" action="{{ url_for('saas.crm_campaign_retry_failed',campaign_id=campaign.id) }}">
+            <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+            <input type="password" name="step_up_password" class="form-control" placeholder="Contraseña para reintentar" autocomplete="current-password" required>
+            <button class="btn btn-warning w-100 mt-2"><i class="bi bi-arrow-repeat me-1"></i>Reintentar fallidos ({{ metrics.failed }})</button>
+          </form>
+          {% endif %}
         {% elif campaign.status == 'FALLIDA' %}
-          <div class="alert alert-danger campaign-alert small mb-0"><i class="bi bi-x-octagon me-1"></i>El envío terminó sin entregas exitosas.</div>
+          <div class="alert alert-danger campaign-alert small mb-2"><i class="bi bi-x-octagon me-1"></i>El envío terminó sin entregas exitosas.</div>
+          {% if metrics.failed %}
+          <form method="post" action="{{ url_for('saas.crm_campaign_retry_failed',campaign_id=campaign.id) }}">
+            <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+            <input type="password" name="step_up_password" class="form-control" placeholder="Contraseña para reintentar" autocomplete="current-password" required>
+            <button class="btn btn-warning w-100 mt-2"><i class="bi bi-arrow-repeat me-1"></i>Reintentar fallidos ({{ metrics.failed }})</button>
+          </form>
+          {% endif %}
         {% elif campaign.status == 'SIN_ENVIO' %}
           <div class="alert alert-secondary campaign-alert small mb-0"><i class="bi bi-slash-circle me-1"></i>La campaña terminó sin destinatarios enviados.</div>
         {% elif campaign.status == 'CANCELADA' %}
