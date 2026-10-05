@@ -327,6 +327,17 @@
   background:linear-gradient(135deg, var(--app-panel) 0%, var(--app-panel-soft) 100%);
   box-shadow:var(--app-shadow-soft);
 }
+.superadmin-page .campaign-detail-header{
+  position:sticky;
+  top:8px;
+  z-index:30;
+}
+@media(max-width:767.98px){
+  .superadmin-page .campaign-detail-header{
+    top:4px;
+  }
+}
+
 .superadmin-page .campaign-flow{
   display:grid;
   grid-template-columns:repeat(4,minmax(0,1fr));
