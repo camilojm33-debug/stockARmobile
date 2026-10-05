@@ -164,5 +164,5 @@ def test_campaign_detail_has_cancel_button_for_queued_state():
     from pathlib import Path
 
     template = Path("templates/ai_agents/campaign_detail.html").read_text(encoding="utf-8")
-    assert "name="status" value="CANCELADA"" in template
+    assert 'name="status" value="CANCELADA"' in template
     assert "Cancelar campaña" in template
