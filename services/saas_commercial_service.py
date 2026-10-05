@@ -278,6 +278,15 @@ def segment_filters_from_request(request) -> dict:
     except (TypeError, ValueError):
         score = 0
 
+    if str(request.form.get("audience_scope") or request.args.get("audience_scope") or "").strip().lower() == "all_email":
+        return {
+            "industry": "",
+            "province": "",
+            "locality": "",
+            "segment": "",
+            "min_score": 0,
+        }
+
     def clean_filter(value):
         cleaned = _clean(value)
         return "" if cleaned.lower() in {"todos", "todas", "all", "*"} else cleaned
