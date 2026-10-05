@@ -546,15 +546,12 @@
 {% endblock %}
 
 {% block extra_scripts_inline %}
-
-{% endblock %}
-
-
 <script>
 document.addEventListener("DOMContentLoaded", function () {
   const form = document.getElementById("crmBulkConsentForm");
   const idsBox = document.getElementById("crmBulkLeadIds");
   const deleteForm = document.getElementById("crmBulkDeleteConfirmForm");
+  const deleteIdsBox = document.getElementById("crmBulkDeleteLeadIds");
   const deleteButton = document.getElementById("crmBulkDeleteButton");
   const deleteCount = document.getElementById("crmBulkDeleteCount");
   const deletePassword = document.getElementById("crmBulkDeletePassword");
@@ -569,6 +566,16 @@ document.addEventListener("DOMContentLoaded", function () {
       input.value = el.value;
       idsBox.appendChild(input);
     });
+    if (deleteIdsBox) {
+      deleteIdsBox.innerHTML = "";
+      document.querySelectorAll(".crm-lead-select:checked").forEach((el) => {
+        const input = document.createElement("input");
+        input.type = "hidden";
+        input.name = "lead_ids";
+        input.value = el.value;
+        deleteIdsBox.appendChild(input);
+      });
+    }
     const selected = document.querySelectorAll(".crm-lead-select:checked");
     const count = selected.length;
     const button = form.querySelector('button[type="submit"]');
@@ -598,7 +605,7 @@ document.addEventListener("DOMContentLoaded", function () {
   if (deleteForm) deleteForm.addEventListener("submit", function (event) {
     syncIds();
     const count = document.querySelectorAll(".crm-lead-select:checked").length;
-    if (!count) {
+    if (!count || !deleteIdsBox || !deleteIdsBox.children.length) {
       event.preventDefault();
       alert("Seleccioná al menos un prospecto.");
       return;
@@ -628,3 +635,7 @@ document.addEventListener("DOMContentLoaded", function () {
   syncIds();
 });
 </script>
+{% endblock %}
+
+
+
