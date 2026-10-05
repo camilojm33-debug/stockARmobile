@@ -27,7 +27,7 @@ def test_superadmin_campaigns_route_counts_incidents():
 def test_campaign_ui_explains_empty_audience_reasons():
     template = (ROOT / "templates/saas/crm_campaign_detail.html").read_text(encoding="utf-8")
     assert "Email disponible" in template
-    assert "Email con permiso" in template
+    assert "Email elegible" in template
     assert "La audiencia filtrada está en 0." in template
     assert "Un dato importado no equivale a consentimiento de marketing." in template
 
