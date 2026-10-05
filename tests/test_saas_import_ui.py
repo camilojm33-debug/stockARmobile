@@ -53,3 +53,12 @@ def test_superadmin_crm_select_all_is_wired_inside_rendered_script_block():
     assert 'el.checked = selectAll.checked' in block
     assert 'syncIds();' in block
     assert template.count('DOMContentLoaded", function ()') == 1
+
+
+def test_campaign_failure_has_safe_retry_action():
+    template = (ROOT / "templates/saas/crm_campaign_detail.html").read_text(encoding="utf-8")
+    source = (ROOT / "saas.py").read_text(encoding="utf-8")
+    assert 'url_for(\'saas.crm_campaign_retry_failed\'' in template
+    assert 'Reintentar fallidos' in template
+    assert 'def crm_campaign_retry_failed(campaign_id)' in source
+    assert 'status not in {"FALLIDA", "ENVIADA_PARCIAL"}' in source
