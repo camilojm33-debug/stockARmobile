@@ -1624,15 +1624,16 @@ def test_quotes_builder_form_renders_productive_layout():
     with stock_app.app.app_context():
         quote = Quote.query.order_by(Quote.id.desc()).first()
         assert quote is not None
+        quote_id = int(quote.id)
 
-    edit_response = client.get(f"/presupuestos/{quote.id}/editar")
+    edit_response = client.get(f"/presupuestos/{quote_id}/editar")
     assert edit_response.status_code == 200
     # Close the request-scoped ORM transaction before mutating the same SQLite
     # fixture again; this prevents intermittent "database is locked" failures.
     db.session.rollback()
     db.session.remove()
     edit_html = edit_response.get_data(as_text=True)
-    assert f'formaction="/presupuestos/{quote.id}/convertir"' in edit_html
+    assert f'formaction="/presupuestos/{quote_id}/convertir"' in edit_html
     assert 'formmethod="post"' in edit_html
 
     with stock_app.app.app_context():
