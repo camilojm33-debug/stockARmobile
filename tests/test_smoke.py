@@ -1640,9 +1640,6 @@ def test_quotes_builder_form_renders_productive_layout():
         company = Company.query.filter_by(name="Empresa Demo").first()
         assert company is not None
         enable_quotes_module(company, enabled=True)
-        user = User.query.filter_by(username="empresa_admin").first()
-        assert user is not None
-        user.permissions_json = None
         db.session.commit()
 
     assert client.get("/presupuestos/").status_code == 200
