@@ -322,7 +322,9 @@ def test_whatsapp_campaign_dispatch_uses_prepared_whatsapp_recipient(app, monkey
         db.session.add(campaign)
         db.session.commit()
 
-        build_campaign_recipients(db.session, campaign.id)
+        summary = build_campaign_recipients(db.session, campaign.id)
+        assert summary["eligible_whatsapp"] == 1
+        assert campaign.target_count == 1
         calls = []
 
         def fake_whatsapp(recipient, current_campaign):
