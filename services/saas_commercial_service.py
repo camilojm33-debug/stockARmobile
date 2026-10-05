@@ -349,7 +349,7 @@ def register_lead_suppression(db_session, *, lead, user_id: int, reason: str = "
     return True
 
 
-def delete_saas_lead(db_session, lead_id: int) -> dict:
+def delete_saas_lead(db_session, lead_id: int, *, suppressing_user_id: int | None = None) -> dict:
     """Permanently remove one SuperAdmin CRM lead and its CRM-only children.
 
     Commercial checkout records are retained as billing history; their lead
@@ -366,7 +366,7 @@ def delete_saas_lead(db_session, lead_id: int) -> dict:
     register_lead_suppression(
         db_session,
         lead=lead,
-        user_id=int(lead.created_by_user_id),
+        user_id=int(suppressing_user_id or lead.created_by_user_id),
         reason="superadmin_delete",
     )
     checkout_query = SaaSCommercialCheckout.query.filter_by(lead_id=lead_id)
