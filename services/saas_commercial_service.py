@@ -812,13 +812,19 @@ def _send_email(recipient, campaign) -> tuple[bool, str]:
     try:
         port = int(current_app.config.get("SMTP_PORT") or 587)
         use_tls = bool(current_app.config.get("SMTP_USE_TLS", True))
-        with smtplib.SMTP(host, port, timeout=30) as server:
-            server.ehlo()
-            if use_tls:
-                server.starttls()
+        if port == 465:
+            with smtplib.SMTP_SSL(host, port, timeout=30) as server:
                 server.ehlo()
-            server.login(user, password)
-            server.send_message(msg)
+                server.login(user, password)
+                server.send_message(msg)
+        else:
+            with smtplib.SMTP(host, port, timeout=30) as server:
+                server.ehlo()
+                if use_tls:
+                    server.starttls()
+                    server.ehlo()
+                server.login(user, password)
+                server.send_message(msg)
     except smtplib.SMTPAuthenticationError as exc:
         return False, "SMTP rechazó la autenticación. Revisá usuario, contraseña o App Password."
     except smtplib.SMTPServerDisconnected:
