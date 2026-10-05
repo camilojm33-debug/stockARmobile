@@ -145,7 +145,7 @@ def test_campaign_both_prepares_independent_channel_recipients(app):
     from app import SaaSCampaign, SaaSCampaignRecipient, SaaSLead, SaaSLeadConsent, User, db
 
     with app.app_context():
-        app.config["SAAS_MARKETING_SEND_ENABLED"] = True
+        app.config["SAAS_MARKETING_SEND_ENABLED"] = "1"
         user = User(
             username="multichannel-admin",
             email="multichannel-admin@example.com",
