@@ -890,3 +890,29 @@ def test_smtp_probe_reports_connection_closed(app, monkeypatch):
         ok, detail = _smtp_probe()
         assert ok is False
         assert "cerró la conexión" in detail.lower()
+
+
+def test_smtp_probe_uses_ssl_for_port_465(app, monkeypatch):
+    with app.app_context():
+        app.config["SMTP_HOST"] = "smtp.example.com"
+        app.config["SMTP_PORT"] = 465
+        app.config["SMTP_USER"] = "user@example.com"
+        app.config["SMTP_PASSWORD"] = "secret"
+        app.config["SMTP_USE_TLS"] = True
+
+        class FakeSMTPSSL:
+            def __init__(self, *args, **kwargs):
+                pass
+            def __enter__(self):
+                return self
+            def __exit__(self, *args):
+                return False
+            def ehlo(self):
+                return None
+            def login(self, *args):
+                return None
+
+        monkeypatch.setattr("services.saas_campaign_preflight.smtplib.SMTP_SSL", FakeSMTPSSL)
+        ok, detail = _smtp_probe()
+        assert ok is True
+        assert "465" in detail
