@@ -36,7 +36,7 @@
         <div class="modal-body">
           <p class="mb-2">Vas a eliminar permanentemente el prospecto <strong>{{ lead.company_name }}</strong> · {{ lead.contact_name }}.</p>
           <div class="alert alert-warning small mb-3">
-            Se eliminan sus datos CRM, consentimiento, tareas, alertas y destinatarios de campañas.
+            Se eliminan sus datos CRM, consentimiento, tareas, alertas y destinatarios de campañas y se bloquea su reingreso automático.
             {% if lead.source == 'whatsapp_comercial' %}La conversación de WhatsApp no se elimina desde aquí; la acción de conversaciones es independiente.{% endif %}
             Cualquier historial de contratación de Mercado Pago se conserva y queda desvinculado del prospecto.
           </div>
