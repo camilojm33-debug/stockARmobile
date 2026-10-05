@@ -166,3 +166,123 @@ def test_campaign_detail_has_cancel_button_for_queued_state():
     template = Path("templates/ai_agents/campaign_detail.html").read_text(encoding="utf-8")
     assert 'name="status" value="CANCELADA"' in template
     assert "Cancelar campaña" in template
+
+
+def test_inactive_audience_is_distinct_from_channel_eligible_targets(app):
+    from datetime import datetime, timedelta
+    from app import Client, Company, Sale, User, db
+    from services.ai_agent.tools.analyst_marketing import ClientesInactivosTool
+
+    with app.app_context():
+        company = Company(name="Audience Co", active=True)
+        db.session.add(company)
+        db.session.flush()
+        user = User(
+            username="audience-admin",
+            email="audience@example.com",
+            role="admin",
+            active=True,
+            company_id=company.id,
+        )
+        user.set_password("password123")
+        client = Client(
+            name="Roberto Mora",
+            email="roberto@example.com",
+            company_id=company.id,
+            active=True,
+            email_marketing_consent="unknown",
+            whatsapp_marketing_consent="unknown",
+        )
+        db.session.add_all([user, client])
+        db.session.flush()
+        db.session.add(
+            Sale(
+                company_id=company.id,
+                client_id=client.id,
+                total_amount=10499,
+                status="confirmada",
+                date=datetime.utcnow() - timedelta(days=66),
+            )
+        )
+        db.session.commit()
+
+        detected = ClientesInactivosTool(company_id=company.id).execute(days=60, limit=20)
+        assert detected["count"] == 1
+        assert detected["items"][0]["name"] == "Roberto Mora"
+
+        campaign = CampaignService.create_draft(
+            company_id=company.id,
+            user_id=user.id,
+            title="Recuperación",
+            objective="Recuperar",
+            campaign_type="recuperacion_clientes_inactivos",
+            content="Hola {{cliente}}",
+            system_data={"channel": "email", "days": 60, "audience_count": 1},
+            audience_segment="clientes inactivos",
+            audience_count=1,
+        )
+        db.session.commit()
+        CampaignService.transition(
+            company_id=company.id,
+            campaign_id=campaign.id,
+            target_status="PENDIENTE_APROBACION",
+            user_id=user.id,
+        )
+        CampaignService.transition(
+            company_id=company.id,
+            campaign_id=campaign.id,
+            target_status="APROBADA",
+            user_id=user.id,
+        )
+        prepare_recipients(campaign.id, company_id=company.id)
+
+        db.session.refresh(campaign)
+        assert campaign.audience_count == 1
+        assert campaign.target_count == 0
+
+
+def test_whatsapp_campaign_requires_connection_before_queue(app):
+    from app import Company, User, db
+
+    with app.app_context():
+        company = Company(name="WhatsApp Co", active=True)
+        db.session.add(company)
+        db.session.flush()
+        user = User(
+            username="wa-admin",
+            email="wa@example.com",
+            role="admin",
+            active=True,
+            company_id=company.id,
+        )
+        user.set_password("password123")
+        db.session.add(user)
+        db.session.flush()
+
+        campaign = CampaignService.create_draft(
+            company_id=company.id,
+            user_id=user.id,
+            title="WhatsApp",
+            objective="Recuperar",
+            campaign_type="recuperacion_clientes_inactivos",
+            content="Hola",
+            system_data={"channel": "whatsapp", "days": 60},
+            audience_segment="clientes inactivos",
+            audience_count=1,
+        )
+        db.session.commit()
+        CampaignService.transition(
+            company_id=company.id,
+            campaign_id=campaign.id,
+            target_status="PENDIENTE_APROBACION",
+            user_id=user.id,
+        )
+        CampaignService.transition(
+            company_id=company.id,
+            campaign_id=campaign.id,
+            target_status="APROBADA",
+            user_id=user.id,
+        )
+
+        with pytest.raises(ValueError, match="WhatsApp no está conectado"):
+            prepare_recipients(campaign.id, company_id=company.id)
