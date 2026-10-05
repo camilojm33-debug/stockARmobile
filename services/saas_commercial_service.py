@@ -277,11 +277,16 @@ def segment_filters_from_request(request) -> dict:
         score = max(0, min(100, int(request.form.get("min_score") or request.args.get("min_score") or 0)))
     except (TypeError, ValueError):
         score = 0
+
+    def clean_filter(value):
+        cleaned = _clean(value)
+        return "" if cleaned.lower() in {"todos", "todas", "all", "*"} else cleaned
+
     return {
-        "industry": _clean(request.form.get("industry") or request.args.get("industry")),
-        "province": _clean(request.form.get("province") or request.args.get("province")),
-        "locality": _clean(request.form.get("locality") or request.args.get("locality")),
-        "segment": _clean(request.form.get("segment") or request.args.get("segment")),
+        "industry": clean_filter(request.form.get("industry") or request.args.get("industry")),
+        "province": clean_filter(request.form.get("province") or request.args.get("province")),
+        "locality": clean_filter(request.form.get("locality") or request.args.get("locality")),
+        "segment": clean_filter(request.form.get("segment") or request.args.get("segment")),
         "min_score": score,
     }
 
@@ -445,7 +450,15 @@ def parse_segment_json(raw: str | None) -> dict:
         value = json.loads(raw or "{}")
     except (TypeError, ValueError):
         return {}
-    return value if isinstance(value, dict) else {}
+    if not isinstance(value, dict):
+        return {}
+    # Valores usados por la UI para significar "sin filtro" no deben
+    # convertirse en filtros literales contra la base de prospectos.
+    for field in ("industry", "province", "locality", "segment"):
+        current = str(value.get(field) or "").strip()
+        if current.lower() in {"todos", "todas", "all", "*"}:
+            value[field] = ""
+    return value
 
 
 def _eligible_leads_query(channel: str, filters: dict):

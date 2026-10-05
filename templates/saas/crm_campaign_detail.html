@@ -119,7 +119,9 @@
         {% for label,value in [
           ('Base filtrada',audience.total),
           ('Bloqueados',audience.blocked),
+          ('Email disponible',audience.email_available),
           ('Email con permiso',audience.eligible_email),
+          ('WhatsApp disponible',audience.whatsapp_available),
           ('WhatsApp con permiso',audience.eligible_whatsapp)
         ] %}
         <div class="campaign-data-row">
@@ -145,6 +147,19 @@
           </div>
         {% else %}
           <div class="small text-muted">Sin filtros específicos: se evalúa la base completa según consentimiento y reglas de elegibilidad.</div>
+        {% endif %}
+        {% if audience.total == 0 %}
+          <div class="alert alert-warning campaign-alert small mt-3 mb-0">
+            <i class="bi bi-funnel me-1"></i>
+            <strong>La audiencia filtrada está en 0.</strong>
+            Revisá los filtros guardados. Dejá Rubro, Provincia, Localidad y Segmento vacíos cuando quieras trabajar sobre toda la base.
+          </div>
+        {% elif (campaign.channel in ['email','both'] and audience.eligible_email == 0) or (campaign.channel in ['whatsapp','both'] and audience.eligible_whatsapp == 0) %}
+          <div class="alert alert-info campaign-alert small mt-3 mb-0">
+            <i class="bi bi-shield-check me-1"></i>
+            <strong>Hay contactos, pero no hay destinatarios habilitados para enviar.</strong>
+            La campaña solo incorpora canales con consentimiento <code>opted_in</code>. Los datos importados quedan en estado desconocido hasta registrar el permiso correspondiente.
+          </div>
         {% endif %}
       </section>
 

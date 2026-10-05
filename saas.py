@@ -2340,19 +2340,45 @@ def crm_campaign_detail(campaign_id):
 @bp.post("/crm/campaigns/<int:campaign_id>/prepare")
 @superadmin_required
 def crm_campaign_prepare(campaign_id):
-    from app import db, record_audit
+    from app import SaaSCampaign, db, record_audit
     from services.saas_commercial_service import build_campaign_recipients
 
     _require_superadmin()
     try:
         result = build_campaign_recipients(db.session, campaign_id)
+        from services.saas_commercial_service import campaign_audience_metrics
+
+        campaign = db.session.get(SaaSCampaign, campaign_id)
+        audience = campaign_audience_metrics(db.session, campaign)
         record_audit(
             action="saas_campaign_prepare", entity="saas_campaign", entity_id=campaign_id,
             detail=f"Destinatarios preparados: elegibles={result['eligible']} agregados={result['added']}.",
             user_id=current_user.id,
         )
         db.session.commit()
-        flash(f"Destinatarios preparados: {result['added']} nuevos.", "success")
+        if result["added"] > 0:
+            flash(f"Audiencia preparada: {result['added']} destinatarios nuevos.", "success")
+        elif audience["total"] == 0:
+            flash(
+                "No se agregaron destinatarios: ningún prospecto coincide con los filtros guardados. "
+                "Revisá rubro, provincia, localidad y segmento.",
+                "warning",
+            )
+        else:
+            channel_parts = []
+            if campaign.channel in {"email", "both"}:
+                channel_parts.append(
+                    f"Email: {audience['email_available']} con dirección, {audience['eligible_email']} con consentimiento"
+                )
+            if campaign.channel in {"whatsapp", "both"}:
+                channel_parts.append(
+                    f"WhatsApp: {audience['whatsapp_available']} con número, {audience['eligible_whatsapp']} con consentimiento"
+                )
+            flash(
+                "No se agregaron destinatarios elegibles. " + " · ".join(channel_parts) +
+                ". Un dato importado no equivale a consentimiento de marketing.",
+                "warning",
+            )
     except Exception as exc:
         db.session.rollback()
         flash(f"No se pudo preparar la campaña: {exc}", "danger")
