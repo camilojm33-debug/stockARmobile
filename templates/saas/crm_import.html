@@ -20,9 +20,33 @@
   {% if preview %}
   <div class="card app-card mt-4"><div class="card-body">
     <div class="d-flex flex-wrap justify-content-between align-items-center gap-2 mb-3"><div><h2 class="h5 fw-bold mb-1">Vista previa</h2><div class="small text-muted">{{ preview.filename }} · {{ preview.valid_count }} válidas · {{ preview.invalid_count }} inválidas</div></div>
-    <form method="post" enctype="multipart/form-data" class="d-flex gap-2"><input type="hidden" name="csrf_token" value="{{ csrf_token() }}"><input type="hidden" name="action" value="import"><input class="form-control" type="file" name="file" accept=".csv,.xlsx,.xlsm" required><button class="btn btn-success"><i class="bi bi-database-add me-1"></i>Importar</button></form></div>
-    <div class="table-responsive"><table class="table table-sm align-middle"><thead><tr><th>Comercio</th><th>Rubro</th><th>Localidad</th><th>Email</th><th>WhatsApp</th><th>Score</th><th>Email</th></tr></thead><tbody>
-    {% for row in preview.sample %}<tr><td>{{ row.company_name }}</td><td>{{ row.industry or '-' }}</td><td>{{ row.locality or '-' }}</td><td>{{ row.email or '-' }}</td><td>{{ row.whatsapp or row.phone or '-' }}</td><td>{{ row.lead_score }}</td><td>{{ row.email_consent_status }}</td></tr>{% endfor %}
+    <div class="alert alert-info small mb-3"><i class="bi bi-info-circle me-1"></i><strong>Esto es sólo una vista previa.</strong> La base todavía no fue modificada. Para importar, seleccioná nuevamente el mismo archivo en el control de la derecha y presioná <strong>Importar</strong>.</div>
+    <div class="d-flex flex-wrap align-items-center gap-2 mb-3">
+      <form method="post" enctype="multipart/form-data" class="d-flex flex-wrap gap-2 flex-grow-1">
+        <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+        <input type="hidden" name="action" value="import">
+        <input class="form-control" type="file" name="file" accept=".csv,.xlsx,.xlsm" required>
+        <button class="btn btn-success"><i class="bi bi-database-add me-1"></i>Importar este archivo</button>
+      </form>
+    </div>
+    <div class="row g-2 mb-3">
+      <div class="col-sm-4"><div class="border rounded-3 p-2"><div class="small text-muted">Emails detectados</div><strong>{{ preview.contact_counts.email }}</strong></div></div>
+      <div class="col-sm-4"><div class="border rounded-3 p-2"><div class="small text-muted">Teléfonos detectados</div><strong>{{ preview.contact_counts.phone }}</strong></div></div>
+      <div class="col-sm-4"><div class="border rounded-3 p-2"><div class="small text-muted">WhatsApp detectados</div><strong>{{ preview.contact_counts.whatsapp }}</strong></div></div>
+    </div>
+    <div class="border rounded-3 p-3 mb-3">
+      <div class="fw-semibold mb-2">Columnas reconocidas</div>
+      <div class="d-flex flex-wrap gap-2">
+        {% for field, header in preview.header_map.items() %}
+          <span class="badge text-bg-success">{{ field }} ← {{ header }}</span>
+        {% endfor %}
+        {% if not preview.header_map %}<span class="small text-danger">No se reconocieron columnas.</span>{% endif %}
+      </div>
+      <div class="small text-muted mt-2">Columnas originales: {{ preview.headers|join(' · ') }}</div>
+    </div>
+    </div>
+    <div class="table-responsive"><table class="table table-sm align-middle"><thead><tr><th>Comercio</th><th>Contacto</th><th>Rubro</th><th>Provincia</th><th>Localidad</th><th>Email</th><th>Teléfono</th><th>WhatsApp</th><th>Score</th><th>Consent. Email</th></tr></thead><tbody>
+    {% for row in preview.sample %}<tr><td>{{ row.company_name }}</td><td>{{ row.contact_name or '-' }}</td><td>{{ row.industry or '-' }}</td><td>{{ row.province or '-' }}</td><td>{{ row.locality or '-' }}</td><td>{{ row.email or '-' }}</td><td>{{ row.phone or '-' }}</td><td>{{ row.whatsapp or '-' }}</td><td>{{ row.lead_score }}</td><td><span class="badge {% if row.email_consent_status == 'opted_in' %}text-bg-success{% elif row.email_consent_status == 'opted_out' %}text-bg-danger{% else %}text-bg-secondary{% endif %}">{{ row.email_consent_status }}</span></td></tr>{% endfor %}
     </tbody></table></div>
   </div></div>
   {% endif %}
