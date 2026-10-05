@@ -51,6 +51,7 @@ def test_tenant_campaign_dispatch_is_idempotent_and_attributes_sale(app, monkeyp
     from app import Campaign, Client, Company, Sale, User, db
 
     with app.app_context():
+        app.config["AI_MARKETING_SEND_ENABLED"] = "1"
         company = Company(name="Dispatch Co", active=True)
         db.session.add(company)
         db.session.flush()
