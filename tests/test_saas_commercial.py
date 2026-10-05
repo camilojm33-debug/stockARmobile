@@ -337,7 +337,9 @@ def test_whatsapp_campaign_dispatch_uses_prepared_whatsapp_recipient(app, monkey
         print("DEBUG_SAAS_CAMPAIGN", campaign.id, campaign.status, campaign.scheduled_at)
         print("DEBUG_SAAS_RECIPIENTS", [(r.id, r.status, r.channel, r.destination) for r in SaaSCampaignRecipient.query.filter_by(campaign_id=campaign.id).all()])
         result = dispatch_due_campaigns(db.session, per_campaign=50)
+        recipient = SaaSCampaignRecipient.query.filter_by(campaign_id=campaign.id).first()
         print("DEBUG_SAAS_RESULT", result)
+        print("DEBUG_SAAS_RECIPIENT_AFTER", recipient.status if recipient else None, recipient.error_reason if recipient else None, recipient.provider_message_id if recipient else None)
 
         recipient = SaaSCampaignRecipient.query.filter_by(campaign_id=campaign.id).first()
         assert result["sent"] == 1
