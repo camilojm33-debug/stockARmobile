@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 import os
 import secrets
+import hmac
 import string
 from html import escape
 from datetime import datetime, timedelta, timezone
@@ -2324,6 +2325,7 @@ def crm_campaigns():
 def crm_campaign_detail(campaign_id):
     from app import SaaSCampaign, db
     from services.saas_commercial_service import campaign_audience_metrics, campaign_metrics
+    from services.saas_campaign_preflight import campaign_preflight
 
     _require_superadmin()
     campaign = SaaSCampaign.query.filter_by(id=campaign_id).first_or_404()
@@ -2342,6 +2344,7 @@ def crm_campaign_detail(campaign_id):
         campaign_scheduled_local=_format_admin_datetime_local(campaign.scheduled_at, "%Y-%m-%dT%H:%M"),
         marketing_send_enabled=str(current_app.config.get("SAAS_MARKETING_SEND_ENABLED", "0")).lower() in {"1", "true", "yes", "on"},
         smtp_configured=bool(current_app.config.get("SMTP_HOST") and current_app.config.get("SMTP_USER")),
+        preflight=campaign_preflight(db.session, campaign),
     )
 
 
@@ -2504,17 +2507,19 @@ def crm_campaign_audience_all_email(campaign_id):
 def crm_campaign_approve(campaign_id):
     from app import SaaSCampaign, db, record_audit, utcnow
 
-    if not _require_superadmin_step_up():
-        return redirect(url_for("saas.crm_campaign_detail", campaign_id=campaign_id))
     campaign = SaaSCampaign.query.filter_by(id=campaign_id).first_or_404()
-    if not current_app.config.get("SAAS_MARKETING_SEND_ENABLED", False):
-        flash("El motor comercial está deshabilitado. La campaña no puede aprobarse para envío.", "warning")
-        return redirect(url_for("saas.crm_campaign_detail", campaign_id=campaign_id))
     if campaign.status != "BORRADOR":
         flash("Solo un borrador puede aprobarse.", "warning")
         return redirect(url_for("saas.crm_campaign_detail", campaign_id=campaign_id))
-    if campaign.target_count <= 0:
-        flash("Prepará los destinatarios antes de aprobar la campaña.", "warning")
+
+    from services.saas_campaign_preflight import campaign_preflight
+    preflight = campaign_preflight(db.session, campaign)
+    if not preflight["ready"]:
+        first = preflight["issues"][0]
+        flash(f"No se puede aprobar: {first['label']}. {first['detail']}", "warning")
+        return redirect(url_for("saas.crm_campaign_detail", campaign_id=campaign_id))
+
+    if not _require_superadmin_step_up():
         return redirect(url_for("saas.crm_campaign_detail", campaign_id=campaign_id))
     if campaign.channel in {"whatsapp", "both"}:
         from app import SaaSCampaignRecipient
@@ -2541,6 +2546,65 @@ def crm_campaign_approve(campaign_id):
     return redirect(url_for("saas.crm_campaign_detail", campaign_id=campaign_id))
 
 
+@bp.post("/crm/campaigns/<int:campaign_id>/send-now")
+@superadmin_required
+def crm_campaign_send_now(campaign_id):
+    from app import SaaSCampaign, db, record_audit, utcnow
+    from services.saas_campaign_preflight import campaign_preflight
+    from services.saas_commercial_service import dispatch_due_campaigns
+
+    campaign = SaaSCampaign.query.filter_by(id=campaign_id).first_or_404()
+    if campaign.status not in {"BORRADOR", "APROBADA"}:
+        flash("Solo una campaña en Borrador o Aprobada puede enviarse ahora.", "warning")
+        return redirect(url_for("saas.crm_campaign_detail", campaign_id=campaign_id))
+
+    preflight = campaign_preflight(db.session, campaign)
+    if not preflight["ready"]:
+        first = preflight["issues"][0]
+        flash(f"No se puede enviar: {first['label']}. {first['detail']}", "warning")
+        return redirect(url_for("saas.crm_campaign_detail", campaign_id=campaign_id))
+
+    if not _require_superadmin_step_up():
+        return redirect(url_for("saas.crm_campaign_detail", campaign_id=campaign_id))
+
+    if campaign.status == "BORRADOR":
+        campaign.status = "APROBADA"
+        campaign.approved_by_user_id = current_user.id
+        campaign.approved_at = utcnow()
+        record_audit(
+            action="saas_campaign_approved",
+            entity="saas_campaign",
+            entity_id=campaign.id,
+            detail=f"Campaña aprobada para envío inmediato: {campaign.name}.",
+            user_id=current_user.id,
+        )
+    campaign.scheduled_at = utcnow()
+    db.session.commit()
+
+    try:
+        result = dispatch_due_campaigns(db.session, limit=1, per_campaign=50)
+    except Exception as exc:
+        db.session.rollback()
+        current_app.logger.exception("Immediate commercial campaign dispatch failed")
+        flash(f"La campaña quedó aprobada, pero el envío inmediato falló: {str(exc)[:300]}", "danger")
+        return redirect(url_for("saas.crm_campaign_detail", campaign_id=campaign_id))
+
+    record_audit(
+        action="saas_campaign_send_now",
+        entity="saas_campaign",
+        entity_id=campaign.id,
+        detail=f"Envío inmediato ejecutado: enviados={result.get('sent', 0)} fallidos={result.get('failed', 0)} omitidos={result.get('skipped', 0)}.",
+        user_id=current_user.id,
+    )
+    db.session.commit()
+    flash(
+        f"Envío inmediato ejecutado: {result.get('sent', 0)} enviados, "
+        f"{result.get('failed', 0)} fallidos, {result.get('skipped', 0)} omitidos.",
+        "success" if not result.get("failed") else "warning",
+    )
+    return redirect(url_for("saas.crm_campaign_detail", campaign_id=campaign_id))
+
+
 @bp.post("/crm/campaigns/<int:campaign_id>/cancel")
 @superadmin_required
 def crm_campaign_cancel(campaign_id):
@@ -2549,8 +2613,8 @@ def crm_campaign_cancel(campaign_id):
     if not _require_superadmin_step_up():
         return redirect(url_for("saas.crm_campaign_detail", campaign_id=campaign_id))
     campaign = SaaSCampaign.query.filter_by(id=campaign_id).first_or_404()
-    if campaign.status not in {"BORRADOR", "APROBADA"}:
-        flash("Esta campaña ya está en ejecución o finalizada.", "warning")
+    if campaign.status not in {"BORRADOR", "APROBADA", "ENVIANDO"}:
+        flash("Esta campaña ya está finalizada.", "warning")
         return redirect(url_for("saas.crm_campaign_detail", campaign_id=campaign_id))
     campaign.status = "CANCELADA"
     record_audit(
