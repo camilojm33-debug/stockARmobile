@@ -2332,6 +2332,7 @@ def crm_campaign_detail(campaign_id):
         metrics=campaign_metrics(db.session, campaign.id),
         audience=campaign_audience_metrics(db.session, campaign),
         segment_filters=segment_filters,
+        campaign_scheduled_local=_format_admin_datetime_local(campaign.scheduled_at, "%Y-%m-%dT%H:%M"),
         marketing_send_enabled=str(current_app.config.get("SAAS_MARKETING_SEND_ENABLED", "0")).lower() in {"1", "true", "yes", "on"},
         smtp_configured=bool(current_app.config.get("SMTP_HOST") and current_app.config.get("SMTP_USER")),
     )
