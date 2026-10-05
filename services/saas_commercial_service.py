@@ -315,6 +315,40 @@ def segment_filters_from_request(request) -> dict:
     }
 
 
+def register_lead_suppression(db_session, *, lead, user_id: int, reason: str = "superadmin_delete") -> bool:
+    """Persist identity suppression before deleting a CRM lead."""
+    from app import SaaSLeadSuppression
+
+    email = str(lead.email or "").strip().lower() or None
+    phone_raw = lead.whatsapp or lead.phone or ""
+    phone = "".join(ch for ch in str(phone_raw) if ch.isdigit()) or None
+    company_name = " ".join(str(lead.company_name or "").strip().lower().split()) or None
+
+    existing = None
+    if email:
+        existing = SaaSLeadSuppression.query.filter_by(email=email).first()
+    if existing is None and phone:
+        existing = SaaSLeadSuppression.query.filter_by(phone=phone).first()
+    if existing is None and not email and not phone and company_name:
+        existing = SaaSLeadSuppression.query.filter_by(company_name=company_name).first()
+
+    if existing is None:
+        existing = SaaSLeadSuppression(
+            email=email,
+            phone=phone,
+            company_name=company_name,
+            reason=(reason or "superadmin_delete").strip()[:500],
+            source="superadmin_delete",
+            created_by_user_id=user_id,
+        )
+        db_session.add(existing)
+    else:
+        existing.reason = (reason or existing.reason or "superadmin_delete").strip()[:500]
+        existing.created_by_user_id = user_id
+    db_session.flush()
+    return True
+
+
 def delete_saas_lead(db_session, lead_id: int) -> dict:
     """Permanently remove one SuperAdmin CRM lead and its CRM-only children.
 
@@ -329,6 +363,12 @@ def delete_saas_lead(db_session, lead_id: int) -> dict:
         raise ValueError("Prospecto no encontrado.")
 
     lead_id = int(lead.id)
+    register_lead_suppression(
+        db_session,
+        lead=lead,
+        user_id=int(lead.created_by_user_id),
+        reason="superadmin_delete",
+    )
     checkout_query = SaaSCommercialCheckout.query.filter_by(lead_id=lead_id)
     checkout_count = checkout_query.count()
 
