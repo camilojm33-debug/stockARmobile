@@ -262,6 +262,7 @@ def edit(product_id=None, id=None):
             return redirect(url_for("products.edit", product_id=product.id))
         old_price = float(product.price or 0)
         old_cost = float(product.cost_price or 0)
+        old_photo = product.photo
         try:
             _apply_product_form(product, form)
         except ValueError as exc:
@@ -270,8 +271,8 @@ def edit(product_id=None, id=None):
         upload = request.files.get("photo_file")
         if upload and (upload.filename or "").strip():
             try:
-                product.photo = _save_product_image(upload)
-            except ValueError as exc:
+                product.photo = save_product_image(upload)
+            except ProductImageError as exc:
                 flash(str(exc), "danger")
                 return redirect(url_for("products.edit", product_id=product.id))
         if old_price != float(product.price or 0) or old_cost != float(product.cost_price or 0):
