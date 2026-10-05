@@ -2,6 +2,7 @@
 from __future__ import annotations
 import os
 import re
+import smtplib
 from flask import current_app
 
 _SUPPORTED_MERGE_FIELDS = {"empresa", "comercio", "contacto", "rubro", "localidad"}
@@ -9,6 +10,36 @@ _MERGE_RE = re.compile(r"{{\s*([a-zA-Z_][a-zA-Z0-9_]*)\s*}}")
 
 def _enabled(value) -> bool:
     return str(value or "").strip().lower() in {"1", "true", "yes", "on"}
+
+
+def _smtp_probe() -> tuple[bool, str]:
+    host = str(current_app.config.get("SMTP_HOST") or "").strip()
+    user = str(current_app.config.get("SMTP_USER") or "").strip()
+    password = current_app.config.get("SMTP_PASSWORD") or ""
+    try:
+        port = int(current_app.config.get("SMTP_PORT") or 587)
+    except (TypeError, ValueError):
+        return False, "SMTP_PORT no es válido."
+
+    if not host or not user or not password:
+        return False, "Faltan credenciales SMTP."
+
+    try:
+        with smtplib.SMTP(host, port, timeout=12) as server:
+            server.ehlo()
+            if bool(current_app.config.get("SMTP_USE_TLS", True)):
+                server.starttls()
+                server.ehlo()
+            server.login(user, password)
+        return True, "Conexión y autenticación SMTP verificadas."
+    except smtplib.SMTPAuthenticationError:
+        return False, "El servidor SMTP rechazó la autenticación. Revisá usuario, contraseña o App Password."
+    except smtplib.SMTPServerDisconnected:
+        return False, "El servidor SMTP cerró la conexión durante la verificación."
+    except (OSError, TimeoutError) as exc:
+        return False, f"No se pudo mantener la conexión SMTP: {str(exc)[:180]}"
+    except Exception as exc:
+        return False, f"No se pudo verificar SMTP: {str(exc)[:180]}"
 
 def campaign_preflight(db_session, campaign) -> dict:
     from services.saas_commercial_service import campaign_audience_metrics
@@ -46,9 +77,13 @@ def campaign_preflight(db_session, campaign) -> dict:
     add("audience", "Destinatarios", target_count > 0, f"{target_count} preparados." if target_count > 0 else "No hay destinatarios preparados.")
 
     email_channel = channel in {"email", "both"}
-    smtp_ok = all(str(current_app.config.get(k) or "").strip() for k in ("SMTP_HOST", "SMTP_USER", "SMTP_PASSWORD"))
+    smtp_configured = all(str(current_app.config.get(k) or "").strip() for k in ("SMTP_HOST", "SMTP_USER", "SMTP_PASSWORD"))
+    smtp_ok = smtp_configured
+    smtp_detail = "SMTP configurado."
+    if email_channel and smtp_configured:
+        smtp_ok, smtp_detail = _smtp_probe()
     email_eligible = int(audience.get("eligible_email") or 0)
-    add("email_config", "Email", (not email_channel) or smtp_ok, "SMTP configurado." if smtp_ok or not email_channel else "Falta SMTP.")
+    add("email_config", "Email", (not email_channel) or smtp_ok, smtp_detail if email_channel else "No requerido.")
     add("email_audience", "Email elegible", (not email_channel) or email_eligible > 0, f"{email_eligible} con permiso." if email_eligible > 0 or not email_channel else "No hay emails con permiso registrado.")
 
     whatsapp_channel = channel in {"whatsapp", "both"}
