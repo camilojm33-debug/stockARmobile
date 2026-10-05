@@ -2737,6 +2737,54 @@ def crm_campaign_send_now(campaign_id):
     return redirect(url_for("saas.crm_campaign_detail", campaign_id=campaign_id))
 
 
+@bp.post("/crm/campaigns/<int:campaign_id>/delete")
+@superadmin_required
+def crm_campaign_delete(campaign_id):
+    from app import SaaSCampaign, SaaSCampaignEvent, SaaSCampaignRecipient, db, record_audit
+
+    campaign = SaaSCampaign.query.filter_by(id=campaign_id).first_or_404()
+    if campaign.status not in {"BORRADOR", "CANCELADA"}:
+        flash(
+            "Solo se puede eliminar una campaña en Borrador o Cancelada. "
+            "Las campañas aprobadas, en ejecución o finalizadas se conservan como historial.",
+            "warning",
+        )
+        return redirect(url_for("saas.crm_campaign_detail", campaign_id=campaign.id))
+
+    if not _require_superadmin_step_up():
+        return redirect(url_for("saas.crm_campaign_detail", campaign_id=campaign.id))
+
+    campaign_name = campaign.name
+    recipient_count = SaaSCampaignRecipient.query.filter_by(campaign_id=campaign.id).count()
+    event_count = SaaSCampaignEvent.query.filter_by(campaign_id=campaign.id).count()
+
+    try:
+        # Delete operational campaign data explicitly before the campaign row.
+        SaaSCampaignEvent.query.filter_by(campaign_id=campaign.id).delete(synchronize_session=False)
+        SaaSCampaignRecipient.query.filter_by(campaign_id=campaign.id).delete(synchronize_session=False)
+
+        record_audit(
+            action="saas_campaign_deleted",
+            entity="saas_campaign",
+            entity_id=campaign.id,
+            detail=(
+                f"Campaña eliminada definitivamente: {campaign_name}. "
+                f"destinatarios={recipient_count}; eventos={event_count}."
+            ),
+            user_id=current_user.id,
+        )
+        db.session.delete(campaign)
+        db.session.commit()
+    except Exception:
+        db.session.rollback()
+        current_app.logger.exception("No se pudo eliminar campaña id=%s", campaign_id)
+        flash("No se pudo eliminar la campaña. No se realizaron cambios.", "danger")
+        return redirect(url_for("saas.crm_campaign_detail", campaign_id=campaign.id))
+
+    flash(f"Campaña “{campaign_name}” eliminada definitivamente.", "success")
+    return redirect(url_for("saas.crm_campaigns"))
+
+
 @bp.post("/crm/campaigns/<int:campaign_id>/cancel")
 @superadmin_required
 def crm_campaign_cancel(campaign_id):
