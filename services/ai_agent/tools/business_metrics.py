@@ -30,7 +30,11 @@ class ResumenVentasTool(AgentTool):
     def execute(self, *, days=1, **kwargs: Any) -> Dict[str, Any]:
         days = _safe_days(days, 1)
         since = datetime.utcnow() - timedelta(days=days)
-        query = Sale.query.filter(Sale.company_id == self.company_id, Sale.date >= since)
+        query = Sale.query.filter(
+            Sale.company_id == self.company_id,
+            Sale.date >= since,
+            Sale.status.notin_(["cancelada", "anulada"]),
+        )
         count, total = query.with_entities(
             func.count(Sale.id),
             func.coalesce(func.sum(Sale.total_amount), 0),
@@ -49,6 +53,7 @@ class ResumenVentasTool(AgentTool):
             Sale.company_id == self.company_id,
             Sale.date >= previous_start,
             Sale.date < since,
+            Sale.status.notin_(["cancelada", "anulada"]),
         )
         previous_count, previous_total = previous_query.with_entities(
             func.count(Sale.id),
