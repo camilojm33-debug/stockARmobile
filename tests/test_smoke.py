@@ -1602,7 +1602,7 @@ def test_quotes_builder_form_renders_productive_layout():
         db.session.commit()
 
     response = client.get("/presupuestos/nuevo")
-    assert response.status_code == 200
+    assert response.status_code == 200, response.headers.get("Location")
     html = response.get_data(as_text=True)
     assert "Constructor de presupuesto" in html
     assert "quoteProductSearch" in html
