@@ -3283,6 +3283,72 @@ def crm_leads_bulk_contact_preferences():
     return _redirect_back("saas.crm_panel")
 
 
+@bp.post("/crm/leads/bulk-delete")
+@superadmin_required
+def crm_leads_bulk_delete():
+    from app import SaaSLead, db, record_audit
+
+    if not _require_superadmin_step_up():
+        return _redirect_back("saas.crm_panel")
+
+    raw_ids = request.form.getlist("lead_ids")
+    ids = []
+    for raw_id in raw_ids:
+        try:
+            value = int(raw_id)
+        except (TypeError, ValueError):
+            continue
+        if value > 0 and value not in ids:
+            ids.append(value)
+    ids = ids[:100]
+    if not ids:
+        flash("Seleccioná al menos un prospecto para eliminar.", "warning")
+        return _redirect_back("saas.crm_panel")
+
+    leads = SaaSLead.query.filter(SaaSLead.id.in_(ids)).order_by(SaaSLead.id.asc()).all()
+    found_ids = {lead.id for lead in leads}
+    missing = [lead_id for lead_id in ids if lead_id not in found_ids]
+    if missing:
+        flash("Uno o más prospectos ya no existen. Actualizá la lista antes de volver a intentar.", "warning")
+        return _redirect_back("saas.crm_panel")
+
+    from services.saas_commercial_service import delete_saas_lead
+
+    deleted = 0
+    try:
+        for lead in leads:
+            lead_company_id = lead.company_id
+            result = delete_saas_lead(
+                db.session,
+                lead.id,
+                suppressing_user_id=current_user.id,
+            )
+            record_audit(
+                action="saas_lead_delete_bulk",
+                entity="saas_lead",
+                entity_id=lead.id,
+                detail=(
+                    f"Prospecto eliminado en lote. tareas={result['tasks_deleted']}; "
+                    f"alertas={result['alerts_deleted']}; destinatarios={result['campaign_recipients_deleted']}; "
+                    f"consentimientos={result['consents_deleted']}; "
+                    f"eventos_campaña={result.get('campaign_events_deleted', 0)}; "
+                    f"checkouts_desvinculados={result['checkouts_detached']}."
+                ),
+                user_id=current_user.id,
+                company_id=lead_company_id,
+            )
+            deleted += 1
+        db.session.commit()
+    except Exception:
+        db.session.rollback()
+        current_app.logger.exception("No se pudo eliminar el lote de prospectos CRM ids=%s", ids)
+        flash("No se pudo completar la eliminación. No se realizaron cambios.", "danger")
+        return _redirect_back("saas.crm_panel")
+
+    flash(f"{deleted} prospecto(s) eliminado(s) definitivamente y bloqueados para reingreso automático.", "success")
+    return _redirect_back("saas.crm_panel")
+
+
 @bp.post("/crm/leads/<int:lead_id>/delete")
 @superadmin_required
 def crm_lead_delete(lead_id):
