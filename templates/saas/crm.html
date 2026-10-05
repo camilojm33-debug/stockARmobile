@@ -53,120 +53,197 @@
 
 <div class="app-shell">
   <style>
-    .crm-home{max-width:1440px;margin:0 auto}
-    .crm-hero{padding:1.2rem 1.3rem;border:1px solid var(--app-line);border-radius:20px;background:linear-gradient(135deg,var(--bs-primary-bg-subtle),var(--app-panel))}
-    .crm-kicker{font-size:.74rem;letter-spacing:.08em;text-transform:uppercase;font-weight:800;color:var(--bs-secondary-color)}
-    .crm-stat{height:100%;border:1px solid var(--app-line);border-radius:18px;background:var(--app-panel)}
-    .crm-stat .value{font-size:1.7rem;line-height:1.1;font-weight:800}
-    .crm-panel{border:1px solid var(--app-line);border-radius:18px;background:var(--app-panel);overflow:hidden}
-    .crm-panel-head{padding:14px 16px;border-bottom:1px solid var(--app-line)}
-    .crm-conv-preview{display:block;text-decoration:none;color:inherit;padding:13px 15px;border-bottom:1px solid var(--app-line)}
+    .crm-home{max-width:1500px;margin:0 auto;padding:4px 0 24px}
+    .crm-hero{position:relative;overflow:hidden;padding:24px;border:1px solid var(--app-line);border-radius:24px;background:linear-gradient(135deg,var(--bs-primary-bg-subtle),var(--app-panel) 62%,var(--app-panel-soft));box-shadow:var(--app-shadow-soft)}
+    .crm-hero::after{content:"";position:absolute;right:-50px;top:-90px;width:210px;height:210px;border-radius:50%;background:rgba(13,110,253,.08)}
+    .crm-kicker{display:inline-flex;align-items:center;gap:6px;font-size:.72rem;letter-spacing:.1em;text-transform:uppercase;font-weight:800;color:var(--bs-primary)}
+    .crm-hero h1{letter-spacing:-.03em}
+    .crm-hero-sub{max-width:760px}
+    .crm-quick-nav{display:flex;flex-wrap:wrap;gap:8px;margin-top:18px}
+    .crm-quick-link{display:inline-flex;align-items:center;gap:7px;padding:8px 11px;border:1px solid var(--app-line);border-radius:999px;background:rgba(255,255,255,.58);color:inherit;text-decoration:none;font-size:.84rem;font-weight:700}
+    .crm-quick-link:hover{background:var(--app-panel);border-color:var(--bs-primary-border-subtle);color:var(--bs-primary)}
+    .crm-alert-strip{display:flex;align-items:center;gap:10px;margin-top:16px;padding:10px 12px;border:1px solid rgba(220,38,38,.16);border-radius:14px;background:rgba(220,38,38,.05);font-size:.88rem}
+    .crm-alert-strip .count{min-width:28px;height:28px;border-radius:9px;display:grid;place-items:center;background:#dc2626;color:#fff;font-weight:800}
+    .crm-kpi{height:100%;padding:16px;border:1px solid var(--app-line);border-radius:18px;background:var(--app-panel);box-shadow:var(--app-shadow-soft);transition:transform .15s ease,box-shadow .15s ease,border-color .15s ease}
+    .crm-kpi:hover{transform:translateY(-1px);box-shadow:0 10px 26px rgba(15,23,42,.07);border-color:var(--bs-primary-border-subtle)}
+    .crm-kpi-link{text-decoration:none;color:inherit;display:block;height:100%}
+    .crm-kpi-icon{width:42px;height:42px;border-radius:12px;display:grid;place-items:center;background:var(--bs-primary-bg-subtle);color:var(--bs-primary);font-size:1.05rem}
+    .crm-kpi-icon.warn{background:rgba(245,158,11,.12);color:#b45309}
+    .crm-kpi-icon.danger{background:rgba(220,38,38,.10);color:#dc2626}
+    .crm-kpi-icon.success{background:rgba(22,163,74,.10);color:#15803d}
+    .crm-kpi .label{font-size:.72rem;text-transform:uppercase;letter-spacing:.06em;font-weight:800;color:var(--bs-secondary-color)}
+    .crm-kpi .value{font-size:1.8rem;line-height:1;font-weight:850;letter-spacing:-.04em}
+    .crm-kpi .meta{font-size:.78rem;color:var(--bs-secondary-color)}
+    .crm-section{border:1px solid var(--app-line);border-radius:20px;background:var(--app-panel);overflow:hidden}
+    .crm-section-head{padding:16px 18px;border-bottom:1px solid var(--app-line)}
+    .crm-section-title{font-weight:800;letter-spacing:-.01em}
+    .crm-section-sub{font-size:.8rem;color:var(--bs-secondary-color)}
+    .crm-conv-preview{display:block;padding:14px 16px;border-bottom:1px solid var(--app-line);text-decoration:none;color:inherit}
+    .crm-conv-preview:last-child{border-bottom:0}
     .crm-conv-preview:hover{background:var(--app-panel-soft)}
-    .crm-mini-avatar{width:40px;height:40px;border-radius:12px;display:grid;place-items:center;flex:0 0 40px;background:var(--bs-primary-bg-subtle);color:var(--app-primary)}
-    .crm-soft-action{border:1px dashed var(--app-line);border-radius:15px;padding:13px 14px;text-decoration:none;color:inherit;display:block}
-    .crm-soft-action:hover{background:var(--app-panel-soft);border-style:solid}
+    .crm-mini-avatar{width:42px;height:42px;border-radius:13px;display:grid;place-items:center;flex:0 0 42px;background:var(--bs-primary-bg-subtle);color:var(--bs-primary)}
+    .crm-mini-avatar.whatsapp{background:rgba(34,197,94,.10);color:#15803d}
+    .crm-mini-avatar.email{background:rgba(59,130,246,.10);color:#2563eb}
+    .crm-attention{display:block;padding:13px 14px;border:1px solid var(--app-line);border-radius:15px;text-decoration:none;color:inherit;background:var(--app-panel-soft)}
+    .crm-attention:hover{border-color:var(--bs-primary-border-subtle);background:var(--app-panel)}
+    .crm-attention-icon{width:34px;height:34px;border-radius:10px;display:grid;place-items:center;background:var(--bs-primary-bg-subtle);color:var(--bs-primary);flex:0 0 34px}
+    .crm-attention-icon.danger{background:rgba(220,38,38,.10);color:#dc2626}
+    .crm-attention-icon.warning{background:rgba(245,158,11,.12);color:#b45309}
+    .crm-channel-card{padding:14px;border:1px solid var(--app-line);border-radius:16px;background:var(--app-panel-soft)}
+    .crm-status-row{display:flex;align-items:center;justify-content:space-between;gap:12px;padding:10px 0;border-bottom:1px solid var(--app-line)}
+    .crm-status-row:last-child{border-bottom:0}
+    .crm-status-dot{width:8px;height:8px;border-radius:50%;display:inline-block}
+    .crm-status-dot.ok{background:#16a34a}.crm-status-dot.warn{background:#f59e0b}.crm-status-dot.off{background:#94a3b8}
+    .crm-tabs{padding:5px;border:1px solid var(--app-line);border-radius:16px;background:var(--app-panel-soft);gap:4px}
+    .crm-tabs .nav-link{border:0;border-radius:11px;color:var(--bs-secondary-color);font-weight:700;padding:9px 13px}
+    .crm-tabs .nav-link.active{background:var(--app-panel);color:var(--bs-primary);box-shadow:var(--app-shadow-soft)}
+    .crm-panel{border:1px solid var(--app-line);border-radius:20px;background:var(--app-panel);overflow:hidden}
+    .crm-panel-head{padding:16px 18px;border-bottom:1px solid var(--app-line)}
     .crm-table-wrap{overflow:auto}
-    @media(max-width:767.98px){.crm-hero{padding:1rem}.crm-stat .value{font-size:1.45rem}}
+    .crm-table-wrap table thead th{font-size:.72rem;text-transform:uppercase;letter-spacing:.05em;color:var(--bs-secondary-color);background:var(--app-panel-soft);white-space:nowrap}
+    .crm-table-wrap table tbody td{padding-top:14px;padding-bottom:14px}
+    .crm-table-wrap table tbody tr{transition:background .12s ease}
+    .crm-table-wrap table tbody tr:hover{background:var(--app-panel-soft)}
+    .crm-action-stack{display:flex;gap:6px;justify-content:flex-end;align-items:center;flex-wrap:wrap}
+    .crm-table-muted{font-size:.78rem;color:var(--bs-secondary-color)}
+    @media(max-width:991.98px){.crm-home{padding-top:0}.crm-hero{padding:20px}.crm-hero .btn{width:100%}.crm-hero-actions{width:100%}.crm-hero-actions>*{flex:1}.crm-action-stack{justify-content:flex-start}}
+    @media(max-width:767.98px){.crm-kpi .value{font-size:1.55rem}.crm-quick-nav{overflow:auto;flex-wrap:nowrap;padding-bottom:2px}.crm-quick-link{white-space:nowrap}.crm-tabs{overflow:auto;flex-wrap:nowrap}.crm-tabs .nav-link{white-space:nowrap}.crm-panel-head,.crm-section-head{padding:14px}.crm-table-wrap table{min-width:980px}}
+    [data-bs-theme="dark"] .crm-quick-link{background:rgba(255,255,255,.03)}
+    [data-bs-theme="dark"] .crm-hero::after{background:rgba(96,165,250,.10)}
   </style>
 
   <div class="crm-home">
     <section class="crm-hero mb-3">
-      <div class="d-flex flex-wrap justify-content-between align-items-start gap-3">
-        <div>
-          <div class="crm-kicker"><i class="bi bi-shop-window me-1"></i>Centro comercial</div>
-          <h1 class="h2 fw-bold mb-1">Ventas y prospectos</h1>
-          <p class="text-muted mb-0">Mirá primero las conversaciones y tareas que necesitan atención. Los datos técnicos quedan fuera del camino.</p>
+      <div class="d-flex flex-column flex-lg-row justify-content-between align-items-start gap-4 position-relative" style="z-index:1">
+        <div class="flex-grow-1">
+          <div class="crm-kicker"><i class="bi bi-grid-1x2-fill"></i> CRM comercial · SuperAdmin</div>
+          <h1 class="h2 fw-bold mb-2 mt-1">Centro de ventas</h1>
+          <p class="text-muted crm-hero-sub mb-0">Un solo lugar para detectar oportunidades, responder prospectos y mantener los seguimientos bajo control.</p>
+          <nav class="crm-quick-nav" aria-label="Navegación rápida del CRM">
+            <a class="crm-quick-link" href="#crmLeads"><i class="bi bi-people"></i>Prospectos <span class="badge text-bg-secondary">{{ leads|length }}</span></a>
+            <a class="crm-quick-link" href="#crmTasks"><i class="bi bi-check2-square"></i>Tareas <span class="badge text-bg-secondary">{{ task_counts['pendiente'] }}</span></a>
+            <a class="crm-quick-link" href="#crmAlerts"><i class="bi bi-bell"></i>Alertas <span class="badge text-bg-secondary">{{ alerts|length }}</span></a>
+            <a class="crm-quick-link" href="{{ url_for('saas.crm_inbox') }}"><i class="bi bi-inbox"></i>Bandeja</a>
+            <a class="crm-quick-link" href="{{ url_for('saas.crm_campaigns') }}"><i class="bi bi-megaphone"></i>Campañas</a>
+          </nav>
+          {% if inbox_counts.pending or task_counts['pendiente'] or lead_counts['nuevo'] %}
+          <div class="crm-alert-strip">
+            <span class="count">{{ inbox_counts.pending + task_counts['pendiente'] + lead_counts['nuevo'] }}</span>
+            <div><strong>Hay trabajo pendiente.</strong> {{ inbox_counts.pending }} conversaciones requieren respuesta, {{ task_counts['pendiente'] }} tareas están abiertas y {{ lead_counts['nuevo'] }} prospectos son nuevos.</div>
+          </div>
+          {% endif %}
         </div>
-        <div class="d-flex flex-wrap gap-2">
-          <a class="btn btn-primary" href="{{ url_for('saas.crm_inbox') }}"><i class="bi bi-inbox me-1"></i>Ir a Bandeja <span class="badge text-bg-light ms-1">{{ inbox_counts.pending }}</span></a>
-          <button class="btn btn-outline-primary" type="button" data-bs-toggle="modal" data-bs-target="#newLeadModal"><i class="bi bi-person-plus me-1"></i>Prospecto</button>
-          <button class="btn btn-outline-secondary" type="button" data-bs-toggle="modal" data-bs-target="#newTaskModal"><i class="bi bi-check2-square me-1"></i>Tarea</button>
-          <a class="btn btn-outline-primary" href="{{ url_for('saas.crm_campaigns') }}"><i class="bi bi-megaphone me-1"></i>Campañas</a>
+        <div class="crm-hero-actions d-flex flex-wrap gap-2">
+          <a class="btn btn-primary" href="{{ url_for('saas.crm_inbox') }}"><i class="bi bi-inbox me-1"></i>Bandeja <span class="badge text-bg-light ms-1">{{ inbox_counts.pending }}</span></a>
+          <button class="btn btn-outline-primary" type="button" data-bs-toggle="modal" data-bs-target="#newLeadModal"><i class="bi bi-person-plus me-1"></i>Nuevo prospecto</button>
+          <button class="btn btn-outline-secondary" type="button" data-bs-toggle="modal" data-bs-target="#newTaskModal"><i class="bi bi-plus-lg me-1"></i>Nueva tarea</button>
         </div>
       </div>
     </section>
 
-    <div class="row g-2 mb-3">
-      <div class="col-6 col-xl-3"><div class="crm-stat p-3"><div class="small text-muted">Conversaciones</div><div class="value">{{ inbox_counts.total }}</div><div class="small text-muted">Gmail + WhatsApp</div></div></div>
-      <div class="col-6 col-xl-3"><div class="crm-stat p-3"><div class="small text-muted">Requieren atención</div><div class="value">{{ inbox_counts.pending }}</div><div class="small text-muted">Último mensaje del prospecto</div></div></div>
-      <div class="col-6 col-xl-3"><div class="crm-stat p-3"><div class="small text-muted">Prospectos nuevos</div><div class="value">{{ lead_counts['nuevo'] }}</div><div class="small text-muted">Listos para seguimiento</div></div></div>
-      <div class="col-6 col-xl-3"><div class="crm-stat p-3"><div class="small text-muted">Tareas pendientes</div><div class="value">{{ task_counts['pendiente'] }}</div><div class="small text-muted">Para hoy y próximos días</div></div></div>
+    <div class="row g-3 mb-3">
+      <div class="col-6 col-xl-3">
+        <a class="crm-kpi-link" href="{{ url_for('saas.crm_inbox') }}"><div class="crm-kpi"><div class="d-flex align-items-start justify-content-between gap-2"><div><div class="label">Conversaciones</div><div class="value mt-2">{{ inbox_counts.total }}</div><div class="meta mt-1">Gmail + WhatsApp</div></div><div class="crm-kpi-icon"><i class="bi bi-chat-square-text"></i></div></div></div></a>
+      </div>
+      <div class="col-6 col-xl-3">
+        <a class="crm-kpi-link" href="{{ url_for('saas.crm_inbox', state='pending') }}"><div class="crm-kpi"><div class="d-flex align-items-start justify-content-between gap-2"><div><div class="label">Por responder</div><div class="value mt-2">{{ inbox_counts.pending }}</div><div class="meta mt-1">Acción inmediata</div></div><div class="crm-kpi-icon danger"><i class="bi bi-chat-left-dots"></i></div></div></div></a>
+      </div>
+      <div class="col-6 col-xl-3">
+        <a class="crm-kpi-link" href="{{ url_for('saas.crm_panel', lead_status='nuevo') }}#crmLeads"><div class="crm-kpi"><div class="d-flex align-items-start justify-content-between gap-2"><div><div class="label">Prospectos nuevos</div><div class="value mt-2">{{ lead_counts['nuevo'] }}</div><div class="meta mt-1">Para contactar</div></div><div class="crm-kpi-icon success"><i class="bi bi-person-plus"></i></div></div></div></a>
+      </div>
+      <div class="col-6 col-xl-3">
+        <a class="crm-kpi-link" href="{{ url_for('saas.crm_panel') }}#crmTasks"><div class="crm-kpi"><div class="d-flex align-items-start justify-content-between gap-2"><div><div class="label">Tareas abiertas</div><div class="value mt-2">{{ task_counts['pendiente'] }}</div><div class="meta mt-1">Seguimientos</div></div><div class="crm-kpi-icon warn"><i class="bi bi-calendar-check"></i></div></div></div></a>
+      </div>
     </div>
 
     <div class="row g-3 mb-3">
       <div class="col-xl-8">
-        <section class="crm-panel h-100">
-          <div class="crm-panel-head d-flex justify-content-between align-items-center gap-2">
-            <div><div class="fw-bold"><i class="bi bi-chat-dots me-1"></i>Conversaciones recientes</div><div class="small text-muted">La actividad comercial más reciente, sin entrar al detalle todavía.</div></div>
-            <a class="btn btn-sm btn-outline-primary" href="{{ url_for('saas.crm_inbox') }}">Ver todas</a>
+        <section class="crm-section h-100">
+          <div class="crm-section-head d-flex justify-content-between align-items-center gap-3">
+            <div><div class="crm-section-title"><i class="bi bi-activity me-2 text-primary"></i>Actividad reciente</div><div class="crm-section-sub">Lo último que pasó en tus canales comerciales.</div></div>
+            <a class="btn btn-sm btn-outline-primary" href="{{ url_for('saas.crm_inbox') }}">Abrir bandeja</a>
           </div>
           {% for row in recent_conversations %}
           <a class="crm-conv-preview" href="{{ url_for('saas.crm_inbox', conversation_id=row.conversation_id) }}">
             <div class="d-flex gap-3 align-items-start">
-              <div class="crm-mini-avatar"><i class="bi {{ 'bi-envelope-at' if row.channel == 'email_commercial' else 'bi-whatsapp' }}"></i></div>
+              <div class="crm-mini-avatar {{ 'whatsapp' if row.channel == 'whatsapp_commercial' else 'email' }}"><i class="bi {{ 'bi-whatsapp' if row.channel == 'whatsapp_commercial' else 'bi-envelope-at' }}"></i></div>
               <div class="min-w-0 flex-grow-1">
                 <div class="d-flex justify-content-between gap-2">
                   <div class="fw-semibold text-truncate">{{ row.contact_name }}</div>
                   {% if row.needs_reply %}<span class="badge text-bg-danger">Responder</span>{% else %}<span class="badge text-bg-light border">{{ row.channel_label }}</span>{% endif %}
                 </div>
                 <div class="small text-muted text-truncate">{{ row.company_name }} · {{ row.latest_text or 'Sin mensajes' }}</div>
-                <div class="small text-muted mt-1">{{ row.latest_at }} · {{ row.channel_label }}</div>
+                <div class="crm-table-muted mt-1">{{ row.latest_at }} · {{ row.channel_label }}</div>
               </div>
             </div>
           </a>
           {% else %}
-          <div class="p-4 text-center">
-            <div class="display-6 mb-2">📭</div>
-            <div class="fw-semibold">No hay conversaciones todavía</div>
-            <div class="small text-muted">La bandeja se llena automáticamente con la actividad comercial.</div>
+          <div class="p-5 text-center">
+            <div class="crm-mini-avatar mx-auto mb-3"><i class="bi bi-inbox"></i></div>
+            <div class="fw-semibold">Todavía no hay conversaciones</div>
+            <div class="small text-muted mt-1">Cuando llegue actividad comercial, la vas a ver acá.</div>
           </div>
           {% endfor %}
         </section>
       </div>
+
       <div class="col-xl-4">
-        <section class="crm-panel h-100">
-          <div class="crm-panel-head"><div class="fw-bold"><i class="bi bi-lightning-charge me-1 text-warning"></i>Mi atención</div><div class="small text-muted">Entrá directo a lo que requiere una acción.</div></div>
-          <div class="p-3 d-grid gap-2">
-            <a class="crm-soft-action" href="{{ url_for('saas.crm_inbox', state='pending') }}"><div class="d-flex justify-content-between gap-2"><span class="fw-semibold">Conversaciones sin responder</span><span class="badge text-bg-danger">{{ inbox_counts.pending }}</span></div><div class="small text-muted mt-1">Gmail y WhatsApp con último mensaje del prospecto.</div></a>
-            <a class="crm-soft-action" href="{{ url_for('saas.crm_panel') }}#crmTasks"><div class="d-flex justify-content-between gap-2"><span class="fw-semibold">Tareas pendientes</span><span class="badge text-bg-primary">{{ task_counts['pendiente'] }}</span></div><div class="small text-muted mt-1">Seguimientos que todavía están abiertos.</div></a>
-            <a class="crm-soft-action" href="{{ url_for('saas.crm_panel', lead_status='nuevo') }}#crmLeads"><div class="d-flex justify-content-between gap-2"><span class="fw-semibold">Prospectos nuevos</span><span class="badge text-bg-secondary">{{ lead_counts['nuevo'] }}</span></div><div class="small text-muted mt-1">Contactos que todavía no pasaron a seguimiento.</div></a>
+        <section class="crm-section h-100">
+          <div class="crm-section-head">
+            <div class="crm-section-title"><i class="bi bi-lightning-charge-fill me-2 text-warning"></i>Requiere tu atención</div>
+            <div class="crm-section-sub">Accesos directos a lo que no conviene dejar pasar.</div>
           </div>
-          <div class="p-3 pt-0">
-            <div class="border rounded-4 p-3">
-              <div class="fw-semibold"><i class="bi bi-envelope-at me-2"></i>Gmail Comercial</div>
-              <div class="small text-muted mt-1 mb-2">stockarmobile@gmail.com</div>
-              <div class="small mb-2">
-                {% if gmail_refresh_configured %}<span class="badge text-bg-success">Recibiendo</span>{% else %}<span class="badge text-bg-warning">Conectar</span>{% endif %}
-                {% if gmail_pubsub_configured %}<span class="badge text-bg-success">Escucha activa</span>{% else %}<span class="badge text-bg-secondary">Push pendiente</span>{% endif %}
+          <div class="p-3 d-grid gap-2">
+            <a class="crm-attention" href="{{ url_for('saas.crm_inbox', state='pending') }}">
+              <div class="d-flex gap-3 align-items-center"><div class="crm-attention-icon danger"><i class="bi bi-chat-left-text"></i></div><div class="flex-grow-1"><div class="d-flex justify-content-between gap-2"><span class="fw-semibold">Responder prospectos</span><span class="badge text-bg-danger">{{ inbox_counts.pending }}</span></div><div class="small text-muted mt-1">Mensajes pendientes en Gmail y WhatsApp.</div></div></div>
+            </a>
+            <a class="crm-attention" href="{{ url_for('saas.crm_panel') }}#crmTasks">
+              <div class="d-flex gap-3 align-items-center"><div class="crm-attention-icon warning"><i class="bi bi-calendar-check"></i></div><div class="flex-grow-1"><div class="d-flex justify-content-between gap-2"><span class="fw-semibold">Cumplir seguimientos</span><span class="badge text-bg-warning">{{ task_counts['pendiente'] }}</span></div><div class="small text-muted mt-1">Tareas abiertas que siguen sin cerrar.</div></div></div>
+            </a>
+            <a class="crm-attention" href="{{ url_for('saas.crm_panel', lead_status='nuevo') }}#crmLeads">
+              <div class="d-flex gap-3 align-items-center"><div class="crm-attention-icon"><i class="bi bi-person-lines-fill"></i></div><div class="flex-grow-1"><div class="d-flex justify-content-between gap-2"><span class="fw-semibold">Trabajar prospectos nuevos</span><span class="badge text-bg-primary">{{ lead_counts['nuevo'] }}</span></div><div class="small text-muted mt-1">Contactos que todavía no tuvieron seguimiento.</div></div></div>
+            </a>
+
+            <div class="crm-channel-card mt-1">
+              <div class="d-flex justify-content-between align-items-center gap-2 mb-2">
+                <div><div class="fw-semibold">Canales comerciales</div><div class="small text-muted">Estado de conexión.</div></div>
+                <i class="bi bi-broadcast-pin text-primary"></i>
               </div>
-              <div class="d-flex flex-wrap gap-2">
-                <form method="post" action="{{ url_for('saas.crm_email_gmail_sync') }}" class="d-inline">
-                  <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
-                  <button class="btn btn-sm btn-outline-secondary" type="submit"><i class="bi bi-arrow-repeat me-1"></i>Sincronizar</button>
-                </form>
-                <form method="post" action="{{ url_for('saas.crm_email_gmail_watch') }}" class="d-inline">
-                  <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
-                  <button class="btn btn-sm btn-outline-success" type="submit"><i class="bi bi-broadcast me-1"></i>Activar escucha</button>
-                </form>
+              <div class="crm-status-row"><div class="d-flex align-items-center gap-2"><span class="crm-status-dot {{ 'ok' if gmail_refresh_configured else 'warn' }}"></span><span class="small fw-semibold">Gmail</span></div><span class="badge {{ 'text-bg-success' if gmail_refresh_configured else 'text-bg-warning' }}">{{ 'Conectado' if gmail_refresh_configured else 'Revisar' }}</span></div>
+              <div class="crm-status-row"><div class="d-flex align-items-center gap-2"><span class="crm-status-dot {{ 'ok' if gmail_pubsub_configured else 'off' }}"></span><span class="small fw-semibold">Escucha automática</span></div><span class="badge {{ 'text-bg-success' if gmail_pubsub_configured else 'text-bg-secondary' }}">{{ 'Activa' if gmail_pubsub_configured else 'Pendiente' }}</span></div>
+              <div class="d-flex flex-wrap gap-2 mt-3">
+                <form method="post" action="{{ url_for('saas.crm_email_gmail_sync') }}" class="d-inline"><input type="hidden" name="csrf_token" value="{{ csrf_token() }}"><button class="btn btn-sm btn-outline-secondary" type="submit"><i class="bi bi-arrow-repeat me-1"></i>Sincronizar</button></form>
+                <form method="post" action="{{ url_for('saas.crm_email_gmail_watch') }}" class="d-inline"><input type="hidden" name="csrf_token" value="{{ csrf_token() }}"><button class="btn btn-sm btn-outline-success" type="submit"><i class="bi bi-broadcast me-1"></i>Activar escucha</button></form>
               </div>
             </div>
+
+            <a class="btn btn-outline-primary" href="{{ url_for('saas.crm_campaigns') }}"><i class="bi bi-megaphone me-1"></i>Gestionar campañas comerciales</a>
           </div>
         </section>
       </div>
     </div>
 
-    <ul class="nav nav-tabs mb-3" id="crmTabs" role="tablist">
-      <li class="nav-item" role="presentation"><button class="nav-link active" id="leads-tab" data-bs-toggle="tab" data-bs-target="#crmLeads" type="button" role="tab">Prospectos <span class="badge text-bg-secondary ms-1">{{ leads|length }}</span></button></li>
-      <li class="nav-item" role="presentation"><button class="nav-link" id="tasks-tab" data-bs-toggle="tab" data-bs-target="#crmTasks" type="button" role="tab">Tareas <span class="badge text-bg-secondary ms-1">{{ tasks|length }}</span></button></li>
-      <li class="nav-item" role="presentation"><button class="nav-link" id="alerts-tab" data-bs-toggle="tab" data-bs-target="#crmAlerts" type="button" role="tab">Alertas <span class="badge text-bg-secondary ms-1">{{ alerts|length }}</span></button></li>
+    <div class="d-flex flex-wrap justify-content-between align-items-end gap-3 mb-2">
+      <div><div class="crm-kicker"><i class="bi bi-database"></i> Gestión del CRM</div><h2 class="h5 fw-bold mb-0 mt-1">Operación diaria</h2><div class="small text-muted">Acá administrás personas, seguimientos y alertas.</div></div>
+      <div class="small text-muted">Datos actualizados al cargar la página</div>
+    </div>
+
+    <ul class="nav nav-tabs crm-tabs mb-3" id="crmTabs" role="tablist">
+      <li class="nav-item" role="presentation"><button class="nav-link active" id="leads-tab" data-bs-toggle="tab" data-bs-target="#crmLeads" type="button" role="tab"><i class="bi bi-people me-1"></i>Prospectos <span class="badge text-bg-secondary ms-1">{{ leads|length }}</span></button></li>
+      <li class="nav-item" role="presentation"><button class="nav-link" id="tasks-tab" data-bs-toggle="tab" data-bs-target="#crmTasks" type="button" role="tab"><i class="bi bi-check2-square me-1"></i>Tareas <span class="badge text-bg-secondary ms-1">{{ tasks|length }}</span></button></li>
+      <li class="nav-item" role="presentation"><button class="nav-link" id="alerts-tab" data-bs-toggle="tab" data-bs-target="#crmAlerts" type="button" role="tab"><i class="bi bi-bell me-1"></i>Alertas <span class="badge text-bg-secondary ms-1">{{ alerts|length }}</span></button></li>
     </ul>
 
     <div class="tab-content" id="crmTabContent">
       <div class="tab-pane fade show active" id="crmLeads" role="tabpanel" aria-labelledby="leads-tab">
         <div class="crm-panel">
-          <div class="crm-panel-head d-flex flex-wrap justify-content-between align-items-center gap-2">
-            <div><div class="fw-bold">Prospectos</div><div class="small text-muted">{{ lead_total }} en total · mostrando {{ leads|length }}</div></div>
-            <a class="btn btn-sm btn-outline-primary" href="{{ url_for('saas.crm_import') }}"><i class="bi bi-upload me-1"></i>Importar</a>
+          <div class="crm-panel-head d-flex flex-wrap justify-content-between align-items-center gap-3">
+            <div><div class="crm-section-title">Prospectos</div><div class="crm-section-sub">{{ lead_total }} en total · mostrando {{ leads|length }} en esta vista</div></div>
+            <div class="d-flex flex-wrap gap-2">
+              <a class="btn btn-sm btn-outline-secondary" href="{{ url_for('saas.crm_leads_export') }}"><i class="bi bi-download me-1"></i>Exportar</a>
+              <a class="btn btn-sm btn-outline-primary" href="{{ url_for('saas.crm_import') }}"><i class="bi bi-upload me-1"></i>Importar</a>
+              <button class="btn btn-sm btn-primary" type="button" data-bs-toggle="modal" data-bs-target="#newLeadModal"><i class="bi bi-plus-lg me-1"></i>Nuevo</button>
+            </div>
           </div>
           <div class="crm-table-wrap">
             <table class="table table-hover align-middle mb-0">
@@ -174,21 +251,20 @@
               <tbody>
               {% for lead in leads %}
               <tr>
-                <td><div class="fw-semibold">{{ lead.company_name }}</div><div class="small text-muted">{{ lead.industry or 'Sin rubro' }}{% if lead.locality %} · {{ lead.locality }}{% endif %}</div></td>
-                <td><div class="fw-semibold">{{ lead.contact_name }}</div><div class="small text-muted">{{ lead.email or lead.phone or 'Sin datos de contacto' }}</div></td>
+                <td><div class="fw-semibold">{{ lead.company_name }}</div><div class="crm-table-muted">{{ lead.industry or 'Sin rubro' }}{% if lead.locality %} · {{ lead.locality }}{% endif %}</div></td>
+                <td><div class="fw-semibold">{{ lead.contact_name }}</div><div class="crm-table-muted">{{ lead.email or lead.phone or 'Sin datos de contacto' }}</div></td>
                 <td><span class="badge text-bg-light border">{{ lead.status|replace('_',' ') }}</span></td>
                 <td><span class="badge {{ 'text-bg-danger' if lead.priority == 'alta' else ('text-bg-warning' if lead.priority == 'media' else 'text-bg-secondary') }}">{{ lead.priority }}</span></td>
-                <td><div class="small">{{ lead.last_contacted_at.strftime('%d/%m %H:%M') if lead.last_contacted_at else 'Sin contacto' }}</div><div class="small text-muted">{{ lead.last_contact_channel or lead.source }}</div></td>
+                <td><div class="small">{{ lead.last_contacted_at.strftime('%d/%m %H:%M') if lead.last_contacted_at else 'Sin contacto' }}</div><div class="crm-table-muted">{{ lead.last_contact_channel or lead.source }}</div></td>
                 <td class="text-end">
-                  <div class="d-flex gap-1 flex-wrap justify-content-end">
+                  <div class="crm-action-stack">
                     <form method="post" action="{{ url_for('saas.crm_lead_status', lead_id=lead.id) }}" class="d-inline-flex gap-1">
                       <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
-                      <select class="form-select form-select-sm" name="status" aria-label="Estado de {{ lead.company_name }}">
-                        {% for status in CRM_LEAD_STATUSES %}<option value="{{ status }}" {% if lead.status == status %}selected{% endif %}>{{ status|replace('_',' ') }}</option>{% endfor %}
-                      </select>
+                      <select class="form-select form-select-sm" name="status" aria-label="Estado de {{ lead.company_name }}">{% for status in CRM_LEAD_STATUSES %}<option value="{{ status }}" {% if lead.status == status %}selected{% endif %}>{{ status|replace('_',' ') }}</option>{% endfor %}</select>
                       <button class="btn btn-sm btn-outline-primary" type="submit">Guardar</button>
                     </form>
-                    <button type="button" class="btn btn-sm btn-outline-secondary" data-bs-toggle="modal" data-bs-target="#contactPrefs{{ lead.id }}">Canales</button>\n                    <form method="post" action="{{ url_for('saas.crm_lead_consent_link', lead_id=lead.id) }}" class="d-inline"><input type="hidden" name="csrf_token" value="{{ csrf_token() }}"><button class="btn btn-sm btn-outline-success" type="submit" title="Generar enlace de consentimiento"><i class="bi bi-link-45deg"></i></button></form>
+                    <button type="button" class="btn btn-sm btn-outline-secondary" data-bs-toggle="modal" data-bs-target="#contactPrefs{{ lead.id }}"><i class="bi bi-broadcast me-1"></i>Canales</button>
+                    <form method="post" action="{{ url_for('saas.crm_lead_consent_link', lead_id=lead.id) }}" class="d-inline"><input type="hidden" name="csrf_token" value="{{ csrf_token() }}"><button class="btn btn-sm btn-outline-success" type="submit" title="Generar enlace de consentimiento"><i class="bi bi-link-45deg"></i></button></form>
                     <button type="button" class="btn btn-sm btn-outline-danger" data-bs-toggle="modal" data-bs-target="#deleteLead{{ lead.id }}" title="Eliminar prospecto"><i class="bi bi-trash3"></i></button>
                   </div>
                 </td>
@@ -199,7 +275,7 @@
           </div>
           {% if lead_pages > 1 %}
           <div class="d-flex justify-content-between align-items-center p-3 border-top">
-            <div class="small text-muted">Página {{ lead_page }} de {{ lead_pages }}</div>
+            <div class="crm-table-muted">Página {{ lead_page }} de {{ lead_pages }}</div>
             <div class="d-flex gap-2">
               {% if lead_page > 1 %}<a class="btn btn-sm btn-outline-secondary" href="{{ url_for('saas.crm_panel', q=filters.q, lead_status=filters.lead_status, task_status=filters.task_status, alert_status=filters.alert_status, page=lead_page-1) }}"><i class="bi bi-chevron-left"></i></a>{% endif %}
               {% if lead_page < lead_pages %}<a class="btn btn-sm btn-outline-secondary" href="{{ url_for('saas.crm_panel', q=filters.q, lead_status=filters.lead_status, task_status=filters.task_status, alert_status=filters.alert_status, page=lead_page+1) }}"><i class="bi bi-chevron-right"></i></a>{% endif %}
@@ -211,15 +287,15 @@
 
       <div class="tab-pane fade" id="crmTasks" role="tabpanel" aria-labelledby="tasks-tab">
         <div class="crm-panel">
-          <div class="crm-panel-head d-flex justify-content-between align-items-center gap-2"><div><div class="fw-bold">Tareas</div><div class="small text-muted">Los seguimientos que están abiertos o próximos.</div></div><button class="btn btn-sm btn-primary" type="button" data-bs-toggle="modal" data-bs-target="#newTaskModal"><i class="bi bi-plus-lg me-1"></i>Nueva tarea</button></div>
+          <div class="crm-panel-head d-flex flex-wrap justify-content-between align-items-center gap-3"><div><div class="crm-section-title">Tareas</div><div class="crm-section-sub">Seguimientos abiertos, próximos y bloqueados.</div></div><button class="btn btn-sm btn-primary" type="button" data-bs-toggle="modal" data-bs-target="#newTaskModal"><i class="bi bi-plus-lg me-1"></i>Nueva tarea</button></div>
           <div class="crm-table-wrap">
             <table class="table table-hover align-middle mb-0">
               <thead><tr><th>Tarea</th><th>Prospecto</th><th>Estado</th><th>Prioridad</th><th>Vencimiento</th><th>Asignado</th><th class="text-end">Acción</th></tr></thead>
               <tbody>
               {% for task in tasks %}
               <tr>
-                <td><div class="fw-semibold">{{ task.title }}</div><div class="small text-muted">{{ task.description or 'Sin descripción' }}</div></td>
-                <td>{% if task.lead %}<div class="fw-semibold">{{ task.lead.company_name }}</div><div class="small text-muted">{{ task.lead.contact_name }}</div>{% else %}<span class="text-muted">Sin prospecto</span>{% endif %}</td>
+                <td><div class="fw-semibold">{{ task.title }}</div><div class="crm-table-muted">{{ task.description or 'Sin descripción' }}</div></td>
+                <td>{% if task.lead %}<div class="fw-semibold">{{ task.lead.company_name }}</div><div class="crm-table-muted">{{ task.lead.contact_name }}</div>{% else %}<span class="text-muted">Sin prospecto</span>{% endif %}</td>
                 <td><span class="badge text-bg-secondary">{{ task.status|replace('_',' ') }}</span></td>
                 <td><span class="badge {{ 'text-bg-danger' if task.priority == 'alta' else ('text-bg-warning' if task.priority == 'media' else 'text-bg-secondary') }}">{{ task.priority }}</span></td>
                 <td class="small">{% if task.due_at %}{{ task.due_at.strftime('%d/%m/%Y %H:%M') }}{% else %}<span class="text-muted">Sin fecha</span>{% endif %}</td>
@@ -232,7 +308,7 @@
                   </form>
                 </td>
               </tr>
-              {% else %}<tr><td colspan="7" class="text-center text-muted py-5">Sin tareas con estos filtros.</td></tr>{% endfor %}
+              {% else %}<tr><td colspan="7" class="text-center text-muted py-5">No hay tareas para mostrar.</td></tr>{% endfor %}
               </tbody>
             </table>
           </div>
@@ -241,18 +317,18 @@
 
       <div class="tab-pane fade" id="crmAlerts" role="tabpanel" aria-labelledby="alerts-tab">
         <div class="crm-panel">
-          <div class="crm-panel-head d-flex justify-content-between align-items-center gap-2"><div><div class="fw-bold">Alertas</div><div class="small text-muted">Problemas o situaciones que requieren seguimiento.</div></div><button class="btn btn-sm btn-outline-danger" type="button" data-bs-toggle="modal" data-bs-target="#newAlertModal"><i class="bi bi-plus-lg me-1"></i>Nueva alerta</button></div>
+          <div class="crm-panel-head d-flex flex-wrap justify-content-between align-items-center gap-3"><div><div class="crm-section-title">Alertas</div><div class="crm-section-sub">Situaciones que requieren revisión o seguimiento.</div></div><button class="btn btn-sm btn-outline-danger" type="button" data-bs-toggle="modal" data-bs-target="#newAlertModal"><i class="bi bi-plus-lg me-1"></i>Nueva alerta</button></div>
           <div class="crm-table-wrap">
             <table class="table table-hover align-middle mb-0">
               <thead><tr><th>Título</th><th>Detalle</th><th>Estado</th><th>Severidad</th><th>Vínculo</th><th class="text-end">Acción</th></tr></thead>
               <tbody>
               {% for alert in alerts %}
               <tr>
-                <td><div class="fw-semibold">{{ alert.title }}</div><div class="small text-muted">{{ alert.category }}</div></td>
+                <td><div class="fw-semibold">{{ alert.title }}</div><div class="crm-table-muted">{{ alert.category }}</div></td>
                 <td class="small">{{ alert.message }}</td>
                 <td><span class="badge text-bg-secondary">{{ alert.status|replace('_',' ') }}</span></td>
                 <td><span class="badge {{ 'text-bg-danger' if alert.severity in ['alta','critica'] else ('text-bg-warning' if alert.severity == 'media' else 'text-bg-secondary') }}">{{ alert.severity }}</span></td>
-                <td>{% if alert.lead %}<div class="fw-semibold">{{ alert.lead.company_name }}</div>{% endif %}{% if alert.task %}<div class="small text-muted">{{ alert.task.title }}</div>{% endif %}{% if not alert.lead and not alert.task %}<span class="text-muted small">Sin vínculo</span>{% endif %}</td>
+                <td>{% if alert.lead %}<div class="fw-semibold">{{ alert.lead.company_name }}</div>{% endif %}{% if alert.task %}<div class="crm-table-muted">{{ alert.task.title }}</div>{% endif %}{% if not alert.lead and not alert.task %}<span class="text-muted small">Sin vínculo</span>{% endif %}</td>
                 <td class="text-end">
                   <form method="post" action="{{ url_for('saas.crm_alert_status', alert_id=alert.id) }}" class="d-inline-flex gap-1">
                     <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
@@ -261,7 +337,7 @@
                   </form>
                 </td>
               </tr>
-              {% else %}<tr><td colspan="6" class="text-center text-muted py-5">Sin alertas con estos filtros.</td></tr>{% endfor %}
+              {% else %}<tr><td colspan="6" class="text-center text-muted py-5">No hay alertas para mostrar.</td></tr>{% endfor %}
               </tbody>
             </table>
           </div>
@@ -269,7 +345,6 @@
       </div>
     </div>
   </div>
-</div>
 </div>
   <div class="modal fade" id="newLeadModal" tabindex="-1" aria-labelledby="newLeadModalLabel" aria-hidden="true">
     <div class="modal-dialog modal-lg modal-dialog-scrollable"><div class="modal-content">
