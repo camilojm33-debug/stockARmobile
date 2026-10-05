@@ -6,6 +6,7 @@ import json
 import re
 import secrets
 import smtplib
+import unicodedata
 from datetime import datetime, timezone, timedelta
 from email.message import EmailMessage
 from html import escape
@@ -63,7 +64,13 @@ def _clean(value) -> str:
     return str(value or "").strip()
 
 def _normalize_header(value) -> str:
-    return re.sub(r"\s+", " ", _clean(value).lower().replace("_", " "))
+    text = _clean(value).lower().replace("_", " ")
+    text = "".join(
+        ch for ch in unicodedata.normalize("NFKD", text)
+        if not unicodedata.combining(ch)
+    )
+    text = re.sub(r"[^a-z0-9]+", " ", text)
+    return re.sub(r"\s+", " ", text).strip()
 
 def normalize_email(value: str | None) -> str | None:
     email = _clean(value).lower()
