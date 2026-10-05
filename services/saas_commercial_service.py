@@ -471,10 +471,13 @@ def _eligible_leads_query(channel: str, filters: dict):
     if int(filters.get("min_score") or 0):
         query = query.filter(SaaSLead.lead_score >= int(filters["min_score"]))
     if channel == "email":
+        # La audiencia de email incluye contactos con email válido y sin baja
+        # explícita. El consentimiento desconocido se muestra para revisión;
+        # las bajas y bloqueos siguen excluidas.
         return query.filter(
             SaaSLead.email.isnot(None),
             SaaSLead.email_status != "invalid",
-            SaaSLead.email_consent_status == "opted_in",
+            SaaSLead.email_consent_status != "opted_out",
         )
     if channel == "whatsapp":
         return query.filter(
@@ -520,7 +523,14 @@ def campaign_audience_metrics(db_session, campaign) -> dict:
         "whatsapp_available": whatsapp_available,
         "email_optin": email_optin,
         "whatsapp_optin": whatsapp_optin,
-        "eligible_email": email_optin if campaign.channel in {"email", "both"} else 0,
+        "eligible_email": (
+            query.filter(
+                SaaSLead.email.isnot(None),
+                SaaSLead.email_status != "invalid",
+                SaaSLead.email_consent_status != "opted_out",
+            ).count()
+            if campaign.channel in {"email", "both"} else 0
+        ),
         "eligible_whatsapp": whatsapp_optin if campaign.channel in {"whatsapp", "both"} else 0,
     }
 
