@@ -3219,7 +3219,21 @@ def crm_leads_bulk_contact_preferences():
     if not _require_superadmin_step_up():
         return _redirect_back("saas.crm_panel")
 
-    leads = SaaSLead.query.filter(SaaSLead.id.in_(ids)).order_by(SaaSLead.id.asc()).all()
+    leads_query = SaaSLead.query.filter(SaaSLead.id.in_(ids))
+    if action in {"opt_in_email"}:
+        leads_query = leads_query.filter(
+            SaaSLead.email.isnot(None),
+            db.func.length(db.func.trim(SaaSLead.email)) > 0,
+            SaaSLead.email_status != "invalid",
+        )
+    elif action == "opt_in_whatsapp":
+        leads_query = leads_query.filter(
+            db.or_(
+                db.and_(SaaSLead.whatsapp.isnot(None), db.func.length(db.func.trim(SaaSLead.whatsapp)) > 0),
+                db.and_(SaaSLead.phone.isnot(None), db.func.length(db.func.trim(SaaSLead.phone)) > 0),
+            )
+        )
+    leads = leads_query.order_by(SaaSLead.id.asc()).all()
     now = utcnow()
     changed = 0
     for lead in leads:
