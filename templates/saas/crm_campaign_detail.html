@@ -1,6 +1,57 @@
 {% extends "base_master.html" %}
 {% block title %}{{ campaign.name }} · SuperAdmin{% endblock %}
 {% block content %}
+<style>
+#editCampaignModal{--campaign-modal-margin:12px;}
+#editCampaignModal .modal-dialog{
+  width:auto !important;
+  max-width:min(1180px,calc(100vw - 24px)) !important;
+  height:calc(100vh - 24px) !important;
+  height:calc(100dvh - 24px) !important;
+  margin:12px auto !important;
+}
+#editCampaignModal .modal-content{
+  height:100% !important;
+  max-height:none !important;
+  display:flex !important;
+  flex-direction:column !important;
+  overflow:hidden !important;
+}
+#editCampaignModal form{
+  height:100% !important;
+  min-height:0 !important;
+  display:flex !important;
+  flex-direction:column !important;
+}
+#editCampaignModal .modal-header,
+#editCampaignModal .modal-footer{
+  flex:0 0 auto !important;
+}
+#editCampaignModal .modal-body{
+  flex:1 1 0 !important;
+  min-height:0 !important;
+  height:auto !important;
+  max-height:none !important;
+  overflow-y:auto !important;
+  overflow-x:hidden !important;
+  -webkit-overflow-scrolling:touch;
+}
+#editCampaignModal .modal-footer{
+  position:relative !important;
+  z-index:20 !important;
+  background:var(--app-panel,#fff) !important;
+  border-top:1px solid var(--app-line,#dee2e6) !important;
+  box-shadow:0 -8px 20px rgba(15,23,42,.08);
+}
+@media(max-width:640px){
+  #editCampaignModal .modal-dialog{
+    max-width:calc(100vw - 10px) !important;
+    height:calc(100vh - 10px) !important;
+    height:calc(100dvh - 10px) !important;
+    margin:5px auto !important;
+  }
+}
+</style>
 <div class="app-shell superadmin-page">
   {% set status_label = {
     'BORRADOR':'Borrador',
@@ -310,7 +361,7 @@
   </section>
 </div>
 <div class="modal fade" id="editCampaignModal" tabindex="-1" aria-labelledby="editCampaignModalLabel" aria-hidden="true">
-  <div class="modal-dialog modal-xl modal-dialog-scrollable">
+  <div class="modal-dialog modal-xl">
     <div class="modal-content border-0 shadow-lg">
       <form method="post" action="{{ url_for('saas.crm_campaign_edit', campaign_id=campaign.id) }}">
         <div class="modal-header px-4 py-3">
