@@ -340,7 +340,7 @@ def test_whatsapp_campaign_dispatch_uses_prepared_whatsapp_recipient(app, monkey
         result = dispatch_due_campaigns(db.session, per_campaign=50)
 
         recipient = SaaSCampaignRecipient.query.filter_by(campaign_id=campaign.id).first()
-        assert result["sent"] == 1, result
+        assert result["sent"] == 1, f"dispatch={result}; error={recipient.error_reason if recipient else None}"
         assert calls == [("5493333333333", "stockarmobile_prospecto_01")]
         assert recipient.status == "sent"
         assert recipient.provider_message_id == "wamid.test.001"
