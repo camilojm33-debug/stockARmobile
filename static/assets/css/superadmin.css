@@ -200,6 +200,39 @@
   font-size:.78rem;font-weight:700;
 }
 .superadmin-page .campaign-readiness .ready-item i{font-size:.8rem}
+.superadmin-page #newCampaignModal .modal-dialog{
+  max-width:min(1180px, calc(100vw - 28px));
+  height:calc(100vh - 24px);
+  margin:.75rem auto;
+}
+.superadmin-page #newCampaignModal .modal-content{
+  max-height:calc(100vh - 24px);
+  display:flex;
+  flex-direction:column;
+}
+.superadmin-page #newCampaignModal .modal-body{
+  overflow-y:auto;
+  min-height:0;
+  overscroll-behavior:contain;
+}
+.superadmin-page #newCampaignModal .modal-footer{
+  flex:0 0 auto;
+  position:sticky;
+  bottom:0;
+  z-index:3;
+  background:var(--app-panel,#fff);
+  border-top:1px solid var(--app-line);
+}
+.superadmin-page #newCampaignModal .campaign-submit-help{
+  margin-right:auto;
+  color:var(--app-muted);
+  font-size:.78rem;
+}
+@media (max-width:640px){
+  .superadmin-page #newCampaignModal .modal-dialog{height:calc(100vh - 10px);margin:5px auto;}
+  .superadmin-page #newCampaignModal .modal-content{max-height:calc(100vh - 10px);}
+  .superadmin-page #newCampaignModal .campaign-submit-help{display:none;}
+}
 .superadmin-page .campaign-form-section{
   padding:14px 0 4px;
 }
