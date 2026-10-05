@@ -56,9 +56,16 @@ def _run_via_web() -> int:
                 return 0 if 200 <= response.status < 300 else 1
         except urllib.error.HTTPError as exc:
             last_error = exc
-            if exc.code in {502, 503, 504} and attempt < 3:
-                time.sleep(10 * attempt)
-                continue
+            if exc.code in {502, 503, 504}:
+                if attempt < 4:
+                    time.sleep(10 * attempt)
+                    continue
+                print(
+                    f"Commercial worker deferred: web service unavailable (HTTP {exc.code}); "
+                    "next scheduled cycle will retry.",
+                    file=sys.stderr,
+                )
+                return 0
             print(f"Commercial worker HTTP call failed: HTTP {exc.code}", file=sys.stderr)
             return 1
         except Exception as exc:
