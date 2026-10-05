@@ -25,13 +25,18 @@ def _smtp_probe() -> tuple[bool, str]:
         return False, "Faltan credenciales SMTP."
 
     try:
-        with smtplib.SMTP(host, port, timeout=12) as server:
-            server.ehlo()
-            if bool(current_app.config.get("SMTP_USE_TLS", True)):
-                server.starttls()
+        if port == 465:
+            with smtplib.SMTP_SSL(host, port, timeout=12) as server:
                 server.ehlo()
-            server.login(user, password)
-        return True, "Conexión y autenticación SMTP verificadas."
+                server.login(user, password)
+        else:
+            with smtplib.SMTP(host, port, timeout=12) as server:
+                server.ehlo()
+                if bool(current_app.config.get("SMTP_USE_TLS", True)):
+                    server.starttls()
+                    server.ehlo()
+                server.login(user, password)
+        return True, f"SMTP verificado ({host}:{port})."
     except smtplib.SMTPAuthenticationError:
         return False, "El servidor SMTP rechazó la autenticación. Revisá usuario, contraseña o App Password."
     except smtplib.SMTPServerDisconnected:
