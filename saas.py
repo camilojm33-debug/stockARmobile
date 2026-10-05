@@ -2320,6 +2320,105 @@ def crm_campaigns():
     )
 
 
+@bp.post("/crm/campaigns/<int:campaign_id>/bulk-consent")
+@superadmin_required
+def crm_campaign_bulk_consent(campaign_id):
+    from app import SaaSCampaign, SaaSLead, SaaSLeadConsent, db, record_audit, utcnow
+    from services.saas_commercial_service import parse_segment_json
+
+    _require_superadmin()
+    campaign = SaaSCampaign.query.filter_by(id=campaign_id).first_or_404()
+    if campaign.status != "BORRADOR":
+        flash("Solo una campaña en borrador puede modificar su audiencia.", "warning")
+        return redirect(url_for("saas.crm_campaign_detail", campaign_id=campaign.id))
+
+    action = (request.form.get("action") or "").strip().lower()
+    channel = str(campaign.channel or "").strip().lower()
+    if action not in {"opt_in_email", "opt_in_whatsapp"}:
+        flash("Acción de autorización no válida.", "danger")
+        return redirect(url_for("saas.crm_campaign_detail", campaign_id=campaign.id))
+    if action == "opt_in_email" and channel not in {"email", "both"}:
+        flash("La campaña no utiliza Email.", "warning")
+        return redirect(url_for("saas.crm_campaign_detail", campaign_id=campaign.id))
+    if action == "opt_in_whatsapp" and channel not in {"whatsapp", "both"}:
+        flash("La campaña no utiliza WhatsApp.", "warning")
+        return redirect(url_for("saas.crm_campaign_detail", campaign_id=campaign.id))
+
+    reason = (request.form.get("consent_reason") or "").strip()[:500]
+    if len(reason) < 5:
+        flash("El motivo es obligatorio para registrar autorizaciones manuales.", "warning")
+        return redirect(url_for("saas.crm_campaign_detail", campaign_id=campaign.id))
+
+    if not _require_superadmin_step_up():
+        return redirect(url_for("saas.crm_campaign_detail", campaign_id=campaign.id))
+
+    filters = parse_segment_json(campaign.segment_json)
+    query = SaaSLead.query.filter(SaaSLead.do_not_contact.is_(False))
+    for field in ("industry", "province", "locality", "segment"):
+        value = str(filters.get(field) or "").strip()
+        if value:
+            query = query.filter(getattr(SaaSLead, field).ilike(f"%{value}%"))
+    min_score = int(filters.get("min_score") or 0)
+    if min_score:
+        query = query.filter(SaaSLead.lead_score >= min_score)
+
+    raw_ids = request.form.getlist("lead_ids")
+    ids = []
+    for raw_id in raw_ids:
+        try:
+            value = int(raw_id)
+        except (TypeError, ValueError):
+            continue
+        if value > 0 and value not in ids:
+            ids.append(value)
+    if not ids:
+        flash("Seleccioná al menos un prospecto.", "warning")
+        return redirect(url_for("saas.crm_campaign_detail", campaign_id=campaign.id))
+
+    query = query.filter(SaaSLead.id.in_(ids))
+    if action == "opt_in_email":
+        query = query.filter(SaaSLead.email.isnot(None), db.func.length(db.func.trim(SaaSLead.email)) > 0)
+    else:
+        query = query.filter(
+            db.or_(
+                db.and_(SaaSLead.whatsapp.isnot(None), db.func.length(db.func.trim(SaaSLead.whatsapp)) > 0),
+                db.and_(SaaSLead.phone.isnot(None), db.func.length(db.func.trim(SaaSLead.phone)) > 0),
+            )
+        )
+
+    leads = query.order_by(SaaSLead.id.asc()).all()
+    now = utcnow()
+    changed = 0
+    for lead in leads:
+        consent = lead.consent or SaaSLeadConsent(lead_id=lead.id)
+        if not consent.unsubscribe_token:
+            consent.unsubscribe_token = secrets.token_urlsafe(48)
+        if action == "opt_in_email":
+            lead.email_consent_status = "opted_in"
+            consent.email_status = "opted_in"
+            consent.email_source = "superadmin_manual"
+        else:
+            lead.whatsapp_consent_status = "opted_in"
+            consent.whatsapp_status = "opted_in"
+            consent.whatsapp_source = "superadmin_manual"
+        consent.granted_at = now
+        consent.revoked_at = None
+        db.session.add(consent)
+        changed += 1
+        record_audit(
+            action="saas_campaign_manual_consent",
+            entity="saas_campaign",
+            entity_id=campaign.id,
+            detail=f"Autorización manual {action} para lead={lead.id}; motivo={reason}.",
+            user_id=current_user.id,
+            company_id=lead.company_id,
+        )
+
+    db.session.commit()
+    flash(f"{changed} prospecto(s) autorizados. Ahora prepará la audiencia.", "success")
+    return redirect(url_for("saas.crm_campaign_detail", campaign_id=campaign.id))
+
+
 @bp.get("/crm/campaigns/<int:campaign_id>")
 @superadmin_required
 def crm_campaign_detail(campaign_id):
@@ -2335,6 +2434,31 @@ def crm_campaign_detail(campaign_id):
         segment_filters = {}
     if not isinstance(segment_filters, dict):
         segment_filters = {}
+    from app import SaaSLead
+    from services.saas_commercial_service import parse_segment_json
+
+    consent_candidates = []
+    consent_filters = parse_segment_json(campaign.segment_json)
+    candidate_query = SaaSLead.query.filter(SaaSLead.do_not_contact.is_(False))
+    for field in ("industry", "province", "locality", "segment"):
+        value = str(consent_filters.get(field) or "").strip()
+        if value:
+            candidate_query = candidate_query.filter(getattr(SaaSLead, field).ilike(f"%{value}%"))
+    min_score = int(consent_filters.get("min_score") or 0)
+    if min_score:
+        candidate_query = candidate_query.filter(SaaSLead.lead_score >= min_score)
+    if campaign.channel in {"email", "both"}:
+        candidates = candidate_query.filter(SaaSLead.email.isnot(None), db.func.length(db.func.trim(SaaSLead.email)) > 0).order_by(SaaSLead.id.asc()).limit(200).all()
+        consent_candidates.extend(("email", lead) for lead in candidates if lead.email_consent_status != "opted_in")
+    if campaign.channel in {"whatsapp", "both"}:
+        candidates = candidate_query.filter(
+            db.or_(
+                db.and_(SaaSLead.whatsapp.isnot(None), db.func.length(db.func.trim(SaaSLead.whatsapp)) > 0),
+                db.and_(SaaSLead.phone.isnot(None), db.func.length(db.func.trim(SaaSLead.phone)) > 0),
+            )
+        ).order_by(SaaSLead.id.asc()).limit(200).all()
+        consent_candidates.extend(("whatsapp", lead) for lead in candidates if lead.whatsapp_consent_status != "opted_in")
+
     return render_template(
         "saas/crm_campaign_detail.html",
         campaign=campaign,
