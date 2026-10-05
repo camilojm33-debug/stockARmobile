@@ -1,6 +1,57 @@
 {% extends "base_master.html" %}
 {% block title %}Campañas comerciales · SuperAdmin{% endblock %}
 {% block content %}
+<style>
+#newCampaignModal{--campaign-modal-margin:12px;}
+#newCampaignModal .modal-dialog{
+  width:auto !important;
+  max-width:min(1180px,calc(100vw - 24px)) !important;
+  height:calc(100vh - 24px) !important;
+  height:calc(100dvh - 24px) !important;
+  margin:12px auto !important;
+}
+#newCampaignModal .modal-content{
+  height:100% !important;
+  max-height:none !important;
+  display:flex !important;
+  flex-direction:column !important;
+  overflow:hidden !important;
+}
+#newCampaignModal form{
+  height:100% !important;
+  min-height:0 !important;
+  display:flex !important;
+  flex-direction:column !important;
+}
+#newCampaignModal .modal-header,
+#newCampaignModal .modal-footer{
+  flex:0 0 auto !important;
+}
+#newCampaignModal .modal-body{
+  flex:1 1 0 !important;
+  min-height:0 !important;
+  height:auto !important;
+  max-height:none !important;
+  overflow-y:auto !important;
+  overflow-x:hidden !important;
+  -webkit-overflow-scrolling:touch;
+}
+#newCampaignModal .modal-footer{
+  position:relative !important;
+  z-index:20 !important;
+  background:var(--app-panel,#fff) !important;
+  border-top:1px solid var(--app-line,#dee2e6) !important;
+  box-shadow:0 -8px 20px rgba(15,23,42,.08);
+}
+@media(max-width:640px){
+  #newCampaignModal .modal-dialog{
+    max-width:calc(100vw - 10px) !important;
+    height:calc(100vh - 10px) !important;
+    height:calc(100dvh - 10px) !important;
+    margin:5px auto !important;
+  }
+}
+</style>
 <div class="app-shell superadmin-page">
   <section class="campaigns-hero p-4 p-lg-5 mb-4">
     <div class="position-relative z-1 d-flex flex-wrap justify-content-between align-items-center gap-4">
@@ -150,7 +201,7 @@
 </div>
 
 <div class="modal fade" id="newCampaignModal" tabindex="-1" aria-labelledby="newCampaignModalLabel" aria-hidden="true">
-  <div class="modal-dialog modal-xl modal-dialog-scrollable">
+  <div class="modal-dialog modal-xl">
     <div class="modal-content border-0 shadow-lg">
       <form method="post">
         <div class="modal-header px-4 py-3">
