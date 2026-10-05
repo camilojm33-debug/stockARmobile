@@ -54,6 +54,33 @@
 {% endfor %}
 
 
+<div class="modal fade" id="crmBulkDeleteConfirmModal" tabindex="-1" aria-labelledby="crmBulkDeleteConfirmLabel" aria-hidden="true">
+  <div class="modal-dialog modal-dialog-centered">
+    <div class="modal-content">
+      <form method="post" action="{{ url_for('saas.crm_leads_bulk_delete') }}" id="crmBulkDeleteConfirmForm">
+        <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+        <div id="crmBulkDeleteConfirmIds"></div>
+        <div class="modal-header">
+          <h5 class="modal-title text-danger" id="crmBulkDeleteConfirmLabel"><i class="bi bi-trash3 me-1"></i>Confirmar eliminación</h5>
+          <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Cerrar"></button>
+        </div>
+        <div class="modal-body">
+          <div class="alert alert-warning small mb-3">
+            <strong>Estás por eliminar <span id="crmBulkDeleteCount">0</span> prospecto(s).</strong>
+            Sus datos CRM relacionados se eliminarán y su identidad quedará suprimida para impedir el reingreso automático.
+          </div>
+          <label class="form-label fw-semibold" for="crmBulkDeletePassword">Contraseña de SuperAdmin</label>
+          <input type="password" class="form-control" id="crmBulkDeletePassword" name="step_up_password" autocomplete="current-password" required>
+        </div>
+        <div class="modal-footer">
+          <button type="button" class="btn btn-outline-secondary" data-bs-dismiss="modal">Cancelar</button>
+          <button type="submit" class="btn btn-danger"><i class="bi bi-trash3 me-1"></i>Confirmar eliminación</button>
+        </div>
+      </form>
+    </div>
+  </div>
+</div>
+
 <div class="app-shell">
   <style>
     .crm-home{max-width:1500px;margin:0 auto;padding:4px 0 24px}
@@ -279,14 +306,9 @@
             </form>
             <div class="col-12 d-flex flex-wrap align-items-center justify-content-between gap-2 mt-1">
               <div class="small text-muted"><i class="bi bi-trash3 me-1"></i>La eliminación en lote es permanente y bloquea el reingreso automático.</div>
-              <form method="post" action="{{ url_for('saas.crm_leads_bulk_delete') }}" id="crmBulkDeleteForm" class="d-inline-flex align-items-center">
-                <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
-                <div id="crmBulkDeleteIds"></div>
-                <input type="password" name="step_up_password" class="form-control form-control-sm" style="width:220px" autocomplete="current-password" required placeholder="Contraseña SuperAdmin">
-                <button class="btn btn-sm btn-outline-danger ms-2" type="submit" id="crmBulkDeleteButton" disabled>
-                  <i class="bi bi-trash3 me-1"></i>Eliminar seleccionados
-                </button>
-              </form>
+              <button class="btn btn-sm btn-outline-danger ms-2" type="button" id="crmBulkDeleteButton" disabled data-bs-toggle="modal" data-bs-target="#crmBulkDeleteConfirmModal">
+                <i class="bi bi-trash3 me-1"></i>Eliminar seleccionados
+              </button>
             </div>
           </div>
 
@@ -546,9 +568,11 @@
 document.addEventListener("DOMContentLoaded", function () {
   const form = document.getElementById("crmBulkConsentForm");
   const idsBox = document.getElementById("crmBulkLeadIds");
-  const deleteForm = document.getElementById("crmBulkDeleteForm");
-  const deleteIdsBox = document.getElementById("crmBulkDeleteIds");
+  const deleteForm = document.getElementById("crmBulkDeleteConfirmForm");
+  const deleteIdsBox = document.getElementById("crmBulkDeleteConfirmIds");
   const deleteButton = document.getElementById("crmBulkDeleteButton");
+  const deleteCount = document.getElementById("crmBulkDeleteCount");
+  const deletePassword = document.getElementById("crmBulkDeletePassword");
   const selectAll = document.getElementById("crmSelectAllLeads");
   const syncIds = () => {
     if (!form || !idsBox) return;
@@ -578,6 +602,7 @@ document.addEventListener("DOMContentLoaded", function () {
       deleteButton.disabled = count === 0;
       deleteButton.innerHTML = '<i class="bi bi-trash3 me-1"></i>Eliminar ' + (count ? '(' + count + ')' : 'seleccionados');
     }
+    if (deleteCount) deleteCount.textContent = String(count);
     if (selectAll) {
       const all = document.querySelectorAll(".crm-lead-select").length;
       selectAll.checked = all > 0 && count === all;
@@ -604,12 +629,26 @@ document.addEventListener("DOMContentLoaded", function () {
       alert("Seleccioná al menos un prospecto.");
       return;
     }
-    const ok = window.confirm(
-      "Vas a eliminar " + count + " prospecto(s) definitivamente. " +
-      "También se bloqueará su reingreso automático. Esta acción no se puede deshacer desde el CRM."
+    if (!deletePassword || !deletePassword.value.trim()) {
+      event.preventDefault();
+      deletePassword?.focus();
+      return;
+    }
+    const confirmed = window.confirm(
+      "Confirmá nuevamente: se eliminarán " + count + " prospecto(s) definitivamente."
     );
-    if (!ok) event.preventDefault();
+    if (!confirmed) event.preventDefault();
   });
+  const deleteModal = document.getElementById("crmBulkDeleteConfirmModal");
+  if (deleteModal) {
+    deleteModal.addEventListener("shown.bs.modal", function () {
+      syncIds();
+      deletePassword?.focus();
+    });
+    deleteModal.addEventListener("hidden.bs.modal", function () {
+      if (deletePassword) deletePassword.value = "";
+    });
+  }
   syncIds();
 });
 </script>
