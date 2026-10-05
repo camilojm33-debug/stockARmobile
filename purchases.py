@@ -383,12 +383,32 @@ def edit_supplier_purchase(supplier_id, purchase_id):
     if request.method == "POST":
         try:
             lines = _parse_purchase_lines()
+            old_items = list(purchase.items or [])
+            affected_ids = sorted(
+                {int(line["product_id"]) for line in lines}
+                | {int(item.product_id) for item in old_items}
+            )
+            locked_products = {
+                int(product.id): product
+                for product in _company_scope(
+                    db.session.query(Product),
+                    Product,
+                    company_id,
+                )
+                .filter(Product.id.in_(affected_ids))
+                .with_for_update()
+                .all()
+            }
+            if set(locked_products) != set(affected_ids):
+                missing = sorted(set(affected_ids) - set(locked_products))
+                raise ValueError(f"Productos no encontrados para actualizar la compra: {missing}")
+
             resolved_lines = []
             new_totals = {}
             for line in lines:
-                product = _company_scope(db.session.query(Product), Product, company_id).filter(Product.id == line["product_id"], Product.active.is_(True)).first()
-                if product is None:
-                    raise ValueError(f"Producto #{line['product_id']} no encontrado para esta empresa.")
+                product = locked_products[int(line["product_id"])]
+                if not product.active:
+                    raise ValueError(f"Producto #{line['product_id']} no está activo en esta empresa.")
                 resolved_lines.append((product, line))
                 if product.id not in new_totals:
                     new_totals[product.id] = [product, 0.0, 0.0]
@@ -396,16 +416,12 @@ def edit_supplier_purchase(supplier_id, purchase_id):
                 new_totals[product.id][2] += line["quantity"] * line["unit_cost"]
 
             old_totals = {}
-            for item in list(purchase.items or []):
-                product = _company_scope(db.session.query(Product), Product, company_id).filter(Product.id == item.product_id).first()
-                if product is None:
-                    raise ValueError(f"El producto #{item.product_id} asociado a la compra ya no existe.")
+            for item in old_items:
+                product = locked_products[int(item.product_id)]
                 if product.id not in old_totals:
                     old_totals[product.id] = [product, 0.0, 0.0]
                 old_totals[product.id][1] += float(item.quantity or 0)
                 old_totals[product.id][2] += float(item.quantity or 0) * float(item.unit_cost or 0)
-
-            affected_ids = set(old_totals) | set(new_totals)
             for product_id in affected_ids:
                 old_qty = old_totals.get(product_id, [None, 0.0, 0.0])[1]
                 new_qty = new_totals.get(product_id, [None, 0.0, 0.0])[1]
@@ -430,7 +446,11 @@ def edit_supplier_purchase(supplier_id, purchase_id):
                 db.session.add(PurchaseItem(purchase_order_id=purchase.id, product_id=product.id, quantity=line["quantity"], unit_cost=line["unit_cost"]))
             subtotal = sum(line["quantity"] * line["unit_cost"] for _, line in resolved_lines)
             purchase.supplier_id = supplier.id
-            purchase.status = (request.form.get("status") or purchase.status or "recibida").strip()
+            submitted_status = (request.form.get("status") or purchase.status or "recibida").strip().lower()
+            current_status = (purchase.status or "recibida").strip().lower()
+            if submitted_status != current_status:
+                raise ValueError("El estado de una compra no se puede cambiar desde la edición porque el stock ya fue aplicado. Gestioná una anulación/reversión por el flujo correspondiente.")
+            purchase.status = current_status
             purchase.note = (request.form.get("note") or "").strip() or None
             purchase.subtotal = subtotal
             purchase.total_amount = subtotal
