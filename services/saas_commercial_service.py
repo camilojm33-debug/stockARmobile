@@ -6,7 +6,7 @@ import json
 import re
 import secrets
 import smtplib
-from datetime import datetime, timezone
+from datetime import datetime, timezone, timedelta
 from email.message import EmailMessage
 from html import escape
 from io import BytesIO, StringIO
@@ -746,7 +746,7 @@ def _recover_stale_campaign_claims(db_session, campaign_id: int, now) -> int:
     """Return stale recipient claims to pending so a crashed worker can recover them."""
     from app import SaaSCampaignRecipient
 
-    cutoff = now - __import__("datetime").timedelta(minutes=30)
+    cutoff = now - timedelta(minutes=30)
     query = (
         db_session.query(SaaSCampaignRecipient)
         .filter(
@@ -793,6 +793,8 @@ def _claim_campaign_recipient(db_session, recipient_id: int, now) -> bool:
 
 def _finalize_campaign_status(campaign, recipients) -> str | None:
     """Set a terminal status only after all recipients leave pending/sending."""
+    from app import utcnow
+
     pending = sum(1 for recipient in recipients if recipient.status in {"pending", "sending"})
     if pending:
         return None
