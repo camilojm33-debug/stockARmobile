@@ -788,7 +788,8 @@ def _send_email(recipient, campaign) -> tuple[bool, str]:
         return False, "Envío comercial deshabilitado."
     host = _clean(current_app.config.get("SMTP_HOST"))
     user = _clean(current_app.config.get("SMTP_USER"))
-    if not host or not user:
+    password = current_app.config.get("SMTP_PASSWORD") or ""
+    if not host or not user or not password:
         return False, "SMTP comercial no configurado."
 
     if not recipient.tracking_token:
@@ -809,21 +810,26 @@ def _send_email(recipient, campaign) -> tuple[bool, str]:
     msg.add_alternative(_render_tracking_html(render_merge(campaign.body_html, recipient.lead), recipient), subtype="html")
 
     try:
-        with smtplib.SMTP(
-            host,
-            int(current_app.config.get("SMTP_PORT") or 587),
-            timeout=30,
-        ) as server:
-            if bool(current_app.config.get("SMTP_USE_TLS", True)):
+        port = int(current_app.config.get("SMTP_PORT") or 587)
+        use_tls = bool(current_app.config.get("SMTP_USE_TLS", True))
+        with smtplib.SMTP(host, port, timeout=30) as server:
+            server.ehlo()
+            if use_tls:
                 server.starttls()
-            server.login(user, current_app.config.get("SMTP_PASSWORD") or "")
+                server.ehlo()
+            server.login(user, password)
             server.send_message(msg)
-    except Exception:
-        # The caller handles the exception and records the failure without
-        # exposing SMTP credentials.
-        raise
+    except smtplib.SMTPAuthenticationError as exc:
+        return False, "SMTP rechazó la autenticación. Revisá usuario, contraseña o App Password."
+    except smtplib.SMTPServerDisconnected:
+        return False, "SMTP cerró la conexión antes de completar el envío."
+    except (OSError, TimeoutError) as exc:
+        return False, f"Error de conexión SMTP: {str(exc)[:180]}"
+    except smtplib.SMTPException as exc:
+        return False, f"Error SMTP: {str(exc)[:180]}"
+    except Exception as exc:
+        return False, f"Error de envío: {str(exc)[:180]}"
     return True, "sent"
-
 
 def _whatsapp_template_parameters(campaign, lead) -> list[str]:
     from flask import current_app
