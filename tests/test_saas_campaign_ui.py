@@ -60,3 +60,18 @@ def test_campaign_edit_invalidates_previous_recipient_audience():
     assert 'SaaSCampaignRecipient.campaign_id == campaign.id' in source
     assert 'campaign.target_count = 0' in source
     assert 'Ahora prepará nuevamente la audiencia.' in source
+
+
+def test_campaign_edit_modal_keeps_save_footer_visible():
+    template = (ROOT / "templates/saas/crm_campaign_detail.html").read_text(encoding="utf-8")
+    css = (ROOT / "static/assets/css/superadmin.css").read_text(encoding="utf-8")
+    assert 'id="editCampaignModal"' in template
+    assert 'name="body_html"' in template
+    assert 'type="submit"' in template
+    assert ">Guardar cambios</button>" in template
+    assert "#editCampaignModal .modal-content" in css
+    assert "#editCampaignModal form" in css
+    assert "#editCampaignModal .modal-body" in css
+    assert "#editCampaignModal .modal-footer" in css
+    assert "min-height:0" in css
+    assert "position:sticky" in css
