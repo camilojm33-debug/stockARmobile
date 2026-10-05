@@ -22,7 +22,7 @@ CONSENT_VALUES = {"opted_in", "opted_out", "unknown"}
 
 def _eligible_consent_values(channel: str) -> tuple[str, ...]:
     if channel == "email":
-        return ("unknown", "opted_in")
+        return ("opted_in",)
     if channel == "whatsapp":
         return ("opted_in",)
     raise ValueError("Canal de campaña no soportado.")
@@ -793,6 +793,8 @@ def _send_whatsapp(recipient, campaign) -> tuple[bool, str, str]:
     provider_id = ""
     if isinstance(messages, list) and messages and isinstance(messages[0], dict):
         provider_id = str(messages[0].get("id") or "").strip()
+    if not provider_id:
+        return False, "WhatsApp API no confirmó el ID del mensaje.", ""
     return True, "sent", provider_id
 
 
