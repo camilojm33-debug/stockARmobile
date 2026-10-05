@@ -75,6 +75,24 @@ class SaaSOpsService:
             query = query.filter(SaaSAlert.company_id == company_id)
         return query.first() is not None
 
+    @staticmethod
+    def _is_suppressed(db_session, *, email: str | None, phone: str | None, company_name: str | None) -> bool:
+        from app import SaaSLeadSuppression
+        query = db_session.query(SaaSLeadSuppression.id)
+        if email:
+            email_norm = str(email).strip().lower()
+            if query.filter(SaaSLeadSuppression.email == email_norm).first():
+                return True
+        if phone:
+            phone_norm = "".join(ch for ch in str(phone) if ch.isdigit())
+            if phone_norm and query.filter(SaaSLeadSuppression.phone == phone_norm).first():
+                return True
+        if not email and not phone and company_name:
+            name_norm = " ".join(str(company_name).strip().lower().split())
+            if name_norm and query.filter(SaaSLeadSuppression.company_name == name_norm).first():
+                return True
+        return False
+
     @classmethod
     def create_or_update_lead(
         cls,
@@ -93,6 +111,9 @@ class SaaSOpsService:
 
         actor_id = cls._default_actor_id(db_session, preferred_user_id)
         if actor_id is None:
+            return None
+
+        if cls._is_suppressed(db_session, email=email, phone=phone, company_name=company_name):
             return None
 
         open_lead = cls._open_lead_for_identity(db_session, email=email, company_name=company_name)
