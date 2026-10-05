@@ -25,7 +25,7 @@ def _sale(company_id, client_id, total, status, when):
 def test_resumen_ventas_excludes_cancelled_and_annulled_sales(app):
     with app.app_context():
         company = Company(name="Empresa Métricas", active=True)
-        client = Client(name="Cliente Métricas", active=True, company=company)
+        client = Client(name="Cliente Métricas", active=True, company_id=company.id)
         product = Product(
             company=company,
             barcode="MET-001",
@@ -67,7 +67,7 @@ def test_resumen_ventas_excludes_cancelled_and_annulled_sales(app):
 def test_clientes_inactivos_ignores_cancelled_and_annulled_sales(app):
     with app.app_context():
         company = Company(name="Empresa Inactivos", active=True)
-        client = Client(name="Cliente Inactivo", active=True, company=company)
+        client = Client(name="Cliente Inactivo", active=True, company_id=company.id)
         product = Product(
             company=company,
             barcode="INA-001",
