@@ -78,6 +78,19 @@ def normalize_email(value: str | None) -> str | None:
         return None
     return email if EMAIL_RE.match(email) else None
 
+def _limit_import_text(value, limit: int) -> str | None:
+    text = _clean(value)
+    if not text:
+        return None
+    return text[:limit]
+
+
+def _limit_import_phone(value) -> str | None:
+    phone = normalize_phone(value)
+    if not phone:
+        return None
+    return phone if len(phone) <= 40 else None
+
 
 def _campaign_email_is_valid(lead, destination: str | None = None) -> bool:
     email = normalize_email(getattr(lead, "email", None))
@@ -155,29 +168,33 @@ def _build_row(raw: dict, header_map: dict) -> dict:
         return _clean(raw.get(source)) if source else ""
     email_raw = value("email")
     email = normalize_email(email_raw)
+    phone_raw = value("phone")
+    whatsapp_raw = value("whatsapp")
+    phone = _limit_import_phone(phone_raw)
+    whatsapp = _limit_import_phone(whatsapp_raw)
     row = {
-        "company_name": value("company_name"),
-        "contact_name": value("contact_name") or "Contacto comercial",
-        "email": email,
-        "phone": normalize_phone(value("phone")),
-        "whatsapp": normalize_phone(value("whatsapp")),
-        "industry": value("industry"),
-        "subindustry": value("subindustry"),
-        "province": value("province"),
-        "locality": value("locality"),
-        "address": value("address"),
-        "website": value("website"),
-        "instagram": value("instagram"),
-        "facebook": value("facebook"),
-        "source": value("source") or "import_publico",
-        "source_url": value("source_url"),
-        "segment": value("segment") or value("industry"),
+        "company_name": _limit_import_text(value("company_name"), 160) or "",
+        "contact_name": _limit_import_text(value("contact_name"), 160) or "Contacto comercial",
+        "email": email[:160] if email else None,
+        "phone": phone,
+        "whatsapp": whatsapp,
+        "industry": _limit_import_text(value("industry"), 100),
+        "subindustry": _limit_import_text(value("subindustry"), 100),
+        "province": _limit_import_text(value("province"), 100),
+        "locality": _limit_import_text(value("locality"), 120),
+        "address": _limit_import_text(value("address"), 255),
+        "website": _limit_import_text(value("website"), 255),
+        "instagram": _limit_import_text(value("instagram"), 255),
+        "facebook": _limit_import_text(value("facebook"), 255),
+        "source": _limit_import_text(value("source"), 80) or "import_publico",
+        "source_url": _limit_import_text(value("source_url"), 500),
+        "segment": _limit_import_text(value("segment") or value("industry"), 100),
         "email_consent_status": parse_consent(value("email_consent_status")),
         "whatsapp_consent_status": parse_consent(value("whatsapp_consent_status")),
         "phone_consent_status": parse_consent(value("phone_consent_status")),
         "do_not_contact": parse_bool(value("do_not_contact")),
         "email_status": "valid" if email else ("invalid" if email_raw else "unknown"),
-        "phone_status": "valid" if value("phone") else "unknown",
+        "phone_status": "valid" if phone else ("invalid" if phone_raw else "unknown"),
     }
     row["lead_score"] = lead_score(row)
     row["valid"] = bool(row["company_name"] and (row["email"] or row["phone"] or row["whatsapp"] or row["website"]))
