@@ -236,3 +236,60 @@ def test_whatsapp_campaign_requires_connection_before_queue(app):
 
         with pytest.raises(ValueError, match="WhatsApp no está conectado"):
             prepare_recipients(campaign.id, company_id=company.id)
+
+
+def test_queued_campaign_can_be_cancelled_before_delivery(app):
+    from app import Company, User, db
+
+    with app.app_context():
+        company = Company(name="Cancel Co", active=True)
+        db.session.add(company)
+        db.session.flush()
+        user = User(
+            username="cancel-admin",
+            email="cancel@example.com",
+            role="admin",
+            active=True,
+            company_id=company.id,
+        )
+        user.set_password("password123")
+        db.session.add(user)
+        db.session.flush()
+
+        campaign = CampaignService.create_draft(
+            company_id=company.id,
+            user_id=user.id,
+            title="Cancelar",
+            objective="Prueba",
+            campaign_type="general",
+            content="Hola",
+            system_data={"channel": "email"},
+            audience_segment="clientes activos",
+            audience_count=0,
+        )
+        db.session.commit()
+        CampaignService.transition(
+            company_id=company.id,
+            campaign_id=campaign.id,
+            target_status="PENDIENTE_APROBACION",
+            user_id=user.id,
+        )
+        CampaignService.transition(
+            company_id=company.id,
+            campaign_id=campaign.id,
+            target_status="APROBADA",
+            user_id=user.id,
+        )
+        CampaignService.transition(
+            company_id=company.id,
+            campaign_id=campaign.id,
+            target_status="EN_PREPARACION",
+            user_id=user.id,
+        )
+        CampaignService.transition(
+            company_id=company.id,
+            campaign_id=campaign.id,
+            target_status="CANCELADA",
+            user_id=user.id,
+        )
+        assert campaign.status == "CANCELADA"
