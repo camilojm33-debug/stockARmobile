@@ -3014,11 +3014,27 @@ def crm_lead_contact_preferences(lead_id):
     lead.phone_consent_status = consent.phone_status
     if not consent.unsubscribe_token:
         consent.unsubscribe_token = __import__("secrets").token_urlsafe(48)
-    if consent.email_status == "opted_out":
-        consent.revoked_at = consent.revoked_at or utcnow()
-    elif consent.email_status == "opted_in":
-        consent.granted_at = utcnow()
+
+    manual_reason = (request.form.get("consent_reason") or "").strip()[:500]
+    has_opt_in = "opted_in" in {
+        consent.email_status,
+        consent.whatsapp_status,
+        consent.phone_status,
+    }
+    if has_opt_in and len(manual_reason) < 5:
+        flash("Para registrar un permiso manual necesitás indicar el motivo o cómo fue obtenido.", "warning")
+        return _redirect_back("saas.crm_panel")
+
+    now = utcnow()
+    if consent.email_status == "opted_out" or consent.whatsapp_status == "opted_out" or consent.phone_status == "opted_out":
+        consent.revoked_at = now
+    if has_opt_in:
+        consent.granted_at = now
         consent.revoked_at = None
+        if consent.email_status == "opted_in":
+            consent.email_source = "superadmin_manual"
+        if consent.whatsapp_status == "opted_in":
+            consent.whatsapp_source = "superadmin_manual"
     if request.form.get("do_not_contact") == "1":
         lead.do_not_contact = True
         lead.do_not_contact_at = lead.do_not_contact_at or utcnow()
@@ -3030,11 +3046,92 @@ def crm_lead_contact_preferences(lead_id):
         action="saas_lead_contact_preferences_update",
         entity="saas_lead",
         entity_id=lead.id,
-        detail=f"Preferencias actualizadas: email={lead.email_consent_status}; whatsapp={lead.whatsapp_consent_status}; llamada={lead.phone_consent_status}; no_contactar={lead.do_not_contact}.",
+        detail=(
+            f"Preferencias actualizadas manualmente: email={lead.email_consent_status}; "
+            f"whatsapp={lead.whatsapp_consent_status}; llamada={lead.phone_consent_status}; "
+            f"no_contactar={lead.do_not_contact}; motivo={manual_reason or 'sin motivo informado'}."
+        ),
         user_id=current_user.id,
     )
     db.session.commit()
     flash("Preferencias de contacto actualizadas.", "success")
+    return _redirect_back("saas.crm_panel")
+
+
+@bp.post("/crm/leads/bulk-contact-preferences")
+@superadmin_required
+def crm_leads_bulk_contact_preferences():
+    from app import SaaSLead, SaaSLeadConsent, db, record_audit, utcnow
+
+    _require_superadmin()
+    action = (request.form.get("action") or "").strip().lower()
+    if action not in {"opt_in_email", "opt_in_whatsapp", "opt_in_both", "opt_out_all"}:
+        flash("Acción de consentimiento no válida.", "danger")
+        return _redirect_back("saas.crm_panel")
+
+    raw_ids = request.form.getlist("lead_ids")
+    ids = []
+    for raw_id in raw_ids:
+        try:
+            value = int(raw_id)
+        except (TypeError, ValueError):
+            continue
+        if value > 0 and value not in ids:
+            ids.append(value)
+    ids = ids[:100]
+    if not ids:
+        flash("Seleccioná al menos un prospecto.", "warning")
+        return _redirect_back("saas.crm_panel")
+
+    reason = (request.form.get("consent_reason") or "").strip()[:500]
+    if len(reason) < 5:
+        flash("El motivo es obligatorio para dejar trazabilidad del cambio manual.", "warning")
+        return _redirect_back("saas.crm_panel")
+
+    if not _require_superadmin_step_up():
+        return _redirect_back("saas.crm_panel")
+
+    leads = SaaSLead.query.filter(SaaSLead.id.in_(ids)).order_by(SaaSLead.id.asc()).all()
+    now = utcnow()
+    changed = 0
+    for lead in leads:
+        consent = lead.consent or SaaSLeadConsent(lead_id=lead.id)
+        if not consent.unsubscribe_token:
+            consent.unsubscribe_token = secrets.token_urlsafe(48)
+
+        if action in {"opt_in_email", "opt_in_both"}:
+            lead.email_consent_status = "opted_in"
+            consent.email_status = "opted_in"
+            consent.email_source = "superadmin_manual"
+        if action in {"opt_in_whatsapp", "opt_in_both"}:
+            lead.whatsapp_consent_status = "opted_in"
+            consent.whatsapp_status = "opted_in"
+            consent.whatsapp_source = "superadmin_manual"
+        if action == "opt_out_all":
+            lead.email_consent_status = "opted_out"
+            lead.whatsapp_consent_status = "opted_out"
+            lead.phone_consent_status = "opted_out"
+            consent.email_status = "opted_out"
+            consent.whatsapp_status = "opted_out"
+            consent.phone_status = "opted_out"
+            consent.revoked_at = now
+        if action != "opt_out_all":
+            consent.granted_at = now
+            consent.revoked_at = None
+
+        db.session.add(consent)
+        changed += 1
+        record_audit(
+            action="saas_lead_manual_consent_bulk",
+            entity="saas_lead",
+            entity_id=lead.id,
+            detail=f"Consentimiento manual: accion={action}; motivo={reason}.",
+            user_id=current_user.id,
+            company_id=lead.company_id,
+        )
+
+    db.session.commit()
+    flash(f"Consentimiento manual actualizado en {changed} prospecto(s). Ahora podés preparar la audiencia.", "success")
     return _redirect_back("saas.crm_panel")
 
 
