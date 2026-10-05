@@ -75,3 +75,22 @@ def test_campaign_edit_modal_keeps_save_footer_visible():
     assert "#editCampaignModal .modal-footer" in css
     assert "min-height:0" in css
     assert "position:sticky" in css
+
+
+def test_campaign_creation_modal_and_edit_modal_keep_footer_outside_scroll():
+    create_template = (ROOT / "templates/saas/crm_campaigns.html").read_text(encoding="utf-8")
+    edit_template = (ROOT / "templates/saas/crm_campaign_detail.html").read_text(encoding="utf-8")
+    css = (ROOT / "static/assets/css/superadmin.css").read_text(encoding="utf-8")
+
+    assert 'id="newCampaignModal"' in create_template
+    assert '>Crear borrador y continuar</button>' in create_template
+    assert 'id="editCampaignModal"' in edit_template
+    assert '>Guardar cambios</button>' in edit_template
+    for modal_id in ("newCampaignModal", "editCampaignModal"):
+        assert f"#{modal_id} .modal-content" in css
+        assert f"#{modal_id} .modal-body" in css
+        assert f"#{modal_id} .modal-footer" in css
+    assert "overflow-y:auto !important" in css
+    assert "overflow:hidden !important" in css
+    assert "max-height:none !important" in css
+    assert "height:calc(100dvh - 24px)" in css
