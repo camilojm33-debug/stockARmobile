@@ -233,6 +233,64 @@
   .superadmin-page #newCampaignModal .modal-content{max-height:calc(100vh - 10px);}
   .superadmin-page #newCampaignModal .campaign-submit-help{display:none;}
 }
+
+/* Editar campaña: el pie debe permanecer visible aunque el formulario sea largo. */
+.superadmin-page #editCampaignModal .modal-dialog{
+  max-width:min(1180px, calc(100vw - 28px));
+  height:calc(100vh - 24px);
+  margin:.75rem auto;
+}
+.superadmin-page #editCampaignModal .modal-content{
+  height:100%;
+  max-height:calc(100vh - 24px);
+  display:flex;
+  flex-direction:column;
+  min-height:0;
+}
+.superadmin-page #editCampaignModal form{
+  display:flex;
+  flex-direction:column;
+  min-height:0;
+  height:100%;
+}
+.superadmin-page #editCampaignModal .modal-body{
+  flex:1 1 auto;
+  min-height:0;
+  overflow-y:auto;
+  overscroll-behavior:contain;
+}
+.superadmin-page #editCampaignModal .modal-footer{
+  flex:0 0 auto;
+  position:sticky;
+  bottom:0;
+  z-index:4;
+  background:var(--app-panel,#fff);
+  border-top:1px solid var(--app-line);
+  box-shadow:0 -6px 18px rgba(15,23,42,.06);
+}
+.superadmin-page #editCampaignModal .modal-footer .campaign-submit-help{
+  margin-right:auto;
+  color:var(--app-muted);
+  font-size:.78rem;
+}
+@media (max-width:640px){
+  .superadmin-page #editCampaignModal .modal-dialog{
+    height:calc(100vh - 10px);
+    margin:5px auto;
+  }
+  .superadmin-page #editCampaignModal .modal-content{
+    max-height:calc(100vh - 10px);
+  }
+  .superadmin-page #editCampaignModal .modal-footer{
+    padding:.75rem;
+  }
+  .superadmin-page #editCampaignModal .modal-footer .campaign-submit-help{
+    display:none;
+  }
+  .superadmin-page #editCampaignModal .modal-footer .btn{
+    flex:1 1 0;
+  }
+}
 .superadmin-page .campaign-form-section{
   padding:14px 0 4px;
 }
