@@ -1595,6 +1595,12 @@ def test_quotes_builder_form_renders_productive_layout():
     client = stock_app.app.test_client()
     client.post("/auth/login", data={"username": "empresa_admin", "password": "admin123"})
 
+    with stock_app.app.app_context():
+        company = Company.query.filter_by(name="Empresa Demo").first()
+        assert company is not None
+        enable_quotes_module(company, enabled=True)
+        db.session.commit()
+
     response = client.get("/presupuestos/nuevo")
     assert response.status_code == 200
     html = response.get_data(as_text=True)
