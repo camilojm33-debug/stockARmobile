@@ -107,6 +107,10 @@ services:
         fromDatabase:
           name: stockarmobile-db
           property: connectionString
+      - key: SAAS_CAMPAIGN_WORKER_URL
+        value: https://www.stockarmobile.com/internal/crm/campaign-worker
+      - key: SAAS_CAMPAIGN_WORKER_TOKEN
+        sync: false
       - key: SECRET_KEY
         generateValue: true
       - key: APP_URL
