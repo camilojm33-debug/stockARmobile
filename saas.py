@@ -2469,6 +2469,7 @@ def crm_campaign_detail(campaign_id):
         marketing_send_enabled=str(current_app.config.get("SAAS_MARKETING_SEND_ENABLED", "0")).lower() in {"1", "true", "yes", "on"},
         smtp_configured=bool(current_app.config.get("SMTP_HOST") and current_app.config.get("SMTP_USER")),
         preflight=campaign_preflight(db.session, campaign),
+        consent_candidates=consent_candidates,
     )
 
 
