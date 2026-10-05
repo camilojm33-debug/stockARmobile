@@ -547,6 +547,9 @@
 document.addEventListener("DOMContentLoaded", function () {
   const form = document.getElementById("crmBulkConsentForm");
   const idsBox = document.getElementById("crmBulkLeadIds");
+  const deleteForm = document.getElementById("crmBulkDeleteForm");
+  const deleteIdsBox = document.getElementById("crmBulkDeleteIds");
+  const deleteButton = document.getElementById("crmBulkDeleteButton");
   const selectAll = document.getElementById("crmSelectAllLeads");
   const syncIds = () => {
     if (!form || !idsBox) return;
@@ -558,9 +561,24 @@ document.addEventListener("DOMContentLoaded", function () {
       input.value = el.value;
       idsBox.appendChild(input);
     });
-    const count = document.querySelectorAll(".crm-lead-select:checked").length;
+    const selected = document.querySelectorAll(".crm-lead-select:checked");
+    const count = selected.length;
     const button = form.querySelector('button[type="submit"]');
     if (button) button.innerHTML = '<i class="bi bi-shield-check me-1"></i>Aplicar (' + count + ')';
+    if (deleteIdsBox) {
+      deleteIdsBox.innerHTML = "";
+      selected.forEach((el) => {
+        const input = document.createElement("input");
+        input.type = "hidden";
+        input.name = "lead_ids";
+        input.value = el.value;
+        deleteIdsBox.appendChild(input);
+      });
+    }
+    if (deleteButton) {
+      deleteButton.disabled = count === 0;
+      deleteButton.innerHTML = '<i class="bi bi-trash3 me-1"></i>Eliminar ' + (count ? '(' + count + ')' : 'seleccionados');
+    }
     if (selectAll) {
       const all = document.querySelectorAll(".crm-lead-select").length;
       selectAll.checked = all > 0 && count === all;
@@ -578,6 +596,20 @@ document.addEventListener("DOMContentLoaded", function () {
       event.preventDefault();
       alert("Seleccioná al menos un prospecto.");
     }
+  });
+  if (deleteForm) deleteForm.addEventListener("submit", function (event) {
+    syncIds();
+    const count = document.querySelectorAll(".crm-lead-select:checked").length;
+    if (!count) {
+      event.preventDefault();
+      alert("Seleccioná al menos un prospecto.");
+      return;
+    }
+    const ok = window.confirm(
+      "Vas a eliminar " + count + " prospecto(s) definitivamente. " +
+      "También se bloqueará su reingreso automático. Esta acción no se puede deshacer desde el CRM."
+    );
+    if (!ok) event.preventDefault();
   });
   syncIds();
 });
