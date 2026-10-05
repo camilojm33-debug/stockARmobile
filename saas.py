@@ -2320,11 +2320,18 @@ def crm_campaign_detail(campaign_id):
 
     _require_superadmin()
     campaign = SaaSCampaign.query.filter_by(id=campaign_id).first_or_404()
+    try:
+        segment_filters = json.loads(campaign.segment_json or "{}")
+    except (TypeError, ValueError):
+        segment_filters = {}
+    if not isinstance(segment_filters, dict):
+        segment_filters = {}
     return render_template(
         "saas/crm_campaign_detail.html",
         campaign=campaign,
         metrics=campaign_metrics(db.session, campaign.id),
         audience=campaign_audience_metrics(db.session, campaign),
+        segment_filters=segment_filters,
         marketing_send_enabled=str(current_app.config.get("SAAS_MARKETING_SEND_ENABLED", "0")).lower() in {"1", "true", "yes", "on"},
         smtp_configured=bool(current_app.config.get("SMTP_HOST") and current_app.config.get("SMTP_USER")),
     )
