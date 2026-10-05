@@ -88,6 +88,11 @@ def campaign_preflight(db_session, campaign) -> dict:
     if email_channel and smtp_configured:
         smtp_ok, smtp_detail = _smtp_probe()
     email_eligible = int(audience.get("eligible_email") or 0)
+    if email_channel:
+        smtp_endpoint = f"{host or 'sin-host'}:{port}"
+        smtp_detail = f"{smtp_detail} Servidor configurado: {smtp_endpoint}."
+        if (not smtp_ok) and port == 587:
+            smtp_detail += " Si este proveedor usa SSL directo, la alternativa habitual es puerto 465."
     add("email_config", "Email", (not email_channel) or smtp_ok, smtp_detail if email_channel else "No requerido.")
     add("email_audience", "Email elegible", (not email_channel) or email_eligible > 0, f"{email_eligible} con permiso." if email_eligible > 0 or not email_channel else "No hay emails con permiso registrado.")
 
