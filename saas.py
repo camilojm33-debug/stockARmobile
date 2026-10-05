@@ -2746,6 +2746,73 @@ def crm_campaign_send_now(campaign_id):
     return redirect(url_for("saas.crm_campaign_detail", campaign_id=campaign_id))
 
 
+@bp.post("/crm/campaigns/<int:campaign_id>/retry-failed")
+@superadmin_required
+def crm_campaign_retry_failed(campaign_id):
+    from app import SaaSCampaign, SaaSCampaignRecipient, db, record_audit, utcnow
+    from services.saas_campaign_preflight import campaign_preflight
+    from services.saas_commercial_service import dispatch_due_campaigns
+
+    campaign = SaaSCampaign.query.filter_by(id=campaign_id).first_or_404()
+    if campaign.status not in {"FALLIDA", "ENVIADA_PARCIAL"}:
+        flash("Solo se pueden reintentar campañas fallidas o con envío parcial.", "warning")
+        return redirect(url_for("saas.crm_campaign_detail", campaign_id=campaign_id))
+
+    failed = SaaSCampaignRecipient.query.filter_by(campaign_id=campaign.id, status="failed").all()
+    if not failed:
+        flash("No hay destinatarios fallidos para reintentar.", "warning")
+        return redirect(url_for("saas.crm_campaign_detail", campaign_id=campaign_id))
+
+    preflight = campaign_preflight(db.session, campaign)
+    if not preflight["ready"]:
+        first = preflight["issues"][0]
+        flash(f"No se puede reintentar: {first['label']}. {first['detail']}", "warning")
+        return redirect(url_for("saas.crm_campaign_detail", campaign_id=campaign_id))
+
+    if not _require_superadmin_step_up():
+        return redirect(url_for("saas.crm_campaign_detail", campaign_id=campaign_id))
+
+    retry_count = len(failed)
+    for recipient in failed:
+        recipient.status = "pending"
+        recipient.error_reason = None
+        recipient.failed_at = None
+        recipient.updated_at = utcnow()
+
+    campaign.failed_count = max(0, int(campaign.failed_count or 0) - retry_count)
+    campaign.status = "APROBADA"
+    campaign.scheduled_at = utcnow()
+    campaign.finished_at = None
+    db.session.commit()
+
+    try:
+        result = dispatch_due_campaigns(db.session, limit=1, per_campaign=50)
+    except Exception as exc:
+        db.session.rollback()
+        current_app.logger.exception("Commercial campaign retry failed")
+        flash(f"La campaña quedó preparada, pero el reintento falló: {str(exc)[:300]}", "danger")
+        return redirect(url_for("saas.crm_campaign_detail", campaign_id=campaign_id))
+
+    record_audit(
+        action="saas_campaign_retry_failed",
+        entity="saas_campaign",
+        entity_id=campaign.id,
+        detail=(
+            f"Reintento de destinatarios fallidos: reintentados={retry_count}; "
+            f"enviados={result.get('sent', 0)}; fallidos={result.get('failed', 0)}; "
+            f"omitidos={result.get('skipped', 0)}."
+        ),
+        user_id=current_user.id,
+    )
+    db.session.commit()
+    flash(
+        f"Reintento ejecutado: {result.get('sent', 0)} enviados, "
+        f"{result.get('failed', 0)} fallidos, {result.get('skipped', 0)} omitidos.",
+        "success" if not result.get("failed") else "warning",
+    )
+    return redirect(url_for("saas.crm_campaign_detail", campaign_id=campaign_id))
+
+
 @bp.post("/crm/campaigns/<int:campaign_id>/delete")
 @superadmin_required
 def crm_campaign_delete(campaign_id):
