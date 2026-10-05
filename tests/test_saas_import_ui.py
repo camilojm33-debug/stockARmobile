@@ -25,4 +25,5 @@ def test_superadmin_manual_consent_controls_are_explicit_and_audited():
     assert 'Autorizar WhatsApp' in template
     assert 'Autorizar Email + WhatsApp' in template
     assert 'Quitar permisos / bloquear' in template
+    assert 'email_status != "invalid"' in source
     assert 'name="step_up_password"' in template
