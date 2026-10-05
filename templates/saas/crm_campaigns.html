@@ -2,29 +2,247 @@
 {% block title %}Campañas comerciales · SuperAdmin{% endblock %}
 {% block content %}
 <div class="app-shell superadmin-page">
-  <div class="d-flex flex-wrap justify-content-between align-items-center gap-3 mb-4">
-    <div><span class="page-kicker"><i class="bi bi-megaphone"></i> Comercial</span><h1 class="h3 fw-bold mb-1">Campañas de captación</h1><p class="text-muted mb-0">Separadas del Marketing IA de los comercios clientes.</p></div>
-    <div class="d-flex gap-2"><a class="btn btn-outline-secondary" href="{{ url_for('saas.crm_panel') }}">CRM</a><button class="btn btn-primary" data-bs-toggle="modal" data-bs-target="#newCampaignModal"><i class="bi bi-plus-lg me-1"></i>Nueva campaña</button></div>
-  </div>
-  <div class="row g-3 mb-4">{% for label,value in [('Borradores',summary.BORRADOR),('Aprobadas',summary.APROBADA),('Enviando',summary.ENVIANDO),('Enviadas',summary.ENVIADA)] %}<div class="col-6 col-xl-3"><div class="card app-card h-100"><div class="card-body"><div class="small text-muted text-uppercase fw-semibold">{{ label }}</div><div class="fs-3 fw-bold">{{ value }}</div></div></div></div>{% endfor %}</div>
-  <div class="card app-card"><div class="table-responsive"><table class="table align-middle mb-0"><thead><tr><th>Campaña</th><th>Canal</th><th>Estado</th><th>Segmentación</th><th>Dest.</th><th>Enviados</th><th>Fallos</th><th></th></tr></thead><tbody>{% for c in campaigns %}<tr><td><strong>{{ c.name }}</strong><div class="small text-muted">{{ c.subject }}</div></td><td>{{ c.channel }}</td><td><span class="badge text-bg-secondary">{{ c.status }}</span></td><td><code>{{ c.segment_json }}</code></td><td>{{ c.target_count }}</td><td>{{ c.sent_count }}</td><td>{{ c.failed_count }}</td><td><a class="btn btn-sm btn-outline-primary" href="{{ url_for('saas.crm_campaign_detail',campaign_id=c.id) }}">Abrir</a></td></tr>{% else %}<tr><td colspan="8" class="text-center text-muted py-4">Todavía no hay campañas.</td></tr>{% endfor %}</tbody></table></div></div>
+  <section class="campaigns-hero p-4 p-lg-5 mb-4">
+    <div class="position-relative z-1 d-flex flex-wrap justify-content-between align-items-center gap-4">
+      <div class="d-flex align-items-start gap-3">
+        <div class="campaigns-hero-icon"><i class="bi bi-megaphone-fill"></i></div>
+        <div>
+          <span class="page-kicker"><i class="bi bi-broadcast-pin"></i> CRM comercial · SuperAdmin</span>
+          <h1 class="display-6 fw-bold mb-2">Campañas de captación</h1>
+          <p class="text-muted mb-0" style="max-width:720px;">Creá, prepará, aprobá y controlá las campañas comerciales de StockArMobile desde un solo lugar.</p>
+        </div>
+      </div>
+      <div class="d-flex flex-wrap gap-2">
+        <a class="btn btn-outline-secondary" href="{{ url_for('saas.crm_panel') }}"><i class="bi bi-arrow-left me-1"></i>Volver al CRM</a>
+        <button class="btn btn-primary px-3" data-bs-toggle="modal" data-bs-target="#newCampaignModal"><i class="bi bi-plus-lg me-1"></i>Nueva campaña</button>
+      </div>
+    </div>
+    <div class="position-relative z-1 mt-4">
+      <div class="campaign-readiness">
+        <span class="ready-item"><i class="bi bi-envelope-check"></i> Gmail {{ 'listo' if smtp_configured else 'a revisar' }}</span>
+        <span class="ready-item"><i class="bi bi-lightning-charge"></i> Motor comercial {{ 'habilitado' if marketing_send_enabled else 'deshabilitado' }}</span>
+        <span class="ready-item"><i class="bi bi-shield-check"></i> Consentimiento por canal</span>
+      </div>
+    </div>
+  </section>
+
+  <section class="row g-3 mb-4" aria-label="Resumen de campañas">
+    {% for label,value,icon,kind in [
+      ('Total', summary.TOTAL, 'bi-grid-1x2-fill', ''),
+      ('Borradores', summary.BORRADOR, 'bi-pencil-square', ''),
+      ('En curso', summary.EN_CURSO, 'bi-send-check-fill', ''),
+      ('Finalizadas', summary.FINALIZADAS, 'bi-check2-all', ''),
+      ('Incidencias', summary.INCIDENCIAS, 'bi-exclamation-triangle-fill', 'danger')
+    ] %}
+    <div class="col-6 col-xl">
+      <article class="campaign-kpi h-100 {{ 'border-danger-subtle' if kind == 'danger' else '' }}">
+        <div class="d-flex justify-content-between align-items-start">
+          <div class="small text-muted text-uppercase fw-bold" style="letter-spacing:.05em;">{{ label }}</div>
+          <div class="kpi-icon"><i class="bi {{ icon }}"></i></div>
+        </div>
+        <div class="kpi-value">{{ value }}</div>
+      </article>
+    </div>
+    {% endfor %}
+  </section>
+
+  <section class="campaign-table-card mb-4">
+    <div class="campaign-toolbar">
+      <div>
+        <div class="fw-bold">Tus campañas</div>
+        <div class="small text-muted">Las más recientes aparecen primero. Abrí una campaña para revisar audiencia, preparación y resultados.</div>
+      </div>
+      <span class="campaign-meta-pill"><i class="bi bi-database"></i>{{ campaigns|length }} mostradas</span>
+    </div>
+    <div class="table-responsive">
+      <table class="table campaign-table mb-0 align-middle">
+        <thead>
+          <tr>
+            <th>Campaña</th>
+            <th>Canal</th>
+            <th>Estado</th>
+            <th>Audiencia</th>
+            <th>Envío</th>
+            <th>Programación</th>
+            <th></th>
+          </tr>
+        </thead>
+        <tbody>
+        {% for c in campaigns %}
+          {% set sent_pct = ((c.sent_count / c.target_count) * 100)|round(0, 'floor') if c.target_count else 0 %}
+          {% set sent_pct = 100 if sent_pct > 100 else sent_pct %}
+          <tr>
+            <td>
+              <div class="campaign-name">
+                <div class="campaign-name-icon"><i class="bi bi-megaphone"></i></div>
+                <div class="min-w-0">
+                  <div class="fw-bold text-truncate" style="max-width:320px;">{{ c.name }}</div>
+                  <div class="small text-muted text-truncate" style="max-width:320px;">{{ c.subject }}</div>
+                </div>
+              </div>
+            </td>
+            <td>
+              <span class="campaign-channel">
+                <i class="bi {{ 'bi-envelope' if c.channel == 'email' else 'bi-whatsapp' if c.channel == 'whatsapp' else 'bi-intersect' }}"></i>
+                {{ 'Email' if c.channel == 'email' else 'WhatsApp' if c.channel == 'whatsapp' else 'Email + WhatsApp' }}
+              </span>
+            </td>
+            <td>
+              {% if c.status == 'BORRADOR' %}
+                <span class="campaign-status status-draft"><i class="bi bi-pencil"></i>Borrador</span>
+              {% elif c.status == 'APROBADA' %}
+                <span class="campaign-status status-approved"><i class="bi bi-check-circle"></i>Aprobada</span>
+              {% elif c.status == 'ENVIANDO' %}
+                <span class="campaign-status status-sending"><i class="bi bi-arrow-repeat"></i>Enviando</span>
+              {% elif c.status == 'ENVIADA' %}
+                <span class="campaign-status status-sent"><i class="bi bi-check2-all"></i>Enviada</span>
+              {% elif c.status == 'ENVIADA_PARCIAL' %}
+                <span class="campaign-status status-partial"><i class="bi bi-exclamation-circle"></i>Parcial</span>
+              {% elif c.status == 'FALLIDA' %}
+                <span class="campaign-status status-failed"><i class="bi bi-x-octagon"></i>Fallida</span>
+              {% elif c.status == 'SIN_ENVIO' %}
+                <span class="campaign-status status-empty"><i class="bi bi-slash-circle"></i>Sin envío</span>
+              {% elif c.status == 'CANCELADA' %}
+                <span class="campaign-status status-cancelled"><i class="bi bi-x-circle"></i>Cancelada</span>
+              {% else %}
+                <span class="campaign-status status-empty"><i class="bi bi-question-circle"></i>{{ c.status }}</span>
+              {% endif %}
+            </td>
+            <td>
+              <div class="fw-bold">{{ c.target_count }}</div>
+              <div class="small text-muted">{{ c.skipped_count }} omitidos</div>
+            </td>
+            <td>
+              <div class="campaign-progress">
+                <div class="d-flex justify-content-between small mb-1">
+                  <span class="text-muted">Enviados</span><strong>{{ c.sent_count }}</strong>
+                </div>
+                <div class="progress"><div class="progress-bar" role="progressbar" style="width:{{ sent_pct }}%;"></div></div>
+                <div class="small text-muted mt-1">{{ c.failed_count }} fallos</div>
+              </div>
+            </td>
+            <td class="small">
+              {% if c.scheduled_at %}
+                <div class="fw-semibold"><i class="bi bi-calendar-event me-1"></i>{{ c.scheduled_at.strftime('%d/%m/%Y') }}</div>
+                <div class="text-muted">{{ c.scheduled_at.strftime('%H:%M') }} hs</div>
+              {% else %}
+                <span class="text-muted">Sin programar</span>
+              {% endif %}
+            </td>
+            <td class="text-end">
+              <a class="btn btn-sm btn-outline-primary px-3" href="{{ url_for('saas.crm_campaign_detail',campaign_id=c.id) }}">Abrir <i class="bi bi-arrow-right ms-1"></i></a>
+            </td>
+          </tr>
+        {% else %}
+          <tr><td colspan="7">
+            <div class="campaign-empty">
+              <div class="campaign-empty-icon mb-3"><i class="bi bi-megaphone"></i></div>
+              <h2 class="h5 fw-bold mb-2">Todavía no hay campañas</h2>
+              <p class="text-muted mb-3">Creá la primera campaña comercial para comenzar a trabajar la captación de prospectos.</p>
+              <button class="btn btn-primary" data-bs-toggle="modal" data-bs-target="#newCampaignModal"><i class="bi bi-plus-lg me-1"></i>Crear primera campaña</button>
+            </div>
+          </td></tr>
+        {% endfor %}
+        </tbody>
+      </table>
+    </div>
+  </section>
 </div>
-<div class="modal fade" id="newCampaignModal" tabindex="-1"><div class="modal-dialog modal-lg"><div class="modal-content"><form method="post">
-<div class="modal-header"><h5 class="modal-title">Nueva campaña</h5><button type="button" class="btn-close" data-bs-dismiss="modal"></button></div>
-<div class="modal-body"><input type="hidden" name="csrf_token" value="{{ csrf_token() }}"><div class="row g-3">
-<div class="col-md-8"><label class="form-label">Nombre</label><input class="form-control" name="name" required></div>
-<div class="col-md-4"><label class="form-label">Canal</label><select class="form-select" name="channel"><option value="email">Email</option><option value="whatsapp">WhatsApp</option><option value="both">Email + WhatsApp</option></select></div>
-<div class="col-md-8"><label class="form-label">Asunto / título</label><input class="form-control" name="subject" required></div><div class="col-md-4"><label class="form-label">Programar</label><input class="form-control" type="datetime-local" name="scheduled_at"></div>
-<div class="col-12"><div class="alert alert-info small mb-0"><strong>Consentimiento por canal:</strong> la campaña solo prepara y envía email a prospectos con permiso registrado para email y WhatsApp a prospectos con permiso registrado para WhatsApp. Un dato público no crea consentimiento.</div></div>
-<div class="col-md-4"><label class="form-label">Rubro</label><input class="form-control" name="industry"></div><div class="col-md-4"><label class="form-label">Provincia</label><input class="form-control" name="province"></div><div class="col-md-4"><label class="form-label">Localidad</label><input class="form-control" name="locality"></div>
-<div class="col-md-6"><label class="form-label">Segmento</label><input class="form-control" name="segment"></div><div class="col-md-6"><label class="form-label">Score mínimo</label><input class="form-control" type="number" min="0" max="100" name="min_score" value="0"></div>
-<div class="col-12"><label class="form-label">Texto</label><textarea class="form-control" name="body_text" rows="5" required>Hola {{contacto}},
+
+<div class="modal fade" id="newCampaignModal" tabindex="-1" aria-labelledby="newCampaignModalLabel" aria-hidden="true">
+  <div class="modal-dialog modal-xl modal-dialog-scrollable">
+    <div class="modal-content border-0 shadow-lg">
+      <form method="post">
+        <div class="modal-header px-4 py-3">
+          <div>
+            <div class="page-kicker mb-1"><i class="bi bi-megaphone"></i> Nueva campaña comercial</div>
+            <h2 class="modal-title h5 fw-bold mb-0" id="newCampaignModalLabel">Prepará la campaña</h2>
+          </div>
+          <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Cerrar"></button>
+        </div>
+        <div class="modal-body px-4">
+          <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+
+          <div class="campaign-form-section">
+            <div class="campaign-section-title"><span class="section-dot"></span>Identidad y canal</div>
+            <div class="row g-3">
+              <div class="col-lg-8">
+                <label class="form-label fw-semibold">Nombre interno</label>
+                <input class="form-control" name="name" required placeholder="Ej.: Captación ferreterías octubre">
+              </div>
+              <div class="col-lg-4">
+                <label class="form-label fw-semibold">Canal</label>
+                <select class="form-select" name="channel">
+                  <option value="email">Email</option>
+                  <option value="whatsapp">WhatsApp</option>
+                  <option value="both">Email + WhatsApp</option>
+                </select>
+              </div>
+              <div class="col-lg-8">
+                <label class="form-label fw-semibold">Asunto / título</label>
+                <input class="form-control" name="subject" required placeholder="Ej.: Probá StockArMobile gratis durante 10 días">
+              </div>
+              <div class="col-lg-4">
+                <label class="form-label fw-semibold">Programar envío</label>
+                <input class="form-control" type="datetime-local" name="scheduled_at">
+              </div>
+            </div>
+          </div>
+
+          <div class="campaign-form-section">
+            <div class="campaign-section-title"><span class="section-dot"></span>Audiencia</div>
+            <div class="alert alert-info campaign-alert small mb-3">
+              <div class="d-flex align-items-start gap-2">
+                <i class="bi bi-shield-check fs-5"></i>
+                <div><strong>El consentimiento se valida por canal.</strong><br>Un dato público no crea permiso para enviar marketing. Solo se preparan destinatarios elegibles.</div>
+              </div>
+            </div>
+            <div class="row g-3">
+              <div class="col-md-4"><label class="form-label fw-semibold">Rubro</label><input class="form-control" name="industry" placeholder="Ferretería"></div>
+              <div class="col-md-4"><label class="form-label fw-semibold">Provincia</label><input class="form-control" name="province" placeholder="Chaco"></div>
+              <div class="col-md-4"><label class="form-label fw-semibold">Localidad</label><input class="form-control" name="locality" placeholder="Resistencia"></div>
+              <div class="col-md-6"><label class="form-label fw-semibold">Segmento</label><input class="form-control" name="segment" placeholder="Ej.: captacion"></div>
+              <div class="col-md-6"><label class="form-label fw-semibold">Score mínimo</label><input class="form-control" type="number" min="0" max="100" name="min_score" value="0"></div>
+            </div>
+          </div>
+
+          <div class="campaign-form-section">
+            <div class="campaign-section-title"><span class="section-dot"></span>Contenido del mensaje</div>
+            <div class="row g-3">
+              <div class="col-12">
+                <label class="form-label fw-semibold">Texto</label>
+                <textarea class="form-control" name="body_text" rows="6" required>Hola {{contacto}},
 
 Te presentamos StockArMobile, una plataforma para gestionar stock, ventas, clientes y presupuestos.
 
-Probalo gratis durante 10 días.</textarea></div>
-<div class="col-md-8"><label class="form-label">Plantilla WhatsApp (opcional)</label><input class="form-control" name="whatsapp_template_name" placeholder="Nombre exacto de la plantilla aprobada en Meta"></div><div class="col-md-2"><label class="form-label">Idioma</label><input class="form-control" name="whatsapp_template_language" value="es_AR"></div><div class="col-md-2"><label class="form-label">Parámetros</label><input class="form-control" name="whatsapp_parameter_fields" value="contacto,empresa" title="Campos: contacto, empresa, rubro, localidad, trial_url o none"></div>
-<div class="col-12"><label class="form-label">HTML</label><textarea class="form-control" name="body_html" rows="7" required><p>Hola {{contacto}},</p><p>Te presentamos <strong>StockArMobile</strong>, una plataforma para gestionar stock, ventas, clientes y presupuestos.</p><p><strong>Probalo gratis durante 10 días.</strong></p><p><a href="https://www.stockarmobile.com">Conocé StockArMobile</a></p></textarea></div>
-</div></div><div class="modal-footer"><button class="btn btn-outline-secondary" type="button" data-bs-dismiss="modal">Cancelar</button><button class="btn btn-primary">Crear borrador</button></div>
-</form></div></div></div>
+Probalo gratis durante 10 días.</textarea>
+              </div>
+              <div class="col-12">
+                <label class="form-label fw-semibold">HTML para Email</label>
+                <textarea class="form-control font-monospace" name="body_html" rows="8" required>&lt;p&gt;Hola {{contacto}},&lt;/p&gt;
+&lt;p&gt;Te presentamos &lt;strong&gt;StockArMobile&lt;/strong&gt;, una plataforma para gestionar stock, ventas, clientes y presupuestos.&lt;/p&gt;
+&lt;p&gt;&lt;strong&gt;Probalo gratis durante 10 días.&lt;/strong&gt;&lt;/p&gt;
+&lt;p&gt;&lt;a href="https://www.stockarmobile.com"&gt;Conocé StockArMobile&lt;/a&gt;&lt;/p&gt;</textarea>
+              </div>
+            </div>
+          </div>
+
+          <div class="campaign-form-section">
+            <div class="campaign-section-title"><span class="section-dot"></span>WhatsApp</div>
+            <div class="row g-3">
+              <div class="col-lg-7"><label class="form-label fw-semibold">Plantilla aprobada</label><input class="form-control" name="whatsapp_template_name" placeholder="Nombre exacto de la plantilla aprobada en Meta"></div>
+              <div class="col-lg-2"><label class="form-label fw-semibold">Idioma</label><input class="form-control" name="whatsapp_template_language" value="es_AR"></div>
+              <div class="col-lg-3"><label class="form-label fw-semibold">Parámetros</label><input class="form-control" name="whatsapp_parameter_fields" value="contacto,empresa"></div>
+            </div>
+            <div class="small text-muted mt-2"><i class="bi bi-info-circle me-1"></i>Campos disponibles: contacto, empresa, rubro, localidad, trial_url o none.</div>
+          </div>
+        </div>
+        <div class="modal-footer px-4">
+          <button class="btn btn-outline-secondary" type="button" data-bs-dismiss="modal">Cancelar</button>
+          <button class="btn btn-primary px-4"><i class="bi bi-save2 me-1"></i>Crear borrador</button>
+        </div>
+      </form>
+    </div>
+  </div>
+</div>
 {% endblock %}
