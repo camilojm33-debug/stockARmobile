@@ -168,6 +168,8 @@ def _build_row(raw: dict, header_map: dict) -> dict:
         return _clean(raw.get(source)) if source else ""
     email_raw = value("email")
     email = normalize_email(email_raw)
+    if email and len(email) > 160:
+        email = None
     phone_raw = value("phone")
     whatsapp_raw = value("whatsapp")
     phone = _limit_import_phone(phone_raw)
