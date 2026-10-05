@@ -165,6 +165,7 @@ def test_campaign_both_prepares_independent_channel_recipients(app):
             phone_status="valid",
             email_consent_status="opted_in",
             whatsapp_consent_status="opted_in",
+            do_not_contact=False,
             created_by_user_id=user.id,
         )
         email_only = SaaSLead(
