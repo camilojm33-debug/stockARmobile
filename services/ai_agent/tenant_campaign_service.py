@@ -167,7 +167,9 @@ def prepare_recipients(campaign_id: int, *, company_id: int) -> dict:
             existing.add((client.id, channel))
             added += 1
     campaign.target_count = len(existing)
-    campaign.audience_count = campaign.target_count
+    # audience_count represents the business segment detected by the AI;
+    # target_count represents channel-eligible recipients. Never overwrite
+    # the analytical audience with channel consent filtering.
     db.session.flush()
     return {"eligible": eligible, "added": added, "target_count": campaign.target_count}
 
