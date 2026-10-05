@@ -839,3 +839,24 @@ def test_import_preview_exposes_contact_mapping_and_visibility():
     assert "WhatsApp detectados" in template
     assert "Consent. Email" in template
     assert "Columnas reconocidas" in template
+
+
+def test_parse_xlsx_handles_oversized_contact_values_without_db_overflow():
+    wb = Workbook()
+    ws = wb.active
+    ws.append(["Empresa", "Email", "Teléfono", "WhatsApp"])
+    ws.append([
+        "Comercio Seguro",
+        "ventas@seguro.com",
+        "1" * 500,
+        "2" * 500,
+    ])
+    buf = BytesIO()
+    wb.save(buf)
+
+    result = parse_prospect_file(buf.getvalue(), "oversized.xlsx")
+    row = result["rows"][0]
+    assert row["email"] == "ventas@seguro.com"
+    assert row["phone"] is None
+    assert row["whatsapp"] is None
+    assert row["phone_status"] == "invalid"
