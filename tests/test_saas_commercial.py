@@ -287,7 +287,7 @@ def test_whatsapp_campaign_dispatch_uses_prepared_whatsapp_recipient(app, monkey
     from services.saas_commercial_service import build_campaign_recipients, dispatch_due_campaigns
 
     with app.app_context():
-        app.config["SAAS_MARKETING_SEND_ENABLED"] = True
+        app.config["SAAS_MARKETING_SEND_ENABLED"] = "1"
         user = User(
             username="wa-campaign-admin",
             email="wa-campaign-admin@example.com",
@@ -303,6 +303,7 @@ def test_whatsapp_campaign_dispatch_uses_prepared_whatsapp_recipient(app, monkey
             contact_name="Wanda",
             whatsapp="5493333333333",
             whatsapp_consent_status="opted_in",
+            do_not_contact=False,
             created_by_user_id=user.id,
         )
         db.session.add(lead)
