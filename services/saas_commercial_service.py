@@ -203,7 +203,13 @@ def parse_prospect_file(file_bytes: bytes, filename: str) -> dict:
                 rows.append(row)
             else:
                 invalid += 1
-        return {"format": "csv", "rows": rows, "invalid_count": invalid, "headers": headers}
+        return {
+            "format": "csv",
+            "rows": rows,
+            "invalid_count": invalid,
+            "headers": headers,
+            "header_map": header_map,
+        }
     if name.endswith((".xlsx", ".xlsm")):
         workbook = load_workbook(BytesIO(file_bytes), read_only=True, data_only=True)
         values = workbook.active.iter_rows(values_only=True)
@@ -218,7 +224,13 @@ def parse_prospect_file(file_bytes: bytes, filename: str) -> dict:
                 rows.append(row)
             else:
                 invalid += 1
-        return {"format": "xlsx", "rows": rows, "invalid_count": invalid, "headers": headers}
+        return {
+            "format": "xlsx",
+            "rows": rows,
+            "invalid_count": invalid,
+            "headers": headers,
+            "header_map": header_map,
+        }
     raise ValueError("Formato no soportado. Usá CSV o XLSX.")
 
 def _merge_if_empty(target, field: str, value) -> bool:
