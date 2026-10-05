@@ -36,3 +36,10 @@ def test_campaign_filters_treat_all_as_no_filter():
     source = (ROOT / "services/saas_commercial_service.py").read_text(encoding="utf-8")
     assert '"todos", "todas", "all", "*"' in source
     assert "clean_filter" in source
+
+
+def test_campaign_detail_exposes_full_email_audience_action():
+    template = (ROOT / "templates/saas/crm_campaign_detail.html").read_text(encoding="utf-8")
+    source = (ROOT / "saas.py").read_text(encoding="utf-8")
+    assert "crm_campaign_audience_all_email" in template
+    assert '/crm/campaigns/<int:campaign_id>/audience-all-email' in source
