@@ -200,6 +200,26 @@
   font-size:.78rem;font-weight:700;
 }
 .superadmin-page .campaign-readiness .ready-item i{font-size:.8rem}
+.superadmin-page .crm-consent-bulk{
+  padding:12px 14px;
+  border-bottom:1px solid var(--app-line);
+  background:var(--app-panel-soft);
+}
+.superadmin-page .crm-consent-bulk .form-label{
+  color:var(--app-muted);
+}
+.superadmin-page .crm-consent-bulk .form-control,
+.superadmin-page .crm-consent-bulk .form-select{
+  min-height:36px;
+}
+@media(max-width:767.98px){
+  .superadmin-page .crm-consent-bulk{
+    position:sticky;
+    top:0;
+    z-index:6;
+  }
+}
+ 
 /* Campaign modals: only the form body scrolls; actions stay visible. */
 .superadmin-page #newCampaignModal .modal-dialog,
 .superadmin-page #editCampaignModal .modal-dialog{
