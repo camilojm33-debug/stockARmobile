@@ -70,10 +70,22 @@ def _run_via_web() -> int:
             return 1
         except Exception as exc:
             last_error = exc
+            message = str(exc)
+            transient = any(code in message for code in ("502", "503", "504", "Bad Gateway", "Service Unavailable", "Gateway Timeout"))
+            if transient:
+                if attempt < 4:
+                    time.sleep(10 * attempt)
+                    continue
+                print(
+                    f"Commercial worker deferred: transient web outage ({message[:220]}); "
+                    "next scheduled cycle will retry.",
+                    file=sys.stderr,
+                )
+                return 0
             if attempt < 3:
                 time.sleep(5 * attempt)
                 continue
-            print(f"Commercial worker HTTP call failed: {str(exc)[:500]}", file=sys.stderr)
+            print(f"Commercial worker HTTP call failed: {message[:500]}", file=sys.stderr)
             return 1
     print(f"Commercial worker HTTP call failed after retries: {str(last_error)[:500]}", file=sys.stderr)
     return 1
