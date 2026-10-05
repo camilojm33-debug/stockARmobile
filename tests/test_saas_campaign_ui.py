@@ -94,3 +94,7 @@ def test_campaign_creation_modal_and_edit_modal_keep_footer_outside_scroll():
     assert "overflow:hidden !important" in css
     assert "max-height:none !important" in css
     assert "height:calc(100dvh - 24px)" in css
+    assert "modal-dialog-scrollable" not in create_template
+    assert "modal-dialog-scrollable" not in edit_template
+    assert f"#{'newCampaignModal'} .modal-body" in create_template
+    assert f"#{'editCampaignModal'} .modal-body" in edit_template
