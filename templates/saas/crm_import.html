@@ -9,7 +9,7 @@
   <div class="row g-4">
     <div class="col-lg-5"><div class="card app-card"><div class="card-body">
       <h2 class="h5 fw-bold">Analizar archivo</h2><p class="small text-muted">Máximo 10.000 filas por importación.</p>
-      <form method="post" enctype="multipart/form-data"><input type="hidden" name="action" value="preview"><input class="form-control mb-3" type="file" name="file" accept=".csv,.xlsx,.xlsm" required><button class="btn btn-primary w-100"><i class="bi bi-search me-1"></i>Analizar</button></form>
+      <form method="post" enctype="multipart/form-data"><input type="hidden" name="csrf_token" value="{{ csrf_token() }}"><input type="hidden" name="action" value="preview"><input class="form-control mb-3" type="file" name="file" accept=".csv,.xlsx,.xlsm" required><button class="btn btn-primary w-100"><i class="bi bi-search me-1"></i>Analizar</button></form>
     </div></div></div>
     <div class="col-lg-7"><div class="card app-card"><div class="card-body">
       <h2 class="h5 fw-bold">Controles de la importación</h2>
@@ -20,7 +20,7 @@
   {% if preview %}
   <div class="card app-card mt-4"><div class="card-body">
     <div class="d-flex flex-wrap justify-content-between align-items-center gap-2 mb-3"><div><h2 class="h5 fw-bold mb-1">Vista previa</h2><div class="small text-muted">{{ preview.filename }} · {{ preview.valid_count }} válidas · {{ preview.invalid_count }} inválidas</div></div>
-    <form method="post" enctype="multipart/form-data" class="d-flex gap-2"><input type="hidden" name="action" value="import"><input class="form-control" type="file" name="file" accept=".csv,.xlsx,.xlsm" required><button class="btn btn-success"><i class="bi bi-database-add me-1"></i>Importar</button></form></div>
+    <form method="post" enctype="multipart/form-data" class="d-flex gap-2"><input type="hidden" name="csrf_token" value="{{ csrf_token() }}"><input type="hidden" name="action" value="import"><input class="form-control" type="file" name="file" accept=".csv,.xlsx,.xlsm" required><button class="btn btn-success"><i class="bi bi-database-add me-1"></i>Importar</button></form></div>
     <div class="table-responsive"><table class="table table-sm align-middle"><thead><tr><th>Comercio</th><th>Rubro</th><th>Localidad</th><th>Email</th><th>WhatsApp</th><th>Score</th><th>Email</th></tr></thead><tbody>
     {% for row in preview.sample %}<tr><td>{{ row.company_name }}</td><td>{{ row.industry or '-' }}</td><td>{{ row.locality or '-' }}</td><td>{{ row.email or '-' }}</td><td>{{ row.whatsapp or row.phone or '-' }}</td><td>{{ row.lead_score }}</td><td>{{ row.email_consent_status }}</td></tr>{% endfor %}
     </tbody></table></div>
