@@ -310,9 +310,15 @@ def dispatch_due_campaigns(db_session, *, company_id=None, limit=10, per_campaig
     campaigns = query.order_by(Campaign.id.asc()).limit(limit).all()
     summary = {"campaigns": 0, "sent": 0, "failed": 0, "skipped": 0, "attributed_sales": 0}
     for campaign in campaigns:
+        if campaign.status != "EN_PREPARACION":
+            continue
         campaign.started_at = campaign.started_at or now
         recipients = TenantCampaignRecipient.query.filter_by(campaign_id=campaign.id, status="pending").order_by(TenantCampaignRecipient.id.asc()).limit(per_campaign).all()
         for recipient in recipients:
+            # Re-check before every delivery so a user cancellation stops
+            # recipients that have not yet been sent.
+            if campaign.status == "CANCELADA":
+                break
             consent = (
                 recipient.client.email_marketing_consent if recipient.channel == "email"
                 else recipient.client.whatsapp_marketing_consent
