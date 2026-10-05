@@ -1700,6 +1700,19 @@ class SaaSLead(db.Model):
     consent = db.relationship("SaaSLeadConsent", back_populates="lead", uselist=False, cascade="all, delete-orphan")
 
 
+class SaaSLeadSuppression(db.Model):
+    __tablename__ = "saas_lead_suppressions"
+    id = db.Column(db.Integer, primary_key=True)
+    email = db.Column(db.String(160), index=True)
+    phone = db.Column(db.String(40), index=True)
+    company_name = db.Column(db.String(160), index=True)
+    reason = db.Column(db.String(500), nullable=False, default="superadmin_delete")
+    source = db.Column(db.String(40), nullable=False, default="superadmin_delete", index=True)
+    created_by_user_id = db.Column(db.Integer, db.ForeignKey("users.id"), nullable=False, index=True)
+    created_at = db.Column(db.DateTime, default=utcnow, nullable=False, index=True)
+    created_by = db.relationship("User", foreign_keys=[created_by_user_id])
+
+
 class SaaSLeadConsent(db.Model):
     __tablename__ = "saas_lead_consents"
     id = db.Column(db.Integer, primary_key=True)
