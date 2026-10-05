@@ -33,8 +33,8 @@ def test_superadmin_crm_bulk_delete_is_available_and_reuses_lead_selection():
     template = (ROOT / "templates/saas/crm.html").read_text(encoding="utf-8")
     source = (ROOT / "saas.py").read_text(encoding="utf-8")
     assert 'action="{{ url_for(\'saas.crm_leads_bulk_delete\') }}"' in template
-    assert 'id="crmBulkDeleteForm"' in template
-    assert 'id="crmBulkDeleteIds"' in template
+    assert 'id="crmBulkDeleteConfirmForm"' in template
+    assert 'id="crmBulkDeleteConfirmIds"' in template
     assert "crmBulkDeleteButton" in template
     assert 'def crm_leads_bulk_delete()' in source
     assert 'ids = ids[:100]' in source
