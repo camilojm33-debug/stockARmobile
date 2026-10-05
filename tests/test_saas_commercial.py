@@ -510,6 +510,8 @@ def test_delete_saas_lead_removes_crm_children_and_detaches_checkout(app):
 
         assert db.session.get(SaaSLead, lead_pk) is None
         assert db.session.query(SaaSLeadConsent).filter_by(lead_id=lead_pk).count() == 0
+        from app import SaaSLeadSuppression
+        assert db.session.query(SaaSLeadSuppression).filter_by(email="borrar@example.com").count() == 1
         assert db.session.query(SaaSTask).filter_by(id=task_pk).count() == 0
         assert db.session.query(SaaSAlert).filter_by(id=alert_pk).count() == 0
         assert db.session.query(SaaSCampaignRecipient).filter_by(id=recipient_pk).count() == 0
