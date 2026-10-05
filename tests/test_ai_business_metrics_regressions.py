@@ -69,7 +69,7 @@ def test_clientes_inactivos_ignores_cancelled_and_annulled_sales(app):
         company = Company(name="Empresa Inactivos", active=True)
         client = Client(name="Cliente Inactivo", active=True, company_id=company.id)
         product = Product(
-            company=company,
+            company_id=company.id,
             barcode="INA-001",
             name="Producto Inactivo",
             price=100,
