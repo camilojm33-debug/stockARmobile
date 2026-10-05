@@ -860,3 +860,33 @@ def test_parse_xlsx_handles_oversized_contact_values_without_db_overflow():
     assert row["phone"] is None
     assert row["whatsapp"] is None
     assert row["phone_status"] == "invalid"
+
+
+def test_smtp_probe_reports_connection_closed(app, monkeypatch):
+    import smtplib
+
+    with app.app_context():
+        app.config["SMTP_HOST"] = "smtp.example.com"
+        app.config["SMTP_PORT"] = 587
+        app.config["SMTP_USER"] = "user@example.com"
+        app.config["SMTP_PASSWORD"] = "secret"
+        app.config["SMTP_USE_TLS"] = True
+
+        class FakeSMTP:
+            def __init__(self, *args, **kwargs):
+                pass
+            def __enter__(self):
+                return self
+            def __exit__(self, *args):
+                return False
+            def ehlo(self):
+                return None
+            def starttls(self):
+                raise smtplib.SMTPServerDisconnected("Connection unexpectedly closed")
+            def login(self, *args):
+                raise AssertionError("login should not run")
+
+        monkeypatch.setattr("services.saas_campaign_preflight.smtplib.SMTP", FakeSMTP)
+        ok, detail = _smtp_probe()
+        assert ok is False
+        assert "cerró la conexión" in detail.lower()
