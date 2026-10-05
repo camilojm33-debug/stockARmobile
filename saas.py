@@ -2183,11 +2183,20 @@ def crm_import():
             return redirect(url_for("saas.crm_import"))
 
         if action == "preview":
+            header_map = parsed.get("header_map") or {}
             preview = {
                 "filename": uploaded.filename,
                 "valid_count": len(parsed["rows"]),
                 "invalid_count": parsed["invalid_count"],
                 "sample": parsed["rows"][:20],
+                "headers": parsed.get("headers") or [],
+                "header_map": header_map,
+                "mapped_fields": len(header_map),
+                "contact_counts": {
+                    "email": sum(1 for row in parsed["rows"] if row.get("email")),
+                    "phone": sum(1 for row in parsed["rows"] if row.get("phone")),
+                    "whatsapp": sum(1 for row in parsed["rows"] if row.get("whatsapp")),
+                },
             }
             return render_template("saas/crm_import.html", preview=preview)
 
