@@ -801,3 +801,41 @@ def test_campaign_detail_has_rapid_consent_flow():
     assert "campaign.status != \"BORRADOR\"" in source
 
 
+
+
+def test_parse_xlsx_detects_flexible_contact_headers():
+    wb = Workbook()
+    ws = wb.active
+    ws.append(["Empresa", "Contacto Comercial", "Correo electrónico", "Teléfono", "WhatsApp Comercial", "Rubro", "Localidad"])
+    ws.append([
+        "Comercio Completo",
+        "Juan Pérez",
+        "ventas@completo.com",
+        "+54 9 11 4444-1234",
+        "+54 9 11 5555-5678",
+        "Ferretería",
+        "CABA",
+    ])
+    buf = BytesIO()
+    wb.save(buf)
+
+    result = parse_prospect_file(buf.getvalue(), "completo.xlsx")
+    row = result["rows"][0]
+    assert row["company_name"] == "Comercio Completo"
+    assert row["contact_name"] == "Juan Pérez"
+    assert row["email"] == "ventas@completo.com"
+    assert row["phone"] == "5491144441234"
+    assert row["whatsapp"] == "5491155555678"
+    assert result["header_map"]["email"] == "Correo electrónico"
+    assert result["header_map"]["whatsapp"] == "WhatsApp Comercial"
+
+
+def test_import_preview_exposes_contact_mapping_and_visibility():
+    template = open("templates/saas/crm_import.html", encoding="utf-8").read()
+    source = open("saas.py", encoding="utf-8").read()
+    assert '"header_map": header_map' in source
+    assert '"contact_counts"' in source
+    assert "Emails detectados" in template
+    assert "WhatsApp detectados" in template
+    assert "Consent. Email" in template
+    assert "Columnas reconocidas" in template
