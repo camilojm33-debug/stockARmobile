@@ -2385,6 +2385,37 @@ def crm_campaign_prepare(campaign_id):
     return redirect(url_for("saas.crm_campaign_detail", campaign_id=campaign_id))
 
 
+@bp.post("/crm/campaigns/<int:campaign_id>/audience-all-email")
+@superadmin_required
+def crm_campaign_audience_all_email(campaign_id):
+    from app import SaaSCampaign, db, record_audit
+
+    _require_superadmin()
+    campaign = SaaSCampaign.query.filter_by(id=campaign_id).first_or_404()
+    if campaign.status != "BORRADOR":
+        flash("Solo se puede cambiar la audiencia de un borrador.", "warning")
+        return redirect(url_for("saas.crm_campaign_detail", campaign_id=campaign_id))
+    if campaign.channel not in {"email", "both"}:
+        flash("Esta acción requiere Email.", "warning")
+        return redirect(url_for("saas.crm_campaign_detail", campaign_id=campaign_id))
+
+    campaign.segment_json = json.dumps(
+        {"industry": "", "province": "", "locality": "", "segment": "", "min_score": 0},
+        ensure_ascii=False,
+    )
+    campaign.target_count = 0
+    record_audit(
+        action="saas_campaign_audience_scope",
+        entity="saas_campaign",
+        entity_id=campaign.id,
+        detail="Audiencia configurada para toda la base de Email elegible.",
+        user_id=current_user.id,
+    )
+    db.session.commit()
+    flash("Audiencia configurada para toda la base de Email. Ahora prepará la audiencia.", "success")
+    return redirect(url_for("saas.crm_campaign_detail", campaign_id=campaign_id))
+
+
 @bp.post("/crm/campaigns/<int:campaign_id>/approve")
 @superadmin_required
 def crm_campaign_approve(campaign_id):
