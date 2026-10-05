@@ -2293,8 +2293,23 @@ def crm_campaigns():
         return redirect(url_for("saas.crm_campaign_detail", campaign_id=campaign.id))
 
     campaigns = SaaSCampaign.query.order_by(SaaSCampaign.created_at.desc(), SaaSCampaign.id.desc()).limit(100).all()
-    summary = {status: SaaSCampaign.query.filter_by(status=status).count() for status in ["BORRADOR", "APROBADA", "ENVIANDO", "ENVIADA"]}
-    return render_template("saas/crm_campaigns.html", campaigns=campaigns, summary=summary)
+    statuses = ["BORRADOR", "APROBADA", "ENVIANDO", "ENVIADA", "ENVIADA_PARCIAL", "FALLIDA", "SIN_ENVIO", "CANCELADA"]
+    summary = {status: SaaSCampaign.query.filter_by(status=status).count() for status in statuses}
+    summary["TOTAL"] = SaaSCampaign.query.count()
+    summary["EN_CURSO"] = summary["APROBADA"] + summary["ENVIANDO"]
+    summary["FINALIZADAS"] = (
+        summary["ENVIADA"] + summary["ENVIADA_PARCIAL"] + summary["FALLIDA"] + summary["SIN_ENVIO"]
+    )
+    summary["INCIDENCIAS"] = summary["ENVIADA_PARCIAL"] + summary["FALLIDA"]
+    marketing_send_enabled = str(current_app.config.get("SAAS_MARKETING_SEND_ENABLED", "0")).lower() in {"1", "true", "yes", "on"}
+    smtp_configured = bool(current_app.config.get("SMTP_HOST") and current_app.config.get("SMTP_USER"))
+    return render_template(
+        "saas/crm_campaigns.html",
+        campaigns=campaigns,
+        summary=summary,
+        marketing_send_enabled=marketing_send_enabled,
+        smtp_configured=smtp_configured,
+    )
 
 
 @bp.get("/crm/campaigns/<int:campaign_id>")
@@ -2305,11 +2320,18 @@ def crm_campaign_detail(campaign_id):
 
     _require_superadmin()
     campaign = SaaSCampaign.query.filter_by(id=campaign_id).first_or_404()
+    try:
+        segment_filters = json.loads(campaign.segment_json or "{}")
+    except (TypeError, ValueError):
+        segment_filters = {}
+    if not isinstance(segment_filters, dict):
+        segment_filters = {}
     return render_template(
         "saas/crm_campaign_detail.html",
         campaign=campaign,
         metrics=campaign_metrics(db.session, campaign.id),
         audience=campaign_audience_metrics(db.session, campaign),
+        segment_filters=segment_filters,
         marketing_send_enabled=str(current_app.config.get("SAAS_MARKETING_SEND_ENABLED", "0")).lower() in {"1", "true", "yes", "on"},
         smtp_configured=bool(current_app.config.get("SMTP_HOST") and current_app.config.get("SMTP_USER")),
     )

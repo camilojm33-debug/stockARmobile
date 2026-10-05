@@ -2,22 +2,243 @@
 {% block title %}{{ campaign.name }} · SuperAdmin{% endblock %}
 {% block content %}
 <div class="app-shell superadmin-page">
-<div class="d-flex flex-wrap justify-content-between align-items-start gap-3 mb-4"><div><span class="page-kicker"><i class="bi bi-megaphone"></i> Campaña comercial</span><h1 class="h3 fw-bold mb-1">{{ campaign.name }}</h1><p class="text-muted mb-0">{{ campaign.channel }} · {{ campaign.status }}</p></div><a class="btn btn-outline-secondary" href="{{ url_for('saas.crm_campaigns') }}">Volver</a></div>
-<div class="row g-3 mb-4">{% for label,value in [('Destinatarios',metrics.total),('Pendientes',metrics.pending),('Enviados',metrics.sent),('Fallos',metrics.failed),('Omitidos',metrics.skipped)] %}<div class="col-6 col-xl"><div class="card app-card"><div class="card-body"><div class="small text-muted">{{ label }}</div><div class="fs-4 fw-bold">{{ value }}</div></div></div></div>{% endfor %}</div>
-<div class="row g-4"><div class="col-lg-7"><div class="card app-card"><div class="card-body"><h2 class="h5 fw-bold">Mensaje</h2><div class="small text-muted mb-2">Canal: <strong>{{ campaign.channel }}</strong>{% if campaign.whatsapp_template_name %} · Plantilla WhatsApp: <strong>{{ campaign.whatsapp_template_name }}</strong>{% endif %}</div><div class="small text-muted">Asunto</div><div class="fw-semibold mb-3">{{ campaign.subject }}</div><pre class="border rounded p-3 bg-light" style="white-space:pre-wrap">{{ campaign.body_text or campaign.body_html }}</pre></div></div></div>
-<div class="col-lg-5">
-<div class="card app-card mb-3"><div class="card-body"><h2 class="h5 fw-bold">Audiencia</h2>
-<div class="row g-2 small"><div class="col-6"><span class="text-muted">Base filtrada</span><div class="fw-bold">{{ audience.total }}</div></div><div class="col-6"><span class="text-muted">Bloqueados</span><div class="fw-bold">{{ audience.blocked }}</div></div><div class="col-6"><span class="text-muted">Email con permiso</span><div class="fw-bold">{{ audience.eligible_email }}</div></div><div class="col-6"><span class="text-muted">WhatsApp con permiso</span><div class="fw-bold">{{ audience.eligible_whatsapp }}</div></div></div>
-<pre class="small mt-3 mb-0" style="white-space:pre-wrap">{{ campaign.segment_json }}</pre></div></div>
-<div class="card app-card mb-3"><div class="card-body"><h2 class="h5 fw-bold">Canales y configuración</h2>
-<div class="small"><div class="d-flex justify-content-between"><span>Email</span><span class="badge {{ 'text-bg-success' if smtp_configured else 'text-bg-warning text-dark' }}">{{ 'SMTP listo' if smtp_configured else 'SMTP pendiente' }}</span></div>
-<div class="d-flex justify-content-between mt-2"><span>Motor comercial</span><span class="badge {{ 'text-bg-success' if marketing_send_enabled else 'text-bg-warning text-dark' }}">{{ 'habilitado' if marketing_send_enabled else 'deshabilitado' }}</span></div>
-<div class="d-flex justify-content-between mt-2"><span>WhatsApp plantilla</span><span class="badge {{ 'text-bg-success' if campaign.whatsapp_template_name else 'text-bg-secondary' }}">{{ campaign.whatsapp_template_name or 'se toma de configuración' }}</span></div></div></div></div>
-<div class="card app-card"><div class="card-body"><h2 class="h5 fw-bold">Flujo</h2><p class="small text-muted">La preparación usa consentimiento vigente por canal y vuelve a validar ese consentimiento al enviar.</p>
-{% if campaign.status == 'BORRADOR' %}<form method="post" action="{{ url_for('saas.crm_campaign_prepare',campaign_id=campaign.id) }}"><input type="hidden" name="csrf_token" value="{{ csrf_token() }}"><button class="btn btn-outline-primary w-100">Preparar / actualizar audiencia</button></form>
-<form method="post" action="{{ url_for('saas.crm_campaign_approve',campaign_id=campaign.id) }}"><input type="hidden" name="csrf_token" value="{{ csrf_token() }}"><input type="password" name="step_up_password" class="form-control mt-2" placeholder="Contraseña para aprobar"><button class="btn btn-success w-100 mt-2">Aprobar campaña</button></form>
-{% elif campaign.status == 'APROBADA' or campaign.status == 'ENVIANDO' %}<form method="post" action="{{ url_for('saas.crm_campaign_cancel',campaign_id=campaign.id) }}"><input type="hidden" name="csrf_token" value="{{ csrf_token() }}"><input type="password" name="step_up_password" class="form-control" placeholder="Contraseña para cancelar"><button class="btn btn-outline-danger w-100 mt-2">Cancelar</button></form>{% endif %}
-</div></div></div></div>
-<div class="card app-card mt-4"><div class="table-responsive"><table class="table align-middle mb-0"><thead><tr><th>Comercio</th><th>Destino</th><th>Canal</th><th>Estado</th><th>Error</th></tr></thead><tbody>{% for r in campaign.recipients[:100] %}<tr><td>{{ r.lead.company_name }}</td><td>{{ r.destination }}</td><td>{{ r.channel }}</td><td>{{ r.status }}</td><td>{{ r.error_reason or '-' }}</td></tr>{% else %}<tr><td colspan="5" class="text-center text-muted py-4">Sin destinatarios.</td></tr>{% endfor %}</tbody></table></div></div>
+  {% set status_label = {
+    'BORRADOR':'Borrador',
+    'APROBADA':'Aprobada',
+    'ENVIANDO':'Enviando',
+    'ENVIADA':'Enviada',
+    'ENVIADA_PARCIAL':'Envío parcial',
+    'FALLIDA':'Fallida',
+    'SIN_ENVIO':'Sin envío',
+    'CANCELADA':'Cancelada'
+  }.get(campaign.status, campaign.status) %}
+  <section class="campaign-detail-header mb-4">
+    <div class="d-flex flex-wrap justify-content-between align-items-start gap-3">
+      <div class="min-w-0">
+        <div class="d-flex flex-wrap align-items-center gap-2 mb-2">
+          <span class="page-kicker"><i class="bi bi-megaphone-fill"></i> Campaña comercial</span>
+          {% if campaign.status == 'BORRADOR' %}
+            <span class="campaign-status status-draft"><i class="bi bi-pencil"></i>{{ status_label }}</span>
+          {% elif campaign.status == 'APROBADA' %}
+            <span class="campaign-status status-approved"><i class="bi bi-check-circle"></i>{{ status_label }}</span>
+          {% elif campaign.status == 'ENVIANDO' %}
+            <span class="campaign-status status-sending"><i class="bi bi-arrow-repeat"></i>{{ status_label }}</span>
+          {% elif campaign.status == 'ENVIADA' %}
+            <span class="campaign-status status-sent"><i class="bi bi-check2-all"></i>{{ status_label }}</span>
+          {% elif campaign.status == 'ENVIADA_PARCIAL' %}
+            <span class="campaign-status status-partial"><i class="bi bi-exclamation-circle"></i>{{ status_label }}</span>
+          {% elif campaign.status == 'FALLIDA' %}
+            <span class="campaign-status status-failed"><i class="bi bi-x-octagon"></i>{{ status_label }}</span>
+          {% elif campaign.status == 'SIN_ENVIO' %}
+            <span class="campaign-status status-empty"><i class="bi bi-slash-circle"></i>{{ status_label }}</span>
+          {% else %}
+            <span class="campaign-status status-cancelled"><i class="bi bi-x-circle"></i>{{ status_label }}</span>
+          {% endif %}
+        </div>
+        <h1 class="h2 fw-bold mb-2 text-break">{{ campaign.name }}</h1>
+        <div class="d-flex flex-wrap gap-2 small text-muted">
+          <span><i class="bi {{ 'bi-envelope' if campaign.channel == 'email' else 'bi-whatsapp' if campaign.channel == 'whatsapp' else 'bi-intersect' }} me-1"></i>{{ 'Email' if campaign.channel == 'email' else 'WhatsApp' if campaign.channel == 'whatsapp' else 'Email + WhatsApp' }}</span>
+          <span>·</span>
+          {% if campaign.scheduled_at %}
+            <span><i class="bi bi-calendar-event me-1"></i>{{ campaign.scheduled_at.strftime('%d/%m/%Y %H:%M') }} hs</span>
+          {% else %}
+            <span><i class="bi bi-calendar-x me-1"></i>Sin programación</span>
+          {% endif %}
+        </div>
+      </div>
+      <a class="btn btn-outline-secondary" href="{{ url_for('saas.crm_campaigns') }}"><i class="bi bi-arrow-left me-1"></i>Campañas</a>
+    </div>
+  </section>
+
+  <section class="row g-3 mb-4" aria-label="Métricas de campaña">
+    {% for label,value,icon in [
+      ('Destinatarios',metrics.total,'bi-people'),
+      ('Pendientes',metrics.pending,'bi-hourglass-split'),
+      ('Enviados',metrics.sent,'bi-send-check'),
+      ('Fallos',metrics.failed,'bi-exclamation-octagon'),
+      ('Omitidos',metrics.skipped,'bi-slash-circle')
+    ] %}
+    <div class="col-6 col-xl">
+      <article class="campaign-kpi h-100">
+        <div class="d-flex justify-content-between align-items-start">
+          <div class="small text-muted text-uppercase fw-bold" style="letter-spacing:.05em;">{{ label }}</div>
+          <div class="kpi-icon"><i class="bi {{ icon }}"></i></div>
+        </div>
+        <div class="kpi-value">{{ value }}</div>
+      </article>
+    </div>
+    {% endfor %}
+  </section>
+
+  <section class="campaign-detail-card p-3 p-lg-4 mb-4">
+    <div class="d-flex flex-wrap justify-content-between align-items-center gap-2 mb-3">
+      <div>
+        <h2 class="h5 fw-bold mb-1">Flujo de la campaña</h2>
+        <p class="small text-muted mb-0">Cada etapa mantiene la validación de consentimiento y la aprobación de SuperAdmin.</p>
+      </div>
+    </div>
+    {% set flow_rank = {'BORRADOR':1,'APROBADA':2,'ENVIANDO':4,'ENVIADA':4,'ENVIADA_PARCIAL':4,'FALLIDA':4,'SIN_ENVIO':4,'CANCELADA':4}.get(campaign.status,1) %}
+    <div class="campaign-flow">
+      {% for step,label,sub in [
+        (1,'Borrador','Contenido y audiencia'),
+        (2,'Preparar','Destinatarios elegibles'),
+        (3,'Aprobar','Reautenticación SuperAdmin'),
+        (4,'Enviar','Worker comercial')
+      ] %}
+      <div class="campaign-flow-step {{ 'is-done' if flow_rank > step else 'is-current' if flow_rank == step else '' }}">
+        <div class="d-flex align-items-center gap-2 mb-2"><span class="step-number">{{ step }}</span><strong class="small">{{ label }}</strong></div>
+        <div class="small text-muted">{{ sub }}</div>
+      </div>
+      {% endfor %}
+    </div>
+  </section>
+
+  <div class="row g-4">
+    <div class="col-lg-7">
+      <section class="campaign-detail-card p-3 p-lg-4 h-100">
+        <div class="d-flex justify-content-between align-items-start gap-3 mb-3">
+          <div>
+            <h2 class="h5 fw-bold mb-1">Mensaje</h2>
+            <div class="small text-muted">Vista del contenido que se usará como propuesta de comunicación.</div>
+          </div>
+          <span class="campaign-channel"><i class="bi bi-chat-square-text"></i>{{ campaign.subject }}</span>
+        </div>
+        {% if campaign.channel in ['whatsapp','both'] and campaign.whatsapp_template_name %}
+          <div class="small mb-3"><span class="text-muted">Plantilla WhatsApp:</span> <strong>{{ campaign.whatsapp_template_name }}</strong></div>
+        {% endif %}
+        <div class="campaign-message-preview">{{ campaign.body_text or campaign.body_html }}</div>
+      </section>
+    </div>
+
+    <div class="col-lg-5">
+      <section class="campaign-detail-card p-3 p-lg-4 mb-4">
+        <div class="d-flex justify-content-between align-items-center mb-3">
+          <div><h2 class="h5 fw-bold mb-1">Audiencia</h2><div class="small text-muted">Elegibilidad calculada para esta campaña.</div></div>
+          <i class="bi bi-people text-primary fs-5"></i>
+        </div>
+        {% for label,value in [
+          ('Base filtrada',audience.total),
+          ('Bloqueados',audience.blocked),
+          ('Email con permiso',audience.eligible_email),
+          ('WhatsApp con permiso',audience.eligible_whatsapp)
+        ] %}
+        <div class="campaign-data-row">
+          <span class="small text-muted">{{ label }}</span>
+          <span class="campaign-audience-value">{{ value }}</span>
+        </div>
+        {% endfor %}
+        <div class="small text-muted mt-3 mb-2">Filtros guardados</div>
+        {% set segment_labels = {
+          'industry':'Rubro',
+          'province':'Provincia',
+          'locality':'Localidad',
+          'segment':'Segmento',
+          'min_score':'Score mínimo'
+        } %}
+        {% if segment_filters %}
+          <div class="d-flex flex-wrap gap-2">
+          {% for key,value in segment_filters.items() %}
+            {% if value not in [None, ''] %}
+              <span class="campaign-meta-pill"><span class="text-muted">{{ segment_labels.get(key,key|replace('_',' ')|title) }}</span><strong>{{ value }}</strong></span>
+            {% endif %}
+          {% endfor %}
+          </div>
+        {% else %}
+          <div class="small text-muted">Sin filtros específicos: se evalúa la base completa según consentimiento y reglas de elegibilidad.</div>
+        {% endif %}
+      </section>
+
+      <section class="campaign-detail-card p-3 p-lg-4 mb-4">
+        <h2 class="h5 fw-bold mb-3">Configuración</h2>
+        <div class="campaign-data-row">
+          <span class="small text-muted">Email</span>
+          <span class="campaign-status {{ 'status-approved' if smtp_configured else 'status-draft' }}"><i class="bi {{ 'bi-check-circle' if smtp_configured else 'bi-exclamation-circle' }}"></i>{{ 'SMTP listo' if smtp_configured else 'SMTP pendiente' }}</span>
+        </div>
+        <div class="campaign-data-row">
+          <span class="small text-muted">Motor comercial</span>
+          <span class="campaign-status {{ 'status-approved' if marketing_send_enabled else 'status-draft' }}"><i class="bi {{ 'bi-lightning-charge' if marketing_send_enabled else 'bi-pause-circle' }}"></i>{{ 'Habilitado' if marketing_send_enabled else 'Deshabilitado' }}</span>
+        </div>
+        <div class="campaign-data-row">
+          <span class="small text-muted">WhatsApp</span>
+          <span class="small fw-semibold text-end">{{ campaign.whatsapp_template_name or 'Plantilla desde configuración' }}</span>
+        </div>
+      </section>
+
+      <section class="campaign-detail-card p-3 p-lg-4">
+        <h2 class="h5 fw-bold mb-2">Acciones</h2>
+        <p class="small text-muted">Prepará antes de aprobar. Las acciones sensibles requieren reautenticación de SuperAdmin.</p>
+        {% if campaign.status == 'BORRADOR' %}
+          <form method="post" action="{{ url_for('saas.crm_campaign_prepare',campaign_id=campaign.id) }}">
+            <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+            <button class="btn btn-outline-primary w-100"><i class="bi bi-person-check me-1"></i>Preparar / actualizar audiencia</button>
+          </form>
+          <form method="post" action="{{ url_for('saas.crm_campaign_approve',campaign_id=campaign.id) }}">
+            <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+            <input type="password" name="step_up_password" class="form-control mt-2" placeholder="Contraseña para aprobar" autocomplete="current-password">
+            <button class="btn btn-success w-100 mt-2"><i class="bi bi-shield-check me-1"></i>Aprobar campaña</button>
+          </form>
+        {% elif campaign.status == 'APROBADA' %}
+          <div class="alert alert-success campaign-alert small"><i class="bi bi-check-circle me-1"></i>Campaña aprobada. El worker comercial controlará el envío.</div>
+          <form method="post" action="{{ url_for('saas.crm_campaign_cancel',campaign_id=campaign.id) }}">
+            <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+            <input type="password" name="step_up_password" class="form-control" placeholder="Contraseña para cancelar" autocomplete="current-password">
+            <button class="btn btn-outline-danger w-100 mt-2"><i class="bi bi-x-circle me-1"></i>Cancelar campaña</button>
+          </form>
+        {% elif campaign.status == 'ENVIANDO' %}
+          <div class="alert alert-primary campaign-alert small"><i class="bi bi-arrow-repeat me-1"></i>Envío en curso. Podés seguir viendo las métricas desde esta pantalla.</div>
+        {% elif campaign.status == 'ENVIADA' %}
+          <div class="alert alert-success campaign-alert small mb-0"><i class="bi bi-check2-all me-1"></i>Envío finalizado correctamente.</div>
+        {% elif campaign.status == 'ENVIADA_PARCIAL' %}
+          <div class="alert alert-warning campaign-alert small mb-0"><i class="bi bi-exclamation-triangle me-1"></i>Envío parcial. Revisá los fallos y omitidos.</div>
+        {% elif campaign.status == 'FALLIDA' %}
+          <div class="alert alert-danger campaign-alert small mb-0"><i class="bi bi-x-octagon me-1"></i>El envío terminó sin entregas exitosas.</div>
+        {% elif campaign.status == 'SIN_ENVIO' %}
+          <div class="alert alert-secondary campaign-alert small mb-0"><i class="bi bi-slash-circle me-1"></i>La campaña terminó sin destinatarios enviados.</div>
+        {% elif campaign.status == 'CANCELADA' %}
+          <div class="alert alert-secondary campaign-alert small mb-0"><i class="bi bi-x-circle me-1"></i>Campaña cancelada.</div>
+        {% endif %}
+      </section>
+    </div>
+  </div>
+
+  <section class="campaign-detail-card mt-4">
+    <div class="campaign-toolbar">
+      <div>
+        <div class="fw-bold">Destinatarios</div>
+        <div class="small text-muted">Se muestran los primeros 100 para revisión operativa.</div>
+      </div>
+      <span class="campaign-meta-pill"><i class="bi bi-people"></i>{{ metrics.total }} total</span>
+    </div>
+    <div class="table-responsive">
+      <table class="table campaign-table mb-0 align-middle">
+        <thead><tr><th>Comercio</th><th>Destino</th><th>Canal</th><th>Estado</th><th>Error</th></tr></thead>
+        <tbody>
+        {% for r in campaign.recipients[:100] %}
+          <tr>
+            <td><div class="fw-semibold">{{ r.lead.company_name }}</div></td>
+            <td class="small">{{ r.destination }}</td>
+            <td><span class="campaign-channel"><i class="bi {{ 'bi-envelope' if r.channel == 'email' else 'bi-whatsapp' }}"></i>{{ 'Email' if r.channel == 'email' else 'WhatsApp' }}</span></td>
+            <td>
+              {% if r.status == 'sent' %}
+                <span class="campaign-status status-sent"><i class="bi bi-check-circle"></i>Enviado</span>
+              {% elif r.status == 'pending' %}
+                <span class="campaign-status status-draft"><i class="bi bi-hourglass"></i>Pendiente</span>
+              {% elif r.status == 'sending' %}
+                <span class="campaign-status status-sending"><i class="bi bi-arrow-repeat"></i>Enviando</span>
+              {% elif r.status == 'failed' %}
+                <span class="campaign-status status-failed"><i class="bi bi-x-octagon"></i>Falló</span>
+              {% else %}
+                <span class="campaign-status status-empty"><i class="bi bi-slash-circle"></i>{{ r.status }}</span>
+              {% endif %}
+            </td>
+            <td class="small text-muted">{{ r.error_reason or '—' }}</td>
+          </tr>
+        {% else %}
+          <tr><td colspan="5"><div class="campaign-empty"><div class="campaign-empty-icon mb-3"><i class="bi bi-people"></i></div><div class="fw-bold mb-1">Sin destinatarios preparados</div><div class="small text-muted">Prepará la audiencia para generar la cola de envío.</div></div></td></tr>
+        {% endfor %}
+        </tbody>
+      </table>
+    </div>
+  </section>
 </div>
 {% endblock %}
