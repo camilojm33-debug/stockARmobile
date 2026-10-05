@@ -332,10 +332,15 @@ def test_whatsapp_campaign_dispatch_uses_prepared_whatsapp_recipient(app, monkey
             return True, "sent", "wamid.test.001"
 
         monkeypatch.setattr("services.saas_commercial_service._send_whatsapp", fake_whatsapp)
+        recipient_before = SaaSCampaignRecipient.query.filter_by(campaign_id=campaign.id).first()
+        assert recipient_before is not None
+        assert recipient_before.status == "pending"
+        assert campaign.status == "APROBADA"
+
         result = dispatch_due_campaigns(db.session, per_campaign=50)
 
         recipient = SaaSCampaignRecipient.query.filter_by(campaign_id=campaign.id).first()
-        assert result["sent"] == 1
+        assert result["sent"] == 1, result
         assert calls == [("5493333333333", "stockarmobile_prospecto_01")]
         assert recipient.status == "sent"
         assert recipient.provider_message_id == "wamid.test.001"
