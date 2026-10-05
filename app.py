@@ -16,7 +16,7 @@ from datetime import datetime, timedelta, timezone
 from decimal import Decimal
 from urllib.parse import parse_qs, urlparse
 
-from flask import abort, flash, g, jsonify, make_response, redirect, render_template, request, send_from_directory, session, url_for
+from flask import abort, current_app, flash, g, jsonify, make_response, redirect, render_template, request, send_from_directory, session, url_for
 from flask_login import UserMixin, current_user, login_required
 from flask_wtf import FlaskForm
 from flask_wtf.csrf import CSRFError

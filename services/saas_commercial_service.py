@@ -19,6 +19,23 @@ MAX_IMPORT_ROWS = 10000
 VALID_CHANNELS = {"email", "whatsapp", "both"}
 CONSENT_VALUES = {"opted_in", "opted_out", "unknown"}
 
+
+def _eligible_consent_values(channel: str) -> tuple[str, ...]:
+    if channel == "email":
+        return ("unknown", "opted_in")
+    if channel == "whatsapp":
+        return ("opted_in",)
+    raise ValueError("Canal de campaña no soportado.")
+
+
+def _consent_is_eligible(channel: str, consent_status: str | None) -> bool:
+    return str(consent_status or "unknown").strip().lower() in _eligible_consent_values(channel)
+
+
+def _apply_consent_eligibility(query, lead_model, channel: str):
+    field_name = "email_consent_status" if channel == "email" else "whatsapp_consent_status"
+    return query.filter(getattr(lead_model, field_name).in_(_eligible_consent_values(channel)))
+
 HEADER_ALIASES = {
     "company_name": {"comercio", "empresa", "nombre comercio", "nombre empresa", "business", "company"},
     "contact_name": {"contacto", "contacto comercial", "nombre", "persona de contacto"},
@@ -53,6 +70,13 @@ def normalize_email(value: str | None) -> str | None:
     if not email:
         return None
     return email if EMAIL_RE.match(email) else None
+
+
+def _campaign_email_is_valid(lead, destination: str | None = None) -> bool:
+    email = normalize_email(getattr(lead, "email", None))
+    if email is None or getattr(lead, "email_status", "unknown") == "invalid":
+        return False
+    return destination is None or email == normalize_email(destination)
 
 def normalize_phone(value: str | None) -> str | None:
     raw = _clean(value)
@@ -473,16 +497,14 @@ def _eligible_leads_query(channel: str, filters: dict):
     if channel == "email":
         # Email: usar toda la base con email válido que no haya pedido baja.
         # Los bloqueos generales y bajas explícitas siguen excluidos.
-        return query.filter(
+        query = query.filter(
             SaaSLead.email.isnot(None),
             SaaSLead.email_status != "invalid",
-            SaaSLead.email_consent_status != "opted_out",
         )
+        return _apply_consent_eligibility(query, SaaSLead, channel)
     if channel == "whatsapp":
-        return query.filter(
-            SaaSLead.whatsapp.isnot(None),
-            SaaSLead.whatsapp_consent_status == "opted_in",
-        )
+        query = query.filter(SaaSLead.whatsapp.isnot(None))
+        return _apply_consent_eligibility(query, SaaSLead, channel)
     raise ValueError("Canal de campaña no soportado.")
 
 
@@ -506,15 +528,20 @@ def campaign_audience_metrics(db_session, campaign) -> dict:
     if int(filters.get("min_score") or 0):
         blocked_query = blocked_query.filter(SaaSLead.lead_score >= int(filters["min_score"]))
     blocked = blocked_query.count()
-    email_available = query.filter(
+    email_candidates = query.filter(
         SaaSLead.email.isnot(None),
         SaaSLead.email_status != "invalid",
-    ).count()
+    )
+    email_available = sum(1 for lead in email_candidates.yield_per(1000) if _campaign_email_is_valid(lead))
     whatsapp_available = query.filter(
         SaaSLead.whatsapp.isnot(None),
     ).count()
-    email_optin = query.filter(SaaSLead.email_consent_status == "opted_in").count()
-    whatsapp_optin = query.filter(SaaSLead.whatsapp_consent_status == "opted_in").count()
+    email_optin_candidates = email_candidates.filter(SaaSLead.email_consent_status == "opted_in")
+    email_optin = sum(1 for lead in email_optin_candidates.yield_per(1000) if _campaign_email_is_valid(lead))
+    whatsapp_optin = query.filter(
+        SaaSLead.whatsapp.isnot(None),
+        SaaSLead.whatsapp_consent_status == "opted_in",
+    ).count()
     return {
         "total": total,
         "blocked": blocked,
@@ -523,14 +550,17 @@ def campaign_audience_metrics(db_session, campaign) -> dict:
         "email_optin": email_optin,
         "whatsapp_optin": whatsapp_optin,
         "eligible_email": (
-            query.filter(
-                SaaSLead.email.isnot(None),
-                SaaSLead.email_status != "invalid",
-                SaaSLead.email_consent_status != "opted_out",
-            ).count()
+            sum(
+                1
+                for lead in _eligible_leads_query("email", filters).yield_per(1000)
+                if _campaign_email_is_valid(lead)
+            )
             if campaign.channel in {"email", "both"} else 0
         ),
-        "eligible_whatsapp": whatsapp_optin if campaign.channel in {"whatsapp", "both"} else 0,
+        "eligible_whatsapp": (
+            _eligible_leads_query("whatsapp", filters).count()
+            if campaign.channel in {"whatsapp", "both"} else 0
+        ),
     }
 
 
@@ -558,9 +588,11 @@ def build_campaign_recipients(db_session, campaign_id: int) -> dict:
             SaaSLead.lead_score.desc(),
             SaaSLead.id.asc(),
         ).all()
+        if channel == "email":
+            leads = [lead for lead in leads if _campaign_email_is_valid(lead)]
         eligible[channel] = len(leads)
         for lead in leads:
-            destination = lead.email if channel == "email" else lead.whatsapp
+            destination = normalize_email(lead.email) if channel == "email" else lead.whatsapp
             key = (lead.id, channel)
             if not destination or key in existing:
                 continue
@@ -904,15 +936,24 @@ def dispatch_due_campaigns(db_session, *, limit: int = 20, per_campaign: int = 5
                     recipient.updated_at = utcnow()
                     campaign.skipped_count += 1
                     summary["skipped"] += 1
-                elif recipient.channel == "email" and lead.email_consent_status != "opted_in":
+                elif recipient.channel == "email" and not _campaign_email_is_valid(lead, recipient.destination):
                     recipient.status = "skipped"
-                    recipient.error_reason = "Consentimiento email no vigente."
+                    recipient.error_reason = "Dirección de email inválida o modificada después de preparar la audiencia."
                     recipient.updated_at = utcnow()
                     campaign.skipped_count += 1
                     summary["skipped"] += 1
-                elif recipient.channel == "whatsapp" and lead.whatsapp_consent_status != "opted_in":
+                elif recipient.channel == "whatsapp" and _normalize_phone(lead.whatsapp) != _normalize_phone(recipient.destination):
                     recipient.status = "skipped"
-                    recipient.error_reason = "Consentimiento WhatsApp no vigente."
+                    recipient.error_reason = "Número de WhatsApp modificado después de preparar la audiencia."
+                    recipient.updated_at = utcnow()
+                    campaign.skipped_count += 1
+                    summary["skipped"] += 1
+                elif not _consent_is_eligible(
+                    recipient.channel,
+                    lead.email_consent_status if recipient.channel == "email" else lead.whatsapp_consent_status,
+                ):
+                    recipient.status = "skipped"
+                    recipient.error_reason = f"Consentimiento {recipient.channel} no vigente."
                     recipient.updated_at = utcnow()
                     campaign.skipped_count += 1
                     summary["skipped"] += 1

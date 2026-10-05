@@ -26,6 +26,14 @@ def _date_form(name):
         return None
 
 
+def _marketing_consent_form_value(name, current="unknown"):
+    value = request.form.get(name)
+    value = str(current if value is None else value).strip().lower()
+    if value not in {"unknown", "opted_in", "opted_out"}:
+        raise ValueError("El estado de consentimiento de marketing no es válido.")
+    return value
+
+
 def _coerce_payload():
     payload = request.get_json(silent=True)
     if isinstance(payload, dict):
@@ -97,14 +105,21 @@ def post():
         flash(message, "warning")
         return redirect(url_for("company_billing.subscription_portal"))
 
+    try:
+        email_consent = _marketing_consent_form_value("email_marketing_consent")
+        whatsapp_consent = _marketing_consent_form_value("whatsapp_marketing_consent")
+    except ValueError as exc:
+        flash(str(exc), "danger")
+        return redirect(url_for("clients.index"))
+
     client = Client(
         company_id=getattr(current_user, "company_id", None),
         name=request.form.get("name", "").strip(),
         email=request.form.get("email") or None,
         phone=request.form.get("phone") or None,
         whatsapp=request.form.get("whatsapp") or None,
-        email_marketing_consent=request.form.get("email_marketing_consent") or "unknown",
-        whatsapp_marketing_consent=request.form.get("whatsapp_marketing_consent") or "unknown",
+        email_marketing_consent=email_consent,
+        whatsapp_marketing_consent=whatsapp_consent,
         birthday=_date_form("birthday"),
         balance=_float_form("balance"),
         credit_limit=_float_form("credit_limit"),
@@ -134,12 +149,23 @@ def edit(client_id=None, id=None):
         flash("Cliente no encontrado.", "warning")
         return redirect(url_for("clients.index"))
     if request.method == "POST":
+        try:
+            email_consent = _marketing_consent_form_value(
+                "email_marketing_consent", client.email_marketing_consent
+            )
+            whatsapp_consent = _marketing_consent_form_value(
+                "whatsapp_marketing_consent", client.whatsapp_marketing_consent
+            )
+        except ValueError as exc:
+            flash(str(exc), "danger")
+            return redirect(url_for("clients.edit", id=client.id))
+
         client.name = request.form.get("name", client.name).strip()
         client.email = request.form.get("email") or None
         client.phone = request.form.get("phone") or None
         client.whatsapp = request.form.get("whatsapp") or None
-        client.email_marketing_consent = request.form.get("email_marketing_consent") or "unknown"
-        client.whatsapp_marketing_consent = request.form.get("whatsapp_marketing_consent") or "unknown"
+        client.email_marketing_consent = email_consent
+        client.whatsapp_marketing_consent = whatsapp_consent
         client.birthday = _date_form("birthday")
         client.balance = _float_form("balance")
         client.credit_limit = _float_form("credit_limit")

@@ -1,3 +1,11 @@
+envVarGroups:
+  - name: stockarmobile-campaign-controls
+    envVars:
+      - key: SAAS_MARKETING_SEND_ENABLED
+        value: "0"
+      - key: AI_MARKETING_SEND_ENABLED
+        value: "0"
+
 services:
   - type: web
     name: stockarmobile
@@ -5,8 +13,7 @@ services:
     buildCommand: pip install -r requirements.txt
     startCommand: python -m flask db upgrade && gunicorn --timeout 120 wsgi:application
     envVars:
-      - key: SAAS_MARKETING_SEND_ENABLED
-        value: "0"
+      - fromGroup: stockarmobile-campaign-controls
       - key: SECRET_KEY
         generateValue: true
       - key: DEFAULT_SUPERADMIN_PASSWORD
@@ -104,8 +111,7 @@ services:
         generateValue: true
       - key: APP_URL
         value: https://www.stockarmobile.com
-      - key: SAAS_MARKETING_SEND_ENABLED
-        value: "1"
+      - fromGroup: stockarmobile-campaign-controls
       - key: SMTP_HOST
         sync: false
       - key: SMTP_PORT
@@ -148,6 +154,7 @@ services:
         sync: false
       - key: SMTP_FROM_EMAIL
         sync: false
+      - fromGroup: stockarmobile-campaign-controls
 
 
   - type: cron

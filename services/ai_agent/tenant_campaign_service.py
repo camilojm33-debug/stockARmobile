@@ -7,6 +7,7 @@ keeping every query, recipient and attribution strictly tenant scoped.
 from __future__ import annotations
 
 import json
+import re
 import secrets
 import smtplib
 from datetime import datetime, timedelta
@@ -21,11 +22,23 @@ from stockarmobile.helpers.dates import utcnow_naive
 CHANNELS = {"email", "whatsapp", "both"}
 SENDABLE_STATUSES = {"EN_PREPARACION"}
 MAX_RECIPIENTS_PER_CYCLE = 50
+DELIVERY_RETRY_DELAY = timedelta(minutes=15)
 ATTRIBUTION_DAYS = 30
 
 
 def _now():
     return utcnow_naive()
+
+
+def _is_retryable_delivery_error(detail: str) -> bool:
+    message = str(detail or "").lower()
+    status_match = re.search(r"http\s+(\d{3})", message)
+    if status_match:
+        return int(status_match.group(1)) == 429
+    # Retry only explicit SMTP temporary rejection responses. Network timeouts
+    # are ambiguous: the provider may have accepted the message before the
+    # connection failed, so retrying could create a duplicate delivery.
+    return re.search(r"\b(?:421|450|451|452)\b", message) is not None
 
 
 def _token():
@@ -266,7 +279,12 @@ def refresh_attribution(company_id=None):
 
 
 def dispatch_due_campaigns(db_session, *, company_id=None, limit=10, per_campaign=MAX_RECIPIENTS_PER_CYCLE):
+    from flask import current_app
     from app import Campaign
+    from sqlalchemy import and_, or_
+
+    if not current_app.config.get("AI_MARKETING_SEND_ENABLED", False):
+        return {"campaigns": 0, "sent": 0, "failed": 0, "skipped": 0, "retry_scheduled": 0, "attributed_sales": 0, "disabled": True}
 
     now = _now()
     query = Campaign.query.filter(
@@ -276,11 +294,21 @@ def dispatch_due_campaigns(db_session, *, company_id=None, limit=10, per_campaig
     if company_id is not None:
         query = query.filter(Campaign.company_id == int(company_id))
     campaigns = query.order_by(Campaign.id.asc()).limit(limit).all()
-    summary = {"campaigns": 0, "sent": 0, "failed": 0, "skipped": 0, "attributed_sales": 0}
+    summary = {"campaigns": 0, "sent": 0, "failed": 0, "skipped": 0, "retry_scheduled": 0, "attributed_sales": 0}
     for campaign in campaigns:
         campaign.started_at = campaign.started_at or now
-        recipients = TenantCampaignRecipient.query.filter_by(campaign_id=campaign.id, status="pending").order_by(TenantCampaignRecipient.id.asc()).limit(per_campaign).with_for_update(skip_locked=True).all()
+        recipients = TenantCampaignRecipient.query.filter(
+            TenantCampaignRecipient.campaign_id == campaign.id,
+            or_(
+                TenantCampaignRecipient.status == "pending",
+                and_(
+                    TenantCampaignRecipient.status == "retry_wait",
+                    TenantCampaignRecipient.updated_at <= now,
+                ),
+            ),
+        ).order_by(TenantCampaignRecipient.id.asc()).limit(per_campaign).with_for_update(skip_locked=True).all()
         for recipient in recipients:
+            retry_attempt = recipient.status == "retry_wait"
             consent = (
                 recipient.client.email_marketing_consent if recipient.channel == "email"
                 else recipient.client.whatsapp_marketing_consent
@@ -302,13 +330,24 @@ def dispatch_due_campaigns(db_session, *, company_id=None, limit=10, per_campaig
                 campaign.sent_count += 1
                 summary["sent"] += 1
             else:
-                recipient.status = "failed"
-                recipient.error_reason = detail
-                campaign.failed_count += 1
-                summary["failed"] += 1
-            recipient.updated_at = _now()
+                if not retry_attempt and _is_retryable_delivery_error(detail):
+                    recipient.status = "retry_wait"
+                    recipient.error_reason = f"Reintento único programado: {detail}"[:2000]
+                    recipient.updated_at = _now() + DELIVERY_RETRY_DELAY
+                    summary["retry_scheduled"] += 1
+                else:
+                    recipient.status = "failed"
+                    recipient.error_reason = detail
+                    recipient.updated_at = _now()
+                    campaign.failed_count += 1
+                    summary["failed"] += 1
+            if ok:
+                recipient.updated_at = _now()
             db_session.flush()
-        remaining = TenantCampaignRecipient.query.filter_by(campaign_id=campaign.id, status="pending").count()
+        remaining = TenantCampaignRecipient.query.filter(
+            TenantCampaignRecipient.campaign_id == campaign.id,
+            TenantCampaignRecipient.status.in_(("pending", "retry_wait")),
+        ).count()
         if remaining == 0:
             counts = {
                 status: TenantCampaignRecipient.query.filter_by(campaign_id=campaign.id, status=status).count()
@@ -346,7 +385,7 @@ def campaign_metrics(company_id: int, campaign_id: int) -> dict:
     ).scalar() or 0
     return {
         "total": recipients.count(),
-        "pending": recipients.filter_by(status="pending").count(),
+        "pending": recipients.filter(TenantCampaignRecipient.status.in_(("pending", "retry_wait"))).count(),
         "sent": recipients.filter_by(status="sent").count(),
         "failed": recipients.filter_by(status="failed").count(),
         "skipped": recipients.filter_by(status="skipped").count(),

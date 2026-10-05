@@ -200,7 +200,7 @@ def _campaign_rows(company_id: int):
 
 def _campaign_summary(company_id: int):
     rows = _campaign_rows(company_id)
-    return {status: sum(1 for row in rows if row.status == status) for status in ("BORRADOR", "PENDIENTE_APROBACION", "APROBADA", "EN_PREPARACION", "ENVIADA", "CANCELADA")}
+    return {status: sum(1 for row in rows if row.status == status) for status in ("BORRADOR", "PENDIENTE_APROBACION", "APROBADA", "EN_PREPARACION", "ENVIADA", "ENVIADA_PARCIAL", "FALLIDA", "SIN_ENVIO", "CANCELADA")}
 
 
 def _meta_graph_version() -> str:
@@ -528,7 +528,13 @@ def campaigns():
             locked_reason=entitlement.reason,
             **_context(),
         )
-    return render_template("ai_agents/campaigns.html", campaigns=_campaign_rows(current_user.company_id), campaign_summary=_campaign_summary(current_user.company_id), **_context())
+    return render_template(
+        "ai_agents/campaigns.html",
+        campaigns=_campaign_rows(current_user.company_id),
+        campaign_summary=_campaign_summary(current_user.company_id),
+        ai_marketing_send_enabled=current_app.config.get("AI_MARKETING_SEND_ENABLED", False),
+        **_context(),
+    )
 
 
 @bp.route("/campanas/unsubscribe/<token>", methods=["GET", "POST"])
@@ -564,7 +570,13 @@ def campaign_detail(campaign_id):
     if campaign is None:
         from flask import abort
         abort(404)
-    return render_template("ai_agents/campaign_detail.html", campaign=campaign, campaign_metrics=campaign_metrics(current_user.company_id, campaign.id), **_context())
+    return render_template(
+        "ai_agents/campaign_detail.html",
+        campaign=campaign,
+        campaign_metrics=campaign_metrics(current_user.company_id, campaign.id),
+        ai_marketing_send_enabled=current_app.config.get("AI_MARKETING_SEND_ENABLED", False),
+        **_context(),
+    )
 
 
 @bp.post("/vendedor/webchat/toggle")
@@ -621,6 +633,8 @@ def campaign_transition(campaign_id):
         return redirect(url_for("ai_agents.agent", agent="planes"))
     target_status = request.form.get("status", "")
     try:
+        if target_status.strip().upper() == "APROBADA" and not current_app.config.get("AI_MARKETING_SEND_ENABLED", False):
+            raise ValueError("El worker de Marketing IA está deshabilitado; la campaña no puede aprobarse para envío.")
         campaign = CampaignService.transition(company_id=current_user.company_id, campaign_id=campaign_id, target_status=target_status, user_id=current_user.id)
         if target_status.upper() == "APROBADA":
             prepare_recipients(campaign.id, company_id=current_user.company_id)

@@ -1938,6 +1938,7 @@ def crm_inbox_message_delete():
 @superadmin_required
 def crm_panel():
     from app import Company, SaaSAlert, SaaSLead, SaaSTask, User, db, record_audit
+    from services.saas_commercial_service import normalize_email
 
     _require_superadmin()
     now = utcnow()
@@ -1953,10 +1954,14 @@ def crm_panel():
                 flash("Empresa y contacto son obligatorios para crear un prospecto.", "danger")
                 return _redirect_back("saas.crm_panel")
 
+            raw_email = (request.form.get("email") or "").strip()
+            normalized_email = normalize_email(raw_email)
+
             lead = SaaSLead(
                 company_name=company_name[:160],
                 contact_name=contact_name[:160],
-                email=(request.form.get("email") or "").strip().lower()[:160] or None,
+                email=normalized_email[:160] if normalized_email else None,
+                email_status="valid" if normalized_email else ("invalid" if raw_email else "unknown"),
                 phone=(request.form.get("phone") or "").strip()[:40] or None,
                 source=(request.form.get("source") or "manual").strip().lower()[:80] or "manual",
                 status=_normalize_crm_value(request.form.get("status"), CRM_LEAD_STATUSES, "nuevo"),
@@ -1977,6 +1982,8 @@ def crm_panel():
             )
             db.session.commit()
             flash("Prospecto creado.", "success")
+            if raw_email and normalized_email is None:
+                flash("El email no tiene un formato válido y no será elegible para campañas.", "warning")
             return redirect(url_for("saas.crm_panel"))
 
         if entity == "task":
@@ -2369,11 +2376,11 @@ def crm_campaign_prepare(campaign_id):
             channel_parts = []
             if campaign.channel in {"email", "both"}:
                 channel_parts.append(
-                    f"Email: {audience['email_available']} con dirección, {audience['eligible_email']} con consentimiento"
+                    f"Email: {audience['email_available']} con dirección, {audience['eligible_email']} elegibles para envío"
                 )
             if campaign.channel in {"whatsapp", "both"}:
                 channel_parts.append(
-                    f"WhatsApp: {audience['whatsapp_available']} con número, {audience['eligible_whatsapp']} con consentimiento"
+                    f"WhatsApp: {audience['whatsapp_available']} con número, {audience['eligible_whatsapp']} elegibles por consentimiento"
                 )
             flash(
                 "No se agregaron destinatarios elegibles. " + " · ".join(channel_parts) +
@@ -2500,6 +2507,9 @@ def crm_campaign_approve(campaign_id):
     if not _require_superadmin_step_up():
         return redirect(url_for("saas.crm_campaign_detail", campaign_id=campaign_id))
     campaign = SaaSCampaign.query.filter_by(id=campaign_id).first_or_404()
+    if not current_app.config.get("SAAS_MARKETING_SEND_ENABLED", False):
+        flash("El motor comercial está deshabilitado. La campaña no puede aprobarse para envío.", "warning")
+        return redirect(url_for("saas.crm_campaign_detail", campaign_id=campaign_id))
     if campaign.status != "BORRADOR":
         flash("Solo un borrador puede aprobarse.", "warning")
         return redirect(url_for("saas.crm_campaign_detail", campaign_id=campaign_id))

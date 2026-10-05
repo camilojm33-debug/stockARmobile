@@ -75,7 +75,7 @@ def test_parse_rejects_unsupported():
         raise AssertionError("Expected ValueError")
 
 
-def test_campaign_recipient_selection_requires_email_opt_in(app):
+def test_campaign_recipient_selection_uses_email_suppression_policy(app):
     from app import SaaSCampaign, SaaSLead, SaaSLeadConsent, User, db
 
     with app.app_context():
@@ -100,11 +100,29 @@ def test_campaign_recipient_selection_requires_email_opt_in(app):
             email_consent_status="unknown",
             created_by_user_id=user.id,
         )
-        db.session.add_all([opted, unknown])
+        opted_out = SaaSLead(
+            company_name="Baja",
+            contact_name="Contacto",
+            email="opted-out@example.com",
+            email_status="valid",
+            email_consent_status="opted_out",
+            created_by_user_id=user.id,
+        )
+        invalid_email = SaaSLead(
+            company_name="Email inválido",
+            contact_name="Contacto",
+            email="not-an-email",
+            email_status="unknown",
+            email_consent_status="opted_in",
+            created_by_user_id=user.id,
+        )
+        db.session.add_all([opted, unknown, opted_out, invalid_email])
         db.session.flush()
         db.session.add_all([
             SaaSLeadConsent(lead_id=opted.id, unsubscribe_token="token-opted"),
             SaaSLeadConsent(lead_id=unknown.id, unsubscribe_token="token-unknown"),
+            SaaSLeadConsent(lead_id=opted_out.id, unsubscribe_token="token-opted-out"),
+            SaaSLeadConsent(lead_id=invalid_email.id, unsubscribe_token="token-invalid-email"),
         ])
 
         campaign = SaaSCampaign(
@@ -119,9 +137,8 @@ def test_campaign_recipient_selection_requires_email_opt_in(app):
         db.session.commit()
 
         summary = build_campaign_recipients(db.session, campaign.id)
-        assert summary["eligible"] == 1
-        assert len(campaign.recipients) == 1
-        assert campaign.recipients[0].lead_id == opted.id
+        assert summary["eligible"] == 2
+        assert {recipient.lead_id for recipient in campaign.recipients} == {opted.id, unknown.id}
 
 
 def test_campaign_both_prepares_independent_channel_recipients(app):

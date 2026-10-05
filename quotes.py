@@ -1246,6 +1246,11 @@ def edit_quote(quote_id):
     _require_quote_permission("quotes_edit")
     quote = _quote_lookup(quote_id)
     _require_owned_or_authorized(quote)
+    if quote.converted_sale_id or (quote.status or "").strip().upper() in {
+        "ENVIADO", "APROBADO", "RECHAZADO", "VENCIDO", "ANULADO", "CONVERTIDO",
+    }:
+        flash("Este presupuesto ya no se puede editar. Duplicalo para iniciar una nueva propuesta.", "warning")
+        return redirect(url_for("quotes.view_quote", quote_id=quote.id))
     if request.method == "POST":
         _quote_from_form(quote=quote)
         from app import record_audit

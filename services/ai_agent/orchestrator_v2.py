@@ -762,14 +762,17 @@ class AgentRuntime:
         # Una solicitud explícita de propuesta/campaña no queda como simple texto:
         # si el modelo omitió la herramienta, el backend intenta preparar igualmente
         # un borrador usando el tipo permitido por la configuración del comercio.
+        proposal_request = False
         if agent_key == "marketing" and campaign_context is None:
             normalized_request = " ".join(str(message or "").strip().lower().split())
-            proposal_request = (
-                "propuesta" in normalized_request
-                or "crear campaña" in normalized_request
-                or "crear una campaña" in normalized_request
-                or "armame una campaña" in normalized_request
-                or "haceme una campaña" in normalized_request
+            proposal_request = any(
+                phrase in normalized_request
+                for phrase in (
+                    "propuesta", "crear campaña", "crear una campaña", "crea una campaña",
+                    "armame una campaña", "armá una campaña", "haceme una campaña",
+                    "hacé una campaña", "prepara una campaña", "prepará una campaña",
+                    "crea una promocion", "creá una promoción",
+                )
             )
             if proposal_request:
                 marketing_options = get_special_options(company, "marketing")
@@ -853,6 +856,12 @@ class AgentRuntime:
             final_content = (
                 f"{final_content}\n\nCampaña #{campaign.id} guardada como "
                 "BORRADOR / PENDIENTE DE APROBACIÓN. No se realizó ningún envío externo."
+            )
+            assistant.content = final_content
+        elif agent_key == "marketing" and proposal_request:
+            final_content = (
+                f"{final_content}\n\nEsto es una propuesta textual; no se creó ni guardó "
+                "un borrador de campaña y no se realizó ningún envío."
             )
             assistant.content = final_content
 

@@ -2,6 +2,7 @@
 {% block title %}CRM Inteligente · StockArmobile{% endblock %}
 
 {% block content %}
+{% if not ai_marketing_send_enabled %}<div class="alert alert-warning mx-auto" style="max-width:1320px" role="status">El envío de campañas de Marketing IA está deshabilitado. No se pueden aprobar campañas para envío.</div>{% endif %}
 <style>
   .crm-campaigns-page { max-width: 1320px; }
   .crm-hero {

@@ -861,7 +861,6 @@
         consumer_name: document.getElementById('quoteConsumerName').value,
         seller_id: document.getElementById('quoteSellerSelect').value,
         expires_at: document.getElementById('quoteExpiresAt').value,
-        status: document.getElementById('quoteStatusSelect').value,
         observations: document.getElementById('observationsInput').value,
         commercial_conditions: document.getElementById('commercialConditions').value,
         discount_value: document.getElementById('generalDiscount').value,
@@ -892,7 +891,6 @@
       document.getElementById('quoteConsumerName').value = payload.consumer_name || '';
       document.getElementById('quoteSellerSelect').value = payload.seller_id || document.getElementById('quoteSellerSelect').value;
       document.getElementById('quoteExpiresAt').value = payload.expires_at || document.getElementById('quoteExpiresAt').value;
-      document.getElementById('quoteStatusSelect').value = payload.status || document.getElementById('quoteStatusSelect').value;
       document.getElementById('observationsInput').value = payload.observations || '';
       document.getElementById('commercialConditions').value = payload.commercial_conditions || '';
       document.getElementById('generalDiscount').value = payload.discount_value || 0;
@@ -958,7 +956,7 @@
       persistDraft();
     });
 
-    ['generalDiscount', 'generalSurcharge', 'quoteExpiresAt', 'quoteStatusSelect', 'quoteCurrency', 'observationsInput', 'commercialConditions', 'quoteConsumerName', 'quoteSellerSelect']
+    ['generalDiscount', 'generalSurcharge', 'quoteExpiresAt', 'quoteCurrency', 'observationsInput', 'commercialConditions', 'quoteConsumerName', 'quoteSellerSelect']
       .forEach((id) => {
         const element = document.getElementById(id);
         if (!element) return;

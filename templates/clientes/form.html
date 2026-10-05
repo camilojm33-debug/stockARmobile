@@ -23,6 +23,7 @@
         {% endif %}
       <form method="post" action="{{ url_for('clients.edit', id=client.id) if client else url_for('clients.post') }}">
         <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+        <fieldset {% if readonly %}disabled{% endif %}>
         <div class="row g-3">
           <div class="col-md-6"><label class="form-label">Nombre</label><input class="form-control" name="name" value="{{ client.name if client else '' }}" required></div>
           <div class="col-md-6"><label class="form-label">Email</label><input class="form-control" name="email" type="email" value="{{ client.email if client else '' }}"></div>
@@ -41,7 +42,8 @@
           <div class="col-md-6"><label class="form-label fw-semibold">Permiso de email</label><select class="form-select" name="email_marketing_consent"><option value="unknown" {% if (client and client.email_marketing_consent == 'unknown') or not client %}selected{% endif %}>Desconocido</option><option value="opted_in" {% if client and client.email_marketing_consent == 'opted_in' %}selected{% endif %}>Permiso registrado</option><option value="opted_out" {% if client and client.email_marketing_consent == 'opted_out' %}selected{% endif %}>No permitido / baja</option></select></div>
           <div class="col-md-6"><label class="form-label fw-semibold">Permiso de WhatsApp</label><select class="form-select" name="whatsapp_marketing_consent"><option value="unknown" {% if (client and client.whatsapp_marketing_consent == 'unknown') or not client %}selected{% endif %}>Desconocido</option><option value="opted_in" {% if client and client.whatsapp_marketing_consent == 'opted_in' %}selected{% endif %}>Permiso registrado</option><option value="opted_out" {% if client and client.whatsapp_marketing_consent == 'opted_out' %}selected{% endif %}>No permitido / baja</option></select></div>
         </div>
-        <button class="btn btn-primary mt-3">Guardar</button>
+        </fieldset>
+        {% if not readonly %}<button class="btn btn-primary mt-3">Guardar</button>{% endif %}
         <a class="btn btn-outline-secondary mt-3" href="{{ url_for('clients.index') }}">Volver</a>
       </form>
     </div>
