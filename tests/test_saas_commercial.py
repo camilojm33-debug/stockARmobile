@@ -508,3 +508,174 @@ def test_delete_saas_lead_removes_crm_children_and_detaches_checkout(app):
             delete_saas_lead(db.session, 999999)
 
         assert db.session.get(SaaSLead, other_lead.id) is not None
+
+
+def test_campaign_recipient_claim_is_idempotent(app):
+    from app import SaaSCampaign, SaaSCampaignRecipient, SaaSLead, User, db
+    from services.saas_commercial_service import _claim_campaign_recipient
+
+    with app.app_context():
+        user = User(
+            username="claim-admin",
+            email="claim-admin@example.com",
+            role="superadmin",
+            active=True,
+        )
+        user.set_password("test-password")
+        db.session.add(user)
+        db.session.flush()
+        lead = SaaSLead(
+            company_name="Claim Test",
+            contact_name="Claim",
+            email="claim@example.com",
+            created_by_user_id=user.id,
+        )
+        campaign = SaaSCampaign(
+            name="Claim campaign",
+            subject="Hola",
+            channel="email",
+            status="APROBADA",
+            body_html="<p>Hola</p>",
+            created_by_user_id=user.id,
+        )
+        db.session.add_all([lead, campaign])
+        db.session.flush()
+        recipient = SaaSCampaignRecipient(
+            campaign_id=campaign.id,
+            lead_id=lead.id,
+            channel="email",
+            destination=lead.email,
+            status="pending",
+        )
+        db.session.add(recipient)
+        db.session.commit()
+
+        now = __import__("datetime").datetime.utcnow()
+        assert _claim_campaign_recipient(db.session, recipient.id, now) is True
+        db.session.commit()
+        assert _claim_campaign_recipient(db.session, recipient.id, now) is False
+        db.session.refresh(recipient)
+        assert recipient.status == "sending"
+
+
+def test_campaign_dispatch_marks_partial_when_some_recipients_fail(app, monkeypatch):
+    from app import SaaSCampaign, SaaSCampaignRecipient, SaaSLead, SaaSLeadConsent, User, db
+    from services.saas_commercial_service import build_campaign_recipients, dispatch_due_campaigns
+
+    with app.app_context():
+        app.config["SAAS_MARKETING_SEND_ENABLED"] = True
+        user = User(
+            username="partial-admin",
+            email="partial-admin@example.com",
+            role="superadmin",
+            active=True,
+        )
+        user.set_password("test-password")
+        db.session.add(user)
+        db.session.flush()
+
+        leads = []
+        for i in range(2):
+            lead = SaaSLead(
+                company_name=f"Partial {i}",
+                contact_name=f"Contacto {i}",
+                email=f"partial-{i}@example.com",
+                email_status="valid",
+                email_consent_status="opted_in",
+                created_by_user_id=user.id,
+            )
+            db.session.add(lead)
+            db.session.flush()
+            db.session.add(SaaSLeadConsent(
+                lead_id=lead.id,
+                unsubscribe_token=f"partial-token-{i}",
+                email_status="opted_in",
+            ))
+            leads.append(lead)
+
+        campaign = SaaSCampaign(
+            name="Partial campaign",
+            subject="Hola",
+            channel="email",
+            status="APROBADA",
+            body_html="<p>Hola {{contacto}}</p>",
+            body_text="Hola {{contacto}}",
+            created_by_user_id=user.id,
+        )
+        db.session.add(campaign)
+        db.session.commit()
+        build_campaign_recipients(db.session, campaign.id)
+
+        def fake_email(recipient, current_campaign):
+            if recipient.destination.endswith("-1@example.com"):
+                return False, "SMTP rechazó el mensaje"
+            return True, "sent"
+
+        monkeypatch.setattr("services.saas_commercial_service._send_email", fake_email)
+        result = dispatch_due_campaigns(db.session, per_campaign=50)
+
+        refreshed = SaaSCampaign.query.get(campaign.id)
+        statuses = {
+            row.status
+            for row in SaaSCampaignRecipient.query.filter_by(campaign_id=campaign.id).all()
+        }
+        assert result["sent"] == 1
+        assert result["failed"] == 1
+        assert statuses == {"sent", "failed"}
+        assert refreshed.status == "ENVIADA_PARCIAL"
+
+
+def test_campaign_dispatch_marks_failed_when_all_recipients_fail(app, monkeypatch):
+    from app import SaaSCampaign, SaaSCampaignRecipient, SaaSLead, SaaSLeadConsent, User, db
+    from services.saas_commercial_service import build_campaign_recipients, dispatch_due_campaigns
+
+    with app.app_context():
+        app.config["SAAS_MARKETING_SEND_ENABLED"] = True
+        user = User(
+            username="failed-admin",
+            email="failed-admin@example.com",
+            role="superadmin",
+            active=True,
+        )
+        user.set_password("test-password")
+        db.session.add(user)
+        db.session.flush()
+        lead = SaaSLead(
+            company_name="Failed campaign",
+            contact_name="Contacto",
+            email="failed@example.com",
+            email_status="valid",
+            email_consent_status="opted_in",
+            created_by_user_id=user.id,
+        )
+        db.session.add(lead)
+        db.session.flush()
+        db.session.add(SaaSLeadConsent(
+            lead_id=lead.id,
+            unsubscribe_token="failed-token",
+            email_status="opted_in",
+        ))
+        campaign = SaaSCampaign(
+            name="Failed campaign",
+            subject="Hola",
+            channel="email",
+            status="APROBADA",
+            body_html="<p>Hola</p>",
+            body_text="Hola",
+            created_by_user_id=user.id,
+        )
+        db.session.add(campaign)
+        db.session.commit()
+        build_campaign_recipients(db.session, campaign.id)
+        monkeypatch.setattr(
+            "services.saas_commercial_service._send_email",
+            lambda recipient, current_campaign: (False, "SMTP caído"),
+        )
+
+        result = dispatch_due_campaigns(db.session, per_campaign=50)
+        refreshed = SaaSCampaign.query.get(campaign.id)
+        recipient = SaaSCampaignRecipient.query.filter_by(campaign_id=campaign.id).first()
+
+        assert result["failed"] == 1
+        assert recipient.status == "failed"
+        assert refreshed.status == "FALLIDA"
