@@ -59,6 +59,7 @@
     <div class="modal-content">
       <form method="post" action="{{ url_for('saas.crm_leads_bulk_delete') }}" id="crmBulkDeleteConfirmForm">
         <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+        <div id="crmBulkDeleteLeadIds"></div>
         <div class="modal-header">
           <h5 class="modal-title text-danger" id="crmBulkDeleteConfirmLabel"><i class="bi bi-trash3 me-1"></i>Confirmar eliminación</h5>
           <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Cerrar"></button>
@@ -313,11 +314,11 @@
 
           <div class="crm-table-wrap">
             <table class="table table-hover align-middle mb-0">
-              <thead><tr><th><input class="form-check-input" type="checkbox" id="crmSelectAllLeads" title="Seleccionar prospectos de esta página"></th><th>Empresa</th><th>Contacto</th><th>Estado</th><th>Prioridad</th><th>Actividad</th><th class="text-end">Acciones</th></tr></thead>
+              <thead><tr><th class="text-nowrap"><label class="d-inline-flex align-items-center gap-1 mb-0" title="Seleccionar todos los prospectos visibles"><input class="form-check-input" type="checkbox" id="crmSelectAllLeads"><span class="small">Todos</span></label></th><th>Empresa</th><th>Contacto</th><th>Estado</th><th>Prioridad</th><th>Actividad</th><th class="text-end">Acciones</th></tr></thead>
               <tbody>
               {% for lead in leads %}
               <tr>
-                <td><input class="form-check-input crm-lead-select" type="checkbox" name="lead_ids" value="{{ lead.id }}" form="crmBulkDeleteConfirmForm" aria-label="Seleccionar {{ lead.company_name }}"></td>
+                <td><input class="form-check-input crm-lead-select" type="checkbox" name="lead_ids" value="{{ lead.id }}" aria-label="Seleccionar {{ lead.company_name }}"></td>
                 <td><div class="fw-semibold">{{ lead.company_name }}</div><div class="crm-table-muted">{{ lead.industry or 'Sin rubro' }}{% if lead.locality %} · {{ lead.locality }}{% endif %}</div></td>
                 <td><div class="fw-semibold">{{ lead.contact_name }}</div><div class="crm-table-muted">{{ lead.email or lead.phone or 'Sin datos de contacto' }}</div></td>
                 <td><span class="badge text-bg-light border">{{ lead.status|replace('_',' ') }}</span></td>
@@ -545,23 +546,9 @@
 {% endblock %}
 
 {% block extra_scripts_inline %}
-<script>
-(function () {
-  const hashMap = {
-    "#crmLeads": "#leads-tab",
-    "#crmTasks": "#tasks-tab",
-    "#crmAlerts": "#alerts-tab"
-  };
-  function activateFromHash() {
-    const trigger = document.querySelector(hashMap[window.location.hash]);
-    if (!trigger || !window.bootstrap) return;
-    bootstrap.Tab.getOrCreateInstance(trigger).show();
-  }
-  activateFromHash();
-  window.addEventListener("hashchange", activateFromHash);
-})();
-</script>
+
 {% endblock %}
+
 
 <script>
 document.addEventListener("DOMContentLoaded", function () {
