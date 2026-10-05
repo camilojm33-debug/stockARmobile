@@ -13,6 +13,9 @@
         {% endfor %}
         <div class="form-check"><input class="form-check-input" type="checkbox" name="do_not_contact" value="1" id="dnc{{ lead.id }}" {% if lead.do_not_contact %}checked{% endif %}><label class="form-check-label" for="dnc{{ lead.id }}">Bloquear todo contacto comercial</label></div>
         {% if lead.do_not_contact %}<input type="hidden" name="clear_do_not_contact" value="0">{% endif %}
+        <div class="alert alert-warning small mt-3 mb-0"><i class="bi bi-shield-exclamation me-1"></i>Para marcar un canal como <strong>Autorizado</strong>, indicá cómo se obtuvo el permiso. Queda auditado con tu usuario.</div>
+        <label class="form-label fw-semibold mt-3">Motivo / respaldo del consentimiento</label>
+        <input class="form-control" name="consent_reason" minlength="5" maxlength="500" placeholder="Ej.: autorización confirmada por llamada o contacto directo">
       </div>
       <div class="modal-footer"><button type="button" class="btn btn-outline-secondary" data-bs-dismiss="modal">Cancelar</button><button class="btn btn-primary">Guardar preferencias</button></div>
     </form>
@@ -245,12 +248,44 @@
               <button class="btn btn-sm btn-primary" type="button" data-bs-toggle="modal" data-bs-target="#newLeadModal"><i class="bi bi-plus-lg me-1"></i>Nuevo</button>
             </div>
           </div>
+          <div class="crm-consent-bulk">
+            <form method="post" action="{{ url_for('saas.crm_leads_bulk_contact_preferences') }}" id="crmBulkConsentForm" class="row g-2 align-items-end">
+              <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+              <div id="crmBulkLeadIds"></div>
+              <div class="col-lg-3">
+                <label class="form-label small fw-semibold mb-1">Consentimiento manual</label>
+                <select class="form-select form-select-sm" name="action" required>
+                  <option value="opt_in_email">Autorizar Email</option>
+                  <option value="opt_in_whatsapp">Autorizar WhatsApp</option>
+                  <option value="opt_in_both">Autorizar Email + WhatsApp</option>
+                  <option value="opt_out_all">Quitar permisos / bloquear</option>
+                </select>
+              </div>
+              <div class="col-lg-4">
+                <label class="form-label small fw-semibold mb-1">Motivo / respaldo</label>
+                <input class="form-control form-control-sm" name="consent_reason" minlength="5" maxlength="500" required placeholder="Ej.: autorización confirmada por llamada">
+              </div>
+              <div class="col-lg-3">
+                <label class="form-label small fw-semibold mb-1">Contraseña SuperAdmin</label>
+                <input class="form-control form-control-sm" type="password" name="step_up_password" autocomplete="current-password" required>
+              </div>
+              <div class="col-lg-2 d-grid">
+                <button class="btn btn-sm btn-primary" type="submit"><i class="bi bi-shield-check me-1"></i>Aplicar seleccionados</button>
+              </div>
+              <div class="col-12 small text-muted">
+                <i class="bi bi-info-circle me-1"></i>
+                Se aplica solo a los prospectos seleccionados en esta página y queda registrado como cambio manual de SuperAdmin.
+              </div>
+            </form>
+          </div>
+
           <div class="crm-table-wrap">
             <table class="table table-hover align-middle mb-0">
-              <thead><tr><th>Empresa</th><th>Contacto</th><th>Estado</th><th>Prioridad</th><th>Actividad</th><th class="text-end">Acciones</th></tr></thead>
+              <thead><tr><th><input class="form-check-input" type="checkbox" id="crmSelectAllLeads" title="Seleccionar prospectos de esta página"></th><th>Empresa</th><th>Contacto</th><th>Estado</th><th>Prioridad</th><th>Actividad</th><th class="text-end">Acciones</th></tr></thead>
               <tbody>
               {% for lead in leads %}
               <tr>
+                <td><input class="form-check-input crm-lead-select" type="checkbox" value="{{ lead.id }}" aria-label="Seleccionar {{ lead.company_name }}"></td>
                 <td><div class="fw-semibold">{{ lead.company_name }}</div><div class="crm-table-muted">{{ lead.industry or 'Sin rubro' }}{% if lead.locality %} · {{ lead.locality }}{% endif %}</div></td>
                 <td><div class="fw-semibold">{{ lead.contact_name }}</div><div class="crm-table-muted">{{ lead.email or lead.phone or 'Sin datos de contacto' }}</div></td>
                 <td><span class="badge text-bg-light border">{{ lead.status|replace('_',' ') }}</span></td>
@@ -269,7 +304,7 @@
                   </div>
                 </td>
               </tr>
-              {% else %}<tr><td colspan="6" class="text-center text-muted py-5">Sin prospectos con estos filtros.</td></tr>{% endfor %}
+              {% else %}<tr><td colspan="7" class="text-center text-muted py-5">Sin prospectos con estos filtros.</td></tr>{% endfor %}
               </tbody>
             </table>
           </div>
@@ -495,3 +530,43 @@
 })();
 </script>
 {% endblock %}
+
+<script>
+document.addEventListener("DOMContentLoaded", function () {
+  const form = document.getElementById("crmBulkConsentForm");
+  const idsBox = document.getElementById("crmBulkLeadIds");
+  const selectAll = document.getElementById("crmSelectAllLeads");
+  const syncIds = () => {
+    if (!form || !idsBox) return;
+    idsBox.innerHTML = "";
+    document.querySelectorAll(".crm-lead-select:checked").forEach((el) => {
+      const input = document.createElement("input");
+      input.type = "hidden";
+      input.name = "lead_ids";
+      input.value = el.value;
+      idsBox.appendChild(input);
+    });
+    const count = document.querySelectorAll(".crm-lead-select:checked").length;
+    const button = form.querySelector('button[type="submit"]');
+    if (button) button.innerHTML = '<i class="bi bi-shield-check me-1"></i>Aplicar (' + count + ')';
+    if (selectAll) {
+      const all = document.querySelectorAll(".crm-lead-select").length;
+      selectAll.checked = all > 0 && count === all;
+      selectAll.indeterminate = count > 0 && count < all;
+    }
+  };
+  document.querySelectorAll(".crm-lead-select").forEach((el) => el.addEventListener("change", syncIds));
+  if (selectAll) selectAll.addEventListener("change", function () {
+    document.querySelectorAll(".crm-lead-select").forEach((el) => { el.checked = selectAll.checked; });
+    syncIds();
+  });
+  if (form) form.addEventListener("submit", function (event) {
+    syncIds();
+    if (!idsBox.children.length) {
+      event.preventDefault();
+      alert("Seleccioná al menos un prospecto.");
+    }
+  });
+  syncIds();
+});
+</script>
