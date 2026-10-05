@@ -129,7 +129,18 @@ def _header_map(headers):
             if key in normalized:
                 result[field] = normalized[key]
                 break
+
+    # Heuristic fallback for contact columns with extra qualifiers.
+    for normalized_header, original in normalized.items():
+        if "email" in normalized_header and "consent" not in normalized_header and "permiso" not in normalized_header:
+            result.setdefault("email", original)
+        if "whatsapp" in normalized_header and "consent" not in normalized_header and "permiso" not in normalized_header:
+            result.setdefault("whatsapp", original)
+        if any(token in normalized_header for token in ("telefono", "tel", "celular", "movil", "mobile")) and "consent" not in normalized_header and "permiso" not in normalized_header:
+            result.setdefault("phone", original)
+
     return result
+
 
 def _build_row(raw: dict, header_map: dict) -> dict:
     def value(field):
