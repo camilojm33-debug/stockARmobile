@@ -116,3 +116,53 @@ def test_campaign_metrics_are_tenant_scoped(app):
         assert campaign_metrics(company_a.id, campaign.id)["total"] == 0
         with pytest.raises(ValueError):
             campaign_metrics(company_b.id, campaign.id)
+
+
+def test_queued_campaign_can_be_cancelled(app):
+    from app import Company, User, db
+
+    with app.app_context():
+        company = Company(name="Cancel Queue Co", active=True)
+        db.session.add(company)
+        db.session.flush()
+        user = User(
+            username="cancel-queue-admin",
+            email="cancel-queue@example.com",
+            role="admin",
+            active=True,
+            company_id=company.id,
+        )
+        user.set_password("password123")
+        db.session.add(user)
+        db.session.flush()
+
+        campaign = CampaignService.create_draft(
+            company_id=company.id,
+            user_id=user.id,
+            title="Campaña cancelable",
+            objective="Prueba",
+            campaign_type="general",
+            content="Hola",
+            system_data={"channel": "email"},
+            audience_segment="clientes activos",
+            audience_count=0,
+        )
+        db.session.commit()
+
+        for target in ("PENDIENTE_APROBACION", "APROBADA", "EN_PREPARACION", "CANCELADA"):
+            CampaignService.transition(
+                company_id=company.id,
+                campaign_id=campaign.id,
+                target_status=target,
+                user_id=user.id,
+            )
+
+        assert campaign.status == "CANCELADA"
+
+
+def test_campaign_detail_has_cancel_button_for_queued_state():
+    from pathlib import Path
+
+    template = Path("templates/ai_agents/campaign_detail.html").read_text(encoding="utf-8")
+    assert 'name="status" value="CANCELADA"' in template
+    assert "Cancelar campaña" in template

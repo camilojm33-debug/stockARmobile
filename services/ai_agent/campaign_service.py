@@ -83,7 +83,7 @@ class CampaignService:
         if campaign is None:
             raise ValueError("Campaña no encontrada para esta empresa.")
         target_status = str(target_status or "").upper()
-        transitions = {"BORRADOR": {"PENDIENTE_APROBACION", "CANCELADA"}, "PENDIENTE_APROBACION": {"APROBADA", "BORRADOR", "CANCELADA"}, "APROBADA": {"EN_PREPARACION", "CANCELADA"}, "EN_PREPARACION": set(), "ENVIADA": set(), "ENVIADA_PARCIAL": set(), "FALLIDA": set(), "SIN_ENVIO": set(), "CANCELADA": set()}
+        transitions = {"BORRADOR": {"PENDIENTE_APROBACION", "CANCELADA"}, "PENDIENTE_APROBACION": {"APROBADA", "BORRADOR", "CANCELADA"}, "APROBADA": {"EN_PREPARACION", "CANCELADA"}, "EN_PREPARACION": {"CANCELADA"}, "ENVIADA": set(), "ENVIADA_PARCIAL": set(), "FALLIDA": set(), "SIN_ENVIO": set(), "CANCELADA": set()}
         if target_status not in transitions.get(campaign.status, set()):
             raise ValueError(f"Transición no permitida: {campaign.status} → {target_status}.")
         campaign.status = target_status
