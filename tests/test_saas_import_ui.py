@@ -27,3 +27,15 @@ def test_superadmin_manual_consent_controls_are_explicit_and_audited():
     assert 'Quitar permisos / bloquear' in template
     assert 'email_status != "invalid"' in source
     assert 'name="step_up_password"' in template
+
+
+def test_superadmin_crm_bulk_delete_is_available_and_reuses_lead_selection():
+    template = (ROOT / "templates/saas/crm.html").read_text(encoding="utf-8")
+    source = (ROOT / "saas.py").read_text(encoding="utf-8")
+    assert 'action="{{ url_for(\'saas.crm_leads_bulk_delete\') }}"' in template
+    assert 'id="crmBulkDeleteForm"' in template
+    assert 'id="crmBulkDeleteIds"' in template
+    assert "crmBulkDeleteButton" in template
+    assert 'def crm_leads_bulk_delete()' in source
+    assert 'ids = ids[:100]' in source
+    assert 'No se realizaron cambios.' in source
