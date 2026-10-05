@@ -100,6 +100,32 @@
     </div>
   </section>
 
+  <section class="campaign-detail-card p-3 p-lg-4 mb-4">
+    <div class="d-flex justify-content-between align-items-center gap-3 mb-3">
+      <div>
+        <h2 class="h5 fw-bold mb-1">Preflight de envío</h2>
+        <div class="small text-muted">La campaña sólo puede aprobarse cuando todas las puertas de seguridad están en verde.</div>
+      </div>
+      <span class="campaign-status {{ 'status-sent' if preflight.ready else 'status-failed' }}">
+        <i class="bi {{ 'bi-shield-check' if preflight.ready else 'bi-shield-exclamation' }}"></i>
+        {{ 'Lista para enviar' if preflight.ready else 'Bloqueada' }}
+      </span>
+    </div>
+    <div class="row g-2">
+      {% for check in preflight.checks %}
+      <div class="col-md-6">
+        <div class="d-flex align-items-start gap-2 p-2 border rounded-3 h-100">
+          <i class="bi {{ 'bi-check-circle-fill text-success' if check.ok else 'bi-x-circle-fill text-danger' }} mt-1"></i>
+          <div class="min-w-0">
+            <div class="fw-semibold small">{{ check.label }}</div>
+            <div class="small text-muted">{{ check.detail }}</div>
+          </div>
+        </div>
+      </div>
+      {% endfor %}
+    </div>
+  </section>
+
   <div class="row g-4">
     <div class="col-lg-7">
       <section class="campaign-detail-card p-3 p-lg-4 h-100">
@@ -127,9 +153,9 @@
           ('Base filtrada',audience.total),
           ('Bloqueados',audience.blocked),
           ('Email disponible',audience.email_available),
-          ('Email elegible',audience.eligible_email),
+          ('Email con permiso',audience.email_optin),
           ('WhatsApp disponible',audience.whatsapp_available),
-          ('WhatsApp con permiso',audience.eligible_whatsapp)
+          ('WhatsApp con permiso',audience.whatsapp_optin)
         ] %}
         <div class="campaign-data-row">
           <span class="small text-muted">{{ label }}</span>
@@ -200,24 +226,34 @@
             <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
             <button class="btn btn-outline-primary w-100"><i class="bi bi-person-check me-1"></i>Preparar / actualizar audiencia</button>
           </form>
-          {% if marketing_send_enabled %}
+          {% if preflight.ready %}
           <form method="post" action="{{ url_for('saas.crm_campaign_approve',campaign_id=campaign.id) }}">
             <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
-            <input type="password" name="step_up_password" class="form-control mt-2" placeholder="Contraseña para aprobar" autocomplete="current-password">
+            <input type="password" name="step_up_password" class="form-control mt-2" placeholder="Contraseña para aprobar" autocomplete="current-password" required>
             <button class="btn btn-success w-100 mt-2"><i class="bi bi-shield-check me-1"></i>Aprobar campaña</button>
           </form>
           {% else %}
-          <div class="alert alert-warning campaign-alert small mt-2 mb-0">El worker de envío está deshabilitado; no se puede aprobar esta campaña para envío.</div>
+          <div class="alert alert-warning campaign-alert small mt-2 mb-0"><i class="bi bi-shield-exclamation me-1"></i>{{ preflight.summary }} Revisá el preflight antes de aprobar.</div>
           {% endif %}
         {% elif campaign.status == 'APROBADA' %}
-          <div class="alert alert-success campaign-alert small"><i class="bi bi-check-circle me-1"></i>Campaña aprobada. El worker comercial controlará el envío.</div>
+          <div class="alert alert-success campaign-alert small"><i class="bi bi-check-circle me-1"></i>Campaña aprobada. Podés iniciar el primer lote inmediatamente.</div>
+          <form method="post" action="{{ url_for('saas.crm_campaign_send_now',campaign_id=campaign.id) }}">
+            <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+            <input type="password" name="step_up_password" class="form-control mt-2" placeholder="Contraseña para enviar ahora" autocomplete="current-password" required>
+            <button class="btn btn-primary w-100 mt-2"><i class="bi bi-send me-1"></i>Enviar ahora</button>
+          </form>
           <form method="post" action="{{ url_for('saas.crm_campaign_cancel',campaign_id=campaign.id) }}">
             <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
             <input type="password" name="step_up_password" class="form-control" placeholder="Contraseña para cancelar" autocomplete="current-password">
             <button class="btn btn-outline-danger w-100 mt-2"><i class="bi bi-x-circle me-1"></i>Cancelar campaña</button>
           </form>
         {% elif campaign.status == 'ENVIANDO' %}
-          <div class="alert alert-primary campaign-alert small"><i class="bi bi-arrow-repeat me-1"></i>Envío en curso. Podés seguir viendo las métricas desde esta pantalla.</div>
+          <div class="alert alert-primary campaign-alert small"><i class="bi bi-arrow-repeat me-1"></i>Envío en curso. Los destinatarios pendientes pueden cancelarse.</div>
+          <form method="post" action="{{ url_for('saas.crm_campaign_cancel',campaign_id=campaign.id) }}">
+            <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+            <input type="password" name="step_up_password" class="form-control" placeholder="Contraseña para cancelar" autocomplete="current-password" required>
+            <button class="btn btn-outline-danger w-100 mt-2"><i class="bi bi-x-circle me-1"></i>Cancelar pendientes</button>
+          </form>
         {% elif campaign.status == 'ENVIADA' %}
           <div class="alert alert-success campaign-alert small mb-0"><i class="bi bi-check2-all me-1"></i>Envío finalizado correctamente.</div>
         {% elif campaign.status == 'ENVIADA_PARCIAL' %}
