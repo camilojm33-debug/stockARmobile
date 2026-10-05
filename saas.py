@@ -2332,6 +2332,7 @@ def crm_campaign_detail(campaign_id):
         metrics=campaign_metrics(db.session, campaign.id),
         audience=campaign_audience_metrics(db.session, campaign),
         segment_filters=segment_filters,
+        campaign_scheduled_local=_format_admin_datetime_local(campaign.scheduled_at, "%Y-%m-%dT%H:%M"),
         marketing_send_enabled=str(current_app.config.get("SAAS_MARKETING_SEND_ENABLED", "0")).lower() in {"1", "true", "yes", "on"},
         smtp_configured=bool(current_app.config.get("SMTP_HOST") and current_app.config.get("SMTP_USER")),
     )
@@ -2383,6 +2384,81 @@ def crm_campaign_prepare(campaign_id):
         db.session.rollback()
         flash(f"No se pudo preparar la campaña: {exc}", "danger")
     return redirect(url_for("saas.crm_campaign_detail", campaign_id=campaign_id))
+
+
+@bp.route("/crm/campaigns/<int:campaign_id>/edit", methods=["POST"])
+@superadmin_required
+def crm_campaign_edit(campaign_id):
+    from app import SaaSCampaign, SaaSCampaignEvent, SaaSCampaignRecipient, db, record_audit
+
+    _require_superadmin()
+    campaign = SaaSCampaign.query.filter_by(id=campaign_id).first_or_404()
+    if campaign.status != "BORRADOR":
+        flash("Solo se puede editar una campaña que todavía está en Borrador.", "warning")
+        return redirect(url_for("saas.crm_campaign_detail", campaign_id=campaign_id))
+
+    channel = (request.form.get("channel") or "email").strip().lower()
+    name = (request.form.get("name") or "").strip()[:180]
+    subject = (request.form.get("subject") or "").strip()[:255]
+    body_html = (request.form.get("body_html") or "").strip()
+    body_text = (request.form.get("body_text") or "").strip() or None
+    whatsapp_template_name = (request.form.get("whatsapp_template_name") or "").strip()[:120] or None
+    whatsapp_template_language = (request.form.get("whatsapp_template_language") or "es_AR").strip()[:20] or "es_AR"
+    whatsapp_parameter_fields = (request.form.get("whatsapp_parameter_fields") or "contacto,empresa").strip()[:500] or "contacto,empresa"
+
+    if channel not in {"email", "whatsapp", "both"} or not name or not subject or not body_html:
+        flash("Nombre, canal, asunto y HTML son obligatorios.", "danger")
+        return redirect(url_for("saas.crm_campaign_detail", campaign_id=campaign_id))
+
+    from services.saas_commercial_service import segment_filters_from_request
+
+    filters = segment_filters_from_request(request)
+    scheduled_at = _parse_dt(request.form.get("scheduled_at"))
+
+    old_snapshot = {
+        "name": campaign.name,
+        "channel": campaign.channel,
+        "subject": campaign.subject,
+        "scheduled_at": campaign.scheduled_at.isoformat() if campaign.scheduled_at else None,
+        "segment_json": campaign.segment_json,
+    }
+
+    campaign.name = name
+    campaign.subject = subject
+    campaign.channel = channel
+    campaign.body_html = body_html
+    campaign.body_text = body_text
+    campaign.whatsapp_template_name = whatsapp_template_name
+    campaign.whatsapp_template_language = whatsapp_template_language
+    campaign.whatsapp_parameter_fields = whatsapp_parameter_fields
+    campaign.segment_json = json.dumps(filters, ensure_ascii=False)
+    campaign.scheduled_at = scheduled_at
+
+    # La audiencia queda obsoleta cuando cambia la campaña: obligar a
+    # recalcular destinatarios evita enviar a una audiencia anterior.
+    db.session.query(SaaSCampaignEvent).filter(
+        SaaSCampaignEvent.campaign_id == campaign.id,
+        SaaSCampaignEvent.event_type == "recipient_prepared",
+    ).delete(synchronize_session=False)
+    db.session.query(SaaSCampaignRecipient).filter(
+        SaaSCampaignRecipient.campaign_id == campaign.id,
+    ).delete(synchronize_session=False)
+    campaign.target_count = 0
+    campaign.sent_count = 0
+    campaign.failed_count = 0
+    campaign.skipped_count = 0
+    campaign.replied_count = 0
+
+    record_audit(
+        action="saas_campaign_edit",
+        entity="saas_campaign",
+        entity_id=campaign.id,
+        detail=f"Campaña editada. Antes={json.dumps(old_snapshot, ensure_ascii=False)}.",
+        user_id=current_user.id,
+    )
+    db.session.commit()
+    flash("Campaña actualizada. Ahora prepará nuevamente la audiencia.", "success")
+    return redirect(url_for("saas.crm_campaign_detail", campaign_id=campaign.id))
 
 
 @bp.post("/crm/campaigns/<int:campaign_id>/audience-all-email")
