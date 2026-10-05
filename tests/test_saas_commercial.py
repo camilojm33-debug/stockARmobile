@@ -137,8 +137,8 @@ def test_campaign_recipient_selection_uses_email_suppression_policy(app):
         db.session.commit()
 
         summary = build_campaign_recipients(db.session, campaign.id)
-        assert summary["eligible"] == 2
-        assert {recipient.lead_id for recipient in campaign.recipients} == {opted.id, unknown.id}
+        assert summary["eligible"] == 1
+        assert {recipient.lead_id for recipient in campaign.recipients} == {opted.id}
 
 
 def test_campaign_both_prepares_independent_channel_recipients(app):
@@ -696,3 +696,46 @@ def test_campaign_dispatch_marks_failed_when_all_recipients_fail(app, monkeypatc
         assert result["failed"] == 1
         assert recipient.status == "failed"
         assert refreshed.status == "FALLIDA"
+
+
+def test_campaign_preflight_blocks_unknown_consent_and_is_channel_specific(app):
+    from app import SaaSCampaign, SaaSLead, User, db
+    from services.saas_campaign_preflight import campaign_preflight
+
+    with app.app_context():
+        app.config["SAAS_MARKETING_SEND_ENABLED"] = True
+        app.config["SMTP_HOST"] = "smtp.test"
+        app.config["SMTP_USER"] = "user@test"
+        app.config["SMTP_PASSWORD"] = "password"
+        app.config["SAAS_CAMPAIGN_WORKER_TOKEN"] = "worker-token"
+        app.config["SAAS_CAMPAIGN_WORKER_URL"] = "https://example.test/internal/crm/campaign-worker"
+        user = User(username="preflight-admin", email="preflight@example.com", role="superadmin", active=True)
+        user.set_password("test-password")
+        db.session.add(user)
+        db.session.flush()
+        lead = SaaSLead(
+            company_name="Sin permiso",
+            contact_name="Contacto",
+            email="sinpermiso@example.com",
+            email_status="valid",
+            email_consent_status="unknown",
+            created_by_user_id=user.id,
+        )
+        db.session.add(lead)
+        db.session.flush()
+        campaign = SaaSCampaign(
+            name="Preflight",
+            subject="Hola",
+            channel="email",
+            status="BORRADOR",
+            body_html="<p>Hola {{contacto}}</p>",
+            body_text="Hola {{contacto}}",
+            created_by_user_id=user.id,
+        )
+        db.session.add(campaign)
+        db.session.commit()
+
+        report = campaign_preflight(db.session, campaign)
+        assert report["ready"] is False
+        assert any(item["code"] == "audience" for item in report["issues"])
+        assert report["audience"]["eligible_email"] == 0
