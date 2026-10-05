@@ -2451,7 +2451,11 @@ def crm_campaign_detail(campaign_id):
     if min_score:
         candidate_query = candidate_query.filter(SaaSLead.lead_score >= min_score)
     if campaign.channel in {"email", "both"}:
-        candidates = candidate_query.filter(SaaSLead.email.isnot(None), db.func.length(db.func.trim(SaaSLead.email)) > 0).order_by(SaaSLead.id.asc()).limit(200).all()
+        candidates = candidate_query.filter(
+            SaaSLead.email.isnot(None),
+            db.func.length(db.func.trim(SaaSLead.email)) > 0,
+            SaaSLead.email_status != "invalid",
+        ).order_by(SaaSLead.id.asc()).limit(200).all()
         consent_candidates.extend(("email", lead) for lead in candidates if lead.email_consent_status != "opted_in")
     if campaign.channel in {"whatsapp", "both"}:
         candidates = candidate_query.filter(
