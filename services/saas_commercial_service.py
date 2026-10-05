@@ -742,6 +742,82 @@ def _send_whatsapp(recipient, campaign) -> tuple[bool, str, str]:
     return True, "sent", provider_id
 
 
+def _recover_stale_campaign_claims(db_session, campaign_id: int, now) -> int:
+    """Return stale recipient claims to pending so a crashed worker can recover them."""
+    from app import SaaSCampaignRecipient
+
+    cutoff = now - __import__("datetime").timedelta(minutes=30)
+    query = (
+        db_session.query(SaaSCampaignRecipient)
+        .filter(
+            SaaSCampaignRecipient.campaign_id == campaign_id,
+            SaaSCampaignRecipient.status == "sending",
+            SaaSCampaignRecipient.updated_at < cutoff,
+        )
+    )
+    recovered = 0
+    for recipient in query.all():
+        recipient.status = "pending"
+        recipient.error_reason = None
+        recipient.updated_at = now
+        recovered += 1
+    if recovered:
+        db_session.flush()
+    return recovered
+
+
+def _claim_campaign_recipient(db_session, recipient_id: int, now) -> bool:
+    """Atomically claim one pending recipient before any external provider call."""
+    from app import SaaSCampaignRecipient
+
+    updated = (
+        db_session.query(SaaSCampaignRecipient)
+        .filter(
+            SaaSCampaignRecipient.id == recipient_id,
+            SaaSCampaignRecipient.status == "pending",
+        )
+        .update(
+            {
+                SaaSCampaignRecipient.status: "sending",
+                SaaSCampaignRecipient.error_reason: "Envío en curso.",
+                SaaSCampaignRecipient.updated_at: now,
+            },
+            synchronize_session=False,
+        )
+    )
+    if updated != 1:
+        return False
+    db_session.flush()
+    return True
+
+
+def _finalize_campaign_status(campaign, recipients) -> str | None:
+    """Set a terminal status only after all recipients leave pending/sending."""
+    pending = sum(1 for recipient in recipients if recipient.status in {"pending", "sending"})
+    if pending:
+        return None
+
+    sent = sum(1 for recipient in recipients if recipient.status == "sent")
+    failed = sum(1 for recipient in recipients if recipient.status == "failed")
+    skipped = sum(1 for recipient in recipients if recipient.status == "skipped")
+
+    if sent > 0 and failed == 0:
+        status = "ENVIADA"
+    elif sent > 0 and (failed > 0 or skipped > 0):
+        status = "ENVIADA_PARCIAL"
+    elif failed > 0:
+        status = "FALLIDA"
+    elif skipped > 0:
+        status = "SIN_ENVIO"
+    else:
+        # No recipients means there was nothing to send.
+        status = "SIN_ENVIO"
+
+    campaign.status = status
+    campaign.finished_at = utcnow()
+    return status
+
+
 def dispatch_due_campaigns(db_session, *, limit: int = 20, per_campaign: int = 50) -> dict:
     from app import SaaSCampaign, SaaSCampaignEvent, SaaSCampaignRecipient, utcnow
     from flask import current_app
@@ -752,7 +828,14 @@ def dispatch_due_campaigns(db_session, *, limit: int = 20, per_campaign: int = 5
         SaaSCampaign.status.in_({"APROBADA", "ENVIANDO"}),
         SaaSCampaign.scheduled_at.is_(None) | (SaaSCampaign.scheduled_at <= now),
     ).order_by(SaaSCampaign.id.asc()).limit(limit).all()
-    summary = {"campaigns": 0, "sent": 0, "failed": 0, "skipped": 0, "disabled": 0}
+    summary = {
+        "campaigns": 0,
+        "sent": 0,
+        "failed": 0,
+        "skipped": 0,
+        "disabled": 0,
+        "claimed": 0,
+    }
 
     for campaign in campaigns:
         if not marketing_enabled:
@@ -762,100 +845,111 @@ def dispatch_due_campaigns(db_session, *, limit: int = 20, per_campaign: int = 5
         campaign.status = "ENVIANDO"
         campaign.started_at = campaign.started_at or now
         db_session.flush()
-        recipients = (
-            SaaSCampaignRecipient.query
-            .filter_by(campaign_id=campaign.id, status="pending")
-            .order_by(SaaSCampaignRecipient.id.asc())
-            .limit(per_campaign)
-            .all()
-        )
 
-        for recipient in recipients:
+        _recover_stale_campaign_claims(db_session, campaign.id, now)
+        db_session.commit()
+
+        candidate_ids = [
+            row.id
+            for row in (
+                SaaSCampaignRecipient.query
+                .filter_by(campaign_id=campaign.id, status="pending")
+                .order_by(SaaSCampaignRecipient.id.asc())
+                .limit(per_campaign)
+                .all()
+            )
+        ]
+
+        for recipient_id in candidate_ids:
+            claim_now = utcnow()
+            if not _claim_campaign_recipient(db_session, recipient_id, claim_now):
+                # Another worker claimed this recipient first.
+                continue
+
+            summary["claimed"] += 1
+            db_session.commit()
+            recipient = db_session.get(SaaSCampaignRecipient, recipient_id)
+            if recipient is None:
+                continue
+
             lead = recipient.lead
-            if lead.do_not_contact:
-                recipient.status = "skipped"
-                recipient.error_reason = "Lead bloqueado en el momento del envío."
-                recipient.updated_at = utcnow()
-                campaign.skipped_count += 1
-                summary["skipped"] += 1
-                continue
-
-            if recipient.channel == "email" and lead.email_consent_status != "opted_in":
-                recipient.status = "skipped"
-                recipient.error_reason = "Consentimiento email no vigente."
-                recipient.updated_at = utcnow()
-                campaign.skipped_count += 1
-                summary["skipped"] += 1
-                continue
-
-            if recipient.channel == "whatsapp" and lead.whatsapp_consent_status != "opted_in":
-                recipient.status = "skipped"
-                recipient.error_reason = "Consentimiento WhatsApp no vigente."
-                recipient.updated_at = utcnow()
-                campaign.skipped_count += 1
-                summary["skipped"] += 1
-                continue
-
             try:
-                if recipient.channel == "email":
-                    ok, detail = _send_email(recipient, campaign)
-                    provider_id = ""
+                if lead.do_not_contact:
+                    recipient.status = "skipped"
+                    recipient.error_reason = "Lead bloqueado en el momento del envío."
+                    recipient.updated_at = utcnow()
+                    campaign.skipped_count += 1
+                    summary["skipped"] += 1
+                elif recipient.channel == "email" and lead.email_consent_status != "opted_in":
+                    recipient.status = "skipped"
+                    recipient.error_reason = "Consentimiento email no vigente."
+                    recipient.updated_at = utcnow()
+                    campaign.skipped_count += 1
+                    summary["skipped"] += 1
+                elif recipient.channel == "whatsapp" and lead.whatsapp_consent_status != "opted_in":
+                    recipient.status = "skipped"
+                    recipient.error_reason = "Consentimiento WhatsApp no vigente."
+                    recipient.updated_at = utcnow()
+                    campaign.skipped_count += 1
+                    summary["skipped"] += 1
                 else:
-                    ok, detail, provider_id = _send_whatsapp(recipient, campaign)
+                    if recipient.channel == "email":
+                        ok, detail = _send_email(recipient, campaign)
+                        provider_id = ""
+                    else:
+                        ok, detail, provider_id = _send_whatsapp(recipient, campaign)
 
-                if not ok:
-                    recipient.status = "failed"
-                    recipient.error_reason = detail
-                    recipient.failed_at = utcnow()
-                    campaign.failed_count += 1
-                    summary["failed"] += 1
-                else:
-                    recipient.status = "sent"
-                    recipient.provider_message_id = provider_id or recipient.provider_message_id
-                    recipient.provider_status = "accepted" if provider_id else "sent"
-                    recipient.sent_at = utcnow()
-                    recipient.lead.last_contacted_at = recipient.sent_at
-                    recipient.lead.last_contact_channel = recipient.channel
-                    recipient.lead.contact_count = (recipient.lead.contact_count or 0) + 1
-                    if recipient.lead.status == "nuevo":
-                        recipient.lead.status = "contactado"
-                    campaign.sent_count += 1
-                    summary["sent"] += 1
-                    db_session.add(
-                        SaaSCampaignEvent(
-                            campaign_id=campaign.id,
-                            recipient_id=recipient.id,
-                            event_type="sent",
-                            metadata_json=json.dumps(
-                                {"channel": recipient.channel, "provider_message_id": provider_id},
-                                ensure_ascii=False,
-                            ),
-                            created_at=utcnow(),
+                    if not ok:
+                        recipient.status = "failed"
+                        recipient.error_reason = detail
+                        recipient.failed_at = utcnow()
+                        recipient.updated_at = recipient.failed_at
+                        campaign.failed_count += 1
+                        summary["failed"] += 1
+                    else:
+                        recipient.status = "sent"
+                        recipient.error_reason = None
+                        recipient.provider_message_id = provider_id or recipient.provider_message_id
+                        recipient.provider_status = "accepted" if provider_id else "sent"
+                        recipient.sent_at = utcnow()
+                        recipient.updated_at = recipient.sent_at
+                        recipient.lead.last_contacted_at = recipient.sent_at
+                        recipient.lead.last_contact_channel = recipient.channel
+                        recipient.lead.contact_count = (recipient.lead.contact_count or 0) + 1
+                        if recipient.lead.status == "nuevo":
+                            recipient.lead.status = "contactado"
+                        campaign.sent_count += 1
+                        summary["sent"] += 1
+                        db_session.add(
+                            SaaSCampaignEvent(
+                                campaign_id=campaign.id,
+                                recipient_id=recipient.id,
+                                event_type="sent",
+                                metadata_json=json.dumps(
+                                    {"channel": recipient.channel, "provider_message_id": provider_id},
+                                    ensure_ascii=False,
+                                ),
+                                created_at=utcnow(),
+                            )
                         )
-                    )
             except Exception as exc:
                 recipient.status = "failed"
                 recipient.error_reason = str(exc)[:2000]
                 recipient.failed_at = utcnow()
+                recipient.updated_at = recipient.failed_at
                 campaign.failed_count += 1
                 summary["failed"] += 1
-            db_session.flush()
+            db_session.commit()
 
-        remaining = SaaSCampaignRecipient.query.filter_by(
-            campaign_id=campaign.id, status="pending"
-        ).count()
-        if remaining == 0:
-            campaign.status = "ENVIADA"
-            campaign.finished_at = utcnow()
-        campaign.target_count = SaaSCampaignRecipient.query.filter_by(
-            campaign_id=campaign.id
-        ).count()
-        db_session.flush()
+        recipients = SaaSCampaignRecipient.query.filter_by(campaign_id=campaign.id).all()
+        terminal_status = _finalize_campaign_status(campaign, recipients)
+        campaign.target_count = len(recipients)
+        db_session.commit()
         summary["campaigns"] += 1
+        if terminal_status:
+            summary.setdefault("final_statuses", {})[terminal_status] = summary.setdefault("final_statuses", {}).get(terminal_status, 0) + 1
 
-    db_session.commit()
     return summary
-
 
 def campaign_metrics(db_session, campaign_id: int) -> dict:
     from app import SaaSCampaignRecipient
