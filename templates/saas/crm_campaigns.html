@@ -200,7 +200,12 @@
                 <div><strong>El consentimiento se valida por canal.</strong><br>Un dato público no crea permiso para enviar marketing. Solo se preparan destinatarios elegibles.</div>
               </div>
             </div>
-            <div class="row g-3">
+            <div class="form-check form-switch mb-3 p-3 rounded-3 border bg-light">
+              <input class="form-check-input ms-0 me-2" type="checkbox" id="allEmailAudience" name="audience_scope" value="all_email">
+              <label class="form-check-label fw-semibold" for="allEmailAudience">Toda la base de Email</label>
+              <div class="small text-muted mt-1">Sin filtros de rubro, provincia, localidad, segmento ni score. Incluye emails válidos y excluye bajas, bloqueos e inválidos.</div>
+            </div>
+            <div class="row g-3" id="campaignAudienceFilters">
               <div class="col-md-4"><label class="form-label fw-semibold">Rubro</label><input class="form-control" name="industry" placeholder="Ferretería"></div>
               <div class="col-md-4"><label class="form-label fw-semibold">Provincia</label><input class="form-control" name="province" placeholder="Chaco"></div>
               <div class="col-md-4"><label class="form-label fw-semibold">Localidad</label><input class="form-control" name="locality" placeholder="Resistencia"></div>
@@ -240,6 +245,32 @@ Probalo gratis durante 10 días.</textarea>
             <div class="small text-muted mt-2"><i class="bi bi-info-circle me-1"></i>Campos disponibles: contacto, empresa, rubro, localidad, trial_url o none.</div>
           </div>
         </div>
+<script>
+document.addEventListener('DOMContentLoaded', function () {
+  const toggle = document.getElementById('allEmailAudience');
+  const filters = document.getElementById('campaignAudienceFilters');
+  const channel = document.querySelector('#newCampaignModal select[name="channel"]');
+  if (!toggle || !filters || !channel) return;
+  function sync() {
+    const active = toggle.checked;
+    filters.style.opacity = active ? '.55' : '1';
+    filters.querySelectorAll('input').forEach(function (input) {
+      input.disabled = active;
+    });
+    if (active && channel.value !== 'email') {
+      channel.value = 'email';
+    }
+  }
+  toggle.addEventListener('change', sync);
+  channel.addEventListener('change', function () {
+    if (channel.value !== 'email' && toggle.checked) {
+      toggle.checked = false;
+      sync();
+    }
+  });
+  sync();
+});
+</script>
         <div class="modal-footer px-4 gap-2">
           <div class="campaign-submit-help"><i class="bi bi-info-circle me-1"></i>Primero se crea el borrador. Después vas a poder preparar la audiencia y aprobar el envío.</div>
           <button class="btn btn-outline-secondary" type="button" data-bs-dismiss="modal">Cancelar</button>
