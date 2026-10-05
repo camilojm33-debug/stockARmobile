@@ -9,6 +9,8 @@ from __future__ import annotations
 import json
 import os
 import sys
+import time
+import urllib.error
 import urllib.request
 
 WORKER_URL = str(os.getenv("SAAS_CAMPAIGN_WORKER_URL") or "").strip()
@@ -45,14 +47,29 @@ def _run_via_web() -> int:
         },
         data=b"{}",
     )
-    try:
-        with urllib.request.urlopen(request, timeout=60) as response:
-            payload = response.read().decode("utf-8", errors="replace")
-            print(payload)
-            return 0 if 200 <= response.status < 300 else 1
-    except Exception as exc:
-        print(f"Commercial worker HTTP call failed: {str(exc)[:500]}", file=sys.stderr)
-        return 1
+    last_error = None
+    for attempt in range(1, 4):
+        try:
+            with urllib.request.urlopen(request, timeout=60) as response:
+                payload = response.read().decode("utf-8", errors="replace")
+                print(payload)
+                return 0 if 200 <= response.status < 300 else 1
+        except urllib.error.HTTPError as exc:
+            last_error = exc
+            if exc.code in {502, 503, 504} and attempt < 3:
+                time.sleep(10 * attempt)
+                continue
+            print(f"Commercial worker HTTP call failed: HTTP {exc.code}", file=sys.stderr)
+            return 1
+        except Exception as exc:
+            last_error = exc
+            if attempt < 3:
+                time.sleep(5 * attempt)
+                continue
+            print(f"Commercial worker HTTP call failed: {str(exc)[:500]}", file=sys.stderr)
+            return 1
+    print(f"Commercial worker HTTP call failed after retries: {str(last_error)[:500]}", file=sys.stderr)
+    return 1
 
 
 def main() -> int:
