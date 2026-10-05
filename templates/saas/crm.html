@@ -59,7 +59,6 @@
     <div class="modal-content">
       <form method="post" action="{{ url_for('saas.crm_leads_bulk_delete') }}" id="crmBulkDeleteConfirmForm">
         <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
-        <div id="crmBulkDeleteConfirmIds"></div>
         <div class="modal-header">
           <h5 class="modal-title text-danger" id="crmBulkDeleteConfirmLabel"><i class="bi bi-trash3 me-1"></i>Confirmar eliminación</h5>
           <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Cerrar"></button>
@@ -306,7 +305,7 @@
             </form>
             <div class="col-12 d-flex flex-wrap align-items-center justify-content-between gap-2 mt-1">
               <div class="small text-muted"><i class="bi bi-trash3 me-1"></i>La eliminación en lote es permanente y bloquea el reingreso automático.</div>
-              <button class="btn btn-sm btn-outline-danger ms-2" type="button" id="crmBulkDeleteButton" disabled data-bs-toggle="modal" data-bs-target="#crmBulkDeleteConfirmModal">
+              <button class="btn btn-sm btn-outline-danger ms-2" type="button" id="crmBulkDeleteButton" data-bs-toggle="modal" data-bs-target="#crmBulkDeleteConfirmModal">
                 <i class="bi bi-trash3 me-1"></i>Eliminar seleccionados
               </button>
             </div>
@@ -318,7 +317,7 @@
               <tbody>
               {% for lead in leads %}
               <tr>
-                <td><input class="form-check-input crm-lead-select" type="checkbox" value="{{ lead.id }}" aria-label="Seleccionar {{ lead.company_name }}"></td>
+                <td><input class="form-check-input crm-lead-select" type="checkbox" name="lead_ids" value="{{ lead.id }}" form="crmBulkDeleteConfirmForm" aria-label="Seleccionar {{ lead.company_name }}"></td>
                 <td><div class="fw-semibold">{{ lead.company_name }}</div><div class="crm-table-muted">{{ lead.industry or 'Sin rubro' }}{% if lead.locality %} · {{ lead.locality }}{% endif %}</div></td>
                 <td><div class="fw-semibold">{{ lead.contact_name }}</div><div class="crm-table-muted">{{ lead.email or lead.phone or 'Sin datos de contacto' }}</div></td>
                 <td><span class="badge text-bg-light border">{{ lead.status|replace('_',' ') }}</span></td>
@@ -569,7 +568,6 @@ document.addEventListener("DOMContentLoaded", function () {
   const form = document.getElementById("crmBulkConsentForm");
   const idsBox = document.getElementById("crmBulkLeadIds");
   const deleteForm = document.getElementById("crmBulkDeleteConfirmForm");
-  const deleteIdsBox = document.getElementById("crmBulkDeleteConfirmIds");
   const deleteButton = document.getElementById("crmBulkDeleteButton");
   const deleteCount = document.getElementById("crmBulkDeleteCount");
   const deletePassword = document.getElementById("crmBulkDeletePassword");
@@ -588,18 +586,7 @@ document.addEventListener("DOMContentLoaded", function () {
     const count = selected.length;
     const button = form.querySelector('button[type="submit"]');
     if (button) button.innerHTML = '<i class="bi bi-shield-check me-1"></i>Aplicar (' + count + ')';
-    if (deleteIdsBox) {
-      deleteIdsBox.innerHTML = "";
-      selected.forEach((el) => {
-        const input = document.createElement("input");
-        input.type = "hidden";
-        input.name = "lead_ids";
-        input.value = el.value;
-        deleteIdsBox.appendChild(input);
-      });
-    }
     if (deleteButton) {
-      deleteButton.disabled = count === 0;
       deleteButton.innerHTML = '<i class="bi bi-trash3 me-1"></i>Eliminar ' + (count ? '(' + count + ')' : 'seleccionados');
     }
     if (deleteCount) deleteCount.textContent = String(count);
@@ -643,7 +630,9 @@ document.addEventListener("DOMContentLoaded", function () {
   if (deleteModal) {
     deleteModal.addEventListener("shown.bs.modal", function () {
       syncIds();
-      deletePassword?.focus();
+      const count = document.querySelectorAll(".crm-lead-select:checked").length;
+      if (deleteCount) deleteCount.textContent = String(count);
+      if (deletePassword) deletePassword.focus();
     });
     deleteModal.addEventListener("hidden.bs.modal", function () {
       if (deletePassword) deletePassword.value = "";
