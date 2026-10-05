@@ -200,97 +200,87 @@
   font-size:.78rem;font-weight:700;
 }
 .superadmin-page .campaign-readiness .ready-item i{font-size:.8rem}
-.superadmin-page #newCampaignModal .modal-dialog{
-  max-width:min(1180px, calc(100vw - 28px));
-  height:calc(100vh - 24px);
-  margin:.75rem auto;
-}
-.superadmin-page #newCampaignModal .modal-content{
-  max-height:calc(100vh - 24px);
-  display:flex;
-  flex-direction:column;
-}
-.superadmin-page #newCampaignModal .modal-body{
-  overflow-y:auto;
-  min-height:0;
-  overscroll-behavior:contain;
-}
-.superadmin-page #newCampaignModal .modal-footer{
-  flex:0 0 auto;
-  position:sticky;
-  bottom:0;
-  z-index:3;
-  background:var(--app-panel,#fff);
-  border-top:1px solid var(--app-line);
-}
-.superadmin-page #newCampaignModal .campaign-submit-help{
-  margin-right:auto;
-  color:var(--app-muted);
-  font-size:.78rem;
-}
-@media (max-width:640px){
-  .superadmin-page #newCampaignModal .modal-dialog{height:calc(100vh - 10px);margin:5px auto;}
-  .superadmin-page #newCampaignModal .modal-content{max-height:calc(100vh - 10px);}
-  .superadmin-page #newCampaignModal .campaign-submit-help{display:none;}
-}
-
-/* Editar campaña: el pie debe permanecer visible aunque el formulario sea largo. */
+/* Campaign modals: only the form body scrolls; actions stay visible. */
+.superadmin-page #newCampaignModal .modal-dialog,
 .superadmin-page #editCampaignModal .modal-dialog{
+  width:auto;
   max-width:min(1180px, calc(100vw - 28px));
   height:calc(100vh - 24px);
-  margin:.75rem auto;
+  height:calc(100dvh - 24px);
+  margin:12px auto;
 }
+.superadmin-page #newCampaignModal .modal-content,
 .superadmin-page #editCampaignModal .modal-content{
-  height:100%;
-  max-height:calc(100vh - 24px);
-  display:flex;
-  flex-direction:column;
-  min-height:0;
+  height:100% !important;
+  max-height:none !important;
+  overflow:hidden !important;
+  display:flex !important;
+  flex-direction:column !important;
+  min-height:0 !important;
 }
+.superadmin-page #newCampaignModal form,
 .superadmin-page #editCampaignModal form{
   display:flex;
   flex-direction:column;
+  flex:1 1 auto;
   min-height:0;
   height:100%;
 }
-.superadmin-page #editCampaignModal .modal-body{
-  flex:1 1 auto;
-  min-height:0;
-  overflow-y:auto;
-  overscroll-behavior:contain;
-}
+.superadmin-page #newCampaignModal .modal-header,
+.superadmin-page #editCampaignModal .modal-header,
+.superadmin-page #newCampaignModal .modal-footer,
 .superadmin-page #editCampaignModal .modal-footer{
   flex:0 0 auto;
+}
+.superadmin-page #newCampaignModal .modal-body,
+.superadmin-page #editCampaignModal .modal-body{
+  flex:1 1 auto !important;
+  min-height:0 !important;
+  max-height:none !important;
+  overflow-y:auto !important;
+  overflow-x:hidden;
+  overscroll-behavior-y:contain;
+  -webkit-overflow-scrolling:touch;
+  scrollbar-gutter:stable;
+  touch-action:pan-y;
+}
+.superadmin-page #newCampaignModal .modal-footer,
+.superadmin-page #editCampaignModal .modal-footer{
   position:sticky;
   bottom:0;
-  z-index:4;
+  z-index:10;
   background:var(--app-panel,#fff);
   border-top:1px solid var(--app-line);
-  box-shadow:0 -6px 18px rgba(15,23,42,.06);
+  box-shadow:0 -8px 20px rgba(15,23,42,.08);
 }
-.superadmin-page #editCampaignModal .modal-footer .campaign-submit-help{
+.superadmin-page #newCampaignModal .campaign-submit-help,
+.superadmin-page #editCampaignModal .campaign-submit-help{
   margin-right:auto;
   color:var(--app-muted);
   font-size:.78rem;
 }
 @media (max-width:640px){
+  .superadmin-page #newCampaignModal .modal-dialog,
   .superadmin-page #editCampaignModal .modal-dialog{
+    max-width:calc(100vw - 10px);
     height:calc(100vh - 10px);
+    height:calc(100dvh - 10px);
     margin:5px auto;
   }
-  .superadmin-page #editCampaignModal .modal-content{
-    max-height:calc(100vh - 10px);
-  }
+  .superadmin-page #newCampaignModal .modal-footer,
   .superadmin-page #editCampaignModal .modal-footer{
     padding:.75rem;
   }
-  .superadmin-page #editCampaignModal .modal-footer .campaign-submit-help{
+  .superadmin-page #newCampaignModal .campaign-submit-help,
+  .superadmin-page #editCampaignModal .campaign-submit-help{
     display:none;
   }
+  .superadmin-page #newCampaignModal .modal-footer .btn,
   .superadmin-page #editCampaignModal .modal-footer .btn{
     flex:1 1 0;
   }
 }
+
 .superadmin-page .campaign-form-section{
   padding:14px 0 4px;
 }
