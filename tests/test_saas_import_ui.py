@@ -34,8 +34,22 @@ def test_superadmin_crm_bulk_delete_is_available_and_reuses_lead_selection():
     source = (ROOT / "saas.py").read_text(encoding="utf-8")
     assert 'action="{{ url_for(\'saas.crm_leads_bulk_delete\') }}"' in template
     assert 'id="crmBulkDeleteConfirmForm"' in template
-    assert 'name="lead_ids" value="{{ lead.id }}" form="crmBulkDeleteConfirmForm"' in template
+    assert 'name="lead_ids" value="{{ lead.id }}"' in template
+    assert 'id="crmBulkDeleteLeadIds"' in template
+    assert 'const deleteIdsBox = document.getElementById("crmBulkDeleteLeadIds");' in template
     assert "crmBulkDeleteButton" in template
     assert 'def crm_leads_bulk_delete()' in source
     assert 'ids = ids[:100]' in source
     assert 'No se realizaron cambios.' in source
+
+
+def test_superadmin_crm_select_all_is_wired_inside_rendered_script_block():
+    template = (ROOT / "templates/saas/crm.html").read_text(encoding="utf-8")
+    block_start = template.index("{% block extra_scripts_inline %}")
+    block_end = template.index("{% endblock %}", block_start)
+    block = template[block_start:block_end]
+
+    assert 'id="crmSelectAllLeads"' in template
+    assert 'el.checked = selectAll.checked' in block
+    assert 'syncIds();' in block
+    assert template.count('DOMContentLoaded", function ()') == 1
