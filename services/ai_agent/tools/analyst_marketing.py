@@ -139,14 +139,17 @@ class ClientesInactivosTool(AgentTool):
             return {"success": False, "error": "limit debe ser un entero"}
 
         cutoff = datetime.utcnow() - timedelta(days=days)
+        valid_sale_statuses = Sale.status.notin_(["cancelada", "anulada"])
         historical = Sale.query.filter(
             Sale.company_id == self.company_id,
             Sale.client_id.isnot(None),
+            valid_sale_statuses,
         ).with_entities(Sale.client_id).distinct().subquery()
         recent = Sale.query.filter(
             Sale.company_id == self.company_id,
             Sale.client_id.isnot(None),
             Sale.date >= cutoff,
+            valid_sale_statuses,
         ).with_entities(Sale.client_id).distinct().subquery()
         base = Client.query.filter(
             Client.company_id == self.company_id,
