@@ -3239,6 +3239,8 @@ def crm_leads_bulk_contact_preferences():
             lead.email_consent_status = "opted_out"
             lead.whatsapp_consent_status = "opted_out"
             lead.phone_consent_status = "opted_out"
+            lead.do_not_contact = True
+            lead.do_not_contact_at = now
             consent.email_status = "opted_out"
             consent.whatsapp_status = "opted_out"
             consent.phone_status = "opted_out"
