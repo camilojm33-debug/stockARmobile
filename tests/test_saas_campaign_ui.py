@@ -43,3 +43,20 @@ def test_campaign_detail_exposes_full_email_audience_action():
     source = (ROOT / "saas.py").read_text(encoding="utf-8")
     assert "crm_campaign_audience_all_email" in template
     assert '/crm/campaigns/<int:campaign_id>/audience-all-email' in source
+
+
+def test_campaign_detail_exposes_edit_for_drafts():
+    template = (ROOT / "templates/saas/crm_campaign_detail.html").read_text(encoding="utf-8")
+    source = (ROOT / "saas.py").read_text(encoding="utf-8")
+    assert "Editar campaña" in template
+    assert "Guardar cambios" in template
+    assert 'def crm_campaign_edit(campaign_id):' in source
+    assert 'campaign.status != "BORRADOR"' in source
+    assert 'saas_campaign_edit' in source
+
+
+def test_campaign_edit_invalidates_previous_recipient_audience():
+    source = (ROOT / "saas.py").read_text(encoding="utf-8")
+    assert 'SaaSCampaignRecipient.campaign_id == campaign.id' in source
+    assert 'campaign.target_count = 0' in source
+    assert 'Ahora prepará nuevamente la audiencia.' in source
