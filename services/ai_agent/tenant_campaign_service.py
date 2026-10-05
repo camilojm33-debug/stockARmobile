@@ -109,6 +109,33 @@ def prepare_recipients(campaign_id: int, *, company_id: int) -> dict:
         raise ValueError("Canal de campaña inválido.")
 
     channels = ("email", "whatsapp") if campaign.channel == "both" else (campaign.channel,)
+
+    if campaign.channel in {"whatsapp", "both"}:
+        from services.ai_agent.config_service import get_whatsapp_connection
+        from app import Company
+
+        company = Company.query.filter_by(id=campaign.company_id, active=True).first()
+        connection = get_whatsapp_connection(company)
+        if (
+            not connection.get("enabled")
+            or not connection.get("phone_number_id")
+            or not connection.get("access_token")
+        ):
+            raise ValueError(
+                "WhatsApp no está conectado para esta empresa. "
+                "Configurá el número de WhatsApp en Agentes IA o elegí Email como canal."
+            )
+        template_name = str(
+            _json(campaign).get("whatsapp_template_name")
+            or connection.get("template_name")
+            or ""
+        ).strip()
+        if not template_name:
+            raise ValueError(
+                "WhatsApp está conectado, pero falta una plantilla aprobada. "
+                "Configurá la plantilla o elegí Email como canal."
+            )
+
     existing = {(r.client_id, r.channel) for r in campaign.recipients}
     added = 0
     eligible = 0
