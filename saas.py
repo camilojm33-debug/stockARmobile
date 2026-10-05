@@ -905,10 +905,13 @@ def _sync_automatic_crm_from_attention(now):
             company_id=row.get("company_id"),
             preferred_user_id=None,
         )
+        if lead is None:
+            continue
+
         task = SaaSOpsService.create_task(
             db.session,
             company_id=row.get("company_id"),
-            lead_id=getattr(lead, "id", None),
+            lead_id=lead.id,
             title=row["reason"],
             description=row["detail"],
             priority="alta" if row["severity"] == "danger" else "media",
