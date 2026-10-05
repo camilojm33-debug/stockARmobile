@@ -127,8 +127,25 @@
           <span class="campaign-audience-value">{{ value }}</span>
         </div>
         {% endfor %}
-        <div class="small text-muted mt-3 mb-1">Filtros guardados</div>
-        <div class="campaign-message-preview" style="min-height:auto;font-size:.82rem;">{{ campaign.segment_json }}</div>
+        <div class="small text-muted mt-3 mb-2">Filtros guardados</div>
+        {% set segment_labels = {
+          'industry':'Rubro',
+          'province':'Provincia',
+          'locality':'Localidad',
+          'segment':'Segmento',
+          'min_score':'Score mínimo'
+        } %}
+        {% if segment_filters %}
+          <div class="d-flex flex-wrap gap-2">
+          {% for key,value in segment_filters.items() %}
+            {% if value not in [None, ''] %}
+              <span class="campaign-meta-pill"><span class="text-muted">{{ segment_labels.get(key,key|replace('_',' ')|title) }}</span><strong>{{ value }}</strong></span>
+            {% endif %}
+          {% endfor %}
+          </div>
+        {% else %}
+          <div class="small text-muted">Sin filtros específicos: se evalúa la base completa según consentimiento y reglas de elegibilidad.</div>
+        {% endif %}
       </section>
 
       <section class="campaign-detail-card p-3 p-lg-4 mb-4">
