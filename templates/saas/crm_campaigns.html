@@ -158,10 +158,7 @@
             <div class="page-kicker mb-1"><i class="bi bi-megaphone"></i> Nueva campaña comercial</div>
             <h2 class="modal-title h5 fw-bold mb-0" id="newCampaignModalLabel">Prepará la campaña</h2>
           </div>
-          <div class="d-flex align-items-center gap-2">
-            <button class="btn btn-primary btn-sm" type="submit"><i class="bi bi-save2 me-1"></i>Crear borrador</button>
-            <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Cerrar"></button>
-          </div>
+          <button type="button" class="btn-close ms-2" data-bs-dismiss="modal" aria-label="Cerrar"></button>
         </div>
         <div class="modal-body px-4">
           <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
