@@ -98,3 +98,17 @@ def test_campaign_creation_modal_and_edit_modal_keep_footer_outside_scroll():
     assert "modal-dialog-scrollable" not in edit_template
     assert f"#{'newCampaignModal'} .modal-body" in create_template
     assert f"#{'editCampaignModal'} .modal-body" in edit_template
+
+
+def test_draft_campaign_can_be_deleted_from_superadmin():
+    template = (ROOT / "templates/saas/crm_campaign_detail.html").read_text(encoding="utf-8")
+    source = (ROOT / "saas.py").read_text(encoding="utf-8")
+    assert 'url_for(' in template
+    assert 'Eliminar campaña' in template
+    assert 'id="deleteCampaignModal"' in template
+    assert 'Confirmar eliminación' in template
+    assert 'def crm_campaign_delete(campaign_id):' in source
+    assert 'campaign.status not in {"BORRADOR", "CANCELADA"}' in source
+    assert 'SaaSCampaignEvent.query.filter_by(campaign_id=campaign.id).delete' in source
+    assert 'SaaSCampaignRecipient.query.filter_by(campaign_id=campaign.id).delete' in source
+    assert 'No se realizaron cambios.' in source
