@@ -2340,7 +2340,7 @@ def crm_campaign_detail(campaign_id):
 @bp.post("/crm/campaigns/<int:campaign_id>/prepare")
 @superadmin_required
 def crm_campaign_prepare(campaign_id):
-    from app import db, record_audit
+    from app import SaaSCampaign, db, record_audit
     from services.saas_commercial_service import build_campaign_recipients
 
     _require_superadmin()
@@ -2348,7 +2348,8 @@ def crm_campaign_prepare(campaign_id):
         result = build_campaign_recipients(db.session, campaign_id)
         from services.saas_commercial_service import campaign_audience_metrics
 
-        audience = campaign_audience_metrics(db.session, db.session.get(__import__("app").SaaSCampaign, campaign_id))
+        campaign = db.session.get(SaaSCampaign, campaign_id)
+        audience = campaign_audience_metrics(db.session, campaign)
         record_audit(
             action="saas_campaign_prepare", entity="saas_campaign", entity_id=campaign_id,
             detail=f"Destinatarios preparados: elegibles={result['eligible']} agregados={result['added']}.",
@@ -2363,7 +2364,7 @@ def crm_campaign_prepare(campaign_id):
                 "Revisá rubro, provincia, localidad y segmento.",
                 "warning",
             )
-        elif campaign_id and campaign_id:
+        else:
             channel_parts = []
             if campaign.channel in {"email", "both"}:
                 channel_parts.append(
