@@ -3147,7 +3147,7 @@ def crm_lead_delete(lead_id):
     lead = SaaSLead.query.filter_by(id=lead_id).first_or_404()
     lead_company_id = lead.company_id
     try:
-        result = delete_saas_lead(db.session, lead_id)
+        result = delete_saas_lead(db.session, lead_id, suppressing_user_id=current_user.id)
         record_audit(
             action="saas_lead_delete",
             entity="saas_lead",
