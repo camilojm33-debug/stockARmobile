@@ -944,7 +944,7 @@ def dispatch_due_campaigns(db_session, *, limit: int = 20, per_campaign: int = 5
                     recipient.updated_at = utcnow()
                     campaign.skipped_count += 1
                     summary["skipped"] += 1
-                elif recipient.channel == "whatsapp" and _normalize_phone(lead.whatsapp) != _normalize_phone(recipient.destination):
+                elif recipient.channel == "whatsapp" and normalize_phone(lead.whatsapp) != normalize_phone(recipient.destination):
                     recipient.status = "skipped"
                     recipient.error_reason = "Número de WhatsApp modificado después de preparar la audiencia."
                     recipient.updated_at = utcnow()
