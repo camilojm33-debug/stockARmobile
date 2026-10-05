@@ -2626,6 +2626,33 @@ def crm_campaign_cancel(campaign_id):
     return redirect(url_for("saas.crm_campaign_detail", campaign_id=campaign_id))
 
 
+@bp.post("/internal/crm/campaign-worker")
+@csrf.exempt
+def crm_campaign_worker():
+    """Authenticated machine endpoint for the Render commercial campaign cron."""
+    from app import db
+    expected = str(
+        current_app.config.get("SAAS_CAMPAIGN_WORKER_TOKEN")
+        or os.getenv("SAAS_CAMPAIGN_WORKER_TOKEN")
+        or ""
+    ).strip()
+    supplied = str(request.headers.get("X-StockAr-Campaign-Worker-Token") or "").strip()
+    if not expected or not supplied or not hmac.compare_digest(supplied, expected):
+        return jsonify({"ok": False, "error": "unauthorized"}), 401
+
+    if str(current_app.config.get("SAAS_MARKETING_SEND_ENABLED", "0")).lower() not in {"1", "true", "yes", "on"}:
+        return jsonify({"ok": False, "error": "commercial_marketing_disabled"}), 503
+
+    try:
+        from services.saas_commercial_service import dispatch_due_campaigns
+        result = dispatch_due_campaigns(db.session)
+        return jsonify({"ok": True, "result": result})
+    except Exception:
+        db.session.rollback()
+        current_app.logger.exception("Commercial campaign worker endpoint failed")
+        return jsonify({"ok": False, "error": "worker_failed"}), 500
+
+
 @bp.get("/crm/email/gmail/connect")
 @superadmin_required
 def crm_email_gmail_connect():
