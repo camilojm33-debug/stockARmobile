@@ -27,7 +27,7 @@ def test_resumen_ventas_excludes_cancelled_and_annulled_sales(app):
         company = Company(name="Empresa Métricas", active=True)
         client = Client(name="Cliente Métricas", active=True, company_id=company.id)
         product = Product(
-            company=company,
+            company_id=company.id,
             barcode="MET-001",
             name="Producto Métricas",
             price=100,
