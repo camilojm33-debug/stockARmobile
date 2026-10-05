@@ -75,3 +75,14 @@ def test_product_image_service_replacement_removes_previous_file(tmp_path, app):
         delete_product_image(first)
         assert not first_path.exists()
         assert second_path.exists()
+
+
+def test_product_edit_uses_shared_image_service():
+    from pathlib import Path
+
+    source = Path(__file__).resolve().parents[1] / "products.py"
+    text = source.read_text(encoding="utf-8")
+    assert "old_photo = product.photo" in text
+    assert "product.photo = save_product_image(upload)" in text
+    assert "delete_product_image(old_photo)" in text
+    assert "_save_product_image(upload)" not in text
