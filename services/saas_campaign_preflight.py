@@ -13,39 +13,40 @@ def _enabled(value) -> bool:
 
 
 def _smtp_probe() -> tuple[bool, str]:
+    from services.saas_commercial_service import _smtp_ports, _smtp_server
+
     host = str(current_app.config.get("SMTP_HOST") or "").strip()
     user = str(current_app.config.get("SMTP_USER") or "").strip()
     password = current_app.config.get("SMTP_PASSWORD") or ""
     try:
-        port = int(current_app.config.get("SMTP_PORT") or 587)
+        preferred_port = int(current_app.config.get("SMTP_PORT") or 587)
     except (TypeError, ValueError):
         return False, "SMTP_PORT no es válido."
 
     if not host or not user or not password:
         return False, "Faltan credenciales SMTP."
 
-    try:
-        if port == 465:
-            with smtplib.SMTP_SSL(host, port, timeout=12) as server:
-                server.ehlo()
-                server.login(user, password)
-        else:
-            with smtplib.SMTP(host, port, timeout=12) as server:
-                server.ehlo()
-                if bool(current_app.config.get("SMTP_USE_TLS", True)):
-                    server.starttls()
-                    server.ehlo()
-                server.login(user, password)
-        return True, f"SMTP verificado ({host}:{port})."
-    except smtplib.SMTPAuthenticationError:
-        return False, "El servidor SMTP rechazó la autenticación. Revisá usuario, contraseña o App Password."
-    except smtplib.SMTPServerDisconnected:
-        return False, "El servidor SMTP cerró la conexión durante la verificación."
-    except (OSError, TimeoutError) as exc:
-        return False, f"No se pudo mantener la conexión SMTP: {str(exc)[:180]}"
-    except Exception as exc:
-        return False, f"No se pudo verificar SMTP: {str(exc)[:180]}"
+    use_tls = bool(current_app.config.get("SMTP_USE_TLS", True))
+    failures = []
 
+    for port in _smtp_ports(preferred_port):
+        try:
+            with _smtp_server(host, port, timeout=12, use_tls=use_tls) as server:
+                server.ehlo()
+                server.login(user, password)
+            return True, f"SMTP verificado ({host}:{port}) por IPv4."
+        except smtplib.SMTPAuthenticationError:
+            return False, f"SMTP rechazó la autenticación en {host}:{port}. Revisá usuario, contraseña o App Password."
+        except smtplib.SMTPServerDisconnected as exc:
+            failures.append(f"{port}: conexión cerrada ({str(exc).strip() or 'sin detalle'})")
+        except (OSError, TimeoutError) as exc:
+            failures.append(f"{port}: {str(exc)[:160]}")
+        except smtplib.SMTPException as exc:
+            failures.append(f"{port}: SMTP {str(exc)[:160]}")
+        except Exception as exc:
+            failures.append(f"{port}: {str(exc)[:160]}")
+
+    return False, f"No se pudo verificar SMTP en {host}. " + "; ".join(failures)
 def campaign_preflight(db_session, campaign) -> dict:
     from services.saas_commercial_service import campaign_audience_metrics
     audience = campaign_audience_metrics(db_session, campaign)
