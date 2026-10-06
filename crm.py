@@ -142,7 +142,7 @@ def opportunity_new():
 def opportunity_detail(opportunity_id):
     opportunity = _opportunity_query().filter(CRMOpportunity.id == opportunity_id).first_or_404()
     activities = _activity_query().filter(CRMActivity.opportunity_id == opportunity.id).order_by(CRMActivity.due_at.desc().nullslast(), CRMActivity.id.desc()).all()
-    return render_template("crm/opportunity_detail.html", opportunity=opportunity, activities=activities, activity_types=ACTIVITY_TYPES)
+    return render_template("crm/opportunity_detail.html", opportunity=opportunity, activities=activities, activity_types=ACTIVITY_TYPES, stages=STAGES)
 
 
 @bp.route("/opportunities/<int:opportunity_id>/stage", methods=["POST"])
