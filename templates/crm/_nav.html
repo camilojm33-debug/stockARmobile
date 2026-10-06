@@ -1,0 +1,19 @@
+<style>
+.crm-module-nav{display:flex;align-items:center;gap:.35rem;flex-wrap:wrap;margin:0 auto 1.25rem;padding:.4rem;border:1px solid var(--app-line);border-radius:14px;background:var(--app-panel);box-shadow:0 6px 18px rgba(15,23,42,.04)}
+.crm-module-nav .crm-nav-label{display:inline-flex;align-items:center;gap:.45rem;padding:.55rem .75rem;font-size:.78rem;font-weight:800;color:var(--app-muted);margin-right:.15rem}
+.crm-module-nav a{display:inline-flex;align-items:center;gap:.42rem;padding:.55rem .75rem;border-radius:10px;color:var(--app-muted);text-decoration:none;font-size:.82rem;font-weight:700;transition:.15s ease}
+.crm-module-nav a:hover{background:var(--app-panel-soft);color:var(--app-primary-deep)}
+.crm-module-nav a.active{background:#eef4ff;color:var(--app-primary-deep)}
+[data-bs-theme="dark"] .crm-module-nav a.active{background:rgba(37,99,235,.18);color:#93c5fd}
+@media(max-width:575.98px){.crm-module-nav{overflow-x:auto;flex-wrap:nowrap;-webkit-overflow-scrolling:touch}.crm-module-nav .crm-nav-label{position:sticky;left:0;background:var(--app-panel);z-index:1;white-space:nowrap}.crm-module-nav a{white-space:nowrap}}
+</style>
+<nav class="crm-module-nav" aria-label="Navegación CRM">
+<span class="crm-nav-label"><i class="bi bi-briefcase"></i> CRM</span>
+<a class="{% if request.endpoint == 'crm.index' %}active{% endif %}" href="{{ url_for('crm.index') }}"><i class="bi bi-grid-1x2"></i>Resumen</a>
+<a class="{% if request.endpoint and request.endpoint.startswith('crm.pipeline') %}active{% endif %}" href="{{ url_for('crm.pipeline') }}"><i class="bi bi-kanban"></i>Pipeline</a>
+<a class="{% if request.endpoint and request.endpoint.startswith('crm.client') %}active{% endif %}" href="{{ url_for('crm.clients') }}"><i class="bi bi-people"></i>Clientes</a>
+<a class="{% if request.endpoint and request.endpoint.startswith('crm.activit') %}active{% endif %}" href="{{ url_for('crm.activities') }}"><i class="bi bi-check2-square"></i>Seguimientos</a>
+{% if current_user.is_authenticated and (current_user.role in ["admin", "superadmin"] or '"ai_access"' in (current_user.permissions_json or "")) %}
+<a class="{% if request.endpoint and request.endpoint in ['ai_agents.campaigns','ai_agents.campaign_detail'] %}active{% endif %}" href="{{ url_for('ai_agents.campaigns') }}"><i class="bi bi-stars"></i>Marketing IA</a>
+{% endif %}
+</nav>

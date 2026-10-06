@@ -5,7 +5,8 @@
 .crm-kpi{height:100%;padding:18px;border:1px solid var(--app-line);border-radius:14px;background:var(--app-panel)}.crm-kpi .value{font-size:1.65rem;font-weight:800;letter-spacing:-.03em}
 .crm-priority{border-left:3px solid var(--app-primary)}.crm-priority.overdue{border-left-color:#dc2626}
 </style>{% endblock %}
-{% block content %}<div class="app-shell">
+{% block content %}
+{% include 'crm/_nav.html' %}<div class="app-shell">
 <div class="d-flex flex-wrap justify-content-between align-items-center gap-3 mb-4"><div><span class="page-kicker"><i class="bi bi-kanban"></i> CRM comercial</span><h1 class="h3 fw-bold mb-1">Tu centro comercial</h1><p class="text-muted mb-0">Clientes, oportunidades y seguimientos en un solo lugar.</p></div><div class="d-flex flex-wrap gap-2"><a class="btn btn-outline-primary" href="{{ url_for('crm.pipeline') }}"><i class="bi bi-kanban me-1"></i>Pipeline</a><a class="btn btn-primary" href="{{ url_for('crm.opportunity_new') }}"><i class="bi bi-plus-lg me-1"></i>Nueva oportunidad</a></div></div>
 <section class="card crm-hero app-card mb-4"><div class="card-body p-4 p-lg-5"><div class="row align-items-center g-4"><div class="col-lg-8"><h2 class="h4 fw-bold mb-2">Vendé con seguimiento, no con memoria.</h2><p class="mb-0 text-muted">Priorizá lo que tiene valor y mantené cada contacto registrado.</p></div><div class="col-lg-4 text-lg-end"><a class="btn btn-light" href="{{ url_for('crm.activities') }}"><i class="bi bi-calendar-check me-1"></i>Ver actividades</a></div></div></div></section>
 <div class="row g-3 mb-4">
