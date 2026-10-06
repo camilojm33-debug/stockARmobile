@@ -67,6 +67,8 @@ def employee_endpoint_permission(endpoint: str | None, method: str = "GET"):
         return EMPLOYEE_ADMIN_ONLY
     if ep.startswith(("ai_agents.",)):
         return "ai_access"
+    if ep.startswith(("crm.",)):
+        return "crm"
 
     if ep in {"whatsapp_agent.ai_orders", "whatsapp_agent.ai_order_detail", "whatsapp_agent.ai_order_shipping"}:
         return "ai_access"

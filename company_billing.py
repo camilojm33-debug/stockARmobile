@@ -175,6 +175,7 @@ def _delete_company_logo_file(logo_path, company_id):
 EMPLOYEE_PERMISSIONS = [
     ("inventory", "Inventario"),
     ("sales", "Ventas"),
+    ("crm", "CRM comercial"),
     ("quotes_view", "Ver presupuestos"),
     ("quotes_create", "Crear presupuestos"),
     ("quotes_edit", "Editar presupuestos"),

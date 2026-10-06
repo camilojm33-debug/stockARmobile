@@ -43,7 +43,7 @@ def _smtp_probe() -> tuple[bool, str]:
         except smtplib.SMTPAuthenticationError:
             return False, f"SMTP rechazó la autenticación en {host}:{port}. Revisá usuario, contraseña o App Password."
         except smtplib.SMTPServerDisconnected as exc:
-            failures.append(f"{port}: conexión cerrada ({str(exc).strip() or 'sin detalle'})")
+            failures.append(f"{port}: el servidor SMTP cerró la conexión ({str(exc).strip() or 'sin detalle'})")
         except (OSError, TimeoutError) as exc:
             failures.append(f"{port}: {str(exc)[:160]}")
         except smtplib.SMTPException as exc:
