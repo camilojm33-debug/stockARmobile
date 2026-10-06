@@ -28,6 +28,7 @@ from services.ai_agent.tools.business_metrics import (
     StockCriticoTool,
 )
 from services.ai_agent.tools.customer_search import BuscarClienteTool
+from services.ai_agent.tools.crm import CRMOpportunitiesTool
 from services.ai_agent.tools.product_search import BuscarProductoTool
 from services.ai_agent.tools.stock_query import ConsultarStockTool
 from services.ai_agent.tools.analyst_marketing import (
@@ -237,6 +238,7 @@ class AgentRuntime:
         "buscar_producto": BuscarProductoTool,
         "consultar_stock": ConsultarStockTool,
         "buscar_cliente": BuscarClienteTool,
+        "oportunidades_crm": CRMOpportunitiesTool,
         "contar_clientes": ContarClientesTool,
         "contar_productos": ContarProductosTool,
         "resumen_ventas": ResumenVentasTool,
@@ -259,7 +261,7 @@ class AgentRuntime:
         "asistente": {
             "buscar_producto", "consultar_stock", "buscar_cliente", "contar_clientes",
             "contar_productos", "resumen_ventas", "productos_mas_vendidos",
-            "productos_sin_ventas_recientes", "stock_critico",
+            "productos_sin_ventas_recientes", "stock_critico", "oportunidades_crm",
         },
         "vendedor": {
             "buscar_producto", "consultar_stock", "buscar_cliente", "carrito_vendedor",
@@ -267,11 +269,11 @@ class AgentRuntime:
         },
         "analista": {
             "resumen_ventas", "productos_mas_vendidos", "productos_sin_ventas_recientes",
-            "stock_critico", "contar_clientes", "comparar_ventas", "clientes_inactivos",
+            "stock_critico", "contar_clientes", "comparar_ventas", "clientes_inactivos", "oportunidades_crm",
         },
         "marketing": {
             "buscar_producto", "consultar_stock", "buscar_cliente", "clientes_inactivos",
-            "productos_promocionables", "oportunidades_marketing", "preparar_campana",
+            "productos_promocionables", "oportunidades_marketing", "preparar_campana", "oportunidades_crm",
         },
         "comercial": {"consultar_oferta_stockarmobile", "iniciar_contratacion_stockarmobile"},
     }
