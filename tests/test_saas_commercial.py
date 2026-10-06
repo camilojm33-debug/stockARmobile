@@ -887,13 +887,13 @@ def test_smtp_probe_reports_connection_closed(app, monkeypatch):
             def login(self, *args):
                 raise AssertionError("login should not run")
 
-        class FakeContext:
-            def __enter__(self):
-                return FakeSMTP()
-            def __exit__(self, *args):
-                return False
+        def fake_smtp_server(*args, **kwargs):
+            server = FakeSMTP()
+            server.esmtp_features = {"starttls": ""}
+            server.starttls()
+            return server
 
-        monkeypatch.setattr("services.saas_commercial_service._smtp_server", lambda *args, **kwargs: FakeContext())
+        monkeypatch.setattr("services.saas_commercial_service._smtp_server", fake_smtp_server)
         ok, detail = _smtp_probe()
         assert ok is False
         assert "cerró la conexión" in detail.lower()
