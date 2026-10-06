@@ -14,6 +14,7 @@ from email.message import EmailMessage
 from html import escape
 from io import BytesIO, StringIO
 from urllib.parse import quote
+from flask import current_app
 
 from openpyxl import load_workbook
 
