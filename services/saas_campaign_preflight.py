@@ -13,7 +13,7 @@ def _enabled(value) -> bool:
 
 
 def _smtp_probe() -> tuple[bool, str]:
-    from services.saas_commercial_service import _smtp_ports, _smtp_server
+    from services.saas_commercial_service import _smtp_helo_name, _smtp_ports, _smtp_server
 
     host = str(current_app.config.get("SMTP_HOST") or "").strip()
     user = str(current_app.config.get("SMTP_USER") or "").strip()
@@ -27,14 +27,19 @@ def _smtp_probe() -> tuple[bool, str]:
         return False, "Faltan credenciales SMTP."
 
     use_tls = bool(current_app.config.get("SMTP_USE_TLS", True))
+    helo_name = _smtp_helo_name()
     failures = []
 
     for port in _smtp_ports(preferred_port):
         try:
-            with _smtp_server(host, port, timeout=12, use_tls=use_tls) as server:
-                server.ehlo()
+            with _smtp_server(host, port, timeout=12, use_tls=use_tls, helo_name=helo_name) as server:
+                features = dict(server.esmtp_features or {})
+                advertised_auth = str(features.get("auth") or "").strip()
+                if not advertised_auth:
+                    failures.append(f"{port}: sin AUTH tras TLS; capacidades={','.join(sorted(features.keys())) or 'ninguna'}")
+                    continue
                 server.login(user, password)
-            return True, f"SMTP verificado ({host}:{port}) por IPv4."
+            return True, f"SMTP verificado ({host}:{port}) por IPv4. AUTH={advertised_auth} HELO={helo_name}."
         except smtplib.SMTPAuthenticationError:
             return False, f"SMTP rechazó la autenticación en {host}:{port}. Revisá usuario, contraseña o App Password."
         except smtplib.SMTPServerDisconnected as exc:
@@ -46,7 +51,9 @@ def _smtp_probe() -> tuple[bool, str]:
         except Exception as exc:
             failures.append(f"{port}: {str(exc)[:160]}")
 
-    return False, f"No se pudo verificar SMTP en {host}. " + "; ".join(failures)
+    return False, f"No se pudo verificar SMTP en {host} usando HELO={helo_name}. " + "; ".join(failures)
+
+
 def campaign_preflight(db_session, campaign) -> dict:
     from services.saas_commercial_service import campaign_audience_metrics
     audience = campaign_audience_metrics(db_session, campaign)
