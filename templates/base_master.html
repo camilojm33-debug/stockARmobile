@@ -89,7 +89,7 @@
         radial-gradient(circle at top right, rgba(14, 165, 233, .08), transparent 22%),
         var(--app-bg);
     }
-    .app-layout { min-height: 100vh; }
+    .app-layout { min-height: 100vh; display: flex; align-items: stretch; }
     .app-shell {
       max-width: 1240px;
       margin: 0 auto;
@@ -138,17 +138,20 @@
       width: 100%;
     }
     .app-sidebar {
-      position: fixed;
-      inset: 0 auto 0 0;
+      position: sticky;
+      top: 0;
+      align-self: flex-start;
+      flex: 0 0 var(--sidebar-width);
       width: var(--sidebar-width);
-      height: 100dvh;
-      max-height: 100dvh;
+      min-height: 100vh;
+      height: auto;
+      max-height: none;
       background: rgba(255, 255, 255, .88);
       border-right: 1px solid var(--app-line);
       backdrop-filter: var(--surface-blur);
       display: flex;
       flex-direction: column;
-      overflow: hidden;
+      overflow: visible;
       z-index: 1030;
     }
     [data-bs-theme="dark"] .app-sidebar,
@@ -223,9 +226,9 @@
     }
     .app-nav {
       padding: 10px 10px 8px;
-      flex: 1 1 auto;
+      flex: 0 0 auto;
       min-height: 0;
-      overflow: hidden;
+      overflow: visible;
     }
     .app-nav .nav-link {
       min-height: 36px;
@@ -257,7 +260,7 @@
       font-size: .68rem;
     }
     .app-sidebar-footer {
-      margin-top: auto;
+      margin-top: 10px;
       flex: 0 0 auto;
       padding: 9px 10px;
       border-top: 1px solid var(--app-line);
@@ -314,7 +317,8 @@
       font-weight: 800;
     }
     .app-main {
-      margin-left: var(--sidebar-width);
+      margin-left: 0;
+      flex: 1 1 auto;
       min-height: 100vh;
       min-height: 100dvh;
       display: flex;
@@ -617,7 +621,15 @@
       .btn { min-height: 44px; }
     }
     @media (max-width: 991.98px) {
+      .app-layout { display: block; }
       .app-sidebar {
+        position: fixed;
+        inset: 0 auto 0 0;
+        height: 100dvh;
+        min-height: 100dvh;
+        max-height: 100dvh;
+        overflow-y: auto;
+        -webkit-overflow-scrolling: touch;
         width: min(86vw, 320px);
         max-width: min(86vw, 320px);
         transform: translateX(-100%);
