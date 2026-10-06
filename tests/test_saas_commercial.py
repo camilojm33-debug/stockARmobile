@@ -893,7 +893,7 @@ def test_smtp_probe_reports_connection_closed(app, monkeypatch):
             def __exit__(self, *args):
                 return False
 
-        monkeypatch.setattr("services.saas_campaign_preflight._smtp_server", lambda *args, **kwargs: FakeContext())
+        monkeypatch.setattr("services.saas_commercial_service._smtp_server", lambda *args, **kwargs: FakeContext())
         ok, detail = _smtp_probe()
         assert ok is False
         assert "cerró la conexión" in detail.lower()
@@ -927,7 +927,7 @@ def test_smtp_probe_uses_ssl_for_port_465(app, monkeypatch):
             def __exit__(self, *args):
                 return False
 
-        monkeypatch.setattr("services.saas_campaign_preflight._smtp_server", lambda *args, **kwargs: FakeContext())
+        monkeypatch.setattr("services.saas_commercial_service._smtp_server", lambda *args, **kwargs: FakeContext())
         ok, detail = _smtp_probe()
         assert ok is True
         assert "465" in detail
