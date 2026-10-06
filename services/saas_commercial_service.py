@@ -804,13 +804,22 @@ class _SMTPSSLIPv4(smtplib.SMTP_SSL):
         return self.context.wrap_socket(raw, server_hostname=host)
 
 
-def _smtp_server(host: str, port: int, timeout: int = 30, use_tls: bool = True):
+def _smtp_helo_name() -> str:
+    configured = _clean(current_app.config.get("SMTP_HELO_DOMAIN")) or _clean(os.getenv("SMTP_HELO_DOMAIN"))
+    if configured:
+        return configured.split("://", 1)[-1].split("/", 1)[0].split(":", 1)[0]
+    return "stockarmobile.com"
+
+
+def _smtp_server(host: str, port: int, timeout: int = 30, use_tls: bool = True, helo_name: str | None = None):
+    helo = helo_name or _smtp_helo_name()
     if int(port) == 465:
-        return _SMTPSSLIPv4(host, port, timeout=timeout)
-    server = _SMTPIPv4(host, port, timeout=timeout)
+        return _SMTPSSLIPv4(host, port, timeout=timeout, local_hostname=helo)
+    server = _SMTPIPv4(host, port, timeout=timeout, local_hostname=helo)
+    server.ehlo(helo)
     if use_tls:
         server.starttls()
-        server.ehlo()
+        server.ehlo(helo)
     return server
 
 
@@ -848,19 +857,23 @@ def _send_email(recipient, campaign) -> tuple[bool, str]:
     except (TypeError, ValueError):
         preferred_port = 587
     use_tls = bool(current_app.config.get("SMTP_USE_TLS", True))
-
+    helo_name = _smtp_helo_name()
     connection_failures = []
+
     for port in _smtp_ports(preferred_port):
         send_started = False
         try:
-            with _smtp_server(host, port, timeout=30, use_tls=use_tls) as server:
-                server.ehlo()
+            with _smtp_server(host, port, timeout=30, use_tls=use_tls, helo_name=helo_name) as server:
+                advertised_auth = server.esmtp_features.get("auth", "")
+                if not advertised_auth:
+                    connection_failures.append(f"{port}: servidor no anunció AUTH después de TLS")
+                    continue
                 server.login(user, password)
                 send_started = True
                 server.send_message(msg)
             return True, "sent"
         except smtplib.SMTPAuthenticationError:
-            return False, "SMTP rechazó la autenticación. Revisá usuario, contraseña o App Password."
+            return False, f"SMTP rechazó la autenticación en {host}:{port}. Revisá usuario, contraseña o App Password."
         except smtplib.SMTPServerDisconnected as exc:
             message = str(exc).strip() or "conexión cerrada por el servidor"
             connection_failures.append(f"{port}: {message}")
@@ -876,7 +889,7 @@ def _send_email(recipient, campaign) -> tuple[bool, str]:
             return False, f"Error de envío ({port}): {str(exc)[:180]}"
 
     detail = "; ".join(connection_failures) or "sin detalle"
-    return False, f"No se pudo conectar al SMTP ({detail})."
+    return False, f"No se pudo conectar/autenticar al SMTP ({detail})."
 
 def _whatsapp_template_parameters(campaign, lead) -> list[str]:
     from flask import current_app
