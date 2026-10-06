@@ -1,21 +1,158 @@
 {% extends "base_master.html" %}
 {% block title %}CRM — StockArmobile{% endblock %}
-{% block extra_css %}<style>
-.crm-hero{background:linear-gradient(135deg,#0f172a,#1d4ed8);color:#fff;border:0}.crm-hero .text-muted{color:rgba(255,255,255,.72)!important}
-.crm-kpi{height:100%;padding:18px;border:1px solid var(--app-line);border-radius:14px;background:var(--app-panel)}.crm-kpi .value{font-size:1.65rem;font-weight:800;letter-spacing:-.03em}
-.crm-priority{border-left:3px solid var(--app-primary)}.crm-priority.overdue{border-left-color:#dc2626}
-</style>{% endblock %}
+
+{% block extra_css %}
+<style>
+  .crm-summary-page{max-width:1240px;margin:0 auto}
+  .crm-page-head{display:flex;align-items:flex-end;justify-content:space-between;gap:1.25rem;margin-bottom:1.1rem}
+  .crm-page-head h1{font-size:clamp(1.65rem,2.4vw,2.15rem);letter-spacing:-.035em;margin:.2rem 0 .3rem}
+  .crm-page-head .lead-copy{color:var(--app-muted);margin:0;font-size:.94rem}
+  .crm-actions{display:flex;gap:.55rem;flex-wrap:wrap;justify-content:flex-end}
+  .crm-actions .btn{white-space:nowrap}
+  .crm-insight{
+    position:relative;overflow:hidden;border:0;border-radius:18px;
+    background:linear-gradient(115deg,#0f172a 0%,#172554 42%,#2563eb 100%);
+    color:#fff;box-shadow:0 18px 40px rgba(30,64,175,.18);margin-bottom:1rem
+  }
+  .crm-insight:after{content:"";position:absolute;width:260px;height:260px;border-radius:50%;right:-110px;top:-150px;background:rgba(255,255,255,.09)}
+  .crm-insight .card-body{position:relative;z-index:1;padding:1.2rem 1.35rem}
+  .crm-insight-kicker{display:inline-flex;align-items:center;gap:.4rem;font-size:.72rem;font-weight:800;letter-spacing:.08em;text-transform:uppercase;color:#bfdbfe;margin-bottom:.35rem}
+  .crm-insight h2{font-size:1.08rem;margin:0 0 .25rem;font-weight:800}
+  .crm-insight p{font-size:.84rem;color:rgba(255,255,255,.74);margin:0}
+  .crm-insight .btn{box-shadow:none;border-color:rgba(255,255,255,.18)}
+  .crm-kpis{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:.8rem;margin-bottom:1rem}
+  .crm-kpi{
+    position:relative;display:flex;align-items:center;gap:.85rem;min-width:0;
+    padding:1rem 1.05rem;border:1px solid var(--app-line);border-radius:14px;
+    background:var(--app-panel);box-shadow:var(--app-shadow-soft)
+  }
+  .crm-kpi-icon{width:40px;height:40px;flex:0 0 40px;display:grid;place-items:center;border-radius:11px;background:#eef4ff;color:var(--app-primary);font-size:1rem}
+  .crm-kpi-label{font-size:.76rem;color:var(--app-muted);margin-bottom:.12rem}
+  .crm-kpi-value{font-size:1.3rem;font-weight:800;line-height:1.1;letter-spacing:-.025em}
+  .crm-kpi-meta{font-size:.7rem;color:var(--app-muted);margin-top:.2rem}
+  .crm-section-card{border:1px solid var(--app-line);border-radius:15px;background:var(--app-panel);box-shadow:var(--app-shadow-soft);height:100%}
+  .crm-section-head{display:flex;justify-content:space-between;align-items:flex-start;gap:1rem;padding:1rem 1.1rem .8rem;border-bottom:1px solid var(--app-line)}
+  .crm-section-head h2{font-size:.98rem;font-weight:800;margin:0 0 .15rem}
+  .crm-section-head p{font-size:.76rem;color:var(--app-muted);margin:0}
+  .crm-section-link{font-size:.76rem;font-weight:700;text-decoration:none;white-space:nowrap}
+  .crm-list{padding:.65rem}
+  .crm-list-item{display:flex;align-items:center;justify-content:space-between;gap:.8rem;padding:.75rem;border-radius:11px;border:1px solid transparent;text-decoration:none;color:inherit}
+  .crm-list-item:hover{background:var(--app-panel-soft);border-color:var(--app-line)}
+  .crm-priority{border-left:3px solid var(--app-primary);background:var(--app-panel-soft)}
+  .crm-priority.overdue{border-left-color:#dc2626}
+  .crm-item-title{font-size:.82rem;font-weight:700}
+  .crm-item-meta{font-size:.72rem;color:var(--app-muted);margin-top:.15rem}
+  .crm-empty{min-height:150px;display:grid;place-items:center;text-align:center;padding:1.2rem;color:var(--app-muted);font-size:.8rem}
+  .crm-empty i{display:block;font-size:1.35rem;margin-bottom:.35rem;opacity:.7}
+  @media(max-width:991.98px){
+    .crm-kpis{grid-template-columns:repeat(2,minmax(0,1fr))}
+    .crm-page-head{align-items:flex-start}
+  }
+  @media(max-width:575.98px){
+    .crm-page-head{display:block}
+    .crm-actions{justify-content:flex-start;margin-top:.85rem}
+    .crm-actions .btn{flex:1 1 auto}
+    .crm-kpis{gap:.55rem}
+    .crm-kpi{padding:.8rem}
+    .crm-kpi-icon{width:34px;height:34px;flex-basis:34px;font-size:.9rem}
+    .crm-kpi-value{font-size:1.1rem}
+    .crm-insight .card-body{padding:1rem}
+  }
+</style>
+{% endblock %}
+
 {% block content %}
-{% include 'crm/_nav.html' %}<div class="app-shell">
-<div class="d-flex flex-wrap justify-content-between align-items-center gap-3 mb-4"><div><span class="page-kicker"><i class="bi bi-kanban"></i> CRM comercial</span><h1 class="h3 fw-bold mb-1">Tu centro comercial</h1><p class="text-muted mb-0">Clientes, oportunidades y seguimientos en un solo lugar.</p></div><div class="d-flex flex-wrap gap-2"><a class="btn btn-outline-primary" href="{{ url_for('crm.pipeline') }}"><i class="bi bi-kanban me-1"></i>Pipeline</a><a class="btn btn-primary" href="{{ url_for('crm.opportunity_new') }}"><i class="bi bi-plus-lg me-1"></i>Nueva oportunidad</a></div></div>
-<section class="card crm-hero app-card mb-4"><div class="card-body p-4 p-lg-5"><div class="row align-items-center g-4"><div class="col-lg-8"><h2 class="h4 fw-bold mb-2">Vendé con seguimiento, no con memoria.</h2><p class="mb-0 text-muted">Priorizá lo que tiene valor y mantené cada contacto registrado.</p></div><div class="col-lg-4 text-lg-end"><a class="btn btn-light" href="{{ url_for('crm.activities') }}"><i class="bi bi-calendar-check me-1"></i>Ver actividades</a></div></div></div></section>
-<div class="row g-3 mb-4">
-{% for label,value,meta in [('Oportunidades abiertas',stats.open_count,'En pipeline'),('Pipeline','ARS ' ~ ('%.0f'|format(stats.pipeline_value)),'Valor potencial'),('Valor ponderado','ARS ' ~ ('%.0f'|format(stats.weighted_value)),'Según probabilidad'),('Seguimientos hoy',stats.today_activities,stats.overdue_activities ~ ' vencidos')] %}
-<div class="col-6 col-xl-3"><div class="crm-kpi"><div class="small text-muted">{{ label }}</div><div class="value">{{ value }}</div><div class="small text-muted mt-1">{{ meta }}</div></div></div>{% endfor %}
+{% include 'crm/_nav.html' %}
+<div class="crm-summary-page">
+  <header class="crm-page-head">
+    <div>
+      <span class="page-kicker"><i class="bi bi-briefcase"></i> CRM comercial</span>
+      <h1>Tu centro comercial</h1>
+      <p class="lead-copy">Una vista rápida de clientes, oportunidades y seguimientos.</p>
+    </div>
+    <div class="crm-actions">
+      <a class="btn btn-outline-primary" href="{{ url_for('crm.activities') }}"><i class="bi bi-check2-square me-1"></i>Seguimientos</a>
+      <a class="btn btn-primary" href="{{ url_for('crm.opportunity_new') }}"><i class="bi bi-plus-lg me-1"></i>Nueva oportunidad</a>
+    </div>
+  </header>
+
+  <section class="crm-insight card">
+    <div class="card-body d-flex align-items-center justify-content-between gap-3 flex-wrap">
+      <div>
+        <div class="crm-insight-kicker"><i class="bi bi-lightning-charge-fill"></i> Enfoque comercial</div>
+        <h2>Vendé con seguimiento, no con memoria.</h2>
+        <p>Priorizá lo importante y mantené cada contacto registrado para no perder oportunidades.</p>
+      </div>
+      <a class="btn btn-light btn-sm" href="{{ url_for('crm.pipeline') }}"><i class="bi bi-kanban me-1"></i>Ver pipeline</a>
+    </div>
+  </section>
+
+  <section class="crm-kpis" aria-label="Indicadores del CRM">
+    {% for icon,label,value,meta in [
+      ('bi-bullseye','Oportunidades abiertas',stats.open_count,'En pipeline'),
+      ('bi-cash-stack','Pipeline','ARS ' ~ ('%.0f'|format(stats.pipeline_value)),'Valor potencial'),
+      ('bi-graph-up-arrow','Valor ponderado','ARS ' ~ ('%.0f'|format(stats.weighted_value)),'Según probabilidad'),
+      ('bi-calendar-check','Seguimientos hoy',stats.today_activities,stats.overdue_activities ~ ' vencidos')
+    ] %}
+    <article class="crm-kpi">
+      <span class="crm-kpi-icon"><i class="bi {{ icon }}"></i></span>
+      <div class="min-w-0">
+        <div class="crm-kpi-label">{{ label }}</div>
+        <div class="crm-kpi-value text-truncate">{{ value }}</div>
+        <div class="crm-kpi-meta">{{ meta }}</div>
+      </div>
+    </article>
+    {% endfor %}
+  </section>
+
+  <div class="row g-3">
+    <div class="col-xl-7">
+      <section class="crm-section-card">
+        <div class="crm-section-head">
+          <div><h2>Prioridades</h2><p>Lo próximo que requiere atención.</p></div>
+          <a class="crm-section-link" href="{{ url_for('crm.activities') }}">Ver todas</a>
+        </div>
+        <div class="crm-list">
+          {% for item in priorities %}
+          <a class="crm-list-item crm-priority" href="{{ url_for('crm.client_360', client_id=item.client_id) }}">
+            <div class="min-w-0">
+              <div class="crm-item-title text-truncate">{{ item.subject }}</div>
+              <div class="crm-item-meta">{{ item.client.name }}{% if item.opportunity %} · {{ item.opportunity.title }}{% endif %}</div>
+              {% if item.due_at %}<div class="crm-item-meta"><i class="bi bi-clock me-1"></i>{{ item.due_at.strftime('%d/%m %H:%M') }}</div>{% endif %}
+            </div>
+            <span class="badge text-bg-primary flex-shrink-0">{{ item.type|capitalize }}</span>
+          </a>
+          {% else %}
+          <div class="crm-empty"><div><i class="bi bi-check2-circle"></i><strong class="d-block mb-1">Todo al día</strong><span>Todavía no hay seguimientos pendientes.</span></div></div>
+          {% endfor %}
+        </div>
+      </section>
+    </div>
+
+    <div class="col-xl-5">
+      <section class="crm-section-card">
+        <div class="crm-section-head">
+          <div><h2>Oportunidades calientes</h2><p>Mayor probabilidad de cierre.</p></div>
+          <a class="crm-section-link" href="{{ url_for('crm.pipeline') }}">Pipeline</a>
+        </div>
+        <div class="crm-list">
+          {% for item in hot %}
+          <a href="{{ url_for('crm.opportunity_detail', opportunity_id=item.id) }}" class="crm-list-item">
+            <div class="min-w-0">
+              <div class="crm-item-title text-truncate">{{ item.title }}</div>
+              <div class="crm-item-meta">{{ item.client.name }}</div>
+            </div>
+            <div class="text-end flex-shrink-0">
+              <div class="fw-bold small">ARS {{ '%.0f'|format(item.value or 0) }}</div>
+              <span class="badge text-bg-success">{{ '%.0f'|format(item.probability or 0) }}%</span>
+            </div>
+          </a>
+          {% else %}
+          <div class="crm-empty"><div><i class="bi bi-kanban"></i><strong class="d-block mb-1">Pipeline listo para crecer</strong><span>No hay oportunidades abiertas todavía.</span></div></div>
+          {% endfor %}
+        </div>
+      </section>
+    </div>
+  </div>
 </div>
-<div class="row g-4"><div class="col-xl-7"><div class="card app-card h-100"><div class="card-body"><div class="d-flex justify-content-between align-items-center mb-3"><div><h2 class="h5 fw-bold mb-1">Prioridades</h2><p class="small text-muted mb-0">Lo próximo que requiere atención.</p></div><a href="{{ url_for('crm.activities') }}" class="small text-decoration-none">Ver todas</a></div>
-{% for item in priorities %}<div class="crm-priority p-3 mb-2 border rounded-3"><div class="d-flex justify-content-between gap-3"><div class="min-w-0"><a class="fw-semibold text-decoration-none" href="{{ url_for('crm.client_360', client_id=item.client_id) }}">{{ item.subject }}</a><div class="small text-muted">{{ item.client.name }}{% if item.opportunity %} · {{ item.opportunity.title }}{% endif %}</div></div><span class="badge text-bg-primary">{{ item.type|capitalize }}</span></div>{% if item.due_at %}<div class="small text-muted mt-2"><i class="bi bi-clock me-1"></i>{{ item.due_at.strftime('%d/%m %H:%M') }}</div>{% endif %}</div>
-{% else %}<div class="empty-state">Todavía no hay seguimientos.</div>{% endfor %}</div></div>
-<div class="col-xl-5"><div class="card app-card h-100"><div class="card-body"><div class="d-flex justify-content-between align-items-center mb-3"><div><h2 class="h5 fw-bold mb-1">Oportunidades calientes</h2><p class="small text-muted mb-0">Mayor probabilidad de cierre.</p></div><a href="{{ url_for('crm.pipeline') }}" class="small text-decoration-none">Pipeline</a></div>
-{% for item in hot %}<a href="{{ url_for('crm.opportunity_detail', opportunity_id=item.id) }}" class="d-flex justify-content-between align-items-center gap-3 text-decoration-none text-reset border rounded-3 p-3 mb-2"><div class="min-w-0"><div class="fw-semibold text-truncate">{{ item.title }}</div><div class="small text-muted">{{ item.client.name }}</div></div><div class="text-end"><div class="fw-bold">ARS {{ '%.0f'|format(item.value or 0) }}</div><span class="badge text-bg-success">{{ '%.0f'|format(item.probability or 0) }}%</span></div></a>
-{% else %}<div class="empty-state">No hay oportunidades abiertas.</div>{% endfor %}</div></div></div></div></div>{% endblock %}
+{% endblock %}
