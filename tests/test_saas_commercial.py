@@ -4,6 +4,7 @@ from io import BytesIO
 
 from openpyxl import Workbook
 
+from services.saas_campaign_preflight import _smtp_probe
 from services.saas_commercial_service import (
     build_campaign_recipients,
     lead_score,
@@ -886,7 +887,13 @@ def test_smtp_probe_reports_connection_closed(app, monkeypatch):
             def login(self, *args):
                 raise AssertionError("login should not run")
 
-        monkeypatch.setattr("services.saas_campaign_preflight.smtplib.SMTP", FakeSMTP)
+        class FakeContext:
+            def __enter__(self):
+                return FakeSMTP()
+            def __exit__(self, *args):
+                return False
+
+        monkeypatch.setattr("services.saas_campaign_preflight._smtp_server", lambda *args, **kwargs: FakeContext())
         ok, detail = _smtp_probe()
         assert ok is False
         assert "cerró la conexión" in detail.lower()
@@ -912,7 +919,15 @@ def test_smtp_probe_uses_ssl_for_port_465(app, monkeypatch):
             def login(self, *args):
                 return None
 
-        monkeypatch.setattr("services.saas_campaign_preflight.smtplib.SMTP_SSL", FakeSMTPSSL)
+        class FakeContext:
+            def __enter__(self):
+                server = FakeSMTPSSL()
+                server.esmtp_features = {"auth": "PLAIN"}
+                return server
+            def __exit__(self, *args):
+                return False
+
+        monkeypatch.setattr("services.saas_campaign_preflight._smtp_server", lambda *args, **kwargs: FakeContext())
         ok, detail = _smtp_probe()
         assert ok is True
         assert "465" in detail
