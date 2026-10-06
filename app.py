@@ -2041,6 +2041,7 @@ class ClientForm(FlaskForm):
 import auth  # noqa: E402
 import cash  # noqa: E402
 import clients  # noqa: E402
+import crm  # noqa: E402
 import dashboard  # noqa: E402
 import expenses  # noqa: E402
 import products  # noqa: E402
@@ -2063,6 +2064,7 @@ auth_bp = auth.bp
 dashboard_bp = dashboard.bp
 products_bp = products.bp
 clients_bp = clients.bp
+crm_bp = crm.bp
 sales_bp = sales.bp
 quotes_bp = quotes.bp
 qr_labels_bp = qr_labels.bp
@@ -2082,6 +2084,7 @@ app.register_blueprint(auth_bp, url_prefix="/auth")
 app.register_blueprint(dashboard_bp, url_prefix="/dashboard")
 app.register_blueprint(products_bp, url_prefix="/productos")
 app.register_blueprint(clients_bp, url_prefix="/clientes")
+app.register_blueprint(crm_bp, url_prefix="/crm")
 app.register_blueprint(sales_bp, url_prefix="/ventas")
 app.register_blueprint(quotes_bp, url_prefix="/presupuestos")
 app.register_blueprint(qr_labels_bp, url_prefix="/qr")
