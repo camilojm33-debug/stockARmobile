@@ -780,6 +780,39 @@ def _render_tracking_html(html: str, recipient) -> str:
     return rendered
 
 
+def _smtp_ports(preferred_port: int) -> list[int]:
+    """Return preferred SMTP port first, with the compatible fallback second."""
+    ordered = [465, 587] if int(preferred_port or 587) == 465 else [587, 465]
+    return ordered
+
+
+class _SMTPIPv4(smtplib.SMTP):
+    """SMTP client that avoids IPv6 routing issues in cloud environments."""
+
+    def _get_socket(self, host, port, timeout):
+        ipv4 = socket.gethostbyname(host)
+        return socket.create_connection((ipv4, port), timeout)
+
+
+class _SMTPSSLIPv4(smtplib.SMTP_SSL):
+    """Implicit-TLS SMTP client with explicit IPv4 connection and SNI."""
+
+    def _get_socket(self, host, port, timeout):
+        ipv4 = socket.gethostbyname(host)
+        raw = socket.create_connection((ipv4, port), timeout)
+        return self.context.wrap_socket(raw, server_hostname=host)
+
+
+def _smtp_server(host: str, port: int, timeout: int = 30, use_tls: bool = True):
+    if int(port) == 465:
+        return _SMTPSSLIPv4(host, port, timeout=timeout)
+    server = _SMTPIPv4(host, port, timeout=timeout)
+    if use_tls:
+        server.starttls()
+        server.ehlo()
+    return server
+
+
 def _send_email(recipient, campaign) -> tuple[bool, str]:
     from flask import current_app
 
@@ -810,32 +843,39 @@ def _send_email(recipient, campaign) -> tuple[bool, str]:
     msg.add_alternative(_render_tracking_html(render_merge(campaign.body_html, recipient.lead), recipient), subtype="html")
 
     try:
-        port = int(current_app.config.get("SMTP_PORT") or 587)
-        use_tls = bool(current_app.config.get("SMTP_USE_TLS", True))
-        if port == 465:
-            with smtplib.SMTP_SSL(host, port, timeout=30) as server:
+        preferred_port = int(current_app.config.get("SMTP_PORT") or 587)
+    except (TypeError, ValueError):
+        preferred_port = 587
+    use_tls = bool(current_app.config.get("SMTP_USE_TLS", True))
+
+    connection_failures = []
+    for port in _smtp_ports(preferred_port):
+        send_started = False
+        try:
+            with _smtp_server(host, port, timeout=30, use_tls=use_tls) as server:
                 server.ehlo()
                 server.login(user, password)
+                send_started = True
                 server.send_message(msg)
-        else:
-            with smtplib.SMTP(host, port, timeout=30) as server:
-                server.ehlo()
-                if use_tls:
-                    server.starttls()
-                    server.ehlo()
-                server.login(user, password)
-                server.send_message(msg)
-    except smtplib.SMTPAuthenticationError as exc:
-        return False, "SMTP rechazó la autenticación. Revisá usuario, contraseña o App Password."
-    except smtplib.SMTPServerDisconnected:
-        return False, "SMTP cerró la conexión antes de completar el envío."
-    except (OSError, TimeoutError) as exc:
-        return False, f"Error de conexión SMTP: {str(exc)[:180]}"
-    except smtplib.SMTPException as exc:
-        return False, f"Error SMTP: {str(exc)[:180]}"
-    except Exception as exc:
-        return False, f"Error de envío: {str(exc)[:180]}"
-    return True, "sent"
+            return True, "sent"
+        except smtplib.SMTPAuthenticationError:
+            return False, "SMTP rechazó la autenticación. Revisá usuario, contraseña o App Password."
+        except smtplib.SMTPServerDisconnected as exc:
+            message = str(exc).strip() or "conexión cerrada por el servidor"
+            connection_failures.append(f"{port}: {message}")
+            if send_started:
+                return False, f"SMTP cerró la conexión durante el envío ({port})."
+        except (OSError, TimeoutError) as exc:
+            connection_failures.append(f"{port}: {str(exc)[:140]}")
+            if send_started:
+                return False, f"Error de conexión SMTP durante el envío ({port}): {str(exc)[:160]}"
+        except smtplib.SMTPException as exc:
+            return False, f"Error SMTP ({port}): {str(exc)[:180]}"
+        except Exception as exc:
+            return False, f"Error de envío ({port}): {str(exc)[:180]}"
+
+    detail = "; ".join(connection_failures) or "sin detalle"
+    return False, f"No se pudo conectar al SMTP ({detail})."
 
 def _whatsapp_template_parameters(campaign, lead) -> list[str]:
     from flask import current_app
