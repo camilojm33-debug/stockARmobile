@@ -119,6 +119,16 @@ class MercadoPagoSubscriptionService:
         )
         SubscriptionService._set_metadata(subscription, metadata)
 
+        if str(metadata.get("closed_reason") or "").strip().lower() == "plan_change":
+            metadata["mercadopago_stale_status_ignored"] = status
+            metadata["mercadopago_stale_status_ignored_at"] = datetime.now(timezone.utc).isoformat()
+            SubscriptionService._set_metadata(subscription, metadata)
+            subscription.renewal_enabled = False
+            subscription.auto_renew = False
+            subscription.cancel_at_period_end = True
+            db_session.flush()
+            return subscription
+
         if status == "authorized":
             if subscription.status not in {SubscriptionService.STATE_ACTIVE, SubscriptionService.STATE_SCHEDULED}:
                 SubscriptionService._transition(

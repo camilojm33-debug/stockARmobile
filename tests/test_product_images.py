@@ -28,6 +28,7 @@ def test_product_image_service_validates_real_image_and_persists(tmp_path, app):
         assert response.status_code == 200
         assert response.mimetype == "image/png"
         assert response.data
+        response.close()
 
         delete_product_image(photo)
         assert not stored.exists()

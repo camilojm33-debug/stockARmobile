@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import base64
+import json
 from io import BytesIO
 
 import qrcode
@@ -17,7 +18,7 @@ class BillingService:
         self.mp_service = MercadoPagoService()
 
     def create_checkout_for_plan(self, *, db_session, company, plan, user, subscription=None):
-        from app import utcnow
+        from app import Payment, PaymentHistory, Subscription
 
         target_subscription = subscription
         if target_subscription is None:
@@ -30,11 +31,65 @@ class BillingService:
                 managed_by="system",
             )
             target_subscription = result["subscription"]
-        db_session.flush()
+        target_subscription = (
+            db_session.query(Subscription)
+            .filter_by(id=target_subscription.id, company_id=company.id)
+            .with_for_update()
+            .first()
+        )
+        if target_subscription is None or target_subscription.plan_id != plan.id:
+            raise ValueError("La suscripción pendiente no corresponde al plan seleccionado.")
+
+        checkout_events = db_session.query(PaymentHistory).filter_by(
+            company_id=company.id,
+            subscription_id=target_subscription.id,
+            event="checkout_preference_created",
+        )
+        checkout_attempts = checkout_events.count()
+        latest_event = checkout_events.order_by(PaymentHistory.id.desc()).first()
+        if latest_event is not None:
+            try:
+                existing_preference = json.loads(latest_event.payload_json or "{}")
+            except (TypeError, ValueError):
+                existing_preference = {}
+            if isinstance(existing_preference, dict):
+                preference_id = str(latest_event.event_id or existing_preference.get("id") or "").strip()
+                checkout_url = str(
+                    existing_preference.get("init_point")
+                    or existing_preference.get("sandbox_init_point")
+                    or ""
+                ).strip()
+                if preference_id and checkout_url:
+                    payment = db_session.query(Payment).filter_by(
+                        company_id=company.id,
+                        subscription_id=target_subscription.id,
+                        preference_id=preference_id,
+                    ).first()
+                    payment_status = str(getattr(payment, "status", "") or "").strip().lower()
+                    if payment is None or payment_status in {"pending", "in_process", "authorized"}:
+                        return {
+                            "subscription": target_subscription,
+                            "preference": existing_preference,
+                            "checkout_status": "pending",
+                            "reused": True,
+                        }
+                    if payment_status == "approved":
+                        from app import utcnow
+
+                        next_due = target_subscription.next_billing_date
+                        if next_due is None or next_due > utcnow():
+                            return {
+                                "subscription": target_subscription,
+                                "preference": existing_preference,
+                                "checkout_status": "paid",
+                                "reused": True,
+                            }
+
+        attempt = checkout_attempts + 1
 
         external_reference = (
             f"company_id:{company.id}|plan_id:{plan.id}|subscription_id:{target_subscription.id}|"
-            f"user_id:{user.id}|ts:{int(utcnow().timestamp())}"
+            f"user_id:{user.id}|checkout_attempt:{attempt}"
         )
         SubscriptionService.run_command(
             db_session,

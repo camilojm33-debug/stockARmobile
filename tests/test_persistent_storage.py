@@ -37,5 +37,5 @@ def test_persistent_services_have_render_fallbacks(monkeypatch, app):
         invoice_path = InvoiceUploadService._directory(7)
         backup_path = BackupService._backup_root()
 
-    assert str(invoice_path).startswith("/var/data/stockarmobile/invoices/")
-    assert str(backup_path) == "/var/data/stockarmobile/backups"
+    assert invoice_path.as_posix().startswith("/var/data/stockarmobile/invoices/")
+    assert backup_path.as_posix() == "/var/data/stockarmobile/backups"

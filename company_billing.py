@@ -723,6 +723,118 @@ def _subscription_state_badge(status, days_remaining):
     return {"label": label_map.get(status, status.title()), "class": "text-bg-success", "indicator": "success", "text": "Activa"}
 
 
+def _persisted_checkout_preview(company, *, subscription_id=None, preference_id=None):
+    """Resolve a tenant-owned checkout from durable billing history after refresh."""
+    from app import Payment, PaymentHistory, Subscription
+
+    query = PaymentHistory.query.filter_by(
+        company_id=company.id,
+        event="checkout_preference_created",
+    )
+    if subscription_id is not None:
+        subscription = Subscription.query.filter_by(
+            id=int(subscription_id),
+            company_id=company.id,
+        ).first()
+        if subscription is None:
+            return None
+        query = query.filter(PaymentHistory.subscription_id == subscription.id)
+    if preference_id:
+        query = query.filter(PaymentHistory.event_id == str(preference_id))
+
+    event = query.order_by(PaymentHistory.id.desc()).first()
+    if event is None or event.subscription_id is None:
+        return None
+    subscription = Subscription.query.filter_by(
+        id=event.subscription_id,
+        company_id=company.id,
+    ).first()
+    if subscription is None or subscription.plan is None:
+        return None
+    try:
+        preference = json.loads(event.payload_json or "{}")
+    except (TypeError, ValueError):
+        return None
+    if not isinstance(preference, dict):
+        return None
+
+    resolved_preference_id = str(event.event_id or preference.get("id") or "").strip()
+    checkout_url = str(preference.get("init_point") or preference.get("sandbox_init_point") or "").strip()
+    if not resolved_preference_id or not checkout_url:
+        return None
+    payment = Payment.query.filter_by(
+        company_id=company.id,
+        subscription_id=subscription.id,
+        preference_id=resolved_preference_id,
+    ).order_by(Payment.id.desc()).first()
+    payment_status = str(getattr(payment, "status", "pending") or "pending").strip().lower()
+    if payment_status == "approved":
+        state = "paid"
+    elif payment_status in {"rejected", "cancelled", "canceled", "expired", "refunded", "charged_back"}:
+        state = "failed"
+    else:
+        state = "pending"
+
+    preview = BillingService.checkout_preview_payload(
+        preference=preference,
+        plan=subscription.plan,
+        company=company,
+    )
+    preview.update({
+        "kind": "commercial_subscription",
+        "status": state,
+        "subscription_id": subscription.id,
+        "preference_id": resolved_preference_id,
+        "payment_id": payment.id if payment else None,
+        "payment_status": payment_status,
+        "created_at": event.created_at,
+    })
+    if state != "pending":
+        preview["checkout_url"] = ""
+        preview["qr_data_uri"] = ""
+    return preview
+
+
+def _pending_paid_plan_change(company_id):
+    from app import Subscription
+
+    rows = (
+        Subscription.query.filter_by(
+            company_id=int(company_id),
+            status=SubscriptionService.STATE_PENDING_PAYMENT,
+        )
+        .order_by(Subscription.id.desc())
+        .all()
+    )
+    return next(
+        (
+            row
+            for row in rows
+            if SubscriptionService._metadata_dict(row).get("pending_plan_change")
+        ),
+        None,
+    )
+
+
+def _plan_change_summary(current_plan, target_plan):
+    current_features = set(_plan_features_label(current_plan))
+    target_features = set(_plan_features_label(target_plan))
+    current_price = float(getattr(current_plan, "price", 0) or 0)
+    target_price = float(getattr(target_plan, "price", 0) or 0)
+    return {
+        "current_plan_name": getattr(current_plan, "name", "Sin plan") if current_plan else "Sin plan",
+        "target_plan_name": target_plan.name,
+        "current_price": current_price,
+        "target_price": target_price,
+        "currency": getattr(target_plan, "currency", None) or "ARS",
+        "price_difference": target_price - current_price,
+        "features_kept": sorted(current_features & target_features),
+        "features_lost": sorted(current_features - target_features),
+        "features_added": sorted(target_features - current_features),
+        "is_downgrade": target_price < current_price,
+    }
+
+
 def _payment_status_badge(status):
     normalized = (status or "pending").strip().lower()
     mapping = {
@@ -1031,12 +1143,97 @@ def subscription_portal():
         )
     timeline_items.sort(key=lambda item: item.get("created_at") or datetime.min, reverse=True)
 
-    checkout_preview = session.pop("mp_checkout_preview", None)
     checkout_status = (request.args.get("checkout") or "").strip().lower()
     subscription_metadata = SubscriptionService._metadata_dict(subscription) if subscription else {}
     mp_auto_active = bool(subscription_metadata.get("mercadopago_preapproval_id") and str(subscription_metadata.get("mercadopago_status") or "").lower() == "authorized" and bool(getattr(subscription, "auto_renew", False)))
     selected_plan_id = request.args.get("selected_plan_id", type=int)
     selected_plan = next((p for p in plans if p.id == selected_plan_id), None)
+    plan_change_summary = _plan_change_summary(usage_snapshot.plan, selected_plan) if selected_plan else None
+    checkout_preview = None
+    checkout_subscription_id = request.args.get("checkout_subscription_id", type=int)
+    checkout_preference_id = str(request.args.get("checkout_preference_id") or "").strip() or None
+    should_restore_checkout = bool(
+        checkout_subscription_id
+        or checkout_preference_id
+        or checkout_status in {"created", "success", "pending", "failure"}
+    )
+    if should_restore_checkout:
+        checkout_preview = _persisted_checkout_preview(
+            company,
+            subscription_id=checkout_subscription_id,
+            preference_id=checkout_preference_id,
+        )
+    ai_status = AISubscriptionService.get_status(company)
+    requested_ai_preapproval = str(request.args.get("ai_preapproval_id") or "").strip()
+    stored_ai_preapproval = str(ai_status.get("mercadopago_preapproval_id") or "").strip()
+    if (
+        checkout_preview is None
+        and requested_ai_preapproval
+        and requested_ai_preapproval == stored_ai_preapproval
+        and ai_status.get("status") in {"PENDIENTE", "ACTIVA"}
+    ):
+        try:
+            from services.mercadopago_service import MercadoPagoService
+
+            remote = MercadoPagoService().get_preapproval(requested_ai_preapproval)
+            remote_status = str(remote.get("status") or "").strip().lower()
+            remote_url = str(remote.get("init_point") or "").strip()
+            amount = AISubscriptionService.plan_amount_ars(ai_status.get("plan_code"))
+            if remote_status == "authorized":
+                checkout_preview = {
+                    "kind": "ai_subscription",
+                    "company_id": company.id,
+                    "preapproval_id": requested_ai_preapproval,
+                    "plan_name": ai_status.get("plan_name") or "Plan IA",
+                    "amount": amount,
+                    "currency": "ARS",
+                    "status": "paid",
+                    "checkout_url": "",
+                    "qr_data_uri": "",
+                }
+                checkout_status = "success"
+            elif remote_status not in {"cancelled", "canceled", "expired", "rejected"} and remote_url:
+                checkout_preview = {
+                    "kind": "ai_subscription",
+                    "company_id": company.id,
+                    "preapproval_id": requested_ai_preapproval,
+                    "plan_name": ai_status.get("plan_name") or "Plan IA",
+                    "amount": amount,
+                    "currency": "ARS",
+                    "status": "pending",
+                    "checkout_url": remote_url,
+                    "qr_data_uri": BillingService._qr_data_uri(remote_url),
+                }
+            else:
+                checkout_status = "failure"
+        except Exception:
+            current_app.logger.exception(
+                "No se pudo recuperar el preapproval IA al volver al portal company_id=%s",
+                company.id,
+            )
+            checkout_status = "failure"
+    ai_preview = session.get("mp_checkout_preview")
+    if (
+        checkout_preview is None
+        and isinstance(ai_preview, dict)
+        and ai_preview.get("kind") == "ai_subscription"
+        and int(ai_preview.get("company_id") or 0) == int(company.id)
+        and str(ai_preview.get("preapproval_id") or "") == str(ai_status.get("mercadopago_preapproval_id") or "")
+    ):
+        checkout_preview = dict(ai_preview)
+        if ai_status.get("status") == "ACTIVA" and str(ai_status.get("mercadopago_status") or "").lower() == "authorized":
+            checkout_preview.update({"status": "paid", "checkout_url": "", "qr_data_uri": ""})
+            checkout_status = "success"
+        elif ai_status.get("status") == "PENDIENTE":
+            checkout_preview["status"] = "pending"
+        else:
+            checkout_preview.update({"status": "failed", "checkout_url": "", "qr_data_uri": ""})
+            checkout_status = "failure"
+    if checkout_preview:
+        if checkout_preview.get("status") == "paid":
+            checkout_status = "success"
+        elif checkout_preview.get("status") == "failed":
+            checkout_status = "failure"
     return render_template(
         "company_billing/portal.html",
         company=company,
@@ -1063,9 +1260,10 @@ def subscription_portal():
         invoice_rows=invoice_rows,
         timeline_items=timeline_items,
         selected_plan=selected_plan,
+        plan_change_summary=plan_change_summary,
         mp_auto_active=mp_auto_active,
         ai_plans=AI_PLANS,
-        ai_status=AISubscriptionService.get_status(company),
+        ai_status=ai_status,
     )
 
 
@@ -1129,7 +1327,6 @@ def subscription_payment_pdf(payment_id):
 @bp.route("/checkout", methods=["POST"])
 @company_admin_required
 def create_checkout():
-    from flask import session
     from app import Company, db
 
     company_id = getattr(current_user, "company_id", None)
@@ -1143,24 +1340,38 @@ def create_checkout():
         flash("Seleccioná un plan antes de pagar.", "warning")
         return redirect(url_for("company_billing.subscription_portal"))
 
+    pending_plan = _pending_paid_plan_change(company.id)
+    if pending_plan is not None:
+        pending_preview = _persisted_checkout_preview(company, subscription_id=pending_plan.id)
+        flash(
+            f"Ya hay un cambio pendiente al plan {pending_plan.plan.name if pending_plan.plan else 'seleccionado'}. "
+            "El plan actual se mantiene hasta la aprobación del pago.",
+            "info",
+        )
+        if pending_preview is not None and pending_preview.get("status") == "pending":
+            return redirect(url_for(
+                "company_billing.subscription_portal",
+                checkout="created",
+                checkout_subscription_id=pending_plan.id,
+                checkout_preference_id=pending_preview.get("preference_id"),
+                _anchor="payment-checkout",
+            ))
+        return redirect(url_for(
+            "company_billing.subscription_portal",
+            selected_plan_id=pending_plan.plan_id,
+            _anchor="planes-disponibles",
+        ))
+
     try:
         current_subscription = SubscriptionService.active_subscription_for_company(company.id)
         if current_subscription is None or current_subscription.plan_id != plan.id:
-            result = SubscriptionService.run_command(
-                db.session,
-                SubscriptionService.ChangePlanCommand(
-                    company_id=company.id,
-                    plan_id=plan.id,
-                    actor_user_id=current_user.id,
-                    actor_role=getattr(current_user, "role", None),
-                    origin="qr_checkout",
-                    ip_address=request.remote_addr,
-                    idempotency_key=f"qr-plan:{company.id}:{plan.id}:{current_user.id}",
-                ),
-            )
-            subscription = db.session.get(__import__("app").Subscription, result.subscription_id)
-        else:
-            subscription = current_subscription
+            return redirect(url_for(
+                "company_billing.subscription_portal",
+                selected_plan_id=plan.id,
+                _anchor="planes-disponibles",
+            ))
+
+        subscription = current_subscription
 
         if subscription is None:
             raise RuntimeError("No se pudo obtener la suscripción para generar el checkout.")
@@ -1176,21 +1387,28 @@ def create_checkout():
         checkout_url = preference.get("init_point") or preference.get("sandbox_init_point")
         if not checkout_url:
             raise RuntimeError("Mercado Pago no devolvió una URL de checkout válida.")
-
-        session["mp_checkout_preview"] = BillingService.checkout_preview_payload(
-            preference=preference,
-            plan=plan,
-            company=company,
-        )
         db.session.commit()
     except Exception as exc:
         db.session.rollback()
         current_app.logger.exception("Error creando checkout QR Mercado Pago: %s", exc)
-        flash("No se pudo generar el QR de Mercado Pago. Revisá la conexión y los datos configurados.", "danger")
+        pending_plan_change = bool(
+            locals().get("subscription")
+            and SubscriptionService._metadata_dict(locals()["subscription"]).get("pending_plan_change")
+        )
+        if pending_plan_change:
+            flash("No se pudo generar el QR. Tu plan actual sigue activo y el cambio quedó pendiente; podés reintentar sin perderlo.", "warning")
+        else:
+            flash("No se pudo generar el QR de Mercado Pago. Revisá la conexión y los datos configurados.", "danger")
         return redirect(url_for("company_billing.subscription_portal"))
 
     flash("QR de Mercado Pago generado. Escanealo o abrí el checkout para pagar.", "info")
-    return redirect(url_for("company_billing.subscription_portal", checkout="created"))
+    return redirect(url_for(
+        "company_billing.subscription_portal",
+        checkout="created",
+        checkout_subscription_id=subscription.id,
+        checkout_preference_id=preference.get("id"),
+        _anchor="payment-checkout",
+    ))
 
 
 @bp.route("/subscription/ai-agent/checkout", methods=["POST"])
@@ -1288,14 +1506,21 @@ def create_ai_subscription_checkout():
         if payment_method == "qr":
             session["mp_checkout_preview"] = {
                 "kind": "ai_subscription",
+                "company_id": company.id,
                 "preapproval_id": preapproval_id,
                 "checkout_url": checkout_url,
                 "plan_name": plan["name"],
                 "amount": amount,
                 "currency": "ARS",
+                "status": "pending",
                 "qr_data_uri": BillingService._qr_data_uri(checkout_url),
             }
-            return redirect(url_for("company_billing.subscription_portal", checkout="ai_created", _anchor="suscripcion-ia"))
+            return redirect(url_for(
+                "company_billing.subscription_portal",
+                checkout="ai_created",
+                ai_preapproval_id=preapproval_id,
+                _anchor="payment-checkout",
+            ))
 
         return _checkout_redirect_response(checkout_url)
     except (AISubscriptionError, RuntimeError, ValueError) as exc:
@@ -1421,8 +1646,6 @@ def create_mercadopago_subscription():
 @bp.route("/subscription/change", methods=["POST"])
 @company_admin_required
 def subscription_change_confirm():
-    from flask import session
-
     from app import Company, Subscription, db, record_audit
 
     company_id = getattr(current_user, "company_id", None)
@@ -1434,9 +1657,33 @@ def subscription_change_confirm():
         flash("Plan no encontrado.", "danger")
         return redirect(url_for("company_billing.subscription_portal"))
 
+    current_subscription = SubscriptionService.active_subscription_for_company(company.id)
+    pending_plan = _pending_paid_plan_change(company.id)
+    if pending_plan is not None and pending_plan.plan_id != plan.id:
+        pending_preview = _persisted_checkout_preview(company, subscription_id=pending_plan.id)
+        flash(
+            f"Ya hay un cambio pendiente al plan {pending_plan.plan.name if pending_plan.plan else 'seleccionado'}. "
+            "Tu plan actual sigue activo hasta que se confirme ese pago.",
+            "warning",
+        )
+        if pending_preview is not None and pending_preview.get("status") == "pending":
+            return redirect(url_for(
+                "company_billing.subscription_portal",
+                checkout="created",
+                checkout_subscription_id=pending_plan.id,
+                checkout_preference_id=pending_preview.get("preference_id"),
+                _anchor="payment-checkout",
+            ))
+        return redirect(url_for(
+            "company_billing.subscription_portal",
+            selected_plan_id=pending_plan.plan_id,
+            _anchor="planes-disponibles",
+        ))
+
+    command_result = None
+    subscription = pending_plan if pending_plan is not None else None
     try:
-        with db.session.begin_nested():
-            current_subscription = SubscriptionService.active_subscription_for_company(company.id)
+        if subscription is None:
             command_result = SubscriptionService.run_command(
                 db.session,
                 SubscriptionService.ChangePlanCommand(
@@ -1451,52 +1698,61 @@ def subscription_change_confirm():
                         or f"portal-change:{company.id}:{getattr(current_subscription, 'id', 0)}:{plan.id}:{current_user.id}"
                     ),
                 ),
+            ),
+            subscription = Subscription.query.filter_by(
+                id=command_result.subscription_id,
+                company_id=company.id,
+            ).first()
+        if subscription is None:
+            raise RuntimeError("No se pudo recuperar la suscripción creada por el comando.")
+
+        if float(plan.price or 0) > 0:
+            # Keep the old subscription operational while the new paid plan is pending.
+            db.session.commit()
+            payload = BillingService().create_checkout_for_plan(
+                db_session=db.session,
+                company=company,
+                plan=plan,
+                user=current_user,
+                subscription=subscription,
             )
-            subscription = Subscription.query.filter_by(id=command_result.subscription_id).first()
-            if subscription is None:
-                raise RuntimeError("No se pudo recuperar la suscripción creada por el comando.")
-
-            if float(plan.price or 0) <= 0:
-                ReferralService.create_commission_for_sale(
-                    db.session,
-                    company_id=company.id,
-                    subscription=subscription,
-                    payment=None,
-                    plan=plan,
-                )
-            else:
-                payload = BillingService().create_checkout_for_plan(
-                    db_session=db.session,
-                    company=company,
-                    plan=plan,
-                    user=current_user,
-                    subscription=subscription,
-                )
-                preference = payload["preference"]
-                checkout_url = preference.get("init_point") or preference.get("sandbox_init_point")
-                if not checkout_url:
-                    raise RuntimeError("Mercado Pago no devolvió URL de checkout.")
-                session["mp_checkout_preview"] = BillingService.checkout_preview_payload(
-                    preference=preference,
-                    plan=plan,
-                    company=company,
-                )
-
+            preference = payload["preference"]
+            checkout_url = preference.get("init_point") or preference.get("sandbox_init_point")
+            if not checkout_url:
+                raise RuntimeError("Mercado Pago no devolvió URL de checkout.")
+            db.session.commit()
+            record_audit(
+                action="subscription_change_checkout_created",
+                entity="subscription",
+                entity_id=subscription.id,
+                detail=f"Checkout pendiente para plan {plan.code or plan.name}; se conserva el plan anterior hasta el pago aprobado.",
+            )
+            db.session.commit()
+        else:
+            ReferralService.create_commission_for_sale(
+                db.session,
+                company_id=company.id,
+                subscription=subscription,
+                payment=None,
+                plan=plan,
+            )
             record_audit(
                 action="subscription_change_confirmed",
                 entity="subscription",
                 entity_id=subscription.id,
                 detail=f"Cambio confirmado a plan {plan.code or plan.name}",
             )
-
-        db.session.commit()
+            db.session.commit()
     except ValueError as exc:
         db.session.rollback()
         flash(str(exc), "warning")
-        return redirect(url_for("company_billing.subscription_portal"))
+        return redirect(url_for("company_billing.subscription_portal", selected_plan_id=plan.id, _anchor="planes-disponibles"))
     except Exception as exc:
         db.session.rollback()
         current_app.logger.exception("Error confirmando cambio de plan: %s", exc)
+        if float(plan.price or 0) > 0 and subscription is not None:
+            flash("No se pudo generar el checkout. Tu plan actual sigue activo y el nuevo quedó pendiente para reintentar.", "warning")
+            return redirect(url_for("company_billing.subscription_portal", selected_plan_id=plan.id, _anchor="planes-disponibles"))
         flash("No se pudo confirmar el cambio de plan. No se aplicaron cambios.", "danger")
         return redirect(url_for("company_billing.subscription_portal"))
 
@@ -1505,7 +1761,13 @@ def subscription_change_confirm():
         return redirect(url_for("company_billing.subscription_portal"))
 
     flash("Checkout generado correctamente. Escaneá el QR o continuá con el botón de pago.", "info")
-    return redirect(url_for("company_billing.subscription_portal", checkout="created"))
+    return redirect(url_for(
+        "company_billing.subscription_portal",
+        checkout="created",
+        checkout_subscription_id=subscription.id,
+        checkout_preference_id=preference.get("id"),
+        _anchor="payment-checkout",
+    ))
 
 
 @bp.route("/subscription/cancel", methods=["POST"])

@@ -495,8 +495,60 @@ class WebhookService:
                     payment.status = "rejected"
                     NotificationService.record_event(db_session, company_id=company.id, payment_id=payment.id, subscription_id=subscription.id, event="mercadopago_webhook_validation_error", detail="Validación de webhook fallida: " + ",".join(validation_errors), source="mercadopago", status="rejected", event_id=event_key, payload={"payment": payment_data, "errors": validation_errors}, user_id=payment.user_id)
 
+                subscription_metadata = SubscriptionService._metadata_dict(subscription)
+                is_paid_plan_change = bool(subscription_metadata.get("pending_plan_change"))
+                previous_subscription_id = subscription_metadata.get("previous_subscription_id")
+                if payment_status == "approved" and is_paid_plan_change and previous_subscription_id:
+                    previous_subscription = Subscription.query.filter_by(
+                        id=int(previous_subscription_id),
+                        company_id=company.id,
+                    ).first()
+                    previous_metadata = SubscriptionService._metadata_dict(previous_subscription) if previous_subscription else {}
+                    previous_preapproval_id = str(previous_metadata.get("mercadopago_preapproval_id") or "").strip()
+                    if previous_preapproval_id:
+                        remote_previous = self.mp_service.get_preapproval(previous_preapproval_id)
+                        remote_status = str(remote_previous.get("status") or "").strip().lower()
+                        if remote_status not in {"cancelled", "canceled", "expired"}:
+                            canceled_previous = self.mp_service.cancel_preapproval(previous_preapproval_id)
+                            remote_status = str(canceled_previous.get("status") or "").strip().lower()
+                            if remote_status not in {"cancelled", "canceled", "expired"}:
+                                raise RuntimeError("Mercado Pago no confirmó la cancelación del preapproval anterior; el cambio nuevo queda pendiente para reintentar.")
+                        if previous_subscription is not None:
+                            SubscriptionService._set_metadata(
+                                previous_subscription,
+                                {
+                                    "mercadopago_status": remote_status,
+                                    "mercadopago_cancelled_for_plan_change_at": datetime.utcnow().isoformat(),
+                                },
+                            )
+                            previous_subscription.renewal_enabled = False
+                            previous_subscription.auto_renew = False
+                            previous_subscription.cancel_at_period_end = True
+                        NotificationService.record_event(
+                            db_session,
+                            company_id=company.id,
+                            subscription_id=previous_subscription.id if previous_subscription else int(previous_subscription_id),
+                            event="preapproval_cancelled_for_plan_change",
+                            detail=f"Preapproval anterior {previous_preapproval_id} cancelado tras aprobar el nuevo plan.",
+                            source="mercadopago",
+                            status=remote_status,
+                            event_id=f"plan-change:{subscription.id}:{previous_preapproval_id}",
+                            payload={"previous_subscription_id": int(previous_subscription_id), "new_subscription_id": subscription.id},
+                            user_id=payment.user_id,
+                        )
+
                 should_apply_status_transition = previous_payment_status != payment_status
-                if should_apply_status_transition:
+                is_replaced_subscription = bool(
+                    SubscriptionService._metadata_dict(subscription).get("closed_reason") == "plan_change"
+                )
+                if is_replaced_subscription:
+                    result = {
+                        "status": "stale_payment_for_replaced_subscription",
+                        "payment_status": payment_status,
+                        "subscription_id": subscription.id,
+                        "event_key": event_key,
+                    }
+                elif should_apply_status_transition:
                     normalized_status = (payment_status or "pending").lower()
                     if normalized_status in {"approved", "refunded"}:
                         SubscriptionService.run_command(db_session, SubscriptionService.RenewSubscriptionCommand(company_id=company.id, subscription_id=subscription.id, payment_status=normalized_status, actor_user_id=payment.user_id, actor_role="system", origin="webhook", idempotency_key=f"webhook-renew:{event_key}:{subscription.id}"))
