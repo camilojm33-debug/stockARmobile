@@ -136,8 +136,31 @@ def _public_vendor_rate_limit(company_id: int, *, conversation_id=None, request_
                 return False
             current_app.logger.warning("Public vendor Redis rate limit unavailable; using session fallback.")
     elif current_app.config.get("IS_PRODUCTION_ENV"):
-        current_app.logger.error("Public vendor Redis rate limit is required in production; failing closed.")
+        # Production may run without Redis. Fall back to the durable conversation
+        # operation log so the public WebChat remains available while preserving
+        # a per-visitor rate limit.
+        if conversation_id:
+            try:
+                from datetime import datetime, timedelta
+
+                cutoff = datetime.utcnow() - timedelta(seconds=PUBLIC_VENDOR_CHAT_WINDOW)
+                recent_count = (
+                    PublicVendorOperation.query
+                    .filter(
+                        PublicVendorOperation.company_id == int(company_id),
+                        PublicVendorOperation.conversation_id == int(conversation_id),
+                        PublicVendorOperation.operation_type == "message",
+                        PublicVendorOperation.created_at >= cutoff,
+                    )
+                    .count()
+                )
+                return recent_count < PUBLIC_VENDOR_CHAT_LIMIT
+            except Exception:
+                current_app.logger.exception("Public vendor DB rate limit fallback failed; failing closed.")
+                return False
+        current_app.logger.error("Public vendor rate limit requires conversation scope in production.")
         return False
+
     now = int(time.time())
     state = session.get("public_vendor_rate") or {}
     visitor_state = state if isinstance(state, dict) else {}
