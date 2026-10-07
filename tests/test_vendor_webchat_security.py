@@ -39,10 +39,8 @@ def test_public_vendor_limits_use_database_fallback_without_redis_in_production(
     from services.ai_agent.vendor_publication import _write_rate_limit
 
     company = qa_ai_database["companies"]["vendedor"]
-    agent = company.agents[0] if getattr(company, "agents", None) else None
     from stockarmobile.models.conversations import Agent, Conversation
-    if agent is None:
-        agent = Agent.query.filter_by(company_id=company.id).first()
+    agent = Agent.query.filter_by(company_id=company.id).first()
     conversation = Conversation(
         company_id=company.id,
         agent_id=agent.id if agent else None,
