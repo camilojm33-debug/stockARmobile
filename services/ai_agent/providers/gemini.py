@@ -182,7 +182,6 @@ class GeminiProvider(AIProvider):
             kwargs["tools"] = [types.Tool(function_declarations=declarations)]
             kwargs["automatic_function_calling"] = types.AutomaticFunctionCallingConfig(
                 disable=True,
-                maximum_remote_calls=None,
             )
         if response_schema is not None:
             kwargs["response_mime_type"] = "application/json"
@@ -322,6 +321,13 @@ class GeminiProvider(AIProvider):
                 config=self._config(messages=messages, tools=tools, temperature=temperature, max_tokens=max_tokens),
             )
         except Exception as exc:
+            import logging
+            logging.getLogger(__name__).warning(
+                "Gemini generate_content failed model=%s code=%s error=%s",
+                effective_model,
+                self._api_error_code(exc),
+                str(exc)[:1200],
+            )
             if self._is_timeout_error(exc):
                 raise AIProviderError("Gemini tardó demasiado en responder. Intentá nuevamente en unos segundos.", status_code=503) from exc
             api_error_code = self._api_error_code(exc)
