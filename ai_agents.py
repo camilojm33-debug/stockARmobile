@@ -123,7 +123,6 @@ def _public_vendor_rate_limit(company_id: int, *, conversation_id=None, request_
     # Redis accelerator is not provisioned. The request-level visitor lock makes this
     # count deterministic for concurrent requests from the same visitor.
     try:
-        from app import Conversation, ConversationMessage
         if operation_scope:
             recent_duplicate = (
                 ConversationMessage.query
@@ -149,7 +148,7 @@ def _public_vendor_rate_limit(company_id: int, *, conversation_id=None, request_
                 ConversationMessage.role == "user",
                 ConversationMessage.created_at >= cutoff,
                 Conversation.channel == "webchat",
-                Conversation.external_conversation_id == str(session.get(f"public_vendor_visitor_{int(company_id)}") or ""),
+                Conversation.id == int(conversation_id or 0),
             )
         )
         recent_count = int(query.scalar() or 0)
