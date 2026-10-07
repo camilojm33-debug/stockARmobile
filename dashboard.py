@@ -12,7 +12,7 @@ from services.ai_agent.providers.base import AIProviderError
 from services.ai_agent.usage_service import can_use_ai, can_use_ai_feature
 from stockarmobile.permissions import can_access_ai
 from services.ai_agent.orchestrator import AgentOrchestrator
-from services.ai_agent.orchestrator_v2 import AgentRuntime
+from services.ai_agent.orchestrator_v2 import AgentRuntime, MAX_AGENT_MESSAGE_CHARS
 from services.dashboard_service import build_dashboard_context
 from services.invoice_upload_service import InvoiceUploadError, InvoiceUploadService
 from services.invoice_ai_service import InvoiceAIError, InvoiceAIService
@@ -170,6 +170,8 @@ def ai_agent_chat():
         return jsonify({"success": False, "error": "Agente inválido."}), 400
     if not isinstance(message, str) or not message.strip():
         return jsonify({"success": False, "error": "El mensaje es obligatorio."}), 400
+    if len(message) > MAX_AGENT_MESSAGE_CHARS:
+        return jsonify({"success": False, "error": f"El mensaje no puede superar los {MAX_AGENT_MESSAGE_CHARS} caracteres."}), 413
     company_id = getattr(current_user, "company_id", None)
     if company_id in (None, ""):
         return jsonify({"success": False, "error": "No hay empresa activa para esta sesión."}), 403

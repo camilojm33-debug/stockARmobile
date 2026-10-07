@@ -89,7 +89,13 @@ def _public_vendor_rate_limit(company_id: int) -> bool:
                 client.expire(key, PUBLIC_VENDOR_CHAT_WINDOW)
             return count <= PUBLIC_VENDOR_CHAT_LIMIT
         except Exception:
+            if current_app.config.get("IS_PRODUCTION_ENV"):
+                current_app.logger.exception("Public vendor Redis rate limit unavailable; failing closed.")
+                return False
             current_app.logger.warning("Public vendor Redis rate limit unavailable; using session fallback.")
+    elif current_app.config.get("IS_PRODUCTION_ENV"):
+        current_app.logger.error("Public vendor Redis rate limit is required in production; failing closed.")
+        return False
     now = int(time.time())
     state = session.get("public_vendor_rate") or {}
     if not isinstance(state, dict) or now - int(state.get("started_at", 0) or 0) >= PUBLIC_VENDOR_CHAT_WINDOW:

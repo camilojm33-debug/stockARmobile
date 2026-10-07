@@ -40,6 +40,30 @@ class OpenAICompatibleProvider(AIProvider):
     def _endpoint(self) -> str:
         return f"{self.base_url}/chat/completions"
 
+    @staticmethod
+    def _tool_calls(raw_tool_calls) -> list[Dict[str, Any]]:
+        parsed_calls = []
+        for raw_call in raw_tool_calls or []:
+            if not isinstance(raw_call, dict):
+                continue
+            function = raw_call.get("function") or {}
+            arguments = function.get("arguments") or {}
+            if isinstance(arguments, str):
+                try:
+                    arguments = json.loads(arguments)
+                except json.JSONDecodeError as exc:
+                    raise RuntimeError("Los argumentos de la Tool no son JSON válido.") from exc
+            if not isinstance(arguments, dict):
+                raise RuntimeError("Los argumentos de la Tool deben ser un objeto JSON.")
+            name = function.get("name")
+            if name:
+                parsed_calls.append({
+                    "id": raw_call.get("id") or f"tool-call-{len(parsed_calls) + 1}",
+                    "name": name,
+                    "arguments": arguments,
+                })
+        return parsed_calls
+
     def generate(self, *, messages, tools=None, model=None, temperature=None, max_tokens=None) -> Dict[str, Any]:
         if not self.api_key:
             raise RuntimeError("AI_PROVIDER_API_KEY/OPENAI_API_KEY no está configurada.")
@@ -72,13 +96,6 @@ class OpenAICompatibleProvider(AIProvider):
         content = message.get("content") or ""
         tool_calls = message.get("tool_calls") or []
         if tool_calls:
-            first = tool_calls[0]
-            function = first.get("function") or {}
-            arguments = function.get("arguments") or {}
-            if isinstance(arguments, str):
-                try:
-                    arguments = json.loads(arguments)
-                except json.JSONDecodeError as exc:
-                    raise RuntimeError("Los argumentos de la Tool no son JSON válido.") from exc
-            return {"content": content, "tool_call": {"id": first.get("id"), "name": function.get("name"), "arguments": arguments}, "usage": data.get("usage") or {}, "model": model or self.model}
-        return {"content": content, "tool_call": None, "usage": data.get("usage") or {}, "model": model or self.model}
+            parsed_calls = self._tool_calls(tool_calls)
+            return {"content": content, "tool_call": parsed_calls[0] if parsed_calls else None, "tool_calls": parsed_calls, "usage": data.get("usage") or {}, "model": model or self.model}
+        return {"content": content, "tool_call": None, "tool_calls": [], "usage": data.get("usage") or {}, "model": model or self.model}

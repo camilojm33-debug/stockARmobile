@@ -6,6 +6,7 @@ import hashlib
 import hmac
 import os
 import re
+import uuid
 
 from flask import Blueprint, abort, current_app, flash, jsonify, redirect, render_template, request, url_for
 from flask_login import current_user, login_required
@@ -16,7 +17,7 @@ from stockarmobile.decorators import company_admin_required
 from app import get_current_company_id
 from stockarmobile.models.conversations import Conversation, ConversationMessage
 from services.ai_agent.config_service import company_for_whatsapp_phone_id, get_whatsapp_connection, get_vendor_options, is_ai_enabled, choose_agent
-from services.ai_agent.orchestrator_v2 import AgentRuntime
+from services.ai_agent.orchestrator_v2 import AgentRuntime, MAX_AGENT_MESSAGE_CHARS
 from services.ai_agent.usage_service import can_use_ai
 from services.ai_agent.vendor_followup_tools import install_vendor_followup_tools
 from services.ai_agent.vendor_order_service import VendorOrderService, _metadata, _set_metadata
@@ -258,33 +259,94 @@ def _handle_vendor_command(company_id: int, conversation_id: int, sender: str, t
     return None
 
 
-def _persist_deterministic_turn(conversation, *, external_id: str, text: str, response: str) -> None:
-    """Persist successful WhatsApp commands for a complete, auditable conversation."""
-    incoming = ConversationMessage(
-        conversation_id=conversation.id,
+def _assistant_for_inbound(conversation, incoming):
+    if incoming is None:
+        return None
+    query = ConversationMessage.query.filter_by(
         company_id=conversation.company_id,
-        sender_type="user",
-        role="user",
-        content=text,
-        content_type="text",
-        external_message_id=external_id,
-        idempotency_key=f"whatsapp:{external_id}",
-        metadata_json={"channel": "whatsapp", "deterministic_command": True},
-    )
-    db.session.add(incoming)
-    db.session.flush()
-    assistant = ConversationMessage(
         conversation_id=conversation.id,
-        company_id=conversation.company_id,
-        sender_type="agent",
-        sender_id=conversation.agent_id,
         role="assistant",
-        content=response,
-        content_type="text",
-        metadata_json={"channel": "whatsapp", "deterministic_command": True, "agent_key": "vendedor"},
     )
-    db.session.add(assistant)
+    if incoming.trace_id:
+        query = query.filter(ConversationMessage.trace_id == incoming.trace_id)
+    else:
+        query = query.filter(ConversationMessage.id > incoming.id)
+    return query.order_by(ConversationMessage.id.desc()).first()
+
+
+def _send_persisted_reply(company, *, sender: str, assistant) -> bool:
+    if assistant is None:
+        raise RuntimeError("La respuesta de WhatsApp no está persistida.")
+    assistant = db.session.query(ConversationMessage).filter_by(
+        id=assistant.id,
+        company_id=company.id,
+        role="assistant",
+    ).with_for_update().first()
+    if assistant is None:
+        raise RuntimeError("La respuesta de WhatsApp ya no está disponible.")
+    metadata = assistant.metadata_json if isinstance(assistant.metadata_json, dict) else {}
+    delivery = metadata.get("whatsapp_delivery") if isinstance(metadata.get("whatsapp_delivery"), dict) else {}
+    if delivery.get("status") == "accepted":
+        return False
+
+    result = WhatsAppService.send_text(company, to=sender, body=str(assistant.content or ""))
+    messages = result.get("messages") if isinstance(result, dict) else None
+    provider_message_id = ""
+    if isinstance(messages, list) and messages and isinstance(messages[0], dict):
+        provider_message_id = str(messages[0].get("id") or "").strip()
+    updated_metadata = dict(metadata)
+    updated_metadata["whatsapp_delivery"] = {
+        "status": "accepted",
+        "accepted_at": utcnow_naive().isoformat(),
+        "provider_message_id": provider_message_id,
+    }
+    assistant.metadata_json = updated_metadata
     db.session.commit()
+    return True
+
+
+def _persist_deterministic_turn(conversation, *, external_id: str, text: str, response: str):
+    """Persist a retryable WhatsApp command turn without duplicating messages."""
+    incoming = ConversationMessage.query.filter_by(
+        company_id=conversation.company_id,
+        conversation_id=conversation.id,
+        external_message_id=external_id,
+        role="user",
+    ).first()
+    if incoming is None:
+        incoming = ConversationMessage(
+            conversation_id=conversation.id,
+            company_id=conversation.company_id,
+            sender_type="user",
+            role="user",
+            content=text,
+            content_type="text",
+            external_message_id=external_id,
+            idempotency_key=f"whatsapp:{external_id}",
+            trace_id=uuid.uuid4().hex,
+            metadata_json={"channel": "whatsapp", "deterministic_command": True},
+        )
+        db.session.add(incoming)
+        db.session.flush()
+    elif not incoming.trace_id:
+        incoming.trace_id = uuid.uuid4().hex
+
+    assistant = _assistant_for_inbound(conversation, incoming)
+    if assistant is None:
+        assistant = ConversationMessage(
+            conversation_id=conversation.id,
+            company_id=conversation.company_id,
+            sender_type="agent",
+            sender_id=conversation.agent_id,
+            role="assistant",
+            content=response,
+            content_type="text",
+            trace_id=incoming.trace_id,
+            metadata_json={"channel": "whatsapp", "deterministic_command": True, "agent_key": "vendedor"},
+        )
+        db.session.add(assistant)
+    db.session.commit()
+    return assistant
 
 
 def _ai_order_payment(company_id: int, quote_id: int):
@@ -659,6 +721,7 @@ def webhook():
         return jsonify({"success": False, "error": "invalid_signature"}), 401
     payload = request.get_json(silent=True) or {}
     processed, errors = 0, []
+    retryable_errors = False
     try:
         _record_commercial_campaign_status(_extract_statuses(payload))
         db.session.commit()
@@ -666,6 +729,7 @@ def webhook():
         db.session.rollback()
         current_app.logger.exception("Commercial WhatsApp campaign status processing failed")
         errors.append({"error": "commercial_campaign_status_internal_error"})
+        retryable_errors = True
 
     for phone_number_id, sender, external_id, text in _extract_messages(payload):
         try:
@@ -686,6 +750,7 @@ def webhook():
                         external_id,
                     )
                     errors.append({"external_message_id": external_id, "error": "commercial_internal_error"})
+                    retryable_errors = True
                 continue
 
             company = company_for_whatsapp_phone_id(phone_number_id)
@@ -693,28 +758,43 @@ def webhook():
                 errors.append({"external_message_id": external_id, "error": "company_not_configured"})
                 continue
 
-            duplicate = db.session.query(ConversationMessage).filter(
-                ConversationMessage.company_id == company.id,
-                ConversationMessage.external_message_id == external_id,
-            ).first()
-            if duplicate is not None:
-                continue
-
             connection = get_whatsapp_connection(company)
             if not connection["enabled"] or not is_ai_enabled(company):
                 continue
 
             conversation = _get_or_create_conversation(company.id, sender)
+            duplicate = db.session.query(ConversationMessage).filter(
+                ConversationMessage.company_id == company.id,
+                ConversationMessage.conversation_id == conversation.id,
+                ConversationMessage.external_message_id == external_id,
+                ConversationMessage.role == "user",
+            ).first()
+            if duplicate is not None:
+                assistant_duplicate = _assistant_for_inbound(conversation, duplicate)
+                if assistant_duplicate is not None:
+                    if not _send_persisted_reply(company, sender=sender, assistant=assistant_duplicate):
+                        continue
+                    processed += 1
+                    continue
+
             access = can_use_ai(company, "vendedor")
             if not access.allowed:
                 errors.append({"external_message_id": external_id, "error": "ai_plan_blocked", "reason": access.reason})
                 continue
+            if len(text) > MAX_AGENT_MESSAGE_CHARS:
+                errors.append({"external_message_id": external_id, "error": "message_too_long"})
+                continue
 
             command_response = _handle_vendor_command(company.id, conversation.id, sender, text)
             if command_response is not None:
-                _persist_deterministic_turn(conversation, external_id=external_id, text=text, response=command_response)
-                WhatsAppService.send_text(company, to=sender, body=command_response)
-                processed += 1
+                assistant = _persist_deterministic_turn(
+                    conversation,
+                    external_id=external_id,
+                    text=text,
+                    response=command_response,
+                )
+                if _send_persisted_reply(company, sender=sender, assistant=assistant):
+                    processed += 1
                 continue
 
             idempotency_key = f"whatsapp:{external_id}"
@@ -734,12 +814,28 @@ def webhook():
                     continue
                 raise
 
-            if result.get("status") == "duplicate":
+            if result.get("status") == "disabled":
                 continue
-            WhatsAppService.send_text(company, to=sender, body=result["content"])
-            processed += 1
+            assistant_id = result.get("assistant_message_id")
+            assistant = db.session.query(ConversationMessage).filter_by(
+                id=assistant_id,
+                company_id=company.id,
+                conversation_id=conversation.id,
+                role="assistant",
+            ).first() if assistant_id else _assistant_for_inbound(
+                conversation,
+                db.session.query(ConversationMessage).filter_by(
+                    company_id=company.id,
+                    conversation_id=conversation.id,
+                    external_message_id=external_id,
+                    role="user",
+                ).first(),
+            )
+            if _send_persisted_reply(company, sender=sender, assistant=assistant):
+                processed += 1
         except Exception:
             db.session.rollback()
             current_app.logger.exception("WhatsApp agent error external_message_id=%s", external_id)
             errors.append({"external_message_id": external_id, "error": "internal_error"})
-    return jsonify({"success": True, "processed": processed, "errors": errors}), 200
+            retryable_errors = True
+    return jsonify({"success": not retryable_errors, "processed": processed, "errors": errors}), 503 if retryable_errors else 200

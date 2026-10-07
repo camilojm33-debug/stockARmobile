@@ -427,3 +427,153 @@ def test_marketing_output_replaces_platform_identity_with_tenant_name(qa_ai_data
     assert "StockARmobile" not in result["content"]
     assert "StockArMobile" not in result["content"]
     assert f"El equipo de {company.name}" in result["content"]
+
+
+def test_company_and_global_ai_pause_block_agent_access(qa_ai_database, monkeypatch):
+    company = qa_ai_database["companies"]["pro"]
+    company.preferences_json = json.dumps({"ai_agent": {"plan_code": "pro", "enabled": False}})
+    assert can_use_ai(company, "asistente").allowed is False
+
+    company.preferences_json = json.dumps({"ai_agent": {"plan_code": "pro", "enabled": True}})
+    monkeypatch.setenv("AI_AGENT_ENABLED", "false")
+    assert can_use_ai(company, "asistente").allowed is False
+
+
+def test_crm_tool_requires_pro_and_user_crm_permission(qa_ai_database):
+    from services.ai_agent.orchestrator_v2 import AgentRuntime
+
+    companies = qa_ai_database["companies"]
+    users = qa_ai_database["users"]
+    basic_names = {
+        item["function"]["name"]
+        for item in AgentRuntime._tool_definitions(
+            "asistente",
+            company_id=companies["inicio"].id,
+            user_id=users["inicio"].id,
+        )
+    }
+    assert "oportunidades_crm" not in basic_names
+
+    pro_company = companies["pro"]
+    employee = User(
+        username="qa_crm_employee",
+        email="qa_crm_employee@qa.local",
+        password_hash="not-used",
+        role="user",
+        active=True,
+        company_id=pro_company.id,
+        permissions_json=json.dumps(["ai_access"]),
+    )
+    db.session.add(employee)
+    db.session.flush()
+
+    employee_names = {
+        item["function"]["name"]
+        for item in AgentRuntime._tool_definitions(
+            "asistente",
+            company_id=pro_company.id,
+            user_id=employee.id,
+        )
+    }
+    assert "oportunidades_crm" not in employee_names
+
+    employee.permissions_json = json.dumps(["ai_access", "crm"])
+    permitted_names = {
+        item["function"]["name"]
+        for item in AgentRuntime._tool_definitions(
+            "asistente",
+            company_id=pro_company.id,
+            user_id=employee.id,
+        )
+    }
+    assert "oportunidades_crm" in permitted_names
+
+    denied = AgentRuntime._execute_tool(
+        "oportunidades_crm",
+        company_id=pro_company.id,
+        arguments={},
+        context={"actor_user_id": employee.id},
+    )
+    assert denied["success"] is False
+
+
+def test_runtime_resumes_idempotent_inbound_without_assistant(qa_ai_database):
+    company = qa_ai_database["companies"]["vendedor"]
+    agent = __import__("services.ai_agent.config_service", fromlist=["ensure_default_agents"]).ensure_default_agents(company.id)["Vendedor 24 hs"]
+    conversation = Conversation(company_id=company.id, agent_id=agent.id, channel="whatsapp", status="open")
+    db.session.add(conversation)
+    db.session.flush()
+    incoming = ConversationMessage(
+        conversation_id=conversation.id,
+        company_id=company.id,
+        sender_type="user",
+        role="user",
+        content="Tienen cafe?",
+        content_type="text",
+        external_message_id="wamid.resume.001",
+        idempotency_key="whatsapp:wamid.resume.001",
+        trace_id="trace-resume-001",
+        metadata_json={"channel": "whatsapp"},
+    )
+    db.session.add(incoming)
+    db.session.flush()
+
+    class Provider:
+        def generate(self, **kwargs):
+            return {"content": "Si, tenemos cafe.", "tool_call": None}
+
+    result = AgentRuntime.process(
+        company_id=company.id,
+        conversation_id=conversation.id,
+        message=incoming.content,
+        channel="whatsapp",
+        external_message_id=incoming.external_message_id,
+        idempotency_key=incoming.idempotency_key,
+        provider_override=Provider(),
+    )
+    assistant = ConversationMessage.query.filter_by(
+        conversation_id=conversation.id,
+        company_id=company.id,
+        role="assistant",
+        trace_id=incoming.trace_id,
+    ).first()
+    assert result["status"] == "completed"
+    assert assistant is not None
+    assert assistant.content == "Si, tenemos cafe."
+    assert ConversationMessage.query.filter_by(id=incoming.id).count() == 1
+
+
+def test_deterministic_whatsapp_turn_reuses_messages_on_retry(qa_ai_database):
+    from whatsapp_agent import _persist_deterministic_turn
+
+    company = qa_ai_database["companies"]["vendedor"]
+    agent = __import__("services.ai_agent.config_service", fromlist=["ensure_default_agents"]).ensure_default_agents(company.id)["Vendedor 24 hs"]
+    conversation = Conversation(company_id=company.id, agent_id=agent.id, channel="whatsapp", status="open")
+    db.session.add(conversation)
+    db.session.flush()
+
+    first = _persist_deterministic_turn(
+        conversation,
+        external_id="wamid.command.001",
+        text="catalogo",
+        response="Catálogo disponible.",
+    )
+    second = _persist_deterministic_turn(
+        conversation,
+        external_id="wamid.command.001",
+        text="catalogo",
+        response="Catálogo disponible.",
+    )
+
+    assert second.id == first.id
+    assert ConversationMessage.query.filter_by(
+        company_id=company.id,
+        conversation_id=conversation.id,
+        external_message_id="wamid.command.001",
+        role="user",
+    ).count() == 1
+    assert ConversationMessage.query.filter_by(
+        company_id=company.id,
+        conversation_id=conversation.id,
+        role="assistant",
+    ).count() == 1

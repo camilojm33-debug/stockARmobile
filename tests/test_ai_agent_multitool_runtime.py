@@ -1,6 +1,11 @@
+from types import SimpleNamespace
+
 import pytest
 
 from services.ai_agent.orchestrator_v2 import AgentRuntime, MAX_TOOL_TURNS
+from services.ai_agent.providers.lm_studio import LMStudioProvider
+from services.ai_agent.providers.openai import OpenAIProvider
+from services.ai_agent.providers.openai_compatible import OpenAICompatibleProvider
 
 
 class SequenceProvider:
@@ -17,6 +22,24 @@ class SequenceProvider:
 
 def _tool_call(name, call_id):
     return {"content": "", "tool_call": {"id": call_id, "name": name, "arguments": {}}}
+
+
+def test_all_provider_adapters_preserve_multiple_tool_calls():
+    raw_calls = [
+        {"id": "call-1", "function": {"name": "buscar_producto", "arguments": '{"query":"cafe"}'}},
+        {"id": "call-2", "function": {"name": "consultar_stock", "arguments": {"product_id": 7}}},
+    ]
+
+    compatible = OpenAICompatibleProvider._tool_calls(raw_calls)
+    lm_studio = LMStudioProvider._tool_calls(raw_calls)
+    responses = OpenAIProvider._tool_calls([
+        SimpleNamespace(type="function_call", call_id="call-1", name="buscar_producto", arguments='{"query":"cafe"}'),
+        SimpleNamespace(type="function_call", call_id="call-2", name="consultar_stock", arguments='{"product_id":7}'),
+    ])
+
+    assert [call["name"] for call in compatible] == ["buscar_producto", "consultar_stock"]
+    assert [call["name"] for call in lm_studio] == ["buscar_producto", "consultar_stock"]
+    assert [call["name"] for call in responses] == ["buscar_producto", "consultar_stock"]
 
 
 def test_run_tool_loop_supports_multiple_sequential_tool_rounds(monkeypatch):

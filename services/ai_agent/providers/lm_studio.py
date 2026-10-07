@@ -26,6 +26,30 @@ class LMStudioProvider(AIProvider):
     def _endpoint(self) -> str:
         return f"{self.base_url}/chat/completions"
 
+    @staticmethod
+    def _tool_calls(raw_tool_calls) -> list[Dict[str, Any]]:
+        parsed_calls = []
+        for raw_call in raw_tool_calls or []:
+            if not isinstance(raw_call, dict):
+                continue
+            function = raw_call.get("function") or {}
+            arguments = function.get("arguments") or {}
+            if isinstance(arguments, str):
+                try:
+                    arguments = json.loads(arguments)
+                except json.JSONDecodeError as exc:
+                    raise ValueError("LM Studio tool call arguments are not valid JSON") from exc
+            if not isinstance(arguments, dict):
+                raise ValueError("LM Studio tool call arguments must be a JSON object")
+            name = function.get("name")
+            if name:
+                parsed_calls.append({
+                    "id": raw_call.get("id") or f"tool-call-{len(parsed_calls) + 1}",
+                    "name": name,
+                    "arguments": arguments,
+                })
+        return parsed_calls
+
     def generate(
         self,
         *,
@@ -79,26 +103,19 @@ class LMStudioProvider(AIProvider):
 
         tool_calls = message.get("tool_calls") or []
         if tool_calls:
-            first_tool_call = tool_calls[0]
-            function = first_tool_call.get("function") or {}
-            name = function.get("name")
-            arguments = function.get("arguments") or {}
-
-            if isinstance(arguments, str):
-                try:
-                    arguments = json.loads(arguments)
-                except json.JSONDecodeError as exc:
-                    raise ValueError("LM Studio tool call arguments are not valid JSON") from exc
-
+            parsed_calls = self._tool_calls(tool_calls)
             return {
                 "content": content if content is not None else "",
-                "tool_call": {
-                    "name": name,
-                    "arguments": arguments,
-                },
+                "tool_call": parsed_calls[0] if parsed_calls else None,
+                "tool_calls": parsed_calls,
+                "usage": data.get("usage") or {},
+                "model": model or self.model,
             }
 
         return {
             "content": content if content is not None else "",
             "tool_call": None,
+            "tool_calls": [],
+            "usage": data.get("usage") or {},
+            "model": model or self.model,
         }

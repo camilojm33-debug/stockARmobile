@@ -152,6 +152,9 @@ def can_use_ai(company, agent: str, *, now: datetime | None = None) -> AIAccess:
     plan = current_plan(company)
     if plan is None:
         return AIAccess(False, "Tu empresa todavía no tiene un plan IA asignado.", None)
+    from services.ai_agent.config_service import is_ai_enabled
+    if not is_ai_enabled(company):
+        return AIAccess(False, "Los agentes IA están pausados para esta empresa.", plan)
 
     key = str(agent or "").strip().lower()
     if key in {"pricing_controller", "pricing_rollback"}:

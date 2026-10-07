@@ -91,7 +91,8 @@ class OpenAIProvider(AIProvider):
         return getattr(item, name, default)
 
     @classmethod
-    def _tool_call(cls, output: Iterable[Any]) -> Dict[str, Any] | None:
+    def _tool_calls(cls, output: Iterable[Any]) -> list[Dict[str, Any]]:
+        calls = []
         for item in output:
             if cls._output_value(item, "type") != "function_call":
                 continue
@@ -102,12 +103,17 @@ class OpenAIProvider(AIProvider):
                 raise RuntimeError("OpenAI devolvió argumentos de Tool inválidos.") from exc
             if not isinstance(parsed_arguments, dict):
                 raise RuntimeError("OpenAI devolvió argumentos de Tool que no son un objeto.")
-            return {
-                "id": cls._output_value(item, "call_id") or cls._output_value(item, "id") or "call_1",
+            calls.append({
+                "id": cls._output_value(item, "call_id") or cls._output_value(item, "id") or f"call_{len(calls) + 1}",
                 "name": cls._output_value(item, "name"),
                 "arguments": parsed_arguments,
-            }
-        return None
+            })
+        return calls
+
+    @classmethod
+    def _tool_call(cls, output: Iterable[Any]) -> Dict[str, Any] | None:
+        calls = cls._tool_calls(output)
+        return calls[0] if calls else None
 
     def generate(
         self,
@@ -140,9 +146,11 @@ class OpenAIProvider(AIProvider):
             raise RuntimeError("OpenAI no pudo procesar la solicitud.") from None
 
         output = getattr(response, "output", None) or []
+        tool_calls = self._tool_calls(output)
         return {
             "content": getattr(response, "output_text", "") or "",
-            "tool_call": self._tool_call(output),
+            "tool_call": tool_calls[0] if tool_calls else None,
+            "tool_calls": tool_calls,
             "usage": getattr(response, "usage", None),
             "model": effective_model,
         }

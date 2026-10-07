@@ -389,8 +389,11 @@ def get_ai_preferences(company):
 
 
 def is_ai_enabled(company):
+    global_enabled = os.getenv("AI_AGENT_ENABLED", "true").strip().lower() in {"1", "true", "yes", "on"}
+    if not global_enabled:
+        return False
     configured = get_ai_preferences(company)["ai_agent"].get("enabled")
-    return bool(configured) if configured is not None else os.getenv("AI_AGENT_ENABLED", "true").strip().lower() in {"1", "true", "yes", "on"}
+    return _coerce_bool(configured, global_enabled)
 
 
 def is_commercial_company(company) -> bool:

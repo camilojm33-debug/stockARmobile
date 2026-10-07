@@ -28,7 +28,7 @@ from services.ai_agent.tools.business_metrics import (
     StockCriticoTool,
 )
 from services.ai_agent.tools.customer_search import BuscarClienteTool
-from services.ai_agent.tools.crm import CRMOpportunitiesTool
+from services.ai_agent.tools.crm import CRMOpportunitiesTool, crm_tool_access
 from services.ai_agent.tools.product_search import BuscarProductoTool
 from services.ai_agent.tools.stock_query import ConsultarStockTool
 from services.ai_agent.tools.analyst_marketing import (
@@ -58,6 +58,9 @@ COMMERCIAL_SYSTEM_PROMPT = (
     "condiciones. Nunca generes pedidos ni cobros en este canal."
 )
 MAX_TOOL_TURNS = 5
+MAX_AGENT_MESSAGE_CHARS = 4000
+MAX_AGENT_HISTORY_CHARS = 16000
+MAX_AGENT_HISTORY_MESSAGE_CHARS = 4000
 
 PRICING_TOOL_NAMES = {
     "consultar_precios",
@@ -306,25 +309,30 @@ class AgentRuntime:
         )
 
     @classmethod
-    def _history(cls, company_id, conversation_id, limit=20):
-        rows = (
+    def _history(cls, company_id, conversation_id, limit=20, *, exclude_message_id=None):
+        query = (
             db.session.query(ConversationMessage)
             .filter(
                 ConversationMessage.company_id == company_id,
                 ConversationMessage.conversation_id == conversation_id,
             )
-            .order_by(ConversationMessage.id.desc())
-            .limit(limit)
-            .all()
         )
-        return [
-            {"role": row.role, "content": str(row.content or "")}
-            for row in reversed(rows)
-            if row.role in {"user", "assistant"}
-        ]
+        if exclude_message_id is not None:
+            query = query.filter(ConversationMessage.id != exclude_message_id)
+        rows = query.order_by(ConversationMessage.id.desc()).limit(limit).all()
+        history = []
+        remaining_chars = MAX_AGENT_HISTORY_CHARS
+        for row in rows:
+            if row.role not in {"user", "assistant"} or remaining_chars <= 0:
+                continue
+            content = str(row.content or "")[-MAX_AGENT_HISTORY_MESSAGE_CHARS:]
+            content = content[-remaining_chars:]
+            history.append({"role": row.role, "content": content})
+            remaining_chars -= len(content)
+        return list(reversed(history))
 
     @classmethod
-    def _tool_definitions(cls, agent_key="asistente", allowed_tool_names=None, company_id=None):
+    def _tool_definitions(cls, agent_key="asistente", allowed_tool_names=None, company_id=None, user_id=None):
         names = set(cls.agent_tool_names.get(agent_key, set()))
         if allowed_tool_names is not None:
             names = names.intersection(set(allowed_tool_names))
@@ -337,6 +345,10 @@ class AgentRuntime:
                 names.difference_update(PRICING_TOOL_NAMES)
             elif rollback_access is None or not rollback_access.allowed:
                 names.discard("revertir_cambio_precios")
+            if "oportunidades_crm" in names:
+                crm_allowed, _ = crm_tool_access(company_id, user_id)
+                if not crm_allowed:
+                    names.discard("oportunidades_crm")
         return [
             {
                 "type": "function",
@@ -375,6 +387,13 @@ class AgentRuntime:
             access = can_use_ai_feature(company, feature) if company is not None else None
             if access is None or not access.allowed:
                 return {"success": False, "error": access.reason if access else "pricing_feature_not_permitted"}
+        if name == "oportunidades_crm":
+            crm_allowed, reason = crm_tool_access(
+                company_id,
+                (context or {}).get("actor_user_id"),
+            )
+            if not crm_allowed:
+                return {"success": False, "error": reason or "crm_feature_not_permitted"}
         tool_class = cls.tool_registry.get(name)
         if tool_class is None:
             return {"success": False, "error": "tool_not_found"}
@@ -584,6 +603,9 @@ class AgentRuntime:
         provider_override=None,
         include_system_prompt=True,
     ):
+        request_message = str(message or "")
+        if len(request_message) > MAX_AGENT_MESSAGE_CHARS:
+            raise ValueError(f"El mensaje no puede superar los {MAX_AGENT_MESSAGE_CHARS} caracteres.")
         conversation = (
             db.session.query(Conversation)
             .filter(
@@ -615,6 +637,7 @@ class AgentRuntime:
         # el primer intento. La búsqueda queda estrictamente aislada por
         # company_id + conversation_id para evitar colisiones entre tenants o
         # conversaciones.
+        retry_incoming = None
         if idempotency_key:
             duplicate = (
                 db.session.query(ConversationMessage)
@@ -637,13 +660,15 @@ class AgentRuntime:
                     .order_by(ConversationMessage.id.desc())
                     .first()
                 )
-                return {
-                    "status": "duplicate",
-                    "conversation_id": conversation.id,
-                    "message_id": duplicate.id,
-                    "assistant_message_id": assistant_duplicate.id if assistant_duplicate else None,
-                    "content": assistant_duplicate.content if assistant_duplicate else "",
-                }
+                if assistant_duplicate is not None:
+                    return {
+                        "status": "duplicate",
+                        "conversation_id": conversation.id,
+                        "message_id": duplicate.id,
+                        "assistant_message_id": assistant_duplicate.id,
+                        "content": assistant_duplicate.content,
+                    }
+                retry_incoming = duplicate
 
         lock_ai_usage(company_id)
         access = can_use_ai(company, agent_key)
@@ -658,22 +683,32 @@ class AgentRuntime:
                 "content": "",
             }
 
-        history = cls._history(company_id, conversation.id, 19)
-        trace_id = str(uuid.uuid4())
-        incoming = ConversationMessage(
-            conversation_id=conversation.id,
-            company_id=company_id,
-            sender_type="user",
-            sender_id=sender_id,
-            role="user",
-            content=str(message),
-            content_type="text",
-            external_message_id=external_message_id,
-            idempotency_key=idempotency_key,
-            trace_id=trace_id,
-            metadata_json=metadata or {},
+        history = cls._history(
+            company_id,
+            conversation.id,
+            19,
+            exclude_message_id=retry_incoming.id if retry_incoming is not None else None,
         )
-        db.session.add(incoming)
+        trace_id = str(retry_incoming.trace_id or uuid.uuid4()) if retry_incoming is not None else str(uuid.uuid4())
+        if retry_incoming is not None:
+            incoming = retry_incoming
+            incoming.trace_id = trace_id
+            request_message = str(incoming.content or request_message)
+        else:
+            incoming = ConversationMessage(
+                conversation_id=conversation.id,
+                company_id=company_id,
+                sender_type="user",
+                sender_id=sender_id,
+                role="user",
+                content=request_message,
+                content_type="text",
+                external_message_id=external_message_id,
+                idempotency_key=idempotency_key,
+                trace_id=trace_id,
+                metadata_json=metadata or {},
+            )
+            db.session.add(incoming)
         db.session.flush()
 
         config = cls._config(agent, company_id)
@@ -734,7 +769,7 @@ class AgentRuntime:
 
         messages = (
             [{"role": "system", "content": prompt}] if include_system_prompt else []
-        ) + history + [{"role": "user", "content": str(message)}]
+        ) + history + [{"role": "user", "content": request_message}]
         kwargs = {}
         provider = provider_override or cls.provider()
         effective_model = cls._provider_model(provider, config)
@@ -754,7 +789,12 @@ class AgentRuntime:
         final_content, campaign_context, tool_rounds, ai_telemetry = cls._run_tool_loop(
             provider=provider,
             messages=messages,
-            tools=cls._tool_definitions(agent_key, allowed_tool_names=allowed_tool_names, company_id=company_id),
+            tools=cls._tool_definitions(
+                agent_key,
+                allowed_tool_names=allowed_tool_names,
+                company_id=company_id,
+                user_id=sender_id,
+            ),
             kwargs=kwargs,
             company_id=company_id,
             context=context,

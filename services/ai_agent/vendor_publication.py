@@ -200,7 +200,13 @@ def _write_rate_limit(company_id: int, action: str, *, limit: int, window: int =
                 client.expire(key, int(window))
             return count <= int(limit)
         except Exception:
+            if current_app.config.get("IS_PRODUCTION_ENV"):
+                current_app.logger.exception("Public Vendor write Redis rate limit unavailable; failing closed.")
+                return False
             current_app.logger.warning("Public Vendor write Redis rate limit unavailable; using session fallback.")
+    elif current_app.config.get("IS_PRODUCTION_ENV"):
+        current_app.logger.error("Public Vendor write Redis rate limit is required in production; failing closed.")
+        return False
     now = int(time.time())
     state = session.get("public_vendor_write_rate") or {}
     if not isinstance(state, dict):
