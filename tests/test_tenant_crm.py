@@ -25,12 +25,10 @@ def test_tenant_crm_ai_tool_is_read_only_and_registered():
 def test_tenant_crm_requires_ia_pro_route_guards():
     from crm import bp
 
-    route_functions = {
-        rule.endpoint
-        for rule in bp.url_values_defaults.keys()
-    } if False else {rule.endpoint for rule in []}
+    from pathlib import Path
+
     source = __import__("crm", fromlist=["__file__"]).__file__
-    source_text = open(source, encoding="utf-8").read()
+    source_text = Path(source).read_text(encoding="utf-8")
     assert source_text.count("@tenant_required\n@ai_pro_crm_required") == 9
 
 
