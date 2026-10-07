@@ -79,7 +79,7 @@ def test_client_excel_import_parses_full_business_fields():
     assert str(record["credit_limit"]) == "5000"
     assert record["birthday"].isoformat() == "1985-10-07"
     assert record["email_marketing_consent"] == "opted_in"
-    assert record["whatsapp_marketing_consent"] == "unknown"
+    assert record["whatsapp_marketing_consent"] == "opted_out"
     assert record["account_current_enabled"] is True
 
 
