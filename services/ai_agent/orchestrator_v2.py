@@ -58,6 +58,10 @@ COMMERCIAL_SYSTEM_PROMPT = (
     "condiciones. Nunca generes pedidos ni cobros en este canal."
 )
 MAX_TOOL_TURNS = 5
+PUBLIC_WEBCHAT_MAX_TOOL_TURNS = 2
+PUBLIC_WEBCHAT_PROVIDER_TIMEOUT = 7.0
+PUBLIC_WEBCHAT_MAX_OUTPUT_TOKENS = 500
+PUBLIC_WEBCHAT_HISTORY_LIMIT = 8
 MAX_AGENT_MESSAGE_CHARS = 4000
 MAX_AGENT_HISTORY_CHARS = 16000
 MAX_AGENT_HISTORY_MESSAGE_CHARS = 4000
@@ -282,15 +286,16 @@ class AgentRuntime:
     }
 
     @classmethod
-    def provider(cls):
+    def provider(cls, *, timeout=None, max_retries=None):
         provider = (os.getenv("AI_PROVIDER") or "lm_studio").strip().lower()
         if provider == "gemini":
-            return GeminiProvider()
+            return GeminiProvider(timeout=timeout)
         if provider == "openai":
-            return OpenAIProvider()
+            kwargs = {} if max_retries is None else {"max_retries": max_retries}
+            return OpenAIProvider(timeout=timeout, **kwargs)
         if provider == "openai_compatible":
-            return OpenAICompatibleProvider()
-        return LMStudioProvider()
+            return OpenAICompatibleProvider(timeout=timeout)
+        return LMStudioProvider(timeout=timeout)
 
     @classmethod
     def ensure_agent(cls, company_id, *, channel):
@@ -481,8 +486,9 @@ class AgentRuntime:
         return input_tokens, output_tokens, total_tokens
 
     @classmethod
-    def _run_tool_loop(cls, *, provider, messages, tools, kwargs, company_id, context, allowed_tool_names=None):
+    def _run_tool_loop(cls, *, provider, messages, tools, kwargs, company_id, context, allowed_tool_names=None, max_tool_turns=None):
         working_messages = list(messages)
+        tool_turn_limit = MAX_TOOL_TURNS if max_tool_turns is None else max(0, int(max_tool_turns))
         response = provider.generate(messages=working_messages, tools=tools, **kwargs)
         campaign_context = None
         tool_rounds = 0
@@ -517,7 +523,7 @@ class AgentRuntime:
                 raise RuntimeError("El proveedor IA no devolvió una respuesta.")
 
             next_tool_round = tool_rounds + 1
-            if next_tool_round > MAX_TOOL_TURNS:
+            if next_tool_round > tool_turn_limit:
                 synthesis_prompt = {
                     "role": "user",
                     "content": (
@@ -683,10 +689,11 @@ class AgentRuntime:
                 "content": "",
             }
 
+        is_public_webchat = channel == "webchat" and sender_id is None and str((metadata or {}).get("source") or "").startswith("public_webchat")
         history = cls._history(
             company_id,
             conversation.id,
-            19,
+            PUBLIC_WEBCHAT_HISTORY_LIMIT if is_public_webchat else 19,
             exclude_message_id=retry_incoming.id if retry_incoming is not None else None,
         )
         trace_id = str(retry_incoming.trace_id or uuid.uuid4()) if retry_incoming is not None else str(uuid.uuid4())
@@ -771,7 +778,10 @@ class AgentRuntime:
             [{"role": "system", "content": prompt}] if include_system_prompt else []
         ) + history + [{"role": "user", "content": request_message}]
         kwargs = {}
-        provider = provider_override or cls.provider()
+        provider = provider_override or cls.provider(
+            timeout=PUBLIC_WEBCHAT_PROVIDER_TIMEOUT if is_public_webchat else None,
+            max_retries=0 if is_public_webchat else None,
+        )
         effective_model = cls._provider_model(provider, config)
         if effective_model:
             kwargs["model"] = effective_model
@@ -780,6 +790,8 @@ class AgentRuntime:
                 kwargs["temperature"] = float(config.temperature)
             if config.max_tokens is not None:
                 kwargs["max_tokens"] = config.max_tokens
+        if is_public_webchat:
+            kwargs["max_tokens"] = min(int(kwargs.get("max_tokens") or PUBLIC_WEBCHAT_MAX_OUTPUT_TOKENS), PUBLIC_WEBCHAT_MAX_OUTPUT_TOKENS)
 
         context = {
             "conversation_id": conversation.id,
@@ -799,6 +811,7 @@ class AgentRuntime:
             company_id=company_id,
             context=context,
             allowed_tool_names=allowed_tool_names,
+            max_tool_turns=PUBLIC_WEBCHAT_MAX_TOOL_TURNS if is_public_webchat else None,
         )
 
         # Una solicitud explícita de propuesta/campaña no queda como simple texto:
