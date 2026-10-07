@@ -225,3 +225,65 @@ body.sidebar-collapsed .app-nav .nav-link.active { box-shadow: none; }
   .app-shell:has(form[action*="company_settings_user_update"]) .table.mobile-card-table td::before { margin-bottom: .05rem; }
 }
 [data-bs-theme="dark"] .app-shell:has(form[action*="company_settings_user_update"]) .table-responsive, [data-bs-theme="dark"] .app-shell:has(form[action*="company_settings_user_update"]) .table thead th, [data-bs-theme="dark"] .app-shell:has(form[action*="company_settings_user_update"]) .table.mobile-card-table tr { background: #101a2b; }
+
+/* Sidebar scroll final: el nav es la única zona desplazable. */
+
+.app-sidebar {
+  display: flex !important;
+  flex-direction: column !important;
+  height: 100dvh !important;
+  min-height: 100dvh !important;
+  max-height: 100dvh !important;
+  overflow: hidden !important;
+}
+.app-sidebar > .app-brand {
+  flex: 0 0 auto !important;
+}
+.app-sidebar > .app-nav {
+  flex: 1 1 auto !important;
+  min-height: 0 !important;
+  height: auto !important;
+  overflow-y: scroll !important;
+  overflow-x: hidden !important;
+  -webkit-overflow-scrolling: touch !important;
+  overscroll-behavior: contain;
+  scrollbar-width: thin;
+  scrollbar-color: rgba(100,116,139,.42) transparent;
+}
+.app-sidebar > .app-nav::-webkit-scrollbar {
+  width: 7px;
+}
+.app-sidebar > .app-nav::-webkit-scrollbar-track {
+  background: transparent;
+}
+.app-sidebar > .app-nav::-webkit-scrollbar-thumb {
+  background: rgba(100,116,139,.28);
+  border-radius: 999px;
+}
+.app-sidebar > .app-nav::-webkit-scrollbar-thumb:hover {
+  background: rgba(71,85,105,.45);
+}
+.app-sidebar > .app-sidebar-footer {
+  position: relative !important;
+  inset: auto !important;
+  bottom: auto !important;
+  flex: 0 0 auto !important;
+  min-height: 0 !important;
+  margin-top: 0 !important;
+  z-index: 5 !important;
+}
+@media (max-width: 1099.98px) {
+  .app-sidebar {
+    display: flex !important;
+    flex-direction: column !important;
+    height: 100dvh !important;
+    min-height: 100dvh !important;
+    max-height: 100dvh !important;
+  }
+  .app-sidebar > .app-nav {
+    flex: 1 1 auto !important;
+    min-height: 0 !important;
+    height: auto !important;
+    overflow-y: scroll !important;
+  }
+}
