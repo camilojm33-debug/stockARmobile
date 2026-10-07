@@ -1698,7 +1698,7 @@ def subscription_change_confirm():
                         or f"portal-change:{company.id}:{getattr(current_subscription, 'id', 0)}:{plan.id}:{current_user.id}"
                     ),
                 ),
-            ),
+            )
             subscription = Subscription.query.filter_by(
                 id=command_result.subscription_id,
                 company_id=company.id,

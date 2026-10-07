@@ -118,13 +118,37 @@ def _public_vendor_rate_limit(company_id: int, *, conversation_id=None, request_
                 client.expire(key, PUBLIC_VENDOR_CHAT_WINDOW)
             return count <= PUBLIC_VENDOR_CHAT_LIMIT
         except Exception:
-            if current_app.config.get("IS_PRODUCTION_ENV"):
-                current_app.logger.exception("Public vendor Redis rate limit unavailable; failing closed.")
-                return False
-            current_app.logger.warning("Public vendor Redis rate limit unavailable; using session fallback.")
-    elif current_app.config.get("IS_PRODUCTION_ENV"):
-        current_app.logger.error("Public vendor Redis rate limit is required in production; failing closed.")
-        return False
+            current_app.logger.warning("Public vendor Redis rate limit unavailable; using PostgreSQL fallback.")
+    try:
+        if operation_scope:
+            recent_duplicate = (
+                ConversationMessage.query
+                .filter(
+                    ConversationMessage.company_id == int(company_id),
+                    ConversationMessage.conversation_id == int(conversation_id or 0),
+                    ConversationMessage.idempotency_key == str(request_key),
+                    ConversationMessage.role == "user",
+                )
+                .first()
+            )
+            if recent_duplicate is not None:
+                return True
+        cutoff = datetime.utcnow() - timedelta(seconds=PUBLIC_VENDOR_CHAT_WINDOW)
+        query = (
+            db.session.query(db.func.count(ConversationMessage.id))
+            .join(Conversation, Conversation.id == ConversationMessage.conversation_id)
+            .filter(
+                ConversationMessage.company_id == int(company_id),
+                ConversationMessage.role == "user",
+                ConversationMessage.created_at >= cutoff,
+                Conversation.channel == "webchat",
+                Conversation.id == int(conversation_id or 0),
+            )
+        )
+        recent_count = int(query.scalar() or 0)
+        return recent_count < PUBLIC_VENDOR_CHAT_LIMIT
+    except Exception:
+        current_app.logger.exception("Public vendor DB rate limit unavailable; using session fallback.")
     now = int(time.time())
     state = session.get("public_vendor_rate") or {}
     if not isinstance(state, dict) or now - int(state.get("started_at", 0) or 0) >= PUBLIC_VENDOR_CHAT_WINDOW:
