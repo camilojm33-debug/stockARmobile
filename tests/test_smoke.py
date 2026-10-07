@@ -5522,8 +5522,9 @@ def test_subscription_change_confirm_double_post_is_idempotent():
         company = Company.query.filter_by(name="Empresa Demo").first()
         assert company is not None
         rows = Subscription.query.filter_by(company_id=company.id).order_by(Subscription.id.asc()).all()
-        assert len(rows) == 2
-        assert rows[-1].plan_id == free_plan_id
+        assert len(rows) == 1
+        assert rows[0].plan_id == free_plan_id
+        assert rows[0].status in {"trial", "active", "pending"}
 
 
 def test_subscription_commands_create_execution_log_row():
