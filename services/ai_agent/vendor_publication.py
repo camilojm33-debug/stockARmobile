@@ -184,7 +184,7 @@ def _public_request_key(payload: dict) -> str | None:
     return key if key and len(key) <= 120 else None
 
 
-def _rate_limit(company_id: int, *, conversation_id=None, request_key=None) -> bool:
+def _rate_limit(company_id: int, *, conversation_id=None, request_key=None, visitor_id=None) -> bool:
     # Reuse the existing public Vendedor guard when available.
     try:
         from ai_agents import _public_vendor_rate_limit
@@ -192,6 +192,7 @@ def _rate_limit(company_id: int, *, conversation_id=None, request_key=None) -> b
             company_id,
             conversation_id=conversation_id,
             request_key=request_key,
+            visitor_id=visitor_id,
         )
     except Exception:
         current_app.logger.exception("Public Vendor rate limiter unavailable; failing closed.")
@@ -871,6 +872,7 @@ def public_vendor_message(slug: str):
                     company.id,
                     conversation_id=conversation.id,
                     request_key=idempotency_key,
+                    visitor_id=visitor_id,
                 ):
                     return jsonify({"success": False, "error": "El vendedor está recibiendo muchas consultas. Esperá unos segundos y probá nuevamente."}), 429, {"Retry-After": "60"}
 
