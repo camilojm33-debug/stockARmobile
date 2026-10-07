@@ -64,6 +64,27 @@ def company_admin_required(func):
     return decorated
 
 
+def ai_pro_crm_required(func):
+    """Require an active IA PRO subscription for the tenant CRM."""
+    @wraps(func)
+    def decorated(*args, **kwargs):
+        from services.ai_agent.usage_service import can_use_ai_feature
+
+        company_id = get_current_company_id(current_user)
+        if company_id is None:
+            abort(403)
+        from app import Company
+
+        company = Company.query.filter_by(id=company_id).first()
+        access = can_use_ai_feature(company, "crm")
+        if not access.allowed:
+            flash(access.reason or "El CRM comercial requiere IA PRO.", "warning")
+            return redirect(url_for("ai_agents.agent", agent="planes"))
+        return func(*args, **kwargs)
+
+    return decorated
+
+
 def seller_required(func):
     @wraps(func)
     @login_required
