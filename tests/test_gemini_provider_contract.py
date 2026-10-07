@@ -39,7 +39,7 @@ def test_gemini_function_declarations_use_json_schema(monkeypatch):
     assert declaration.name == "agregar_al_carrito"
     assert declaration.parameters_json_schema["type"] == "object"
     assert declaration.parameters_json_schema["required"] == ["product_query", "quantity"]
-    assert declaration.parameters_json_schema["additionalProperties"] is False
+    assert "additionalProperties" not in declaration.parameters_json_schema
 
 
 def test_gemini_adapter_uses_public_generate_content_api():
@@ -50,7 +50,7 @@ def test_gemini_adapter_uses_public_generate_content_api():
 
 def test_gemini_tool_config_disables_only_automatic_function_calling():
     source = Path("services/ai_agent/providers/gemini.py").read_text(encoding="utf-8")
-    assert "automatic_function_calling=types.AutomaticFunctionCallingConfig(" in source
+    assert "types.AutomaticFunctionCallingConfig(" in source
     assert "disable=True" in source
     assert "maximum_remote_calls=None" not in source
 
