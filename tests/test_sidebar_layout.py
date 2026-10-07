@@ -18,3 +18,16 @@ def test_main_sidebar_owns_scroll_in_navigation_area():
     assert "height: 100%;" in nav_css
     assert "overflow-y: auto;" in nav_css
     assert "overscroll-behavior: contain;" in nav_css
+
+
+def test_sidebar_final_stylesheet_owns_scroll_behavior():
+    template = Path("static/assets/css/styles.css").read_text(encoding="utf-8")
+    marker = "/* Sidebar scroll final: el nav es la única zona desplazable. */"
+    assert marker in template
+    final_css = template.split(marker, 1)[1]
+    assert ".app-sidebar > .app-nav" in final_css
+    assert "overflow-y: scroll !important;" in final_css
+    assert "flex: 1 1 auto !important;" in final_css
+    assert ".app-sidebar > .app-sidebar-footer" in final_css
+    assert "position: relative !important;" in final_css
+    assert "@media (max-width: 1099.98px)" in final_css
