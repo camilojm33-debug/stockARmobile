@@ -9,6 +9,7 @@ from services.ai_agent.providers.openai_compatible import OpenAICompatibleProvid
 from services.ai_agent.providers.lm_studio import LMStudioProvider
 from services.ai_agent.providers.openai import OpenAIProvider
 from services.ai_agent.providers.gemini import GeminiProvider
+from services.ai_agent.providers.base import AIProviderError
 from services.ai_agent.config_service import (
     BUSINESS_AGENT_NAME,
     VENDOR_AGENT_NAME,
@@ -200,6 +201,7 @@ class VendorOrderPreviewTool(AgentTool):
     name = "preparar_pedido"
     description = (
         "Prepara el pedido, el presupuesto final y el link seguro de pago. "
+        "Si el cliente pidió un producto que todavía no está en el carrito, agregalo primero con agregar_al_carrito y luego prepará el pedido en la misma ronda de herramientas. "
         "Antes de prepararlo confirmá nombre y teléfono del comprador. "
         "Preguntá si desea retiro o envío. Si elige envío, solicitá dirección, localidad "
         "y provincia. El backend aplica automáticamente el costo fijo de envío configurado "
