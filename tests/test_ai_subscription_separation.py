@@ -828,3 +828,17 @@ def test_subscription_portal_has_one_real_payment_anchor():
     assert 'name="payment_method" value="qr"' in html
     assert 'Pagar con QR' in html
     assert 'history.replaceState' in html
+
+
+
+def test_subscription_portal_renders_after_checkout_with_usage_snapshot_dict(subscription_app):
+    company, user, _, subscription = _tenant_with_standard_subscription()
+    subscription.status = SubscriptionService.STATE_ACTIVE
+    db.session.commit()
+
+    client = subscription_app.test_client()
+    _login(client, user)
+
+    response = client.get("/admin/portal?checkout=created&checkout_subscription_id=" + str(subscription.id))
+    assert response.status_code == 200
+    assert "Mi Suscripción" in response.get_data(as_text=True)
