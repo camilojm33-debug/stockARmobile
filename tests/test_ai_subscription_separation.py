@@ -757,3 +757,66 @@ def test_superadmin_manual_activation_updates_only_ai(subscription_app):
     assert status["status"] == "ACTIVA"
     assert status["origin"] == "MANUAL"
     assert _standard_snapshot(subscription) == before
+
+
+
+def test_standard_subscription_can_downgrade_to_entrepreneur_12999_once(subscription_app, monkeypatch):
+    from services.billing_service import BillingService
+
+    company = Company(name="Empresa Downgrade", active=True, contact_email="downgrade@test.local")
+    user = User(username="downgrade_admin", email="downgrade@test.local", password_hash="x", role="admin", active=True)
+    business = Plan(code="business", name="Business", price=29999, currency="ARS", duration_days=30, active=True)
+    entrepreneur = Plan(code="entrepreneur", name="Entrepreneur", price=12999, currency="ARS", duration_days=30, active=True)
+    company.users = [user]
+    user.company_id = company.id
+    db.session.add_all([company, user, business, entrepreneur])
+    db.session.flush()
+    current = Subscription(
+        company_id=company.id,
+        plan_id=business.id,
+        status=SubscriptionService.STATE_ACTIVE,
+        renewal_enabled=True,
+        auto_renew=True,
+    )
+    db.session.add(current)
+    db.session.commit()
+
+    calls = []
+
+    def fake_checkout(self, **kwargs):
+        calls.append(kwargs)
+        return {
+            "subscription": kwargs["subscription"],
+            "preference": {
+                "id": "pref-downgrade-12999",
+                "init_point": "https://mp.test/downgrade-12999",
+            },
+        }
+
+    monkeypatch.setattr(BillingService, "create_checkout_for_plan", fake_checkout)
+
+    client = subscription_app.test_client()
+    _login(client, user)
+
+    first = client.post(
+        "/admin/subscription/change",
+        data={"plan_id": entrepreneur.id},
+        follow_redirects=False,
+    )
+    second = client.post(
+        "/admin/subscription/change",
+        data={"plan_id": entrepreneur.id},
+        follow_redirects=False,
+    )
+
+    assert first.status_code == second.status_code == 302
+    assert "#payment-checkout" in first.headers["Location"]
+    assert first.headers["Location"] == second.headers["Location"]
+
+    rows = Subscription.query.filter_by(company_id=company.id).order_by(Subscription.id.asc()).all()
+    assert len(rows) == 2
+    assert rows[0].plan_id == business.id
+    assert rows[0].status == SubscriptionService.STATE_ACTIVE
+    assert rows[1].plan_id == entrepreneur.id
+    assert rows[1].status == SubscriptionService.STATE_PENDING_PAYMENT
+    assert len(calls) == 2
