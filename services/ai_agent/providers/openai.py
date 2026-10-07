@@ -21,10 +21,12 @@ class OpenAIProvider(AIProvider):
         model: str | None = None,
         api_key: str | None = None,
         timeout: float | None = None,
+        max_retries: int | None = None,
     ) -> None:
         self.model = model or os.getenv("OPENAI_MODEL")
         self.api_key = api_key if api_key is not None else os.getenv("OPENAI_API_KEY")
         self.timeout = float(timeout if timeout is not None else os.getenv("OPENAI_TIMEOUT", "60"))
+        self.max_retries = int(max_retries if max_retries is not None else os.getenv("OPENAI_MAX_RETRIES", "2"))
         self._client: OpenAI | None = None
 
     @property
@@ -32,7 +34,7 @@ class OpenAIProvider(AIProvider):
         if not self.api_key:
             raise RuntimeError("OPENAI_API_KEY no está configurada.")
         if self._client is None:
-            self._client = OpenAI(api_key=self.api_key, timeout=self.timeout)
+            self._client = OpenAI(api_key=self.api_key, timeout=self.timeout, max_retries=self.max_retries)
         return self._client
 
     @staticmethod
