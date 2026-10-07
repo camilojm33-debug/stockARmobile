@@ -823,7 +823,7 @@ def test_downgrade_business_to_entrepreneur_12999_creates_single_pending_checkou
 def test_subscription_portal_has_one_real_payment_anchor():
     from pathlib import Path
     html = Path("templates/company_billing/portal.html").read_text(encoding="utf-8")
-    assert html.count('id="payment-checkout"') == 1
+    assert html.count('<section id="payment-checkout"') == 1
     assert 'id="payment-checkout-status"' in html
     assert 'name="payment_method" value="qr"' in html
     assert 'Pagar con QR' in html
