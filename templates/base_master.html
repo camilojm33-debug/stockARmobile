@@ -149,9 +149,7 @@
       backdrop-filter: var(--surface-blur);
       display: flex;
       flex-direction: column;
-      overflow-y: auto;
-      overflow-x: hidden;
-      -webkit-overflow-scrolling: touch;
+      overflow: hidden;
       scrollbar-width: thin;
       scrollbar-color: rgba(100,116,139,.28) transparent;
       z-index: 1040;
@@ -234,8 +232,17 @@
       padding: 10px 10px 8px;
       flex: 1 1 auto;
       min-height: 0;
-      overflow: visible;
+      overflow-y: auto;
+      overflow-x: hidden;
+      -webkit-overflow-scrolling: touch;
+      overscroll-behavior: contain;
+      scrollbar-width: thin;
+      scrollbar-color: rgba(100,116,139,.25) transparent;
     }
+    .app-nav::-webkit-scrollbar { width: 7px; }
+    .app-nav::-webkit-scrollbar-track { background: transparent; }
+    .app-nav::-webkit-scrollbar-thumb { background: rgba(100,116,139,.25); border-radius: 999px; }
+    .app-nav::-webkit-scrollbar-thumb:hover { background: rgba(71,85,105,.4); }
     .app-nav .nav-link {
       min-height: 34px;
       padding: .34rem .58rem;
