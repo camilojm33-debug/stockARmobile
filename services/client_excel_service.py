@@ -348,10 +348,28 @@ def _build_identity_lookup(Client, scope_query, records):
     clients += scope_query(Client.query, Client).filter(Client.phone.in_(phones)).all() if phones else []
     clients += scope_query(Client.query, Client).filter(Client.whatsapp.in_(whatsapps)).all() if whatsapps else []
 
+    def unique_map(attribute):
+        mapping = {}
+        conflicts = set()
+        for client in clients:
+            value = getattr(client, attribute, None)
+            if not value:
+                continue
+            key = normalize_key(value)
+            if not key:
+                continue
+            if key in mapping and mapping[key].id != client.id:
+                conflicts.add(key)
+            else:
+                mapping[key] = client
+        for key in conflicts:
+            mapping[key] = None
+        return mapping
+
     by_id = {c.id: c for c in clients}
-    by_email = {normalize_key(c.email): c for c in clients if c.email}
-    by_phone = {normalize_key(c.phone): c for c in clients if c.phone}
-    by_whatsapp = {normalize_key(c.whatsapp): c for c in clients if c.whatsapp}
+    by_email = unique_map("email")
+    by_phone = unique_map("phone")
+    by_whatsapp = unique_map("whatsapp")
     return by_id, by_email, by_phone, by_whatsapp
 
 
@@ -359,17 +377,21 @@ def resolve_existing(record, lookups):
     by_id, by_email, by_phone, by_whatsapp = lookups
     if record["id"] and record["id"] in by_id:
         return by_id[record["id"]]
-    if record["email"]:
-        match = by_email.get(normalize_key(record["email"]))
-        if match:
-            return match
-    if record["whatsapp"]:
-        match = by_whatsapp.get(normalize_key(record["whatsapp"]))
-        if match:
-            return match
-    if record["phone"]:
-        match = by_phone.get(normalize_key(record["phone"]))
-        if match:
+    for field, mapping, label in (
+        ("email", by_email, "email"),
+        ("whatsapp", by_whatsapp, "WhatsApp"),
+        ("phone", by_phone, "teléfono"),
+    ):
+        value = record.get(field)
+        if not value:
+            continue
+        match = mapping.get(normalize_key(value), "__missing__")
+        if match is None:
+            raise ClientImportError(
+                f"Fila {record['row_number']}: el {label} coincide con más de un cliente existente. "
+                "Usá el ID exportado para actualizarlo con precisión."
+            )
+        if match != "__missing__":
             return match
     return None
 
