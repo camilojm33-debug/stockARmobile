@@ -28,7 +28,7 @@ from services.ai_agent.config_service import (
 )
 from services.ai_agent.usage_service import AI_PLANS, AGENT_LABELS, can_use_ai, can_use_ai_feature, current_plan, usage_snapshot
 from stockarmobile.extensions import csrf, db
-from stockarmobile.models.conversations import Conversation
+from stockarmobile.models.conversations import Conversation, ConversationMessage
 from stockarmobile.decorators import company_admin_required
 from stockarmobile.permissions import can_access_ai
 from services.ai_agent.campaign_service import CampaignService
@@ -448,8 +448,6 @@ def public_vendor_chat_message(token):
     access = can_use_ai(company, "vendedor")
     if not access.allowed:
         return jsonify({"success": False, "error": access.reason}), 403
-    if not _public_vendor_rate_limit(company_id):
-        return jsonify({"success": False, "error": "Hay muchas consultas en este momento. Esperá unos segundos e intentá nuevamente."}), 429, {"Retry-After": str(PUBLIC_VENDOR_CHAT_WINDOW)}
     payload = request.get_json(silent=True) or {}
     message = str(payload.get("message") or "").strip()
     if not message:
@@ -463,6 +461,7 @@ def public_vendor_chat_message(token):
     from services.ai_agent.orchestrator_v2 import AgentRuntime
     vendor_agent = ensure_default_agents(company_id)[VENDOR_AGENT_NAME]
     conversation_id = payload.get("conversation_id")
+    requested_idempotency_key = str(request.headers.get("Idempotency-Key") or payload.get("idempotency_key") or "").strip()
     if conversation_id not in (None, ""):
         try:
             conversation = Conversation.query.filter_by(
@@ -495,6 +494,42 @@ def public_vendor_chat_message(token):
             )
             db.session.add(conversation)
             db.session.flush()
+    if requested_idempotency_key:
+        duplicate = (
+            ConversationMessage.query
+            .filter(
+                ConversationMessage.company_id == company_id,
+                ConversationMessage.conversation_id == conversation.id,
+                ConversationMessage.idempotency_key == requested_idempotency_key,
+            )
+            .order_by(ConversationMessage.id.desc())
+            .first()
+        )
+        if duplicate is not None:
+            assistant_duplicate = (
+                ConversationMessage.query
+                .filter(
+                    ConversationMessage.company_id == company_id,
+                    ConversationMessage.conversation_id == conversation.id,
+                    ConversationMessage.trace_id == duplicate.trace_id,
+                    ConversationMessage.role == "assistant",
+                )
+                .order_by(ConversationMessage.id.desc())
+                .first()
+            )
+            if assistant_duplicate is not None:
+                return jsonify({
+                    "success": True,
+                    "conversation_id": conversation.id,
+                    "message_id": duplicate.id,
+                    "assistant_message_id": assistant_duplicate.id,
+                    "content": assistant_duplicate.content,
+                    "duplicate": True,
+                })
+
+    if not _public_vendor_rate_limit(company_id):
+        return jsonify({"success": False, "error": "Hay muchas consultas en este momento. Esperá unos segundos e intentá nuevamente."}), 429, {"Retry-After": str(PUBLIC_VENDOR_CHAT_WINDOW)}
+
     try:
         result = AgentRuntime.process(
             company_id=company_id,
@@ -502,7 +537,7 @@ def public_vendor_chat_message(token):
             message=message,
             channel="webchat",
             sender_id=None,
-            idempotency_key=str(request.headers.get("Idempotency-Key") or payload.get("idempotency_key") or uuid.uuid4().hex),
+            idempotency_key=requested_idempotency_key or uuid.uuid4().hex,
             metadata={"from": visitor_id, "source": "public_webchat"},
             include_system_prompt=True,
         )
