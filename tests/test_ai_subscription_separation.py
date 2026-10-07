@@ -374,7 +374,7 @@ def test_ai_checkout_action_does_not_modify_standard_subscription(subscription_a
     response = client.post("/admin/subscription/ai-agent/checkout", data={"plan_code": "vendedor", "payment_method": "qr"})
 
     assert response.status_code == 302
-    assert response.headers["Location"].endswith("/admin/portal?checkout=ai_created&ai_preapproval_id=ai-pre-new#payment-checkout")
+    assert response.headers["Location"].endswith("/admin/portal?checkout=ai_created#suscripcion-ia")
     assert AISubscriptionService.get_status(company)["status"] == "PENDIENTE"
     assert _standard_snapshot(subscription) == before
 
