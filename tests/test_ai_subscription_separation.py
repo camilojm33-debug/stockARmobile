@@ -820,3 +820,14 @@ def test_standard_subscription_can_downgrade_to_entrepreneur_12999_once(subscrip
     assert rows[1].plan_id == entrepreneur.id
     assert rows[1].status == SubscriptionService.STATE_PENDING_PAYMENT
     assert len(calls) == 2
+
+
+
+def test_subscription_portal_has_unique_payment_anchor_and_ai_qr_action():
+    from pathlib import Path
+    html = Path("templates/company_billing/portal.html").read_text(encoding="utf-8")
+    assert html.count('id="payment-checkout"') == 1
+    assert 'id="payment-checkout-status"' in html
+    assert 'name="payment_method" value="qr"' in html
+    assert 'Pagar con QR' in html
+    assert 'history.replaceState' in html
