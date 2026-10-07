@@ -374,7 +374,7 @@ def test_ai_checkout_action_does_not_modify_standard_subscription(subscription_a
     response = client.post("/admin/subscription/ai-agent/checkout", data={"plan_code": "vendedor", "payment_method": "qr"})
 
     assert response.status_code == 302
-    assert response.headers["Location"].endswith("/admin/portal?checkout=ai_created#suscripcion-ia")
+    assert response.headers["Location"].endswith("/admin/portal?checkout=ai_created&ai_preapproval_id=ai-pre-new#payment-checkout")
     assert AISubscriptionService.get_status(company)["status"] == "PENDIENTE"
     assert _standard_snapshot(subscription) == before
 
@@ -757,3 +757,74 @@ def test_superadmin_manual_activation_updates_only_ai(subscription_app):
     assert status["status"] == "ACTIVA"
     assert status["origin"] == "MANUAL"
     assert _standard_snapshot(subscription) == before
+
+
+
+def test_downgrade_business_to_entrepreneur_12999_creates_single_pending_checkout(subscription_app, monkeypatch):
+    from services.billing_service import BillingService
+
+    company = Company(name="Empresa Downgrade", active=True, contact_email="downgrade@test.local")
+    db.session.add(company)
+    db.session.flush()
+    user = User(
+        username="downgrade_admin",
+        email="downgrade@test.local",
+        password_hash="x",
+        role="admin",
+        active=True,
+        company_id=company.id,
+    )
+    business = Plan(code="business", name="Business", price=29999, currency="ARS", duration_days=30, active=True)
+    entrepreneur = Plan(code="entrepreneur", name="Entrepreneur", price=12999, currency="ARS", duration_days=30, active=True)
+    db.session.add_all([user, business, entrepreneur])
+    db.session.flush()
+    current = Subscription(
+        company_id=company.id,
+        plan_id=business.id,
+        status=SubscriptionService.STATE_ACTIVE,
+        renewal_enabled=True,
+        auto_renew=True,
+    )
+    db.session.add(current)
+    db.session.commit()
+
+    calls = []
+    def fake_checkout(self, **kwargs):
+        calls.append(kwargs)
+        return {
+            "subscription": kwargs["subscription"],
+            "preference": {
+                "id": "pref-downgrade-12999",
+                "init_point": "https://mp.test/downgrade-12999",
+            },
+        }
+
+    monkeypatch.setattr(BillingService, "create_checkout_for_plan", fake_checkout)
+
+    client = subscription_app.test_client()
+    _login(client, user)
+
+    first = client.post("/admin/subscription/change", data={"plan_id": entrepreneur.id}, follow_redirects=False)
+    second = client.post("/admin/subscription/change", data={"plan_id": entrepreneur.id}, follow_redirects=False)
+
+    assert first.status_code == second.status_code == 302
+    assert first.headers["Location"] == second.headers["Location"]
+    assert "#payment-checkout" in first.headers["Location"]
+
+    rows = Subscription.query.filter_by(company_id=company.id).order_by(Subscription.id.asc()).all()
+    assert len(rows) == 2
+    assert rows[0].plan_id == business.id
+    assert rows[0].status == SubscriptionService.STATE_ACTIVE
+    assert rows[1].plan_id == entrepreneur.id
+    assert rows[1].status == SubscriptionService.STATE_PENDING_PAYMENT
+    assert len(calls) == 2
+
+
+def test_subscription_portal_has_one_real_payment_anchor():
+    from pathlib import Path
+    html = Path("templates/company_billing/portal.html").read_text(encoding="utf-8")
+    assert html.count('id="payment-checkout"') == 1
+    assert 'id="payment-checkout-status"' in html
+    assert 'name="payment_method" value="qr"' in html
+    assert 'Pagar con QR' in html
+    assert 'history.replaceState' in html
