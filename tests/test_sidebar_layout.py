@@ -11,8 +11,10 @@ def test_main_sidebar_owns_scroll_in_navigation_area():
     sidebar_css = template[sidebar_start:nav_start]
     nav_css = template[nav_start:main_start]
 
+    assert "display: grid;" in sidebar_css
+    assert "grid-template-rows: auto minmax(0, 1fr) auto;" in sidebar_css
     assert "overflow: hidden;" in sidebar_css
-    assert "flex: 1 1 auto;" in nav_css
     assert "min-height: 0;" in nav_css
+    assert "height: 100%;" in nav_css
     assert "overflow-y: auto;" in nav_css
     assert "overscroll-behavior: contain;" in nav_css

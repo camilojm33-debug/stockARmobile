@@ -147,8 +147,8 @@
       background: rgba(255, 255, 255, .88);
       border-right: 1px solid var(--app-line);
       backdrop-filter: var(--surface-blur);
-      display: flex;
-      flex-direction: column;
+      display: grid;
+      grid-template-rows: auto minmax(0, 1fr) auto;
       overflow: hidden;
       scrollbar-width: thin;
       scrollbar-color: rgba(100,116,139,.28) transparent;
@@ -230,8 +230,8 @@
     }
     .app-nav {
       padding: 10px 10px 8px;
-      flex: 1 1 auto;
       min-height: 0;
+      height: 100%;
       overflow-y: auto;
       overflow-x: hidden;
       -webkit-overflow-scrolling: touch;
@@ -274,8 +274,8 @@
       font-size: .68rem;
     }
     .app-sidebar-footer {
-      margin-top: auto;
-      flex: 0 0 auto;
+      margin-top: 0;
+      min-height: 0;
       padding: 9px 10px;
       border-top: 1px solid var(--app-line);
     }
