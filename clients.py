@@ -129,6 +129,7 @@ def import_excel():
     from app import Client, db, scope_query_to_company
     from services.client_excel_service import (
         ClientImportError,
+        _build_identity_lookup,
         apply_record,
         build_records,
         resolve_existing,
@@ -138,7 +139,7 @@ def import_excel():
     upload = request.files.get("file")
     try:
         records = build_records(upload)
-        lookups = resolve_existing.__globals__["_build_identity_lookup"](Client, scope_query_to_company, records)
+        lookups = _build_identity_lookup(Client, scope_query_to_company, records)
         existing = [resolve_existing(record, lookups) for record in records]
 
         active_creates = sum(1 for record, client in zip(records, existing) if client is None and record["active"])
