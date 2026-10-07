@@ -571,6 +571,7 @@ def public_vendor_message(slug: str):
     visitor_id = _visitor_id(company.id)
     try:
         from services.ai_agent.orchestrator_v2 import AgentRuntime
+        from services.ai_agent.providers.base import AIProviderError
 
         result = AgentRuntime.process(
             company_id=company.id,
@@ -598,6 +599,17 @@ def public_vendor_message(slug: str):
     except ValueError as exc:
         db.session.rollback()
         return jsonify({"success": False, "error": str(exc)}), 400
+    except AIProviderError as exc:
+        db.session.rollback()
+        current_app.logger.warning(
+            "Stable public Vendor IA provider failure company_id=%s status=%s",
+            company.id,
+            getattr(exc, "status_code", 503),
+        )
+        status_code = int(getattr(exc, "status_code", 503) or 503)
+        if status_code not in {429, 503}:
+            status_code = 503
+        return jsonify({"success": False, "error": str(exc)}), status_code
     except Exception:
         db.session.rollback()
         current_app.logger.exception("Stable public Vendor IA failed company_id=%s", company.id)

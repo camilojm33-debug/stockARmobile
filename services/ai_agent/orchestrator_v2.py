@@ -9,6 +9,7 @@ from services.ai_agent.providers.openai_compatible import OpenAICompatibleProvid
 from services.ai_agent.providers.lm_studio import LMStudioProvider
 from services.ai_agent.providers.openai import OpenAIProvider
 from services.ai_agent.providers.gemini import GeminiProvider
+from services.ai_agent.providers.base import AIProviderError
 from services.ai_agent.config_service import (
     BUSINESS_AGENT_NAME,
     VENDOR_AGENT_NAME,
@@ -58,6 +59,10 @@ COMMERCIAL_SYSTEM_PROMPT = (
     "condiciones. Nunca generes pedidos ni cobros en este canal."
 )
 MAX_TOOL_TURNS = 5
+PUBLIC_WEBCHAT_MAX_TOOL_TURNS = 1
+PUBLIC_WEBCHAT_PROVIDER_TIMEOUT = 8.0
+PUBLIC_WEBCHAT_MAX_OUTPUT_TOKENS = 500
+PUBLIC_WEBCHAT_HISTORY_LIMIT = 8
 MAX_AGENT_MESSAGE_CHARS = 4000
 MAX_AGENT_HISTORY_CHARS = 16000
 MAX_AGENT_HISTORY_MESSAGE_CHARS = 4000
@@ -196,6 +201,7 @@ class VendorOrderPreviewTool(AgentTool):
     name = "preparar_pedido"
     description = (
         "Prepara el pedido, el presupuesto final y el link seguro de pago. "
+        "Si el cliente pidió un producto que todavía no está en el carrito, agregalo primero con agregar_al_carrito y luego prepará el pedido en la misma ronda de herramientas. "
         "Antes de prepararlo confirmá nombre y teléfono del comprador. "
         "Preguntá si desea retiro o envío. Si elige envío, solicitá dirección, localidad "
         "y provincia. El backend aplica automáticamente el costo fijo de envío configurado "
@@ -205,6 +211,8 @@ class VendorOrderPreviewTool(AgentTool):
     input_schema = {
         "type": "object",
         "properties": {
+            "product_query": {"type": "string", "description": "Producto solicitado directamente por el cliente; usar cuando todavía no está en el carrito."},
+            "quantity": {"type": "number", "minimum": 0.01, "description": "Cantidad solicitada del producto. Ejemplo: 4 para 4 metros."},
             "customer_name": {"type": "string"},
             "customer_phone": {"type": "string"},
             "delivery_method": {"type": "string", "enum": ["retiro", "envio"]},
@@ -220,6 +228,21 @@ class VendorOrderPreviewTool(AgentTool):
     }
 
     def execute(self, **kwargs):
+        product_query = str(kwargs.get("product_query") or "").strip()
+        quantity = kwargs.get("quantity")
+        if product_query and quantity not in (None, ""):
+            cart = VendorOrderService.get_cart(
+                company_id=self.company_id,
+                conversation_id=self._context["conversation_id"],
+            )
+            if not cart["items"]:
+                added = VendorOrderService.update_cart(
+                    company_id=self.company_id,
+                    conversation_id=self._context["conversation_id"],
+                    items=[{"product_query": product_query, "quantity": quantity}],
+                )
+                if isinstance(added, dict) and added.get("success") is False:
+                    return added
         return VendorOrderService.create_pending_order(
             company_id=self.company_id,
             conversation_id=self._context["conversation_id"],
@@ -282,15 +305,16 @@ class AgentRuntime:
     }
 
     @classmethod
-    def provider(cls):
+    def provider(cls, *, timeout=None, max_retries=None):
         provider = (os.getenv("AI_PROVIDER") or "lm_studio").strip().lower()
         if provider == "gemini":
-            return GeminiProvider()
+            return GeminiProvider(timeout=timeout, max_retries=max_retries)
         if provider == "openai":
-            return OpenAIProvider()
+            kwargs = {} if max_retries is None else {"max_retries": max_retries}
+            return OpenAIProvider(timeout=timeout, **kwargs)
         if provider == "openai_compatible":
-            return OpenAICompatibleProvider()
-        return LMStudioProvider()
+            return OpenAICompatibleProvider(timeout=timeout)
+        return LMStudioProvider(timeout=timeout)
 
     @classmethod
     def ensure_agent(cls, company_id, *, channel):
@@ -481,8 +505,9 @@ class AgentRuntime:
         return input_tokens, output_tokens, total_tokens
 
     @classmethod
-    def _run_tool_loop(cls, *, provider, messages, tools, kwargs, company_id, context, allowed_tool_names=None):
+    def _run_tool_loop(cls, *, provider, messages, tools, kwargs, company_id, context, allowed_tool_names=None, max_tool_turns=None):
         working_messages = list(messages)
+        tool_turn_limit = MAX_TOOL_TURNS if max_tool_turns is None else max(0, int(max_tool_turns))
         response = provider.generate(messages=working_messages, tools=tools, **kwargs)
         campaign_context = None
         tool_rounds = 0
@@ -517,7 +542,7 @@ class AgentRuntime:
                 raise RuntimeError("El proveedor IA no devolvió una respuesta.")
 
             next_tool_round = tool_rounds + 1
-            if next_tool_round > MAX_TOOL_TURNS:
+            if next_tool_round > tool_turn_limit:
                 synthesis_prompt = {
                     "role": "user",
                     "content": (
@@ -560,13 +585,29 @@ class AgentRuntime:
                         },
                     }
                 )
-                result = cls._execute_tool(
-                    name,
-                    company_id=company_id,
-                    arguments=args,
-                    context=context,
-                    allowed_tool_names=allowed_tool_names,
-                )
+                try:
+                    result = cls._execute_tool(
+                        name,
+                        company_id=company_id,
+                        arguments=args,
+                        context=context,
+                        allowed_tool_names=allowed_tool_names,
+                    )
+                except ValueError as exc:
+                    result = {"success": False, "error": str(exc)[:700], "retryable": False}
+                except Exception:
+                    import logging
+                    logging.getLogger(__name__).exception(
+                        "AI tool execution failed: tool=%s company_id=%s conversation_id=%s",
+                        name,
+                        company_id,
+                        context.get("conversation_id") if isinstance(context, dict) else None,
+                    )
+                    result = {
+                        "success": False,
+                        "error": "No se pudo completar la operación solicitada en este momento.",
+                        "retryable": True,
+                    }
                 if name == "preparar_campana" and isinstance(result, dict):
                     campaign_context = result.get("campaign_context") or campaign_context
                 results_to_append.append(
@@ -683,10 +724,11 @@ class AgentRuntime:
                 "content": "",
             }
 
+        is_public_webchat = channel == "webchat" and sender_id is None and str((metadata or {}).get("source") or "").startswith("public_webchat")
         history = cls._history(
             company_id,
             conversation.id,
-            19,
+            PUBLIC_WEBCHAT_HISTORY_LIMIT if is_public_webchat else 19,
             exclude_message_id=retry_incoming.id if retry_incoming is not None else None,
         )
         trace_id = str(retry_incoming.trace_id or uuid.uuid4()) if retry_incoming is not None else str(uuid.uuid4())
@@ -741,6 +783,14 @@ class AgentRuntime:
                 first_interaction=not history,
             )
             allowed_tool_names = vendor_allowed_tool_names(vendor_options)
+            if is_public_webchat:
+                prompt += (
+                    "\n\nMODO WEBCHAT PÚBLICO — ORDEN DIRECTA:"
+                    "\n- Priorizá resolver una solicitud de compra en una sola ronda de herramientas."
+                    "\n- Si el cliente ya indicó producto, cantidad, nombre, teléfono y datos de envío, evitá búsquedas exploratorias innecesarias."
+                    "\n- Para un pedido, podés agregar el producto al carrito y después preparar el pedido dentro de la misma ronda de herramientas."
+                    "\n- Nunca afirmes que el pago quedó realizado si el backend no devolvió un resultado exitoso."
+                )
         elif agent_key in {"analista", "marketing"}:
             special_options = get_special_options(company, agent_key)
             if agent_key == "analista":
@@ -771,7 +821,10 @@ class AgentRuntime:
             [{"role": "system", "content": prompt}] if include_system_prompt else []
         ) + history + [{"role": "user", "content": request_message}]
         kwargs = {}
-        provider = provider_override or cls.provider()
+        provider = provider_override or cls.provider(
+            timeout=PUBLIC_WEBCHAT_PROVIDER_TIMEOUT if is_public_webchat else None,
+            max_retries=0 if is_public_webchat else None,
+        )
         effective_model = cls._provider_model(provider, config)
         if effective_model:
             kwargs["model"] = effective_model
@@ -780,6 +833,8 @@ class AgentRuntime:
                 kwargs["temperature"] = float(config.temperature)
             if config.max_tokens is not None:
                 kwargs["max_tokens"] = config.max_tokens
+        if is_public_webchat:
+            kwargs["max_tokens"] = min(int(kwargs.get("max_tokens") or PUBLIC_WEBCHAT_MAX_OUTPUT_TOKENS), PUBLIC_WEBCHAT_MAX_OUTPUT_TOKENS)
 
         context = {
             "conversation_id": conversation.id,
@@ -799,6 +854,7 @@ class AgentRuntime:
             company_id=company_id,
             context=context,
             allowed_tool_names=allowed_tool_names,
+            max_tool_turns=PUBLIC_WEBCHAT_MAX_TOOL_TURNS if is_public_webchat else None,
         )
 
         # Una solicitud explícita de propuesta/campaña no queda como simple texto:

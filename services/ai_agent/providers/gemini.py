@@ -21,10 +21,12 @@ class GeminiProvider(AIProvider):
         model: str | None = None,
         api_key: str | None = None,
         timeout: float | None = None,
+        max_retries: int | None = None,
     ) -> None:
         self.model = model or os.getenv("GEMINI_MODEL")
         self.api_key = api_key if api_key is not None else os.getenv("GEMINI_API_KEY")
         self.timeout = float(timeout if timeout is not None else os.getenv("GEMINI_TIMEOUT", "25"))
+        self.max_retries = max(0, int(max_retries if max_retries is not None else os.getenv("GEMINI_MAX_RETRIES", "1")))
         self._client = None
         self._types = None
         self._thought_signatures: Dict[str, Any] = {}
@@ -282,7 +284,7 @@ class GeminiProvider(AIProvider):
         return f"{seconds} segundo" + ("s" if seconds != 1 else "")
 
     def _generate_content_with_retry(self, *, model: str, contents, config):
-        attempts = 2
+        attempts = 1 + self.max_retries
         last_exc = None
         for attempt in range(attempts):
             try:
