@@ -764,12 +764,12 @@ def test_standard_subscription_can_downgrade_to_entrepreneur_12999_once(subscrip
     from services.billing_service import BillingService
 
     company = Company(name="Empresa Downgrade", active=True, contact_email="downgrade@test.local")
-    user = User(username="downgrade_admin", email="downgrade@test.local", password_hash="x", role="admin", active=True)
+    db.session.add(company)
+    db.session.flush()
+    user = User(username="downgrade_admin", email="downgrade@test.local", password_hash="x", role="admin", active=True, company_id=company.id)
     business = Plan(code="business", name="Business", price=29999, currency="ARS", duration_days=30, active=True)
     entrepreneur = Plan(code="entrepreneur", name="Entrepreneur", price=12999, currency="ARS", duration_days=30, active=True)
-    company.users = [user]
-    user.company_id = company.id
-    db.session.add_all([company, user, business, entrepreneur])
+    db.session.add_all([user, business, entrepreneur])
     db.session.flush()
     current = Subscription(
         company_id=company.id,
