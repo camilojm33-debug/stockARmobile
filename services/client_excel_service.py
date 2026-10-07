@@ -177,8 +177,9 @@ def parse_consent(value: Any, field_label: str, *, default: str = "unknown") -> 
     if value in (None, ""):
         return default
     normalized = normalize_header(value)
-    if normalized in CONSENT_VALUES:
-        return CONSENT_VALUES[normalized]
+    consent_values = {normalize_header(key): val for key, val in CONSENT_VALUES.items()}
+    if normalized in consent_values:
+        return consent_values[normalized]
     raise ClientImportError(
         f"Consentimiento inválido en {field_label}: {value!r}. Usá unknown, opted_in u opted_out."
     )
