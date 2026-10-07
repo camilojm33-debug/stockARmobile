@@ -1,6 +1,7 @@
 """Blueprint de clientes: CRUD y API."""
 
-from flask import Blueprint, flash, jsonify, redirect, render_template, request, url_for
+from flask import Blueprint, flash, jsonify, redirect, render_template, request, send_file, url_for
+from io import BytesIO
 from flask_login import current_user, login_required
 from app import tenant_required
 
@@ -39,6 +40,163 @@ def _coerce_payload():
     if isinstance(payload, dict):
         return payload
     return request.form
+
+
+def _client_stats_for_export(clients, Sale, Quote, db, scope_query_to_company):
+    client_ids = {client.id for client in clients}
+    stats = {client_id: {} for client_id in client_ids}
+    if not client_ids:
+        return stats
+
+    sales_rows = (
+        scope_query_to_company(
+            db.session.query(
+                Sale.client_id,
+                db.func.count(Sale.id).label("purchase_count"),
+                db.func.coalesce(db.func.sum(Sale.total_amount), 0).label("total_spent"),
+            ),
+            Sale,
+        )
+        .filter(Sale.client_id.in_(client_ids))
+        .group_by(Sale.client_id)
+        .all()
+    )
+    for row in sales_rows:
+        stats[row.client_id] = {
+            **stats.get(row.client_id, {}),
+            "purchase_count": int(row.purchase_count or 0),
+            "total_spent": float(row.total_spent or 0),
+        }
+
+    quote_rows = (
+        scope_query_to_company(
+            db.session.query(
+                Quote.client_id,
+                db.func.count(Quote.id).label("quote_count"),
+                db.func.coalesce(db.func.sum(Quote.total_amount), 0).label("total_quoted"),
+            ),
+            Quote,
+        )
+        .filter(Quote.client_id.in_(client_ids))
+        .group_by(Quote.client_id)
+        .all()
+    )
+    for row in quote_rows:
+        stats[row.client_id] = {
+            **stats.get(row.client_id, {}),
+            "quote_count": int(row.quote_count or 0),
+            "total_quoted": float(row.total_quoted or 0),
+        }
+    return stats
+
+
+@bp.route("/export.xlsx")
+@tenant_required
+def export_excel():
+    from app import Client, Quote, Sale, db, scope_query_to_company
+    from services.client_excel_service import create_workbook
+
+    clients = scope_query_to_company(Client.query, Client).order_by(Client.name).all()
+    client_stats = _client_stats_for_export(clients, Sale, Quote, db, scope_query_to_company)
+    buffer = create_workbook(clients=clients, client_stats=client_stats)
+    return send_file(
+        buffer,
+        mimetype="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        as_attachment=True,
+        download_name=f"clientes_{__import__('datetime').datetime.utcnow():%Y%m%d}.xlsx",
+    )
+
+
+@bp.route("/import/template.xlsx")
+@tenant_required
+def import_template():
+    from app import Client
+    from services.client_excel_service import create_workbook
+
+    empty_stats = {}
+    buffer = create_workbook(clients=[], client_stats=empty_stats)
+    return send_file(
+        buffer,
+        mimetype="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        as_attachment=True,
+        download_name="plantilla_clientes_stockarmobile.xlsx",
+    )
+
+
+@bp.route("/import", methods=["POST"])
+@tenant_required
+def import_excel():
+    from app import Client, db, scope_query_to_company
+    from services.client_excel_service import (
+        ClientImportError,
+        apply_record,
+        build_records,
+        resolve_existing,
+    )
+    from services.plan_usage_service import PlanUsageService
+
+    upload = request.files.get("file")
+    try:
+        records = build_records(upload)
+        lookups = resolve_existing.__globals__["_build_identity_lookup"](Client, scope_query_to_company, records)
+        existing = [resolve_existing(record, lookups) for record in records]
+
+        active_creates = sum(1 for record, client in zip(records, existing) if client is None and record["active"])
+        active_reactivations = sum(
+            1 for record, client in zip(records, existing)
+            if client is not None and not client.active and record["active"]
+        )
+        if active_creates or active_reactivations:
+            usage = PlanUsageService.usage_snapshot(getattr(current_user, "company_id", None))
+            metric = next(
+                (item for item in usage["metrics"] if item.key == PlanUsageService.RESOURCE_CLIENTS),
+                None,
+            )
+            if metric and metric.limit > 0 and metric.used + active_creates + active_reactivations > metric.limit:
+                raise ClientImportError(
+                    f"La importación supera el límite de clientes de tu plan. "
+                    f"Disponibles: {metric.remaining}; necesita: {active_creates + active_reactivations}."
+                )
+
+        created = 0
+        updated = 0
+        reactivated = 0
+
+        try:
+            for record, client in zip(records, existing):
+                if client is None:
+                    client = Client(
+                        company_id=getattr(current_user, "company_id", None),
+                        name=record["name"],
+                        active=record["active"],
+                    )
+                    db.session.add(client)
+                    created += 1
+                else:
+                    was_active = bool(client.active)
+                    updated += 1
+                    apply_record(client, record)
+                    if not was_active and client.active:
+                        reactivated += 1
+                    continue
+                apply_record(client, record)
+
+            db.session.commit()
+        except Exception:
+            db.session.rollback()
+            raise
+
+        summary = f"Importación completada: {created} creados y {updated} actualizados."
+        if reactivated:
+            summary += f" {reactivated} reactivados."
+        flash(summary, "success")
+    except ClientImportError as exc:
+        flash(f"No se importó el archivo: {exc}", "danger")
+    except Exception:
+        db.session.rollback()
+        flash("No se importó el archivo. No se aplicaron cambios.", "danger")
+
+    return redirect(url_for("clients.index"))
 
 
 @bp.route("/")
