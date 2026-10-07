@@ -64,22 +64,23 @@ def test_public_vendor_rate_limit_uses_database_when_redis_missing(monkeypatch):
     monkeypatch.setitem(stock_app.app.config, "IS_PRODUCTION_ENV", True)
     monkeypatch.setattr(ai_agents.PublicVendorOperation, "query", FakeQuery(2), raising=False)
 
-    with stock_app.app.test_request_context("/"):
-        assert ai_agents._public_vendor_rate_limit(
-            12345,
-            conversation_id=77,
-            request_key="operation-1",
-            visitor_id="visitor-1",
-        ) is True
+    with stock_app.app.app_context():
+        with stock_app.app.test_request_context("/"):
+            assert ai_agents._public_vendor_rate_limit(
+                12345,
+                conversation_id=77,
+                request_key="operation-1",
+                visitor_id="visitor-1",
+            ) is True
 
-    monkeypatch.setattr(ai_agents.PublicVendorOperation, "query", FakeQuery(12), raising=False)
-    with stock_app.app.test_request_context("/"):
-        assert ai_agents._public_vendor_rate_limit(
-            12345,
-            conversation_id=77,
-            request_key="operation-2",
-            visitor_id="visitor-1",
-        ) is False
+        monkeypatch.setattr(ai_agents.PublicVendorOperation, "query", FakeQuery(12), raising=False)
+        with stock_app.app.test_request_context("/"):
+            assert ai_agents._public_vendor_rate_limit(
+                12345,
+                conversation_id=77,
+                request_key="operation-2",
+                visitor_id="visitor-1",
+            ) is False
 
 
 def test_public_vendor_chat_template_blocks_concurrent_submissions():
