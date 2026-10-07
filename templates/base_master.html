@@ -44,7 +44,7 @@
       --app-line: rgba(15, 23, 42, .09);
       --app-shadow: 0 18px 42px rgba(15, 23, 42, .08);
       --app-shadow-soft: 0 10px 28px rgba(15, 23, 42, .06);
-      --sidebar-width: 264px;
+      --sidebar-width: 248px;
       --surface-blur: saturate(180%) blur(18px);
     }
     [data-bs-theme="dark"] {
@@ -152,8 +152,14 @@
       overflow-y: auto;
       overflow-x: hidden;
       -webkit-overflow-scrolling: touch;
-      z-index: 1030;
+      scrollbar-width: thin;
+      scrollbar-color: rgba(100,116,139,.28) transparent;
+      z-index: 1040;
     }
+    .app-sidebar::-webkit-scrollbar { width: 7px; }
+    .app-sidebar::-webkit-scrollbar-track { background: transparent; }
+    .app-sidebar::-webkit-scrollbar-thumb { background: rgba(100,116,139,.25); border-radius: 999px; }
+    .app-sidebar::-webkit-scrollbar-thumb:hover { background: rgba(71,85,105,.4); }
     [data-bs-theme="dark"] .app-sidebar,
     [data-bs-theme="dark"] .app-mobilebar {
       background: rgba(24, 34, 53, .94);
@@ -231,9 +237,10 @@
       overflow: visible;
     }
     .app-nav .nav-link {
-      min-height: 36px;
-      padding: .38rem .65rem;
+      min-height: 34px;
+      padding: .34rem .58rem;
       color: #475569;
+      font-size: .88rem;
       border-radius: 8px;
       display: flex;
       align-items: center;
@@ -316,6 +323,7 @@
       justify-content: center;
       font-weight: 800;
     }
+    body.sidebar-mobile-open { overflow: hidden; }
     .app-main {
       margin-left: var(--sidebar-width);
       min-height: 100vh;
@@ -550,11 +558,12 @@
     .app-sidebar-backdrop {
       position: fixed;
       inset: 0;
-      background: rgba(15, 23, 42, .45);
+      background: rgba(15, 23, 42, .54);
       opacity: 0;
       pointer-events: none;
-      transition: opacity .24s ease;
-      z-index: 1025;
+      transition: opacity .2s ease;
+      z-index: 1035;
+      backdrop-filter: blur(2px);
     }
     .app-sidebar-backdrop.show {
       opacity: 1;
@@ -619,7 +628,7 @@
       .metric-card:hover { transform: none; }
       .btn { min-height: 44px; }
     }
-    @media (max-width: 991.98px) {
+    @media (max-width: 1099.98px) {
       .app-layout { display: block; }
       .app-sidebar {
         position: fixed;
@@ -627,13 +636,12 @@
         height: 100dvh;
         min-height: 100dvh;
         max-height: 100dvh;
-        overflow-y: auto;
-        -webkit-overflow-scrolling: touch;
-        width: min(86vw, 320px);
-        max-width: min(86vw, 320px);
-        transform: translateX(-100%);
+        width: min(82vw, 300px);
+        max-width: min(82vw, 300px);
+        transform: translateX(-102%);
         transition: transform .24s ease;
-        box-shadow: 24px 0 70px rgba(15,23,42,.18);
+        box-shadow: 24px 0 70px rgba(15,23,42,.22);
+        z-index: 1040;
       }
       .app-sidebar.show { transform: translateX(0); }
       .app-main { margin-left: 0; }
@@ -670,6 +678,7 @@
       }
     }
     @media (max-width: 575.98px) {
+      .app-sidebar { width: min(86vw, 280px); max-width: min(86vw, 280px); }
       .app-card .card-body { padding: 1rem; }
       .toolbar-card { padding: 10px; }
       .btn-lg, .form-control-lg { font-size: 1rem; }
@@ -1158,6 +1167,7 @@
         if (!sidebar) return;
         sidebar.classList.remove('show');
         sidebarBackdrop?.classList.remove('show');
+        document.body.classList.remove('sidebar-mobile-open');
         sidebarFooter?.classList.remove('is-expanded');
         sidebarFooterToggle?.setAttribute('aria-expanded', 'false');
       }
@@ -1166,7 +1176,9 @@
         if (!sidebar) return;
         const shouldOpen = !sidebar.classList.contains('show');
         sidebar.classList.toggle('show', shouldOpen);
-        sidebarBackdrop?.classList.toggle('show', shouldOpen && mobileViewport.matches);
+        const isMobile = mobileViewport.matches;
+        sidebarBackdrop?.classList.toggle('show', shouldOpen && isMobile);
+        document.body.classList.toggle('sidebar-mobile-open', shouldOpen && isMobile);
       }
 
       sidebarToggle?.addEventListener('click', function() {
@@ -1188,6 +1200,7 @@
         if (!mobileViewport.matches) {
           sidebarBackdrop?.classList.remove('show');
           sidebar?.classList.remove('show');
+          document.body.classList.remove('sidebar-mobile-open');
           sidebarFooter?.classList.remove('is-expanded');
           sidebarFooterToggle?.setAttribute('aria-expanded', 'false');
         }
