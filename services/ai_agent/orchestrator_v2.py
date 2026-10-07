@@ -58,8 +58,8 @@ COMMERCIAL_SYSTEM_PROMPT = (
     "condiciones. Nunca generes pedidos ni cobros en este canal."
 )
 MAX_TOOL_TURNS = 5
-PUBLIC_WEBCHAT_MAX_TOOL_TURNS = 2
-PUBLIC_WEBCHAT_PROVIDER_TIMEOUT = 7.0
+PUBLIC_WEBCHAT_MAX_TOOL_TURNS = 1
+PUBLIC_WEBCHAT_PROVIDER_TIMEOUT = 8.0
 PUBLIC_WEBCHAT_MAX_OUTPUT_TOKENS = 500
 PUBLIC_WEBCHAT_HISTORY_LIMIT = 8
 MAX_AGENT_MESSAGE_CHARS = 4000
@@ -289,7 +289,7 @@ class AgentRuntime:
     def provider(cls, *, timeout=None, max_retries=None):
         provider = (os.getenv("AI_PROVIDER") or "lm_studio").strip().lower()
         if provider == "gemini":
-            return GeminiProvider(timeout=timeout)
+            return GeminiProvider(timeout=timeout, max_retries=max_retries)
         if provider == "openai":
             kwargs = {} if max_retries is None else {"max_retries": max_retries}
             return OpenAIProvider(timeout=timeout, **kwargs)
@@ -566,13 +566,29 @@ class AgentRuntime:
                         },
                     }
                 )
-                result = cls._execute_tool(
-                    name,
-                    company_id=company_id,
-                    arguments=args,
-                    context=context,
-                    allowed_tool_names=allowed_tool_names,
-                )
+                try:
+                    result = cls._execute_tool(
+                        name,
+                        company_id=company_id,
+                        arguments=args,
+                        context=context,
+                        allowed_tool_names=allowed_tool_names,
+                    )
+                except ValueError as exc:
+                    result = {"success": False, "error": str(exc)[:700], "retryable": False}
+                except Exception:
+                    import logging
+                    logging.getLogger(__name__).exception(
+                        "AI tool execution failed: tool=%s company_id=%s conversation_id=%s",
+                        name,
+                        company_id,
+                        context.get("conversation_id") if isinstance(context, dict) else None,
+                    )
+                    result = {
+                        "success": False,
+                        "error": "No se pudo completar la operación solicitada en este momento.",
+                        "retryable": True,
+                    }
                 if name == "preparar_campana" and isinstance(result, dict):
                     campaign_context = result.get("campaign_context") or campaign_context
                 results_to_append.append(
@@ -748,6 +764,20 @@ class AgentRuntime:
                 first_interaction=not history,
             )
             allowed_tool_names = vendor_allowed_tool_names(vendor_options)
+            if is_public_webchat:
+                prompt += (
+                    "
+
+MODO WEBCHAT PÚBLICO — ORDEN DIRECTA:"
+                    "
+- Priorizá resolver una solicitud de compra en una sola ronda de herramientas."
+                    "
+- Si el cliente ya indicó producto, cantidad, nombre, teléfono y datos de envío, evitá búsquedas exploratorias innecesarias."
+                    "
+- Para un pedido, podés agregar el producto al carrito y después preparar el pedido dentro de la misma ronda de herramientas."
+                    "
+- Nunca afirmes que el pago quedó realizado si el backend no devolvió un resultado exitoso."
+                )
         elif agent_key in {"analista", "marketing"}:
             special_options = get_special_options(company, agent_key)
             if agent_key == "analista":
