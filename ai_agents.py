@@ -84,7 +84,7 @@ def _decode_public_vendor_token(token: str):
         return None
 
 
-def _public_vendor_rate_limit(company_id: int, *, conversation_id=None, request_key=None) -> bool:
+def _public_vendor_rate_limit(company_id: int, *, conversation_id=None, request_key=None, visitor_id=None) -> bool:
     remote = (request.remote_addr or "unknown").strip()
     visitor_scope = str(visitor_id or "").strip()[:200] or remote
     visitor_digest = hashlib.sha256(visitor_scope.encode()).hexdigest()[:32]
