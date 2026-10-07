@@ -488,6 +488,7 @@ def test_crm_tool_requires_pro_and_user_crm_permission(qa_ai_database):
     }
     assert "oportunidades_crm" in permitted_names
 
+    employee.permissions_json = json.dumps(["ai_access"])
     denied = AgentRuntime._execute_tool(
         "oportunidades_crm",
         company_id=pro_company.id,
