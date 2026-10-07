@@ -107,17 +107,20 @@ class GeminiProvider(AIProvider):
         return converted
 
     @classmethod
-    def _function_declarations(cls, tools: Iterable[Dict[str, Any]] | None) -> list[Dict[str, Any]]:
+    def _function_declarations(cls, tools: Iterable[Dict[str, Any]] | None):
+        """Build explicit Gemini FunctionDeclaration objects from JSON schemas."""
+        from google.genai import types
+
         declarations = []
         for tool in tools or []:
             function = tool.get("function") or {}
             raw_parameters = function.get("parameters") or {"type": "object", "properties": {}}
             declarations.append(
-                {
-                    "name": function.get("name"),
-                    "description": function.get("description") or "",
-                    "parameters": cls._to_gemini_schema(raw_parameters),
-                }
+                types.FunctionDeclaration(
+                    name=str(function.get("name") or "").strip(),
+                    description=str(function.get("description") or ""),
+                    parameters_json_schema=cls._to_gemini_schema(raw_parameters),
+                )
             )
         return declarations
 
@@ -288,7 +291,7 @@ class GeminiProvider(AIProvider):
         last_exc = None
         for attempt in range(attempts):
             try:
-                return self.client.models._generate_content(model=model, contents=contents, config=config)
+                return self.client.models.generate_content(model=model, contents=contents, config=config)
             except Exception as exc:
                 last_exc = exc
                 api_error_code = self._api_error_code(exc)
