@@ -211,6 +211,8 @@ class VendorOrderPreviewTool(AgentTool):
     input_schema = {
         "type": "object",
         "properties": {
+            "product_query": {"type": "string", "description": "Producto solicitado directamente por el cliente; usar cuando todavía no está en el carrito."},
+            "quantity": {"type": "number", "minimum": 0.01, "description": "Cantidad solicitada del producto. Ejemplo: 4 para 4 metros."},
             "customer_name": {"type": "string"},
             "customer_phone": {"type": "string"},
             "delivery_method": {"type": "string", "enum": ["retiro", "envio"]},
@@ -226,6 +228,21 @@ class VendorOrderPreviewTool(AgentTool):
     }
 
     def execute(self, **kwargs):
+        product_query = str(kwargs.get("product_query") or "").strip()
+        quantity = kwargs.get("quantity")
+        if product_query and quantity not in (None, ""):
+            cart = VendorOrderService.get_cart(
+                company_id=self.company_id,
+                conversation_id=self._context["conversation_id"],
+            )
+            if not cart["items"]:
+                added = VendorOrderService.update_cart(
+                    company_id=self.company_id,
+                    conversation_id=self._context["conversation_id"],
+                    items=[{"product_query": product_query, "quantity": quantity}],
+                )
+                if isinstance(added, dict) and added.get("success") is False:
+                    return added
         return VendorOrderService.create_pending_order(
             company_id=self.company_id,
             conversation_id=self._context["conversation_id"],
