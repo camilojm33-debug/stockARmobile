@@ -9,6 +9,7 @@ from flask_login import current_user
 from sqlalchemy import func, or_
 
 from app import db, tenant_required, scope_query_to_company
+from stockarmobile.decorators import ai_pro_crm_required
 from crm_models import CRMActivity, CRMOpportunity
 
 bp = Blueprint("crm", __name__)
