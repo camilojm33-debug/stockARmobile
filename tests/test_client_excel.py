@@ -168,4 +168,4 @@ def test_client_excel_template_is_exposed_in_client_screen():
     assert "Exportar Excel" in html
     assert "Importar Excel" in html
     assert "Descargar plantilla" in html
-    assert "enctype="multipart/form-data"" in html
+    assert 'enctype="multipart/form-data"' in html
