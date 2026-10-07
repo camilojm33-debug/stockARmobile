@@ -34,12 +34,36 @@ def test_runtime_idempotent_retry_returns_original_assistant_content(qa_ai_datab
     assert result["content"] == "respuesta original"
 
 
-def test_public_vendor_limits_fail_closed_without_redis_in_production(monkeypatch):
+def test_public_vendor_limits_fallback_without_redis_in_production(qa_ai_database, monkeypatch):
     from ai_agents import _public_vendor_rate_limit
     from services.ai_agent.vendor_publication import _write_rate_limit
+    from stockarmobile.models.conversations import Agent, Conversation
+
+    company = qa_ai_database["companies"]["vendedor"]
+    agent = Agent.query.filter_by(company_id=company.id).first()
+    conversation = Conversation(
+        company_id=company.id,
+        agent_id=agent.id,
+        channel="webchat",
+        external_conversation_id="qa-rate-visitor",
+        status="open",
+    )
+    db = stock_app.db
+    db.session.add(conversation)
+    db.session.flush()
 
     monkeypatch.delenv("REDIS_URL", raising=False)
     monkeypatch.setitem(stock_app.app.config, "IS_PRODUCTION_ENV", True)
     with stock_app.app.test_request_context("/"):
-        assert _public_vendor_rate_limit(12345) is False
-        assert _write_rate_limit(12345, "cart", limit=30) is False
+        assert _public_vendor_rate_limit(
+            company.id,
+            conversation_id=conversation.id,
+            request_key="qa-rate-message",
+        ) is True
+        assert _write_rate_limit(
+            company.id,
+            "cart",
+            limit=30,
+            conversation_id=conversation.id,
+            request_key="qa-rate-cart",
+        ) is True
