@@ -34,15 +34,23 @@ def test_runtime_idempotent_retry_returns_original_assistant_content(qa_ai_datab
     assert result["content"] == "respuesta original"
 
 
-def test_public_vendor_limits_fail_closed_without_redis_in_production(monkeypatch):
+def test_public_vendor_limits_degrade_safely_without_redis_in_production(monkeypatch):
     from ai_agents import _public_vendor_rate_limit
     from services.ai_agent.vendor_publication import _write_rate_limit
 
     monkeypatch.delenv("REDIS_URL", raising=False)
     monkeypatch.setitem(stock_app.app.config, "IS_PRODUCTION_ENV", True)
-    with stock_app.app.test_request_context("/"):
-        assert _public_vendor_rate_limit(12345) is False
-        assert _write_rate_limit(12345, "cart", limit=30) is False
+    with stock_app.app.app_context():
+        with stock_app.app.test_request_context("/"):
+            # Chat can use its durable database fallback when Redis is absent.
+            monkeypatch.setattr(_public_vendor_rate_limit.__globals__["PublicVendorOperation"], "query", type("FakeQuery", (), {
+                "filter": lambda self, *args, **kwargs: self,
+                "count": lambda self: 0,
+            })(), raising=False)
+            assert _public_vendor_rate_limit(12345, conversation_id=77, visitor_id="visitor-1") is True
+            # Cart/checkout writes remain fail-closed without Redis until their
+            # own durable fallback is available.
+            assert _write_rate_limit(12345, "cart", limit=30) is False
 
 
 
@@ -62,9 +70,8 @@ def test_public_vendor_rate_limit_uses_database_when_redis_missing(monkeypatch):
 
     monkeypatch.delenv("REDIS_URL", raising=False)
     monkeypatch.setitem(stock_app.app.config, "IS_PRODUCTION_ENV", True)
-    monkeypatch.setattr(ai_agents.PublicVendorOperation, "query", FakeQuery(2), raising=False)
-
     with stock_app.app.app_context():
+        monkeypatch.setattr(ai_agents.PublicVendorOperation, "query", FakeQuery(2), raising=False)
         with stock_app.app.test_request_context("/"):
             assert ai_agents._public_vendor_rate_limit(
                 12345,
