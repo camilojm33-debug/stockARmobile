@@ -22,12 +22,17 @@ def test_main_sidebar_owns_scroll_in_navigation_area():
 
 def test_sidebar_final_stylesheet_owns_scroll_behavior():
     template = Path("static/assets/css/styles.css").read_text(encoding="utf-8")
-    marker = "/* Sidebar scroll final: el nav es la única zona desplazable. */"
+    marker = "/* Sidebar scroll definitivo: viewport acotado igual que un panel flotante. */"
     assert marker in template
     final_css = template.split(marker, 1)[1]
+
     assert ".app-sidebar > .app-nav" in final_css
+    assert "position: absolute !important;" in final_css
+    assert "top: 64px !important;" in final_css
+    assert "bottom: 76px !important;" in final_css
     assert "overflow-y: scroll !important;" in final_css
-    assert "flex: 1 1 auto !important;" in final_css
+    assert "touch-action: pan-y !important;" in final_css
     assert ".app-sidebar > .app-sidebar-footer" in final_css
-    assert "position: relative !important;" in final_css
+    assert "position: absolute !important;" in final_css
+    assert "bottom: 0 !important;" in final_css
     assert "@media (max-width: 1099.98px)" in final_css
