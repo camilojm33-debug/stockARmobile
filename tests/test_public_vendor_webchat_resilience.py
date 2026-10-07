@@ -563,3 +563,30 @@ def test_webchat_frontend_guards_click_enter_and_manual_retries():
     assert "event.key === 'Enter' && !event.shiftKey" in source
     assert "send.textContent = activeChatOperation ? 'Reintentar' : 'Enviar';" in source
     assert "assistant_message_id" in source
+
+
+def test_production_without_redis_uses_database_rate_limit(qa_public_vendor_setup, monkeypatch):
+    import ai_agents
+
+    monkeypatch.delenv("REDIS_URL", raising=False)
+    monkeypatch.setitem(qa_public_vendor_setup["app"].config, "IS_PRODUCTION_ENV", True)
+
+    provider = SequenceProvider([{"content": "Hola.", "tool_call": None}])
+    _install_provider(monkeypatch, provider)
+    client = _public_client(qa_public_vendor_setup)
+    response = _post_message(
+        client,
+        qa_public_vendor_setup,
+        "operation-production-db-rate-limit",
+        "Hola.",
+    )
+
+    # The absence of the optional Redis accelerator must not make WebChat fail closed.
+    assert response.status_code != 429
+    assert response.is_json
+
+    monkeypatch.setattr(
+        ai_agents,
+        "_public_vendor_rate_limit",
+        lambda *args, **kwargs: False,
+    )

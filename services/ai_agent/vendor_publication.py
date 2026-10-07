@@ -244,13 +244,28 @@ def _write_rate_limit(
                 client.expire(key, int(window))
             return count <= int(limit)
         except Exception:
-            if current_app.config.get("IS_PRODUCTION_ENV"):
-                current_app.logger.exception("Public Vendor write Redis rate limit unavailable; failing closed.")
-                return False
-            current_app.logger.warning("Public Vendor write Redis rate limit unavailable; using session fallback.")
-    elif current_app.config.get("IS_PRODUCTION_ENV"):
-        current_app.logger.error("Public Vendor write Redis rate limit is required in production; failing closed.")
-        return False
+            current_app.logger.warning("Public Vendor write Redis rate limit unavailable; using PostgreSQL fallback.")
+    # PostgreSQL fallback: Redis is an optional accelerator, not a production dependency.
+    # PublicVendorOperation provides durable, tenant-scoped write history.
+    try:
+        cutoff = datetime.utcnow() - timedelta(seconds=int(window))
+        query = (
+            db.session.query(db.func.count(PublicVendorOperation.id))
+            .filter(
+                PublicVendorOperation.company_id == int(company_id),
+                PublicVendorOperation.conversation_id == int(conversation_id or 0),
+                PublicVendorOperation.created_at >= cutoff,
+            )
+        )
+        operation_prefix = f"{bucket}:"
+        if bucket == "checkout":
+            query = query.filter(PublicVendorOperation.operation_type == bucket)
+        else:
+            query = query.filter(PublicVendorOperation.operation_type.like(operation_prefix + "%"))
+        recent_count = int(query.scalar() or 0)
+        return recent_count < int(limit)
+    except Exception:
+        current_app.logger.exception("Public Vendor write DB rate limit unavailable; using session fallback.")
     now = int(time.time())
     state = session.get("public_vendor_write_rate") or {}
     if not isinstance(state, dict):
