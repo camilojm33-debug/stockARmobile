@@ -816,7 +816,9 @@ def _smtp_helo_name() -> str:
 def _smtp_server(host: str, port: int, timeout: int = 30, use_tls: bool = True, helo_name: str | None = None):
     helo = helo_name or _smtp_helo_name()
     if int(port) == 465:
-        return _SMTPSSLIPv4(host, port, timeout=timeout, local_hostname=helo)
+        server = _SMTPSSLIPv4(host, port, timeout=timeout, local_hostname=helo)
+        server.ehlo(helo)
+        return server
     server = _SMTPIPv4(host, port, timeout=timeout, local_hostname=helo)
     server.ehlo(helo)
     if use_tls:

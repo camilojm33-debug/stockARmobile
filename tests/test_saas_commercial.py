@@ -909,25 +909,17 @@ def test_smtp_probe_uses_ssl_for_port_465(app, monkeypatch):
 
         class FakeSMTPSSL:
             def __init__(self, *args, **kwargs):
-                pass
+                self.esmtp_features = {}
             def __enter__(self):
                 return self
             def __exit__(self, *args):
                 return False
-            def ehlo(self):
-                return None
+            def ehlo(self, *args):
+                self.esmtp_features = {"auth": "PLAIN"}
             def login(self, *args):
                 return None
 
-        class FakeContext:
-            def __enter__(self):
-                server = FakeSMTPSSL()
-                server.esmtp_features = {"auth": "PLAIN"}
-                return server
-            def __exit__(self, *args):
-                return False
-
-        monkeypatch.setattr("services.saas_commercial_service._smtp_server", lambda *args, **kwargs: FakeContext())
+        monkeypatch.setattr("services.saas_commercial_service._SMTPSSLIPv4", FakeSMTPSSL)
         ok, detail = _smtp_probe()
         assert ok is True
         assert "465" in detail
