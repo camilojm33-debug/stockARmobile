@@ -571,6 +571,8 @@ def test_production_without_redis_uses_database_rate_limit(qa_public_vendor_setu
     monkeypatch.delenv("REDIS_URL", raising=False)
     monkeypatch.setitem(qa_public_vendor_setup["app"].config, "IS_PRODUCTION_ENV", True)
 
+    provider = SequenceProvider([{"content": "Hola.", "tool_call": None}])
+    _install_provider(monkeypatch, provider)
     client = _public_client(qa_public_vendor_setup)
     response = _post_message(
         client,
