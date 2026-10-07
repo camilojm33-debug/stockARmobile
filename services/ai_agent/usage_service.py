@@ -28,6 +28,7 @@ AI_FEATURE_LABELS = {
     "facturas": "Reconocimiento de facturas con IA",
     "pricing_controller": "Controlador global de precios con IA",
     "pricing_rollback": "Rollback de precios con IA",
+    "crm": "CRM comercial",
 }
 
 
@@ -108,6 +109,9 @@ def can_use_ai_feature(company, feature: str) -> AIAccess:
         return AIAccess(False, f"El plan IA de tu empresa está {labels[status]}. Contactá a soporte.", plan)
     if status == "PENDIENTE":
         return AIAccess(False, "Tu plan IA está pendiente de activación.", plan)
+
+    if key == "crm" and plan["code"] != "pro":
+        return AIAccess(False, "CRM comercial requiere IA PRO.", plan)
 
     if key in AI_FEATURE_LABELS:
         if key == "facturas" and not plan.get("invoice_processing", False):
