@@ -165,6 +165,191 @@ def test_standard_plan_change_offers_qr_and_monthly_destinations(subscription_ap
     assert "Suscripción mensual en Mercado Pago" in html
 
 
+def test_pending_standard_checkout_can_be_replaced_with_cheaper_plan(subscription_app, monkeypatch):
+    company, user, _, active_subscription = _tenant_with_standard_subscription()
+    premium = Plan(code="premium", name="Premium", price=54999, currency="ARS", duration_days=30, active=True)
+    cheaper = Plan(code="entrepreneur", name="Emprendedor", price=12999, currency="ARS", duration_days=30, active=True)
+    db.session.add_all([premium, cheaper])
+    db.session.flush()
+    command = SubscriptionService.ChangePlanCommand(
+        company_id=company.id,
+        plan_id=premium.id,
+        actor_user_id=user.id,
+        actor_role=user.role,
+        origin="portal_confirm",
+        idempotency_key="pending-premium-checkout",
+    )
+    pending_result = SubscriptionService.run_command(db.session, command)
+    old_pending = db.session.get(Subscription, pending_result.subscription_id)
+    from services.billing_notification_service import NotificationService
+
+    NotificationService.record_event(
+        db.session,
+        company_id=company.id,
+        subscription_id=old_pending.id,
+        event="checkout_preference_created",
+        detail="Preference old-premium para Premium",
+        source="mercadopago",
+        status="pending",
+        event_id="old-premium-preference",
+        payload={"id": "old-premium-preference", "init_point": "https://mp.test/old-premium"},
+        user_id=user.id,
+    )
+    db.session.commit()
+    old_pending_id = old_pending.id
+    cheaper_id = cheaper.id
+    created = {}
+
+    def create_checkout(self, *, db_session, company, plan, user, subscription):
+        created["subscription"] = subscription
+        return {
+            "subscription": subscription,
+            "preference": {"id": "cheaper-preference", "init_point": "https://mp.test/cheaper"},
+        }
+
+    monkeypatch.setattr("company_billing.BillingService.create_checkout_for_plan", create_checkout)
+    client = subscription_app.test_client()
+    _login(client, user)
+
+    response = client.post("/admin/subscription/change", data={"plan_id": cheaper_id})
+
+    assert response.status_code == 302
+    assert "checkout_preference_id=cheaper-preference" in response.headers["Location"]
+    assert created["subscription"].plan_id == cheaper_id
+    db.session.refresh(old_pending)
+    db.session.refresh(active_subscription)
+    assert old_pending.status == SubscriptionService.STATE_CANCELLED
+    assert SubscriptionService._metadata_dict(old_pending)["checkout_superseded"] is True
+    assert active_subscription.status == SubscriptionService.STATE_ACTIVE
+    assert Subscription.query.filter_by(company_id=company.id, plan_id=cheaper_id, status=SubscriptionService.STATE_PENDING_PAYMENT).count() == 1
+
+
+def test_plan_change_replacement_is_blocked_when_old_payment_is_in_process(subscription_app, monkeypatch):
+    company, user, _, _ = _tenant_with_standard_subscription()
+    premium = Plan(code="premium_in_process", name="Premium", price=54999, currency="ARS", duration_days=30, active=True)
+    cheaper = Plan(code="entrepreneur_in_process", name="Emprendedor", price=12999, currency="ARS", duration_days=30, active=True)
+    db.session.add_all([premium, cheaper])
+    db.session.flush()
+    result = SubscriptionService.run_command(
+        db.session,
+        SubscriptionService.ChangePlanCommand(
+            company_id=company.id,
+            plan_id=premium.id,
+            actor_user_id=user.id,
+            actor_role=user.role,
+            origin="portal_confirm",
+            idempotency_key="pending-premium-in-process",
+        ),
+    )
+    pending = db.session.get(Subscription, result.subscription_id)
+    from services.billing_notification_service import NotificationService
+
+    NotificationService.record_event(
+        db.session,
+        company_id=company.id,
+        subscription_id=pending.id,
+        event="checkout_preference_created",
+        detail="Preference old-premium-in-process",
+        source="mercadopago",
+        status="pending",
+        event_id="old-premium-in-process-preference",
+        payload={"id": "old-premium-in-process-preference", "init_point": "https://mp.test/old-premium"},
+        user_id=user.id,
+    )
+    payment = Payment(
+        payment_id="12345678901",
+        preference_id="old-premium-in-process-preference",
+        external_reference="old-premium-in-process",
+        company_id=company.id,
+        subscription_id=pending.id,
+        user_id=user.id,
+        amount=54999,
+        currency="ARS",
+        status="in_process",
+        provider="mercadopago",
+    )
+    db.session.add(payment)
+    db.session.commit()
+    pending_id = pending.id
+    cheaper_id = cheaper.id
+    calls = []
+    monkeypatch.setattr(
+        "company_billing.BillingService.create_checkout_for_plan",
+        lambda *args, **kwargs: calls.append("created"),
+    )
+    client = subscription_app.test_client()
+    _login(client, user)
+
+    response = client.post("/admin/subscription/change", data={"plan_id": cheaper_id})
+
+    assert response.status_code == 302
+    assert f"checkout_subscription_id={pending_id}" in response.headers["Location"]
+    assert calls == []
+    db.session.refresh(pending)
+    assert pending.status == SubscriptionService.STATE_PENDING_PAYMENT
+    assert Subscription.query.filter_by(company_id=company.id, plan_id=cheaper_id).count() == 0
+
+
+def test_pending_standard_monthly_checkout_can_be_replaced_with_cheaper_plan(subscription_app, monkeypatch):
+    company, user, _, active_subscription = _tenant_with_standard_subscription()
+    premium = Plan(code="premium_monthly", name="Premium", price=54999, currency="ARS", duration_days=30, active=True)
+    cheaper = Plan(code="entrepreneur_monthly", name="Emprendedor", price=12999, currency="ARS", duration_days=30, active=True)
+    db.session.add_all([premium, cheaper])
+    db.session.flush()
+    result = SubscriptionService.run_command(
+        db.session,
+        SubscriptionService.ChangePlanCommand(
+            company_id=company.id,
+            plan_id=premium.id,
+            actor_user_id=user.id,
+            actor_role=user.role,
+            origin="portal_confirm",
+            idempotency_key="pending-premium-monthly",
+        ),
+    )
+    old_pending = db.session.get(Subscription, result.subscription_id)
+    SubscriptionService._set_metadata(
+        old_pending,
+        {"mercadopago_preapproval_id": "old-premium-preapproval", "mercadopago_status": "pending"},
+    )
+    db.session.commit()
+    cheaper_id = cheaper.id
+    calls = []
+
+    def get_preapproval(self, preapproval_id):
+        calls.append(("get", preapproval_id))
+        return {"id": preapproval_id, "status": "pending"}
+
+    def cancel_preapproval(self, preapproval_id):
+        calls.append(("cancel", preapproval_id))
+        return {"id": preapproval_id, "status": "cancelled"}
+
+    def create_preapproval(*, db_session, company, subscription, plan, payer_email, notification_url, back_url):
+        calls.append(("create", subscription.plan_id))
+        return {"id": "cheaper-preapproval", "init_point": "https://mp.test/cheaper-monthly", "status": "pending"}
+
+    monkeypatch.setattr("services.mercadopago_service.MercadoPagoService.get_preapproval", get_preapproval)
+    monkeypatch.setattr("services.mercadopago_service.MercadoPagoService.cancel_preapproval", cancel_preapproval)
+    monkeypatch.setattr("services.mercadopago_subscription_service.MercadoPagoSubscriptionService.create", create_preapproval)
+    client = subscription_app.test_client()
+    _login(client, user)
+
+    response = client.post("/admin/subscription/mercadopago/create", data={"plan_id": cheaper_id})
+
+    assert response.status_code == 302
+    assert response.headers["Location"] == "https://mp.test/cheaper-monthly"
+    assert calls == [
+        ("get", "old-premium-preapproval"),
+        ("cancel", "old-premium-preapproval"),
+        ("create", cheaper_id),
+    ]
+    db.session.refresh(old_pending)
+    db.session.refresh(active_subscription)
+    assert old_pending.status == SubscriptionService.STATE_CANCELLED
+    assert active_subscription.status == SubscriptionService.STATE_ACTIVE
+    assert Subscription.query.filter_by(company_id=company.id, plan_id=cheaper_id, status=SubscriptionService.STATE_PENDING_PAYMENT).count() == 1
+
+
 def test_standard_active_ai_active_blocks_same_ai_plan_only(subscription_app, monkeypatch):
     company, user, _, subscription = _tenant_with_standard_subscription()
     update_ai_preferences(company, ai_updates={"plan_code": "inicio", "status": "ACTIVA", "origin": "MERCADO_PAGO", "mercadopago_preapproval_id": "ai-pre"})
@@ -432,6 +617,88 @@ def test_standard_webhook_updates_only_standard_subscription(subscription_app, m
     assert subscription.status == SubscriptionService.STATE_ACTIVE
     assert subscription.auto_renew is True
     assert AISubscriptionService.get_status(company) == ai_before
+
+
+def test_late_approved_superseded_checkout_is_refunded_without_disabling_company(subscription_app, monkeypatch):
+    company, user, _, active_subscription = _tenant_with_standard_subscription()
+    premium = Plan(code="premium_stale", name="Premium", price=54999, currency="ARS", duration_days=30, active=True)
+    db.session.add(premium)
+    db.session.flush()
+    result = SubscriptionService.run_command(
+        db.session,
+        SubscriptionService.ChangePlanCommand(
+            company_id=company.id,
+            plan_id=premium.id,
+            actor_user_id=user.id,
+            actor_role=user.role,
+            origin="portal_confirm",
+            idempotency_key="stale-premium-checkout",
+        ),
+    )
+    old_subscription = db.session.get(Subscription, result.subscription_id)
+    SubscriptionService._close_for_change(
+        old_subscription,
+        now=stock_app.utcnow(),
+        actor_user_id=user.id,
+        origin="portal_confirm_replaced",
+    )
+    SubscriptionService._set_metadata(old_subscription, {"pending_plan_change": False, "checkout_superseded": True})
+    company.active = True
+    payment = Payment(
+        payment_id="123456789",
+        preference_id="old-premium-preference",
+        external_reference=(
+            f"company_id:{company.id}|plan_id:{premium.id}|subscription_id:{old_subscription.id}|"
+            f"user_id:{user.id}|checkout_attempt:1"
+        ),
+        company_id=company.id,
+        subscription_id=old_subscription.id,
+        user_id=user.id,
+        amount=54999,
+        currency="ARS",
+        status="pending",
+        provider="mercadopago",
+    )
+    db.session.add(payment)
+    db.session.commit()
+    payment_data = {
+        "id": payment.payment_id,
+        "status": "approved",
+        "external_reference": payment.external_reference,
+        "transaction_amount": 54999,
+        "currency_id": "ARS",
+        "date_approved": "2026-10-07T20:00:00Z",
+        "date_last_updated": "2026-10-07T20:00:00Z",
+        "payment_method_id": "account_money",
+        "order": {"id": payment.preference_id},
+        "metadata": {"company_id": company.id, "plan_id": premium.id, "user_id": user.id},
+    }
+    service = WebhookService()
+    refunds = []
+    monkeypatch.setattr(service.mp_service, "validate_webhook_signature", lambda **kwargs: True)
+    monkeypatch.setattr(service.mp_service, "get_payment", lambda payment_id, **kwargs: payment_data)
+    monkeypatch.setattr(
+        service.mp_service,
+        "refund_payment",
+        lambda payment_id: refunds.append(payment_id) or {"id": "refund-1", "status": "approved"},
+    )
+
+    response = service.process(
+        db_session=db.session,
+        headers={"x-request-id": "rq-stale", "x-signature": "ts=1,v1=abc"},
+        payload={"id": "evt-stale", "type": "payment", "data": {"id": payment.payment_id}},
+    )
+
+    db.session.refresh(payment)
+    db.session.refresh(old_subscription)
+    db.session.refresh(active_subscription)
+    db.session.refresh(company)
+    assert response["status"] == "stale_payment_refunded"
+    assert refunds == [payment.payment_id]
+    assert payment.status == "refunded"
+    assert old_subscription.status == SubscriptionService.STATE_CANCELLED
+    assert active_subscription.status == SubscriptionService.STATE_ACTIVE
+    assert company.active is True
 
 
 def test_standard_auto_subscription_checkout_works_when_ai_is_active(subscription_app, monkeypatch):

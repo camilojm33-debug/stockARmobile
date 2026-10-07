@@ -74,6 +74,27 @@ def test_cancel_preapproval_uses_mercado_pago_cancelled_status(monkeypatch):
     assert captured["idempotency_key"] == "preapproval-update:preapproval-test:cancelled"
 
 
+def test_superseded_plan_payment_refund_uses_idempotent_full_refund_endpoint(monkeypatch):
+    service = MercadoPagoService()
+    captured = {}
+
+    def fake_request(method, path, *, payload=None, access_token=None, idempotency_key=None):
+        captured.update(method=method, path=path, payload=payload, idempotency_key=idempotency_key)
+        return {"id": "refund-test", "status": "approved"}
+
+    monkeypatch.setattr(service, "_request", fake_request)
+
+    response = service.refund_payment("123456789")
+
+    assert response["status"] == "approved"
+    assert captured == {
+        "method": "POST",
+        "path": "/v1/payments/123456789/refunds",
+        "payload": None,
+        "idempotency_key": "superseded-plan-checkout-refund:123456789",
+    }
+
+
 def test_standard_preapproval_without_init_point_is_not_reused(monkeypatch):
     calls = []
     company = SimpleNamespace(id=1)

@@ -125,6 +125,16 @@ class MercadoPagoService:
 
     def get_payment(self, payment_id: str, *, access_token: str | None = None) -> dict[str, Any]:
         return self._request("GET", f"/v1/payments/{payment_id}", access_token=access_token)
+    def refund_payment(self, payment_id: str) -> dict[str, Any]:
+        payment_id = str(payment_id or "").strip()
+        if not payment_id.isdigit():
+            raise ValueError("Mercado Pago requiere un payment_id numérico para solicitar el reembolso.")
+        return self._request(
+            "POST",
+            f"/v1/payments/{payment_id}/refunds",
+            payload=None,
+            idempotency_key=f"superseded-plan-checkout-refund:{payment_id}",
+        )
     def get_preapproval(self, preapproval_id: str) -> dict[str, Any]: return self._request("GET", f"/preapproval/{preapproval_id}")
     def get_authorized_payment(self, authorized_payment_id: str) -> dict[str, Any]: return self._request("GET", f"/authorized_payments/{authorized_payment_id}")
 

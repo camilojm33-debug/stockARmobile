@@ -542,9 +542,34 @@ class WebhookService:
                     SubscriptionService._metadata_dict(subscription).get("closed_reason") == "plan_change"
                 )
                 if is_replaced_subscription:
+                    stale_refund_status = None
+                    if payment_status == "approved":
+                        refund = self.mp_service.refund_payment(str(payment.payment_id or ""))
+                        stale_refund_status = str(refund.get("status") or "").strip().lower()
+                        if stale_refund_status not in {"approved", "refunded", "pending", "in_process"}:
+                            raise RuntimeError("Mercado Pago no confirmó el reembolso del checkout reemplazado.")
+                        payment.status = (
+                            "refunded"
+                            if stale_refund_status in {"approved", "refunded"}
+                            else "refund_pending"
+                        )
+                        NotificationService.record_event(
+                            db_session,
+                            company_id=company.id,
+                            payment_id=payment.id,
+                            subscription_id=subscription.id,
+                            event="superseded_plan_checkout_refund",
+                            detail="Se recibió el pago de un checkout reemplazado y se solicitó su reembolso; el plan no fue activado.",
+                            source="mercadopago",
+                            status=stale_refund_status,
+                            event_id=f"superseded-plan-refund:{payment.payment_id}",
+                            payload={"refund_id": refund.get("id"), "refund_status": stale_refund_status},
+                            user_id=payment.user_id,
+                        )
                     result = {
-                        "status": "stale_payment_for_replaced_subscription",
+                        "status": "stale_payment_refunded" if stale_refund_status else "stale_payment_for_replaced_subscription",
                         "payment_status": payment_status,
+                        "refund_status": stale_refund_status,
                         "subscription_id": subscription.id,
                         "event_key": event_key,
                     }
@@ -561,7 +586,7 @@ class WebhookService:
                     else:
                         SubscriptionService.apply_payment_status(subscription, payment_status)
                 is_pending_plan_change = bool(SubscriptionService._metadata_dict(subscription).get("pending_plan_change"))
-                if not is_pending_plan_change:
+                if not is_pending_plan_change and not is_replaced_subscription:
                     company.active = subscription.status in {"active", "approved", "trial"}
                 if subscription.status in {"active", "approved"}:
                     if payment.invoice_id is None:
@@ -571,7 +596,8 @@ class WebhookService:
 
                 user = User.query.filter_by(id=payment.user_id).first() if payment.user_id else None
                 NotificationService.record_event(db_session, company_id=company.id, payment_id=payment.id, subscription_id=subscription.id, invoice_id=payment.invoice_id, event="mercadopago_webhook_payment", detail=f"Pago {payment.payment_id} en estado {payment.status}", source="mercadopago", status=payment.status, event_id=event_key, payload=payment_data, user_id=user.id if user else None)
-                result = {"status": "processed", "payment_status": payment_status, "event_key": event_key}
+                if not is_replaced_subscription:
+                    result = {"status": "processed", "payment_status": payment_status, "event_key": event_key}
 
         elif event_type in {"preapproval", "subscription_preapproval"}:
             preapproval_data = self.mp_service.get_preapproval(data_id)
