@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import base64
+import hashlib
 import io
 import json
 import os
@@ -18,7 +19,7 @@ from sqlalchemy import or_
 from stockarmobile.decorators import company_admin_required
 from stockarmobile.tenant import get_current_company_id
 from stockarmobile.extensions import csrf, db
-from stockarmobile.models.conversations import Conversation
+from stockarmobile.models.conversations import Conversation, ConversationMessage, PublicVendorOperation
 from services.ai_agent.config_service import (
     get_ai_preferences,
     update_ai_preferences,
@@ -27,6 +28,13 @@ from services.ai_agent.config_service import (
     get_vendor_options,
 )
 from services.ai_agent.usage_service import can_use_ai, can_use_ai_feature
+from services.ai_agent.public_idempotency import (
+    PublicOperationConflict,
+    cached_result,
+    complete_operation,
+    get_or_create_operation,
+    public_operation_lock,
+)
 from services.ai_agent.vendor_order_service import (
     CART_KEY,
     PENDING_PAYMENT_KEY,
@@ -170,17 +178,35 @@ def _visitor_id(company_id: int) -> str:
     return value
 
 
-def _rate_limit(company_id: int) -> bool:
+def _public_request_key(payload: dict) -> str | None:
+    raw = request.headers.get("Idempotency-Key") or payload.get("idempotency_key")
+    key = str(raw or "").strip()
+    return key if key and len(key) <= 120 else None
+
+
+def _rate_limit(company_id: int, *, conversation_id=None, request_key=None) -> bool:
     # Reuse the existing public Vendedor guard when available.
     try:
         from ai_agents import _public_vendor_rate_limit
-        return _public_vendor_rate_limit(company_id)
+        return _public_vendor_rate_limit(
+            company_id,
+            conversation_id=conversation_id,
+            request_key=request_key,
+        )
     except Exception:
         current_app.logger.exception("Public Vendor rate limiter unavailable; failing closed.")
         return False
 
 
-def _write_rate_limit(company_id: int, action: str, *, limit: int, window: int = 60) -> bool:
+def _write_rate_limit(
+    company_id: int,
+    action: str,
+    *,
+    limit: int,
+    window: int = 60,
+    conversation_id=None,
+    request_key=None,
+) -> bool:
     """Rate-limit anonymous Webchat writes independently from AI chat messages."""
     remote = (request.remote_addr or "unknown").strip()
     bucket = str(action or "write").strip().lower()
@@ -195,6 +221,24 @@ def _write_rate_limit(company_id: int, action: str, *, limit: int, window: int =
                 decode_responses=True,
             )
             key = f"stockarmobile:public-vendor-write:{int(company_id)}:{bucket}:{remote}"
+            if request_key:
+                digest = hashlib.sha256(str(request_key).encode()).hexdigest()
+                operation_key = f"{key}:operation:{int(conversation_id or 0)}:{digest}"
+                result = client.eval(
+                    "local known = redis.call('EXISTS', KEYS[2]); "
+                    "if known == 1 then return 1 end; "
+                    "local count = redis.call('INCR', KEYS[1]); "
+                    "if count == 1 then redis.call('EXPIRE', KEYS[1], ARGV[2]) end; "
+                    "if count > tonumber(ARGV[1]) then redis.call('SET', KEYS[2], '0', 'EX', ARGV[2]); return 0 end; "
+                    "redis.call('SET', KEYS[2], '1', 'EX', ARGV[3]); return 1",
+                    2,
+                    key,
+                    operation_key,
+                    int(limit),
+                    int(window),
+                    86400,
+                )
+                return bool(result)
             count = int(client.incr(key))
             if count == 1:
                 client.expire(key, int(window))
@@ -213,13 +257,31 @@ def _write_rate_limit(company_id: int, action: str, *, limit: int, window: int =
         state = {}
     entry = state.get(bucket) or {}
     if now - int(entry.get("started_at", 0) or 0) >= int(window):
-        state[bucket] = {"started_at": now, "count": 1}
+        request_scope = f"{conversation_id}:{request_key}" if request_key else None
+        state[bucket] = {"started_at": now, "count": 1, "operations": [request_scope] if request_scope else []}
         session["public_vendor_write_rate"] = state
+        return True
+    request_scope = (
+        f"{conversation_id}:{hashlib.sha256(str(request_key).encode()).hexdigest()}"
+        if request_key
+        else None
+    )
+    operations = entry.get("operations") if isinstance(entry.get("operations"), list) else []
+    if request_scope and request_scope in operations:
         return True
     count = int(entry.get("count", 0) or 0)
     if count >= int(limit):
+        if request_scope:
+            operations.append(request_scope)
+            entry["operations"] = operations[-100:]
+            state[bucket] = entry
+            session["public_vendor_write_rate"] = state
+            session.modified = True
         return False
     entry["count"] = count + 1
+    if request_scope:
+        operations.append(request_scope)
+        entry["operations"] = operations[-100:]
     state[bucket] = entry
     session["public_vendor_write_rate"] = state
     session.modified = True
@@ -315,6 +377,93 @@ def _cart_public_state(conversation) -> dict:
         "delivery": state.get("delivery") or None,
         "shipping_config": shipping_config,
         "order": last_order,
+    }
+
+
+def recover_committed_order_reply(*, company, conversation, operation, incoming, visitor_id: str):
+    """Finish a chat turn from its committed pending quote without rerunning tools."""
+    from app import Payment, Quote
+    from stockarmobile.models.conversations import Agent
+    from services.ai_agent.vendor_order_service import _ai_order_external_reference
+
+    quote_id = getattr(operation, "quote_id", None)
+    if not quote_id:
+        return None
+    state = _conversation_metadata(conversation)
+    if str(state.get(PENDING_QUOTE_KEY) or "") != str(quote_id):
+        return None
+    quote = Quote.query.filter_by(
+        id=int(quote_id),
+        company_id=int(company.id),
+        observations="Pedido generado por el Vendedor 24 hs de StockARmobile.",
+    ).first()
+    if quote is None:
+        return None
+    external_reference = _ai_order_external_reference(
+        company_id=company.id,
+        quote_id=quote.id,
+        conversation_id=conversation.id,
+        user_id=quote.created_by_user_id,
+    )
+    payment = Payment.query.filter_by(
+        company_id=company.id,
+        provider="mercadopago_ai_order",
+        external_reference=external_reference,
+    ).first()
+    payment_url = str(state.get(PENDING_PAYMENT_KEY) or "").strip()
+    if payment is None or not (payment.preference_id or payment_url):
+        return None
+    assistant = ConversationMessage.query.filter_by(
+        company_id=company.id,
+        conversation_id=conversation.id,
+        trace_id=operation.trace_id or incoming.trace_id,
+        role="assistant",
+    ).order_by(ConversationMessage.id.desc()).first()
+    if assistant is None:
+        if payment.status == "approved":
+            content = f"El pago del pedido {quote.number} figura aprobado. El pedido sigue pendiente de confirmación de venta."
+        else:
+            content = (
+                f"Tu pedido {quote.number} quedó preparado por ${float(quote.total_amount or 0):.2f}, "
+                "con el envío incluido. El pago sigue pendiente; podés continuar desde el link de pago."
+            )
+        assistant = ConversationMessage(
+            conversation_id=conversation.id,
+            company_id=company.id,
+            sender_type="agent",
+            sender_id=conversation.agent_id,
+            role="assistant",
+            content=content,
+            content_type="text",
+            trace_id=operation.trace_id or incoming.trace_id,
+            metadata_json={
+                "channel": "webchat",
+                "agent_key": "vendedor",
+                "public_operation_recovered": True,
+            },
+        )
+        db.session.add(assistant)
+        db.session.flush()
+        agent = db.session.get(Agent, conversation.agent_id)
+        if agent is not None:
+            from services.ai_agent.usage_service import record_ai_usage
+
+            record_ai_usage(
+                company_id=company.id,
+                agent_id=agent.id,
+                conversation_id=conversation.id,
+                user_id=None,
+                external_actor_id=visitor_id,
+                interaction_type="vendedor",
+                message_id=assistant.id,
+            )
+    return {
+        "status": "completed",
+        "conversation_id": conversation.id,
+        "message_id": incoming.id,
+        "assistant_message_id": assistant.id,
+        "content": assistant.content,
+        "trace_id": operation.trace_id or incoming.trace_id,
     }
 
 
@@ -445,72 +594,103 @@ def public_vendor_cart(slug: str):
     company = _public_available_company(slug)
     if company is None:
         return jsonify({"success": False, "error": "El vendedor no está publicado."}), 404
-    access = can_use_ai(company, "vendedor")
-    if not access.allowed:
-        return jsonify({"success": False, "error": access.reason}), 403
-    if not _write_rate_limit(company.id, "cart", limit=30):
-        return jsonify({"success": False, "error": "Hay demasiadas modificaciones del carrito. Esperá unos segundos."}), 429, {"Retry-After": "60"}
-
     payload = request.get_json(silent=True) or {}
-    conversation = _public_conversation(company, payload.get("conversation_id"), create=True)
-    if conversation is None:
-        return jsonify({"success": False, "error": "La conversación no es válida."}), 403
+    if not isinstance(payload, dict):
+        return jsonify({"success": False, "error": "La solicitud debe ser un objeto JSON."}), 400
+    idempotency_key = _public_request_key(payload)
+    if idempotency_key is None:
+        return jsonify({"success": False, "error": "Falta una clave de idempotencia válida."}), 400
 
     action = str(payload.get("action") or "add").strip().lower()
+    if action not in {"add", "remove"}:
+        return jsonify({"success": False, "error": "Acción inválida."}), 400
     try:
         product_id = int(payload.get("product_id"))
     except (TypeError, ValueError):
         return jsonify({"success": False, "error": "Producto inválido."}), 400
+    quantity = 1
+    if action == "add":
+        try:
+            quantity = float(payload.get("quantity", 1))
+        except (TypeError, ValueError):
+            quantity = 0
+        if quantity <= 0 or quantity > 1000:
+            return jsonify({"success": False, "error": "Cantidad inválida."}), 400
 
-    try:
-        if action == "add":
-            try:
-                quantity = float(payload.get("quantity", 1))
-            except (TypeError, ValueError):
-                quantity = 0
-            if quantity <= 0 or quantity > 1000:
-                return jsonify({"success": False, "error": "Cantidad inválida."}), 400
-            VendorOrderService.update_cart(
+    visitor_id = _visitor_id(company.id)
+    operation_type = f"cart:{action}"
+    with public_operation_lock(scope="visitor", company_id=company.id, conversation_id=0, key=visitor_id):
+        conversation = _public_conversation(company, payload.get("conversation_id"), create=True)
+        if conversation is None:
+            return jsonify({"success": False, "error": "La conversación no es válida."}), 403
+        with public_operation_lock(scope="request", company_id=company.id, conversation_id=conversation.id, key=idempotency_key):
+            operation = PublicVendorOperation.query.filter_by(
                 company_id=company.id,
                 conversation_id=conversation.id,
-                items=[{"product_id": product_id, "quantity": quantity}],
+                idempotency_key=idempotency_key,
+            ).first()
+            cached = cached_result(operation, operation_type=operation_type)
+            if cached is not None:
+                return jsonify(cached)
+            if operation is not None and operation.operation_type != operation_type:
+                return jsonify({"success": False, "error": "La clave ya pertenece a otra operación."}), 409
+            access = can_use_ai(company, "vendedor")
+            if not access.allowed:
+                return jsonify({"success": False, "error": access.reason}), 403
+            if operation is None and not _write_rate_limit(
+                company.id,
+                "cart",
+                limit=30,
+                conversation_id=conversation.id,
+                request_key=idempotency_key,
+            ):
+                return jsonify({"success": False, "error": "Hay demasiadas modificaciones del carrito. Esperá unos segundos."}), 429, {"Retry-After": "60"}
+
+            operation = get_or_create_operation(
+                company_id=company.id,
+                conversation_id=conversation.id,
+                idempotency_key=idempotency_key,
+                operation_type=operation_type,
             )
-        elif action == "remove":
-            state = _conversation_metadata(conversation)
-            cart = dict(state.get(CART_KEY) or {})
-            cart.pop(str(product_id), None)
-            state[CART_KEY] = cart
-            state.pop(PENDING_QUOTE_KEY, None)
-            state.pop(PENDING_PAYMENT_KEY, None)
-            conversation.metadata_json = state
-            db.session.flush()
-        else:
-            return jsonify({"success": False, "error": "Acción inválida."}), 400
-        db.session.commit()
-        return jsonify({"success": True, **_cart_public_state(conversation)})
-    except ValueError as exc:
-        db.session.rollback()
-        return jsonify({"success": False, "error": str(exc)}), 400
-    except Exception:
-        db.session.rollback()
-        current_app.logger.exception("Public Vendor cart failed company_id=%s", company.id)
-        return jsonify({"success": False, "error": "No se pudo actualizar el carrito."}), 500
+            try:
+                if action == "add":
+                    VendorOrderService.update_cart(
+                        company_id=company.id,
+                        conversation_id=conversation.id,
+                        items=[{"product_id": product_id, "quantity": quantity}],
+                    )
+                else:
+                    state = _conversation_metadata(conversation)
+                    cart = dict(state.get(CART_KEY) or {})
+                    cart.pop(str(product_id), None)
+                    state[CART_KEY] = cart
+                    state.pop(PENDING_QUOTE_KEY, None)
+                    state.pop(PENDING_PAYMENT_KEY, None)
+                    conversation.metadata_json = state
+                    db.session.flush()
+                response_payload = {"success": True, **_cart_public_state(conversation)}
+                complete_operation(operation, response_payload)
+                db.session.commit()
+                return jsonify(response_payload)
+            except ValueError as exc:
+                db.session.rollback()
+                return jsonify({"success": False, "error": str(exc)}), 400
+            except Exception:
+                db.session.rollback()
+                current_app.logger.exception("Public Vendor cart failed company_id=%s", company.id)
+                return jsonify({"success": False, "error": "No se pudo actualizar el carrito."}), 500
 
 
 def public_vendor_checkout(slug: str):
     company = _public_available_company(slug)
     if company is None:
         return jsonify({"success": False, "error": "El vendedor no está publicado."}), 404
-    access = can_use_ai(company, "vendedor")
-    if not access.allowed:
-        return jsonify({"success": False, "error": access.reason}), 403
-    if not _write_rate_limit(company.id, "checkout", limit=8):
-        return jsonify({"success": False, "error": "Hay demasiados intentos de checkout. Esperá unos segundos."}), 429, {"Retry-After": "60"}
-
     payload = request.get_json(silent=True) or {}
-    conversation = _public_conversation(company, payload.get("conversation_id"), create=True)
-    if conversation is None:
-        return jsonify({"success": False, "error": "La conversación no es válida."}), 403
+    if not isinstance(payload, dict):
+        return jsonify({"success": False, "error": "La solicitud debe ser un objeto JSON."}), 400
+    idempotency_key = _public_request_key(payload)
+    if idempotency_key is None:
+        return jsonify({"success": False, "error": "Falta una clave de idempotencia válida."}), 400
     customer_name = str(payload.get("customer_name") or "").strip()[:160]
     customer_phone = str(payload.get("customer_phone") or "").strip()[:40]
     if not customer_name or not customer_phone:
@@ -522,80 +702,224 @@ def public_vendor_checkout(slug: str):
     delivery_postal_code = str(payload.get("delivery_postal_code") or "").strip()[:20]
     delivery_reference = str(payload.get("delivery_reference") or "").strip()[:255]
     delivery_notes = str(payload.get("delivery_notes") or "").strip()[:2000]
-    try:
-        result = VendorOrderService.create_pending_order(
-            company_id=company.id,
-            conversation_id=conversation.id,
-            customer_name=customer_name,
-            customer_phone=customer_phone,
-            delivery_method=delivery_method,
-            delivery_address=delivery_address,
-            delivery_city=delivery_city,
-            delivery_province=delivery_province,
-            delivery_postal_code=delivery_postal_code,
-            delivery_reference=delivery_reference,
-            delivery_notes=delivery_notes,
-            actor_user_id=None,
-        )
-        db.session.commit()
-        return jsonify({"success": True, "conversation_id": conversation.id, "cart": _cart_public_state(conversation)["cart"], **result})
-    except ValueError as exc:
-        db.session.rollback()
-        return jsonify({"success": False, "error": str(exc)}), 400
-    except Exception:
-        db.session.rollback()
-        current_app.logger.exception("Public Vendor checkout failed company_id=%s", company.id)
-        return jsonify({"success": False, "error": "No se pudo preparar el pedido para el pago."}), 500
+    visitor_id = _visitor_id(company.id)
+    with public_operation_lock(scope="visitor", company_id=company.id, conversation_id=0, key=visitor_id):
+        conversation = _public_conversation(company, payload.get("conversation_id"), create=True)
+        if conversation is None:
+            return jsonify({"success": False, "error": "La conversación no es válida."}), 403
+        with public_operation_lock(scope="request", company_id=company.id, conversation_id=conversation.id, key=idempotency_key):
+            operation = PublicVendorOperation.query.filter_by(
+                company_id=company.id,
+                conversation_id=conversation.id,
+                idempotency_key=idempotency_key,
+            ).first()
+            cached = cached_result(operation, operation_type="checkout")
+            if cached is not None:
+                return jsonify(cached)
+            if operation is not None and operation.operation_type != "checkout":
+                return jsonify({"success": False, "error": "La clave ya pertenece a otra operación."}), 409
+            access = can_use_ai(company, "vendedor")
+            if not access.allowed:
+                return jsonify({"success": False, "error": access.reason}), 403
+            if operation is None and not _write_rate_limit(
+                company.id,
+                "checkout",
+                limit=8,
+                conversation_id=conversation.id,
+                request_key=idempotency_key,
+            ):
+                return jsonify({"success": False, "error": "Hay demasiados intentos de checkout. Esperá unos segundos."}), 429, {"Retry-After": "60"}
+
+            operation = get_or_create_operation(
+                company_id=company.id,
+                conversation_id=conversation.id,
+                idempotency_key=idempotency_key,
+                operation_type="checkout",
+            )
+            try:
+                result = VendorOrderService.create_pending_order(
+                    company_id=company.id,
+                    conversation_id=conversation.id,
+                    customer_name=customer_name,
+                    customer_phone=customer_phone,
+                    delivery_method=delivery_method,
+                    delivery_address=delivery_address,
+                    delivery_city=delivery_city,
+                    delivery_province=delivery_province,
+                    delivery_postal_code=delivery_postal_code,
+                    delivery_reference=delivery_reference,
+                    delivery_notes=delivery_notes,
+                    actor_user_id=None,
+                    idempotency_key=idempotency_key,
+                )
+                response_payload = {
+                    "success": True,
+                    "conversation_id": conversation.id,
+                    "cart": _cart_public_state(conversation)["cart"],
+                    **result,
+                }
+                complete_operation(operation, response_payload, quote_id=result.get("quote_id"))
+                db.session.commit()
+                return jsonify(response_payload)
+            except ValueError as exc:
+                db.session.rollback()
+                return jsonify({"success": False, "error": str(exc)}), 400
+            except Exception:
+                db.session.rollback()
+                current_app.logger.exception("Public Vendor checkout failed company_id=%s", company.id)
+                return jsonify({"success": False, "error": "No se pudo preparar el pedido para el pago."}), 503
 
 
 def public_vendor_message(slug: str):
     company = _public_available_company(slug)
     if company is None:
         return jsonify({"success": False, "error": "El vendedor no está publicado."}), 404
-    access = can_use_ai(company, "vendedor")
-    if not access.allowed:
-        return jsonify({"success": False, "error": access.reason}), 403
-    if not _rate_limit(company.id):
-        return jsonify({"success": False, "error": "Hay muchas consultas en este momento. Esperá unos segundos e intentá nuevamente."}), 429, {"Retry-After": "60"}
-
     payload = request.get_json(silent=True) or {}
+    if not isinstance(payload, dict):
+        return jsonify({"success": False, "error": "La consulta debe ser un objeto JSON."}), 400
     message = str(payload.get("message") or "").strip()
     if not message:
         return jsonify({"success": False, "error": "Escribí una consulta."}), 400
     if len(message) > 500:
         return jsonify({"success": False, "error": "La consulta es demasiado larga."}), 400
 
-    conversation = _public_conversation(company, payload.get("conversation_id"), create=True)
-    if conversation is None:
-        return jsonify({"success": False, "error": "La conversación ya no es válida."}), 403
     visitor_id = _visitor_id(company.id)
+    raw_key = request.headers.get("Idempotency-Key") or payload.get("idempotency_key")
+    idempotency_key = str(raw_key or "").strip()
+    if not idempotency_key or len(idempotency_key) > 120:
+        return jsonify({"success": False, "error": "Falta una clave de idempotencia válida."}), 400
+
     try:
         from services.ai_agent.orchestrator_v2 import AgentRuntime
         from services.ai_agent.providers.base import AIProviderError
 
-        result = AgentRuntime.process(
+        with public_operation_lock(
+            scope="visitor",
             company_id=company.id,
-            conversation_id=conversation.id,
-            message=message,
-            channel="webchat",
-            sender_id=None,
-            idempotency_key=str(request.headers.get("Idempotency-Key") or payload.get("idempotency_key") or secrets.token_urlsafe(18)),
-            metadata={"from": visitor_id, "source": "public_webchat_stable", "public_vendor_slug": slug},
-            include_system_prompt=True,
-        )
-        state = _cart_public_state(conversation)
-        return jsonify({
-            "success": True,
-            "conversation_id": result.get("conversation_id"),
-            "message_id": result.get("message_id"),
-            "assistant_message_id": result.get("assistant_message_id"),
-            "content": result.get("content"),
-            "cart": state["cart"],
-            "payment_url": state["payment_url"],
-            "quote_url": state.get("quote_url"),
-            "total": (state.get("delivery") or {}).get("total"),
-            "delivery": state.get("delivery"),
-        })
+            conversation_id=0,
+            key=visitor_id,
+        ):
+            conversation = _public_conversation(company, payload.get("conversation_id"), create=True)
+            if conversation is None:
+                return jsonify({"success": False, "error": "La conversación ya no es válida."}), 403
+
+            with public_operation_lock(
+                scope="request",
+                company_id=company.id,
+                conversation_id=conversation.id,
+                key=idempotency_key,
+            ):
+                operation = PublicVendorOperation.query.filter_by(
+                    company_id=company.id,
+                    conversation_id=conversation.id,
+                    idempotency_key=idempotency_key,
+                ).first()
+                cached = cached_result(operation, operation_type="message")
+                if cached is not None:
+                    return jsonify(cached)
+                if operation is not None and operation.operation_type != "message":
+                    return jsonify({"success": False, "error": "La clave ya pertenece a otra operación."}), 409
+
+                incoming = ConversationMessage.query.filter_by(
+                    company_id=company.id,
+                    conversation_id=conversation.id,
+                    idempotency_key=idempotency_key,
+                    role="user",
+                ).first()
+                assistant = None
+                if incoming is not None:
+                    assistant = ConversationMessage.query.filter_by(
+                        company_id=company.id,
+                        conversation_id=conversation.id,
+                        trace_id=incoming.trace_id,
+                        role="assistant",
+                    ).order_by(ConversationMessage.id.desc()).first()
+                if operation is not None and incoming is not None and assistant is None:
+                    recovered = recover_committed_order_reply(
+                        company=company,
+                        conversation=conversation,
+                        operation=operation,
+                        incoming=incoming,
+                        visitor_id=visitor_id,
+                    )
+                    if recovered is not None:
+                        state = _cart_public_state(conversation)
+                        response_payload = {
+                            "success": True,
+                            "conversation_id": recovered["conversation_id"],
+                            "message_id": recovered["message_id"],
+                            "assistant_message_id": recovered["assistant_message_id"],
+                            "content": recovered["content"],
+                            "cart": state["cart"],
+                            "payment_url": state["payment_url"],
+                            "quote_url": state.get("quote_url"),
+                            "total": (state.get("delivery") or {}).get("total"),
+                            "delivery": state.get("delivery"),
+                        }
+                        complete_operation(
+                            operation,
+                            response_payload,
+                            quote_id=state.get("pending_quote_id"),
+                        )
+                        db.session.commit()
+                        return jsonify(response_payload)
+                if assistant is None:
+                    access = can_use_ai(company, "vendedor")
+                    if not access.allowed:
+                        return jsonify({"success": False, "error": access.reason}), 403
+                if operation is None and incoming is None and not _rate_limit(
+                    company.id,
+                    conversation_id=conversation.id,
+                    request_key=idempotency_key,
+                ):
+                    return jsonify({"success": False, "error": "El vendedor está recibiendo muchas consultas. Esperá unos segundos y probá nuevamente."}), 429, {"Retry-After": "60"}
+
+                operation = get_or_create_operation(
+                    company_id=company.id,
+                    conversation_id=conversation.id,
+                    idempotency_key=idempotency_key,
+                    operation_type="message",
+                    trace_id=incoming.trace_id if incoming is not None else None,
+                )
+                if assistant is not None:
+                    result = {
+                        "status": "duplicate",
+                        "conversation_id": conversation.id,
+                        "message_id": incoming.id,
+                        "assistant_message_id": assistant.id,
+                        "content": assistant.content,
+                        "trace_id": incoming.trace_id,
+                    }
+                else:
+                    result = AgentRuntime.process(
+                        company_id=company.id,
+                        conversation_id=conversation.id,
+                        message=message,
+                        channel="webchat",
+                        sender_id=None,
+                        idempotency_key=idempotency_key,
+                        metadata={"from": visitor_id, "source": "public_webchat_stable", "public_vendor_slug": slug},
+                        include_system_prompt=True,
+                        idempotency_lock_held=True,
+                        trace_id=operation.trace_id,
+                    )
+                state = _cart_public_state(conversation)
+                response_payload = {
+                    "success": True,
+                    "conversation_id": result.get("conversation_id"),
+                    "message_id": result.get("message_id"),
+                    "assistant_message_id": result.get("assistant_message_id"),
+                    "content": result.get("content"),
+                    "cart": state["cart"],
+                    "payment_url": state["payment_url"],
+                    "quote_url": state.get("quote_url"),
+                    "total": (state.get("delivery") or {}).get("total"),
+                    "delivery": state.get("delivery"),
+                }
+                operation.trace_id = result.get("trace_id") or operation.trace_id
+                complete_operation(operation, response_payload, quote_id=state.get("pending_quote_id"))
+                db.session.commit()
+                return jsonify(response_payload)
     except ValueError as exc:
         db.session.rollback()
         return jsonify({"success": False, "error": str(exc)}), 400

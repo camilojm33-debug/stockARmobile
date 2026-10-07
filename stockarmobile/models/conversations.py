@@ -173,14 +173,42 @@ class ConversationMessage(db.Model):
             postgresql_where=sa.text("external_message_id IS NOT NULL"),
         ),
         sa.Index(
-            "uq_convmsg_company_idempotency",
+            "uq_convmsg_tenant_conversation_idempotency",
             "company_id",
+            "conversation_id",
             "idempotency_key",
             unique=True,
             postgresql_where=sa.text("idempotency_key IS NOT NULL"),
+            sqlite_where=sa.text("idempotency_key IS NOT NULL"),
         ),
         sa.Index("ix_convmsgs_company_conversation", "company_id", "conversation_id"),
         sa.Index("ix_convmsgs_company_created", "company_id", "created_at"),
+    )
+
+
+class PublicVendorOperation(db.Model):
+    __tablename__ = "public_vendor_operations"
+
+    id = db.Column(db.Integer, primary_key=True)
+    company_id = db.Column(db.Integer, db.ForeignKey("companies.id"), nullable=False)
+    conversation_id = db.Column(db.Integer, db.ForeignKey("conversations.id"), nullable=False)
+    idempotency_key = db.Column(db.String(120), nullable=False)
+    operation_type = db.Column(db.String(24), nullable=False)
+    status = db.Column(db.String(20), nullable=False, default="processing")
+    trace_id = db.Column(db.String(120), nullable=True)
+    quote_id = db.Column(db.Integer, nullable=True)
+    result_json = db.Column(JSONType, nullable=True)
+    created_at = db.Column(db.DateTime, default=utcnow, nullable=False)
+    updated_at = db.Column(db.DateTime, default=utcnow, onupdate=utcnow, nullable=False)
+
+    __table_args__ = (
+        sa.UniqueConstraint(
+            "company_id",
+            "conversation_id",
+            "idempotency_key",
+            name="uq_public_vendor_operation_tenant_conversation_key",
+        ),
+        sa.Index("ix_public_vendor_operations_status_updated", "status", "updated_at"),
     )
 
 

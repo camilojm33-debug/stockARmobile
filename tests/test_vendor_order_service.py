@@ -629,7 +629,7 @@ def test_cart_change_invalidates_pending_order_reuse(vendor_database, monkeypatc
     assert PENDING_PAYMENT_KEY not in conversation.metadata_json
 
 
-def test_create_pending_order_propagates_mp_missing_payment_url(vendor_database, monkeypatch):
+def test_create_pending_order_keeps_durable_pending_reservation_when_mp_url_is_missing(vendor_database, monkeypatch):
     data = vendor_database
     conversation = _conversation(data["company_a"].id)
     calls = []
@@ -640,15 +640,20 @@ def test_create_pending_order_propagates_mp_missing_payment_url(vendor_database,
         items=[{"product_query": "Cafe clasico", "quantity": 1}],
     )
 
-    with pytest.raises(RuntimeError, match="no devolvi. un link de pago"):
+    from services.ai_agent.providers.base import AIProviderError
+
+    with pytest.raises(AIProviderError, match="Mercado Pago no pudo generar el link de pago"):
         VendorOrderService.create_pending_order(
             company_id=data["company_a"].id,
             conversation_id=conversation.id,
             actor_user_id=data["user_a"].id,
         )
 
-    assert Payment.query.filter_by(company_id=data["company_a"].id).count() == 0
-    assert PENDING_QUOTE_KEY not in conversation.metadata_json
+    payment = Payment.query.filter_by(company_id=data["company_a"].id).one()
+    quote = Quote.query.filter_by(company_id=data["company_a"].id).one()
+    assert payment.status == "pending"
+    assert payment.preference_id is None
+    assert conversation.metadata_json[PENDING_QUOTE_KEY] == quote.id
     assert PENDING_PAYMENT_KEY not in conversation.metadata_json
 
 

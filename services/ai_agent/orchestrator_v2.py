@@ -10,6 +10,7 @@ from services.ai_agent.providers.lm_studio import LMStudioProvider
 from services.ai_agent.providers.openai import OpenAIProvider
 from services.ai_agent.providers.gemini import GeminiProvider
 from services.ai_agent.providers.base import AIProviderError
+from services.ai_agent.providers.base import AIProviderError
 from services.ai_agent.config_service import (
     BUSINESS_AGENT_NAME,
     VENDOR_AGENT_NAME,
@@ -256,6 +257,7 @@ class VendorOrderPreviewTool(AgentTool):
             delivery_reference=str(kwargs.get("delivery_reference") or ""),
             delivery_notes=str(kwargs.get("delivery_notes") or ""),
             actor_user_id=self._context.get("actor_user_id"),
+            idempotency_key=self._context.get("idempotency_key"),
         )
 
 
@@ -593,6 +595,8 @@ class AgentRuntime:
                         context=context,
                         allowed_tool_names=allowed_tool_names,
                     )
+                except AIProviderError:
+                    raise
                 except ValueError as exc:
                     result = {"success": False, "error": str(exc)[:700], "retryable": False}
                 except Exception:
@@ -643,10 +647,38 @@ class AgentRuntime:
         metadata=None,
         provider_override=None,
         include_system_prompt=True,
+        idempotency_lock_held=False,
+        trace_id=None,
     ):
         request_message = str(message or "")
         if len(request_message) > MAX_AGENT_MESSAGE_CHARS:
             raise ValueError(f"El mensaje no puede superar los {MAX_AGENT_MESSAGE_CHARS} caracteres.")
+        idempotency_key = str(idempotency_key or "").strip() or None
+        if idempotency_key and len(idempotency_key) > 120:
+            raise ValueError("La clave de idempotencia no puede superar 120 caracteres.")
+        if idempotency_key and not idempotency_lock_held:
+            from services.ai_agent.public_idempotency import public_operation_lock
+
+            with public_operation_lock(
+                scope="request",
+                company_id=company_id,
+                conversation_id=conversation_id,
+                key=idempotency_key,
+            ):
+                return cls.process(
+                    company_id=company_id,
+                    conversation_id=conversation_id,
+                    message=request_message,
+                    channel=channel,
+                    sender_id=sender_id,
+                    external_message_id=external_message_id,
+                    idempotency_key=idempotency_key,
+                    metadata=metadata,
+                    provider_override=provider_override,
+                    include_system_prompt=include_system_prompt,
+                    idempotency_lock_held=True,
+                    trace_id=trace_id,
+                )
         conversation = (
             db.session.query(Conversation)
             .filter(
@@ -731,7 +763,11 @@ class AgentRuntime:
             PUBLIC_WEBCHAT_HISTORY_LIMIT if is_public_webchat else 19,
             exclude_message_id=retry_incoming.id if retry_incoming is not None else None,
         )
-        trace_id = str(retry_incoming.trace_id or uuid.uuid4()) if retry_incoming is not None else str(uuid.uuid4())
+        trace_id = (
+            str(retry_incoming.trace_id or trace_id or uuid.uuid4())
+            if retry_incoming is not None
+            else str(trace_id or uuid.uuid4())
+        )
         if retry_incoming is not None:
             incoming = retry_incoming
             incoming.trace_id = trace_id
@@ -840,6 +876,8 @@ class AgentRuntime:
             "conversation_id": conversation.id,
             "customer_phone": (metadata or {}).get("from") or "",
             "actor_user_id": sender_id,
+            "idempotency_key": idempotency_key,
+            "trace_id": trace_id,
         }
         final_content, campaign_context, tool_rounds, ai_telemetry = cls._run_tool_loop(
             provider=provider,

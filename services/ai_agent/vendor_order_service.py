@@ -587,6 +587,120 @@ class VendorOrderService:
         return VendorOrderService.get_cart(company_id=company_id, conversation_id=conversation_id)
 
     @staticmethod
+    def _ensure_payment_preference(*, company_id: int, conversation, quote, state: Dict[str, Any]) -> Dict[str, Any]:
+        from app import Payment
+
+        external_reference = _ai_order_external_reference(
+            company_id=company_id,
+            quote_id=quote.id,
+            conversation_id=conversation.id,
+            user_id=quote.created_by_user_id,
+        )
+        legacy_reference = _ai_order_external_reference(
+            company_id=company_id,
+            quote_id=quote.id,
+        )
+        payment = Payment.query.filter_by(
+            company_id=company_id,
+            provider="mercadopago_ai_order",
+        ).filter(Payment.external_reference.in_([external_reference, legacy_reference])).order_by(Payment.id.desc()).first()
+        payment_url = str(state.get(PENDING_PAYMENT_KEY) or "").strip()
+        if payment is not None and not payment_url:
+            try:
+                stored_payload = json.loads(payment.payload_json or "{}")
+            except (TypeError, ValueError):
+                stored_payload = {}
+            payment_url = str(
+                stored_payload.get("init_point")
+                or stored_payload.get("sandbox_init_point")
+                or ""
+            ).strip()
+        preference_already_persisted = bool(payment is not None and (payment.preference_id or payment_url))
+        if payment is None:
+            payment = Payment(
+                payment_id=None,
+                preference_id=None,
+                external_reference=external_reference,
+                company_id=company_id,
+                subscription_id=None,
+                user_id=quote.created_by_user_id,
+                amount=quote.total_amount,
+                currency=quote.currency or "ARS",
+                status="pending",
+                payment_method="mercadopago_ai_order",
+                provider="mercadopago_ai_order",
+                reference=external_reference,
+                payload_json="{}",
+            )
+            db.session.add(payment)
+            db.session.commit()
+            preference_already_persisted = False
+
+        if not payment.preference_id and not payment_url:
+            try:
+                oauth = MercadoPagoOAuthService()
+                access_token = oauth.ensure_access_token(company_id=company_id)
+                result = MercadoPagoService().create_ai_order_checkout_preference(
+                    title=f"Pedido {quote.number} - StockARmobile",
+                    items=_quote_checkout_items(quote),
+                    amount=float(quote.total_amount or 0),
+                    currency=quote.currency or "ARS",
+                    external_reference=external_reference,
+                    company_id=company_id,
+                    user_id=quote.created_by_user_id,
+                    quote_id=quote.id,
+                    conversation_id=conversation.id,
+                    return_url=_with_payment_query(
+                        _public_quote_url(quote.id),
+                        payment="completed",
+                    ),
+                    access_token=access_token,
+                )
+            except Exception as exc:
+                from services.ai_agent.providers.base import AIProviderError
+
+                raise AIProviderError(
+                    "Mercado Pago está temporalmente no disponible. Probá nuevamente en unos segundos.",
+                    status_code=503,
+                ) from exc
+            payment_url = str(
+                result.get("init_point") or result.get("sandbox_init_point") or ""
+            ).strip()
+            if not payment_url:
+                from services.ai_agent.providers.base import AIProviderError
+
+                raise AIProviderError(
+                    "Mercado Pago no pudo generar el link de pago. Probá nuevamente en unos segundos.",
+                    status_code=503,
+                )
+            payment.preference_id = str(result.get("id") or "").strip() or None
+            payment.payload_json = json.dumps(result, ensure_ascii=False)
+
+        state[PENDING_QUOTE_KEY] = quote.id
+        state[PENDING_PAYMENT_KEY] = payment_url
+        state[LAST_ORDER_KEY] = {
+            "quote_id": quote.id,
+            "quote_number": quote.number,
+            "order_status": "pendiente_pago" if payment.status != "approved" else "pagado",
+            "payment_status": str(payment.status or "pending").lower(),
+            "total": float(quote.total_amount or 0),
+            "payment_id": payment.payment_id,
+            "sale_id": quote.converted_sale_id,
+        }
+        _set_metadata(conversation, state)
+        db.session.commit()
+        return {
+            "success": True,
+            "existing": preference_already_persisted,
+            "quote_id": quote.id,
+            "quote_number": quote.number or f"P-{quote.id:06d}",
+            "total": float(quote.total_amount or 0),
+            "currency": quote.currency or "ARS",
+            "payment_url": payment_url,
+            "quote_url": _public_quote_url(quote.id),
+        }
+
+    @staticmethod
     def create_pending_order(
         *,
         company_id: int,
@@ -601,9 +715,11 @@ class VendorOrderService:
         delivery_reference: str = "",
         delivery_notes: str = "",
         actor_user_id: int | None = None,
+        idempotency_key: str | None = None,
     ) -> Dict[str, Any]:
         from stockarmobile.models.conversations import Conversation
         from app import Client, Payment, Product, Quote, QuoteDelivery, QuoteItem, User
+        from stockarmobile.models.conversations import PublicVendorOperation
 
         conversation = db.session.query(Conversation).filter(
             Conversation.id == conversation_id,
@@ -617,7 +733,14 @@ class VendorOrderService:
             raise ValueError("El carrito está vacío.")
 
         state = _metadata(conversation)
-        pending_quote_id = state.get(PENDING_QUOTE_KEY)
+        operation = None
+        if idempotency_key:
+            operation = PublicVendorOperation.query.filter_by(
+                company_id=company_id,
+                conversation_id=conversation.id,
+                idempotency_key=idempotency_key,
+            ).with_for_update().first()
+        pending_quote_id = (operation.quote_id if operation is not None else None) or state.get(PENDING_QUOTE_KEY)
         if pending_quote_id:
             try:
                 existing = Quote.query.filter_by(id=int(pending_quote_id), company_id=company_id).first()
@@ -648,16 +771,15 @@ class VendorOrderService:
                     state.pop(PENDING_QUOTE_KEY, None)
                     state.pop(PENDING_PAYMENT_KEY, None)
                     _set_metadata(conversation, state)
-                if payment is not None and payment.status in {"pending", "in_process"}:
-                    return {
-                        "success": True,
-                        "existing": True,
-                        "quote_id": existing.id,
-                        "quote_number": existing.number or f"P-{existing.id:06d}",
-                        "total": float(existing.total_amount or 0),
-                        "payment_url": state.get(PENDING_PAYMENT_KEY) or "",
-                        "quote_url": _public_quote_url(existing.id),
-                    }
+                else:
+                    if operation is not None:
+                        operation.quote_id = existing.id
+                    return VendorOrderService._ensure_payment_preference(
+                        company_id=company_id,
+                        conversation=conversation,
+                        quote=existing,
+                        state=state,
+                    )
 
         delivery = _delivery_payload(
             method=delivery_method,
@@ -863,45 +985,32 @@ class VendorOrderService:
             conversation_id=conversation_id,
             user_id=actor.id,
         )
-        oauth = MercadoPagoOAuthService()
-        access_token = oauth.ensure_access_token(company_id=company_id)
-        mp = MercadoPagoService()
-        quote_url = _public_quote_url(quote.id)
-        result = mp.create_ai_order_checkout_preference(
-            title=f"Pedido {quote.number} - StockARmobile",
-            items=_quote_checkout_items(quote),
-            amount=float(quote.total_amount or 0),
-            currency=quote.currency or "ARS",
-            external_reference=external_reference,
+        placeholder_payment = Payment.query.filter_by(
             company_id=company_id,
-            user_id=actor.id,
-            quote_id=quote.id,
-            conversation_id=conversation_id,
-            return_url=_with_payment_query(quote_url, payment="completed"),
-            access_token=access_token,
-        )
-        payment_url = str(result.get("init_point") or result.get("sandbox_init_point") or "").strip()
-        if not payment_url:
-            raise RuntimeError("Mercado Pago no devolvió un link de pago.")
-
-        payment = Payment(
-            payment_id=None,
-            preference_id=str(result.get("id") or "").strip() or None,
-            external_reference=external_reference,
-            company_id=company_id,
-            subscription_id=None,
-            user_id=actor.id,
-            amount=quote.total_amount,
-            currency=quote.currency or "ARS",
-            status="pending",
-            payment_method="mercadopago_ai_order",
             provider="mercadopago_ai_order",
-            reference=external_reference,
-            payload_json=json.dumps(result, ensure_ascii=False),
-        )
-        db.session.add(payment)
+            external_reference=external_reference,
+        ).first()
+        if placeholder_payment is None:
+            db.session.add(
+                Payment(
+                    payment_id=None,
+                    preference_id=None,
+                    external_reference=external_reference,
+                    company_id=company_id,
+                    subscription_id=None,
+                    user_id=actor.id,
+                    amount=quote.total_amount,
+                    currency=quote.currency or "ARS",
+                    status="pending",
+                    payment_method="mercadopago_ai_order",
+                    provider="mercadopago_ai_order",
+                    reference=external_reference,
+                    payload_json="{}",
+                )
+            )
+
         state[PENDING_QUOTE_KEY] = quote.id
-        state[PENDING_PAYMENT_KEY] = payment_url
+        state.pop(PENDING_PAYMENT_KEY, None)
         state[LAST_ORDER_KEY] = {
             "quote_id": quote.id,
             "quote_number": quote.number,
@@ -931,16 +1040,25 @@ class VendorOrderService:
         if customer_name.strip():
             state["customer_name"] = customer_name.strip()[:160]
         _set_metadata(conversation, state)
+        if idempotency_key:
+            operation = PublicVendorOperation.query.filter_by(
+                company_id=company_id,
+                conversation_id=conversation.id,
+                idempotency_key=idempotency_key,
+            ).with_for_update().first()
+            if operation is not None:
+                operation.quote_id = quote.id
         db.session.commit()
 
+        preference = VendorOrderService._ensure_payment_preference(
+            company_id=company_id,
+            conversation=conversation,
+            quote=quote,
+            state=state,
+        )
+
         return {
-            "success": True,
-            "quote_id": quote.id,
-            "quote_number": quote.number,
-            "total": float(quote.total_amount or 0),
-            "currency": quote.currency or "ARS",
-            "payment_url": payment_url,
-            "quote_url": quote_url,
+            **preference,
             "charges": charge_plan["charges"],
             "expires_at": quote.expires_at.isoformat() if quote.expires_at else None,
             "delivery": {

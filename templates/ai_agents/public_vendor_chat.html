@@ -339,9 +339,47 @@
     const mobileCartButton = document.getElementById('mobileCartButton');
     let conversationId = initialState && initialState.conversation_id ? initialState.conversation_id : null;
     let currentState = initialState || { cart: { items: [], total: 0, line_count: 0, currency: 'ARS' }, payment_url: null };
-    let sequence = 0;
+    const operationStoragePrefix = 'stockarmobile:public-vendor:' + chatEndpoint + ':';
+    const chatStorageKey = operationStoragePrefix + 'chat';
+    const renderedMessageIds = new Set();
+    const cartInFlight = new Set();
+    let sendInFlight = false;
+    let checkoutInFlight = false;
+    let activeChatOperation = null;
+    let activeCheckoutOperation = readStoredOperation(operationStoragePrefix + 'checkout');
     let searchTimer = null;
     let orderPollTimer = null;
+
+    function createIdempotencyKey() {
+      if (window.crypto && typeof window.crypto.randomUUID === 'function') {
+        return window.crypto.randomUUID().replaceAll('-', '');
+      }
+      return Date.now().toString(36) + Math.random().toString(36).slice(2) + Math.random().toString(36).slice(2);
+    }
+
+    function readStoredOperation(key) {
+      try {
+        const value = sessionStorage.getItem(key);
+        return value ? JSON.parse(value) : null;
+      } catch (err) {
+        return null;
+      }
+    }
+
+    function storeOperation(key, value) {
+      try {
+        if (value == null) sessionStorage.removeItem(key);
+        else sessionStorage.setItem(key, JSON.stringify(value));
+      } catch (err) {}
+    }
+
+    function friendlyRequestError(status, fallback) {
+      if (status === 429) return 'El vendedor está recibiendo muchas consultas. Esperá unos segundos y probá nuevamente.';
+      if (status === 503) return 'El vendedor está temporalmente ocupado. Probá nuevamente en unos segundos.';
+      return fallback || 'No se pudo completar la operación.';
+    }
+
+    activeChatOperation = readStoredOperation(chatStorageKey);
 
     function escapeHtml(value) {
       return String(value == null ? '' : value)
@@ -392,7 +430,7 @@
       }).join('');
       productsEl.querySelectorAll('.add-product').forEach(function (button) {
         button.addEventListener('click', function () {
-          addProduct(Number(button.dataset.productId));
+          addProduct(Number(button.dataset.productId), button);
         });
       });
     }
@@ -437,7 +475,7 @@
               '</div>';
           }).join('');
           cartItemsEl.querySelectorAll('.remove-product').forEach(function (button) {
-            button.addEventListener('click', function () { removeProduct(Number(button.dataset.productId)); });
+            button.addEventListener('click', function () { removeProduct(Number(button.dataset.productId), button); });
           });
         }
       }
@@ -536,11 +574,14 @@
       }
     }
 
-    function add(role, text) {
+    function add(role, text, messageId) {
       if (!messages) return;
+      const stableMessageId = messageId == null ? '' : String(messageId);
+      if (stableMessageId && renderedMessageIds.has(stableMessageId)) return;
       if (empty) empty.remove();
       const row = document.createElement('div');
       row.className = 'msg ' + role;
+      if (stableMessageId) row.dataset.messageId = stableMessageId;
       const bubble = document.createElement('div');
       bubble.className = 'bubble';
       if (role === 'assistant') {
@@ -551,6 +592,8 @@
       row.appendChild(bubble);
       messages.appendChild(row);
       messages.scrollTop = messages.scrollHeight;
+      if (stableMessageId) renderedMessageIds.add(stableMessageId);
+      return row;
     }
 
     async function requestJson(url, options) {
@@ -566,44 +609,76 @@
       if (!contentType.includes('application/json')) {
         const text = await response.text().catch(function () { return ''; });
         const statusMessage = response.status ? ' (HTTP ' + response.status + ')' : '';
-        throw new Error(text ? 'El servidor no devolvió una respuesta válida' + statusMessage + '.' : 'No se pudo conectar con el Vendedor IA' + statusMessage + '.');
+        const error = new Error(text ? 'El servidor no devolvió una respuesta válida' + statusMessage + '.' : 'No se pudo conectar con el Vendedor IA' + statusMessage + '.');
+        error.status = response.status;
+        throw error;
       }
       const data = await response.json().catch(function () { return {}; });
       if (!response.ok || !data.success) {
-        throw new Error(data.error || 'No se pudo completar la operación.');
+        const error = new Error(data.error || 'No se pudo completar la operación.');
+        error.status = response.status;
+        throw error;
       }
       return data;
     }
 
-    async function addProduct(productId) {
+    async function addProduct(productId, button) {
       if (!cartEndpoint) return;
+      const operationName = 'cart:add:' + Number(productId);
+      if (cartInFlight.has(operationName)) return;
+      cartInFlight.add(operationName);
+      if (button) button.disabled = true;
+      const storageKey = operationStoragePrefix + operationName;
+      let operation = readStoredOperation(storageKey);
+      if (!operation) {
+        operation = { key: createIdempotencyKey() };
+        storeOperation(storageKey, operation);
+      }
       try {
         const data = await requestJson(cartEndpoint, {
           method: 'POST',
           credentials: 'same-origin',
-          headers: { 'Content-Type': 'application/json', 'X-CSRFToken': csrf },
+          headers: { 'Content-Type': 'application/json', 'X-CSRFToken': csrf, 'Idempotency-Key': operation.key },
           body: JSON.stringify({ conversation_id: conversationId, action: 'add', product_id: productId, quantity: 1 })
         });
         setState(data);
+        storeOperation(storageKey, null);
         if (checkoutError) checkoutError.textContent = '';
       } catch (err) {
-        if (checkoutError) checkoutError.textContent = err.message || 'No se pudo agregar el producto.';
+        if (checkoutError) checkoutError.textContent = friendlyRequestError(err.status, err.message || 'No se pudo agregar el producto.');
+      } finally {
+        cartInFlight.delete(operationName);
+        if (button && button.isConnected) button.disabled = false;
       }
     }
 
-    async function removeProduct(productId) {
+    async function removeProduct(productId, button) {
       if (!cartEndpoint) return;
+      const operationName = 'cart:remove:' + Number(productId);
+      if (cartInFlight.has(operationName)) return;
+      cartInFlight.add(operationName);
+      if (button) button.disabled = true;
+      const storageKey = operationStoragePrefix + operationName;
+      let operation = readStoredOperation(storageKey);
+      if (!operation) {
+        operation = { key: createIdempotencyKey() };
+        storeOperation(storageKey, operation);
+      }
       try {
         const data = await requestJson(cartEndpoint, {
           method: 'POST',
           credentials: 'same-origin',
-          headers: { 'Content-Type': 'application/json', 'X-CSRFToken': csrf },
+          headers: { 'Content-Type': 'application/json', 'X-CSRFToken': csrf, 'Idempotency-Key': operation.key },
           body: JSON.stringify({ conversation_id: conversationId, action: 'remove', product_id: productId })
         });
         setState(data);
+        storeOperation(storageKey, null);
         if (checkoutError) checkoutError.textContent = '';
       } catch (err) {
-        if (checkoutError) checkoutError.textContent = err.message || 'No se pudo quitar el producto.';
+        if (checkoutError) checkoutError.textContent = friendlyRequestError(err.status, err.message || 'No se pudo quitar el producto.');
+      } finally {
+        cartInFlight.delete(operationName);
+        if (button && button.isConnected) button.disabled = false;
       }
     }
 
@@ -613,38 +688,65 @@
       renderCart(currentState);
     }
 
+    function setCheckoutFieldsDisabled(disabled) {
+      [customerName, customerPhone, deliveryMethod, deliveryAddress, deliveryCity, deliveryProvince, deliveryPostalCode, deliveryReference, deliveryNotes]
+        .filter(Boolean)
+        .forEach(function (field) { field.disabled = Boolean(disabled); });
+    }
+
     async function checkout() {
-      if (!checkoutEndpoint || checkoutButton.disabled) return;
+      if (!checkoutEndpoint || checkoutButton.disabled || checkoutInFlight) return;
       checkoutError.textContent = '';
+      const checkoutStorageKey = operationStoragePrefix + 'checkout';
+      const requestBody = {
+        conversation_id: conversationId,
+        customer_name: customerName.value.trim(),
+        customer_phone: customerPhone.value.trim(),
+        delivery_method: deliveryMethod.value,
+        delivery_address: deliveryAddress.value.trim(),
+        delivery_city: deliveryCity.value.trim(),
+        delivery_province: deliveryProvince.value.trim(),
+        delivery_postal_code: deliveryPostalCode.value.trim(),
+        delivery_reference: deliveryReference.value.trim(),
+        delivery_notes: deliveryNotes.value.trim(),
+      };
+      if (!activeCheckoutOperation) {
+        activeCheckoutOperation = { key: createIdempotencyKey(), body: requestBody };
+        storeOperation(checkoutStorageKey, activeCheckoutOperation);
+      }
+      const operation = activeCheckoutOperation;
+      checkoutInFlight = true;
+      setCheckoutFieldsDisabled(true);
       checkoutButton.disabled = true;
+      checkoutButton.setAttribute('aria-busy', 'true');
+      checkoutButton.textContent = 'Preparando…';
       try {
         const data = await requestJson(checkoutEndpoint, {
           method: 'POST',
           credentials: 'same-origin',
-          headers: { 'Content-Type': 'application/json', 'X-CSRFToken': csrf },
-          body: JSON.stringify({
-            conversation_id: conversationId,
-            customer_name: customerName.value.trim(),
-            customer_phone: customerPhone.value.trim(),
-            delivery_method: deliveryMethod.value,
-            delivery_address: deliveryAddress.value.trim(),
-            delivery_city: deliveryCity.value.trim(),
-            delivery_province: deliveryProvince.value.trim(),
-            delivery_postal_code: deliveryPostalCode.value.trim(),
-            delivery_reference: deliveryReference.value.trim(),
-            delivery_notes: deliveryNotes.value.trim(),
-          })
+          headers: { 'Content-Type': 'application/json', 'X-CSRFToken': csrf, 'Idempotency-Key': operation.key },
+          body: JSON.stringify(operation.body)
         });
         setState(data);
+        activeCheckoutOperation = null;
+        storeOperation(checkoutStorageKey, null);
         if (data.payment_url && data.quote_url) {
-          add('assistant', 'Tu pedido ' + (data.quote_number || '') + ' quedó preparado por ' + money(data.total || 0) + ', con el envío incluido. Te dejo el presupuesto y el pago con Mercado Pago.');
+          add('assistant', 'Tu pedido ' + (data.quote_number || '') + ' quedó preparado por ' + money(data.total || 0) + ', con el envío incluido. Te dejo el presupuesto y el pago con Mercado Pago.', 'checkout:' + operation.key);
           payLinkButton.focus();
         } else if (data.order && data.order.order_status === 'confirmado') {
           add('assistant', 'Pago confirmado. Tu pedido quedó registrado correctamente.');
         }
       } catch (err) {
-        checkoutError.textContent = err.message || 'No se pudo preparar el pedido.';
+        checkoutError.textContent = friendlyRequestError(err.status, err.message || 'No se pudo preparar el pedido.');
+        if (err.status && ![429, 503].includes(err.status)) {
+          activeCheckoutOperation = null;
+          storeOperation(checkoutStorageKey, null);
+        }
       } finally {
+        checkoutInFlight = false;
+        setCheckoutFieldsDisabled(Boolean(activeCheckoutOperation));
+        checkoutButton.removeAttribute('aria-busy');
+        checkoutButton.textContent = activeCheckoutOperation ? 'Reintentar pedido' : 'Preparar pedido y pagar';
         checkoutButton.disabled = !(currentState.cart && currentState.cart.items && currentState.cart.items.length);
       }
     }
@@ -653,39 +755,60 @@
     syncDeliveryFields();
 
     async function ask() {
-      const message = input ? input.value.trim() : '';
-      if (!input || !send || send.disabled) return;
+      if (!input || !send || sendInFlight) return;
       if (!chatEndpoint) {
         error.textContent = 'El Vendedor IA no tiene disponible el canal de consultas.';
         return;
       }
-      if (!message) {
+      const typedMessage = input.value.trim();
+      if (!activeChatOperation && !typedMessage) {
         input.focus();
         return;
       }
+      if (activeChatOperation && typedMessage && typedMessage !== activeChatOperation.message) {
+        error.textContent = 'Reintentá o resolvé la consulta pendiente antes de enviar otra.';
+        return;
+      }
+      if (!activeChatOperation) {
+        activeChatOperation = { key: createIdempotencyKey(), message: typedMessage };
+        add('user', typedMessage, 'user:' + activeChatOperation.key);
+        storeOperation(chatStorageKey, activeChatOperation);
+      }
+      const operation = activeChatOperation;
+      const message = operation.message;
       error.textContent = '';
-      add('user', message);
-      input.value = '';
+      sendInFlight = true;
       send.disabled = true;
+      input.disabled = true;
+      input.readOnly = true;
       send.setAttribute('aria-busy', 'true');
       send.textContent = 'Enviando…';
-      const idempotencyKey = 'web-' + Date.now() + '-' + (++sequence) + '-' + Math.random().toString(36).slice(2);
       try {
         const data = await requestJson(chatEndpoint, {
           method: 'POST',
           credentials: 'same-origin',
-          headers: { 'Content-Type': 'application/json', 'X-CSRFToken': csrf, 'Idempotency-Key': idempotencyKey },
+          headers: { 'Content-Type': 'application/json', 'X-CSRFToken': csrf, 'Idempotency-Key': operation.key },
           body: JSON.stringify({ message: message, ...(conversationId ? { conversation_id: conversationId } : {}) })
         });
         conversationId = data.conversation_id || conversationId;
-        add('assistant', data.content || '');
+        add('assistant', data.content || '', data.assistant_message_id);
         setState(data);
+        activeChatOperation = null;
+        storeOperation(chatStorageKey, null);
+        input.value = '';
       } catch (err) {
-        error.textContent = err.message || 'No se pudo procesar la consulta.';
+        error.textContent = friendlyRequestError(err.status, err.message || 'No se pudo procesar la consulta.');
+        if (err.status && ![429, 503].includes(err.status)) {
+          activeChatOperation = null;
+          storeOperation(chatStorageKey, null);
+        }
       } finally {
+        sendInFlight = false;
         send.disabled = false;
+        input.disabled = false;
+        input.readOnly = Boolean(activeChatOperation);
         send.removeAttribute('aria-busy');
-        send.textContent = 'Enviar';
+        send.textContent = activeChatOperation ? 'Reintentar' : 'Enviar';
         if (input) input.focus();
       }
     }
@@ -734,6 +857,25 @@
     }
 
     if (productsEl) renderProducts(initialCatalog);
+    if (activeChatOperation && input && send) {
+      input.value = String(activeChatOperation.message || '');
+      input.readOnly = true;
+      add('user', activeChatOperation.message || '', 'user:' + activeChatOperation.key);
+      send.textContent = 'Reintentar';
+    }
+    if (activeCheckoutOperation) {
+      customerName.value = activeCheckoutOperation.body.customer_name || '';
+      customerPhone.value = activeCheckoutOperation.body.customer_phone || '';
+      deliveryMethod.value = activeCheckoutOperation.body.delivery_method || 'retiro';
+      deliveryAddress.value = activeCheckoutOperation.body.delivery_address || '';
+      deliveryCity.value = activeCheckoutOperation.body.delivery_city || '';
+      deliveryProvince.value = activeCheckoutOperation.body.delivery_province || '';
+      deliveryPostalCode.value = activeCheckoutOperation.body.delivery_postal_code || '';
+      deliveryReference.value = activeCheckoutOperation.body.delivery_reference || '';
+      deliveryNotes.value = activeCheckoutOperation.body.delivery_notes || '';
+      setCheckoutFieldsDisabled(true);
+      checkoutButton.textContent = 'Reintentar pedido';
+    }
     renderCart(currentState);
     if (searchEl) {
       searchEl.addEventListener('input', function () {

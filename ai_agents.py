@@ -6,6 +6,7 @@ import os
 import secrets
 import time
 import uuid
+import hashlib
 
 from itsdangerous import BadSignature, SignatureExpired, URLSafeTimedSerializer
 
@@ -28,7 +29,14 @@ from services.ai_agent.config_service import (
 )
 from services.ai_agent.usage_service import AI_PLANS, AGENT_LABELS, can_use_ai, can_use_ai_feature, current_plan, usage_snapshot
 from stockarmobile.extensions import csrf, db
-from stockarmobile.models.conversations import Conversation
+from stockarmobile.models.conversations import Conversation, ConversationMessage, PublicVendorOperation
+from services.ai_agent.public_idempotency import (
+    PublicOperationConflict,
+    cached_result,
+    complete_operation,
+    get_or_create_operation,
+    public_operation_lock,
+)
 from stockarmobile.decorators import company_admin_required
 from stockarmobile.permissions import can_access_ai
 from services.ai_agent.campaign_service import CampaignService
@@ -76,14 +84,35 @@ def _decode_public_vendor_token(token: str):
         return None
 
 
-def _public_vendor_rate_limit(company_id: int) -> bool:
+def _public_vendor_rate_limit(company_id: int, *, conversation_id=None, request_key=None) -> bool:
     remote = (request.remote_addr or "unknown").strip()
     redis_url = (os.getenv("REDIS_URL") or "").strip()
+    operation_scope = ""
+    if request_key:
+        digest = hashlib.sha256(str(request_key).encode()).hexdigest()
+        operation_scope = f":{int(conversation_id or 0)}:{digest}"
     if redis_url:
         try:
             import redis
             client = redis.Redis.from_url(redis_url, socket_connect_timeout=1, socket_timeout=1, decode_responses=True)
             key = f"stockarmobile:public-vendor:{int(company_id)}:{remote}"
+            if operation_scope:
+                operation_key = key + ":operation" + operation_scope
+                result = client.eval(
+                    "local known = redis.call('EXISTS', KEYS[2]); "
+                    "if known == 1 then return 1 end; "
+                    "local count = redis.call('INCR', KEYS[1]); "
+                    "if count == 1 then redis.call('EXPIRE', KEYS[1], ARGV[2]) end; "
+                    "if count > tonumber(ARGV[1]) then redis.call('SET', KEYS[2], '0', 'EX', ARGV[2]); return 0 end; "
+                    "redis.call('SET', KEYS[2], '1', 'EX', ARGV[3]); return 1",
+                    2,
+                    key,
+                    operation_key,
+                    PUBLIC_VENDOR_CHAT_LIMIT,
+                    PUBLIC_VENDOR_CHAT_WINDOW,
+                    86400,
+                )
+                return bool(result)
             count = int(client.incr(key))
             if count == 1:
                 client.expire(key, PUBLIC_VENDOR_CHAT_WINDOW)
@@ -99,12 +128,18 @@ def _public_vendor_rate_limit(company_id: int) -> bool:
     now = int(time.time())
     state = session.get("public_vendor_rate") or {}
     if not isinstance(state, dict) or now - int(state.get("started_at", 0) or 0) >= PUBLIC_VENDOR_CHAT_WINDOW:
-        session["public_vendor_rate"] = {"started_at": now, "count": 1}
+        session["public_vendor_rate"] = {"started_at": now, "count": 1, "operations": [operation_scope] if operation_scope else []}
+        return True
+    operations = state.get("operations") if isinstance(state.get("operations"), list) else []
+    if operation_scope and operation_scope in operations:
         return True
     count = int(state.get("count", 0) or 0)
     if count >= PUBLIC_VENDOR_CHAT_LIMIT:
         return False
     state["count"] = count + 1
+    if operation_scope:
+        operations.append(operation_scope)
+        state["operations"] = operations[-100:]
     session["public_vendor_rate"] = state
     session.modified = True
     return True
@@ -445,17 +480,17 @@ def public_vendor_chat_message(token):
     preferences = get_ai_preferences(company)
     if not bool(preferences.get("ai_agent", {}).get("public_webchat_enabled", False)):
         return jsonify({"success": False, "error": "El vendedor web no está habilitado."}), 404
-    access = can_use_ai(company, "vendedor")
-    if not access.allowed:
-        return jsonify({"success": False, "error": access.reason}), 403
-    if not _public_vendor_rate_limit(company_id):
-        return jsonify({"success": False, "error": "Hay muchas consultas en este momento. Esperá unos segundos e intentá nuevamente."}), 429, {"Retry-After": str(PUBLIC_VENDOR_CHAT_WINDOW)}
     payload = request.get_json(silent=True) or {}
+    if not isinstance(payload, dict):
+        return jsonify({"success": False, "error": "La consulta debe ser un objeto JSON."}), 400
     message = str(payload.get("message") or "").strip()
     if not message:
         return jsonify({"success": False, "error": "Escribí una consulta."}), 400
     if len(message) > 500:
         return jsonify({"success": False, "error": "La consulta es demasiado larga."}), 400
+    idempotency_key = str(request.headers.get("Idempotency-Key") or payload.get("idempotency_key") or "").strip()
+    if not idempotency_key or len(idempotency_key) > 120:
+        return jsonify({"success": False, "error": "Falta una clave de idempotencia válida."}), 400
     visitor_session_key = f"public_vendor_visitor_{company_id}"
     visitor_id = str(session.get(visitor_session_key) or uuid.uuid4().hex)
     session[visitor_session_key] = visitor_id
@@ -463,57 +498,156 @@ def public_vendor_chat_message(token):
     from services.ai_agent.orchestrator_v2 import AgentRuntime
     vendor_agent = ensure_default_agents(company_id)[VENDOR_AGENT_NAME]
     conversation_id = payload.get("conversation_id")
-    if conversation_id not in (None, ""):
-        try:
-            conversation = Conversation.query.filter_by(
-                id=int(conversation_id),
-                company_id=company_id,
-                channel="webchat",
-                external_conversation_id=visitor_id,
-            ).first()
-        except (TypeError, ValueError):
-            conversation = None
-        if conversation is None:
-            return jsonify({"success": False, "error": "La conversación ya no es válida."}), 403
-        if conversation.agent_id != vendor_agent.id:
-            return jsonify({"success": False, "error": "La conversación no corresponde al vendedor."}), 409
-    else:
-        conversation = Conversation.query.filter_by(
-            company_id=company_id,
-            channel="webchat",
-            external_conversation_id=visitor_id,
-            agent_id=vendor_agent.id,
-        ).filter(Conversation.status == "open").order_by(Conversation.id.desc()).first()
-        if conversation is None:
-            conversation = Conversation(
-                company_id=company_id,
-                agent_id=vendor_agent.id,
-                channel="webchat",
-                external_conversation_id=visitor_id,
-                status="open",
-                metadata_json={"source": "public_webchat"},
-            )
-            db.session.add(conversation)
-            db.session.flush()
     try:
-        result = AgentRuntime.process(
-            company_id=company_id,
-            conversation_id=conversation.id,
-            message=message,
-            channel="webchat",
-            sender_id=None,
-            idempotency_key=str(request.headers.get("Idempotency-Key") or payload.get("idempotency_key") or uuid.uuid4().hex),
-            metadata={"from": visitor_id, "source": "public_webchat"},
-            include_system_prompt=True,
-        )
-        return jsonify({"success": True, "conversation_id": result.get("conversation_id"), "message_id": result.get("message_id"), "assistant_message_id": result.get("assistant_message_id"), "content": result.get("content")})
+        from services.ai_agent.providers.base import AIProviderError
+
+        with public_operation_lock(scope="visitor", company_id=company_id, conversation_id=0, key=visitor_id):
+            if conversation_id not in (None, ""):
+                try:
+                    conversation = Conversation.query.filter_by(
+                        id=int(conversation_id),
+                        company_id=company_id,
+                        channel="webchat",
+                        external_conversation_id=visitor_id,
+                    ).first()
+                except (TypeError, ValueError):
+                    conversation = None
+                if conversation is None:
+                    return jsonify({"success": False, "error": "La conversación ya no es válida."}), 403
+                if conversation.agent_id != vendor_agent.id:
+                    return jsonify({"success": False, "error": "La conversación no corresponde al vendedor."}), 403
+            else:
+                conversation = Conversation.query.filter_by(
+                    company_id=company_id,
+                    channel="webchat",
+                    external_conversation_id=visitor_id,
+                    agent_id=vendor_agent.id,
+                ).filter(Conversation.status == "open").order_by(Conversation.id.desc()).first()
+                if conversation is None:
+                    conversation = Conversation(
+                        company_id=company_id,
+                        agent_id=vendor_agent.id,
+                        channel="webchat",
+                        external_conversation_id=visitor_id,
+                        status="open",
+                        metadata_json={"source": "public_webchat"},
+                    )
+                    db.session.add(conversation)
+                    db.session.flush()
+
+            with public_operation_lock(scope="request", company_id=company_id, conversation_id=conversation.id, key=idempotency_key):
+                operation = PublicVendorOperation.query.filter_by(
+                    company_id=company_id,
+                    conversation_id=conversation.id,
+                    idempotency_key=idempotency_key,
+                ).first()
+                cached = cached_result(operation, operation_type="message")
+                if cached is not None:
+                    return jsonify(cached)
+                if operation is not None and operation.operation_type != "message":
+                    return jsonify({"success": False, "error": "La clave ya pertenece a otra operación."}), 409
+                incoming = ConversationMessage.query.filter_by(
+                    company_id=company_id,
+                    conversation_id=conversation.id,
+                    idempotency_key=idempotency_key,
+                    role="user",
+                ).first()
+                assistant = None
+                if incoming is not None:
+                    assistant = ConversationMessage.query.filter_by(
+                        company_id=company_id,
+                        conversation_id=conversation.id,
+                        trace_id=incoming.trace_id,
+                        role="assistant",
+                    ).order_by(ConversationMessage.id.desc()).first()
+                if operation is not None and incoming is not None and assistant is None:
+                    from services.ai_agent.vendor_publication import recover_committed_order_reply
+
+                    recovered = recover_committed_order_reply(
+                        company=company,
+                        conversation=conversation,
+                        operation=operation,
+                        incoming=incoming,
+                        visitor_id=visitor_id,
+                    )
+                    if recovered is not None:
+                        response_payload = {
+                            "success": True,
+                            "conversation_id": recovered["conversation_id"],
+                            "message_id": recovered["message_id"],
+                            "assistant_message_id": recovered["assistant_message_id"],
+                            "content": recovered["content"],
+                        }
+                        operation.trace_id = recovered.get("trace_id") or operation.trace_id
+                        complete_operation(operation, response_payload, quote_id=operation.quote_id)
+                        db.session.commit()
+                        return jsonify(response_payload)
+                if assistant is None:
+                    access = can_use_ai(company, "vendedor")
+                    if not access.allowed:
+                        return jsonify({"success": False, "error": access.reason}), 403
+                if operation is None and incoming is None and not _public_vendor_rate_limit(
+                    company_id,
+                    conversation_id=conversation.id,
+                    request_key=idempotency_key,
+                ):
+                    return jsonify({"success": False, "error": "El vendedor está recibiendo muchas consultas. Esperá unos segundos y probá nuevamente."}), 429, {"Retry-After": str(PUBLIC_VENDOR_CHAT_WINDOW)}
+                operation = get_or_create_operation(
+                    company_id=company_id,
+                    conversation_id=conversation.id,
+                    idempotency_key=idempotency_key,
+                    operation_type="message",
+                    trace_id=incoming.trace_id if incoming is not None else None,
+                )
+                result = (
+                    {
+                        "conversation_id": conversation.id,
+                        "message_id": incoming.id,
+                        "assistant_message_id": assistant.id,
+                        "content": assistant.content,
+                        "trace_id": incoming.trace_id,
+                    }
+                    if assistant is not None
+                    else AgentRuntime.process(
+                        company_id=company_id,
+                        conversation_id=conversation.id,
+                        message=message,
+                        channel="webchat",
+                        sender_id=None,
+                        idempotency_key=idempotency_key,
+                        metadata={"from": visitor_id, "source": "public_webchat"},
+                        include_system_prompt=True,
+                        idempotency_lock_held=True,
+                        trace_id=operation.trace_id,
+                    )
+                )
+                response_payload = {
+                    "success": True,
+                    "conversation_id": result.get("conversation_id"),
+                    "message_id": result.get("message_id"),
+                    "assistant_message_id": result.get("assistant_message_id"),
+                    "content": result.get("content"),
+                }
+                operation.trace_id = result.get("trace_id") or operation.trace_id
+                complete_operation(operation, response_payload)
+                db.session.commit()
+                return jsonify(response_payload)
     except ValueError as exc:
         db.session.rollback()
         return jsonify({"success": False, "error": str(exc)}), 400
+    except PublicOperationConflict as exc:
+        db.session.rollback()
+        return jsonify({"success": False, "error": str(exc)}), 409
+    except AIProviderError as exc:
+        db.session.rollback()
+        status_code = int(getattr(exc, "status_code", 503) or 503)
+        if status_code not in {429, 503}:
+            status_code = 503
+        return jsonify({"success": False, "error": str(exc)}), status_code
     except Exception:
         db.session.rollback()
         current_app.logger.exception("Error en vendedor web público: company_id=%s conversation_id=%s", company_id, conversation.id)
-        return jsonify({"success": False, "error": "No se pudo procesar la consulta. Intentá nuevamente."}), 500
+        return jsonify({"success": False, "error": "El vendedor está temporalmente ocupado. Probá nuevamente en unos segundos."}), 503
 
 
 # The legacy public Vendedor endpoint is anonymous; signed token + tenant lookup + rate limit protect it.\ncsrf.exempt(public_vendor_chat_message)\n\n@bp.get("/")
