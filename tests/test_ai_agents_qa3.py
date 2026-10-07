@@ -88,6 +88,7 @@ def test_plan_feature_entitlements(qa_ai_database, plan_code, pricing_allowed, i
     assert can_use_ai_feature(company, "pricing_controller").allowed is pricing_allowed
     assert can_use_ai_feature(company, "pricing_rollback").allowed is (plan_code == "pro")
     assert can_use_ai_feature(company, "facturas").allowed is invoice_allowed
+    assert can_use_ai_feature(company, "crm").allowed is (plan_code == "pro")
 
 
 def test_plan_feature_entitlements_do_not_depend_on_monthly_usage(qa_ai_database):

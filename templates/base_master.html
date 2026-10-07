@@ -149,7 +149,9 @@
       backdrop-filter: var(--surface-blur);
       display: flex;
       flex-direction: column;
-      overflow: hidden;
+      overflow-y: auto;
+      overflow-x: hidden;
+      -webkit-overflow-scrolling: touch;
       z-index: 1030;
     }
     [data-bs-theme="dark"] .app-sidebar,
@@ -226,9 +228,7 @@
       padding: 10px 10px 8px;
       flex: 1 1 auto;
       min-height: 0;
-      overflow-y: auto;
-      overflow-x: hidden;
-      -webkit-overflow-scrolling: touch;
+      overflow: visible;
     }
     .app-nav .nav-link {
       min-height: 36px;
@@ -812,7 +812,7 @@
       <a class="nav-link {% if request.endpoint and request.endpoint.startswith('qr_labels.') %}active{% endif %}" href="{{ url_for('qr_labels.generate') }}"><i class="bi bi-qr-code"></i><span class="nav-text">QR y etiquetas</span></a>
       {% endif %}
       <div class="nav-section-label">Comercial</div>
-      {% if current_user.role == 'admin' or current_user_has_permission('crm') %}
+      {% if ai_feature_crm_allowed and (current_user.role == 'admin' or current_user_has_permission('crm')) %}
       <a class="nav-link {% if request.endpoint and request.endpoint.startswith('crm.') %}active{% endif %}" href="{{ url_for('crm.index') }}"><i class="bi bi-kanban"></i><span class="nav-text">CRM</span></a>
       {% endif %}
       <div class="nav-section-label">Resumen</div>

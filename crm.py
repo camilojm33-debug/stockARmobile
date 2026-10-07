@@ -9,6 +9,7 @@ from flask_login import current_user
 from sqlalchemy import func, or_
 
 from app import db, tenant_required, scope_query_to_company
+from stockarmobile.decorators import ai_pro_crm_required
 from crm_models import CRMActivity, CRMOpportunity
 
 bp = Blueprint("crm", __name__)
@@ -66,6 +67,7 @@ def _client_for_company(client_id):
 
 @bp.route("/")
 @tenant_required
+@ai_pro_crm_required
 def index():
     company_id = _company_id()
     open_opps = _opportunity_query().filter(CRMOpportunity.status == "open")
@@ -94,6 +96,7 @@ def index():
 
 @bp.route("/pipeline")
 @tenant_required
+@ai_pro_crm_required
 def pipeline():
     opportunities = _opportunity_query().filter(CRMOpportunity.status == "open").order_by(CRMOpportunity.updated_at.desc()).all()
     grouped = {stage: [] for stage, _ in STAGES if stage not in {"ganado", "perdido"}}
@@ -104,6 +107,7 @@ def pipeline():
 
 @bp.route("/opportunities/new", methods=["GET", "POST"])
 @tenant_required
+@ai_pro_crm_required
 def opportunity_new():
     from app import Client
     clients = scope_query_to_company(Client.query.filter(Client.active.is_(True)), Client).order_by(Client.name).all()
@@ -139,6 +143,7 @@ def opportunity_new():
 
 @bp.route("/opportunities/<int:opportunity_id>")
 @tenant_required
+@ai_pro_crm_required
 def opportunity_detail(opportunity_id):
     opportunity = _opportunity_query().filter(CRMOpportunity.id == opportunity_id).first_or_404()
     activities = _activity_query().filter(CRMActivity.opportunity_id == opportunity.id).order_by(CRMActivity.due_at.desc().nullslast(), CRMActivity.id.desc()).all()
@@ -147,6 +152,7 @@ def opportunity_detail(opportunity_id):
 
 @bp.route("/opportunities/<int:opportunity_id>/stage", methods=["POST"])
 @tenant_required
+@ai_pro_crm_required
 def opportunity_stage(opportunity_id):
     opportunity = _opportunity_query().filter(CRMOpportunity.id == opportunity_id).first_or_404()
     stage = request.form.get("stage")
@@ -162,6 +168,7 @@ def opportunity_stage(opportunity_id):
 
 @bp.route("/activities", methods=["GET", "POST"])
 @tenant_required
+@ai_pro_crm_required
 def activities():
     if request.method == "POST":
         client_id = request.form.get("client_id", type=int)
@@ -196,6 +203,7 @@ def activities():
 
 @bp.route("/activities/<int:activity_id>/complete", methods=["POST"])
 @tenant_required
+@ai_pro_crm_required
 def activity_complete(activity_id):
     activity = _activity_query().filter(CRMActivity.id == activity_id).first_or_404()
     now = _now()
@@ -209,6 +217,7 @@ def activity_complete(activity_id):
 
 @bp.route("/clients/<int:client_id>")
 @tenant_required
+@ai_pro_crm_required
 def client_360(client_id):
     from app import Client, Quote, Sale
     client = _client_for_company(client_id)
@@ -224,6 +233,7 @@ def client_360(client_id):
 
 @bp.route("/clients")
 @tenant_required
+@ai_pro_crm_required
 def clients():
     from app import Client
     search = (request.args.get("search") or "").strip()

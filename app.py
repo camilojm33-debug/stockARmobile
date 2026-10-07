@@ -2445,6 +2445,7 @@ def inject_notifications():
     ai_feature_pricing_allowed = False
     ai_feature_vendor_allowed = False
     ai_feature_marketing_allowed = False
+    ai_feature_crm_allowed = False
     commercial_promotions_allowed = False
     ai_employee_access_allowed = False
     support_contact = {
@@ -2470,6 +2471,7 @@ def inject_notifications():
                 )
                 ai_feature_vendor_allowed = can_use_ai_feature(company, "vendedor").allowed
                 ai_feature_marketing_allowed = can_use_ai_feature(company, "marketing").allowed
+                ai_feature_crm_allowed = can_use_ai_feature(company, "crm").allowed
                 commercial_promotions_allowed = can_use_commercial_feature(company, "promotions").allowed
                 ai_employee_access_allowed = (
                     getattr(current_user, "role", None) in {"admin", "superadmin"}
@@ -2505,6 +2507,7 @@ def inject_notifications():
             "ai_feature_pricing_allowed": ai_feature_pricing_allowed,
             "ai_feature_vendor_allowed": ai_feature_vendor_allowed,
             "ai_feature_marketing_allowed": ai_feature_marketing_allowed,
+            "ai_feature_crm_allowed": ai_feature_crm_allowed,
             "commercial_promotions_allowed": commercial_promotions_allowed,
             "ai_employee_access_allowed": ai_employee_access_allowed,
         }
@@ -2517,6 +2520,7 @@ def inject_notifications():
         "company_preferences": {},
         "company_feature_enabled": lambda key, default=False: bool(default),
         "current_user_has_permission": lambda key: _user_has_permission(current_user, key),
+        "ai_feature_crm_allowed": False,
     }
 
 
