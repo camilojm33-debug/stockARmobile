@@ -287,3 +287,77 @@ body.sidebar-collapsed .app-nav .nav-link.active { box-shadow: none; }
     overflow-y: scroll !important;
   }
 }
+
+/* Sidebar scroll definitivo: viewport acotado igual que un panel flotante. */
+.app-sidebar {
+  position: fixed !important;
+  inset: 0 auto 0 0 !important;
+  height: 100dvh !important;
+  max-height: 100dvh !important;
+  overflow: hidden !important;
+  display: block !important;
+}
+.app-sidebar > .app-brand {
+  position: absolute !important;
+  top: 0 !important;
+  left: 0 !important;
+  right: 0 !important;
+  height: 64px !important;
+  z-index: 6 !important;
+  background: inherit !important;
+}
+.app-sidebar > .app-nav {
+  position: absolute !important;
+  top: 64px !important;
+  right: 0 !important;
+  bottom: 76px !important;
+  left: 0 !important;
+  width: auto !important;
+  height: auto !important;
+  max-height: none !important;
+  min-height: 0 !important;
+  margin: 0 !important;
+  padding: 10px 10px 18px !important;
+  overflow-y: scroll !important;
+  overflow-x: hidden !important;
+  -webkit-overflow-scrolling: touch !important;
+  overscroll-behavior-y: contain !important;
+  scrollbar-width: auto !important;
+  scrollbar-color: rgba(100,116,139,.55) transparent !important;
+  touch-action: pan-y !important;
+}
+.app-sidebar > .app-nav::-webkit-scrollbar {
+  width: 9px;
+}
+.app-sidebar > .app-nav::-webkit-scrollbar-track {
+  background: rgba(100,116,139,.08);
+  border-radius: 999px;
+}
+.app-sidebar > .app-nav::-webkit-scrollbar-thumb {
+  background: rgba(100,116,139,.48);
+  border-radius: 999px;
+  border: 2px solid transparent;
+  background-clip: padding-box;
+}
+.app-sidebar > .app-sidebar-footer {
+  position: absolute !important;
+  right: 0 !important;
+  bottom: 0 !important;
+  left: 0 !important;
+  z-index: 7 !important;
+  margin: 0 !important;
+  min-height: 76px !important;
+  background: var(--app-panel) !important;
+}
+@media (max-width: 1099.98px) {
+  .app-sidebar > .app-brand {
+    height: 64px !important;
+  }
+  .app-sidebar > .app-nav {
+    top: 64px !important;
+    bottom: 72px !important;
+  }
+  .app-sidebar > .app-sidebar-footer {
+    min-height: 72px !important;
+  }
+}
