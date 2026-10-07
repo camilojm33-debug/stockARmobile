@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import logging
 import os
 import re
 import time
@@ -107,17 +108,19 @@ class GeminiProvider(AIProvider):
         return converted
 
     @classmethod
-    def _function_declarations(cls, tools: Iterable[Dict[str, Any]] | None) -> list[Dict[str, Any]]:
+    def _function_declarations(cls, tools: Iterable[Dict[str, Any]] | None) -> list[Any]:
+        from google.genai import types
+
         declarations = []
         for tool in tools or []:
             function = tool.get("function") or {}
             raw_parameters = function.get("parameters") or {"type": "object", "properties": {}}
             declarations.append(
-                {
-                    "name": function.get("name"),
-                    "description": function.get("description") or "",
-                    "parameters": cls._to_gemini_schema(raw_parameters),
-                }
+                types.FunctionDeclaration(
+                    name=function.get("name"),
+                    description=function.get("description") or "",
+                    parameters_json_schema=cls._to_gemini_schema(raw_parameters),
+                )
             )
         return declarations
 
@@ -288,7 +291,7 @@ class GeminiProvider(AIProvider):
         last_exc = None
         for attempt in range(attempts):
             try:
-                return self.client.models._generate_content(model=model, contents=contents, config=config)
+                return self.client.models.generate_content(model=model, contents=contents, config=config)
             except Exception as exc:
                 last_exc = exc
                 api_error_code = self._api_error_code(exc)
@@ -319,9 +322,15 @@ class GeminiProvider(AIProvider):
                 config=self._config(messages=messages, tools=tools, temperature=temperature, max_tokens=max_tokens),
             )
         except Exception as exc:
+            api_error_code = self._api_error_code(exc)
+            logging.getLogger(__name__).error(
+                "Gemini generate_content failed model=%s code=%s error=%s",
+                effective_model,
+                api_error_code if api_error_code is not None else "unknown",
+                self._safe_error_message(exc),
+            )
             if self._is_timeout_error(exc):
                 raise AIProviderError("Gemini tardó demasiado en responder. Intentá nuevamente en unos segundos.", status_code=503) from exc
-            api_error_code = self._api_error_code(exc)
             if api_error_code == 429:
                 if self._is_daily_quota_exhausted(exc):
                     message = (
@@ -348,6 +357,17 @@ class GeminiProvider(AIProvider):
             "usage": self._usage(response),
             "model": effective_model,
         }
+
+    @staticmethod
+    def _safe_error_message(exc: Exception) -> str:
+        message = str(exc)
+        message = re.sub(r"\bAIza[0-9A-Za-z_-]{20,}\b", "[REDACTED_API_KEY]", message)
+        message = re.sub(
+            r"(?i)\b(api[_-]?key|access[_-]?token|authorization)\b(\s*[:=]\s*)(?:Bearer\s+)?[^\s,;]+",
+            r"\1\2[REDACTED]",
+            message,
+        )
+        return message[:1000]
 
     def generate_invoice(self, *, file_path, mime_type: str, prompt: str, schema: Dict[str, Any], model: str | None = None) -> Dict[str, Any]:
         effective_model = model or os.getenv("GEMINI_INVOICE_MODEL") or self.model
