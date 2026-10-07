@@ -138,26 +138,11 @@
       width: 100%;
     }
     .app-sidebar {
-      position: fixed;
-      inset: 0 auto 0 0;
-      width: var(--sidebar-width);
-      height: 100dvh;
-      min-height: 100vh;
-      max-height: 100dvh;
       background: rgba(255, 255, 255, .88);
       border-right: 1px solid var(--app-line);
       backdrop-filter: var(--surface-blur);
-      display: grid;
-      grid-template-rows: auto minmax(0, 1fr) auto;
-      overflow: hidden;
-      scrollbar-width: thin;
-      scrollbar-color: rgba(100,116,139,.28) transparent;
       z-index: 1040;
     }
-    .app-sidebar::-webkit-scrollbar { width: 7px; }
-    .app-sidebar::-webkit-scrollbar-track { background: transparent; }
-    .app-sidebar::-webkit-scrollbar-thumb { background: rgba(100,116,139,.25); border-radius: 999px; }
-    .app-sidebar::-webkit-scrollbar-thumb:hover { background: rgba(71,85,105,.4); }
     [data-bs-theme="dark"] .app-sidebar,
     [data-bs-theme="dark"] .app-mobilebar {
       background: rgba(24, 34, 53, .94);
@@ -230,19 +215,7 @@
     }
     .app-nav {
       padding: 10px 10px 8px;
-      min-height: 0;
-      height: 100%;
-      overflow-y: auto;
-      overflow-x: hidden;
-      -webkit-overflow-scrolling: touch;
-      overscroll-behavior: contain;
-      scrollbar-width: thin;
-      scrollbar-color: rgba(100,116,139,.25) transparent;
     }
-    .app-nav::-webkit-scrollbar { width: 7px; }
-    .app-nav::-webkit-scrollbar-track { background: transparent; }
-    .app-nav::-webkit-scrollbar-thumb { background: rgba(100,116,139,.25); border-radius: 999px; }
-    .app-nav::-webkit-scrollbar-thumb:hover { background: rgba(71,85,105,.4); }
     .app-nav .nav-link {
       min-height: 34px;
       padding: .34rem .58rem;
@@ -275,7 +248,6 @@
     }
     .app-sidebar-footer {
       margin-top: 0;
-      min-height: 0;
       padding: 9px 10px;
       border-top: 1px solid var(--app-line);
     }
@@ -362,6 +334,9 @@
       }
       body.sidebar-collapsed .app-sidebar {
         width: var(--sidebar-width);
+      }
+      body.sidebar-collapsed .app-sidebar-header {
+        flex-basis: 52px;
       }
       body.sidebar-collapsed .app-main {
         margin-left: var(--sidebar-width);
@@ -638,17 +613,9 @@
     @media (max-width: 1099.98px) {
       .app-layout { display: block; }
       .app-sidebar {
-        position: fixed;
-        inset: 0 auto 0 0;
-        height: 100dvh;
-        min-height: 100dvh;
-        max-height: 100dvh;
-        width: min(82vw, 300px);
-        max-width: min(82vw, 300px);
         transform: translateX(-102%);
         transition: transform .24s ease;
         box-shadow: 24px 0 70px rgba(15,23,42,.22);
-        z-index: 1040;
       }
       .app-sidebar.show { transform: translateX(0); }
       .app-main { margin-left: 0; }
@@ -685,7 +652,6 @@
       }
     }
     @media (max-width: 575.98px) {
-      .app-sidebar { width: min(86vw, 280px); max-width: min(86vw, 280px); }
       .app-card .card-body { padding: 1rem; }
       .toolbar-card { padding: 10px; }
       .btn-lg, .form-control-lg { font-size: 1rem; }
@@ -746,17 +712,20 @@
   {% if current_user.is_authenticated %}
   <div class="app-sidebar-backdrop" id="appSidebarBackdrop" aria-hidden="true"></div>
   <aside class="app-sidebar" id="appSidebar">
-    <button class="app-sidebar-toggle d-none d-lg-inline-flex" type="button" id="appSidebarDesktopToggle" aria-label="Contraer menú"><i class="bi bi-layout-sidebar-inset"></i></button>
-    <a class="app-brand" href="{{ url_for('saas.index') if current_user.role == 'superadmin' else (url_for('referrals.seller_dashboard') if current_user.role == 'seller' and not current_user.company_id else url_for('dashboard.index')) }}">
-      <span class="app-brand-mark">
-        <img class="app-brand-logo" src="{{ url_for('static', filename='images/branding/logo.png') }}" alt="StockArmobile logo">
-      </span>
-      <span>
-        <span class="fw-bold d-block">StockArmobile</span>
-        <small class="text-muted">Sistema de gestión comercial</small>
-      </span>
-    </a>
-    <nav class="app-nav nav flex-column">
+    <div class="app-sidebar-header">
+      <button class="app-sidebar-toggle d-none d-lg-inline-flex" type="button" id="appSidebarDesktopToggle" aria-label="Contraer menú"><i class="bi bi-layout-sidebar-inset"></i></button>
+      <a class="app-brand" href="{{ url_for('saas.index') if current_user.role == 'superadmin' else (url_for('referrals.seller_dashboard') if current_user.role == 'seller' and not current_user.company_id else url_for('dashboard.index')) }}">
+        <span class="app-brand-mark">
+          <img class="app-brand-logo" src="{{ url_for('static', filename='images/branding/logo.png') }}" alt="StockArmobile logo">
+        </span>
+        <span>
+          <span class="fw-bold d-block">StockArmobile</span>
+          <small class="text-muted">Sistema de gestión comercial</small>
+        </span>
+      </a>
+    </div>
+    <div class="app-sidebar-nav-scroll">
+      <nav class="app-nav nav flex-column">
       {% if current_user.role == 'superadmin' %}
       <div class="nav-section-label">Administración</div>
       <a class="nav-link {% if request.endpoint == 'saas.index' %}active{% endif %}" href="{{ url_for('saas.index') }}"><i class="bi bi-grid-1x2"></i>Panel SaaS</a>
@@ -871,7 +840,8 @@
       {% if current_user.role != 'superadmin' %}
       <a class="nav-link {% if request.endpoint and request.endpoint.startswith('support.') %}active{% endif %}" href="{{ url_for('support.new_ticket') }}"><i class="bi bi-life-preserver"></i><span class="nav-text">Ayuda</span></a>
       {% endif %}
-    </nav>
+      </nav>
+    </div>
     <div class="app-sidebar-footer" id="appSidebarFooter">
       <div class="sidebar-footer-mobile-summary">
         <button class="sidebar-footer-toggle" type="button" id="appSidebarFooterToggle" aria-expanded="false" aria-controls="appSidebarFooterDetails">
