@@ -768,17 +768,11 @@ class AgentRuntime:
             allowed_tool_names = vendor_allowed_tool_names(vendor_options)
             if is_public_webchat:
                 prompt += (
-                    "
-
-MODO WEBCHAT PÚBLICO — ORDEN DIRECTA:"
-                    "
-- Priorizá resolver una solicitud de compra en una sola ronda de herramientas."
-                    "
-- Si el cliente ya indicó producto, cantidad, nombre, teléfono y datos de envío, evitá búsquedas exploratorias innecesarias."
-                    "
-- Para un pedido, podés agregar el producto al carrito y después preparar el pedido dentro de la misma ronda de herramientas."
-                    "
-- Nunca afirmes que el pago quedó realizado si el backend no devolvió un resultado exitoso."
+                    "\n\nMODO WEBCHAT PÚBLICO — ORDEN DIRECTA:"
+                    "\n- Priorizá resolver una solicitud de compra en una sola ronda de herramientas."
+                    "\n- Si el cliente ya indicó producto, cantidad, nombre, teléfono y datos de envío, evitá búsquedas exploratorias innecesarias."
+                    "\n- Para un pedido, podés agregar el producto al carrito y después preparar el pedido dentro de la misma ronda de herramientas."
+                    "\n- Nunca afirmes que el pago quedó realizado si el backend no devolvió un resultado exitoso."
                 )
         elif agent_key in {"analista", "marketing"}:
             special_options = get_special_options(company, agent_key)
