@@ -86,6 +86,9 @@ def _decode_public_vendor_token(token: str):
 
 def _public_vendor_rate_limit(company_id: int, *, conversation_id=None, request_key=None) -> bool:
     remote = (request.remote_addr or "unknown").strip()
+    visitor_scope = str(visitor_id or "").strip()[:200] or remote
+    visitor_digest = hashlib.sha256(visitor_scope.encode()).hexdigest()[:32]
+    ip_digest = hashlib.sha256(remote.encode()).hexdigest()[:32]
     redis_url = (os.getenv("REDIS_URL") or "").strip()
     operation_scope = ""
     if request_key:
@@ -95,28 +98,38 @@ def _public_vendor_rate_limit(company_id: int, *, conversation_id=None, request_
         try:
             import redis
             client = redis.Redis.from_url(redis_url, socket_connect_timeout=1, socket_timeout=1, decode_responses=True)
-            key = f"stockarmobile:public-vendor:{int(company_id)}:{remote}"
+            visitor_key = f"stockarmobile:public-vendor:{int(company_id)}:visitor:{visitor_digest}"
+            ip_key = f"stockarmobile:public-vendor:{int(company_id)}:ip:{ip_digest}"
+            key = visitor_key
             if operation_scope:
                 operation_key = key + ":operation" + operation_scope
                 result = client.eval(
-                    "local known = redis.call('EXISTS', KEYS[2]); "
+                    "local known = redis.call('EXISTS', KEYS[3]); "
                     "if known == 1 then return 1 end; "
-                    "local count = redis.call('INCR', KEYS[1]); "
-                    "if count == 1 then redis.call('EXPIRE', KEYS[1], ARGV[2]) end; "
-                    "if count > tonumber(ARGV[1]) then redis.call('SET', KEYS[2], '0', 'EX', ARGV[2]); return 0 end; "
-                    "redis.call('SET', KEYS[2], '1', 'EX', ARGV[3]); return 1",
-                    2,
-                    key,
+                    "local visitor_count = redis.call('INCR', KEYS[1]); "
+                    "if visitor_count == 1 then redis.call('EXPIRE', KEYS[1], ARGV[2]) end; "
+                    "if visitor_count > tonumber(ARGV[1]) then redis.call('SET', KEYS[3], '0', 'EX', ARGV[4]); return 0 end; "
+                    "local ip_count = redis.call('INCR', KEYS[2]); "
+                    "if ip_count == 1 then redis.call('EXPIRE', KEYS[2], ARGV[2]) end; "
+                    "if ip_count > tonumber(ARGV[3]) then redis.call('SET', KEYS[3], '0', 'EX', ARGV[4]); return 0 end; "
+                    "redis.call('SET', KEYS[3], '1', 'EX', ARGV[4]); return 1",
+                    3,
+                    visitor_key,
+                    ip_key,
                     operation_key,
                     PUBLIC_VENDOR_CHAT_LIMIT,
                     PUBLIC_VENDOR_CHAT_WINDOW,
+                    PUBLIC_VENDOR_CHAT_LIMIT * 5,
                     86400,
                 )
                 return bool(result)
-            count = int(client.incr(key))
+            count = int(client.incr(visitor_key))
             if count == 1:
-                client.expire(key, PUBLIC_VENDOR_CHAT_WINDOW)
-            return count <= PUBLIC_VENDOR_CHAT_LIMIT
+                client.expire(visitor_key, PUBLIC_VENDOR_CHAT_WINDOW)
+            ip_count = int(client.incr(ip_key))
+            if ip_count == 1:
+                client.expire(ip_key, PUBLIC_VENDOR_CHAT_WINDOW)
+            return count <= PUBLIC_VENDOR_CHAT_LIMIT and ip_count <= PUBLIC_VENDOR_CHAT_LIMIT * 5
         except Exception:
             if current_app.config.get("IS_PRODUCTION_ENV"):
                 current_app.logger.exception("Public vendor Redis rate limit unavailable; failing closed.")
@@ -127,20 +140,23 @@ def _public_vendor_rate_limit(company_id: int, *, conversation_id=None, request_
         return False
     now = int(time.time())
     state = session.get("public_vendor_rate") or {}
-    if not isinstance(state, dict) or now - int(state.get("started_at", 0) or 0) >= PUBLIC_VENDOR_CHAT_WINDOW:
-        session["public_vendor_rate"] = {"started_at": now, "count": 1, "operations": [operation_scope] if operation_scope else []}
+    visitor_state = state if isinstance(state, dict) else {}
+    if now - int(visitor_state.get("started_at", 0) or 0) >= PUBLIC_VENDOR_CHAT_WINDOW:
+        session["public_vendor_rate"] = {"started_at": now, "count": 1, "operations": [operation_scope] if operation_scope else [], "ip_count": 1}
         return True
     operations = state.get("operations") if isinstance(state.get("operations"), list) else []
     if operation_scope and operation_scope in operations:
         return True
-    count = int(state.get("count", 0) or 0)
-    if count >= PUBLIC_VENDOR_CHAT_LIMIT:
+    count = int(visitor_state.get("count", 0) or 0)
+    ip_count = int(visitor_state.get("ip_count", 0) or 0)
+    if count >= PUBLIC_VENDOR_CHAT_LIMIT or ip_count >= PUBLIC_VENDOR_CHAT_LIMIT * 5:
         return False
-    state["count"] = count + 1
+    visitor_state["count"] = count + 1
+    visitor_state["ip_count"] = ip_count + 1
     if operation_scope:
         operations.append(operation_scope)
         state["operations"] = operations[-100:]
-    session["public_vendor_rate"] = state
+    session["public_vendor_rate"] = visitor_state
     session.modified = True
     return True
 
