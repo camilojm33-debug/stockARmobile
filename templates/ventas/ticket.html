@@ -41,10 +41,17 @@
       <div><span>Descuento</span><strong>-${{ "%.2f"|format(effective_discount) }}</strong></div>
       {% if sale.discount_type == 'percentage' and sale.discount_value is not none %}<div><span>Descuento aplicado</span><strong>-${{ "%.2f"|format(sale.discount) }}</strong></div>{% endif %}
       {% if sale.discount_reason %}<div><span>Motivo descuento</span><strong>{{ sale.discount_reason }}</strong></div>{% endif %}
+      {% if charge_rows %}
+      {% for charge in charge_rows %}
+      <div><span>{{ charge.name }}</span><strong>+${{ "%.2f"|format(charge.amount) }}</strong></div>
+      {% if charge.type == 'percentage' and charge.value is not none %}<div><span>{{ charge.name }} aplicado</span><strong>${{ "%.2f"|format(charge.amount) }}</strong></div>{% endif %}
+      {% endfor %}
+      {% else %}
       {% if sale.surcharge %}<div><span>Recargo</span><strong>{% if sale.surcharge_type == 'percentage' and sale.surcharge_value is not none %}{{ "%.2f"|format(sale.surcharge_value) }}%{% else %}${{ "%.2f"|format(sale.surcharge) }}{% endif %}</strong></div>{% endif %}
       {% if sale.surcharge_type == 'percentage' and sale.surcharge_value is not none %}<div><span>Recargo aplicado</span><strong>${{ "%.2f"|format(sale.surcharge) }}</strong></div>{% endif %}
       {% if sale.surcharge_reason %}<div><span>Motivo recargo</span><strong>{{ sale.surcharge_reason }}</strong></div>{% endif %}
-      <div><span>Impuestos</span><strong>${{ "%.2f"|format(sale.tax) }}</strong></div>
+      {% if sale.tax %}<div><span>Impuestos</span><strong>${{ "%.2f"|format(sale.tax) }}</strong></div>{% endif %}
+      {% endif %}
       <div class="ticket-total-final"><span>Total</span><strong>${{ "%.2f"|format(sale.total_amount) }}</strong></div>
     </div>
 
