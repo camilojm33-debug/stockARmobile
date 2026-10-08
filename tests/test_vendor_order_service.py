@@ -243,6 +243,98 @@ def test_update_cart_reports_ambiguous_products(vendor_database):
     assert CART_KEY not in (conversation.metadata_json or {})
 
 
+def test_update_cart_after_pending_checkout_starts_fresh_cart_and_replaces_quantity(vendor_database):
+    data = vendor_database
+    conversation = _conversation(data["company_a"].id)
+    second_product = Product(
+        barcode="A-004",
+        name="Te verde",
+        price=75,
+        cost_price=30,
+        stock=10,
+        min_stock=1,
+        active=True,
+        company_id=data["company_a"].id,
+    )
+    db.session.add(second_product)
+    db.session.flush()
+    conversation.metadata_json = {
+        CART_KEY: {
+            str(data["product_a"].id): 5.0,
+            str(second_product.id): 1.0,
+        },
+        PENDING_QUOTE_KEY: 321,
+        PENDING_PAYMENT_KEY: "https://payments.test/old-checkout",
+    }
+    db.session.commit()
+
+    cart = VendorOrderService.update_cart(
+        company_id=data["company_a"].id,
+        conversation_id=conversation.id,
+        items=[{
+            "product_query": "Cafe clasico",
+            "quantity": 6,
+            "replace_quantity": True,
+        }],
+    )
+
+    assert cart["line_count"] == 1
+    assert cart["items"][0]["product_id"] == data["product_a"].id
+    assert cart["items"][0]["quantity"] == 6
+    assert conversation.metadata_json[CART_KEY] == {str(data["product_a"].id): 6.0}
+    assert PENDING_QUOTE_KEY not in conversation.metadata_json
+    assert PENDING_PAYMENT_KEY not in conversation.metadata_json
+
+
+def test_create_pending_order_does_not_reuse_pending_quote_for_different_buyer(vendor_database, monkeypatch):
+    data = vendor_database
+    conversation = _conversation(data["company_a"].id)
+    calls = []
+    _mock_checkout(monkeypatch, calls)
+    VendorOrderService.update_cart(
+        company_id=data["company_a"].id,
+        conversation_id=conversation.id,
+        items=[{"product_query": "Cafe clasico", "quantity": 1}],
+    )
+
+    first = VendorOrderService.create_pending_order(
+        company_id=data["company_a"].id,
+        conversation_id=conversation.id,
+        customer_name="Adolfo Piris",
+        customer_phone="3624228396",
+        delivery_method="envio",
+        delivery_address="Siempreviva 355",
+        delivery_city="Resistencia",
+        delivery_province="Chaco",
+        actor_user_id=data["user_a"].id,
+    )
+    second = VendorOrderService.create_pending_order(
+        company_id=data["company_a"].id,
+        conversation_id=conversation.id,
+        customer_name="Nelson Mandela",
+        customer_phone="4434556655",
+        delivery_method="envio",
+        delivery_address="La Libertad 434",
+        delivery_city="Resistencia",
+        delivery_province="Chaco",
+        actor_user_id=data["user_a"].id,
+    )
+
+    from app import QuoteDelivery
+    first_quote = Quote.query.filter_by(id=first["quote_id"], company_id=data["company_a"].id).one()
+    second_quote = Quote.query.filter_by(id=second["quote_id"], company_id=data["company_a"].id).one()
+    second_delivery = QuoteDelivery.query.filter_by(quote_id=second_quote.id).one()
+
+    assert first["quote_id"] != second["quote_id"]
+    assert second["existing"] is False
+    assert Quote.query.filter_by(company_id=data["company_a"].id).count() == 2
+    assert second_quote.client.name == "Nelson Mandela"
+    assert second_delivery.phone == "4434556655"
+    assert second_delivery.address == "La Libertad 434"
+    assert second_quote.id != first_quote.id
+    assert [kind for kind, _ in calls].count("checkout") == 2
+
+
 def test_create_pending_order_rejects_empty_cart(vendor_database):
     data = vendor_database
     conversation = _conversation(data["company_a"].id)
