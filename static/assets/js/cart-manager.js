@@ -127,6 +127,16 @@ function quotePayloadMatchesCart(payload) {
   });
 }
 
+function getActiveQuoteId() {
+  if (quotePricingSnapshot && quoteSnapshotMatchesCart()) {
+    return Number(quotePricingSnapshot.quoteId || 0) || '';
+  }
+  if (quotePayloadMatchesCart(window.__quoteCartPrefill)) {
+    return Number(window.__quoteCartPrefill.quote_id || 0) || '';
+  }
+  return '';
+}
+
 function ensureCheckoutToken() {
   if (quotePricingSnapshot && quotePricingSnapshot.checkoutToken && quoteSnapshotMatchesCart()) {
     checkoutToken = String(quotePricingSnapshot.checkoutToken);
