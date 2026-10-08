@@ -751,6 +751,8 @@ def _persisted_checkout_preview(company, *, subscription_id=None, preference_id=
     ).first()
     if subscription is None or subscription.plan is None:
         return None
+    if SubscriptionService._metadata_dict(subscription).get("checkout_cancelled"):
+        return None
     try:
         preference = json.loads(event.payload_json or "{}")
     except (TypeError, ValueError):
@@ -1735,7 +1737,12 @@ def cancel_ai_subscription():
     if _wants_json_response():
         return jsonify({"success": True, "message": message})
     flash(message, "success")
-    return redirect(url_for("company_billing.subscription_portal", _anchor="suscripcion-ia"))
+    return redirect(
+        url_for(
+            "company_billing.subscription_portal",
+            _anchor="payment-checkout" if request.form.get("from_checkout") == "1" else "suscripcion-ia",
+        )
+    )
 
 
 @bp.route("/subscription/mercadopago/create", methods=["POST"])
@@ -2018,6 +2025,101 @@ def subscription_change_confirm():
         checkout_preference_id=preference.get("id"),
         _anchor="payment-checkout",
     ))
+
+
+@bp.route("/subscription/checkout/cancel", methods=["POST"])
+@company_admin_required
+def cancel_checkout():
+    """Cancela solo el checkout pendiente sin cancelar una suscripción ya paga."""
+    from app import Company, PaymentHistory, Subscription, db, record_audit
+    from services.billing_notification_service import NotificationService
+    from services.subscription_service import SubscriptionCommandError
+
+    company_id = getattr(current_user, "company_id", None)
+    company = Company.query.filter_by(id=company_id).first_or_404()
+    subscription_id = request.form.get("subscription_id", type=int)
+    subscription = (
+        Subscription.query
+        .filter_by(id=subscription_id, company_id=company.id)
+        .first()
+        if subscription_id
+        else None
+    )
+    if subscription is None:
+        flash("El checkout ya no está disponible.", "warning")
+        return redirect(url_for("company_billing.subscription_portal"))
+
+    metadata = SubscriptionService._metadata_dict(subscription)
+    checkout_method = str(metadata.get("checkout_method") or "").strip().lower()
+    is_pending_plan_change = (
+        subscription.status == SubscriptionService.STATE_PENDING_PAYMENT
+        and bool(metadata.get("pending_plan_change"))
+    )
+    is_qr_checkout = checkout_method == "qr"
+
+    if not (is_pending_plan_change or is_qr_checkout):
+        flash("No hay un checkout pendiente para cancelar en este momento.", "info")
+        return redirect(url_for("company_billing.subscription_portal", _anchor="payment-checkout"))
+
+    try:
+        from app import utcnow
+
+        if is_pending_plan_change:
+            SubscriptionService.run_command(
+                db.session,
+                SubscriptionService.CancelSubscriptionCommand(
+                    company_id=company.id,
+                    subscription_id=subscription.id,
+                    actor_user_id=current_user.id,
+                    actor_role=getattr(current_user, "role", None),
+                    origin="portal_checkout_cancel",
+                    idempotency_key=f"checkout-cancel:{company.id}:{subscription.id}:{current_user.id}",
+                    cancel_at_period_end=False,
+                ),
+            )
+
+        SubscriptionService._set_metadata(
+            subscription,
+            {
+                "checkout_method": None,
+                "checkout_cancelled": True,
+                "checkout_cancelled_at": utcnow().isoformat(),
+                "checkout_cancelled_by_user_id": current_user.id,
+                "pending_plan_change": False if is_pending_plan_change else metadata.get("pending_plan_change"),
+            },
+        )
+        NotificationService.record_event(
+            db.session,
+            company_id=company.id,
+            subscription_id=subscription.id,
+            event="checkout_cancelled_by_user",
+            detail="El usuario canceló el checkout pendiente; la suscripción vigente no fue modificada.",
+            source="portal",
+            status="cancelled",
+            event_id=f"checkout-cancel:{company.id}:{subscription.id}:{current_user.id}",
+            payload={"checkout_method": checkout_method, "pending_plan_change": is_pending_plan_change},
+            user_id=current_user.id,
+        )
+        record_audit(
+            action="subscription_checkout_cancel",
+            entity="subscription",
+            entity_id=subscription.id,
+            detail=f"Checkout {checkout_method or 'pendiente'} cancelado por el usuario.",
+        )
+        db.session.commit()
+        flash(
+            "Checkout cancelado. Ya podés elegir otra modalidad o cambiar de plan.",
+            "success",
+        )
+    except SubscriptionCommandError as exc:
+        db.session.rollback()
+        flash(str(exc), "warning")
+    except Exception as exc:
+        db.session.rollback()
+        current_app.logger.exception("Error cancelando checkout company_id=%s subscription_id=%s: %s", company.id, subscription.id, exc)
+        flash("No se pudo cancelar el checkout. No se aplicaron cambios.", "danger")
+
+    return redirect(url_for("company_billing.subscription_portal", _anchor="payment-checkout"))
 
 
 @bp.route("/subscription/cancel", methods=["POST"])
