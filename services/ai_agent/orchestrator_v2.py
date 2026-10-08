@@ -317,8 +317,8 @@ class VendorOrderPreviewTool(AgentTool):
                                     reference=str(kwargs.get("delivery_reference") or ""),
                                     notes=str(kwargs.get("delivery_notes") or ""),
                                 )
-                            except ValueError:
-                                requested_delivery = {}
+                            except ValueError as exc:
+                                return {"success": False, "error": str(exc), "retryable": False}
                             if requested_delivery:
                                 reuse_pending_checkout = _pending_quote_matches_checkout(
                                     quote=pending_quote,
