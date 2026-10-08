@@ -6,6 +6,7 @@ import hashlib
 import io
 import json
 import os
+import re
 import secrets
 import time
 from datetime import datetime, timezone
@@ -391,6 +392,38 @@ def _cart_public_state(conversation) -> dict:
         "shipping_config": shipping_config,
         "order": last_order,
     }
+
+
+def _public_order_intent(message: str) -> bool:
+    normalized = " ".join(str(message or "").strip().lower().split())
+    phrases = (
+        "presupuesto", "presupuest", "preparar pedido", "preparame el pedido",
+        "preparame un pedido", "armar pedido", "hacer un pedido", "quiero comprar",
+        "quiero pagar", "pasame el link", "pásame el link", "link de pago",
+        "enlace de pago", "confirmar compra", "comprar",
+    )
+    return any(phrase in normalized for phrase in phrases)
+
+
+def _strip_unscoped_checkout_links(content: str) -> str:
+    """Do not let model-generated history expose payment/quote URLs without a scoped order."""
+    raw = str(content or "")
+    unsafe_host_or_path = r"(?:mercadopago\\.com(?:\\.ar)?|stockarmobile\\.com/presupuestos/publico)"
+    raw = re.sub(
+        r"\\[[^\\]]*\\]\\((?:https?://[^)\\s]*" + unsafe_host_or_path + r"[^)\\s]*)\\)",
+        "",
+        raw,
+        flags=re.IGNORECASE,
+    )
+    raw = re.sub(
+        r"https?://[^\\s<]*(?:" + unsafe_host_or_path + r")[^\\s<]*",
+        "",
+        raw,
+        flags=re.IGNORECASE,
+    )
+    raw = re.sub(r"(?im)^\\s*(?:💳|📄)?\\s*(?:Pagar con Mercado Pago|Ver presupuesto|Enlace para realizar el pago)\\s*:?\\s*$", "", raw)
+    raw = re.sub(r"\\n{3,}", "\\n\\n", raw)
+    return raw.strip()
 
 
 def _public_money(value) -> str:
@@ -1046,18 +1079,35 @@ def public_vendor_message(slug: str):
                         "delivery": state.get("delivery"),
                     }
                 else:
+                    content = _strip_unscoped_checkout_links(str(result.get("content") or ""))
+                    if _public_order_intent(message):
+                        content = (
+                            "No pude generar un presupuesto nuevo y su enlace de pago para esta solicitud. "
+                            "Para evitar confusiones, no voy a reutilizar un enlace de un pedido anterior. "
+                            "Por favor, enviá nuevamente el pedido para prepararlo desde cero."
+                        )
                     response_payload = {
                         "success": True,
                         "conversation_id": result.get("conversation_id"),
                         "message_id": result.get("message_id"),
                         "assistant_message_id": result.get("assistant_message_id"),
-                        "content": result.get("content"),
+                        "content": content,
                         "cart": state["cart"],
                         "payment_url": None,
                         "quote_url": None,
                         "total": None,
                         "delivery": None,
                     }
+                    # Persist the safe response too; retries must not replay an unsafe
+                    # model answer containing a checkout link from a previous buyer.
+                    assistant_row = ConversationMessage.query.filter_by(
+                        id=result.get("assistant_message_id"),
+                        company_id=company.id,
+                        conversation_id=conversation.id,
+                        role="assistant",
+                    ).first()
+                    if assistant_row is not None:
+                        assistant_row.content = content
                 operation.trace_id = result.get("trace_id") or operation.trace_id
                 complete_operation(
                     operation,
