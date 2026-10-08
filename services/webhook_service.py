@@ -630,7 +630,7 @@ class WebhookService:
 
                 user = User.query.filter_by(id=payment.user_id).first() if payment.user_id else None
                 NotificationService.record_event(db_session, company_id=company.id, payment_id=payment.id, subscription_id=subscription.id, invoice_id=payment.invoice_id, event="mercadopago_webhook_payment", detail=f"Pago {payment.payment_id} en estado {payment.status}", source="mercadopago", status=payment.status, event_id=event_key, payload=payment_data, user_id=user.id if user else None)
-                if not is_replaced_subscription:
+                if not is_replaced_subscription and not is_cancelled_checkout:
                     result = {"status": "processed", "payment_status": payment_status, "event_key": event_key}
 
         elif event_type in {"preapproval", "subscription_preapproval"}:
