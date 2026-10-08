@@ -56,6 +56,14 @@ def test_gemini_config_uses_sdk_function_declarations_and_disables_auto_executio
     assert config.automatic_function_calling.maximum_remote_calls is None
 
 
+def test_gemini_3_uses_low_thinking_level():
+    provider = GeminiProvider(model="gemini-3.6-flash", api_key="test-key")
+    provider._types = types
+    config = provider._config(messages=[], model="gemini-3.6-flash")
+
+    assert isinstance(config.thinking_config, types.ThinkingConfig)
+    assert config.thinking_config.thinking_level == types.ThinkingLevel.LOW
+
 def test_gemini_generate_uses_public_generate_content_api():
     class FakeModels:
         def __init__(self):
