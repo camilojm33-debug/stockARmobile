@@ -169,7 +169,7 @@ class GeminiProvider(AIProvider):
                 contents.append({"role": "model" if role in {"assistant", "model"} else "user", "parts": [{"text": str(message.get("content") or "")}]})
         return contents
 
-    def _config(self, *, messages, tools=None, temperature=None, max_tokens=None, response_schema=None):
+    def _config(self, *, messages, tools=None, temperature=None, max_tokens=None, response_schema=None, model=None):
         types = self._types
         system_parts = [str(message.get("content") or "") for message in messages if message.get("role") == "system"]
         kwargs: Dict[str, Any] = {}
@@ -179,6 +179,10 @@ class GeminiProvider(AIProvider):
             kwargs["temperature"] = float(temperature)
         if max_tokens is not None:
             kwargs["max_output_tokens"] = int(max_tokens)
+        if str(model or self.model or "").lower().startswith("gemini-3"):
+            kwargs["thinking_config"] = types.ThinkingConfig(
+                thinking_level=types.ThinkingLevel.LOW,
+            )
         declarations = self._function_declarations(tools)
         if declarations:
             kwargs["tools"] = [types.Tool(function_declarations=declarations)]
@@ -321,7 +325,7 @@ class GeminiProvider(AIProvider):
             response = self._generate_content_with_retry(
                 model=effective_model,
                 contents=self._contents(messages),
-                config=self._config(messages=messages, tools=tools, temperature=temperature, max_tokens=max_tokens),
+                config=self._config(messages=messages, tools=tools, temperature=temperature, max_tokens=max_tokens, model=effective_model),
             )
         except Exception as exc:
             api_error_code = self._api_error_code(exc)
