@@ -408,23 +408,22 @@ def _public_order_intent(message: str) -> bool:
 def _strip_unscoped_checkout_links(content: str) -> str:
     """Do not let model-generated history expose payment/quote URLs without a scoped order."""
     raw = str(content or "")
-    unsafe_host_or_path = r"(?:mercadopago\\.com(?:\\.ar)?|stockarmobile\\.com/presupuestos/publico)"
+    unsafe_host_or_path = r"(?:mercadopago\.com(?:\.ar)?|stockarmobile\.com/presupuestos/publico)"
     raw = re.sub(
-        r"\\[[^\\]]*\\]\\((?:https?://[^)\\s]*" + unsafe_host_or_path + r"[^)\\s]*)\\)",
+        r"\[[^\]]*\]\((?:https?://[^)\s]*" + unsafe_host_or_path + r"[^)\s]*)\)",
         "",
         raw,
         flags=re.IGNORECASE,
     )
     raw = re.sub(
-        r"https?://[^\\s<]*(?:" + unsafe_host_or_path + r")[^\\s<]*",
+        r"https?://[^\s<]*(?:" + unsafe_host_or_path + r")[^\s<]*",
         "",
         raw,
         flags=re.IGNORECASE,
     )
-    raw = re.sub(r"(?im)^\\s*(?:💳|📄)?\\s*(?:Pagar con Mercado Pago|Ver presupuesto|Enlace para realizar el pago)\\s*:?\\s*$", "", raw)
-    raw = re.sub(r"\\n{3,}", "\\n\\n", raw)
+    raw = re.sub(r"(?im)^\s*(?:💳|📄)?\s*(?:Pagar con Mercado Pago|Ver presupuesto|Enlace para realizar el pago)\s*:?\s*$", "", raw)
+    raw = re.sub(r"\n{3,}", "\n\n", raw)
     return raw.strip()
-
 
 def _public_money(value) -> str:
     try:
