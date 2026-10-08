@@ -410,6 +410,81 @@ def _quote_checkout_items(quote) -> list[dict[str, Any]]:
     return items
 
 
+def _pending_quote_matches_checkout(*, quote, cart: Dict[str, Any], customer_name: str, customer_phone: str, delivery: Dict[str, str]) -> bool:
+    """Only reuse a pending quote when its products and buyer/delivery data match."""
+    quote_items = list(getattr(quote, "items", []) or [])
+    cart_items = list((cart or {}).get("items") or [])
+    if len(quote_items) != len(cart_items):
+        return False
+
+    def quantity(value):
+        try:
+            return Decimal(str(value or 0)).quantize(Decimal("0.0001"))
+        except (TypeError, ValueError, ArithmeticError):
+            return None
+
+    existing_lines = {}
+    for item in quote_items:
+        try:
+            product_id = int(item.product_id)
+        except (TypeError, ValueError):
+            return False
+        existing_lines[product_id] = (
+            quantity(item.quantity),
+            _money(item.subtotal),
+        )
+    requested_lines = {}
+    for item in cart_items:
+        try:
+            product_id = int(item.get("product_id"))
+        except (TypeError, ValueError):
+            return False
+        requested_lines[product_id] = (
+            quantity(item.get("quantity")),
+            _money(item.get("subtotal")),
+        )
+    if existing_lines != requested_lines:
+        return False
+
+    existing_delivery = getattr(quote, "delivery", None)
+    client = getattr(quote, "client", None)
+    existing_name = (
+        getattr(client, "name", None)
+        or getattr(quote, "consumer_name", None)
+        or getattr(existing_delivery, "recipient_name", None)
+        or ""
+    )
+    existing_phone = (
+        getattr(existing_delivery, "phone", None)
+        or getattr(client, "whatsapp", None)
+        or getattr(client, "phone", None)
+        or ""
+    )
+    if _normalize_text(existing_name) != _normalize_text(customer_name):
+        return False
+    if _normalize_phone(existing_phone) != _normalize_phone(customer_phone):
+        return False
+
+    for field in ("method", "address", "city", "province", "postal_code", "reference", "notes"):
+        existing_value = getattr(existing_delivery, field, "") if existing_delivery is not None else ""
+        if field == "method":
+            existing_value = _normalize_delivery_method(existing_value or "retiro")
+            requested_value = _normalize_delivery_method(delivery.get(field) or "retiro")
+        else:
+            requested_key = {
+                "address": "address",
+                "city": "city",
+                "province": "province",
+                "postal_code": "postal_code",
+                "reference": "reference",
+                "notes": "notes",
+            }[field]
+            requested_value = delivery.get(requested_key) or ""
+        if _normalize_text(existing_value) != _normalize_text(requested_value):
+            return False
+    return True
+
+
 class VendorOrderService:
     """Owns tenant-scoped cart, quote and payment transitions."""
 
@@ -503,7 +578,10 @@ class VendorOrderService:
             raise ValueError("Conversación no encontrada para esta empresa.")
 
         state = _metadata(conversation)
-        cart = {} if clear else dict(state.get(CART_KEY) or {})
+        # Editing a cart after a payment link was issued starts a new draft.
+        # Never mutate the quote behind a live checkout link.
+        has_pending_checkout = bool(state.get(PENDING_QUOTE_KEY) or state.get(PENDING_PAYMENT_KEY))
+        cart = {} if clear or has_pending_checkout else dict(state.get(CART_KEY) or {})
         if not isinstance(items, list) and items is not None:
             raise ValueError("Los productos del carrito son inválidos.")
         if items is None:
@@ -546,7 +624,8 @@ class VendorOrderService:
 
             available = Decimal(str(product.stock or 0))
             existing = Decimal(str(cart.get(str(product.id), 0) or 0))
-            requested_total = existing + quantity
+            replace_quantity = bool(row.get("replace_quantity"))
+            requested_total = quantity if replace_quantity else existing + quantity
             if requested_total > available:
                 raise ValueError(
                     f"Stock insuficiente para {product.name}. Disponible: {product.stock:g}; solicitado: {requested_total:g}."
@@ -732,55 +811,6 @@ class VendorOrderService:
         if not cart["items"]:
             raise ValueError("El carrito está vacío.")
 
-        state = _metadata(conversation)
-        operation = None
-        if idempotency_key:
-            operation = PublicVendorOperation.query.filter_by(
-                company_id=company_id,
-                conversation_id=conversation.id,
-                idempotency_key=idempotency_key,
-            ).with_for_update().first()
-        pending_quote_id = (operation.quote_id if operation is not None else None) or state.get(PENDING_QUOTE_KEY)
-        if pending_quote_id:
-            try:
-                existing = Quote.query.filter_by(id=int(pending_quote_id), company_id=company_id).first()
-            except (TypeError, ValueError):
-                existing = None
-            if existing is not None and existing.status not in {"ANULADO", "RECHAZADO", "VENCIDO", "CONVERTIDO"}:
-                external_reference = _ai_order_external_reference(
-                    company_id=company_id,
-                    quote_id=existing.id,
-                    conversation_id=conversation.id,
-                    user_id=existing.created_by_user_id,
-                )
-                legacy_reference = _ai_order_external_reference(
-                    company_id=company_id,
-                    quote_id=existing.id,
-                )
-                payment = Payment.query.filter(
-                    Payment.company_id == company_id,
-                    Payment.external_reference.in_([external_reference, legacy_reference]),
-                ).first()
-                existing_delivery = getattr(existing, "delivery", None)
-                if (
-                    existing_delivery is not None
-                    and getattr(existing_delivery, "shipping_status", "") == "pending"
-                    and payment is None
-                ):
-                    # Pedido heredado del flujo eliminado: no se vuelve a exponer ni esperar.
-                    state.pop(PENDING_QUOTE_KEY, None)
-                    state.pop(PENDING_PAYMENT_KEY, None)
-                    _set_metadata(conversation, state)
-                else:
-                    if operation is not None:
-                        operation.quote_id = existing.id
-                    return VendorOrderService._ensure_payment_preference(
-                        company_id=company_id,
-                        conversation=conversation,
-                        quote=existing,
-                        state=state,
-                    )
-
         delivery = _delivery_payload(
             method=delivery_method,
             customer_name=customer_name,
@@ -792,6 +822,66 @@ class VendorOrderService:
             reference=delivery_reference,
             notes=delivery_notes,
         )
+
+        state = _metadata(conversation)
+        operation = None
+        if idempotency_key:
+            operation = PublicVendorOperation.query.filter_by(
+                company_id=company_id,
+                conversation_id=conversation.id,
+                idempotency_key=idempotency_key,
+            ).with_for_update().first()
+        operation_quote_id = (operation.quote_id if operation is not None else None)
+        pending_quote_id = operation_quote_id or state.get(PENDING_QUOTE_KEY)
+        if pending_quote_id:
+            try:
+                existing = Quote.query.filter_by(id=int(pending_quote_id), company_id=company_id).first()
+            except (TypeError, ValueError):
+                existing = None
+            if existing is not None and existing.status not in {"ANULADO", "RECHAZADO", "VENCIDO", "CONVERTIDO"}:
+                # Same-key recovery is idempotent. A new message may reuse the previous
+                # pending order only when the cart, buyer, phone and delivery all match.
+                same_checkout = bool(operation_quote_id) or _pending_quote_matches_checkout(
+                    quote=existing,
+                    cart=cart,
+                    customer_name=customer_name,
+                    customer_phone=customer_phone,
+                    delivery=delivery,
+                )
+                if same_checkout:
+                    external_reference = _ai_order_external_reference(
+                        company_id=company_id,
+                        quote_id=existing.id,
+                        conversation_id=conversation.id,
+                        user_id=existing.created_by_user_id,
+                    )
+                    legacy_reference = _ai_order_external_reference(
+                        company_id=company_id,
+                        quote_id=existing.id,
+                    )
+                    payment = Payment.query.filter(
+                        Payment.company_id == company_id,
+                        Payment.external_reference.in_([external_reference, legacy_reference]),
+                    ).first()
+                    existing_delivery = getattr(existing, "delivery", None)
+                    if (
+                        existing_delivery is not None
+                        and getattr(existing_delivery, "shipping_status", "") == "pending"
+                        and payment is None
+                    ):
+                        # Pedido heredado del flujo eliminado: no se vuelve a exponer ni esperar.
+                        state.pop(PENDING_QUOTE_KEY, None)
+                        state.pop(PENDING_PAYMENT_KEY, None)
+                        _set_metadata(conversation, state)
+                    else:
+                        if operation is not None:
+                            operation.quote_id = existing.id
+                        return VendorOrderService._ensure_payment_preference(
+                            company_id=company_id,
+                            conversation=conversation,
+                            quote=existing,
+                            state=state,
+                        )
 
         actor = None
         if actor_user_id:
