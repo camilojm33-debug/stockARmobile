@@ -1533,7 +1533,7 @@ def create_checkout():
             flash("No se pudo generar el QR de Mercado Pago. Revisá la conexión y los datos configurados.", "danger")
         return redirect(url_for("company_billing.subscription_portal"))
 
-    flash("QR de Mercado Pago generado. Escanealo o abrí el checkout para pagar.", "info")
+    flash("Pago con QR listo. Escanealo o abrí Mercado Pago para pagar este ciclo.", "info")
     return redirect(url_for(
         "company_billing.subscription_portal",
         checkout="created",
@@ -1567,7 +1567,7 @@ def create_ai_subscription_checkout():
 
     payer_email = (getattr(current_user, "email", None) or getattr(company, "contact_email", None) or "").strip()
     if not payer_email or "@" not in payer_email:
-        return _checkout_error_response("Necesitás un email válido en tu cuenta para activar el cobro automático de IA.", url_for("ai_agents.agent", agent="planes"))
+        return _checkout_error_response("Necesitás un email válido en tu cuenta para activar la suscripción IA.", url_for("ai_agents.agent", agent="planes"))
 
     # Estado server-side de la suscripción IA de la empresa; nunca se confía en lo que envía el frontend.
     ai_status = AISubscriptionService.get_status(company)
