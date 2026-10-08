@@ -324,6 +324,7 @@ def _sale_snapshot(sale, items=None):
             "secondary_payment_method": sale.secondary_payment_method,
             "paid_amount": float(sale.paid_amount or 0),
             "secondary_paid_amount": float(sale.secondary_paid_amount or 0),
+            "charges_json": getattr(sale, "charges_json", None),
             "note": sale.note,
             "status": sale.status,
         },
