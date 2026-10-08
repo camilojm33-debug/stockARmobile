@@ -2221,6 +2221,8 @@ def index():
 
     whatsapp_value = app.config.get("SUPPORT_WHATSAPP_DISPLAY", "3624-228396")
     whatsapp_digits = app.config.get("SUPPORT_WHATSAPP_NUMBER", "5493624228396")
+    whatsapp_value_2 = app.config.get("SUPPORT_WHATSAPP_DISPLAY_2", "+54 9 3644 819100")
+    whatsapp_digits_2 = app.config.get("SUPPORT_WHATSAPP_NUMBER_2", "5493644819100")
     contact = {
         "whatsapp": whatsapp_value,
         "whatsapp_link": f"https://wa.me/{whatsapp_digits}" if whatsapp_digits else "https://wa.me/",
