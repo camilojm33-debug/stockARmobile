@@ -751,6 +751,8 @@ def _persisted_checkout_preview(company, *, subscription_id=None, preference_id=
     ).first()
     if subscription is None or subscription.plan is None:
         return None
+    if SubscriptionService._metadata_dict(subscription).get("checkout_cancelled"):
+        return None
     try:
         preference = json.loads(event.payload_json or "{}")
     except (TypeError, ValueError):
