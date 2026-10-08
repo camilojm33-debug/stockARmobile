@@ -538,10 +538,44 @@ class WebhookService:
                         )
 
                 should_apply_status_transition = previous_payment_status != payment_status
+                subscription_metadata = SubscriptionService._metadata_dict(subscription)
+                is_cancelled_checkout = bool(subscription_metadata.get("checkout_cancelled"))
                 is_replaced_subscription = bool(
-                    SubscriptionService._metadata_dict(subscription).get("closed_reason") == "plan_change"
+                    subscription_metadata.get("closed_reason") == "plan_change"
                 )
-                if is_replaced_subscription:
+                if is_cancelled_checkout:
+                    stale_refund_status = None
+                    if payment_status == "approved":
+                        refund = self.mp_service.refund_payment(str(payment.payment_id or ""))
+                        stale_refund_status = str(refund.get("status") or "").strip().lower()
+                        if stale_refund_status not in {"approved", "refunded", "pending", "in_process"}:
+                            raise RuntimeError("Mercado Pago no confirmó el reembolso del checkout cancelado.")
+                        payment.status = (
+                            "refunded"
+                            if stale_refund_status in {"approved", "refunded"}
+                            else "refund_pending"
+                        )
+                        NotificationService.record_event(
+                            db_session,
+                            company_id=company.id,
+                            payment_id=payment.id,
+                            subscription_id=subscription.id,
+                            event="cancelled_checkout_refund",
+                            detail="Se recibió el pago de un checkout cancelado y se solicitó su reembolso; la suscripción no fue modificada.",
+                            source="mercadopago",
+                            status=stale_refund_status,
+                            event_id=f"cancelled-checkout-refund:{payment.payment_id}",
+                            payload={"refund_id": refund.get("id"), "refund_status": stale_refund_status},
+                            user_id=payment.user_id,
+                        )
+                    result = {
+                        "status": "cancelled_checkout_refunded" if stale_refund_status else "cancelled_checkout_payment_ignored",
+                        "payment_status": payment_status,
+                        "refund_status": stale_refund_status,
+                        "subscription_id": subscription.id,
+                        "event_key": event_key,
+                    }
+                elif is_replaced_subscription:
                     stale_refund_status = None
                     if payment_status == "approved":
                         refund = self.mp_service.refund_payment(str(payment.payment_id or ""))
@@ -586,7 +620,7 @@ class WebhookService:
                     else:
                         SubscriptionService.apply_payment_status(subscription, payment_status)
                 is_pending_plan_change = bool(SubscriptionService._metadata_dict(subscription).get("pending_plan_change"))
-                if not is_pending_plan_change and not is_replaced_subscription:
+                if not is_pending_plan_change and not is_replaced_subscription and not is_cancelled_checkout:
                     company.active = subscription.status in {"active", "approved", "trial"}
                 if subscription.status in {"active", "approved"}:
                     if payment.invoice_id is None:
