@@ -61,7 +61,9 @@ COMMERCIAL_SYSTEM_PROMPT = (
 )
 MAX_TOOL_TURNS = 5
 PUBLIC_WEBCHAT_MAX_TOOL_TURNS = 1
-PUBLIC_WEBCHAT_PROVIDER_TIMEOUT = 8.0
+# Gemini requires a minimum manually configured deadline of 10 seconds.
+# Keep the public chat at 25s so normal model/tool latency has headroom.
+PUBLIC_WEBCHAT_PROVIDER_TIMEOUT = 25.0
 PUBLIC_WEBCHAT_MAX_OUTPUT_TOKENS = 500
 PUBLIC_WEBCHAT_HISTORY_LIMIT = 8
 MAX_AGENT_MESSAGE_CHARS = 4000

@@ -26,7 +26,9 @@ class GeminiProvider(AIProvider):
     ) -> None:
         self.model = model or os.getenv("GEMINI_MODEL")
         self.api_key = api_key if api_key is not None else os.getenv("GEMINI_API_KEY")
-        self.timeout = float(timeout if timeout is not None else os.getenv("GEMINI_TIMEOUT", "25"))
+        # Gemini rejects manually configured client deadlines below 10 seconds.
+        # Clamp defensively so public/web callers can never send an invalid deadline.
+        self.timeout = max(10.0, float(timeout if timeout is not None else os.getenv("GEMINI_TIMEOUT", "25")))
         self.max_retries = max(0, int(max_retries if max_retries is not None else os.getenv("GEMINI_MAX_RETRIES", "1")))
         self._client = None
         self._types = None
