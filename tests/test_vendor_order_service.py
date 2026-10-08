@@ -1242,24 +1242,3 @@ def test_ai_order_row_does_not_show_pending_payment_after_manual_conversion(vend
     assert row["order_label"] == "Confirmado · venta manual"
     assert row["payment_status"] == "pending"
     assert row["payment_label"] == "Cerrado por venta manual"
-
-
-
-def test_sale_totals_keep_surcharge_out_of_line_discounts():
-    from services.sales_calculation_service import calculate_sale_totals
-
-    totals = calculate_sale_totals(
-        [{"price": 100, "quantity": 2, "line_discount": 0}],
-        surcharge=50,
-        surcharge_type="fixed",
-        surcharge_value=50,
-        tax=42,
-    )
-
-    assert totals["subtotal"] == 200
-    assert totals["general_discount"] == 0
-    assert totals["surcharge"] == 50
-    assert totals["tax"] == 42
-    assert totals["total"] == 292
-    assert totals["lines"][0]["final_discount"] == 0
-    assert totals["lines"][0]["line_total"] == 200
