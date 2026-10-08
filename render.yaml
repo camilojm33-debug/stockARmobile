@@ -80,6 +80,10 @@ services:
         value: "+54 9 3624 202415"
       - key: SUPPORT_WHATSAPP_NUMBER
         value: "5493624202415"
+      - key: SUPPORT_WHATSAPP_DISPLAY_2
+        value: "+54 9 3644 819100"
+      - key: SUPPORT_WHATSAPP_NUMBER_2
+        value: "5493644819100"
       - key: BACKUP_AUTOMATION_TOKEN
         sync: false
       - key: BACKUP_VERIFY_COMPANY_ID
