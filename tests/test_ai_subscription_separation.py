@@ -741,6 +741,120 @@ def test_standard_webhook_updates_only_standard_subscription(subscription_app, m
     assert AISubscriptionService.get_status(company) == ai_before
 
 
+def test_standard_qr_checkout_can_be_cancelled_without_cancelling_active_subscription(subscription_app):
+    company, user, _, subscription = _tenant_with_standard_subscription()
+    SubscriptionService._set_metadata(subscription, {"checkout_method": "qr"})
+    from services.billing_notification_service import NotificationService
+
+    NotificationService.record_event(
+        db.session,
+        company_id=company.id,
+        subscription_id=subscription.id,
+        event="checkout_preference_created",
+        detail="Pending standard QR",
+        source="mercadopago",
+        status="pending",
+        event_id="standard-qr-cancel",
+        payload={"id": "standard-qr-cancel", "init_point": "https://mp.test/standard-qr-cancel"},
+        user_id=user.id,
+    )
+    db.session.commit()
+
+    client = subscription_app.test_client()
+    _login(client, user)
+    response = client.post(
+        "/admin/subscription/checkout/cancel",
+        data={"subscription_id": subscription.id},
+        follow_redirects=False,
+    )
+
+    assert response.status_code == 302
+    assert "#payment-checkout" in response.headers["Location"]
+    db.session.refresh(subscription)
+    metadata = SubscriptionService._metadata_dict(subscription)
+    assert subscription.status == SubscriptionService.STATE_ACTIVE
+    assert metadata.get("checkout_method") is None
+    assert metadata["checkout_cancelled"] is True
+    assert _standard_snapshot(subscription)["status"] == SubscriptionService.STATE_ACTIVE
+
+
+def test_pending_plan_change_checkout_can_be_cancelled_without_disabling_current_plan(subscription_app):
+    company, user, current_plan, active_subscription = _tenant_with_standard_subscription()
+    target_plan = Plan(code="premium_cancel_checkout", name="Premium", price=54999, currency="ARS", duration_days=30, active=True)
+    db.session.add(target_plan)
+    db.session.flush()
+
+    result = SubscriptionService.run_command(
+        db.session,
+        SubscriptionService.ChangePlanCommand(
+            company_id=company.id,
+            plan_id=target_plan.id,
+            actor_user_id=user.id,
+            actor_role=user.role,
+            origin="portal_confirm",
+            idempotency_key="cancel-pending-plan-checkout",
+        ),
+    )
+    pending = db.session.get(Subscription, result.subscription_id)
+    assert pending.status == SubscriptionService.STATE_PENDING_PAYMENT
+    assert SubscriptionService._metadata_dict(pending).get("pending_plan_change") is True
+    db.session.commit()
+
+    client = subscription_app.test_client()
+    _login(client, user)
+    response = client.post(
+        "/admin/subscription/checkout/cancel",
+        data={"subscription_id": pending.id},
+        follow_redirects=False,
+    )
+
+    assert response.status_code == 302
+    db.session.refresh(pending)
+    db.session.refresh(active_subscription)
+    db.session.refresh(company)
+    metadata = SubscriptionService._metadata_dict(pending)
+    assert pending.status == SubscriptionService.STATE_CANCELLED
+    assert metadata["checkout_cancelled"] is True
+    assert metadata["pending_plan_change"] is False
+    assert active_subscription.id != pending.id
+    assert active_subscription.status == SubscriptionService.STATE_ACTIVE
+    assert company.active is True
+
+
+def test_ai_pending_checkout_can_be_cancelled_from_checkout_without_affecting_standard(subscription_app, monkeypatch):
+    company, user, _, subscription = _tenant_with_standard_subscription()
+    before = _standard_snapshot(subscription)
+    update_ai_preferences(
+        company,
+        ai_updates={
+            "plan_code": "inicio",
+            "status": "PENDIENTE",
+            "origin": "MERCADO_PAGO",
+            "mercadopago_preapproval_id": "ai-pre-cancel-checkout",
+            "checkout_method": "qr",
+        },
+    )
+    db.session.commit()
+
+    monkeypatch.setattr(
+        AISubscriptionService,
+        "_get_mp_preapproval",
+        lambda company: {"id": "ai-pre-cancel-checkout", "status": "cancelled"},
+    )
+    client = subscription_app.test_client()
+    _login(client, user)
+    response = client.post(
+        "/admin/subscription/ai-agent/cancel",
+        data={"confirm_ai_cancel": "1", "from_checkout": "1"},
+        follow_redirects=False,
+    )
+
+    assert response.status_code == 302
+    assert "#payment-checkout" in response.headers["Location"]
+    assert AISubscriptionService.get_status(company)["status"] == "CANCELADA"
+    assert _standard_snapshot(subscription) == before
+
+
 def test_late_approved_superseded_checkout_is_refunded_without_disabling_company(subscription_app, monkeypatch):
     company, user, _, active_subscription = _tenant_with_standard_subscription()
     premium = Plan(code="premium_stale", name="Premium", price=54999, currency="ARS", duration_days=30, active=True)
@@ -1238,6 +1352,9 @@ def test_subscription_portal_has_one_real_payment_anchor():
     assert 'Pago mensual con QR' in html
     assert 'El próximo ciclo no se cobra solo.' in html
     assert 'Cobro automático mensual' in html
+    assert 'Cancelar checkout' in html
+    assert 'company_billing.cancel_checkout' in html
+    assert 'company_billing.cancel_ai_subscription' in html
     assert 'history.replaceState' in html
 
 
