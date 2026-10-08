@@ -662,6 +662,9 @@ class VendorOrderService:
             return VendorOrderService.get_cart(company_id=company_id, conversation_id=conversation_id)
         cart.pop(str(selected.id), None)
         state[CART_KEY] = cart
+        # Removing a cart line invalidates any checkout derived from the old cart.
+        state.pop(PENDING_QUOTE_KEY, None)
+        state.pop(PENDING_PAYMENT_KEY, None)
         _set_metadata(conversation, state)
         db.session.flush()
         return VendorOrderService.get_cart(company_id=company_id, conversation_id=conversation_id)
