@@ -549,6 +549,16 @@ def _build_resource_center_context(profile, search_term: str = ""):
         "email_link": f"mailto:{current_app.config.get('SUPPORT_EMAIL', 'stockarmobile@gmail.com')}",
         "whatsapp_display": current_app.config.get("SUPPORT_WHATSAPP_DISPLAY", "+54 9 3624 22-8296"),
         "whatsapp_link": f"https://wa.me/{current_app.config.get('SUPPORT_WHATSAPP_NUMBER', '5493624228296')}?text={quote_plus('Hola equipo de StockArmobile, necesito soporte comercial para vendedores.')}",
+        "whatsapp_contacts": [
+            {
+                "display": current_app.config.get("SUPPORT_WHATSAPP_DISPLAY", "+54 9 3624 22-8296"),
+                "link": f"https://wa.me/{current_app.config.get('SUPPORT_WHATSAPP_NUMBER', '5493624228296')}?text={quote_plus('Hola equipo de StockArmobile, necesito soporte comercial para vendedores.')}",
+            },
+            {
+                "display": current_app.config.get("SUPPORT_WHATSAPP_DISPLAY_2", "+54 9 3644 819100"),
+                "link": f"https://wa.me/{current_app.config.get('SUPPORT_WHATSAPP_NUMBER_2', '5493644819100')}?text={quote_plus('Hola equipo de StockArmobile, necesito soporte comercial para vendedores.')}",
+            },
+        ],
         "manual_pdf": url_for("referrals.seller_material_brochure"),
         "faq_link": url_for("referrals.seller_resources", panel="faq"),
         "video_link": url_for("referrals.seller_resources", panel="videos"),
