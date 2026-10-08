@@ -1235,6 +1235,9 @@ def test_subscription_portal_has_one_real_payment_anchor():
     assert 'id="payment-checkout-status"' in html
     assert 'name="payment_method" value="qr"' in html
     assert 'Pagar con QR' in html
+    assert 'Pago mensual con QR' in html
+    assert 'El próximo ciclo no se cobra solo.' in html
+    assert 'Cobro automático mensual' in html
     assert 'history.replaceState' in html
 
 
