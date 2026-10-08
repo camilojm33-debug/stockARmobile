@@ -453,6 +453,9 @@ class SaleService:
         sale.surcharge_type = sale_totals["surcharge_adjustment"]["type"]
         sale.surcharge_value = sale_totals["surcharge_adjustment"]["value"]
         sale.surcharge_reason = sale_totals["surcharge_adjustment"]["reason"]
+        # A manual edit invalidates the original quote charge snapshot; the
+        # ticket will fall back to the persisted sale-level adjustments.
+        sale.charges_json = None
         sale.tax = sale_totals["tax"]
         sale.total_amount = sale_totals["total"]
         sale.paid_amount = payment_breakdown.get("efectivo", sale_totals["total"])
