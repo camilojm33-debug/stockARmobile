@@ -234,18 +234,24 @@ class VendorOrderPreviewTool(AgentTool):
         product_query = str(kwargs.get("product_query") or "").strip()
         quantity = kwargs.get("quantity")
         if product_query and quantity not in (None, ""):
-            cart = VendorOrderService.get_cart(
+            # Explicit product + quantity are authoritative for this request.
+            # update_cart starts a fresh cart when an older payment checkout is pending,
+            # and replaces this line's quantity instead of adding it to an old order.
+            VendorOrderService.get_cart(
                 company_id=self.company_id,
                 conversation_id=self._context["conversation_id"],
             )
-            if not cart["items"]:
-                added = VendorOrderService.update_cart(
-                    company_id=self.company_id,
-                    conversation_id=self._context["conversation_id"],
-                    items=[{"product_query": product_query, "quantity": quantity}],
-                )
-                if isinstance(added, dict) and added.get("success") is False:
-                    return added
+            added = VendorOrderService.update_cart(
+                company_id=self.company_id,
+                conversation_id=self._context["conversation_id"],
+                items=[{
+                    "product_query": product_query,
+                    "quantity": quantity,
+                    "replace_quantity": True,
+                }],
+            )
+            if isinstance(added, dict) and added.get("success") is False:
+                return added
         return VendorOrderService.create_pending_order(
             company_id=self.company_id,
             conversation_id=self._context["conversation_id"],
