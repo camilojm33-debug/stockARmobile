@@ -773,6 +773,9 @@ class Sale(db.Model):
     surcharge_type = db.Column(db.String(20))
     surcharge_value = db.Column(MONEY)
     surcharge_reason = db.Column(db.Text)
+    # Immutable breakdown of commercial charges inherited from a quote.
+    # Nullable keeps existing/manual sales fully backward compatible.
+    charges_json = db.Column(db.Text)
     client_txn_id = db.Column(db.String(64), index=True)
     document_type = db.Column(db.String(30), default="venta")
     requiere_comprobante = db.Column(db.Boolean, default=False, nullable=False, index=True)

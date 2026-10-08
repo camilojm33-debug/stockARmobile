@@ -109,7 +109,44 @@ function generateCheckoutToken() {
   return `chk_${Date.now()}_${Math.random().toString(36).slice(2, 10)}`;
 }
 
+function quotePayloadMatchesCart(payload) {
+  if (!payload || !Array.isArray(payload.items)) return false;
+  if (payload.items.length !== cart.length) return false;
+  const expected = new Map(payload.items.map(item => [
+    Number(item?.productId || item?.product_id || 0),
+    {
+      quantity: Number(item?.quantity || 0),
+      price: Number(item?.price || 0),
+    }
+  ]));
+  return cart.every(item => {
+    const row = expected.get(Number(item.productId));
+    return row
+      && Math.abs(Number(item.quantity || 0) - row.quantity) < 0.000001
+      && Math.abs(Number(item.price || 0) - row.price) < 0.000001;
+  });
+}
+
+function getActiveQuoteId() {
+  if (quotePricingSnapshot && quoteSnapshotMatchesCart()) {
+    return Number(quotePricingSnapshot.quoteId || 0) || '';
+  }
+  if (quotePayloadMatchesCart(window.__quoteCartPrefill)) {
+    return Number(window.__quoteCartPrefill.quote_id || 0) || '';
+  }
+  return '';
+}
+
 function ensureCheckoutToken() {
+  if (quotePricingSnapshot && quotePricingSnapshot.checkoutToken && quoteSnapshotMatchesCart()) {
+    checkoutToken = String(quotePricingSnapshot.checkoutToken);
+    return checkoutToken;
+  }
+  const serverQuotePayload = window.__quoteCartPrefill;
+  if (serverQuotePayload?.checkout_token && quotePayloadMatchesCart(serverQuotePayload)) {
+    checkoutToken = String(serverQuotePayload.checkout_token);
+    return checkoutToken;
+  }
   if (!checkoutToken) {
     checkoutToken = generateCheckoutToken();
   }
@@ -277,6 +314,7 @@ function applyQuoteCartPrefillFromServer() {
     surcharge: Number(payload.quote_surcharge || 0),
     tax: Number(payload.tax_amount || 0),
     total: Number(payload.quote_total || 0),
+    checkoutToken: String(payload.checkout_token || ''),
     charges: Array.isArray(payload.quote_charges) ? payload.quote_charges : [],
     items: payload.items.map(item => ({
       productId: Number(item.productId || item.product_id || 0),
@@ -333,6 +371,7 @@ function applyQuoteCartPrefillFromServer() {
   saveCart();
   quotePrefillApplying = false;
   updateCheckoutTotals();
+  renderQuoteChargeBreakdown();
   showNotification(`Presupuesto ${payload.quote_number || ''} cargado al carrito`, 'info');
 
   if (payload.auto_open_cart) {
@@ -354,7 +393,14 @@ function invalidateQuoteSnapshot() {
   if (quotePrefillApplying || !quotePricingSnapshot) return;
   quotePricingSnapshot = null;
   window.__quoteLineDiscounts = {};
+  window.__quoteCartPrefill = null;
+  window.__quoteCartPrefillSeeded = false;
   resetCheckoutToken();
+  const chargeBreakdown = document.getElementById('quote-cart-charge-breakdown');
+  if (chargeBreakdown) {
+    chargeBreakdown.classList.add('d-none');
+    chargeBreakdown.innerHTML = '';
+  }
   const bannerText = document.getElementById('quote-prefill-banner-text');
   if (bannerText) bannerText.textContent = 'El carrito fue modificado. Los cargos del presupuesto ya no se aplican; para conservar la cotización original, volvé a cargar el presupuesto.';
   showNotification('Se desvinculó el presupuesto porque modificaste el carrito.', 'warning');
@@ -471,7 +517,8 @@ function updateCartUI() {
       }
     }
     const totals = getCheckoutTotals();
-    syncChargeButtons(totals.total);
+    renderQuoteChargeBreakdown();
+  syncChargeButtons(totals.total);
     emitPosUiEvent('pos:cart-updated', {
       count: getCartItemCount(),
       total: totals.total,
@@ -616,6 +663,7 @@ async function processCheckout() {
     line_discounts: window.__quoteLineDiscounts || {},
     document_type: document.getElementById('checkout-document-type')?.value || 'venta',
     note: document.getElementById('checkout-note')?.value || '',
+    quote_id: quoteSnapshotMatchesCart() ? Number(quotePricingSnapshot.quoteId || 0) || '' : '',
     checkout_token: ensureCheckoutToken()
   };
   console.debug('[sales] checkout preparado; items:', Array.isArray(payload.items) ? payload.items.length : 0);
@@ -712,10 +760,40 @@ function validateCheckoutClientRequirements() {
   return false;
 }
 
+function renderQuoteChargeBreakdown() {
+  const container = document.getElementById('quote-cart-charge-breakdown');
+  if (!container) return;
+  const charges = Array.isArray(quotePricingSnapshot?.charges) ? quotePricingSnapshot.charges : [];
+  if (!quotePricingSnapshot || !charges.length) {
+    container.classList.add('d-none');
+    container.innerHTML = '';
+    return;
+  }
+  const rows = charges
+    .map((charge) => {
+      const name = escapeHtml(String(charge?.name || 'Cargo'));
+      const amount = Number(charge?.amount || 0);
+      if (!Number.isFinite(amount) || amount <= 0) return '';
+      const amountText = formatPrice(amount);
+      return '<div class="d-flex justify-content-between gap-2"><span>' + name + '</span><strong>+' + amountText + '</strong></div>';
+    })
+    .filter(Boolean)
+    .join('');
+  if (!rows) {
+    container.classList.add('d-none');
+    container.innerHTML = '';
+    return;
+  }
+  container.innerHTML = '<div class="small text-muted fw-semibold mb-1">Cargos del presupuesto</div>' + rows;
+  container.classList.remove('d-none');
+}
+
 function updateCheckoutTotals() {
   const totals = getCheckoutTotals();
   const pairs = {
     'cart-subtotal': totals.subtotal,
+    'cart-discount': totals.discount,
+    'cart-surcharge': totals.surcharge,
     'cart-total': totals.total,
     'pos-subtotal': totals.subtotal,
     'pos-discount': totals.discount,

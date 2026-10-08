@@ -56,6 +56,30 @@ class SaleService:
             checkout_token = ValidationService.sanitize_checkout_token(data.get("checkout_token") or data.get("checkoutToken"))
             company_id = getattr(current_user, "company_id", None)
             quote_snapshot = None
+
+            # A quote conversion is identified server-side by quote_id, not only by
+            # a browser-generated token. This makes the conversion authoritative even
+            # when the POS JS token is regenerated or stale.
+            requested_quote_id = data.get("quote_id") or data.get("quoteId")
+            if requested_quote_id not in (None, ""):
+                try:
+                    requested_quote_id = int(requested_quote_id)
+                except (TypeError, ValueError):
+                    raise ValueError("Presupuesto de origen inválido.")
+                if requested_quote_id <= 0:
+                    raise ValueError("Presupuesto de origen inválido.")
+
+            token_quote_id = None
+            if checkout_token and checkout_token.startswith("quote-cart-"):
+                raw_quote_id = checkout_token[len("quote-cart-"):]
+                if not raw_quote_id.isdigit():
+                    raise ValueError("Token de presupuesto inválido.")
+                token_quote_id = int(raw_quote_id)
+
+            if requested_quote_id is not None and token_quote_id not in (None, requested_quote_id):
+                raise ValueError("El presupuesto y el token de conversión no coinciden.")
+
+            quote_id = requested_quote_id or token_quote_id
             if checkout_token:
                 existing_sale = scope_query_to_company(Sale.query, Sale).filter(Sale.client_txn_id == checkout_token).first()
                 if existing_sale is not None:
@@ -63,42 +87,54 @@ class SaleService:
                         return jsonify({"sale_id": existing_sale.id, "redirect_url": url_for("sales.success", sale_id=existing_sale.id)})
                     return redirect(url_for("sales.success", sale_id=existing_sale.id))
 
-                if checkout_token.startswith("quote-cart-"):
-                    raw_quote_id = checkout_token[len("quote-cart-"):]
-                    if not raw_quote_id.isdigit():
-                        raise ValueError("Token de presupuesto inválido.")
-                    from app import Quote, QuoteItem
-                    quote_snapshot = (
-                        scope_query_to_company(
-                            Quote.query.options(selectinload(Quote.items)),
-                            Quote,
-                        )
-                        .filter(Quote.id == int(raw_quote_id))
-                        .with_for_update()
-                        .first()
+            if quote_id is not None:
+                from app import Quote, QuoteItem
+                quote_snapshot = (
+                    scope_query_to_company(
+                        Quote.query.options(selectinload(Quote.items)),
+                        Quote,
                     )
-                    if quote_snapshot is None:
-                        raise ValueError("No se encontró el presupuesto de origen.")
-                    if getattr(current_user, "role", None) not in {"admin", "superadmin"} and int(quote_snapshot.seller_id or 0) != int(current_user.id or 0):
-                        raise ValueError("No tenés permiso para convertir este presupuesto.")
-                    ai_payment = (
-                        scope_query_to_company(Payment.query, Payment)
-                        .filter(
-                            Payment.provider == "mercadopago_ai_order",
-                            Payment.external_reference.like(f"flow:ai_order|company_id:{int(company_id)}|quote_id:{int(quote_snapshot.id)}|%"),
-                        )
-                        .order_by(Payment.id.desc())
-                        .first()
+                    .filter(Quote.id == int(quote_id))
+                    .with_for_update()
+                    .first()
+                )
+                if quote_snapshot is None:
+                    raise ValueError("No se encontró el presupuesto de origen.")
+                if getattr(current_user, "role", None) not in {"admin", "superadmin"} and int(quote_snapshot.seller_id or 0) != int(current_user.id or 0):
+                    raise ValueError("No tenés permiso para convertir este presupuesto.")
+
+                quote_status = str(getattr(quote_snapshot, "status", "") or "").strip().upper()
+                ai_origin = str(getattr(quote_snapshot, "observations", "") or "").strip() == "Pedido generado por el Vendedor 24 hs de StockARmobile."
+                allowed_quote_statuses = {"APROBADO", "ENVIADO"} if ai_origin else {"APROBADO"}
+                if quote_status not in allowed_quote_statuses:
+                    raise ValueError("Solo se puede convertir un presupuesto aprobado.")
+
+                if quote_snapshot.expires_at is not None and quote_snapshot.expires_at < utcnow():
+                    raise ValueError("El presupuesto está vencido. Revisá el presupuesto antes de convertirlo.")
+
+                # AI-paid quotes are normally finalized by their payment flow; a manual
+                # POS conversion is only allowed while the payment is not approved.
+                ai_payment = (
+                    scope_query_to_company(Payment.query, Payment)
+                    .filter(
+                        Payment.provider == "mercadopago_ai_order",
+                        Payment.external_reference.like(f"flow:ai_order|company_id:{int(company_id)}|quote_id:{int(quote_snapshot.id)}|%"),
                     )
-                    if ai_payment is not None and str(ai_payment.status or "").lower() == "approved":
-                        raise ValueError("El pago del pedido IA ya fue aprobado; la venta debe confirmarse desde el flujo de pago.")
-                    if quote_snapshot.converted_sale_id:
-                        existing_sale = scope_query_to_company(Sale.query, Sale).filter(Sale.id == quote_snapshot.converted_sale_id).first()
-                        if existing_sale is not None:
-                            if json_response:
-                                return jsonify({"sale_id": existing_sale.id, "redirect_url": url_for("sales.success", sale_id=existing_sale.id)})
-                            return redirect(url_for("sales.success", sale_id=existing_sale.id))
-                        raise ValueError("El presupuesto ya figura convertido pero no se encontró su venta.")
+                    .order_by(Payment.id.desc())
+                    .first()
+                )
+                if ai_payment is not None and str(ai_payment.status or "").lower() == "approved":
+                    raise ValueError("El pago del pedido IA ya fue aprobado; la venta debe confirmarse desde el flujo de pago.")
+
+                # The quote token is canonical and idempotent for this conversion.
+                checkout_token = f"quote-cart-{int(quote_snapshot.id)}"
+                if quote_snapshot.converted_sale_id:
+                    existing_sale = scope_query_to_company(Sale.query, Sale).filter(Sale.id == quote_snapshot.converted_sale_id).first()
+                    if existing_sale is not None:
+                        if json_response:
+                            return jsonify({"sale_id": existing_sale.id, "redirect_url": url_for("sales.success", sale_id=existing_sale.id)})
+                        return redirect(url_for("sales.success", sale_id=existing_sale.id))
+                    raise ValueError("El presupuesto ya figura convertido pero no se encontró su venta.")
 
             lines = self._calculate_lines(items, lock_for_update=True, discount_overrides=(data.get("line_discounts") or data.get("line_discount_overrides") or {}))
             if quote_snapshot is not None:
@@ -219,6 +255,7 @@ class SaleService:
                 surcharge_type=sale_totals["surcharge_adjustment"]["type"],
                 surcharge_value=sale_totals["surcharge_adjustment"]["value"],
                 surcharge_reason=sale_totals["surcharge_adjustment"]["reason"],
+                charges_json=(quote_snapshot.charges_json if quote_snapshot is not None else data.get("charges_json")),
                 client_txn_id=checkout_token,
                 document_type=data.get("document_type") or data.get("tipo_comprobante") or "venta",
                 requiere_comprobante=requiere_comprobante,
@@ -416,6 +453,9 @@ class SaleService:
         sale.surcharge_type = sale_totals["surcharge_adjustment"]["type"]
         sale.surcharge_value = sale_totals["surcharge_adjustment"]["value"]
         sale.surcharge_reason = sale_totals["surcharge_adjustment"]["reason"]
+        # A manual edit invalidates the original quote charge snapshot; the
+        # ticket will fall back to the persisted sale-level adjustments.
+        sale.charges_json = None
         sale.tax = sale_totals["tax"]
         sale.total_amount = sale_totals["total"]
         sale.paid_amount = payment_breakdown.get("efectivo", sale_totals["total"])

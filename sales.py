@@ -213,6 +213,7 @@ def _pos_qr_snapshot(items, payload, *, total_amount, currency):
         "items": normalized_items,
         "client_id": payload.get("client_id") or payload.get("cliente_id") or "",
         "checkout_token": payload.get("checkout_token") or payload.get("checkoutToken") or "",
+        "quote_id": payload.get("quote_id") or payload.get("quoteId") or "",
         "note": payload.get("note") or "",
         "document_type": payload.get("document_type") or payload.get("tipo_comprobante") or "venta",
         "requiere_comprobante": requiere_comprobante,
@@ -323,6 +324,7 @@ def _sale_snapshot(sale, items=None):
             "secondary_payment_method": sale.secondary_payment_method,
             "paid_amount": float(sale.paid_amount or 0),
             "secondary_paid_amount": float(sale.secondary_paid_amount or 0),
+            "charges_json": getattr(sale, "charges_json", None),
             "note": sale.note,
             "status": sale.status,
         },
@@ -1218,6 +1220,7 @@ def api_mp_qr_finalize():
     sale_payload = {
         "client_id": snapshot.get("client_id") or "",
         "checkout_token": snapshot.get("checkout_token") or "",
+        "quote_id": snapshot.get("quote_id") or "",
         "metodo_pago": "QR Mercado Pago",
         "payment_method": "QR Mercado Pago",
         "monto_pago": payment.amount,
@@ -1432,6 +1435,7 @@ def thermal_ticket(sale_id):
         "ventas/ticket.html",
         sale=sale,
         rows=_ticket_rows(sale),
+        charge_rows=_ticket_charge_rows(sale),
         ticket_text=_ticket_text(sale, ticket_brand=ticket_brand),
         ticket_brand=ticket_brand,
         printer_settings=printer_settings,
@@ -1600,6 +1604,10 @@ def _ticket_text(sale, ticket_brand=None):
 
 def _ticket_rows(sale):
     return ReceiptService.ticket_rows(sale)
+
+
+def _ticket_charge_rows(sale):
+    return ReceiptService.charge_rows(sale)
 
 
 def _public_share_serializer():

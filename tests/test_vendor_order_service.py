@@ -1015,10 +1015,88 @@ def test_manual_quote_acceptance_requires_post_and_does_not_create_sale(vendor_d
     assert Sale.query.filter_by(company_id=data["company_a"].id).count() == 0
 
 
+def test_quote_conversion_uses_quote_id_when_browser_token_is_stale(vendor_database):
+    from flask_login import login_user
+    from app import CashSession, QuoteItem, Sale
+    from sales import _create_sale_from_items
+
+    data = vendor_database
+    company = data["company_a"]
+    product = data["product_a"]
+    user = data["user_a"]
+    client = data["client_a"]
+
+    quote = Quote(
+        company_id=company.id,
+        created_by_user_id=user.id,
+        seller_id=user.id,
+        client_id=client.id,
+        number="P-STALE-TOKEN-001",
+        subtotal=200,
+        discount=0,
+        surcharge=50,
+        tax=42,
+        total_amount=292,
+        surcharge_type="fixed",
+        surcharge_value=50,
+        status="APROBADO",
+        observations="Presupuesto estándar.",
+        charges_json=json.dumps([
+            {"id": "shipping", "name": "Envío a domicilio", "type": "fixed", "value": "50.00", "amount": "50.00"},
+            {"id": "iva", "name": "IVA", "type": "percentage", "value": "21", "amount": "42.00"},
+        ]),
+    )
+    db.session.add(quote)
+    db.session.flush()
+    db.session.add(QuoteItem(
+        quote_id=quote.id,
+        product_id=product.id,
+        description=product.name,
+        quantity=2,
+        unit_price=100,
+        discount=0,
+        subtotal=200,
+        sort_order=0,
+    ))
+    db.session.add(CashSession(
+        user_id=user.id,
+        company_id=company.id,
+        status="abierta",
+        opening_amount=0,
+    ))
+    db.session.commit()
+
+    with stock_app.app.test_request_context("/ventas/"):
+        login_user(user)
+        result = _create_sale_from_items(
+            {str(product.id): 2},
+            {
+                "quote_id": quote.id,
+                "checkout_token": "browser-token-regenerated-after-prefill",
+                "client_id": client.id,
+                "metodo_pago": "EFECTIVO",
+                "monto_pago": "292",
+            },
+            json_response=True,
+        )
+        assert result.get_json()["sale_id"]
+
+    sale = db.session.get(Sale, result.get_json()["sale_id"])
+    db.session.refresh(quote)
+    assert float(sale.total_amount) == pytest.approx(292)
+    assert float(sale.surcharge) == pytest.approx(50)
+    assert float(sale.tax) == pytest.approx(42)
+    assert sale.client_id == client.id
+    assert sale.client_txn_id == f"quote-cart-{quote.id}"
+    assert quote.status == "CONVERTIDO"
+    assert quote.converted_sale_id == sale.id
+
+
 def test_manual_ai_quote_conversion_preserves_tax_and_closes_payment(vendor_database):
     from flask_login import login_user
     from app import CashSession, QuoteItem, Sale
     from sales import _create_sale_from_items
+    from whatsapp_agent import _ai_order_row
 
     data = vendor_database
     company = data["company_a"]
@@ -1108,6 +1186,9 @@ def test_manual_ai_quote_conversion_preserves_tax_and_closes_payment(vendor_data
     assert quote.status == "CONVERTIDO"
     assert quote.converted_sale_id == sale.id
     assert payment.status == "cancelled"
+    order_row = _ai_order_row(company.id, quote)
+    assert order_row["order_key"] == "confirmed"
+    assert order_row["sale_id"] == sale.id
     assert float(product.stock) == pytest.approx(8)
 
 

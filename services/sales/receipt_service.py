@@ -52,6 +52,47 @@ class ReceiptService:
         return lines
 
     @staticmethod
+    def charge_rows(sale):
+        """Return the persisted commercial charge snapshot for ticket rendering."""
+        raw = getattr(sale, "charges_json", None)
+        if not raw:
+            return []
+        try:
+            payload = json.loads(raw) if isinstance(raw, str) else raw
+        except (TypeError, ValueError, json.JSONDecodeError):
+            return []
+        if not isinstance(payload, list):
+            return []
+
+        rows = []
+        for charge in payload:
+            if not isinstance(charge, dict):
+                continue
+            try:
+                amount = Decimal(str(charge.get("amount") or 0)).quantize(Decimal("0.01"))
+            except Exception:
+                continue
+            if amount <= Decimal("0.00"):
+                continue
+            charge_type = str(charge.get("type") or "fixed").strip().lower()
+            try:
+                value = Decimal(str(charge.get("value"))) if charge.get("value") is not None else None
+            except Exception:
+                value = None
+            rows.append({
+                "name": str(charge.get("name") or "Cargo").strip()[:120] or "Cargo",
+                "type": charge_type,
+                "value": value.quantize(Decimal("0.01")) if value is not None else None,
+                "amount": amount,
+                "base": str(charge.get("base") or "").strip(),
+            })
+        return rows
+
+    @staticmethod
+    def _snapshot_charge_amount(sale):
+        return sum((row["amount"] for row in ReceiptService.charge_rows(sale)), Decimal("0.00")).quantize(Decimal("0.01"))
+
+    @staticmethod
     def _adjustment_lines(label, adjustment_type, value, amount, reason, sign=""):
         if adjustment_type == "percentage" and value is not None:
             lines = [f"{label}: {value:.2f}%", f"{label} aplicado: {sign}${amount:.2f}"]
@@ -92,9 +133,31 @@ class ReceiptService:
         effective_discount = ReceiptService._effective_discount(sale)
         lines.extend(["-" * 32, f"Subtotal: ${sale.subtotal:.2f}"])
         lines.extend(ReceiptService._adjustment_lines("Descuento", sale.discount_type, sale.discount_value, effective_discount, sale.discount_reason, "-"))
-        if sale.surcharge:
-            lines.extend(ReceiptService._adjustment_lines("Recargo", sale.surcharge_type, sale.surcharge_value, sale.surcharge, sale.surcharge_reason))
-        lines.extend([f"Impuestos: ${sale.tax:.2f}", "=" * 32, f"TOTAL: ${sale.total_amount:.2f}", "Gracias por su compra!"])
+        charge_rows = ReceiptService.charge_rows(sale)
+        if charge_rows:
+            for row in charge_rows:
+                if row["type"] == "percentage" and row["value"] is not None:
+                    lines.append(f'{row["name"]}: {row["value"]:.2f}%')
+                    lines.append(f'{row["name"]} aplicado: ${row["amount"]:.2f}')
+                else:
+                    lines.append(f'{row["name"]}: +${row["amount"]:.2f}')
+            expected_order_charges = (Decimal(str(getattr(sale, "surcharge", 0) or 0)) + Decimal(str(getattr(sale, "tax", 0) or 0))).quantize(Decimal("0.01"))
+            covered = ReceiptService._snapshot_charge_amount(sale)
+            if covered < expected_order_charges:
+                remainder = expected_order_charges - covered
+                surcharge = Decimal(str(getattr(sale, "surcharge", 0) or 0)).quantize(Decimal("0.01"))
+                extra_surcharge = min(remainder, surcharge)
+                if extra_surcharge > 0:
+                    lines.append(f"Recargo adicional: +${extra_surcharge:.2f}")
+                    remainder -= extra_surcharge
+                if remainder > 0 and getattr(sale, "tax", 0):
+                    lines.append(f"Impuestos adicionales: +${remainder:.2f}")
+        else:
+            if sale.surcharge:
+                lines.extend(ReceiptService._adjustment_lines("Recargo", sale.surcharge_type, sale.surcharge_value, sale.surcharge, sale.surcharge_reason))
+            if sale.tax:
+                lines.append(f"Impuestos: ${sale.tax:.2f}")
+        lines.extend(["=" * 32, f"TOTAL: ${sale.total_amount:.2f}", "Gracias por su compra!"])
         return "\n".join(lines)
 
     @staticmethod
@@ -124,5 +187,19 @@ class ReceiptService:
         lines.append("------------------------------")
         lines.extend(ReceiptService._ticket_lines(sale))
         effective_discount = ReceiptService._effective_discount(sale)
-        lines.extend(["------------------------------", f"Subtotal: ${sale.subtotal:.2f}", *ReceiptService._adjustment_lines("Descuento", sale.discount_type, sale.discount_value, effective_discount, sale.discount_reason, "-"), *(ReceiptService._adjustment_lines("Recargo", sale.surcharge_type, sale.surcharge_value, sale.surcharge, sale.surcharge_reason) if sale.surcharge else []), f"Impuestos: ${sale.tax:.2f}", f"Total: ${sale.total_amount:.2f}", "Gracias por su compra!"])
+        lines.extend(["------------------------------", f"Subtotal: ${sale.subtotal:.2f}", *ReceiptService._adjustment_lines("Descuento", sale.discount_type, sale.discount_value, effective_discount, sale.discount_reason, "-")])
+        charge_rows = ReceiptService.charge_rows(sale)
+        if charge_rows:
+            for row in charge_rows:
+                if row["type"] == "percentage" and row["value"] is not None:
+                    lines.append(f'{row["name"]}: {row["value"]:.2f}%')
+                    lines.append(f'{row["name"]} aplicado: ${row["amount"]:.2f}')
+                else:
+                    lines.append(f'{row["name"]}: +${row["amount"]:.2f}')
+        else:
+            if sale.surcharge:
+                lines.extend(ReceiptService._adjustment_lines("Recargo", sale.surcharge_type, sale.surcharge_value, sale.surcharge, sale.surcharge_reason))
+            if sale.tax:
+                lines.append(f"Impuestos: ${sale.tax:.2f}")
+        lines.extend([f"Total: ${sale.total_amount:.2f}", "Gracias por su compra!"])
         return "\n".join(lines)
