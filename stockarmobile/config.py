@@ -86,6 +86,12 @@ def configure_app(app):
         or normalize_whatsapp_number(app.config["SUPPORT_WHATSAPP_DISPLAY"])
         or "5493624228396"
     ).strip()
+    app.config["SUPPORT_WHATSAPP_DISPLAY_2"] = (os.environ.get("SUPPORT_WHATSAPP_DISPLAY_2") or "+54 9 3644 819100").strip()
+    app.config["SUPPORT_WHATSAPP_NUMBER_2"] = (
+        os.environ.get("SUPPORT_WHATSAPP_NUMBER_2")
+        or normalize_whatsapp_number(app.config["SUPPORT_WHATSAPP_DISPLAY_2"])
+        or "5493644819100"
+    ).strip()
     app.config["PASSWORD_RESET_TOKEN_TTL_MINUTES"] = int(os.environ.get("PASSWORD_RESET_TOKEN_TTL_MINUTES", "60"))
     app.config["SMTP_HOST"] = (os.environ.get("SMTP_HOST") or "").strip()
     app.config["SMTP_PORT"] = int(os.environ.get("SMTP_PORT") or "587")
