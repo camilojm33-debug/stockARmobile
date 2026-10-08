@@ -484,6 +484,62 @@ def test_direct_order_from_empty_cart_is_pending_and_replayed_once(qa_public_ven
     assert Sale.query.filter_by(company_id=qa_public_vendor_db["company"].id).count() == 0
 
 
+def test_general_chat_turn_does_not_reexpose_previous_checkout_links(qa_public_vendor_db, monkeypatch):
+    from services.ai_agent.providers.base import AIProviderError
+
+    provider = SequenceProvider([
+        {
+            "content": "",
+            "tool_call": {
+                "id": "tool-order-link-gate",
+                "name": "preparar_pedido",
+                "arguments": {
+                    "product_query": "machimbre",
+                    "quantity": 2,
+                    "customer_name": "Julia Acosta",
+                    "customer_phone": "3624001122",
+                    "delivery_method": "retiro",
+                },
+            },
+        },
+        {"content": "Pedido preparado.", "tool_call": None},
+        {"content": "Tenemos otros productos disponibles. ¿Qué estás buscando?", "tool_call": None},
+    ])
+    _install_provider(monkeypatch, provider)
+
+    def ensure_token(self, *, company_id):
+        return "qa-token"
+
+    def create_preference(self, **kwargs):
+        return {"id": "pref-stale-link", "init_point": "https://payments.test/stale-link"}
+
+    monkeypatch.setattr("services.ai_agent.vendor_order_service.MercadoPagoOAuthService.ensure_access_token", ensure_token)
+    monkeypatch.setattr("services.ai_agent.vendor_order_service.MercadoPagoService.create_ai_order_checkout_preference", create_preference)
+
+    client = _public_client(qa_public_vendor_db)
+    first = _post_message(
+        client,
+        qa_public_vendor_db,
+        "operation-create-link-gate",
+        "Necesito 2 metros de machimbre, a nombre de Julia Acosta, retiro en local.",
+    )
+    second = _post_message(
+        client,
+        qa_public_vendor_db,
+        "operation-general-after-checkout",
+        "¿Qué otros productos tienen?",
+        conversation_id=first.json["conversation_id"],
+    )
+
+    assert first.status_code == second.status_code == 200
+    assert first.json["payment_url"] == "https://payments.test/stale-link"
+    assert first.json["quote_url"]
+    assert second.json["payment_url"] is None
+    assert second.json["quote_url"] is None
+    assert second.json["total"] is None
+    assert "Julia Acosta" not in second.json["content"]
+
+
 def test_checkout_timeout_reuses_quote_and_same_mp_idempotency_reference(qa_public_vendor_setup, monkeypatch):
     from app import Payment, Quote
 
