@@ -192,6 +192,11 @@ def test_remove_from_cart_deletes_matching_product(vendor_database):
         conversation_id=conversation.id,
         items=[{"product_query": "Cafe clasico", "quantity": 1}],
     )
+    state = dict(conversation.metadata_json or {})
+    state[PENDING_QUOTE_KEY] = 123
+    state[PENDING_PAYMENT_KEY] = "https://payments.test/old-cart"
+    conversation.metadata_json = state
+    db.session.flush()
 
     cart = VendorOrderService.remove_from_cart(
         company_id=data["company_a"].id,
@@ -202,6 +207,8 @@ def test_remove_from_cart_deletes_matching_product(vendor_database):
     assert cart["items"] == []
     assert cart["total"] == 0.0
     assert conversation.metadata_json[CART_KEY] == {}
+    assert PENDING_QUOTE_KEY not in conversation.metadata_json
+    assert PENDING_PAYMENT_KEY not in conversation.metadata_json
 
 
 def test_update_cart_reports_ambiguous_products(vendor_database):
