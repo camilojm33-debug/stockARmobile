@@ -290,10 +290,7 @@ def calculate_sale_totals(
     tax_amount = clamp_non_negative_money(tax)
     final_total = quantize_money(taxable + safe_surcharge + tax_amount)
 
-    # Surcharges are order-level charges and must never be encoded as
-    # negative line discounts. Line totals represent product value after
-    # line/general discounts; surcharge and tax are added separately.
-    order_discount_adjustment = quantize_money(safe_general_discount)
+    order_discount_adjustment = quantize_money(safe_general_discount - safe_surcharge)
 
     sum_net = sum((line["net"] for line in normalized_lines), Decimal("0.00"))
     if sum_net <= Decimal("0.00"):
@@ -315,9 +312,10 @@ def calculate_sale_totals(
         line["line_total"] = line_total
 
     rounded_sum = quantize_money(sum((line["line_total"] for line in normalized_lines), Decimal("0.00")))
-    # Taxes and surcharges are order-level amounts, not line discounts.
-    # Reconcile product line totals only against subtotal - discounts.
-    line_total_target = quantize_money(subtotal - line_discount_total - safe_general_discount)
+    # Taxes belong to the sale total, not to individual SaleItem line totals.
+    # Keep the existing surcharge allocation semantics while excluding tax from
+    # the line reconciliation step.
+    line_total_target = quantize_money(final_total - tax_amount)
     diff = quantize_money(line_total_target - rounded_sum)
     if normalized_lines and diff != Decimal("0.00"):
         normalized_lines[-1]["line_total"] = quantize_money(normalized_lines[-1]["line_total"] + diff)
