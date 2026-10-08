@@ -48,7 +48,13 @@ def test_preparar_pedido_can_build_cart_from_direct_product_request(monkeypatch)
 
     def fake_get_cart(**kwargs):
         calls.append(("get_cart", kwargs))
-        return {"items": [], "total": 0, "currency": "ARS", "line_count": 0}
+        # A previous checkout is still present in this conversation.
+        return {
+            "items": [{"product_id": 42, "name": "Machimbre", "quantity": 5, "subtotal": 33000}],
+            "total": 33000,
+            "currency": "ARS",
+            "line_count": 1,
+        }
 
     def fake_update_cart(**kwargs):
         calls.append(("update_cart", kwargs))
@@ -76,7 +82,11 @@ def test_preparar_pedido_can_build_cart_from_direct_product_request(monkeypatch)
 
     assert result["success"] is True
     assert [item[0] for item in calls] == ["get_cart", "update_cart", "create_pending_order"]
-    assert calls[1][1]["items"] == [{"product_query": "machimbre", "quantity": 4}]
+    assert calls[1][1]["items"] == [{
+        "product_query": "machimbre",
+        "quantity": 4,
+        "replace_quantity": True,
+    }]
     assert calls[2][1]["customer_name"] == "Waldo Ricollini"
     assert calls[2][1]["delivery_method"] == "envio"
 
@@ -563,3 +573,7 @@ def test_webchat_frontend_guards_click_enter_and_manual_retries():
     assert "event.key === 'Enter' && !event.shiftKey" in source
     assert "send.textContent = activeChatOperation ? 'Reintentar' : 'Enviar';" in source
     assert "assistant_message_id" in source
+    assert "function appendInlineMarkdown(parent, value)" in source
+    assert "function safeMessageUrl(value)" in source
+    assert "const heading = trimmed.match(/^#{1,6}\\s+(.+)$/)" in source
+    assert "const bullet = trimmed.match(/^(?:\\*|-)\\s+(.+)$/)" in source
