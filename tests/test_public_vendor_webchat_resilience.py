@@ -459,6 +459,11 @@ def test_direct_order_from_empty_cart_is_pending_and_replayed_once(qa_public_ven
     delivery = QuoteDelivery.query.filter_by(quote_id=quote.id).one()
     assert first.status_code == second.status_code == 200
     assert first.json == second.json
+    assert "Waldo Ricollini" in first.json["content"]
+    assert "4 × Machimbre pino" in first.json["content"]
+    assert "Pagar con Mercado Pago" in first.json["content"]
+    assert "Ver presupuesto" in first.json["content"]
+    assert "pendiente de pago" in first.json["content"]
     assert provider.calls == 2
     assert len(rate_calls) == len(mp_calls) == 1
     assert Conversation.query.filter_by(company_id=qa_public_vendor_db["company"].id, channel="webchat").count() == 1
