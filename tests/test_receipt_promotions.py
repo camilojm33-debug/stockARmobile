@@ -63,3 +63,21 @@ def test_ticket_rows_expose_promotion_discount_and_gross_amount():
     assert row["gross"] == Decimal("34800.00")
     assert row["discount"] == Decimal("6960.00")
     assert row["total"] == Decimal("27840.00")
+
+
+
+def test_ticket_renders_persisted_quote_charge_breakdown():
+    sale = make_sale()
+    sale.charges_json = """[{"id":"shipping","name":"Envío a domicilio","type":"fixed","value":"50.00","amount":"50.00"},{"id":"iva","name":"IVA","type":"percentage","value":"21","amount":"42.00"}]"""
+    sale.surcharge = Decimal("50.00")
+    sale.tax = Decimal("42.00")
+    sale.total_amount = Decimal("320.00")
+
+    ticket = ReceiptService.ticket_text(sale, "STOCK ARMOBILE")
+
+    assert "Envío a domicilio: +$50.00" in ticket
+    assert "IVA: 21.00%" in ticket
+    assert "IVA aplicado: $42.00" in ticket
+    assert "Recargo: " not in ticket
+    assert "Impuestos: " not in ticket
+    assert "TOTAL: $320.00" in ticket
