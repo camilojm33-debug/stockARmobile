@@ -109,9 +109,32 @@ function generateCheckoutToken() {
   return `chk_${Date.now()}_${Math.random().toString(36).slice(2, 10)}`;
 }
 
+function quotePayloadMatchesCart(payload) {
+  if (!payload || !Array.isArray(payload.items)) return false;
+  if (payload.items.length !== cart.length) return false;
+  const expected = new Map(payload.items.map(item => [
+    Number(item?.productId || item?.product_id || 0),
+    {
+      quantity: Number(item?.quantity || 0),
+      price: Number(item?.price || 0),
+    }
+  ]));
+  return cart.every(item => {
+    const row = expected.get(Number(item.productId));
+    return row
+      && Math.abs(Number(item.quantity || 0) - row.quantity) < 0.000001
+      && Math.abs(Number(item.price || 0) - row.price) < 0.000001;
+  });
+}
+
 function ensureCheckoutToken() {
   if (quotePricingSnapshot && quotePricingSnapshot.checkoutToken && quoteSnapshotMatchesCart()) {
     checkoutToken = String(quotePricingSnapshot.checkoutToken);
+    return checkoutToken;
+  }
+  const serverQuotePayload = window.__quoteCartPrefill;
+  if (serverQuotePayload?.checkout_token && quotePayloadMatchesCart(serverQuotePayload)) {
+    checkoutToken = String(serverQuotePayload.checkout_token);
     return checkoutToken;
   }
   if (!checkoutToken) {
@@ -360,6 +383,8 @@ function invalidateQuoteSnapshot() {
   if (quotePrefillApplying || !quotePricingSnapshot) return;
   quotePricingSnapshot = null;
   window.__quoteLineDiscounts = {};
+  window.__quoteCartPrefill = null;
+  window.__quoteCartPrefillSeeded = false;
   resetCheckoutToken();
   const chargeBreakdown = document.getElementById('quote-cart-charge-breakdown');
   if (chargeBreakdown) {
