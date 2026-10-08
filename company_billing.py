@@ -816,6 +816,28 @@ def _pending_paid_plan_change(company_id):
     )
 
 
+def _standard_checkout_method(company, subscription):
+    if subscription is None:
+        return None
+
+    metadata = SubscriptionService._metadata_dict(subscription)
+    configured_method = str(metadata.get("checkout_method") or "").strip().lower()
+    preapproval_status = str(metadata.get("mercadopago_status") or "").strip().lower()
+    if configured_method == "automatic" and preapproval_status in {"pending", "in_process", "authorized"}:
+        return "automatic"
+    if configured_method == "qr":
+        preview = _persisted_checkout_preview(company, subscription_id=subscription.id)
+        if preview is not None and preview.get("status") == "pending":
+            return "qr"
+
+    if metadata.get("mercadopago_preapproval_id") and preapproval_status in {"pending", "in_process", "authorized"}:
+        return "automatic"
+    preview = _persisted_checkout_preview(company, subscription_id=subscription.id)
+    if preview is not None and preview.get("status") == "pending":
+        return "qr"
+    return None
+
+
 def _supersede_pending_paid_plan_change(
     db_session,
     *,
@@ -1116,6 +1138,11 @@ def subscription_portal():
 
     plans = PlanService.all_commercial_plans()
     subscription = SubscriptionService.active_subscription_for_company(company.id)
+    pending_standard_subscription = _pending_paid_plan_change(company.id)
+    standard_checkout_method = _standard_checkout_method(
+        company,
+        pending_standard_subscription or subscription,
+    )
     effective_state = SubscriptionService.resolve_company_access_state(company, subscription=subscription)
 
     usage_snapshot = PlanUsageService.usage_snapshot(company.id)
@@ -1346,6 +1373,7 @@ def subscription_portal():
         selected_plan=selected_plan,
         plan_change_summary=plan_change_summary,
         mp_auto_active=mp_auto_active,
+        standard_checkout_method=standard_checkout_method,
         ai_plans=AI_PLANS,
         ai_status=ai_status,
     )
@@ -1456,8 +1484,18 @@ def create_checkout():
             _anchor="planes-disponibles",
         ))
 
+    current_subscription = SubscriptionService.active_subscription_for_company(company.id)
+    checkout_subscription = pending_plan or current_subscription
+    locked_checkout_method = _standard_checkout_method(company, checkout_subscription)
+    if locked_checkout_method and locked_checkout_method != "qr":
+        flash("Ya elegiste la suscripción mensual para este plan. Continuá ese checkout antes de iniciar un pago QR.", "warning")
+        return redirect(url_for(
+            "company_billing.subscription_portal",
+            checkout_subscription_id=checkout_subscription.id if pending_plan else None,
+            _anchor="payment-checkout" if pending_plan else "planes-disponibles",
+        ))
+
     try:
-        current_subscription = SubscriptionService.active_subscription_for_company(company.id)
         if current_subscription is None or current_subscription.plan_id != plan.id:
             return redirect(url_for(
                 "company_billing.subscription_portal",
@@ -1567,15 +1605,29 @@ def create_ai_subscription_checkout():
         checkout_url = ""
 
         if current_status == "PENDIENTE" and existing_preapproval_id and current_plan_code == plan_code:
+            AISubscriptionService.select_pending_checkout_method(
+                company,
+                payment_method=payment_method,
+            )
             try:
                 remote = mp_service.get_preapproval(existing_preapproval_id)
-            except RuntimeError:
-                remote = {}
+            except RuntimeError as exc:
+                raise AISubscriptionError(
+                    "No se pudo verificar el checkout IA pendiente. No se creó otro cobro; intentá nuevamente."
+                ) from exc
             remote_status = str(remote.get("status") or "").strip().lower()
             remote_init_point = str(remote.get("init_point") or "").strip()
-            if remote_status not in {"cancelled", "canceled", "expired"} and remote_init_point:
+            if remote_status == "authorized":
+                AISubscriptionService.sync_from_mercadopago(preapproval=remote)
+                flash("Mercado Pago ya autorizó tu suscripción IA. El estado se actualizó.", "success")
+                return redirect(url_for("company_billing.subscription_portal", _anchor="suscripcion-ia"))
+            if remote_status in {"pending", "in_process"} and remote_init_point:
                 preapproval_id = existing_preapproval_id
                 checkout_url = remote_init_point
+            elif remote_status not in {"cancelled", "canceled", "expired"}:
+                raise AISubscriptionError(
+                    "El checkout IA no está disponible para cambiar de modalidad. Revisá su estado en Mercado Pago antes de crear otro."
+                )
 
         if not preapproval_id:
             external_reference = f"ai_subscription:true|company_id:{company.id}|plan_code:{plan_code}|nonce:{uuid.uuid4().hex}"
@@ -1595,7 +1647,14 @@ def create_ai_subscription_checkout():
             checkout_url = str(response.get("init_point") or "").strip()
             if not preapproval_id or not checkout_url:
                 raise RuntimeError("Mercado Pago no devolvió una suscripción IA válida (id/init_point).")
-            AISubscriptionService.link_mercadopago_pending(company, plan_code=plan_code, preapproval_id=preapproval_id, payer_email=payer_email, external_reference=external_reference)
+            AISubscriptionService.link_mercadopago_pending(
+                company,
+                plan_code=plan_code,
+                preapproval_id=preapproval_id,
+                payer_email=payer_email,
+                external_reference=external_reference,
+                checkout_method=payment_method,
+            )
 
         if payment_method == "qr":
             session["mp_checkout_preview"] = {
@@ -1617,7 +1676,18 @@ def create_ai_subscription_checkout():
             ))
 
         return _checkout_redirect_response(checkout_url)
-    except (AISubscriptionError, RuntimeError, ValueError) as exc:
+    except AISubscriptionError as exc:
+        db.session.rollback()
+        if _wants_json_response():
+            return jsonify({"success": False, "error": str(exc)}), 409
+        flash(str(exc), "warning")
+        return redirect(url_for(
+            "company_billing.subscription_portal",
+            checkout="ai_created",
+            ai_preapproval_id=existing_preapproval_id or None,
+            _anchor="payment-checkout",
+        ))
+    except (RuntimeError, ValueError) as exc:
         db.session.rollback()
         current_app.logger.exception("Error creando suscripción IA Mercado Pago: %s", exc)
         return _checkout_error_response(f"No se pudo iniciar la suscripción IA: {exc}", url_for("ai_agents.agent", agent="planes"), status_code=500)
@@ -1687,6 +1757,20 @@ def create_mercadopago_subscription():
             return jsonify({"success": False, "error": "Seleccioná un plan antes de activar la suscripción automática."}), 400
         flash("Seleccioná un plan antes de activar la suscripción automática.", "warning")
         return redirect(url_for("company_billing.subscription_portal"))
+
+    pending_standard_subscription = _pending_paid_plan_change(company.id)
+    checkout_subscription = pending_standard_subscription or SubscriptionService.active_subscription_for_company(company.id)
+    locked_checkout_method = _standard_checkout_method(company, checkout_subscription)
+    if locked_checkout_method and locked_checkout_method != "automatic":
+        message = "Ya elegiste pagar este plan con QR. Completá o resolvé ese checkout antes de activar la suscripción mensual."
+        if _wants_json_response():
+            return jsonify({"success": False, "error": message}), 409
+        flash(message, "warning")
+        return redirect(url_for(
+            "company_billing.subscription_portal",
+            checkout_subscription_id=checkout_subscription.id if pending_standard_subscription else None,
+            _anchor="payment-checkout" if pending_standard_subscription else "planes-disponibles",
+        ))
 
     try:
         pending_plan = _pending_paid_plan_change(company.id)
@@ -1787,6 +1871,18 @@ def subscription_change_confirm():
         return redirect(url_for("company_billing.subscription_portal"))
 
     pending_plan = _pending_paid_plan_change(company.id)
+    checkout_subscription = pending_plan or SubscriptionService.active_subscription_for_company(company.id)
+    locked_checkout_method = _standard_checkout_method(company, checkout_subscription)
+    if locked_checkout_method and locked_checkout_method != "qr":
+        flash(
+            "Este plan ya tiene una suscripción mensual seleccionada. Continuá ese checkout para evitar mezclar modalidades.",
+            "warning",
+        )
+        return redirect(url_for(
+            "company_billing.subscription_portal",
+            selected_plan_id=plan.id,
+            _anchor="plan-change-confirmation",
+        ))
     replaced_pending_id = None
     if pending_plan is not None and pending_plan.plan_id != plan.id:
         try:

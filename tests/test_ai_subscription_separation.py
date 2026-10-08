@@ -386,6 +386,12 @@ def test_standard_active_ai_active_different_plan_does_not_cancel_or_create(subs
     client = subscription_app.test_client()
     _login(client, user)
 
+    plans_page = client.get("/agentes-ia/planes")
+    plans_html = plans_page.get_data(as_text=True)
+    assert plans_page.status_code == 200
+    assert 'var subscriptionStatus="ACTIVA"' in plans_html
+    assert "Ya hay un plan IA activo" in plans_html
+
     response = client.post("/admin/subscription/ai-agent/checkout", data={"plan_code": "vendedor", "payment_method": "automatic"})
 
     assert response.status_code == 302
@@ -412,6 +418,122 @@ def test_standard_active_ai_pending_can_continue_same_ai_checkout(subscription_a
     assert calls == [("get", "ai-pre")]
     assert AISubscriptionService.get_status(company)["status"] == "PENDIENTE"
     assert _standard_snapshot(subscription) == before
+
+
+def test_pending_ai_checkout_locks_other_method_and_keeps_standard_independent(subscription_app, monkeypatch):
+    company, user, _, subscription = _tenant_with_standard_subscription()
+    before = _standard_snapshot(subscription)
+    update_ai_preferences(
+        company,
+        ai_updates={
+            "plan_code": "vendedor",
+            "status": "PENDIENTE",
+            "origin": "MERCADO_PAGO",
+            "mercadopago_preapproval_id": "ai-pre-locked",
+            "checkout_method": "qr",
+        },
+    )
+    db.session.commit()
+    calls = []
+
+    def get_preapproval(self, preapproval_id):
+        calls.append(("get", preapproval_id))
+        return {"id": preapproval_id, "status": "pending", "init_point": "https://mp.test/ai-locked"}
+
+    def create_preapproval(self, **kwargs):
+        calls.append(("create", kwargs))
+        return {"id": "unexpected-second-preapproval", "status": "pending", "init_point": "https://mp.test/duplicate"}
+
+    monkeypatch.setattr("services.mercadopago_service.MercadoPagoService.get_preapproval", get_preapproval)
+    monkeypatch.setattr("services.mercadopago_service.MercadoPagoService.create_preapproval", create_preapproval)
+    client = subscription_app.test_client()
+    _login(client, user)
+
+    continue_qr = client.post(
+        "/admin/subscription/ai-agent/checkout",
+        data={"plan_code": "vendedor", "payment_method": "qr"},
+    )
+    alternate_method = client.post(
+        "/admin/subscription/ai-agent/checkout",
+        data={"plan_code": "vendedor", "payment_method": "automatic"},
+    )
+    portal = client.get("/admin/portal")
+    html = portal.get_data(as_text=True)
+
+    assert continue_qr.status_code == 302
+    assert "ai_preapproval_id=ai-pre-locked" in continue_qr.headers["Location"]
+    assert alternate_method.status_code == 302
+    assert "ai_preapproval_id=ai-pre-locked" in alternate_method.headers["Location"]
+    assert calls == [("get", "ai-pre-locked")]
+    assert AISubscriptionService.get_status(company)["checkout_method"] == "qr"
+    assert 'data-ai-checkout-method="qr"' in html
+    assert 'data-standard-checkout-method=""' in html
+    assert _standard_snapshot(subscription) == before
+
+    ai_plans = client.get("/agentes-ia/planes")
+    ai_plans_html = ai_plans.get_data(as_text=True)
+    assert ai_plans.status_code == 200
+    assert 'var pendingPlanCode="vendedor"' in ai_plans_html
+    assert 'var checkoutMethod="qr"' in ai_plans_html
+    assert "Suscripción automática bloqueada" in ai_plans_html
+    assert "Continuar con QR" in ai_plans_html
+
+
+@pytest.mark.parametrize(
+    ("checkout_method", "attempt_endpoint"),
+    [
+        ("qr", "/admin/subscription/mercadopago/create"),
+        ("automatic", "/admin/checkout"),
+    ],
+)
+def test_standard_pending_checkout_locks_only_the_other_method(subscription_app, monkeypatch, checkout_method, attempt_endpoint):
+    company, user, plan, subscription = _tenant_with_standard_subscription()
+    metadata = {"checkout_method": checkout_method}
+    if checkout_method == "automatic":
+        metadata.update({"mercadopago_preapproval_id": "standard-pre-locked", "mercadopago_status": "pending"})
+    SubscriptionService._set_metadata(subscription, metadata)
+    db.session.commit()
+    if checkout_method == "qr":
+        from services.billing_notification_service import NotificationService
+
+        NotificationService.record_event(
+            db.session,
+            company_id=company.id,
+            subscription_id=subscription.id,
+            event="checkout_preference_created",
+            detail="Pending standard QR",
+            source="mercadopago",
+            status="pending",
+            event_id="standard-qr-locked",
+            payload={"id": "standard-qr-locked", "init_point": "https://mp.test/standard-qr"},
+            user_id=user.id,
+        )
+        db.session.commit()
+
+    created = []
+    monkeypatch.setattr(
+        "company_billing.BillingService.create_checkout_for_plan",
+        lambda *args, **kwargs: created.append("qr"),
+    )
+    monkeypatch.setattr(
+        "services.mercadopago_subscription_service.MercadoPagoSubscriptionService.create",
+        lambda *args, **kwargs: created.append("automatic"),
+    )
+    client = subscription_app.test_client()
+    _login(client, user)
+
+    if attempt_endpoint.endswith("/checkout"):
+        response = client.post(attempt_endpoint, data={"plan_id": plan.id})
+    else:
+        response = client.post(attempt_endpoint, data={"plan_id": plan.id})
+    portal = client.get("/admin/portal")
+    html = portal.get_data(as_text=True)
+
+    assert response.status_code == 302
+    assert created == []
+    assert f'data-standard-checkout-method="{checkout_method}"' in html
+    assert 'data-ai-checkout-status=""' in html
+    assert subscription.status == SubscriptionService.STATE_ACTIVE
 
 
 def test_ai_pending_abandoned_checkout_remains_pending(subscription_app, monkeypatch):

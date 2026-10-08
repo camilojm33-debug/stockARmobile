@@ -128,6 +128,7 @@ class BillingService:
             payload=preference,
             user_id=user.id,
         )
+        SubscriptionService._set_metadata(target_subscription, {"checkout_method": "qr"})
         return {"subscription": target_subscription, "preference": preference}
 
     @staticmethod

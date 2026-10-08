@@ -96,6 +96,7 @@ class AISubscriptionService:
             "agents": list(plan["agents"]) if plan else [],
             "invoice_processing": bool(plan.get("invoice_processing")) if plan else False,
             "status": str(ai.get("status") or "").strip().upper() or None,
+            "checkout_method": str(ai.get("checkout_method") or "").strip().lower() or None,
             "starts_at": ai.get("starts_at"),
             "ends_at": ai.get("ends_at"),
             "origin": str(ai.get("origin") or "").strip().upper() or None,
@@ -452,13 +453,51 @@ class AISubscriptionService:
         return float(digits)
 
     @classmethod
-    def link_mercadopago_pending(cls, company, *, plan_code: str, preapproval_id: str, payer_email: str, external_reference: str | None = None) -> dict[str, Any]:
+    def select_pending_checkout_method(cls, company, *, payment_method: str) -> dict[str, Any]:
+        method = str(payment_method or "").strip().lower()
+        if method not in {"qr", "automatic"}:
+            raise AISubscriptionError("Método de checkout IA inválido.")
+        ai = cls._ai_prefs(company)
+        if (
+            str(ai.get("status") or "").strip().upper() != "PENDIENTE"
+            or cls._origin(ai) != "MERCADO_PAGO"
+            or not cls._preapproval_id(ai)
+        ):
+            raise AISubscriptionError("No hay un checkout IA pendiente para elegir modalidad.")
+        current_method = str(ai.get("checkout_method") or "").strip().lower()
+        if current_method and current_method != method:
+            raise AISubscriptionError(
+                "Ya elegiste otra modalidad para este checkout IA. Completá o cancelá el intento antes de cambiarla."
+            )
+        if current_method == method:
+            return cls.get_status(company)
+        return cls._apply(
+            company,
+            admin_user_id=None,
+            action="ai_subscription_checkout_method_selected",
+            new_fields={"checkout_method": method},
+        )
+
+    @classmethod
+    def link_mercadopago_pending(
+        cls,
+        company,
+        *,
+        plan_code: str,
+        preapproval_id: str,
+        payer_email: str,
+        external_reference: str | None = None,
+        checkout_method: str = "automatic",
+    ) -> dict[str, Any]:
         """Registra el preapproval recién creado ANTES de redirigir a Mercado Pago. Queda en PENDIENTE hasta que el webhook confirme."""
         code = str(plan_code or "").strip().lower()
         if code not in AI_PLAN_BY_CODE:
             raise AISubscriptionError("Plan IA inválido.")
         if not preapproval_id:
             raise AISubscriptionError("Mercado Pago no devolvió un identificador de suscripción válido.")
+        method = str(checkout_method or "").strip().lower()
+        if method not in {"qr", "automatic"}:
+            raise AISubscriptionError("Método de checkout IA inválido.")
         return cls._apply(company, admin_user_id=None, action="ai_subscription_mercadopago_checkout_created", new_fields={
             "plan_code": code,
             "status": "PENDIENTE",
@@ -467,6 +506,7 @@ class AISubscriptionService:
             "mercadopago_payer_email": str(payer_email or "").strip().lower(),
             "mercadopago_external_reference": str(external_reference or "").strip() or None,
             "mercadopago_status": "pending",
+            "checkout_method": method,
         })
 
     @classmethod

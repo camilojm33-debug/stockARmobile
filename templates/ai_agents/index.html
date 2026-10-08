@@ -168,6 +168,44 @@
 </style>
 {% endblock %}
 {% block content %}
+{% if view == 'planes' and ai_status and ai_status.status in ['PENDIENTE', 'ACTIVA'] %}
+<script>
+(function(){
+  var pendingPlanCode={{ ai_status.plan_code|tojson }};
+  var checkoutMethod={{ ai_status.checkout_method|tojson }};
+  var subscriptionStatus={{ ai_status.status|tojson }};
+  function lockButtons(){
+    document.querySelectorAll('.ai-plan-grid-v2 form').forEach(function(form){
+      var planField=form.querySelector('input[name="plan_code"]');
+      var planCode=planField?planField.value:'';
+      var buttons=form.querySelectorAll('button[name="payment_method"]');
+      buttons.forEach(function(button){
+        var reason='';
+        if(planCode!==pendingPlanCode){
+          reason=subscriptionStatus==='ACTIVA'?'Ya hay un plan IA activo':'Checkout IA pendiente para '+pendingPlanCode;
+        }else if(subscriptionStatus==='PENDIENTE' && checkoutMethod && button.value!==checkoutMethod){
+          reason=checkoutMethod==='qr'?'Suscripción automática bloqueada':'Pago con QR bloqueado';
+        }else if(subscriptionStatus==='PENDIENTE' && planCode===pendingPlanCode && checkoutMethod===button.value){
+          button.textContent=checkoutMethod==='qr'?'Continuar con QR':'Continuar con Mercado Pago';
+        }
+        if(reason){
+          button.disabled=true;
+          button.setAttribute('aria-disabled','true');
+          button.classList.add('disabled');
+          button.title=reason;
+          button.textContent=reason;
+        }
+      });
+    });
+  }
+  if(document.readyState==='loading'){
+    document.addEventListener('DOMContentLoaded',lockButtons,{once:true});
+  }else{
+    lockButtons();
+  }
+})();
+</script>
+{% endif %}
 <div class="app-shell ai-hub">
   {% if view == 'dashboard' %}
   {% set default_chat_agent = 'asistente' %}

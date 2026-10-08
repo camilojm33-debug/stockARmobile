@@ -54,6 +54,10 @@ class MercadoPagoSubscriptionService:
             current_status = str(current.get("status") or "").lower()
             current_init_point = str(current.get("init_point") or "").strip()
             if current_status in {"authorized", "pending"} and current_init_point:
+                SubscriptionService._set_metadata(
+                    subscription,
+                    {"checkout_method": "automatic", "payment_method": "mercadopago_subscription"},
+                )
                 return current
 
         external_reference = cls._external_reference(company_id=company.id, subscription_id=subscription.id)
@@ -81,6 +85,7 @@ class MercadoPagoSubscriptionService:
                 "mercadopago_payer_email": payer_email,
                 "mercadopago_external_reference": external_reference,
                 "payment_method": "mercadopago_subscription",
+                "checkout_method": "automatic",
                 "auto_renew": True,
                 "subscription_auto_created_at": datetime.now(timezone.utc).isoformat(),
             },

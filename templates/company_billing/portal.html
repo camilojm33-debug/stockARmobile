@@ -1,7 +1,7 @@
 {% extends "base_master.html" %}
 {% block title %}Suscripción - StockArmobile{% endblock %}
 {% block content %}
-<div class="app-shell subscription-shell-v3">
+<div class="app-shell subscription-shell-v3" data-standard-checkout-method="{{ standard_checkout_method or '' }}" data-ai-checkout-method="{{ ai_status.checkout_method or '' }}" data-ai-checkout-status="{{ ai_status.status or '' }}">
   <section class="subscription-hero mb-4">
     <div class="subscription-hero-copy"><span class="subscription-kicker"><i class="bi bi-stars"></i> Mi Suscripción · Tu centro de planes</span><h1>Tu negocio está potenciado 🚀</h1><p>Administrá tu plan, descubrí nuevas herramientas y llevá tu negocio al próximo nivel desde un solo lugar.</p><div class="subscription-hero-actions"><a class="btn btn-light btn-lg" href="#planes-disponibles"><i class="bi bi-arrow-up-circle me-1"></i>Mejorar mi plan</a><a class="btn btn-outline-light btn-lg" href="#suscripcion-ia"><i class="bi bi-stars me-1"></i>Ver Agentes IA</a></div></div>
     <div class="subscription-hero-status"><span class="hero-status-label">Tu plan actual</span><strong>{{ usage_snapshot.plan.name if usage_snapshot.plan else 'Sin plan definido' }}</strong><span class="hero-active"><i class="bi bi-check-circle-fill"></i>{{ status_badge.label }}</span><div class="hero-next-payment"><span>Próximo cobro</span><b>{{ currency }} {{ '{:,.0f}'.format(next_amount or 0).replace(',', '.') }}</b><small>{{ reference_date.strftime('%d/%m/%Y') if reference_date else 'Sin fecha' }}</small></div></div>
@@ -94,4 +94,41 @@
   }
   window.addEventListener('load',scheduleFocus,{once:true});
 })();
-</script>{% endblock %}
+</script>
+<script>
+(function(){
+  var root=document.querySelector('.subscription-shell-v3');
+  if(!root){return;}
+
+  function blockForm(form, lockedMethod, formMethod){
+    if(!lockedMethod || lockedMethod===formMethod){return;}
+    var button=form.querySelector('button[type="submit"]');
+    if(!button){return;}
+    button.disabled=true;
+    button.setAttribute('aria-disabled','true');
+    button.classList.add('disabled');
+    button.title='Ya hay un checkout '+(lockedMethod==='qr'?'por QR':'mensual')+' pendiente para este producto.';
+    button.textContent='Bloqueado: checkout '+(lockedMethod==='qr'?'QR':'mensual')+' pendiente';
+  }
+
+  var standardMethod=(root.getAttribute('data-standard-checkout-method')||'').toLowerCase();
+  if(standardMethod){
+    document.querySelectorAll('.payment-section form, #plan-change-confirmation form').forEach(function(form){
+      var action=(form.getAttribute('action')||'').toLowerCase();
+      var formMethod=action.indexOf('/mercadopago/create')>=0?'automatic':
+        action.indexOf('/checkout')>=0 || action.indexOf('/subscription/change')>=0?'qr':'';
+      blockForm(form,standardMethod,formMethod);
+    });
+  }
+
+  var aiStatus=(root.getAttribute('data-ai-checkout-status')||'').toUpperCase();
+  var aiMethod=(root.getAttribute('data-ai-checkout-method')||'').toLowerCase();
+  if(aiStatus==='PENDIENTE' && aiMethod){
+    document.querySelectorAll('#planes-ia form[action*="/subscription/ai-agent/checkout"]').forEach(function(form){
+      var method=form.querySelector('input[name="payment_method"]');
+      blockForm(form,aiMethod,method?method.value:'');
+    });
+  }
+})();
+</script>
+{% endblock %}
