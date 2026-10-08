@@ -48,7 +48,13 @@ def test_preparar_pedido_can_build_cart_from_direct_product_request(monkeypatch)
 
     def fake_get_cart(**kwargs):
         calls.append(("get_cart", kwargs))
-        return {"items": [], "total": 0, "currency": "ARS", "line_count": 0}
+        # A previous checkout is still present in this conversation.
+        return {
+            "items": [{"product_id": 42, "name": "Machimbre", "quantity": 5, "subtotal": 33000}],
+            "total": 33000,
+            "currency": "ARS",
+            "line_count": 1,
+        }
 
     def fake_update_cart(**kwargs):
         calls.append(("update_cart", kwargs))
@@ -76,7 +82,11 @@ def test_preparar_pedido_can_build_cart_from_direct_product_request(monkeypatch)
 
     assert result["success"] is True
     assert [item[0] for item in calls] == ["get_cart", "update_cart", "create_pending_order"]
-    assert calls[1][1]["items"] == [{"product_query": "machimbre", "quantity": 4}]
+    assert calls[1][1]["items"] == [{
+        "product_query": "machimbre",
+        "quantity": 4,
+        "replace_quantity": True,
+    }]
     assert calls[2][1]["customer_name"] == "Waldo Ricollini"
     assert calls[2][1]["delivery_method"] == "envio"
 
@@ -449,6 +459,11 @@ def test_direct_order_from_empty_cart_is_pending_and_replayed_once(qa_public_ven
     delivery = QuoteDelivery.query.filter_by(quote_id=quote.id).one()
     assert first.status_code == second.status_code == 200
     assert first.json == second.json
+    assert "Waldo Ricollini" in first.json["content"]
+    assert "4 × Machimbre pino" in first.json["content"]
+    assert "Pagar con Mercado Pago" in first.json["content"]
+    assert "Ver presupuesto" in first.json["content"]
+    assert "pendiente de pago" in first.json["content"]
     assert provider.calls == 2
     assert len(rate_calls) == len(mp_calls) == 1
     assert Conversation.query.filter_by(company_id=qa_public_vendor_db["company"].id, channel="webchat").count() == 1
@@ -467,6 +482,123 @@ def test_direct_order_from_empty_cart_is_pending_and_replayed_once(qa_public_ven
     assert delivery.province == "Chaco"
     assert float(qa_public_vendor_db["product"].stock) == 20
     assert Sale.query.filter_by(company_id=qa_public_vendor_db["company"].id).count() == 0
+
+
+def test_general_chat_turn_does_not_reexpose_previous_checkout_links(qa_public_vendor_db, monkeypatch):
+    from services.ai_agent.providers.base import AIProviderError
+
+    provider = SequenceProvider([
+        {
+            "content": "",
+            "tool_call": {
+                "id": "tool-order-link-gate",
+                "name": "preparar_pedido",
+                "arguments": {
+                    "product_query": "machimbre",
+                    "quantity": 2,
+                    "customer_name": "Julia Acosta",
+                    "customer_phone": "3624001122",
+                    "delivery_method": "retiro",
+                },
+            },
+        },
+        {"content": "Pedido preparado.", "tool_call": None},
+        {
+            "content": "Tenemos otros productos disponibles. ¿Qué estás buscando?\\n\\n[Pagar con Mercado Pago](https://www.mercadopago.com.ar/checkout/v1/redirect?pref_id=old)\\n[Ver presupuesto](https://www.stockarmobile.com/presupuestos/publico/old-token)",
+            "tool_call": None,
+        },
+    ])
+    _install_provider(monkeypatch, provider)
+
+    def ensure_token(self, *, company_id):
+        return "qa-token"
+
+    def create_preference(self, **kwargs):
+        return {"id": "pref-stale-link", "init_point": "https://payments.test/stale-link"}
+
+    monkeypatch.setattr("services.ai_agent.vendor_order_service.MercadoPagoOAuthService.ensure_access_token", ensure_token)
+    monkeypatch.setattr("services.ai_agent.vendor_order_service.MercadoPagoService.create_ai_order_checkout_preference", create_preference)
+
+    client = _public_client(qa_public_vendor_db)
+    first = _post_message(
+        client,
+        qa_public_vendor_db,
+        "operation-create-link-gate",
+        "Necesito 2 metros de machimbre, a nombre de Julia Acosta, retiro en local.",
+    )
+    second = _post_message(
+        client,
+        qa_public_vendor_db,
+        "operation-general-after-checkout",
+        "¿Qué otros productos tienen?",
+        conversation_id=first.json["conversation_id"],
+    )
+
+    assert first.status_code == second.status_code == 200
+    assert first.json["payment_url"] == "https://payments.test/stale-link"
+    assert first.json["quote_url"]
+    assert second.json["payment_url"] is None
+    assert second.json["quote_url"] is None
+    assert second.json["total"] is None
+    assert "Julia Acosta" not in second.json["content"]
+    assert "mercadopago.com.ar/checkout" not in second.json["content"]
+    assert "stockarmobile.com/presupuestos/publico" not in second.json["content"]
+
+
+def test_new_order_without_new_checkout_does_not_replay_previous_customer_link(qa_public_vendor_db, monkeypatch):
+    provider = SequenceProvider([
+        {
+            "content": "",
+            "tool_call": {
+                "id": "tool-first-order",
+                "name": "preparar_pedido",
+                "arguments": {
+                    "product_query": "machimbre",
+                    "quantity": 2,
+                    "customer_name": "Julia Acosta",
+                    "customer_phone": "3624001122",
+                    "delivery_method": "retiro",
+                },
+            },
+        },
+        {"content": "Pedido preparado.", "tool_call": None},
+        {
+            "content": "¡Listo Pedro! Nuevo presupuesto. [Pagar con Mercado Pago](https://www.mercadopago.com.ar/checkout/v1/redirect?pref_id=previous)",
+            "tool_call": None,
+        },
+    ])
+    _install_provider(monkeypatch, provider)
+
+    def ensure_token(self, *, company_id):
+        return "qa-token"
+
+    def create_preference(self, **kwargs):
+        return {"id": "pref-previous-customer", "init_point": "https://payments.test/previous-customer"}
+
+    monkeypatch.setattr("services.ai_agent.vendor_order_service.MercadoPagoOAuthService.ensure_access_token", ensure_token)
+    monkeypatch.setattr("services.ai_agent.vendor_order_service.MercadoPagoService.create_ai_order_checkout_preference", create_preference)
+
+    client = _public_client(qa_public_vendor_db)
+    first = _post_message(
+        client,
+        qa_public_vendor_db,
+        "operation-first-order-safe",
+        "Necesito 2 metros de machimbre, a nombre de Julia Acosta, teléfono 3624001122, retiro en local.",
+    )
+    second = _post_message(
+        client,
+        qa_public_vendor_db,
+        "operation-new-order-without-tool",
+        "Soy Pedro, necesito un nuevo presupuesto de 3 metros de machimbre, a nombre de Pedro Silva, teléfono 3624556789, retiro en local.",
+        conversation_id=first.json["conversation_id"],
+    )
+
+    assert first.status_code == second.status_code == 200
+    assert second.json["payment_url"] is None
+    assert second.json["quote_url"] is None
+    assert "No pude generar un presupuesto nuevo" in second.json["content"]
+    assert "pref_id=previous" not in second.json["content"]
+    assert "Julia Acosta" not in second.json["content"]
 
 
 def test_checkout_timeout_reuses_quote_and_same_mp_idempotency_reference(qa_public_vendor_setup, monkeypatch):
@@ -563,3 +695,7 @@ def test_webchat_frontend_guards_click_enter_and_manual_retries():
     assert "event.key === 'Enter' && !event.shiftKey" in source
     assert "send.textContent = activeChatOperation ? 'Reintentar' : 'Enviar';" in source
     assert "assistant_message_id" in source
+    assert "function appendInlineMarkdown(parent, value)" in source
+    assert "function safeMessageUrl(value)" in source
+    assert "const heading = trimmed.match(/^#{1,6}\\s+(.+)$/)" in source
+    assert "const bullet = trimmed.match(/^(?:\\*|-)\\s+(.+)$/)" in source

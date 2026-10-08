@@ -234,15 +234,109 @@ class VendorOrderPreviewTool(AgentTool):
         product_query = str(kwargs.get("product_query") or "").strip()
         quantity = kwargs.get("quantity")
         if product_query and quantity not in (None, ""):
+            # Explicit product + quantity are authoritative. Preserve a pending
+            # checkout only for an exact retry of the same cart, buyer and delivery.
             cart = VendorOrderService.get_cart(
                 company_id=self.company_id,
                 conversation_id=self._context["conversation_id"],
             )
-            if not cart["items"]:
+            reuse_pending_checkout = False
+            from flask import has_app_context
+            if cart.get("items") and has_app_context():
+                from app import Quote
+                from stockarmobile.models.conversations import Conversation
+                from services.ai_agent.vendor_order_service import (
+                    PENDING_QUOTE_KEY,
+                    _delivery_payload,
+                    _metadata,
+                    _normalize_text,
+                    _normalize_product_score,
+                    _pending_quote_matches_checkout,
+                    _search_candidates,
+                )
+
+                conversation = Conversation.query.filter_by(
+                    id=int(self._context["conversation_id"]),
+                    company_id=int(self.company_id),
+                ).first()
+                state = _metadata(conversation) if conversation is not None else {}
+                pending_quote_id = state.get(PENDING_QUOTE_KEY)
+                if pending_quote_id:
+                    try:
+                        pending_quote = Quote.query.filter_by(
+                            id=int(pending_quote_id),
+                            company_id=int(self.company_id),
+                        ).first()
+                    except (TypeError, ValueError):
+                        pending_quote = None
+                    if (
+                        pending_quote is not None
+                        and pending_quote.status not in {"ANULADO", "RECHAZADO", "VENCIDO", "CONVERTIDO"}
+                        and (
+                            pending_quote.expires_at is None
+                            or pending_quote.expires_at > __import__("datetime").datetime.utcnow()
+                        )
+                    ):
+                        candidates = _search_candidates(self.company_id, product_query)
+                        requested_product = candidates[0] if candidates else None
+                        normalized_query = _normalize_text(product_query)
+                        unambiguous = bool(requested_product)
+                        if len(candidates) > 1:
+                            second = candidates[1]
+                            if (
+                                _normalize_text(requested_product.name) != normalized_query
+                                and _normalize_text(second.name) != normalized_query
+                                and abs(
+                                    _normalize_product_score(requested_product, product_query)
+                                    - _normalize_product_score(second, product_query)
+                                ) < 20
+                            ):
+                                unambiguous = False
+                        try:
+                            requested_quantity = float(quantity)
+                        except (TypeError, ValueError):
+                            requested_quantity = -1.0
+                        cart_matches_requested_line = bool(
+                            unambiguous
+                            and any(
+                                int(item.get("product_id") or 0) == int(requested_product.id)
+                                and abs(float(item.get("quantity") or 0) - requested_quantity) < 0.0001
+                                for item in cart["items"]
+                            )
+                        )
+                        if cart_matches_requested_line:
+                            try:
+                                requested_delivery = _delivery_payload(
+                                    method=str(kwargs.get("delivery_method") or "retiro"),
+                                    customer_name=str(kwargs.get("customer_name") or ""),
+                                    customer_phone=str(kwargs.get("customer_phone") or self._context.get("customer_phone") or ""),
+                                    address=str(kwargs.get("delivery_address") or ""),
+                                    city=str(kwargs.get("delivery_city") or ""),
+                                    province=str(kwargs.get("delivery_province") or ""),
+                                    postal_code=str(kwargs.get("delivery_postal_code") or ""),
+                                    reference=str(kwargs.get("delivery_reference") or ""),
+                                    notes=str(kwargs.get("delivery_notes") or ""),
+                                )
+                            except ValueError as exc:
+                                return {"success": False, "error": str(exc), "retryable": False}
+                            if requested_delivery:
+                                reuse_pending_checkout = _pending_quote_matches_checkout(
+                                    quote=pending_quote,
+                                    cart=cart,
+                                    customer_name=str(kwargs.get("customer_name") or ""),
+                                    customer_phone=str(kwargs.get("customer_phone") or self._context.get("customer_phone") or ""),
+                                    delivery=requested_delivery,
+                                )
+
+            if not reuse_pending_checkout:
                 added = VendorOrderService.update_cart(
                     company_id=self.company_id,
                     conversation_id=self._context["conversation_id"],
-                    items=[{"product_query": product_query, "quantity": quantity}],
+                    items=[{
+                        "product_query": product_query,
+                        "quantity": quantity,
+                        "replace_quantity": True,
+                    }],
                 )
                 if isinstance(added, dict) and added.get("success") is False:
                     return added

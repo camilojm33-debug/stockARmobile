@@ -6,6 +6,7 @@ import hashlib
 import io
 import json
 import os
+import re
 import secrets
 import time
 from datetime import datetime, timezone
@@ -42,6 +43,7 @@ from services.ai_agent.vendor_order_service import (
     LAST_ORDER_KEY,
     VendorOrderService,
     _public_quote_url,
+    _quote_charge_snapshot,
 )
 
 
@@ -390,6 +392,127 @@ def _cart_public_state(conversation) -> dict:
         "shipping_config": shipping_config,
         "order": last_order,
     }
+
+
+def _public_order_intent(message: str) -> bool:
+    normalized = " ".join(str(message or "").strip().lower().split())
+    phrases = (
+        "presupuesto", "presupuest", "preparar pedido", "preparame el pedido",
+        "preparame un pedido", "armar pedido", "hacer un pedido", "quiero comprar",
+        "quiero pagar", "pasame el link", "pásame el link", "link de pago",
+        "enlace de pago", "confirmar compra", "comprar",
+    )
+    return any(phrase in normalized for phrase in phrases)
+
+
+def _strip_unscoped_checkout_links(content: str) -> str:
+    """Do not let model-generated history expose payment/quote URLs without a scoped order."""
+    raw = str(content or "")
+    unsafe_host_or_path = r"(?:mercadopago\.com(?:\.ar)?|stockarmobile\.com/presupuestos/publico)"
+    raw = re.sub(
+        r"\[[^\]]*\]\((?:https?://[^)\s]*" + unsafe_host_or_path + r"[^)\s]*)\)",
+        "",
+        raw,
+        flags=re.IGNORECASE,
+    )
+    raw = re.sub(
+        r"https?://[^\s<]*(?:" + unsafe_host_or_path + r")[^\s<]*",
+        "",
+        raw,
+        flags=re.IGNORECASE,
+    )
+    raw = re.sub(r"(?im)^\s*(?:💳|📄)?\s*(?:Pagar con Mercado Pago|Ver presupuesto|Enlace para realizar el pago)\s*:?\s*$", "", raw)
+    raw = re.sub(r"\n{3,}", "\n\n", raw)
+    return raw.strip()
+
+def _public_money(value) -> str:
+    try:
+        amount = float(value or 0)
+    except (TypeError, ValueError):
+        amount = 0.0
+    localized = f"{amount:,.2f}".replace(",", "\0").replace(".", ",").replace("\0", ".")
+    return f"${localized} ARS"
+
+
+def _public_order_confirmation_text(quote, payment_url: str, quote_url: str) -> str:
+    """Build checkout confirmation from persisted order data, never LLM guesses."""
+    delivery = getattr(quote, "delivery", None)
+    client = getattr(quote, "client", None)
+    customer_name = (
+        getattr(delivery, "recipient_name", None)
+        or getattr(client, "name", None)
+        or getattr(quote, "consumer_name", None)
+        or "Consumidor final"
+    )
+    customer_phone = (
+        getattr(delivery, "phone", None)
+        or getattr(client, "whatsapp", None)
+        or getattr(client, "phone", None)
+        or ""
+    )
+    quote_number = quote.number or f"P-{int(quote.id):06d}"
+    lines = [
+        f"¡Listo, {customer_name}! Preparé el presupuesto {quote_number}.",
+        "",
+        f"### **Detalle del presupuesto ({quote_number})**",
+        f"* **Cliente:** {customer_name}",
+    ]
+    if customer_phone:
+        lines.append(f"* **Teléfono:** {customer_phone}")
+    if delivery is not None and getattr(delivery, "method", "retiro") == "envio":
+        address = ", ".join(
+            value for value in (
+                getattr(delivery, "address", None),
+                getattr(delivery, "city", None),
+                getattr(delivery, "province", None),
+                getattr(delivery, "postal_code", None),
+            ) if str(value or "").strip()
+        )
+        if address:
+            lines.append(f"* **Dirección de envío:** {address}")
+    quote_items = list(getattr(quote, "items", []) or [])
+    if quote_items:
+        lines.append("* **Productos:**")
+        for item in quote_items:
+            try:
+                quantity = float(item.quantity or 0)
+            except (TypeError, ValueError):
+                quantity = 0.0
+            quantity_text = f"{quantity:g}"
+            item_amount = getattr(item, "subtotal", None)
+            if item_amount is None:
+                item_amount = float(item.unit_price or 0) * quantity
+            lines.append(
+                f"  * {quantity_text} × {item.description}: {_public_money(item_amount)}"
+            )
+    lines.extend(["", "---", "", "### **Resumen del cobro**"])
+    charges = _quote_charge_snapshot(quote)
+    if charges:
+        for charge in charges:
+            try:
+                amount = float(charge.get("amount") or 0)
+            except (TypeError, ValueError):
+                amount = 0.0
+            if amount > 0:
+                lines.append(f"* **{str(charge.get('name') or 'Cargo')}:** {_public_money(amount)}")
+    else:
+        surcharge = float(getattr(quote, "surcharge", 0) or 0)
+        tax = float(getattr(quote, "tax", 0) or 0)
+        if surcharge > 0:
+            lines.append(f"* **Recargos y envío:** {_public_money(surcharge)}")
+        if tax > 0:
+            lines.append(f"* **Impuestos:** {_public_money(tax)}")
+    lines.append(f"* **Total a pagar:** **{_public_money(getattr(quote, 'total_amount', 0))}**")
+    lines.extend(["", "---", "", "### **Enlaces del pedido**"])
+    if payment_url:
+        lines.append(f"* [Pagar con Mercado Pago]({payment_url})")
+    if quote_url:
+        lines.append(f"* [Ver presupuesto]({quote_url})")
+    lines.extend([
+        "",
+        "El pedido queda **pendiente de pago**. No es una venta confirmada hasta que Mercado Pago informe el cobro aprobado.",
+    ])
+    return "\n".join(lines)
 
 
 def recover_committed_order_reply(*, company, conversation, operation, incoming, visitor_id: str):
@@ -916,20 +1039,80 @@ def public_vendor_message(slug: str):
                         trace_id=operation.trace_id,
                     )
                 state = _cart_public_state(conversation)
-                response_payload = {
-                    "success": True,
-                    "conversation_id": result.get("conversation_id"),
-                    "message_id": result.get("message_id"),
-                    "assistant_message_id": result.get("assistant_message_id"),
-                    "content": result.get("content"),
-                    "cart": state["cart"],
-                    "payment_url": state["payment_url"],
-                    "quote_url": state.get("quote_url"),
-                    "total": (state.get("delivery") or {}).get("total"),
-                    "delivery": state.get("delivery"),
-                }
+                # Only expose a checkout when this exact chat turn created or
+                # idempotently recovered the quote. Never attach an older buyer's
+                # payment link to a fresh/general assistant answer.
+                active_quote = None
+                active_quote_id = getattr(operation, "quote_id", None)
+                if active_quote_id and str(state.get("pending_quote_id") or "") == str(active_quote_id):
+                    from app import Quote
+                    active_quote = Quote.query.filter_by(
+                        id=int(active_quote_id),
+                        company_id=int(company.id),
+                        observations="Pedido generado por el Vendedor 24 hs de StockARmobile.",
+                    ).first()
+                if active_quote is not None and state.get("payment_url") and state.get("quote_url"):
+                    content = _public_order_confirmation_text(
+                        active_quote,
+                        str(state["payment_url"]),
+                        str(state["quote_url"]),
+                    )
+                    assistant_row = ConversationMessage.query.filter_by(
+                        id=result.get("assistant_message_id"),
+                        company_id=company.id,
+                        conversation_id=conversation.id,
+                        role="assistant",
+                    ).first()
+                    if assistant_row is not None:
+                        assistant_row.content = content
+                    response_payload = {
+                        "success": True,
+                        "conversation_id": result.get("conversation_id"),
+                        "message_id": result.get("message_id"),
+                        "assistant_message_id": result.get("assistant_message_id"),
+                        "content": content,
+                        "cart": state["cart"],
+                        "payment_url": state["payment_url"],
+                        "quote_url": state.get("quote_url"),
+                        "total": float(active_quote.total_amount or 0),
+                        "delivery": state.get("delivery"),
+                    }
+                else:
+                    content = _strip_unscoped_checkout_links(str(result.get("content") or ""))
+                    if _public_order_intent(message):
+                        content = (
+                            "No pude generar un presupuesto nuevo y su enlace de pago para esta solicitud. "
+                            "Para evitar confusiones, no voy a reutilizar un enlace de un pedido anterior. "
+                            "Por favor, enviá nuevamente el pedido para prepararlo desde cero."
+                        )
+                    response_payload = {
+                        "success": True,
+                        "conversation_id": result.get("conversation_id"),
+                        "message_id": result.get("message_id"),
+                        "assistant_message_id": result.get("assistant_message_id"),
+                        "content": content,
+                        "cart": state["cart"],
+                        "payment_url": None,
+                        "quote_url": None,
+                        "total": None,
+                        "delivery": None,
+                    }
+                    # Persist the safe response too; retries must not replay an unsafe
+                    # model answer containing a checkout link from a previous buyer.
+                    assistant_row = ConversationMessage.query.filter_by(
+                        id=result.get("assistant_message_id"),
+                        company_id=company.id,
+                        conversation_id=conversation.id,
+                        role="assistant",
+                    ).first()
+                    if assistant_row is not None:
+                        assistant_row.content = content
                 operation.trace_id = result.get("trace_id") or operation.trace_id
-                complete_operation(operation, response_payload, quote_id=state.get("pending_quote_id"))
+                complete_operation(
+                    operation,
+                    response_payload,
+                    quote_id=active_quote.id if active_quote is not None else None,
+                )
                 db.session.commit()
                 return jsonify(response_payload)
     except ValueError as exc:
