@@ -460,7 +460,8 @@ def _pending_quote_matches_checkout(*, quote, cart: Dict[str, Any], customer_nam
         or getattr(client, "phone", None)
         or ""
     )
-    if _normalize_text(existing_name) != _normalize_text(customer_name):
+    requested_name = str(customer_name or "").strip() or "Consumidor final"
+    if _normalize_text(existing_name) != _normalize_text(requested_name):
         return False
     if _normalize_phone(existing_phone) != _normalize_phone(customer_phone):
         return False
