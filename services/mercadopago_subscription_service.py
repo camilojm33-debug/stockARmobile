@@ -56,7 +56,7 @@ class MercadoPagoSubscriptionService:
             if current_status in {"authorized", "pending"} and current_init_point:
                 SubscriptionService._set_metadata(
                     subscription,
-                    {"checkout_method": "automatic", "payment_method": "mercadopago_subscription"},
+                    {"checkout_method": "automatic", "checkout_cancelled": False, "payment_method": "mercadopago_subscription"},
                 )
                 return current
 
@@ -86,6 +86,7 @@ class MercadoPagoSubscriptionService:
                 "mercadopago_external_reference": external_reference,
                 "payment_method": "mercadopago_subscription",
                 "checkout_method": "automatic",
+                "checkout_cancelled": False,
                 "auto_renew": True,
                 "subscription_auto_created_at": datetime.now(timezone.utc).isoformat(),
             },
