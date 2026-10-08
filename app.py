@@ -2226,6 +2226,10 @@ def index():
     contact = {
         "whatsapp": whatsapp_value,
         "whatsapp_link": f"https://wa.me/{whatsapp_digits}" if whatsapp_digits else "https://wa.me/",
+        "whatsapp_contacts": [
+            {"display": whatsapp_value, "link": f"https://wa.me/{whatsapp_digits}" if whatsapp_digits else "https://wa.me/"},
+            {"display": whatsapp_value_2, "link": f"https://wa.me/{whatsapp_digits_2}" if whatsapp_digits_2 else "https://wa.me/"},
+        ],
         "email": app.config.get("SUPPORT_EMAIL", "stockarmobile@gmail.com"),
     }
     raw_demo_video_url = (os.environ.get("LANDING_DEMO_VIDEO_URL") or "").strip()
