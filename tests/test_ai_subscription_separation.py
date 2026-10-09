@@ -177,7 +177,8 @@ def test_standard_plan_change_offers_qr_and_monthly_destinations(subscription_ap
     assert 'action="/admin/subscription/change"' in html
     assert 'name="payment_method" value="qr"' in html
     assert 'action="/admin/subscription/mercadopago/create"' in html
-    assert 'name="direct_checkout" value="1"' in html
+    # Este botón crea una suscripción mensual recurrente; direct_checkout pertenece
+    # al selector estándar de planes, no a este endpoint de autorización automática.
     assert 'data-mp-external-checkout="true"' in html
     assert "Pagar con QR" in html
     assert "Suscripción mensual en Mercado Pago" in html
