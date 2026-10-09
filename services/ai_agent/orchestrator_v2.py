@@ -220,6 +220,37 @@ class CommercialCheckoutTool(AgentTool):
         )
 
 
+def _extract_public_customer_name(messages) -> str:
+    """Read an explicit self-identification from this visitor's own chat history."""
+    import re
+
+    pattern = re.compile(r"\b(?:soy|me llamo|mi nombre es)\s+([^\n,.;!?]+)", re.IGNORECASE)
+    stopwords = {
+        "y", "quiero", "necesito", "busco", "para", "presupuesto", "cotizar",
+        "hacer", "comprar", "tengo", "ahora", "hoy", "por", "favor", "que",
+        "con", "sobre", "en", "a", "un", "una", "me", "te",
+    }
+    non_name_starts = {"dueno", "dueña", "encargado", "encargada", "gerente", "cliente", "vendedor"}
+    for row in reversed(list(messages or [])):
+        raw = str(getattr(row, "content", "") or "")
+        match = pattern.search(raw)
+        if not match:
+            continue
+        tokens = re.findall(r"[A-Za-zÁÉÍÓÚÜÑáéíóúüñ'-]+", match.group(1))
+        name_tokens = []
+        for token in tokens:
+            normalized = _normalize_text(token)
+            if normalized in stopwords:
+                break
+            name_tokens.append(token)
+            if len(name_tokens) >= 4:
+                break
+        if not name_tokens or _normalize_text(name_tokens[0]) in non_name_starts:
+            continue
+        return " ".join(token.capitalize() for token in name_tokens)
+    return ""
+
+
 def _same_public_customer_name(saved_name: str, requested_name: str) -> bool:
     """Treat a small spelling variation as the same profile in one visitor session."""
     from difflib import SequenceMatcher
@@ -334,19 +365,24 @@ class VendorOrderPreviewTool(AgentTool):
         customer_phone = saved_customer_phone
 
         if self._context.get("channel") == "webchat":
-            # In a public chat, don't trust model-invented contact data. It must
-            # either be saved in this visitor-bound conversation or appear in
-            # a user message from the same conversation.
+            # In a public chat, don't trust model-invented contact data. The
+            # current visitor's explicit self-identification is safe to reuse;
+            # CRM details from other chats are not.
+            stated_customer_name = _extract_public_customer_name(recent_user_messages)
             if requested_customer_name:
                 normalized_name = _normalize_text(requested_customer_name)
                 name_was_stated = any(
                     normalized_name in _normalize_text(row.content)
                     for row in recent_user_messages
-                )
+                ) or _same_public_customer_name(stated_customer_name, requested_customer_name)
                 if name_was_stated:
-                    customer_name = requested_customer_name
+                    customer_name = stated_customer_name or requested_customer_name
+                elif stated_customer_name:
+                    customer_name = stated_customer_name
                 elif not saved_customer_name:
                     customer_name = ""
+            elif stated_customer_name:
+                customer_name = stated_customer_name
             if requested_customer_phone:
                 phone_digits = _normalize_phone(requested_customer_phone)
                 phone_was_stated = bool(phone_digits) and any(
