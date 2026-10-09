@@ -1190,10 +1190,13 @@
         if (loading) loading.classList.remove('show');
       }
       document.querySelectorAll('form[method="post"]').forEach(function(form) {
-        form.addEventListener('submit', function() {
-          // Los formularios que redirigen a un checkout externo no deben dejar
-          // una capa de carga por encima mientras el navegador navega a Mercado Pago.
-          if (form.matches('[data-mp-external-checkout="true"]')) return;
+        form.addEventListener('submit', function(event) {
+          const submitter = event.submitter;
+          const isAiAutomaticCheckout =
+            (form.getAttribute('action') || '').includes('/subscription/ai-agent/checkout') &&
+            submitter && submitter.name === 'payment_method' && submitter.value === 'automatic';
+          // No cubrir con el overlay el envío que debe navegar directamente a Mercado Pago.
+          if (form.matches('[data-mp-external-checkout="true"]') || isAiAutomaticCheckout) return;
           const loading = document.getElementById('appLoading');
           if (loading) loading.classList.add('show');
         });
