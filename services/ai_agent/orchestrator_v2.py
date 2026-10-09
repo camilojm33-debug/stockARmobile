@@ -335,7 +335,7 @@ def _public_user_requested_quantity(messages, product_query: str, *, allow_singl
     for row in reversed(list(messages or [])):
         text = plain(getattr(row, "content", "") or "")
         has_product = identifying_token in text
-        if has_product:
+        if has_product or allow_single_item_update:
             matches = list(quantity_with_unit.finditer(text))
             if matches:
                 try:
@@ -351,6 +351,15 @@ def _public_user_requested_quantity(messages, product_query: str, *, allow_singl
                     return amount if amount.is_finite() and amount > 0 else None
                 except (InvalidOperation, ValueError):
                     return None
+        # Do not reuse the quantity from an older completed cart after the
+        # visitor has explicitly started a new quote but omitted its quantity.
+        if any(marker in text for marker in (
+            "cotizame", "cotizar", "presupuestame", "haceme un presupuesto",
+            "haceme presupuesto", "preparame un presupuesto", "quiero un presupuesto",
+            "necesito un presupuesto", "nuevo presupuesto", "otro presupuesto",
+            "presupuesto con", "nueva cotizacion", "otra cotizacion",
+        )):
+            return None
     return None
 
 
