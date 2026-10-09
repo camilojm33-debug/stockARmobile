@@ -64,6 +64,26 @@ def test_resumen_ventas_excludes_cancelled_and_annulled_sales(app):
         assert result["units_sold"] == 1.0
 
 
+def test_clientes_inactivos_prioritizes_historical_revenue_before_name(app):
+    with app.app_context():
+        company = Company(name="Empresa Prioridad", active=True)
+        low_value = Client(name="AAA Cliente", active=True, company_id=company.id)
+        high_value = Client(name="ZZZ Cliente", active=True, company_id=company.id)
+        db.session.add_all([company, low_value, high_value])
+        db.session.flush()
+
+        now = datetime.utcnow()
+        _sale(company.id, low_value.id, 100, "confirmada", now - timedelta(days=20))
+        _sale(company.id, high_value.id, 2500, "confirmada", now - timedelta(days=100))
+        db.session.commit()
+
+        result = ClientesInactivosTool(company_id=company.id).execute(days=10, limit=1)
+
+        assert result["count"] == 2
+        assert result["items"][0]["id"] == high_value.id
+        assert result["items"][0]["historical_revenue"] == 2500.0
+
+
 def test_clientes_inactivos_ignores_cancelled_and_annulled_sales(app):
     with app.app_context():
         company = Company(name="Empresa Inactivos", active=True)
