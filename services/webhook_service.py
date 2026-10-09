@@ -365,7 +365,7 @@ class WebhookService:
                     raise RuntimeError("Webhook de pago QR IA sin empresa o checkout pendiente válido.")
                 if str(draft.external_reference or "") != external_reference:
                     raise RuntimeError("Webhook de pago QR IA con referencia distinta al checkout registrado.")
-                if not _text(draft.reference).startswith("ai-qr:"):
+                if not str(draft.reference or "").strip().startswith("ai-qr:"):
                     raise RuntimeError("Webhook de pago QR IA con referencia local inconsistente.")
                 existing_mp_payment = Payment.query.filter_by(payment_id=mp_payment_id).first()
                 if existing_mp_payment is not None and existing_mp_payment.id != draft.id:
