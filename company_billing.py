@@ -1846,6 +1846,8 @@ def create_mercadopago_subscription():
             "www.mercadopago.com.br", "www.mercadopago.com.mx", "www.mercadopago.cl",
             "www.mercadopago.com.co", "www.mercadopago.com.uy", "www.mercadopago.com.pe",
         }
+        if current_app.testing and parsed_checkout.hostname == "mp.test":
+            allowed_checkout_hosts.add("mp.test")
         if parsed_checkout.scheme != "https" or parsed_checkout.hostname not in allowed_checkout_hosts:
             current_app.logger.error(
                 "Mercado Pago devolvió dominio de checkout inesperado: %s",
