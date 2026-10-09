@@ -255,25 +255,33 @@ class VendorOrderPreviewTool(AgentTool):
 
         # Reuse only the profile saved in this same tenant-scoped conversation.
         # Never treat a public webchat visitor token as a telephone number.
+        from flask import has_app_context
         from stockarmobile.models.conversations import Conversation, ConversationMessage
         from services.ai_agent.vendor_order_service import _metadata, _normalize_phone, _normalize_text
-        conversation = Conversation.query.filter_by(
-            id=int(self._context["conversation_id"]),
-            company_id=int(self.company_id),
-        ).first()
-        saved_state = _metadata(conversation) if conversation is not None else {}
-        saved_delivery = saved_state.get("delivery") if isinstance(saved_state.get("delivery"), dict) else {}
-        recent_user_messages = (
-            ConversationMessage.query.filter_by(
+        if has_app_context():
+            conversation = Conversation.query.filter_by(
+                id=int(self._context["conversation_id"]),
                 company_id=int(self.company_id),
-                conversation_id=int(self._context["conversation_id"]),
-                role="user",
+            ).first()
+            saved_state = _metadata(conversation) if conversation is not None else {}
+            recent_user_messages = (
+                ConversationMessage.query.filter_by(
+                    company_id=int(self.company_id),
+                    conversation_id=int(self._context["conversation_id"]),
+                    role="user",
+                )
+                .order_by(ConversationMessage.id.desc())
+                .limit(20)
+                .all()
             )
-            .order_by(ConversationMessage.id.desc())
-            .limit(20)
-            .all()
-        )
-        recent_user_messages = list(reversed(recent_user_messages))
+            recent_user_messages = list(reversed(recent_user_messages))
+        else:
+            # Service-level callers and unit tests may invoke the tool without
+            # Flask/SQLAlchemy context; in that case there is no session profile
+            # to reuse and the normal required-field guard still applies.
+            saved_state = {}
+            recent_user_messages = []
+        saved_delivery = saved_state.get("delivery") if isinstance(saved_state.get("delivery"), dict) else {}
 
         saved_customer_name = str(
             saved_state.get("customer_name") or saved_delivery.get("recipient_name") or ""
