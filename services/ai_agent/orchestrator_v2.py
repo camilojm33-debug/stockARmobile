@@ -315,7 +315,7 @@ class VendorOrderPreviewTool(AgentTool):
             # Keep phone candidates separate from quantities, postal codes and quote IDs.
             for row in rows:
                 raw = str(row.content or "")
-                for match in re.finditer(r"(?<!\\d)\\+?\\d[\\d\\s().-]{6,}\\d(?!\\d)", raw):
+                for match in re.finditer(r"(?<!\d)\+?\d[\d\s().-]{6,}\d(?!\d)", raw):
                     digits = _normalize_phone(match.group(0))
                     if 8 <= len(digits) <= 15 and digits not in values:
                         values.append(digits)
