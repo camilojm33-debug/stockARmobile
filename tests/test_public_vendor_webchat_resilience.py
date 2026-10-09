@@ -602,7 +602,10 @@ def test_new_order_without_new_checkout_does_not_replay_previous_customer_link(q
 
 
 def test_new_quote_intent_does_not_capture_previous_quote_retrieval():
-    from services.ai_agent.vendor_publication import _starts_new_quote_request
+    from services.ai_agent.vendor_publication import (
+        _assistant_requests_order_details,
+        _starts_new_quote_request,
+    )
 
     assert _starts_new_quote_request("Necesito otro presupuesto") is True
     assert _starts_new_quote_request("Quiero cotizar otro producto") is True
@@ -610,6 +613,10 @@ def test_new_quote_intent_does_not_capture_previous_quote_retrieval():
     assert _starts_new_quote_request("Mostrame el presupuesto anterior") is False
     assert _starts_new_quote_request("Pasame el link del presupuesto anterior") is False
     assert _starts_new_quote_request("Quiero consultar el estado del presupuesto") is False
+    assert _assistant_requests_order_details("¿Qué producto y qué cantidad necesitás?") is True
+    assert _assistant_requests_order_details(
+        "¡Listo! Ya preparé tu presupuesto. ¿Qué producto necesitás?"
+    ) is False
 
 
 def test_public_chat_can_start_second_quote_after_clarification(qa_public_vendor_db, monkeypatch):
