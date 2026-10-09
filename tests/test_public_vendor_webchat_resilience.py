@@ -601,6 +601,17 @@ def test_new_order_without_new_checkout_does_not_replay_previous_customer_link(q
     assert "Julia Acosta" not in second.json["content"]
 
 
+def test_new_quote_intent_does_not_capture_previous_quote_retrieval():
+    from services.ai_agent.vendor_publication import _starts_new_quote_request
+
+    assert _starts_new_quote_request("Necesito otro presupuesto") is True
+    assert _starts_new_quote_request("Quiero cotizar otro producto") is True
+    assert _starts_new_quote_request("Quiero otro presupuesto parecido al anterior") is True
+    assert _starts_new_quote_request("Mostrame el presupuesto anterior") is False
+    assert _starts_new_quote_request("Pasame el link del presupuesto anterior") is False
+    assert _starts_new_quote_request("Quiero consultar el estado del presupuesto") is False
+
+
 def test_public_chat_can_start_second_quote_after_clarification(qa_public_vendor_db, monkeypatch):
     from app import Payment, Quote
     from stockarmobile.models.conversations import Conversation
