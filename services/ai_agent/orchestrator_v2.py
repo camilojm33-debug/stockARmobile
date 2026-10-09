@@ -387,11 +387,13 @@ class VendorOrderPreviewTool(AgentTool):
             return ""
 
         user_delivery_method = explicit_delivery_from_user_messages()
-        # A user-stated method takes precedence; otherwise reuse a saved method
-        # from this same conversation. Never silently accept a guessed default.
-        delivery_method = user_delivery_method or saved_delivery_method
-        if not delivery_method:
-            delivery_method = ""
+        # Public webchat must have an actual user-stated choice or a saved choice
+        # from this same visitor-bound conversation. Other authenticated channels
+        # may pass their explicit tool argument as before.
+        if self._context.get("channel") == "webchat":
+            delivery_method = user_delivery_method or saved_delivery_method
+        else:
+            delivery_method = requested_delivery_method or saved_delivery_method or user_delivery_method
         same_delivery_method = not saved_delivery_method or delivery_method == saved_delivery_method
         delivery_address = str(
             kwargs.get("delivery_address") or (saved_delivery.get("address") if same_delivery_method else "") or ""
