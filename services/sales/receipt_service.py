@@ -120,6 +120,20 @@ class ReceiptService:
         return name[:120] or fallback
 
     @staticmethod
+    def ticket_note(sale, ticket_brand=None):
+        """Translate an internal AI workflow marker into a merchant-facing note."""
+        note = str(getattr(sale, "note", None) or "").strip()
+        if note != "Pedido generado por el Vendedor 24 hs de StockARmobile.":
+            return note
+        company = getattr(sale, "company", None)
+        business_name = str(
+            getattr(company, "name", None)
+            or ticket_brand
+            or "el comercio"
+        ).strip()
+        return f"Pedido generado por el Vendedor IA de {business_name}."
+
+    @staticmethod
     def ticket_text(sale, ticket_brand):
         brand = (ticket_brand or "STOCK ARMOBILE").strip()
         sale_datetime = ReceiptService._sale_datetime(sale)
@@ -128,8 +142,9 @@ class ReceiptService:
             lines.append(f"Cliente: {sale.customer}")
         lines.append("-" * 32)
         lines.extend(ReceiptService._ticket_lines(sale))
-        if sale.note:
-            lines.extend(["-" * 32, f"Obs.: {sale.note}"])
+        ticket_note = ReceiptService.ticket_note(sale, ticket_brand=brand)
+        if ticket_note:
+            lines.extend(["-" * 32, f"Obs.: {ticket_note}"])
         effective_discount = ReceiptService._effective_discount(sale)
         lines.extend(["-" * 32, f"Subtotal: ${sale.subtotal:.2f}"])
         lines.extend(ReceiptService._adjustment_lines("Descuento", sale.discount_type, sale.discount_value, effective_discount, sale.discount_reason, "-"))
