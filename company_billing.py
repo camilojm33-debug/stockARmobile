@@ -1821,6 +1821,10 @@ def create_mercadopago_subscription():
 
         payer_email = (getattr(current_user, "email", None) or getattr(company, "contact_email", None) or "").strip()
         config = load_billing_config()
+        current_app.logger.info(
+            "Iniciando checkout recurrente estándar: company_id=%s plan_id=%s mode=%s token_configured=%s",
+            company.id, plan.id, config.mode, bool(config.access_token),
+        )
         response = MercadoPagoSubscriptionService.create(
             db_session=db.session,
             company=company,
@@ -1830,10 +1834,27 @@ def create_mercadopago_subscription():
             notification_url=config.notification_url,
             back_url=config.success_url,
         )
-        db.session.commit()
-        checkout_url = response.get("init_point")
+        checkout_url = str(response.get("init_point") or "").strip()
         if not checkout_url:
-            raise RuntimeError("Mercado Pago no devolvió el enlace de autorización.")
+            db.session.rollback()
+            raise RuntimeError("Mercado Pago creó o devolvió una suscripción sin enlace de autorización (init_point).")
+        from urllib.parse import urlparse
+        parsed_checkout = urlparse(checkout_url)
+        allowed_checkout_hosts = {
+            "www.mercadopago.com", "mercadopago.com", "sandbox.mercadopago.com",
+            "www.mercadopago.com.ar", "mercadopago.com.ar", "sandbox.mercadopago.com.ar",
+            "www.mercadopago.com.br", "www.mercadopago.com.mx", "www.mercadopago.cl",
+            "www.mercadopago.com.co", "www.mercadopago.com.uy", "www.mercadopago.com.pe",
+        }
+        if current_app.testing and parsed_checkout.hostname == "mp.test":
+            allowed_checkout_hosts.add("mp.test")
+        if parsed_checkout.scheme != "https" or parsed_checkout.hostname not in allowed_checkout_hosts:
+            current_app.logger.error(
+                "Mercado Pago devolvió dominio de checkout inesperado: %s",
+                parsed_checkout.hostname or "invalid-url",
+            )
+            raise RuntimeError("Mercado Pago devolvió un enlace de autorización no reconocido. No se redirigió por seguridad.")
+        db.session.commit()
         current_app.logger.info(
             "Checkout suscripción automática StockArMobile creado: company_id=%s subscription_id=%s plan_id=%s preapproval_id=%s",
             company.id,

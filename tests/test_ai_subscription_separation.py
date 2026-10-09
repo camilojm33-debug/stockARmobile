@@ -146,6 +146,54 @@ def test_standard_plan_selection_redirects_directly_to_mercadopago(subscription_
     assert response.headers["Location"] == "https://mp.test/standard-direct"
 
 
+def test_standard_recurring_checkout_reuses_in_process_preapproval(monkeypatch):
+    from services.mercadopago_subscription_service import MercadoPagoSubscriptionService
+
+    class DummyPlan:
+        id = 1
+        name = "Standard"
+        price = 1000
+        currency = "ARS"
+
+    class DummySubscription:
+        metadata_json = json.dumps({"mercadopago_preapproval_id": "preapproval-in-process"})
+
+    class DummyCompany:
+        id = 1
+
+    calls = []
+    monkeypatch.setattr(
+        "services.mercadopago_subscription_service.MercadoPagoService.get_preapproval",
+        lambda self, preapproval_id: {
+            "id": preapproval_id,
+            "status": "in_process",
+            "init_point": "https://www.mercadopago.com.ar/subscriptions/checkout?preapproval_id=preapproval-in-process",
+        },
+    )
+    monkeypatch.setattr(
+        "services.mercadopago_subscription_service.SubscriptionService._metadata_dict",
+        lambda subscription: json.loads(subscription.metadata_json),
+    )
+    monkeypatch.setattr(
+        "services.mercadopago_subscription_service.SubscriptionService._set_metadata",
+        lambda subscription, updates: calls.append(updates),
+    )
+
+    result = MercadoPagoSubscriptionService.create(
+        db_session=None,
+        company=DummyCompany(),
+        subscription=DummySubscription(),
+        plan=DummyPlan(),
+        payer_email="admin@example.com",
+        notification_url="https://stockarmobile.com/webhook",
+        back_url="https://stockarmobile.com/portal",
+    )
+
+    assert result["status"] == "in_process"
+    assert result["init_point"].startswith("https://www.mercadopago.com.ar/")
+    assert calls == [{"checkout_method": "automatic", "checkout_cancelled": False, "payment_method": "mercadopago_subscription"}]
+
+
 def test_subscription_portal_uses_separate_ai_payment_method_forms(subscription_app):
     _, user, _, _ = _tenant_with_standard_subscription()
     db.session.add(Plan(code="entrepreneur", name="Emprendedor", price=12000, currency="ARS", duration_days=30, active=True))
@@ -755,7 +803,7 @@ def test_standard_webhook_updates_only_standard_subscription(subscription_app, m
     ai_before = deepcopy(AISubscriptionService.get_status(company))
     service = WebhookService()
     monkeypatch.setattr(service.mp_service, "validate_webhook_signature", lambda **kwargs: True)
-    monkeypatch.setattr(service.mp_service, "get_preapproval", lambda data_id: {"id": "standard-pre", "status": "authorized", "next_payment_date": "2026-10-09T12:00:00Z", "external_reference": f"stockarmobile|flow:subscription_auto|company_id:{company.id}|subscription_id:{subscription.id}|nonce:def"})
+    monkeypatch.setattr(service.mp_service, "get_preapproval", lambda data_id: {"id": "standard-pre", "status": "authorized", "next_payment_date": "2099-10-09T12:00:00Z", "external_reference": f"stockarmobile|flow:subscription_auto|company_id:{company.id}|subscription_id:{subscription.id}|nonce:def"})
 
     result = service.process(db_session=db.session, headers={"x-request-id": "rq-standard", "x-signature": "ts=1,v1=abc"}, payload={"id": "evt-standard", "type": "subscription_preapproval", "data": {"id": "standard-pre"}})
 
