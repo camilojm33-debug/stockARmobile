@@ -49,18 +49,67 @@ class MercadoPagoSubscriptionService:
 
         metadata = cls._metadata(subscription)
         existing_id = str(metadata.get("mercadopago_preapproval_id") or "").strip()
+        existing_reference = str(metadata.get("mercadopago_external_reference") or "").strip()
+        terminal_statuses = {"cancelled", "canceled", "expired", "rejected"}
         if existing_id:
             current = MercadoPagoService().get_preapproval(existing_id)
-            current_status = str(current.get("status") or "").lower()
+            current_status = str(current.get("status") or "").strip().lower()
             current_init_point = str(current.get("init_point") or "").strip()
-            if current_status in {"authorized", "pending", "in_process"} and current_init_point:
+            if current_status == "authorized":
+                # Authorized preapprovals are already operational. Mercado Pago
+                # may omit init_point once the payer has completed authorization.
                 SubscriptionService._set_metadata(
                     subscription,
-                    {"checkout_method": "automatic", "checkout_cancelled": False, "payment_method": "mercadopago_subscription"},
+                    {
+                        "mercadopago_status": current_status,
+                        "checkout_method": "automatic",
+                        "checkout_cancelled": False,
+                        "payment_method": "mercadopago_subscription",
+                        "auto_renew": True,
+                    },
                 )
                 return current
+            if current_status in {"pending", "in_process"} and current_init_point:
+                SubscriptionService._set_metadata(
+                    subscription,
+                    {"mercadopago_status": current_status, "checkout_method": "automatic", "checkout_cancelled": False, "payment_method": "mercadopago_subscription"},
+                )
+                return current
+            if current_status in terminal_statuses:
+                # A terminated authorization can be replaced, but an active or
+                # unknown preapproval must never be silently orphaned.
+                existing_reference = ""
+                SubscriptionService._set_metadata(
+                    subscription,
+                    {
+                        "mercadopago_previous_preapproval_id": existing_id,
+                        "mercadopago_preapproval_id": None,
+                        "mercadopago_status": current_status,
+                    },
+                )
+                metadata = cls._metadata(subscription)
+                db_session.flush()
+            # If a pending resource lacks init_point, retry with the same persisted
+            # external reference/idempotency key instead of creating a duplicate.
 
-        external_reference = cls._external_reference(company_id=company.id, subscription_id=subscription.id)
+        external_reference = existing_reference or cls._external_reference(company_id=company.id, subscription_id=subscription.id)
+        # Persist the attempt reference BEFORE calling Mercado Pago. If the request
+        # times out after MP creates the preapproval, a retry reuses the exact same
+        # reference and idempotency key, so it cannot create another subscription.
+        if external_reference != str(metadata.get("mercadopago_external_reference") or "").strip() or not metadata.get("mercadopago_creation_pending"):
+            SubscriptionService._set_metadata(
+                subscription,
+                {
+                    "mercadopago_external_reference": external_reference,
+                    "mercadopago_creation_pending": True,
+                    "payment_method": "mercadopago_subscription",
+                    "checkout_method": "automatic",
+                    "checkout_cancelled": False,
+                    "auto_renew": True,
+                },
+            )
+            db_session.commit()
+
         response = MercadoPagoService().create_preapproval(
             reason=f"StockArMobile - Plan {plan.name}",
             payer_email=payer_email,
@@ -84,6 +133,7 @@ class MercadoPagoSubscriptionService:
                 "mercadopago_status": str(response.get("status") or "pending"),
                 "mercadopago_payer_email": payer_email,
                 "mercadopago_external_reference": external_reference,
+                "mercadopago_creation_pending": False,
                 "payment_method": "mercadopago_subscription",
                 "checkout_method": "automatic",
                 "checkout_cancelled": False,
