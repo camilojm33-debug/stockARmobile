@@ -223,6 +223,7 @@ class CommercialCheckoutTool(AgentTool):
 def _extract_public_customer_name(messages) -> str:
     """Read an explicit self-identification from this visitor's own chat history."""
     import re
+    from services.ai_agent.vendor_order_service import _normalize_text
 
     pattern = re.compile(r"\b(?:soy|me llamo|mi nombre es)\s+([^\n,.;!?]+)", re.IGNORECASE)
     stopwords = {
