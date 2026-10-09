@@ -905,6 +905,67 @@ def test_ai_qr_approved_webhook_activates_manual_plan_without_touching_standard(
 
 
 
+def test_late_approved_webhook_refunds_terminal_ai_qr_checkout_without_activation(subscription_app, monkeypatch):
+    company, user, _, subscription = _tenant_with_standard_subscription()
+    before = _standard_snapshot(subscription)
+    amount = AISubscriptionService.plan_amount_ars("inicio")
+    draft = Payment(
+        company_id=company.id,
+        user_id=user.id,
+        amount=amount,
+        currency="ARS",
+        status="refunded",
+        payment_method="mercadopago_ai_qr",
+        provider="mercadopago_ai_qr",
+        reference="ai-qr:late-refund",
+        preference_id="ai-qr-pref-late",
+    )
+    db.session.add(draft)
+    db.session.flush()
+    draft.external_reference = (
+        f"ai_subscription_qr:true|flow:ai_subscription_qr|company_id:{company.id}|"
+        f"plan_code:inicio|payment_record_id:{draft.id}|user_id:{user.id}|nonce:late"
+    )
+    db.session.commit()
+    payment_data = {
+        "id": "mp-ai-qr-late-approved",
+        "status": "approved",
+        "external_reference": draft.external_reference,
+        "metadata": {
+            "flow": "ai_subscription_qr",
+            "company_id": company.id,
+            "plan_code": "inicio",
+            "payment_record_id": draft.id,
+            "user_id": user.id,
+        },
+        "transaction_amount": amount,
+        "currency_id": "ARS",
+        "date_approved": "2026-10-09T12:00:00Z",
+    }
+    service = WebhookService()
+    refunded = []
+    monkeypatch.setattr(service.mp_service, "validate_webhook_signature", lambda **kwargs: True)
+    monkeypatch.setattr(service.mp_service, "get_payment", lambda data_id: payment_data)
+    monkeypatch.setattr(
+        service.mp_service,
+        "refund_payment",
+        lambda payment_id: refunded.append(payment_id) or {"id": "refund-ai-qr-late", "status": "approved"},
+    )
+
+    result = service.process(
+        db_session=db.session,
+        headers={"x-request-id": "rq-ai-qr-late", "x-signature": "ts=1,v1=abc"},
+        payload={"id": "evt-ai-qr-late", "type": "payment", "data": {"id": "mp-ai-qr-late-approved"}},
+    )
+
+    db.session.refresh(draft)
+    assert result["status"] == "cancelled_ai_qr_payment_refunded"
+    assert refunded == ["mp-ai-qr-late-approved"]
+    assert draft.status == "refunded"
+    assert AISubscriptionService.get_status(company)["status"] is None
+    assert _standard_snapshot(subscription) == before
+
+
 def test_ai_webhook_updates_only_ai_subscription(subscription_app, monkeypatch):
     company, _, _, subscription = _tenant_with_standard_subscription()
     before = _standard_snapshot(subscription)
