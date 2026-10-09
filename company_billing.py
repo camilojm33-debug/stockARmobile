@@ -1906,25 +1906,6 @@ def create_ai_subscription_checkout():
                 checkout_method=payment_method,
             )
 
-        if payment_method == "qr":
-            session["mp_checkout_preview"] = {
-                "kind": "ai_subscription",
-                "company_id": company.id,
-                "preapproval_id": preapproval_id,
-                "checkout_url": checkout_url,
-                "plan_name": plan["name"],
-                "amount": amount,
-                "currency": "ARS",
-                "status": "pending",
-                "qr_data_uri": BillingService._qr_data_uri(checkout_url),
-            }
-            return redirect(url_for(
-                "company_billing.subscription_portal",
-                checkout="ai_created",
-                ai_preapproval_id=preapproval_id,
-                _anchor="payment-checkout",
-            ))
-
         return _checkout_redirect_response(checkout_url)
     except AISubscriptionError as exc:
         db.session.rollback()
