@@ -1459,7 +1459,7 @@ class VendorOrderService:
                 "brand": product.brand or "",
                 "category": product.category or "",
                 "price": float(product.price or 0),
-                "stock": float(product.stock or 0),
+                "stock": normalized_stock_quantity(product.stock),
                 "unit_measure": product.unit_measure or "u",
                 "photo": product.photo or "",
             }
