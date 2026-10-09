@@ -1271,6 +1271,60 @@ def subscription_portal():
     company_id = getattr(current_user, "company_id", None)
     company = Company.query.filter_by(id=company_id).first_or_404()
 
+    # Mercado Pago can return the browser before its webhook has updated our
+    # database. Reconcile only the product and local record named in the return
+    # marker; standard billing and AI billing must never update one another.
+    return_flow = str(request.args.get("mp_subscription_return") or "").strip().lower()
+    if return_flow == "standard":
+        from services.mercadopago_subscription_service import MercadoPagoSubscriptionService
+        requested_subscription_id = request.args.get("mp_subscription_id", type=int)
+        if requested_subscription_id:
+            target_subscription = Subscription.query.filter_by(
+                id=requested_subscription_id,
+                company_id=company.id,
+            ).first()
+            target_metadata = SubscriptionService._metadata_dict(target_subscription) if target_subscription else {}
+            target_preapproval_id = str(target_metadata.get("mercadopago_preapproval_id") or "").strip()
+            if target_preapproval_id:
+                try:
+                    remote = MercadoPagoService().get_preapproval(target_preapproval_id)
+                    ref_parts = WebhookService._external_reference_parts(str(remote.get("external_reference") or ""))
+                    if (
+                        str(remote.get("id") or "").strip() == target_preapproval_id
+                        and ref_parts.get("flow") == MercadoPagoSubscriptionService.FLOW
+                        and str(ref_parts.get("company_id") or "") == str(company.id)
+                        and str(ref_parts.get("subscription_id") or "") == str(target_subscription.id)
+                    ):
+                        MercadoPagoSubscriptionService.sync_preapproval(db_session=db.session, preapproval=remote)
+                        db.session.commit()
+                except Exception:
+                    db.session.rollback()
+                    current_app.logger.exception(
+                        "No se pudo reconciliar retorno de suscripción estándar company_id=%s subscription_id=%s",
+                        company.id,
+                        requested_subscription_id,
+                    )
+    elif return_flow == "ai":
+        ai_status_before_return = AISubscriptionService.get_status(company)
+        ai_preapproval_id = str(ai_status_before_return.get("mercadopago_preapproval_id") or "").strip()
+        if ai_preapproval_id:
+            try:
+                remote = MercadoPagoService().get_preapproval(ai_preapproval_id)
+                ref_parts = WebhookService._external_reference_parts(str(remote.get("external_reference") or ""))
+                if (
+                    str(remote.get("id") or "").strip() == ai_preapproval_id
+                    and ref_parts.get("ai_subscription") == "true"
+                    and str(ref_parts.get("company_id") or "") == str(company.id)
+                ):
+                    AISubscriptionService.sync_from_mercadopago(preapproval=remote)
+                    db.session.commit()
+            except Exception:
+                db.session.rollback()
+                current_app.logger.exception(
+                    "No se pudo reconciliar retorno de suscripción IA company_id=%s",
+                    company.id,
+                )
+
     plans = PlanService.all_commercial_plans()
     subscription = SubscriptionService.active_subscription_for_company(company.id)
     pending_standard_subscription = _pending_paid_plan_change(company.id)
@@ -1984,6 +2038,18 @@ def create_ai_subscription_checkout():
         if not preapproval_id:
             external_reference = f"ai_subscription:true|company_id:{company.id}|plan_code:{plan_code}|nonce:{uuid.uuid4().hex}"
             config = load_billing_config()
+            from urllib.parse import parse_qsl, urlencode, urlsplit, urlunsplit
+
+            ai_back_parts = urlsplit(config.success_url)
+            ai_back_query = dict(parse_qsl(ai_back_parts.query, keep_blank_values=True))
+            ai_back_query["mp_subscription_return"] = "ai"
+            ai_subscription_back_url = urlunsplit((
+                ai_back_parts.scheme,
+                ai_back_parts.netloc,
+                ai_back_parts.path,
+                urlencode(ai_back_query),
+                ai_back_parts.fragment,
+            ))
             response = mp_service.create_preapproval(
                 reason=f"StockArMobile IA - Plan {plan['name']}",
                 payer_email=payer_email,
@@ -1993,7 +2059,7 @@ def create_ai_subscription_checkout():
                 frequency=1,
                 frequency_type="months",
                 notification_url=config.notification_url,
-                back_url=config.success_url,
+                back_url=ai_subscription_back_url,
             )
             preapproval_id = str(response.get("id") or "").strip()
             checkout_url = str(response.get("init_point") or "").strip()
