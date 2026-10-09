@@ -257,7 +257,7 @@ def _extract_explicit_public_recipient_name(messages) -> str:
     import re
     from services.ai_agent.vendor_order_service import _normalize_text
 
-    pattern = re.compile(r"\\ba nombre de\\s+([^\\n,.;!?]+)", re.IGNORECASE)
+    pattern = re.compile(r"\ba nombre de\s+([^\n,.;!?]+)", re.IGNORECASE)
     stopwords = {
         "para", "con", "necesito", "quiero", "presupuesto", "pedido", "y",
         "telefono", "teléfono", "direccion", "dirección", "envio", "envío",
