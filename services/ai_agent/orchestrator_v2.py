@@ -61,6 +61,7 @@ VENDOR_SYSTEM_PROMPT = (
     "consultaste el catálogo. Mostrá únicamente productos devueltos por la herramienta, con precio, unidad y stock reales. Si un producto tiene "
     "stock cero, aclaralo y no lo presentes como disponible para entrega inmediata. Si el catálogo devuelve cero productos, decilo claramente sin inventar "
     "alternativas. No muestres mensajes técnicos como 'la búsqueda enviada no obtuvo resultados'. "
+    "STOCK Y CANTIDADES: los valores numéricos devueltos por las herramientas son autoritativos. 17.8 significa 17,8 (diecisiete coma ocho), no 1,8. Nunca quites cifras iniciales ni reduzcas una cantidad solicitada por una interpretación propia. Para preparar pedidos, conservá la cantidad explícitamente escrita por el cliente y dejá que el backend valide el stock. Si el backend devuelve stock insuficiente, copiá exactamente ese valor y pedí confirmación explícita de la cantidad alternativa antes de cotizarla. " 
     "DATOS DEL CLIENTE: usá el nombre que la persona ya dio en la conversación. Si hay perfil guardado para esta misma conversación web, reutilizá "
     "esos datos en un nuevo presupuesto salvo que la persona indique cambios. Si no hay teléfono guardado en este chat, pedí solo el teléfono que falta "
     "y la modalidad de entrega; no vuelvas a pedir el nombre cuando ya fue informado. Nunca busques ni reveles datos de otra conversación solamente "
@@ -297,6 +298,60 @@ def _same_public_customer_name(saved_name: str, requested_name: str) -> bool:
     # Same given name plus a near-identical full name covers small typos such
     # as "Nelson Mandele" vs "Nelson Mandela" without conflating unrelated people.
     return SequenceMatcher(None, saved, requested).ratio() >= 0.90
+
+
+def _public_user_requested_quantity(messages, product_query: str, *, allow_single_item_update: bool = False):
+    """Return a quantity explicitly typed by this visitor for this product.
+
+    Do not derive or accept a quantity from an assistant/model response. In a
+    public WebChat, this is used to keep tool arguments from silently changing
+    a previously requested amount after the model misreads the stock value.
+    """
+    import re
+    import unicodedata
+    from decimal import Decimal, InvalidOperation
+
+    def plain(value: str) -> str:
+        value = unicodedata.normalize("NFKD", str(value or "").lower())
+        return "".join(char for char in value if not unicodedata.combining(char))
+
+    query_tokens = re.findall(r"[a-z0-9]+", plain(product_query))
+    if not query_tokens:
+        return None
+    identifying_token = max(query_tokens, key=len)
+    quantity_with_unit = re.compile(
+        r"(?<![a-z0-9])(\\d+(?:[.,]\\d+)?)\\s*"
+        r"(?:metros?|mts?\\.?|m(?=\\s|$)|unidades?|unidad|unid\\.?|uds?\\.?|"
+        r"kilos?|kilogramos?|kg|gramos?|grs?\\.?|litros?|lts?\\.?|l(?=\\s|$)|"
+        r"rollos?|bolsas?|cajas?|paquetes?|packs?)\\b",
+        re.IGNORECASE,
+    )
+    quantity_action = re.compile(
+        r"\\b(?:cambiame|cambiar|cambia|modificame|modificar|modifica|dejame|deja|"
+        r"bajame|baja|subime|subi|me llevo|me quedo con|en vez de|solamente)\\b"
+        r".{0,35}?\\b(\\d+(?:[.,]\\d+)?)\\b",
+        re.IGNORECASE,
+    )
+    for row in reversed(list(messages or [])):
+        text = plain(getattr(row, "content", "") or "")
+        has_product = identifying_token in text
+        if has_product:
+            matches = list(quantity_with_unit.finditer(text))
+            if matches:
+                try:
+                    amount = Decimal(matches[-1].group(1).replace(",", "."))
+                    return amount if amount.is_finite() and amount > 0 else None
+                except (InvalidOperation, ValueError):
+                    return None
+        if allow_single_item_update:
+            action_match = quantity_action.search(text)
+            if action_match:
+                try:
+                    amount = Decimal(action_match.group(1).replace(",", "."))
+                    return amount if amount.is_finite() and amount > 0 else None
+                except (InvalidOperation, ValueError):
+                    return None
+    return None
 
 
 class VendorOrderPreviewTool(AgentTool):
@@ -563,12 +618,48 @@ class VendorOrderPreviewTool(AgentTool):
         ).strip()
 
         if product_query and quantity not in (None, ""):
-            # Explicit product + quantity are authoritative. Preserve a pending
-            # checkout only for an exact retry of the same cart, buyer and delivery.
+            # Public WebChat quantity arguments must agree with something the
+            # visitor explicitly typed. Do not let the model reinterpret stock
+            # (e.g. 17.8 as 1.8) and silently replace an already valid cart line.
             cart = VendorOrderService.get_cart(
                 company_id=self.company_id,
                 conversation_id=self._context["conversation_id"],
             )
+            if self._context.get("channel") == "webchat":
+                cart_items = list(cart.get("items") or [])
+                normalized_query = _normalize_text(product_query)
+                matching_cart_item = next(
+                    (
+                        item for item in cart_items
+                        if normalized_query
+                        and (
+                            normalized_query in _normalize_text(item.get("name") or "")
+                            or _normalize_text(item.get("name") or "") in normalized_query
+                        )
+                    ),
+                    None,
+                )
+                explicit_quantity = _public_user_requested_quantity(
+                    recent_user_messages,
+                    product_query,
+                    allow_single_item_update=len(cart_items) == 1,
+                )
+                if explicit_quantity is not None:
+                    # The quantity from the visitor's message outranks any
+                    # conflicting argument synthesized by the model.
+                    quantity = float(explicit_quantity)
+                elif matching_cart_item is not None:
+                    # A follow-up containing only phone/address/confirmation is
+                    # not permission to change the quantity already in the cart.
+                    quantity = float(matching_cart_item.get("quantity") or 0)
+                else:
+                    return {
+                        "success": True,
+                        "status": "needs_quantity_confirmation",
+                        "product_query": product_query,
+                        "message": "La persona no indicó una cantidad explícita para este producto. Preguntá la cantidad antes de preparar el presupuesto.",
+                        "cart": cart,
+                    }
             reuse_pending_checkout = False
             from flask import has_app_context
             if cart.get("items") and has_app_context():
