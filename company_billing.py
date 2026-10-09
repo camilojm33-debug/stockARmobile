@@ -2028,10 +2028,16 @@ def create_ai_subscription_checkout():
                 AISubscriptionService.sync_from_mercadopago(preapproval=remote)
                 flash("Mercado Pago ya autorizó tu suscripción IA. El estado se actualizó.", "success")
                 return redirect(url_for("company_billing.subscription_portal", _anchor="suscripcion-ia"))
-            if remote_status in {"pending", "in_process"} and remote_init_point:
+            if remote_status in {"pending", "in_process"}:
                 preapproval_id = existing_preapproval_id
+                if not remote_init_point:
+                    from urllib.parse import urlencode
+                    remote_init_point = (
+                        "https://www.mercadopago.com.ar/subscriptions/checkout?"
+                        + urlencode({"preapproval_id": existing_preapproval_id})
+                    )
                 checkout_url = remote_init_point
-            elif remote_status not in {"cancelled", "canceled", "expired"}:
+            elif remote_status not in {"cancelled", "canceled", "expired", "rejected"}:
                 raise AISubscriptionError(
                     "El checkout IA no está disponible para cambiar de modalidad. Revisá su estado en Mercado Pago antes de crear otro."
                 )
