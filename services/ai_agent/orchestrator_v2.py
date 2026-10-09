@@ -344,11 +344,11 @@ class VendorOrderPreviewTool(AgentTool):
 
             values = []
             phone_label = re.compile(
-                r"(?:tel[eé]fono|tel\\b|cel(?:ular)?|whats\\s*app|whatsapp|n[uú]mero(?:\\s+de\\s+contacto)?|contacto)"
-                r"\\s*(?:es|de contacto|:|-)?\\s*(\\+?\\d[\\d\\s().-]{6,}\\d)",
+                r"(?:tel[eé]fono|tel\b|cel(?:ular)?|whats\s*app|whatsapp|n[uú]mero(?:\s+de\s+contacto)?|contacto)"
+                r"\s*(?:es|de contacto|:|-)?\s*(\+?\d[\d\s().-]{6,}\d)",
                 re.IGNORECASE,
             )
-            standalone_number = re.compile(r"^\\s*(\\+?\\d[\\d\\s().-]{6,}\\d)\\s*$")
+            standalone_number = re.compile(r"^\s*(\+?\d[\d\s().-]{6,}\d)\s*$")
             # Only use labeled contact numbers or a message consisting solely of a
             # phone number. Don't mistake a barcode, quote number, or street number
             # for a customer's phone.
