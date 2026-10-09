@@ -832,9 +832,6 @@ class VendorOrderService:
         # An explicit request for another quote starts an independent checkout.
         # Keep prior Quote/Payment rows intact, but do not reuse their pending pointer.
         force_new_quote = bool(state.get(NEW_QUOTE_CONTEXT_KEY))
-        if force_new_quote:
-            state.pop(NEW_QUOTE_CONTEXT_KEY, None)
-            _set_metadata(conversation, state)
         operation = None
         if idempotency_key:
             operation = PublicVendorOperation.query.filter_by(
@@ -1142,6 +1139,9 @@ class VendorOrderService:
         }
         if customer_name.strip():
             state["customer_name"] = customer_name.strip()[:160]
+        # Consume the marker only after the new quote is fully persisted. If
+        # validation fails before this point, a retry must still create a new quote.
+        state.pop(NEW_QUOTE_CONTEXT_KEY, None)
         _set_metadata(conversation, state)
         if idempotency_key:
             operation = PublicVendorOperation.query.filter_by(
