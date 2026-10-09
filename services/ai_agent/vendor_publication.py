@@ -466,7 +466,7 @@ def _assistant_requests_order_details(content: str) -> bool:
 def _contains_unscoped_checkout_link(content: str) -> bool:
     raw = str(content or "")
     return bool(re.search(
-        r"https?://[^\\s<]*(?:mercadopago\\.com(?:\\.ar)?|stockarmobile\\.com/presupuestos/publico)[^\\s<]*",
+        r"https?://[^\s<]*(?:mercadopago\.com(?:\.ar)?|stockarmobile\.com/presupuestos/publico)[^\s<]*",
         raw,
         flags=re.IGNORECASE,
     ))
