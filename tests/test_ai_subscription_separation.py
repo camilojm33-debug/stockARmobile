@@ -117,6 +117,7 @@ def test_standard_active_ai_missing_can_start_ai_checkout(subscription_app, monk
 
 def test_ai_recurring_checkout_reuses_attempt_after_ambiguous_mp_timeout(subscription_app, monkeypatch):
     company, user, _, subscription = _tenant_with_standard_subscription()
+    standard_before = _standard_snapshot(subscription)
     seen_references = []
     client = subscription_app.test_client()
     _login(client, user)
@@ -162,7 +163,7 @@ def test_ai_recurring_checkout_reuses_attempt_after_ambiguous_mp_timeout(subscri
     assert current_ai["mercadopago_preapproval_id"] == "ai-pre-recovered"
     assert current_ai["mercadopago_create_attempt_reference"] is None
     assert current_ai["mercadopago_create_attempt_plan_code"] is None
-    assert _standard_snapshot(subscription) == _standard_snapshot(subscription)
+    assert _standard_snapshot(subscription) == standard_before
 
 
 def test_ai_plans_page_posts_directly_to_ai_checkout(subscription_app):
