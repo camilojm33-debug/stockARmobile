@@ -53,7 +53,7 @@ class MercadoPagoSubscriptionService:
             current = MercadoPagoService().get_preapproval(existing_id)
             current_status = str(current.get("status") or "").lower()
             current_init_point = str(current.get("init_point") or "").strip()
-            if current_status in {"authorized", "pending"} and current_init_point:
+            if current_status in {"authorized", "pending", "in_process"} and current_init_point:
                 SubscriptionService._set_metadata(
                     subscription,
                     {"checkout_method": "automatic", "checkout_cancelled": False, "payment_method": "mercadopago_subscription"},
