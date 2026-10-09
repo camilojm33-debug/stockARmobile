@@ -1535,6 +1535,12 @@ def create_checkout():
             flash("No se pudo generar el QR de Mercado Pago. Revisá la conexión y los datos configurados.", "danger")
         return redirect(url_for("company_billing.subscription_portal"))
 
+    # La acción explícita de contratación desde la tabla de planes abre el
+    # checkout de Mercado Pago directamente. Los flujos QR existentes siguen
+    # mostrando su pantalla de resumen cuando no solicitan esta modalidad.
+    if request.form.get("direct_checkout") == "1":
+        return _checkout_redirect_response(checkout_url)
+
     flash("Pago con QR listo. Escanealo o abrí Mercado Pago para pagar este ciclo.", "info")
     return redirect(url_for(
         "company_billing.subscription_portal",

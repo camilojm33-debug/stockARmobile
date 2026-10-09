@@ -130,6 +130,22 @@ def test_ai_plans_page_posts_directly_to_ai_checkout(subscription_app):
     assert '>Contratar<' not in html
 
 
+def test_standard_plan_selection_redirects_directly_to_mercadopago(subscription_app, monkeypatch):
+    _, user, _, _ = _tenant_with_standard_subscription()
+
+    def fake_checkout(*args, **kwargs):
+        return {"preference": {"id": "pref-direct", "init_point": "https://mp.test/standard-direct"}}
+
+    monkeypatch.setattr("company_billing.BillingService.create_checkout_for_plan", fake_checkout)
+    client = subscription_app.test_client()
+    _login(client, user)
+
+    response = client.post("/admin/checkout", data={"direct_checkout": "1"})
+
+    assert response.status_code == 302
+    assert response.headers["Location"] == "https://mp.test/standard-direct"
+
+
 def test_subscription_portal_uses_separate_ai_payment_method_forms(subscription_app):
     _, user, _, _ = _tenant_with_standard_subscription()
     client = subscription_app.test_client()
@@ -161,6 +177,9 @@ def test_standard_plan_change_offers_qr_and_monthly_destinations(subscription_ap
     assert 'action="/admin/subscription/change"' in html
     assert 'name="payment_method" value="qr"' in html
     assert 'action="/admin/subscription/mercadopago/create"' in html
+    # Este botón crea una suscripción mensual recurrente; direct_checkout pertenece
+    # al selector estándar de planes, no a este endpoint de autorización automática.
+    assert 'data-mp-external-checkout="true"' in html
     assert "Pagar con QR" in html
     assert "Suscripción mensual en Mercado Pago" in html
 
