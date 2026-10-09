@@ -1425,7 +1425,11 @@ def subscription_portal():
 
     ai_qr_preview = _ai_qr_checkout_preview(company, ai_qr_payment)
     if ai_qr_preview is not None:
-        if checkout_preview is None or ai_qr_preview.get("status") == "pending":
+        explicitly_requested_ai_qr = bool(
+            requested_ai_qr_payment_id
+            and int(ai_qr_preview.get("payment_record_id") or 0) == requested_ai_qr_payment_id
+        )
+        if checkout_preview is None or explicitly_requested_ai_qr:
             checkout_preview = ai_qr_preview
             if ai_qr_preview.get("status") == "paid":
                 checkout_status = "success"
@@ -2074,8 +2078,8 @@ def create_mercadopago_subscription():
     pending_standard_subscription = _pending_paid_plan_change(company.id)
     checkout_subscription = pending_standard_subscription or SubscriptionService.active_subscription_for_company(company.id)
     locked_checkout_method = _standard_checkout_method(company, checkout_subscription)
-    if locked_checkout_method and locked_checkout_method != "automatic":
-        message = "Ya elegiste pagar este plan con QR. Completá o resolvé ese checkout antes de activar la suscripción mensual."
+    if pending_standard_subscription is not None and locked_checkout_method and locked_checkout_method != "automatic":
+        message = "Ya elegiste pagar este cambio de plan con QR. Completá o cancelá ese checkout antes de activar la suscripción mensual."
         if _wants_json_response():
             return jsonify({"success": False, "error": message}), 409
         flash(message, "warning")
@@ -2207,9 +2211,9 @@ def subscription_change_confirm():
     pending_plan = _pending_paid_plan_change(company.id)
     checkout_subscription = pending_plan or SubscriptionService.active_subscription_for_company(company.id)
     locked_checkout_method = _standard_checkout_method(company, checkout_subscription)
-    if locked_checkout_method and locked_checkout_method != "qr":
+    if pending_plan is not None and locked_checkout_method and locked_checkout_method != "qr":
         flash(
-            "Este plan ya tiene una suscripción mensual seleccionada. Continuá ese checkout para evitar mezclar modalidades.",
+            "Ya elegiste la suscripción mensual para este cambio de plan. Continuá o cancelá ese checkout antes de elegir QR.",
             "warning",
         )
         return redirect(url_for(
