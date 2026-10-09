@@ -2219,6 +2219,24 @@ def create_mercadopago_subscription():
             "Iniciando checkout recurrente estándar: company_id=%s plan_id=%s mode=%s token_configured=%s",
             company.id, plan.id, config.mode, bool(config.access_token),
         )
+        from urllib.parse import parse_qsl, urlencode, urlsplit, urlunsplit
+
+        # Give the payer a return URL specific to the standard product and the
+        # exact local subscription. The AI subscription uses a different marker
+        # and is reconciled independently on return.
+        back_parts = urlsplit(config.success_url)
+        back_query = dict(parse_qsl(back_parts.query, keep_blank_values=True))
+        back_query.update({
+            "mp_subscription_return": "standard",
+            "mp_subscription_id": str(subscription.id),
+        })
+        subscription_back_url = urlunsplit((
+            back_parts.scheme,
+            back_parts.netloc,
+            back_parts.path,
+            urlencode(back_query),
+            back_parts.fragment,
+        ))
         response = MercadoPagoSubscriptionService.create(
             db_session=db.session,
             company=company,
@@ -2226,8 +2244,16 @@ def create_mercadopago_subscription():
             plan=plan,
             payer_email=payer_email,
             notification_url=config.notification_url,
-            back_url=config.success_url,
+            back_url=subscription_back_url,
         )
+        if str(response.get("status") or "").strip().lower() == "authorized":
+            # Mercado Pago may omit init_point once an existing authorization
+            # is complete. Reconcile local state rather than trying to redirect
+            # back into checkout or creating a second preapproval.
+            MercadoPagoSubscriptionService.sync_preapproval(db_session=db.session, preapproval=response)
+            db.session.commit()
+            flash("La suscripción mensual de StockArMobile ya está autorizada y quedó sincronizada.", "success")
+            return redirect(url_for("company_billing.subscription_portal", mp_subscription_return="standard"))
         checkout_url = str(response.get("init_point") or "").strip()
         if not checkout_url:
             db.session.rollback()
