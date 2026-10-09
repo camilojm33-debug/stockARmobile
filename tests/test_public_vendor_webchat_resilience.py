@@ -601,6 +601,166 @@ def test_new_order_without_new_checkout_does_not_replay_previous_customer_link(q
     assert "Julia Acosta" not in second.json["content"]
 
 
+def test_new_quote_intent_does_not_capture_previous_quote_retrieval():
+    from services.ai_agent.vendor_publication import (
+        _assistant_requests_order_details,
+        _starts_new_quote_request,
+    )
+
+    assert _starts_new_quote_request("Necesito otro presupuesto") is True
+    assert _starts_new_quote_request("Quiero cotizar otro producto") is True
+    assert _starts_new_quote_request("Quiero otro presupuesto parecido al anterior") is True
+    assert _starts_new_quote_request("Mostrame el presupuesto anterior") is False
+    assert _starts_new_quote_request("Pasame el link del presupuesto anterior") is False
+    assert _starts_new_quote_request("Quiero consultar el estado del presupuesto") is False
+    assert _assistant_requests_order_details("¿Qué producto y qué cantidad necesitás?") is True
+    assert _assistant_requests_order_details(
+        "¡Listo! Ya preparé tu presupuesto. ¿Qué producto necesitás?"
+    ) is False
+
+
+def test_public_chat_can_start_second_quote_after_clarification(qa_public_vendor_db, monkeypatch):
+    from app import Payment, Quote
+    from stockarmobile.models.conversations import Conversation
+
+    provider = SequenceProvider([
+        {
+            "content": "",
+            "tool_call": {
+                "id": "tool-first-quote",
+                "name": "preparar_pedido",
+                "arguments": {
+                    "product_query": "machimbre",
+                    "quantity": 2,
+                    "customer_name": "Julia Acosta",
+                    "customer_phone": "3624001122",
+                    "delivery_method": "retiro",
+                },
+            },
+        },
+        {"content": "Pedido preparado.", "tool_call": None},
+        {
+            "content": "¡Claro! ¿Qué producto y qué cantidad necesitás cotizar para preparar otro presupuesto?",
+            "tool_call": None,
+        },
+        {
+            "content": "",
+            "tool_call": {
+                "id": "tool-second-quote",
+                "name": "preparar_pedido",
+                "arguments": {
+                    "product_query": "machimbre",
+                    "quantity": 3,
+                    "customer_name": "Julia Acosta",
+                    "customer_phone": "3624001122",
+                    "delivery_method": "retiro",
+                },
+            },
+        },
+        {"content": "Presupuesto preparado.", "tool_call": None},
+    ])
+    _install_provider(monkeypatch, provider)
+    preferences = []
+
+    def ensure_token(self, *, company_id):
+        return "qa-token"
+
+    def create_preference(self, **kwargs):
+        preferences.append(kwargs)
+        number = len(preferences)
+        return {
+            "id": f"pref-second-quote-{number}",
+            "init_point": f"https://payments.test/second-quote-{number}",
+        }
+
+    monkeypatch.setattr(
+        "services.ai_agent.vendor_order_service.MercadoPagoOAuthService.ensure_access_token",
+        ensure_token,
+    )
+    monkeypatch.setattr(
+        "services.ai_agent.vendor_order_service.MercadoPagoService.create_ai_order_checkout_preference",
+        create_preference,
+    )
+
+    client = _public_client(qa_public_vendor_db)
+    conversation_setup = qa_public_vendor_db
+    first = _post_message(
+        client,
+        conversation_setup,
+        "operation-first-quote-same-client",
+        "Necesito 2 metros de machimbre, a nombre de Julia Acosta, teléfono 3624001122, retiro en local.",
+    )
+    second = _post_message(
+        client,
+        conversation_setup,
+        "operation-request-second-quote",
+        "Necesito otro presupuesto",
+        conversation_id=first.json["conversation_id"],
+    )
+
+    assert first.status_code == second.status_code == 200
+    assert first.json["payment_url"] == "https://payments.test/second-quote-1"
+    assert second.json["payment_url"] is None
+    assert second.json["quote_url"] is None
+    assert "¿Qué producto y qué cantidad" in second.json["content"]
+    assert "No pude generar un presupuesto nuevo" not in second.json["content"]
+    assert "second-quote-1" not in second.json["content"]
+    assert second.json["cart"]["items"] == []
+
+    conversation = Conversation.query.filter_by(
+        id=first.json["conversation_id"],
+        company_id=conversation_setup["company"].id,
+    ).one()
+    assert conversation.metadata_json["vendor_new_quote_context"] is True
+
+    third = _post_message(
+        client,
+        conversation_setup,
+        "operation-details-second-quote",
+        "Para el mismo cliente, necesito 3 metros de machimbre, Julia Acosta, teléfono 3624001122, retiro en local.",
+        conversation_id=first.json["conversation_id"],
+    )
+
+    assert third.status_code == 200
+    assert third.json["payment_url"] == "https://payments.test/second-quote-2"
+    assert third.json["payment_url"] != first.json["payment_url"]
+    assert third.json["quote_url"] != first.json["quote_url"]
+    assert provider.calls == 5
+    assert len(preferences) == 2
+    assert preferences[0]["external_reference"] != preferences[1]["external_reference"]
+
+    quotes = (
+        Quote.query.filter_by(
+            company_id=conversation_setup["company"].id,
+            observations="Pedido generado por el Vendedor 24 hs de StockARmobile.",
+        )
+        .order_by(Quote.id.asc())
+        .all()
+    )
+    assert len(quotes) == 2
+    assert quotes[0].id != quotes[1].id
+    assert quotes[0].number != quotes[1].number
+    assert float(quotes[0].items[0].quantity) == 2
+    assert float(quotes[1].items[0].quantity) == 3
+    assert quotes[0].items[0].description == quotes[1].items[0].description
+
+    payments = (
+        Payment.query.filter_by(
+            company_id=conversation_setup["company"].id,
+            provider="mercadopago_ai_order",
+        )
+        .order_by(Payment.id.asc())
+        .all()
+    )
+    assert len(payments) == 2
+    assert [payment.preference_id for payment in payments] == [
+        "pref-second-quote-1",
+        "pref-second-quote-2",
+    ]
+    assert all(payment.status == "pending" for payment in payments)
+    assert "vendor_new_quote_context" not in conversation.metadata_json
+
+
 def test_checkout_timeout_reuses_quote_and_same_mp_idempotency_reference(qa_public_vendor_setup, monkeypatch):
     from app import Payment, Quote
 

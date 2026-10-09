@@ -9,6 +9,7 @@ import os
 import re
 import secrets
 import time
+import unicodedata
 from datetime import datetime, timezone
 
 import qrcode
@@ -41,6 +42,7 @@ from services.ai_agent.vendor_order_service import (
     PENDING_PAYMENT_KEY,
     PENDING_QUOTE_KEY,
     LAST_ORDER_KEY,
+    NEW_QUOTE_CONTEXT_KEY,
     VendorOrderService,
     _public_quote_url,
     _quote_charge_snapshot,
@@ -365,11 +367,16 @@ def _public_conversation(company, conversation_id=None, *, create=False):
 def _cart_public_state(conversation) -> dict:
     cart = VendorOrderService.get_cart(company_id=conversation.company_id, conversation_id=conversation.id)
     state = _conversation_metadata(conversation)
-    payment_url = str(state.get(PENDING_PAYMENT_KEY) or "").strip()
-    pending_quote_id = state.get(PENDING_QUOTE_KEY)
-    last_order = state.get(LAST_ORDER_KEY) if isinstance(state.get(LAST_ORDER_KEY), dict) else None
+    new_quote_context = bool(state.get(NEW_QUOTE_CONTEXT_KEY))
+    payment_url = "" if new_quote_context else str(state.get(PENDING_PAYMENT_KEY) or "").strip()
+    pending_quote_id = None if new_quote_context else state.get(PENDING_QUOTE_KEY)
+    last_order = (
+        None
+        if new_quote_context
+        else (state.get(LAST_ORDER_KEY) if isinstance(state.get(LAST_ORDER_KEY), dict) else None)
+    )
     quote_url = None
-    quote_id_for_url = pending_quote_id or (last_order or {}).get("quote_id")
+    quote_id_for_url = None if new_quote_context else (pending_quote_id or (last_order or {}).get("quote_id"))
     if quote_id_for_url:
         try:
             quote_url = _public_quote_url(int(quote_id_for_url))
@@ -388,21 +395,107 @@ def _cart_public_state(conversation) -> dict:
         "payment_url": payment_url or None,
         "quote_url": quote_url,
         "pending_quote_id": pending_quote_id,
-        "delivery": state.get("delivery") or None,
+        "delivery": None if new_quote_context else (state.get("delivery") or None),
         "shipping_config": shipping_config,
         "order": last_order,
     }
 
 
+def _normalize_vendor_text(value: str) -> str:
+    decomposed = unicodedata.normalize("NFKD", str(value or "").strip().lower())
+    plain = "".join(char for char in decomposed if not unicodedata.combining(char))
+    return " ".join(plain.split())
+
+
 def _public_order_intent(message: str) -> bool:
-    normalized = " ".join(str(message or "").strip().lower().split())
+    normalized = _normalize_vendor_text(message)
     phrases = (
         "presupuesto", "presupuest", "preparar pedido", "preparame el pedido",
         "preparame un pedido", "armar pedido", "hacer un pedido", "quiero comprar",
-        "quiero pagar", "pasame el link", "pásame el link", "link de pago",
+        "quiero pagar", "pasame el link", "link de pago",
         "enlace de pago", "confirmar compra", "comprar",
     )
     return any(phrase in normalized for phrase in phrases)
+
+
+def _starts_new_quote_request(message: str) -> bool:
+    """Recognize an explicit request to start a separate quote, not to retrieve an old one."""
+    normalized = _normalize_vendor_text(message)
+    retrieval_phrases = (
+        "ver el presupuesto", "ver presupuesto", "mostrar el presupuesto",
+        "mostrar presupuesto", "mostrame el presupuesto", "mostrame presupuesto",
+        "consultar el presupuesto", "consultar presupuesto", "recuperar el presupuesto",
+        "recuperar presupuesto", "reenviar el presupuesto", "reenviar presupuesto",
+        "pasame el link del presupuesto", "pasame el enlace del presupuesto",
+        "estado del presupuesto", "numero de presupuesto", "numero del presupuesto",
+    )
+    if any(phrase in normalized for phrase in retrieval_phrases):
+        return False
+    phrases = (
+        "otro presupuesto",
+        "otra cotizacion",
+        "nuevo presupuesto",
+        "nueva cotizacion",
+        "presupuesto nuevo",
+        "presupuesto distinto",
+        "presupuesto diferente",
+        "cotizar otro producto",
+        "cotizar otra cosa",
+        "cotizar otros productos",
+        "hacer otro presupuesto",
+        "hacer una nueva cotizacion",
+        "armar otro presupuesto",
+    )
+    return any(phrase in normalized for phrase in phrases)
+
+
+def _begin_new_quote_context(conversation) -> None:
+    """Start a fresh cart while leaving previous Quote/Payment records untouched."""
+    state = _conversation_metadata(conversation)
+    state[CART_KEY] = {}
+    state[NEW_QUOTE_CONTEXT_KEY] = True
+    conversation.metadata_json = state
+    db.session.flush()
+
+
+def _assistant_requests_order_details(content: str) -> bool:
+    """Allow clarification turns, but never pass through an unverified completion claim."""
+    raw = str(content or "")
+    normalized = _normalize_vendor_text(raw)
+    completion_claims = (
+        "presupuesto generado", "presupuesto creado", "presupuesto preparado",
+        "presupuesto fue generado", "presupuesto fue creado", "presupuesto esta listo",
+        "ya prepare tu presupuesto", "ya prepare el presupuesto", "ya te prepare",
+        "prepare tu presupuesto", "prepare el presupuesto", "genere tu presupuesto",
+        "te genere un presupuesto", "creamos el presupuesto", "cree el presupuesto",
+        "pedido confirmado", "pedido creado", "pedido preparado", "total a pagar",
+        "pagar con mercado pago", "enlace de pago", "link de pago",
+    )
+    if any(claim in normalized for claim in completion_claims):
+        return False
+    detail_terms = (
+        "producto", "productos", "cantidad", "cuantos", "cuantas", "articulo",
+        "articulos", "nombre", "telefono", "direccion", "envio", "retiro",
+        "localidad", "provincia", "unidades", "metros",
+    )
+    asks_question = "?" in raw or "¿" in raw
+    if asks_question and any(term in normalized for term in detail_terms):
+        return True
+    direct_requests = (
+        "decime que", "indicame que", "pasame el producto", "decime el producto",
+        "indicame el producto", "necesito saber que", "para preparar el presupuesto necesito",
+        "para cotizar necesito", "confirmame el producto",
+    )
+    return any(phrase in normalized for phrase in direct_requests)
+
+
+def _contains_unscoped_checkout_link(content: str) -> bool:
+    raw = str(content or "")
+    return bool(re.search(
+        r"https?://[^\s<]*(?:mercadopago\.com(?:\.ar)?|stockarmobile\.com/presupuestos/publico)[^\s<]*",
+        raw,
+        flags=re.IGNORECASE,
+    ))
 
 
 def _strip_unscoped_checkout_links(content: str) -> str:
@@ -1026,6 +1119,11 @@ def public_vendor_message(slug: str):
                         "trace_id": incoming.trace_id,
                     }
                 else:
+                    if _starts_new_quote_request(message):
+                        # The previous quote/payment stay persisted, but its cart is
+                        # not part of this new operation. A follow-up message may
+                        # provide the missing product details after this clarification.
+                        _begin_new_quote_context(conversation)
                     result = AgentRuntime.process(
                         company_id=company.id,
                         conversation_id=conversation.id,
@@ -1078,8 +1176,12 @@ def public_vendor_message(slug: str):
                         "delivery": state.get("delivery"),
                     }
                 else:
-                    content = _strip_unscoped_checkout_links(str(result.get("content") or ""))
-                    if _public_order_intent(message):
+                    raw_content = str(result.get("content") or "")
+                    content = _strip_unscoped_checkout_links(raw_content)
+                    if _public_order_intent(message) and (
+                        not _assistant_requests_order_details(content)
+                        or _contains_unscoped_checkout_link(raw_content)
+                    ):
                         content = (
                             "No pude generar un presupuesto nuevo y su enlace de pago para esta solicitud. "
                             "Para evitar confusiones, no voy a reutilizar un enlace de un pedido anterior. "

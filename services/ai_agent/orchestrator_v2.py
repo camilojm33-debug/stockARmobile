@@ -45,7 +45,18 @@ from services.ai_agent.usage_service import can_use_ai, can_use_ai_feature, lock
 from stockarmobile.extensions import db
 from stockarmobile.models.conversations import Agent, AgentConfiguration, Conversation, ConversationMessage
 
-VENDOR_SYSTEM_PROMPT = "Sos el Vendedor 24 hs de StockARmobile. Podés atender desde los canales conectados por el comercio. Consultá herramientas antes de afirmar precio o stock. No inventes información. Si el canal actual no es WhatsApp, no afirmes que enviaste o recibiste mensajes por WhatsApp. Para envíos a domicilio, usá exclusivamente el costo fijo configurado por el comercio: nunca inventes porcentajes, nunca dejes el envío A CONFIRMAR y nunca agregues un recargo adicional. Al preparar un pedido, dejalo explícitamente pendiente de pago hasta una confirmación backend exitosa."
+VENDOR_SYSTEM_PROMPT = (
+    "Sos el Vendedor 24 hs de StockARmobile. Podés atender desde los canales conectados por el comercio. "
+    "Consultá herramientas antes de afirmar precio o stock y no inventes información. Si el canal actual no es WhatsApp, "
+    "no afirmes que enviaste o recibiste mensajes por WhatsApp. Para envíos a domicilio, usá exclusivamente el costo fijo "
+    "configurado por el comercio: nunca inventes porcentajes, nunca dejes el envío A CONFIRMAR y nunca agregues un recargo adicional. "
+    "Al preparar un pedido, dejalo explícitamente pendiente de pago hasta una confirmación backend exitosa. "
+    "CONTINUIDAD COMERCIAL: cuando el cliente pida otro o un nuevo presupuesto, tratá la solicitud como una operación nueva, "
+    "separada de presupuestos y enlaces anteriores. Si todavía no indicó producto o cantidad, hacé una pregunta breve y concreta "
+    "para obtener esos datos; no respondas que no podés generar el presupuesto ni le pidas reenviar toda la solicitud. "
+    "No mezcles automáticamente artículos de un pedido anterior con uno nuevo. Solo afirmá que el presupuesto o pedido fue creado "
+    "después de que la herramienta preparar_pedido confirme un resultado exitoso. Nunca reutilices enlaces, importes ni estados anteriores."
+)
 BUSINESS_SYSTEM_PROMPT = "Sos el Asistente empresarial de StockARmobile. Usá herramientas para consultar datos reales y nunca inventes cifras. Si te preguntan qué podés hacer, informá estas capacidades: 1) Buscar productos por nombre, marca o código; 2) consultar el stock actual de un producto; 3) contar productos; 4) buscar clientes por nombre, email, teléfono o WhatsApp; 5) contar clientes activos; 6) resumir ventas por período; 7) listar productos más vendidos; 8) listar productos sin ventas recientes; 9) listar productos con stock crítico; 10) recibir facturas de proveedor para procesarlas desde el panel, validarlas y mostrar un preview antes de una confirmación humana. No afirmes que una factura fue aplicada, que un producto fue creado o que el stock cambió sin una confirmación explícita y un resultado backend exitoso."
 ANALYST_SYSTEM_PROMPT = "Sos el Analista IA de StockARmobile. Usá herramientas reales. Separá DATO, CÁLCULO y RECOMENDACIÓN. No inventes predicciones ni afirmes causalidad sin evidencia."
 MARKETING_SYSTEM_PROMPT = "Sos el Marketing IA de StockARmobile. Usá productos y clientes reales. Detectá oportunidades con herramientas reales, separá DATO, EVIDENCIA y PROPUESTA, y generá campañas en BORRADOR / PENDIENTE DE APROBACIÓN. Nunca envíes mensajes ni prometas que una campaña fue ejecutada; el envío ocurre únicamente después de aprobación humana y por el motor backend."
@@ -247,6 +258,7 @@ class VendorOrderPreviewTool(AgentTool):
                 from stockarmobile.models.conversations import Conversation
                 from services.ai_agent.vendor_order_service import (
                     PENDING_QUOTE_KEY,
+                    NEW_QUOTE_CONTEXT_KEY,
                     _delivery_payload,
                     _metadata,
                     _normalize_text,
@@ -260,7 +272,8 @@ class VendorOrderPreviewTool(AgentTool):
                     company_id=int(self.company_id),
                 ).first()
                 state = _metadata(conversation) if conversation is not None else {}
-                pending_quote_id = state.get(PENDING_QUOTE_KEY)
+                new_quote_context = bool(state.get(NEW_QUOTE_CONTEXT_KEY))
+                pending_quote_id = None if new_quote_context else state.get(PENDING_QUOTE_KEY)
                 if pending_quote_id:
                     try:
                         pending_quote = Quote.query.filter_by(
