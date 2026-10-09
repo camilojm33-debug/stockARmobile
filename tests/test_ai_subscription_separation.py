@@ -231,6 +231,12 @@ def test_standard_recurring_checkout_refuses_free_trial_fallback(subscription_ap
     assert response.headers["Location"].endswith("#planes-disponibles")
     assert calls == []
 
+    portal = client.get("/admin/portal")
+    html = portal.get_data(as_text=True)
+    assert portal.status_code == 200
+    assert "Autorizar cobro mensual" not in html
+    assert "Elegí un plan pago en “StockArMobile”" in html
+
 
 def test_cancelled_payment_is_not_labelled_as_rejected():
     from company_billing import _payment_status_badge
