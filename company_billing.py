@@ -1718,6 +1718,52 @@ def create_ai_subscription_checkout():
     current_origin = str(ai_status.get("origin") or "").strip().upper()
 
     if payment_method == "qr":
+        # Recuperación de datos históricos: antes, la opción etiquetada QR creaba
+        # por error un preapproval recurrente y lo marcaba checkout_method=qr.
+        # Solo en ese caso heredado lo cancelamos antes de crear el pago único.
+        if (
+            current_status == "PENDIENTE"
+            and existing_preapproval_id
+            and current_origin == "MERCADO_PAGO"
+            and str(ai_status.get("checkout_method") or "").strip().lower() == "qr"
+        ):
+            try:
+                legacy_service = MercadoPagoService()
+                legacy_remote = legacy_service.get_preapproval(existing_preapproval_id)
+                legacy_status = str(legacy_remote.get("status") or "").strip().lower()
+                if legacy_status in {"pending", "in_process"}:
+                    cancelled_legacy = legacy_service.cancel_preapproval(existing_preapproval_id)
+                    legacy_status = str(cancelled_legacy.get("status") or "").strip().lower()
+                    if legacy_status not in {"cancelled", "canceled", "expired"}:
+                        raise AISubscriptionError(
+                            "Mercado Pago no confirmó la cancelación de la autorización heredada. No se creó otro cobro."
+                        )
+                elif legacy_status not in {"cancelled", "canceled", "expired"}:
+                    raise AISubscriptionError(
+                        "La autorización mensual anterior ya no está pendiente. Revisá o cancelá esa suscripción antes de pagar con QR."
+                    )
+                AISubscriptionService._apply(
+                    company,
+                    admin_user_id=None,
+                    action="ai_subscription_legacy_qr_checkout_closed",
+                    new_fields={
+                        "status": "CANCELADA",
+                        "mercadopago_status": legacy_status,
+                        "checkout_method": None,
+                    },
+                    reason="Se reemplazó el checkout QR heredado que había creado una autorización recurrente.",
+                )
+                current_status = "CANCELADA"
+                current_plan_code = str(ai_status.get("plan_code") or "").strip().lower()
+            except (AISubscriptionError, RuntimeError, ValueError) as exc:
+                db.session.rollback()
+                flash(f"No se pudo reemplazar el checkout IA anterior: {exc}", "warning")
+                return redirect(url_for(
+                    "company_billing.subscription_portal",
+                    ai_preapproval_id=existing_preapproval_id,
+                    _anchor="payment-checkout",
+                ))
+
         # QR siempre representa un pago único de 30 días. Nunca se debe crear un
         # preapproval para este camino.
         if current_status == "PENDIENTE" and existing_preapproval_id and current_origin == "MERCADO_PAGO":
