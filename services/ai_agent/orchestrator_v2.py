@@ -1100,7 +1100,9 @@ class AgentRuntime:
 
         context = {
             "conversation_id": conversation.id,
-            "customer_phone": (metadata or {}).get("from") or "",
+            # Public webchat uses "from" for a visitor/session token, not a phone.
+            "customer_phone": "" if is_public_webchat else ((metadata or {}).get("from") or ""),
+            "channel": channel,
             "actor_user_id": sender_id,
             "idempotency_key": idempotency_key,
             "trace_id": trace_id,
