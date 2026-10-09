@@ -255,14 +255,25 @@ class VendorOrderPreviewTool(AgentTool):
 
         # Reuse only the profile saved in this same tenant-scoped conversation.
         # Never treat a public webchat visitor token as a telephone number.
-        from stockarmobile.models.conversations import Conversation
-        from services.ai_agent.vendor_order_service import _metadata
+        from stockarmobile.models.conversations import Conversation, ConversationMessage
+        from services.ai_agent.vendor_order_service import _metadata, _normalize_phone, _normalize_text
         conversation = Conversation.query.filter_by(
             id=int(self._context["conversation_id"]),
             company_id=int(self.company_id),
         ).first()
         saved_state = _metadata(conversation) if conversation is not None else {}
         saved_delivery = saved_state.get("delivery") if isinstance(saved_state.get("delivery"), dict) else {}
+        recent_user_messages = (
+            ConversationMessage.query.filter_by(
+                company_id=int(self.company_id),
+                conversation_id=int(self._context["conversation_id"]),
+                role="user",
+            )
+            .order_by(ConversationMessage.id.desc())
+            .limit(20)
+            .all()
+        )
+        recent_user_messages = list(reversed(recent_user_messages))
 
         customer_name = str(
             kwargs.get("customer_name") or saved_state.get("customer_name")
@@ -275,19 +286,57 @@ class VendorOrderPreviewTool(AgentTool):
             or ""
         ).strip()
 
+        if self._context.get("channel") == "webchat":
+            # In a public chat, don't trust model-invented contact data. It must
+            # either be saved in this visitor-bound conversation or appear in
+            # a user message from the same conversation.
+            if not (saved_state.get("customer_name") or saved_delivery.get("recipient_name")) and customer_name:
+                normalized_name = _normalize_text(customer_name)
+                if not any(normalized_name in _normalize_text(row.content) for row in recent_user_messages):
+                    customer_name = ""
+            if not (saved_state.get("customer_phone") or saved_delivery.get("phone")) and customer_phone:
+                phone_digits = _normalize_phone(customer_phone)
+                if not phone_digits or not any(
+                    phone_digits in _normalize_phone(row.content)
+                    for row in recent_user_messages
+                ):
+                    customer_phone = ""
+
         requested_delivery_method = str(kwargs.get("delivery_method") or "").strip().lower()
         saved_delivery_method = str(saved_delivery.get("method") or "").strip().lower()
-        delivery_method = requested_delivery_method or saved_delivery_method
-        if delivery_method in {"envío", "delivery", "shipping"}:
-            delivery_method = "envio"
-        elif delivery_method in {"retirar", "retira", "pickup", "local"}:
-            delivery_method = "retiro"
+        if requested_delivery_method in {"envío", "delivery", "shipping"}:
+            requested_delivery_method = "envio"
+        elif requested_delivery_method in {"retirar", "retira", "pickup", "local"}:
+            requested_delivery_method = "retiro"
 
-        same_delivery_method = (
-            not requested_delivery_method
-            or not saved_delivery_method
-            or delivery_method == saved_delivery_method
-        )
+        def explicit_delivery_from_user_messages():
+            for row in reversed(recent_user_messages):
+                text = _normalize_text(row.content)
+                if any(term in text for term in (
+                    "prefiero envio", "con envio", "envio a domicilio", "a domicilio",
+                    "que me lo envien", "que lo envien", "mandalo a casa", "entrega a domicilio",
+                    "quiero envio", "necesito envio",
+                )):
+                    return "envio"
+                if any(term in text for term in (
+                    "prefiero retiro", "con retiro", "retiro en local", "retiro por local",
+                    "paso a buscar", "voy a retirar", "retirar en local", "quiero retirar",
+                    "quiero retiro",
+                )):
+                    return "retiro"
+                if text.strip() in {"envio", "a domicilio", "delivery"}:
+                    return "envio"
+                if text.strip() in {"retiro", "retirar", "retiro en local"}:
+                    return "retiro"
+            return ""
+
+        user_delivery_method = explicit_delivery_from_user_messages()
+        # A user-stated method takes precedence; otherwise reuse a saved method
+        # from this same conversation. Never silently accept a guessed default.
+        delivery_method = user_delivery_method or saved_delivery_method
+        if not delivery_method:
+            delivery_method = ""
+        same_delivery_method = not saved_delivery_method or delivery_method == saved_delivery_method
         delivery_address = str(
             kwargs.get("delivery_address") or (saved_delivery.get("address") if same_delivery_method else "") or ""
         ).strip()
