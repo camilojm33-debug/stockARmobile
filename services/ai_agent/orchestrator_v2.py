@@ -55,7 +55,11 @@ VENDOR_SYSTEM_PROMPT = (
     "separada de presupuestos y enlaces anteriores. Si todavía no indicó producto o cantidad, hacé una pregunta breve y concreta "
     "para obtener esos datos; no respondas que no podés generar el presupuesto ni le pidas reenviar toda la solicitud. "
     "No mezcles automáticamente artículos de un pedido anterior con uno nuevo. Solo afirmá que el presupuesto o pedido fue creado "
-    "después de que la herramienta preparar_pedido confirme un resultado exitoso. Nunca reutilices enlaces, importes ni estados anteriores."
+    "después de que la herramienta preparar_pedido confirme un resultado exitoso. Nunca reutilices enlaces, importes ni estados anteriores. "
+    "CATÁLOGO: si preguntan qué productos ofrecés, qué otra cosa hay, qué opciones tienen o piden ver el catálogo completo, usá ver_catalogo "
+    "sin filtro (query vacío). No uses buscar_producto como si fuera un listado completo y no afirmes que solo existe un producto cuando no "
+    "consultaste el catálogo. Mostrá únicamente productos devueltos por la herramienta, con precio y unidad reales; si el catálogo devuelve cero "
+    "productos, decilo claramente sin inventar alternativas. No muestres mensajes técnicos como 'la búsqueda enviada no obtuvo resultados'."
 )
 BUSINESS_SYSTEM_PROMPT = "Sos el Asistente empresarial de StockARmobile. Usá herramientas para consultar datos reales y nunca inventes cifras. Si te preguntan qué podés hacer, informá estas capacidades: 1) Buscar productos por nombre, marca o código; 2) consultar el stock actual de un producto; 3) contar productos; 4) buscar clientes por nombre, email, teléfono o WhatsApp; 5) contar clientes activos; 6) resumir ventas por período; 7) listar productos más vendidos; 8) listar productos sin ventas recientes; 9) listar productos con stock crítico; 10) recibir facturas de proveedor para procesarlas desde el panel, validarlas y mostrar un preview antes de una confirmación humana. No afirmes que una factura fue aplicada, que un producto fue creado o que el stock cambió sin una confirmación explícita y un resultado backend exitoso."
 ANALYST_SYSTEM_PROMPT = "Sos el Analista IA de StockARmobile. Usá herramientas reales. Separá DATO, CÁLCULO y RECOMENDACIÓN. No inventes predicciones ni afirmes causalidad sin evidencia."
@@ -934,8 +938,37 @@ class AgentRuntime:
                     "\n- Priorizá resolver una solicitud de compra en una sola ronda de herramientas."
                     "\n- Si el cliente ya indicó producto, cantidad, nombre, teléfono y datos de envío, evitá búsquedas exploratorias innecesarias."
                     "\n- Para un pedido, podés agregar el producto al carrito y después preparar el pedido dentro de la misma ronda de herramientas."
+                    "\n- Si faltan datos obligatorios, guardá el producto en el carrito y preguntá solo los datos que realmente falten; nunca afirmes que el presupuesto se creó antes del resultado exitoso de preparar_pedido."
+                    "\n- Si hay datos de cliente ya guardados en esta misma conversación, reutilizalos para el nuevo presupuesto salvo que el cliente indique un cambio."
                     "\n- Nunca afirmes que el pago quedó realizado si el backend no devolvió un resultado exitoso."
                 )
+                # Only use profile details saved in this visitor-bound conversation.
+                # Do not search across unrelated chats or disclose another customer's record by name.
+                from services.ai_agent.vendor_order_service import _metadata as _vendor_metadata
+                saved_state = _vendor_metadata(conversation)
+                saved_delivery = saved_state.get("delivery") if isinstance(saved_state.get("delivery"), dict) else {}
+                saved_customer = {
+                    "Nombre": saved_state.get("customer_name") or saved_delivery.get("recipient_name"),
+                    "Teléfono": saved_state.get("customer_phone") or saved_delivery.get("phone"),
+                    "Modalidad de entrega": saved_delivery.get("method"),
+                    "Dirección": saved_delivery.get("address"),
+                    "Localidad": saved_delivery.get("city"),
+                    "Provincia": saved_delivery.get("province"),
+                    "Código postal": saved_delivery.get("postal_code"),
+                }
+                saved_lines = [
+                    f"- {label}: {str(value).strip()}"
+                    for label, value in saved_customer.items()
+                    if str(value or "").strip()
+                ]
+                if saved_lines:
+                    prompt += (
+                        "\n\nDATOS DE CLIENTE GUARDADOS EN ESTA MISMA CONVERSACIÓN WEB (mismo visitante):"
+                        "\nUsalos para preparar un nuevo presupuesto y no vuelvas a pedirlos si no hace falta. "
+                        "Si el cliente pide cambiar entrega o contacto, prevalece el cambio que indique. "
+                        "No busques ni infieras datos de otros clientes o conversaciones."
+                        "\n" + "\n".join(saved_lines)
+                    )
         elif agent_key in {"analista", "marketing"}:
             special_options = get_special_options(company, agent_key)
             if agent_key == "analista":
