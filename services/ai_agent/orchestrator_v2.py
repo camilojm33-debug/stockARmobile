@@ -372,12 +372,18 @@ class VendorOrderPreviewTool(AgentTool):
             stated_customer_name = _extract_public_customer_name(recent_user_messages)
             if requested_customer_name:
                 normalized_name = _normalize_text(requested_customer_name)
-                name_was_stated = any(
+                exact_name_was_stated = any(
                     normalized_name in _normalize_text(row.content)
                     for row in recent_user_messages
-                ) or _same_public_customer_name(stated_customer_name, requested_customer_name)
-                if name_was_stated:
-                    customer_name = stated_customer_name or requested_customer_name
+                )
+                if exact_name_was_stated:
+                    # An explicit full name such as "a nombre de Pedro Silva"
+                    # is more precise than a prior "soy Pedro" greeting.
+                    customer_name = requested_customer_name
+                elif _same_public_customer_name(stated_customer_name, requested_customer_name):
+                    # A small spelling difference can be normalized to the
+                    # visitor's actual self-identification in this same chat.
+                    customer_name = stated_customer_name
                 elif stated_customer_name:
                     customer_name = stated_customer_name
                 elif not saved_customer_name:
