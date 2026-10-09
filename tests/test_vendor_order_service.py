@@ -287,7 +287,7 @@ def test_update_cart_selects_the_only_in_stock_variant_when_price_is_configured(
         items=[{"product_query": "leche", "quantity": 5, "replace_quantity": True}],
     )
 
-    assert result["success"] is True
+    assert result["line_count"] == 1
     assert result["items"][0]["product_id"] == available.id
     assert result["items"][0]["quantity"] == 5
     assert result["items"][0]["stock"] == 24
