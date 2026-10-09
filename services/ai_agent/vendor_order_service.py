@@ -82,6 +82,7 @@ from services.sales.inventory_service import InventoryService
 from services.sales.pricing_service import PricingService
 from services.promotion_service import PromotionEngine
 from services.ai_agent.config_service import get_vendor_options
+from services.ai_agent.stock_quantity import normalized_stock_quantity
 
 
 FLOW_PREFIX = "flow:ai_order"
@@ -550,7 +551,7 @@ class VendorOrderService:
                 "quantity": float(quantity),
                 "unit_measure": product.unit_measure or "u",
                 "unit_price": float(promotion.unit_price),
-                "stock": float(product.stock or 0),
+                "stock": normalized_stock_quantity(product.stock),
                 "subtotal": float(subtotal),
                 "promotion_id": promotion.promotion_id,
                 "promotion_name": promotion.promotion_name,
@@ -618,7 +619,7 @@ class VendorOrderService:
                     second_name = _normalize_text(second.name)
                     if first_name != _normalize_text(query) and second_name != _normalize_text(query) and abs(_normalize_product_score(first, query) - _normalize_product_score(second, query)) < 20:
                         options = [
-                            {"product_id": item.id, "name": item.name, "price": float(item.price or 0), "stock": float(item.stock or 0)}
+                            {"product_id": item.id, "name": item.name, "price": float(item.price or 0), "stock": normalized_stock_quantity(item.stock)}
                             for item in candidates[:5]
                         ]
                         return {"success": False, "error": "producto_ambiguo", "query": query, "candidates": options}
