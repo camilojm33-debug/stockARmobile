@@ -252,6 +252,33 @@ def _extract_public_customer_name(messages) -> str:
     return ""
 
 
+def _extract_explicit_public_recipient_name(messages) -> str:
+    """Return a recipient explicitly designated with an 'a nombre de' statement."""
+    import re
+    from services.ai_agent.vendor_order_service import _normalize_text
+
+    pattern = re.compile(r"\ba nombre de\s+([^\n,.;!?]+)", re.IGNORECASE)
+    stopwords = {
+        "para", "con", "necesito", "quiero", "presupuesto", "pedido", "y",
+        "telefono", "teléfono", "direccion", "dirección", "envio", "envío",
+    }
+    for row in reversed(list(messages or [])):
+        match = pattern.search(str(getattr(row, "content", "") or ""))
+        if not match:
+            continue
+        tokens = re.findall(r"[A-Za-zÁÉÍÓÚÜÑáéíóúüñ'-]+", match.group(1))
+        name_tokens = []
+        for token in tokens:
+            if _normalize_text(token) in stopwords:
+                break
+            name_tokens.append(token)
+            if len(name_tokens) >= 4:
+                break
+        if name_tokens:
+            return " ".join(token.capitalize() for token in name_tokens)
+    return ""
+
+
 def _same_public_customer_name(saved_name: str, requested_name: str) -> bool:
     """Treat a small spelling variation as the same profile in one visitor session."""
     from difflib import SequenceMatcher
@@ -331,12 +358,32 @@ class VendorOrderPreviewTool(AgentTool):
                 .all()
             )
             recent_user_messages = list(reversed(recent_user_messages))
+            # Identity statements may be older than the short operational history.
+            # Fetch them separately so an LLM typo cannot replace the user's own name
+            # just because they exchanged many messages before requesting a quote.
+            identity_user_messages = (
+                ConversationMessage.query.filter_by(
+                    company_id=int(self.company_id),
+                    conversation_id=int(self._context["conversation_id"]),
+                    role="user",
+                )
+                .filter(
+                    (ConversationMessage.content.ilike("%soy %"))
+                    | (ConversationMessage.content.ilike("%me llamo %"))
+                    | (ConversationMessage.content.ilike("%mi nombre es %"))
+                )
+                .order_by(ConversationMessage.id.desc())
+                .limit(50)
+                .all()
+            )
+            identity_user_messages = list(reversed(identity_user_messages))
         else:
             # Service-level callers and unit tests may invoke the tool without
             # Flask/SQLAlchemy context; in that case there is no session profile
             # to reuse and the normal required-field guard still applies.
             saved_state = {}
             recent_user_messages = []
+            identity_user_messages = []
         saved_delivery = saved_state.get("delivery") if isinstance(saved_state.get("delivery"), dict) else {}
 
         def user_stated_phone_values(rows):
@@ -381,27 +428,27 @@ class VendorOrderPreviewTool(AgentTool):
             # In a public chat, don't trust model-invented contact data. The
             # current visitor's explicit self-identification is safe to reuse;
             # CRM details from other chats are not.
-            stated_customer_name = _extract_public_customer_name(recent_user_messages)
-            if requested_customer_name:
+            stated_customer_name = _extract_public_customer_name(identity_user_messages)
+            explicit_recipient_name = _extract_explicit_public_recipient_name(recent_user_messages)
+            if explicit_recipient_name:
+                # A clear, recent "a nombre de X" instruction overrides the
+                # visitor's own name for this particular order.
+                customer_name = explicit_recipient_name
+            elif stated_customer_name:
+                # The user's explicit self-identification is authoritative. Never
+                # let a model-produced typo/truncation overwrite it in a public chat.
+                customer_name = stated_customer_name
+            elif requested_customer_name:
                 normalized_name = _normalize_text(requested_customer_name)
                 exact_name_was_stated = any(
                     normalized_name in _normalize_text(row.content)
                     for row in recent_user_messages
                 )
                 if exact_name_was_stated:
-                    # An explicit full name such as "a nombre de Pedro Silva"
-                    # is more precise than a prior "soy Pedro" greeting.
                     customer_name = requested_customer_name
-                elif _same_public_customer_name(stated_customer_name, requested_customer_name):
-                    # A small spelling difference can be normalized to the
-                    # visitor's actual self-identification in this same chat.
-                    customer_name = stated_customer_name
-                elif stated_customer_name:
-                    customer_name = stated_customer_name
                 elif not saved_customer_name:
                     customer_name = ""
-            elif stated_customer_name:
-                customer_name = stated_customer_name
+
             if requested_customer_phone:
                 phone_digits = _normalize_phone(requested_customer_phone)
                 phone_was_stated = bool(phone_digits) and any(

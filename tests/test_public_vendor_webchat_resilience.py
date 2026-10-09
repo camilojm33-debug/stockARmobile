@@ -649,6 +649,94 @@ def test_new_quote_intent_does_not_capture_previous_quote_retrieval():
     ) is False
 
 
+def test_public_webchat_prefers_older_explicit_name_over_model_typo(qa_public_vendor_db, monkeypatch):
+    """A self-identification must survive long chats and override an LLM misspelling."""
+    from app import db
+    from services.ai_agent.orchestrator_v2 import VendorOrderPreviewTool, VendorOrderService
+    from stockarmobile.models.conversations import Conversation, ConversationMessage
+
+    setup = qa_public_vendor_db
+    created = {}
+
+    with setup["app"].app_context():
+        conversation = Conversation(
+            company_id=setup["company"].id,
+            channel="webchat",
+            external_conversation_id="qa-old-name-history",
+            status="open",
+            metadata_json={
+                "customer_name": "Nelson Mandele",
+                "customer_phone": "3624001122",
+                "delivery": {
+                    "method": "retiro",
+                    "recipient_name": "Nelson Mandele",
+                    "phone": "3624001122",
+                },
+            },
+        )
+        db.session.add(conversation)
+        db.session.flush()
+
+        # Place the authoritative introduction outside the ordinary 20-message
+        # operating history, as happens when a customer chats before checkout.
+        db.session.add(ConversationMessage(
+            conversation_id=conversation.id,
+            company_id=setup["company"].id,
+            sender_type="customer",
+            role="user",
+            content="hola soy nelson mandela",
+        ))
+        for index in range(22):
+            db.session.add(ConversationMessage(
+                conversation_id=conversation.id,
+                company_id=setup["company"].id,
+                sender_type="customer",
+                role="user",
+                content=f"Consulta de seguimiento número {index}",
+            ))
+        db.session.flush()
+
+        monkeypatch.setattr(
+            VendorOrderService,
+            "get_cart",
+            staticmethod(lambda **kwargs: {
+                "items": [], "total": 0, "currency": "ARS", "line_count": 0,
+            }),
+        )
+        monkeypatch.setattr(
+            VendorOrderService,
+            "update_cart",
+            staticmethod(lambda **kwargs: {"success": True, "items": []}),
+        )
+
+        def fake_create_pending_order(**kwargs):
+            created.update(kwargs)
+            return {"success": True, "quote_number": "P-000099", "total": 21600}
+
+        monkeypatch.setattr(
+            VendorOrderService,
+            "create_pending_order",
+            staticmethod(fake_create_pending_order),
+        )
+
+        tool = VendorOrderPreviewTool(
+            company_id=setup["company"].id,
+            conversation_id=conversation.id,
+            channel="webchat",
+        )
+        result = tool.execute(
+            product_query="machimbre",
+            quantity=3,
+            customer_name="nelson mandele",
+            customer_phone="3624001122",
+        )
+
+        assert result["success"] is True
+        assert created["customer_name"] == "Nelson Mandela"
+        assert created["customer_phone"] == "3624001122"
+        db.session.rollback()
+
+
 def test_public_chat_can_start_second_quote_after_clarification(qa_public_vendor_db, monkeypatch):
     from app import Payment, Quote, QuoteDelivery
     from stockarmobile.models.conversations import Conversation
