@@ -856,6 +856,75 @@ def _ai_qr_checkout_preview(company, payment):
     }
 
 
+def _ensure_ai_qr_checkout_preference(company, payment, plan):
+    """Create/recover the same one-time preference for a persisted tenant-scoped draft."""
+    from urllib.parse import urlparse
+
+    from app import PaymentHistory, db
+    from services.ai_agent.subscription_service import AISubscriptionService
+    from services.billing_notification_service import NotificationService
+    from services.mercadopago_service import MercadoPagoService
+
+    plan_code = _ai_qr_plan_code(payment)
+    if not plan_code or plan_code != str(plan.get("code") or "").strip().lower():
+        raise ValueError("El plan del checkout QR IA no coincide con el plan solicitado.")
+    amount = AISubscriptionService.plan_amount_ars(plan_code)
+    if abs(float(payment.amount or 0) - amount) > 0.01:
+        raise ValueError("El importe del checkout QR IA no coincide con el precio oficial.")
+
+    response = MercadoPagoService().create_ai_subscription_qr_preference(
+        title=f"StockArMobile IA - {plan.get('name') or plan_code}",
+        amount=amount,
+        external_reference=str(payment.external_reference or ""),
+        company_id=company.id,
+        plan_code=plan_code,
+        payment_record_id=payment.id,
+        user_id=int(payment.user_id or 0),
+    )
+    preference_id = str(response.get("id") or "").strip()
+    checkout_url = str(response.get("init_point") or response.get("sandbox_init_point") or "").strip()
+    if not preference_id or not checkout_url:
+        raise RuntimeError("Mercado Pago no devolvió un checkout QR IA válido (id/init_point).")
+    parsed_checkout = urlparse(checkout_url)
+    allowed_checkout_hosts = {
+        "www.mercadopago.com", "mercadopago.com", "sandbox.mercadopago.com",
+        "www.mercadopago.com.ar", "mercadopago.com.ar", "sandbox.mercadopago.com.ar",
+        "www.mercadopago.com.br", "www.mercadopago.com.mx", "www.mercadopago.cl",
+        "www.mercadopago.com.co", "www.mercadopago.com.uy", "www.mercadopago.com.pe",
+    }
+    if current_app.testing and parsed_checkout.hostname == "mp.test":
+        allowed_checkout_hosts.add("mp.test")
+    if parsed_checkout.scheme != "https" or parsed_checkout.hostname not in allowed_checkout_hosts:
+        raise RuntimeError("Mercado Pago devolvió un enlace QR no reconocido. No se redirigió por seguridad.")
+
+    payment.preference_id = preference_id
+    payment.payload_json = json.dumps(response, ensure_ascii=False)
+    existing_event = PaymentHistory.query.filter_by(
+        company_id=company.id,
+        payment_id=payment.id,
+        event="ai_qr_checkout_preference_created",
+        event_id=preference_id,
+    ).first()
+    if existing_event is None:
+        NotificationService.record_event(
+            db.session,
+            company_id=company.id,
+            payment_id=payment.id,
+            event="ai_qr_checkout_preference_created",
+            detail=f"Checkout QR manual para plan IA {plan.get('name') or plan_code}; no renueva automáticamente.",
+            source="mercadopago",
+            status="pending",
+            event_id=preference_id,
+            payload=response,
+            user_id=payment.user_id,
+        )
+    db.session.commit()
+    preview = _ai_qr_checkout_preview(company, payment)
+    if not preview or preview.get("status") != "pending":
+        raise RuntimeError("No se pudo recuperar el QR IA creado.")
+    return preview
+
+
 def _pending_paid_plan_change(company_id):
     from app import Subscription
 
