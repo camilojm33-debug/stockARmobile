@@ -610,6 +610,8 @@ def test_new_quote_intent_does_not_capture_previous_quote_retrieval():
     assert _starts_new_quote_request("Necesito otro presupuesto") is True
     assert _starts_new_quote_request("Quiero cotizar otro producto") is True
     assert _starts_new_quote_request("Quiero otro presupuesto parecido al anterior") is True
+    assert _starts_new_quote_request("Haceme un presupuesto con 3 metros de machimbre") is True
+    assert _starts_new_quote_request("Quiero consultar cuánto era el presupuesto") is False
     assert _starts_new_quote_request("Mostrame el presupuesto anterior") is False
     assert _starts_new_quote_request("Pasame el link del presupuesto anterior") is False
     assert _starts_new_quote_request("Quiero consultar el estado del presupuesto") is False
