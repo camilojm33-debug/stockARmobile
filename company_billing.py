@@ -1759,13 +1759,33 @@ def create_ai_subscription_checkout():
     if pending_qr is not None:
         pending_code = _ai_qr_plan_code(pending_qr)
         pending_preview = _ai_qr_checkout_preview(company, pending_qr)
-        if payment_method == "qr" and pending_code == plan_code and pending_preview and pending_preview.get("status") == "pending":
-            session["mp_checkout_preview"] = pending_preview
-            return redirect(url_for(
-                "company_billing.subscription_portal",
-                ai_qr_payment_id=pending_qr.id,
-                _anchor="payment-checkout",
-            ))
+        if payment_method == "qr" and pending_code == plan_code:
+            if pending_preview and pending_preview.get("status") == "pending":
+                session["mp_checkout_preview"] = pending_preview
+                return redirect(url_for(
+                    "company_billing.subscription_portal",
+                    ai_qr_payment_id=pending_qr.id,
+                    _anchor="payment-checkout",
+                ))
+            # Recover the same persisted draft with the same Mercado Pago
+            # idempotency key if the previous network call timed out.
+            try:
+                pending_preview = _ensure_ai_qr_checkout_preference(company, pending_qr, plan)
+                session["mp_checkout_preview"] = pending_preview
+                return redirect(url_for(
+                    "company_billing.subscription_portal",
+                    ai_qr_payment_id=pending_qr.id,
+                    _anchor="payment-checkout",
+                ))
+            except (RuntimeError, ValueError) as exc:
+                db.session.rollback()
+                current_app.logger.exception(
+                    "No se pudo recuperar checkout QR IA company_id=%s payment_record_id=%s",
+                    company.id,
+                    pending_qr.id,
+                )
+                flash(f"No se pudo recuperar el QR pendiente: {exc}. Podés reintentar con el mismo botón.", "warning")
+                return redirect(url_for("ai_agents.agent", agent="planes"))
         if pending_preview:
             session["mp_checkout_preview"] = pending_preview
         flash(
@@ -1855,14 +1875,10 @@ def create_ai_subscription_checkout():
 
         try:
             amount = AISubscriptionService.plan_amount_ars(plan_code)
-            external_reference = (
-                f"ai_subscription_qr:true|flow:ai_subscription_qr|company_id:{company.id}|"
-                f"plan_code:{plan_code}|user_id:{current_user.id}|nonce:{uuid.uuid4().hex}"
-            )
             payment = Payment(
                 payment_id=None,
                 preference_id=None,
-                external_reference=external_reference,
+                external_reference="",
                 company_id=company.id,
                 subscription_id=None,
                 user_id=current_user.id,
@@ -1876,49 +1892,16 @@ def create_ai_subscription_checkout():
             )
             db.session.add(payment)
             db.session.flush()
-            response = MercadoPagoService().create_ai_subscription_qr_preference(
-                title=f"StockArMobile IA - {plan['name']}",
-                amount=amount,
-                external_reference=external_reference,
-                company_id=company.id,
-                plan_code=plan_code,
-                payment_record_id=payment.id,
-                user_id=current_user.id,
+            external_reference = (
+                f"ai_subscription_qr:true|flow:ai_subscription_qr|company_id:{company.id}|"
+                f"plan_code:{plan_code}|payment_record_id:{payment.id}|user_id:{current_user.id}|nonce:{uuid.uuid4().hex}"
             )
-            preference_id = str(response.get("id") or "").strip()
-            checkout_url = str(response.get("init_point") or response.get("sandbox_init_point") or "").strip()
-            if not preference_id or not checkout_url:
-                raise RuntimeError("Mercado Pago no devolvió un checkout QR IA válido (id/init_point).")
-            from urllib.parse import urlparse
-            parsed_checkout = urlparse(checkout_url)
-            allowed_checkout_hosts = {
-                "www.mercadopago.com", "mercadopago.com", "sandbox.mercadopago.com",
-                "www.mercadopago.com.ar", "mercadopago.com.ar", "sandbox.mercadopago.com.ar",
-                "www.mercadopago.com.br", "www.mercadopago.com.mx", "www.mercadopago.cl",
-                "www.mercadopago.com.co", "www.mercadopago.com.uy", "www.mercadopago.com.pe",
-            }
-            if current_app.testing and parsed_checkout.hostname == "mp.test":
-                allowed_checkout_hosts.add("mp.test")
-            if parsed_checkout.scheme != "https" or parsed_checkout.hostname not in allowed_checkout_hosts:
-                raise RuntimeError("Mercado Pago devolvió un enlace QR no reconocido. No se redirigió por seguridad.")
-            payment.preference_id = preference_id
-            payment.payload_json = json.dumps(response, ensure_ascii=False)
-            NotificationService.record_event(
-                db.session,
-                company_id=company.id,
-                payment_id=payment.id,
-                event="ai_qr_checkout_preference_created",
-                detail=f"Checkout QR manual para plan IA {plan['name']}; no renueva automáticamente.",
-                source="mercadopago",
-                status="pending",
-                event_id=preference_id,
-                payload=response,
-                user_id=current_user.id,
-            )
+            payment.external_reference = external_reference
+            # Persist the draft before the remote request: if the response times
+            # out after Mercado Pago created a preference, the next click can
+            # recover it idempotently instead of creating a second checkout.
             db.session.commit()
-            preview = _ai_qr_checkout_preview(company, payment)
-            if not preview or preview.get("status") != "pending":
-                raise RuntimeError("No se pudo recuperar el QR IA creado.")
+            preview = _ensure_ai_qr_checkout_preference(company, payment, plan)
             session["mp_checkout_preview"] = preview
             flash("QR listo. Este pago cubre 30 días y no se renueva automáticamente.", "info")
             return redirect(url_for(
