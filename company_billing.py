@@ -2153,6 +2153,14 @@ def create_ai_subscription_checkout():
                 allowed_ai_checkout_hosts.add("mp.test")
             if parsed_ai_checkout.scheme != "https" or parsed_ai_checkout.hostname not in allowed_ai_checkout_hosts:
                 raise RuntimeError("Mercado Pago devolvió un enlace de autorización IA no reconocido.")
+            current_app.logger.info(
+                "Checkout recurrente IA listo para redirección: company_id=%s plan_code=%s preapproval_id=%s mp_status=%s checkout_host=%s",
+                company.id,
+                plan_code,
+                preapproval_id,
+                remote_status,
+                parsed_ai_checkout.hostname,
+            )
         return _checkout_redirect_response(checkout_url)
     except AISubscriptionError as exc:
         db.session.rollback()
