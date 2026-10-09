@@ -211,6 +211,129 @@ def test_remove_from_cart_deletes_matching_product(vendor_database):
     assert PENDING_PAYMENT_KEY not in conversation.metadata_json
 
 
+def test_update_cart_prefers_the_only_fulfillable_variant_but_blocks_zero_price(vendor_database):
+    data = vendor_database
+    no_stock = Product(
+        barcode="MILK-1900",
+        name="Leche Entera 1 L",
+        price=1900,
+        cost_price=1200,
+        stock=0,
+        min_stock=1,
+        active=True,
+        company_id=data["company_a"].id,
+        unit_measure="u",
+    )
+    available_but_unpriced = Product(
+        barcode="MILK-UAT",
+        name="Leche UAT Entera 1 lt",
+        price=0,
+        cost_price=1300,
+        stock=24,
+        min_stock=1,
+        active=True,
+        company_id=data["company_a"].id,
+        unit_measure="u",
+    )
+    db.session.add_all([no_stock, available_but_unpriced])
+    db.session.commit()
+    conversation = _conversation(data["company_a"].id)
+
+    result = VendorOrderService.update_cart(
+        company_id=data["company_a"].id,
+        conversation_id=conversation.id,
+        items=[{"product_query": "leche", "quantity": 5, "replace_quantity": True}],
+    )
+
+    assert result["success"] is False
+    assert result["error"] == "precio_no_configurado"
+    assert result["product"]["product_id"] == available_but_unpriced.id
+    assert result["product"]["stock"] == 24
+    assert result["product"]["price"] == 0
+    assert CART_KEY not in (conversation.metadata_json or {})
+
+
+def test_update_cart_selects_the_only_in_stock_variant_when_price_is_configured(vendor_database):
+    data = vendor_database
+    no_stock = Product(
+        barcode="MILK-1900",
+        name="Leche Entera 1 L",
+        price=1900,
+        cost_price=1200,
+        stock=0,
+        min_stock=1,
+        active=True,
+        company_id=data["company_a"].id,
+        unit_measure="u",
+    )
+    available = Product(
+        barcode="MILK-AVAILABLE",
+        name="Leche UAT Entera 1 lt",
+        price=1200,
+        cost_price=800,
+        stock=24,
+        min_stock=1,
+        active=True,
+        company_id=data["company_a"].id,
+        unit_measure="u",
+    )
+    db.session.add_all([no_stock, available])
+    db.session.commit()
+    conversation = _conversation(data["company_a"].id)
+
+    result = VendorOrderService.update_cart(
+        company_id=data["company_a"].id,
+        conversation_id=conversation.id,
+        items=[{"product_query": "leche", "quantity": 5, "replace_quantity": True}],
+    )
+
+    assert result["success"] is True
+    assert result["items"][0]["product_id"] == available.id
+    assert result["items"][0]["quantity"] == 5
+    assert result["items"][0]["stock"] == 24
+    assert result["total"] == 6000
+
+
+def test_update_cart_does_not_switch_away_from_an_exactly_named_out_of_stock_product(vendor_database):
+    data = vendor_database
+    exact_but_out_of_stock = Product(
+        barcode="MILK-EXACT",
+        name="Leche Entera 1 L",
+        price=1900,
+        cost_price=1200,
+        stock=0,
+        min_stock=1,
+        active=True,
+        company_id=data["company_a"].id,
+        unit_measure="u",
+    )
+    alternative = Product(
+        barcode="MILK-AVAILABLE",
+        name="Leche UAT Entera 1 lt",
+        price=1200,
+        cost_price=800,
+        stock=24,
+        min_stock=1,
+        active=True,
+        company_id=data["company_a"].id,
+        unit_measure="u",
+    )
+    db.session.add_all([exact_but_out_of_stock, alternative])
+    db.session.commit()
+    conversation = _conversation(data["company_a"].id)
+
+    with pytest.raises(ValueError, match="Stock insuficiente para Leche Entera 1 L"):
+        VendorOrderService.update_cart(
+            company_id=data["company_a"].id,
+            conversation_id=conversation.id,
+            items=[{
+                "product_query": "Leche Entera 1 L",
+                "quantity": 5,
+                "replace_quantity": True,
+            }],
+        )
+
+
 def test_update_cart_reports_ambiguous_products(vendor_database):
     data = vendor_database
     db.session.add_all(
