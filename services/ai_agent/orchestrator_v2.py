@@ -248,6 +248,61 @@ class VendorOrderPreviewTool(AgentTool):
     def execute(self, **kwargs):
         product_query = str(kwargs.get("product_query") or "").strip()
         quantity = kwargs.get("quantity")
+
+        # Reuse only the profile saved in this same tenant-scoped conversation.
+        # Never treat a public webchat visitor token as a telephone number.
+        from stockarmobile.models.conversations import Conversation
+        from services.ai_agent.vendor_order_service import _metadata
+        conversation = Conversation.query.filter_by(
+            id=int(self._context["conversation_id"]),
+            company_id=int(self.company_id),
+        ).first()
+        saved_state = _metadata(conversation) if conversation is not None else {}
+        saved_delivery = saved_state.get("delivery") if isinstance(saved_state.get("delivery"), dict) else {}
+
+        customer_name = str(
+            kwargs.get("customer_name") or saved_state.get("customer_name")
+            or saved_delivery.get("recipient_name") or ""
+        ).strip()
+        customer_phone = str(
+            kwargs.get("customer_phone") or saved_state.get("customer_phone")
+            or saved_delivery.get("phone")
+            or (self._context.get("customer_phone") if self._context.get("channel") != "webchat" else "")
+            or ""
+        ).strip()
+
+        requested_delivery_method = str(kwargs.get("delivery_method") or "").strip().lower()
+        saved_delivery_method = str(saved_delivery.get("method") or "").strip().lower()
+        delivery_method = requested_delivery_method or saved_delivery_method
+        if delivery_method in {"envío", "delivery", "shipping"}:
+            delivery_method = "envio"
+        elif delivery_method in {"retirar", "retira", "pickup", "local"}:
+            delivery_method = "retiro"
+
+        same_delivery_method = (
+            not requested_delivery_method
+            or not saved_delivery_method
+            or delivery_method == saved_delivery_method
+        )
+        delivery_address = str(
+            kwargs.get("delivery_address") or (saved_delivery.get("address") if same_delivery_method else "") or ""
+        ).strip()
+        delivery_city = str(
+            kwargs.get("delivery_city") or (saved_delivery.get("city") if same_delivery_method else "") or ""
+        ).strip()
+        delivery_province = str(
+            kwargs.get("delivery_province") or (saved_delivery.get("province") if same_delivery_method else "") or ""
+        ).strip()
+        delivery_postal_code = str(
+            kwargs.get("delivery_postal_code") or (saved_delivery.get("postal_code") if same_delivery_method else "") or ""
+        ).strip()
+        delivery_reference = str(
+            kwargs.get("delivery_reference") or (saved_delivery.get("reference") if same_delivery_method else "") or ""
+        ).strip()
+        delivery_notes = str(
+            kwargs.get("delivery_notes") or (saved_delivery.get("notes") if same_delivery_method else "") or ""
+        ).strip()
+
         if product_query and quantity not in (None, ""):
             # Explicit product + quantity are authoritative. Preserve a pending
             # checkout only for an exact retry of the same cart, buyer and delivery.
@@ -324,15 +379,15 @@ class VendorOrderPreviewTool(AgentTool):
                         if cart_matches_requested_line:
                             try:
                                 requested_delivery = _delivery_payload(
-                                    method=str(kwargs.get("delivery_method") or "retiro"),
-                                    customer_name=str(kwargs.get("customer_name") or ""),
-                                    customer_phone=str(kwargs.get("customer_phone") or self._context.get("customer_phone") or ""),
-                                    address=str(kwargs.get("delivery_address") or ""),
-                                    city=str(kwargs.get("delivery_city") or ""),
-                                    province=str(kwargs.get("delivery_province") or ""),
-                                    postal_code=str(kwargs.get("delivery_postal_code") or ""),
-                                    reference=str(kwargs.get("delivery_reference") or ""),
-                                    notes=str(kwargs.get("delivery_notes") or ""),
+                                    method=delivery_method or "retiro",
+                                    customer_name=customer_name,
+                                    customer_phone=customer_phone,
+                                    address=delivery_address,
+                                    city=delivery_city,
+                                    province=delivery_province,
+                                    postal_code=delivery_postal_code,
+                                    reference=delivery_reference,
+                                    notes=delivery_notes,
                                 )
                             except ValueError as exc:
                                 return {"success": False, "error": str(exc), "retryable": False}
@@ -340,8 +395,8 @@ class VendorOrderPreviewTool(AgentTool):
                                 reuse_pending_checkout = _pending_quote_matches_checkout(
                                     quote=pending_quote,
                                     cart=cart,
-                                    customer_name=str(kwargs.get("customer_name") or ""),
-                                    customer_phone=str(kwargs.get("customer_phone") or self._context.get("customer_phone") or ""),
+                                    customer_name=customer_name,
+                                    customer_phone=customer_phone,
                                     delivery=requested_delivery,
                                 )
 
@@ -357,18 +412,47 @@ class VendorOrderPreviewTool(AgentTool):
                 )
                 if isinstance(added, dict) and added.get("success") is False:
                     return added
+
+        missing_fields = []
+        if not customer_name:
+            missing_fields.append("nombre")
+        if not customer_phone:
+            missing_fields.append("teléfono")
+        if delivery_method not in {"retiro", "envio"}:
+            missing_fields.append("modalidad de entrega (retiro o envío)")
+        elif delivery_method == "envio":
+            if not delivery_address:
+                missing_fields.append("dirección")
+            if not delivery_city:
+                missing_fields.append("localidad")
+            if not delivery_province:
+                missing_fields.append("provincia")
+        if missing_fields:
+            # Keep the chosen products, but do not create a quote/payment from
+            # incomplete identity or delivery data. The model can ask only for
+            # the missing fields and resume the same cart on the next turn.
+            return {
+                "success": True,
+                "status": "needs_customer_details",
+                "missing_fields": missing_fields,
+                "cart": VendorOrderService.get_cart(
+                    company_id=self.company_id,
+                    conversation_id=self._context["conversation_id"],
+                ),
+            }
+
         return VendorOrderService.create_pending_order(
             company_id=self.company_id,
             conversation_id=self._context["conversation_id"],
-            customer_name=str(kwargs.get("customer_name") or ""),
-            customer_phone=str(kwargs.get("customer_phone") or self._context.get("customer_phone") or ""),
-            delivery_method=str(kwargs.get("delivery_method") or "retiro"),
-            delivery_address=str(kwargs.get("delivery_address") or ""),
-            delivery_city=str(kwargs.get("delivery_city") or ""),
-            delivery_province=str(kwargs.get("delivery_province") or ""),
-            delivery_postal_code=str(kwargs.get("delivery_postal_code") or ""),
-            delivery_reference=str(kwargs.get("delivery_reference") or ""),
-            delivery_notes=str(kwargs.get("delivery_notes") or ""),
+            customer_name=customer_name,
+            customer_phone=customer_phone,
+            delivery_method=delivery_method,
+            delivery_address=delivery_address,
+            delivery_city=delivery_city,
+            delivery_province=delivery_province,
+            delivery_postal_code=delivery_postal_code,
+            delivery_reference=delivery_reference,
+            delivery_notes=delivery_notes,
             actor_user_id=self._context.get("actor_user_id"),
             idempotency_key=self._context.get("idempotency_key"),
         )
