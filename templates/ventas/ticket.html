@@ -55,9 +55,10 @@
       <div class="ticket-total-final"><span>Total</span><strong>${{ "%.2f"|format(sale.total_amount) }}</strong></div>
     </div>
 
-    {% if sale.note %}
+    {% set visible_ticket_note = ticket_note if ticket_note is defined else sale.note %}
+    {% if visible_ticket_note %}
     <hr>
-    <div class="ticket-note"><strong>Nota:</strong> {{ sale.note }}</div>
+    <div class="ticket-note"><strong>Nota:</strong> {{ visible_ticket_note }}</div>
     {% endif %}
 
     <div class="ticket-actions no-print">

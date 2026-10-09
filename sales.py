@@ -1438,6 +1438,7 @@ def thermal_ticket(sale_id):
         charge_rows=_ticket_charge_rows(sale),
         ticket_text=_ticket_text(sale, ticket_brand=ticket_brand),
         ticket_brand=ticket_brand,
+        ticket_note=_ticket_note(sale, ticket_brand=ticket_brand),
         printer_settings=printer_settings,
     )
 
@@ -1610,6 +1611,13 @@ def _ticket_charge_rows(sale):
     return ReceiptService.charge_rows(sale)
 
 
+def _ticket_note(sale, ticket_brand=None):
+    return ReceiptService.ticket_note(
+        sale,
+        ticket_brand=(ticket_brand or _ticket_brand_name() or "STOCK ARMOBILE"),
+    )
+
+
 def _public_share_serializer():
     return URLSafeTimedSerializer(current_app.config.get("SECRET_KEY", "stockarmobile-dev-secret"))
 
@@ -1687,4 +1695,11 @@ def public_ticket(token):
         abort(404)
 
     ticket_brand = sale.company.name if getattr(sale, "company", None) and getattr(sale.company, "name", None) else "STOCK ARMOBILE"
-    return render_template("ventas/ticket.html", sale=sale, rows=_ticket_rows(sale), ticket_text=_ticket_text(sale, ticket_brand=ticket_brand), ticket_brand=ticket_brand)
+    return render_template(
+        "ventas/ticket.html",
+        sale=sale,
+        rows=_ticket_rows(sale),
+        ticket_text=_ticket_text(sale, ticket_brand=ticket_brand),
+        ticket_brand=ticket_brand,
+        ticket_note=_ticket_note(sale, ticket_brand=ticket_brand),
+    )
