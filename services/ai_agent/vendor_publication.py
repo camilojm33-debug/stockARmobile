@@ -416,6 +416,17 @@ def _public_order_intent(message: str) -> bool:
 def _starts_new_quote_request(message: str) -> bool:
     """Recognize an explicit request to start a separate quote, not to retrieve an old one."""
     normalized = _normalize_vendor_text(message)
+    retrieval_phrases = (
+        "ver el presupuesto", "ver presupuesto", "mostrar el presupuesto",
+        "mostrar presupuesto", "mostrame el presupuesto", "mostrame presupuesto",
+        "consultar el presupuesto", "consultar presupuesto", "recuperar el presupuesto",
+        "recuperar presupuesto", "reenviar el presupuesto", "reenviar presupuesto",
+        "pasame el link del presupuesto", "pasame el enlace del presupuesto",
+        "presupuesto anterior", "ultimo presupuesto", "ultimo presupuesto que",
+        "estado del presupuesto", "numero de presupuesto", "numero del presupuesto",
+    )
+    if any(phrase in normalized for phrase in retrieval_phrases):
+        return False
     phrases = (
         "otro presupuesto",
         "otra cotizacion",
