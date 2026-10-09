@@ -422,6 +422,20 @@ class VendorOrderPreviewTool(AgentTool):
                 .all()
             )
             recent_user_messages = list(reversed(recent_user_messages))
+            # The customer's explicit requested quantity may predate the latest
+            # 20 turns. Keep a longer tenant/conversation-scoped view for numeric
+            # intent only; stop at a newer quote request that omits its quantity.
+            quantity_user_messages = (
+                ConversationMessage.query.filter_by(
+                    company_id=int(self.company_id),
+                    conversation_id=int(self._context["conversation_id"]),
+                    role="user",
+                )
+                .order_by(ConversationMessage.id.desc())
+                .limit(100)
+                .all()
+            )
+            quantity_user_messages = list(reversed(quantity_user_messages))
             # Identity statements may be older than the short operational history.
             # Fetch them separately so an LLM typo cannot replace the user's own name
             # just because they exchanged many messages before requesting a quote.
@@ -447,6 +461,7 @@ class VendorOrderPreviewTool(AgentTool):
             # to reuse and the normal required-field guard still applies.
             saved_state = {}
             recent_user_messages = []
+            quantity_user_messages = []
             identity_user_messages = []
         saved_delivery = saved_state.get("delivery") if isinstance(saved_state.get("delivery"), dict) else {}
 
@@ -649,9 +664,9 @@ class VendorOrderPreviewTool(AgentTool):
                     None,
                 )
                 explicit_quantity = _public_user_requested_quantity(
-                    recent_user_messages,
+                    quantity_user_messages,
                     product_query,
-                    allow_single_item_update=len(cart_items) == 1,
+                    allow_single_item_update=(matching_cart_item is not None and len(cart_items) == 1),
                 )
                 if explicit_quantity is not None:
                     # The quantity from the visitor's message outranks any
