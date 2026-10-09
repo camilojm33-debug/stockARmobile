@@ -125,7 +125,11 @@ def _explicit_price_action_confirmation(
     batch_text = str(int(batch_id))
     if not current or not previous:
         return False
-    if not re.search(rf"\b{re.escape(batch_text)}\b", previous):
+    batch_pattern = rf"\b{re.escape(batch_text)}\b"
+    if not re.search(batch_pattern, previous):
+        return False
+    # Bind the approval itself to the exact lote, not merely to an unqualified "sí".
+    if not re.search(batch_pattern, current):
         return False
     if not any(marker in previous for marker in ("vista previa", "lote", "batch_id", "propuesta de precios")):
         return False
