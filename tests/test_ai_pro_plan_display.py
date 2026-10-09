@@ -6,7 +6,7 @@ def test_ia_pro_plan_presents_crm_as_included_feature():
 
     assert '<span>CRM comercial</span>' in html
     assert '<td>CRM comercial</td><td>—</td><td>—</td><td>—</td><td>✓</td>' in html
-    assert "CRM comercial, Marketing IA" in html
+    assert "segmentación y campañas de Marketing IA en borrador" in html
 
 
 def test_ia_pro_crm_entitlement_is_still_enforced_by_plan_code():
