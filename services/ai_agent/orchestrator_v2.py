@@ -220,6 +220,26 @@ class CommercialCheckoutTool(AgentTool):
         )
 
 
+def _same_public_customer_name(saved_name: str, requested_name: str) -> bool:
+    """Treat a small spelling variation as the same profile in one visitor session."""
+    from difflib import SequenceMatcher
+    from services.ai_agent.vendor_order_service import _normalize_text
+
+    saved = _normalize_text(saved_name)
+    requested = _normalize_text(requested_name)
+    if not saved or not requested:
+        return False
+    if saved == requested:
+        return True
+    saved_parts = saved.split()
+    requested_parts = requested.split()
+    if len(saved_parts) != len(requested_parts) or not saved_parts or saved_parts[0] != requested_parts[0]:
+        return False
+    # Same given name plus a near-identical full name covers small typos such
+    # as "Nelson Mandele" vs "Nelson Mandela" without conflating unrelated people.
+    return SequenceMatcher(None, saved, requested).ratio() >= 0.90
+
+
 class VendorOrderPreviewTool(AgentTool):
     name = "preparar_pedido"
     description = (
@@ -338,7 +358,7 @@ class VendorOrderPreviewTool(AgentTool):
             self._context.get("channel") == "webchat"
             and saved_customer_name
             and customer_name
-            and _normalize_text(saved_customer_name) != _normalize_text(customer_name)
+            and not _same_public_customer_name(saved_customer_name, customer_name)
         ):
             normalized_new_name = _normalize_text(customer_name)
             identity_indexes = [
