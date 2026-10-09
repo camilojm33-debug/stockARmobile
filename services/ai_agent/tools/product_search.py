@@ -8,6 +8,7 @@ from sqlalchemy import or_
 
 from app import Product
 from services.ai_agent.tools.base import AgentTool
+from services.ai_agent.stock_quantity import normalized_stock_quantity
 
 
 class BuscarProductoTool(AgentTool):
@@ -79,7 +80,7 @@ class BuscarProductoTool(AgentTool):
                     "name": product.name,
                     "barcode": product.barcode,
                     "price": float(product.price) if product.price is not None else 0.0,
-                    "stock": float(product.stock) if product.stock is not None else 0.0,
+                    "stock": normalized_stock_quantity(product.stock),
                 }
             )
 
