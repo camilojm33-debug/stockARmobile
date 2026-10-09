@@ -224,12 +224,14 @@ class VendorOrderPreviewTool(AgentTool):
     name = "preparar_pedido"
     description = (
         "Prepara el pedido, el presupuesto final y el link seguro de pago. "
-        "Si el cliente pidió un producto que todavía no está en el carrito, agregalo primero con agregar_al_carrito y luego prepará el pedido en la misma ronda de herramientas. "
-        "Antes de prepararlo confirmá nombre y teléfono del comprador. "
-        "Preguntá si desea retiro o envío. Si elige envío, solicitá dirección, localidad "
-        "y provincia. El backend aplica automáticamente el costo fijo de envío configurado "
-        "por el comercio y usa ese mismo total para el presupuesto y Mercado Pago. "
-        "Nunca calcules porcentajes ni dejes el envío pendiente."
+        "Si el cliente pidió un producto que todavía no está en el carrito y ya se conocen todos los datos obligatorios, "
+        "podés agregarlo y preparar el pedido en la misma ronda de herramientas. "
+        "Si ya indicó producto y cantidad pero faltan datos, ejecutá la herramienta con los datos disponibles: el backend guarda el "
+        "producto en el carrito y devuelve los campos faltantes sin crear presupuesto ni pago. Preguntá solamente por esos campos faltantes. "
+        "Usá nombre y teléfono informados por el cliente o guardados en esta misma conversación; no inventes datos ni uses el identificador de sesión como teléfono. "
+        "Solo usá la modalidad de entrega que el cliente eligió o la que está guardada en esta misma conversación. "
+        "Si elige envío, solicitá dirección, localidad y provincia. El backend aplica automáticamente el costo fijo de envío configurado "
+        "por el comercio y usa ese mismo total para el presupuesto y Mercado Pago. Nunca calcules porcentajes ni dejes el envío pendiente."
     )
     input_schema = {
         "type": "object",
@@ -246,7 +248,8 @@ class VendorOrderPreviewTool(AgentTool):
             "delivery_reference": {"type": "string"},
             "delivery_notes": {"type": "string"},
         },
-        "required": ["customer_name", "customer_phone", "delivery_method"],
+        # Partial arguments are intentional: the tool can preserve the requested
+        # product in the cart and ask for missing buyer/delivery data safely.
         "additionalProperties": False,
     }
 
