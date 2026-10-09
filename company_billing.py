@@ -837,6 +837,11 @@ def _ai_qr_checkout_preview(company, payment):
         checkout_url = ""
     elif payment_status in {"pending", "in_process", "authorized"} and checkout_url:
         state = "pending"
+    elif payment_status in {"pending", "in_process", "authorized"}:
+        # A persisted local draft without a known URL remains cancelable and
+        # recoverable. Never treat it as a new payment or unlock another mode.
+        state = "pending_recovery"
+        checkout_url = ""
     else:
         state = "failed"
         checkout_url = ""
@@ -1509,7 +1514,7 @@ def subscription_portal():
     pending_ai_qr_checkout = None
     if pending_ai_qr_payment is not None:
         pending_ai_qr_checkout = _ai_qr_checkout_preview(company, pending_ai_qr_payment)
-        if pending_ai_qr_checkout and pending_ai_qr_checkout.get("status") != "pending":
+        if pending_ai_qr_checkout and pending_ai_qr_checkout.get("status") not in {"pending", "pending_recovery"}:
             pending_ai_qr_checkout = None
     if checkout_preview:
         if checkout_preview.get("status") == "paid":
