@@ -1191,6 +1191,9 @@
       }
       document.querySelectorAll('form[method="post"]').forEach(function(form) {
         form.addEventListener('submit', function() {
+          // Los formularios que redirigen a un checkout externo no deben dejar
+          // una capa de carga por encima mientras el navegador navega a Mercado Pago.
+          if (form.matches('[data-mp-external-checkout="true"]')) return;
           const loading = document.getElementById('appLoading');
           if (loading) loading.classList.add('show');
         });
