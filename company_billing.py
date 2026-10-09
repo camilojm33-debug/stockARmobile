@@ -1085,8 +1085,10 @@ def _payment_status_badge(status):
         "in_process": {"label": "En proceso", "class": "text-bg-primary"},
         "processing": {"label": "En proceso", "class": "text-bg-primary"},
         "rejected": {"label": "Rechazado", "class": "text-bg-danger"},
-        "cancelled": {"label": "Rechazado", "class": "text-bg-danger"},
-        "failed": {"label": "Rechazado", "class": "text-bg-danger"},
+        "failed": {"label": "Fallido", "class": "text-bg-danger"},
+        "cancelled": {"label": "Cancelado", "class": "text-bg-secondary"},
+        "canceled": {"label": "Cancelado", "class": "text-bg-secondary"},
+        "expired": {"label": "Vencido", "class": "text-bg-secondary"},
         "refunded": {"label": "Reembolsado", "class": "text-bg-info"},
         "refund_pending": {"label": "Reembolso en proceso", "class": "text-bg-warning"},
     }
