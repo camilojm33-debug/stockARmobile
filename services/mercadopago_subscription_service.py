@@ -135,6 +135,54 @@ class MercadoPagoSubscriptionService:
             db_session.flush()
             return subscription
 
+        if status == "authorized" and metadata.get("pending_plan_change"):
+            # A new monthly preapproval is only switched on after Mercado Pago
+            # confirms authorization. Retire the previous tenant subscription
+            # before transitioning the pending row to active (single-active
+            # company constraint) and prevent the old preapproval charging again.
+            previous_id_raw = metadata.get("previous_subscription_id")
+            previous_subscription = None
+            if str(previous_id_raw or "").isdigit():
+                previous_subscription = Subscription.query.filter_by(
+                    id=int(previous_id_raw),
+                    company_id=subscription.company_id,
+                ).first()
+            if previous_subscription is not None and previous_subscription.id != subscription.id:
+                previous_metadata = SubscriptionService._metadata_dict(previous_subscription)
+                previous_preapproval_id = str(previous_metadata.get("mercadopago_preapproval_id") or "").strip()
+                if previous_preapproval_id and previous_preapproval_id != preapproval_id:
+                    from services.mercadopago_service import MercadoPagoService
+
+                    previous_remote = MercadoPagoService().get_preapproval(previous_preapproval_id)
+                    previous_status = str(previous_remote.get("status") or "").strip().lower()
+                    if previous_status not in {"cancelled", "canceled", "expired"}:
+                        previous_cancelled = MercadoPagoService().cancel_preapproval(previous_preapproval_id)
+                        previous_status = str(previous_cancelled.get("status") or "").strip().lower()
+                    if previous_status not in {"cancelled", "canceled", "expired"}:
+                        raise RuntimeError(
+                            "Mercado Pago autorizó el nuevo plan, pero no confirmó la cancelación del preapproval anterior."
+                        )
+                    SubscriptionService._set_metadata(
+                        previous_subscription,
+                        {
+                            "mercadopago_status": previous_status,
+                            "mercadopago_cancelled_for_plan_change_at": datetime.now(timezone.utc).isoformat(),
+                        },
+                    )
+                change_at = datetime.now(timezone.utc).replace(tzinfo=None)
+                SubscriptionService._close_for_change(
+                    previous_subscription,
+                    now=change_at,
+                    actor_user_id=None,
+                    origin="mercadopago_preapproval_authorized",
+                )
+                metadata.update({
+                    "pending_plan_change": False,
+                    "plan_change_applied_at": change_at.isoformat(),
+                    "replaced_subscription_id": previous_subscription.id,
+                })
+                SubscriptionService._set_metadata(subscription, metadata)
+
         if status == "authorized":
             if subscription.status not in {SubscriptionService.STATE_ACTIVE, SubscriptionService.STATE_SCHEDULED}:
                 SubscriptionService._transition(
