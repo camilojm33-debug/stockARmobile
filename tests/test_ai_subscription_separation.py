@@ -1002,6 +1002,97 @@ def test_standard_webhook_updates_only_standard_subscription(subscription_app, m
     assert AISubscriptionService.get_status(company) == ai_before
 
 
+def test_standard_monthly_plan_change_switches_only_after_new_preapproval_authorized(subscription_app, monkeypatch):
+    company, user, _, old_subscription = _tenant_with_standard_subscription()
+    SubscriptionService._set_metadata(
+        old_subscription,
+        {
+            "mercadopago_preapproval_id": "old-standard-preapproval",
+            "mercadopago_status": "authorized",
+            "payment_method": "mercadopago_subscription",
+            "checkout_method": "automatic",
+        },
+    )
+    new_plan = Plan(
+        code="standard_monthly_switch_test",
+        name="Standard Monthly Switch Test",
+        price=2500,
+        currency="ARS",
+        duration_days=30,
+        active=True,
+    )
+    db.session.add(new_plan)
+    db.session.commit()
+
+    result = SubscriptionService.run_command(
+        db.session,
+        SubscriptionService.ChangePlanCommand(
+            company_id=company.id,
+            plan_id=new_plan.id,
+            actor_user_id=user.id,
+            actor_role=user.role,
+            origin="portal_confirm",
+            idempotency_key="test-monthly-plan-switch",
+        ),
+    )
+    new_subscription = db.session.get(Subscription, result.subscription_id)
+    assert new_subscription is not None
+    pending_metadata = SubscriptionService._metadata_dict(new_subscription)
+    assert pending_metadata["pending_plan_change"] is True
+    assert pending_metadata["previous_subscription_id"] == old_subscription.id
+    SubscriptionService._set_metadata(
+        new_subscription,
+        {
+            "mercadopago_preapproval_id": "new-standard-preapproval",
+            "mercadopago_status": "pending",
+            "payment_method": "mercadopago_subscription",
+            "checkout_method": "automatic",
+        },
+    )
+    db.session.commit()
+
+    calls = []
+
+    def get_preapproval(self, preapproval_id):
+        calls.append(("get", preapproval_id))
+        return {"id": preapproval_id, "status": "authorized"}
+
+    def cancel_preapproval(self, preapproval_id):
+        calls.append(("cancel", preapproval_id))
+        return {"id": preapproval_id, "status": "cancelled"}
+
+    monkeypatch.setattr("services.mercadopago_service.MercadoPagoService.get_preapproval", get_preapproval)
+    monkeypatch.setattr("services.mercadopago_service.MercadoPagoService.cancel_preapproval", cancel_preapproval)
+
+    from services.mercadopago_subscription_service import MercadoPagoSubscriptionService
+
+    synced = MercadoPagoSubscriptionService.sync_preapproval(
+        db_session=db.session,
+        preapproval={
+            "id": "new-standard-preapproval",
+            "status": "authorized",
+            "next_payment_date": "2099-10-09T12:00:00Z",
+        },
+    )
+    db.session.commit()
+    db.session.refresh(old_subscription)
+    db.session.refresh(new_subscription)
+
+    new_metadata = SubscriptionService._metadata_dict(new_subscription)
+    old_metadata = SubscriptionService._metadata_dict(old_subscription)
+    assert synced is new_subscription
+    assert calls == [("get", "old-standard-preapproval"), ("cancel", "old-standard-preapproval")]
+    assert old_subscription.status == SubscriptionService.STATE_CANCELLED
+    assert old_subscription.auto_renew is False
+    assert old_subscription.renewal_enabled is False
+    assert old_metadata["mercadopago_status"] == "cancelled"
+    assert new_subscription.status == SubscriptionService.STATE_ACTIVE
+    assert new_subscription.auto_renew is True
+    assert new_subscription.renewal_enabled is True
+    assert new_metadata["pending_plan_change"] is False
+    assert new_metadata["replaced_subscription_id"] == old_subscription.id
+
+
 def test_standard_qr_checkout_can_be_cancelled_without_cancelling_active_subscription(subscription_app):
     company, user, _, subscription = _tenant_with_standard_subscription()
     SubscriptionService._set_metadata(subscription, {"checkout_method": "qr"})
