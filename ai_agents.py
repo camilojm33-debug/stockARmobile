@@ -208,7 +208,7 @@ def _vendor_dashboard_metrics(company_id: int, month_start: datetime) -> dict:
     return {"orders": int(orders), "ai_sales": int(derived_sales)}
 
 def _context():
-    from app import Client, Company, Product, Quote, Sale, SaleItem
+    from app import Client, Company, Product, Quote, Sale, SaleItem, Payment
     from services.ai_agent.subscription_service import AISubscriptionService
 
     company_id = current_user.company_id
@@ -245,6 +245,31 @@ def _context():
                 default_chat_agent = candidate
                 break
 
+    pending_ai_qr_payment = (
+        Payment.query
+        .filter(
+            Payment.company_id == company_id,
+            Payment.provider == "mercadopago_ai_qr",
+            Payment.status.in_(("pending", "in_process", "authorized")),
+        )
+        .order_by(Payment.id.desc())
+        .first()
+    )
+    pending_ai_qr_checkout = None
+    if pending_ai_qr_payment is not None:
+        qr_ref_parts = {}
+        for segment in str(pending_ai_qr_payment.external_reference or "").split("|"):
+            if ":" in segment:
+                key, value = segment.split(":", 1)
+                qr_ref_parts[key.strip()] = value.strip()
+        qr_plan_code = str(qr_ref_parts.get("plan_code") or "").strip().lower()
+        if qr_ref_parts.get("ai_subscription_qr") == "true" and qr_plan_code:
+            pending_ai_qr_checkout = {
+                "payment_record_id": pending_ai_qr_payment.id,
+                "plan_code": qr_plan_code,
+                "status": str(pending_ai_qr_payment.status or "pending").strip().lower(),
+            }
+
     public_webchat_enabled = bool(preferences.get("ai_agent", {}).get("public_webchat_enabled", False))
     public_vendor_url = url_for("ai_agents.public_vendor_chat", token=_public_vendor_token(company_id)) if agent_access["vendedor"].allowed else None
     if agent_access["vendedor"].allowed:
@@ -255,7 +280,7 @@ def _context():
                 public_vendor_url = publication["url"]
         except Exception:
             current_app.logger.exception("No se pudo resolver la URL estable del Vendedor público company_id=%s", company_id)
-    return {"company": company, "agents": agents, "preferences": preferences, "metrics": {"conversations": conversations, "clients_attended": clients_attended, "quotes": quotes, "sales": int(sales_month.count()), "orders": vendor_metrics["orders"], "ai_sales": vendor_metrics["ai_sales"]}, "analyst": {"sales_change": sales_change, "critical_stock": critical_stock, "low_rotation": low_rotation, "opportunities": None}, "ai_status": ai_status, "ai_plans": AI_PLANS, "agent_labels": AGENT_LABELS, "ai_plan": ai_plan, "ai_usage": ai_usage, "agent_access": agent_access, "invoice_access": invoice_access, "any_chat_agent": any_chat_agent, "default_chat_agent": default_chat_agent, "public_webchat_enabled": public_webchat_enabled, "public_vendor_url": public_vendor_url, "plan_url": url_for("ai_agents.agent", agent="planes"), "ai_checkout_url": url_for("company_billing.create_ai_subscription_checkout"), "config_url": url_for("ai_admin.index"), "chat_url": url_for("dashboard.ai_agent_chat")}
+    return {"company": company, "agents": agents, "preferences": preferences, "metrics": {"conversations": conversations, "clients_attended": clients_attended, "quotes": quotes, "sales": int(sales_month.count()), "orders": vendor_metrics["orders"], "ai_sales": vendor_metrics["ai_sales"]}, "analyst": {"sales_change": sales_change, "critical_stock": critical_stock, "low_rotation": low_rotation, "opportunities": None}, "ai_status": ai_status, "ai_plans": AI_PLANS, "pending_ai_qr_checkout": pending_ai_qr_checkout, "agent_labels": AGENT_LABELS, "ai_plan": ai_plan, "ai_usage": ai_usage, "agent_access": agent_access, "invoice_access": invoice_access, "any_chat_agent": any_chat_agent, "default_chat_agent": default_chat_agent, "public_webchat_enabled": public_webchat_enabled, "public_vendor_url": public_vendor_url, "plan_url": url_for("ai_agents.agent", agent="planes"), "ai_checkout_url": url_for("company_billing.create_ai_subscription_checkout"), "config_url": url_for("ai_admin.index"), "chat_url": url_for("dashboard.ai_agent_chat")}
 
 
 def _campaign_rows(company_id: int):
