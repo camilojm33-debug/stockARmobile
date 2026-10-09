@@ -621,7 +621,11 @@ def test_new_quote_intent_does_not_capture_previous_quote_retrieval():
         _assistant_requests_order_details,
         _starts_new_quote_request,
     )
-    from services.ai_agent.orchestrator_v2 import _same_public_customer_name
+    from types import SimpleNamespace
+    from services.ai_agent.orchestrator_v2 import (
+        _extract_public_customer_name,
+        _same_public_customer_name,
+    )
 
     assert _starts_new_quote_request("Necesito otro presupuesto") is True
     assert _starts_new_quote_request("Quiero cotizar otro producto") is True
@@ -630,6 +634,12 @@ def test_new_quote_intent_does_not_capture_previous_quote_retrieval():
     assert _starts_new_quote_request("Quiero consultar cuánto era el presupuesto") is False
     assert _same_public_customer_name("Nelson Mandele", "Nelson Mandela") is True
     assert _same_public_customer_name("Julia Acosta", "María Rodríguez") is False
+    assert _extract_public_customer_name([
+        SimpleNamespace(content="hola soy nelson mandela"),
+    ]) == "Nelson Mandela"
+    assert _extract_public_customer_name([
+        SimpleNamespace(content="Hola, soy Nelson Mandela y necesito un presupuesto"),
+    ]) == "Nelson Mandela"
     assert _starts_new_quote_request("Mostrame el presupuesto anterior") is False
     assert _starts_new_quote_request("Pasame el link del presupuesto anterior") is False
     assert _starts_new_quote_request("Quiero consultar el estado del presupuesto") is False
