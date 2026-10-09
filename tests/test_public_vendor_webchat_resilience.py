@@ -154,9 +154,15 @@ class SequenceProvider:
     def __init__(self, responses):
         self.responses = list(responses)
         self.calls = 0
+        self.invocations = []
 
     def generate(self, **kwargs):
         self.calls += 1
+        self.invocations.append({
+            "messages": list(kwargs.get("messages") or []),
+            "tools": kwargs.get("tools"),
+            "kwargs": {key: value for key, value in kwargs.items() if key not in {"messages", "tools"}},
+        })
         if not self.responses:
             return {"content": "Respuesta recuperada.", "tool_call": None}
         response = self.responses.pop(0)
@@ -793,10 +799,10 @@ def test_public_chat_can_list_the_full_active_catalog(qa_public_vendor_db, monke
     assert "Machimbre pino" in response.json["content"]
     offered_tools = {
         item["function"]["name"]
-        for item in (provider.calls[0].get("tools") or [])
+        for item in (provider.invocations[0].get("tools") or [])
     }
     assert "ver_catalogo" in offered_tools
-    tool_messages = [m for m in provider.calls[1]["messages"] if m.get("role") == "tool"]
+    tool_messages = [m for m in provider.invocations[1]["messages"] if m.get("role") == "tool"]
     assert len(tool_messages) == 1
     catalog = json.loads(tool_messages[0]["content"])
     assert catalog["success"] is True
