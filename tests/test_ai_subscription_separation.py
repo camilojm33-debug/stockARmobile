@@ -242,7 +242,14 @@ def test_standard_recurring_checkout_reuses_in_process_preapproval(monkeypatch):
 
     assert result["status"] == "in_process"
     assert result["init_point"].startswith("https://www.mercadopago.com.ar/")
-    assert calls == [{"checkout_method": "automatic", "checkout_cancelled": False, "payment_method": "mercadopago_subscription"}]
+    assert calls == [{
+        "mercadopago_status": "in_process",
+        "mercadopago_external_reference": None,
+        "mercadopago_creation_pending": False,
+        "checkout_method": "automatic",
+        "checkout_cancelled": False,
+        "payment_method": "mercadopago_subscription",
+    }]
 
 
 def test_subscription_portal_uses_separate_ai_payment_method_forms(subscription_app):
