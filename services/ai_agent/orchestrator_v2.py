@@ -125,18 +125,18 @@ def _explicit_price_action_confirmation(
     batch_text = str(int(batch_id))
     if not current or not previous:
         return False
-    if not re.search(rf"\\b{re.escape(batch_text)}\\b", previous):
+    if not re.search(rf"\b{re.escape(batch_text)}\b", previous):
         return False
     if not any(marker in previous for marker in ("vista previa", "lote", "batch_id", "propuesta de precios")):
         return False
-    if re.search(r"\\bno\\s+(?:confirmo|autorizo|apliques|aplicar|revertir|deshacer)\\b", current):
+    if re.search(r"\bno\s+(?:confirmo|autorizo|apliques|aplicar|revertir|deshacer)\b", current):
         return False
 
     new_change_intent = re.search(
-        r"\\b(?:subi|subir|aumenta|aumentar|incrementa|incrementar|baja|bajar|"
+        r"\b(?:subi|subir|aumenta|aumentar|incrementa|incrementar|baja|bajar|"
         r"disminui|disminuir|reduce|reducir|modifica|modificar|cambia|cambiar|"
         r"ajusta|ajustar|actualiza|actualizar|establece|establecer|crea|crear|"
-        r"prepara|preparar|genera|generar|propone|proponer)\\b",
+        r"prepara|preparar|genera|generar|propone|proponer)\b",
         current,
     )
     if new_change_intent:
@@ -145,14 +145,19 @@ def _explicit_price_action_confirmation(
     if action == "apply":
         return bool(re.match(
             r"^(?:si|dale|ok|okay|listo|confirmo|confirmar|confirmado|autorizo|"
-            r"autorizado|aprobado|aprobada|aplica|aplicalo|hacelo|procede|proceder)\\b",
+            r"autorizado|aprobado|aprobada|aplica|aplicalo|hacelo|procede|proceder)\b",
             current,
         ))
     if action == "rollback":
-        return bool(re.search(
-            r"\\b(?:reverti|revertir|deshacer|deshacelo|restaura|restaurar|rollback)\\b",
+        has_rollback_order = bool(re.search(
+            r"\b(?:reverti|revertir|deshacer|deshacelo|restaura|restaurar|rollback)\b",
             current,
-        )) and bool(re.match(r"^(?:si|dale|ok|listo|confirmo|autorizo|reverti|revertir|deshacer|restaura|restaurar|rollback)\\b", current))
+        ))
+        starts_as_explicit_order = bool(re.match(
+            r"^(?:si|dale|ok|listo|confirmo|autorizo|reverti|revertir|deshacer|restaura|restaurar|rollback)\b",
+            current,
+        ))
+        return has_rollback_order and starts_as_explicit_order
     return False
 
 
