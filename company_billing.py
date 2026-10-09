@@ -1753,7 +1753,7 @@ def create_ai_subscription_checkout():
                 status="pending",
                 payment_method="mercadopago_ai_qr",
                 provider="mercadopago_ai_qr",
-                reference=external_reference,
+                reference=f"ai-qr:{uuid.uuid4().hex[:12]}",
                 payload_json=None,
             )
             db.session.add(payment)
