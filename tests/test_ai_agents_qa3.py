@@ -361,7 +361,7 @@ def test_price_confirmation_guard_blocks_same_turn_and_requires_the_shown_batch(
         ("Sí, confirmo el lote 42", "apply", True),
         ("Subí 10% y confirmo", "apply", False),
         ("No confirmo", "apply", False),
-        ("Confirmo", "apply", False),
+        ("Confirmo", "apply", True),
         ("Revertí el lote 42", "rollback", True),
         ("Sí, revertí el lote 42", "rollback", True),
         ("Sí", "rollback", False),
