@@ -136,7 +136,7 @@ def test_superseded_plan_payment_refund_uses_idempotent_full_refund_endpoint(mon
     }
 
 
-def test_standard_preapproval_without_init_point_retries_same_attempt(monkeypatch):
+def test_standard_preapproval_without_init_point_reuses_existing_pending_contract(monkeypatch):
     calls = []
     company = SimpleNamespace(id=1)
     plan = SimpleNamespace(id=2, name="Standard", price=1000, currency="ARS")
@@ -151,8 +151,7 @@ def test_standard_preapproval_without_init_point_retries_same_attempt(monkeypatc
         return {"id": preapproval_id, "status": "pending"}
 
     def create_preapproval(self, **kwargs):
-        calls.append(("create", kwargs))
-        return {"id": "new-pre", "status": "pending", "init_point": "https://mp.test/new"}
+        raise AssertionError("A pending preapproval must be reused; missing init_point must not create a duplicate.")
 
     monkeypatch.setattr("services.mercadopago_service.MercadoPagoService.get_preapproval", get_preapproval)
     monkeypatch.setattr("services.mercadopago_service.MercadoPagoService.create_preapproval", create_preapproval)
@@ -167,12 +166,9 @@ def test_standard_preapproval_without_init_point_retries_same_attempt(monkeypatc
         back_url="https://www.stockarmobile.com/admin/portal?checkout=success",
     )
 
-    assert response["id"] == "new-pre"
-    assert response["init_point"] == "https://mp.test/new"
-    assert [kind for kind, _ in calls] == ["get", "commit", "create", "flush"]
-    created_args = next(value for kind, value in calls if kind == "create")
-    assert created_args["external_reference"]
-    assert "subscription_id:3" in created_args["external_reference"]
+    assert response["id"] == "old-pre"
+    assert response["init_point"] == "https://www.mercadopago.com.ar/subscriptions/checkout?preapproval_id=old-pre"
+    assert calls == [("get", "old-pre")]
 
 
 def test_authorized_standard_preapproval_without_init_point_is_reused(monkeypatch):
