@@ -1655,9 +1655,8 @@ def create_checkout():
 @bp.route("/subscription/ai-agent/checkout", methods=["POST"])
 @company_admin_required
 def create_ai_subscription_checkout():
-    """Crea o reutiliza una suscripcion recurrente de Mercado Pago para el plan IA elegido.
-    Reutiliza MercadoPagoService.create_preapproval()/get_preapproval() y AISubscriptionService;
-    no crea un segundo catalogo de precios ni un segundo generador de QR (BillingService._qr_data_uri)."""
+    """Start a manual one-time QR checkout or a separate monthly Mercado Pago preapproval for an AI plan.
+    The payment mode is decided server-side from the submitted button and prices always come from AI_PLANS."""
     from app import Company, db
     from services.ai_agent.subscription_service import AISubscriptionError, AISubscriptionService
     from services.ai_agent.usage_service import AI_PLAN_BY_CODE
@@ -2105,7 +2104,14 @@ def create_mercadopago_subscription():
     pending_standard_subscription = _pending_paid_plan_change(company.id)
     checkout_subscription = pending_standard_subscription or SubscriptionService.active_subscription_for_company(company.id)
     locked_checkout_method = _standard_checkout_method(company, checkout_subscription)
-    if pending_standard_subscription is not None and locked_checkout_method and locked_checkout_method != "automatic":
+    if (
+        locked_checkout_method
+        and locked_checkout_method != "automatic"
+        and (
+            pending_standard_subscription is not None
+            or (checkout_subscription is not None and checkout_subscription.plan_id == plan.id)
+        )
+    ):
         message = "Ya elegiste pagar este cambio de plan con QR. Completá o cancelá ese checkout antes de activar la suscripción mensual."
         if _wants_json_response():
             return jsonify({"success": False, "error": message}), 409
