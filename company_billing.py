@@ -2037,7 +2037,27 @@ def create_ai_subscription_checkout():
                 )
 
         if not preapproval_id:
-            external_reference = f"ai_subscription:true|company_id:{company.id}|plan_code:{plan_code}|nonce:{uuid.uuid4().hex}"
+            # Persist a per-plan attempt identifier before talking to Mercado Pago.
+            # On network timeouts, retries reuse the same external_reference and
+            # API idempotency key instead of creating a second recurring contract.
+            attempt_reference = str(ai_status.get("mercadopago_create_attempt_reference") or "").strip()
+            attempt_plan_code = str(ai_status.get("mercadopago_create_attempt_plan_code") or "").strip().lower()
+            if attempt_reference and attempt_plan_code == plan_code:
+                external_reference = attempt_reference
+            else:
+                external_reference = (
+                    f"ai_subscription:true|company_id:{company.id}|plan_code:{plan_code}|nonce:{uuid.uuid4().hex}"
+                )
+                AISubscriptionService._apply(
+                    company,
+                    admin_user_id=None,
+                    action="ai_subscription_preapproval_attempt_started",
+                    new_fields={
+                        "mercadopago_create_attempt_reference": external_reference,
+                        "mercadopago_create_attempt_plan_code": plan_code,
+                    },
+                    reason="Intento recurrente independiente del plan estándar, persistido antes de invocar Mercado Pago.",
+                )
             config = load_billing_config()
             from urllib.parse import parse_qsl, urlencode, urlsplit, urlunsplit
 
