@@ -118,6 +118,28 @@ def test_vendor_runtime_instructions_keep_system_guardrails_and_merchant_context
     assert "costo fijo configurado" in prompt
 
 
+def test_vendor_catalog_tools_follow_recommendation_configuration():
+    enabled = config_service.vendor_allowed_tool_names({
+        "can_recommend": True,
+        "can_offer_alternatives": True,
+    })
+    no_recommendations = config_service.vendor_allowed_tool_names({
+        "can_recommend": False,
+        "can_offer_alternatives": True,
+    })
+    no_alternatives = config_service.vendor_allowed_tool_names({
+        "can_recommend": True,
+        "can_offer_alternatives": False,
+    })
+
+    assert "ver_catalogo" in enabled
+    assert "ver_promociones" in enabled
+    assert "ver_catalogo" not in no_recommendations
+    assert "ver_promociones" in no_recommendations
+    assert "ver_catalogo" in no_alternatives
+    assert "ver_promociones" not in no_alternatives
+
+
 def test_vendor_tool_policy_blocks_order_tools_when_orders_are_disabled():
     names = config_service.vendor_allowed_tool_names(
         {"can_take_orders": False, "can_prepare_quotes": True}
