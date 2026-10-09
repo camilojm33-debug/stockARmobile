@@ -69,10 +69,28 @@ class MercadoPagoSubscriptionService:
                     },
                 )
                 return current
-            if current_status in {"pending", "in_process"} and current_init_point:
+            if current_status in {"pending", "in_process"}:
+                # A valid pending preapproval can occasionally be returned without
+                # init_point on GET. Rebuild the documented checkout URL from this
+                # exact preapproval ID; never POST a second recurring contract just
+                # because Mercado Pago omitted the redirect field.
+                if not current_init_point:
+                    from urllib.parse import urlencode
+                    current_init_point = (
+                        "https://www.mercadopago.com.ar/subscriptions/checkout?"
+                        + urlencode({"preapproval_id": existing_id})
+                    )
+                    current["init_point"] = current_init_point
                 SubscriptionService._set_metadata(
                     subscription,
-                    {"mercadopago_status": current_status, "checkout_method": "automatic", "checkout_cancelled": False, "payment_method": "mercadopago_subscription"},
+                    {
+                        "mercadopago_status": current_status,
+                        "mercadopago_external_reference": str(current.get("external_reference") or existing_reference or "").strip() or None,
+                        "mercadopago_creation_pending": False,
+                        "checkout_method": "automatic",
+                        "checkout_cancelled": False,
+                        "payment_method": "mercadopago_subscription",
+                    },
                 )
                 return current
             if current_status in terminal_statuses:
@@ -89,8 +107,11 @@ class MercadoPagoSubscriptionService:
                 )
                 metadata = cls._metadata(subscription)
                 db_session.flush()
-            # If a pending resource lacks init_point, retry with the same persisted
-            # external reference/idempotency key instead of creating a duplicate.
+            else:
+                raise RuntimeError(
+                    f"La suscripción de Mercado Pago {existing_id} está en estado no terminal '{current_status or 'desconocido'}'. "
+                    "No se creará otra autorización mensual para evitar cobros duplicados."
+                )
 
         external_reference = existing_reference or cls._external_reference(company_id=company.id, subscription_id=subscription.id)
         # Persist the attempt reference BEFORE calling Mercado Pago. If the request
