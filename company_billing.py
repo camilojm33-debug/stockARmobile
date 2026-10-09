@@ -2298,10 +2298,40 @@ def create_mercadopago_subscription():
         subscription = SubscriptionService.active_subscription_for_company(company.id)
         plan = getattr(subscription, "plan", None) if subscription else None
     if plan is None:
-        if _wants_json_response():
-            return jsonify({"success": False, "error": "Seleccioná un plan antes de activar la suscripción automática."}), 400
-        flash("Seleccioná un plan antes de activar la suscripción automática.", "warning")
-        return redirect(url_for("company_billing.subscription_portal"))
+        message = "Seleccioná un plan pago antes de activar la suscripción automática."
+        current_app.logger.warning(
+            "Checkout recurrente rechazado por falta de plan: company_id=%s submitted_plan_id=%s",
+            company.id,
+            plan_id,
+        )
+        return _checkout_error_response(
+            message,
+            url_for("company_billing.subscription_portal", _anchor="planes-disponibles"),
+            status_code=400,
+        )
+
+    # The payment-method shortcut at the bottom of the portal used to fall back
+    # to the active Trial plan (id=1, ARS 0) when no plan_id was submitted. That
+    # reached the route but could never create a valid preapproval, so users
+    # were silently bounced back to the portal. Only explicit paid commercial
+    # plans are eligible for a recurring authorization.
+    if str(getattr(plan, "code", "") or "").strip().lower() not in {"entrepreneur", "business", "premium"} or float(plan.price or 0) <= 0:
+        message = (
+            "El período de prueba no admite cobros automáticos. Elegí Emprendedor, Negocio o Premium "
+            "en la tabla de planes y tocá “Suscripción mensual automática”."
+        )
+        current_app.logger.warning(
+            "Checkout recurrente bloqueado para plan no cobrable: company_id=%s plan_id=%s plan_code=%s price=%s",
+            company.id,
+            getattr(plan, "id", None),
+            getattr(plan, "code", None),
+            getattr(plan, "price", None),
+        )
+        return _checkout_error_response(
+            message,
+            url_for("company_billing.subscription_portal", _anchor="planes-disponibles"),
+            status_code=400,
+        )
 
     pending_standard_subscription = _pending_paid_plan_change(company.id)
     checkout_subscription = pending_standard_subscription or SubscriptionService.active_subscription_for_company(company.id)
