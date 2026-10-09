@@ -671,27 +671,26 @@ class VendorOrderService:
                                 }
                         product = candidates[0]
 
-                # When a generic query resolves to the only variant that can
-                # fulfill it, do not create a commercial quote if that variant's
-                # price is missing/zero. Return the real stock and the data issue
-                # so the assistant can explain the blocker accurately.
-                if resolved_by_stock and _money(product.price) <= Decimal("0.00"):
-                    return {
-                        "success": False,
-                        "error": "precio_no_configurado",
-                        "message": (
-                            f"Encontré '{product.name}' con {normalized_stock_quantity(product.stock):g} "
-                            "unidades disponibles, pero su precio está configurado en $0. "
-                            "No corresponde armar un presupuesto hasta corregir ese precio."
-                        ),
-                        "product": {
-                            "product_id": product.id,
-                            "name": product.name,
-                            "price": float(product.price or 0),
-                            "stock": normalized_stock_quantity(product.stock),
-                            "unit_measure": product.unit_measure or "u",
-                        },
-                    }
+            # A zero/missing sale price is a data-quality blocker regardless
+            # of how the item was resolved (generic search, exact name, ID, or an
+            # existing cart). Never silently quote a commercial item at $0.
+            if _money(product.price) <= Decimal("0.00"):
+                return {
+                    "success": False,
+                    "error": "precio_no_configurado",
+                    "message": (
+                        f"Encontré '{product.name}' con {normalized_stock_quantity(product.stock):g} "
+                        "unidades disponibles, pero su precio está configurado en $0. "
+                        "No corresponde armar un presupuesto hasta que el comercio configure su precio."
+                    ),
+                    "product": {
+                        "product_id": product.id,
+                        "name": product.name,
+                        "price": float(product.price or 0),
+                        "stock": normalized_stock_quantity(product.stock),
+                        "unit_measure": product.unit_measure or "u",
+                    },
+                }
 
             available = Decimal(str(product.stock or 0))
             existing = Decimal(str(cart.get(str(product.id), 0) or 0))
@@ -1027,6 +1026,11 @@ class VendorOrderService:
             if product is None:
                 raise ValueError("Uno de los productos del carrito ya no está disponible.")
             quantity = Decimal(str(item["quantity"]))
+            if _money(product.price) <= Decimal("0.00"):
+                raise ValueError(
+                    f"El producto '{product.name}' tiene precio $0/no configurado. "
+                    "Corregí el precio antes de emitir un presupuesto o enlace de pago."
+                )
             reserved = reservations.get(product.id, Decimal("0"))
             available_after_reservations = Decimal(str(product.stock or 0)) - reserved
             if quantity <= 0 or available_after_reservations < quantity:
