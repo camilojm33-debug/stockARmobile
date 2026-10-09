@@ -495,7 +495,11 @@ def _assistant_requests_order_details(content: str) -> bool:
     direct_requests = (
         "decime que", "indicame que", "pasame el producto", "decime el producto",
         "indicame el producto", "necesito saber que", "para preparar el presupuesto necesito",
-        "para cotizar necesito", "confirmame el producto",
+        "para cotizar necesito", "confirmame el producto", "para prepararte el presupuesto",
+        "para preparar el presupuesto", "para dejar listo el presupuesto",
+        "por favor brindame", "por favor indicame", "confirmame tu telefono",
+        "confirmame el telefono", "necesito tu telefono", "necesito el telefono",
+        "si preferis retiro", "si preferis envio", "indicame si preferis",
     )
     return any(phrase in normalized for phrase in direct_requests)
 
