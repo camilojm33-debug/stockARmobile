@@ -48,6 +48,47 @@ def test_preapproval_explicitly_uses_pending_flow(monkeypatch):
     assert captured["payload"]["auto_recurring"]["currency_id"] == "ARS"
 
 
+def test_ai_qr_preference_is_one_time_checkout_not_preapproval(monkeypatch):
+    service = MercadoPagoService()
+    captured = {}
+
+    def fake_request(method, path, *, payload=None, access_token=None, idempotency_key=None):
+        captured.update(
+            method=method,
+            path=path,
+            payload=payload,
+            idempotency_key=idempotency_key,
+        )
+        return {"id": "ai-qr-pref-1", "init_point": "https://www.mercadopago.com.ar/checkout/v1/redirect?pref_id=ai-qr-pref-1"}
+
+    monkeypatch.setattr(service, "_request", fake_request)
+    response = service.create_ai_subscription_qr_preference(
+        title="StockArMobile IA - Inicio",
+        amount=4999,
+        external_reference="ai_subscription_qr:true|flow:ai_subscription_qr|company_id:1|plan_code:inicio|payment_record_id:9|user_id:2|nonce:test",
+        company_id=1,
+        plan_code="inicio",
+        payment_record_id=9,
+        user_id=2,
+    )
+
+    assert response["id"] == "ai-qr-pref-1"
+    assert captured["method"] == "POST"
+    assert captured["path"] == "/checkout/preferences"
+    assert captured["payload"]["items"][0]["unit_price"] == 4999.0
+    assert captured["payload"]["items"][0]["currency_id"] == "ARS"
+    assert captured["payload"]["metadata"] == {
+        "flow": "ai_subscription_qr",
+        "company_id": 1,
+        "plan_code": "inicio",
+        "payment_record_id": 9,
+        "user_id": 2,
+        "recurring": False,
+    }
+    assert "auto_recurring" not in captured["payload"]
+    assert "no renueva automáticamente" in captured["payload"]["items"][0]["description"].lower()
+
+
 def test_cancel_preapproval_uses_mercado_pago_cancelled_status(monkeypatch):
     service = MercadoPagoService()
     captured = {}
