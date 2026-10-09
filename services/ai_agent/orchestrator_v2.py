@@ -307,6 +307,21 @@ class VendorOrderPreviewTool(AgentTool):
             recent_user_messages = []
         saved_delivery = saved_state.get("delivery") if isinstance(saved_state.get("delivery"), dict) else {}
 
+        def user_stated_phone_values(rows):
+            import re
+
+            values = []
+            # Only scan user-authored messages from this visitor-bound conversation.
+            # Keep phone candidates separate from quantities, postal codes and quote IDs.
+            for row in rows:
+                raw = str(row.content or "")
+                for match in re.finditer(r"(?<!\\d)\\+?\\d[\\d\\s().-]{6,}\\d(?!\\d)", raw):
+                    digits = _normalize_phone(match.group(0))
+                    if 8 <= len(digits) <= 15 and digits not in values:
+                        values.append(digits)
+            return values
+
+        stated_phone_values = user_stated_phone_values(recent_user_messages)
         saved_customer_name = str(
             saved_state.get("customer_name") or saved_delivery.get("recipient_name") or ""
         ).strip()
@@ -335,13 +350,19 @@ class VendorOrderPreviewTool(AgentTool):
             if requested_customer_phone:
                 phone_digits = _normalize_phone(requested_customer_phone)
                 phone_was_stated = bool(phone_digits) and any(
-                    phone_digits in _normalize_phone(row.content)
-                    for row in recent_user_messages
+                    candidate == phone_digits
+                    or (candidate.endswith(phone_digits) and len(candidate) - len(phone_digits) <= 3)
+                    or (phone_digits.endswith(candidate) and len(phone_digits) - len(candidate) <= 3)
+                    for candidate in stated_phone_values
                 )
                 if phone_was_stated:
                     customer_phone = requested_customer_phone
                 elif not saved_customer_phone:
                     customer_phone = ""
+            elif not saved_customer_phone and stated_phone_values:
+                # If the user explicitly provided a phone but the model omitted it
+                # from tool arguments, recover it from this conversation.
+                customer_phone = stated_phone_values[-1]
         else:
             customer_name = requested_customer_name or saved_customer_name
             customer_phone = (
