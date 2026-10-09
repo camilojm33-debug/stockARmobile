@@ -1264,9 +1264,10 @@ def _build_user_and_cash_rows(company_id, date_from=None, date_to=None, search_t
 def subscription_portal():
     from flask import session
 
-    from app import Company, Invoice, Payment, PaymentHistory, ReferralAttribution
+    from app import Company, Invoice, Payment, PaymentHistory, ReferralAttribution, Subscription
     from services.ai_agent.usage_service import AI_PLANS
     from services.ai_agent.subscription_service import AISubscriptionService
+    from services.mercadopago_service import MercadoPagoService
 
     company_id = getattr(current_user, "company_id", None)
     company = Company.query.filter_by(id=company_id).first_or_404()
