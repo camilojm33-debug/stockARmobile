@@ -148,6 +148,8 @@ def test_standard_plan_selection_redirects_directly_to_mercadopago(subscription_
 
 def test_subscription_portal_uses_separate_ai_payment_method_forms(subscription_app):
     _, user, _, _ = _tenant_with_standard_subscription()
+    db.session.add(Plan(code="entrepreneur", name="Emprendedor", price=12000, currency="ARS", duration_days=30, active=True))
+    db.session.commit()
     client = subscription_app.test_client()
     _login(client, user)
 
@@ -159,6 +161,9 @@ def test_subscription_portal_uses_separate_ai_payment_method_forms(subscription_
     assert 'type="hidden" name="payment_method" value="automatic"' in html
     assert 'action="/admin/subscription/mercadopago/create"' in html
     assert '>Suscripción automática</button>' in html
+    assert '>Elegir y pagar con QR</button>' in html
+    assert 'action="/admin/checkout"' in html
+    assert 'name="plan_id"' in html
     assert 'type="hidden" name="payment_method" value="qr"' in html
     assert 'type="submit" name="payment_method"' not in html
     assert 'data-mp-external-checkout="true"' in html
