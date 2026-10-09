@@ -367,11 +367,16 @@ def _public_conversation(company, conversation_id=None, *, create=False):
 def _cart_public_state(conversation) -> dict:
     cart = VendorOrderService.get_cart(company_id=conversation.company_id, conversation_id=conversation.id)
     state = _conversation_metadata(conversation)
-    payment_url = str(state.get(PENDING_PAYMENT_KEY) or "").strip()
-    pending_quote_id = state.get(PENDING_QUOTE_KEY)
-    last_order = state.get(LAST_ORDER_KEY) if isinstance(state.get(LAST_ORDER_KEY), dict) else None
+    new_quote_context = bool(state.get(NEW_QUOTE_CONTEXT_KEY))
+    payment_url = "" if new_quote_context else str(state.get(PENDING_PAYMENT_KEY) or "").strip()
+    pending_quote_id = None if new_quote_context else state.get(PENDING_QUOTE_KEY)
+    last_order = (
+        None
+        if new_quote_context
+        else (state.get(LAST_ORDER_KEY) if isinstance(state.get(LAST_ORDER_KEY), dict) else None)
+    )
     quote_url = None
-    quote_id_for_url = pending_quote_id or (last_order or {}).get("quote_id")
+    quote_id_for_url = None if new_quote_context else (pending_quote_id or (last_order or {}).get("quote_id"))
     if quote_id_for_url:
         try:
             quote_url = _public_quote_url(int(quote_id_for_url))
@@ -390,7 +395,7 @@ def _cart_public_state(conversation) -> dict:
         "payment_url": payment_url or None,
         "quote_url": quote_url,
         "pending_quote_id": pending_quote_id,
-        "delivery": state.get("delivery") or None,
+        "delivery": None if new_quote_context else (state.get("delivery") or None),
         "shipping_config": shipping_config,
         "order": last_order,
     }
@@ -459,9 +464,9 @@ def _assistant_requests_order_details(content: str) -> bool:
     raw = str(content or "")
     normalized = _normalize_vendor_text(raw)
     detail_terms = (
-        "producto", "productos", "cantidad", "cuantos", "cuantas", "cotizar",
-        "presupuest", "articulo", "articulos", "nombre", "telefono", "direccion",
-        "envio", "retiro", "localidad", "provincia", "pedido",
+        "producto", "productos", "cantidad", "cuantos", "cuantas", "articulo",
+        "articulos", "nombre", "telefono", "direccion", "envio", "retiro",
+        "localidad", "provincia", "unidades", "metros",
     )
     asks_question = "?" in raw or "¿" in raw
     if asks_question and any(term in normalized for term in detail_terms):
