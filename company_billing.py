@@ -2317,10 +2317,10 @@ def create_mercadopago_subscription():
     # reached the route but could never create a valid preapproval, so users
     # were silently bounced back to the portal. Only explicit paid commercial
     # plans are eligible for a recurring authorization.
-    if str(getattr(plan, "code", "") or "").strip().lower() not in {"entrepreneur", "business", "premium"} or float(plan.price or 0) <= 0:
+    if float(plan.price or 0) <= 0:
         message = (
-            "El período de prueba no admite cobros automáticos. Elegí Emprendedor, Negocio o Premium "
-            "en la tabla de planes y tocá “Suscripción mensual automática”."
+            "El período de prueba no admite cobros automáticos. Elegí un plan pago en la tabla de planes "
+            "y tocá “Suscripción mensual automática”."
         )
         current_app.logger.warning(
             "Checkout recurrente bloqueado para plan no cobrable: company_id=%s plan_id=%s plan_code=%s price=%s",
