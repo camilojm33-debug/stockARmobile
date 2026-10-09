@@ -66,6 +66,28 @@ def test_ticket_rows_expose_promotion_discount_and_gross_amount():
 
 
 
+def test_ai_order_ticket_note_uses_business_name_without_changing_internal_marker():
+    sale = make_sale()
+    sale.note = "Pedido generado por el Vendedor 24 hs de StockARmobile."
+    sale.company = SimpleNamespace(name="Maderas Panambiseñas")
+
+    visible_note = ReceiptService.ticket_note(sale, ticket_brand="Maderas Panambiseñas")
+    ticket = ReceiptService.ticket_text(sale, "Maderas Panambiseñas")
+
+    assert visible_note == "Pedido generado por el Vendedor IA de Maderas Panambiseñas."
+    assert "Obs.: Pedido generado por el Vendedor IA de Maderas Panambiseñas." in ticket
+    assert "Pedido generado por el Vendedor 24 hs de StockARmobile." not in ticket
+    assert sale.note == "Pedido generado por el Vendedor 24 hs de StockARmobile."
+
+
+def test_ticket_note_preserves_customer_notes_unchanged():
+    sale = make_sale()
+    sale.note = "Entregar por la puerta lateral."
+    sale.company = SimpleNamespace(name="Maderas Panambiseñas")
+
+    assert ReceiptService.ticket_note(sale) == "Entregar por la puerta lateral."
+
+
 def test_ticket_renders_persisted_quote_charge_breakdown():
     sale = make_sale()
     sale.charges_json = """[{"id":"shipping","name":"Envío a domicilio","type":"fixed","value":"50.00","amount":"50.00"},{"id":"iva","name":"IVA","type":"percentage","value":"21","amount":"42.00"}]"""
