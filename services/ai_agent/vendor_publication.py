@@ -427,7 +427,6 @@ def _starts_new_quote_request(message: str) -> bool:
         "consultar el presupuesto", "consultar presupuesto", "recuperar el presupuesto",
         "recuperar presupuesto", "reenviar el presupuesto", "reenviar presupuesto",
         "pasame el link del presupuesto", "pasame el enlace del presupuesto",
-        "presupuesto anterior", "ultimo presupuesto", "ultimo presupuesto que",
         "estado del presupuesto", "numero de presupuesto", "numero del presupuesto",
     )
     if any(phrase in normalized for phrase in retrieval_phrases):
