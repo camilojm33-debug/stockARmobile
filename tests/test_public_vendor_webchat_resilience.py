@@ -530,7 +530,7 @@ def test_general_chat_turn_does_not_reexpose_previous_checkout_links(qa_public_v
         client,
         qa_public_vendor_db,
         "operation-create-link-gate",
-        "Necesito 2 metros de machimbre, a nombre de Julia Acosta, retiro en local.",
+        "Necesito 2 metros de machimbre, a nombre de Julia Acosta, teléfono 3624001122, retiro en local.",
     )
     first_tool_messages = [
         item for item in provider.invocations[1]["messages"]
