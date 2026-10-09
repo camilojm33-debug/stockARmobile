@@ -67,9 +67,11 @@ def test_resumen_ventas_excludes_cancelled_and_annulled_sales(app):
 def test_clientes_inactivos_prioritizes_historical_revenue_before_name(app):
     with app.app_context():
         company = Company(name="Empresa Prioridad", active=True)
+        db.session.add(company)
+        db.session.flush()
         low_value = Client(name="AAA Cliente", active=True, company_id=company.id)
         high_value = Client(name="ZZZ Cliente", active=True, company_id=company.id)
-        db.session.add_all([company, low_value, high_value])
+        db.session.add_all([low_value, high_value])
         db.session.flush()
 
         now = datetime.utcnow()
