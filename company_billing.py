@@ -1792,7 +1792,10 @@ def create_ai_subscription_checkout():
     from services.mercadopago_service import MercadoPagoService
 
     company_id = getattr(current_user, "company_id", None)
-    company = Company.query.filter_by(id=company_id).first_or_404()
+    # Serialize checkout creation for this tenant. PostgreSQL holds this row
+    # lock until the attempt reference is committed, preventing double-clicks
+    # or concurrent requests from creating two independent preapprovals.
+    company = Company.query.filter_by(id=company_id).with_for_update().first_or_404()
     plan_code = (request.form.get("plan_code") or "").strip().lower()
     plan = AI_PLAN_BY_CODE.get(plan_code)
     if plan is None:
@@ -2286,7 +2289,9 @@ def create_mercadopago_subscription():
     from services.mercadopago_subscription_service import MercadoPagoSubscriptionService
 
     company_id = getattr(current_user, "company_id", None)
-    company = Company.query.filter_by(id=company_id).first_or_404()
+    # Serialize standard checkout attempts for this tenant as well; the AI plan
+    # uses the same company row only as a lock, never as shared subscription state.
+    company = Company.query.filter_by(id=company_id).with_for_update().first_or_404()
     plan_id = request.form.get("plan_id", type=int)
     plan = PlanService.get_plan(plan_id=plan_id) if plan_id else None
     if plan is None:
