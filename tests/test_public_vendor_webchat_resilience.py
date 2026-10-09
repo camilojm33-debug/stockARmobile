@@ -784,7 +784,7 @@ def test_public_vendor_stock_outputs_normalize_float_noise(qa_public_vendor_db):
 
 
 def test_public_webchat_keeps_customer_quantity_when_model_misreads_stock(qa_public_vendor_db, monkeypatch):
-    from app import db
+    from app import Product, db
     from services.ai_agent.orchestrator_v2 import VendorOrderPreviewTool, VendorOrderService
     from services.ai_agent.vendor_order_service import CART_KEY
     from stockarmobile.models.conversations import Conversation, ConversationMessage
@@ -793,89 +793,97 @@ def test_public_webchat_keeps_customer_quantity_when_model_misreads_stock(qa_pub
     observed = {}
 
     with setup["app"].app_context():
-        product = setup["product"]
-        product.stock = 17.80000000000001
-        conversation = Conversation(
-            company_id=setup["company"].id,
-            channel="webchat",
-            external_conversation_id="qa-stock-quantity-authority",
-            status="open",
-            metadata_json={
-                CART_KEY: {str(product.id): 4},
-                "customer_name": "Nelson Mandela",
-                "customer_phone": "344344223",
-                "delivery": {
-                    "method": "envio",
-                    "recipient_name": "Nelson Mandela",
-                    "phone": "344344223",
-                    "address": "calle siempreviva 435",
-                    "city": "Resistencia",
-                    "province": "Chaco",
+        try:
+            product = Product.query.filter_by(
+                id=setup["product"].id,
+                company_id=setup["company"].id,
+            ).first()
+            product.stock = 17.80000000000001
+                conversation = Conversation(
+                company_id=setup["company"].id,
+                channel="webchat",
+                external_conversation_id="qa-stock-quantity-authority",
+                status="open",
+                metadata_json={
+                    CART_KEY: {str(product.id): 4},
+                    "customer_name": "Nelson Mandela",
+                    "customer_phone": "344344223",
+                    "delivery": {
+                        "method": "envio",
+                        "recipient_name": "Nelson Mandela",
+                        "phone": "344344223",
+                        "address": "calle siempreviva 435",
+                        "city": "Resistencia",
+                        "province": "Chaco",
+                    },
                 },
-            },
-        )
-        db.session.add(conversation)
-        db.session.flush()
-
-        messages = [
-            "hola soy nelson mandela",
-            "cotizame 4 metros de machimbre con envio",
-            "cel 344344223 a calle siempreviva 435 resistencia chaco",
-            "Actualmente no contamos con stock suficiente; tenemos disponible 1,80 metros.",
-            "si esta bien",
-        ]
-        for content in messages:
-            role = "assistant" if content.startswith("Actualmente") else "user"
-            db.session.add(ConversationMessage(
-                conversation_id=conversation.id,
-                company_id=setup["company"].id,
-                sender_type="assistant" if role == "assistant" else "customer",
-                role=role,
-                content=content,
-            ))
-        db.session.flush()
-
-        def fake_create_pending_order(**kwargs):
-            cart = VendorOrderService.get_cart(
-                company_id=setup["company"].id,
-                conversation_id=conversation.id,
             )
-            observed["quantity"] = cart["items"][0]["quantity"]
-            observed["stock"] = cart["items"][0]["stock"]
-            observed.update(kwargs)
-            return {
-                "success": True,
-                "quote_number": "P-TEST",
-                "total": cart["total"],
-            }
+            db.session.add(conversation)
+            db.session.flush()
 
-        monkeypatch.setattr(
-            VendorOrderService,
-            "create_pending_order",
-            staticmethod(fake_create_pending_order),
-        )
+            messages = [
+                "hola soy nelson mandela",
+                "cotizame 4 metros de machimbre con envio",
+                "cel 344344223 a calle siempreviva 435 resistencia chaco",
+                "Actualmente no contamos con stock suficiente; tenemos disponible 1,80 metros.",
+                "si esta bien",
+            ]
+            for content in messages:
+                role = "assistant" if content.startswith("Actualmente") else "user"
+                db.session.add(ConversationMessage(
+                    conversation_id=conversation.id,
+                    company_id=setup["company"].id,
+                    sender_type="assistant" if role == "assistant" else "customer",
+                    role=role,
+                    content=content,
+                ))
+            db.session.flush()
 
-        tool = VendorOrderPreviewTool(
-            company_id=setup["company"].id,
-            conversation_id=conversation.id,
-            channel="webchat",
-        )
-        result = tool.execute(
-            product_query="machimbre",
-            quantity=1.8,
-            customer_name="Nelson Mandele",
-            customer_phone="344344223",
-            delivery_method="envio",
-            delivery_address="calle siempreviva 435",
-            delivery_city="Resistencia",
-            delivery_province="Chaco",
-        )
+            def fake_create_pending_order(**kwargs):
+                cart = VendorOrderService.get_cart(
+                    company_id=setup["company"].id,
+                    conversation_id=conversation.id,
+                )
+                observed["quantity"] = cart["items"][0]["quantity"]
+                observed["stock"] = cart["items"][0]["stock"]
+                observed.update(kwargs)
+                return {
+                    "success": True,
+                    "quote_number": "P-TEST",
+                    "total": cart["total"],
+                }
 
-        assert result["success"] is True
-        assert observed["quantity"] == 4
-        assert observed["stock"] == 17.8
-        assert observed["customer_name"] == "Nelson Mandela"
-        db.session.rollback()
+            monkeypatch.setattr(
+                VendorOrderService,
+                "create_pending_order",
+                staticmethod(fake_create_pending_order),
+            )
+
+            tool = VendorOrderPreviewTool(
+                company_id=setup["company"].id,
+                conversation_id=conversation.id,
+                channel="webchat",
+            )
+            result = tool.execute(
+                product_query="machimbre",
+                quantity=1.8,
+                customer_name="Nelson Mandele",
+                customer_phone="344344223",
+                delivery_method="envio",
+                delivery_address="calle siempreviva 435",
+                delivery_city="Resistencia",
+                delivery_province="Chaco",
+            )
+
+            assert result["success"] is True
+            assert observed["quantity"] == 4
+            assert observed["stock"] == 17.8
+            assert observed["customer_name"] == "Nelson Mandela"
+            db.session.rollback()
+
+
+        finally:
+            db.session.rollback()
 
 
 def test_public_chat_can_start_second_quote_after_clarification(qa_public_vendor_db, monkeypatch):
