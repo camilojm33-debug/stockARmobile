@@ -157,6 +157,8 @@ def test_subscription_portal_uses_separate_ai_payment_method_forms(subscription_
     assert response.status_code == 200
     assert 'action="/admin/subscription/ai-agent/checkout"' in html
     assert 'type="hidden" name="payment_method" value="automatic"' in html
+    assert 'action="/admin/subscription/mercadopago/create"' in html
+    assert '>Suscripción automática</button>' in html
     assert 'type="hidden" name="payment_method" value="qr"' in html
     assert 'type="submit" name="payment_method"' not in html
     assert 'data-mp-external-checkout="true"' in html
