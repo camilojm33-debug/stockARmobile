@@ -1489,7 +1489,7 @@ class VendorOrderService:
                     "price": float(price),
                     "discount": float(discount),
                     "final_price": float(final_price),
-                    "stock": float(product.stock or 0),
+                    "stock": normalized_stock_quantity(product.stock),
                     "unit_measure": product.unit_measure or "u",
                 }
             )
