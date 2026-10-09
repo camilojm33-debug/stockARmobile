@@ -459,9 +459,20 @@ def _begin_new_quote_context(conversation) -> None:
 
 
 def _assistant_requests_order_details(content: str) -> bool:
-    """Allow a genuine clarification to continue without claiming checkout succeeded."""
+    """Allow clarification turns, but never pass through an unverified completion claim."""
     raw = str(content or "")
     normalized = _normalize_vendor_text(raw)
+    completion_claims = (
+        "presupuesto generado", "presupuesto creado", "presupuesto preparado",
+        "presupuesto fue generado", "presupuesto fue creado", "presupuesto esta listo",
+        "ya prepare tu presupuesto", "ya prepare el presupuesto", "ya te prepare",
+        "prepare tu presupuesto", "prepare el presupuesto", "genere tu presupuesto",
+        "te genere un presupuesto", "creamos el presupuesto", "cree el presupuesto",
+        "pedido confirmado", "pedido creado", "pedido preparado", "total a pagar",
+        "pagar con mercado pago", "enlace de pago", "link de pago",
+    )
+    if any(claim in normalized for claim in completion_claims):
+        return False
     detail_terms = (
         "producto", "productos", "cantidad", "cuantos", "cuantas", "articulo",
         "articulos", "nombre", "telefono", "direccion", "envio", "retiro",
