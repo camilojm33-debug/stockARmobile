@@ -532,6 +532,15 @@ def test_general_chat_turn_does_not_reexpose_previous_checkout_links(qa_public_v
         "operation-create-link-gate",
         "Necesito 2 metros de machimbre, a nombre de Julia Acosta, retiro en local.",
     )
+    first_tool_messages = [
+        item for item in provider.invocations[1]["messages"]
+        if item.get("role") == "tool"
+    ]
+    assert len(first_tool_messages) == 1
+    first_tool_result = json.loads(first_tool_messages[0]["content"])
+    assert first_tool_result.get("success") is True, first_tool_result
+    assert first_tool_result.get("status") != "needs_customer_details", first_tool_result
+
     second = _post_message(
         client,
         qa_public_vendor_db,
