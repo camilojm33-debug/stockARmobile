@@ -320,16 +320,16 @@ def _public_user_requested_quantity(messages, product_query: str, *, allow_singl
         return None
     identifying_token = max(query_tokens, key=len)
     quantity_with_unit = re.compile(
-        r"(?<![a-z0-9])(\\d+(?:[.,]\\d+)?)\\s*"
-        r"(?:metros?|mts?\\.?|m(?=\\s|$)|unidades?|unidad|unid\\.?|uds?\\.?|"
-        r"kilos?|kilogramos?|kg|gramos?|grs?\\.?|litros?|lts?\\.?|l(?=\\s|$)|"
-        r"rollos?|bolsas?|cajas?|paquetes?|packs?)\\b",
+        r"(?<![a-z0-9])(\d+(?:[.,]\d+)?)\s*"
+        r"(?:metros?|mts?\.?|m(?=\s|$)|unidades?|unidad|unid\.?|uds?\.?|"
+        r"kilos?|kilogramos?|kg|gramos?|grs?\.?|litros?|lts?\.?|l(?=\s|$)|"
+        r"rollos?|bolsas?|cajas?|paquetes?|packs?)\b",
         re.IGNORECASE,
     )
     quantity_action = re.compile(
-        r"\\b(?:cambiame|cambiar|cambia|modificame|modificar|modifica|dejame|deja|"
-        r"bajame|baja|subime|subi|me llevo|me quedo con|en vez de|solamente)\\b"
-        r".{0,35}?\\b(\\d+(?:[.,]\\d+)?)\\b",
+        r"\b(?:cambiame|cambiar|cambia|modificame|modificar|modifica|dejame|deja|"
+        r"bajame|baja|subime|subi|me llevo|me quedo con|en vez de|solamente)\b"
+        r".{0,35}?\b(\d+(?:[.,]\d+)?)\b",
         re.IGNORECASE,
     )
     for row in reversed(list(messages or [])):
