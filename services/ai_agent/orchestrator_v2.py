@@ -319,22 +319,31 @@ class VendorOrderPreviewTool(AgentTool):
             )
 
         # If a different name was explicitly provided in this conversation, don't
-        # silently combine it with the previous visitor's phone/address.
+        # silently combine it with the previous visitor's phone/address or delivery choice.
         profile_reusable = True
+        identity_change_index = None
         if (
             self._context.get("channel") == "webchat"
             and saved_customer_name
             and customer_name
             and _normalize_text(saved_customer_name) != _normalize_text(customer_name)
-            and any(_normalize_text(customer_name) in _normalize_text(row.content) for row in recent_user_messages)
         ):
-            profile_reusable = False
-            if not requested_customer_phone or not any(
-                _normalize_phone(requested_customer_phone) in _normalize_phone(row.content)
-                for row in recent_user_messages
-            ):
-                customer_phone = ""
-            saved_delivery = {}
+            normalized_new_name = _normalize_text(customer_name)
+            identity_indexes = [
+                index for index, row in enumerate(recent_user_messages)
+                if normalized_new_name in _normalize_text(row.content)
+            ]
+            if identity_indexes:
+                profile_reusable = False
+                identity_change_index = identity_indexes[0]
+                phone_digits = _normalize_phone(requested_customer_phone)
+                phone_was_stated = bool(phone_digits) and any(
+                    phone_digits in _normalize_phone(row.content)
+                    for row in recent_user_messages[identity_change_index:]
+                )
+                if not phone_was_stated:
+                    customer_phone = ""
+                saved_delivery = {}
 
         requested_delivery_method = str(kwargs.get("delivery_method") or "").strip().lower()
         saved_delivery_method = str(saved_delivery.get("method") or "").strip().lower()
@@ -344,7 +353,12 @@ class VendorOrderPreviewTool(AgentTool):
             requested_delivery_method = "retiro"
 
         def explicit_delivery_from_user_messages():
-            for row in reversed(recent_user_messages):
+            relevant_messages = (
+                recent_user_messages[identity_change_index:]
+                if identity_change_index is not None
+                else recent_user_messages
+            )
+            for row in reversed(relevant_messages):
                 text = _normalize_text(row.content)
                 if any(term in text for term in (
                     "prefiero envio", "con envio", "envio a domicilio", "a domicilio",
