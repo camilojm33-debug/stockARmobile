@@ -89,6 +89,7 @@ CART_KEY = "vendor_cart"
 PENDING_QUOTE_KEY = "pending_quote_id"
 PENDING_PAYMENT_KEY = "pending_payment_url"
 LAST_ORDER_KEY = "vendor_last_order"
+NEW_QUOTE_CONTEXT_KEY = "vendor_new_quote_context"
 MAX_CART_LINES = 30
 
 
@@ -828,6 +829,12 @@ class VendorOrderService:
         )
 
         state = _metadata(conversation)
+        # An explicit request for another quote starts an independent checkout.
+        # Keep prior Quote/Payment rows intact, but do not reuse their pending pointer.
+        force_new_quote = bool(state.get(NEW_QUOTE_CONTEXT_KEY))
+        if force_new_quote:
+            state.pop(NEW_QUOTE_CONTEXT_KEY, None)
+            _set_metadata(conversation, state)
         operation = None
         if idempotency_key:
             operation = PublicVendorOperation.query.filter_by(
@@ -836,7 +843,9 @@ class VendorOrderService:
                 idempotency_key=idempotency_key,
             ).with_for_update().first()
         operation_quote_id = (operation.quote_id if operation is not None else None)
-        pending_quote_id = operation_quote_id or state.get(PENDING_QUOTE_KEY)
+        pending_quote_id = operation_quote_id or (
+            None if force_new_quote else state.get(PENDING_QUOTE_KEY)
+        )
         if pending_quote_id:
             try:
                 existing = Quote.query.filter_by(id=int(pending_quote_id), company_id=company_id).first()
