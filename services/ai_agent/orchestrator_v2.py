@@ -1132,6 +1132,10 @@ class AgentRuntime:
             )
             allowed_tool_names = vendor_allowed_tool_names(vendor_options)
             if is_public_webchat:
+                # A public visitor is not authenticated as a CRM customer. Don't
+                # expose the tenant's contact search tool through the public chat;
+                # reuse only same-session checkout data or ask the visitor to confirm it.
+                allowed_tool_names = set(allowed_tool_names) - {"buscar_cliente"}
                 prompt += (
                     "\n\nMODO WEBCHAT PÚBLICO — ORDEN DIRECTA:"
                     "\n- Priorizá resolver una solicitud de compra en una sola ronda de herramientas."
