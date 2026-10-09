@@ -154,9 +154,15 @@ class SequenceProvider:
     def __init__(self, responses):
         self.responses = list(responses)
         self.calls = 0
+        self.invocations = []
 
     def generate(self, **kwargs):
         self.calls += 1
+        self.invocations.append({
+            "messages": list(kwargs.get("messages") or []),
+            "tools": kwargs.get("tools"),
+            "kwargs": {key: value for key, value in kwargs.items() if key not in {"messages", "tools"}},
+        })
         if not self.responses:
             return {"content": "Respuesta recuperada.", "tool_call": None}
         response = self.responses.pop(0)
@@ -524,8 +530,17 @@ def test_general_chat_turn_does_not_reexpose_previous_checkout_links(qa_public_v
         client,
         qa_public_vendor_db,
         "operation-create-link-gate",
-        "Necesito 2 metros de machimbre, a nombre de Julia Acosta, retiro en local.",
+        "Necesito 2 metros de machimbre, a nombre de Julia Acosta, teléfono 3624001122, retiro en local.",
     )
+    first_tool_messages = [
+        item for item in provider.invocations[1]["messages"]
+        if item.get("role") == "tool"
+    ]
+    assert len(first_tool_messages) == 1
+    first_tool_result = json.loads(first_tool_messages[0]["content"])
+    assert first_tool_result.get("success") is True, first_tool_result
+    assert first_tool_result.get("status") != "needs_customer_details", first_tool_result
+
     second = _post_message(
         client,
         qa_public_vendor_db,
@@ -606,10 +621,25 @@ def test_new_quote_intent_does_not_capture_previous_quote_retrieval():
         _assistant_requests_order_details,
         _starts_new_quote_request,
     )
+    from types import SimpleNamespace
+    from services.ai_agent.orchestrator_v2 import (
+        _extract_public_customer_name,
+        _same_public_customer_name,
+    )
 
     assert _starts_new_quote_request("Necesito otro presupuesto") is True
     assert _starts_new_quote_request("Quiero cotizar otro producto") is True
     assert _starts_new_quote_request("Quiero otro presupuesto parecido al anterior") is True
+    assert _starts_new_quote_request("Haceme un presupuesto con 3 metros de machimbre") is True
+    assert _starts_new_quote_request("Quiero consultar cuánto era el presupuesto") is False
+    assert _same_public_customer_name("Nelson Mandele", "Nelson Mandela") is True
+    assert _same_public_customer_name("Julia Acosta", "María Rodríguez") is False
+    assert _extract_public_customer_name([
+        SimpleNamespace(content="hola soy nelson mandela"),
+    ]) == "Nelson Mandela"
+    assert _extract_public_customer_name([
+        SimpleNamespace(content="Hola, soy Nelson Mandela y necesito un presupuesto"),
+    ]) == "Nelson Mandela"
     assert _starts_new_quote_request("Mostrame el presupuesto anterior") is False
     assert _starts_new_quote_request("Pasame el link del presupuesto anterior") is False
     assert _starts_new_quote_request("Quiero consultar el estado del presupuesto") is False
@@ -620,7 +650,7 @@ def test_new_quote_intent_does_not_capture_previous_quote_retrieval():
 
 
 def test_public_chat_can_start_second_quote_after_clarification(qa_public_vendor_db, monkeypatch):
-    from app import Payment, Quote
+    from app import Payment, Quote, QuoteDelivery
     from stockarmobile.models.conversations import Conversation
 
     provider = SequenceProvider([
@@ -651,9 +681,6 @@ def test_public_chat_can_start_second_quote_after_clarification(qa_public_vendor
                 "arguments": {
                     "product_query": "machimbre",
                     "quantity": 3,
-                    "customer_name": "Julia Acosta",
-                    "customer_phone": "3624001122",
-                    "delivery_method": "retiro",
                 },
             },
         },
@@ -717,7 +744,7 @@ def test_public_chat_can_start_second_quote_after_clarification(qa_public_vendor
         client,
         conversation_setup,
         "operation-details-second-quote",
-        "Para el mismo cliente, necesito 3 metros de machimbre, Julia Acosta, teléfono 3624001122, retiro en local.",
+        "3 metros de machimbre",
         conversation_id=first.json["conversation_id"],
     )
 
@@ -743,6 +770,11 @@ def test_public_chat_can_start_second_quote_after_clarification(qa_public_vendor
     assert float(quotes[0].items[0].quantity) == 2
     assert float(quotes[1].items[0].quantity) == 3
     assert quotes[0].items[0].description == quotes[1].items[0].description
+    first_delivery = QuoteDelivery.query.filter_by(quote_id=quotes[0].id).one()
+    second_delivery = QuoteDelivery.query.filter_by(quote_id=quotes[1].id).one()
+    assert second_delivery.recipient_name == first_delivery.recipient_name == "Julia Acosta"
+    assert second_delivery.phone == first_delivery.phone == "3624001122"
+    assert second_delivery.method == first_delivery.method == "retiro"
 
     payments = (
         Payment.query.filter_by(
@@ -759,6 +791,108 @@ def test_public_chat_can_start_second_quote_after_clarification(qa_public_vendor
     ]
     assert all(payment.status == "pending" for payment in payments)
     assert "vendor_new_quote_context" not in conversation.metadata_json
+
+
+def test_public_chat_can_list_the_full_active_catalog(qa_public_vendor_db, monkeypatch):
+    import json
+
+    provider = SequenceProvider([
+        {
+            "content": "",
+            "tool_call": {
+                "id": "catalog-query-1",
+                "name": "ver_catalogo",
+                "arguments": {"query": "", "limit": 20},
+            },
+        },
+        {"content": "El catálogo activo tiene Machimbre pino y clavos galvanizados; consultá precios y stock en la ficha de cada uno.", "tool_call": None},
+    ])
+    _install_provider(monkeypatch, provider)
+    from app import Product, db
+    extra_product = Product(
+        barcode="CLV-002",
+        name="Clavos galvanizados",
+        price=3500,
+        cost_price=2000,
+        stock=15,
+        min_stock=1,
+        active=True,
+        company_id=qa_public_vendor_db["company"].id,
+        unit_measure="kg",
+    )
+    db.session.add(extra_product)
+    db.session.flush()
+    client = _public_client(qa_public_vendor_db)
+
+    response = _post_message(
+        client,
+        qa_public_vendor_db,
+        "operation-open-catalog",
+        "¿Y qué otra cosa tenés?",
+    )
+
+    assert response.status_code == 200
+    assert "Machimbre pino" in response.json["content"]
+    offered_tools = {
+        item["function"]["name"]
+        for item in (provider.invocations[0].get("tools") or [])
+    }
+    assert "ver_catalogo" in offered_tools
+    tool_messages = [m for m in provider.invocations[1]["messages"] if m.get("role") == "tool"]
+    assert len(tool_messages) == 1
+    catalog = json.loads(tool_messages[0]["content"])
+    assert catalog["success"] is True
+    assert catalog["count"] == 2
+    products = {item["name"]: item for item in catalog["products"]}
+    assert set(products) == {"Machimbre pino", "Clavos galvanizados"}
+    assert products["Machimbre pino"]["price"] == 6600.0
+    assert products["Clavos galvanizados"]["price"] == 3500.0
+    assert products["Clavos galvanizados"]["stock"] == 15.0
+    assert "no se obtuvieron resultados" not in response.json["content"].lower()
+
+
+def test_public_quote_with_missing_contact_asks_clarification_without_failing(qa_public_vendor_db, monkeypatch):
+    from app import Payment, Quote
+
+    provider = SequenceProvider([
+        {
+            "content": "",
+            "tool_call": {
+                "id": "quote-missing-details",
+                "name": "preparar_pedido",
+                "arguments": {"product_query": "machimbre", "quantity": 3},
+            },
+        },
+        {
+            "content": "¡Dale! Ya tengo los 3 metros de machimbre en el carrito. ¿Me confirmás tu nombre, teléfono y si preferís retiro o envío?",
+            "tool_call": None,
+        },
+    ])
+    _install_provider(monkeypatch, provider)
+    client = _public_client(qa_public_vendor_db)
+    response = _post_message(
+        client,
+        qa_public_vendor_db,
+        "operation-quote-missing-contact",
+        "Haceme un presupuesto con 3 metros de machimbre",
+    )
+
+    assert response.status_code == 200
+    assert "No pude generar un presupuesto nuevo" not in response.json["content"]
+    assert "teléfono" in response.json["content"].lower()
+    assert "retiro o envío" in response.json["content"].lower()
+    assert response.json["payment_url"] is None
+    assert response.json["quote_url"] is None
+    assert len(response.json["cart"]["items"]) == 1
+    assert response.json["cart"]["items"][0]["quantity"] == 3
+    assert Quote.query.filter_by(
+        company_id=qa_public_vendor_db["company"].id,
+        observations="Pedido generado por el Vendedor 24 hs de StockARmobile.",
+    ).count() == 0
+    assert Payment.query.filter_by(
+        company_id=qa_public_vendor_db["company"].id,
+        provider="mercadopago_ai_order",
+    ).count() == 0
 
 
 def test_checkout_timeout_reuses_quote_and_same_mp_idempotency_reference(qa_public_vendor_setup, monkeypatch):

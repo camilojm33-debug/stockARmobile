@@ -428,6 +428,9 @@ def _starts_new_quote_request(message: str) -> bool:
         "recuperar presupuesto", "reenviar el presupuesto", "reenviar presupuesto",
         "pasame el link del presupuesto", "pasame el enlace del presupuesto",
         "estado del presupuesto", "numero de presupuesto", "numero del presupuesto",
+        "cuanto era el presupuesto", "cuanto salio el presupuesto", "cuanto costo el presupuesto",
+        "el presupuesto que me hiciste", "el presupuesto anterior que me pasaste",
+        "reenviar el ultimo presupuesto", "mandame de nuevo el presupuesto",
     )
     if any(phrase in normalized for phrase in retrieval_phrases):
         return False
@@ -439,6 +442,14 @@ def _starts_new_quote_request(message: str) -> bool:
         "presupuesto nuevo",
         "presupuesto distinto",
         "presupuesto diferente",
+        "hacer un presupuesto",
+        "hacer presupuesto",
+        "haceme un presupuesto",
+        "preparame un presupuesto",
+        "preparar un presupuesto",
+        "quiero un presupuesto",
+        "necesito un presupuesto",
+        "presupuesto con",
         "cotizar otro producto",
         "cotizar otra cosa",
         "cotizar otros productos",
@@ -484,7 +495,11 @@ def _assistant_requests_order_details(content: str) -> bool:
     direct_requests = (
         "decime que", "indicame que", "pasame el producto", "decime el producto",
         "indicame el producto", "necesito saber que", "para preparar el presupuesto necesito",
-        "para cotizar necesito", "confirmame el producto",
+        "para cotizar necesito", "confirmame el producto", "para prepararte el presupuesto",
+        "para preparar el presupuesto", "para dejar listo el presupuesto",
+        "por favor brindame", "por favor indicame", "confirmame tu telefono",
+        "confirmame el telefono", "necesito tu telefono", "necesito el telefono",
+        "si preferis retiro", "si preferis envio", "indicame si preferis",
     )
     return any(phrase in normalized for phrase in direct_requests)
 

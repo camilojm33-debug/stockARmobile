@@ -55,7 +55,16 @@ VENDOR_SYSTEM_PROMPT = (
     "separada de presupuestos y enlaces anteriores. Si todavía no indicó producto o cantidad, hacé una pregunta breve y concreta "
     "para obtener esos datos; no respondas que no podés generar el presupuesto ni le pidas reenviar toda la solicitud. "
     "No mezcles automáticamente artículos de un pedido anterior con uno nuevo. Solo afirmá que el presupuesto o pedido fue creado "
-    "después de que la herramienta preparar_pedido confirme un resultado exitoso. Nunca reutilices enlaces, importes ni estados anteriores."
+    "después de que la herramienta preparar_pedido confirme un resultado exitoso. Nunca reutilices enlaces, importes ni estados anteriores. "
+    "CATÁLOGO: si preguntan qué productos ofrecés, qué otra cosa hay, qué opciones tienen o piden ver el catálogo completo, usá ver_catalogo "
+    "sin filtro (query vacío). No uses buscar_producto como si fuera un listado completo y no afirmes que solo existe un producto cuando no "
+    "consultaste el catálogo. Mostrá únicamente productos devueltos por la herramienta, con precio, unidad y stock reales. Si un producto tiene "
+    "stock cero, aclaralo y no lo presentes como disponible para entrega inmediata. Si el catálogo devuelve cero productos, decilo claramente sin inventar "
+    "alternativas. No muestres mensajes técnicos como 'la búsqueda enviada no obtuvo resultados'. "
+    "DATOS DEL CLIENTE: usá el nombre que la persona ya dio en la conversación. Si hay perfil guardado para esta misma conversación web, reutilizá "
+    "esos datos en un nuevo presupuesto salvo que la persona indique cambios. Si no hay teléfono guardado en este chat, pedí solo el teléfono que falta "
+    "y la modalidad de entrega; no vuelvas a pedir el nombre cuando ya fue informado. Nunca busques ni reveles datos de otra conversación solamente "
+    "porque alguien mencione un nombre."
 )
 BUSINESS_SYSTEM_PROMPT = "Sos el Asistente empresarial de StockARmobile. Usá herramientas para consultar datos reales y nunca inventes cifras. Si te preguntan qué podés hacer, informá estas capacidades: 1) Buscar productos por nombre, marca o código; 2) consultar el stock actual de un producto; 3) contar productos; 4) buscar clientes por nombre, email, teléfono o WhatsApp; 5) contar clientes activos; 6) resumir ventas por período; 7) listar productos más vendidos; 8) listar productos sin ventas recientes; 9) listar productos con stock crítico; 10) recibir facturas de proveedor para procesarlas desde el panel, validarlas y mostrar un preview antes de una confirmación humana. No afirmes que una factura fue aplicada, que un producto fue creado o que el stock cambió sin una confirmación explícita y un resultado backend exitoso."
 ANALYST_SYSTEM_PROMPT = "Sos el Analista IA de StockARmobile. Usá herramientas reales. Separá DATO, CÁLCULO y RECOMENDACIÓN. No inventes predicciones ni afirmes causalidad sin evidencia."
@@ -211,16 +220,70 @@ class CommercialCheckoutTool(AgentTool):
         )
 
 
+def _extract_public_customer_name(messages) -> str:
+    """Read an explicit self-identification from this visitor's own chat history."""
+    import re
+    from services.ai_agent.vendor_order_service import _normalize_text
+
+    pattern = re.compile(r"\b(?:soy|me llamo|mi nombre es)\s+([^\n,.;!?]+)", re.IGNORECASE)
+    stopwords = {
+        "y", "quiero", "necesito", "busco", "para", "presupuesto", "cotizar",
+        "hacer", "comprar", "tengo", "ahora", "hoy", "por", "favor", "que",
+        "con", "sobre", "en", "a", "un", "una", "me", "te",
+    }
+    non_name_starts = {"dueno", "dueña", "encargado", "encargada", "gerente", "cliente", "vendedor"}
+    for row in reversed(list(messages or [])):
+        raw = str(getattr(row, "content", "") or "")
+        match = pattern.search(raw)
+        if not match:
+            continue
+        tokens = re.findall(r"[A-Za-zÁÉÍÓÚÜÑáéíóúüñ'-]+", match.group(1))
+        name_tokens = []
+        for token in tokens:
+            normalized = _normalize_text(token)
+            if normalized in stopwords:
+                break
+            name_tokens.append(token)
+            if len(name_tokens) >= 4:
+                break
+        if not name_tokens or _normalize_text(name_tokens[0]) in non_name_starts:
+            continue
+        return " ".join(token.capitalize() for token in name_tokens)
+    return ""
+
+
+def _same_public_customer_name(saved_name: str, requested_name: str) -> bool:
+    """Treat a small spelling variation as the same profile in one visitor session."""
+    from difflib import SequenceMatcher
+    from services.ai_agent.vendor_order_service import _normalize_text
+
+    saved = _normalize_text(saved_name)
+    requested = _normalize_text(requested_name)
+    if not saved or not requested:
+        return False
+    if saved == requested:
+        return True
+    saved_parts = saved.split()
+    requested_parts = requested.split()
+    if len(saved_parts) != len(requested_parts) or not saved_parts or saved_parts[0] != requested_parts[0]:
+        return False
+    # Same given name plus a near-identical full name covers small typos such
+    # as "Nelson Mandele" vs "Nelson Mandela" without conflating unrelated people.
+    return SequenceMatcher(None, saved, requested).ratio() >= 0.90
+
+
 class VendorOrderPreviewTool(AgentTool):
     name = "preparar_pedido"
     description = (
         "Prepara el pedido, el presupuesto final y el link seguro de pago. "
-        "Si el cliente pidió un producto que todavía no está en el carrito, agregalo primero con agregar_al_carrito y luego prepará el pedido en la misma ronda de herramientas. "
-        "Antes de prepararlo confirmá nombre y teléfono del comprador. "
-        "Preguntá si desea retiro o envío. Si elige envío, solicitá dirección, localidad "
-        "y provincia. El backend aplica automáticamente el costo fijo de envío configurado "
-        "por el comercio y usa ese mismo total para el presupuesto y Mercado Pago. "
-        "Nunca calcules porcentajes ni dejes el envío pendiente."
+        "Si el cliente pidió un producto que todavía no está en el carrito y ya se conocen todos los datos obligatorios, "
+        "podés agregarlo y preparar el pedido en la misma ronda de herramientas. "
+        "Si ya indicó producto y cantidad pero faltan datos, ejecutá la herramienta con los datos disponibles: el backend guarda el "
+        "producto en el carrito y devuelve los campos faltantes sin crear presupuesto ni pago. Preguntá solamente por esos campos faltantes. "
+        "Usá nombre y teléfono informados por el cliente o guardados en esta misma conversación; no inventes datos ni uses el identificador de sesión como teléfono. "
+        "Solo usá la modalidad de entrega que el cliente eligió o la que está guardada en esta misma conversación. "
+        "Si elige envío, solicitá dirección, localidad y provincia. El backend aplica automáticamente el costo fijo de envío configurado "
+        "por el comercio y usa ese mismo total para el presupuesto y Mercado Pago. Nunca calcules porcentajes ni dejes el envío pendiente."
     )
     input_schema = {
         "type": "object",
@@ -237,13 +300,221 @@ class VendorOrderPreviewTool(AgentTool):
             "delivery_reference": {"type": "string"},
             "delivery_notes": {"type": "string"},
         },
-        "required": ["customer_name", "customer_phone", "delivery_method"],
+        # Partial arguments are intentional: the tool can preserve the requested
+        # product in the cart and ask for missing buyer/delivery data safely.
         "additionalProperties": False,
     }
 
     def execute(self, **kwargs):
         product_query = str(kwargs.get("product_query") or "").strip()
         quantity = kwargs.get("quantity")
+
+        # Reuse only the profile saved in this same tenant-scoped conversation.
+        # Never treat a public webchat visitor token as a telephone number.
+        from flask import has_app_context
+        from stockarmobile.models.conversations import Conversation, ConversationMessage
+        from services.ai_agent.vendor_order_service import _metadata, _normalize_phone, _normalize_text
+        if has_app_context():
+            conversation = Conversation.query.filter_by(
+                id=int(self._context["conversation_id"]),
+                company_id=int(self.company_id),
+            ).first()
+            saved_state = _metadata(conversation) if conversation is not None else {}
+            recent_user_messages = (
+                ConversationMessage.query.filter_by(
+                    company_id=int(self.company_id),
+                    conversation_id=int(self._context["conversation_id"]),
+                    role="user",
+                )
+                .order_by(ConversationMessage.id.desc())
+                .limit(20)
+                .all()
+            )
+            recent_user_messages = list(reversed(recent_user_messages))
+        else:
+            # Service-level callers and unit tests may invoke the tool without
+            # Flask/SQLAlchemy context; in that case there is no session profile
+            # to reuse and the normal required-field guard still applies.
+            saved_state = {}
+            recent_user_messages = []
+        saved_delivery = saved_state.get("delivery") if isinstance(saved_state.get("delivery"), dict) else {}
+
+        def user_stated_phone_values(rows):
+            import re
+
+            values = []
+            phone_label = re.compile(
+                r"(?:tel[eé]fono|tel\b|cel(?:ular)?|whats\s*app|whatsapp|n[uú]mero(?:\s+de\s+contacto)?|contacto)"
+                r"\s*(?:es|de contacto|:|-)?\s*(\+?\d[\d\s().-]{6,}\d)",
+                re.IGNORECASE,
+            )
+            standalone_number = re.compile(r"^\s*(\+?\d[\d\s().-]{6,}\d)\s*$")
+            # Only use labeled contact numbers or a message consisting solely of a
+            # phone number. Don't mistake a barcode, quote number, or street number
+            # for a customer's phone.
+            for row in rows:
+                raw = str(row.content or "")
+                matches = [match.group(1) for match in phone_label.finditer(raw)]
+                if not matches:
+                    standalone = standalone_number.fullmatch(raw)
+                    if standalone:
+                        matches = [standalone.group(1)]
+                for candidate in matches:
+                    digits = _normalize_phone(candidate)
+                    if 8 <= len(digits) <= 15 and digits not in values:
+                        values.append(digits)
+            return values
+
+        stated_phone_values = user_stated_phone_values(recent_user_messages)
+        saved_customer_name = str(
+            saved_state.get("customer_name") or saved_delivery.get("recipient_name") or ""
+        ).strip()
+        saved_customer_phone = str(
+            saved_state.get("customer_phone") or saved_delivery.get("phone") or ""
+        ).strip()
+        requested_customer_name = str(kwargs.get("customer_name") or "").strip()
+        requested_customer_phone = str(kwargs.get("customer_phone") or "").strip()
+        customer_name = saved_customer_name
+        customer_phone = saved_customer_phone
+
+        if self._context.get("channel") == "webchat":
+            # In a public chat, don't trust model-invented contact data. The
+            # current visitor's explicit self-identification is safe to reuse;
+            # CRM details from other chats are not.
+            stated_customer_name = _extract_public_customer_name(recent_user_messages)
+            if requested_customer_name:
+                normalized_name = _normalize_text(requested_customer_name)
+                exact_name_was_stated = any(
+                    normalized_name in _normalize_text(row.content)
+                    for row in recent_user_messages
+                )
+                if exact_name_was_stated:
+                    # An explicit full name such as "a nombre de Pedro Silva"
+                    # is more precise than a prior "soy Pedro" greeting.
+                    customer_name = requested_customer_name
+                elif _same_public_customer_name(stated_customer_name, requested_customer_name):
+                    # A small spelling difference can be normalized to the
+                    # visitor's actual self-identification in this same chat.
+                    customer_name = stated_customer_name
+                elif stated_customer_name:
+                    customer_name = stated_customer_name
+                elif not saved_customer_name:
+                    customer_name = ""
+            elif stated_customer_name:
+                customer_name = stated_customer_name
+            if requested_customer_phone:
+                phone_digits = _normalize_phone(requested_customer_phone)
+                phone_was_stated = bool(phone_digits) and any(
+                    candidate == phone_digits
+                    or (candidate.endswith(phone_digits) and len(candidate) - len(phone_digits) <= 3)
+                    or (phone_digits.endswith(candidate) and len(phone_digits) - len(candidate) <= 3)
+                    for candidate in stated_phone_values
+                )
+                if phone_was_stated:
+                    customer_phone = requested_customer_phone
+                elif not saved_customer_phone:
+                    customer_phone = ""
+            elif stated_phone_values:
+                # If the user explicitly provided a phone but the model omitted it
+                # from tool arguments, prefer the latest number stated in this chat,
+                # including an intentional update to a previously saved contact.
+                customer_phone = stated_phone_values[-1]
+        else:
+            customer_name = requested_customer_name or saved_customer_name
+            customer_phone = (
+                requested_customer_phone
+                or saved_customer_phone
+                or str(self._context.get("customer_phone") or "").strip()
+            )
+
+        # If a different name was explicitly provided in this conversation, don't
+        # silently combine it with the previous visitor's phone/address or delivery choice.
+        profile_reusable = True
+        identity_change_index = None
+        if (
+            self._context.get("channel") == "webchat"
+            and saved_customer_name
+            and customer_name
+            and not _same_public_customer_name(saved_customer_name, customer_name)
+        ):
+            normalized_new_name = _normalize_text(customer_name)
+            identity_indexes = [
+                index for index, row in enumerate(recent_user_messages)
+                if normalized_new_name in _normalize_text(row.content)
+            ]
+            if identity_indexes:
+                profile_reusable = False
+                identity_change_index = identity_indexes[0]
+                phone_digits = _normalize_phone(requested_customer_phone)
+                phone_was_stated = bool(phone_digits) and any(
+                    phone_digits in _normalize_phone(row.content)
+                    for row in recent_user_messages[identity_change_index:]
+                )
+                if not phone_was_stated:
+                    customer_phone = ""
+                saved_delivery = {}
+
+        requested_delivery_method = str(kwargs.get("delivery_method") or "").strip().lower()
+        saved_delivery_method = str(saved_delivery.get("method") or "").strip().lower()
+        if requested_delivery_method in {"envío", "delivery", "shipping"}:
+            requested_delivery_method = "envio"
+        elif requested_delivery_method in {"retirar", "retira", "pickup", "local"}:
+            requested_delivery_method = "retiro"
+
+        def explicit_delivery_from_user_messages():
+            relevant_messages = (
+                recent_user_messages[identity_change_index:]
+                if identity_change_index is not None
+                else recent_user_messages
+            )
+            for row in reversed(relevant_messages):
+                text = _normalize_text(row.content)
+                if any(term in text for term in (
+                    "prefiero envio", "con envio", "envio a domicilio", "a domicilio",
+                    "que me lo envien", "que lo envien", "mandalo a casa", "entrega a domicilio",
+                    "quiero envio", "necesito envio",
+                )):
+                    return "envio"
+                if any(term in text for term in (
+                    "prefiero retiro", "con retiro", "retiro en local", "retiro por local",
+                    "paso a buscar", "voy a retirar", "retirar en local", "quiero retirar",
+                    "quiero retiro",
+                )):
+                    return "retiro"
+                if text.strip() in {"envio", "a domicilio", "delivery"}:
+                    return "envio"
+                if text.strip() in {"retiro", "retirar", "retiro en local"}:
+                    return "retiro"
+            return ""
+
+        user_delivery_method = explicit_delivery_from_user_messages()
+        # Public webchat must have an actual user-stated choice or a saved choice
+        # from this same visitor-bound conversation. Other authenticated channels
+        # may pass their explicit tool argument as before.
+        if self._context.get("channel") == "webchat":
+            delivery_method = user_delivery_method or saved_delivery_method
+        else:
+            delivery_method = requested_delivery_method or saved_delivery_method or user_delivery_method
+        same_delivery_method = not saved_delivery_method or delivery_method == saved_delivery_method
+        delivery_address = str(
+            kwargs.get("delivery_address") or (saved_delivery.get("address") if same_delivery_method else "") or ""
+        ).strip()
+        delivery_city = str(
+            kwargs.get("delivery_city") or (saved_delivery.get("city") if same_delivery_method else "") or ""
+        ).strip()
+        delivery_province = str(
+            kwargs.get("delivery_province") or (saved_delivery.get("province") if same_delivery_method else "") or ""
+        ).strip()
+        delivery_postal_code = str(
+            kwargs.get("delivery_postal_code") or (saved_delivery.get("postal_code") if same_delivery_method else "") or ""
+        ).strip()
+        delivery_reference = str(
+            kwargs.get("delivery_reference") or (saved_delivery.get("reference") if same_delivery_method else "") or ""
+        ).strip()
+        delivery_notes = str(
+            kwargs.get("delivery_notes") or (saved_delivery.get("notes") if same_delivery_method else "") or ""
+        ).strip()
+
         if product_query and quantity not in (None, ""):
             # Explicit product + quantity are authoritative. Preserve a pending
             # checkout only for an exact retry of the same cart, buyer and delivery.
@@ -320,15 +591,15 @@ class VendorOrderPreviewTool(AgentTool):
                         if cart_matches_requested_line:
                             try:
                                 requested_delivery = _delivery_payload(
-                                    method=str(kwargs.get("delivery_method") or "retiro"),
-                                    customer_name=str(kwargs.get("customer_name") or ""),
-                                    customer_phone=str(kwargs.get("customer_phone") or self._context.get("customer_phone") or ""),
-                                    address=str(kwargs.get("delivery_address") or ""),
-                                    city=str(kwargs.get("delivery_city") or ""),
-                                    province=str(kwargs.get("delivery_province") or ""),
-                                    postal_code=str(kwargs.get("delivery_postal_code") or ""),
-                                    reference=str(kwargs.get("delivery_reference") or ""),
-                                    notes=str(kwargs.get("delivery_notes") or ""),
+                                    method=delivery_method or "retiro",
+                                    customer_name=customer_name,
+                                    customer_phone=customer_phone,
+                                    address=delivery_address,
+                                    city=delivery_city,
+                                    province=delivery_province,
+                                    postal_code=delivery_postal_code,
+                                    reference=delivery_reference,
+                                    notes=delivery_notes,
                                 )
                             except ValueError as exc:
                                 return {"success": False, "error": str(exc), "retryable": False}
@@ -336,8 +607,8 @@ class VendorOrderPreviewTool(AgentTool):
                                 reuse_pending_checkout = _pending_quote_matches_checkout(
                                     quote=pending_quote,
                                     cart=cart,
-                                    customer_name=str(kwargs.get("customer_name") or ""),
-                                    customer_phone=str(kwargs.get("customer_phone") or self._context.get("customer_phone") or ""),
+                                    customer_name=customer_name,
+                                    customer_phone=customer_phone,
                                     delivery=requested_delivery,
                                 )
 
@@ -353,18 +624,47 @@ class VendorOrderPreviewTool(AgentTool):
                 )
                 if isinstance(added, dict) and added.get("success") is False:
                     return added
+
+        missing_fields = []
+        if not customer_name:
+            missing_fields.append("nombre")
+        if not customer_phone:
+            missing_fields.append("teléfono")
+        if delivery_method not in {"retiro", "envio"}:
+            missing_fields.append("modalidad de entrega (retiro o envío)")
+        elif delivery_method == "envio":
+            if not delivery_address:
+                missing_fields.append("dirección")
+            if not delivery_city:
+                missing_fields.append("localidad")
+            if not delivery_province:
+                missing_fields.append("provincia")
+        if missing_fields:
+            # Keep the chosen products, but do not create a quote/payment from
+            # incomplete identity or delivery data. The model can ask only for
+            # the missing fields and resume the same cart on the next turn.
+            return {
+                "success": True,
+                "status": "needs_customer_details",
+                "missing_fields": missing_fields,
+                "cart": VendorOrderService.get_cart(
+                    company_id=self.company_id,
+                    conversation_id=self._context["conversation_id"],
+                ),
+            }
+
         return VendorOrderService.create_pending_order(
             company_id=self.company_id,
             conversation_id=self._context["conversation_id"],
-            customer_name=str(kwargs.get("customer_name") or ""),
-            customer_phone=str(kwargs.get("customer_phone") or self._context.get("customer_phone") or ""),
-            delivery_method=str(kwargs.get("delivery_method") or "retiro"),
-            delivery_address=str(kwargs.get("delivery_address") or ""),
-            delivery_city=str(kwargs.get("delivery_city") or ""),
-            delivery_province=str(kwargs.get("delivery_province") or ""),
-            delivery_postal_code=str(kwargs.get("delivery_postal_code") or ""),
-            delivery_reference=str(kwargs.get("delivery_reference") or ""),
-            delivery_notes=str(kwargs.get("delivery_notes") or ""),
+            customer_name=customer_name,
+            customer_phone=customer_phone,
+            delivery_method=delivery_method,
+            delivery_address=delivery_address,
+            delivery_city=delivery_city,
+            delivery_province=delivery_province,
+            delivery_postal_code=delivery_postal_code,
+            delivery_reference=delivery_reference,
+            delivery_notes=delivery_notes,
             actor_user_id=self._context.get("actor_user_id"),
             idempotency_key=self._context.get("idempotency_key"),
         )
@@ -929,13 +1229,46 @@ class AgentRuntime:
             )
             allowed_tool_names = vendor_allowed_tool_names(vendor_options)
             if is_public_webchat:
+                # A public visitor is not authenticated as a CRM customer. Don't
+                # expose the tenant's contact search tool through the public chat;
+                # reuse only same-session checkout data or ask the visitor to confirm it.
+                allowed_tool_names = set(allowed_tool_names) - {"buscar_cliente"}
                 prompt += (
                     "\n\nMODO WEBCHAT PÚBLICO — ORDEN DIRECTA:"
                     "\n- Priorizá resolver una solicitud de compra en una sola ronda de herramientas."
                     "\n- Si el cliente ya indicó producto, cantidad, nombre, teléfono y datos de envío, evitá búsquedas exploratorias innecesarias."
                     "\n- Para un pedido, podés agregar el producto al carrito y después preparar el pedido dentro de la misma ronda de herramientas."
+                    "\n- Si faltan datos obligatorios, guardá el producto en el carrito y preguntá solo los datos que realmente falten; nunca afirmes que el presupuesto se creó antes del resultado exitoso de preparar_pedido."
+                    "\n- Si hay datos de cliente ya guardados en esta misma conversación, reutilizalos para el nuevo presupuesto salvo que el cliente indique un cambio."
                     "\n- Nunca afirmes que el pago quedó realizado si el backend no devolvió un resultado exitoso."
                 )
+                # Only use profile details saved in this visitor-bound conversation.
+                # Do not search across unrelated chats or disclose another customer's record by name.
+                from services.ai_agent.vendor_order_service import _metadata as _vendor_metadata
+                saved_state = _vendor_metadata(conversation)
+                saved_delivery = saved_state.get("delivery") if isinstance(saved_state.get("delivery"), dict) else {}
+                saved_customer = {
+                    "Nombre": saved_state.get("customer_name") or saved_delivery.get("recipient_name"),
+                    "Teléfono": saved_state.get("customer_phone") or saved_delivery.get("phone"),
+                    "Modalidad de entrega": saved_delivery.get("method"),
+                    "Dirección": saved_delivery.get("address"),
+                    "Localidad": saved_delivery.get("city"),
+                    "Provincia": saved_delivery.get("province"),
+                    "Código postal": saved_delivery.get("postal_code"),
+                }
+                saved_lines = [
+                    f"- {label}: {str(value).strip()}"
+                    for label, value in saved_customer.items()
+                    if str(value or "").strip()
+                ]
+                if saved_lines:
+                    prompt += (
+                        "\n\nDATOS DE CLIENTE GUARDADOS EN ESTA MISMA CONVERSACIÓN WEB (mismo visitante):"
+                        "\nUsalos para preparar un nuevo presupuesto y no vuelvas a pedirlos si no hace falta. "
+                        "Si el cliente pide cambiar entrega o contacto, prevalece el cambio que indique. "
+                        "No busques ni infieras datos de otros clientes o conversaciones."
+                        "\n" + "\n".join(saved_lines)
+                    )
         elif agent_key in {"analista", "marketing"}:
             special_options = get_special_options(company, agent_key)
             if agent_key == "analista":
@@ -983,7 +1316,9 @@ class AgentRuntime:
 
         context = {
             "conversation_id": conversation.id,
-            "customer_phone": (metadata or {}).get("from") or "",
+            # Public webchat uses "from" for a visitor/session token, not a phone.
+            "customer_phone": "" if is_public_webchat else ((metadata or {}).get("from") or ""),
+            "channel": channel,
             "actor_user_id": sender_id,
             "idempotency_key": idempotency_key,
             "trace_id": trace_id,
