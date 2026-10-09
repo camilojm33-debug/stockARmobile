@@ -128,7 +128,7 @@ class MercadoPagoService:
             "POST",
             "/checkout/preferences",
             payload=payload,
-            idempotency_key=f"ai-qr-preference:{external_reference}",
+            idempotency_key=f"ai-qr-preference:{int(payment_record_id)}",
         )
 
     def create_pos_checkout_preference(self, *, title: str, amount: float, currency: str, external_reference: str, company_id: int, user_id: int, metadata: dict[str, Any] | None = None, access_token: str | None = None) -> dict[str, Any]:
