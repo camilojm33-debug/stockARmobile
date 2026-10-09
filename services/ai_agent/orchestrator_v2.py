@@ -275,32 +275,66 @@ class VendorOrderPreviewTool(AgentTool):
         )
         recent_user_messages = list(reversed(recent_user_messages))
 
-        customer_name = str(
-            kwargs.get("customer_name") or saved_state.get("customer_name")
-            or saved_delivery.get("recipient_name") or ""
+        saved_customer_name = str(
+            saved_state.get("customer_name") or saved_delivery.get("recipient_name") or ""
         ).strip()
-        customer_phone = str(
-            kwargs.get("customer_phone") or saved_state.get("customer_phone")
-            or saved_delivery.get("phone")
-            or (self._context.get("customer_phone") if self._context.get("channel") != "webchat" else "")
-            or ""
+        saved_customer_phone = str(
+            saved_state.get("customer_phone") or saved_delivery.get("phone") or ""
         ).strip()
+        requested_customer_name = str(kwargs.get("customer_name") or "").strip()
+        requested_customer_phone = str(kwargs.get("customer_phone") or "").strip()
+        customer_name = saved_customer_name
+        customer_phone = saved_customer_phone
 
         if self._context.get("channel") == "webchat":
             # In a public chat, don't trust model-invented contact data. It must
             # either be saved in this visitor-bound conversation or appear in
             # a user message from the same conversation.
-            if not (saved_state.get("customer_name") or saved_delivery.get("recipient_name")) and customer_name:
-                normalized_name = _normalize_text(customer_name)
-                if not any(normalized_name in _normalize_text(row.content) for row in recent_user_messages):
+            if requested_customer_name:
+                normalized_name = _normalize_text(requested_customer_name)
+                name_was_stated = any(
+                    normalized_name in _normalize_text(row.content)
+                    for row in recent_user_messages
+                )
+                if name_was_stated:
+                    customer_name = requested_customer_name
+                elif not saved_customer_name:
                     customer_name = ""
-            if not (saved_state.get("customer_phone") or saved_delivery.get("phone")) and customer_phone:
-                phone_digits = _normalize_phone(customer_phone)
-                if not phone_digits or not any(
+            if requested_customer_phone:
+                phone_digits = _normalize_phone(requested_customer_phone)
+                phone_was_stated = bool(phone_digits) and any(
                     phone_digits in _normalize_phone(row.content)
                     for row in recent_user_messages
-                ):
+                )
+                if phone_was_stated:
+                    customer_phone = requested_customer_phone
+                elif not saved_customer_phone:
                     customer_phone = ""
+        else:
+            customer_name = requested_customer_name or saved_customer_name
+            customer_phone = (
+                requested_customer_phone
+                or saved_customer_phone
+                or str(self._context.get("customer_phone") or "").strip()
+            )
+
+        # If a different name was explicitly provided in this conversation, don't
+        # silently combine it with the previous visitor's phone/address.
+        profile_reusable = True
+        if (
+            self._context.get("channel") == "webchat"
+            and saved_customer_name
+            and customer_name
+            and _normalize_text(saved_customer_name) != _normalize_text(customer_name)
+            and any(_normalize_text(customer_name) in _normalize_text(row.content) for row in recent_user_messages)
+        ):
+            profile_reusable = False
+            if not requested_customer_phone or not any(
+                _normalize_phone(requested_customer_phone) in _normalize_phone(row.content)
+                for row in recent_user_messages
+            ):
+                customer_phone = ""
+            saved_delivery = {}
 
         requested_delivery_method = str(kwargs.get("delivery_method") or "").strip().lower()
         saved_delivery_method = str(saved_delivery.get("method") or "").strip().lower()
