@@ -620,7 +620,7 @@ def test_new_quote_intent_does_not_capture_previous_quote_retrieval():
 
 
 def test_public_chat_can_start_second_quote_after_clarification(qa_public_vendor_db, monkeypatch):
-    from app import Payment, Quote
+    from app import Payment, Quote, QuoteDelivery
     from stockarmobile.models.conversations import Conversation
 
     provider = SequenceProvider([
@@ -651,9 +651,6 @@ def test_public_chat_can_start_second_quote_after_clarification(qa_public_vendor
                 "arguments": {
                     "product_query": "machimbre",
                     "quantity": 3,
-                    "customer_name": "Julia Acosta",
-                    "customer_phone": "3624001122",
-                    "delivery_method": "retiro",
                 },
             },
         },
@@ -717,7 +714,7 @@ def test_public_chat_can_start_second_quote_after_clarification(qa_public_vendor
         client,
         conversation_setup,
         "operation-details-second-quote",
-        "Para el mismo cliente, necesito 3 metros de machimbre, Julia Acosta, teléfono 3624001122, retiro en local.",
+        "3 metros de machimbre",
         conversation_id=first.json["conversation_id"],
     )
 
@@ -743,6 +740,11 @@ def test_public_chat_can_start_second_quote_after_clarification(qa_public_vendor
     assert float(quotes[0].items[0].quantity) == 2
     assert float(quotes[1].items[0].quantity) == 3
     assert quotes[0].items[0].description == quotes[1].items[0].description
+    first_delivery = QuoteDelivery.query.filter_by(quote_id=quotes[0].id).one()
+    second_delivery = QuoteDelivery.query.filter_by(quote_id=quotes[1].id).one()
+    assert second_delivery.recipient_name == first_delivery.recipient_name == "Julia Acosta"
+    assert second_delivery.phone == first_delivery.phone == "3624001122"
+    assert second_delivery.method == first_delivery.method == "retiro"
 
     payments = (
         Payment.query.filter_by(
@@ -759,6 +761,91 @@ def test_public_chat_can_start_second_quote_after_clarification(qa_public_vendor
     ]
     assert all(payment.status == "pending" for payment in payments)
     assert "vendor_new_quote_context" not in conversation.metadata_json
+
+
+def test_public_chat_can_list_the_full_active_catalog(qa_public_vendor_db, monkeypatch):
+    import json
+
+    provider = SequenceProvider([
+        {
+            "content": "",
+            "tool_call": {
+                "id": "catalog-query-1",
+                "name": "ver_catalogo",
+                "arguments": {"query": "", "limit": 20},
+            },
+        },
+        {"content": "El catálogo activo muestra Machimbre pino a $6.600 por metro.", "tool_call": None},
+    ])
+    _install_provider(monkeypatch, provider)
+    client = _public_client(qa_public_vendor_db)
+
+    response = _post_message(
+        client,
+        qa_public_vendor_db,
+        "operation-open-catalog",
+        "¿Y qué otra cosa tenés?",
+    )
+
+    assert response.status_code == 200
+    assert "Machimbre pino" in response.json["content"]
+    offered_tools = {
+        item["function"]["name"]
+        for item in (provider.calls[0].get("tools") or [])
+    }
+    assert "ver_catalogo" in offered_tools
+    tool_messages = [m for m in provider.calls[1]["messages"] if m.get("role") == "tool"]
+    assert len(tool_messages) == 1
+    catalog = json.loads(tool_messages[0]["content"])
+    assert catalog["success"] is True
+    assert catalog["count"] == 1
+    assert catalog["products"][0]["name"] == "Machimbre pino"
+    assert catalog["products"][0]["price"] == 6600.0
+    assert "no se obtuvieron resultados" not in response.json["content"].lower()
+
+
+def test_public_quote_with_missing_contact_asks_clarification_without_failing(qa_public_vendor_db, monkeypatch):
+    from app import Payment, Quote
+
+    provider = SequenceProvider([
+        {
+            "content": "",
+            "tool_call": {
+                "id": "quote-missing-details",
+                "name": "preparar_pedido",
+                "arguments": {"product_query": "machimbre", "quantity": 3},
+            },
+        },
+        {
+            "content": "¡Dale! Ya tengo los 3 metros de machimbre en el carrito. ¿Me confirmás tu nombre, teléfono y si preferís retiro o envío?",
+            "tool_call": None,
+        },
+    ])
+    _install_provider(monkeypatch, provider)
+    client = _public_client(qa_public_vendor_db)
+    response = _post_message(
+        client,
+        qa_public_vendor_db,
+        "operation-quote-missing-contact",
+        "Haceme un presupuesto con 3 metros de machimbre",
+    )
+
+    assert response.status_code == 200
+    assert "No pude generar un presupuesto nuevo" not in response.json["content"]
+    assert "teléfono" in response.json["content"].lower()
+    assert "retiro o envío" in response.json["content"].lower()
+    assert response.json["payment_url"] is None
+    assert response.json["quote_url"] is None
+    assert len(response.json["cart"]["items"]) == 1
+    assert response.json["cart"]["items"][0]["quantity"] == 3
+    assert Quote.query.filter_by(
+        company_id=qa_public_vendor_db["company"].id,
+        observations="Pedido generado por el Vendedor 24 hs de StockARmobile.",
+    ).count() == 0
+    assert Payment.query.filter_by(
+        company_id=qa_public_vendor_db["company"].id,
+        provider="mercadopago_ai_order",
+    ).count() == 0
 
 
 def test_checkout_timeout_reuses_quote_and_same_mp_idempotency_reference(qa_public_vendor_setup, monkeypatch):
