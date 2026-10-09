@@ -326,6 +326,200 @@ class WebhookService:
                     pass
                 return result
 
+            if flow == "ai_subscription_qr" or ref_parts.get("ai_subscription_qr") == "true":
+                # QR del plan IA es un pago único independiente de Subscription.
+                # La referencia firmada por nuestra preferencia liga el webhook a
+                # un borrador tenant-scoped creado antes de enviar al usuario a MP.
+                from app import Company, Payment, PaymentHistory
+                from services.ai_agent.subscription_service import AISubscriptionError, AISubscriptionService
+
+                mp_payment_id = str(payment_data.get("id") or "").strip()
+                payment_record_id_raw = metadata.get("payment_record_id") or ref_parts.get("payment_record_id")
+                company_id_raw = metadata.get("company_id") or ref_parts.get("company_id")
+                plan_code = str(metadata.get("plan_code") or ref_parts.get("plan_code") or "").strip().lower()
+                if not mp_payment_id or not str(payment_record_id_raw or "").isdigit() or not str(company_id_raw or "").isdigit():
+                    raise RuntimeError("Webhook de pago QR IA sin payment_record_id/company_id válidos.")
+                payment_record_id = int(payment_record_id_raw)
+                company_id = int(company_id_raw)
+                if metadata_company_id and metadata_company_id != company_id:
+                    raise RuntimeError("Webhook de pago QR IA con company_id inconsistente en metadata.")
+                if ref_company_id and ref_company_id != company_id:
+                    raise RuntimeError("Webhook de pago QR IA con company_id inconsistente en la referencia.")
+                if metadata.get("plan_code") and str(metadata.get("plan_code")).strip().lower() != plan_code:
+                    raise RuntimeError("Webhook de pago QR IA con plan_code inconsistente en metadata.")
+                if str(ref_parts.get("payment_record_id") or "") != str(payment_record_id):
+                    raise RuntimeError("Webhook de pago QR IA sin referencia consistente al borrador.")
+                if not plan_code or ref_parts.get("flow") != "ai_subscription_qr":
+                    raise RuntimeError("Webhook de pago QR IA sin flujo o plan válidos.")
+                if merchant_connection is not None:
+                    raise RuntimeError("Webhook de pago QR IA rechazado: no corresponde a una cuenta vendedora conectada.")
+
+                company = Company.query.filter_by(id=company_id).first()
+                draft = Payment.query.filter_by(
+                    id=payment_record_id,
+                    company_id=company_id,
+                    provider="mercadopago_ai_qr",
+                    payment_method="mercadopago_ai_qr",
+                ).first()
+                if company is None or draft is None:
+                    raise RuntimeError("Webhook de pago QR IA sin empresa o checkout pendiente válido.")
+                if str(draft.external_reference or "") != external_reference:
+                    raise RuntimeError("Webhook de pago QR IA con referencia distinta al checkout registrado.")
+                if not str(draft.reference or "").strip().startswith("ai-qr:"):
+                    raise RuntimeError("Webhook de pago QR IA con referencia local inconsistente.")
+                existing_mp_payment = Payment.query.filter_by(payment_id=mp_payment_id).first()
+                if existing_mp_payment is not None and existing_mp_payment.id != draft.id:
+                    raise RuntimeError("Webhook de pago QR IA: ese payment_id ya pertenece a otro registro.")
+
+                try:
+                    expected_amount = AISubscriptionService.plan_amount_ars(plan_code)
+                    draft_amount = float(draft.amount or 0)
+                    incoming_amount = float(payment_data.get("transaction_amount"))
+                except (AISubscriptionError, TypeError, ValueError) as exc:
+                    raise RuntimeError("Webhook de pago QR IA con importe o plan inválidos.") from exc
+                incoming_currency = str(payment_data.get("currency_id") or "").strip().upper()
+                if abs(draft_amount - expected_amount) > 0.01:
+                    raise RuntimeError("El importe registrado para el pago QR IA no coincide con el precio oficial.")
+                if abs(incoming_amount - expected_amount) > 0.01 or incoming_currency != "ARS":
+                    raise RuntimeError("Webhook de pago QR IA rechazado por importe o moneda incorrectos.")
+
+                previous_qr_status = str(draft.status or "pending").strip().lower()
+                draft.payment_id = mp_payment_id
+                draft.preference_id = str(
+                    metadata.get("preference_id")
+                    or ref_parts.get("preference_id")
+                    or (payment_data.get("order") or {}).get("id")
+                    or draft.preference_id
+                    or ""
+                ).strip() or draft.preference_id
+                draft.amount = incoming_amount
+                draft.currency = incoming_currency
+                draft.payment_method = "mercadopago_ai_qr"
+                draft.payload_json = json.dumps(payment_data, ensure_ascii=False)
+                draft.paid_at = paid_at or draft.paid_at
+
+                terminal_qr_statuses = {"cancelled", "refunded", "refund_pending"}
+                if previous_qr_status in terminal_qr_statuses and payment_status != "approved":
+                    # A late pending/rejected notification must not reopen a
+                    # canceled or already-refunded one-time checkout.
+                    draft.status = previous_qr_status
+                    result = {
+                        "status": "cancelled_ai_qr_payment_ignored",
+                        "payment_status": payment_status,
+                        "payment_id": mp_payment_id,
+                        "event_key": event_key,
+                    }
+                elif previous_qr_status == "approved":
+                    # Idempotency safeguard for late/duplicated status updates.
+                    draft.status = "approved"
+                    result = {
+                        "status": "processed_ai_qr_subscription_payment",
+                        "payment_status": payment_status,
+                        "payment_id": mp_payment_id,
+                        "event_key": event_key,
+                    }
+                elif previous_qr_status in terminal_qr_statuses and payment_status == "approved":
+                    # Canceled/refunded drafts never activate, even when another
+                    # approval webhook arrives later. Refund is idempotent at MP.
+                    refund = self.mp_service.refund_payment(mp_payment_id)
+                    refund_status = str(refund.get("status") or "").strip().lower()
+                    if refund_status not in {"approved", "refunded", "pending", "in_process"}:
+                        raise RuntimeError("Mercado Pago no confirmó el reembolso del checkout QR IA cancelado.")
+                    draft.status = "refunded" if refund_status in {"approved", "refunded"} else "refund_pending"
+                    NotificationService.record_event(
+                        db_session,
+                        company_id=company_id,
+                        payment_id=draft.id,
+                        event="ai_qr_terminal_payment_refund",
+                        detail="Se aprobó un pago QR IA de un intento cancelado/reembolsado; se solicitó el reembolso sin activar la suscripción.",
+                        source="mercadopago",
+                        status=refund_status,
+                        event_id=f"ai-qr-terminal-refund:{mp_payment_id}",
+                        payload={"payment_id": mp_payment_id, "refund_id": refund.get("id"), "refund_status": refund_status},
+                        user_id=draft.user_id,
+                    )
+                    result = {
+                        "status": "cancelled_ai_qr_payment_refunded",
+                        "payment_status": payment_status,
+                        "refund_status": refund_status,
+                        "payment_id": mp_payment_id,
+                        "event_key": event_key,
+                    }
+                elif payment_status == "approved":
+                    # Mark before applying the subscription so the operation can
+                    # be retried without extending another 30 days.
+                    draft.status = "approved"
+                    try:
+                        AISubscriptionService.activate_paid_qr(
+                            company,
+                            plan_code=plan_code,
+                            payment_id=mp_payment_id,
+                            amount=incoming_amount,
+                            currency=incoming_currency,
+                            paid_at=paid_at,
+                        )
+                        NotificationService.record_event(
+                            db_session,
+                            company_id=company_id,
+                            payment_id=draft.id,
+                            event="ai_qr_subscription_activated",
+                            detail=f"Pago QR IA aprobado; se activaron 30 días del plan {plan_code}.",
+                            source="mercadopago",
+                            status="approved",
+                            event_id=f"ai-qr-activated:{mp_payment_id}",
+                            payload={"payment_id": mp_payment_id, "plan_code": plan_code, "amount": incoming_amount},
+                            user_id=draft.user_id,
+                        )
+                        result = {
+                            "status": "processed_ai_qr_subscription_payment",
+                            "payment_status": "approved",
+                            "plan_code": plan_code,
+                            "payment_id": mp_payment_id,
+                            "event_key": event_key,
+                        }
+                    except AISubscriptionError as exc:
+                        refund = self.mp_service.refund_payment(mp_payment_id)
+                        refund_status = str(refund.get("status") or "").strip().lower()
+                        if refund_status not in {"approved", "refunded", "pending", "in_process"}:
+                            raise RuntimeError("El pago QR IA no pudo activarse y Mercado Pago no confirmó su reembolso.") from exc
+                        draft.status = "refunded" if refund_status in {"approved", "refunded"} else "refund_pending"
+                        NotificationService.record_event(
+                            db_session,
+                            company_id=company_id,
+                            payment_id=draft.id,
+                            event="ai_qr_checkout_refunded_no_activation",
+                            detail=f"Pago QR IA reembolsado sin activar la suscripción: {exc}",
+                            source="mercadopago",
+                            status=refund_status,
+                            event_id=f"ai-qr-no-activation-refund:{mp_payment_id}",
+                            payload={"payment_id": mp_payment_id, "refund_id": refund.get("id"), "refund_status": refund_status, "reason": str(exc)},
+                            user_id=draft.user_id,
+                        )
+                        result = {
+                            "status": "ai_qr_payment_refunded_no_activation",
+                            "payment_status": "approved",
+                            "refund_status": refund_status,
+                            "payment_id": mp_payment_id,
+                            "event_key": event_key,
+                        }
+                else:
+                    # Don't reopen cancelled rows if Mercado Pago sends a later
+                    # pending/in_process event.
+                    if previous_qr_status != "cancelled":
+                        draft.status = payment_status
+                    result = {
+                        "status": "processed_ai_qr_subscription_payment",
+                        "payment_status": payment_status,
+                        "payment_id": mp_payment_id,
+                        "event_key": event_key,
+                    }
+
+                event_row.status = result.get("status", "processed_ai_qr_subscription_payment")
+                db_session.add(draft)
+                db_session.add(event_row)
+                db_session.commit()
+                return result
+
             payment = Payment.query.filter_by(payment_id=str(payment_data.get("id"))).first()
             if merchant_connection is not None and payment is not None and int(payment.company_id or 0) != int(merchant_connection.company_id or 0):
                 raise RuntimeError("Webhook Mercado Pago con pago perteneciente a otra empresa")

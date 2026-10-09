@@ -208,8 +208,8 @@ def test_subscription_portal_uses_separate_ai_payment_method_forms(subscription_
     assert 'action="/admin/subscription/ai-agent/checkout"' in html
     assert 'type="hidden" name="payment_method" value="automatic"' in html
     assert 'action="/admin/subscription/mercadopago/create"' in html
-    assert '>Suscripción automática</button>' in html
-    assert '>Elegir y pagar con QR</button>' in html
+    assert '>Suscripción mensual automática</button>' in html
+    assert '>Pagar este plan con QR</button>' in html
     assert 'action="/admin/checkout"' in html
     assert 'name="plan_id"' in html
     assert 'type="hidden" name="payment_method" value="qr"' in html
@@ -504,6 +504,7 @@ def test_pending_ai_checkout_locks_other_method_and_keeps_standard_independent(s
             "status": "PENDIENTE",
             "origin": "MERCADO_PAGO",
             "mercadopago_preapproval_id": "ai-pre-locked",
+            "mercadopago_status": "pending",
             "checkout_method": "qr",
         },
     )
@@ -512,14 +513,19 @@ def test_pending_ai_checkout_locks_other_method_and_keeps_standard_independent(s
 
     def get_preapproval(self, preapproval_id):
         calls.append(("get", preapproval_id))
-        return {"id": preapproval_id, "status": "pending", "init_point": "https://mp.test/ai-locked"}
+        return {"id": preapproval_id, "status": "pending", "init_point": "https://mp.test/legacy-ai-locked"}
 
-    def create_preapproval(self, **kwargs):
-        calls.append(("create", kwargs))
-        return {"id": "unexpected-second-preapproval", "status": "pending", "init_point": "https://mp.test/duplicate"}
+    def cancel_preapproval(self, preapproval_id):
+        calls.append(("cancel", preapproval_id))
+        return {"id": preapproval_id, "status": "cancelled"}
+
+    def create_qr_preference(self, **kwargs):
+        calls.append(("create_qr", kwargs))
+        return {"id": "ai-qr-pref-locked", "init_point": "https://mp.test/ai-qr-locked"}
 
     monkeypatch.setattr("services.mercadopago_service.MercadoPagoService.get_preapproval", get_preapproval)
-    monkeypatch.setattr("services.mercadopago_service.MercadoPagoService.create_preapproval", create_preapproval)
+    monkeypatch.setattr("services.mercadopago_service.MercadoPagoService.cancel_preapproval", cancel_preapproval)
+    monkeypatch.setattr("services.mercadopago_service.MercadoPagoService.create_ai_subscription_qr_preference", create_qr_preference)
     client = subscription_app.test_client()
     _login(client, user)
 
@@ -527,6 +533,7 @@ def test_pending_ai_checkout_locks_other_method_and_keeps_standard_independent(s
         "/admin/subscription/ai-agent/checkout",
         data={"plan_code": "vendedor", "payment_method": "qr"},
     )
+    qr_payment = Payment.query.filter_by(company_id=company.id, provider="mercadopago_ai_qr").first()
     alternate_method = client.post(
         "/admin/subscription/ai-agent/checkout",
         data={"plan_code": "vendedor", "payment_method": "automatic"},
@@ -535,22 +542,23 @@ def test_pending_ai_checkout_locks_other_method_and_keeps_standard_independent(s
     html = portal.get_data(as_text=True)
 
     assert continue_qr.status_code == 302
-    assert "ai_preapproval_id=ai-pre-locked" in continue_qr.headers["Location"]
+    assert f"ai_qr_payment_id={qr_payment.id}" in continue_qr.headers["Location"]
     assert alternate_method.status_code == 302
-    assert "ai_preapproval_id=ai-pre-locked" in alternate_method.headers["Location"]
-    assert calls == [("get", "ai-pre-locked")]
-    assert AISubscriptionService.get_status(company)["checkout_method"] == "qr"
-    assert 'data-ai-checkout-method="qr"' in html
+    assert f"ai_qr_payment_id={qr_payment.id}" in alternate_method.headers["Location"]
+    assert [call[0] for call in calls] == ["get", "cancel", "create_qr"]
+    assert AISubscriptionService.get_status(company)["status"] == "CANCELADA"
+    assert qr_payment.status == "pending"
+    assert "Pago QR pendiente" in html or "Pago único de 30 días" in html
+    assert 'data-ai-checkout-method=""' in html
     assert 'data-standard-checkout-method=""' in html
     assert _standard_snapshot(subscription) == before
 
     ai_plans = client.get("/agentes-ia/planes")
     ai_plans_html = ai_plans.get_data(as_text=True)
     assert ai_plans.status_code == 200
-    assert 'var pendingPlanCode="vendedor"' in ai_plans_html
-    assert 'var checkoutMethod="qr"' in ai_plans_html
-    assert "Suscripción automática bloqueada" in ai_plans_html
+    assert 'var pendingQrPlanCode="vendedor"' in ai_plans_html
     assert "Continuar con QR" in ai_plans_html
+    assert "Pago QR pendiente" in ai_plans_html or "Pago QR pendiente:" in ai_plans_html
 
 
 @pytest.mark.parametrize(
@@ -767,15 +775,194 @@ def test_standard_cancel_does_not_modify_ai_subscription(subscription_app):
 def test_ai_checkout_action_does_not_modify_standard_subscription(subscription_app, monkeypatch):
     company, user, _, subscription = _tenant_with_standard_subscription()
     before = _standard_snapshot(subscription)
-    _mock_preapproval(monkeypatch)
+    captured = {}
+
+    def create_qr_preference(self, **kwargs):
+        captured.update(kwargs)
+        return {"id": "ai-qr-pref-01", "init_point": "https://mp.test/ai-qr-01"}
+
+    monkeypatch.setattr(
+        "services.mercadopago_service.MercadoPagoService.create_ai_subscription_qr_preference",
+        create_qr_preference,
+    )
     client = subscription_app.test_client()
     _login(client, user)
 
-    response = client.post("/admin/subscription/ai-agent/checkout", data={"plan_code": "vendedor", "payment_method": "qr"})
+    response = client.post(
+        "/admin/subscription/ai-agent/checkout",
+        data={"plan_code": "vendedor", "payment_method": "qr"},
+    )
 
+    payment = Payment.query.filter_by(company_id=company.id, provider="mercadopago_ai_qr").one()
     assert response.status_code == 302
-    assert response.headers["Location"].endswith("/admin/portal?checkout=ai_created&ai_preapproval_id=ai-pre-new#payment-checkout")
-    assert AISubscriptionService.get_status(company)["status"] == "PENDIENTE"
+    assert f"ai_qr_payment_id={payment.id}" in response.headers["Location"]
+    assert captured["plan_code"] == "vendedor"
+    assert captured["amount"] == AISubscriptionService.plan_amount_ars("vendedor")
+    assert payment.preference_id == "ai-qr-pref-01"
+    assert payment.status == "pending"
+    assert payment.payment_method == "mercadopago_ai_qr"
+    assert AISubscriptionService.get_status(company)["status"] is None
+    assert _standard_snapshot(subscription) == before
+
+
+def test_cancel_ai_qr_checkout_does_not_change_either_subscription(subscription_app, monkeypatch):
+    company, user, _, subscription = _tenant_with_standard_subscription()
+    before = _standard_snapshot(subscription)
+    draft = Payment(
+        company_id=company.id,
+        user_id=user.id,
+        subscription_id=None,
+        amount=AISubscriptionService.plan_amount_ars("inicio"),
+        currency="ARS",
+        status="pending",
+        payment_method="mercadopago_ai_qr",
+        provider="mercadopago_ai_qr",
+        reference="ai-qr:test-cancel",
+        external_reference=f"ai_subscription_qr:true|flow:ai_subscription_qr|company_id:{company.id}|plan_code:inicio|payment_record_id:999|user_id:{user.id}|nonce:cancel",
+        payload_json='{"id":"ai-qr-pref-cancel","init_point":"https://mp.test/ai-qr-cancel"}',
+        preference_id="ai-qr-pref-cancel",
+    )
+    db.session.add(draft)
+    db.session.flush()
+    ref_parts = draft.external_reference.replace("payment_record_id:999", f"payment_record_id:{draft.id}")
+    draft.external_reference = ref_parts
+    db.session.commit()
+    client = subscription_app.test_client()
+    _login(client, user)
+
+    response = client.post(
+        "/admin/subscription/ai-agent/qr/cancel",
+        data={"payment_record_id": draft.id},
+    )
+
+    db.session.refresh(draft)
+    assert response.status_code == 302
+    assert draft.status == "cancelled"
+    assert AISubscriptionService.get_status(company)["status"] is None
+    assert _standard_snapshot(subscription) == before
+
+
+def test_ai_qr_approved_webhook_activates_manual_plan_without_touching_standard(subscription_app, monkeypatch):
+    company, user, _, subscription = _tenant_with_standard_subscription()
+    before = _standard_snapshot(subscription)
+    amount = AISubscriptionService.plan_amount_ars("inicio")
+    draft = Payment(
+        company_id=company.id,
+        user_id=user.id,
+        amount=amount,
+        currency="ARS",
+        status="pending",
+        payment_method="mercadopago_ai_qr",
+        provider="mercadopago_ai_qr",
+        reference="ai-qr:test-webhook",
+        payload_json='{"id":"ai-qr-pref-webhook","init_point":"https://mp.test/ai-qr-webhook"}',
+        preference_id="ai-qr-pref-webhook",
+    )
+    db.session.add(draft)
+    db.session.flush()
+    draft.external_reference = (
+        f"ai_subscription_qr:true|flow:ai_subscription_qr|company_id:{company.id}|"
+        f"plan_code:inicio|payment_record_id:{draft.id}|user_id:{user.id}|nonce:webhook"
+    )
+    db.session.commit()
+    payment_data = {
+        "id": "mp-ai-qr-payment-01",
+        "status": "approved",
+        "external_reference": draft.external_reference,
+        "metadata": {
+            "flow": "ai_subscription_qr",
+            "company_id": company.id,
+            "plan_code": "inicio",
+            "payment_record_id": draft.id,
+            "user_id": user.id,
+        },
+        "transaction_amount": amount,
+        "currency_id": "ARS",
+        "date_approved": "2026-10-09T12:00:00Z",
+        "date_last_updated": "2026-10-09T12:00:00Z",
+    }
+    service = WebhookService()
+    monkeypatch.setattr(service.mp_service, "validate_webhook_signature", lambda **kwargs: True)
+    monkeypatch.setattr(service.mp_service, "get_payment", lambda data_id: payment_data)
+
+    result = service.process(
+        db_session=db.session,
+        headers={"x-request-id": "rq-ai-qr", "x-signature": "ts=1,v1=abc"},
+        payload={"id": "evt-ai-qr-01", "type": "payment", "data": {"id": "mp-ai-qr-payment-01"}},
+    )
+
+    status = AISubscriptionService.get_status(company)
+    db.session.refresh(draft)
+    assert result["status"] == "processed_ai_qr_subscription_payment"
+    assert draft.status == "approved"
+    assert status["status"] == "ACTIVA"
+    assert status["origin"] == "MANUAL"
+    assert status["checkout_method"] == "qr"
+    assert status["mercadopago_preapproval_id"] is None
+    assert status["last_payment_id"] == "mp-ai-qr-payment-01"
+    assert status["ends_at"]
+    assert _standard_snapshot(subscription) == before
+
+
+
+def test_late_approved_webhook_refunds_terminal_ai_qr_checkout_without_activation(subscription_app, monkeypatch):
+    company, user, _, subscription = _tenant_with_standard_subscription()
+    before = _standard_snapshot(subscription)
+    amount = AISubscriptionService.plan_amount_ars("inicio")
+    draft = Payment(
+        company_id=company.id,
+        user_id=user.id,
+        amount=amount,
+        currency="ARS",
+        status="refunded",
+        payment_method="mercadopago_ai_qr",
+        provider="mercadopago_ai_qr",
+        reference="ai-qr:late-refund",
+        preference_id="ai-qr-pref-late",
+    )
+    db.session.add(draft)
+    db.session.flush()
+    draft.external_reference = (
+        f"ai_subscription_qr:true|flow:ai_subscription_qr|company_id:{company.id}|"
+        f"plan_code:inicio|payment_record_id:{draft.id}|user_id:{user.id}|nonce:late"
+    )
+    db.session.commit()
+    payment_data = {
+        "id": "mp-ai-qr-late-approved",
+        "status": "approved",
+        "external_reference": draft.external_reference,
+        "metadata": {
+            "flow": "ai_subscription_qr",
+            "company_id": company.id,
+            "plan_code": "inicio",
+            "payment_record_id": draft.id,
+            "user_id": user.id,
+        },
+        "transaction_amount": amount,
+        "currency_id": "ARS",
+        "date_approved": "2026-10-09T12:00:00Z",
+    }
+    service = WebhookService()
+    refunded = []
+    monkeypatch.setattr(service.mp_service, "validate_webhook_signature", lambda **kwargs: True)
+    monkeypatch.setattr(service.mp_service, "get_payment", lambda data_id: payment_data)
+    monkeypatch.setattr(
+        service.mp_service,
+        "refund_payment",
+        lambda payment_id: refunded.append(payment_id) or {"id": "refund-ai-qr-late", "status": "approved"},
+    )
+
+    result = service.process(
+        db_session=db.session,
+        headers={"x-request-id": "rq-ai-qr-late", "x-signature": "ts=1,v1=abc"},
+        payload={"id": "evt-ai-qr-late", "type": "payment", "data": {"id": "mp-ai-qr-late-approved"}},
+    )
+
+    db.session.refresh(draft)
+    assert result["status"] == "cancelled_ai_qr_payment_refunded"
+    assert refunded == ["mp-ai-qr-late-approved"]
+    assert draft.status == "refunded"
+    assert AISubscriptionService.get_status(company)["status"] is None
     assert _standard_snapshot(subscription) == before
 
 
@@ -813,6 +1000,97 @@ def test_standard_webhook_updates_only_standard_subscription(subscription_app, m
     assert subscription.status == SubscriptionService.STATE_ACTIVE
     assert subscription.auto_renew is True
     assert AISubscriptionService.get_status(company) == ai_before
+
+
+def test_standard_monthly_plan_change_switches_only_after_new_preapproval_authorized(subscription_app, monkeypatch):
+    company, user, _, old_subscription = _tenant_with_standard_subscription()
+    SubscriptionService._set_metadata(
+        old_subscription,
+        {
+            "mercadopago_preapproval_id": "old-standard-preapproval",
+            "mercadopago_status": "authorized",
+            "payment_method": "mercadopago_subscription",
+            "checkout_method": "automatic",
+        },
+    )
+    new_plan = Plan(
+        code="standard_monthly_switch_test",
+        name="Standard Monthly Switch Test",
+        price=2500,
+        currency="ARS",
+        duration_days=30,
+        active=True,
+    )
+    db.session.add(new_plan)
+    db.session.commit()
+
+    result = SubscriptionService.run_command(
+        db.session,
+        SubscriptionService.ChangePlanCommand(
+            company_id=company.id,
+            plan_id=new_plan.id,
+            actor_user_id=user.id,
+            actor_role=user.role,
+            origin="portal_confirm",
+            idempotency_key="test-monthly-plan-switch",
+        ),
+    )
+    new_subscription = db.session.get(Subscription, result.subscription_id)
+    assert new_subscription is not None
+    pending_metadata = SubscriptionService._metadata_dict(new_subscription)
+    assert pending_metadata["pending_plan_change"] is True
+    assert pending_metadata["previous_subscription_id"] == old_subscription.id
+    SubscriptionService._set_metadata(
+        new_subscription,
+        {
+            "mercadopago_preapproval_id": "new-standard-preapproval",
+            "mercadopago_status": "pending",
+            "payment_method": "mercadopago_subscription",
+            "checkout_method": "automatic",
+        },
+    )
+    db.session.commit()
+
+    calls = []
+
+    def get_preapproval(self, preapproval_id):
+        calls.append(("get", preapproval_id))
+        return {"id": preapproval_id, "status": "authorized"}
+
+    def cancel_preapproval(self, preapproval_id):
+        calls.append(("cancel", preapproval_id))
+        return {"id": preapproval_id, "status": "cancelled"}
+
+    monkeypatch.setattr("services.mercadopago_service.MercadoPagoService.get_preapproval", get_preapproval)
+    monkeypatch.setattr("services.mercadopago_service.MercadoPagoService.cancel_preapproval", cancel_preapproval)
+
+    from services.mercadopago_subscription_service import MercadoPagoSubscriptionService
+
+    synced = MercadoPagoSubscriptionService.sync_preapproval(
+        db_session=db.session,
+        preapproval={
+            "id": "new-standard-preapproval",
+            "status": "authorized",
+            "next_payment_date": "2099-10-09T12:00:00Z",
+        },
+    )
+    db.session.commit()
+    db.session.refresh(old_subscription)
+    db.session.refresh(new_subscription)
+
+    new_metadata = SubscriptionService._metadata_dict(new_subscription)
+    old_metadata = SubscriptionService._metadata_dict(old_subscription)
+    assert synced is new_subscription
+    assert calls == [("get", "old-standard-preapproval"), ("cancel", "old-standard-preapproval")]
+    assert old_subscription.status == SubscriptionService.STATE_CANCELLED
+    assert old_subscription.auto_renew is False
+    assert old_subscription.renewal_enabled is False
+    assert old_metadata["mercadopago_status"] == "cancelled"
+    assert new_subscription.status == SubscriptionService.STATE_ACTIVE
+    assert new_subscription.auto_renew is True
+    assert new_subscription.renewal_enabled is True
+    assert new_metadata["pending_plan_change"] is False
+    assert new_metadata["replaced_subscription_id"] == old_subscription.id
 
 
 def test_standard_qr_checkout_can_be_cancelled_without_cancelling_active_subscription(subscription_app):

@@ -78,7 +78,7 @@ def payment_flow(payment) -> str:
     reference = _text(getattr(payment, "reference", None))
     subscription_id = getattr(payment, "subscription_id", None)
 
-    if provider == "mercadopago_ai_subscription" or payment_method == "mercadopago_ai_subscription" or "ai_subscription:true" in external_reference:
+    if provider in {"mercadopago_ai_subscription", "mercadopago_ai_qr"} or payment_method in {"mercadopago_ai_subscription", "mercadopago_ai_qr"} or "ai_subscription:true" in external_reference or "ai_subscription_qr:true" in external_reference:
         return FLOW_AI_SUBSCRIPTION
     if provider == "mercadopago_ai_order" or "flow:ai_order" in external_reference or "flow:ai_order" in reference:
         return FLOW_AI_ORDER
@@ -109,9 +109,10 @@ def is_standard_subscription_payment(payment) -> bool:
 
 def ai_subscription_payment_filter(Payment):
     return or_(
-        func.coalesce(Payment.provider, "") == "mercadopago_ai_subscription",
-        func.coalesce(Payment.payment_method, "") == "mercadopago_ai_subscription",
+        func.coalesce(Payment.provider, "").in_(("mercadopago_ai_subscription", "mercadopago_ai_qr")),
+        func.coalesce(Payment.payment_method, "").in_(("mercadopago_ai_subscription", "mercadopago_ai_qr")),
         func.coalesce(Payment.external_reference, "").contains("ai_subscription:true"),
+        func.coalesce(Payment.external_reference, "").contains("ai_subscription_qr:true"),
     )
 
 

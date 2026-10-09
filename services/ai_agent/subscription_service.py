@@ -453,6 +453,101 @@ class AISubscriptionService:
         return float(digits)
 
     @classmethod
+    def activate_paid_qr(
+        cls,
+        company,
+        *,
+        plan_code: str,
+        payment_id: str,
+        amount: float,
+        currency: str,
+        paid_at: datetime | None = None,
+    ) -> dict[str, Any]:
+        """Activates/extends one manually paid AI month after webhook validation.
+
+        Manual QR payments never create or replace a live Mercado Pago preapproval.
+        """
+        from math import isfinite
+
+        code = str(plan_code or "").strip().lower()
+        if code not in AI_PLAN_BY_CODE:
+            raise AISubscriptionError("Plan IA inválido para activar el pago QR.")
+        expected_amount = cls.plan_amount_ars(code)
+        try:
+            incoming_amount = float(amount)
+        except (TypeError, ValueError):
+            raise AISubscriptionError("El importe del pago QR IA no es válido.")
+        if not isfinite(incoming_amount) or abs(incoming_amount - expected_amount) > 0.01:
+            raise AISubscriptionError("El importe del pago QR no coincide con el precio oficial del plan IA.")
+        normalized_currency = str(currency or "").strip().upper()
+        if normalized_currency != "ARS":
+            raise AISubscriptionError("El pago QR del plan IA debe estar expresado en ARS.")
+
+        ai = cls._ai_prefs(company)
+        current_status = str(ai.get("status") or "").strip().upper()
+        current_origin = cls._origin(ai)
+        current_code = str(ai.get("plan_code") or "").strip().lower()
+        current_preapproval_id = cls._preapproval_id(ai)
+        current_mp_status = str(ai.get("mercadopago_status") or "").strip().lower()
+
+        if current_origin == "MERCADO_PAGO" and current_preapproval_id:
+            if current_status not in {"CANCELADA", "VENCIDA"} and current_mp_status not in MP_TERMINAL_STATUSES:
+                raise AISubscriptionError(
+                    "La empresa ya tiene una suscripción IA administrada por Mercado Pago. "
+                    "Cancelala allí antes de activar un plan por QR."
+                )
+
+        now = utcnow_naive()
+        current_ends_at = _parse_dt(ai.get("ends_at"))
+        if current_status in {"ACTIVA", "TRIAL"} and current_origin != "MERCADO_PAGO":
+            if current_code != code:
+                raise AISubscriptionError(
+                    "Ya hay otro plan IA activo. Finalizá ese plan antes de contratar uno diferente."
+                )
+            base = current_ends_at if current_ends_at and current_ends_at > now else now
+            starts_at = ai.get("starts_at") or now.isoformat()
+        else:
+            base = now
+            starts_at = now.isoformat()
+
+        archive_fields = {}
+        if current_origin == "MERCADO_PAGO" and current_preapproval_id:
+            archive_fields = {
+                "mercadopago_previous_preapproval_id": current_preapproval_id,
+                "mercadopago_previous_status": ai.get("mercadopago_status"),
+                "mercadopago_previous_external_reference": ai.get("mercadopago_external_reference"),
+            }
+
+        payment_timestamp = paid_at.isoformat() if isinstance(paid_at, datetime) else now.isoformat()
+        new_fields = {
+            **archive_fields,
+            "plan_code": code,
+            "status": "ACTIVA",
+            "origin": "MANUAL",
+            "starts_at": starts_at,
+            "ends_at": (base + timedelta(days=30)).isoformat(),
+            "checkout_method": "qr",
+            "mercadopago_preapproval_id": None,
+            "mercadopago_status": None,
+            "mercadopago_external_reference": None,
+            "mercadopago_payer_email": None,
+            "last_payment_id": str(payment_id or "").strip() or None,
+            "last_payment_status": "approved",
+            "last_payment_amount": incoming_amount,
+            "last_payment_currency": normalized_currency,
+            "last_payment_at": payment_timestamp,
+            "granted_by_user_id": None,
+            "trial_reason": None,
+        }
+        return cls._apply(
+            company,
+            admin_user_id=None,
+            action="ai_subscription_qr_payment_activated",
+            new_fields=new_fields,
+            reason=f"Pago QR manual aprobado; payment_id={str(payment_id or '').strip()}",
+        )
+
+    @classmethod
     def select_pending_checkout_method(cls, company, *, payment_method: str) -> dict[str, Any]:
         method = str(payment_method or "").strip().lower()
         if method not in {"qr", "automatic"}:

@@ -76,6 +76,61 @@ class MercadoPagoService:
         payload = {"items": [{"id": str(plan_id), "title": title, "description": f"Suscripcion plan {title}", "quantity": 1, "currency_id": currency, "unit_price": float(amount)}], "external_reference": external_reference, "metadata": {"company_id": company_id, "plan_id": plan_id, "subscription_id": subscription_id, "user_id": user_id}, "back_urls": {"success": self.config.success_url, "pending": self.config.pending_url, "failure": self.config.failure_url}, "notification_url": self.config.notification_url, "statement_descriptor": self.config.statement_descriptor, "auto_return": "approved"}
         return self._request("POST", "/checkout/preferences", payload=payload, idempotency_key=f"checkout-preference:{external_reference}")
 
+    def create_ai_subscription_qr_preference(
+        self,
+        *,
+        title: str,
+        amount: float,
+        external_reference: str,
+        company_id: int,
+        plan_code: str,
+        payment_record_id: int,
+        user_id: int,
+    ) -> dict[str, Any]:
+        """Create a one-time checkout for an AI plan paid manually each month.
+
+        This intentionally uses /checkout/preferences, not /preapproval: a QR
+        checkout must never authorize automatic recurring charges.
+        """
+        if float(amount) <= 0:
+            raise ValueError("El plan IA debe tener un precio mayor a cero.")
+        code = str(plan_code or "").strip().lower()
+        if not code or not str(external_reference or "").strip():
+            raise ValueError("Faltan datos para generar el checkout QR del plan IA.")
+        payload = {
+            "items": [{
+                "id": code,
+                "title": str(title or f"StockArMobile IA - {code}")[:256],
+                "description": "Plan IA StockArMobile por 30 días. Pago manual con QR; no renueva automáticamente.",
+                "quantity": 1,
+                "currency_id": "ARS",
+                "unit_price": float(amount),
+            }],
+            "external_reference": external_reference,
+            "metadata": {
+                "flow": "ai_subscription_qr",
+                "company_id": int(company_id),
+                "plan_code": code,
+                "payment_record_id": int(payment_record_id),
+                "user_id": int(user_id),
+                "recurring": False,
+            },
+            "back_urls": {
+                "success": self.config.success_url,
+                "pending": self.config.pending_url,
+                "failure": self.config.failure_url,
+            },
+            "notification_url": self.config.notification_url,
+            "statement_descriptor": self.config.statement_descriptor,
+            "auto_return": "approved",
+        }
+        return self._request(
+            "POST",
+            "/checkout/preferences",
+            payload=payload,
+            idempotency_key=f"ai-qr-preference:{int(payment_record_id)}",
+        )
+
     def create_pos_checkout_preference(self, *, title: str, amount: float, currency: str, external_reference: str, company_id: int, user_id: int, metadata: dict[str, Any] | None = None, access_token: str | None = None) -> dict[str, Any]:
         payload = {"items": [{"id": external_reference, "title": title, "description": "Cobro QR Mercado Pago desde POS", "quantity": 1, "currency_id": currency, "unit_price": float(amount)}], "external_reference": external_reference, "metadata": {"flow": "pos_sale", "company_id": company_id, "user_id": user_id, **(metadata or {})}, "back_urls": {"success": self.config.success_url, "pending": self.config.pending_url, "failure": self.config.failure_url}, "notification_url": self.config.notification_url, "statement_descriptor": self.config.statement_descriptor, "auto_return": "approved"}
         return self._request("POST", "/checkout/preferences", payload=payload, access_token=access_token, idempotency_key=f"pos-checkout-preference:{external_reference}")
