@@ -803,7 +803,7 @@ def test_standard_webhook_updates_only_standard_subscription(subscription_app, m
     ai_before = deepcopy(AISubscriptionService.get_status(company))
     service = WebhookService()
     monkeypatch.setattr(service.mp_service, "validate_webhook_signature", lambda **kwargs: True)
-    monkeypatch.setattr(service.mp_service, "get_preapproval", lambda data_id: {"id": "standard-pre", "status": "authorized", "next_payment_date": "2026-10-09T12:00:00Z", "external_reference": f"stockarmobile|flow:subscription_auto|company_id:{company.id}|subscription_id:{subscription.id}|nonce:def"})
+    monkeypatch.setattr(service.mp_service, "get_preapproval", lambda data_id: {"id": "standard-pre", "status": "authorized", "next_payment_date": "2099-10-09T12:00:00Z", "external_reference": f"stockarmobile|flow:subscription_auto|company_id:{company.id}|subscription_id:{subscription.id}|nonce:def"})
 
     result = service.process(db_session=db.session, headers={"x-request-id": "rq-standard", "x-signature": "ts=1,v1=abc"}, payload={"id": "evt-standard", "type": "subscription_preapproval", "data": {"id": "standard-pre"}})
 
