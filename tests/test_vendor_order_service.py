@@ -253,6 +253,74 @@ def test_update_cart_prefers_the_only_fulfillable_variant_but_blocks_zero_price(
     assert CART_KEY not in (conversation.metadata_json or {})
 
 
+def test_update_cart_blocks_exactly_named_zero_price_product(vendor_database):
+    data = vendor_database
+    milk = Product(
+        barcode="MILK-UAT-EXACT",
+        name="Leche UAT Entera 1 lt",
+        price=0,
+        cost_price=1300,
+        stock=24,
+        min_stock=1,
+        active=True,
+        company_id=data["company_a"].id,
+        unit_measure="u",
+    )
+    db.session.add(milk)
+    db.session.commit()
+    conversation = _conversation(data["company_a"].id)
+
+    result = VendorOrderService.update_cart(
+        company_id=data["company_a"].id,
+        conversation_id=conversation.id,
+        items=[{
+            "product_query": "Leche UAT Entera 1 lt",
+            "quantity": 5,
+            "replace_quantity": True,
+        }],
+    )
+
+    assert result["success"] is False
+    assert result["error"] == "precio_no_configurado"
+    assert result["product"]["product_id"] == milk.id
+    assert result["product"]["stock"] == 24
+    assert CART_KEY not in (conversation.metadata_json or {})
+
+
+def test_create_pending_order_blocks_stale_zero_price_cart(vendor_database):
+    data = vendor_database
+    milk = Product(
+        barcode="MILK-UAT-STALE",
+        name="Leche UAT Entera 1 lt",
+        price=0,
+        cost_price=1300,
+        stock=24,
+        min_stock=1,
+        active=True,
+        company_id=data["company_a"].id,
+        unit_measure="u",
+    )
+    db.session.add(milk)
+    db.session.flush()
+    conversation = _conversation(data["company_a"].id)
+    conversation.metadata_json = {CART_KEY: {str(milk.id): 5.0}}
+    db.session.commit()
+
+    with pytest.raises(ValueError, match="precio \$0/no configurado"):
+        VendorOrderService.create_pending_order(
+            company_id=data["company_a"].id,
+            conversation_id=conversation.id,
+            customer_name="Cliente QA",
+            customer_phone="3624123456",
+            delivery_method="retiro",
+            actor_user_id=data["user_a"].id,
+        )
+
+    db.session.rollback()
+    assert Quote.query.filter_by(company_id=data["company_a"].id).count() == 0
+    assert Payment.query.filter_by(company_id=data["company_a"].id, provider="mercadopago_ai_order").count() == 0
+
+
 def test_update_cart_selects_the_only_in_stock_variant_when_price_is_configured(vendor_database):
     data = vendor_database
     no_stock = Product(

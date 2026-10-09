@@ -6,7 +6,7 @@ import pytest
 import app as stock_app
 from app import Company, User, db
 from services.ai_agent.campaign_service import CampaignService
-from services.ai_agent.orchestrator_v2 import AgentRuntime
+from services.ai_agent.orchestrator_v2 import AgentRuntime, _explicit_price_action_confirmation
 from services.ai_agent.usage_service import AI_PLANS, can_use_ai, can_use_ai_feature, record_ai_usage, usage_snapshot
 from stockarmobile.helpers.dates import utcnow_naive
 from stockarmobile.models.conversations import Agent, Conversation, ConversationMessage
@@ -236,7 +236,7 @@ def test_backend_blocks_unincluded_agent_before_provider_and_without_campaign(qa
     assert Campaign.query.filter_by(company_id=company.id).count() == 0
 
 
-def test_pricing_tools_follow_plan_entitlements(qa_ai_database):
+def test_pricing_tools_follow_plan_entitlements_for_assistant_and_analyst(qa_ai_database):
     expected = {
         "inicio": set(),
         "negocio": {
@@ -253,20 +253,128 @@ def test_pricing_tools_follow_plan_entitlements(qa_ai_database):
             "revertir_cambio_precios",
         },
     }
+    pricing_tool_names = {
+        "consultar_precios",
+        "analizar_oportunidades_precios",
+        "previsualizar_cambio_precios",
+        "confirmar_cambio_precios",
+        "revertir_cambio_precios",
+    }
     for plan_code, expected_pricing_tools in expected.items():
         company = qa_ai_database["companies"][plan_code]
-        names = {
-            item["function"]["name"]
-            for item in AgentRuntime._tool_definitions("asistente", company_id=company.id)
-        }
-        pricing_names = {name for name in names if name in {
-            "consultar_precios",
-            "analizar_oportunidades_precios",
-            "previsualizar_cambio_precios",
-            "confirmar_cambio_precios",
-            "revertir_cambio_precios",
-        }}
-        assert pricing_names == expected_pricing_tools
+        for agent_key in ("asistente", "analista"):
+            names = {
+                item["function"]["name"]
+                for item in AgentRuntime._tool_definitions(agent_key, company_id=company.id)
+            }
+            assert {name for name in names if name in pricing_tool_names} == expected_pricing_tools
+
+
+def test_analyst_chat_exposes_global_price_controller_to_the_authenticated_admin(qa_ai_database):
+    company = qa_ai_database["companies"]["pro"]
+    user = qa_ai_database["users"]["pro"]
+    conversation = _conversation(company.id, "analista")
+    calls = []
+
+    class Provider:
+        def generate(self, *, messages, tools=None, **kwargs):
+            calls.append({"messages": list(messages), "tools": tools})
+            return {"content": "Puedo preparar una vista previa del cambio para que la revises.", "tool_call": None}
+
+    result = AgentRuntime.process(
+        company_id=company.id,
+        conversation_id=conversation.id,
+        message="Quiero revisar los precios del comercio",
+        channel="web",
+        sender_id=user.id,
+        provider_override=Provider(),
+        include_system_prompt=True,
+    )
+
+    tool_names = {item["function"]["name"] for item in calls[0]["tools"]}
+    assert {
+        "consultar_precios",
+        "analizar_oportunidades_precios",
+        "previsualizar_cambio_precios",
+        "confirmar_cambio_precios",
+    } <= tool_names
+    assert "revertir_cambio_precios" in tool_names
+    system = calls[0]["messages"][0]["content"]
+    assert "Controlador Global de Precios" in system
+    assert "confirmación explícita" in system
+    assert "vista previa" in system.lower()
+    assert "Puedo preparar" in result["content"]
+
+
+def test_price_confirmation_guard_blocks_same_turn_and_requires_the_shown_batch(qa_ai_database, monkeypatch):
+    company = qa_ai_database["companies"]["pro"]
+    user = qa_ai_database["users"]["pro"]
+    apply_calls = []
+
+    def fake_apply_batch(*, company_id, user_id, batch_id):
+        apply_calls.append((company_id, user_id, batch_id))
+        return {"success": True, "batch_id": batch_id, "applied": 3}
+
+    monkeypatch.setattr("services.ai_agent.tools.pricing_controller.apply_batch", fake_apply_batch)
+    arguments = {"batch_id": 42}
+
+    same_turn = AgentRuntime._execute_tool(
+        "confirmar_cambio_precios",
+        company_id=company.id,
+        arguments=arguments,
+        context={"actor_user_id": user.id, "user_message": "Subí los precios un 10%", "previous_assistant_message": ""},
+    )
+    assert same_turn["success"] is False
+    assert same_turn["requires_human_confirmation"] is True
+    assert apply_calls == []
+
+    wrong_batch = AgentRuntime._execute_tool(
+        "confirmar_cambio_precios",
+        company_id=company.id,
+        arguments=arguments,
+        context={
+            "actor_user_id": user.id,
+            "user_message": "Sí, confirmo",
+            "previous_assistant_message": "Vista previa de precios creada. ID del lote: 41. Ningún precio fue modificado.",
+        },
+    )
+    assert wrong_batch["success"] is False
+    assert apply_calls == []
+
+    confirmed = AgentRuntime._execute_tool(
+        "confirmar_cambio_precios",
+        company_id=company.id,
+        arguments=arguments,
+        context={
+            "actor_user_id": user.id,
+            "user_message": "Sí, confirmo el lote 42",
+            "previous_assistant_message": "Vista previa creada. ID del lote: 42. Ningún precio fue modificado.",
+        },
+    )
+    assert confirmed == {"success": True, "batch_id": 42, "applied": 3}
+    assert apply_calls == [(company.id, user.id, 42)]
+
+
+@pytest.mark.parametrize(
+    "message,action,expected",
+    [
+        ("Sí, confirmo el lote 42", "apply", True),
+        ("Subí 10% y confirmo", "apply", False),
+        ("No confirmo", "apply", False),
+        ("Confirmo", "apply", False),
+        ("Revertí el lote 42", "rollback", True),
+        ("Sí, revertí el lote 42", "rollback", True),
+        ("Sí", "rollback", False),
+    ],
+)
+def test_price_confirmation_intent_is_explicit_and_scoped(message, action, expected):
+    previous = "Vista previa de precios creada. ID del lote: 42. Ningún precio fue modificado."
+    assert _explicit_price_action_confirmation(
+        message,
+        action=action,
+        batch_id=42,
+        previous_assistant_message=previous,
+    ) is expected
 
 
 def test_agent_selection_restricts_tools_and_preserves_isolation(qa_ai_database):

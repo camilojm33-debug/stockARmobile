@@ -7,7 +7,7 @@ from typing import Any, Dict
 
 from sqlalchemy import func
 
-from app import Client, Product, Sale, SaleItem
+from app import Client, Product, Sale, SaleItem, db
 from services.ai_agent.tools.base import AgentTool
 
 
@@ -139,43 +139,50 @@ class ClientesInactivosTool(AgentTool):
             return {"success": False, "error": "limit debe ser un entero"}
 
         cutoff = datetime.utcnow() - timedelta(days=days)
-        historical = Sale.query.filter(
+        # Only completed/non-voided sales should establish history or recent activity.
+        # Aggregate history once and rank eligible inactive customers by value and recency,
+        # matching the priority rule returned to the agent.
+        valid_sales = Sale.query.filter(
             Sale.company_id == self.company_id,
             Sale.client_id.isnot(None),
-        ).with_entities(Sale.client_id).distinct().subquery()
+            Sale.status.notin_(["cancelada", "anulada"]),
+        )
+        history = valid_sales.with_entities(
+            Sale.client_id.label("client_id"),
+            func.max(Sale.date).label("last_purchase"),
+            func.sum(Sale.total_amount).label("historical_revenue"),
+            func.count(Sale.id).label("purchase_count"),
+        ).group_by(Sale.client_id).subquery()
         recent = Sale.query.filter(
             Sale.company_id == self.company_id,
             Sale.client_id.isnot(None),
+            Sale.status.notin_(["cancelada", "anulada"]),
             Sale.date >= cutoff,
         ).with_entities(Sale.client_id).distinct().subquery()
-        base = Client.query.filter(
-            Client.company_id == self.company_id,
-            Client.active.is_(True),
-            Client.id.in_(historical),
-            ~Client.id.in_(recent),
+        base = (
+            db.session.query(
+                Client,
+                history.c.last_purchase,
+                history.c.historical_revenue,
+                history.c.purchase_count,
+            )
+            .join(history, history.c.client_id == Client.id)
+            .filter(
+                Client.company_id == self.company_id,
+                Client.active.is_(True),
+                ~Client.id.in_(recent),
+            )
         )
         count = base.count()
-        clients = base.order_by(Client.name.asc()).limit(limit).all()
-        client_ids = [client.id for client in clients]
-        history = {}
-        if client_ids:
-            rows = Sale.query.filter(
-                Sale.company_id == self.company_id,
-                Sale.client_id.in_(client_ids),
-                Sale.status.notin_(["cancelada", "anulada"]),
-            ).with_entities(
-                Sale.client_id,
-                func.max(Sale.date).label("last_purchase"),
-                func.sum(Sale.total_amount).label("historical_revenue"),
-                func.count(Sale.id).label("purchase_count"),
-            ).group_by(Sale.client_id).all()
-            history = {row.client_id: row for row in rows}
+        rows = base.order_by(
+            history.c.historical_revenue.desc(),
+            history.c.last_purchase.asc(),
+            Client.name.asc(),
+        ).limit(limit).all()
 
         now = datetime.utcnow()
         items = []
-        for client in clients:
-            row = history.get(client.id)
-            last_purchase = row.last_purchase if row else None
+        for client, last_purchase, historical_revenue, purchase_count in rows:
             items.append({
                 "id": client.id,
                 "name": client.name,
@@ -183,8 +190,8 @@ class ClientesInactivosTool(AgentTool):
                 "phone": client.phone,
                 "last_purchase_at": last_purchase.isoformat() if last_purchase else None,
                 "days_since_last_purchase": (now - last_purchase).days if last_purchase else None,
-                "historical_revenue": float(row.historical_revenue or 0) if row else 0.0,
-                "purchase_count": int(row.purchase_count or 0) if row else 0,
+                "historical_revenue": float(historical_revenue or 0),
+                "purchase_count": int(purchase_count or 0),
             })
         return {
             "success": True,
