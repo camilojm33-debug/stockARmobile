@@ -343,12 +343,24 @@ class VendorOrderPreviewTool(AgentTool):
             import re
 
             values = []
-            # Only scan user-authored messages from this visitor-bound conversation.
-            # Keep phone candidates separate from quantities, postal codes and quote IDs.
+            phone_label = re.compile(
+                r"(?:tel[eé]fono|tel\\b|cel(?:ular)?|whats\\s*app|whatsapp|n[uú]mero(?:\\s+de\\s+contacto)?|contacto)"
+                r"\\s*(?:es|de contacto|:|-)?\\s*(\\+?\\d[\\d\\s().-]{6,}\\d)",
+                re.IGNORECASE,
+            )
+            standalone_number = re.compile(r"^\\s*(\\+?\\d[\\d\\s().-]{6,}\\d)\\s*$")
+            # Only use labeled contact numbers or a message consisting solely of a
+            # phone number. Don't mistake a barcode, quote number, or street number
+            # for a customer's phone.
             for row in rows:
                 raw = str(row.content or "")
-                for match in re.finditer(r"(?<!\d)\+?\d[\d\s().-]{6,}\d(?!\d)", raw):
-                    digits = _normalize_phone(match.group(0))
+                matches = [match.group(1) for match in phone_label.finditer(raw)]
+                if not matches:
+                    standalone = standalone_number.fullmatch(raw)
+                    if standalone:
+                        matches = [standalone.group(1)]
+                for candidate in matches:
+                    digits = _normalize_phone(candidate)
                     if 8 <= len(digits) <= 15 and digits not in values:
                         values.append(digits)
             return values
