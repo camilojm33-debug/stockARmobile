@@ -799,7 +799,7 @@ def test_public_webchat_keeps_customer_quantity_when_model_misreads_stock(qa_pub
                 company_id=setup["company"].id,
             ).first()
             product.stock = 17.80000000000001
-                conversation = Conversation(
+            conversation = Conversation(
                 company_id=setup["company"].id,
                 channel="webchat",
                 external_conversation_id="qa-stock-quantity-authority",
@@ -879,9 +879,6 @@ def test_public_webchat_keeps_customer_quantity_when_model_misreads_stock(qa_pub
             assert observed["quantity"] == 4
             assert observed["stock"] == 17.8
             assert observed["customer_name"] == "Nelson Mandela"
-            db.session.rollback()
-
-
         finally:
             db.session.rollback()
 
