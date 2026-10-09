@@ -1264,12 +1264,67 @@ def _build_user_and_cash_rows(company_id, date_from=None, date_to=None, search_t
 def subscription_portal():
     from flask import session
 
-    from app import Company, Invoice, Payment, PaymentHistory, ReferralAttribution
+    from app import Company, Invoice, Payment, PaymentHistory, ReferralAttribution, Subscription
     from services.ai_agent.usage_service import AI_PLANS
     from services.ai_agent.subscription_service import AISubscriptionService
+    from services.mercadopago_service import MercadoPagoService
 
     company_id = getattr(current_user, "company_id", None)
     company = Company.query.filter_by(id=company_id).first_or_404()
+
+    # Mercado Pago can return the browser before its webhook has updated our
+    # database. Reconcile only the product and local record named in the return
+    # marker; standard billing and AI billing must never update one another.
+    return_flow = str(request.args.get("mp_subscription_return") or "").strip().lower()
+    if return_flow == "standard":
+        from services.mercadopago_subscription_service import MercadoPagoSubscriptionService
+        requested_subscription_id = request.args.get("mp_subscription_id", type=int)
+        if requested_subscription_id:
+            target_subscription = Subscription.query.filter_by(
+                id=requested_subscription_id,
+                company_id=company.id,
+            ).first()
+            target_metadata = SubscriptionService._metadata_dict(target_subscription) if target_subscription else {}
+            target_preapproval_id = str(target_metadata.get("mercadopago_preapproval_id") or "").strip()
+            if target_preapproval_id:
+                try:
+                    remote = MercadoPagoService().get_preapproval(target_preapproval_id)
+                    ref_parts = WebhookService._external_reference_parts(str(remote.get("external_reference") or ""))
+                    if (
+                        str(remote.get("id") or "").strip() == target_preapproval_id
+                        and ref_parts.get("flow") == MercadoPagoSubscriptionService.FLOW
+                        and str(ref_parts.get("company_id") or "") == str(company.id)
+                        and str(ref_parts.get("subscription_id") or "") == str(target_subscription.id)
+                    ):
+                        MercadoPagoSubscriptionService.sync_preapproval(db_session=db.session, preapproval=remote)
+                        db.session.commit()
+                except Exception:
+                    db.session.rollback()
+                    current_app.logger.exception(
+                        "No se pudo reconciliar retorno de suscripción estándar company_id=%s subscription_id=%s",
+                        company.id,
+                        requested_subscription_id,
+                    )
+    elif return_flow == "ai":
+        ai_status_before_return = AISubscriptionService.get_status(company)
+        ai_preapproval_id = str(ai_status_before_return.get("mercadopago_preapproval_id") or "").strip()
+        if ai_preapproval_id:
+            try:
+                remote = MercadoPagoService().get_preapproval(ai_preapproval_id)
+                ref_parts = WebhookService._external_reference_parts(str(remote.get("external_reference") or ""))
+                if (
+                    str(remote.get("id") or "").strip() == ai_preapproval_id
+                    and ref_parts.get("ai_subscription") == "true"
+                    and str(ref_parts.get("company_id") or "") == str(company.id)
+                ):
+                    AISubscriptionService.sync_from_mercadopago(preapproval=remote)
+                    db.session.commit()
+            except Exception:
+                db.session.rollback()
+                current_app.logger.exception(
+                    "No se pudo reconciliar retorno de suscripción IA company_id=%s",
+                    company.id,
+                )
 
     plans = PlanService.all_commercial_plans()
     subscription = SubscriptionService.active_subscription_for_company(company.id)
@@ -1737,7 +1792,10 @@ def create_ai_subscription_checkout():
     from services.mercadopago_service import MercadoPagoService
 
     company_id = getattr(current_user, "company_id", None)
-    company = Company.query.filter_by(id=company_id).first_or_404()
+    # Serialize checkout creation for this tenant. PostgreSQL holds this row
+    # lock until the attempt reference is committed, preventing double-clicks
+    # or concurrent requests from creating two independent preapprovals.
+    company = Company.query.filter_by(id=company_id).with_for_update().first_or_404()
     plan_code = (request.form.get("plan_code") or "").strip().lower()
     plan = AI_PLAN_BY_CODE.get(plan_code)
     if plan is None:
@@ -1973,17 +2031,55 @@ def create_ai_subscription_checkout():
                 AISubscriptionService.sync_from_mercadopago(preapproval=remote)
                 flash("Mercado Pago ya autorizó tu suscripción IA. El estado se actualizó.", "success")
                 return redirect(url_for("company_billing.subscription_portal", _anchor="suscripcion-ia"))
-            if remote_status in {"pending", "in_process"} and remote_init_point:
+            if remote_status in {"pending", "in_process"}:
                 preapproval_id = existing_preapproval_id
+                if not remote_init_point:
+                    from urllib.parse import urlencode
+                    remote_init_point = (
+                        "https://www.mercadopago.com.ar/subscriptions/checkout?"
+                        + urlencode({"preapproval_id": existing_preapproval_id})
+                    )
                 checkout_url = remote_init_point
-            elif remote_status not in {"cancelled", "canceled", "expired"}:
+            elif remote_status not in {"cancelled", "canceled", "expired", "rejected"}:
                 raise AISubscriptionError(
                     "El checkout IA no está disponible para cambiar de modalidad. Revisá su estado en Mercado Pago antes de crear otro."
                 )
 
         if not preapproval_id:
-            external_reference = f"ai_subscription:true|company_id:{company.id}|plan_code:{plan_code}|nonce:{uuid.uuid4().hex}"
+            # Persist a per-plan attempt identifier before talking to Mercado Pago.
+            # On network timeouts, retries reuse the same external_reference and
+            # API idempotency key instead of creating a second recurring contract.
+            attempt_reference = str(ai_status.get("mercadopago_create_attempt_reference") or "").strip()
+            attempt_plan_code = str(ai_status.get("mercadopago_create_attempt_plan_code") or "").strip().lower()
+            if attempt_reference and attempt_plan_code == plan_code:
+                external_reference = attempt_reference
+            else:
+                external_reference = (
+                    f"ai_subscription:true|company_id:{company.id}|plan_code:{plan_code}|nonce:{uuid.uuid4().hex}"
+                )
+                AISubscriptionService._apply(
+                    company,
+                    admin_user_id=None,
+                    action="ai_subscription_preapproval_attempt_started",
+                    new_fields={
+                        "mercadopago_create_attempt_reference": external_reference,
+                        "mercadopago_create_attempt_plan_code": plan_code,
+                    },
+                    reason="Intento recurrente independiente del plan estándar, persistido antes de invocar Mercado Pago.",
+                )
             config = load_billing_config()
+            from urllib.parse import parse_qsl, urlencode, urlsplit, urlunsplit
+
+            ai_back_parts = urlsplit(config.success_url)
+            ai_back_query = dict(parse_qsl(ai_back_parts.query, keep_blank_values=True))
+            ai_back_query["mp_subscription_return"] = "ai"
+            ai_subscription_back_url = urlunsplit((
+                ai_back_parts.scheme,
+                ai_back_parts.netloc,
+                ai_back_parts.path,
+                urlencode(ai_back_query),
+                ai_back_parts.fragment,
+            ))
             response = mp_service.create_preapproval(
                 reason=f"StockArMobile IA - Plan {plan['name']}",
                 payer_email=payer_email,
@@ -1993,12 +2089,28 @@ def create_ai_subscription_checkout():
                 frequency=1,
                 frequency_type="months",
                 notification_url=config.notification_url,
-                back_url=config.success_url,
+                back_url=ai_subscription_back_url,
             )
             preapproval_id = str(response.get("id") or "").strip()
+            remote_status = str(response.get("status") or "pending").strip().lower()
             checkout_url = str(response.get("init_point") or "").strip()
-            if not preapproval_id or not checkout_url:
-                raise RuntimeError("Mercado Pago no devolvió una suscripción IA válida (id/init_point).")
+            if not preapproval_id:
+                raise RuntimeError(
+                    "Mercado Pago no devolvió el identificador de la suscripción IA. "
+                    "Se conservó el intento para reintentar con la misma clave de idempotencia."
+                )
+
+            # If MP returns an ID but no redirect, check the already-created
+            # resource before deciding how to proceed. Never POST a second
+            # preapproval because an init_point field is absent.
+            if not checkout_url and remote_status not in {"authorized", "cancelled", "canceled", "expired", "rejected"}:
+                remote = mp_service.get_preapproval(preapproval_id)
+                if str(remote.get("id") or "").strip() != preapproval_id:
+                    raise RuntimeError("Mercado Pago devolvió una suscripción IA distinta de la solicitada.")
+                remote_status = str(remote.get("status") or remote_status).strip().lower()
+                checkout_url = str(remote.get("init_point") or "").strip()
+                response = remote
+
             AISubscriptionService.link_mercadopago_pending(
                 company,
                 plan_code=plan_code,
@@ -2008,6 +2120,37 @@ def create_ai_subscription_checkout():
                 checkout_method=payment_method,
             )
 
+            if remote_status == "authorized":
+                AISubscriptionService.sync_from_mercadopago(preapproval=response)
+                db.session.commit()
+                flash("La suscripción mensual IA ya está autorizada en Mercado Pago y quedó sincronizada.", "success")
+                return redirect(url_for("company_billing.subscription_portal", mp_subscription_return="ai", _anchor="suscripcion-ia"))
+
+            if remote_status in {"cancelled", "canceled", "expired", "rejected"}:
+                AISubscriptionService.sync_from_mercadopago(preapproval=response)
+                db.session.commit()
+                raise AISubscriptionError(
+                    "Mercado Pago devolvió una autorización IA terminada. Podés volver a intentar la suscripción."
+                )
+
+            if not checkout_url:
+                from urllib.parse import urlencode
+                checkout_url = (
+                    "https://www.mercadopago.com.ar/subscriptions/checkout?"
+                    + urlencode({"preapproval_id": preapproval_id})
+                )
+            from urllib.parse import urlparse
+            parsed_ai_checkout = urlparse(checkout_url)
+            allowed_ai_checkout_hosts = {
+                "www.mercadopago.com", "mercadopago.com", "sandbox.mercadopago.com",
+                "www.mercadopago.com.ar", "mercadopago.com.ar", "sandbox.mercadopago.com.ar",
+                "www.mercadopago.com.br", "www.mercadopago.com.mx", "www.mercadopago.com.cl",
+                "www.mercadopago.com.co", "www.mercadopago.com.uy", "www.mercadopago.com.pe",
+            }
+            if current_app.testing and parsed_ai_checkout.hostname == "mp.test":
+                allowed_ai_checkout_hosts.add("mp.test")
+            if parsed_ai_checkout.scheme != "https" or parsed_ai_checkout.hostname not in allowed_ai_checkout_hosts:
+                raise RuntimeError("Mercado Pago devolvió un enlace de autorización IA no reconocido.")
         return _checkout_redirect_response(checkout_url)
     except AISubscriptionError as exc:
         db.session.rollback()
@@ -2146,7 +2289,9 @@ def create_mercadopago_subscription():
     from services.mercadopago_subscription_service import MercadoPagoSubscriptionService
 
     company_id = getattr(current_user, "company_id", None)
-    company = Company.query.filter_by(id=company_id).first_or_404()
+    # Serialize standard checkout attempts for this tenant as well; the AI plan
+    # uses the same company row only as a lock, never as shared subscription state.
+    company = Company.query.filter_by(id=company_id).with_for_update().first_or_404()
     plan_id = request.form.get("plan_id", type=int)
     plan = PlanService.get_plan(plan_id=plan_id) if plan_id else None
     if plan is None:
@@ -2219,6 +2364,24 @@ def create_mercadopago_subscription():
             "Iniciando checkout recurrente estándar: company_id=%s plan_id=%s mode=%s token_configured=%s",
             company.id, plan.id, config.mode, bool(config.access_token),
         )
+        from urllib.parse import parse_qsl, urlencode, urlsplit, urlunsplit
+
+        # Give the payer a return URL specific to the standard product and the
+        # exact local subscription. The AI subscription uses a different marker
+        # and is reconciled independently on return.
+        back_parts = urlsplit(config.success_url)
+        back_query = dict(parse_qsl(back_parts.query, keep_blank_values=True))
+        back_query.update({
+            "mp_subscription_return": "standard",
+            "mp_subscription_id": str(subscription.id),
+        })
+        subscription_back_url = urlunsplit((
+            back_parts.scheme,
+            back_parts.netloc,
+            back_parts.path,
+            urlencode(back_query),
+            back_parts.fragment,
+        ))
         response = MercadoPagoSubscriptionService.create(
             db_session=db.session,
             company=company,
@@ -2226,8 +2389,16 @@ def create_mercadopago_subscription():
             plan=plan,
             payer_email=payer_email,
             notification_url=config.notification_url,
-            back_url=config.success_url,
+            back_url=subscription_back_url,
         )
+        if str(response.get("status") or "").strip().lower() == "authorized":
+            # Mercado Pago may omit init_point once an existing authorization
+            # is complete. Reconcile local state rather than trying to redirect
+            # back into checkout or creating a second preapproval.
+            MercadoPagoSubscriptionService.sync_preapproval(db_session=db.session, preapproval=response)
+            db.session.commit()
+            flash("La suscripción mensual de StockArMobile ya está autorizada y quedó sincronizada.", "success")
+            return redirect(url_for("company_billing.subscription_portal", mp_subscription_return="standard"))
         checkout_url = str(response.get("init_point") or "").strip()
         if not checkout_url:
             db.session.rollback()

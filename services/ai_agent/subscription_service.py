@@ -105,6 +105,8 @@ class AISubscriptionService:
             "mercadopago_preapproval_id": ai.get("mercadopago_preapproval_id"),
             "mercadopago_status": ai.get("mercadopago_status"),
             "mercadopago_external_reference": ai.get("mercadopago_external_reference"),
+            "mercadopago_create_attempt_reference": ai.get("mercadopago_create_attempt_reference"),
+            "mercadopago_create_attempt_plan_code": ai.get("mercadopago_create_attempt_plan_code"),
             "last_payment_id": ai.get("last_payment_id"),
             "last_payment_status": ai.get("last_payment_status"),
             "last_payment_at": ai.get("last_payment_at"),
@@ -600,6 +602,8 @@ class AISubscriptionService:
             "mercadopago_preapproval_id": str(preapproval_id).strip(),
             "mercadopago_payer_email": str(payer_email or "").strip().lower(),
             "mercadopago_external_reference": str(external_reference or "").strip() or None,
+            "mercadopago_create_attempt_reference": None,
+            "mercadopago_create_attempt_plan_code": None,
             "mercadopago_status": "pending",
             "checkout_method": method,
         })

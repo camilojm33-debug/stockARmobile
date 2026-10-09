@@ -136,20 +136,22 @@ def test_superseded_plan_payment_refund_uses_idempotent_full_refund_endpoint(mon
     }
 
 
-def test_standard_preapproval_without_init_point_is_not_reused(monkeypatch):
+def test_standard_preapproval_without_init_point_reuses_existing_pending_contract(monkeypatch):
     calls = []
     company = SimpleNamespace(id=1)
     plan = SimpleNamespace(id=2, name="Standard", price=1000, currency="ARS")
     subscription = SimpleNamespace(id=3, metadata_json='{"mercadopago_preapproval_id":"old-pre"}', renewal_enabled=True, auto_renew=True, cancel_at_period_end=False)
-    db_session = SimpleNamespace(flush=lambda: calls.append(("flush", None)))
+    db_session = SimpleNamespace(
+        flush=lambda: calls.append(("flush", None)),
+        commit=lambda: calls.append(("commit", None)),
+    )
 
     def get_preapproval(self, preapproval_id):
         calls.append(("get", preapproval_id))
         return {"id": preapproval_id, "status": "pending"}
 
     def create_preapproval(self, **kwargs):
-        calls.append(("create", kwargs))
-        return {"id": "new-pre", "status": "pending", "init_point": "https://mp.test/new"}
+        raise AssertionError("A pending preapproval must be reused; missing init_point must not create a duplicate.")
 
     monkeypatch.setattr("services.mercadopago_service.MercadoPagoService.get_preapproval", get_preapproval)
     monkeypatch.setattr("services.mercadopago_service.MercadoPagoService.create_preapproval", create_preapproval)
@@ -164,9 +166,45 @@ def test_standard_preapproval_without_init_point_is_not_reused(monkeypatch):
         back_url="https://www.stockarmobile.com/admin/portal?checkout=success",
     )
 
-    assert response["id"] == "new-pre"
-    assert response["init_point"] == "https://mp.test/new"
-    assert [kind for kind, _ in calls] == ["get", "create", "flush"]
+    assert response["id"] == "old-pre"
+    assert response["init_point"] == "https://www.mercadopago.com.ar/subscriptions/checkout?preapproval_id=old-pre"
+    assert calls == [("get", "old-pre")]
+
+
+def test_authorized_standard_preapproval_without_init_point_is_reused(monkeypatch):
+    calls = []
+    subscription = SimpleNamespace(
+        id=3,
+        metadata_json='{"mercadopago_preapproval_id":"already-authorized"}',
+        renewal_enabled=True,
+        auto_renew=True,
+        cancel_at_period_end=False,
+    )
+    db_session = SimpleNamespace(flush=lambda: calls.append("flush"), commit=lambda: calls.append("commit"))
+
+    def get_preapproval(self, preapproval_id):
+        calls.append(("get", preapproval_id))
+        return {"id": preapproval_id, "status": "authorized"}
+
+    def create_preapproval(self, **kwargs):
+        raise AssertionError("An authorized recurring subscription must never be duplicated.")
+
+    monkeypatch.setattr("services.mercadopago_service.MercadoPagoService.get_preapproval", get_preapproval)
+    monkeypatch.setattr("services.mercadopago_service.MercadoPagoService.create_preapproval", create_preapproval)
+
+    response = MercadoPagoSubscriptionService.create(
+        db_session=db_session,
+        company=SimpleNamespace(id=1),
+        subscription=subscription,
+        plan=SimpleNamespace(id=2, name="Standard", price=1000, currency="ARS"),
+        payer_email="cliente@example.com",
+        notification_url="https://www.stockarmobile.com/admin/webhooks/mercadopago",
+        back_url="https://www.stockarmobile.com/admin/portal",
+    )
+
+    assert response["id"] == "already-authorized"
+    assert response["status"] == "authorized"
+    assert calls == [("get", "already-authorized")]
 
 
 def test_webhook_signature_matches_mercado_pago_manifest():
