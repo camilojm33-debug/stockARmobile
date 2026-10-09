@@ -2083,9 +2083,25 @@ def create_ai_subscription_checkout():
                 back_url=ai_subscription_back_url,
             )
             preapproval_id = str(response.get("id") or "").strip()
+            remote_status = str(response.get("status") or "pending").strip().lower()
             checkout_url = str(response.get("init_point") or "").strip()
-            if not preapproval_id or not checkout_url:
-                raise RuntimeError("Mercado Pago no devolvió una suscripción IA válida (id/init_point).")
+            if not preapproval_id:
+                raise RuntimeError(
+                    "Mercado Pago no devolvió el identificador de la suscripción IA. "
+                    "Se conservó el intento para reintentar con la misma clave de idempotencia."
+                )
+
+            # If MP returns an ID but no redirect, check the already-created
+            # resource before deciding how to proceed. Never POST a second
+            # preapproval because an init_point field is absent.
+            if not checkout_url and remote_status not in {"authorized", "cancelled", "canceled", "expired", "rejected"}:
+                remote = mp_service.get_preapproval(preapproval_id)
+                if str(remote.get("id") or "").strip() != preapproval_id:
+                    raise RuntimeError("Mercado Pago devolvió una suscripción IA distinta de la solicitada.")
+                remote_status = str(remote.get("status") or remote_status).strip().lower()
+                checkout_url = str(remote.get("init_point") or "").strip()
+                response = remote
+
             AISubscriptionService.link_mercadopago_pending(
                 company,
                 plan_code=plan_code,
@@ -2095,6 +2111,37 @@ def create_ai_subscription_checkout():
                 checkout_method=payment_method,
             )
 
+            if remote_status == "authorized":
+                AISubscriptionService.sync_from_mercadopago(preapproval=response)
+                db.session.commit()
+                flash("La suscripción mensual IA ya está autorizada en Mercado Pago y quedó sincronizada.", "success")
+                return redirect(url_for("company_billing.subscription_portal", mp_subscription_return="ai", _anchor="suscripcion-ia"))
+
+            if remote_status in {"cancelled", "canceled", "expired", "rejected"}:
+                AISubscriptionService.sync_from_mercadopago(preapproval=response)
+                db.session.commit()
+                raise AISubscriptionError(
+                    "Mercado Pago devolvió una autorización IA terminada. Podés volver a intentar la suscripción."
+                )
+
+            if not checkout_url:
+                from urllib.parse import urlencode
+                checkout_url = (
+                    "https://www.mercadopago.com.ar/subscriptions/checkout?"
+                    + urlencode({"preapproval_id": preapproval_id})
+                )
+            from urllib.parse import urlparse
+            parsed_ai_checkout = urlparse(checkout_url)
+            allowed_ai_checkout_hosts = {
+                "www.mercadopago.com", "mercadopago.com", "sandbox.mercadopago.com",
+                "www.mercadopago.com.ar", "mercadopago.com.ar", "sandbox.mercadopago.com.ar",
+                "www.mercadopago.com.br", "www.mercadopago.com.mx", "www.mercadopago.com.cl",
+                "www.mercadopago.com.co", "www.mercadopago.com.uy", "www.mercadopago.com.pe",
+            }
+            if current_app.testing and parsed_ai_checkout.hostname == "mp.test":
+                allowed_ai_checkout_hosts.add("mp.test")
+            if parsed_ai_checkout.scheme != "https" or parsed_ai_checkout.hostname not in allowed_ai_checkout_hosts:
+                raise RuntimeError("Mercado Pago devolvió un enlace de autorización IA no reconocido.")
         return _checkout_redirect_response(checkout_url)
     except AISubscriptionError as exc:
         db.session.rollback()
