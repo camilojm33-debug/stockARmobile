@@ -115,6 +115,56 @@ def test_standard_active_ai_missing_can_start_ai_checkout(subscription_app, monk
     assert _standard_snapshot(subscription) == before
 
 
+def test_ai_recurring_checkout_reuses_attempt_after_ambiguous_mp_timeout(subscription_app, monkeypatch):
+    company, user, _, subscription = _tenant_with_standard_subscription()
+    seen_references = []
+    client = subscription_app.test_client()
+    _login(client, user)
+
+    def timeout_after_mp_may_have_created(self, **kwargs):
+        seen_references.append(kwargs["external_reference"])
+        raise RuntimeError("simulated network timeout after request")
+
+    monkeypatch.setattr(
+        "services.mercadopago_service.MercadoPagoService.create_preapproval",
+        timeout_after_mp_may_have_created,
+    )
+    first = client.post(
+        "/admin/subscription/ai-agent/checkout",
+        data={"plan_code": "inicio", "payment_method": "automatic"},
+    )
+    assert first.status_code in {302, 409, 500}
+    first_status = AISubscriptionService.get_status(company)
+    first_attempt = first_status["mercadopago_create_attempt_reference"]
+    assert first_attempt
+    assert first_status["mercadopago_create_attempt_plan_code"] == "inicio"
+
+    def successful_idempotent_retry(self, **kwargs):
+        seen_references.append(kwargs["external_reference"])
+        return {
+            "id": "ai-pre-recovered",
+            "status": "pending",
+            "init_point": "https://www.mercadopago.com.ar/subscriptions/checkout?preapproval_id=ai-pre-recovered",
+        }
+
+    monkeypatch.setattr(
+        "services.mercadopago_service.MercadoPagoService.create_preapproval",
+        successful_idempotent_retry,
+    )
+    second = client.post(
+        "/admin/subscription/ai-agent/checkout",
+        data={"plan_code": "inicio", "payment_method": "automatic"},
+    )
+
+    assert second.status_code == 302
+    assert seen_references == [first_attempt, first_attempt]
+    current_ai = AISubscriptionService.get_status(company)
+    assert current_ai["mercadopago_preapproval_id"] == "ai-pre-recovered"
+    assert current_ai["mercadopago_create_attempt_reference"] is None
+    assert current_ai["mercadopago_create_attempt_plan_code"] is None
+    assert _standard_snapshot(subscription) == _standard_snapshot(subscription)
+
+
 def test_ai_plans_page_posts_directly_to_ai_checkout(subscription_app):
     _, user, _, _ = _tenant_with_standard_subscription()
     client = subscription_app.test_client()
