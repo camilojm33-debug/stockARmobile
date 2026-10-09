@@ -686,6 +686,14 @@ def test_public_webchat_prefers_older_explicit_name_over_model_typo(qa_public_ve
             role="user",
             content="hola soy nelson mandela",
         ))
+        # The original amount is also older than the short operational history.
+        db.session.add(ConversationMessage(
+            conversation_id=conversation.id,
+            company_id=setup["company"].id,
+            sender_type="customer",
+            role="user",
+            content="cotizame 3 metros de machimbre con envio",
+        ))
         for index in range(22):
             db.session.add(ConversationMessage(
                 conversation_id=conversation.id,
@@ -735,6 +743,144 @@ def test_public_webchat_prefers_older_explicit_name_over_model_typo(qa_public_ve
         assert created["customer_name"] == "Nelson Mandela"
         assert created["customer_phone"] == "3624001122"
         db.session.rollback()
+
+
+def test_public_vendor_stock_outputs_normalize_float_noise(qa_public_vendor_db):
+    from app import Product, db
+    from services.ai_agent.tools.product_search import BuscarProductoTool
+    from services.ai_agent.tools.stock_query import ConsultarStockTool
+    from services.ai_agent.vendor_order_service import VendorOrderService
+
+    setup = qa_public_vendor_db
+    with setup["app"].app_context():
+        try:
+            # Re-query within this app context; fixture-returned ORM instances can
+            # be attached to a different scoped session in this test setup.
+            product = Product.query.filter_by(
+                id=setup["product"].id,
+                company_id=setup["company"].id,
+            ).first()
+            product.stock = 17.80000000000001
+            db.session.flush()
+
+            stock_result = ConsultarStockTool(company_id=setup["company"].id).execute(
+                product_id=product.id,
+            )
+            search_result = BuscarProductoTool(company_id=setup["company"].id).execute(
+                query="Machimbre",
+            )
+            catalog_result = VendorOrderService.list_catalog(
+                company_id=setup["company"].id,
+                query="Machimbre",
+            )
+
+            searched_product = next(item for item in search_result["items"] if item["id"] == product.id)
+            catalog_product = next(item for item in catalog_result["products"] if item["product_id"] == product.id)
+            assert stock_result["product"]["stock"] == 17.8
+            assert searched_product["stock"] == 17.8
+            assert catalog_product["stock"] == 17.8
+        finally:
+            db.session.rollback()
+
+
+def test_public_webchat_keeps_customer_quantity_when_model_misreads_stock(qa_public_vendor_db, monkeypatch):
+    from app import Product, db
+    from services.ai_agent.orchestrator_v2 import VendorOrderPreviewTool, VendorOrderService
+    from services.ai_agent.vendor_order_service import CART_KEY
+    from stockarmobile.models.conversations import Conversation, ConversationMessage
+
+    setup = qa_public_vendor_db
+    observed = {}
+
+    with setup["app"].app_context():
+        try:
+            product = Product.query.filter_by(
+                id=setup["product"].id,
+                company_id=setup["company"].id,
+            ).first()
+            product.stock = 17.80000000000001
+            conversation = Conversation(
+                company_id=setup["company"].id,
+                channel="webchat",
+                external_conversation_id="qa-stock-quantity-authority",
+                status="open",
+                metadata_json={
+                    CART_KEY: {str(product.id): 4},
+                    "customer_name": "Nelson Mandela",
+                    "customer_phone": "344344223",
+                    "delivery": {
+                        "method": "envio",
+                        "recipient_name": "Nelson Mandela",
+                        "phone": "344344223",
+                        "address": "calle siempreviva 435",
+                        "city": "Resistencia",
+                        "province": "Chaco",
+                    },
+                },
+            )
+            db.session.add(conversation)
+            db.session.flush()
+
+            messages = [
+                "hola soy nelson mandela",
+                "cotizame 4 metros de machimbre con envio",
+                "cel 344344223 a calle siempreviva 435 resistencia chaco",
+                "Actualmente no contamos con stock suficiente; tenemos disponible 1,80 metros.",
+                "si esta bien",
+            ]
+            for content in messages:
+                role = "assistant" if content.startswith("Actualmente") else "user"
+                db.session.add(ConversationMessage(
+                    conversation_id=conversation.id,
+                    company_id=setup["company"].id,
+                    sender_type="assistant" if role == "assistant" else "customer",
+                    role=role,
+                    content=content,
+                ))
+            db.session.flush()
+
+            def fake_create_pending_order(**kwargs):
+                cart = VendorOrderService.get_cart(
+                    company_id=setup["company"].id,
+                    conversation_id=conversation.id,
+                )
+                observed["quantity"] = cart["items"][0]["quantity"]
+                observed["stock"] = cart["items"][0]["stock"]
+                observed.update(kwargs)
+                return {
+                    "success": True,
+                    "quote_number": "P-TEST",
+                    "total": cart["total"],
+                }
+
+            monkeypatch.setattr(
+                VendorOrderService,
+                "create_pending_order",
+                staticmethod(fake_create_pending_order),
+            )
+
+            tool = VendorOrderPreviewTool(
+                company_id=setup["company"].id,
+                conversation_id=conversation.id,
+                channel="webchat",
+            )
+            result = tool.execute(
+                product_query="machimbre",
+                quantity=1.8,
+                customer_name="Nelson Mandele",
+                customer_phone="344344223",
+                delivery_method="envio",
+                delivery_address="calle siempreviva 435",
+                delivery_city="Resistencia",
+                delivery_province="Chaco",
+            )
+
+            assert result["success"] is True
+            assert observed["quantity"] == 4
+            assert observed["stock"] == 17.8
+            assert observed["customer_name"] == "Nelson Mandela"
+        finally:
+            db.session.rollback()
 
 
 def test_public_chat_can_start_second_quote_after_clarification(qa_public_vendor_db, monkeypatch):
