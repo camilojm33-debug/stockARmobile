@@ -3,6 +3,8 @@ from __future__ import annotations
 
 import json
 import os
+import re
+import unicodedata
 import uuid
 
 from services.ai_agent.providers.openai_compatible import OpenAICompatibleProvider
@@ -73,7 +75,7 @@ VENDOR_SYSTEM_PROMPT = (
     "porque alguien mencione un nombre."
 )
 BUSINESS_SYSTEM_PROMPT = "Sos el Asistente empresarial de StockARmobile. Usá herramientas para consultar datos reales y nunca inventes cifras. Si te preguntan qué podés hacer, informá estas capacidades: 1) Buscar productos por nombre, marca o código; 2) consultar el stock actual de un producto; 3) contar productos; 4) buscar clientes por nombre, email, teléfono o WhatsApp; 5) contar clientes activos; 6) resumir ventas por período; 7) listar productos más vendidos; 8) listar productos sin ventas recientes; 9) listar productos con stock crítico; 10) recibir facturas de proveedor para procesarlas desde el panel, validarlas y mostrar un preview antes de una confirmación humana. No afirmes que una factura fue aplicada, que un producto fue creado o que el stock cambió sin una confirmación explícita y un resultado backend exitoso."
-ANALYST_SYSTEM_PROMPT = "Sos el Analista IA de StockARmobile. Usá herramientas reales. Separá DATO, CÁLCULO y RECOMENDACIÓN. No inventes predicciones ni afirmes causalidad sin evidencia."
+ANALYST_SYSTEM_PROMPT = ("Sos el Analista IA de StockARmobile. Usá herramientas reales. Separá DATO, CÁLCULO y RECOMENDACIÓN. No inventes predicciones ni afirmes causalidad sin evidencia. " "PRECIOS: si el responsable pide ajustar precios, consultá datos reales y usá el Controlador Global de Precios; generá primero una vista previa y mostrá el ID del lote, cantidad afectada, bloqueados, precios antes/después y guardrails. No afirmes que un precio cambió hasta que la herramienta confirme el resultado aplicado. La aplicación requiere una confirmación explícita en un mensaje posterior a la vista previa, emitida por un administrador autenticado del mismo comercio. Nunca confirmes en el mismo turno en que creaste la vista previa. La reversión también necesita solicitud explícita y un lote aplicado. Nunca escribas Product.price directamente.")
 MARKETING_SYSTEM_PROMPT = "Sos el Marketing IA de StockARmobile. Usá productos y clientes reales. Detectá oportunidades con herramientas reales, separá DATO, EVIDENCIA y PROPUESTA, y generá campañas en BORRADOR / PENDIENTE DE APROBACIÓN. Nunca envíes mensajes ni prometas que una campaña fue ejecutada; el envío ocurre únicamente después de aprobación humana y por el motor backend."
 COMMERCIAL_SYSTEM_PROMPT = (
     "Sos el Comercial IA de StockArMobile. Atendés únicamente consultas de prospectos que llegan por el WhatsApp comercial "
@@ -103,6 +105,55 @@ PRICING_TOOL_NAMES = {
     "confirmar_cambio_precios",
     "revertir_cambio_precios",
 }
+
+
+def _normalize_price_confirmation_text(value: str) -> str:
+    normalized = unicodedata.normalize("NFKD", str(value or "").lower())
+    return " ".join("".join(ch for ch in normalized if not unicodedata.combining(ch)).split())
+
+
+def _explicit_price_action_confirmation(
+    message: str,
+    *,
+    action: str,
+    batch_id: int,
+    previous_assistant_message: str,
+) -> bool:
+    """Require a separate-turn confirmation after the exact batch preview was shown."""
+    current = _normalize_price_confirmation_text(message)
+    previous = _normalize_price_confirmation_text(previous_assistant_message)
+    batch_text = str(int(batch_id))
+    if not current or not previous:
+        return False
+    if not re.search(rf"\\b{re.escape(batch_text)}\\b", previous):
+        return False
+    if not any(marker in previous for marker in ("vista previa", "lote", "batch_id", "propuesta de precios")):
+        return False
+    if re.search(r"\\bno\\s+(?:confirmo|autorizo|apliques|aplicar|revertir|deshacer)\\b", current):
+        return False
+
+    new_change_intent = re.search(
+        r"\\b(?:subi|subir|aumenta|aumentar|incrementa|incrementar|baja|bajar|"
+        r"disminui|disminuir|reduce|reducir|modifica|modificar|cambia|cambiar|"
+        r"ajusta|ajustar|actualiza|actualizar|establece|establecer|crea|crear|"
+        r"prepara|preparar|genera|generar|propone|proponer)\\b",
+        current,
+    )
+    if new_change_intent:
+        return False
+
+    if action == "apply":
+        return bool(re.match(
+            r"^(?:si|dale|ok|okay|listo|confirmo|confirmar|confirmado|autorizo|"
+            r"autorizado|aprobado|aprobada|aplica|aplicalo|hacelo|procede|proceder)\\b",
+            current,
+        ))
+    if action == "rollback":
+        return bool(re.search(
+            r"\\b(?:reverti|revertir|deshacer|deshacelo|restaura|restaurar|rollback)\\b",
+            current,
+        )) and bool(re.match(r"^(?:si|dale|ok|listo|confirmo|autorizo|reverti|revertir|deshacer|restaura|restaurar|rollback)\\b", current))
+    return False
 
 
 class VendorCartTool(AgentTool):
@@ -989,6 +1040,29 @@ class AgentRuntime:
             access = can_use_ai_feature(company, feature) if company is not None else None
             if access is None or not access.allowed:
                 return {"success": False, "error": access.reason if access else "pricing_feature_not_permitted"}
+            if name in {"confirmar_cambio_precios", "revertir_cambio_precios"}:
+                action = "rollback" if name == "revertir_cambio_precios" else "apply"
+                batch_id = arguments.get("batch_id")
+                try:
+                    normalized_batch_id = int(batch_id)
+                except (TypeError, ValueError):
+                    return {"success": False, "error": "Indicá un lote válido antes de confirmar.", "requires_human_confirmation": True}
+                context_data = context if isinstance(context, dict) else {}
+                if not _explicit_price_action_confirmation(
+                    context_data.get("user_message", ""),
+                    action=action,
+                    batch_id=normalized_batch_id,
+                    previous_assistant_message=context_data.get("previous_assistant_message", ""),
+                ):
+                    return {
+                        "success": False,
+                        "error": (
+                            "No se aplicó ningún cambio. Mostrá primero la vista previa del lote y solicitá una "
+                            "confirmación explícita en un mensaje posterior; la reversión también requiere una orden explícita."
+                        ),
+                        "requires_human_confirmation": True,
+                        "batch_id": normalized_batch_id,
+                    }
         if name == "oportunidades_crm":
             crm_allowed, reason = crm_tool_access(
                 company_id,
@@ -1481,6 +1555,10 @@ class AgentRuntime:
         if is_public_webchat:
             kwargs["max_tokens"] = min(int(kwargs.get("max_tokens") or PUBLIC_WEBCHAT_MAX_OUTPUT_TOKENS), PUBLIC_WEBCHAT_MAX_OUTPUT_TOKENS)
 
+        previous_assistant_message = next(
+            (str(item.get("content") or "") for item in reversed(history) if item.get("role") == "assistant"),
+            "",
+        )
         context = {
             "conversation_id": conversation.id,
             # Public webchat uses "from" for a visitor/session token, not a phone.
@@ -1489,6 +1567,9 @@ class AgentRuntime:
             "actor_user_id": sender_id,
             "idempotency_key": idempotency_key,
             "trace_id": trace_id,
+            # Mutation guards rely on the actual user turn, never the model's arguments.
+            "user_message": request_message,
+            "previous_assistant_message": previous_assistant_message,
         }
         final_content, campaign_context, tool_rounds, ai_telemetry = cls._run_tool_loop(
             provider=provider,
