@@ -388,7 +388,7 @@ class WebhookService:
                 draft.preference_id = str(
                     metadata.get("preference_id")
                     or ref_parts.get("preference_id")
-                    or payment_data.get("order", {}).get("id")
+                    or (payment_data.get("order") or {}).get("id")
                     or draft.preference_id
                     or ""
                 ).strip() or draft.preference_id
@@ -398,8 +398,11 @@ class WebhookService:
                 draft.payload_json = json.dumps(payment_data, ensure_ascii=False)
                 draft.paid_at = paid_at or draft.paid_at
 
-                if previous_qr_status == "cancelled" and payment_status != "approved":
-                    draft.status = "cancelled"
+                terminal_qr_statuses = {"cancelled", "refunded", "refund_pending"}
+                if previous_qr_status in terminal_qr_statuses and payment_status != "approved":
+                    # A late pending/rejected notification must not reopen a
+                    # canceled or already-refunded one-time checkout.
+                    draft.status = previous_qr_status
                     result = {
                         "status": "cancelled_ai_qr_payment_ignored",
                         "payment_status": payment_status,
@@ -415,7 +418,9 @@ class WebhookService:
                         "payment_id": mp_payment_id,
                         "event_key": event_key,
                     }
-                elif previous_qr_status == "cancelled" and payment_status == "approved":
+                elif previous_qr_status in terminal_qr_statuses and payment_status == "approved":
+                    # Canceled/refunded drafts never activate, even when another
+                    # approval webhook arrives later. Refund is idempotent at MP.
                     refund = self.mp_service.refund_payment(mp_payment_id)
                     refund_status = str(refund.get("status") or "").strip().lower()
                     if refund_status not in {"approved", "refunded", "pending", "in_process"}:
@@ -425,11 +430,11 @@ class WebhookService:
                         db_session,
                         company_id=company_id,
                         payment_id=draft.id,
-                        event="ai_qr_cancelled_payment_refund",
-                        detail="Se aprobó un pago QR IA cancelado; se solicitó el reembolso sin activar la suscripción.",
+                        event="ai_qr_terminal_payment_refund",
+                        detail="Se aprobó un pago QR IA de un intento cancelado/reembolsado; se solicitó el reembolso sin activar la suscripción.",
                         source="mercadopago",
                         status=refund_status,
-                        event_id=f"ai-qr-cancelled-refund:{mp_payment_id}",
+                        event_id=f"ai-qr-terminal-refund:{mp_payment_id}",
                         payload={"payment_id": mp_payment_id, "refund_id": refund.get("id"), "refund_status": refund_status},
                         user_id=draft.user_id,
                     )
