@@ -402,9 +402,10 @@ class VendorOrderPreviewTool(AgentTool):
                     customer_phone = requested_customer_phone
                 elif not saved_customer_phone:
                     customer_phone = ""
-            elif not saved_customer_phone and stated_phone_values:
+            elif stated_phone_values:
                 # If the user explicitly provided a phone but the model omitted it
-                # from tool arguments, recover it from this conversation.
+                # from tool arguments, prefer the latest number stated in this chat,
+                # including an intentional update to a previously saved contact.
                 customer_phone = stated_phone_values[-1]
         else:
             customer_name = requested_customer_name or saved_customer_name
