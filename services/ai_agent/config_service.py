@@ -285,6 +285,13 @@ def vendor_allowed_tool_names(vendor_options: Optional[Dict[str, Any]] = None):
         "buscar_cliente",
         "carrito_vendedor",
     }
+    # These tools are already registered by vendor_followup_tools.py. Expose
+    # the full catalog to the vendor when product recommendations are enabled;
+    # a text search is not a substitute for listing all active products.
+    if options["can_recommend"]:
+        names.add("ver_catalogo")
+    if options["can_offer_alternatives"]:
+        names.add("ver_promociones")
     if options["can_take_orders"]:
         names.update({"agregar_al_carrito", "quitar_del_carrito"})
     if options["can_prepare_quotes"] and options["can_take_orders"]:
