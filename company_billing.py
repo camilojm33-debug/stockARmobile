@@ -797,6 +797,65 @@ def _persisted_checkout_preview(company, *, subscription_id=None, preference_id=
     return preview
 
 
+def _ai_qr_plan_code(payment):
+    external_reference = str(getattr(payment, "external_reference", "") or "")
+    parts = {}
+    for segment in external_reference.split("|"):
+        if ":" in segment:
+            key, value = segment.split(":", 1)
+            parts[key.strip()] = value.strip()
+    if parts.get("ai_subscription_qr") != "true" or parts.get("flow") != "ai_subscription_qr":
+        return None
+    return str(parts.get("plan_code") or "").strip().lower() or None
+
+
+def _ai_qr_checkout_preview(company, payment):
+    """Build a tenant-scoped preview for a one-time AI QR payment."""
+    from services.ai_agent.usage_service import AI_PLAN_BY_CODE
+
+    if (
+        payment is None
+        or int(getattr(payment, "company_id", 0) or 0) != int(company.id)
+        or str(getattr(payment, "provider", "") or "").strip().lower() != "mercadopago_ai_qr"
+    ):
+        return None
+    plan_code = _ai_qr_plan_code(payment)
+    plan = AI_PLAN_BY_CODE.get(plan_code or "")
+    if plan is None:
+        return None
+    try:
+        preference = json.loads(getattr(payment, "payload_json", "") or "{}")
+    except (TypeError, ValueError):
+        preference = {}
+    if not isinstance(preference, dict):
+        preference = {}
+    preference_id = str(getattr(payment, "preference_id", "") or preference.get("id") or "").strip()
+    checkout_url = str(preference.get("init_point") or preference.get("sandbox_init_point") or "").strip()
+    payment_status = str(getattr(payment, "status", "") or "pending").strip().lower()
+    if payment_status == "approved":
+        state = "paid"
+        checkout_url = ""
+    elif payment_status in {"pending", "in_process", "authorized"} and checkout_url:
+        state = "pending"
+    else:
+        state = "failed"
+        checkout_url = ""
+    return {
+        "kind": "ai_subscription_qr",
+        "company_id": company.id,
+        "payment_record_id": payment.id,
+        "plan_code": plan_code,
+        "plan_name": plan.get("name") or f"Plan IA {plan_code}",
+        "amount": float(getattr(payment, "amount", 0) or 0),
+        "currency": str(getattr(payment, "currency", "") or "ARS"),
+        "status": state,
+        "payment_status": payment_status,
+        "preference_id": preference_id,
+        "checkout_url": checkout_url,
+        "qr_data_uri": BillingService._qr_data_uri(checkout_url) if checkout_url and state == "pending" else "",
+    }
+
+
 def _pending_paid_plan_change(company_id):
     from app import Subscription
 
