@@ -144,14 +144,30 @@ class MercadoPagoSubscriptionService:
         )
         preapproval_id = str(response.get("id") or "").strip()
         init_point = str(response.get("init_point") or "").strip()
-        if not preapproval_id or not init_point:
-            raise RuntimeError("Mercado Pago no devolvió una suscripción válida (id/init_point).")
+        if not preapproval_id:
+            raise RuntimeError("Mercado Pago no devolvió el identificador de la suscripción automática.")
+        response_status = str(response.get("status") or "pending").strip().lower()
+        if not init_point and response_status in {"pending", "in_process"}:
+            # Recovery path for an API response with an ID but no redirect URL.
+            # The existing preapproval ID is enough to reopen the payer's
+            # authorization page and must not trigger a second preapproval POST.
+            from urllib.parse import urlencode
+            init_point = (
+                "https://www.mercadopago.com.ar/subscriptions/checkout?"
+                + urlencode({"preapproval_id": preapproval_id})
+            )
+            response["init_point"] = init_point
+        if not init_point and response_status != "authorized":
+            raise RuntimeError(
+                "Mercado Pago devolvió una suscripción sin enlace de autorización. "
+                "Se conservó el intento para reintentar sin duplicar el contrato."
+            )
 
         SubscriptionService._set_metadata(
             subscription,
             {
                 "mercadopago_preapproval_id": preapproval_id,
-                "mercadopago_status": str(response.get("status") or "pending"),
+                "mercadopago_status": response_status,
                 "mercadopago_payer_email": payer_email,
                 "mercadopago_external_reference": external_reference,
                 "mercadopago_creation_pending": False,
