@@ -7,7 +7,7 @@ from typing import Any, Dict
 
 from sqlalchemy import func
 
-from app import Client, Product, Sale, SaleItem
+from app import Client, Product, Sale, SaleItem, db
 from services.ai_agent.tools.base import AgentTool
 
 
