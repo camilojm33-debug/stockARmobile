@@ -609,21 +609,89 @@ class VendorOrderService:
                     product = Product.query.filter_by(id=int(product_id_raw), company_id=company_id, active=True).first()
                 except (TypeError, ValueError):
                     product = None
+            resolved_by_stock = False
             if product is None:
                 candidates = _search_candidates(company_id, query)
                 if not candidates:
                     raise ValueError(f"No encontré el producto '{query or 'solicitado'}'.")
-                if len(candidates) > 1:
-                    first, second = candidates[0], candidates[1]
-                    first_name = _normalize_text(first.name)
-                    second_name = _normalize_text(second.name)
-                    if first_name != _normalize_text(query) and second_name != _normalize_text(query) and abs(_normalize_product_score(first, query) - _normalize_product_score(second, query)) < 20:
-                        options = [
-                            {"product_id": item.id, "name": item.name, "price": float(item.price or 0), "stock": normalized_stock_quantity(item.stock)}
-                            for item in candidates[:5]
-                        ]
-                        return {"success": False, "error": "producto_ambiguo", "query": query, "candidates": options}
-                product = candidates[0]
+
+                normalized_query = _normalize_text(query)
+                # A fully specified product name wins over other variants even if
+                # that exact item is out of stock. Generic queries (e.g. "leche")
+                # should instead consider which matching variant can fulfill the
+                # requested quantity, rather than blindly picking the first name.
+                exact_matches = [
+                    candidate
+                    for candidate in candidates
+                    if _normalize_text(candidate.name) == normalized_query
+                ]
+                if exact_matches:
+                    product = exact_matches[0]
+                else:
+                    replace_requested_quantity = bool(row.get("replace_quantity"))
+                    fulfillable = []
+                    for candidate in candidates:
+                        existing_candidate_qty = Decimal(str(cart.get(str(candidate.id), 0) or 0))
+                        candidate_requested_qty = (
+                            quantity
+                            if replace_requested_quantity
+                            else existing_candidate_qty + quantity
+                        )
+                        candidate_stock = Decimal(str(candidate.stock or 0))
+                        if candidate_requested_qty <= candidate_stock:
+                            fulfillable.append(candidate)
+
+                    if len(fulfillable) == 1:
+                        product = fulfillable[0]
+                        resolved_by_stock = True
+                    else:
+                        if len(candidates) > 1:
+                            first, second = candidates[0], candidates[1]
+                            first_name = _normalize_text(first.name)
+                            second_name = _normalize_text(second.name)
+                            if (
+                                first_name != normalized_query
+                                and second_name != normalized_query
+                                and abs(_normalize_product_score(first, query) - _normalize_product_score(second, query)) < 20
+                            ):
+                                options = [
+                                    {
+                                        "product_id": item.id,
+                                        "name": item.name,
+                                        "price": float(item.price or 0),
+                                        "stock": normalized_stock_quantity(item.stock),
+                                    }
+                                    for item in candidates[:5]
+                                ]
+                                return {
+                                    "success": False,
+                                    "error": "producto_ambiguo",
+                                    "query": query,
+                                    "candidates": options,
+                                }
+                        product = candidates[0]
+
+                # When a generic query resolves to the only variant that can
+                # fulfill it, do not create a commercial quote if that variant's
+                # price is missing/zero. Return the real stock and the data issue
+                # so the assistant can explain the blocker accurately.
+                if resolved_by_stock and _money(product.price) <= Decimal("0.00"):
+                    return {
+                        "success": False,
+                        "error": "precio_no_configurado",
+                        "message": (
+                            f"Encontré '{product.name}' con {normalized_stock_quantity(product.stock):g} "
+                            "unidades disponibles, pero su precio está configurado en $0. "
+                            "No corresponde armar un presupuesto hasta corregir ese precio."
+                        ),
+                        "product": {
+                            "product_id": product.id,
+                            "name": product.name,
+                            "price": float(product.price or 0),
+                            "stock": normalized_stock_quantity(product.stock),
+                            "unit_measure": product.unit_measure or "u",
+                        },
+                    }
 
             available = Decimal(str(product.stock or 0))
             existing = Decimal(str(cart.get(str(product.id), 0) or 0))
