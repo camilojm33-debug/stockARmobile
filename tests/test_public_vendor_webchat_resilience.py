@@ -783,9 +783,23 @@ def test_public_chat_can_list_the_full_active_catalog(qa_public_vendor_db, monke
                 "arguments": {"query": "", "limit": 20},
             },
         },
-        {"content": "El catálogo activo muestra Machimbre pino a $6.600 por metro.", "tool_call": None},
+        {"content": "El catálogo activo tiene Machimbre pino y clavos galvanizados; consultá precios y stock en la ficha de cada uno.", "tool_call": None},
     ])
     _install_provider(monkeypatch, provider)
+    from app import Product, db
+    extra_product = Product(
+        barcode="CLV-002",
+        name="Clavos galvanizados",
+        price=3500,
+        cost_price=2000,
+        stock=15,
+        min_stock=1,
+        active=True,
+        company_id=qa_public_vendor_db["company"].id,
+        unit_measure="kg",
+    )
+    db.session.add(extra_product)
+    db.session.flush()
     client = _public_client(qa_public_vendor_db)
 
     response = _post_message(
@@ -806,9 +820,12 @@ def test_public_chat_can_list_the_full_active_catalog(qa_public_vendor_db, monke
     assert len(tool_messages) == 1
     catalog = json.loads(tool_messages[0]["content"])
     assert catalog["success"] is True
-    assert catalog["count"] == 1
-    assert catalog["products"][0]["name"] == "Machimbre pino"
-    assert catalog["products"][0]["price"] == 6600.0
+    assert catalog["count"] == 2
+    products = {item["name"]: item for item in catalog["products"]}
+    assert set(products) == {"Machimbre pino", "Clavos galvanizados"}
+    assert products["Machimbre pino"]["price"] == 6600.0
+    assert products["Clavos galvanizados"]["price"] == 3500.0
+    assert products["Clavos galvanizados"]["stock"] == 15.0
     assert "no se obtuvieron resultados" not in response.json["content"].lower()
 
 
