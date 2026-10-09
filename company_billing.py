@@ -1401,6 +1401,43 @@ def subscription_portal():
         else:
             checkout_preview.update({"status": "failed", "checkout_url": "", "qr_data_uri": ""})
             checkout_status = "failure"
+
+    requested_ai_qr_payment_id = request.args.get("ai_qr_payment_id", type=int)
+    pending_ai_qr_payment = (
+        Payment.query
+        .filter(
+            Payment.company_id == company.id,
+            Payment.provider == "mercadopago_ai_qr",
+            Payment.status.in_(("pending", "in_process", "authorized")),
+        )
+        .order_by(Payment.id.desc())
+        .first()
+    )
+    ai_qr_payment = None
+    if requested_ai_qr_payment_id:
+        ai_qr_payment = Payment.query.filter_by(
+            id=requested_ai_qr_payment_id,
+            company_id=company.id,
+            provider="mercadopago_ai_qr",
+        ).first()
+    elif pending_ai_qr_payment is not None:
+        ai_qr_payment = pending_ai_qr_payment
+
+    ai_qr_preview = _ai_qr_checkout_preview(company, ai_qr_payment)
+    if ai_qr_preview is not None:
+        if checkout_preview is None or ai_qr_preview.get("status") == "pending":
+            checkout_preview = ai_qr_preview
+            if ai_qr_preview.get("status") == "paid":
+                checkout_status = "success"
+            elif ai_qr_preview.get("status") == "failed":
+                checkout_status = "failure"
+        if ai_qr_preview.get("status") == "pending":
+            session["mp_checkout_preview"] = ai_qr_preview
+    pending_ai_qr_checkout = None
+    if pending_ai_qr_payment is not None:
+        pending_ai_qr_checkout = _ai_qr_checkout_preview(company, pending_ai_qr_payment)
+        if pending_ai_qr_checkout and pending_ai_qr_checkout.get("status") != "pending":
+            pending_ai_qr_checkout = None
     if checkout_preview:
         if checkout_preview.get("status") == "paid":
             checkout_status = "success"
@@ -1416,6 +1453,7 @@ def subscription_portal():
         recent_invoices=recent_invoices,
         checkout_preview=checkout_preview,
         checkout_status=checkout_status,
+        pending_ai_qr_checkout=pending_ai_qr_checkout,
         days_remaining=days_remaining,
         reference_date=reference_date,
         status_badge=status_badge,
@@ -1899,6 +1937,68 @@ def create_ai_subscription_checkout():
         db.session.rollback()
         current_app.logger.exception("Error creando suscripción IA Mercado Pago: %s", exc)
         return _checkout_error_response(f"No se pudo iniciar la suscripción IA: {exc}", url_for("ai_agents.agent", agent="planes"), status_code=500)
+
+
+@bp.route("/subscription/ai-agent/qr/cancel", methods=["POST"])
+@company_admin_required
+def cancel_ai_qr_checkout():
+    """Cancel a one-time AI QR checkout without touching any AI or standard subscription."""
+    from app import Company, Payment, db
+    from services.billing_notification_service import NotificationService
+
+    company = Company.query.filter_by(id=getattr(current_user, "company_id", None)).first_or_404()
+    payment_id = request.form.get("payment_record_id", type=int)
+    payment = Payment.query.filter_by(
+        id=payment_id,
+        company_id=company.id,
+        provider="mercadopago_ai_qr",
+    ).first()
+    if payment is None:
+        flash("El checkout QR ya no está disponible.", "warning")
+        return redirect(url_for("company_billing.subscription_portal", _anchor="planes-ia"))
+
+    status = str(payment.status or "").strip().lower()
+    if status == "approved":
+        flash("El pago ya fue aprobado. No hace falta cancelar el checkout.", "info")
+        return redirect(url_for("company_billing.subscription_portal", _anchor="historial-pagos"))
+    if status not in {"pending", "in_process", "authorized"}:
+        flash("Este checkout QR ya fue cancelado o finalizado.", "info")
+        return redirect(url_for("company_billing.subscription_portal", _anchor="planes-ia"))
+
+    try:
+        payment.status = "cancelled"
+        NotificationService.record_event(
+            db.session,
+            company_id=company.id,
+            payment_id=payment.id,
+            event="ai_qr_checkout_cancelled_by_user",
+            detail="El usuario canceló el checkout QR manual IA; no se activó ni modificó ninguna suscripción.",
+            source="portal",
+            status="cancelled",
+            event_id=f"ai-qr-cancel:{payment.id}",
+            payload={"payment_record_id": payment.id, "plan_code": _ai_qr_plan_code(payment)},
+            user_id=current_user.id,
+        )
+        preview = session.get("mp_checkout_preview")
+        if isinstance(preview, dict) and int(preview.get("payment_record_id") or 0) == payment.id:
+            session.pop("mp_checkout_preview", None)
+        db.session.commit()
+    except Exception:
+        db.session.rollback()
+        current_app.logger.exception(
+            "No se pudo cancelar checkout QR IA company_id=%s payment_record_id=%s",
+            company.id,
+            payment.id,
+        )
+        flash("No se pudo cancelar el checkout. Tu suscripción no fue modificada; intentá nuevamente.", "danger")
+        return redirect(url_for(
+            "company_billing.subscription_portal",
+            ai_qr_payment_id=payment.id,
+            _anchor="payment-checkout",
+        ))
+
+    flash("Checkout QR cancelado. No se activó ningún plan y ya podés elegir otra modalidad.", "success")
+    return redirect(url_for("company_billing.subscription_portal", _anchor="planes-ia"))
 
 
 @bp.route("/subscription/ai-agent/cancel", methods=["POST"])
