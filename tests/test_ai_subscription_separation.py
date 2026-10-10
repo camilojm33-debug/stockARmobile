@@ -2030,3 +2030,31 @@ def test_standard_qr_checkout_rejects_zero_price_before_calling_mercado_pago(sub
         )
 
     assert calls == []
+
+
+def test_billing_reconciliation_flags_missing_invoice_and_legacy_qr_autorenew(subscription_app):
+    from app import utcnow
+    from saas import _billing_reconciliation_snapshot
+
+    company, user, _, subscription = _tenant_with_standard_subscription()
+    SubscriptionService._set_metadata(subscription, {"checkout_method": "qr", "mercadopago_status": ""})
+    payment = Payment(
+        payment_id="pay-diagnostic-missing-invoice",
+        external_reference="company_id:1|checkout_attempt:1",
+        company_id=company.id,
+        subscription_id=subscription.id,
+        user_id=user.id,
+        amount=1000,
+        currency="ARS",
+        status="approved",
+        payment_method="mercadopago",
+        provider="mercadopago",
+    )
+    db.session.add(payment)
+    db.session.commit()
+
+    issues = _billing_reconciliation_snapshot(now=utcnow())
+    titles = {issue["title"] for issue in issues}
+
+    assert "Pago aprobado sin factura" in titles
+    assert "QR marcado como renovación automática" in titles
