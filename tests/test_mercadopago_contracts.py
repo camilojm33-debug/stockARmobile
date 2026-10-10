@@ -175,16 +175,23 @@ def test_authorized_standard_preapproval_without_init_point_is_reused(monkeypatc
     calls = []
     subscription = SimpleNamespace(
         id=3,
+        status="pending",
         metadata_json='{"mercadopago_preapproval_id":"already-authorized"}',
-        renewal_enabled=True,
-        auto_renew=True,
-        cancel_at_period_end=False,
+        renewal_enabled=False,
+        auto_renew=False,
+        cancel_at_period_end=True,
+        next_billing_date=None,
+        ends_at=None,
     )
     db_session = SimpleNamespace(flush=lambda: calls.append("flush"), commit=lambda: calls.append("commit"))
 
     def get_preapproval(self, preapproval_id):
         calls.append(("get", preapproval_id))
-        return {"id": preapproval_id, "status": "authorized"}
+        return {
+            "id": preapproval_id,
+            "status": "authorized",
+            "next_payment_date": "2099-10-01T00:00:00Z",
+        }
 
     def create_preapproval(self, **kwargs):
         raise AssertionError("An authorized recurring subscription must never be duplicated.")
@@ -205,6 +212,12 @@ def test_authorized_standard_preapproval_without_init_point_is_reused(monkeypatc
     assert response["id"] == "already-authorized"
     assert response["status"] == "authorized"
     assert calls == [("get", "already-authorized")]
+    assert subscription.status == "active"
+    assert subscription.renewal_enabled is True
+    assert subscription.auto_renew is True
+    assert subscription.cancel_at_period_end is False
+    assert subscription.next_billing_date.isoformat() == "2099-10-01T00:00:00"
+    assert subscription.ends_at == subscription.next_billing_date
 
 
 def test_webhook_signature_matches_mercado_pago_manifest():
