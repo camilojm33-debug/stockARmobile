@@ -4304,6 +4304,7 @@ def _billing_reconciliation_snapshot(*, now=None, limit=50):
     records or contacting Mercado Pago. Repairs must be explicit and auditable.
     """
     from app import Company, Payment, Subscription, WebhookEvent, db
+    from services.subscription_service import SubscriptionService
 
     current = now or utcnow()
     stale_payment_cutoff = current - timedelta(hours=24)
@@ -4458,8 +4459,10 @@ def _billing_reconciliation_snapshot(*, now=None, limit=50):
 
     return sorted(
         issues,
-        key=lambda item: (0 if item["severity"] == "danger" else 1, item["created_at"] or datetime.min),
-        reverse=False,
+        key=lambda item: (
+            0 if item["severity"] == "danger" else 1,
+            str(item["created_at"] or ""),
+        ),
     )[:limit * 3]
 
 
