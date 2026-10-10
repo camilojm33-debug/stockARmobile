@@ -179,6 +179,12 @@ def test_ai_plans_page_posts_directly_to_ai_checkout(subscription_app):
     assert 'name="payment_method" value="automatic"' in html
     assert 'name="payment_method" value="qr"' in html
     assert '>Contratar<' not in html
+    # Regression: recurring checkout must navigate explicitly after its AJAX
+    # response rather than relying solely on a cross-origin form POST redirect.
+    assert "X-Requested-With" in html
+    assert "response.redirected" in html
+    assert "window.location.assign(checkoutUrl.href)" in html
+    assert "Conectando con Mercado Pago" in html
 
 
 def test_pending_ai_automatic_checkout_form_skips_global_loading_overlay(subscription_app):
