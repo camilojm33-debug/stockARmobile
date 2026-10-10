@@ -797,6 +797,86 @@ def _persisted_checkout_preview(company, *, subscription_id=None, preference_id=
     return preview
 
 
+def _session_standard_qr_preview(company, *, subscription_id=None, preference_id=None):
+    """Recover the exact QR checkout for this tenant if its history lookup misses.
+
+    This is a short-lived redirect fallback only; it never creates a payment and
+    never replaces a successfully resolved, persisted checkout.
+    """
+    from app import Payment, Subscription
+
+    remembered = session.get("standard_qr_checkout_preview")
+    if not isinstance(remembered, dict):
+        return None
+
+    try:
+        remembered_company_id = int(remembered.get("company_id") or 0)
+        remembered_subscription_id = int(remembered.get("subscription_id") or 0)
+    except (TypeError, ValueError):
+        return None
+
+    remembered_preference_id = str(remembered.get("preference_id") or "").strip()
+    checkout_url = str(remembered.get("checkout_url") or "").strip()
+    if (
+        remembered_company_id != int(company.id)
+        or not remembered_subscription_id
+        or (subscription_id is not None and remembered_subscription_id != int(subscription_id))
+        or (preference_id and remembered_preference_id != str(preference_id))
+        or not remembered_preference_id
+        or not checkout_url
+    ):
+        return None
+
+    subscription = Subscription.query.filter_by(
+        id=remembered_subscription_id,
+        company_id=company.id,
+    ).first()
+    if subscription is None or subscription.plan is None:
+        return None
+    metadata = SubscriptionService._metadata_dict(subscription)
+    if str(metadata.get("checkout_method") or "").strip().lower() != "qr":
+        return None
+
+    payment = Payment.query.filter_by(
+        company_id=company.id,
+        subscription_id=subscription.id,
+        preference_id=remembered_preference_id,
+    ).order_by(Payment.id.desc()).first()
+    if payment is not None and str(payment.status or "").strip().lower() not in {"pending", "in_process", "authorized"}:
+        return None
+
+    preview = BillingService.checkout_preview_payload(
+        preference={"id": remembered_preference_id, "init_point": checkout_url},
+        plan=subscription.plan,
+        company=company,
+    )
+    preview.update({
+        "kind": "commercial_subscription",
+        "status": "pending",
+        "subscription_id": subscription.id,
+        "preference_id": remembered_preference_id,
+        "payment_id": payment.id if payment else None,
+        "payment_status": str(payment.status or "pending").strip().lower() if payment else "pending",
+    })
+    return preview
+
+
+def _remember_standard_qr_checkout(company, subscription, preference):
+    """Keep enough tenant-scoped data to render the QR after the POST/redirect/GET."""
+    checkout_url = str(
+        preference.get("init_point") or preference.get("sandbox_init_point") or ""
+    ).strip()
+    preference_id = str(preference.get("id") or "").strip()
+    if not checkout_url or not preference_id or subscription is None:
+        return
+    session["standard_qr_checkout_preview"] = {
+        "company_id": int(company.id),
+        "subscription_id": int(subscription.id),
+        "preference_id": preference_id,
+        "checkout_url": checkout_url,
+    }
+
+
 def _ai_qr_plan_code(payment):
     external_reference = str(getattr(payment, "external_reference", "") or "")
     parts = {}
@@ -1466,6 +1546,18 @@ def subscription_portal():
             subscription_id=checkout_subscription_id,
             preference_id=checkout_preference_id,
         )
+        if checkout_preview is None:
+            checkout_preview = _session_standard_qr_preview(
+                company,
+                subscription_id=checkout_subscription_id,
+                preference_id=checkout_preference_id,
+            )
+        elif (
+            isinstance(session.get("standard_qr_checkout_preview"), dict)
+            and str(session["standard_qr_checkout_preview"].get("preference_id") or "")
+            == str(checkout_preview.get("preference_id") or "")
+        ):
+            session.pop("standard_qr_checkout_preview", None)
     ai_status = AISubscriptionService.get_status(company)
     requested_ai_preapproval = str(request.args.get("ai_preapproval_id") or "").strip()
     stored_ai_preapproval = str(ai_status.get("mercadopago_preapproval_id") or "").strip()
@@ -1773,6 +1865,7 @@ def create_checkout():
     if request.form.get("direct_checkout") == "1":
         return _checkout_redirect_response(checkout_url)
 
+    _remember_standard_qr_checkout(company, subscription, preference)
     flash("Pago con QR listo. Escanealo o abrí Mercado Pago para pagar este ciclo.", "info")
     return redirect(url_for(
         "company_billing.subscription_portal",
@@ -2643,6 +2736,7 @@ def subscription_change_confirm():
         flash("Plan actualizado correctamente.", "success")
         return redirect(url_for("company_billing.subscription_portal"))
 
+    _remember_standard_qr_checkout(company, subscription, preference)
     if replaced_pending_id:
         flash(
             "Checkout anterior reemplazado. Usá solamente el nuevo QR; si el pago anterior llega a aprobarse, se solicitará su reembolso.",
