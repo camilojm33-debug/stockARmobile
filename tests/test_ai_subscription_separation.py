@@ -1913,7 +1913,7 @@ def test_subscription_portal_has_one_real_payment_anchor():
     assert html.index('<section id="payment-checkout"') < html.index('<section class="product-overview mb-5">')
     # The generic QR action must not offer charging the free Trial plan.
     assert "Elegí primero un plan pago en “StockArMobile” para pagar este ciclo con QR." in html
-    assert "usage_snapshot.plan.code in ['entrepreneur', 'business', 'premium']" in html
+    assert "usage_snapshot.plan.code != 'trial'" in html
 
 
 
