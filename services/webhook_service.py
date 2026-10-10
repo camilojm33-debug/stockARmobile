@@ -1146,53 +1146,49 @@ class WebhookService:
                     "company_id": commercial.get("company_id"),
                 }
             else:
-                subscription_id = preapproval_data.get("external_reference")
-                subscription = None
-                if subscription_id and str(subscription_id).isdigit():
-                    subscription = Subscription.query.filter_by(id=int(subscription_id)).first()
-                if subscription:
-                    status = (preapproval_data.get("status") or "pending").lower()
-                    SubscriptionService.run_command(
-                        db_session,
-                        SubscriptionService.ChangePaymentMethodCommand(
-                            company_id=subscription.company_id,
-                            subscription_id=subscription.id,
-                            actor_user_id=None,
-                            actor_role="system",
-                            origin="webhook",
-                            idempotency_key=f"webhook-preapproval-meta:{event_key}:{subscription.id}",
-                            payment_method="mercadopago_subscription",
-                            metadata={"mercadopago_subscription_id": str(preapproval_data.get("id") or "")},
-                        ),
+                ref_parts = self._external_reference_parts(str(preapproval_data.get("external_reference") or ""))
+                if ref_parts.get("ai_subscription") == "true":
+                    from services.ai_agent.subscription_service import AISubscriptionService
+
+                    ai_company = AISubscriptionService.sync_from_mercadopago(preapproval=preapproval_data)
+                    db_session.flush()
+                    result = {
+                        "status": "processed_ai_subscription" if ai_company is not None else "ignored",
+                        "company_id": getattr(ai_company, "id", None),
+                        "event_key": event_key,
+                    }
+                else:
+                    from services.mercadopago_subscription_service import MercadoPagoSubscriptionService
+
+                    subscription = MercadoPagoSubscriptionService.sync_preapproval(
+                        db_session=db_session,
+                        preapproval=preapproval_data,
                     )
-                    if status in {"authorized", "pending", "in_process"}:
-                        SubscriptionService.apply_payment_status(subscription, status)
-                    elif status in {"approved"}:
-                        SubscriptionService.run_command(
-                            db_session,
-                            SubscriptionService.ReactivateSubscriptionCommand(
-                                company_id=subscription.company_id,
-                                subscription_id=subscription.id,
-                                actor_user_id=None,
-                                actor_role="system",
-                                origin="webhook",
-                                idempotency_key=f"webhook-preapproval-reactivate:{event_key}:{subscription.id}",
-                            ),
-                        )
-                    elif status in {"cancelled", "paused"}:
-                        SubscriptionService.run_command(
-                            db_session,
-                            SubscriptionService.CancelSubscriptionCommand(
-                                company_id=subscription.company_id,
-                                subscription_id=subscription.id,
-                                actor_user_id=None,
-                                actor_role="system",
-                                origin="webhook",
-                                idempotency_key=f"webhook-preapproval-cancel:{event_key}:{subscription.id}",
-                                cancel_at_period_end=False,
-                            ),
-                        )
-                result = {"status": "processed_preapproval", "event_key": event_key}
+                    # Compatibility with older contracts whose external_reference
+                    # was only a numeric local subscription ID and whose metadata
+                    # did not yet retain the preapproval ID.
+                    legacy_reference = str(preapproval_data.get("external_reference") or "").strip()
+                    if subscription is None and legacy_reference.isdigit():
+                        legacy_subscription = Subscription.query.filter_by(id=int(legacy_reference)).first()
+                        if legacy_subscription is not None:
+                            SubscriptionService._set_metadata(
+                                legacy_subscription,
+                                {
+                                    "mercadopago_preapproval_id": str(preapproval_data.get("id") or ""),
+                                    "mercadopago_external_reference": legacy_reference,
+                                    "checkout_method": "automatic",
+                                    "payment_method": "mercadopago_subscription",
+                                },
+                            )
+                            subscription = MercadoPagoSubscriptionService.sync_preapproval(
+                                db_session=db_session,
+                                preapproval=preapproval_data,
+                            )
+                    result = {
+                        "status": "processed_preapproval" if subscription is not None else "ignored",
+                        "subscription_id": getattr(subscription, "id", None),
+                        "event_key": event_key,
+                    }
 
         event_row.status = result.get("status")
         ReferralService.refresh_commission_states(db_session)
