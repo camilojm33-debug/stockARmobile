@@ -2118,3 +2118,43 @@ def test_billing_reconciliation_flags_missing_invoice_and_legacy_qr_autorenew(su
     renewed_diagnostics = _billing_reconciliation_snapshot(now=utcnow())
     renewed_titles = {issue["title"] for issue in renewed_diagnostics}
     assert "Contrato mensual autorizado pero renovación local desactivada" in renewed_titles
+
+
+def test_ai_cancelled_preapproval_preserves_paid_access_until_expiry(subscription_app):
+    from datetime import timedelta
+    from app import utcnow
+    from services.ai_agent.usage_service import can_use_ai
+
+    company, _, _, standard_subscription = _tenant_with_standard_subscription()
+    paid_until = utcnow() + timedelta(days=10)
+    update_ai_preferences(
+        company,
+        ai_updates={
+            "plan_code": "inicio",
+            "status": "ACTIVA",
+            "origin": "MERCADO_PAGO",
+            "mercadopago_status": "authorized",
+            "mercadopago_preapproval_id": "ai-pre-paid-through",
+            "ends_at": paid_until.isoformat(),
+        },
+    )
+    db.session.commit()
+
+    synced_company = AISubscriptionService.sync_from_mercadopago(
+        preapproval={
+            "id": "ai-pre-paid-through",
+            "status": "cancelled",
+            "external_reference": f"ai_subscription:true|company_id:{company.id}|plan_code:inicio|nonce:paid-through",
+        }
+    )
+    db.session.commit()
+
+    snapshot = AISubscriptionService.get_status(synced_company)
+    assert snapshot["status"] == "ACTIVA"
+    assert snapshot["mercadopago_status"] == "cancelled"
+    assert snapshot["ends_at"] == paid_until.isoformat()
+    assert snapshot.get("mercadopago_access_preserved_until") == paid_until.isoformat()
+    assert can_use_ai(synced_company, "asistente").allowed is True
+    assert can_use_ai(synced_company, "asistente", now=paid_until + timedelta(seconds=1)).allowed is False
+    assert can_use_ai(synced_company, "asistente", now=paid_until + timedelta(seconds=1)).reason.endswith("vencido. Contactá a soporte.")
+    assert _standard_snapshot(standard_subscription)["status"] == SubscriptionService.STATE_ACTIVE
