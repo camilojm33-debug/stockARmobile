@@ -1127,10 +1127,56 @@
           registration.active?.postMessage({ type: 'CLEAR_OFFLINE_QUEUE' });
         }).catch(function() {});
       }
+      function clearPrivateOfflineCache() {
+        return new Promise(function(resolve) {
+          if (!('serviceWorker' in navigator)) {
+            resolve();
+            return;
+          }
+          let settled = false;
+          const requestId = 'private-cache-' + Date.now() + '-' + Math.random().toString(36).slice(2);
+          const finish = function() {
+            if (settled) return;
+            settled = true;
+            clearTimeout(timeout);
+            navigator.serviceWorker.removeEventListener('message', onMessage);
+            resolve();
+          };
+          const onMessage = function(event) {
+            const data = event.data || {};
+            if (data.type === 'PRIVATE_CACHE_CLEARED' && data.requestId === requestId) finish();
+          };
+          const timeout = setTimeout(finish, 2000);
+          navigator.serviceWorker.addEventListener('message', onMessage);
+          navigator.serviceWorker.ready.then(function(registration) {
+            const worker = navigator.serviceWorker.controller || registration.active;
+            if (!worker) {
+              finish();
+              return;
+            }
+            worker.postMessage({ type: 'CLEAR_PRIVATE_CACHE', requestId: requestId });
+          }).catch(finish);
+        });
+      }
       document.querySelectorAll('form[action*="/auth/logout"]').forEach(function(form) {
         form.addEventListener('submit', function() {
           clearCartStorage();
           clearOfflineQueue();
+        });
+      });
+      document.querySelectorAll('form[action*="/auth/switch-user"]').forEach(function(form) {
+        form.addEventListener('submit', function(event) {
+          if (form.dataset.privateCacheCleared === 'true') return;
+          event.preventDefault();
+          if (form.dataset.clearingPrivateCache === 'true') return;
+          form.dataset.clearingPrivateCache = 'true';
+          const submitter = event.submitter;
+          clearPrivateOfflineCache().finally(function() {
+            form.dataset.privateCacheCleared = 'true';
+            form.dataset.clearingPrivateCache = 'false';
+            if (submitter && submitter.form === form) form.requestSubmit(submitter);
+            else form.requestSubmit();
+          });
         });
       });
       const sidebar = document.getElementById('appSidebar');
