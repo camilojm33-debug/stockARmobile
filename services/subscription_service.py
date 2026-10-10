@@ -829,26 +829,35 @@ class SubscriptionService:
             SubscriptionService._transition(subscription, SubscriptionService.STATE_ACTIVE, reason="renew")
 
         duration = int(subscription.plan.duration_days if subscription.plan else 30)
+        # Never move an existing period start backwards when Mercado Pago sends a
+        # delayed notification or an old next_payment_date. The DB requires both
+        # end dates to be on or after the persisted start dates.
+        start_candidates = [
+            value
+            for value in (now, subscription.start_date, subscription.starts_at)
+            if value is not None
+        ]
+        minimum_period_start = max(start_candidates)
         authoritative_next_due = command.next_billing_date
-        if authoritative_next_due is not None and authoritative_next_due <= now:
-            authoritative_next_due = None
 
-        if authoritative_next_due is not None:
-            # Mercado Pago's next_payment_date is authoritative for recurring
-            # contracts; adding another duration would accidentally skip a cycle.
-            period_start = now
+        if authoritative_next_due is not None and authoritative_next_due > minimum_period_start:
+            # Mercado Pago's next_payment_date is authoritative when it is later
+            # than the existing period start; never add a second duration.
+            period_start = minimum_period_start
             next_due = authoritative_next_due
         else:
-            # Manual QR checkout extends from the current paid-through date, but
-            # never turns itself into an automatic contract.
+            # Ignore missing or stale contract dates and calculate a valid paid
+            # period from the current paid-through date without skipping backwards.
+            paid_through = subscription.next_billing_date
             period_start = (
-                subscription.next_billing_date
-                if subscription.next_billing_date and subscription.next_billing_date > now
-                else now
+                paid_through
+                if paid_through is not None and paid_through > minimum_period_start
+                else minimum_period_start
             )
             next_due = period_start + timedelta(days=duration)
 
-        subscription.last_payment_date = now
+        if subscription.last_payment_date is None or subscription.last_payment_date <= now:
+            subscription.last_payment_date = now
         subscription.start_date = period_start
         subscription.starts_at = period_start
         subscription.next_billing_date = next_due
