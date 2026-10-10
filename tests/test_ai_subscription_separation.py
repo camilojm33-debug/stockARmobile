@@ -390,6 +390,54 @@ def test_standard_plan_change_offers_qr_and_monthly_destinations(subscription_ap
     assert "Suscripción mensual en Mercado Pago" in html
 
 
+def test_standard_qr_checkout_preview_recovers_from_session_when_history_lookup_misses(subscription_app):
+    import company_billing
+    from flask import session
+
+    company, user, plan, subscription = _tenant_with_standard_subscription()
+    SubscriptionService._set_metadata(subscription, {"checkout_method": "qr"})
+    db.session.commit()
+
+    with subscription_app.test_request_context(
+        "/admin/portal?checkout=created&checkout_subscription_id="
+        f"{subscription.id}&checkout_preference_id=qr-pref-123"
+    ):
+        session["standard_qr_checkout_preview"] = {
+            "company_id": company.id,
+            "subscription_id": subscription.id,
+            "preference_id": "qr-pref-123",
+            "checkout_url": "https://www.mercadopago.com.ar/checkout/v1/redirect?pref_id=qr-pref-123",
+        }
+
+        preview = company_billing._session_standard_qr_preview(
+            company,
+            subscription_id=subscription.id,
+            preference_id="qr-pref-123",
+        )
+
+        assert preview is not None
+        assert preview["kind"] == "commercial_subscription"
+        assert preview["status"] == "pending"
+        assert preview["plan_name"] == plan.name
+        assert preview["preference_id"] == "qr-pref-123"
+        assert preview["qr_data_uri"].startswith("data:image/png;base64,")
+
+        # A different tenant or preference must never reuse the remembered QR.
+        other_company = Company(name="Otra empresa", active=True, contact_email="otra@test.local")
+        db.session.add(other_company)
+        db.session.commit()
+        assert company_billing._session_standard_qr_preview(
+            other_company,
+            subscription_id=subscription.id,
+            preference_id="qr-pref-123",
+        ) is None
+        assert company_billing._session_standard_qr_preview(
+            company,
+            subscription_id=subscription.id,
+            preference_id="other-pref",
+        ) is None
+
+
 def test_pending_standard_checkout_can_be_replaced_with_cheaper_plan(subscription_app, monkeypatch):
     company, user, _, active_subscription = _tenant_with_standard_subscription()
     premium = Plan(code="premium", name="Premium", price=54999, currency="ARS", duration_days=30, active=True)
