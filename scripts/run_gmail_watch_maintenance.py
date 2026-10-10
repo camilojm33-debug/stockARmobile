@@ -28,7 +28,7 @@ def _report_response(response: requests.Response) -> int:
 
     try:
         payload = response.json()
-    except (ValueError, requests.JSONDecodeError):
+    except ValueError:
         print("Gmail watch maintenance endpoint returned invalid JSON.", file=sys.stderr)
         return 1
 
