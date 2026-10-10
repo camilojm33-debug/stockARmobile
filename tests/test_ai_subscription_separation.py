@@ -1845,3 +1845,188 @@ def test_subscription_portal_renders_after_checkout_with_usage_snapshot_dict(sub
     response = client.get("/admin/portal?checkout=created&checkout_subscription_id=" + str(subscription.id))
     assert response.status_code == 200
     assert "Mi Suscripción" in response.get_data(as_text=True)
+
+
+def test_standard_authorized_payment_is_amount_checked_invoiced_and_idempotent(subscription_app, monkeypatch):
+    from app import Invoice, utcnow
+
+    company, _, _, subscription = _tenant_with_standard_subscription()
+    external_reference = (
+        f"stockarmobile|flow:subscription_auto|company_id:{company.id}|"
+        f"subscription_id:{subscription.id}|nonce:standard-payment"
+    )
+    SubscriptionService._set_metadata(
+        subscription,
+        {
+            "mercadopago_preapproval_id": "standard-pre-payment",
+            "mercadopago_external_reference": external_reference,
+        },
+    )
+    db.session.commit()
+
+    service = WebhookService()
+    monkeypatch.setattr(service.mp_service, "validate_webhook_signature", lambda **kwargs: True)
+    authorized = {
+        "preapproval_id": "standard-pre-payment",
+        "external_reference": external_reference,
+        "transaction_amount": 1000,
+        "currency_id": "ARS",
+        "debit_date": utcnow().isoformat(),
+        "payment": {"id": "pay-standard-authorized-once", "status": "approved"},
+    }
+    monkeypatch.setattr(service.mp_service, "get_authorized_payment", lambda _data_id: authorized)
+
+    first = service.process(
+        db_session=db.session,
+        headers={"x-request-id": "rq-standard-authorized-1", "x-signature": "ts=1,v1=abc"},
+        payload={"id": "evt-standard-authorized-1", "type": "subscription_authorized_payment", "data": {"id": "auth-standard-1"}},
+    )
+    db.session.commit()
+    first_due = subscription.next_billing_date
+
+    second = service.process(
+        db_session=db.session,
+        headers={"x-request-id": "rq-standard-authorized-2", "x-signature": "ts=1,v1=abc"},
+        payload={"id": "evt-standard-authorized-2", "type": "subscription_authorized_payment", "data": {"id": "auth-standard-2"}},
+    )
+    db.session.commit()
+
+    payment = Payment.query.filter_by(payment_id="pay-standard-authorized-once").one()
+    invoice = Invoice.query.filter_by(reference="payment:pay-standard-authorized-once").one()
+    assert first["status"] == second["status"] == "processed"
+    assert first["payment_status"] == second["payment_status"] == "approved"
+    assert Payment.query.filter_by(payment_id="pay-standard-authorized-once").count() == 1
+    assert payment.provider == "mercadopago_subscription"
+    assert payment.invoice_id == invoice.id
+    assert subscription.next_billing_date == first_due
+    assert subscription.renewal_enabled is True
+    assert subscription.auto_renew is True
+
+
+def test_standard_authorized_payment_with_wrong_amount_never_renews(subscription_app, monkeypatch):
+    company, _, _, subscription = _tenant_with_standard_subscription()
+    external_reference = (
+        f"stockarmobile|flow:subscription_auto|company_id:{company.id}|"
+        f"subscription_id:{subscription.id}|nonce:wrong-amount"
+    )
+    SubscriptionService._set_metadata(
+        subscription,
+        {
+            "mercadopago_preapproval_id": "standard-pre-wrong-amount",
+            "mercadopago_external_reference": external_reference,
+        },
+    )
+    db.session.commit()
+
+    service = WebhookService()
+    monkeypatch.setattr(service.mp_service, "validate_webhook_signature", lambda **kwargs: True)
+    monkeypatch.setattr(
+        service.mp_service,
+        "get_authorized_payment",
+        lambda _data_id: {
+            "preapproval_id": "standard-pre-wrong-amount",
+            "external_reference": external_reference,
+            "transaction_amount": 1,
+            "currency_id": "ARS",
+            "payment": {"id": "pay-standard-wrong-amount", "status": "approved"},
+        },
+    )
+
+    with pytest.raises(RuntimeError, match="importe"):
+        service.process(
+            db_session=db.session,
+            headers={"x-request-id": "rq-standard-wrong-amount", "x-signature": "ts=1,v1=abc"},
+            payload={"id": "evt-standard-wrong-amount", "type": "subscription_authorized_payment", "data": {"id": "auth-standard-wrong-amount"}},
+        )
+
+    assert subscription.next_billing_date is None
+    assert Payment.query.filter_by(payment_id="pay-standard-wrong-amount").count() == 0
+
+
+def test_one_time_qr_renewal_never_enables_automatic_billing(subscription_app):
+    company, _, _, subscription = _tenant_with_standard_subscription()
+    subscription.renewal_enabled = False
+    subscription.auto_renew = False
+    db.session.commit()
+
+    SubscriptionService.run_command(
+        db.session,
+        SubscriptionService.RenewSubscriptionCommand(
+            company_id=company.id,
+            subscription_id=subscription.id,
+            payment_status="approved",
+            renewal_enabled=False,
+            origin="webhook",
+            idempotency_key="test-one-time-qr-no-auto-renew",
+        ),
+    )
+    db.session.commit()
+
+    db.session.refresh(subscription)
+    assert subscription.status == SubscriptionService.STATE_ACTIVE
+    assert subscription.renewal_enabled is False
+    assert subscription.auto_renew is False
+    assert subscription.cancel_at_period_end is True
+
+
+def test_mercadopago_cancellation_preserves_remaining_paid_period(subscription_app):
+    from datetime import timedelta
+    from app import utcnow
+    from services.mercadopago_subscription_service import MercadoPagoSubscriptionService
+
+    company, _, _, subscription = _tenant_with_standard_subscription()
+    subscription.next_billing_date = utcnow() + timedelta(days=10)
+    subscription.ends_at = subscription.next_billing_date
+    external_reference = (
+        f"stockarmobile|flow:subscription_auto|company_id:{company.id}|"
+        f"subscription_id:{subscription.id}|nonce:cancel"
+    )
+    SubscriptionService._set_metadata(
+        subscription,
+        {
+            "mercadopago_preapproval_id": "standard-pre-cancelled",
+            "mercadopago_external_reference": external_reference,
+        },
+    )
+    db.session.commit()
+
+    synced = MercadoPagoSubscriptionService.sync_preapproval(
+        db_session=db.session,
+        preapproval={
+            "id": "standard-pre-cancelled",
+            "status": "cancelled",
+            "external_reference": external_reference,
+        },
+    )
+    db.session.commit()
+
+    state = SubscriptionService.resolve_company_access_state(company, subscription=synced, now=utcnow())
+    assert synced.status == SubscriptionService.STATE_ACTIVE
+    assert synced.renewal_enabled is False
+    assert synced.auto_renew is False
+    assert synced.cancel_at_period_end is True
+    assert state["can_access"] is True
+
+
+def test_standard_qr_checkout_rejects_zero_price_before_calling_mercado_pago(subscription_app, monkeypatch):
+    from services.billing_service import BillingService
+
+    company, user, plan, subscription = _tenant_with_standard_subscription()
+    plan.price = 0
+    db.session.commit()
+    calls = []
+    monkeypatch.setattr(
+        "services.mercadopago_service.MercadoPagoService.create_checkout_preference",
+        lambda self, **kwargs: calls.append(kwargs),
+    )
+
+    with pytest.raises(ValueError, match="plan pago"):
+        BillingService().create_checkout_for_plan(
+            db_session=db.session,
+            company=company,
+            plan=plan,
+            user=user,
+            subscription=subscription,
+        )
+
+    assert calls == []
