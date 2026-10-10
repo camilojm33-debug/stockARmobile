@@ -2153,7 +2153,7 @@ def test_ai_cancelled_preapproval_preserves_paid_access_until_expiry(subscriptio
     assert snapshot["status"] == "ACTIVA"
     assert snapshot["mercadopago_status"] == "cancelled"
     assert snapshot["ends_at"] == paid_until.isoformat()
-    assert snapshot.get("mercadopago_access_preserved_until") == paid_until.isoformat()
+    assert AISubscriptionService._ai_prefs(synced_company).get("mercadopago_access_preserved_until") == paid_until.isoformat()
     assert can_use_ai(synced_company, "asistente").allowed is True
     assert can_use_ai(synced_company, "asistente", now=paid_until + timedelta(seconds=1)).allowed is False
     assert can_use_ai(synced_company, "asistente", now=paid_until + timedelta(seconds=1)).reason.endswith("vencido. Contactá a soporte.")
