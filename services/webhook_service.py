@@ -954,7 +954,16 @@ class WebhookService:
                         # Both "payment" and "subscription_authorized_payment" can
                         # describe the same Mercado Pago charge. The MP payment ID,
                         # not the webhook delivery/event ID, is the idempotency key.
-                        automatic_contract = flow == "subscription_auto"
+                        checkout_method = str(
+                            subscription_metadata.get("checkout_method") or ""
+                        ).strip().lower()
+                        # New recurring checkouts carry an explicit flow marker.
+                        # Legacy one-time QR references predate that marker, so use
+                        # persisted checkout method to keep QR payments manual while
+                        # preserving automatic renewal for older non-QR contracts.
+                        automatic_contract = flow == "subscription_auto" or (
+                            not flow and checkout_method != "qr"
+                        )
                         SubscriptionService.run_command(
                             db_session,
                             SubscriptionService.RenewSubscriptionCommand(
