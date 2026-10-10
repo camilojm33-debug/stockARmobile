@@ -2158,3 +2158,56 @@ def test_ai_cancelled_preapproval_preserves_paid_access_until_expiry(subscriptio
     assert can_use_ai(synced_company, "asistente", now=paid_until + timedelta(seconds=1)).allowed is False
     assert can_use_ai(synced_company, "asistente", now=paid_until + timedelta(seconds=1)).reason.endswith("vencido. Contactá a soporte.")
     assert _standard_snapshot(standard_subscription)["status"] == SubscriptionService.STATE_ACTIVE
+
+
+def test_approved_standard_qr_webhook_keeps_automatic_renewal_disabled(subscription_app, monkeypatch):
+    from app import utcnow
+
+    company, user, plan, subscription = _tenant_with_standard_subscription()
+    external_reference = (
+        f"company_id:{company.id}|plan_id:{plan.id}|subscription_id:{subscription.id}|"
+        f"user_id:{user.id}|checkout_attempt:qr"
+    )
+    subscription.external_reference = external_reference
+    SubscriptionService._set_metadata(
+        subscription,
+        {"checkout_method": "qr", "checkout_cancelled": False},
+    )
+    db.session.commit()
+
+    service = WebhookService()
+    monkeypatch.setattr(service.mp_service, "validate_webhook_signature", lambda **kwargs: True)
+    monkeypatch.setattr(
+        service.mp_service,
+        "get_payment",
+        lambda _payment_id: {
+            "id": "pay-standard-qr-manual",
+            "status": "approved",
+            "date_last_updated": utcnow().isoformat(),
+            "date_approved": utcnow().isoformat(),
+            "transaction_amount": float(plan.price),
+            "currency_id": str(plan.currency or "ARS"),
+            "payment_method_id": "visa",
+            "external_reference": external_reference,
+            "metadata": {
+                "company_id": company.id,
+                "subscription_id": subscription.id,
+                "plan_id": plan.id,
+                "user_id": user.id,
+            },
+        },
+    )
+
+    result = service.process(
+        db_session=db.session,
+        headers={"x-request-id": "rq-standard-qr-manual", "x-signature": "ts=1,v1=abc"},
+        payload={"id": "evt-standard-qr-manual", "type": "payment", "data": {"id": "pay-standard-qr-manual"}},
+    )
+    db.session.commit()
+    db.session.refresh(subscription)
+
+    assert result["status"] == "processed"
+    assert subscription.status == SubscriptionService.STATE_ACTIVE
+    assert subscription.renewal_enabled is False
+    assert subscription.auto_renew is False
+    assert subscription.cancel_at_period_end is False
