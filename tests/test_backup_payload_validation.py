@@ -1,9 +1,6 @@
-import copy
-
 import pytest
 
 from services.backup_service import BackupService
-
 
 def valid_backup_payload():
     return {
@@ -22,12 +19,10 @@ def valid_backup_payload():
         "expenses": [{"id": 90, "company_id": 42}],
     }
 
-
 def test_backup_tenant_validator_accepts_rows_belonging_to_target_company():
     payload = valid_backup_payload()
 
     assert BackupService._validate_backup_tenant_scope(payload, 42) is None
-
 
 def test_backup_tenant_validator_rejects_rows_from_another_company():
     payload = valid_backup_payload()
@@ -36,14 +31,12 @@ def test_backup_tenant_validator_rejects_rows_from_another_company():
     with pytest.raises(ValueError, match="otra empresa"):
         BackupService._validate_backup_tenant_scope(payload, 42)
 
-
 def test_backup_tenant_validator_rejects_superadmin_users():
     payload = valid_backup_payload()
     payload["users"][0]["role"] = " SuperAdmin "
 
     with pytest.raises(ValueError, match="superadmin"):
         BackupService._validate_backup_tenant_scope(payload, 42)
-
 
 def test_backup_tenant_validator_rejects_child_rows_linked_outside_backup():
     payload = valid_backup_payload()
@@ -52,7 +45,6 @@ def test_backup_tenant_validator_rejects_child_rows_linked_outside_backup():
     with pytest.raises(ValueError, match="referencia fuera"):
         BackupService._validate_backup_tenant_scope(payload, 42)
 
-
 def test_backup_tenant_validator_rejects_missing_company_id_on_tenant_rows():
     payload = valid_backup_payload()
     payload["products"][0].pop("company_id")
@@ -60,14 +52,12 @@ def test_backup_tenant_validator_rejects_missing_company_id_on_tenant_rows():
     with pytest.raises(ValueError, match="no identifica su empresa"):
         BackupService._validate_backup_tenant_scope(payload, 42)
 
-
 def test_backup_tenant_validator_rejects_malformed_row_sections():
     payload = valid_backup_payload()
     payload["users"] = {"id": 1, "company_id": 42, "role": "admin"}
 
     with pytest.raises(ValueError, match="formato invalido"):
         BackupService._validate_backup_tenant_scope(payload, 42)
-
 
 def test_backup_tenant_validator_rejects_a_backup_for_another_company():
     payload = valid_backup_payload()
