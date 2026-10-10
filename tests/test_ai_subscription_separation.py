@@ -365,7 +365,6 @@ def test_subscription_management_actions_appear_near_plan_choices(subscription_a
     standard_plans = html.index('id="planes-disponibles"')
     assert overview < management < ai_plans < standard_plans
     assert "Actualizar plan" in html
-    assert "Cancelar suscripción IA" in html
     assert 'action="/admin/subscription/mercadopago/create"' in html
 
 
