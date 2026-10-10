@@ -1850,7 +1850,7 @@ def test_subscription_portal_renders_after_checkout_with_usage_snapshot_dict(sub
 
 
 def test_standard_authorized_payment_is_idempotent_across_webhook_topics(subscription_app, monkeypatch):
-    company, _, _, subscription = _tenant_with_standard_subscription()
+    company, user, plan, subscription = _tenant_with_standard_subscription()
     external_reference = (
         f"stockarmobile|flow:subscription_auto|company_id:{company.id}|"
         f"subscription_id:{subscription.id}|nonce:stable"
@@ -1867,8 +1867,29 @@ def test_standard_authorized_payment_is_idempotent_across_webhook_topics(subscri
     )
     db.session.commit()
 
+    payment_payload = {
+        "id": "pay-standard-repeat",
+        "status": "approved",
+        "external_reference": external_reference,
+        "transaction_amount": 1000,
+        "currency_id": "ARS",
+        "payment_method_id": "master",
+        "metadata": {
+            "company_id": company.id,
+            "plan_id": plan.id,
+            "subscription_id": subscription.id,
+            "user_id": user.id,
+        },
+        "date_approved": "2026-10-09T00:00:00Z",
+        "date_last_updated": "2026-10-09T00:00:00Z",
+    }
     service = WebhookService()
     monkeypatch.setattr(service.mp_service, "validate_webhook_signature", lambda **kwargs: True)
+    monkeypatch.setattr(
+        service.mp_service,
+        "get_payment",
+        lambda data_id, access_token=None: payment_payload,
+    )
     monkeypatch.setattr(
         service.mp_service,
         "get_authorized_payment",
@@ -1894,24 +1915,33 @@ def test_standard_authorized_payment_is_idempotent_across_webhook_topics(subscri
 
     first = service.process(
         db_session=db.session,
-        headers={"x-request-id": "rq-standard-repeat-1", "x-signature": "ts=1,v1=abc"},
-        payload={"id": "evt-standard-repeat-1", "type": "subscription_authorized_payment", "data": {"id": "auth-standard-1"}},
+        headers={"x-request-id": "rq-standard-payment-1", "x-signature": "ts=1,v1=abc"},
+        payload={"id": "evt-standard-payment", "type": "payment", "data": {"id": "pay-standard-repeat"}},
     )
     db.session.commit()
     second = service.process(
         db_session=db.session,
-        headers={"x-request-id": "rq-standard-repeat-2", "x-signature": "ts=2,v1=def"},
-        payload={"id": "evt-standard-repeat-2", "type": "subscription_authorized_payment", "data": {"id": "auth-standard-2"}},
+        headers={"x-request-id": "rq-standard-auth-1", "x-signature": "ts=2,v1=def"},
+        payload={"id": "evt-standard-auth-1", "type": "subscription_authorized_payment", "data": {"id": "auth-standard-1"}},
+    )
+    db.session.commit()
+    third = service.process(
+        db_session=db.session,
+        headers={"x-request-id": "rq-standard-auth-2", "x-signature": "ts=3,v1=ghi"},
+        payload={"id": "evt-standard-auth-2", "type": "subscription_authorized_payment", "data": {"id": "auth-standard-2"}},
     )
     db.session.commit()
     db.session.refresh(subscription)
 
-    from app import Invoice
+    from app import Invoice, SubscriptionCommandExecution
 
+    canonical_key = f"mercadopago-payment-renew:{company.id}:{subscription.id}:pay-standard-repeat"
     assert first["status"] == "processed"
     assert second["status"] == "processed"
+    assert third["status"] == "processed"
     assert Payment.query.filter_by(payment_id="pay-standard-repeat").count() == 1
     assert Invoice.query.filter_by(reference="payment:pay-standard-repeat").count() == 1
+    assert SubscriptionCommandExecution.query.filter_by(command_key=canonical_key).count() == 1
     payment = Payment.query.filter_by(payment_id="pay-standard-repeat").one()
     assert payment.invoice_id is not None
     assert subscription.status == SubscriptionService.STATE_ACTIVE
