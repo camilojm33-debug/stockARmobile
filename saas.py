@@ -4304,6 +4304,7 @@ def _billing_reconciliation_snapshot(*, now=None, limit=50):
     records or contacting Mercado Pago. Repairs must be explicit and auditable.
     """
     from app import Company, Payment, Subscription, WebhookEvent, db
+    from services.ai_agent.subscription_service import AISubscriptionService
     from services.subscription_service import SubscriptionService
 
     current = now or utcnow()
@@ -4435,6 +4436,58 @@ def _billing_reconciliation_snapshot(*, now=None, limit=50):
                 reference=f"Suscripción #{subscription.id}",
                 created_at=subscription.updated_at or subscription.created_at,
                 subscription_id=subscription.id,
+            )
+
+    # AI billing is stored independently inside each company's preferences,
+    # not in the standard Subscription table. Check that contract separately.
+    ai_companies = (
+        Company.query.filter(Company.preferences_json.isnot(None))
+        .order_by(Company.id.desc())
+        .limit(1000)
+        .all()
+    )
+    for company in ai_companies:
+        ai = AISubscriptionService._ai_prefs(company)
+        if not isinstance(ai, dict) or not ai.get("plan_code"):
+            continue
+        ai_status = str(ai.get("status") or "").strip().upper()
+        ai_origin = str(ai.get("origin") or "").strip().upper()
+        ai_checkout_method = str(ai.get("checkout_method") or "").strip().lower()
+        ai_mp_status = str(ai.get("mercadopago_status") or "").strip().lower()
+        ai_preapproval_id = str(ai.get("mercadopago_preapproval_id") or "").strip()
+        ai_attempt_reference = str(ai.get("mercadopago_create_attempt_reference") or "").strip()
+
+        if ai_origin == "MERCADO_PAGO" and ai_mp_status == "authorized" and not ai_preapproval_id:
+            add_issue(
+                severity="danger",
+                title="Suscripción IA autorizada sin contrato registrado",
+                company_id=company.id,
+                detail="El estado local de Mercado Pago figura autorizado, pero falta guardar el identificador preapproval. No se alteró el plan.",
+                reference=f"Plan IA {ai.get('plan_code')}",
+                created_at=company.updated_at or company.created_at,
+            )
+        elif ai_origin == "MERCADO_PAGO" and ai_mp_status in {"cancelled", "canceled", "expired", "paused"} and ai_status == "ACTIVA":
+            add_issue(
+                severity="danger",
+                title="Estado de suscripción IA desincronizado",
+                company_id=company.id,
+                detail=f"Mercado Pago informa '{ai_mp_status}', pero el estado local de IA sigue ACTIVA.",
+                reference=f"Plan IA {ai.get('plan_code')}",
+                created_at=company.updated_at or company.created_at,
+            )
+        elif ai_origin == "MERCADO_PAGO" and ai_checkout_method == "automatic" and not ai_preapproval_id:
+            title = (
+                "Alta automática IA pendiente de recuperar"
+                if ai_attempt_reference
+                else "Suscripción IA automática sin contrato"
+            )
+            add_issue(
+                severity="warning",
+                title=title,
+                company_id=company.id,
+                detail="No existe un preapproval guardado para esta suscripción IA. Reabrir el intento existente y confirmar Mercado Pago antes de crear otro.",
+                reference=f"Plan IA {ai.get('plan_code')}",
+                created_at=company.updated_at or company.created_at,
             )
 
     # Long-running webhook rows are unusual; show only old processing rows or
