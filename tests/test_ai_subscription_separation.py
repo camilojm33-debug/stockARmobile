@@ -2132,32 +2132,21 @@ def test_cancelled_preapproval_keeps_access_until_paid_through_date(subscription
 
 def test_standard_webhook_cannot_reassign_an_ai_payment_id(subscription_app, monkeypatch):
     company, user, plan, subscription = _tenant_with_standard_subscription()
-    Payment(
-        payment_id="pay-ai-cross-flow",
-        external_reference=f"ai_subscription:true|company_id:{company.id}",
-        company_id=company.id,
-        subscription_id=None,
-        user_id=user.id,
-        amount=1000,
-        currency="ARS",
-        status="approved",
-        payment_method="mercadopago_ai_subscription",
-        provider="mercadopago_ai_subscription",
-        payload_json="{}",
+    db.session.add(
+        Payment(
+            payment_id="pay-ai-cross-flow",
+            external_reference=f"ai_subscription:true|company_id:{company.id}",
+            company_id=company.id,
+            subscription_id=None,
+            user_id=user.id,
+            amount=1000,
+            currency="ARS",
+            status="approved",
+            payment_method="mercadopago_ai_subscription",
+            provider="mercadopago_ai_subscription",
+            payload_json="{}",
+        )
     )
-    db.session.add(Payment.query.filter_by(payment_id="pay-ai-cross-flow").first() or Payment(
-        payment_id="pay-ai-cross-flow",
-        external_reference=f"ai_subscription:true|company_id:{company.id}",
-        company_id=company.id,
-        subscription_id=None,
-        user_id=user.id,
-        amount=1000,
-        currency="ARS",
-        status="approved",
-        payment_method="mercadopago_ai_subscription",
-        provider="mercadopago_ai_subscription",
-        payload_json="{}",
-    ))
     db.session.commit()
 
     external_reference = (
