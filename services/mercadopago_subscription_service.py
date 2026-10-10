@@ -215,6 +215,9 @@ class MercadoPagoSubscriptionService:
             # Only a currently fetched, matching MP preapproval can clear an old
             # cancellation marker; a stale local flag must not disable a new contract.
             metadata["mercadopago_cancellation_requested"] = False
+            metadata["auto_renew"] = True
+        elif status in {"paused", "cancelled", "canceled", "expired", "pending"}:
+            metadata["auto_renew"] = False
         SubscriptionService._set_metadata(subscription, metadata)
 
         if str(metadata.get("closed_reason") or "").strip().lower() == "plan_change":
