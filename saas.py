@@ -4310,6 +4310,12 @@ def _billing_reconciliation_snapshot(*, now=None, limit=50):
     stale_payment_cutoff = current - timedelta(hours=24)
     stuck_webhook_cutoff = current - timedelta(minutes=10)
     issues = []
+    # Restrict checkout diagnostics to actual Mercado Pago standard subscription
+    # payments so a manually recorded payment is not mislabeled as a lost checkout.
+    mp_standard_payment_filter = db.or_(
+        Payment.provider.in_(["mercadopago", "mercadopago_subscription"]),
+        Payment.payment_method.in_(["mercadopago", "mercadopago_subscription"]),
+    )
 
     def add_issue(*, severity, title, company_id, detail, reference, created_at=None, payment_id=None, subscription_id=None):
         company = db.session.get(Company, company_id) if company_id else None
@@ -4329,6 +4335,7 @@ def _billing_reconciliation_snapshot(*, now=None, limit=50):
     approved_without_invoice = (
         Payment.query.filter(
             standard_subscription_payment_filter(Payment),
+            mp_standard_payment_filter,
             Payment.status == "approved",
             Payment.invoice_id.is_(None),
         )
@@ -4353,6 +4360,7 @@ def _billing_reconciliation_snapshot(*, now=None, limit=50):
     stale_pending = (
         Payment.query.filter(
             standard_subscription_payment_filter(Payment),
+            mp_standard_payment_filter,
             Payment.subscription_id.isnot(None),
             Payment.status.in_(["pending", "in_process", "authorized"]),
             Payment.created_at < stale_payment_cutoff,
