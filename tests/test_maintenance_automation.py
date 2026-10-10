@@ -57,6 +57,7 @@ def test_maintenance_endpoints_keep_token_auth_when_csrf_is_enabled(app, monkeyp
         assert accepted.is_json
         assert accepted.get_json()["ok"] is True
 
+
 def test_health_check_endpoint_is_available_for_render(app):
     response = app.test_client().get("/health")
     assert response.status_code == 200
