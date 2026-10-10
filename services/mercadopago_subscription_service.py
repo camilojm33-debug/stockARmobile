@@ -66,6 +66,7 @@ class MercadoPagoSubscriptionService:
                         "checkout_cancelled": False,
                         "payment_method": "mercadopago_subscription",
                         "auto_renew": True,
+                        "mercadopago_cancellation_requested": False,
                     },
                 )
                 return current
@@ -90,6 +91,7 @@ class MercadoPagoSubscriptionService:
                         "checkout_method": "automatic",
                         "checkout_cancelled": False,
                         "payment_method": "mercadopago_subscription",
+                        "mercadopago_cancellation_requested": False,
                     },
                 )
                 return current
