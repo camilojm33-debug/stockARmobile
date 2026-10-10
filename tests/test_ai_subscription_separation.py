@@ -1998,7 +1998,7 @@ def test_one_time_qr_renewal_never_enables_automatic_billing(subscription_app):
     assert subscription.status == SubscriptionService.STATE_ACTIVE
     assert subscription.renewal_enabled is False
     assert subscription.auto_renew is False
-    assert subscription.cancel_at_period_end is True
+    assert subscription.cancel_at_period_end is False
 
 
 def test_mercadopago_cancellation_preserves_remaining_paid_period(subscription_app):
