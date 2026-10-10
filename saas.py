@@ -4479,7 +4479,7 @@ def _billing_reconciliation_snapshot(*, now=None, limit=50):
                 company_id=company.id,
                 detail="El estado local de Mercado Pago figura autorizado, pero falta guardar el identificador preapproval. No se alteró el plan.",
                 reference=f"Plan IA {ai.get('plan_code')}",
-                created_at=company.updated_at or company.created_at,
+                created_at=getattr(company, "updated_at", None) or getattr(company, "created_at", None),
             )
         elif ai_origin == "MERCADO_PAGO" and ai_mp_status in {"cancelled", "canceled", "expired", "paused"} and ai_status == "ACTIVA":
             add_issue(
@@ -4488,7 +4488,7 @@ def _billing_reconciliation_snapshot(*, now=None, limit=50):
                 company_id=company.id,
                 detail=f"Mercado Pago informa '{ai_mp_status}', pero el estado local de IA sigue ACTIVA.",
                 reference=f"Plan IA {ai.get('plan_code')}",
-                created_at=company.updated_at or company.created_at,
+                created_at=getattr(company, "updated_at", None) or getattr(company, "created_at", None),
             )
         elif ai_origin == "MERCADO_PAGO" and ai_checkout_method == "automatic" and not ai_preapproval_id:
             title = (
@@ -4502,7 +4502,7 @@ def _billing_reconciliation_snapshot(*, now=None, limit=50):
                 company_id=company.id,
                 detail="No existe un preapproval guardado para esta suscripción IA. Reabrir el intento existente y confirmar Mercado Pago antes de crear otro.",
                 reference=f"Plan IA {ai.get('plan_code')}",
-                created_at=company.updated_at or company.created_at,
+                created_at=getattr(company, "updated_at", None) or getattr(company, "created_at", None),
             )
 
     # Long-running webhook rows are unusual; show only old processing rows or
