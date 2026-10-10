@@ -852,6 +852,7 @@ class SubscriptionService:
         subscription.renewal_enabled = is_automatic_recurring
         subscription.auto_renew = is_automatic_recurring
         subscription.cancel_at_period_end = not is_automatic_recurring
+        SubscriptionService._set_metadata(subscription, {"auto_renew": is_automatic_recurring})
 
         return CommandResult(
             command_name="RenewSubscriptionCommand",
