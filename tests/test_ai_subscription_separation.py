@@ -395,7 +395,9 @@ def test_standard_qr_checkout_preview_recovers_from_session_when_history_lookup_
     from flask import session
 
     company, user, plan, subscription = _tenant_with_standard_subscription()
-    SubscriptionService._set_metadata(subscription, {"checkout_method": "qr"})
+    # Older/pending records can lack this metadata even though this exact
+    # tenant-scoped session entry was written by the QR checkout route.
+    SubscriptionService._set_metadata(subscription, {"checkout_method": ""})
     db.session.commit()
 
     with subscription_app.test_request_context(
@@ -1907,6 +1909,11 @@ def test_subscription_portal_has_one_real_payment_anchor():
     assert 'company_billing.cancel_checkout' in html
     assert 'company_billing.cancel_ai_subscription' in html
     assert 'history.replaceState' in html
+    # A returned QR must be near the top, not buried after pricing sections.
+    assert html.index('<section id="payment-checkout"') < html.index('<section class="product-overview mb-5">')
+    # The generic QR action must not offer charging the free Trial plan.
+    assert "Elegí primero un plan pago en “StockArMobile” para pagar este ciclo con QR." in html
+    assert "usage_snapshot.plan.code in ['entrepreneur', 'business', 'premium']" in html
 
 
 
@@ -2287,3 +2294,27 @@ def test_approved_standard_qr_webhook_keeps_automatic_renewal_disabled(subscript
     assert subscription.renewal_enabled is False
     assert subscription.auto_renew is False
     assert subscription.cancel_at_period_end is False
+
+
+
+def test_standard_generic_checkout_rejects_trial_before_calling_mercadopago(subscription_app, monkeypatch):
+    _, user, _, subscription = _tenant_with_standard_subscription()
+    trial = Plan(code="trial", name="Trial", price=0, currency="ARS", duration_days=10, active=True)
+    db.session.add(trial)
+    db.session.flush()
+    subscription.plan_id = trial.id
+    db.session.commit()
+
+    calls = []
+    monkeypatch.setattr(
+        "company_billing.BillingService.create_checkout_for_plan",
+        lambda *args, **kwargs: calls.append("called"),
+    )
+    client = subscription_app.test_client()
+    _login(client, user)
+
+    response = client.post("/admin/checkout", data={"plan_id": trial.id}, follow_redirects=True)
+
+    assert response.status_code == 200
+    assert "El plan de prueba no admite pagos".encode("utf-8") in response.data
+    assert calls == []
