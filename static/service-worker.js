@@ -1,4 +1,4 @@
-const CACHE_NAME = 'stockarmobile-pwa-v11';
+const CACHE_NAME = 'stockarmobile-pwa-v12';
 const STATIC_ASSETS = [
   '/',
   '/offline.html',
@@ -289,6 +289,29 @@ self.addEventListener('message', event => {
   if (data.type === 'CLEAR_OFFLINE_QUEUE') {
     event.waitUntil(clearQueue().then(() => broadcastQueueStatus(data.requestId || null)));
   }
+  if (data.type === 'CLEAR_PRIVATE_CACHE') {
+    event.waitUntil((async () => {
+      let success = true;
+      try {
+        await clearPrivateCache();
+      } catch (error) {
+        success = false;
+        console.warn('No se pudo limpiar toda la cache privada al cambiar de usuario.', error);
+      }
+      try {
+        await broadcastQueueStatus(data.requestId || null);
+      } catch (error) {
+        // La limpieza de cache no depende de que pueda leerse el estado de la cola.
+      }
+      if (event.source) {
+        event.source.postMessage({
+          type: 'PRIVATE_CACHE_CLEARED',
+          requestId: data.requestId || null,
+          success,
+        });
+      }
+    })());
+  }
   if (data.type === 'GET_OFFLINE_STATUS') {
     event.waitUntil((async () => {
       const status = await broadcastQueueStatus(data.requestId || null);
@@ -459,6 +482,40 @@ async function flushQueue() {
   });
   syncState = null;
   await broadcastQueueStatus();
+}
+
+async function clearPrivateCache() {
+  const cache = await caches.open(CACHE_NAME);
+  const requests = await cache.keys();
+  await Promise.all(requests.map(async request => {
+    const pathname = new URL(request.url).pathname;
+    if (pathname === '/offline.html') return;
+    const response = await cache.match(request);
+    const contentType = (response && response.headers.get('content-type') || '').toLowerCase();
+    if (request.mode === 'navigate' || contentType.includes('text/html')) {
+      await cache.delete(request);
+    }
+  }));
+
+  const db = await openOfflineDB();
+  await new Promise((resolve, reject) => {
+    const tx = db.transaction([SNAPSHOT_STORE], 'readwrite');
+    tx.objectStore(SNAPSHOT_STORE).clear();
+    tx.oncomplete = () => {
+      db.close();
+      resolve();
+    };
+    tx.onerror = () => {
+      const error = tx.error;
+      db.close();
+      reject(error);
+    };
+    tx.onabort = () => {
+      const error = tx.error || new Error('No se pudo limpiar la cache offline.');
+      db.close();
+      reject(error);
+    };
+  });
 }
 
 async function clearQueue() {
