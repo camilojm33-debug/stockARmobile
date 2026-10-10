@@ -167,10 +167,10 @@ services:
 
 
   - type: cron
-    name: stockarmobile-monthly-backup
+    name: stockarmobile-daily-backup
     runtime: python
     plan: starter
-    schedule: "15 3 1,10,15,20 * *"
+    schedule: "15 3 * * *"
     buildCommand: pip install -r requirements.txt
     startCommand: python scripts/run_backup_maintenance.py
     envVars:
