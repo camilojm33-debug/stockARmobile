@@ -102,3 +102,24 @@ def test_cancel_at_period_end_does_not_change_active_status(monkeypatch):
     assert subscription.renewal_enabled is False
     assert subscription.auto_renew is False
     assert result.status_after == SubscriptionService.STATE_ACTIVE
+
+
+def test_legacy_cancelled_status_keeps_access_until_paid_through_date(monkeypatch):
+    monkeypatch.setattr("app.utcnow", lambda: BASE_NOW)
+    subscription = _subscription(
+        status=SubscriptionService.STATE_CANCELLED,
+        next_billing_date=BASE_NOW + timedelta(days=5),
+        cancel_at_period_end=True,
+    )
+
+    result = SubscriptionService.resolve_company_access_state(
+        _company(),
+        subscription=subscription,
+        now=BASE_NOW,
+    )
+
+    assert result["status"] == SubscriptionService.STATE_ACTIVE
+    assert result["subscription_status"] == SubscriptionService.STATE_CANCELLED
+    assert result["can_access"] is True
+    assert result["reference_date"] == BASE_NOW + timedelta(days=5)
+
