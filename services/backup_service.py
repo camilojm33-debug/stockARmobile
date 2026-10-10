@@ -516,6 +516,113 @@ class BackupService:
         return result
 
     @staticmethod
+    def _validate_backup_tenant_scope(payload, expected_company_id: int):
+        """Rechaza filas de otros tenants y relaciones cruzadas antes de importar/restaurar."""
+        if not isinstance(payload, dict):
+            raise ValueError("Formato de backup invalido.")
+        if isinstance(expected_company_id, bool):
+            raise ValueError("Empresa de destino invalida.")
+        try:
+            expected_company_id = int(expected_company_id)
+            payload_company_id = payload.get("company_id")
+            if isinstance(payload_company_id, bool):
+                raise ValueError
+            payload_company_id = int(payload_company_id)
+        except (TypeError, ValueError):
+            raise ValueError("El backup no contiene company_id valido.") from None
+        if expected_company_id <= 0 or payload_company_id != expected_company_id:
+            raise ValueError("El backup no corresponde a la empresa seleccionada.")
+
+        tenant_sections = (
+            "users",
+            "products",
+            "clients",
+            "suppliers",
+            "purchase_orders",
+            "sales",
+            "cash_sessions",
+            "cash_movements",
+            "expenses",
+        )
+        row_sections = tenant_sections + ("sale_items", "purchase_items")
+        for section in row_sections:
+            rows = payload.get(section)
+            if rows is None:
+                continue
+            if not isinstance(rows, list):
+                raise ValueError(f"La seccion {section} del backup tiene un formato invalido.")
+            for row_number, row in enumerate(rows, start=1):
+                if not isinstance(row, dict):
+                    raise ValueError(f"La fila {row_number} de {section} no es valida.")
+                if section in tenant_sections:
+                    row_company_id = row.get("company_id")
+                    if isinstance(row_company_id, bool) or row_company_id is None:
+                        raise ValueError(
+                            f"La fila {row_number} de {section} no identifica su empresa."
+                        )
+                    try:
+                        row_company_id = int(row_company_id)
+                    except (TypeError, ValueError):
+                        raise ValueError(
+                            f"La fila {row_number} de {section} tiene una empresa invalida."
+                        ) from None
+                    if row_company_id != expected_company_id:
+                        raise ValueError(
+                            f"El backup contiene registros de otra empresa en {section}."
+                        )
+                if section == "users" and str(row.get("role") or "").strip().lower() == "superadmin":
+                    raise ValueError("El backup de una empresa no puede restaurar usuarios superadmin.")
+
+        # Los registros hijos no tienen company_id propio: sus referencias deben
+        # apuntar a registros incluidos en el mismo backup del tenant.
+        relationships = (
+            ("products", "supplier_id", "suppliers"),
+            ("sales", "client_id", "clients"),
+            ("sales", "cash_session_id", "cash_sessions"),
+            ("sale_items", "sale_id", "sales"),
+            ("sale_items", "product_id", "products"),
+            ("purchase_orders", "supplier_id", "suppliers"),
+            ("purchase_items", "purchase_order_id", "purchase_orders"),
+            ("purchase_items", "product_id", "products"),
+            ("cash_movements", "session_id", "cash_sessions"),
+            ("cash_movements", "sale_id", "sales"),
+        )
+        for source_section, foreign_key, target_section in relationships:
+            if source_section not in payload or target_section not in payload:
+                continue
+            source_rows = payload.get(source_section) or []
+            target_rows = payload.get(target_section) or []
+            target_ids = set()
+            for target_row in target_rows:
+                if isinstance(target_row, dict) and target_row.get("id") is not None:
+                    target_id = target_row.get("id")
+                    try:
+                        if isinstance(target_id, bool):
+                            raise ValueError
+                        target_ids.add(int(target_id))
+                    except (TypeError, ValueError):
+                        raise ValueError(
+                            f"El backup contiene un identificador invalido en {target_section}."
+                        ) from None
+            for row_number, row in enumerate(source_rows, start=1):
+                foreign_id = row.get(foreign_key)
+                if foreign_id is None:
+                    continue
+                try:
+                    if isinstance(foreign_id, bool):
+                        raise ValueError
+                    foreign_id = int(foreign_id)
+                except (TypeError, ValueError):
+                    raise ValueError(
+                        f"Referencia invalida {foreign_key} en {source_section}, fila {row_number}."
+                    ) from None
+                if foreign_id not in target_ids:
+                    raise ValueError(
+                        f"El backup contiene una referencia fuera de sus datos en "
+                        f"{source_section}.{foreign_key}."
+                    )
+
+    @staticmethod
     def plan_limit_status(company_id: int):
         from app import BackupLog
 
@@ -586,8 +693,7 @@ class BackupService:
         if len(raw_bytes) > max_compressed:
             raise ValueError("El archivo de backup excede el tamaño permitido.")
         payload = BackupService._load_payload_from_bytes(raw_bytes)
-        if int(payload.get("company_id") or 0) != int(company_id):
-            raise ValueError("El backup no corresponde a la empresa seleccionada.")
+        BackupService._validate_backup_tenant_scope(payload, company_id)
 
         plan = BackupService._plan_context(company_id)
         backup_dir = BackupService._company_dir(company_id)
@@ -641,7 +747,9 @@ class BackupService:
         if not backup_path.exists():
             raise FileNotFoundError("No existe el archivo de backup.")
         with backup_path.open("rb") as file_handle:
-            return BackupService._load_payload_from_bytes(file_handle.read())
+            payload = BackupService._load_payload_from_bytes(file_handle.read())
+        BackupService._validate_backup_tenant_scope(payload, int(backup_log.company_id or 0))
+        return payload
 
     @staticmethod
     def _restore_product_subset(current_products, backup_rows, fields):
