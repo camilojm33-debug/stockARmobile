@@ -1117,9 +1117,55 @@ class WebhookService:
                                 reason="webhook_suspend",
                             ),
                         )
-                    # A rejected, expired, cancelled, pending or refunded *payment*
-                    # does not cancel or expire the subscription contract itself.
-                    # Contract cancellation is handled by the preapproval webhook.
+                    elif normalized_status in {"rejected", "expired", "cancelled", "canceled"}:
+                        # End only a still-unpaid checkout attempt. Failed renewal
+                        # payments must not terminate an already-paid subscription,
+                        # and recurring contract state must come from preapproval sync.
+                        current_state = SubscriptionService._normalize_state(subscription.status)
+                        subscription_metadata = SubscriptionService._metadata_dict(subscription)
+                        has_recurring_contract = bool(
+                            subscription_metadata.get("mercadopago_preapproval_id")
+                            or subscription_metadata.get("mercadopago_subscription_id")
+                            or subscription_metadata.get("checkout_method") == "automatic"
+                            or str(subscription_metadata.get("mercadopago_status") or "").lower()
+                            in {"authorized", "paused", "cancelled", "canceled", "expired"}
+                        )
+                        checkout_not_yet_paid = current_state in {
+                            SubscriptionService.STATE_DRAFT,
+                            SubscriptionService.STATE_PENDING,
+                            SubscriptionService.STATE_PENDING_PAYMENT,
+                            SubscriptionService.STATE_PENDING_CONFIRMATION,
+                        }
+                        if checkout_not_yet_paid and not has_recurring_contract:
+                            if normalized_status in {"cancelled", "canceled"}:
+                                SubscriptionService.run_command(
+                                    db_session,
+                                    SubscriptionService.CancelSubscriptionCommand(
+                                        company_id=company.id,
+                                        subscription_id=subscription.id,
+                                        actor_user_id=payment.user_id,
+                                        actor_role="system",
+                                        origin="webhook",
+                                        idempotency_key=f"webhook-cancel-checkout:{event_key}:{subscription.id}",
+                                        cancel_at_period_end=False,
+                                    ),
+                                )
+                            else:
+                                SubscriptionService.run_command(
+                                    db_session,
+                                    SubscriptionService.ExpireSubscriptionCommand(
+                                        company_id=company.id,
+                                        subscription_id=subscription.id,
+                                        actor_user_id=payment.user_id,
+                                        actor_role="system",
+                                        origin="webhook",
+                                        idempotency_key=f"webhook-expire-checkout:{event_key}:{subscription.id}",
+                                        reason=f"checkout_{normalized_status}",
+                                    ),
+                                )
+                    # Failed/expired payment notifications cannot terminate a paid
+                    # contract. Only a pending one-off checkout is closed here;
+                    # recurring contracts are managed from authoritative preapproval events.
                 is_pending_plan_change = bool(SubscriptionService._metadata_dict(subscription).get("pending_plan_change"))
                 if not is_pending_plan_change and not is_replaced_subscription and not is_cancelled_checkout:
                     company.active = subscription.status in {"active", "approved", "trial"}
