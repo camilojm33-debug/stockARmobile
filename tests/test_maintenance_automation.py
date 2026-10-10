@@ -14,7 +14,6 @@ def _response(status_code: int, content_type: str, body: bytes) -> requests.Resp
 
 
 def test_maintenance_endpoints_keep_token_auth_when_csrf_is_enabled(app, monkeypatch):
-    from app import db
     from services.backup_service import BackupService
 
     monkeypatch.setitem(app.config, "WTF_CSRF_ENABLED", True)
@@ -58,7 +57,11 @@ def test_maintenance_endpoints_keep_token_auth_when_csrf_is_enabled(app, monkeyp
         assert accepted.is_json
         assert accepted.get_json()["ok"] is True
 
-    db.session.remove()
+def test_health_check_endpoint_is_available_for_render(app):
+    response = app.test_client().get("/health")
+    assert response.status_code == 200
+    assert response.is_json
+    assert response.get_json()["status"] == "ok"
 
 
 def test_backup_cron_reports_only_safe_json_summary(capsys):
