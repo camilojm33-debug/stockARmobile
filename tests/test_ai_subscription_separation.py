@@ -346,6 +346,29 @@ def test_subscription_portal_uses_separate_ai_payment_method_forms(subscription_
     assert 'data-mp-external-checkout="true"' in html
 
 
+def test_subscription_management_actions_appear_near_plan_choices(subscription_app):
+    _, user, _, _ = _tenant_with_standard_subscription()
+    db.session.add(Plan(code="entrepreneur", name="Emprendedor", price=12000, currency="ARS", duration_days=30, active=True))
+    db.session.commit()
+    client = subscription_app.test_client()
+    _login(client, user)
+
+    response = client.get("/admin/portal")
+    html = response.get_data(as_text=True)
+
+    assert response.status_code == 200
+    # Keep management actions visible directly after the subscription summary,
+    # before the two plan-selection areas, without changing payment flows.
+    overview = html.index('class="product-overview')
+    management = html.index('class="admin-actions mb-5"')
+    ai_plans = html.index('id="planes-ia"')
+    standard_plans = html.index('id="planes-disponibles"')
+    assert overview < management < ai_plans < standard_plans
+    assert "Actualizar plan" in html
+    assert "Cancelar suscripción IA" in html
+    assert 'action="/admin/subscription/mercadopago/create"' in html
+
+
 def test_standard_plan_change_offers_qr_and_monthly_destinations(subscription_app):
     _, user, _, _ = _tenant_with_standard_subscription()
     target_plan = Plan(code="standard_upgrade", name="Standard Upgrade", price=2000, currency="ARS", duration_days=30, active=True)
