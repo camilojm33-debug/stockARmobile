@@ -7037,7 +7037,7 @@ def test_webhook_approved_activates_subscription_and_creates_commission_automati
             lambda preapproval_id: {
                 "id": "mp-preapproval-test-1",
                 "status": "authorized",
-                "next_payment_date": "2026-08-13T10:00:00Z",
+                "next_payment_date": "2030-08-13T10:00:00Z",
                 "external_reference": subscription.external_reference,
             },
         )
