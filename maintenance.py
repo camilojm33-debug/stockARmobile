@@ -8,7 +8,7 @@ import os
 from flask import Blueprint, current_app, jsonify, request
 
 from services.backup_service import BackupService
-from stockarmobile.extensions import db
+from stockarmobile.extensions import csrf, db
 
 maintenance_bp = Blueprint("maintenance", __name__)
 
@@ -45,6 +45,7 @@ def _company_id_from_env() -> int | None:
 
 
 @maintenance_bp.post("/internal/maintenance/gmail/watch")
+@csrf.exempt
 def run_gmail_watch_maintenance():
     if not _gmail_watch_authorized():
         return jsonify({"ok": False, "error": "forbidden"}), 403
@@ -62,6 +63,7 @@ def run_gmail_watch_maintenance():
 
 
 @maintenance_bp.post("/internal/maintenance/backups/run")
+@csrf.exempt
 def run_backup_maintenance():
     if not _authorized():
         return jsonify({"ok": False, "error": "forbidden"}), 403

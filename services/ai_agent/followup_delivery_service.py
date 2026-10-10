@@ -223,10 +223,17 @@ class AIFollowupDeliveryService:
             "sent": 0,
             "stale": 0,
             "blocked": 0,
+            "blocked_reasons": {},
             "failed": 0,
             "pending": 0,
             "skipped": 0,
         }
+
+        def record_blocked(reason: str, count: int) -> None:
+            # Aggregated categories only: never log tenant, contact, message, or credential data.
+            stats["blocked"] += count
+            reasons = stats["blocked_reasons"]
+            reasons[reason] = reasons.get(reason, 0) + count
 
         from app import Company
 
@@ -258,11 +265,17 @@ class AIFollowupDeliveryService:
             access = can_use_ai(company, "vendedor")
             connection = get_whatsapp_connection(company)
             ai_enabled = is_ai_enabled(company)
-            if not ai_enabled or not connection["enabled"] or not connection["phone_number_id"] or not connection["access_token"]:
-                stats["blocked"] += len(pending)
+            if not ai_enabled:
+                record_blocked("ai_disabled", len(pending))
+                continue
+            if not connection["enabled"]:
+                record_blocked("whatsapp_disabled", len(pending))
+                continue
+            if not connection["phone_number_id"] or not connection["access_token"]:
+                record_blocked("whatsapp_connection_incomplete", len(pending))
                 continue
             if not access.allowed:
-                stats["blocked"] += len(pending)
+                record_blocked("ai_plan_access_denied", len(pending))
                 continue
 
             latest = _latest_user_message(conversation)
