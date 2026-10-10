@@ -68,6 +68,12 @@ class MercadoPagoService:
             ) from exc
         except json.JSONDecodeError as exc:
             raise RuntimeError("Mercado Pago devolvió una respuesta inválida.") from exc
+        self._logger().info(
+            "Mercado Pago response: method=%s path=%s http_status=%s",
+            method,
+            path,
+            status_code,
+        )
         if status_code >= 400:
             raise RuntimeError(f"Mercado Pago respondió HTTP {status_code}: {raw[:700]}")
         return json.loads(raw) if raw else {}

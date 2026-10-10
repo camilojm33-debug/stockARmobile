@@ -1192,9 +1192,14 @@
       document.querySelectorAll('form[method="post"]').forEach(function(form) {
         form.addEventListener('submit', function(event) {
           const submitter = event.submitter;
+          const paymentMethodField = form.querySelector('input[name="payment_method"]');
+          const submittedMethodIsAutomatic = Boolean(
+            (submitter && submitter.name === 'payment_method' && submitter.value === 'automatic') ||
+            (paymentMethodField && paymentMethodField.value === 'automatic')
+          );
           const isAiAutomaticCheckout =
             (form.getAttribute('action') || '').includes('/subscription/ai-agent/checkout') &&
-            submitter && submitter.name === 'payment_method' && submitter.value === 'automatic';
+            submittedMethodIsAutomatic;
           // No cubrir con el overlay el envío que debe navegar directamente a Mercado Pago.
           if (form.matches('[data-mp-external-checkout="true"]') || isAiAutomaticCheckout) return;
           const loading = document.getElementById('appLoading');

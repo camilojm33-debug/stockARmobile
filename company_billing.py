@@ -1085,8 +1085,10 @@ def _payment_status_badge(status):
         "in_process": {"label": "En proceso", "class": "text-bg-primary"},
         "processing": {"label": "En proceso", "class": "text-bg-primary"},
         "rejected": {"label": "Rechazado", "class": "text-bg-danger"},
-        "cancelled": {"label": "Rechazado", "class": "text-bg-danger"},
-        "failed": {"label": "Rechazado", "class": "text-bg-danger"},
+        "failed": {"label": "Fallido", "class": "text-bg-danger"},
+        "cancelled": {"label": "Cancelado", "class": "text-bg-secondary"},
+        "canceled": {"label": "Cancelado", "class": "text-bg-secondary"},
+        "expired": {"label": "Vencido", "class": "text-bg-secondary"},
         "refunded": {"label": "Reembolsado", "class": "text-bg-info"},
         "refund_pending": {"label": "Reembolso en proceso", "class": "text-bg-warning"},
     }
@@ -2151,6 +2153,14 @@ def create_ai_subscription_checkout():
                 allowed_ai_checkout_hosts.add("mp.test")
             if parsed_ai_checkout.scheme != "https" or parsed_ai_checkout.hostname not in allowed_ai_checkout_hosts:
                 raise RuntimeError("Mercado Pago devolvió un enlace de autorización IA no reconocido.")
+            current_app.logger.info(
+                "Checkout recurrente IA listo para redirección: company_id=%s plan_code=%s preapproval_id=%s mp_status=%s checkout_host=%s",
+                company.id,
+                plan_code,
+                preapproval_id,
+                remote_status,
+                parsed_ai_checkout.hostname,
+            )
         return _checkout_redirect_response(checkout_url)
     except AISubscriptionError as exc:
         db.session.rollback()
@@ -2298,10 +2308,40 @@ def create_mercadopago_subscription():
         subscription = SubscriptionService.active_subscription_for_company(company.id)
         plan = getattr(subscription, "plan", None) if subscription else None
     if plan is None:
-        if _wants_json_response():
-            return jsonify({"success": False, "error": "Seleccioná un plan antes de activar la suscripción automática."}), 400
-        flash("Seleccioná un plan antes de activar la suscripción automática.", "warning")
-        return redirect(url_for("company_billing.subscription_portal"))
+        message = "Seleccioná un plan pago antes de activar la suscripción automática."
+        current_app.logger.warning(
+            "Checkout recurrente rechazado por falta de plan: company_id=%s submitted_plan_id=%s",
+            company.id,
+            plan_id,
+        )
+        return _checkout_error_response(
+            message,
+            url_for("company_billing.subscription_portal", _anchor="planes-disponibles"),
+            status_code=400,
+        )
+
+    # The payment-method shortcut at the bottom of the portal used to fall back
+    # to the active Trial plan (id=1, ARS 0) when no plan_id was submitted. That
+    # reached the route but could never create a valid preapproval, so users
+    # were silently bounced back to the portal. Only explicit paid commercial
+    # plans are eligible for a recurring authorization.
+    if float(plan.price or 0) <= 0:
+        message = (
+            "El período de prueba no admite cobros automáticos. Elegí un plan pago en la tabla de planes "
+            "y tocá “Suscripción mensual automática”."
+        )
+        current_app.logger.warning(
+            "Checkout recurrente bloqueado para plan no cobrable: company_id=%s plan_id=%s plan_code=%s price=%s",
+            company.id,
+            getattr(plan, "id", None),
+            getattr(plan, "code", None),
+            getattr(plan, "price", None),
+        )
+        return _checkout_error_response(
+            message,
+            url_for("company_billing.subscription_portal", _anchor="planes-disponibles"),
+            status_code=400,
+        )
 
     pending_standard_subscription = _pending_paid_plan_change(company.id)
     checkout_subscription = pending_standard_subscription or SubscriptionService.active_subscription_for_company(company.id)

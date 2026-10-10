@@ -181,6 +181,71 @@ def test_ai_plans_page_posts_directly_to_ai_checkout(subscription_app):
     assert '>Contratar<' not in html
 
 
+def test_pending_ai_automatic_checkout_form_skips_global_loading_overlay(subscription_app):
+    company, user, _, _ = _tenant_with_standard_subscription()
+    update_ai_preferences(
+        company,
+        ai_updates={
+            "plan_code": "negocio",
+            "status": "PENDIENTE",
+            "origin": "MERCADO_PAGO",
+            "mercadopago_preapproval_id": "ai-pre-pending",
+            "mercadopago_status": "pending",
+            "checkout_method": "automatic",
+        },
+    )
+    db.session.commit()
+    client = subscription_app.test_client()
+    _login(client, user)
+
+    response = client.get("/agentes-ia/planes")
+    html = response.get_data(as_text=True)
+
+    assert response.status_code == 200
+    assert 'action="/admin/subscription/ai-agent/checkout" data-mp-external-checkout="true" class="d-grid gap-2"' in html
+    assert "Continuar autorización mensual" in html
+
+
+def test_standard_recurring_checkout_refuses_free_trial_fallback(subscription_app, monkeypatch):
+    company, user, plan, _ = _tenant_with_standard_subscription()
+    plan.code = "trial"
+    plan.name = "Trial"
+    plan.price = 0
+    db.session.commit()
+    calls = []
+
+    def unexpected_preapproval(**kwargs):
+        calls.append(kwargs)
+        raise AssertionError("Free Trial must never be sent to Mercado Pago as a recurring subscription.")
+
+    monkeypatch.setattr(
+        "services.mercadopago_subscription_service.MercadoPagoSubscriptionService.create",
+        unexpected_preapproval,
+    )
+    client = subscription_app.test_client()
+    _login(client, user)
+
+    response = client.post("/admin/subscription/mercadopago/create", data={})
+
+    assert response.status_code == 302
+    assert response.headers["Location"].endswith("#planes-disponibles")
+    assert calls == []
+
+    portal = client.get("/admin/portal")
+    html = portal.get_data(as_text=True)
+    assert portal.status_code == 200
+    assert "Autorizar cobro mensual" not in html
+    assert "Elegí un plan pago en “StockArMobile”" in html
+
+
+def test_cancelled_payment_is_not_labelled_as_rejected():
+    from company_billing import _payment_status_badge
+
+    assert _payment_status_badge("cancelled")["label"] == "Cancelado"
+    assert _payment_status_badge("canceled")["label"] == "Cancelado"
+    assert _payment_status_badge("rejected")["label"] == "Rechazado"
+
+
 def test_standard_plan_selection_redirects_directly_to_mercadopago(subscription_app, monkeypatch):
     _, user, _, _ = _tenant_with_standard_subscription()
 
