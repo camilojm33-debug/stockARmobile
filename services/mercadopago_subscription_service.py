@@ -290,9 +290,22 @@ class MercadoPagoSubscriptionService:
             subscription.auto_renew = True
             subscription.cancel_at_period_end = False
             next_payment = cls._parse_datetime(preapproval.get("next_payment_date"))
-            if next_payment:
+            start_floor = max(
+                value
+                for value in (subscription.start_date, subscription.starts_at)
+                if value is not None
+            ) if (subscription.start_date is not None or subscription.starts_at is not None) else None
+            if next_payment is not None and (start_floor is None or next_payment >= start_floor):
                 subscription.next_billing_date = next_payment
                 subscription.ends_at = next_payment
+            elif next_payment is not None:
+                # Mercado Pago may resend a stale next_payment_date. Never
+                # overwrite the local period end with a date preceding the
+                # persisted start date; the DB's chronological constraints are
+                # a hard safety boundary, not something to bypass.
+                metadata["mercadopago_stale_next_payment_date_ignored"] = next_payment.isoformat()
+                metadata["mercadopago_stale_next_payment_date_ignored_at"] = datetime.now(timezone.utc).isoformat()
+                SubscriptionService._set_metadata(subscription, metadata)
         elif status in {"paused", "cancelled", "canceled", "expired"}:
             subscription.renewal_enabled = False
             subscription.auto_renew = False
