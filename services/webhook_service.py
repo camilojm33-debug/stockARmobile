@@ -1036,20 +1036,76 @@ class WebhookService:
                     }
                 elif should_apply_status_transition:
                     normalized_status = (payment_status or "pending").lower()
-                    if normalized_status in {"approved", "refunded"}:
-                        SubscriptionService.run_command(db_session, SubscriptionService.RenewSubscriptionCommand(company_id=company.id, subscription_id=subscription.id, payment_status=normalized_status, actor_user_id=payment.user_id, actor_role="system", origin="webhook", idempotency_key=f"webhook-renew:{event_key}:{subscription.id}"))
-                    elif normalized_status == "cancelled":
-                        SubscriptionService.run_command(db_session, SubscriptionService.CancelSubscriptionCommand(company_id=company.id, subscription_id=subscription.id, actor_user_id=payment.user_id, actor_role="system", origin="webhook", idempotency_key=f"webhook-cancel:{event_key}:{subscription.id}", cancel_at_period_end=False))
-                    elif normalized_status in {"expired", "rejected"}:
-                        SubscriptionService.run_command(db_session, SubscriptionService.ExpireSubscriptionCommand(company_id=company.id, subscription_id=subscription.id, actor_user_id=payment.user_id, actor_role="system", origin="webhook", idempotency_key=f"webhook-expire:{event_key}:{subscription.id}", reason=f"webhook_{normalized_status}"))
+                    if normalized_status == "approved":
+                        authoritative_next_due = None
+                        subscription_metadata = SubscriptionService._metadata_dict(subscription)
+                        preapproval_id = str(subscription_metadata.get("mercadopago_preapproval_id") or "").strip()
+                        is_automatic_checkout = (
+                            str(subscription_metadata.get("checkout_method") or "").strip().lower() == "automatic"
+                            and bool(preapproval_id)
+                        )
+                        if is_automatic_checkout:
+                            from services.mercadopago_subscription_service import MercadoPagoSubscriptionService
+
+                            preapproval = self.mp_service.get_preapproval(preapproval_id)
+                            remote_preapproval_id = str(preapproval.get("id") or "").strip()
+                            if remote_preapproval_id and remote_preapproval_id != preapproval_id:
+                                raise RuntimeError("Mercado Pago devolvió un preapproval distinto al de la suscripción.")
+                            expected_external_reference = str(
+                                subscription_metadata.get("mercadopago_external_reference") or ""
+                            ).strip()
+                            remote_reference = str(preapproval.get("external_reference") or "").strip()
+                            if expected_external_reference and remote_reference and remote_reference != expected_external_reference:
+                                raise RuntimeError("La referencia del preapproval en Mercado Pago no coincide con la suscripción local.")
+                            if not remote_reference:
+                                preapproval["external_reference"] = expected_external_reference or external_reference
+                            MercadoPagoSubscriptionService.sync_preapproval(
+                                db_session=db_session,
+                                preapproval=preapproval,
+                            )
+                            authoritative_next_due = self._parse_mp_datetime(preapproval.get("next_payment_date"))
+                            if (
+                                authoritative_next_due is None
+                                and subscription.next_billing_date
+                                and payment.paid_at
+                                and subscription.next_billing_date > payment.paid_at
+                            ):
+                                authoritative_next_due = subscription.next_billing_date
+
+                        SubscriptionService.run_command(
+                            db_session,
+                            SubscriptionService.RenewSubscriptionCommand(
+                                company_id=company.id,
+                                subscription_id=subscription.id,
+                                payment_status="approved",
+                                paid_at=payment.paid_at,
+                                next_billing_date=authoritative_next_due,
+                                actor_user_id=payment.user_id,
+                                actor_role="system",
+                                origin="webhook",
+                                idempotency_key=self._subscription_renewal_key(subscription, str(payment.payment_id or "")),
+                            ),
+                        )
                     elif normalized_status == "charged_back":
-                        SubscriptionService.run_command(db_session, SubscriptionService.ExpireSubscriptionCommand(company_id=company.id, subscription_id=subscription.id, actor_user_id=payment.user_id, actor_role="system", origin="webhook", idempotency_key=f"webhook-suspend:{event_key}:{subscription.id}", reason="webhook_suspend"))
-                    else:
-                        SubscriptionService.apply_payment_status(subscription, payment_status)
+                        SubscriptionService.run_command(
+                            db_session,
+                            SubscriptionService.ExpireSubscriptionCommand(
+                                company_id=company.id,
+                                subscription_id=subscription.id,
+                                actor_user_id=payment.user_id,
+                                actor_role="system",
+                                origin="webhook",
+                                idempotency_key=f"webhook-suspend:{event_key}:{subscription.id}",
+                                reason="webhook_suspend",
+                            ),
+                        )
+                    # A rejected, expired, cancelled, pending or refunded *payment*
+                    # does not cancel or expire the subscription contract itself.
+                    # Contract cancellation is handled by the preapproval webhook.
                 is_pending_plan_change = bool(SubscriptionService._metadata_dict(subscription).get("pending_plan_change"))
                 if not is_pending_plan_change and not is_replaced_subscription and not is_cancelled_checkout:
                     company.active = subscription.status in {"active", "approved", "trial"}
-                if subscription.status in {"active", "approved"}:
+                if payment.status == "approved" and subscription.status in {"active", "approved"}:
                     if payment.invoice_id is None:
                         invoice = InvoiceService.create_invoice(db_session, company=company, subscription=subscription, amount=float(payment.amount or 0), currency=payment.currency or "ARS", detail=f"Cobro Mercado Pago {payment.payment_id}", payment_id=payment.payment_id)
                         payment.invoice_id = invoice.id
