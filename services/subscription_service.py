@@ -692,6 +692,12 @@ class SubscriptionService:
             subscription.renewal_enabled = False
             subscription.auto_renew = False
 
+        metadata = SubscriptionService._metadata_dict(subscription)
+        metadata_updates = {"auto_renew": False}
+        if metadata.get("mercadopago_preapproval_id"):
+            metadata_updates["mercadopago_cancellation_requested"] = True
+        SubscriptionService._set_metadata(subscription, metadata_updates)
+
         return CommandResult(
             command_name="CancelSubscriptionCommand",
             subscription_id=getattr(subscription, "id", command.subscription_id),
