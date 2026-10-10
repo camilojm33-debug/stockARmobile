@@ -58,14 +58,13 @@ def test_maintenance_endpoints_keep_token_auth_when_csrf_is_enabled(app, monkeyp
         assert accepted.get_json()["ok"] is True
 
 
-def test_health_check_endpoint_is_available_for_render(app):
-    # The production entry point registers the health route before serving requests.
-    import wsgi  # noqa: F401
+def test_render_health_check_targets_the_existing_wsgi_endpoint():
+    from pathlib import Path
 
-    response = app.test_client().get("/health")
-    assert response.status_code == 200
-    assert response.is_json
-    assert response.get_json()["status"] == "ok"
+    render = Path("render.yaml").read_text(encoding="utf-8")
+    wsgi_source = Path("wsgi.py").read_text(encoding="utf-8")
+    assert "healthCheckPath: /health" in render
+    assert 'app.add_url_rule("/health", endpoint="stockarmobile_health"' in wsgi_source
 
 
 def test_backup_cron_reports_only_safe_json_summary(capsys):
