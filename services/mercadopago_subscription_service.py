@@ -68,6 +68,25 @@ class MercadoPagoSubscriptionService:
                         "auto_renew": True,
                     },
                 )
+                # A retry can be the first request after Mercado Pago has already
+                # authorized the contract (for example, if the webhook was delayed).
+                # Reconcile local flags from the verified resource rather than returning
+                # success while automatic billing remains disabled locally.
+                subscription.renewal_enabled = True
+                subscription.auto_renew = True
+                subscription.cancel_at_period_end = False
+                if hasattr(subscription, "status"):
+                    local_status = SubscriptionService._normalize_state(subscription.status)
+                    if local_status not in SubscriptionService.ACTIVE_STATUSES:
+                        SubscriptionService._transition(
+                            subscription,
+                            SubscriptionService.STATE_ACTIVE,
+                            reason="mercadopago_preapproval_authorized_on_retry",
+                        )
+                next_payment = cls._parse_datetime(current.get("next_payment_date"))
+                if next_payment is not None:
+                    subscription.next_billing_date = next_payment
+                    subscription.ends_at = next_payment
                 return current
             if current_status in {"pending", "in_process"}:
                 # A valid pending preapproval can occasionally be returned without
@@ -288,7 +307,23 @@ class MercadoPagoSubscriptionService:
             subscription.renewal_enabled = False
             subscription.auto_renew = False
             subscription.cancel_at_period_end = True
-            if status in {"cancelled", "canceled"} and subscription.status not in {
+
+            # Mercado Pago stops future charges immediately, but the local
+            # subscription must preserve any period that has already been paid.
+            # Treat the remote contract status and local access entitlement as
+            # separate facts; access is resolved against next_billing_date.
+            paid_until = subscription.next_billing_date or subscription.ends_at
+            if paid_until is not None and getattr(paid_until, "tzinfo", None) is not None:
+                paid_until = paid_until.astimezone(timezone.utc).replace(tzinfo=None)
+            now = datetime.now(timezone.utc).replace(tzinfo=None)
+            local_status = SubscriptionService._normalize_state(subscription.status)
+            has_paid_access = bool(
+                local_status in SubscriptionService.ACTIVE_STATUSES
+                and paid_until is not None
+                and paid_until > now
+            )
+
+            if status in {"cancelled", "canceled"} and not has_paid_access and local_status not in {
                 SubscriptionService.STATE_CANCELLED,
                 SubscriptionService.STATE_EXPIRED,
             }:
@@ -297,6 +332,10 @@ class MercadoPagoSubscriptionService:
                     SubscriptionService.STATE_CANCELLED,
                     reason="mercadopago_preapproval_cancelled",
                 )
+            elif has_paid_access:
+                metadata["mercadopago_access_preserved_until"] = paid_until.isoformat()
+                metadata["mercadopago_access_preserved_reason"] = "recurring_contract_ended"
+                SubscriptionService._set_metadata(subscription, metadata)
         elif status == "pending":
             subscription.renewal_enabled = False
             subscription.auto_renew = False

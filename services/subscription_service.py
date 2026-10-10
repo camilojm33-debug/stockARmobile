@@ -56,6 +56,7 @@ class RenewSubscriptionCommand(SubscriptionCommandBase):
     subscription_id: int | None = None
     payment_status: str | None = None
     paid_at: Any = None
+    renewal_enabled: bool | None = None
 
 
 @dataclass
@@ -820,9 +821,18 @@ class SubscriptionService:
         subscription.starts_at = base
         subscription.next_billing_date = base + timedelta(days=duration)
         subscription.ends_at = subscription.next_billing_date
-        subscription.cancel_at_period_end = False
-        subscription.renewal_enabled = True
-        subscription.auto_renew = True
+        # A successful one-time QR payment grants the paid period but must never
+        # silently create/re-enable an automatic renewal contract. Only recurring
+        # payment paths pass renewal_enabled=True explicitly.
+        if command.renewal_enabled is not None:
+            recurring_enabled = bool(command.renewal_enabled)
+            subscription.renewal_enabled = recurring_enabled
+            subscription.auto_renew = recurring_enabled
+            if recurring_enabled:
+                subscription.cancel_at_period_end = False
+            # A one-time QR payment disables automatic billing but does not mean
+            # the customer explicitly requested cancellation at period end. Keep
+            # that independent lifecycle flag unchanged.
 
         return CommandResult(
             command_name="RenewSubscriptionCommand",

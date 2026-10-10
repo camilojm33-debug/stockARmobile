@@ -79,6 +79,54 @@
     </div>
   </div>
 
+  <section id="billing-diagnostics" class="card app-card mb-4">
+    <div class="card-header bg-white d-flex flex-wrap align-items-center justify-content-between gap-2">
+      <div>
+        <div class="fw-bold"><i class="bi bi-shield-check me-1"></i>Conciliación y alertas de cobro</div>
+        <div class="text-muted small">Controles de solo lectura. Ningún pago, factura ni suscripción se modifica automáticamente desde este panel.</div>
+      </div>
+      <div class="d-flex gap-2 align-items-center">
+        {% set critical_count = billing_diagnostics|selectattr('severity', 'equalto', 'danger')|list|length %}
+        <span class="badge text-bg-danger">{{ critical_count }} críticas</span>
+        <span class="badge text-bg-warning">{{ billing_diagnostics|length - critical_count }} para revisar</span>
+        <a class="btn btn-sm btn-outline-secondary" href="{{ url_for('saas.payments_panel') }}">Ver pagos</a>
+      </div>
+    </div>
+    {% if billing_diagnostics %}
+    <div class="table-responsive">
+      <table class="table align-middle mb-0">
+        <thead>
+          <tr><th>Prioridad</th><th>Empresa</th><th>Hallazgo</th><th>Referencia</th><th>Fecha</th></tr>
+        </thead>
+        <tbody>
+          {% for issue in billing_diagnostics %}
+          <tr>
+            <td><span class="badge {{ 'text-bg-danger' if issue.severity == 'danger' else 'text-bg-warning' }}">{{ 'Crítica' if issue.severity == 'danger' else 'Revisar' }}</span></td>
+            <td class="fw-semibold">{{ issue.company_name }}</td>
+            <td>
+              <div class="fw-semibold">{{ issue.title }}</div>
+              <div class="small text-muted">{{ issue.detail }}</div>
+            </td>
+            <td><code class="text-wrap">{{ issue.reference }}</code></td>
+            <td class="text-nowrap small">{{ issue.created_at.strftime('%Y-%m-%d %H:%M') if issue.created_at else '—' }}</td>
+          </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+    {% else %}
+    <div class="card-body">
+      <div class="d-flex align-items-start gap-3">
+        <span class="badge text-bg-success"><i class="bi bi-check-lg"></i></span>
+        <div>
+          <div class="fw-semibold">No se detectaron inconsistencias en los controles disponibles.</div>
+          <div class="small text-muted">El panel revisa pagos aprobados sin factura, checkouts estándar antiguos aún pendientes, flags de renovación incompatibles con el checkout y webhooks con estado anómalo persistido.</div>
+        </div>
+      </div>
+    </div>
+    {% endif %}
+  </section>
+
   <div class="row g-3">
     <div class="col-lg-7">
       <div class="card app-card h-100">

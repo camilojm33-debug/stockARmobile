@@ -215,16 +215,163 @@ class WebhookService:
                 rows = Subscription.query.filter(Subscription.metadata_json.contains(preapproval_id)).all()
                 subscription = next((row for row in rows if json.loads(row.metadata_json or "{}").get("mercadopago_preapproval_id") == preapproval_id), None)
             if subscription is not None and payment_id:
+                subscription_metadata = SubscriptionService._metadata_dict(subscription)
+                expected_reference = str(subscription_metadata.get("mercadopago_external_reference") or "").strip()
+                if expected_reference and external_reference and expected_reference != external_reference:
+                    raise RuntimeError("Pago recurrente de Mercado Pago con referencia externa distinta a la suscripción registrada.")
+                if ref_parts.get("flow") and ref_parts.get("flow") != "subscription_auto":
+                    raise RuntimeError("Pago autorizado vinculado a una suscripción con flujo incompatible.")
+                if ref_parts.get("company_id") and str(ref_parts.get("company_id")) != str(subscription.company_id):
+                    raise RuntimeError("Pago recurrente de Mercado Pago asociado a otra empresa.")
+                if ref_parts.get("subscription_id") and str(ref_parts.get("subscription_id")) != str(subscription.id):
+                    raise RuntimeError("Pago recurrente de Mercado Pago asociado a otra suscripción.")
+
+                try:
+                    amount_value = authorized.get("transaction_amount")
+                    if amount_value is None:
+                        amount_value = payment_info.get("transaction_amount")
+                    incoming_amount = float(amount_value)
+                except (TypeError, ValueError, OverflowError) as exc:
+                    if payment_status == "approved":
+                        raise RuntimeError("Pago recurrente aprobado sin un importe verificable.") from exc
+                    incoming_amount = 0.0
+                incoming_currency = str(authorized.get("currency_id") or payment_info.get("currency_id") or "").strip().upper()
+
+                # Never unlock or extend access from a recurring payment whose
+                # amount or currency does not match the tenant's plan.
+                if payment_status == "approved":
+                    expected_amount = float(getattr(subscription.plan, "price", 0) or 0)
+                    expected_currency = str(getattr(subscription.plan, "currency", "ARS") or "ARS").strip().upper()
+                    if expected_amount <= 0 or incoming_amount <= 0 or abs(expected_amount - incoming_amount) > 0.01:
+                        raise RuntimeError(
+                            f"Pago recurrente de Mercado Pago rechazado por importe: esperado={expected_amount:.2f}, recibido={incoming_amount:.2f}."
+                        )
+                    if not incoming_currency or incoming_currency != expected_currency:
+                        raise RuntimeError(
+                            f"Pago recurrente de Mercado Pago rechazado por moneda: esperada={expected_currency}, recibida={incoming_currency or 'vacía'}."
+                        )
+
                 payment = Payment.query.filter_by(payment_id=payment_id).first()
+                if payment is not None:
+                    if payment.company_id not in (None, subscription.company_id):
+                        raise RuntimeError("El payment_id de Mercado Pago ya pertenece a otra empresa.")
+                    if payment.subscription_id not in (None, subscription.id):
+                        raise RuntimeError("El payment_id de Mercado Pago ya pertenece a otra suscripción.")
+
+                previous_payment_status = str(getattr(payment, "status", "") or "").strip().lower()
+                persisted_status = payment_status
+                # A delayed pending/rejected delivery must not overwrite a charge
+                # that has already been verified as approved.
+                if previous_payment_status == "approved" and payment_status not in {"refunded", "charged_back"}:
+                    persisted_status = "approved"
+
+                paid_at = (
+                    self._parse_mp_datetime(authorized.get("debit_date"))
+                    or self._parse_mp_datetime(authorized.get("date_approved"))
+                    or (getattr(payment, "paid_at", None) if payment is not None else None)
+                )
                 if payment is None:
-                    payment = Payment(payment_id=payment_id, external_reference=str(authorized.get("external_reference") or ""), company_id=subscription.company_id, subscription_id=subscription.id, user_id=None, amount=float(authorized.get("transaction_amount") or 0), currency=authorized.get("currency_id") or "ARS", status=str(payment_info.get("status") or authorized.get("summarized") or "pending"), payment_method="mercadopago_subscription", reference=preapproval_id, provider="mercadopago_subscription", payload_json=json.dumps(authorized, ensure_ascii=False), paid_at=self._parse_mp_datetime(authorized.get("debit_date")) if payment_info.get("status") == "approved" else None)
+                    payment = Payment(
+                        payment_id=payment_id,
+                        external_reference=external_reference,
+                        company_id=subscription.company_id,
+                        subscription_id=subscription.id,
+                        user_id=None,
+                        amount=incoming_amount,
+                        currency=incoming_currency or "ARS",
+                        status=persisted_status,
+                        payment_method="mercadopago_subscription",
+                        reference=preapproval_id,
+                        provider="mercadopago_subscription",
+                        payload_json=json.dumps(authorized, ensure_ascii=False),
+                        paid_at=paid_at if persisted_status == "approved" else None,
+                    )
                     db_session.add(payment)
                 else:
-                    payment.status = str(payment_info.get("status") or authorized.get("summarized") or payment.status)
+                    payment.external_reference = external_reference or payment.external_reference
+                    payment.company_id = subscription.company_id
+                    payment.subscription_id = subscription.id
+                    payment.status = persisted_status
+                    if incoming_amount > 0:
+                        payment.amount = incoming_amount
+                    payment.currency = incoming_currency or payment.currency or "ARS"
+                    payment.payment_method = "mercadopago_subscription"
+                    payment.reference = preapproval_id
+                    payment.provider = "mercadopago_subscription"
                     payment.payload_json = json.dumps(authorized, ensure_ascii=False)
+                    payment.paid_at = paid_at or payment.paid_at
+                db_session.add(payment)
+                db_session.flush()
+
                 if payment.status == "approved":
-                    SubscriptionService.run_command(db_session, SubscriptionService.RenewSubscriptionCommand(company_id=subscription.company_id, subscription_id=subscription.id, payment_status="approved", actor_user_id=payment.user_id, actor_role="system", origin="subscription_authorized_payment", idempotency_key=f"authorized-payment:{data_id}:{payment_id}"))
-            result = {"status": "processed", "subscription_id": getattr(subscription, "id", None), "payment_id": payment_id or None, "event_key": event_key}
+                    SubscriptionService.run_command(
+                        db_session,
+                        SubscriptionService.RenewSubscriptionCommand(
+                            company_id=subscription.company_id,
+                            subscription_id=subscription.id,
+                            payment_status="approved",
+                            paid_at=payment.paid_at,
+                            renewal_enabled=True,
+                            actor_user_id=payment.user_id,
+                            actor_role="system",
+                            origin="subscription_authorized_payment",
+                            idempotency_key=f"mercadopago-payment-approved:{payment_id}",
+                        ),
+                    )
+                    company = getattr(subscription, "company", None)
+                    if company is None:
+                        from app import Company
+                        company = db_session.get(Company, subscription.company_id)
+                    if company is not None:
+                        company.active = True
+                        if payment.invoice_id is None:
+                            invoice = InvoiceService.create_invoice(
+                                db_session,
+                                company=company,
+                                subscription=subscription,
+                                amount=float(payment.amount or 0),
+                                currency=payment.currency or "ARS",
+                                detail=f"Cobro recurrente Mercado Pago {payment_id}",
+                                payment_id=payment_id,
+                            )
+                            payment.invoice_id = invoice.id
+                        ReferralService.create_commission_for_sale(
+                            db_session,
+                            company_id=company.id,
+                            subscription=subscription,
+                            payment=payment,
+                            plan=subscription.plan,
+                        )
+                    NotificationService.record_event(
+                        db_session,
+                        company_id=subscription.company_id,
+                        payment_id=payment.id,
+                        subscription_id=subscription.id,
+                        invoice_id=payment.invoice_id,
+                        event="mercadopago_authorized_subscription_payment",
+                        detail=f"Pago recurrente {payment_id} en estado aprobado.",
+                        source="mercadopago",
+                        status="approved",
+                        event_id=f"mercadopago-authorized-payment:{payment_id}",
+                        payload={"preapproval_id": preapproval_id, "payment_id": payment_id, "amount": payment.amount, "currency": payment.currency},
+                        user_id=payment.user_id,
+                    )
+                elif payment.status in {"refunded", "charged_back"}:
+                    NotificationService.record_event(
+                        db_session,
+                        company_id=subscription.company_id,
+                        payment_id=payment.id,
+                        subscription_id=subscription.id,
+                        event="mercadopago_authorized_subscription_payment_reversed",
+                        detail=f"El pago recurrente {payment_id} fue informado como {payment.status}; no se extiende la suscripción.",
+                        source="mercadopago",
+                        status=payment.status,
+                        event_id=f"mercadopago-authorized-reversal:{payment_id}:{payment.status}",
+                        payload={"preapproval_id": preapproval_id, "payment_id": payment_id, "status": payment.status},
+                        user_id=payment.user_id,
+                    )
+                payment_status = payment.status
+            result = {"status": "processed", "subscription_id": getattr(subscription, "id", None), "payment_id": payment_id or None, "payment_status": payment_status, "event_key": event_key}
 
         elif event_type in {"payment", "payment.updated", "merchant_order", "topic_payment"}:
             payment_status = (payment_data.get("status") or "pending").lower()
@@ -803,8 +950,50 @@ class WebhookService:
                     }
                 elif should_apply_status_transition:
                     normalized_status = (payment_status or "pending").lower()
-                    if normalized_status in {"approved", "refunded"}:
-                        SubscriptionService.run_command(db_session, SubscriptionService.RenewSubscriptionCommand(company_id=company.id, subscription_id=subscription.id, payment_status=normalized_status, actor_user_id=payment.user_id, actor_role="system", origin="webhook", idempotency_key=f"webhook-renew:{event_key}:{subscription.id}"))
+                    if normalized_status == "approved":
+                        # Both "payment" and "subscription_authorized_payment" can
+                        # describe the same Mercado Pago charge. The MP payment ID,
+                        # not the webhook delivery/event ID, is the idempotency key.
+                        checkout_method = str(
+                            subscription_metadata.get("checkout_method") or ""
+                        ).strip().lower()
+                        # New recurring checkouts carry an explicit flow marker.
+                        # Legacy one-time QR references predate that marker, so use
+                        # persisted checkout method to keep QR payments manual while
+                        # preserving automatic renewal for older non-QR contracts.
+                        automatic_contract = flow == "subscription_auto" or (
+                            not flow and checkout_method != "qr"
+                        )
+                        SubscriptionService.run_command(
+                            db_session,
+                            SubscriptionService.RenewSubscriptionCommand(
+                                company_id=company.id,
+                                subscription_id=subscription.id,
+                                payment_status="approved",
+                                paid_at=paid_at,
+                                renewal_enabled=automatic_contract,
+                                actor_user_id=payment.user_id,
+                                actor_role="system",
+                                origin="webhook",
+                                idempotency_key=f"mercadopago-payment-approved:{payment.payment_id or data_id}",
+                            ),
+                        )
+                    elif normalized_status == "refunded":
+                        # A refund is not a successful renewal and must never add
+                        # another billing period.
+                        NotificationService.record_event(
+                            db_session,
+                            company_id=company.id,
+                            payment_id=payment.id,
+                            subscription_id=subscription.id,
+                            event="mercadopago_payment_refunded",
+                            detail=f"Pago {payment.payment_id} reembolsado; no se extiende el período de suscripción.",
+                            source="mercadopago",
+                            status="refunded",
+                            event_id=f"mercadopago-refunded:{payment.payment_id}",
+                            payload=payment_data,
+                            user_id=payment.user_id,
+                        )
                     elif normalized_status == "cancelled":
                         SubscriptionService.run_command(db_session, SubscriptionService.CancelSubscriptionCommand(company_id=company.id, subscription_id=subscription.id, actor_user_id=payment.user_id, actor_role="system", origin="webhook", idempotency_key=f"webhook-cancel:{event_key}:{subscription.id}", cancel_at_period_end=False))
                     elif normalized_status in {"expired", "rejected"}:
@@ -816,7 +1005,7 @@ class WebhookService:
                 is_pending_plan_change = bool(SubscriptionService._metadata_dict(subscription).get("pending_plan_change"))
                 if not is_pending_plan_change and not is_replaced_subscription and not is_cancelled_checkout:
                     company.active = subscription.status in {"active", "approved", "trial"}
-                if subscription.status in {"active", "approved"}:
+                if payment.status == "approved" and subscription.status in {"active", "approved"}:
                     if payment.invoice_id is None:
                         invoice = InvoiceService.create_invoice(db_session, company=company, subscription=subscription, amount=float(payment.amount or 0), currency=payment.currency or "ARS", detail=f"Cobro Mercado Pago {payment.payment_id}", payment_id=payment.payment_id)
                         payment.invoice_id = invoice.id
