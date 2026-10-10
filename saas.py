@@ -4415,6 +4415,21 @@ def _billing_reconciliation_snapshot(*, now=None, limit=50):
                 created_at=subscription.updated_at or subscription.created_at,
                 subscription_id=subscription.id,
             )
+        elif (
+            checkout_method == "automatic"
+            and preapproval_id
+            and mp_status == "authorized"
+            and not (bool(subscription.renewal_enabled) and bool(subscription.auto_renew))
+        ):
+            add_issue(
+                severity="danger",
+                title="Contrato mensual autorizado pero renovación local desactivada",
+                company_id=subscription.company_id,
+                detail="Mercado Pago informa que el preapproval está autorizado, pero la suscripción local no habilitó ambas flags de renovación.",
+                reference=f"MP preapproval {preapproval_id}",
+                created_at=subscription.updated_at or subscription.created_at,
+                subscription_id=subscription.id,
+            )
         elif checkout_method == "automatic" and not preapproval_id and mp_status not in {"cancelled", "canceled", "expired", "rejected"}:
             add_issue(
                 severity="warning",
