@@ -4300,7 +4300,8 @@ def impersonation_exit():
 @bp.route("/billing")
 @superadmin_required
 def billing():
-    from app import Company, Invoice, Payment, PaymentHistory, Subscription, db
+    from app import Company, Invoice, Payment, PaymentHistory, Subscription, WebhookEvent, db
+    from services.subscription_service import SubscriptionService
 
     _require_superadmin()
     invoices = Invoice.query.order_by(Invoice.issued_at.desc()).limit(40).all()
@@ -4323,6 +4324,88 @@ def billing():
     totals["total_paid"] = totals["total_paid_standard"] + totals["total_paid_ai"]
     totals["pending_payments"] = totals["pending_payments_standard"] + totals["pending_payments_ai"]
     totals["rejected_payments"] = totals["rejected_payments_standard"] + totals["rejected_payments_ai"]
+
+    # Read-only reconciliation: identify approved standard subscription payments
+    # that have not yet been invoiced, and local automatic-renewal flags that do
+    # not agree with the currently persisted Mercado Pago contract status.
+    missing_invoice_query = Payment.query.filter(
+        standard_subscription_payment_filter(Payment),
+        Payment.status == "approved",
+        Payment.invoice_id.is_(None),
+    )
+    missing_invoice_payments = (
+        missing_invoice_query.order_by(Payment.paid_at.desc().nullslast(), Payment.created_at.desc())
+        .limit(20)
+        .all()
+    )
+    totals["approved_standard_without_invoice"] = missing_invoice_query.count()
+
+    automatic_rows = Subscription.query.filter(Subscription.auto_renew.is_(True)).all()
+    authorized_contract_rows = (
+        Subscription.query.filter(
+            Subscription.status.in_(["active", "approved", "scheduled"]),
+            Subscription.metadata_json.contains("mercadopago_preapproval_id"),
+        )
+        .all()
+    )
+    candidate_subscriptions = {
+        row.id: row for row in (automatic_rows + authorized_contract_rows)
+    }
+    auto_renew_mismatches = []
+    for row in candidate_subscriptions.values():
+        metadata = SubscriptionService._metadata_dict(row)
+        checkout_method = str(metadata.get("checkout_method") or "").strip().lower()
+        preapproval_id = str(metadata.get("mercadopago_preapproval_id") or "").strip()
+        mp_status = str(metadata.get("mercadopago_status") or "").strip().lower()
+        cancellation_requested = bool(metadata.get("mercadopago_cancellation_requested"))
+        local_auto_renew = bool(row.auto_renew)
+        reason = None
+
+        if local_auto_renew and (
+            checkout_method != "automatic"
+            or not preapproval_id
+            or mp_status != "authorized"
+            or bool(row.cancel_at_period_end)
+            or cancellation_requested
+        ):
+            reason = "La renovación local está habilitada sin un contrato Mercado Pago autorizado y vigente."
+        elif (
+            not local_auto_renew
+            and checkout_method == "automatic"
+            and preapproval_id
+            and mp_status == "authorized"
+            and not bool(row.cancel_at_period_end)
+            and not cancellation_requested
+            and str(row.status or "").strip().lower() in {"active", "approved", "scheduled"}
+        ):
+            reason = "Mercado Pago figura autorizado, pero la renovación local está deshabilitada."
+
+        if reason:
+            auto_renew_mismatches.append({
+                "subscription": row,
+                "company": row.company,
+                "reason": reason,
+            })
+
+    auto_renew_mismatches.sort(
+        key=lambda item: (
+            (getattr(item["company"], "name", "") or "").lower(),
+            int(getattr(item["subscription"], "id", 0) or 0),
+        )
+    )
+    totals["auto_renew_mismatches"] = len(auto_renew_mismatches)
+    auto_renew_mismatches = auto_renew_mismatches[:20]
+
+    webhook_attention_query = WebhookEvent.query.filter(
+        WebhookEvent.status.in_(["failed", "error", "processing", "payment_validation_rejected"])
+    )
+    totals["webhooks_needing_attention"] = webhook_attention_query.count()
+    webhook_attention = (
+        webhook_attention_query.order_by(WebhookEvent.created_at.desc(), WebhookEvent.id.desc())
+        .limit(20)
+        .all()
+    )
+
     return render_template(
         "saas/billing.html",
         invoices=invoices,
@@ -4331,6 +4414,9 @@ def billing():
         companies=companies,
         subscriptions=subscriptions,
         totals=totals,
+        missing_invoice_payments=missing_invoice_payments,
+        auto_renew_mismatches=auto_renew_mismatches,
+        webhook_attention=webhook_attention,
         payment_flow=payment_flow,
         payment_flow_label=payment_flow_label,
         mp_config=load_billing_config(),

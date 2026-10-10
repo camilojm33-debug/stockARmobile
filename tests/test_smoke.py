@@ -6995,6 +6995,15 @@ def test_webhook_approved_activates_subscription_and_creates_commission_automati
             f"company_id:{company.id}|plan_id:{plan.id}|subscription_id:{subscription.id}|"
             f"user_id:{user.id}|ts:123"
         )
+        SubscriptionService._set_metadata(
+            subscription,
+            {
+                "mercadopago_preapproval_id": "mp-preapproval-test-1",
+                "mercadopago_external_reference": subscription.external_reference,
+                "mercadopago_status": "authorized",
+                "checkout_method": "automatic",
+            },
+        )
         db.session.commit()
 
         approved_payload = {
@@ -7022,6 +7031,16 @@ def test_webhook_approved_activates_subscription_and_creates_commission_automati
         service = WebhookService()
         monkeypatch.setattr(service.mp_service, "validate_webhook_signature", lambda **kwargs: True)
         monkeypatch.setattr(service.mp_service, "get_payment", lambda payment_id: approved_payment)
+        monkeypatch.setattr(
+            service.mp_service,
+            "get_preapproval",
+            lambda preapproval_id: {
+                "id": "mp-preapproval-test-1",
+                "status": "authorized",
+                "next_payment_date": "2026-08-13T10:00:00Z",
+                "external_reference": subscription.external_reference,
+            },
+        )
 
         result = service.process(
             db_session=db.session,

@@ -56,6 +56,7 @@ class RenewSubscriptionCommand(SubscriptionCommandBase):
     subscription_id: int | None = None
     payment_status: str | None = None
     paid_at: Any = None
+    next_billing_date: Any = None
 
 
 @dataclass
@@ -691,6 +692,12 @@ class SubscriptionService:
             subscription.renewal_enabled = False
             subscription.auto_renew = False
 
+        metadata = SubscriptionService._metadata_dict(subscription)
+        metadata_updates = {"auto_renew": False}
+        if metadata.get("mercadopago_preapproval_id"):
+            metadata_updates["mercadopago_cancellation_requested"] = True
+        SubscriptionService._set_metadata(subscription, metadata_updates)
+
         return CommandResult(
             command_name="CancelSubscriptionCommand",
             subscription_id=getattr(subscription, "id", command.subscription_id),
@@ -732,9 +739,17 @@ class SubscriptionService:
         if normalized in {SubscriptionService.STATE_CANCELLED, SubscriptionService.STATE_SUSPENDED, SubscriptionService.STATE_EXPIRED, SubscriptionService.STATE_TRIAL_EXPIRED}:
             SubscriptionService._transition(subscription, SubscriptionService.STATE_ACTIVE, reason="reactivate")
 
+        metadata = SubscriptionService._metadata_dict(subscription)
+        is_automatic_recurring = bool(
+            str(metadata.get("checkout_method") or "").strip().lower() == "automatic"
+            and metadata.get("mercadopago_preapproval_id")
+            and str(metadata.get("mercadopago_status") or "").strip().lower() == "authorized"
+            and not metadata.get("mercadopago_cancellation_requested")
+        )
         subscription.cancel_at_period_end = False
-        subscription.renewal_enabled = True
-        subscription.auto_renew = True
+        subscription.renewal_enabled = is_automatic_recurring
+        subscription.auto_renew = is_automatic_recurring
+        SubscriptionService._set_metadata(subscription, {"auto_renew": is_automatic_recurring})
         return CommandResult(
             command_name="ReactivateSubscriptionCommand",
             subscription_id=subscription.id,
@@ -814,15 +829,53 @@ class SubscriptionService:
             SubscriptionService._transition(subscription, SubscriptionService.STATE_ACTIVE, reason="renew")
 
         duration = int(subscription.plan.duration_days if subscription.plan else 30)
-        base = subscription.next_billing_date if subscription.next_billing_date and subscription.next_billing_date > now else now
-        subscription.last_payment_date = now
-        subscription.start_date = base
-        subscription.starts_at = base
-        subscription.next_billing_date = base + timedelta(days=duration)
-        subscription.ends_at = subscription.next_billing_date
-        subscription.cancel_at_period_end = False
-        subscription.renewal_enabled = True
-        subscription.auto_renew = True
+        # Never move an existing period start backwards when Mercado Pago sends a
+        # delayed notification or an old next_payment_date. The DB requires both
+        # end dates to be on or after the persisted start dates.
+        start_candidates = [
+            value
+            for value in (now, subscription.start_date, subscription.starts_at)
+            if value is not None
+        ]
+        minimum_period_start = max(start_candidates)
+        authoritative_next_due = command.next_billing_date
+
+        if authoritative_next_due is not None and authoritative_next_due > minimum_period_start:
+            # Mercado Pago's next_payment_date is authoritative when it is later
+            # than the existing period start; never add a second duration.
+            period_start = minimum_period_start
+            next_due = authoritative_next_due
+        else:
+            # Ignore missing or stale contract dates and calculate a valid paid
+            # period from the current paid-through date without skipping backwards.
+            paid_through = subscription.next_billing_date
+            period_start = (
+                paid_through
+                if paid_through is not None and paid_through > minimum_period_start
+                else minimum_period_start
+            )
+            next_due = period_start + timedelta(days=duration)
+
+        if subscription.last_payment_date is None or subscription.last_payment_date <= now:
+            subscription.last_payment_date = now
+        subscription.start_date = period_start
+        subscription.starts_at = period_start
+        subscription.next_billing_date = next_due
+        subscription.ends_at = next_due
+
+        checkout_method = str(metadata.get("checkout_method") or "").strip().lower()
+        mp_preapproval_id = str(metadata.get("mercadopago_preapproval_id") or "").strip()
+        mp_status = str(metadata.get("mercadopago_status") or "").strip().lower()
+        is_automatic_recurring = bool(
+            checkout_method == "automatic"
+            and mp_preapproval_id
+            and mp_status == "authorized"
+            and not metadata.get("mercadopago_cancellation_requested")
+        )
+        subscription.renewal_enabled = is_automatic_recurring
+        subscription.auto_renew = is_automatic_recurring
+        subscription.cancel_at_period_end = not is_automatic_recurring
+        SubscriptionService._set_metadata(subscription, {"auto_renew": is_automatic_recurring})
 
         return CommandResult(
             command_name="RenewSubscriptionCommand",
@@ -1092,6 +1145,44 @@ class SubscriptionService:
                 "reference_date": trial_end,
                 "next_billing_date": trial_end,
             }
+
+        # Older webhook handling could mark a subscription CANCELLED as soon
+        # as Mercado Pago cancelled its preapproval. If cancellation is scheduled
+        # for period end, honor the already-paid-through date for those rows too.
+        if (
+            raw_status == SubscriptionService.STATE_CANCELLED
+            and subscription is not None
+            and bool(getattr(subscription, "cancel_at_period_end", False))
+        ):
+            paid_limit = (
+                getattr(subscription, "next_billing_date", None)
+                or getattr(subscription, "ends_at", None)
+            )
+            if paid_limit is None:
+                start_ref = getattr(subscription, "start_date", None) or getattr(subscription, "starts_at", None)
+                plan_duration_days = int(getattr(getattr(subscription, "plan", None), "duration_days", 30) or 30)
+                if start_ref is not None:
+                    paid_limit = start_ref + timedelta(days=plan_duration_days)
+            if paid_limit is not None and current < paid_limit:
+                return {
+                    "status": SubscriptionService.STATE_ACTIVE,
+                    "subscription_status": raw_status,
+                    "can_access": True,
+                    "reason": "La renovación automática está cancelada; tu acceso continúa hasta el final del período pagado.",
+                    "trial_ends_at": trial_end,
+                    "reference_date": paid_limit,
+                    "next_billing_date": paid_limit,
+                }
+            if paid_limit is not None:
+                return {
+                    "status": SubscriptionService.STATE_EXPIRED,
+                    "subscription_status": raw_status,
+                    "can_access": False,
+                    "reason": "La suscripción cancelada venció al finalizar su período pagado.",
+                    "trial_ends_at": trial_end,
+                    "reference_date": paid_limit,
+                    "next_billing_date": paid_limit,
+                }
 
         if raw_status in SubscriptionService.BLOCKED_STATUSES:
             return {

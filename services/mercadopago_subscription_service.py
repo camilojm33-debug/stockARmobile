@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 import uuid
 
 from services.mercadopago_service import MercadoPagoService
@@ -66,6 +66,7 @@ class MercadoPagoSubscriptionService:
                         "checkout_cancelled": False,
                         "payment_method": "mercadopago_subscription",
                         "auto_renew": True,
+                        "mercadopago_cancellation_requested": False,
                     },
                 )
                 return current
@@ -175,6 +176,7 @@ class MercadoPagoSubscriptionService:
                 "checkout_method": "automatic",
                 "checkout_cancelled": False,
                 "auto_renew": True,
+                "mercadopago_cancellation_requested": False,
                 "subscription_auto_created_at": datetime.now(timezone.utc).isoformat(),
             },
         )
@@ -210,6 +212,13 @@ class MercadoPagoSubscriptionService:
                 "mercadopago_last_sync_at": datetime.now(timezone.utc).isoformat(),
             }
         )
+        if status == "authorized":
+            # Only a currently fetched, matching MP preapproval can clear an old
+            # cancellation marker; a stale local flag must not disable a new contract.
+            metadata["mercadopago_cancellation_requested"] = False
+            metadata["auto_renew"] = True
+        elif status in {"paused", "cancelled", "canceled", "expired", "pending"}:
+            metadata["auto_renew"] = False
         SubscriptionService._set_metadata(subscription, metadata)
 
         if str(metadata.get("closed_reason") or "").strip().lower() == "plan_change":
@@ -281,22 +290,63 @@ class MercadoPagoSubscriptionService:
             subscription.auto_renew = True
             subscription.cancel_at_period_end = False
             next_payment = cls._parse_datetime(preapproval.get("next_payment_date"))
-            if next_payment:
+            start_floor = max(
+                value
+                for value in (subscription.start_date, subscription.starts_at)
+                if value is not None
+            ) if (subscription.start_date is not None or subscription.starts_at is not None) else None
+            if next_payment is not None and (start_floor is None or next_payment >= start_floor):
                 subscription.next_billing_date = next_payment
                 subscription.ends_at = next_payment
+            elif next_payment is not None:
+                # Mercado Pago may resend a stale next_payment_date. Never
+                # overwrite the local period end with a date preceding the
+                # persisted start date; the DB's chronological constraints are
+                # a hard safety boundary, not something to bypass.
+                metadata["mercadopago_stale_next_payment_date_ignored"] = next_payment.isoformat()
+                metadata["mercadopago_stale_next_payment_date_ignored_at"] = datetime.now(timezone.utc).isoformat()
+                SubscriptionService._set_metadata(subscription, metadata)
         elif status in {"paused", "cancelled", "canceled", "expired"}:
             subscription.renewal_enabled = False
             subscription.auto_renew = False
             subscription.cancel_at_period_end = True
-            if status in {"cancelled", "canceled"} and subscription.status not in {
-                SubscriptionService.STATE_CANCELLED,
-                SubscriptionService.STATE_EXPIRED,
-            }:
-                SubscriptionService._transition(
+            if status in {"cancelled", "canceled", "expired"}:
+                SubscriptionService._set_metadata(
                     subscription,
-                    SubscriptionService.STATE_CANCELLED,
-                    reason="mercadopago_preapproval_cancelled",
+                    {"mercadopago_cancellation_requested": True},
                 )
+                now = datetime.now(timezone.utc).replace(tzinfo=None)
+                paid_limit = (
+                    getattr(subscription, "next_billing_date", None)
+                    or getattr(subscription, "ends_at", None)
+                    or getattr(subscription, "trial_end", None)
+                )
+                if paid_limit is None:
+                    start_ref = getattr(subscription, "start_date", None) or getattr(subscription, "starts_at", None)
+                    duration = int(getattr(getattr(subscription, "plan", None), "duration_days", 30) or 30)
+                    if start_ref is not None:
+                        paid_limit = start_ref + timedelta(days=duration)
+
+                current_status = SubscriptionService._normalize_state(subscription.status)
+                provisioned = (
+                    current_status in SubscriptionService.ACTIVE_STATUSES
+                    or current_status in SubscriptionService.TRIAL_STATUSES
+                )
+                still_paid_through = bool(paid_limit and now < paid_limit and provisioned)
+                if not still_paid_through and current_status not in {
+                    SubscriptionService.STATE_CANCELLED,
+                    SubscriptionService.STATE_EXPIRED,
+                }:
+                    target = (
+                        SubscriptionService.STATE_EXPIRED
+                        if paid_limit is not None and now >= paid_limit
+                        else SubscriptionService.STATE_CANCELLED
+                    )
+                    SubscriptionService._transition(
+                        subscription,
+                        target,
+                        reason="mercadopago_preapproval_ended",
+                    )
         elif status == "pending":
             subscription.renewal_enabled = False
             subscription.auto_renew = False
