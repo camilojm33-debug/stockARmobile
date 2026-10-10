@@ -739,9 +739,17 @@ class SubscriptionService:
         if normalized in {SubscriptionService.STATE_CANCELLED, SubscriptionService.STATE_SUSPENDED, SubscriptionService.STATE_EXPIRED, SubscriptionService.STATE_TRIAL_EXPIRED}:
             SubscriptionService._transition(subscription, SubscriptionService.STATE_ACTIVE, reason="reactivate")
 
+        metadata = SubscriptionService._metadata_dict(subscription)
+        is_automatic_recurring = bool(
+            str(metadata.get("checkout_method") or "").strip().lower() == "automatic"
+            and metadata.get("mercadopago_preapproval_id")
+            and str(metadata.get("mercadopago_status") or "").strip().lower() == "authorized"
+            and not metadata.get("mercadopago_cancellation_requested")
+        )
         subscription.cancel_at_period_end = False
-        subscription.renewal_enabled = True
-        subscription.auto_renew = True
+        subscription.renewal_enabled = is_automatic_recurring
+        subscription.auto_renew = is_automatic_recurring
+        SubscriptionService._set_metadata(subscription, {"auto_renew": is_automatic_recurring})
         return CommandResult(
             command_name="ReactivateSubscriptionCommand",
             subscription_id=subscription.id,
