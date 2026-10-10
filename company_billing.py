@@ -834,7 +834,17 @@ def _session_standard_qr_preview(company, *, subscription_id=None, preference_id
     if subscription is None or subscription.plan is None:
         return None
     metadata = SubscriptionService._metadata_dict(subscription)
-    if str(metadata.get("checkout_method") or "").strip().lower() != "qr":
+    checkout_method = str(metadata.get("checkout_method") or "").strip().lower()
+    # This signed session entry is created only by a standard QR checkout route.
+    # Older/partially persisted records may lack checkout_method; reject only an
+    # explicit different method so that the valid QR isn't lost after redirect.
+    if checkout_method and checkout_method != "qr":
+        return None
+    try:
+        plan_amount = float(getattr(subscription.plan, "price", 0) or 0)
+    except (TypeError, ValueError, OverflowError):
+        plan_amount = 0.0
+    if str(getattr(subscription.plan, "code", "") or "").strip().lower() == "trial" or plan_amount <= 0:
         return None
 
     payment = Payment.query.filter_by(
@@ -1777,6 +1787,20 @@ def create_checkout():
     if plan is None:
         flash("Seleccioná un plan antes de pagar.", "warning")
         return redirect(url_for("company_billing.subscription_portal"))
+
+    # The generic payment button must never attempt to charge a free trial or
+    # a zero-priced plan. Keep this guard server-side even when the UI hides it.
+    plan_code = str(getattr(plan, "code", "") or "").strip().lower()
+    try:
+        plan_amount = float(getattr(plan, "price", 0) or 0)
+    except (TypeError, ValueError, OverflowError):
+        plan_amount = 0.0
+    if plan_code == "trial" or plan_amount <= 0:
+        flash(
+            "El plan de prueba no admite pagos. Elegí un plan pago en la tabla de StockArMobile para generar el QR.",
+            "warning",
+        )
+        return redirect(url_for("company_billing.subscription_portal", _anchor="planes-disponibles"))
 
     pending_plan = _pending_paid_plan_change(company.id)
     if pending_plan is not None:
