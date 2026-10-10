@@ -4297,10 +4297,177 @@ def impersonation_exit():
     return _redirect_back("saas.companies_panel")
 
 
+def _billing_reconciliation_snapshot(*, now=None, limit=50):
+    """Read-only checks for payment records that need an administrator's attention.
+
+    This deliberately reports possible inconsistencies without changing billing
+    records or contacting Mercado Pago. Repairs must be explicit and auditable.
+    """
+    from app import Company, Payment, Subscription, WebhookEvent, db
+
+    current = now or utcnow()
+    stale_payment_cutoff = current - timedelta(hours=24)
+    stuck_webhook_cutoff = current - timedelta(minutes=10)
+    issues = []
+
+    def add_issue(*, severity, title, company_id, detail, reference, created_at=None, payment_id=None, subscription_id=None):
+        company = db.session.get(Company, company_id) if company_id else None
+        issues.append({
+            "severity": severity,
+            "title": title,
+            "company_name": getattr(company, "name", None) or (f"Empresa #{company_id}" if company_id else "Sin empresa"),
+            "detail": detail,
+            "reference": reference,
+            "created_at": created_at,
+            "payment_id": payment_id,
+            "subscription_id": subscription_id,
+        })
+
+    # A verified standard payment should have one invoice attached. InvoiceService
+    # is idempotent by Mercado Pago payment ID, so this list is safe to reconcile.
+    approved_without_invoice = (
+        Payment.query.filter(
+            standard_subscription_payment_filter(Payment),
+            Payment.status == "approved",
+            Payment.invoice_id.is_(None),
+        )
+        .order_by(Payment.created_at.desc())
+        .limit(limit)
+        .all()
+    )
+    for payment in approved_without_invoice:
+        add_issue(
+            severity="danger",
+            title="Pago aprobado sin factura",
+            company_id=payment.company_id,
+            detail=f"El pago aprobado {payment.payment_id or payment.id} no tiene factura vinculada.",
+            reference=f"MP {payment.payment_id or payment.id}",
+            created_at=payment.paid_at or payment.created_at,
+            payment_id=payment.id,
+            subscription_id=payment.subscription_id,
+        )
+
+    # Old pending attempts can be abandoned checkouts or missed notifications.
+    # They are surfaced for review, but never automatically marked paid/cancelled.
+    stale_pending = (
+        Payment.query.filter(
+            standard_subscription_payment_filter(Payment),
+            Payment.subscription_id.isnot(None),
+            Payment.status.in_(["pending", "in_process", "authorized"]),
+            Payment.created_at < stale_payment_cutoff,
+        )
+        .order_by(Payment.created_at.asc())
+        .limit(limit)
+        .all()
+    )
+    for payment in stale_pending:
+        add_issue(
+            severity="warning",
+            title="Checkout pendiente por más de 24 horas",
+            company_id=payment.company_id,
+            detail=f"El pago sigue en estado {payment.status}; confirmar su estado en Mercado Pago antes de intervenir.",
+            reference=f"MP {payment.payment_id or payment.reference or payment.id}",
+            created_at=payment.created_at,
+            payment_id=payment.id,
+            subscription_id=payment.subscription_id,
+        )
+
+    # A recurring contract that was synchronized as authorized should have its
+    # local automatic-billing flag enabled; QR-only checkouts must not masquerade
+    # as recurring contracts. This detects legacy state but performs no mutation.
+    active_subscriptions = (
+        Subscription.query.filter(
+            Subscription.status.in_(["active", "approved"]),
+        )
+        .order_by(Subscription.id.desc())
+        .limit(1000)
+        .all()
+    )
+    for subscription in active_subscriptions:
+        metadata = SubscriptionService._metadata_dict(subscription)
+        checkout_method = str(metadata.get("checkout_method") or "").strip().lower()
+        preapproval_id = str(
+            metadata.get("mercadopago_preapproval_id")
+            or metadata.get("mercadopago_subscription_id")
+            or ""
+        ).strip()
+        mp_status = str(metadata.get("mercadopago_status") or "").strip().lower()
+
+        if checkout_method == "qr" and not preapproval_id and (
+            bool(subscription.renewal_enabled) or bool(subscription.auto_renew)
+        ):
+            add_issue(
+                severity="danger",
+                title="QR marcado como renovación automática",
+                company_id=subscription.company_id,
+                detail="La suscripción proviene de un checkout QR sin contrato recurrente, pero tiene activada la renovación local.",
+                reference=f"Suscripción #{subscription.id}",
+                created_at=subscription.updated_at or subscription.created_at,
+                subscription_id=subscription.id,
+            )
+        elif checkout_method == "automatic" and not preapproval_id and mp_status not in {"cancelled", "canceled", "expired", "rejected"}:
+            add_issue(
+                severity="warning",
+                title="Falta el identificador del contrato mensual",
+                company_id=subscription.company_id,
+                detail="La suscripción figura como automática, pero no tiene un preapproval de Mercado Pago guardado.",
+                reference=f"Suscripción #{subscription.id}",
+                created_at=subscription.updated_at or subscription.created_at,
+                subscription_id=subscription.id,
+            )
+        elif mp_status in {"cancelled", "canceled", "expired"} and (
+            bool(subscription.renewal_enabled) or bool(subscription.auto_renew)
+        ):
+            add_issue(
+                severity="warning",
+                title="Renovación local desincronizada",
+                company_id=subscription.company_id,
+                detail=f"Mercado Pago informa '{mp_status}', pero la renovación automática sigue activa localmente.",
+                reference=f"Suscripción #{subscription.id}",
+                created_at=subscription.updated_at or subscription.created_at,
+                subscription_id=subscription.id,
+            )
+
+    # Long-running webhook rows are unusual; show only old processing rows or
+    # explicit persisted failures, since ordinary successful events have many
+    # application-specific terminal statuses.
+    if model_table_exists(WebhookEvent):
+        failed_events = (
+            WebhookEvent.query.filter(
+                db.or_(
+                    WebhookEvent.status.in_(["failed", "error", "invalid"]),
+                    db.and_(
+                        WebhookEvent.status == "processing",
+                        WebhookEvent.created_at < stuck_webhook_cutoff,
+                    ),
+                )
+            )
+            .order_by(WebhookEvent.created_at.asc())
+            .limit(limit)
+            .all()
+        )
+        for event in failed_events:
+            add_issue(
+                severity="danger" if str(event.status or "").lower() in {"failed", "error", "invalid"} else "warning",
+                title="Webhook requiere revisión",
+                company_id=None,
+                detail=f"Evento {event.event_type or 'Mercado Pago'} en estado {event.status}; revisar su carga antes de reintentar.",
+                reference=str(event.event_key or event.id),
+                created_at=event.created_at,
+            )
+
+    return sorted(
+        issues,
+        key=lambda item: (0 if item["severity"] == "danger" else 1, item["created_at"] or datetime.min),
+        reverse=False,
+    )[:limit * 3]
+
+
 @bp.route("/billing")
 @superadmin_required
 def billing():
     from app import Company, Invoice, Payment, PaymentHistory, Subscription, db
+    from services.subscription_service import SubscriptionService
 
     _require_superadmin()
     invoices = Invoice.query.order_by(Invoice.issued_at.desc()).limit(40).all()
@@ -4334,6 +4501,7 @@ def billing():
         payment_flow=payment_flow,
         payment_flow_label=payment_flow_label,
         mp_config=load_billing_config(),
+        billing_diagnostics=_billing_reconciliation_snapshot(),
     )
 
 
