@@ -679,10 +679,33 @@ class AISubscriptionService:
         if new_status is None:
             return company
 
-        new_fields: dict[str, Any] = {"status": new_status, "origin": "MERCADO_PAGO", "mercadopago_status": mp_status}
-        if new_status == "ACTIVA":
+        current_ai = cls._ai_prefs(company)
+        paid_until = _parse_dt(current_ai.get("ends_at"))
+        now = utcnow_naive()
+        has_paid_access = bool(
+            mp_status in {"paused", "cancelled", "canceled", "expired"}
+            and paid_until is not None
+            and paid_until > now
+        )
+        # Stopping future AI renewals at Mercado Pago must not revoke a period
+        # the customer already paid for. Keep local access ACTIVE until ends_at;
+        # the AI access projection will naturally return VENCIDA once that date
+        # passes. The remote contract status remains stored independently.
+        if has_paid_access:
+            new_status = "ACTIVA"
+
+        new_fields: dict[str, Any] = {
+            "status": new_status,
+            "origin": "MERCADO_PAGO",
+            "mercadopago_status": mp_status,
+        }
+        if new_status == "ACTIVA" and mp_status == "authorized":
             next_payment = (preapproval or {}).get("next_payment_date")
-            if next_payment and _parse_dt(next_payment) is not None:
-                new_fields["ends_at"] = _parse_dt(next_payment).isoformat()
+            parsed_next_payment = _parse_dt(next_payment)
+            if parsed_next_payment is not None:
+                new_fields["ends_at"] = parsed_next_payment.isoformat()
+        if has_paid_access:
+            new_fields["mercadopago_access_preserved_until"] = paid_until.isoformat()
+            new_fields["mercadopago_access_preserved_reason"] = "recurring_contract_ended"
         cls._apply(company, admin_user_id=None, action="ai_subscription_mercadopago_sync", new_fields=new_fields, reason=f"mercadopago_status={mp_status}")
         return company
