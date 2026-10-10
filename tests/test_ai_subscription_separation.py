@@ -2102,3 +2102,19 @@ def test_billing_reconciliation_flags_missing_invoice_and_legacy_qr_autorenew(su
     assert "Pago aprobado sin factura" in titles
     assert "QR marcado como renovación automática" in titles
     assert "Suscripción IA autorizada sin contrato registrado" in titles
+
+    SubscriptionService._set_metadata(
+        subscription,
+        {
+            "checkout_method": "automatic",
+            "mercadopago_preapproval_id": "standard-preauthorized",
+            "mercadopago_status": "authorized",
+        },
+    )
+    subscription.renewal_enabled = False
+    subscription.auto_renew = False
+    db.session.commit()
+
+    renewed_diagnostics = _billing_reconciliation_snapshot(now=utcnow())
+    renewed_titles = {issue["title"] for issue in renewed_diagnostics}
+    assert "Contrato mensual autorizado pero renovación local desactivada" in renewed_titles
