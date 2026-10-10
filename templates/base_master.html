@@ -1206,6 +1206,110 @@
           if (loading) loading.classList.add('show');
         });
       });
+
+      // External subscription checkouts return JSON with the verified redirect URL.
+      // Navigate explicitly instead of relying on a browser/PWA form POST following
+      // a cross-origin 302, which can leave the user on the StockArMobile portal.
+      document.addEventListener('submit', async function(event) {
+        const form = event.target;
+        if (!(form instanceof HTMLFormElement)) return;
+        if ((form.method || 'GET').toLowerCase() !== 'post') return;
+        if (!form.matches('[data-mp-external-checkout="true"]')) return;
+        if (form.dataset.mpCheckoutSubmitting === 'true') {
+          event.preventDefault();
+          return;
+        }
+
+        event.preventDefault();
+        const errorClass = 'js-mp-checkout-error';
+        const previousError = form.querySelector('.' + errorClass);
+        if (previousError) previousError.remove();
+
+        const submitButtons = Array.from(form.querySelectorAll('button[type="submit"], input[type="submit"]'));
+        const savedButtons = submitButtons.map(function(button) {
+          return {
+            button: button,
+            disabled: button.disabled,
+            text: button instanceof HTMLButtonElement ? button.textContent : button.value
+          };
+        });
+        form.dataset.mpCheckoutSubmitting = 'true';
+        form.setAttribute('aria-busy', 'true');
+        submitButtons.forEach(function(button) {
+          button.disabled = true;
+          if (button instanceof HTMLButtonElement) button.textContent = 'Conectando con Mercado Pago…';
+          else button.value = 'Conectando con Mercado Pago…';
+        });
+
+        function restoreForm() {
+          delete form.dataset.mpCheckoutSubmitting;
+          form.removeAttribute('aria-busy');
+          savedButtons.forEach(function(saved) {
+            saved.button.disabled = saved.disabled;
+            if (saved.button instanceof HTMLButtonElement) saved.button.textContent = saved.text;
+            else saved.button.value = saved.text;
+          });
+        }
+
+        function showError(message) {
+          restoreForm();
+          const alert = document.createElement('div');
+          alert.className = 'alert alert-danger py-2 mt-2 mb-0 ' + errorClass;
+          alert.setAttribute('role', 'alert');
+          alert.textContent = message || 'No se pudo abrir Mercado Pago. Revisá tu conexión e intentá nuevamente.';
+          form.appendChild(alert);
+          alert.scrollIntoView({behavior: 'smooth', block: 'nearest'});
+        }
+
+        try {
+          const response = await fetch(form.action, {
+            method: 'POST',
+            body: new FormData(form),
+            credentials: 'same-origin',
+            headers: {
+              'X-Requested-With': 'XMLHttpRequest',
+              'Accept': 'application/json'
+            },
+            cache: 'no-store'
+          });
+          const contentType = (response.headers.get('content-type') || '').toLowerCase();
+          const payload = contentType.includes('application/json')
+            ? await response.json()
+            : null;
+
+          // Some safe branches (for example, an already-authorized contract) send
+          // the user back to the local portal. Honor those same-origin redirects.
+          if (response.redirected) {
+            const finalUrl = new URL(response.url, window.location.origin);
+            if (finalUrl.origin === window.location.origin) {
+              window.location.assign(finalUrl.href);
+              return;
+            }
+          }
+
+          if (!response.ok || !payload || payload.success !== true || !payload.redirect_url) {
+            throw new Error((payload && payload.error) || 'StockArMobile no devolvió un enlace de autorización. No se creó otro checkout automáticamente.');
+          }
+
+          const checkoutUrl = new URL(payload.redirect_url, window.location.origin);
+          const allowedHosts = new Set([
+            'www.mercadopago.com', 'mercadopago.com', 'sandbox.mercadopago.com',
+            'www.mercadopago.com.ar', 'mercadopago.com.ar', 'sandbox.mercadopago.com.ar',
+            'www.mercadopago.com.br', 'www.mercadopago.com.mx', 'www.mercadopago.com.cl',
+            'www.mercadopago.com.co', 'www.mercadopago.com.uy', 'www.mercadopago.com.pe'
+          ]);
+          if (checkoutUrl.protocol !== 'https:' || !allowedHosts.has(checkoutUrl.hostname.toLowerCase())) {
+            throw new Error('El enlace recibido no pertenece a un checkout válido de Mercado Pago. No se abrió por seguridad.');
+          }
+
+          // Same-tab navigation is not subject to popup blockers and works in
+          // browsers and installed PWAs alike.
+          window.location.assign(checkoutUrl.href);
+        } catch (error) {
+          console.error('No se pudo iniciar navegación al checkout de Mercado Pago:', error);
+          showError(error && error.message);
+        }
+      });
       window.addEventListener('pageshow', hideAppLoading);
       window.addEventListener('focus', hideAppLoading);
       window.addEventListener('afterprint', hideAppLoading);
