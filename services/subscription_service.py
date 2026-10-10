@@ -828,7 +828,11 @@ class SubscriptionService:
             recurring_enabled = bool(command.renewal_enabled)
             subscription.renewal_enabled = recurring_enabled
             subscription.auto_renew = recurring_enabled
-            subscription.cancel_at_period_end = not recurring_enabled
+            if recurring_enabled:
+                subscription.cancel_at_period_end = False
+            # A one-time QR payment disables automatic billing but does not mean
+            # the customer explicitly requested cancellation at period end. Keep
+            # that independent lifecycle flag unchanged.
 
         return CommandResult(
             command_name="RenewSubscriptionCommand",
