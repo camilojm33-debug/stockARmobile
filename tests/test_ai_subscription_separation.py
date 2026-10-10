@@ -2083,6 +2083,17 @@ def test_billing_reconciliation_flags_missing_invoice_and_legacy_qr_autorenew(su
         provider="mercadopago",
     )
     db.session.add(payment)
+    update_ai_preferences(
+        company,
+        ai_updates={
+            "plan_code": "inicio",
+            "status": "ACTIVA",
+            "origin": "MERCADO_PAGO",
+            "checkout_method": "automatic",
+            "mercadopago_status": "authorized",
+            "mercadopago_preapproval_id": None,
+        },
+    )
     db.session.commit()
 
     issues = _billing_reconciliation_snapshot(now=utcnow())
@@ -2090,3 +2101,4 @@ def test_billing_reconciliation_flags_missing_invoice_and_legacy_qr_autorenew(su
 
     assert "Pago aprobado sin factura" in titles
     assert "QR marcado como renovación automática" in titles
+    assert "Suscripción IA autorizada sin contrato registrado" in titles
