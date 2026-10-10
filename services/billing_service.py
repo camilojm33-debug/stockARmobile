@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import base64
 import json
+import math
 from io import BytesIO
 
 import qrcode
@@ -19,6 +20,14 @@ class BillingService:
 
     def create_checkout_for_plan(self, *, db_session, company, plan, user, subscription=None):
         from app import Payment, PaymentHistory, Subscription
+
+        plan_code = str(getattr(plan, "code", "") or "").strip().lower()
+        try:
+            amount = float(getattr(plan, "price", 0) or 0)
+        except (TypeError, ValueError, OverflowError) as exc:
+            raise ValueError("El plan seleccionado no tiene un importe válido para cobrar.") from exc
+        if plan_code == "trial" or not math.isfinite(amount) or amount <= 0:
+            raise ValueError("El plan de prueba o un plan sin precio no puede cobrarse por Mercado Pago. Elegí un plan pago.")
 
         target_subscription = subscription
         if target_subscription is None:
