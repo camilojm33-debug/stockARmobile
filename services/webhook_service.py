@@ -754,6 +754,24 @@ class WebhookService:
                 return result
 
             payment = Payment.query.filter_by(payment_id=str(payment_data.get("id"))).first()
+            if payment is not None and flow != "pos_sale":
+                existing_provider = str(payment.provider or "").strip().lower()
+                existing_method = str(payment.payment_method or "").strip().lower()
+                incoming_company_id = int(metadata_company_id or ref_company_id or 0)
+                incoming_subscription_id_raw = metadata.get("subscription_id") or ref_parts.get("subscription_id")
+                incoming_subscription_id = (
+                    int(incoming_subscription_id_raw)
+                    if str(incoming_subscription_id_raw or "").isdigit()
+                    else 0
+                )
+                if existing_provider.startswith("mercadopago_ai") or existing_method.startswith("mercadopago_ai") or existing_provider == "mercadopago_pos":
+                    raise RuntimeError("Webhook Mercado Pago rechazado: el payment_id ya pertenece a otra modalidad de cobro.")
+                if payment.company_id and incoming_company_id and int(payment.company_id) != incoming_company_id:
+                    raise RuntimeError("Webhook Mercado Pago rechazado: el payment_id ya pertenece a otra empresa.")
+                if payment.subscription_id and incoming_subscription_id and int(payment.subscription_id) != incoming_subscription_id:
+                    raise RuntimeError("Webhook Mercado Pago rechazado: el payment_id ya pertenece a otra suscripción.")
+                if payment.external_reference and external_reference and payment.external_reference != external_reference:
+                    raise RuntimeError("Webhook Mercado Pago rechazado: el payment_id ya está asociado a otra referencia externa.")
             if merchant_connection is not None and payment is not None and int(payment.company_id or 0) != int(merchant_connection.company_id or 0):
                 raise RuntimeError("Webhook Mercado Pago con pago perteneciente a otra empresa")
             previous_payment_status = (payment.status or "").lower() if payment is not None else ""
