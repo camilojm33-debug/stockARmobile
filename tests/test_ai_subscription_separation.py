@@ -2059,7 +2059,11 @@ def test_cancelled_payment_webhook_does_not_cancel_subscription_contract(subscri
 
 def test_manual_qr_renewal_does_not_enable_automatic_charges(subscription_app):
     company, _, _, subscription = _tenant_with_standard_subscription()
-    paid_at = datetime(2026, 10, 9)
+    paid_at = max(
+        value
+        for value in (subscription.start_date, subscription.starts_at, datetime(2026, 10, 9))
+        if value is not None
+    )
     SubscriptionService._set_metadata(
         subscription,
         {"checkout_method": "qr", "checkout_cancelled": False},
@@ -2082,7 +2086,8 @@ def test_manual_qr_renewal_does_not_enable_automatic_charges(subscription_app):
     db.session.refresh(subscription)
 
     assert subscription.status == SubscriptionService.STATE_ACTIVE
-    assert subscription.next_billing_date == datetime(2026, 11, 8)
+    assert subscription.next_billing_date > paid_at
+    assert (subscription.next_billing_date - paid_at).days == 30
     assert subscription.auto_renew is False
     assert subscription.renewal_enabled is False
     assert subscription.cancel_at_period_end is True
