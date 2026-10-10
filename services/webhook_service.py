@@ -1170,7 +1170,12 @@ class WebhookService:
                     legacy_reference = str(preapproval_data.get("external_reference") or "").strip()
                     if subscription is None and legacy_reference.isdigit():
                         legacy_subscription = Subscription.query.filter_by(id=int(legacy_reference)).first()
-                        if legacy_subscription is not None:
+                        legacy_metadata = (
+                            SubscriptionService._metadata_dict(legacy_subscription)
+                            if legacy_subscription is not None
+                            else {}
+                        )
+                        if legacy_subscription is not None and not legacy_metadata.get("mercadopago_preapproval_id"):
                             SubscriptionService._set_metadata(
                                 legacy_subscription,
                                 {
