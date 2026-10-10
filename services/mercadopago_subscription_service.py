@@ -68,6 +68,12 @@ class MercadoPagoSubscriptionService:
                         "auto_renew": True,
                     },
                 )
+                # A retry can be the first request after Mercado Pago has already
+                # authorized the contract (for example, if the webhook was delayed).
+                # Reconcile local access/renewal flags from that verified preapproval
+                # rather than returning a successful URL while local billing stays off.
+                cls.sync_preapproval(db_session=db_session, preapproval=current)
+                db_session.flush()
                 return current
             if current_status in {"pending", "in_process"}:
                 # A valid pending preapproval can occasionally be returned without
