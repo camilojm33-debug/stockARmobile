@@ -2127,3 +2127,75 @@ def test_cancelled_preapproval_keeps_access_until_paid_through_date(subscription
     assert access["can_access"] is True
     assert access["reference_date"] == paid_through
 
+
+
+
+def test_standard_webhook_cannot_reassign_an_ai_payment_id(subscription_app, monkeypatch):
+    company, user, plan, subscription = _tenant_with_standard_subscription()
+    Payment(
+        payment_id="pay-ai-cross-flow",
+        external_reference=f"ai_subscription:true|company_id:{company.id}",
+        company_id=company.id,
+        subscription_id=None,
+        user_id=user.id,
+        amount=1000,
+        currency="ARS",
+        status="approved",
+        payment_method="mercadopago_ai_subscription",
+        provider="mercadopago_ai_subscription",
+        payload_json="{}",
+    )
+    db.session.add(Payment.query.filter_by(payment_id="pay-ai-cross-flow").first() or Payment(
+        payment_id="pay-ai-cross-flow",
+        external_reference=f"ai_subscription:true|company_id:{company.id}",
+        company_id=company.id,
+        subscription_id=None,
+        user_id=user.id,
+        amount=1000,
+        currency="ARS",
+        status="approved",
+        payment_method="mercadopago_ai_subscription",
+        provider="mercadopago_ai_subscription",
+        payload_json="{}",
+    ))
+    db.session.commit()
+
+    external_reference = (
+        f"stockarmobile|flow:subscription_auto|company_id:{company.id}|plan_id:{plan.id}|"
+        f"subscription_id:{subscription.id}|user_id:{user.id}|nonce:collision"
+    )
+    service = WebhookService()
+    monkeypatch.setattr(service.mp_service, "validate_webhook_signature", lambda **kwargs: True)
+    monkeypatch.setattr(
+        service.mp_service,
+        "get_payment",
+        lambda data_id, access_token=None: {
+            "id": "pay-ai-cross-flow",
+            "status": "approved",
+            "external_reference": external_reference,
+            "transaction_amount": 1000,
+            "currency_id": "ARS",
+            "metadata": {
+                "company_id": company.id,
+                "plan_id": plan.id,
+                "subscription_id": subscription.id,
+                "user_id": user.id,
+            },
+            "date_approved": "2026-10-09T00:00:00Z",
+            "date_last_updated": "2026-10-09T00:00:00Z",
+        },
+    )
+
+    with pytest.raises(RuntimeError, match="otra modalidad de cobro"):
+        service.process(
+            db_session=db.session,
+            headers={"x-request-id": "rq-ai-cross-flow", "x-signature": "ts=1,v1=abc"},
+            payload={"id": "evt-ai-cross-flow", "type": "payment", "data": {"id": "pay-ai-cross-flow"}},
+        )
+
+    db.session.rollback()
+    payment = Payment.query.filter_by(payment_id="pay-ai-cross-flow").one()
+    assert payment.provider == "mercadopago_ai_subscription"
+    assert payment.subscription_id is None
+    assert subscription.status == SubscriptionService.STATE_ACTIVE
+
