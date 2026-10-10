@@ -64,6 +64,8 @@ def test_render_health_check_targets_the_existing_wsgi_endpoint():
     render = Path("render.yaml").read_text(encoding="utf-8")
     wsgi_source = Path("wsgi.py").read_text(encoding="utf-8")
     assert "healthCheckPath: /health" in render
+    assert "name: stockarmobile-daily-backup" in render
+    assert 'schedule: "15 3 * * *"' in render
     assert 'app.add_url_rule("/health", endpoint="stockarmobile_health"' in wsgi_source
 
 
