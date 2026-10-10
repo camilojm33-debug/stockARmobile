@@ -79,6 +79,79 @@
     </div>
   </div>
 
+  <section class="card app-card mb-4 border {{ 'border-warning' if totals.approved_standard_without_invoice or totals.auto_renew_mismatches or totals.webhooks_needing_attention else 'border-success' }}">
+    <div class="card-header bg-white d-flex flex-wrap align-items-center justify-content-between gap-2">
+      <div>
+        <div class="fw-bold"><i class="bi bi-shield-check me-2"></i>Conciliación de cobros automáticos</div>
+        <div class="small text-muted">Control de consistencia local. No modifica suscripciones ni reintenta cobros.</div>
+      </div>
+      {% if totals.approved_standard_without_invoice or totals.auto_renew_mismatches or totals.webhooks_needing_attention %}
+      <span class="badge text-bg-warning">Requiere revisión</span>
+      {% else %}
+      <span class="badge text-bg-success">Sin alertas detectadas</span>
+      {% endif %}
+    </div>
+    <div class="card-body">
+      <div class="row g-3 mb-3">
+        <div class="col-md-4"><div class="rounded border p-3 h-100"><div class="small text-muted">Pagos Standard aprobados sin factura</div><div class="fs-3 fw-bold">{{ totals.approved_standard_without_invoice }}</div></div></div>
+        <div class="col-md-4"><div class="rounded border p-3 h-100"><div class="small text-muted">Renovaciones automáticas inconsistentes</div><div class="fs-3 fw-bold">{{ totals.auto_renew_mismatches }}</div></div></div>
+        <div class="col-md-4"><div class="rounded border p-3 h-100"><div class="small text-muted">Webhooks que requieren atención</div><div class="fs-3 fw-bold">{{ totals.webhooks_needing_attention }}</div></div></div>
+      </div>
+      {% if missing_invoice_payments %}
+      <h2 class="h6 fw-bold mt-3">Pagos aprobados que no tienen factura asociada</h2>
+      <div class="table-responsive mb-3">
+        <table class="table table-sm align-middle">
+          <thead><tr><th>Empresa</th><th>Suscripción</th><th>Pago Mercado Pago</th><th>Fecha</th><th class="text-end">Importe</th></tr></thead>
+          <tbody>{% for payment in missing_invoice_payments %}
+            <tr>
+              <td>{{ payment.company.name if payment.company else payment.company_id }}</td>
+              <td>#{{ payment.subscription_id or '—' }}</td>
+              <td><code>{{ payment.payment_id or '—' }}</code></td>
+              <td>{{ payment.paid_at.strftime('%d/%m/%Y %H:%M') if payment.paid_at else (payment.created_at.strftime('%d/%m/%Y %H:%M') if payment.created_at else '—') }}</td>
+              <td class="text-end">{{ payment.currency or 'ARS' }} {{ "%.2f"|format(payment.amount or 0) }}</td>
+            </tr>
+          {% endfor %}</tbody>
+        </table>
+      </div>
+      {% endif %}
+      {% if auto_renew_mismatches %}
+      <h2 class="h6 fw-bold mt-3">Renovaciones automáticas con datos inconsistentes</h2>
+      <div class="table-responsive mb-3">
+        <table class="table table-sm align-middle">
+          <thead><tr><th>Empresa</th><th>Suscripción</th><th>Estado local</th><th>Motivo</th></tr></thead>
+          <tbody>{% for item in auto_renew_mismatches %}
+            <tr>
+              <td>{{ item.company.name if item.company else item.subscription.company_id }}</td>
+              <td>#{{ item.subscription.id }}</td>
+              <td>{{ status_labels.get(item.subscription.status, item.subscription.status|replace('_', ' ')|title) }}</td>
+              <td>{{ item.reason }}</td>
+            </tr>
+          {% endfor %}</tbody>
+        </table>
+      </div>
+      {% endif %}
+      {% if webhook_attention %}
+      <h2 class="h6 fw-bold mt-3">Últimos eventos de webhook sin resolver</h2>
+      <div class="table-responsive">
+        <table class="table table-sm align-middle mb-0">
+          <thead><tr><th>Fecha</th><th>Evento</th><th>Estado</th><th>Clave</th></tr></thead>
+          <tbody>{% for event in webhook_attention %}
+            <tr>
+              <td>{{ event.created_at.strftime('%d/%m/%Y %H:%M') if event.created_at else '—' }}</td>
+              <td>{{ event.event_type }}</td>
+              <td><span class="badge text-bg-warning">{{ event.status }}</span></td>
+              <td><code>{{ event.event_key }}</code></td>
+            </tr>
+          {% endfor %}</tbody>
+        </table>
+      </div>
+      {% endif %}
+      {% if not missing_invoice_payments and not auto_renew_mismatches and not webhook_attention %}
+      <p class="small text-muted mb-0">No se detectaron pagos Standard aprobados sin factura, estados de renovación contradictorios ni webhooks pendientes de revisión.</p>
+      {% endif %}
+    </div>
+  </section>
+
   <div class="row g-3">
     <div class="col-lg-7">
       <div class="card app-card h-100">
