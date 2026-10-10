@@ -1850,7 +1850,7 @@ def test_subscription_portal_renders_after_checkout_with_usage_snapshot_dict(sub
 def test_standard_authorized_payment_is_amount_checked_invoiced_and_idempotent(subscription_app, monkeypatch):
     from app import Invoice, utcnow
 
-    company, _, _, subscription = _tenant_with_standard_subscription()
+    company, user, plan, subscription = _tenant_with_standard_subscription()
     external_reference = (
         f"stockarmobile|flow:subscription_auto|company_id:{company.id}|"
         f"subscription_id:{subscription.id}|nonce:standard-payment"
@@ -1891,6 +1891,38 @@ def test_standard_authorized_payment_is_amount_checked_invoiced_and_idempotent(s
     )
     db.session.commit()
 
+    # The generic payment webhook can be delivered for the same MP charge as the
+    # authorized-subscription-payment notification. It must converge on the same
+    # renewal idempotency key instead of extending a second monthly period.
+    monkeypatch.setattr(
+        service.mp_service,
+        "get_payment",
+        lambda _payment_id, **_kwargs: {
+            "id": "pay-standard-authorized-once",
+            "status": "approved",
+            "external_reference": external_reference,
+            "metadata": {
+                "flow": "subscription_auto",
+                "company_id": company.id,
+                "plan_id": plan.id,
+                "user_id": user.id,
+            },
+            "transaction_amount": 1000,
+            "currency_id": "ARS",
+            "payment_method_id": "credit_card",
+            "date_approved": authorized["debit_date"],
+            "date_last_updated": authorized["debit_date"],
+        },
+    )
+    cross_type = service.process(
+        db_session=db.session,
+        headers={"x-request-id": "rq-standard-generic-1", "x-signature": "ts=1,v1=abc"},
+        payload={"id": "evt-standard-generic-1", "type": "payment", "data": {"id": "pay-standard-authorized-once"}},
+    )
+    db.session.commit()
+
+    assert cross_type["status"] == "processed"
+    assert subscription.next_billing_date == first_due
     payment = Payment.query.filter_by(payment_id="pay-standard-authorized-once").one()
     invoice = Invoice.query.filter_by(reference="payment:pay-standard-authorized-once").one()
     assert first["status"] == second["status"] == "processed"
