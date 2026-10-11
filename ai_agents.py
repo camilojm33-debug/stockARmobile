@@ -383,6 +383,16 @@ def vendor_whatsapp_complete():
     business_id = str(payload.get("business_id") or payload.get("businessId") or "").strip()
     if not code or not waba_id or not phone_number_id:
         return jsonify({"success": False, "error": "Meta no devolvió todos los datos necesarios para conectar el número."}), 400
+    # These IDs become Graph API path segments; accept only numeric Meta IDs so
+    # browser-supplied values cannot alter the endpoint path.
+    if (
+        len(code) > 4096
+        or not re.fullmatch(r"\d{1,30}", waba_id)
+        or not re.fullmatch(r"\d{1,30}", phone_number_id)
+    ):
+        return jsonify({"success": False, "error": "Meta devolvió identificadores inválidos. Volvé a iniciar la conexión."}), 400
+    if business_id and not re.fullmatch(r"\d{1,30}", business_id):
+        business_id = ""
 
     app_id, config_id = _embedded_signup_config()
     app_secret = (os.getenv("META_APP_SECRET") or os.getenv("WHATSAPP_APP_SECRET") or "").strip()
