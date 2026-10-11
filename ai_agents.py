@@ -21,6 +21,7 @@ from services.ai_agent.config_service import (
     BUSINESS_AGENT_NAME,
     VENDOR_AGENT_NAME,
     configure_whatsapp_connection,
+    company_for_whatsapp_phone_id,
     encrypt_secret,
     ensure_default_agents,
     get_ai_preferences,
@@ -328,6 +329,7 @@ def _current_active_company():
 
 @bp.get("/vendedor/conectar-whatsapp")
 @tenant_required
+@company_admin_required
 def vendor_whatsapp_connect():
     company = _current_active_company()
     entitlement = can_use_ai_feature(company, "vendedor")
@@ -337,12 +339,28 @@ def vendor_whatsapp_connect():
     if not current_app.config.get("WHATSAPP_VENDOR_UI_ENABLED", False):
         return redirect(url_for("ai_agents.agent", agent="vendedor"))
     whatsapp = get_whatsapp_connection(company)
+    # Never pass a raw access token into a template context. The browser only needs
+    # the connected state and the display fields for this setup screen.
+    connected = bool(
+        whatsapp.get("enabled")
+        and whatsapp.get("phone_number_id")
+        and whatsapp.get("access_token")
+    )
     app_id, config_id = _embedded_signup_config()
+    app_secret = (os.getenv("META_APP_SECRET") or os.getenv("WHATSAPP_APP_SECRET") or "").strip()
+    onboarding_ready = bool(app_id and config_id and app_secret)
+    safe_whatsapp = {
+        "enabled": connected,
+        "phone_number_id": str(whatsapp.get("phone_number_id") or "").strip(),
+        "display_phone_number": str(whatsapp.get("display_phone_number") or "").strip(),
+    }
     return render_template(
         "ai_agents/whatsapp_onboarding.html",
         app_id=app_id,
         config_id=config_id,
-        whatsapp=whatsapp,
+        onboarding_ready=onboarding_ready,
+        connected=connected,
+        whatsapp=safe_whatsapp,
         complete_url=url_for("ai_agents.vendor_whatsapp_complete"),
         vendor_url=url_for("ai_agents.agent", agent="vendedor"),
     )
@@ -350,6 +368,7 @@ def vendor_whatsapp_connect():
 
 @bp.post("/vendedor/conectar-whatsapp/complete")
 @tenant_required
+@company_admin_required
 def vendor_whatsapp_complete():
     if not current_app.config.get("WHATSAPP_VENDOR_UI_ENABLED", False):
         return jsonify({"success": False, "error": "La conexión de WhatsApp todavía no está habilitada en StockARmobile."}), 503
@@ -409,6 +428,26 @@ def vendor_whatsapp_complete():
         waba_phones = (waba_response.json() or {}).get("data") or []
         if not any(str(item.get("id") or "") == phone_number_id for item in waba_phones if isinstance(item, dict)):
             return jsonify({"success": False, "error": "El número no pertenece a la cuenta de WhatsApp seleccionada."}), 400
+
+        # The SuperAdmin acquisition number is a separate system channel and cannot
+        # be attached to a tenant workspace.
+        commercial_phone_id = str(os.getenv("WHATSAPP_COMMERCIAL_PHONE_NUMBER_ID") or "").strip()
+        commercial_enabled = (os.getenv("WHATSAPP_COMMERCIAL_ENABLED") or "0").strip().lower() in {"1", "true", "yes", "on"}
+        if commercial_enabled and commercial_phone_id and phone_number_id == commercial_phone_id:
+            return jsonify({"success": False, "error": "Este número está reservado para el canal comercial de StockArMobile."}), 409
+
+        # Do not let a WhatsApp phone number be associated with two active company
+        # workspaces. The check happens before subscribing/registering the number.
+        existing_company = company_for_whatsapp_phone_id(phone_number_id)
+        if existing_company is not None and int(existing_company.id) != int(company.id):
+            current_app.logger.warning(
+                "WhatsApp connection refused: phone_number_id already belongs to another company; target_company_id=%s",
+                company.id,
+            )
+            return jsonify({
+                "success": False,
+                "error": "Este número de WhatsApp ya está conectado a otra empresa de StockArMobile. Desconectalo allí antes de continuar.",
+            }), 409
 
         subscribe = requests.post(
             _meta_graph_url(f"{waba_id}/subscribed_apps"),
