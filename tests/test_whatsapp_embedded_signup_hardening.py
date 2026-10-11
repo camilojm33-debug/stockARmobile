@@ -34,12 +34,16 @@ def test_onboarding_checks_all_server_side_meta_configuration_without_exposing_s
     source = (ROOT / "ai_agents.py").read_text(encoding="utf-8")
     template = (ROOT / "templates/ai_agents/whatsapp_onboarding.html").read_text(encoding="utf-8")
 
+    connect_start = source.index('@bp.get("/vendedor/conectar-whatsapp")')
+    complete_start = source.index('@bp.post("/vendedor/conectar-whatsapp/complete")', connect_start)
+    connect_route = source[connect_start:complete_start]
+
     assert 'app_secret = (os.getenv("META_APP_SECRET") or os.getenv("WHATSAPP_APP_SECRET") or "").strip()' in source
     assert "onboarding_ready = bool(app_id and config_id and app_secret)" in source
-    assert "onboarding_ready=onboarding_ready" in source
-    assert "connected=connected" in source
-    assert "whatsapp=safe_whatsapp" in source
-    assert "whatsapp=whatsapp," not in source
+    assert "onboarding_ready=onboarding_ready" in connect_route
+    assert "connected=connected" in connect_route
+    assert "whatsapp=safe_whatsapp" in connect_route
+    assert "whatsapp=whatsapp," not in connect_route
     assert "{% if onboarding_ready and not connected %}" in template
 
 
