@@ -2318,3 +2318,43 @@ def test_standard_generic_checkout_rejects_trial_before_calling_mercadopago(subs
     assert response.status_code == 200
     assert "El plan de prueba no admite pagos".encode("utf-8") in response.data
     assert calls == []
+
+
+
+def test_manual_ai_renewal_restores_expired_subscription_and_extends_expiry(subscription_app):
+    from datetime import datetime
+
+    from app import AuditLog
+
+    company, user, _ = _tenant_without_standard_subscription()
+    update_ai_preferences(
+        company,
+        ai_updates={
+            "plan_code": "pro",
+            "status": "VENCIDA",
+            "origin": "MANUAL",
+            "starts_at": "2020-01-01T00:00:00",
+            "ends_at": "2020-02-01T00:00:00",
+            "granted_by_user_id": user.id,
+        },
+    )
+    db.session.commit()
+
+    before = datetime.fromisoformat("2020-02-01T00:00:00")
+    result = AISubscriptionService.renew(company, admin_user_id=user.id, days="30")
+
+    expiry = datetime.fromisoformat(result["ends_at"])
+    now = datetime.utcnow()
+    assert result["status"] == "ACTIVA"
+    assert result["plan_code"] == "pro"
+    assert result["origin"] == "MANUAL"
+    assert expiry > now
+    assert 29 <= (expiry - now).total_seconds() / 86400 <= 30.1
+    assert expiry > before
+
+    audit = AuditLog.query.filter_by(
+        company_id=company.id,
+        action="ai_subscription_renew",
+        entity="company_ai_subscription",
+    ).one()
+    assert audit.user_id == user.id
