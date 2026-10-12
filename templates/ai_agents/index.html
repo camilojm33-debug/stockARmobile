@@ -502,7 +502,7 @@
           {% else %}
             <div class="alert alert-light border mb-3"><strong>WhatsApp todavía no está conectado.</strong><div class="small mt-1">Esto no afecta el Vendedor Web 24/7.</div></div>
           {% endif %}
-          <a class="btn btn-outline-primary" href="{{ url_for('ai_agents.vendor_whatsapp_connect') }}"><i class="bi bi-whatsapp me-1"></i>{% if preferences.whatsapp.enabled %}Administrar WhatsApp{% else %}Conectar WhatsApp{% endif %}</a>
+          <a class="btn btn-outline-primary" href="{{ url_for('ai_agents.vendor_whatsapp_connect') }}"><i class="bi bi-whatsapp me-1"></i>{% if whatsapp_connected %}Administrar WhatsApp{% else %}Conectar WhatsApp{% endif %}</a>
         </div>
       </div>
     </div>
