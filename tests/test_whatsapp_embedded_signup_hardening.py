@@ -71,3 +71,17 @@ def test_whatsapp_number_conflict_is_rejected_before_meta_side_effects():
     assert "Este número de WhatsApp ya está conectado a otra empresa" in route
     assert route.index("existing_company = company_for_whatsapp_phone_id(phone_number_id)") < route.index("subscribe = requests.post(")
     assert "}), 409" in route
+
+ 
+def test_webhook_signature_uses_same_meta_secret_alias_as_embedded_signup():
+    source = (ROOT / "whatsapp_agent.py").read_text(encoding="utf-8")
+    assert 'os.getenv("META_APP_SECRET") or os.getenv("WHATSAPP_APP_SECRET")' in source
+    assert 'if not app_secret:\n        return not bool(current_app.config.get("IS_PRODUCTION_ENV"))' in source
+
+
+def test_vendor_dashboard_connection_badge_requires_decryptable_access_token():
+    source = (ROOT / "ai_agents.py").read_text(encoding="utf-8")
+    template = (ROOT / "templates/ai_agents/index.html").read_text(encoding="utf-8")
+    assert 'whatsapp_connection.get("access_token")' in source
+    assert '"whatsapp_connected": whatsapp_connected' in source
+    assert "{{ 'Conectado' if whatsapp_connected else 'No conectado' }}" in template

@@ -493,16 +493,16 @@
               <h2 class="h5 fw-bold mb-1"><i class="bi bi-whatsapp me-2"></i>WhatsApp</h2>
               <p class="small text-muted mb-0">Canal opcional para atender desde tu número comercial.</p>
             </div>
-            <span class="badge {{ 'text-bg-success' if preferences.whatsapp.enabled and preferences.whatsapp.phone_number_id else 'text-bg-secondary' }}">
-              {{ 'Conectado' if preferences.whatsapp.enabled and preferences.whatsapp.phone_number_id else 'No conectado' }}
+            <span class="badge {{ 'text-bg-success' if whatsapp_connected else 'text-bg-secondary' }}">
+              {{ 'Conectado' if whatsapp_connected else 'No conectado' }}
             </span>
           </div>
-          {% if preferences.whatsapp.enabled and preferences.whatsapp.phone_number_id %}
+          {% if whatsapp_connected %}
             <div class="alert alert-success mb-3"><strong>WhatsApp conectado.</strong><div class="small mt-1">{{ preferences.whatsapp.display_phone_number or 'Número conectado' }}</div></div>
           {% else %}
             <div class="alert alert-light border mb-3"><strong>WhatsApp todavía no está conectado.</strong><div class="small mt-1">Esto no afecta el Vendedor Web 24/7.</div></div>
           {% endif %}
-          <a class="btn btn-outline-primary" href="{{ url_for('ai_agents.vendor_whatsapp_connect') }}"><i class="bi bi-whatsapp me-1"></i>{% if preferences.whatsapp.enabled %}Administrar WhatsApp{% else %}Conectar WhatsApp{% endif %}</a>
+          <a class="btn btn-outline-primary" href="{{ url_for('ai_agents.vendor_whatsapp_connect') }}"><i class="bi bi-whatsapp me-1"></i>{% if whatsapp_connected %}Administrar WhatsApp{% else %}Conectar WhatsApp{% endif %}</a>
         </div>
       </div>
     </div>
