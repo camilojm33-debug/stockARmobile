@@ -2358,3 +2358,114 @@ def test_manual_ai_renewal_restores_expired_subscription_and_extends_expiry(subs
         entity="company_ai_subscription",
     ).one()
     assert audit.user_id == user.id
+
+
+def test_new_commercial_customer_is_provisioned_for_subscription_preapproval_webhook(subscription_app, monkeypatch):
+    from app import SaaSCommercialCheckout, SaaSLead
+
+    admin = User(
+        username="commercial-test-admin",
+        email="commercial-test-admin@example.com",
+        password_hash="x",
+        role="superadmin",
+        active=True,
+    )
+    plan = Plan(
+        code="commercial-auto-test",
+        name="Commercial Auto Test",
+        price=3500,
+        currency="ARS",
+        duration_days=30,
+        active=True,
+    )
+    db.session.add_all([admin, plan])
+    db.session.flush()
+
+    lead = SaaSLead(
+        company_name="Comercio Nuevo Mercado Pago",
+        contact_name="Cliente de prueba",
+        email="nuevo-cliente@example.com",
+        whatsapp="5493624000000",
+        status="propuesta",
+        created_by_user_id=admin.id,
+    )
+    db.session.add(lead)
+    db.session.flush()
+
+    preapproval_id = "commercial-pre-activation-test"
+    external_reference = (
+        f"stockarmobile|flow:commercial_checkout|lead_id:{lead.id}|"
+        f"plan_code:{plan.code}|checkout_id:{preapproval_id}|nonce:test"
+    )
+    checkout = SaaSCommercialCheckout(
+        lead_id=lead.id,
+        plan_id=plan.id,
+        plan_code=plan.code,
+        company_name="Comercio Nuevo Mercado Pago",
+        payer_email="nuevo-cliente@example.com",
+        phone="5493624000000",
+        preapproval_id=preapproval_id,
+        external_reference=external_reference,
+        checkout_url="https://www.mercadopago.com.ar/subscriptions/checkout?preapproval_id=commercial-pre-activation-test",
+        status="pending",
+    )
+    db.session.add(checkout)
+    db.session.commit()
+
+    preapproval = {
+        "id": preapproval_id,
+        "status": "authorized",
+        "external_reference": external_reference,
+        "payer_email": "nuevo-cliente@example.com",
+        "next_payment_date": "2099-11-12T00:00:00Z",
+    }
+    service = WebhookService()
+    monkeypatch.setattr(service.mp_service, "validate_webhook_signature", lambda **kwargs: True)
+    monkeypatch.setattr(service.mp_service, "get_preapproval", lambda data_id: preapproval)
+
+    result = service.process(
+        db_session=db.session,
+        headers={"x-request-id": "rq-commercial-activation", "x-signature": "ts=1,v1=abc"},
+        payload={
+            "id": "evt-commercial-activation-01",
+            "type": "subscription_preapproval",
+            "data": {"id": preapproval_id},
+        },
+    )
+
+    db.session.expire_all()
+    checkout = db.session.get(SaaSCommercialCheckout, checkout.id)
+    company = Company.query.filter_by(name="Comercio Nuevo Mercado Pago").one()
+    user = User.query.filter_by(email="nuevo-cliente@example.com").one()
+    subscription = Subscription.query.filter_by(company_id=company.id).one()
+
+    assert result["status"] == "processed_commercial_checkout"
+    assert result["checkout_status"] == "activated"
+    assert result["company_id"] == company.id
+    assert checkout.status == "activated"
+    assert checkout.company_id == company.id
+    assert checkout.user_id == user.id
+    assert company.active is True
+    assert user.company_id == company.id
+    assert user.role == "admin"
+    assert subscription.plan_id == plan.id
+    assert subscription.status == SubscriptionService.STATE_ACTIVE
+    assert subscription.renewal_enabled is True
+    assert subscription.auto_renew is True
+    assert subscription.mercadopago_subscription_id == preapproval_id
+
+    # A second distinct notification for the same authorized contract must reuse
+    # the same tenant/subscription instead of creating a duplicate account.
+    duplicate_result = service.process(
+        db_session=db.session,
+        headers={"x-request-id": "rq-commercial-activation-retry", "x-signature": "ts=1,v1=abc"},
+        payload={
+            "id": "evt-commercial-activation-02",
+            "type": "subscription_preapproval",
+            "data": {"id": preapproval_id},
+        },
+    )
+    db.session.expire_all()
+    assert duplicate_result["status"] == "processed_commercial_checkout"
+    assert Company.query.filter_by(name="Comercio Nuevo Mercado Pago").count() == 1
+    assert Subscription.query.filter_by(company_id=company.id).count() == 1
