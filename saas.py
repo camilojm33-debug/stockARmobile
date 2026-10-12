@@ -3838,27 +3838,40 @@ def ai_subscriptions_action(company_id):
     if not _require_superadmin_step_up():
         return redirect(url_for("saas.ai_subscription_detail", company_id=company.id))
     action = (request.form.get("action") or "").strip().lower()
+    result = None
     try:
         if action == "assign_plan":
-            AISubscriptionService.assign_plan(company, plan_code=request.form.get("plan_code"), admin_user_id=current_user.id)
+            result = AISubscriptionService.assign_plan(company, plan_code=request.form.get("plan_code"), admin_user_id=current_user.id)
         elif action == "activate":
-            AISubscriptionService.activate(company, admin_user_id=current_user.id)
+            result = AISubscriptionService.activate(company, admin_user_id=current_user.id)
         elif action == "suspend":
-            AISubscriptionService.suspend(company, admin_user_id=current_user.id, reason=request.form.get("reason"))
+            result = AISubscriptionService.suspend(company, admin_user_id=current_user.id, reason=request.form.get("reason"))
         elif action == "reactivate":
-            AISubscriptionService.reactivate(company, admin_user_id=current_user.id)
+            result = AISubscriptionService.reactivate(company, admin_user_id=current_user.id)
         elif action == "cancel":
-            AISubscriptionService.cancel(company, admin_user_id=current_user.id, reason=request.form.get("reason"))
+            result = AISubscriptionService.cancel(company, admin_user_id=current_user.id, reason=request.form.get("reason"))
         elif action == "grant_trial":
-            AISubscriptionService.grant_trial(company, plan_code=request.form.get("plan_code"), days=request.form.get("days"), admin_user_id=current_user.id, reason=request.form.get("reason"))
+            result = AISubscriptionService.grant_trial(company, plan_code=request.form.get("plan_code"), days=request.form.get("days"), admin_user_id=current_user.id, reason=request.form.get("reason"))
         elif action == "renew":
-            AISubscriptionService.renew(company, admin_user_id=current_user.id, days=request.form.get("days"))
+            result = AISubscriptionService.renew(company, admin_user_id=current_user.id, days=request.form.get("days"))
         elif action == "set_expiry":
-            AISubscriptionService.set_expiry(company, ends_at=request.form.get("ends_at"), admin_user_id=current_user.id)
+            result = AISubscriptionService.set_expiry(company, ends_at=request.form.get("ends_at"), admin_user_id=current_user.id)
         else:
             flash("Acción inválida.", "danger")
             return _redirect_back("saas.ai_subscriptions_panel")
-        flash("Suscripción IA actualizada.", "success")
+        final_status = str((result or {}).get("status") or "").strip().upper()
+        if action == "renew":
+            new_expiry = str((result or {}).get("ends_at") or "").strip()
+            if final_status == "ACTIVA" and new_expiry:
+                flash(f"Suscripción IA renovada correctamente. Nuevo vencimiento: {new_expiry}.", "success")
+            elif final_status == "ACTIVA":
+                flash("Suscripción IA renovada correctamente y estado ACTIVA.", "success")
+            else:
+                flash("Se procesó la renovación, pero la suscripción no quedó ACTIVA. Revisá el estado antes de continuar.", "warning")
+        elif action == "assign_plan" and final_status == "VENCIDA":
+            flash("El plan quedó asignado, pero la suscripción continúa VENCIDA. Asignar un plan no renueva la vigencia: usá «Renovar suscripción IA vencida».", "warning")
+        else:
+            flash("Suscripción IA actualizada.", "success")
     except AISubscriptionError as exc:
         flash(str(exc), "danger")
     return _redirect_back("saas.ai_subscriptions_panel")
