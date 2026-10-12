@@ -30,7 +30,9 @@ bp = Blueprint("whatsapp_agent", __name__)
 
 
 def _verify_signature(raw_body: bytes) -> bool:
-    app_secret = (os.getenv("WHATSAPP_APP_SECRET") or "").strip()
+    # Embedded Signup accepts META_APP_SECRET as the canonical Meta app secret;
+    # use the same fallback here so webhook verification matches onboarding.
+    app_secret = (os.getenv("META_APP_SECRET") or os.getenv("WHATSAPP_APP_SECRET") or "").strip()
     if not app_secret:
         return not bool(current_app.config.get("IS_PRODUCTION_ENV"))
     header = request.headers.get("X-Hub-Signature-256", "")
