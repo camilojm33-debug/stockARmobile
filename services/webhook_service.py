@@ -154,7 +154,57 @@ class WebhookService:
             from services.mercadopago_subscription_service import MercadoPagoSubscriptionService
             preapproval = self.mp_service.get_preapproval(data_id)
             ref_parts = self._external_reference_parts(str(preapproval.get("external_reference") or ""))
-            if ref_parts.get("ai_subscription") == "true":
+            if ref_parts.get("flow") == "commercial_checkout":
+                # Mercado Pago may deliver commercial signups as
+                # subscription_preapproval (not only preapproval). This branch is
+                # evaluated first, so provision the tenant here before the generic
+                # subscription synchronizer can discard the commercial reference.
+                from app import SaaSCommercialCheckout
+                from services.saas_commercial_whatsapp import (
+                    activate_commercial_checkout,
+                    get_commercial_company,
+                )
+                from services.ai_agent.whatsapp_service import WhatsAppService
+
+                commercial = activate_commercial_checkout(preapproval=preapproval)
+                if commercial is None:
+                    # Do not acknowledge an unknown commercial contract as
+                    # processed: Mercado Pago can retry after local consistency is
+                    # restored, and no customer should be left with a paid,
+                    # unprovisioned account.
+                    raise RuntimeError(
+                        "Preapproval comercial autorizado sin un checkout local verificable."
+                    )
+                if commercial.get("activation_url"):
+                    checkout_id = commercial.get("checkout_id")
+                    checkout = db_session.get(SaaSCommercialCheckout, checkout_id) if checkout_id else None
+                    if checkout is not None:
+                        message = (
+                            "✅ Pago autorizado. Tu empresa de StockArMobile ya está creada. "
+                            "Completá tu contraseña para ingresar: "
+                            f"{commercial['activation_url']}"
+                        )
+                        try:
+                            WhatsAppService.send_text(
+                                get_commercial_company(),
+                                to=checkout.phone,
+                                body=message,
+                            )
+                        except Exception:
+                            # The account must remain activated even if WhatsApp
+                            # delivery is temporarily unavailable.
+                            from flask import current_app
+                            current_app.logger.exception(
+                                "Checkout comercial activado pero no se pudo enviar el enlace por WhatsApp; checkout_id=%s",
+                                checkout_id,
+                            )
+                result = {
+                    "status": "processed_commercial_checkout",
+                    "event_key": event_key,
+                    "checkout_status": commercial.get("status"),
+                    "company_id": commercial.get("company_id"),
+                }
+            elif ref_parts.get("ai_subscription") == "true":
                 from services.ai_agent.subscription_service import AISubscriptionService
                 ai_company = AISubscriptionService.sync_from_mercadopago(preapproval=preapproval)
                 db_session.flush()
