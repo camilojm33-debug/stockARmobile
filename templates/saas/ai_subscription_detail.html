@@ -49,6 +49,29 @@
     </div>
 
     <div class="col-lg-7">
+      {% if status.status == 'VENCIDA' and status.origin != 'MERCADO_PAGO' %}
+      <div class="card app-card border-warning mb-4">
+        <div class="card-header bg-warning-subtle fw-bold"><i class="bi bi-arrow-repeat me-2"></i>Renovar suscripción IA vencida</div>
+        <div class="card-body">
+          <p class="mb-2">El plan <strong>{{ status.plan_name or status.plan_code }}</strong> sigue asignado, pero su vigencia terminó. Renovar restablece el acceso a los agentes IA; no crea ni cobra una suscripción de Mercado Pago.</p>
+          <form method="post" action="{{ url_for('saas.ai_subscriptions_action', company_id=company.id) }}" class="d-flex flex-wrap gap-2 align-items-end">
+            <input type="hidden" name="action" value="renew">
+            <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+            <input type="hidden" name="next" value="{{ url_for('saas.ai_subscription_detail', company_id=company.id) }}">
+            <div class="flex-grow-1" style="min-width:170px;max-width:240px">
+              <label class="form-label small mb-1" for="aiRenewDaysExpired">Extender por (días)</label>
+              <input id="aiRenewDaysExpired" class="form-control" type="number" name="days" min="1" max="365" value="30" required>
+            </div>
+            <div class="flex-grow-1" style="min-width:230px;max-width:320px">
+              <label class="form-label small mb-1" for="aiRenewStepUpExpired">Verificación de SuperAdmin</label>
+              <input id="aiRenewStepUpExpired" type="password" name="step_up_password" class="form-control" autocomplete="current-password" placeholder="Contraseña si te la solicita">
+            </div>
+            <button class="btn btn-primary" type="submit"><i class="bi bi-check-circle me-1"></i>Renovar y restablecer acceso</button>
+          </form>
+        </div>
+      </div>
+      {% endif %}
+
       <div class="card app-card mb-4">
         <div class="card-header bg-white fw-bold">
           {% if status.origin == 'MERCADO_PAGO' and status.status in ['CANCELADA', 'VENCIDA'] %}
@@ -67,6 +90,8 @@
           </div>
           {% elif status.origin == 'MERCADO_PAGO' %}
           <div class="alert alert-info small mb-3">Esta suscripción se administra mediante Mercado Pago. El cambio actualiza el mismo preapproval recurrente; no se crea un segundo cobro. Si Mercado Pago no confirma el cambio, el plan actual se conserva.</div>
+          {% elif status.status == 'VENCIDA' %}
+          <div class="alert alert-warning small mb-3"><strong>Importante:</strong> asignar o cambiar el plan aquí no renueva la vigencia. Para devolver el acceso, usá la tarjeta <strong>Renovar suscripción IA vencida</strong> que aparece arriba.</div>
           {% endif %}
           <form method="post" action="{{ url_for('saas.ai_subscriptions_action', company_id=company.id) }}" class="row g-2 align-items-end">
             <input type="hidden" name="action" value="assign_plan">
@@ -105,6 +130,8 @@
           {% elif status.status in ['CANCELADA', 'VENCIDA'] and status.origin == 'MERCADO_PAGO' %}
             <div class="small text-muted align-self-center">La suscripción MP terminó. Usá <strong>Tomar control manual</strong> arriba para administrarla como una suscripción manual, o contratá nuevamente por Mercado Pago.</div>
             <a class="btn btn-outline-primary" href="{{ url_for('ai_agents.agent', agent='planes') }}">Contratar nuevamente</a>
+          {% elif status.status == 'VENCIDA' %}
+            <div class="small text-muted align-self-center">La renovación manual está disponible en la tarjeta destacada de arriba.</div>
           {% elif status.status == 'CANCELADA' %}
             <form method="post" action="{{ url_for('saas.ai_subscriptions_action', company_id=company.id) }}"><input type="hidden" name="action" value="activate"><input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
                   <input type="password" name="step_up_password" class="form-control form-control-sm" autocomplete="current-password" placeholder="Contraseña si venció el step-up"><input type="hidden" name="next" value="{{ request.path }}"><button class="btn btn-outline-success" type="submit">Activar</button></form>
@@ -146,6 +173,7 @@
             </div>
           </div>
         </div>
+        {% if status.status != 'VENCIDA' %}
         <div class="col-md-6">
           <div class="card app-card mb-4">
             <div class="card-header bg-white fw-bold">Renovar</div>
@@ -165,6 +193,7 @@
             </div>
           </div>
         </div>
+        {% endif %}
       </div>
 
       <div class="card app-card mb-4">
