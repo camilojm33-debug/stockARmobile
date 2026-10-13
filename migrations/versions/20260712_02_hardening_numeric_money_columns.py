@@ -16,6 +16,14 @@ depends_on = None
 
 
 def _ensure_baseline_schema(bind):
+    """Bootstrap only the pre-Alembic core tables on an empty/partial database.
+
+    Calling MetaData.create_all() without an explicit table list here creates
+    every table known to the *current* application models. Later revisions then
+    try to create their own tables and fail with "table already exists". Keep
+    this bootstrap pinned to the baseline schema; newer tables belong to their
+    own Alembic revisions.
+    """
     inspector = sa.inspect(bind)
     existing = set(inspector.get_table_names())
     required = {"users", "companies", "plans", "payments", "subscriptions"}
@@ -24,7 +32,33 @@ def _ensure_baseline_schema(bind):
 
     from app import db
 
-    db.metadata.create_all(bind=bind)
+    baseline_tables = (
+        "companies",
+        "users",
+        "plans",
+        "subscriptions",
+        "payments",
+        "invoices",
+        "payment_history",
+        "audit_logs",
+        "products",
+        "clients",
+        "suppliers",
+        "purchase_orders",
+        "purchase_items",
+        "sales",
+        "sale_items",
+        "cash_sessions",
+        "cash_movements",
+        "expenses",
+        "product_price_history",
+    )
+    tables = [
+        db.metadata.tables[name]
+        for name in baseline_tables
+        if name in db.metadata.tables
+    ]
+    db.metadata.create_all(bind=bind, tables=tables, checkfirst=True)
 
 
 def _has_column(bind, table_name, column_name):
