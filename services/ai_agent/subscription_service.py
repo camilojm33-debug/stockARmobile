@@ -713,7 +713,7 @@ class AISubscriptionService:
         )
 
     @classmethod
-    def sync_from_mercadopago(cls, *, preapproval: dict):
+    def sync_from_mercadopago(cls, *, preapproval: dict, verified_payment_id: str | None = None):
         """Procesa un preapproval de Mercado Pago proveniente del webhook. Devuelve la Company afectada o None
         si el preapproval no corresponde a una suscripción IA (o no puede verificarse de forma segura)."""
         from app import Company
@@ -774,11 +774,24 @@ class AISubscriptionService:
             current_ai.get("last_payment_id")
             and str(current_ai.get("last_payment_status") or "").strip().lower() == "approved"
         )
-        if new_status == "ACTIVA" and mp_status == "authorized" and not has_verified_paid_payment:
+        # A payment notification may be the only event that repairs a timeout.
+        # Its matching verified payment lets this sync apply the provider's
+        # authoritative next boundary. A separate/stale preapproval notification
+        # must not overwrite a period already credited for the latest payment.
+        verified_payment_matches = bool(
+            verified_payment_id
+            and str(verified_payment_id).strip()
+            == str(current_ai.get("last_payment_id") or "").strip()
+            and str(current_ai.get("last_payment_status") or "").strip().lower() == "approved"
+        )
+        if new_status == "ACTIVA" and mp_status == "authorized" and (
+            not has_verified_paid_payment or verified_payment_matches
+        ):
             next_payment = (preapproval or {}).get("next_payment_date")
             parsed_next_payment = _parse_dt(next_payment)
             if parsed_next_payment is not None:
                 new_fields["ends_at"] = parsed_next_payment.isoformat()
+                new_fields["mercadopago_next_payment_date"] = parsed_next_payment.isoformat()
         if (
             str(current_ai.get("last_payment_status") or "").strip().lower() in {"refunded", "charged_back"}
             and str(current_ai.get("last_payment_id") or "").strip()
