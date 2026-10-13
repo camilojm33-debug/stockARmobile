@@ -333,7 +333,14 @@ def add_security_headers(response):
 
 @login_manager.user_loader
 def load_user(user_id):
-    return db.session.get(User, int(user_id))
+    """Load only currently active accounts so revocation applies to existing sessions."""
+    try:
+        user = db.session.get(User, int(user_id))
+    except (TypeError, ValueError):
+        return None
+    if user is None or not bool(getattr(user, "active", True)):
+        return None
+    return user
 
 
 def get_current_company_id():
