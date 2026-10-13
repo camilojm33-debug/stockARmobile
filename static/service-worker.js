@@ -82,7 +82,7 @@ function inferOperationType(pathname, method) {
 function openOfflineDB() {
   return new Promise((resolve, reject) => {
     const request = indexedDB.open(DB_NAME, DB_VERSION);
-    request.onupgradeneeded = () => {
+    request.onupgradeneeded = event => {
       const db = request.result;
       if (!db.objectStoreNames.contains(REQUEST_STORE)) {
         db.createObjectStore(REQUEST_STORE, { keyPath: 'id', autoIncrement: true });
@@ -92,6 +92,12 @@ function openOfflineDB() {
       }
       if (!db.objectStoreNames.contains(META_STORE)) {
         db.createObjectStore(META_STORE, { keyPath: 'key' });
+      }
+      // Snapshots from old schema versions were keyed only by URL, not by
+      // tenant/user. They are cache data, so drop them during migration rather
+      // than allow an old private response to remain in IndexedDB.
+      if (event.oldVersion > 0 && event.oldVersion < DB_VERSION) {
+        event.target.transaction.objectStore(SNAPSHOT_STORE).clear();
       }
     };
     request.onsuccess = () => resolve(request.result);

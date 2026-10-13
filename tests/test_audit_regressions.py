@@ -196,3 +196,5 @@ def test_service_worker_never_caches_private_html_and_namespaces_api_snapshots()
     assert "response.ok && !contentType.includes('text/html')" in worker
     assert "identitySnapshotKey(request.url, identity)" in worker
     assert "sameOfflineIdentity(snapshot.identity, identity)" in worker
+    assert "if (event.oldVersion > 0 && event.oldVersion < DB_VERSION)" in worker
+    assert "event.target.transaction.objectStore(SNAPSHOT_STORE).clear()" in worker
