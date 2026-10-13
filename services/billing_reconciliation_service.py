@@ -215,13 +215,10 @@ class BillingReconciliationService:
             payment_info.get("status") or authorized.get("summarized") or "pending"
         ).strip().lower()
         if payment_status != "approved":
-            if payment_status in {"rejected", "cancelled", "canceled", "refunded", "charged_back"}:
-                event.status = "reconciliation_not_approved"
-                db.session.commit()
-                return "ignored"
-            # Authorization/payment may still be settling. It remains retryable
-            # until a later provider read confirms a terminal or approved state.
-            event.status = "retry"
+            # This persisted notification only describes this specific delivery.
+            # A subsequent state change arrives as a new webhook event. Do not
+            # poll a pending/declined payment forever or let it starve real repairs.
+            event.status = "reconciliation_not_approved"
             db.session.commit()
             return "ignored"
 
