@@ -11,6 +11,7 @@ from reportlab.pdfgen import canvas
 from openpyxl import Workbook
 from openpyxl.styles import Font, PatternFill
 from app import tenant_required
+from services.sales_calculation_service import CONFIRMED_SALE_STATUSES
 from stockarmobile.helpers.dates import local_day_bounds_utc_naive, local_today, format_local_datetime, parse_date_yyyy_mm_dd
 
 bp = Blueprint("reports", __name__)
@@ -54,7 +55,12 @@ def index():
     def _apply_date(q, col):
         return q.filter(col >= start_utc, col < end_utc)
 
-    sales_total = _apply_date(scope_query_to_company(db.session.query(db.func.coalesce(db.func.sum(Sale.total_amount), 0)), Sale), Sale.date).scalar() or 0
+    sales_total = _apply_date(
+        scope_query_to_company(
+            db.session.query(db.func.coalesce(db.func.sum(Sale.total_amount), 0)), Sale
+        ).filter(db.func.lower(db.func.trim(Sale.status)).in_(CONFIRMED_SALE_STATUSES)),
+        Sale.date,
+    ).scalar() or 0
     purchases_total = _apply_date(scope_query_to_company(db.session.query(db.func.coalesce(db.func.sum(PurchaseOrder.total_amount), 0)), PurchaseOrder), PurchaseOrder.date).scalar() or 0
     expenses_total = _apply_date(scope_query_to_company(db.session.query(db.func.coalesce(db.func.sum(Expense.amount), 0)), Expense), Expense.date).scalar() or 0
     return render_template(
@@ -72,13 +78,17 @@ def _balance_rows(start_value=None, end_value=None):
     from app import Expense, PurchaseOrder, Sale, db, scope_query_to_company
     start_utc, end_utc, _, _, _ = _local_date_range(start_value, end_value)
 
-    def total(model, amount_column, date_column):
+    def total(model, amount_column, date_column, *, confirmed_sales_only=False):
         query = scope_query_to_company(
             db.session.query(db.func.coalesce(db.func.sum(amount_column), 0)), model
         ).filter(date_column >= start_utc, date_column < end_utc)
+        if confirmed_sales_only:
+            query = query.filter(
+                db.func.lower(db.func.trim(Sale.status)).in_(CONFIRMED_SALE_STATUSES)
+            )
         return float(query.scalar() or 0)
 
-    sales_total = total(Sale, Sale.total_amount, Sale.date)
+    sales_total = total(Sale, Sale.total_amount, Sale.date, confirmed_sales_only=True)
     purchases_total = total(PurchaseOrder, PurchaseOrder.total_amount, PurchaseOrder.date)
     expenses_total = total(Expense, Expense.amount, Expense.date)
     return [("Ventas", sales_total), ("Compras", purchases_total), ("Gastos", expenses_total), ("Resultado", sales_total - purchases_total - expenses_total)]
@@ -255,7 +265,15 @@ def _rows_for(kind):
     from sqlalchemy.orm import selectinload
     start_utc, end_utc, _, _, tz_name = _local_date_range(request.args.get("desde"), request.args.get("hasta"))
     if kind == "ventas":
-        query = _date_filter(scope_query_to_company(Sale.query.options(selectinload(Sale.items).selectinload(SaleItem.product)).order_by(Sale.date.desc()), Sale), Sale.date, start_utc, end_utc)
+        query = _date_filter(
+            scope_query_to_company(
+                Sale.query.options(selectinload(Sale.items).selectinload(SaleItem.product)).order_by(Sale.date.desc()),
+                Sale,
+            ).filter(db.func.lower(db.func.trim(Sale.status)).in_(CONFIRMED_SALE_STATUSES)),
+            Sale.date,
+            start_utc,
+            end_utc,
+        )
         return [["ID", "Cliente", "Total", "Fecha", "Unidades"]] + [[s.id, s.customer or "", s.total_amount or 0, format_local_datetime(s.date, tz_name), "; ".join(f"{item.product.name if item.product else f'Producto {item.product_id}'} ({item.product.unit_measure if item.product else 'u'}) x {item.quantity:g}" for item in s.items)] for s in query.all()], "ventas"
     if kind == "compras":
         query = _date_filter(scope_query_to_company(PurchaseOrder.query.order_by(PurchaseOrder.date.desc()), PurchaseOrder), PurchaseOrder.date, start_utc, end_utc)
