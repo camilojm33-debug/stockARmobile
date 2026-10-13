@@ -1,8 +1,9 @@
-"""Idempotent repair of interrupted Mercado Pago AI-subscription webhooks.
+"""Recover interrupted Mercado Pago renewal webhooks for StockArMobile subscriptions.
 
-Only events already persisted after the application's webhook signature check are
-eligible. The worker re-fetches the authorized-payment resource from Mercado Pago
-and re-validates its tenant/preapproval binding before changing any entitlement.
+Only persisted delivery records are eligible. The worker re-fetches each provider
+resource and re-validates tenant, preapproval and payment bindings before applying
+entitlements. It handles AI and primary SaaS recurring subscriptions, not one-off
+QR/checkout flows or every general billing reconciliation scenario.
 """
 from __future__ import annotations
 
@@ -20,7 +21,7 @@ _LOCAL_RUN_LOCK = Lock()
 
 
 class BillingReconciliationService:
-    """Repair incomplete AI recurring-payment webhook processing safely."""
+    """Repair eligible interrupted recurring-payment webhook processing safely."""
 
     ADVISORY_LOCK_KEY = 7301000101
     RETRYABLE_EVENT_STATUSES = ("", "processing", "failed", "error", "retry", "pending")
