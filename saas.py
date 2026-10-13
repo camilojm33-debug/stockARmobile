@@ -4418,14 +4418,26 @@ def _billing_reconciliation_snapshot(*, now=None, limit=50):
         ).strip()
         mp_status = str(metadata.get("mercadopago_status") or "").strip().lower()
 
-        if checkout_method == "qr" and not preapproval_id and (
-            bool(subscription.renewal_enabled) or bool(subscription.auto_renew)
-        ):
+        auto_flags = bool(subscription.renewal_enabled) or bool(subscription.auto_renew)
+        cancellation_status = str(
+            metadata.get("mercadopago_cancellation_status") or ""
+        ).strip().lower()
+        if checkout_method == "qr" and not preapproval_id and auto_flags:
             add_issue(
                 severity="danger",
                 title="QR marcado como renovación automática",
                 company_id=subscription.company_id,
                 detail="La suscripción proviene de un checkout QR sin contrato recurrente, pero tiene activada la renovación local.",
+                reference=f"Suscripción #{subscription.id}",
+                created_at=subscription.updated_at or subscription.created_at,
+                subscription_id=subscription.id,
+            )
+        elif not preapproval_id and auto_flags:
+            add_issue(
+                severity="danger",
+                title="Renovación automática sin contrato de Mercado Pago",
+                company_id=subscription.company_id,
+                detail="Las banderas de renovación están activas, pero no existe un identificador de preapproval verificable. No se asumirá que hay cobro mensual.",
                 reference=f"Suscripción #{subscription.id}",
                 created_at=subscription.updated_at or subscription.created_at,
                 subscription_id=subscription.id,
@@ -4464,6 +4476,24 @@ def _billing_reconciliation_snapshot(*, now=None, limit=50):
                 company_id=subscription.company_id,
                 detail=f"Mercado Pago informa '{mp_status}', pero la renovación automática sigue activa localmente.",
                 reference=f"Suscripción #{subscription.id}",
+                created_at=subscription.updated_at or subscription.created_at,
+                subscription_id=subscription.id,
+            )
+
+        if (
+            cancellation_status in {"cancelled", "canceled", "expired"}
+            and mp_status not in {"cancelled", "canceled", "expired", "rejected"}
+        ):
+            add_issue(
+                severity="warning",
+                title="Estado local del contrato Mercado Pago inconsistente",
+                company_id=subscription.company_id,
+                detail=(
+                    f"La metadata registra una cancelación confirmada ('{cancellation_status}'), "
+                    f"pero el estado principal del contrato figura como '{mp_status or 'vacío'}'. "
+                    "Verificar el estado remoto antes de cambiar banderas o fechas."
+                ),
+                reference=f"MP preapproval {preapproval_id or 'sin identificador'}",
                 created_at=subscription.updated_at or subscription.created_at,
                 subscription_id=subscription.id,
             )
@@ -4843,7 +4873,10 @@ def subscriptions_create():
     status = _normalized_subscription_status(request.form.get("status"))
     start_date = _parse_dt(request.form.get("start_date")) or utcnow()
     next_billing_date = _parse_dt(request.form.get("next_billing_date"))
-    renewal_enabled = (request.form.get("renewal_enabled") or "1") == "1"
+    # This administrative form cannot create a Mercado Pago contract. Any
+    # subscription created here is manual until the payer completes a provider
+    # checkout and a verified webhook stores the preapproval ID.
+    renewal_enabled = False
 
     company = Company.query.filter_by(id=company_id).first()
     plan = Plan.query.filter_by(id=plan_id).first()
@@ -4917,6 +4950,17 @@ def subscriptions_update(subscription_id):
     metadata_before_edit = SubscriptionService._metadata_dict(subscription)
     paid_until_before_edit = subscription.next_billing_date or subscription.ends_at
     preapproval_before_edit = str(metadata_before_edit.get("mercadopago_preapproval_id") or "").strip()
+
+    if renewal_enabled and (
+        SubscriptionService.is_manual_subscription(subscription)
+        or not preapproval_before_edit
+    ):
+        flash(
+            "No se puede marcar una suscripción como automática sin un contrato de Mercado Pago verificado. "
+            "Las suscripciones creadas manualmente deben quedar en modo Manual.",
+            "warning",
+        )
+        return _redirect_back("saas.subscriptions_panel")
 
     try:
         # IMPORTANTE: "Modificar" siempre debe hacer UPDATE sobre esta misma fila de Subscription
@@ -5216,6 +5260,15 @@ def subscriptions_action(subscription_id):
                 ),
             )
         elif action == "renew_now":
+            metadata = SubscriptionService._metadata_dict(subscription)
+            preapproval_id = str(metadata.get("mercadopago_preapproval_id") or "").strip()
+            if preapproval_id and not SubscriptionService.is_manual_subscription(subscription):
+                flash(
+                    "Esta suscripción está vinculada a Mercado Pago. Usá Reactivar para comprobar el contrato "
+                    "y, si hace falta, completar una nueva autorización; no se puede renovarla manualmente.",
+                    "warning",
+                )
+                return _redirect_back("saas.subscriptions_panel")
             SubscriptionService.run_command(
                 db.session,
                 SubscriptionService.RenewSubscriptionCommand(
@@ -5225,6 +5278,7 @@ def subscriptions_action(subscription_id):
                     actor_role=current_user.role,
                     origin="superadmin",
                     ip_address=request.remote_addr,
+                    renewal_enabled=False,
                     idempotency_key=(
                         f"saas-action-renew:{subscription.company_id}:{subscription.id}:"
                         f"{subscription.status}:{subscription.next_billing_date.isoformat() if subscription.next_billing_date else 'none'}"

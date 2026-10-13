@@ -71,10 +71,14 @@
           <input class="form-control" type="datetime-local" name="next_billing_date">
         </div>
         <div class="col-md-1">
-          <select class="form-select" name="renewal_enabled">
-            <option value="1" selected>Auto</option>
-            <option value="0">Manual</option>
+          <input type="hidden" name="renewal_enabled" value="0">
+          <select class="form-select" aria-label="Renovación" disabled>
+            <option selected>Manual</option>
           </select>
+        </div>
+        <div class="col-12 small text-muted">
+          Las suscripciones creadas desde este formulario son manuales. La renovación automática sólo se habilita
+          después de completar un checkout de Mercado Pago y validar el contrato recibido por webhook.
         </div>
         <div class="col-12 d-grid d-md-flex justify-content-md-end">
           <button class="btn btn-primary" type="submit">Crear suscripción</button>

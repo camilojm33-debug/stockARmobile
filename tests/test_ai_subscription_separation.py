@@ -2201,6 +2201,29 @@ def test_billing_reconciliation_flags_missing_invoice_and_legacy_qr_autorenew(su
     assert "QR marcado como renovación automática" in titles
     assert "Suscripción IA autorizada sin contrato registrado" in titles
 
+    # Older rows may lack checkout_method entirely; local Auto flags still must
+    # never be treated as proof that Mercado Pago has an active contract.
+    from app import Subscription
+    legacy = Subscription(
+        company_id=company.id,
+        plan_id=subscription.plan_id,
+        status="active",
+        start_date=utcnow() - timedelta(days=10),
+        starts_at=utcnow() - timedelta(days=10),
+        next_billing_date=utcnow() + timedelta(days=20),
+        ends_at=utcnow() + timedelta(days=20),
+        renewal_enabled=True,
+        auto_renew=True,
+        metadata_json="{}",
+    )
+    db.session.add(legacy)
+    db.session.commit()
+    legacy_titles = {
+        issue["title"] for issue in _billing_reconciliation_snapshot(now=utcnow())
+        if issue.get("subscription_id") == legacy.id
+    }
+    assert "Renovación automática sin contrato de Mercado Pago" in legacy_titles
+
     SubscriptionService._set_metadata(
         subscription,
         {
