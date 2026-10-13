@@ -404,9 +404,14 @@ class WebhookService:
 
                 previous_payment_status = str(getattr(payment, "status", "") or "").strip().lower()
                 persisted_status = payment_status
-                # A delayed pending/rejected delivery must not overwrite a charge
-                # that has already been verified as approved.
-                if previous_payment_status == "approved" and payment_status not in {"refunded", "charged_back"}:
+                # Statuses must not move backward when providers deliver distinct
+                # notifications out of order. Reversals can supersede approval,
+                # but a delayed approval can never undo a refund/chargeback.
+                if previous_payment_status in {"refunded", "charged_back"} and payment_status not in {"refunded", "charged_back"}:
+                    persisted_status = previous_payment_status
+                elif previous_payment_status == "refund_pending" and payment_status not in {"refunded", "charged_back"}:
+                    persisted_status = "refund_pending"
+                elif previous_payment_status == "approved" and payment_status not in {"refunded", "charged_back"}:
                     persisted_status = "approved"
 
                 paid_at = (
@@ -448,6 +453,26 @@ class WebhookService:
                 db_session.flush()
 
                 if payment.status == "approved":
+                    from services.mercadopago_subscription_service import MercadoPagoSubscriptionService
+
+                    # The payment and preapproval notifications can arrive in
+                    # either order. Query MP's current contract state and persist
+                    # its next billing boundary before renewing locally, so the
+                    # same payment never adds an extra plan duration.
+                    preapproval = self.mp_service.get_preapproval(preapproval_id)
+                    if str(preapproval.get("id") or "").strip() != preapproval_id:
+                        raise RuntimeError("Mercado Pago devolvió una autorización distinta para el pago recurrente.")
+                    remote_reference = str(preapproval.get("external_reference") or "").strip()
+                    expected_reference = str(
+                        SubscriptionService._metadata_dict(subscription).get("mercadopago_external_reference") or ""
+                    ).strip()
+                    if expected_reference and remote_reference and expected_reference != remote_reference:
+                        raise RuntimeError("La autorización de Mercado Pago no coincide con la referencia de la suscripción.")
+                    MercadoPagoSubscriptionService.sync_preapproval(
+                        db_session=db_session,
+                        preapproval=preapproval,
+                    )
+                    remote_contract_status = str(preapproval.get("status") or "").strip().lower()
                     SubscriptionService.run_command(
                         db_session,
                         SubscriptionService.RenewSubscriptionCommand(
@@ -455,7 +480,7 @@ class WebhookService:
                             subscription_id=subscription.id,
                             payment_status="approved",
                             paid_at=payment.paid_at,
-                            renewal_enabled=True,
+                            renewal_enabled=(remote_contract_status == "authorized"),
                             actor_user_id=payment.user_id,
                             actor_role="system",
                             origin="subscription_authorized_payment",
