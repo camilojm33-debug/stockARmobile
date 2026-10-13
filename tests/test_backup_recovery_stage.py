@@ -262,3 +262,49 @@ def test_full_backup_restore_round_trip_preserves_sales_purchase_and_cash_relati
         assert result["counts_after_restore"]["cash_sessions"] == 1
         assert result["counts_after_restore"]["cash_movements"] == 1
         assert result["counts_after_restore"]["expenses"] == 1
+
+
+def test_backup_creation_refuses_payload_over_import_size_limit(app, monkeypatch, tmp_path):
+    import pytest
+    from app import BackupLog
+
+    monkeypatch.setenv("BACKUP_UPLOAD_DIR", str(tmp_path / "backup-size-qa"))
+    monkeypatch.setitem(app.config, "BACKUP_MAX_UNCOMPRESSED_BYTES", 128)
+    with app.app_context():
+        company = Company(name="Backup size QA", active=True)
+        db.session.add(company)
+        db.session.commit()
+        company_id = company.id
+        monkeypatch.setattr(
+            BackupService,
+            "_payload_for_company",
+            staticmethod(lambda _company_id: {
+                "schema_version": 2,
+                "system_version": "qa",
+                "company_id": company_id,
+                "payload": "x" * 500,
+            }),
+        )
+
+        with pytest.raises(ValueError, match="sin comprimir"):
+            BackupService.create_manual_backup(company_id, user_id=None)
+
+        db.session.rollback()
+        assert BackupLog.query.filter_by(company_id=company_id).count() == 0
+        files_left = list((tmp_path / "backup-size-qa").rglob("*"))
+        assert not [path for path in files_left if path.is_file()]
+
+
+def test_backup_creation_refuses_compressed_payload_over_limit(app, monkeypatch):
+    import pytest
+
+    monkeypatch.setitem(app.config, "BACKUP_MAX_UNCOMPRESSED_BYTES", 1024 * 1024)
+    monkeypatch.setitem(app.config, "BACKUP_MAX_COMPRESSED_BYTES", 64)
+    with app.app_context():
+        with pytest.raises(ValueError, match="comprimido"):
+            BackupService._encode_backup_payload({
+                "schema_version": 2,
+                "system_version": "qa",
+                "company_id": 1,
+                "records": list(range(1000)),
+            })
