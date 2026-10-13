@@ -683,11 +683,15 @@ class AISubscriptionService:
             except Exception:
                 credited_ids = []
             if normalized_id not in credited_ids:
-                current_end = _parse_dt(current.get("ends_at"))
+                provider_end = _parse_dt(current.get("mercadopago_next_payment_date"))
+                current_end = provider_end or _parse_dt(current.get("ends_at"))
                 paid_period_end = paid_timestamp + timedelta(days=30)
-                # MP's next_payment_date may already represent this paid period.
-                # Keep the later of the verified period end and the known end date.
-                if current_end is None or current_end < paid_period_end:
+                # If the preapproval webhook already supplied the provider's
+                # current billing boundary, use it exactly: adding a local
+                # 30-day duration can shift a monthly subscription by a day.
+                if provider_end is not None:
+                    fields["ends_at"] = provider_end.isoformat()
+                elif current_end is None or current_end < paid_period_end:
                     fields["ends_at"] = paid_period_end.isoformat()
                 credited_ids = (credited_ids + [normalized_id])[-100:]
                 fields["mercadopago_paid_payment_ids"] = credited_ids
