@@ -165,8 +165,11 @@ class BillingService:
         return f"data:image/png;base64,{encoded}"
 
     @staticmethod
-    def cancel_subscription(db_session, *, subscription, user_id: int | None = None):
-        """Cancel Mercado Pago recurring billing and keep the current paid period."""
+    def cancel_subscription(
+        db_session, *, subscription, user_id: int | None = None,
+        cancel_at_period_end: bool = True,
+    ):
+        """Cancel MP recurring billing and apply the caller's explicit access policy."""
         metadata = SubscriptionService._metadata_dict(subscription)
         preapproval_id = str(metadata.get("mercadopago_preapproval_id") or "").strip()
         remote_status = "not_configured"
@@ -182,7 +185,7 @@ class BillingService:
                     raise RuntimeError(
                         f"Mercado Pago no confirmó la cancelación de la suscripción automática (estado: {remote_status or 'desconocido'})."
                     )
-            elif remote_status not in {"canceled", "cancelled", "expired"}:
+            elif remote_status not in {"canceled", "cancelled", "expired", "rejected"}:
                 raise RuntimeError(
                     f"No se puede cancelar la suscripción automática de Mercado Pago porque su estado actual es '{remote_status or 'desconocido'}'."
                 )
@@ -195,7 +198,7 @@ class BillingService:
                 actor_user_id=user_id,
                 origin="portal",
                 idempotency_key=BillingService._subscription_action_key("cancel", subscription, user_id),
-                cancel_at_period_end=True,
+                cancel_at_period_end=bool(cancel_at_period_end),
             ),
         )
         SubscriptionService._set_metadata(
@@ -211,13 +214,68 @@ class BillingService:
             company_id=subscription.company_id,
             subscription_id=subscription.id,
             event="subscription_cancel_requested",
-            detail="Mercado Pago cancelado y renovación local deshabilitada al finalizar el periodo vigente.",
+            detail=(
+                "Mercado Pago cancelado; el acceso pagado se conserva hasta el vencimiento."
+                if cancel_at_period_end
+                else "Contrato recurrente de Mercado Pago cancelado por administración; acceso local bloqueado según la acción administrativa."
+            ),
             source="portal",
             status="cancelled",
             payload={"preapproval_id": preapproval_id, "remote_status": remote_status},
             user_id=user_id,
         )
         return subscription
+
+    @staticmethod
+    def suspend_subscription(db_session, *, subscription, user_id: int | None = None, reason: str = "superadmin_suspend"):
+        """Pause MP recurring billing before applying an intentional local suspension."""
+        metadata = SubscriptionService._metadata_dict(subscription)
+        preapproval_id = str(metadata.get("mercadopago_preapproval_id") or "").strip()
+        remote_status = "not_configured"
+        if preapproval_id:
+            mp = MercadoPagoService()
+            remote = mp.get_preapproval(preapproval_id)
+            if str(remote.get("id") or "").strip() != preapproval_id:
+                raise RuntimeError("Mercado Pago devolvió una autorización diferente a la registrada.")
+            remote_status = str(remote.get("status") or "").strip().lower()
+            if remote_status in {"authorized", "pending", "in_process"}:
+                remote = mp.update_preapproval(preapproval_id, {"status": "paused"})
+                if str(remote.get("id") or "").strip() != preapproval_id:
+                    raise RuntimeError("Mercado Pago devolvió una autorización diferente al suspender.")
+                remote_status = str(remote.get("status") or "").strip().lower()
+            if remote_status not in {"paused", "canceled", "cancelled", "expired", "rejected"}:
+                raise RuntimeError(
+                    f"Mercado Pago no confirmó la suspensión del contrato recurrente (estado: {remote_status or 'desconocido'})."
+                )
+
+        result = SubscriptionService.run_command(
+            db_session,
+            SubscriptionService.ExpireSubscriptionCommand(
+                company_id=subscription.company_id,
+                subscription_id=subscription.id,
+                actor_user_id=user_id,
+                actor_role="superadmin",
+                origin="superadmin",
+                idempotency_key=BillingService._subscription_action_key("suspend", subscription, user_id),
+                reason=reason,
+            ),
+        )
+        SubscriptionService._set_metadata(
+            subscription,
+            {"mercadopago_suspension_status": remote_status, "mercadopago_suspended_by_user_id": user_id},
+        )
+        NotificationService.record_event(
+            db_session,
+            company_id=subscription.company_id,
+            subscription_id=subscription.id,
+            event="subscription_suspended",
+            detail="Suscripción suspendida por administración; estado recurrente verificado en Mercado Pago.",
+            source="superadmin",
+            status=remote_status,
+            payload={"preapproval_id": preapproval_id or None, "remote_status": remote_status, "reason": reason},
+            user_id=user_id,
+        )
+        return result
 
     @staticmethod
     def _subscription_action_key(action: str, subscription, user_id: int | None = None) -> str:
