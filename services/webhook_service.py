@@ -893,6 +893,18 @@ class WebhookService:
                     return {"status": "stale_ignored", "event_key": event_key}
 
                 payment.preference_id = str(payment_data.get("order", {}).get("id") or payment.preference_id or "")
+
+                # Preserve a verified payment outcome against delayed notifications.
+                # Reversals are the only allowed transitions away from approval.
+                # Conversely, retain a canceled draft's late approval so the
+                # canceled-checkout branch below can request the required refund.
+                incoming_status = str(payment_status or "pending").strip().lower()
+                if previous_payment_status in {"refunded", "charged_back"} and incoming_status not in {"refunded", "charged_back"}:
+                    payment_status = previous_payment_status
+                elif previous_payment_status == "refund_pending" and incoming_status not in {"refunded", "charged_back"}:
+                    payment_status = "refund_pending"
+                elif previous_payment_status == "approved" and incoming_status not in {"refunded", "charged_back"}:
+                    payment_status = "approved"
                 payment.status = payment_status
                 payment.amount = float(payment_data.get("transaction_amount") or payment.amount or 0)
                 payment.currency = payment_data.get("currency_id") or payment.currency or "ARS"
@@ -1141,7 +1153,48 @@ class WebhookService:
                     elif normalized_status == "cancelled":
                         SubscriptionService.run_command(db_session, SubscriptionService.CancelSubscriptionCommand(company_id=company.id, subscription_id=subscription.id, actor_user_id=payment.user_id, actor_role="system", origin="webhook", idempotency_key=f"webhook-cancel:{event_key}:{subscription.id}", cancel_at_period_end=False))
                     elif normalized_status in {"expired", "rejected"}:
-                        SubscriptionService.run_command(db_session, SubscriptionService.ExpireSubscriptionCommand(company_id=company.id, subscription_id=subscription.id, actor_user_id=payment.user_id, actor_role="system", origin="webhook", idempotency_key=f"webhook-expire:{event_key}:{subscription.id}", reason=f"webhook_{normalized_status}"))
+                        # A failed attempt to charge the next period must not
+                        # revoke an already-paid active period.
+                        paid_until = subscription.next_billing_date or subscription.ends_at
+                        if paid_until is not None and getattr(paid_until, "tzinfo", None) is not None:
+                            paid_until = paid_until.astimezone(timezone.utc).replace(tzinfo=None)
+                        now_utc = datetime.now(timezone.utc).replace(tzinfo=None)
+                        current_state = SubscriptionService._normalize_state(subscription.status)
+                        has_paid_access = bool(
+                            current_state in SubscriptionService.ACTIVE_STATUSES
+                            and paid_until is not None
+                            and paid_until > now_utc
+                        )
+                        if not has_paid_access:
+                            SubscriptionService.run_command(
+                                db_session,
+                                SubscriptionService.ExpireSubscriptionCommand(
+                                    company_id=company.id,
+                                    subscription_id=subscription.id,
+                                    actor_user_id=payment.user_id,
+                                    actor_role="system",
+                                    origin="webhook",
+                                    idempotency_key=f"webhook-expire:{event_key}:{subscription.id}",
+                                    reason=f"webhook_{normalized_status}",
+                                ),
+                            )
+                        else:
+                            NotificationService.record_event(
+                                db_session,
+                                company_id=company.id,
+                                payment_id=payment.id,
+                                subscription_id=subscription.id,
+                                event="renewal_payment_failed_paid_period_preserved",
+                                detail=(
+                                    f"El intento de renovación quedó {normalized_status}; "
+                                    f"se conserva el acceso pagado hasta {paid_until.isoformat()}."
+                                ),
+                                source="mercadopago",
+                                status=normalized_status,
+                                event_id=f"renewal-failed-paid-period:{payment.payment_id}:{normalized_status}",
+                                payload={"payment_id": payment.payment_id, "paid_until": paid_until.isoformat()},
+                                user_id=payment.user_id,
+                            )
                     elif normalized_status == "charged_back":
                         SubscriptionService.run_command(db_session, SubscriptionService.ExpireSubscriptionCommand(company_id=company.id, subscription_id=subscription.id, actor_user_id=payment.user_id, actor_role="system", origin="webhook", idempotency_key=f"webhook-suspend:{event_key}:{subscription.id}", reason="webhook_suspend"))
                     else:
