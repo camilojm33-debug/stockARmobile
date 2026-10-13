@@ -6,7 +6,7 @@ import hashlib
 import json
 import logging
 from dataclasses import asdict, dataclass, field
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from time import perf_counter
 from typing import Any
 
@@ -817,8 +817,9 @@ class SubscriptionService:
         duration = int(subscription.plan.duration_days if subscription.plan else 30)
         current_due = subscription.next_billing_date or subscription.ends_at
         recurring_mp = bool(
-            command.renewal_enabled is True
-            and str(metadata.get("mercadopago_preapproval_id") or "").strip()
+            str(metadata.get("mercadopago_preapproval_id") or "").strip()
+            and str(command.origin or "").strip().lower()
+            in {"webhook", "subscription_authorized_payment"}
             and str(metadata.get("checkout_method") or "automatic").strip().lower() != "qr"
         )
 
@@ -826,7 +827,7 @@ class SubscriptionService:
             if not value:
                 return None
             if getattr(value, "tzinfo", None) is not None:
-                return value.astimezone(__import__("datetime").timezone.utc).replace(tzinfo=None)
+                return value.astimezone(timezone.utc).replace(tzinfo=None)
             return value
 
         current_due_utc = _naive_utc(current_due)
