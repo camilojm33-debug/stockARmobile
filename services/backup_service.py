@@ -752,6 +752,35 @@ class BackupService:
         return payload
 
     @staticmethod
+    def _preserve_ai_entitlement_preferences(*, current_raw, restored_raw):
+        """Restore operational preferences without granting paid AI access.
+
+        An imported backup can be older or user-controlled. The current tenant's
+        ai_agent subscription and channel configuration are not restored from it.
+        If no current AI entitlement exists, remove the incoming subsection rather
+        than treating historical backup data as authority to grant one.
+        """
+        def _as_dict(raw):
+            if isinstance(raw, dict):
+                return dict(raw)
+            if not isinstance(raw, str) or not raw.strip():
+                return {}
+            try:
+                value = json.loads(raw)
+            except (TypeError, ValueError):
+                return {}
+            return value if isinstance(value, dict) else {}
+
+        current = _as_dict(current_raw)
+        restored = _as_dict(restored_raw)
+        current_ai = current.get("ai_agent")
+        if isinstance(current_ai, dict):
+            restored["ai_agent"] = current_ai
+        else:
+            restored.pop("ai_agent", None)
+        return json.dumps(restored, ensure_ascii=False, separators=(",", ":"))
+
+    @staticmethod
     def _restore_product_subset(current_products, backup_rows, fields):
         backup_by_id, backup_by_barcode = BackupService._row_lookup(backup_rows)
         for product in current_products:
@@ -843,7 +872,6 @@ class BackupService:
             CashMovement.query.filter_by(company_id=expected_company_id).delete(synchronize_session=False)
             Expense.query.filter_by(company_id=expected_company_id).delete(synchronize_session=False)
             CashSession.query.filter_by(company_id=expected_company_id).delete(synchronize_session=False)
-            Supplier.query.filter_by(company_id=expected_company_id).delete(synchronize_session=False)
 
         current_products = Product.query.filter_by(company_id=expected_company_id).order_by(Product.id.asc()).all()
         if "products" in sections:
