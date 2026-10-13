@@ -387,11 +387,21 @@ class AISubscriptionService:
                     raise AISubscriptionError("No se pudo cancelar la suscripción IA en Mercado Pago.") from exc
                 if str(updated.get("status") or "").strip().lower() not in MP_TERMINAL_STATUSES:
                     raise AISubscriptionError("Mercado Pago no confirmó la cancelación de la suscripción IA.")
+            paid_until = _parse_dt(ai.get("ends_at"))
+            preserve_paid_access = paid_until is not None and paid_until > utcnow_naive()
+            fields = {
+                "status": "ACTIVA" if preserve_paid_access else "CANCELADA",
+                "origin": "MERCADO_PAGO",
+                "mercadopago_status": "cancelled",
+            }
+            if preserve_paid_access:
+                fields["mercadopago_access_preserved_until"] = paid_until.isoformat()
+                fields["mercadopago_access_preserved_reason"] = "renewal_cancelled"
             return cls._apply(
                 company,
                 admin_user_id=admin_user_id,
                 action="ai_subscription_cancel_sync",
-                new_fields={"status": "CANCELADA", "origin": "MERCADO_PAGO", "mercadopago_status": "cancelled"},
+                new_fields=fields,
                 reason=reason,
             )
 
@@ -629,17 +639,78 @@ class AISubscriptionService:
 
     @classmethod
     def record_mercadopago_payment(cls, company, *, payment_id: str, payment_status: str, amount: float | None, currency: str | None, paid_at: datetime | None, preapproval_id: str, external_reference: str) -> dict[str, Any]:
-        fields = {
-            "last_payment_id": str(payment_id or "").strip() or None,
-            "last_payment_status": str(payment_status or "").strip().lower() or None,
-            "last_payment_amount": float(amount or 0) if amount is not None else None,
-            "last_payment_currency": str(currency or "ARS").strip().upper() or "ARS",
-            "last_payment_at": paid_at.isoformat() if paid_at else utcnow_naive().isoformat(),
+        """Persist payment state and idempotently credit the paid AI access period.
+
+        A committed payment must be sufficient to repair access after a timeout
+        before the follow-up preapproval synchronization. Re-delivering the same
+        payment must never add another 30 days.
+        """
+        current = cls._ai_prefs(company)
+        normalized_id = str(payment_id or "").strip()
+        normalized_status = str(payment_status or "").strip().lower()
+        same_payment = bool(normalized_id and normalized_id == str(current.get("last_payment_id") or "").strip())
+        parsed_paid_at = _parse_dt(paid_at.isoformat()) if isinstance(paid_at, datetime) else None
+        if parsed_paid_at is None and same_payment:
+            parsed_paid_at = _parse_dt(current.get("last_payment_at"))
+        paid_timestamp = parsed_paid_at or utcnow_naive()
+        previous_paid_at = _parse_dt(current.get("last_payment_at"))
+        incoming_is_latest = (
+            same_payment
+            or previous_paid_at is None
+            or paid_timestamp >= previous_paid_at
+        )
+
+        fields: dict[str, Any] = {
             "mercadopago_preapproval_id": str(preapproval_id or "").strip() or None,
             "mercadopago_external_reference": str(external_reference or "").strip() or None,
             "origin": "MERCADO_PAGO",
         }
-        return cls._apply(company, admin_user_id=None, action="ai_subscription_payment_recorded", new_fields=fields, reason=f"payment_status={payment_status}")
+        if incoming_is_latest:
+            fields.update({
+                "last_payment_id": normalized_id or None,
+                "last_payment_status": normalized_status or None,
+                "last_payment_amount": float(amount or 0) if amount is not None else None,
+                "last_payment_currency": str(currency or "ARS").strip().upper() or "ARS",
+                "last_payment_at": paid_timestamp.isoformat(),
+            })
+
+        if normalized_status == "approved" and normalized_id:
+            try:
+                credited_ids = current.get("mercadopago_paid_payment_ids") or []
+                if not isinstance(credited_ids, list):
+                    credited_ids = []
+                credited_ids = [str(value) for value in credited_ids if str(value).strip()]
+            except Exception:
+                credited_ids = []
+            if normalized_id not in credited_ids:
+                current_end = _parse_dt(current.get("ends_at"))
+                paid_period_end = paid_timestamp + timedelta(days=30)
+                # MP's next_payment_date may already represent this paid period.
+                # Keep the later of the verified period end and the known end date.
+                if current_end is None or current_end < paid_period_end:
+                    fields["ends_at"] = paid_period_end.isoformat()
+                credited_ids = (credited_ids + [normalized_id])[-100:]
+                fields["mercadopago_paid_payment_ids"] = credited_ids
+            if incoming_is_latest:
+                fields["status"] = "ACTIVA"
+                fields["last_payment_access_applied_payment_id"] = normalized_id
+
+        elif normalized_status in {"refunded", "charged_back"} and same_payment and incoming_is_latest:
+            # A reversal of the latest payment must not keep granting paid AI
+            # access. A later verified approved payment can reactivate it.
+            fields["status"] = "SUSPENDIDA" if normalized_status == "charged_back" else "VENCIDA"
+            fields["mercadopago_reversal_payment_id"] = normalized_id
+            fields["mercadopago_reversal_status"] = normalized_status
+
+        if not fields:
+            return cls.get_status(company)
+        return cls._apply(
+            company,
+            admin_user_id=None,
+            action="ai_subscription_payment_recorded",
+            new_fields=fields,
+            reason=f"payment_status={normalized_status}; payment_id={normalized_id or 'n/a'}",
+        )
 
     @classmethod
     def sync_from_mercadopago(cls, *, preapproval: dict):
@@ -699,11 +770,23 @@ class AISubscriptionService:
             "origin": "MERCADO_PAGO",
             "mercadopago_status": mp_status,
         }
-        if new_status == "ACTIVA" and mp_status == "authorized":
+        has_verified_paid_payment = bool(
+            current_ai.get("last_payment_id")
+            and str(current_ai.get("last_payment_status") or "").strip().lower() == "approved"
+        )
+        if new_status == "ACTIVA" and mp_status == "authorized" and not has_verified_paid_payment:
             next_payment = (preapproval or {}).get("next_payment_date")
             parsed_next_payment = _parse_dt(next_payment)
             if parsed_next_payment is not None:
                 new_fields["ends_at"] = parsed_next_payment.isoformat()
+        if (
+            str(current_ai.get("last_payment_status") or "").strip().lower() in {"refunded", "charged_back"}
+            and str(current_ai.get("last_payment_id") or "").strip()
+            and mp_status == "authorized"
+        ):
+            # Contract authorization alone cannot reinstate access after the
+            # most recent recorded payment was reversed.
+            new_fields["status"] = "SUSPENDIDA" if str(current_ai.get("last_payment_status")).lower() == "charged_back" else "VENCIDA"
         if has_paid_access:
             new_fields["mercadopago_access_preserved_until"] = paid_until.isoformat()
             new_fields["mercadopago_access_preserved_reason"] = "recurring_contract_ended"
