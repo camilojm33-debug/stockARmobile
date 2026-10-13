@@ -48,13 +48,15 @@ const ONLINE_NAVIGATION_POST_PREFIXES = [
   '/admin/subscription/ai-agent/checkout',
 ];
 const DB_NAME = 'stockarmobile-offline';
-const DB_VERSION = 3;
+const DB_VERSION = 4;
 const REQUEST_STORE = 'requests';
 const SNAPSHOT_STORE = 'snapshots';
 const META_STORE = 'meta';
 const LAST_SYNC_KEY = 'lastSyncAt';
 const LAST_ERROR_KEY = 'lastError';
 const LAST_SYNC_SUMMARY_KEY = 'lastSyncSummary';
+const ACTIVE_IDENTITY_KEY = 'activeIdentity';
+const PERMANENT_HTTP_STATUSES = new Set([400, 401, 403, 404, 405, 409, 410, 412, 413, 415, 422]);
 let syncState = null;
 
 function nowIso() {
@@ -155,6 +157,40 @@ async function updateMeta(key, value) {
 async function readMetaValue(key, fallback = null) {
   const meta = await dbGet(META_STORE, key);
   return meta ? meta.value : fallback;
+}
+
+function normalizeOfflineIdentity(value) {
+  if (!value || typeof value !== 'object') return null;
+  const userId = String(value.userId || '').trim();
+  const companyId = String(value.companyId || '').trim();
+  if (!userId || !companyId) return null;
+  return { userId, companyId };
+}
+
+function sameOfflineIdentity(left, right) {
+  const a = normalizeOfflineIdentity(left);
+  const b = normalizeOfflineIdentity(right);
+  return Boolean(a && b && a.userId === b.userId && a.companyId === b.companyId);
+}
+
+async function setActiveOfflineIdentity(value) {
+  const identity = normalizeOfflineIdentity(value);
+  await updateMeta(ACTIVE_IDENTITY_KEY, identity);
+  return identity;
+}
+
+function requestOfflineIdentity(request) {
+  return normalizeOfflineIdentity({
+    userId: request.headers.get('X-Offline-User-Id'),
+    companyId: request.headers.get('X-Offline-Company-Id'),
+  });
+}
+
+function offlineJsonError(message, status = 409) {
+  return new Response(JSON.stringify({ queued: false, error: message }), {
+    status,
+    headers: { 'Content-Type': 'application/json; charset=utf-8' },
+  });
 }
 
 async function setSyncSummary(summary) {
@@ -283,14 +319,24 @@ self.addEventListener('sync', event => {
 
 self.addEventListener('message', event => {
   const data = event.data || {};
+  if (data.type === 'SET_ACTIVE_IDENTITY') {
+    event.waitUntil(setActiveOfflineIdentity(data.identity).then(() => broadcastQueueStatus(data.requestId || null)));
+  }
   if (data.type === 'FLUSH_QUEUE') {
-    event.waitUntil(flushQueue().then(() => broadcastQueueStatus(data.requestId || null)));
+    event.waitUntil((async () => {
+      const identity = await setActiveOfflineIdentity(data.identity);
+      await flushQueue(identity);
+      await broadcastQueueStatus(data.requestId || null);
+    })());
   }
   if (data.type === 'CLEAR_OFFLINE_QUEUE') {
     event.waitUntil(clearQueue().then(() => broadcastQueueStatus(data.requestId || null)));
   }
   if (data.type === 'CLEAR_PRIVATE_CACHE') {
     event.waitUntil((async () => {
+      // During a session switch, queue replay stays disabled until the newly
+      // authenticated page explicitly establishes its identity.
+      await setActiveOfflineIdentity(null);
       let success = true;
       try {
         await clearPrivateCache();
@@ -314,6 +360,7 @@ self.addEventListener('message', event => {
   }
   if (data.type === 'GET_OFFLINE_STATUS') {
     event.waitUntil((async () => {
+      await setActiveOfflineIdentity(data.identity);
       const status = await broadcastQueueStatus(data.requestId || null);
       if (event.source) {
         event.source.postMessage({ type: 'OFFLINE_QUEUE_STATUS', requestId: data.requestId || null, status });
@@ -387,10 +434,23 @@ async function queueWhenOffline(request) {
     }
     return response;
   } catch (error) {
+    const identity = requestOfflineIdentity(request);
+    if (!identity) {
+      return offlineJsonError(
+        'No se guardó la operación offline porque falta la identidad de usuario y empresa. Iniciá sesión y volvé a cargar la operación.',
+      );
+    }
     const body = await request.clone().text();
     const requestUuid = extractRequestUuid(request) || generateUuid();
+    const existing = await findQueuedRequestByUuid(requestUuid);
+    if (existing && !sameOfflineIdentity(existing.identity, identity)) {
+      return offlineJsonError(
+        'La operación coincide con una cola creada bajo otra identidad. No se reemplazó ni se envió; revisá la operación pendiente.',
+      );
+    }
     const queued = {
       uuid: requestUuid,
+      identity,
       operationType: inferOperationType(new URL(request.url).pathname, request.method),
       url: request.url,
       method: request.method,
@@ -400,7 +460,6 @@ async function queueWhenOffline(request) {
       attempts: 0,
       status: 'pending',
     };
-    const existing = await findQueuedRequestByUuid(requestUuid);
     if (existing) {
       queued.id = existing.id;
       await dbPut(REQUEST_STORE, queued);
@@ -419,7 +478,15 @@ async function queueWhenOffline(request) {
   }
 }
 
-async function flushQueue() {
+async function flushQueue(identityInput) {
+  const currentIdentity = identityInput === undefined
+    ? normalizeOfflineIdentity(await readMetaValue(ACTIVE_IDENTITY_KEY, null))
+    : normalizeOfflineIdentity(identityInput);
+  if (!currentIdentity) {
+    await updateMeta(LAST_ERROR_KEY, 'No se sincronizó la cola: falta una sesión autenticada con empresa activa.');
+    await broadcastQueueStatus();
+    return;
+  }
   const queued = await dbReadAll(REQUEST_STORE);
   syncState = {
     requestId: generateUuid(),
@@ -433,6 +500,36 @@ async function flushQueue() {
   await broadcastSyncProgress();
   for (const item of queued) {
     syncState.currentOperation = item.operationType || item.url;
+    if (item.status === 'needs_attention') {
+      syncState.errorCount += 1;
+      syncState.progress = syncState.totalCount > 0 ? Math.round(((syncState.syncedCount + syncState.errorCount) / syncState.totalCount) * 100) : 100;
+      await broadcastSyncProgress();
+      continue;
+    }
+    const latestIdentity = normalizeOfflineIdentity(await readMetaValue(ACTIVE_IDENTITY_KEY, null));
+    if (!sameOfflineIdentity(latestIdentity, currentIdentity)) {
+      // Stop a running batch as soon as a logout or user-switch is observed.
+      break;
+    }
+    const queuedIdentity = normalizeOfflineIdentity(item.identity);
+    if (!queuedIdentity || !sameOfflineIdentity(queuedIdentity, currentIdentity)) {
+      await dbPut(REQUEST_STORE, {
+        ...item,
+        status: 'needs_attention',
+        attentionReason: queuedIdentity ? 'identity_mismatch' : 'identity_unverified',
+        lastAttemptAt: nowIso(),
+      });
+      await updateMeta(
+        LAST_ERROR_KEY,
+        queuedIdentity
+          ? 'Hay una operación de otra empresa/usuario en la cola. No se envió; revisá y volvé a cargarla con la sesión correcta.'
+          : 'Hay una operación offline antigua sin identidad verificable. No se envió; revisá y volvé a cargarla.',
+      );
+      syncState.errorCount += 1;
+      syncState.progress = syncState.totalCount > 0 ? Math.round(((syncState.syncedCount + syncState.errorCount) / syncState.totalCount) * 100) : 100;
+      await broadcastSyncProgress();
+      continue;
+    }
     try {
       const response = await fetch(item.url, {
         method: item.method,
@@ -445,15 +542,16 @@ async function flushQueue() {
         await updateMeta(LAST_SYNC_KEY, nowIso());
         await updateMeta(LAST_ERROR_KEY, '');
         syncState.syncedCount += 1;
-      } else if ([401, 403, 409, 412].includes(response.status)) {
+      } else if (PERMANENT_HTTP_STATUSES.has(response.status)) {
         await dbPut(REQUEST_STORE, {
           ...item,
           attempts: (item.attempts || 0) + 1,
           status: 'needs_attention',
+          attentionReason: 'permanent_http_error',
           lastHttpStatus: response.status,
           lastAttemptAt: nowIso(),
         });
-        await updateMeta(LAST_ERROR_KEY, `Operación ${item.operationType || item.url} requiere atención: HTTP ${response.status}. No se eliminó de la cola.`);
+        await updateMeta(LAST_ERROR_KEY, `Operación ${item.operationType || item.url} requiere atención: HTTP ${response.status}. No se volverá a intentar automáticamente.`);
         syncState.errorCount += 1;
       } else {
         await dbPut(REQUEST_STORE, {
@@ -463,7 +561,7 @@ async function flushQueue() {
           lastHttpStatus: response.status,
           lastAttemptAt: nowIso(),
         });
-        await updateMeta(LAST_ERROR_KEY, `Error sincronizando ${item.operationType || item.url}: HTTP ${response.status}`);
+        await updateMeta(LAST_ERROR_KEY, `Error temporal sincronizando ${item.operationType || item.url}: HTTP ${response.status}`);
         syncState.errorCount += 1;
       }
     } catch (error) {
@@ -519,6 +617,7 @@ async function clearPrivateCache() {
 }
 
 async function clearQueue() {
+  await setActiveOfflineIdentity(null);
   const db = await openOfflineDB();
   await new Promise((resolve, reject) => {
     const tx = db.transaction([REQUEST_STORE, SNAPSHOT_STORE, META_STORE], 'readwrite');
