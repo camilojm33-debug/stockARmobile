@@ -2143,6 +2143,24 @@ def _plan_feature_flags(plan):
     }
 
 
+@app.route("/healthz", methods=["GET"])
+def healthz():
+    """Public liveness probe: confirms the Flask process can serve requests."""
+    return jsonify({"status": "ok"}), 200
+
+
+@app.route("/readyz", methods=["GET"])
+def readyz():
+    """Public readiness probe: checks database connectivity without exposing internals."""
+    try:
+        db.session.execute(text("SELECT 1"))
+        return jsonify({"status": "ready"}), 200
+    except Exception:
+        db.session.rollback()
+        current_app.logger.warning("Readiness probe failed.")
+        return jsonify({"status": "not_ready"}), 503
+
+
 @app.route("/")
 def index():
     from services.plan_service import PlanService

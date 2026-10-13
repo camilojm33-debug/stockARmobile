@@ -9309,3 +9309,26 @@ def test_employee_cannot_mutate_company_subscription_or_billing(monkeypatch):
         "company_billing.reactivate_subscription",
     ]:
         assert employee_endpoint_permission(endpoint, "POST") == EMPLOYEE_ADMIN_ONLY
+
+
+def test_public_health_and_readiness_probes():
+    client = stock_app.app.test_client()
+    live = client.get("/healthz")
+    assert live.status_code == 200
+    assert live.get_json() == {"status": "ok"}
+
+    ready = client.get("/readyz")
+    assert ready.status_code == 200
+    assert ready.get_json() == {"status": "ready"}
+
+
+def test_readiness_probe_returns_safe_503_when_database_is_unavailable(monkeypatch):
+    def unavailable(*args, **kwargs):
+        raise RuntimeError("private database detail")
+
+    monkeypatch.setattr(db.session, "execute", unavailable)
+    client = stock_app.app.test_client()
+    response = client.get("/readyz")
+    assert response.status_code == 503
+    assert response.get_json() == {"status": "not_ready"}
+    assert "private database detail" not in response.get_data(as_text=True)
