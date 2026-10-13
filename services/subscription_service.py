@@ -815,12 +815,78 @@ class SubscriptionService:
             SubscriptionService._transition(subscription, SubscriptionService.STATE_ACTIVE, reason="renew")
 
         duration = int(subscription.plan.duration_days if subscription.plan else 30)
-        base = subscription.next_billing_date if subscription.next_billing_date and subscription.next_billing_date > now else now
+        current_due = subscription.next_billing_date or subscription.ends_at
+        recurring_mp = bool(
+            command.renewal_enabled is True
+            and str(metadata.get("mercadopago_preapproval_id") or "").strip()
+            and str(metadata.get("checkout_method") or "automatic").strip().lower() != "qr"
+        )
+
+        def _naive_utc(value):
+            if not value:
+                return None
+            if getattr(value, "tzinfo", None) is not None:
+                return value.astimezone(__import__("datetime").timezone.utc).replace(tzinfo=None)
+            return value
+
+        current_due_utc = _naive_utc(current_due)
+        provider_due = None
+        if recurring_mp:
+            raw_provider_due = metadata.get("mercadopago_next_payment_date")
+            try:
+                provider_due = datetime.fromisoformat(str(raw_provider_due)) if raw_provider_due else None
+            except (TypeError, ValueError):
+                provider_due = None
+            provider_due = _naive_utc(provider_due)
+
+        provider_boundary_already_applied = bool(
+            recurring_mp
+            and provider_due is not None
+            and current_due_utc is not None
+            and abs((provider_due - current_due_utc).total_seconds()) <= 2
+        )
+
         subscription.last_payment_date = now
-        subscription.start_date = base
-        subscription.starts_at = base
-        subscription.next_billing_date = base + timedelta(days=duration)
-        subscription.ends_at = subscription.next_billing_date
+        if provider_boundary_already_applied:
+            # A current MP preapproval already supplied the access boundary for
+            # this charge. Do not add one more plan duration on top of it.
+            subscription.next_billing_date = current_due_utc
+            subscription.ends_at = current_due_utc
+            if is_paid_plan_change:
+                subscription.start_date = now
+                subscription.starts_at = now
+        else:
+            if recurring_mp:
+                # Without a verified current provider boundary, the local next
+                # date can be a placeholder from checkout creation. Starting from
+                # it would double-credit a month; the post-payment preapproval sync
+                # will replace this fallback with MP's authoritative next date.
+                base = (
+                    current_due_utc
+                    if current_due_utc is not None and current_due_utc <= now
+                    else now
+                )
+            else:
+                initial_pending = normalized in {
+                    SubscriptionService.STATE_PENDING,
+                    SubscriptionService.STATE_PENDING_PAYMENT,
+                    SubscriptionService.STATE_PENDING_CONFIRMATION,
+                    SubscriptionService.STATE_EXPIRED,
+                    SubscriptionService.STATE_CANCELLED,
+                    SubscriptionService.STATE_SUSPENDED,
+                    SubscriptionService.STATE_TRIAL_EXPIRED,
+                }
+                base = (
+                    now
+                    if initial_pending and not is_paid_plan_change
+                    else current_due_utc
+                    if current_due_utc is not None and current_due_utc > now
+                    else now
+                )
+            subscription.start_date = base
+            subscription.starts_at = base
+            subscription.next_billing_date = base + timedelta(days=duration)
+            subscription.ends_at = subscription.next_billing_date
         # A successful one-time QR payment grants the paid period but must never
         # silently create/re-enable an automatic renewal contract. Only recurring
         # payment paths pass renewal_enabled=True explicitly.
