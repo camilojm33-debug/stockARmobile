@@ -4913,6 +4913,11 @@ def subscriptions_update(subscription_id):
     if requires_sensitive_step_up and not _require_superadmin_step_up():
         return _redirect_back("saas.subscriptions_panel")
 
+    status_before_edit = _normalized_subscription_status(subscription.status)
+    metadata_before_edit = SubscriptionService._metadata_dict(subscription)
+    paid_until_before_edit = subscription.next_billing_date or subscription.ends_at
+    preapproval_before_edit = str(metadata_before_edit.get("mercadopago_preapproval_id") or "").strip()
+
     try:
         # IMPORTANTE: "Modificar" siempre debe hacer UPDATE sobre esta misma fila de Subscription
         # (identificada por subscription_id). NUNCA reutilizar ChangePlanCommand/CreateSubscriptionCommand
@@ -4983,18 +4988,84 @@ def subscriptions_update(subscription_id):
                     ),
                 )
         elif target_status == "active":
-            SubscriptionService.run_command(
-                db.session,
-                SubscriptionService.ReactivateSubscriptionCommand(
-                    company_id=target_subscription.company_id,
-                    subscription_id=target_subscription.id,
-                    actor_user_id=current_user.id,
-                    actor_role=current_user.role,
+            from services.billing_service import BillingService
+
+            if renewal_enabled:
+                BillingService.reactivate_subscription(
+                    db.session,
+                    subscription=target_subscription,
+                    user_id=current_user.id,
                     origin="superadmin",
-                    ip_address=request.remote_addr,
-                    idempotency_key=f"saas-update-reactivate:{target_subscription.company_id}:{target_subscription.id}",
-                ),
-            )
+                    actor_role=current_user.role,
+                )
+                reactivation_url = str(
+                    SubscriptionService._metadata_dict(target_subscription).get(
+                        "mercadopago_reactivation_init_point"
+                    ) or ""
+                ).strip()
+                if reactivation_url:
+                    parsed = urlparse(reactivation_url)
+                    host = (parsed.hostname or "").lower()
+                    if parsed.scheme != "https" or not (
+                        host == "mercadopago.com"
+                        or host.endswith(".mercadopago.com")
+                        or host == "mercadopago.com.ar"
+                        or host.endswith(".mercadopago.com.ar")
+                    ):
+                        raise RuntimeError("Mercado Pago no devolvió un enlace de autorización confiable.")
+                    db.session.commit()
+                    flash("Se creó una autorización pendiente. Completá el checkout de Mercado Pago para finalizar la reactivación.", "warning")
+                    return redirect(reactivation_url)
+            else:
+                # A form that explicitly disables renewal must never pass through
+                # ReactivateSubscriptionCommand and silently turn renewal back on.
+                # For MP-backed records, stop remote billing first and only restore
+                # local access when a previously paid period still remains.
+                current_state = SubscriptionService._normalize_state(status_before_edit)
+                current_is_open = current_state in {
+                    SubscriptionService.STATE_ACTIVE,
+                    SubscriptionService.STATE_SCHEDULED,
+                    SubscriptionService.STATE_TRIAL,
+                }
+                if preapproval_before_edit:
+                    try:
+                        paid_until = paid_until_before_edit
+                        if getattr(paid_until, "tzinfo", None) is not None:
+                            paid_until = paid_until.astimezone(timezone.utc).replace(tzinfo=None)
+                        now_utc = utcnow().replace(tzinfo=None) if getattr(utcnow(), "tzinfo", None) is not None else utcnow()
+                        if not current_is_open and (paid_until is None or paid_until <= now_utc):
+                            raise SubscriptionCommandError(
+                                "No se puede reactivar una suscripción automática sin días pagados vigentes. "
+                                "El cliente debe completar una nueva autorización de Mercado Pago."
+                            )
+                        BillingService.cancel_subscription(
+                            db.session,
+                            subscription=target_subscription,
+                            user_id=current_user.id,
+                            cancel_at_period_end=True,
+                            origin="superadmin",
+                            actor_role=current_user.role,
+                        )
+                    except SubscriptionCommandError:
+                        raise
+                if not current_is_open:
+                    SubscriptionService.run_command(
+                        db.session,
+                        SubscriptionService.ReactivateSubscriptionCommand(
+                            company_id=target_subscription.company_id,
+                            subscription_id=target_subscription.id,
+                            actor_user_id=current_user.id,
+                            actor_role=current_user.role,
+                            origin="superadmin",
+                            ip_address=request.remote_addr,
+                            idempotency_key=BillingService._subscription_action_key(
+                                "reactivate-no-renewal", target_subscription, current_user.id
+                            ),
+                        ),
+                    )
+                target_subscription.renewal_enabled = False
+                target_subscription.auto_renew = False
+                target_subscription.cancel_at_period_end = True
         else:
             target_subscription.status = target_status
 
