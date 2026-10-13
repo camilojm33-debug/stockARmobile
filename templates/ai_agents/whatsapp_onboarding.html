@@ -67,6 +67,7 @@
   const statusBox = document.getElementById('wa-status');
   let authCode = null;
   let sessionInfo = null;
+  let onboardingEvent = '';
   let submitted = false;
   let finishTimer = null;
 
@@ -92,7 +93,7 @@
   }
 
   function tryComplete() {
-    if (submitted || !authCode || !sessionInfo || !isMetaId(sessionInfo.waba_id) || !isMetaId(sessionInfo.phone_number_id)) return;
+    if (submitted || !authCode || !sessionInfo || !isMetaId(sessionInfo.waba_id)) return;
     submitted = true;
     if (finishTimer) clearTimeout(finishTimer);
     button.disabled = true;
@@ -102,7 +103,7 @@
       method: 'POST',
       credentials: 'same-origin',
       headers: {'Content-Type': 'application/json', 'X-CSRFToken': csrf},
-      body: JSON.stringify({code: authCode, waba_id: sessionInfo.waba_id, phone_number_id: sessionInfo.phone_number_id, business_id: sessionInfo.business_id || ''})
+      body: JSON.stringify({code: authCode, waba_id: sessionInfo.waba_id, phone_number_id: sessionInfo.phone_number_id || '', phone_number: sessionInfo.phone_number || '', business_id: sessionInfo.business_id || '', onboarding_event: onboardingEvent})
     }).then(async (response) => {
       const data = await response.json().catch(() => ({}));
       if (!response.ok || !data.success) throw new Error(data.error || 'No pudimos completar la conexión.');
@@ -125,10 +126,11 @@
     if (data.data && data.data.waba_id) {
       const wabaId = String(data.data.waba_id || '').trim();
       const phoneNumberId = String(data.data.phone_number_id || '').trim();
-      if (isMetaId(wabaId) && isMetaId(phoneNumberId)) {
+      if (isMetaId(wabaId) && (!phoneNumberId || isMetaId(phoneNumberId))) {
         sessionInfo = {
           waba_id: wabaId,
-          phone_number_id: phoneNumberId,
+          phone_number_id: isMetaId(phoneNumberId) ? phoneNumberId : '',
+          phone_number: String(data.data.phone_number || data.data.display_phone_number || '').trim().slice(0, 64),
           business_id: isMetaId(data.data.businessId || data.data.business_id)
             ? String(data.data.businessId || data.data.business_id)
             : ''
@@ -152,11 +154,12 @@
       return;
     }
     if (eventName === 'FINISH' || eventName === 'FINISH_ONLY_WABA' || eventName === 'FINISH_WHATSAPP_BUSINESS_APP_ONBOARDING') {
-      if (!sessionInfo || !isMetaId(sessionInfo.waba_id) || !isMetaId(sessionInfo.phone_number_id)) {
+      onboardingEvent = eventName;
+      if (!sessionInfo || !isMetaId(sessionInfo.waba_id)) {
         submitted = false;
         button.disabled = false;
         button.innerHTML = '<i class="bi bi-whatsapp me-2"></i>Conectar WhatsApp';
-        setStatus('Meta terminó el registro, pero no devolvió el identificador de la cuenta y del número. Volvé a intentarlo.', 'error');
+        setStatus('Meta terminó el registro, pero no devolvió el identificador de la cuenta de WhatsApp. Volvé a intentarlo.', 'error');
         return;
       }
       tryComplete();
@@ -185,7 +188,7 @@
       config_id: configId,
       response_type: 'code',
       override_default_response_type: true,
-      extras: {setup: {}}
+      extras: {setup: {}, featureType: 'whatsapp_business_app_onboarding'}
     });
   });
 })();
