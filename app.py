@@ -333,7 +333,14 @@ def add_security_headers(response):
 
 @login_manager.user_loader
 def load_user(user_id):
-    return db.session.get(User, int(user_id))
+    """Load only currently active accounts so revocation applies to existing sessions."""
+    try:
+        user = db.session.get(User, int(user_id))
+    except (TypeError, ValueError):
+        return None
+    if user is None or not bool(getattr(user, "active", True)):
+        return None
+    return user
 
 
 def get_current_company_id():
@@ -2134,6 +2141,24 @@ def _plan_feature_flags(plan):
         "multiusuario": int(getattr(plan, "max_users", 0) or 0) > 1,
         "soporte": True,
     }
+
+
+@app.route("/healthz", methods=["GET"])
+def healthz():
+    """Public liveness probe: confirms the Flask process can serve requests."""
+    return jsonify({"status": "ok"}), 200
+
+
+@app.route("/readyz", methods=["GET"])
+def readyz():
+    """Public readiness probe: checks database connectivity without exposing internals."""
+    try:
+        db.session.execute(text("SELECT 1"))
+        return jsonify({"status": "ready"}), 200
+    except Exception:
+        db.session.rollback()
+        current_app.logger.warning("Readiness probe failed.")
+        return jsonify({"status": "not_ready"}), 503
 
 
 @app.route("/")

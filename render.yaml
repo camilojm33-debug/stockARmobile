@@ -1,4 +1,8 @@
 envVarGroups:
+  - name: stockarmobile-billing-reconciliation-controls
+    envVars:
+      - key: BILLING_RECONCILIATION_TOKEN
+        sync: false
   - name: stockarmobile-campaign-controls
     envVars:
       - key: SAAS_MARKETING_SEND_ENABLED
@@ -11,10 +15,11 @@ services:
     name: stockarmobile
     env: python
     buildCommand: pip install -r requirements.txt
-    healthCheckPath: /health
+    healthCheckPath: /healthz
     startCommand: python -m flask db upgrade && gunicorn --timeout 120 wsgi:application
     envVars:
       - fromGroup: stockarmobile-campaign-controls
+      - fromGroup: stockarmobile-billing-reconciliation-controls
       - key: SECRET_KEY
         generateValue: true
       - key: DEFAULT_SUPERADMIN_PASSWORD
@@ -180,6 +185,19 @@ services:
         sync: false
       - key: BACKUP_VERIFY_COMPANY_ID
         sync: false
+
+  - type: cron
+    name: stockarmobile-billing-reconciliation
+    runtime: python
+    plan: starter
+    schedule: "*/15 * * * *"
+    buildCommand: pip install -r requirements.txt
+    startCommand: python scripts/run_billing_reconciliation.py
+    envVars:
+      - key: STOCKARMOBILE_BASE_URL
+        value: https://www.stockarmobile.com
+      - fromGroup: stockarmobile-billing-reconciliation-controls
+
 
   - type: cron
     name: stockarmobile-gmail-watch

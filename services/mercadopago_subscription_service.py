@@ -303,6 +303,10 @@ class MercadoPagoSubscriptionService:
             if next_payment:
                 subscription.next_billing_date = next_payment
                 subscription.ends_at = next_payment
+                metadata["mercadopago_next_payment_date"] = next_payment.isoformat()
+            else:
+                metadata.pop("mercadopago_next_payment_date", None)
+            SubscriptionService._set_metadata(subscription, metadata)
         elif status in {"paused", "cancelled", "canceled", "expired"}:
             subscription.renewal_enabled = False
             subscription.auto_renew = False

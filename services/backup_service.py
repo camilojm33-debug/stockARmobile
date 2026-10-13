@@ -259,6 +259,41 @@ class BackupService:
             raise ValueError("No se pudo leer el archivo de backup.") from exc
 
     @staticmethod
+    def _encode_backup_payload(payload: dict) -> bytes:
+        """Serialize a backup within the same limits used by the importer."""
+        max_compressed = int(
+            current_app.config.get(
+                "BACKUP_MAX_COMPRESSED_BYTES",
+                BackupService.DEFAULT_MAX_COMPRESSED_BYTES,
+            )
+            or BackupService.DEFAULT_MAX_COMPRESSED_BYTES
+        )
+        max_uncompressed = int(
+            current_app.config.get(
+                "BACKUP_MAX_UNCOMPRESSED_BYTES",
+                BackupService.DEFAULT_MAX_UNCOMPRESSED_BYTES,
+            )
+            or BackupService.DEFAULT_MAX_UNCOMPRESSED_BYTES
+        )
+        raw_bytes = json.dumps(
+            payload,
+            ensure_ascii=False,
+            separators=(",", ":"),
+        ).encode("utf-8")
+        if len(raw_bytes) > max_uncompressed:
+            raise ValueError(
+                "El backup supera el tamaño máximo del contenido sin comprimir; "
+                "no se guardó una copia que no pudiera restaurarse."
+            )
+        compressed = gzip.compress(raw_bytes, mtime=0)
+        if len(compressed) > max_compressed:
+            raise ValueError(
+                "El backup comprimido supera el tamaño máximo permitido; "
+                "no se guardó una copia que no pudiera restaurarse."
+            )
+        return compressed
+
+    @staticmethod
     def _section_counts(payload):
         products = payload.get("products") or []
         categories = {str(row.get("category") or "").strip() for row in products if str(row.get("category") or "").strip()}
@@ -355,6 +390,15 @@ class BackupService:
         return f"backup_company_{int(company_id)}_{timestamp}.json.gz"
 
     @staticmethod
+    def _sequence_reset_values(max_value):
+        """Return valid PostgreSQL setval arguments, including for empty tables."""
+        try:
+            current_max = int(max_value or 0)
+        except (TypeError, ValueError, OverflowError):
+            current_max = 0
+        return (current_max, True) if current_max > 0 else (1, False)
+
+    @staticmethod
     def _sync_sequences(models):
         from app import db
 
@@ -372,11 +416,16 @@ class BackupService:
             if not sequence_name:
                 continue
             max_value = db.session.execute(
-                sa.text(f'SELECT COALESCE(MAX("{pk_column.name}"), 0) FROM "{model.__tablename__}"')
+                sa.select(sa.func.coalesce(sa.func.max(pk_column), 0)).select_from(model.__table__)
             ).scalar() or 0
+            reset_value, is_called = BackupService._sequence_reset_values(max_value)
             db.session.execute(
-                sa.text("SELECT setval(:sequence_name, :max_value, true)"),
-                {"sequence_name": sequence_name, "max_value": int(max_value)},
+                sa.text("SELECT setval(:sequence_name, :max_value, :is_called)"),
+                {
+                    "sequence_name": sequence_name,
+                    "max_value": reset_value,
+                    "is_called": is_called,
+                },
             )
 
     @staticmethod
@@ -646,10 +695,10 @@ class BackupService:
         backup_path = backup_dir / file_name
 
         payload = BackupService._payload_for_company(company_id)
-        with gzip.open(backup_path, "wt", encoding="utf-8") as gz_file:
-            json.dump(payload, gz_file, ensure_ascii=False)
+        compressed_payload = BackupService._encode_backup_payload(payload)
+        backup_path.write_bytes(compressed_payload)
 
-        size_bytes = backup_path.stat().st_size if backup_path.exists() else 0
+        size_bytes = len(compressed_payload)
         backup = BackupLog(
             company_id=company_id,
             status="ready",
@@ -699,8 +748,8 @@ class BackupService:
         backup_dir = BackupService._company_dir(company_id)
         file_name = BackupService._backup_file_name(company_id)
         backup_path = backup_dir / file_name
-        with gzip.open(backup_path, "wt", encoding="utf-8") as gz_file:
-            json.dump(payload, gz_file, ensure_ascii=False)
+        compressed_payload = BackupService._encode_backup_payload(payload)
+        backup_path.write_bytes(compressed_payload)
 
         backup = BackupLog(
             company_id=company_id,
@@ -752,6 +801,64 @@ class BackupService:
         return payload
 
     @staticmethod
+    def _preserve_ai_entitlement_preferences(*, current_raw, restored_raw):
+        """Restore operational preferences without granting paid AI access.
+
+        An imported backup can be older or user-controlled. The current tenant's
+        ai_agent subscription and channel configuration are not restored from it.
+        If no current AI entitlement exists, remove the incoming subsection rather
+        than treating historical backup data as authority to grant one.
+        """
+        def _as_dict(raw):
+            if isinstance(raw, dict):
+                return dict(raw)
+            if not isinstance(raw, str) or not raw.strip():
+                return {}
+            try:
+                value = json.loads(raw)
+            except (TypeError, ValueError):
+                return {}
+            return value if isinstance(value, dict) else {}
+
+        current = _as_dict(current_raw)
+        restored = _as_dict(restored_raw)
+
+        def _is_entitlement_key(key):
+            normalized = str(key or "").strip().lower()
+            reserved = {
+                "ai_agent", "crm", "crm_enabled", "crm_access", "crm_allowed",
+                "internal_channel", "features", "feature_flags", "modules",
+                "entitlements", "permissions", "module_permissions", "plan",
+                "plan_code", "subscription", "commercial_plan",
+                "commercial_promotions", "pricing_controller", "ai_access",
+            }
+            return (
+                normalized in reserved
+                or "entitlement" in normalized
+                or "permission" in normalized
+                or "crm" in normalized
+                or normalized.endswith("_module_enabled")
+                or normalized.endswith("_feature_enabled")
+                or normalized.endswith("_feature_allowed")
+                or normalized.endswith("_plan_code")
+            )
+
+        # Preserve all entitlement/control keys that exist today, and discard
+        # entitlement-looking keys introduced only by the untrusted backup. This
+        # covers CRM/module toggles as well as the nested AI subscription block.
+        reserved_keys = {
+            key for key in set(current) | set(restored)
+            if _is_entitlement_key(key)
+        }
+        for key in reserved_keys:
+            if key in current:
+                restored[key] = current[key]
+            else:
+                restored.pop(key, None)
+
+        return json.dumps(restored, ensure_ascii=False, separators=(",", ":"))
+
+    @staticmethod
     def _restore_product_subset(current_products, backup_rows, fields):
         backup_by_id, backup_by_barcode = BackupService._row_lookup(backup_rows)
         for product in current_products:
@@ -762,6 +869,74 @@ class BackupService:
             for field in fields:
                 if field in payload and field in mapper.columns:
                     setattr(product, field, BackupService._deserialize_for_column(mapper.columns[field], payload.get(field)))
+
+    @staticmethod
+    def _restore_employee_rows(db_session, *, company_id: int, rows):
+        """Restore profile data without restoring historical security decisions."""
+        from app import User
+
+        existing_users = {
+            int(row.id): row
+            for row in User.query.filter(
+                User.company_id == company_id,
+                User.role != "superadmin",
+            ).all()
+        }
+        for raw_row in rows or []:
+            if not isinstance(raw_row, dict):
+                raise ValueError("El backup contiene un registro de empleado inválido.")
+            row = BackupService._deserialize_rows(User, [raw_row])[0]
+            incoming_id = row.get("id")
+            user = existing_users.get(int(incoming_id)) if incoming_id is not None else None
+            username = str(row.get("username") or "").strip()
+            email = str(row.get("email") or "").strip().lower()
+
+            if user is None:
+                by_username = (
+                    User.query.filter_by(company_id=company_id, username=username)
+                    .filter(User.role != "superadmin").first()
+                    if username else None
+                )
+                by_email = (
+                    User.query.filter_by(company_id=company_id, email=email)
+                    .filter(User.role != "superadmin").first()
+                    if email else None
+                )
+                if by_username is not None and by_email is not None and by_username.id != by_email.id:
+                    raise ValueError("El backup contiene usuario y email asociados a cuentas distintas.")
+                user = by_username or by_email
+
+            if user is not None:
+                # Existing credentials, roles, active state and permissions remain
+                # authoritative. Restore only non-security display fields.
+                for field in ("first_name", "last_name", "avatar_url"):
+                    if field in row:
+                        setattr(user, field, row.get(field))
+                continue
+
+            if not username or not email or "@" not in email:
+                raise ValueError("No se puede restaurar un empleado sin usuario y email válidos.")
+            username_owner = User.query.filter_by(username=username).first()
+            email_owner = User.query.filter_by(email=email).first()
+            if username_owner is not None or email_owner is not None:
+                raise ValueError(
+                    "El backup contiene un empleado cuyo usuario/email ya pertenece a otra cuenta. "
+                    "No se modificó la cuenta existente."
+                )
+
+            candidate = dict(row)
+            candidate["company_id"] = company_id
+            candidate.update({
+                "role": "user",
+                "active": False,
+                "permissions_json": None,
+                "must_change_password": True,
+                "auth_provider": "local",
+                "google_sub": None,
+            })
+            if incoming_id is not None and db_session.get(User, int(incoming_id)) is not None:
+                candidate.pop("id", None)
+            db_session.execute(User.__table__.insert(), [candidate])
 
     @staticmethod
     def _restore_full_company_dataset(db_session, model, rows):
@@ -807,14 +982,107 @@ class BackupService:
         if "general" in sections or "schedules" in sections:
             for field in BackupService.COMPANY_GENERAL_FIELDS:
                 if field in company_payload:
-                    setattr(company, field, company_payload.get(field))
+                    value = company_payload.get(field)
+                    if field == "preferences_json":
+                        # Imported backups may restore operational preferences, but
+                        # must never grant paid AI entitlements or replace current
+                        # provider/channel credentials. Keep the live ai_agent
+                        # subsection (or omit it when no live entitlement exists).
+                        value = BackupService._preserve_ai_entitlement_preferences(
+                            current_raw=company.preferences_json,
+                            restored_raw=value,
+                        )
+                    setattr(company, field, value)
+
+        # Remove children before parents. With ON DELETE CASCADE foreign keys,
+        # deleting a product/client first can silently erase purchase/sale details
+        # or even sales before we have captured their IDs for restoration.
+        full_restore = set(sections) == set(BackupService.FULL_RESTORE_SECTIONS)
+        if "sales" in sections:
+            existing_sales_ids = [
+                row.id for row in Sale.query.filter_by(company_id=expected_company_id).all()
+            ]
+            if existing_sales_ids:
+                SaleItem.query.filter(SaleItem.sale_id.in_(existing_sales_ids)).delete(synchronize_session=False)
+            Sale.query.filter_by(company_id=expected_company_id).delete(synchronize_session=False)
+
+        if full_restore:
+            existing_purchase_ids = [
+                row.id for row in PurchaseOrder.query.filter_by(company_id=expected_company_id).all()
+            ]
+            if existing_purchase_ids:
+                PurchaseItem.query.filter(
+                    PurchaseItem.purchase_order_id.in_(existing_purchase_ids)
+                ).delete(synchronize_session=False)
+            PurchaseOrder.query.filter_by(company_id=expected_company_id).delete(synchronize_session=False)
+            CashMovement.query.filter_by(company_id=expected_company_id).delete(synchronize_session=False)
+            Expense.query.filter_by(company_id=expected_company_id).delete(synchronize_session=False)
+            CashSession.query.filter_by(company_id=expected_company_id).delete(synchronize_session=False)
 
         current_products = Product.query.filter_by(company_id=expected_company_id).order_by(Product.id.asc()).all()
         if "products" in sections:
-            Product.query.filter_by(company_id=expected_company_id).delete(synchronize_session=False)
             product_rows = BackupService._deserialize_rows(Product, payload.get("products") or [])
-            if product_rows:
-                db.session.execute(Product.__table__.insert(), product_rows)
+            if full_restore:
+                # Full restore has already removed sale and purchase children.
+                # Delete products before suppliers, then recreate suppliers first
+                # because product.supplier_id is a foreign key.
+                Product.query.filter_by(company_id=expected_company_id).delete(synchronize_session=False)
+                Supplier.query.filter_by(company_id=expected_company_id).delete(synchronize_session=False)
+                supplier_rows = BackupService._deserialize_rows(Supplier, payload.get("suppliers") or [])
+                if supplier_rows:
+                    db.session.execute(Supplier.__table__.insert(), supplier_rows)
+                if product_rows:
+                    db.session.execute(Product.__table__.insert(), product_rows)
+            else:
+                # Partial product restores must not delete products referenced by
+                # sales or purchase history. Merge by tenant-scoped ID/barcode.
+                existing_by_id = {
+                    int(row.id): row
+                    for row in Product.query.filter_by(company_id=expected_company_id).all()
+                }
+                existing_by_barcode = {
+                    str(row.barcode or "").strip(): row
+                    for row in existing_by_id.values()
+                    if str(row.barcode or "").strip()
+                }
+                for product_row in product_rows:
+                    incoming_id = product_row.get("id")
+                    barcode = str(product_row.get("barcode") or "").strip()
+                    product = existing_by_id.get(int(incoming_id)) if incoming_id is not None else None
+                    if product is None and barcode:
+                        product = existing_by_barcode.get(barcode)
+                    if product is not None:
+                        for key, value in product_row.items():
+                            if key in {"id", "company_id", "supplier_id"}:
+                                continue
+                            if hasattr(product, key):
+                                setattr(product, key, value)
+                        supplier_id = product_row.get("supplier_id")
+                        if supplier_id is None or Supplier.query.filter_by(
+                            id=supplier_id, company_id=expected_company_id
+                        ).first() is not None:
+                            product.supplier_id = supplier_id
+                    else:
+                        candidate = dict(product_row)
+                        candidate["company_id"] = expected_company_id
+                        supplier_id = candidate.get("supplier_id")
+                        if supplier_id is not None and Supplier.query.filter_by(
+                            id=supplier_id, company_id=expected_company_id
+                        ).first() is None:
+                            candidate["supplier_id"] = None
+                        if incoming_id is not None:
+                            id_owner = db.session.get(Product, int(incoming_id))
+                            if id_owner is not None:
+                                candidate.pop("id", None)
+                        db.session.execute(Product.__table__.insert(), [candidate])
+                        db.session.flush()
+                        if barcode:
+                            inserted = Product.query.filter_by(
+                                company_id=expected_company_id, barcode=barcode
+                            ).first()
+                            if inserted is not None:
+                                existing_by_id[int(inserted.id)] = inserted
+                                existing_by_barcode[barcode] = inserted
             current_products = Product.query.filter_by(company_id=expected_company_id).order_by(Product.id.asc()).all()
         else:
             if "inventory" in sections:
@@ -823,10 +1091,50 @@ class BackupService:
                 BackupService._restore_product_subset(current_products, payload.get("products") or [], ["category"])
 
         if "clients" in sections:
-            Client.query.filter_by(company_id=expected_company_id).delete(synchronize_session=False)
             client_rows = BackupService._deserialize_rows(Client, payload.get("clients") or [])
-            if client_rows:
-                db.session.execute(Client.__table__.insert(), client_rows)
+            if full_restore:
+                Client.query.filter_by(company_id=expected_company_id).delete(synchronize_session=False)
+                if client_rows:
+                    db.session.execute(Client.__table__.insert(), client_rows)
+            else:
+                # A selected client restore must preserve historical sales that
+                # reference existing clients. Update and insert; never cascade-delete.
+                existing_clients = {
+                    int(row.id): row
+                    for row in Client.query.filter_by(company_id=expected_company_id).all()
+                }
+                for client_row in client_rows:
+                    incoming_id = client_row.get("id")
+                    client = existing_clients.get(int(incoming_id)) if incoming_id is not None else None
+                    if client is not None:
+                        for key, value in client_row.items():
+                            if key not in {"id", "company_id"} and hasattr(client, key):
+                                setattr(client, key, value)
+                    else:
+                        candidate = dict(client_row)
+                        candidate["company_id"] = expected_company_id
+                        if incoming_id is not None and db.session.get(Client, int(incoming_id)) is not None:
+                            candidate.pop("id", None)
+                        db.session.execute(Client.__table__.insert(), [candidate])
+                        db.session.flush()
+                        if incoming_id is not None:
+                            inserted = Client.query.filter_by(id=int(incoming_id), company_id=expected_company_id).first()
+                            if inserted is not None:
+                                existing_clients[int(inserted.id)] = inserted
+
+        if "employees" in sections:
+            BackupService._restore_employee_rows(
+                db.session,
+                company_id=expected_company_id,
+                rows=payload.get("users") or [],
+            )
+
+        # Sales can reference users and cash sessions. Restore those parents first
+        # in a full restore, after removing the old child rows above.
+        if full_restore:
+            cash_session_rows = BackupService._deserialize_rows(CashSession, payload.get("cash_sessions") or [])
+            if cash_session_rows:
+                db.session.execute(CashSession.__table__.insert(), cash_session_rows)
 
         if "sales" in sections:
             sales_ids = [row.id for row in Sale.query.filter_by(company_id=expected_company_id).all()]
@@ -839,12 +1147,6 @@ class BackupService:
                 db.session.execute(Sale.__table__.insert(), sale_rows)
             if sale_item_rows:
                 db.session.execute(SaleItem.__table__.insert(), sale_item_rows)
-
-        if "employees" in sections:
-            User.query.filter(User.company_id == expected_company_id, User.role != "superadmin").delete(synchronize_session=False)
-            user_rows = BackupService._deserialize_rows(User, payload.get("users") or [])
-            if user_rows:
-                db.session.execute(User.__table__.insert(), user_rows)
 
         if sections == BackupService.FULL_RESTORE_SECTIONS or set(sections) == set(BackupService.FULL_RESTORE_SECTIONS):
             purchase_order_ids = [row.id for row in PurchaseOrder.query.filter_by(company_id=expected_company_id).all()]
@@ -859,21 +1161,13 @@ class BackupService:
                 db.session.execute(PurchaseItem.__table__.insert(), purchase_item_rows)
 
             CashMovement.query.filter_by(company_id=expected_company_id).delete(synchronize_session=False)
-            CashSession.query.filter_by(company_id=expected_company_id).delete(synchronize_session=False)
             Expense.query.filter_by(company_id=expected_company_id).delete(synchronize_session=False)
-            Supplier.query.filter_by(company_id=expected_company_id).delete(synchronize_session=False)
-            cash_session_rows = BackupService._deserialize_rows(CashSession, payload.get("cash_sessions") or [])
             cash_movement_rows = BackupService._deserialize_rows(CashMovement, payload.get("cash_movements") or [])
             expense_rows = BackupService._deserialize_rows(Expense, payload.get("expenses") or [])
-            supplier_rows = BackupService._deserialize_rows(Supplier, payload.get("suppliers") or [])
-            if cash_session_rows:
-                db.session.execute(CashSession.__table__.insert(), cash_session_rows)
             if cash_movement_rows:
                 db.session.execute(CashMovement.__table__.insert(), cash_movement_rows)
             if expense_rows:
                 db.session.execute(Expense.__table__.insert(), expense_rows)
-            if supplier_rows:
-                db.session.execute(Supplier.__table__.insert(), supplier_rows)
 
         BackupService._sync_sequences([Product, Client, Supplier, PurchaseOrder, PurchaseItem, Sale, SaleItem, CashSession, CashMovement, Expense, User])
 

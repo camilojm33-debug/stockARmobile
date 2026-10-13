@@ -1945,6 +1945,8 @@ def test_standard_authorized_payment_is_amount_checked_invoiced_and_idempotent(s
             "mercadopago_external_reference": external_reference,
         },
     )
+    # A paid recurring webhook must not undo a SuperAdmin suspension.
+    company.active = False
     db.session.commit()
 
     service = WebhookService()
@@ -1958,6 +1960,18 @@ def test_standard_authorized_payment_is_amount_checked_invoiced_and_idempotent(s
         "payment": {"id": "pay-standard-authorized-once", "status": "approved"},
     }
     monkeypatch.setattr(service.mp_service, "get_authorized_payment", lambda _data_id: authorized)
+    from datetime import timedelta
+    provider_next_payment = (utcnow() + timedelta(days=30)).isoformat()
+    monkeypatch.setattr(
+        service.mp_service,
+        "get_preapproval",
+        lambda _preapproval_id: {
+            "id": "standard-pre-payment",
+            "status": "authorized",
+            "next_payment_date": provider_next_payment,
+            "external_reference": external_reference,
+        },
+    )
 
     first = service.process(
         db_session=db.session,
@@ -2016,6 +2030,7 @@ def test_standard_authorized_payment_is_amount_checked_invoiced_and_idempotent(s
     assert subscription.next_billing_date == first_due
     assert subscription.renewal_enabled is True
     assert subscription.auto_renew is True
+    assert company.active is False
 
 
 def test_standard_authorized_payment_with_wrong_amount_never_renews(subscription_app, monkeypatch):
@@ -2148,6 +2163,7 @@ def test_standard_qr_checkout_rejects_zero_price_before_calling_mercado_pago(sub
 
 
 def test_billing_reconciliation_flags_missing_invoice_and_legacy_qr_autorenew(subscription_app):
+    from datetime import timedelta
     from app import utcnow
     from saas import _billing_reconciliation_snapshot
 
@@ -2185,6 +2201,38 @@ def test_billing_reconciliation_flags_missing_invoice_and_legacy_qr_autorenew(su
     assert "Pago aprobado sin factura" in titles
     assert "QR marcado como renovación automática" in titles
     assert "Suscripción IA autorizada sin contrato registrado" in titles
+
+    # Older rows may lack checkout_method entirely; local Auto flags still must
+    # never be treated as proof that Mercado Pago has an active contract. The
+    # application enforces one subscription row per company, so use a separate
+    # QA tenant to model this legacy state.
+    from app import Company, Subscription
+    legacy_company = Company(
+        name="Legacy Auto Flag QA",
+        active=True,
+        preferences_json="{}",
+    )
+    db.session.add(legacy_company)
+    db.session.flush()
+    legacy = Subscription(
+        company_id=legacy_company.id,
+        plan_id=subscription.plan_id,
+        status="active",
+        start_date=utcnow() - timedelta(days=10),
+        starts_at=utcnow() - timedelta(days=10),
+        next_billing_date=utcnow() + timedelta(days=20),
+        ends_at=utcnow() + timedelta(days=20),
+        renewal_enabled=True,
+        auto_renew=True,
+        metadata_json="{}",
+    )
+    db.session.add(legacy)
+    db.session.commit()
+    legacy_titles = {
+        issue["title"] for issue in _billing_reconciliation_snapshot(now=utcnow())
+        if issue.get("subscription_id") == legacy.id
+    }
+    assert "Renovación automática sin contrato de Mercado Pago" in legacy_titles
 
     SubscriptionService._set_metadata(
         subscription,

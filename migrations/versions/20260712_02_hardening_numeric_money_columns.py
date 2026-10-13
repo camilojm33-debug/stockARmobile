@@ -16,15 +16,61 @@ depends_on = None
 
 
 def _ensure_baseline_schema(bind):
+    """Bootstrap only the pre-Alembic core tables on an empty/partial database.
+
+    Calling MetaData.create_all() without an explicit table list here creates
+    every table known to the *current* application models. Later revisions then
+    try to create their own tables and fail with "table already exists". Keep
+    this bootstrap pinned to the baseline schema; newer tables belong to their
+    own Alembic revisions.
+    """
     inspector = sa.inspect(bind)
     existing = set(inspector.get_table_names())
-    required = {"users", "companies", "plans", "payments", "subscriptions"}
-    if required.issubset(existing):
-        return
 
     from app import db
 
-    db.metadata.create_all(bind=bind)
+    baseline_tables = (
+        "companies",
+        "users",
+        "plans",
+        "subscriptions",
+        "payments",
+        "invoices",
+        "payment_history",
+        "audit_logs",
+        "products",
+        "clients",
+        "suppliers",
+        "purchase_orders",
+        "purchase_items",
+        "sales",
+        "sale_items",
+        "cash_sessions",
+        "cash_movements",
+        "expenses",
+        "product_price_history",
+    )
+    # When running on a production database with all baseline tables present,
+    # avoid even introspective DDL. For an empty/partial database create only
+    # missing baseline tables, leaving all later feature tables to their own
+    # timestamped migrations.
+    baseline_present = {
+        name for name in baseline_tables
+        if name in db.metadata.tables and name in existing
+    }
+    baseline_expected = {
+        name for name in baseline_tables
+        if name in db.metadata.tables
+    }
+    if baseline_present == baseline_expected:
+        return
+
+    tables = [
+        db.metadata.tables[name]
+        for name in baseline_tables
+        if name in db.metadata.tables
+    ]
+    db.metadata.create_all(bind=bind, tables=tables, checkfirst=True)
 
 
 def _has_column(bind, table_name, column_name):

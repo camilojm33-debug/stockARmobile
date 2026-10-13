@@ -913,7 +913,7 @@ def test_offline_first_shell_and_critical_forms_are_wired():
     worker = client.get("/service-worker.js")
     assert worker.status_code == 200
     worker_js = worker.data.decode("utf-8")
-    assert "stockarmobile-pwa-v12" in worker_js
+    assert "stockarmobile-pwa-v13" in worker_js
     assert "OFFLINE_QUEUE_STATUS" in worker_js
 
 
@@ -1023,7 +1023,7 @@ def test_superadmin_subscriptions_actions_visibility_and_flows():
             "company_id": company_id,
             "plan_id": plan_basic_id,
             "status": "pending",
-            "renewal_enabled": "1",
+            "renewal_enabled": "0",
             "step_up_password": "admin123",
         },
         follow_redirects=True,
@@ -1040,7 +1040,7 @@ def test_superadmin_subscriptions_actions_visibility_and_flows():
         data={
             "plan_id": plan_pro_id,
             "status": "active",
-            "renewal_enabled": "1",
+            "renewal_enabled": "0",
             "step_up_password": "admin123",
         },
         follow_redirects=True,
@@ -1239,7 +1239,7 @@ def test_subscription_modify_never_duplicates_records():
     for target_plan_id in (plan_b_id, plan_a_id, plan_b_id):
         resp = client.post(
             f"/superadmin/subscriptions/{subscription_id}/update",
-            data={"plan_id": target_plan_id, "status": "active", "renewal_enabled": "1", "step_up_password": "admin123"},
+            data={"plan_id": target_plan_id, "status": "active", "renewal_enabled": "0", "step_up_password": "admin123"},
             follow_redirects=True,
         )
         assert resp.status_code == 200
@@ -1257,7 +1257,7 @@ def test_subscription_modify_never_duplicates_records():
     # Test 9: doble-submit (mismos datos dos veces seguidas) tampoco debe duplicar.
     resp_again = client.post(
         f"/superadmin/subscriptions/{subscription_id}/update",
-        data={"plan_id": plan_b_id, "status": "active", "renewal_enabled": "1", "step_up_password": "admin123"},
+        data={"plan_id": plan_b_id, "status": "active", "renewal_enabled": "0", "step_up_password": "admin123"},
         follow_redirects=True,
     )
     assert resp_again.status_code == 200
@@ -5587,7 +5587,7 @@ def test_superadmin_create_subscription_keeps_trial_when_company_is_new():
             "company_id": company_id,
             "plan_id": paid_plan_id,
             "status": "pending",
-            "renewal_enabled": "1",
+            "renewal_enabled": "0",
             "step_up_password": "admin123",
         },
         follow_redirects=False,
@@ -5967,7 +5967,7 @@ def test_superadmin_update_subscription_date_to_future_keeps_effective_active():
             "plan_id": plan_id,
             "status": "active",
             "next_billing_date": future_local,
-            "renewal_enabled": "1",
+            "renewal_enabled": "0",
         },
         follow_redirects=False,
     )
@@ -6022,7 +6022,7 @@ def test_superadmin_update_subscription_date_to_past_sets_effective_expired():
             "status": "active",
             "start_date": start_local,
             "next_billing_date": past_local,
-            "renewal_enabled": "1",
+            "renewal_enabled": "0",
             "step_up_password": "admin123",
         },
         follow_redirects=False,
@@ -6192,7 +6192,7 @@ def test_business_billing_issue_sale_document_persists_numbering_sequence():
         assert docs[1].source_id == sale_id_b
 
 
-def test_plan_catalog_sync_updates_existing_plan_values():
+def test_plan_catalog_bootstrap_preserves_existing_admin_configuration():
     with stock_app.app.app_context():
         from app import Plan
         from services.plan_service import PlanService
@@ -6204,14 +6204,22 @@ def test_plan_catalog_sync_updates_existing_plan_values():
         plan.price = 1
         plan.max_users = 99
         plan.features_json = "legacy"
+        plan.state = "paused"
+        plan.active = False
         db.session.commit()
 
         PlanService.ensure_defaults(db.session)
         db.session.refresh(plan)
 
-        assert float(plan.price or 0) == 12999.0
-        assert int(plan.max_users or 0) == 3
-        assert plan.features_json == "inventario,ventas,clientes,reportes,excel"
+        # Bootstrap only creates missing catalog entries. Commercial values
+        # and activation state are explicitly controlled by Superadmin.
+        assert float(plan.price or 0) == 1.0
+        assert int(plan.max_users or 0) == 99
+        assert plan.features_json == "legacy"
+        assert plan.state == "paused"
+        assert plan.active is False
+        existing_codes = {row.code for row in Plan.query.all()}
+        assert {"trial", "entrepreneur", "business", "premium"} <= existing_codes
 
 
 def test_referral_capture_and_register_attribution_flow():
@@ -9301,3 +9309,26 @@ def test_employee_cannot_mutate_company_subscription_or_billing(monkeypatch):
         "company_billing.reactivate_subscription",
     ]:
         assert employee_endpoint_permission(endpoint, "POST") == EMPLOYEE_ADMIN_ONLY
+
+
+def test_public_health_and_readiness_probes():
+    client = stock_app.app.test_client()
+    live = client.get("/healthz")
+    assert live.status_code == 200
+    assert live.get_json() == {"status": "ok"}
+
+    ready = client.get("/readyz")
+    assert ready.status_code == 200
+    assert ready.get_json() == {"status": "ready"}
+
+
+def test_readiness_probe_returns_safe_503_when_database_is_unavailable(monkeypatch):
+    def unavailable(*args, **kwargs):
+        raise RuntimeError("private database detail")
+
+    monkeypatch.setattr(db.session, "execute", unavailable)
+    client = stock_app.app.test_client()
+    response = client.get("/readyz")
+    assert response.status_code == 503
+    assert response.get_json() == {"status": "not_ready"}
+    assert "private database detail" not in response.get_data(as_text=True)

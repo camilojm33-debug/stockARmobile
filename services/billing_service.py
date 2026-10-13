@@ -165,8 +165,13 @@ class BillingService:
         return f"data:image/png;base64,{encoded}"
 
     @staticmethod
-    def cancel_subscription(db_session, *, subscription, user_id: int | None = None):
-        """Cancel Mercado Pago recurring billing and keep the current paid period."""
+    def cancel_subscription(
+        db_session, *, subscription, user_id: int | None = None,
+        cancel_at_period_end: bool = True,
+        origin: str = "portal",
+        actor_role: str | None = None,
+    ):
+        """Cancel MP recurring billing and apply the caller's explicit access policy."""
         metadata = SubscriptionService._metadata_dict(subscription)
         preapproval_id = str(metadata.get("mercadopago_preapproval_id") or "").strip()
         remote_status = "not_configured"
@@ -182,7 +187,7 @@ class BillingService:
                     raise RuntimeError(
                         f"Mercado Pago no confirmó la cancelación de la suscripción automática (estado: {remote_status or 'desconocido'})."
                     )
-            elif remote_status not in {"canceled", "cancelled", "expired"}:
+            elif remote_status not in {"canceled", "cancelled", "expired", "rejected"}:
                 raise RuntimeError(
                     f"No se puede cancelar la suscripción automática de Mercado Pago porque su estado actual es '{remote_status or 'desconocido'}'."
                 )
@@ -193,9 +198,10 @@ class BillingService:
                 company_id=subscription.company_id,
                 subscription_id=subscription.id,
                 actor_user_id=user_id,
-                origin="portal",
-                idempotency_key=f"cancel:{subscription.company_id}:{subscription.id}:{user_id or 0}",
-                cancel_at_period_end=True,
+                actor_role=actor_role,
+                origin=origin,
+                idempotency_key=BillingService._subscription_action_key("cancel", subscription, user_id),
+                cancel_at_period_end=bool(cancel_at_period_end),
             ),
         )
         SubscriptionService._set_metadata(
@@ -211,8 +217,12 @@ class BillingService:
             company_id=subscription.company_id,
             subscription_id=subscription.id,
             event="subscription_cancel_requested",
-            detail="Mercado Pago cancelado y renovación local deshabilitada al finalizar el periodo vigente.",
-            source="portal",
+            detail=(
+                "Mercado Pago cancelado; el acceso pagado se conserva hasta el vencimiento."
+                if cancel_at_period_end
+                else "Contrato recurrente de Mercado Pago cancelado por administración; acceso local bloqueado según la acción administrativa."
+            ),
+            source=origin,
             status="cancelled",
             payload={"preapproval_id": preapproval_id, "remote_status": remote_status},
             user_id=user_id,
@@ -220,11 +230,82 @@ class BillingService:
         return subscription
 
     @staticmethod
-    def reactivate_subscription(db_session, *, subscription, user_id: int | None = None):
-        """Reactivate only after Mercado Pago confirms an authorized state.
+    def suspend_subscription(db_session, *, subscription, user_id: int | None = None, reason: str = "superadmin_suspend"):
+        """Pause MP recurring billing before applying an intentional local suspension."""
+        metadata = SubscriptionService._metadata_dict(subscription)
+        preapproval_id = str(metadata.get("mercadopago_preapproval_id") or "").strip()
+        remote_status = "not_configured"
+        if preapproval_id:
+            mp = MercadoPagoService()
+            remote = mp.get_preapproval(preapproval_id)
+            if str(remote.get("id") or "").strip() != preapproval_id:
+                raise RuntimeError("Mercado Pago devolvió una autorización diferente a la registrada.")
+            remote_status = str(remote.get("status") or "").strip().lower()
+            if remote_status in {"authorized", "pending", "in_process"}:
+                remote = mp.update_preapproval(preapproval_id, {"status": "paused"})
+                if str(remote.get("id") or "").strip() != preapproval_id:
+                    raise RuntimeError("Mercado Pago devolvió una autorización diferente al suspender.")
+                remote_status = str(remote.get("status") or "").strip().lower()
+            if remote_status not in {"paused", "canceled", "cancelled", "expired", "rejected"}:
+                raise RuntimeError(
+                    f"Mercado Pago no confirmó la suspensión del contrato recurrente (estado: {remote_status or 'desconocido'})."
+                )
 
-        If the previous preapproval was canceled/expired, create a fresh authorization
-        and leave the local subscription disabled until the webhook confirms it.
+        result = SubscriptionService.run_command(
+            db_session,
+            SubscriptionService.ExpireSubscriptionCommand(
+                company_id=subscription.company_id,
+                subscription_id=subscription.id,
+                actor_user_id=user_id,
+                actor_role="superadmin",
+                origin="superadmin",
+                idempotency_key=BillingService._subscription_action_key("suspend", subscription, user_id),
+                reason=reason,
+            ),
+        )
+        SubscriptionService._set_metadata(
+            subscription,
+            {"mercadopago_suspension_status": remote_status, "mercadopago_suspended_by_user_id": user_id},
+        )
+        NotificationService.record_event(
+            db_session,
+            company_id=subscription.company_id,
+            subscription_id=subscription.id,
+            event="subscription_suspended",
+            detail="Suscripción suspendida por administración; estado recurrente verificado en Mercado Pago.",
+            source="superadmin",
+            status=remote_status,
+            payload={"preapproval_id": preapproval_id or None, "remote_status": remote_status, "reason": reason},
+            user_id=user_id,
+        )
+        return result
+
+    @staticmethod
+    def _subscription_action_key(action: str, subscription, user_id: int | None = None) -> str:
+        """Stable across retries, but different after the subscription state changes."""
+        import hashlib
+
+        revision = "|".join([
+            str(getattr(subscription, "status", "") or ""),
+            str(getattr(subscription, "updated_at", "") or ""),
+            str(getattr(subscription, "ends_at", "") or ""),
+            str(bool(getattr(subscription, "renewal_enabled", False))),
+            str(bool(getattr(subscription, "auto_renew", False))),
+            str(bool(getattr(subscription, "cancel_at_period_end", False))),
+        ])
+        digest = hashlib.sha256(revision.encode("utf-8")).hexdigest()[:20]
+        return f"{action}:{getattr(subscription, 'company_id', 0)}:{getattr(subscription, 'id', 0)}:{user_id or 0}:{digest}"
+
+    @staticmethod
+    def reactivate_subscription(
+        db_session, *, subscription, user_id: int | None = None,
+        origin: str = "portal", actor_role: str | None = None,
+    ):
+        """Reactivate only after Mercado Pago confirms authorization.
+
+        Pending contracts send the payer back to authorization. A canceled
+        contract gets a new preapproval and stays locally inactive until the
+        verified webhook confirms it.
         """
         metadata = SubscriptionService._metadata_dict(subscription)
         preapproval_id = str(metadata.get("mercadopago_preapproval_id") or "").strip()
@@ -232,40 +313,82 @@ class BillingService:
         if preapproval_id:
             mp = MercadoPagoService()
             remote = mp.get_preapproval(preapproval_id)
+            remote_id = str(remote.get("id") or "").strip()
             remote_status = str(remote.get("status") or "").strip().lower()
+            if remote_id != preapproval_id:
+                raise RuntimeError("Mercado Pago devolvió una autorización diferente a la registrada.")
 
-            if remote_status in {"authorized", "paused", "pending", "in_process"}:
-                if remote_status in {"paused", "pending", "in_process"}:
-                    remote = mp.update_preapproval(preapproval_id, {"status": "authorized"})
-                    remote_status = str(remote.get("status") or "").strip().lower()
-
-                if remote_status == "authorized":
-                    SubscriptionService.run_command(
-                        db_session,
-                        SubscriptionService.ReactivateSubscriptionCommand(
-                            company_id=subscription.company_id,
-                            subscription_id=subscription.id,
-                            actor_user_id=user_id,
-                            origin="portal",
-                            idempotency_key=f"reactivate:{subscription.company_id}:{subscription.id}:{user_id or 0}",
-                        ),
+            if remote_status == "paused":
+                remote = mp.update_preapproval(preapproval_id, {"status": "authorized"})
+                if str(remote.get("id") or "").strip() != preapproval_id:
+                    raise RuntimeError("Mercado Pago devolvió una autorización diferente al reactivar.")
+                remote_status = str(remote.get("status") or "").strip().lower()
+                if remote_status != "authorized":
+                    raise RuntimeError(
+                        "Mercado Pago no confirmó la reactivación; el acceso y la renovación local no se modificaron."
                     )
-                    NotificationService.record_event(
-                        db_session,
+
+            if remote_status == "authorized":
+                SubscriptionService.run_command(
+                    db_session,
+                    SubscriptionService.ReactivateSubscriptionCommand(
                         company_id=subscription.company_id,
                         subscription_id=subscription.id,
-                        event="subscription_reactivated",
-                        detail="Renovacion automatica reactivada y autorizada en Mercado Pago.",
-                        source="portal",
-                        status=SubscriptionService.active_subscription_for_company(subscription.company_id).status,
-                        user_id=user_id,
-                    )
-                    return subscription
+                        actor_user_id=user_id,
+                        actor_role=actor_role,
+                        origin=origin,
+                        idempotency_key=BillingService._subscription_action_key("reactivate", subscription, user_id),
+                    ),
+                )
+                SubscriptionService._set_metadata(
+                    subscription,
+                    {"mercadopago_reactivation_init_point": None},
+                )
+                NotificationService.record_event(
+                    db_session,
+                    company_id=subscription.company_id,
+                    subscription_id=subscription.id,
+                    event="subscription_reactivated",
+                    detail="Renovación automática reactivada y autorización confirmada por Mercado Pago.",
+                    source=origin,
+                    status=SubscriptionService.active_subscription_for_company(subscription.company_id).status,
+                    user_id=user_id,
+                )
+                return subscription
 
-            if remote_status in {"cancelled", "canceled", "expired"}:
+            if remote_status in {"pending", "in_process"}:
+                # Never turn local auto-renewal back on until the payer completes
+                # authorization and Mercado Pago sends the verified confirmation.
+                init_point = str(remote.get("init_point") or "").strip()
+                if not init_point:
+                    from urllib.parse import urlencode
+                    init_point = "https://www.mercadopago.com.ar/subscriptions/checkout?" + urlencode({"preapproval_id": preapproval_id})
+                SubscriptionService._set_metadata(
+                    subscription,
+                    {
+                        "mercadopago_status": remote_status,
+                        "mercadopago_reactivation_init_point": init_point,
+                    },
+                )
+                NotificationService.record_event(
+                    db_session,
+                    company_id=subscription.company_id,
+                    subscription_id=subscription.id,
+                    event="subscription_reactivation_authorization_pending",
+                    detail="La autorización de Mercado Pago sigue pendiente; no se habilitó la renovación local.",
+                    source=origin,
+                    status="pending",
+                    payload={"preapproval_id": preapproval_id, "init_point": init_point},
+                    user_id=user_id,
+                )
+                db_session.flush()
+                return subscription
+
+            if remote_status in {"cancelled", "canceled", "expired", "rejected"}:
                 from app import Company, User
                 from config.billing_config import load_billing_config
                 from services.mercadopago_subscription_service import MercadoPagoSubscriptionService
+
                 company = db_session.get(Company, subscription.company_id)
                 plan = getattr(subscription, "plan", None)
                 if company is None or plan is None:
@@ -284,19 +407,34 @@ class BillingService:
                     notification_url=config.notification_url,
                     back_url=config.success_url,
                 )
+                init_point = str(response.get("init_point") or "").strip()
+                if not init_point:
+                    raise RuntimeError(
+                        "Mercado Pago creó o encontró la autorización, pero no devolvió el enlace para completarla. "
+                        "No se habilitó la renovación local."
+                    )
+                SubscriptionService._set_metadata(
+                    subscription,
+                    {"mercadopago_reactivation_init_point": init_point},
+                )
                 NotificationService.record_event(
                     db_session,
                     company_id=subscription.company_id,
                     subscription_id=subscription.id,
                     event="subscription_reactivation_authorization_pending",
-                    detail="La suscripción anterior de Mercado Pago estaba cancelada/vencida. Se generó una nueva autorización; la activación local queda pendiente del webhook.",
+                    detail="Se generó una nueva autorización de Mercado Pago; la activación local queda pendiente del webhook.",
                     source="portal",
                     status="pending",
-                    payload={"preapproval_id": response.get("id"), "init_point": response.get("init_point")},
+                    payload={"preapproval_id": response.get("id"), "init_point": init_point},
                     user_id=user_id,
                 )
                 db_session.flush()
                 return subscription
+
+            raise RuntimeError(
+                f"No se puede reactivar la suscripción: Mercado Pago informó el estado "
+                f"'{remote_status or 'desconocido'}'."
+            )
 
         SubscriptionService.run_command(
             db_session,
@@ -304,8 +442,9 @@ class BillingService:
                 company_id=subscription.company_id,
                 subscription_id=subscription.id,
                 actor_user_id=user_id,
-                origin="portal",
-                idempotency_key=f"reactivate:{subscription.company_id}:{subscription.id}:{user_id or 0}",
+                actor_role=actor_role,
+                origin=origin,
+                idempotency_key=BillingService._subscription_action_key("reactivate", subscription, user_id),
             ),
         )
         NotificationService.record_event(
@@ -313,8 +452,8 @@ class BillingService:
             company_id=subscription.company_id,
             subscription_id=subscription.id,
             event="subscription_reactivated",
-            detail="El usuario reactivo renovacion automatica.",
-            source="portal",
+            detail="El usuario reactivó la renovación de la suscripción administrada localmente.",
+            source=origin,
             status=SubscriptionService.active_subscription_for_company(subscription.company_id).status,
             user_id=user_id,
         )

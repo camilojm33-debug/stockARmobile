@@ -151,3 +151,47 @@ def run_backup_maintenance():
             "restore_verification": verification,
         }
     ), 200 if ok else 500
+
+def _billing_reconciliation_expected_token() -> str:
+    return str(os.environ.get("BILLING_RECONCILIATION_TOKEN") or "").strip()
+
+
+def _billing_reconciliation_authorized() -> bool:
+    expected = _billing_reconciliation_expected_token()
+    supplied = str(request.headers.get("X-Billing-Reconciliation-Token") or "").strip()
+    return bool(expected) and bool(supplied) and hmac.compare_digest(supplied, expected)
+
+
+@maintenance_bp.post("/internal/maintenance/billing/reconcile")
+@csrf.exempt
+def run_billing_reconciliation():
+    if not _billing_reconciliation_authorized():
+        return jsonify({"ok": False, "error": "forbidden"}), 403
+
+    try:
+        from services.billing_reconciliation_service import BillingReconciliationService
+
+        result = BillingReconciliationService.run()
+        current_app.logger.info(
+            "Automated billing reconciliation: scanned=%s repaired=%s ignored=%s errors=%s attention=%s",
+            result.get("events_scanned", 0),
+            result.get("repaired", 0),
+            result.get("ignored", 0),
+            result.get("errors", 0),
+            result.get("attention", 0),
+        )
+        return jsonify(result), 200 if result.get("ok") is True else 500
+    except Exception as exc:
+        current_app.logger.exception(
+            "Automated billing reconciliation failed: error_type=%s",
+            type(exc).__name__,
+        )
+        return jsonify({
+            "ok": False,
+            "events_scanned": 0,
+            "repaired": 0,
+            "ignored": 0,
+            "errors": 1,
+            "attention": 0,
+            "error": "billing_reconciliation_failed",
+        }), 500

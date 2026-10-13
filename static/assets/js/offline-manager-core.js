@@ -143,11 +143,21 @@
     }
   }
 
+  function getCurrentOfflineIdentity() {
+    const userId = String(document.body?.dataset?.userId || '').trim();
+    const companyId = String(document.body?.dataset?.companyId || '').trim();
+    return userId && companyId ? { userId, companyId } : null;
+  }
+
   function postMessageToWorker(message) {
     if (!('serviceWorker' in navigator)) return Promise.resolve();
     return navigator.serviceWorker.ready.then((registration) => {
       state.serviceWorkerReady = true;
-      registration.active?.postMessage({ ...message, requestId: state.requestId });
+      registration.active?.postMessage({
+        ...message,
+        requestId: state.requestId,
+        identity: getCurrentOfflineIdentity(),
+      });
       if (elements.syncNow) {
         elements.syncNow.disabled = false;
       }
@@ -174,6 +184,8 @@
         credentials: 'same-origin',
         headers: {
           'X-Offline-Request-Id': uuid,
+          'X-Offline-User-Id': String(document.body?.dataset?.userId || ''),
+          'X-Offline-Company-Id': String(document.body?.dataset?.companyId || ''),
           'X-Requested-With': 'XMLHttpRequest',
         },
       });

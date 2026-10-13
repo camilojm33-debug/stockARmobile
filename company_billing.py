@@ -2885,9 +2885,8 @@ def cancel_subscription():
     metadata = SubscriptionService._metadata_dict(subscription)
     preapproval_id = str(metadata.get("mercadopago_preapproval_id") or "").strip()
     try:
-        if preapproval_id:
-            from services.mercadopago_service import MercadoPagoService
-            MercadoPagoService().cancel_preapproval(preapproval_id)
+        # BillingService performs and verifies the remote cancellation before it
+        # changes the local renewal flags. Avoid a second unverified MP request here.
         BillingService.cancel_subscription(db.session, subscription=subscription, user_id=current_user.id)
         record_audit(action="subscription_cancel", entity="subscription", entity_id=subscription.id, detail="Cancelacion de suscripcion solicitada" + (" en Mercado Pago" if preapproval_id else ""))
         db.session.commit()
@@ -2909,16 +2908,36 @@ def reactivate_subscription():
     if subscription is None:
         flash("No hay suscripción para reactivar.", "warning")
         return redirect(url_for("company_billing.subscription_portal"))
-    metadata = SubscriptionService._metadata_dict(subscription)
-    preapproval_id = str(metadata.get("mercadopago_preapproval_id") or "").strip()
     try:
-        if preapproval_id:
-            from services.mercadopago_service import MercadoPagoService
-            MercadoPagoService().update_preapproval(preapproval_id, {"status": "authorized"})
+        # All provider-state decisions are centralized in BillingService. A
+        # pending/replacement preapproval must send the payer to MP instead of
+        # falsely reporting that the subscription is active.
         BillingService.reactivate_subscription(db.session, subscription=subscription, user_id=current_user.id)
-        record_audit(action="subscription_reactivate", entity="subscription", entity_id=subscription.id, detail="Renovacion automatica reactivada" + (" en Mercado Pago" if preapproval_id else ""))
+        metadata_after = SubscriptionService._metadata_dict(subscription)
+        reactivation_url = str(metadata_after.get("mercadopago_reactivation_init_point") or "").strip()
+        if reactivation_url:
+            from urllib.parse import urlparse
+            parsed = urlparse(reactivation_url)
+            host = (parsed.hostname or "").lower()
+            if parsed.scheme != "https" or not (
+                host == "mercadopago.com"
+                or host.endswith(".mercadopago.com")
+                or host == "mercadopago.com.ar"
+                or host.endswith(".mercadopago.com.ar")
+            ):
+                raise RuntimeError("Mercado Pago no devolvió un enlace de autorización confiable.")
+            record_audit(
+                action="subscription_reactivation_authorization_pending",
+                entity="subscription",
+                entity_id=subscription.id,
+                detail="El cliente debe completar una autorización pendiente de Mercado Pago.",
+            )
+            db.session.commit()
+            return redirect(reactivation_url)
+
+        record_audit(action="subscription_reactivate", entity="subscription", entity_id=subscription.id, detail="Renovacion automatica reactivada" + (" en Mercado Pago" if metadata_after.get("mercadopago_preapproval_id") else ""))
         db.session.commit()
-        flash("Renovación automática reactivada.", "success")
+        flash("Renovación automática reactivada y confirmada.", "success")
     except Exception as exc:
         db.session.rollback()
         current_app.logger.exception("Error reactivando suscripción Mercado Pago: %s", exc)
@@ -5216,8 +5235,9 @@ def webhook_mercadopago():
     from app import WebhookEvent
 
     payload = request.get_json(silent=True) or {}
+    webhook_service = WebhookService()
     try:
-        result = WebhookService().process(db_session=db.session, headers=dict(request.headers), payload=payload)
+        result = webhook_service.process(db_session=db.session, headers=dict(request.headers), payload=payload)
         record_audit(action="webhook_mercadopago", entity="webhook", detail=f"Webhook procesado: {result.get('status')}")
         try:
             db.session.commit()
@@ -5232,8 +5252,32 @@ def webhook_mercadopago():
     except IntegrityError as exc:
         current_app.logger.exception("Webhook Mercado Pago rechazado por integridad: %s", exc)
         db.session.rollback()
+        try:
+            webhook_service.persist_failed_authorized_payment(
+                db_session=db.session,
+                headers=dict(request.headers),
+                payload=payload,
+            )
+        except Exception as persist_exc:
+            db.session.rollback()
+            current_app.logger.warning(
+                "No se pudo persistir el webhook firmado para reconciliación; error_type=%s",
+                type(persist_exc).__name__,
+            )
         return jsonify({"ok": False, "error": "No se pudo procesar la notificación por una inconsistencia interna."}), 400
     except Exception as exc:
         current_app.logger.exception("Webhook Mercado Pago rechazado: %s", exc)
         db.session.rollback()
+        try:
+            webhook_service.persist_failed_authorized_payment(
+                db_session=db.session,
+                headers=dict(request.headers),
+                payload=payload,
+            )
+        except Exception as persist_exc:
+            db.session.rollback()
+            current_app.logger.warning(
+                "No se pudo persistir el webhook firmado para reconciliación; error_type=%s",
+                type(persist_exc).__name__,
+            )
         return jsonify({"ok": False, "error": "No se pudo procesar la notificación."}), 400

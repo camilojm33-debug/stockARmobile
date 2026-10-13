@@ -29,6 +29,85 @@ class WebhookService:
         return f"{event_type}:{data_id}"
 
     @staticmethod
+    def _event_can_be_retried(event) -> bool:
+        """Only completed webhook records are deduplicated permanently."""
+        status = str(getattr(event, "status", "") or "").strip().lower()
+        return status in {"", "processing", "failed", "error", "retry", "pending"}
+
+    def persist_failed_authorized_payment(
+        self,
+        *,
+        db_session,
+        headers: dict,
+        payload: dict,
+    ) -> bool:
+        """Persist a retryable record after a signed authorized-payment webhook fails.
+
+        The normal webhook route rolls back the business transaction when provider
+        synchronization fails. Persisting the verified delivery in a separate
+        transaction makes it visible to the reconciler. Terminal records are not
+        downgraded, and bounded-retry diagnostics survive later provider redeliveries.
+        """
+        from app import WebhookEvent
+
+        event_type = payload.get("type") or payload.get("topic") or "unknown"
+        if event_type != "subscription_authorized_payment":
+            return False
+        data = payload.get("data") or {}
+        data_id = str(data.get("id") or payload.get("id") or "").strip()
+        normalized_headers = {
+            str(key or "").strip().lower(): str(value or "").strip()
+            for key, value in (headers or {}).items()
+        }
+        request_id = normalized_headers.get("x-request-id", "")
+        signature = normalized_headers.get("x-signature", "")
+        if not self.mp_service.validate_webhook_signature(
+            request_id=request_id,
+            x_signature=signature,
+            data_id=data_id,
+        ):
+            return False
+
+        event_key = self._event_key(payload)
+        existing = (
+            db_session.query(WebhookEvent)
+            .filter_by(event_key=event_key)
+            .with_for_update()
+            .first()
+        )
+        if existing is not None:
+            if not self._event_can_be_retried(existing):
+                return False
+            preserved_metadata = {}
+            try:
+                prior_payload = json.loads(existing.payload_json or "{}")
+                if isinstance(prior_payload, dict):
+                    for key in (
+                        "_billing_reconciliation_attempts",
+                        "_billing_reconciliation_last_error",
+                    ):
+                        if key in prior_payload:
+                            preserved_metadata[key] = prior_payload[key]
+            except (TypeError, ValueError):
+                preserved_metadata = {}
+            failed_payload = dict(payload)
+            failed_payload.update(preserved_metadata)
+            existing.status = "failed"
+            existing.payload_json = json.dumps(failed_payload, ensure_ascii=False)
+        else:
+            db_session.add(
+                WebhookEvent(
+                    provider="mercadopago",
+                    event_key=event_key,
+                    event_type=event_type,
+                    status="failed",
+                    payload_json=json.dumps(payload, ensure_ascii=False),
+                )
+            )
+        db_session.commit()
+        return True
+
+    @staticmethod
     def _parse_mp_datetime(value: str | None):
         if not value:
             return None
@@ -99,9 +178,12 @@ class WebhookService:
         if not self.mp_service.validate_webhook_signature(request_id=request_id, x_signature=x_signature, data_id=data_id):
             raise RuntimeError("Firma de webhook invalida")
 
-        existing = WebhookEvent.query.filter_by(event_key=event_key).first()
-        if existing:
-            return {"status": "duplicate", "event_key": event_key}
+        retry_event = None
+        existing = WebhookEvent.query.filter_by(event_key=event_key).with_for_update().first()
+        if existing is not None:
+            if not self._event_can_be_retried(existing):
+                return {"status": "duplicate", "event_key": event_key}
+            retry_event = existing
 
         payment_data = None
         merchant_connection = None
@@ -133,18 +215,25 @@ class WebhookService:
                         "Webhook Mercado Pago rechazado: el collector del pago no coincide con la cuenta vinculada a la empresa."
                     )
             event_key = self._payment_event_key(payment_data, generic_event_key)
-            existing_payment_event = WebhookEvent.query.filter_by(event_key=event_key).first()
-            if existing_payment_event:
-                return {"status": "duplicate", "event_key": event_key}
+            existing_payment_event = WebhookEvent.query.filter_by(event_key=event_key).with_for_update().first()
+            if existing_payment_event is not None:
+                if not self._event_can_be_retried(existing_payment_event):
+                    return {"status": "duplicate", "event_key": event_key}
+                retry_event = existing_payment_event
 
-        event_row = WebhookEvent(
-            provider="mercadopago",
-            event_key=event_key,
-            event_type=event_type,
-            status="processing",
-            payload_json=json.dumps(payload, ensure_ascii=False),
-        )
-        db_session.add(event_row)
+        if retry_event is not None:
+            event_row = retry_event
+            event_row.status = "processing"
+            event_row.payload_json = json.dumps(payload, ensure_ascii=False)
+        else:
+            event_row = WebhookEvent(
+                provider="mercadopago",
+                event_key=event_key,
+                event_type=event_type,
+                status="processing",
+                payload_json=json.dumps(payload, ensure_ascii=False),
+            )
+            db_session.add(event_row)
         db_session.flush()
 
         payment_status = "pending"
@@ -229,32 +318,116 @@ class WebhookService:
                 if preapproval_id:
                     ai_company = AISubscriptionService.company_for_mercadopago_reference(preapproval_id=preapproval_id, external_reference=external_reference)
                 if ai_company is not None and payment_id:
-                    payment = Payment.query.filter_by(payment_id=payment_id).first()
-                    previous_payment_status = (payment.status or "").lower() if payment else ""
+                    ai_prefs = AISubscriptionService._ai_prefs(ai_company)
+                    previous_payment = Payment.query.filter_by(payment_id=payment_id).first()
+                    previous_payment_status = str(previous_payment.status or "").strip().lower() if previous_payment else ""
+                    try:
+                        incoming_amount = float(
+                            authorized.get("transaction_amount")
+                            or payment_info.get("transaction_amount")
+                            or (previous_payment.amount if previous_payment is not None else 0)
+                        )
+                    except (TypeError, ValueError, OverflowError) as exc:
+                        if payment_status == "approved":
+                            raise RuntimeError("Pago de suscripción IA aprobado sin importe verificable.") from exc
+                        incoming_amount = 0.0
+                    incoming_currency = str(
+                        authorized.get("currency_id")
+                        or payment_info.get("currency_id")
+                        or (previous_payment.currency if previous_payment is not None else "")
+                        or "ARS"
+                    ).strip().upper()
+
+                    if payment_status == "approved":
+                        expected_amount = AISubscriptionService.plan_amount_ars(str(ai_prefs.get("plan_code") or ""))
+                        if incoming_amount <= 0 or abs(expected_amount - incoming_amount) > 0.01:
+                            raise RuntimeError(
+                                f"Pago recurrente IA rechazado por importe: esperado={expected_amount:.2f}, recibido={incoming_amount:.2f}."
+                            )
+                        if incoming_currency != "ARS":
+                            raise RuntimeError(
+                                f"Pago recurrente IA rechazado por moneda: esperada=ARS, recibida={incoming_currency or 'vacía'}."
+                            )
+
+                    persisted_status = payment_status
+                    if previous_payment_status in {"refunded", "charged_back"}:
+                        # A delayed approved/pending delivery cannot undo an already
+                        # recorded refund or chargeback for this payment.
+                        persisted_status = (
+                            "charged_back"
+                            if previous_payment_status == "charged_back" or payment_status == "charged_back"
+                            else "refunded"
+                        )
+                    elif previous_payment_status == "approved" and payment_status not in {"refunded", "charged_back"}:
+                        # A delayed pending/rejected delivery cannot overwrite a verified approval.
+                        persisted_status = "approved"
+
+                    payment = previous_payment
                     if payment is None:
-                        payment = Payment(payment_id=payment_id, external_reference=external_reference, company_id=ai_company.id, subscription_id=None, user_id=None, amount=float(authorized.get("transaction_amount") or 0), currency=authorized.get("currency_id") or "ARS", status=payment_status, payment_method="mercadopago_ai_subscription", reference=preapproval_id, provider="mercadopago_ai_subscription", payload_json=json.dumps(authorized, ensure_ascii=False), paid_at=self._parse_mp_datetime(authorized.get("debit_date")) if payment_status == "approved" else None)
+                        payment = Payment(
+                            payment_id=payment_id,
+                            external_reference=external_reference,
+                            company_id=ai_company.id,
+                            subscription_id=None,
+                            user_id=None,
+                            amount=incoming_amount,
+                            currency=incoming_currency,
+                            status=persisted_status,
+                            payment_method="mercadopago_ai_subscription",
+                            reference=preapproval_id,
+                            provider="mercadopago_ai_subscription",
+                            payload_json=json.dumps(authorized, ensure_ascii=False),
+                            paid_at=self._parse_mp_datetime(authorized.get("debit_date")) if persisted_status == "approved" else None,
+                        )
                         db_session.add(payment)
                         db_session.flush()
                     else:
                         payment.external_reference = external_reference or payment.external_reference
                         payment.company_id = ai_company.id
                         payment.subscription_id = None
-                        payment.amount = float(authorized.get("transaction_amount") or payment.amount or 0)
-                        payment.currency = authorized.get("currency_id") or payment.currency or "ARS"
-                        payment.status = payment_status
+                        if incoming_amount > 0:
+                            payment.amount = incoming_amount
+                        payment.currency = incoming_currency or payment.currency or "ARS"
+                        payment.status = persisted_status
                         payment.payment_method = payment.payment_method or "mercadopago_ai_subscription"
                         payment.reference = preapproval_id
                         payment.provider = "mercadopago_ai_subscription"
                         payment.payload_json = json.dumps(authorized, ensure_ascii=False)
                         payment.paid_at = self._parse_mp_datetime(authorized.get("debit_date")) or payment.paid_at
-                    if previous_payment_status != payment_status:
-                        should_sync_ai_preapproval = payment_status == "approved"
-                        AISubscriptionService.record_mercadopago_payment(ai_company, payment_id=payment_id, payment_status=payment_status, amount=float(payment.amount or 0), currency=payment.currency or "ARS", paid_at=payment.paid_at, preapproval_id=preapproval_id, external_reference=external_reference)
+
+                    recorded_paid_ids = ai_prefs.get("mercadopago_paid_payment_ids") or []
+                    if not isinstance(recorded_paid_ids, list):
+                        recorded_paid_ids = []
+                    payment_needs_access_credit = (
+                        persisted_status == "approved"
+                        and payment_id not in {str(value) for value in recorded_paid_ids}
+                    )
+                    if (
+                        previous_payment_status != persisted_status
+                        or payment_needs_access_credit
+                    ):
+                        AISubscriptionService.record_mercadopago_payment(
+                            ai_company,
+                            payment_id=payment_id,
+                            payment_status=persisted_status,
+                            amount=float(payment.amount or 0),
+                            currency=payment.currency or "ARS",
+                            paid_at=payment.paid_at,
+                            preapproval_id=preapproval_id,
+                            external_reference=external_reference,
+                        )
+                    should_sync_ai_preapproval = (
+                        persisted_status == "approved"
+                        and payment_needs_access_credit
+                    )
                     if ai_company is not None and preapproval_id and should_sync_ai_preapproval:
                         preapproval = self.mp_service.get_preapproval(preapproval_id)
                         if not preapproval.get("external_reference"):
                             preapproval["external_reference"] = external_reference
-                        ai_company = AISubscriptionService.sync_from_mercadopago(preapproval=preapproval)
+                        ai_company = AISubscriptionService.sync_from_mercadopago(
+                            preapproval=preapproval,
+                            verified_payment_id=payment_id,
+                        )
                         db_session.flush()
                 result = {"status": "processed_ai_subscription_payment", "company_id": getattr(ai_company, "id", None), "payment_status": payment_status, "payment_id": payment_id or None, "event_key": event_key}
                 event_row.status = result.get("status", "processed_ai_subscription_payment")
@@ -310,9 +483,14 @@ class WebhookService:
 
                 previous_payment_status = str(getattr(payment, "status", "") or "").strip().lower()
                 persisted_status = payment_status
-                # A delayed pending/rejected delivery must not overwrite a charge
-                # that has already been verified as approved.
-                if previous_payment_status == "approved" and payment_status not in {"refunded", "charged_back"}:
+                # Statuses must not move backward when providers deliver distinct
+                # notifications out of order. Reversals can supersede approval,
+                # but a delayed approval can never undo a refund/chargeback.
+                if previous_payment_status in {"refunded", "charged_back"} and payment_status not in {"refunded", "charged_back"}:
+                    persisted_status = previous_payment_status
+                elif previous_payment_status == "refund_pending" and payment_status not in {"refunded", "charged_back"}:
+                    persisted_status = "refund_pending"
+                elif previous_payment_status == "approved" and payment_status not in {"refunded", "charged_back"}:
                     persisted_status = "approved"
 
                 paid_at = (
@@ -354,6 +532,26 @@ class WebhookService:
                 db_session.flush()
 
                 if payment.status == "approved":
+                    from services.mercadopago_subscription_service import MercadoPagoSubscriptionService
+
+                    # The payment and preapproval notifications can arrive in
+                    # either order. Query MP's current contract state and persist
+                    # its next billing boundary before renewing locally, so the
+                    # same payment never adds an extra plan duration.
+                    preapproval = self.mp_service.get_preapproval(preapproval_id)
+                    if str(preapproval.get("id") or "").strip() != preapproval_id:
+                        raise RuntimeError("Mercado Pago devolvió una autorización distinta para el pago recurrente.")
+                    remote_reference = str(preapproval.get("external_reference") or "").strip()
+                    expected_reference = str(
+                        SubscriptionService._metadata_dict(subscription).get("mercadopago_external_reference") or ""
+                    ).strip()
+                    if expected_reference and remote_reference and expected_reference != remote_reference:
+                        raise RuntimeError("La autorización de Mercado Pago no coincide con la referencia de la suscripción.")
+                    MercadoPagoSubscriptionService.sync_preapproval(
+                        db_session=db_session,
+                        preapproval=preapproval,
+                    )
+                    remote_contract_status = str(preapproval.get("status") or "").strip().lower()
                     SubscriptionService.run_command(
                         db_session,
                         SubscriptionService.RenewSubscriptionCommand(
@@ -361,7 +559,7 @@ class WebhookService:
                             subscription_id=subscription.id,
                             payment_status="approved",
                             paid_at=payment.paid_at,
-                            renewal_enabled=True,
+                            renewal_enabled=(remote_contract_status == "authorized"),
                             actor_user_id=payment.user_id,
                             actor_role="system",
                             origin="subscription_authorized_payment",
@@ -373,7 +571,8 @@ class WebhookService:
                         from app import Company
                         company = db_session.get(Company, subscription.company_id)
                     if company is not None:
-                        company.active = True
+                        # A paid renewal restores subscription state only. It must
+                        # never reverse a separate SuperAdmin company suspension.
                         if payment.invoice_id is None:
                             invoice = InvoiceService.create_invoice(
                                 db_session,
@@ -799,6 +998,18 @@ class WebhookService:
                     return {"status": "stale_ignored", "event_key": event_key}
 
                 payment.preference_id = str(payment_data.get("order", {}).get("id") or payment.preference_id or "")
+
+                # Preserve a verified payment outcome against delayed notifications.
+                # Reversals are the only allowed transitions away from approval.
+                # Conversely, retain a canceled draft's late approval so the
+                # canceled-checkout branch below can request the required refund.
+                incoming_status = str(payment_status or "pending").strip().lower()
+                if previous_payment_status in {"refunded", "charged_back"} and incoming_status not in {"refunded", "charged_back"}:
+                    payment_status = previous_payment_status
+                elif previous_payment_status == "refund_pending" and incoming_status not in {"refunded", "charged_back"}:
+                    payment_status = "refund_pending"
+                elif previous_payment_status == "approved" and incoming_status not in {"refunded", "charged_back"}:
+                    payment_status = "approved"
                 payment.status = payment_status
                 payment.amount = float(payment_data.get("transaction_amount") or payment.amount or 0)
                 payment.currency = payment_data.get("currency_id") or payment.currency or "ARS"
@@ -1014,6 +1225,27 @@ class WebhookService:
                         automatic_contract = flow == "subscription_auto" or (
                             not flow and checkout_method != "qr"
                         )
+                        renewal_enabled = automatic_contract
+                        preapproval_id = str(
+                            subscription_metadata.get("mercadopago_preapproval_id") or ""
+                        ).strip()
+                        if automatic_contract and preapproval_id:
+                            from services.mercadopago_subscription_service import MercadoPagoSubscriptionService
+
+                            preapproval = self.mp_service.get_preapproval(preapproval_id)
+                            if str(preapproval.get("id") or "").strip() != preapproval_id:
+                                raise RuntimeError("Mercado Pago devolvió una autorización distinta para el pago de suscripción.")
+                            remote_reference = str(preapproval.get("external_reference") or "").strip()
+                            expected_reference = str(
+                                subscription_metadata.get("mercadopago_external_reference") or ""
+                            ).strip()
+                            if expected_reference and remote_reference and expected_reference != remote_reference:
+                                raise RuntimeError("La autorización remota no coincide con la referencia de la suscripción.")
+                            MercadoPagoSubscriptionService.sync_preapproval(
+                                db_session=db_session,
+                                preapproval=preapproval,
+                            )
+                            renewal_enabled = str(preapproval.get("status") or "").strip().lower() == "authorized"
                         SubscriptionService.run_command(
                             db_session,
                             SubscriptionService.RenewSubscriptionCommand(
@@ -1021,7 +1253,7 @@ class WebhookService:
                                 subscription_id=subscription.id,
                                 payment_status="approved",
                                 paid_at=paid_at,
-                                renewal_enabled=automatic_contract,
+                                renewal_enabled=renewal_enabled,
                                 actor_user_id=payment.user_id,
                                 actor_role="system",
                                 origin="webhook",
@@ -1047,14 +1279,55 @@ class WebhookService:
                     elif normalized_status == "cancelled":
                         SubscriptionService.run_command(db_session, SubscriptionService.CancelSubscriptionCommand(company_id=company.id, subscription_id=subscription.id, actor_user_id=payment.user_id, actor_role="system", origin="webhook", idempotency_key=f"webhook-cancel:{event_key}:{subscription.id}", cancel_at_period_end=False))
                     elif normalized_status in {"expired", "rejected"}:
-                        SubscriptionService.run_command(db_session, SubscriptionService.ExpireSubscriptionCommand(company_id=company.id, subscription_id=subscription.id, actor_user_id=payment.user_id, actor_role="system", origin="webhook", idempotency_key=f"webhook-expire:{event_key}:{subscription.id}", reason=f"webhook_{normalized_status}"))
+                        # A failed attempt to charge the next period must not
+                        # revoke an already-paid active period.
+                        paid_until = subscription.next_billing_date or subscription.ends_at
+                        if paid_until is not None and getattr(paid_until, "tzinfo", None) is not None:
+                            paid_until = paid_until.astimezone(timezone.utc).replace(tzinfo=None)
+                        now_utc = datetime.now(timezone.utc).replace(tzinfo=None)
+                        current_state = SubscriptionService._normalize_state(subscription.status)
+                        has_paid_access = bool(
+                            current_state in SubscriptionService.ACTIVE_STATUSES
+                            and paid_until is not None
+                            and paid_until > now_utc
+                        )
+                        if not has_paid_access:
+                            SubscriptionService.run_command(
+                                db_session,
+                                SubscriptionService.ExpireSubscriptionCommand(
+                                    company_id=company.id,
+                                    subscription_id=subscription.id,
+                                    actor_user_id=payment.user_id,
+                                    actor_role="system",
+                                    origin="webhook",
+                                    idempotency_key=f"webhook-expire:{event_key}:{subscription.id}",
+                                    reason=f"webhook_{normalized_status}",
+                                ),
+                            )
+                        else:
+                            NotificationService.record_event(
+                                db_session,
+                                company_id=company.id,
+                                payment_id=payment.id,
+                                subscription_id=subscription.id,
+                                event="renewal_payment_failed_paid_period_preserved",
+                                detail=(
+                                    f"El intento de renovación quedó {normalized_status}; "
+                                    f"se conserva el acceso pagado hasta {paid_until.isoformat()}."
+                                ),
+                                source="mercadopago",
+                                status=normalized_status,
+                                event_id=f"renewal-failed-paid-period:{payment.payment_id}:{normalized_status}",
+                                payload={"payment_id": payment.payment_id, "paid_until": paid_until.isoformat()},
+                                user_id=payment.user_id,
+                            )
                     elif normalized_status == "charged_back":
                         SubscriptionService.run_command(db_session, SubscriptionService.ExpireSubscriptionCommand(company_id=company.id, subscription_id=subscription.id, actor_user_id=payment.user_id, actor_role="system", origin="webhook", idempotency_key=f"webhook-suspend:{event_key}:{subscription.id}", reason="webhook_suspend"))
                     else:
                         SubscriptionService.apply_payment_status(subscription, payment_status)
-                is_pending_plan_change = bool(SubscriptionService._metadata_dict(subscription).get("pending_plan_change"))
-                if not is_pending_plan_change and not is_replaced_subscription and not is_cancelled_checkout:
-                    company.active = subscription.status in {"active", "approved", "trial"}
+                # A payment/renewal webhook must never undo an explicit
+                # SuperAdmin company suspension. Subscription status governs
+                # billing entitlement; company.active is an independent control.
                 if payment.status == "approved" and subscription.status in {"active", "approved"}:
                     if payment.invoice_id is None:
                         invoice = InvoiceService.create_invoice(db_session, company=company, subscription=subscription, amount=float(payment.amount or 0), currency=payment.currency or "ARS", detail=f"Cobro Mercado Pago {payment.payment_id}", payment_id=payment.payment_id)

@@ -99,6 +99,33 @@ class InvoicePurchaseService:
         return currency, subtotal, tax, total
 
     @staticmethod
+    def _validate_line_subtotal(lines, subtotal: Decimal) -> Decimal:
+        """Reject a header total that cannot be supported by the applied lines."""
+        computed_subtotal = Decimal("0")
+        for index, line in enumerate(lines, start=1):
+            quantity = InvoicePurchaseService._decimal(
+                line.get("quantity"), f"La cantidad de la línea {index}", minimum=Decimal("0.000001")
+            )
+            unit_cost = InvoicePurchaseService._decimal(
+                line.get("unit_cost"), f"El costo de la línea {index}"
+            )
+            computed_subtotal += quantity * unit_cost
+            line_total_raw = line.get("line_total")
+            if line_total_raw not in (None, ""):
+                line_total = InvoicePurchaseService._decimal(
+                    line_total_raw, f"El importe de la línea {index}"
+                )
+                if abs(quantity * unit_cost - line_total) > Decimal("0.05"):
+                    raise InvoicePurchaseError(
+                        f"El importe de la línea {index} no coincide con cantidad × costo unitario."
+                    )
+        if abs(computed_subtotal - subtotal) > Decimal("0.05"):
+            raise InvoicePurchaseError(
+                "El subtotal de la factura no coincide con la suma de las líneas. Revisá la factura antes de confirmar."
+            )
+        return computed_subtotal
+
+    @staticmethod
     def confirm(*, company_id: int, user_id: int, invoice: dict, conversation):
         if invoice.get("status") in {"CONFIRMADA", "APLICADA"}:
             return invoice.get("result") or {"status": invoice.get("status")}
@@ -115,6 +142,7 @@ class InvoicePurchaseService:
         if any(line.get("quantity") in (None, "") or line.get("unit_cost") in (None, "") for line in lines):
             raise InvoicePurchaseError("Hay líneas sin cantidad o costo unitario.")
         currency, subtotal, tax, total = InvoicePurchaseService._prepare_invoice(invoice)
+        InvoicePurchaseService._validate_line_subtotal(lines, subtotal)
 
         from app import AuditLog, Product, PurchaseItem, PurchaseOrder, Supplier, db
 

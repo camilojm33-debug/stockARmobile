@@ -12,6 +12,43 @@ def _to_float(value, default=0.0):
     return safe_float(value, default)
 
 
+def _record_cash_expense_movement(*, user, expense):
+    """Mirror an EFECTIVO expense in the operator's open drawer atomically."""
+    payment_method = str(getattr(expense, "payment_method", "") or "").strip().lower()
+    if payment_method not in {"efectivo", "cash", "contado"}:
+        return None
+
+    from app import CashMovement, CashSession, db
+
+    company_id = getattr(user, "company_id", None)
+    open_session = (
+        CashSession.query
+        .filter_by(
+            company_id=company_id,
+            user_id=user.id,
+            status="abierta",
+        )
+        .order_by(CashSession.opened_at.desc(), CashSession.id.desc())
+        .with_for_update()
+        .first()
+    )
+    if open_session is None:
+        return None
+
+    movement = CashMovement(
+        session_id=open_session.id,
+        user_id=user.id,
+        company_id=company_id,
+        movement_type="egreso",
+        category="gasto",
+        amount=expense.amount,
+        description=f"Gasto #{expense.id}: {expense.description}",
+    )
+    db.session.add(movement)
+    db.session.flush()
+    return movement
+
+
 @bp.route("/", methods=["GET", "POST"])
 @tenant_required
 def index():
@@ -33,6 +70,10 @@ def index():
         )
         db.session.add(expense)
         db.session.flush()
+
+        # Both records share this transaction, so rollback cannot leave only one.
+        _record_cash_expense_movement(user=current_user, expense=expense)
+
         record_audit(action="expense_create", entity="expense", entity_id=expense.id, detail=f"Gasto {expense.category} por {amount}")
         db.session.commit()
         flash("Gasto registrado.", "success")

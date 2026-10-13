@@ -19,6 +19,7 @@ def test_maintenance_endpoints_keep_token_auth_when_csrf_is_enabled(app, monkeyp
     monkeypatch.setitem(app.config, "WTF_CSRF_ENABLED", True)
     monkeypatch.setenv("BACKUP_AUTOMATION_TOKEN", "backup-test-token")
     monkeypatch.setenv("GMAIL_WATCH_AUTOMATION_TOKEN", "gmail-test-token")
+    monkeypatch.setenv("BILLING_RECONCILIATION_TOKEN", "billing-reconcile-test-token")
     monkeypatch.setattr(
         BackupService,
         "automated_backup_due",
@@ -27,6 +28,13 @@ def test_maintenance_endpoints_keep_token_auth_when_csrf_is_enabled(app, monkeyp
     monkeypatch.setattr(
         "services.gmail_commercial_service.renew_watch",
         lambda: {"status": "skipped"},
+    )
+    monkeypatch.setattr(
+        "services.billing_reconciliation_service.BillingReconciliationService.run",
+        lambda: {
+            "ok": True, "skipped": False, "events_scanned": 2, "repaired": 1,
+            "ignored": 1, "errors": 0, "attention": 0,
+        },
     )
     client = app.test_client()
 
@@ -40,6 +48,11 @@ def test_maintenance_endpoints_keep_token_auth_when_csrf_is_enabled(app, monkeyp
             "/internal/maintenance/gmail/watch",
             "X-Gmail-Watch-Automation-Token",
             "gmail-test-token",
+        ),
+        (
+            "/internal/maintenance/billing/reconcile",
+            "X-Billing-Reconciliation-Token",
+            "billing-reconcile-test-token",
         ),
     ):
         missing = client.post(path)
@@ -66,6 +79,9 @@ def test_render_health_check_targets_the_existing_wsgi_endpoint():
     assert "healthCheckPath: /health" in render
     assert "name: stockarmobile-daily-backup" in render
     assert 'schedule: "15 3 * * *"' in render
+    assert "name: stockarmobile-billing-reconciliation" in render
+    assert 'schedule: "*/15 * * * *"' in render
+    assert "BILLING_RECONCILIATION_TOKEN" in render
     assert 'app.add_url_rule("/health", endpoint="stockarmobile_health"' in wsgi_source
 
 
@@ -111,3 +127,31 @@ def test_maintenance_cron_scripts_never_echo_html_csrf_response(capsys):
         assert "403" in stderr
         assert "sensitive-token" not in stderr
         assert "csrf-token" not in stderr
+
+
+
+def test_billing_reconciliation_cron_report_omits_response_bodies_and_secrets(capsys):
+    from scripts.run_billing_reconciliation import _report_response
+
+    response = _response(
+        500,
+        "text/html; charset=utf-8",
+        b"<html>private-payment-id=123456 secret-token</html>",
+    )
+    assert _report_response(response) == 1
+    error = capsys.readouterr().err
+    assert "Billing reconciliation endpoint failed" in error
+    assert "500" in error
+    assert "private-payment-id" not in error
+    assert "secret-token" not in error
+
+    ok_response = _response(
+        200,
+        "application/json",
+        json.dumps({
+            "ok": True, "events_scanned": 3, "repaired": 1,
+            "ignored": 2, "errors": 0, "attention": 0,
+        }).encode(),
+    )
+    assert _report_response(ok_response) == 0
+    assert "events_scanned=3" in capsys.readouterr().out

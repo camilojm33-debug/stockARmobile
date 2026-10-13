@@ -65,7 +65,11 @@ def employee_endpoint_permission(endpoint: str | None, method: str = "GET"):
         return EMPLOYEE_ADMIN_ONLY
     if ep.startswith(("purchases.",)):
         return EMPLOYEE_ADMIN_ONLY
-    if ep.startswith(("ai_agents.",)):
+    if ep.startswith(("ai_agents.", "whatsapp_agent.ai_whatsapp_attention")):
+        return "ai_access"
+    if ep == "resolve_invoice_code_direct":
+        return "ai_access"
+    if ep.startswith(("dashboard.resolve_invoice_line", "dashboard.invoice_preview", "dashboard.process_invoice")):
         return "ai_access"
     if ep.startswith(("crm.",)):
         return "crm"

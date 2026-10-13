@@ -383,14 +383,25 @@ def _hard_delete_company(company):
     _safe_delete_in(PasswordResetToken, "user_id", user_ids)
     _safe_delete_in(User, "id", user_ids)
 
+    reflected_tables = {}
+
+    def _reflected_table(table_name):
+        if table_name not in reflected_tables:
+            reflected_tables[table_name] = sa.Table(
+                table_name,
+                sa.MetaData(),
+                autoload_with=db.session.get_bind(),
+            )
+        return reflected_tables[table_name]
+
     def _raw_delete_company_rows(table_name):
         if table_name not in table_names:
             return
-        if table_name not in columns_cache:
-            columns_cache[table_name] = {column.get("name") for column in inspector.get_columns(table_name)}
-        if "company_id" not in columns_cache[table_name]:
+        table = _reflected_table(table_name)
+        company_column = table.c.get("company_id")
+        if company_column is None:
             return
-        db.session.execute(sa.text(f"DELETE FROM {table_name} WHERE company_id = :company_id"), {"company_id": company_id})
+        db.session.execute(sa.delete(table).where(company_column == company_id))
 
     # Defensive second pass to avoid leftovers when ORM bulk-delete skips rows due mapper/session edge cases.
     for table_name in [
@@ -427,12 +438,11 @@ def _hard_delete_company(company):
     def _raw_delete_where_in(table_name, column_name, values):
         if not values or table_name not in table_names:
             return
-        if table_name not in columns_cache:
-            columns_cache[table_name] = {column.get("name") for column in inspector.get_columns(table_name)}
-        if column_name not in columns_cache[table_name]:
+        table = _reflected_table(table_name)
+        column = table.c.get(column_name)
+        if column is None:
             return
-        statement = sa.text(f"DELETE FROM {table_name} WHERE {column_name} IN :ids").bindparams(sa.bindparam("ids", expanding=True))
-        db.session.execute(statement, {"ids": list(values)})
+        db.session.execute(sa.delete(table).where(column.in_(list(values))))
 
     # Final defensive pass for legacy/optional tables that may reference tenant entities without company_id.
     fk_value_sets = {
@@ -3612,7 +3622,7 @@ def mercado_pago_connections():
 @bp.route("/companies/<int:company_id>/toggle", methods=["POST"])
 @superadmin_required
 def toggle_company(company_id):
-    from app import AuditLog, Company, User, db
+    from app import AuditLog, Company, db
 
     _require_superadmin()
     if not _require_superadmin_step_up():
@@ -3621,7 +3631,9 @@ def toggle_company(company_id):
     if company is None:
         abort(404)
     company.active = not company.active
-    User.query.filter_by(company_id=company.id).update({User.active: company.active}, synchronize_session=False)
+    # Company-level suspension is enforced by the request/access guards. Do not
+    # mutate each user's personal active flag: doing so destroys the distinction
+    # between employees disabled by an administrator and a company-wide block.
     db.session.add(
         AuditLog(
             user_id=current_user.id,
@@ -4416,14 +4428,26 @@ def _billing_reconciliation_snapshot(*, now=None, limit=50):
         ).strip()
         mp_status = str(metadata.get("mercadopago_status") or "").strip().lower()
 
-        if checkout_method == "qr" and not preapproval_id and (
-            bool(subscription.renewal_enabled) or bool(subscription.auto_renew)
-        ):
+        auto_flags = bool(subscription.renewal_enabled) or bool(subscription.auto_renew)
+        cancellation_status = str(
+            metadata.get("mercadopago_cancellation_status") or ""
+        ).strip().lower()
+        if checkout_method == "qr" and not preapproval_id and auto_flags:
             add_issue(
                 severity="danger",
                 title="QR marcado como renovación automática",
                 company_id=subscription.company_id,
                 detail="La suscripción proviene de un checkout QR sin contrato recurrente, pero tiene activada la renovación local.",
+                reference=f"Suscripción #{subscription.id}",
+                created_at=subscription.updated_at or subscription.created_at,
+                subscription_id=subscription.id,
+            )
+        elif not preapproval_id and auto_flags:
+            add_issue(
+                severity="danger",
+                title="Renovación automática sin contrato de Mercado Pago",
+                company_id=subscription.company_id,
+                detail="Las banderas de renovación están activas, pero no existe un identificador de preapproval verificable. No se asumirá que hay cobro mensual.",
                 reference=f"Suscripción #{subscription.id}",
                 created_at=subscription.updated_at or subscription.created_at,
                 subscription_id=subscription.id,
@@ -4462,6 +4486,24 @@ def _billing_reconciliation_snapshot(*, now=None, limit=50):
                 company_id=subscription.company_id,
                 detail=f"Mercado Pago informa '{mp_status}', pero la renovación automática sigue activa localmente.",
                 reference=f"Suscripción #{subscription.id}",
+                created_at=subscription.updated_at or subscription.created_at,
+                subscription_id=subscription.id,
+            )
+
+        if (
+            cancellation_status in {"cancelled", "canceled", "expired"}
+            and mp_status not in {"cancelled", "canceled", "expired", "rejected"}
+        ):
+            add_issue(
+                severity="warning",
+                title="Estado local del contrato Mercado Pago inconsistente",
+                company_id=subscription.company_id,
+                detail=(
+                    f"La metadata registra una cancelación confirmada ('{cancellation_status}'), "
+                    f"pero el estado principal del contrato figura como '{mp_status or 'vacío'}'. "
+                    "Verificar el estado remoto antes de cambiar banderas o fechas."
+                ),
+                reference=f"MP preapproval {preapproval_id or 'sin identificador'}",
                 created_at=subscription.updated_at or subscription.created_at,
                 subscription_id=subscription.id,
             )
@@ -4841,7 +4883,10 @@ def subscriptions_create():
     status = _normalized_subscription_status(request.form.get("status"))
     start_date = _parse_dt(request.form.get("start_date")) or utcnow()
     next_billing_date = _parse_dt(request.form.get("next_billing_date"))
-    renewal_enabled = (request.form.get("renewal_enabled") or "1") == "1"
+    # This administrative form cannot create a Mercado Pago contract. Any
+    # subscription created here is manual until the payer completes a provider
+    # checkout and a verified webhook stores the preapproval ID.
+    renewal_enabled = False
 
     company = Company.query.filter_by(id=company_id).first()
     plan = Plan.query.filter_by(id=plan_id).first()
@@ -4902,13 +4947,34 @@ def subscriptions_update(subscription_id):
     start_date = _parse_dt(request.form.get("start_date"))
     next_billing_date = _parse_dt(request.form.get("next_billing_date"))
     last_payment_date = _parse_dt(request.form.get("last_payment_date"))
-    renewal_enabled = (request.form.get("renewal_enabled") or "1") == "1"
+    renewal_value = request.form.get("renewal_enabled")
+    renewal_enabled = (
+        bool(subscription.renewal_enabled)
+        if renewal_value is None
+        else renewal_value == "1"
+    )
     target_status = _normalized_subscription_status(request.form.get("status") or subscription.status)
     requires_sensitive_step_up = (
         (plan is not None and plan.id != subscription.plan_id)
         or target_status != _normalized_subscription_status(subscription.status)
     )
     if requires_sensitive_step_up and not _require_superadmin_step_up():
+        return _redirect_back("saas.subscriptions_panel")
+
+    status_before_edit = _normalized_subscription_status(subscription.status)
+    metadata_before_edit = SubscriptionService._metadata_dict(subscription)
+    paid_until_before_edit = subscription.next_billing_date or subscription.ends_at
+    preapproval_before_edit = str(metadata_before_edit.get("mercadopago_preapproval_id") or "").strip()
+
+    if renewal_enabled and (
+        SubscriptionService.is_manual_subscription(subscription)
+        or not preapproval_before_edit
+    ):
+        flash(
+            "No se puede marcar una suscripción como automática sin un contrato de Mercado Pago verificado. "
+            "Las suscripciones creadas manualmente deben quedar en modo Manual.",
+            "warning",
+        )
         return _redirect_back("saas.subscriptions_panel")
 
     try:
@@ -4949,33 +5015,22 @@ def subscriptions_update(subscription_id):
             raise SubscriptionCommandError("Fechas inválidas: el vencimiento no puede ser menor al inicio.")
 
         if target_status in {"cancelled", "suspended", "expired"}:
+            from services.billing_service import BillingService
             if target_status == "cancelled":
-                SubscriptionService.run_command(
+                BillingService.cancel_subscription(
                     db.session,
-                    SubscriptionService.CancelSubscriptionCommand(
-                        company_id=target_subscription.company_id,
-                        subscription_id=target_subscription.id,
-                        actor_user_id=current_user.id,
-                        actor_role=current_user.role,
-                        origin="superadmin",
-                        ip_address=request.remote_addr,
-                        idempotency_key=f"saas-update-cancel:{target_subscription.company_id}:{target_subscription.id}",
-                        cancel_at_period_end=False,
-                    ),
+                    subscription=target_subscription,
+                    user_id=current_user.id,
+                    cancel_at_period_end=False,
+                    origin="superadmin",
+                    actor_role=current_user.role,
                 )
             elif target_status == "suspended":
-                SubscriptionService.run_command(
+                BillingService.suspend_subscription(
                     db.session,
-                    SubscriptionService.ExpireSubscriptionCommand(
-                        company_id=target_subscription.company_id,
-                        subscription_id=target_subscription.id,
-                        actor_user_id=current_user.id,
-                        actor_role=current_user.role,
-                        origin="superadmin",
-                        ip_address=request.remote_addr,
-                        idempotency_key=f"saas-update-suspend:{target_subscription.company_id}:{target_subscription.id}",
-                        reason="superadmin_suspend",
-                    ),
+                    subscription=target_subscription,
+                    user_id=current_user.id,
+                    reason="superadmin_suspend",
                 )
             elif target_status == "expired":
                 SubscriptionService.run_command(
@@ -4992,18 +5047,91 @@ def subscriptions_update(subscription_id):
                     ),
                 )
         elif target_status == "active":
-            SubscriptionService.run_command(
-                db.session,
-                SubscriptionService.ReactivateSubscriptionCommand(
-                    company_id=target_subscription.company_id,
-                    subscription_id=target_subscription.id,
-                    actor_user_id=current_user.id,
-                    actor_role=current_user.role,
+            from services.billing_service import BillingService
+
+            if renewal_enabled:
+                BillingService.reactivate_subscription(
+                    db.session,
+                    subscription=target_subscription,
+                    user_id=current_user.id,
                     origin="superadmin",
-                    ip_address=request.remote_addr,
-                    idempotency_key=f"saas-update-reactivate:{target_subscription.company_id}:{target_subscription.id}",
-                ),
-            )
+                    actor_role=current_user.role,
+                )
+                reactivation_url = str(
+                    SubscriptionService._metadata_dict(target_subscription).get(
+                        "mercadopago_reactivation_init_point"
+                    ) or ""
+                ).strip()
+                if reactivation_url:
+                    parsed = urlparse(reactivation_url)
+                    host = (parsed.hostname or "").lower()
+                    if parsed.scheme != "https" or not (
+                        host == "mercadopago.com"
+                        or host.endswith(".mercadopago.com")
+                        or host == "mercadopago.com.ar"
+                        or host.endswith(".mercadopago.com.ar")
+                    ):
+                        raise RuntimeError("Mercado Pago no devolvió un enlace de autorización confiable.")
+                    db.session.commit()
+                    flash("Se creó una autorización pendiente. Completá el checkout de Mercado Pago para finalizar la reactivación.", "warning")
+                    return redirect(reactivation_url)
+            else:
+                # A form that explicitly disables renewal must never pass through
+                # ReactivateSubscriptionCommand and silently turn renewal back on.
+                # For MP-backed records, stop remote billing first and only restore
+                # local access when a previously paid period still remains.
+                current_state = SubscriptionService._normalize_state(status_before_edit)
+                current_is_open = current_state in {
+                    SubscriptionService.STATE_ACTIVE,
+                    SubscriptionService.STATE_SCHEDULED,
+                    SubscriptionService.STATE_TRIAL,
+                }
+                if preapproval_before_edit:
+                    try:
+                        paid_until = paid_until_before_edit
+                        if getattr(paid_until, "tzinfo", None) is not None:
+                            paid_until = paid_until.astimezone(timezone.utc).replace(tzinfo=None)
+                        now_ref = utcnow()
+                        now_utc = now_ref.astimezone(timezone.utc).replace(tzinfo=None) if getattr(now_ref, "tzinfo", None) is not None else now_ref
+                        if not current_is_open and (paid_until is None or paid_until <= now_utc):
+                            raise SubscriptionCommandError(
+                                "No se puede reactivar una suscripción automática sin días pagados vigentes. "
+                                "El cliente debe completar una nueva autorización de Mercado Pago."
+                            )
+                        BillingService.cancel_subscription(
+                            db.session,
+                            subscription=target_subscription,
+                            user_id=current_user.id,
+                            cancel_at_period_end=True,
+                            origin="superadmin",
+                            actor_role=current_user.role,
+                        )
+                    except SubscriptionCommandError:
+                        raise
+                if not current_is_open:
+                    SubscriptionService.run_command(
+                        db.session,
+                        SubscriptionService.ReactivateSubscriptionCommand(
+                            company_id=target_subscription.company_id,
+                            subscription_id=target_subscription.id,
+                            actor_user_id=current_user.id,
+                            actor_role=current_user.role,
+                            origin="superadmin",
+                            ip_address=request.remote_addr,
+                            idempotency_key=BillingService._subscription_action_key(
+                                "reactivate-no-renewal", target_subscription, current_user.id
+                            ),
+                        ),
+                    )
+                elif current_state != SubscriptionService.STATE_ACTIVE:
+                    SubscriptionService._transition(
+                        target_subscription,
+                        SubscriptionService.STATE_ACTIVE,
+                        reason="superadmin_edit_no_renewal",
+                    )
+                target_subscription.renewal_enabled = False
+                target_subscription.auto_renew = False
+                target_subscription.cancel_at_period_end = True
         else:
             target_subscription.status = target_status
 
@@ -5087,55 +5215,46 @@ def subscriptions_action(subscription_id):
         return _redirect_back("saas.subscriptions_panel")
 
     try:
+        from services.billing_service import BillingService
         if action == "cancel":
-            SubscriptionService.run_command(
+            BillingService.cancel_subscription(
                 db.session,
-                SubscriptionService.CancelSubscriptionCommand(
-                    company_id=subscription.company_id,
-                    subscription_id=subscription.id,
-                    actor_user_id=current_user.id,
-                    actor_role=current_user.role,
-                    origin="superadmin",
-                    ip_address=request.remote_addr,
-                    idempotency_key=(
-                        f"saas-action-cancel:{subscription.company_id}:{subscription.id}:"
-                        f"{subscription.status}:{subscription.next_billing_date.isoformat() if subscription.next_billing_date else 'none'}"
-                    ),
-                    cancel_at_period_end=False,
-                ),
+                subscription=subscription,
+                user_id=current_user.id,
+                cancel_at_period_end=False,
+                origin="superadmin",
+                actor_role=current_user.role,
             )
         elif action == "reactivate":
-            SubscriptionService.run_command(
+            BillingService.reactivate_subscription(
                 db.session,
-                SubscriptionService.ReactivateSubscriptionCommand(
-                    company_id=subscription.company_id,
-                    subscription_id=subscription.id,
-                    actor_user_id=current_user.id,
-                    actor_role=current_user.role,
-                    origin="superadmin",
-                    ip_address=request.remote_addr,
-                    idempotency_key=(
-                        f"saas-action-reactivate:{subscription.company_id}:{subscription.id}:"
-                        f"{subscription.status}:{subscription.next_billing_date.isoformat() if subscription.next_billing_date else 'none'}"
-                    ),
-                ),
+                subscription=subscription,
+                user_id=current_user.id,
+                origin="superadmin",
+                actor_role=current_user.role,
             )
+            reactivation_url = str(
+                SubscriptionService._metadata_dict(subscription).get("mercadopago_reactivation_init_point") or ""
+            ).strip()
+            if reactivation_url:
+                parsed = urlparse(reactivation_url)
+                host = (parsed.hostname or "").lower()
+                if parsed.scheme != "https" or not (
+                    host == "mercadopago.com"
+                    or host.endswith(".mercadopago.com")
+                    or host == "mercadopago.com.ar"
+                    or host.endswith(".mercadopago.com.ar")
+                ):
+                    raise RuntimeError("Mercado Pago no devolvió un enlace de autorización confiable.")
+                db.session.commit()
+                flash("Se generó una autorización pendiente de Mercado Pago; completá el flujo para terminar la reactivación.", "warning")
+                return redirect(reactivation_url)
         elif action == "suspend":
-            SubscriptionService.run_command(
+            BillingService.suspend_subscription(
                 db.session,
-                SubscriptionService.ExpireSubscriptionCommand(
-                    company_id=subscription.company_id,
-                    subscription_id=subscription.id,
-                    actor_user_id=current_user.id,
-                    actor_role=current_user.role,
-                    origin="superadmin",
-                    ip_address=request.remote_addr,
-                    idempotency_key=(
-                        f"saas-action-suspend:{subscription.company_id}:{subscription.id}:"
-                        f"{subscription.status}:{subscription.next_billing_date.isoformat() if subscription.next_billing_date else 'none'}"
-                    ),
-                    reason="superadmin_suspend",
-                ),
+                subscription=subscription,
+                user_id=current_user.id,
+                reason="superadmin_suspend",
             )
         elif action == "extend":
             days = request.form.get("days", type=int) or 7
@@ -5156,6 +5275,15 @@ def subscriptions_action(subscription_id):
                 ),
             )
         elif action == "renew_now":
+            metadata = SubscriptionService._metadata_dict(subscription)
+            preapproval_id = str(metadata.get("mercadopago_preapproval_id") or "").strip()
+            if preapproval_id and not SubscriptionService.is_manual_subscription(subscription):
+                flash(
+                    "Esta suscripción está vinculada a Mercado Pago. Usá Reactivar para comprobar el contrato "
+                    "y, si hace falta, completar una nueva autorización; no se puede renovarla manualmente.",
+                    "warning",
+                )
+                return _redirect_back("saas.subscriptions_panel")
             SubscriptionService.run_command(
                 db.session,
                 SubscriptionService.RenewSubscriptionCommand(
@@ -5165,6 +5293,7 @@ def subscriptions_action(subscription_id):
                     actor_role=current_user.role,
                     origin="superadmin",
                     ip_address=request.remote_addr,
+                    renewal_enabled=False,
                     idempotency_key=(
                         f"saas-action-renew:{subscription.company_id}:{subscription.id}:"
                         f"{subscription.status}:{subscription.next_billing_date.isoformat() if subscription.next_billing_date else 'none'}"

@@ -33,8 +33,15 @@ def _index_exists(bind, table_name, index_name):
 
 
 def _nullable_company_count(bind, table_name):
+    # This migration only checks these two known tables. Use reflected SQLAlchemy
+    # identifiers and an expression query instead of interpolating identifiers.
+    if table_name not in {"suppliers", "purchase_orders"}:
+        raise ValueError("Unsupported table for company-nullability check.")
+    table = sa.Table(table_name, sa.MetaData(), autoload_with=bind)
     return int(
-        bind.execute(sa.text(f"SELECT COUNT(*) FROM {table_name} WHERE company_id IS NULL")).scalar() or 0
+        bind.execute(
+            sa.select(sa.func.count()).select_from(table).where(table.c.company_id.is_(None))
+        ).scalar() or 0
     )
 
 

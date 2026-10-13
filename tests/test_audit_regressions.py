@@ -167,3 +167,34 @@ def test_campaign_all_failures_are_not_marked_as_sent(app, monkeypatch):
         assert refreshed.sent_count == 0
         assert refreshed.failed_count == 1
         assert refreshed.skipped_count == 0
+
+
+def test_offline_queue_is_bound_to_tenant_identity_and_stops_permanent_http_retries():
+    worker = (REPO_ROOT / "static" / "service-worker.js").read_text(encoding="utf-8")
+    offline = (REPO_ROOT / "static" / "assets" / "js" / "offline-manager-core.js").read_text(encoding="utf-8")
+    assert "X-Offline-User-Id" in offline
+    assert "X-Offline-Company-Id" in offline
+    assert "ACTIVE_IDENTITY_KEY" in worker
+    assert "attentionReason: queuedIdentity ? 'identity_mismatch' : 'identity_unverified'" in worker
+    assert "const PERMANENT_HTTP_STATUSES = new Set([400, 401, 403, 404, 405, 409, 410, 412, 413, 415, 422])" in worker
+    assert "item.status === 'needs_attention'" in worker
+    assert "await setActiveOfflineIdentity(null)" in worker
+
+
+def test_offline_queue_does_not_treat_login_redirect_as_successful_mutation():
+    worker = (REPO_ROOT / "static" / "service-worker.js").read_text(encoding="utf-8")
+    assert "function isAuthenticationRedirect(response)" in worker
+    assert "attentionReason: 'session_required'" in worker
+    assert "La sesión venció antes de sincronizar una operación offline" in worker
+
+
+def test_service_worker_never_caches_private_html_and_namespaces_api_snapshots():
+    worker = (REPO_ROOT / "static" / "service-worker.js").read_text(encoding="utf-8")
+    assert "const CACHE_NAME = 'stockarmobile-pwa-v13';" in worker
+    assert "  '/',\n  '/offline.html'," not in worker
+    assert "Never persist navigated HTML" in worker
+    assert "response.ok && !contentType.includes('text/html')" in worker
+    assert "identitySnapshotKey(request.url, identity)" in worker
+    assert "sameOfflineIdentity(snapshot.identity, identity)" in worker
+    assert "if (event.oldVersion > 0 && event.oldVersion < DB_VERSION)" in worker
+    assert "event.target.transaction.objectStore(SNAPSHOT_STORE).clear()" in worker

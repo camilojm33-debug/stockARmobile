@@ -50,7 +50,9 @@ class GeminiProvider(AIProvider):
                 from google import genai
             except ImportError:
                 raise RuntimeError("La dependencia google-genai no está instalada.") from None
-            transport = httpx.HTTPTransport(local_address="0.0.0.0")
+            # Use the platform's normal outbound interface selection. Binding
+            # the client transport to 0.0.0.0 is unnecessary and overly broad.
+            transport = httpx.HTTPTransport()
             self._client = genai.Client(
                 api_key=self.api_key,
                 http_options=self._types.HttpOptions(

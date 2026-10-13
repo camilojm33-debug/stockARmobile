@@ -61,36 +61,21 @@ class PlanService:
 
     @classmethod
     def ensure_defaults(cls, db_session) -> None:
+        """Create missing catalog entries without overwriting administrator choices.
+
+        The catalog is a bootstrap mechanism, not a source of truth after a plan
+        has been created. Prices, limits, features and activation state must stay
+        under Superadmin control across requests and deployments.
+        """
         from app import Plan
 
-        existing_by_code = {plan.code: plan for plan in Plan.query.all() if plan.code}
+        existing_codes = {plan.code for plan in Plan.query.all() if plan.code}
         changed = False
         for plan_payload in cls.PLAN_CATALOG:
-            existing = existing_by_code.get(plan_payload["code"])
-            if existing is None:
-                db_session.add(Plan(**plan_payload))
-                changed = True
+            if plan_payload["code"] in existing_codes:
                 continue
-
-            for field in [
-                "name",
-                "price",
-                "currency",
-                "duration_days",
-                "max_users",
-                "max_products",
-                "max_clients",
-                "features_json",
-                "state",
-            ]:
-                expected = plan_payload[field]
-                if getattr(existing, field) != expected:
-                    setattr(existing, field, expected)
-                    changed = True
-
-            if not getattr(existing, "active", True):
-                existing.active = True
-                changed = True
+            db_session.add(Plan(**plan_payload))
+            changed = True
         if changed:
             db_session.commit()
 

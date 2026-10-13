@@ -53,7 +53,7 @@ class MercadoPagoService:
         )
         try:
             self._logger().info("Mercado Pago request: method=%s path=%s timeout=%ss", method, path, self.REQUEST_TIMEOUT_SECONDS)
-            with urlrequest.urlopen(req, timeout=self.REQUEST_TIMEOUT_SECONDS) as response:
+            with urlrequest.urlopen(req, timeout=self.REQUEST_TIMEOUT_SECONDS) as response:  # nosec B310 - URL is built from the fixed HTTPS Mercado Pago API base.
                 raw = response.read().decode("utf-8")
                 status_code = response.getcode()
         except HTTPError as exc:
@@ -178,8 +178,12 @@ class MercadoPagoService:
     def debug_fetch_pos_catalog(self, *, access_token: str | None = None) -> dict[str, Any]:
         path = "/pos?limit=50&offset=0"; req = urlrequest.Request(url=f"{self.API_BASE}{path}", headers=self._headers(access_token=access_token), method="GET"); status_code=None; raw=""
         try:
-            with urlrequest.urlopen(req, timeout=self.REQUEST_TIMEOUT_SECONDS) as response: status_code=response.getcode(); raw=response.read().decode("utf-8")
-        except HTTPError as exc: status_code=exc.code; raw=exc.read().decode("utf-8", errors="ignore") if hasattr(exc,"read") else str(exc)
+            with urlrequest.urlopen(req, timeout=self.REQUEST_TIMEOUT_SECONDS) as response:  # nosec B310 - req.url uses the fixed HTTPS Mercado Pago API base.
+                status_code = response.getcode()
+                raw = response.read().decode("utf-8")
+        except HTTPError as exc:
+            status_code = exc.code
+            raw = exc.read().decode("utf-8", errors="ignore") if hasattr(exc, "read") else str(exc)
         try: payload=json.loads(raw) if raw else {}
         except json.JSONDecodeError: payload={"raw":raw[:1200]}
         return {"path":path,"status_code":status_code,"pos_count":len(self._extract_pos_results(payload)),"response":payload}
