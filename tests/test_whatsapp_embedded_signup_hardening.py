@@ -79,6 +79,15 @@ def test_webhook_signature_uses_same_meta_secret_alias_as_embedded_signup():
     assert 'if not app_secret:\n        return not bool(current_app.config.get("IS_PRODUCTION_ENV"))' in source
 
 
+def test_embedded_signup_launch_uses_configuration_driven_v4_extras():
+    template = (ROOT / "templates/ai_agents/whatsapp_onboarding.html").read_text(encoding="utf-8")
+
+    assert "config_id: configId" in template
+    assert "extras: {setup: {}}" in template
+    assert "sessionInfoVersion: '3'" not in template
+    assert "version: 'v3'" not in template
+
+
 def test_vendor_dashboard_connection_badge_requires_decryptable_access_token():
     source = (ROOT / "ai_agents.py").read_text(encoding="utf-8")
     template = (ROOT / "templates/ai_agents/index.html").read_text(encoding="utf-8")
