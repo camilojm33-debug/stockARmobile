@@ -707,6 +707,13 @@ def ai_whatsapp_attention_action(conversation_id: int):
     if attention["status"] == "human" and taken_by and int(taken_by) != int(current_user.id):
         flash("La conversación ya está asignada a otro operador.", "warning")
         return redirect(url_for("whatsapp_agent.ai_whatsapp_attention", conversation_id=conversation.id, state="human"))
+    if (
+        attention["status"] == "human"
+        and action in {"resolve", "resume_ai"}
+        and int(taken_by or 0) != int(current_user.id)
+    ):
+        flash("Tomá la conversación antes de cerrar la atención o devolver el control a la IA.", "warning")
+        return redirect(url_for("whatsapp_agent.ai_whatsapp_attention", conversation_id=conversation.id, state="human"))
 
     from app import record_audit
     if action == "take":
