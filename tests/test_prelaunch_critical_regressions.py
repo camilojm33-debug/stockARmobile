@@ -427,3 +427,117 @@ def test_empty_database_bootstrap_creates_only_historical_baseline_tables(app):
         assert "crm_opportunities" not in tables
         assert "crm_activities" not in tables
         assert "saas_lead_suppressions" not in tables
+
+
+
+def test_recurring_payment_does_not_add_month_to_provider_synced_boundary(monkeypatch):
+    from datetime import datetime, timedelta
+    from types import SimpleNamespace
+    from services.subscription_service import SubscriptionService
+
+    paid_at = datetime(2026, 10, 13, 12, 0, 0)
+    provider_boundary = paid_at + timedelta(days=30)
+    metadata = {
+        "is_manual": False,
+        "checkout_method": "automatic",
+        "mercadopago_preapproval_id": "preapproval-order-1",
+        "mercadopago_next_payment_date": provider_boundary.isoformat(),
+    }
+    subscription = SimpleNamespace(
+        id=17,
+        company_id=9,
+        status="active",
+        plan=SimpleNamespace(duration_days=30),
+        metadata_json=json.dumps(metadata),
+        next_billing_date=provider_boundary,
+        ends_at=provider_boundary,
+        start_date=paid_at - timedelta(days=30),
+        starts_at=paid_at - timedelta(days=30),
+        renewal_enabled=True,
+        auto_renew=True,
+        cancel_at_period_end=False,
+        last_payment_date=None,
+    )
+    monkeypatch.setattr(
+        SubscriptionService,
+        "_target_subscription_for_command",
+        staticmethod(lambda company_id, subscription_id: subscription),
+    )
+    monkeypatch.setattr(
+        SubscriptionService,
+        "active_subscription_for_company",
+        staticmethod(lambda company_id: subscription),
+    )
+
+    SubscriptionService._handle_renew(
+        object(),
+        company=SimpleNamespace(id=9),
+        command=SubscriptionService.RenewSubscriptionCommand(
+            company_id=9,
+            subscription_id=17,
+            payment_status="approved",
+            paid_at=paid_at,
+            renewal_enabled=True,
+            origin="subscription_authorized_payment",
+        ),
+    )
+
+    assert subscription.next_billing_date == provider_boundary
+    assert subscription.ends_at == provider_boundary
+    assert subscription.last_payment_date == paid_at
+    assert subscription.renewal_enabled is True
+
+
+def test_recurring_payment_without_provider_boundary_does_not_stack_on_placeholder_date(monkeypatch):
+    from datetime import datetime, timedelta
+    from types import SimpleNamespace
+    from services.subscription_service import SubscriptionService
+
+    paid_at = datetime(2026, 10, 13, 12, 0, 0)
+    placeholder = paid_at + timedelta(days=60)
+    metadata = {
+        "is_manual": False,
+        "checkout_method": "automatic",
+        "mercadopago_preapproval_id": "preapproval-order-2",
+    }
+    subscription = SimpleNamespace(
+        id=18,
+        company_id=9,
+        status="active",
+        plan=SimpleNamespace(duration_days=30),
+        metadata_json=json.dumps(metadata),
+        next_billing_date=placeholder,
+        ends_at=placeholder,
+        start_date=paid_at - timedelta(days=10),
+        starts_at=paid_at - timedelta(days=10),
+        renewal_enabled=True,
+        auto_renew=True,
+        cancel_at_period_end=False,
+        last_payment_date=None,
+    )
+    monkeypatch.setattr(
+        SubscriptionService,
+        "_target_subscription_for_command",
+        staticmethod(lambda company_id, subscription_id: subscription),
+    )
+    monkeypatch.setattr(
+        SubscriptionService,
+        "active_subscription_for_company",
+        staticmethod(lambda company_id: subscription),
+    )
+
+    SubscriptionService._handle_renew(
+        object(),
+        company=SimpleNamespace(id=9),
+        command=SubscriptionService.RenewSubscriptionCommand(
+            company_id=9,
+            subscription_id=18,
+            payment_status="approved",
+            paid_at=paid_at,
+            renewal_enabled=True,
+            origin="subscription_authorized_payment",
+        ),
+    )
+
+    assert subscription.next_billing_date == paid_at + timedelta(days=30)
+    assert subscription.ends_at == paid_at + timedelta(days=30)
