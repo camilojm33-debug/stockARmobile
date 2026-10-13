@@ -1945,6 +1945,8 @@ def test_standard_authorized_payment_is_amount_checked_invoiced_and_idempotent(s
             "mercadopago_external_reference": external_reference,
         },
     )
+    # A paid recurring webhook must not undo a SuperAdmin suspension.
+    company.active = False
     db.session.commit()
 
     service = WebhookService()
@@ -2028,6 +2030,7 @@ def test_standard_authorized_payment_is_amount_checked_invoiced_and_idempotent(s
     assert subscription.next_billing_date == first_due
     assert subscription.renewal_enabled is True
     assert subscription.auto_renew is True
+    assert company.active is False
 
 
 def test_standard_authorized_payment_with_wrong_amount_never_renews(subscription_app, monkeypatch):
