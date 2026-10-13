@@ -235,7 +235,7 @@ def test_reconciler_repairs_interrupted_commercial_subscription_payment_once(app
     from services.subscription_service import SubscriptionService
 
     with app.app_context():
-        company = Company(name="Commercial reconcile QA", active=True)
+        company = Company(name="Commercial reconcile QA", active=False)
         plan = Plan(
             code="reconcile-business",
             name="Reconcile Business",
@@ -339,7 +339,7 @@ def test_reconciler_repairs_interrupted_commercial_subscription_payment_once(app
         assert event_row.status == "processed_subscription_payment"
         assert payment is not None and payment.status == "approved"
         assert payment.company_id == company_id and payment.subscription_id == subscription_id
-        assert company.active is True
+        assert company.active is False  # Payment does not undo manual suspension.
         assert subscription.renewal_enabled is True
         assert datetime.fromisoformat(subscription.ends_at.isoformat()) == datetime.fromisoformat(next_payment).replace(tzinfo=None)
 

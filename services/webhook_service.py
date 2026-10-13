@@ -571,7 +571,8 @@ class WebhookService:
                         from app import Company
                         company = db_session.get(Company, subscription.company_id)
                     if company is not None:
-                        company.active = True
+                        # A paid renewal restores subscription state only. It must
+                        # never reverse a separate SuperAdmin company suspension.
                         if payment.invoice_id is None:
                             invoice = InvoiceService.create_invoice(
                                 db_session,

@@ -529,7 +529,7 @@ class BillingReconciliationService:
         company = db.session.get(Company, subscription.company_id)
         if company is None:
             return cls._mark_attention(event_id, "commercial_subscription_company_missing")
-        company.active = True
+        # A paid renewal must not clear an administrative company suspension.
         if existing.invoice_id is None:
             invoice = InvoiceService.create_invoice(
                 db.session,
