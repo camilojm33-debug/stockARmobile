@@ -356,6 +356,22 @@ def test_failed_signed_authorized_payment_is_persisted_for_reconciliation(app, m
     with app.app_context():
         service = WebhookService()
         monkeypatch.setattr(service.mp_service, "validate_webhook_signature", lambda **kwargs: True)
+        event = WebhookEvent(
+            provider="mercadopago",
+            event_key="subscription_authorized_payment:notification:notification-persist-qa",
+            event_type="subscription_authorized_payment",
+            status="failed",
+            payload_json=json.dumps({
+                "type": "subscription_authorized_payment",
+                "id": "notification-persist-qa",
+                "data": {"id": "authorized-persist-qa"},
+                "_billing_reconciliation_attempts": 9,
+                "_billing_reconciliation_last_error": "TimeoutError",
+            }),
+        )
+        db.session.add(event)
+        db.session.commit()
+
         saved = service.persist_failed_authorized_payment(
             db_session=db.session,
             headers={"X-Request-ID": "request-qa", "X-Signature": "ts=1,v1=fake"},
@@ -371,6 +387,9 @@ def test_failed_signed_authorized_payment_is_persisted_for_reconciliation(app, m
         ).first()
         assert event is not None
         assert event.status == "failed"
+        preserved = json.loads(event.payload_json)
+        assert preserved["_billing_reconciliation_attempts"] == 9
+        assert preserved["_billing_reconciliation_last_error"] == "TimeoutError"
 
         monkeypatch.setattr(service.mp_service, "validate_webhook_signature", lambda **kwargs: False)
         not_saved = service.persist_failed_authorized_payment(

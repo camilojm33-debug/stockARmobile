@@ -144,65 +144,6 @@ class BillingReconciliationService:
                     lock_connection.close()
 
 
-    def persist_failed_authorized_payment(
-        self,
-        *,
-        db_session,
-        headers: dict,
-        payload: dict,
-    ) -> bool:
-        """Persist a retryable record after a signed authorized-payment webhook fails.
-
-        The normal webhook route rolls back the business transaction when provider
-        synchronization fails. Persisting the *verified* delivery in a separate
-        transaction makes it visible to the reconciler without trusting unsigned
-        client input. Terminal/completed records are never downgraded.
-        """
-        from app import WebhookEvent
-
-        event_type = payload.get("type") or payload.get("topic") or "unknown"
-        if event_type != "subscription_authorized_payment":
-            return False
-        data = payload.get("data") or {}
-        data_id = str(data.get("id") or payload.get("id") or "").strip()
-        normalized_headers = {
-            str(key or "").strip().lower(): str(value or "").strip()
-            for key, value in (headers or {}).items()
-        }
-        request_id = normalized_headers.get("x-request-id", "")
-        signature = normalized_headers.get("x-signature", "")
-        if not self.mp_service.validate_webhook_signature(
-            request_id=request_id,
-            x_signature=signature,
-            data_id=data_id,
-        ):
-            return False
-
-        event_key = self._event_key(payload)
-        existing = (
-            db_session.query(WebhookEvent)
-            .filter_by(event_key=event_key)
-            .with_for_update()
-            .first()
-        )
-        if existing is not None:
-            if not self._event_can_be_retried(existing):
-                return False
-            existing.status = "failed"
-            existing.payload_json = json.dumps(payload, ensure_ascii=False)
-        else:
-            db_session.add(
-                WebhookEvent(
-                    provider="mercadopago",
-                    event_key=event_key,
-                    event_type=event_type,
-                    status="failed",
-                    payload_json=json.dumps(payload, ensure_ascii=False),
-                )
-            )
-        db_session.commit()
-        return True
-
     @staticmethod
     def _parse_datetime(value):
         if not value:
