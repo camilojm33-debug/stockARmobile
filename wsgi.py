@@ -135,6 +135,14 @@ def resolve_invoice_code_direct(upload_id):
     if not company_id:
         return jsonify({"success": False, "error": "No hay una empresa activa."}), 403
 
+    # Invoice AI may prepare a product candidate, but any operation that changes
+    # the inventory catalog also requires the employee's explicit inventory
+    # permission. Admins retain the existing workflow.
+    if getattr(current_user, "role", None) == "user":
+        from stockarmobile.permissions import has_any_permission
+        if not has_any_permission(current_user, {"inventory"}):
+            return jsonify({"success": False, "error": "No tenés permiso para modificar el inventario."}), 403
+
     company = Company.query.filter_by(id=company_id).first()
     invoice_access = can_use_ai_feature(company, "facturas") if company is not None else None
     if invoice_access is None or not invoice_access.allowed:
