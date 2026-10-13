@@ -793,6 +793,74 @@ class BackupService:
                     setattr(product, field, BackupService._deserialize_for_column(mapper.columns[field], payload.get(field)))
 
     @staticmethod
+    def _restore_employee_rows(db_session, *, company_id: int, rows):
+        """Restore profile data without restoring historical security decisions."""
+        from app import User
+
+        existing_users = {
+            int(row.id): row
+            for row in User.query.filter(
+                User.company_id == company_id,
+                User.role != "superadmin",
+            ).all()
+        }
+        for raw_row in rows or []:
+            if not isinstance(raw_row, dict):
+                raise ValueError("El backup contiene un registro de empleado inválido.")
+            row = BackupService._deserialize_rows(User, [raw_row])[0]
+            incoming_id = row.get("id")
+            user = existing_users.get(int(incoming_id)) if incoming_id is not None else None
+            username = str(row.get("username") or "").strip()
+            email = str(row.get("email") or "").strip().lower()
+
+            if user is None:
+                by_username = (
+                    User.query.filter_by(company_id=company_id, username=username)
+                    .filter(User.role != "superadmin").first()
+                    if username else None
+                )
+                by_email = (
+                    User.query.filter_by(company_id=company_id, email=email)
+                    .filter(User.role != "superadmin").first()
+                    if email else None
+                )
+                if by_username is not None and by_email is not None and by_username.id != by_email.id:
+                    raise ValueError("El backup contiene usuario y email asociados a cuentas distintas.")
+                user = by_username or by_email
+
+            if user is not None:
+                # Existing credentials, roles, active state and permissions remain
+                # authoritative. Restore only non-security display fields.
+                for field in ("first_name", "last_name", "avatar_url"):
+                    if field in row:
+                        setattr(user, field, row.get(field))
+                continue
+
+            if not username or not email or "@" not in email:
+                raise ValueError("No se puede restaurar un empleado sin usuario y email válidos.")
+            username_owner = User.query.filter_by(username=username).first()
+            email_owner = User.query.filter_by(email=email).first()
+            if username_owner is not None or email_owner is not None:
+                raise ValueError(
+                    "El backup contiene un empleado cuyo usuario/email ya pertenece a otra cuenta. "
+                    "No se modificó la cuenta existente."
+                )
+
+            candidate = dict(row)
+            candidate["company_id"] = company_id
+            candidate.update({
+                "role": "user",
+                "active": False,
+                "permissions_json": None,
+                "must_change_password": True,
+                "auth_provider": "local",
+                "google_sub": None,
+            })
+            if incoming_id is not None and db_session.get(User, int(incoming_id)) is not None:
+                candidate.pop("id", None)
+            db_session.execute(User.__table__.insert(), [candidate])
+
+    @staticmethod
     def _restore_full_company_dataset(db_session, model, rows):
         model.query.filter_by(company_id=rows[0].get("company_id") if rows else None).delete(synchronize_session=False)
         if rows:
@@ -977,42 +1045,11 @@ class BackupService:
                                 existing_clients[int(inserted.id)] = inserted
 
         if "employees" in sections:
-            user_rows = BackupService._deserialize_rows(User, payload.get("users") or [])
-            if full_restore:
-                User.query.filter(User.company_id == expected_company_id, User.role != "superadmin").delete(synchronize_session=False)
-                if user_rows:
-                    db.session.execute(User.__table__.insert(), user_rows)
-            else:
-                # A selected employee restore must not delete users referenced by
-                # historical sales/cash sessions. Merge tenant-scoped records.
-                existing_users = {
-                    int(row.id): row
-                    for row in User.query.filter(
-                        User.company_id == expected_company_id,
-                        User.role != "superadmin",
-                    ).all()
-                }
-                for user_row in user_rows:
-                    incoming_id = user_row.get("id")
-                    user = existing_users.get(int(incoming_id)) if incoming_id is not None else None
-                    if user is not None:
-                        was_inactive = not bool(user.active)
-                        for key, value in user_row.items():
-                            if key in {"id", "company_id", "role", "active"} or not hasattr(user, key):
-                                continue
-                            setattr(user, key, value)
-                        # An old backup cannot reactivate a locally revoked account.
-                        user.active = bool(user_row.get("active", True)) and not was_inactive
-                    else:
-                        candidate = dict(user_row)
-                        candidate["company_id"] = expected_company_id
-                        if incoming_id is not None:
-                            id_owner = db_session.get(User, int(incoming_id))
-                            if id_owner is not None:
-                                raise ValueError(
-                                    "No se puede restaurar un empleado porque su ID ya pertenece a otra cuenta."
-                                )
-                        db.session.execute(User.__table__.insert(), [candidate])
+            BackupService._restore_employee_rows(
+                db.session,
+                company_id=expected_company_id,
+                rows=payload.get("users") or [],
+            )
 
         # Sales can reference users and cash sessions. Restore those parents first
         # in a full restore, after removing the old child rows above.
