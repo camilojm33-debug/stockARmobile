@@ -194,7 +194,7 @@ class BillingService:
                 subscription_id=subscription.id,
                 actor_user_id=user_id,
                 origin="portal",
-                idempotency_key=f"cancel:{subscription.company_id}:{subscription.id}:{user_id or 0}",
+                idempotency_key=BillingService._subscription_action_key("cancel", subscription, user_id),
                 cancel_at_period_end=True,
             ),
         )
@@ -230,7 +230,7 @@ class BillingService:
             str(getattr(subscription, "ends_at", "") or ""),
             str(bool(getattr(subscription, "renewal_enabled", False))),
             str(bool(getattr(subscription, "auto_renew", False))),
-            str(bool(getattr(subscription, "cancel_at_period_end", False)),
+            str(bool(getattr(subscription, "cancel_at_period_end", False))),
         ])
         digest = hashlib.sha256(revision.encode("utf-8")).hexdigest()[:20]
         return f"{action}:{getattr(subscription, 'company_id', 0)}:{getattr(subscription, 'id', 0)}:{user_id or 0}:{digest}"
