@@ -168,6 +168,8 @@ class BillingService:
     def cancel_subscription(
         db_session, *, subscription, user_id: int | None = None,
         cancel_at_period_end: bool = True,
+        origin: str = "portal",
+        actor_role: str | None = None,
     ):
         """Cancel MP recurring billing and apply the caller's explicit access policy."""
         metadata = SubscriptionService._metadata_dict(subscription)
@@ -196,7 +198,8 @@ class BillingService:
                 company_id=subscription.company_id,
                 subscription_id=subscription.id,
                 actor_user_id=user_id,
-                origin="portal",
+                actor_role=actor_role,
+                origin=origin,
                 idempotency_key=BillingService._subscription_action_key("cancel", subscription, user_id),
                 cancel_at_period_end=bool(cancel_at_period_end),
             ),
@@ -219,7 +222,7 @@ class BillingService:
                 if cancel_at_period_end
                 else "Contrato recurrente de Mercado Pago cancelado por administración; acceso local bloqueado según la acción administrativa."
             ),
-            source="portal",
+            source=origin,
             status="cancelled",
             payload={"preapproval_id": preapproval_id, "remote_status": remote_status},
             user_id=user_id,
@@ -294,7 +297,10 @@ class BillingService:
         return f"{action}:{getattr(subscription, 'company_id', 0)}:{getattr(subscription, 'id', 0)}:{user_id or 0}:{digest}"
 
     @staticmethod
-    def reactivate_subscription(db_session, *, subscription, user_id: int | None = None):
+    def reactivate_subscription(
+        db_session, *, subscription, user_id: int | None = None,
+        origin: str = "portal", actor_role: str | None = None,
+    ):
         """Reactivate only after Mercado Pago confirms authorization.
 
         Pending contracts send the payer back to authorization. A canceled
@@ -329,7 +335,8 @@ class BillingService:
                         company_id=subscription.company_id,
                         subscription_id=subscription.id,
                         actor_user_id=user_id,
-                        origin="portal",
+                        actor_role=actor_role,
+                        origin=origin,
                         idempotency_key=BillingService._subscription_action_key("reactivate", subscription, user_id),
                     ),
                 )
@@ -343,7 +350,7 @@ class BillingService:
                     subscription_id=subscription.id,
                     event="subscription_reactivated",
                     detail="Renovación automática reactivada y autorización confirmada por Mercado Pago.",
-                    source="portal",
+                    source=origin,
                     status=SubscriptionService.active_subscription_for_company(subscription.company_id).status,
                     user_id=user_id,
                 )
@@ -369,7 +376,7 @@ class BillingService:
                     subscription_id=subscription.id,
                     event="subscription_reactivation_authorization_pending",
                     detail="La autorización de Mercado Pago sigue pendiente; no se habilitó la renovación local.",
-                    source="portal",
+                    source=origin,
                     status="pending",
                     payload={"preapproval_id": preapproval_id, "init_point": init_point},
                     user_id=user_id,
@@ -435,7 +442,8 @@ class BillingService:
                 company_id=subscription.company_id,
                 subscription_id=subscription.id,
                 actor_user_id=user_id,
-                origin="portal",
+                actor_role=actor_role,
+                origin=origin,
                 idempotency_key=BillingService._subscription_action_key("reactivate", subscription, user_id),
             ),
         )
@@ -445,7 +453,7 @@ class BillingService:
             subscription_id=subscription.id,
             event="subscription_reactivated",
             detail="El usuario reactivó la renovación de la suscripción administrada localmente.",
-            source="portal",
+            source=origin,
             status=SubscriptionService.active_subscription_for_company(subscription.company_id).status,
             user_id=user_id,
         )
