@@ -5032,7 +5032,8 @@ def subscriptions_update(subscription_id):
                         paid_until = paid_until_before_edit
                         if getattr(paid_until, "tzinfo", None) is not None:
                             paid_until = paid_until.astimezone(timezone.utc).replace(tzinfo=None)
-                        now_utc = utcnow().replace(tzinfo=None) if getattr(utcnow(), "tzinfo", None) is not None else utcnow()
+                        now_ref = utcnow()
+                        now_utc = now_ref.astimezone(timezone.utc).replace(tzinfo=None) if getattr(now_ref, "tzinfo", None) is not None else now_ref
                         if not current_is_open and (paid_until is None or paid_until <= now_utc):
                             raise SubscriptionCommandError(
                                 "No se puede reactivar una suscripción automática sin días pagados vigentes. "
@@ -5062,6 +5063,12 @@ def subscriptions_update(subscription_id):
                                 "reactivate-no-renewal", target_subscription, current_user.id
                             ),
                         ),
+                    )
+                elif current_state != SubscriptionService.STATE_ACTIVE:
+                    SubscriptionService._transition(
+                        target_subscription,
+                        SubscriptionService.STATE_ACTIVE,
+                        reason="superadmin_edit_no_renewal",
                     )
                 target_subscription.renewal_enabled = False
                 target_subscription.auto_renew = False
