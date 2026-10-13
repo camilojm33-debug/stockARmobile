@@ -105,14 +105,14 @@
             </div>
             <div class="small text-muted">Conversación #{{ selected.conversation_id }} · Historial de mensajes guardados en StockArMobile</div>
             {% if selected.attention.reason %}<div class="small mt-2"><strong>Motivo:</strong> {{ selected.attention.reason }}</div>{% endif %}
-            {% if selected.attention.taken_by_user_id %}<div class="small mt-1 text-muted">Operador responsable: usuario #{{ selected.attention.taken_by_user_id }}</div>{% endif %}
+            {% if selected.attention.taken_by_user_id %}<div class="small mt-1 text-muted">{% if selected.attention.status == 'resolved' %}Último operador{% else %}Operador responsable{% endif %}: usuario #{{ selected.attention.taken_by_user_id }}</div>{% endif %}
           </div>
           <div class="d-flex flex-wrap align-content-start gap-2">
-            {% if selected.attention.status == 'ai' %}
+            {% if selected.attention.status in ['ai', 'resolved'] %}
             <form method="post" action="{{ url_for('whatsapp_agent.ai_whatsapp_attention_action', conversation_id=selected.conversation_id) }}">
               <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
               <input type="hidden" name="action" value="take">
-              <button type="submit" class="btn btn-danger"><i class="bi bi-person-check me-1"></i>Tomar conversación</button>
+              <button type="submit" class="btn btn-danger"><i class="bi bi-person-check me-1"></i>{% if selected.attention.status == 'resolved' %}Reabrir atención{% else %}Tomar conversación{% endif %}</button>
             </form>
             {% elif selected.attention.pending %}
             <form method="post" action="{{ url_for('whatsapp_agent.ai_whatsapp_attention_action', conversation_id=selected.conversation_id) }}">
@@ -127,7 +127,7 @@
               <button type="submit" class="btn btn-outline-success"><i class="bi bi-check2-circle me-1"></i>Marcar resuelta</button>
             </form>
             {% endif %}
-            {% if (selected.attention.status == 'human' and selected.attention.taken_by_user_id == current_user.id) or (selected.attention.status == 'resolved' and (not selected.attention.taken_by_user_id or selected.attention.taken_by_user_id == current_user.id)) %}
+            {% if (selected.attention.status == 'human' and selected.attention.taken_by_user_id == current_user.id) or selected.attention.status == 'resolved' %}
             <form method="post" action="{{ url_for('whatsapp_agent.ai_whatsapp_attention_action', conversation_id=selected.conversation_id) }}">
               <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
               <input type="hidden" name="action" value="resume_ai">
