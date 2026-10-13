@@ -261,7 +261,7 @@ def balance_excel():
 
 
 def _rows_for(kind):
-    from app import CashMovement, Client, Expense, Product, PurchaseOrder, Sale, SaleItem, scope_query_to_company
+    from app import CashMovement, Client, Expense, Product, PurchaseOrder, Sale, SaleItem, db, scope_query_to_company
     from sqlalchemy.orm import selectinload
     start_utc, end_utc, _, _, tz_name = _local_date_range(request.args.get("desde"), request.args.get("hasta"))
     if kind == "ventas":
