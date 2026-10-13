@@ -79,13 +79,28 @@ def test_webhook_signature_uses_same_meta_secret_alias_as_embedded_signup():
     assert 'if not app_secret:\n        return not bool(current_app.config.get("IS_PRODUCTION_ENV"))' in source
 
 
-def test_embedded_signup_launch_uses_configuration_driven_v4_extras():
+def test_embedded_signup_launch_uses_v4_and_offers_business_app_coexistence():
     template = (ROOT / "templates/ai_agents/whatsapp_onboarding.html").read_text(encoding="utf-8")
 
     assert "config_id: configId" in template
-    assert "extras: {setup: {}}" in template
-    assert "sessionInfoVersion: '3'" not in template
+    assert "extras: {setup: {}, featureType: 'whatsapp_business_app_onboarding', sessionInfoVersion: '3'}" in template
+    assert "onboardingEvent = eventName" in template
+    assert "phone_number_id: sessionInfo.phone_number_id || ''" in template
+    assert "sessionInfoVersion: '3'" in template
     assert "version: 'v3'" not in template
+
+
+def test_embedded_signup_completion_resolves_missing_phone_id_server_side_and_skips_register_for_coexistence():
+    source = (ROOT / "ai_agents.py").read_text(encoding="utf-8")
+    start = source.index('@bp.post("/vendedor/conectar-whatsapp/complete")')
+    end = source.index('@bp.get("/public/vendedor/<token>")', start)
+    route = source[start:end]
+
+    assert 'onboarding_event == "FINISH_WHATSAPP_BUSINESS_APP_ONBOARDING"' in route
+    assert 'if not code or not waba_id:' in route
+    assert 'f"{waba_id}/phone_numbers"' in route
+    assert 'if len(matching_phones) != 1:' in route
+    assert 'if not is_coexistence and status not in {"CONNECTED"}' in route
 
 
 def test_vendor_dashboard_connection_badge_requires_decryptable_access_token():

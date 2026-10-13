@@ -387,18 +387,21 @@ def vendor_whatsapp_complete():
     waba_id = str(payload.get("waba_id") or "").strip()
     phone_number_id = str(payload.get("phone_number_id") or "").strip()
     business_id = str(payload.get("business_id") or payload.get("businessId") or "").strip()
-    if not code or not waba_id or not phone_number_id:
-        return jsonify({"success": False, "error": "Meta no devolvió todos los datos necesarios para conectar el número."}), 400
-    # These IDs become Graph API path segments; accept only numeric Meta IDs so
-    # browser-supplied values cannot alter the endpoint path.
+    if not code or not waba_id:
+        return jsonify({"success": False, "error": "Meta no devolvió el código de autorización y la cuenta de WhatsApp."}), 400
+    # Phone number ID can be omitted by Meta on the WhatsApp Business App
+    # coexistence completion event. Resolve it server-side from the authorized
+    # WABA; never trust an arbitrary browser-supplied Graph path.
     if (
         len(code) > 4096
         or not re.fullmatch(r"\d{1,30}", waba_id)
-        or not re.fullmatch(r"\d{1,30}", phone_number_id)
+        or (phone_number_id and not re.fullmatch(r"\d{1,30}", phone_number_id))
     ):
         return jsonify({"success": False, "error": "Meta devolvió identificadores inválidos. Volvé a iniciar la conexión."}), 400
     if business_id and not re.fullmatch(r"\d{1,30}", business_id):
         business_id = ""
+    onboarding_event = str(payload.get("onboarding_event") or "").strip().upper()
+    is_coexistence = onboarding_event == "FINISH_WHATSAPP_BUSINESS_APP_ONBOARDING"
 
     app_id, config_id = _embedded_signup_config()
     app_secret = (os.getenv("META_APP_SECRET") or os.getenv("WHATSAPP_APP_SECRET") or "").strip()
@@ -419,6 +422,49 @@ def vendor_whatsapp_complete():
         if not access_token:
             return jsonify({"success": False, "error": "Meta no devolvió un token válido para la conexión."}), 400
 
+        # Query the WABA with the exchanged token first. For coexistence, Meta's
+        # FINISH event may contain only waba_id; resolve a unique selected phone
+        # here instead of rejecting the legitimate completion in the browser.
+        waba_response = requests.get(
+            _meta_graph_url(f"{waba_id}/phone_numbers"),
+            params={"fields": "id,display_phone_number,verified_name,status,platform_type,code_verification_status,name_status"},
+            headers={"Authorization": f"Bearer {access_token}"},
+            timeout=20,
+        )
+        if not waba_response.ok:
+            current_app.logger.warning("WhatsApp Embedded Signup WABA validation failed: %s", _meta_error(waba_response))
+            return jsonify({"success": False, "error": "Meta no permitió validar la cuenta de WhatsApp seleccionada."}), 400
+        waba_phones = [
+            item for item in ((waba_response.json() or {}).get("data") or [])
+            if isinstance(item, dict) and re.fullmatch(r"\d{1,30}", str(item.get("id") or ""))
+        ]
+
+        if phone_number_id:
+            matching_phones = [item for item in waba_phones if str(item.get("id") or "") == phone_number_id]
+            if not matching_phones:
+                return jsonify({"success": False, "error": "El número no pertenece a la cuenta de WhatsApp seleccionada."}), 400
+        else:
+            requested_phone = str(payload.get("phone_number") or payload.get("display_phone_number") or "").strip()
+            requested_digits = "".join(ch for ch in requested_phone if ch.isdigit())
+            matching_phones = []
+            if requested_digits:
+                matching_phones = [
+                    item for item in waba_phones
+                    if "".join(ch for ch in str(item.get("display_phone_number") or "") if ch.isdigit()) == requested_digits
+                ]
+            if not matching_phones and len(waba_phones) == 1:
+                matching_phones = waba_phones
+            if len(matching_phones) != 1:
+                current_app.logger.warning(
+                    "WhatsApp Embedded Signup returned no unique phone_number_id; company_id=%s waba_id=%s phone_count=%s coexistence=%s",
+                    company.id, waba_id, len(waba_phones), is_coexistence,
+                )
+                return jsonify({
+                    "success": False,
+                    "error": "Meta autorizó la cuenta, pero no pudimos identificar un único número. Volvé a conectar el WhatsApp y elegí el número del comercio.",
+                }), 400
+            phone_number_id = str(matching_phones[0].get("id") or "").strip()
+
         phone_response = requests.get(
             _meta_graph_url(phone_number_id),
             params={"fields": "id,display_phone_number,verified_name,status,platform_type,code_verification_status,name_status"},
@@ -431,18 +477,7 @@ def vendor_whatsapp_complete():
         phone = phone_response.json() or {}
         if str(phone.get("id") or "") != phone_number_id:
             return jsonify({"success": False, "error": "El número devuelto por Meta no coincide con la sesión de conexión."}), 400
-
-        waba_response = requests.get(
-            _meta_graph_url(f"{waba_id}/phone_numbers"),
-            params={"fields": "id,display_phone_number,verified_name,status,platform_type,code_verification_status,name_status"},
-            headers={"Authorization": f"Bearer {access_token}"},
-            timeout=20,
-        )
-        if not waba_response.ok:
-            current_app.logger.warning("WhatsApp Embedded Signup WABA validation failed: %s", _meta_error(waba_response))
-            return jsonify({"success": False, "error": "Meta no permitió validar la cuenta de WhatsApp seleccionada."}), 400
-        waba_phones = (waba_response.json() or {}).get("data") or []
-        if not any(str(item.get("id") or "") == phone_number_id for item in waba_phones if isinstance(item, dict)):
+        if not any(str(item.get("id") or "") == phone_number_id for item in waba_phones):
             return jsonify({"success": False, "error": "El número no pertenece a la cuenta de WhatsApp seleccionada."}), 400
 
         # The SuperAdmin acquisition number is a separate system channel and cannot
@@ -477,7 +512,7 @@ def vendor_whatsapp_complete():
         status = str(phone.get("status") or "").upper()
         platform_type = str(phone.get("platform_type") or "").upper()
         registration_pin = ""
-        if status not in {"CONNECTED"} and platform_type not in {"ON_PREMISE"}:
+        if not is_coexistence and status not in {"CONNECTED"} and platform_type not in {"ON_PREMISE"}:
             registration_pin = str(secrets.randbelow(900000) + 100000)
             register = requests.post(
                 _meta_graph_url(f"{phone_number_id}/register"),
