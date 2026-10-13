@@ -6192,7 +6192,7 @@ def test_business_billing_issue_sale_document_persists_numbering_sequence():
         assert docs[1].source_id == sale_id_b
 
 
-def test_plan_catalog_sync_updates_existing_plan_values():
+def test_plan_catalog_bootstrap_preserves_existing_admin_configuration():
     with stock_app.app.app_context():
         from app import Plan
         from services.plan_service import PlanService
@@ -6204,14 +6204,22 @@ def test_plan_catalog_sync_updates_existing_plan_values():
         plan.price = 1
         plan.max_users = 99
         plan.features_json = "legacy"
+        plan.state = "paused"
+        plan.active = False
         db.session.commit()
 
         PlanService.ensure_defaults(db.session)
         db.session.refresh(plan)
 
-        assert float(plan.price or 0) == 12999.0
-        assert int(plan.max_users or 0) == 3
-        assert plan.features_json == "inventario,ventas,clientes,reportes,excel"
+        # Bootstrap only creates missing catalog entries. Commercial values
+        # and activation state are explicitly controlled by Superadmin.
+        assert float(plan.price or 0) == 1.0
+        assert int(plan.max_users or 0) == 99
+        assert plan.features_json == "legacy"
+        assert plan.state == "paused"
+        assert plan.active is False
+        existing_codes = {row.code for row in Plan.query.all()}
+        assert {"trial", "entrepreneur", "business", "premium"} <= existing_codes
 
 
 def test_referral_capture_and_register_attribution_flow():
