@@ -5235,8 +5235,9 @@ def webhook_mercadopago():
     from app import WebhookEvent
 
     payload = request.get_json(silent=True) or {}
+    webhook_service = WebhookService()
     try:
-        result = WebhookService().process(db_session=db.session, headers=dict(request.headers), payload=payload)
+        result = webhook_service.process(db_session=db.session, headers=dict(request.headers), payload=payload)
         record_audit(action="webhook_mercadopago", entity="webhook", detail=f"Webhook procesado: {result.get('status')}")
         try:
             db.session.commit()
@@ -5251,8 +5252,32 @@ def webhook_mercadopago():
     except IntegrityError as exc:
         current_app.logger.exception("Webhook Mercado Pago rechazado por integridad: %s", exc)
         db.session.rollback()
+        try:
+            webhook_service.persist_failed_authorized_payment(
+                db_session=db.session,
+                headers=dict(request.headers),
+                payload=payload,
+            )
+        except Exception as persist_exc:
+            db.session.rollback()
+            current_app.logger.warning(
+                "No se pudo persistir el webhook firmado para reconciliación; error_type=%s",
+                type(persist_exc).__name__,
+            )
         return jsonify({"ok": False, "error": "No se pudo procesar la notificación por una inconsistencia interna."}), 400
     except Exception as exc:
         current_app.logger.exception("Webhook Mercado Pago rechazado: %s", exc)
         db.session.rollback()
+        try:
+            webhook_service.persist_failed_authorized_payment(
+                db_session=db.session,
+                headers=dict(request.headers),
+                payload=payload,
+            )
+        except Exception as persist_exc:
+            db.session.rollback()
+            current_app.logger.warning(
+                "No se pudo persistir el webhook firmado para reconciliación; error_type=%s",
+                type(persist_exc).__name__,
+            )
         return jsonify({"ok": False, "error": "No se pudo procesar la notificación."}), 400

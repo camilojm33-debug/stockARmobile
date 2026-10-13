@@ -143,6 +143,66 @@ class BillingReconciliationService:
                 finally:
                     lock_connection.close()
 
+
+    def persist_failed_authorized_payment(
+        self,
+        *,
+        db_session,
+        headers: dict,
+        payload: dict,
+    ) -> bool:
+        """Persist a retryable record after a signed authorized-payment webhook fails.
+
+        The normal webhook route rolls back the business transaction when provider
+        synchronization fails. Persisting the *verified* delivery in a separate
+        transaction makes it visible to the reconciler without trusting unsigned
+        client input. Terminal/completed records are never downgraded.
+        """
+        from app import WebhookEvent
+
+        event_type = payload.get("type") or payload.get("topic") or "unknown"
+        if event_type != "subscription_authorized_payment":
+            return False
+        data = payload.get("data") or {}
+        data_id = str(data.get("id") or payload.get("id") or "").strip()
+        normalized_headers = {
+            str(key or "").strip().lower(): str(value or "").strip()
+            for key, value in (headers or {}).items()
+        }
+        request_id = normalized_headers.get("x-request-id", "")
+        signature = normalized_headers.get("x-signature", "")
+        if not self.mp_service.validate_webhook_signature(
+            request_id=request_id,
+            x_signature=signature,
+            data_id=data_id,
+        ):
+            return False
+
+        event_key = self._event_key(payload)
+        existing = (
+            db_session.query(WebhookEvent)
+            .filter_by(event_key=event_key)
+            .with_for_update()
+            .first()
+        )
+        if existing is not None:
+            if not self._event_can_be_retried(existing):
+                return False
+            existing.status = "failed"
+            existing.payload_json = json.dumps(payload, ensure_ascii=False)
+        else:
+            db_session.add(
+                WebhookEvent(
+                    provider="mercadopago",
+                    event_key=event_key,
+                    event_type=event_type,
+                    status="failed",
+                    payload_json=json.dumps(payload, ensure_ascii=False),
+                )
+            )
+        db_session.commit()
+        return True
+
     @staticmethod
     def _parse_datetime(value):
         if not value:
@@ -165,7 +225,12 @@ class BillingReconciliationService:
         from app import Payment, WebhookEvent, db
         from services.ai_agent.subscription_service import AISubscriptionService
 
-        event = db.session.get(WebhookEvent, event_id)
+        event = (
+            db.session.query(WebhookEvent)
+            .filter_by(id=event_id)
+            .with_for_update()
+            .first()
+        )
         if event is None:
             return "ignored"
         if (
@@ -200,7 +265,15 @@ class BillingReconciliationService:
             external_reference=external_reference,
         )
         if company is None:
-            return cls._mark_attention(event_id, "unmatched_company_or_preapproval")
+            return cls._reconcile_commercial_subscription_payment(
+                event_id,
+                authorized=authorized,
+                payment_info=payment_info,
+                preapproval_id=preapproval_id,
+                payment_id=payment_id,
+                external_reference=external_reference,
+                provider=provider,
+            )
 
         ai = AISubscriptionService._ai_prefs(company)
         if str(ai.get("origin") or "").strip().upper() != "MERCADO_PAGO":
@@ -323,6 +396,233 @@ class BillingReconciliationService:
         event = db.session.get(WebhookEvent, event_id)
         if event is not None:
             event.status = "processed_ai_subscription_payment"
+        db.session.commit()
+        return "repaired"
+
+
+    @classmethod
+    def _reconcile_commercial_subscription_payment(
+        cls,
+        event_id: int,
+        *,
+        authorized: dict,
+        payment_info: dict,
+        preapproval_id: str,
+        payment_id: str,
+        external_reference: str,
+        provider,
+    ) -> str:
+        """Repair an interrupted recurring payment for the main SaaS subscription."""
+        from app import Company, Payment, Subscription, WebhookEvent, db
+        from services.billing_notification_service import NotificationService
+        from services.invoice_service import InvoiceService
+        from services.mercadopago_subscription_service import MercadoPagoSubscriptionService
+        from services.referral_service import ReferralService
+        from services.subscription_service import SubscriptionService
+
+        ref_parts = {
+            segment.split(":", 1)[0]: segment.split(":", 1)[1]
+            for segment in str(external_reference or "").split("|")
+            if ":" in segment
+        }
+        if ref_parts.get("ai_subscription") == "true":
+            return cls._mark_attention(event_id, "ai_reference_without_matching_company")
+        flow = str(ref_parts.get("flow") or "").strip().lower()
+        if flow and flow != "subscription_auto":
+            return cls._mark_attention(event_id, "unsupported_subscription_payment_flow")
+        if not preapproval_id or not payment_id or not external_reference:
+            return cls._mark_attention(event_id, "commercial_payment_binding_missing")
+
+        try:
+            referenced_company_id = int(ref_parts.get("company_id") or 0)
+            referenced_subscription_id = int(ref_parts.get("subscription_id") or 0)
+        except (TypeError, ValueError):
+            return cls._mark_attention(event_id, "commercial_reference_invalid")
+        if referenced_subscription_id <= 0:
+            return cls._mark_attention(event_id, "commercial_subscription_id_missing")
+
+        rows = (
+            Subscription.query
+            .filter(Subscription.metadata_json.contains(preapproval_id))
+            .order_by(Subscription.id.asc())
+            .all()
+        )
+        subscription = next(
+            (
+                row for row in rows
+                if str(SubscriptionService._metadata_dict(row).get("mercadopago_preapproval_id") or "").strip()
+                == preapproval_id
+            ),
+            None,
+        )
+        if subscription is None:
+            return cls._mark_attention(event_id, "commercial_subscription_not_found")
+        if subscription.id != referenced_subscription_id:
+            return cls._mark_attention(event_id, "commercial_subscription_reference_mismatch")
+        if referenced_company_id and int(subscription.company_id or 0) != referenced_company_id:
+            return cls._mark_attention(event_id, "commercial_company_reference_mismatch")
+
+        metadata = SubscriptionService._metadata_dict(subscription)
+        saved_reference = str(metadata.get("mercadopago_external_reference") or "").strip()
+        if saved_reference and saved_reference != external_reference:
+            return cls._mark_attention(event_id, "commercial_external_reference_mismatch")
+        if str(metadata.get("checkout_method") or "automatic").strip().lower() == "qr":
+            return cls._mark_attention(event_id, "manual_qr_subscription_must_not_auto_renew")
+        if not subscription.plan_id or subscription.plan is None:
+            return cls._mark_attention(event_id, "commercial_subscription_plan_missing")
+
+        payment_status = str(
+            payment_info.get("status") or authorized.get("summarized") or "pending"
+        ).strip().lower()
+        if payment_status != "approved":
+            event = db.session.get(WebhookEvent, event_id)
+            if event is not None:
+                event.status = "reconciliation_not_approved"
+            db.session.commit()
+            return "ignored"
+
+        existing = Payment.query.filter_by(payment_id=payment_id).first()
+        prior_status = str(getattr(existing, "status", "") or "").strip().lower()
+        if prior_status in {"refunded", "charged_back", "refund_pending"}:
+            event = db.session.get(WebhookEvent, event_id)
+            if event is not None:
+                event.status = "reconciliation_ignored_reversed"
+            db.session.commit()
+            return "ignored"
+        if existing is not None and (
+            (existing.company_id not in (None, subscription.company_id))
+            or (existing.subscription_id not in (None, subscription.id))
+            or str(existing.provider or "").strip() not in {"", "mercadopago_subscription"}
+            or str(existing.reference or "").strip() not in {"", preapproval_id}
+        ):
+            return cls._mark_attention(event_id, "commercial_payment_already_bound_elsewhere")
+
+        amount_source = (
+            authorized.get("transaction_amount")
+            or payment_info.get("transaction_amount")
+            or (existing.amount if existing is not None else None)
+        )
+        try:
+            amount = float(amount_source)
+        except (TypeError, ValueError, OverflowError):
+            return cls._mark_attention(event_id, "commercial_approved_payment_amount_missing")
+        currency = str(
+            authorized.get("currency_id")
+            or payment_info.get("currency_id")
+            or (existing.currency if existing is not None else "")
+            or ""
+        ).strip().upper()
+        expected_amount = float(getattr(subscription.plan, "price", 0) or 0)
+        expected_currency = str(getattr(subscription.plan, "currency", "ARS") or "ARS").strip().upper()
+        if amount <= 0 or expected_amount <= 0 or abs(expected_amount - amount) > 0.01 or currency != expected_currency:
+            return cls._mark_attention(event_id, "commercial_approved_payment_amount_or_currency_mismatch")
+
+        preapproval = provider.get_preapproval(preapproval_id)
+        if str(preapproval.get("id") or "").strip() != preapproval_id:
+            raise ValueError("commercial_preapproval_id_mismatch")
+        provider_reference = str(preapproval.get("external_reference") or "").strip()
+        if provider_reference and provider_reference != external_reference:
+            return cls._mark_attention(event_id, "commercial_provider_external_reference_mismatch")
+
+        paid_at = (
+            cls._parse_datetime(authorized.get("debit_date"))
+            or cls._parse_datetime(payment_info.get("date_approved"))
+            or cls._parse_datetime(authorized.get("date_approved"))
+            or (getattr(existing, "paid_at", None) if existing is not None else None)
+        )
+        if existing is None:
+            existing = Payment(
+                payment_id=payment_id,
+                external_reference=external_reference,
+                company_id=subscription.company_id,
+                subscription_id=subscription.id,
+                user_id=None,
+                amount=amount,
+                currency=currency,
+                status="approved",
+                payment_method="mercadopago_subscription",
+                reference=preapproval_id,
+                provider="mercadopago_subscription",
+                payload_json=json.dumps(authorized, ensure_ascii=False),
+                paid_at=paid_at,
+            )
+            db.session.add(existing)
+            db.session.flush()
+        else:
+            existing.external_reference = external_reference
+            existing.company_id = subscription.company_id
+            existing.subscription_id = subscription.id
+            existing.amount = amount
+            existing.currency = currency
+            existing.status = "approved"
+            existing.payment_method = existing.payment_method or "mercadopago_subscription"
+            existing.reference = preapproval_id
+            existing.provider = "mercadopago_subscription"
+            existing.payload_json = json.dumps(authorized, ensure_ascii=False)
+            existing.paid_at = paid_at or existing.paid_at
+
+        # Persist the authoritative provider boundary before renewing locally.
+        # SubscriptionService uses the same payment ID as its idempotency key,
+        # preventing a duplicate month if a worker or web request retries.
+        MercadoPagoSubscriptionService.sync_preapproval(
+            db_session=db.session,
+            preapproval=preapproval,
+        )
+        remote_status = str(preapproval.get("status") or "").strip().lower()
+        SubscriptionService.run_command(
+            db.session,
+            SubscriptionService.RenewSubscriptionCommand(
+                company_id=subscription.company_id,
+                subscription_id=subscription.id,
+                payment_status="approved",
+                paid_at=existing.paid_at,
+                renewal_enabled=(remote_status == "authorized"),
+                actor_user_id=existing.user_id,
+                actor_role="system",
+                origin="subscription_authorized_payment",
+                idempotency_key=f"mercadopago-payment-approved:{payment_id}",
+            ),
+        )
+
+        company = db.session.get(Company, subscription.company_id)
+        if company is None:
+            return cls._mark_attention(event_id, "commercial_subscription_company_missing")
+        company.active = True
+        if existing.invoice_id is None:
+            invoice = InvoiceService.create_invoice(
+                db.session,
+                company=company,
+                subscription=subscription,
+                amount=float(existing.amount or 0),
+                currency=existing.currency or expected_currency,
+                detail=f"Cobro recurrente Mercado Pago {payment_id}",
+                payment_id=payment_id,
+            )
+            existing.invoice_id = invoice.id
+        ReferralService.create_commission_for_sale(
+            db.session,
+            company_id=company.id,
+            subscription=subscription,
+            payment=existing,
+            plan=subscription.plan,
+        )
+        NotificationService.record_event(
+            db.session,
+            company_id=subscription.company_id,
+            payment_id=existing.id,
+            subscription_id=subscription.id,
+            invoice_id=existing.invoice_id,
+            event="mercadopago_authorized_subscription_payment",
+            detail=f"Pago recurrente {payment_id} recuperado por reconciliación.",
+            source="mercadopago",
+            status="approved",
+            event_id=f"mercadopago-authorized-payment:{payment_id}",
+            payload={"payment_id": payment_id, "reconciled": True},
+            user_id=existing.user_id,
+        )
+        event = db.session.get(WebhookEvent, event_id)
+        if event is not None:
+            event.status = "processed_subscription_payment"
         db.session.commit()
         return "repaired"
 

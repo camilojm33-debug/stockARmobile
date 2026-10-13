@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 from datetime import datetime, timedelta, timezone
+from decimal import Decimal
 
 
 def test_reconciler_repairs_interrupted_ai_payment_once(app, monkeypatch):
@@ -222,3 +223,166 @@ def test_reconciler_closes_pending_payment_event_without_granting_access(app, mo
         assert event.status == "reconciliation_not_approved"
         assert Payment.query.filter_by(payment_id="payment-pending-qa").first() is None
         assert json.loads(company.preferences_json)["ai_agent"]["status"] == "PENDIENTE"
+
+
+
+def test_reconciler_repairs_interrupted_commercial_subscription_payment_once(app, monkeypatch):
+    import json
+    from datetime import datetime, timedelta, timezone
+
+    from app import Company, Payment, Plan, Subscription, WebhookEvent, db
+    from services.billing_reconciliation_service import BillingReconciliationService
+    from services.subscription_service import SubscriptionService
+
+    with app.app_context():
+        company = Company(name="Commercial reconcile QA", active=True)
+        plan = Plan(
+            code="reconcile-business",
+            name="Reconcile Business",
+            price=Decimal("12999.00"),
+            currency="ARS",
+            duration_days=30,
+            state="active",
+            active=True,
+        )
+        db.session.add_all([company, plan])
+        db.session.flush()
+        subscription_id = 0
+        preapproval_id = "preapproval-commercial-reconcile-qa"
+        external_reference = (
+            f"stockarmobile|flow:subscription_auto|company_id:{company.id}|"
+            f"subscription_id:PLACEHOLDER|nonce:reconcile-qa"
+        )
+        subscription = Subscription(
+            company_id=company.id,
+            plan_id=plan.id,
+            status=SubscriptionService.STATE_ACTIVE,
+            starts_at=datetime.utcnow() - timedelta(days=30),
+            start_date=datetime.utcnow() - timedelta(days=30),
+            next_billing_date=datetime.utcnow() + timedelta(days=1),
+            ends_at=datetime.utcnow() + timedelta(days=1),
+            renewal_enabled=True,
+            auto_renew=True,
+            external_reference=external_reference,
+            metadata_json="{}",
+        )
+        db.session.add(subscription)
+        db.session.flush()
+        subscription_id = subscription.id
+        external_reference = external_reference.replace("PLACEHOLDER", str(subscription.id))
+        subscription.metadata_json = json.dumps({
+            "mercadopago_preapproval_id": preapproval_id,
+            "mercadopago_external_reference": external_reference,
+            "checkout_method": "automatic",
+            "flow": "subscription_auto",
+        })
+        event = WebhookEvent(
+            provider="mercadopago",
+            event_key="subscription_authorized_payment:notification:commercial-qa",
+            event_type="subscription_authorized_payment",
+            status="failed",
+            payload_json=json.dumps({
+                "type": "subscription_authorized_payment",
+                "id": "commercial-qa",
+                "data": {"id": "authorized-commercial-qa"},
+            }),
+            created_at=datetime.utcnow() - timedelta(hours=1),
+        )
+        db.session.add(event)
+        company_id = company.id
+        plan_id = plan.id
+        db.session.commit()
+        event_id = event.id
+
+    paid_at = datetime.now(timezone.utc).replace(microsecond=0)
+    next_payment = (paid_at + timedelta(days=30)).isoformat()
+
+    class FakeMercadoPago:
+        def get_authorized_payment(self, authorized_id):
+            return {
+                "id": authorized_id,
+                "preapproval_id": preapproval_id,
+                "external_reference": external_reference,
+                "transaction_amount": 12999.0,
+                "currency_id": "ARS",
+                "debit_date": paid_at.isoformat(),
+                "payment": {
+                    "id": "payment-commercial-reconcile-qa",
+                    "status": "approved",
+                    "transaction_amount": 12999.0,
+                    "currency_id": "ARS",
+                },
+            }
+
+        def get_preapproval(self, requested_id):
+            assert requested_id == preapproval_id
+            return {
+                "id": requested_id,
+                "external_reference": external_reference,
+                "status": "authorized",
+                "next_payment_date": next_payment,
+            }
+
+    monkeypatch.setattr(
+        "services.billing_reconciliation_service.MercadoPagoService",
+        FakeMercadoPago,
+    )
+
+    with app.app_context():
+        first = BillingReconciliationService.run()
+        event_row = db.session.get(WebhookEvent, event_id)
+        company = db.session.get(Company, company_id)
+        subscription = db.session.get(Subscription, subscription_id)
+        payment = Payment.query.filter_by(payment_id="payment-commercial-reconcile-qa").first()
+        assert first["ok"] is True
+        assert first["repaired"] == 1
+        assert event_row.status == "processed_subscription_payment"
+        assert payment is not None and payment.status == "approved"
+        assert payment.company_id == company_id and payment.subscription_id == subscription_id
+        assert company.active is True
+        assert subscription.renewal_enabled is True
+        assert datetime.fromisoformat(subscription.ends_at.isoformat()) == datetime.fromisoformat(next_payment).replace(tzinfo=None)
+
+        second = BillingReconciliationService.run()
+        assert second["events_scanned"] == 0
+        assert Payment.query.filter_by(payment_id="payment-commercial-reconcile-qa").count() == 1
+
+
+
+def test_failed_signed_authorized_payment_is_persisted_for_reconciliation(app, monkeypatch):
+    from app import WebhookEvent, db
+    from services.webhook_service import WebhookService
+
+    with app.app_context():
+        service = WebhookService()
+        monkeypatch.setattr(service.mp_service, "validate_webhook_signature", lambda **kwargs: True)
+        saved = service.persist_failed_authorized_payment(
+            db_session=db.session,
+            headers={"X-Request-ID": "request-qa", "X-Signature": "ts=1,v1=fake"},
+            payload={
+                "type": "subscription_authorized_payment",
+                "id": "notification-persist-qa",
+                "data": {"id": "authorized-persist-qa"},
+            },
+        )
+        assert saved is True
+        event = WebhookEvent.query.filter_by(
+            event_key="subscription_authorized_payment:notification:notification-persist-qa"
+        ).first()
+        assert event is not None
+        assert event.status == "failed"
+
+        monkeypatch.setattr(service.mp_service, "validate_webhook_signature", lambda **kwargs: False)
+        not_saved = service.persist_failed_authorized_payment(
+            db_session=db.session,
+            headers={"X-Request-ID": "request-qa", "X-Signature": "bad"},
+            payload={
+                "type": "subscription_authorized_payment",
+                "id": "notification-invalid-qa",
+                "data": {"id": "authorized-invalid-qa"},
+            },
+        )
+        assert not_saved is False
+        assert WebhookEvent.query.filter_by(
+            event_key="subscription_authorized_payment:notification:notification-invalid-qa"
+        ).first() is None
