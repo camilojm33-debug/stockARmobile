@@ -4951,33 +4951,20 @@ def subscriptions_update(subscription_id):
             raise SubscriptionCommandError("Fechas inválidas: el vencimiento no puede ser menor al inicio.")
 
         if target_status in {"cancelled", "suspended", "expired"}:
+            from services.billing_service import BillingService
             if target_status == "cancelled":
-                SubscriptionService.run_command(
+                BillingService.cancel_subscription(
                     db.session,
-                    SubscriptionService.CancelSubscriptionCommand(
-                        company_id=target_subscription.company_id,
-                        subscription_id=target_subscription.id,
-                        actor_user_id=current_user.id,
-                        actor_role=current_user.role,
-                        origin="superadmin",
-                        ip_address=request.remote_addr,
-                        idempotency_key=f"saas-update-cancel:{target_subscription.company_id}:{target_subscription.id}",
-                        cancel_at_period_end=False,
-                    ),
+                    subscription=target_subscription,
+                    user_id=current_user.id,
+                    cancel_at_period_end=False,
                 )
             elif target_status == "suspended":
-                SubscriptionService.run_command(
+                BillingService.suspend_subscription(
                     db.session,
-                    SubscriptionService.ExpireSubscriptionCommand(
-                        company_id=target_subscription.company_id,
-                        subscription_id=target_subscription.id,
-                        actor_user_id=current_user.id,
-                        actor_role=current_user.role,
-                        origin="superadmin",
-                        ip_address=request.remote_addr,
-                        idempotency_key=f"saas-update-suspend:{target_subscription.company_id}:{target_subscription.id}",
-                        reason="superadmin_suspend",
-                    ),
+                    subscription=target_subscription,
+                    user_id=current_user.id,
+                    reason="superadmin_suspend",
                 )
             elif target_status == "expired":
                 SubscriptionService.run_command(
@@ -5089,55 +5076,42 @@ def subscriptions_action(subscription_id):
         return _redirect_back("saas.subscriptions_panel")
 
     try:
+        from services.billing_service import BillingService
         if action == "cancel":
-            SubscriptionService.run_command(
+            BillingService.cancel_subscription(
                 db.session,
-                SubscriptionService.CancelSubscriptionCommand(
-                    company_id=subscription.company_id,
-                    subscription_id=subscription.id,
-                    actor_user_id=current_user.id,
-                    actor_role=current_user.role,
-                    origin="superadmin",
-                    ip_address=request.remote_addr,
-                    idempotency_key=(
-                        f"saas-action-cancel:{subscription.company_id}:{subscription.id}:"
-                        f"{subscription.status}:{subscription.next_billing_date.isoformat() if subscription.next_billing_date else 'none'}"
-                    ),
-                    cancel_at_period_end=False,
-                ),
+                subscription=subscription,
+                user_id=current_user.id,
+                cancel_at_period_end=False,
             )
         elif action == "reactivate":
-            SubscriptionService.run_command(
+            BillingService.reactivate_subscription(
                 db.session,
-                SubscriptionService.ReactivateSubscriptionCommand(
-                    company_id=subscription.company_id,
-                    subscription_id=subscription.id,
-                    actor_user_id=current_user.id,
-                    actor_role=current_user.role,
-                    origin="superadmin",
-                    ip_address=request.remote_addr,
-                    idempotency_key=(
-                        f"saas-action-reactivate:{subscription.company_id}:{subscription.id}:"
-                        f"{subscription.status}:{subscription.next_billing_date.isoformat() if subscription.next_billing_date else 'none'}"
-                    ),
-                ),
+                subscription=subscription,
+                user_id=current_user.id,
             )
+            reactivation_url = str(
+                SubscriptionService._metadata_dict(subscription).get("mercadopago_reactivation_init_point") or ""
+            ).strip()
+            if reactivation_url:
+                parsed = urlparse(reactivation_url)
+                host = (parsed.hostname or "").lower()
+                if parsed.scheme != "https" or not (
+                    host == "mercadopago.com"
+                    or host.endswith(".mercadopago.com")
+                    or host == "mercadopago.com.ar"
+                    or host.endswith(".mercadopago.com.ar")
+                ):
+                    raise RuntimeError("Mercado Pago no devolvió un enlace de autorización confiable.")
+                db.session.commit()
+                flash("Se generó una autorización pendiente de Mercado Pago; completá el flujo para terminar la reactivación.", "warning")
+                return redirect(reactivation_url)
         elif action == "suspend":
-            SubscriptionService.run_command(
+            BillingService.suspend_subscription(
                 db.session,
-                SubscriptionService.ExpireSubscriptionCommand(
-                    company_id=subscription.company_id,
-                    subscription_id=subscription.id,
-                    actor_user_id=current_user.id,
-                    actor_role=current_user.role,
-                    origin="superadmin",
-                    ip_address=request.remote_addr,
-                    idempotency_key=(
-                        f"saas-action-suspend:{subscription.company_id}:{subscription.id}:"
-                        f"{subscription.status}:{subscription.next_billing_date.isoformat() if subscription.next_billing_date else 'none'}"
-                    ),
-                    reason="superadmin_suspend",
-                ),
+                subscription=subscription,
+                user_id=current_user.id,
+                reason="superadmin_suspend",
             )
         elif action == "extend":
             days = request.form.get("days", type=int) or 7
