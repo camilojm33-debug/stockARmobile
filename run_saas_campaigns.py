@@ -12,9 +12,33 @@ import sys
 import time
 import urllib.error
 import urllib.request
+from urllib.parse import urlsplit
 
 WORKER_URL = str(os.getenv("SAAS_CAMPAIGN_WORKER_URL") or "").strip()
 WORKER_TOKEN = str(os.getenv("SAAS_CAMPAIGN_WORKER_TOKEN") or "").strip()
+
+
+
+def _validated_worker_url(value: str) -> str | None:
+    """Accept only HTTPS worker endpoints from trusted deployment configuration."""
+    raw = str(value or "").strip()
+    if not raw:
+        return None
+    try:
+        parsed = urlsplit(raw)
+        port = parsed.port
+    except ValueError:
+        return None
+    if (
+        parsed.scheme.lower() != "https"
+        or not parsed.hostname
+        or parsed.username is not None
+        or parsed.password is not None
+        or parsed.fragment
+        or (port is not None and not 1 <= port <= 65535)
+    ):
+        return None
+    return raw
 
 
 def _db_url_is_usable() -> bool:
@@ -33,12 +57,17 @@ def _run_direct() -> int:
 
 
 def _run_via_web() -> int:
-    if not WORKER_URL or not WORKER_TOKEN:
-        print("Commercial worker unavailable: configure SAAS_CAMPAIGN_WORKER_URL and SAAS_CAMPAIGN_WORKER_TOKEN.", file=sys.stderr)
+    worker_url = _validated_worker_url(WORKER_URL)
+    if not worker_url or not WORKER_TOKEN:
+        print(
+            "Commercial worker unavailable: configure a valid HTTPS "
+            "SAAS_CAMPAIGN_WORKER_URL and SAAS_CAMPAIGN_WORKER_TOKEN.",
+            file=sys.stderr,
+        )
         return 2
 
     request = urllib.request.Request(
-        WORKER_URL,
+        worker_url,
         method="POST",
         headers={
             "X-StockAr-Campaign-Worker-Token": WORKER_TOKEN,
@@ -50,6 +79,7 @@ def _run_via_web() -> int:
     last_error = None
     for attempt in range(1, 4):
         try:
+            # nosec B310: worker_url is rejected unless parsed as HTTPS above.
             with urllib.request.urlopen(request, timeout=60) as response:
                 payload = response.read().decode("utf-8", errors="replace")
                 print(payload)
