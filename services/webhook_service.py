@@ -1325,9 +1325,9 @@ class WebhookService:
                         SubscriptionService.run_command(db_session, SubscriptionService.ExpireSubscriptionCommand(company_id=company.id, subscription_id=subscription.id, actor_user_id=payment.user_id, actor_role="system", origin="webhook", idempotency_key=f"webhook-suspend:{event_key}:{subscription.id}", reason="webhook_suspend"))
                     else:
                         SubscriptionService.apply_payment_status(subscription, payment_status)
-                is_pending_plan_change = bool(SubscriptionService._metadata_dict(subscription).get("pending_plan_change"))
-                if not is_pending_plan_change and not is_replaced_subscription and not is_cancelled_checkout:
-                    company.active = subscription.status in {"active", "approved", "trial"}
+                # A payment/renewal webhook must never undo an explicit
+                # SuperAdmin company suspension. Subscription status governs
+                # billing entitlement; company.active is an independent control.
                 if payment.status == "approved" and subscription.status in {"active", "approved"}:
                     if payment.invoice_id is None:
                         invoice = InvoiceService.create_invoice(db_session, company=company, subscription=subscription, amount=float(payment.amount or 0), currency=payment.currency or "ARS", detail=f"Cobro Mercado Pago {payment.payment_id}", payment_id=payment.payment_id)
