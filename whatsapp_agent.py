@@ -477,6 +477,7 @@ def _ai_order_row(company_id: int, quote):
         attention_key, attention_label, attention_badge = "manual", "Seguimiento manual", "text-bg-secondary"
     return {
         "quote_id": quote.id,
+        "conversation_id": conversation.id if conversation is not None else None,
         "number": quote.number or f"P-{quote.id:06d}",
         "customer_name": getattr(client, "name", None) or getattr(quote, "consumer_name", None) or "Consumidor final",
         "customer_phone": getattr(client, "whatsapp", None) or getattr(client, "phone", None) or "",
@@ -544,13 +545,14 @@ def ai_orders():
     )
     all_rows = [_ai_order_row(company_id, quote) for quote in quotes]
     selected_status = (request.args.get("status") or "").strip().lower()
-    allowed_filters = {"pending", "shipping_pending", "paid", "confirmed", "problem"}
+    allowed_filters = {"pending", "shipping_pending", "paid", "confirmed", "problem", "human"}
     rows = [
         row for row in all_rows
         if not selected_status
         or selected_status not in allowed_filters
         or (selected_status == "shipping_pending" and row.get("delivery", {}).get("shipping_status") == "pending")
-        or (selected_status != "shipping_pending" and row["order_key"] == selected_status)
+        or (selected_status == "human" and row.get("attention", {}).get("key") == "human")
+        or (selected_status not in {"shipping_pending", "human"} and row["order_key"] == selected_status)
     ]
     channel_keys = []
     for row in all_rows:
@@ -782,7 +784,7 @@ def webhook():
                 continue
 
             connection = get_whatsapp_connection(company)
-            if not connection["enabled"] or not is_ai_enabled(company):
+            if not connection["enabled"]:
                 continue
 
             conversation = _get_or_create_conversation(company.id, sender)
@@ -792,6 +794,40 @@ def webhook():
                 ConversationMessage.external_message_id == external_id,
                 ConversationMessage.role == "user",
             ).first()
+            attention = attention_for(conversation)
+
+            # Human-owned conversations persist inbound messages but never invoke
+            # deterministic vendor commands or the AI runtime.
+            if attention["status"] == "human":
+                persist_human_inbound(
+                    conversation,
+                    external_id=external_id,
+                    sender=sender,
+                    text=text,
+                )
+                db.session.commit()
+                processed += 1
+                continue
+
+            # Do not turn a Meta webhook retry for a human-owned message into an
+            # AI reply after the operator later resumes the conversation.
+            duplicate_metadata = (
+                duplicate.metadata_json
+                if duplicate is not None and isinstance(duplicate.metadata_json, dict)
+                else {}
+            )
+            if duplicate is not None and duplicate_metadata.get("human_attention"):
+                continue
+
+            # Resolution returns control to the AI on the next new customer
+            # message; blocked reminders are deliberately not resurrected.
+            if attention["status"] == "resolved":
+                resume_ai(conversation)
+                db.session.commit()
+
+            if not is_ai_enabled(company):
+                continue
+
             if duplicate is not None:
                 assistant_duplicate = _assistant_for_inbound(conversation, duplicate)
                 if assistant_duplicate is not None:
