@@ -393,3 +393,37 @@ def test_sales_report_excludes_cancelled_sales(app):
         assert len(rows) == 2
         assert rows[1][1] == "Confirmada"
         assert rows[1][2] == Decimal("200.00")
+
+
+
+def test_empty_database_bootstrap_creates_only_historical_baseline_tables(app):
+    import importlib.util
+    from pathlib import Path
+    from sqlalchemy import inspect
+
+    migration_path = (
+        Path(__file__).resolve().parents[1]
+        / "migrations"
+        / "versions"
+        / "20260712_02_hardening_numeric_money_columns.py"
+    )
+    spec = importlib.util.spec_from_file_location("stockarmobile_baseline_migration_20260712_02", migration_path)
+    migration = importlib.util.module_from_spec(spec)
+    assert spec is not None and spec.loader is not None
+    spec.loader.exec_module(migration)
+
+    with app.app_context():
+        db.session.remove()
+        db.drop_all()
+        bind = db.engine
+        migration._ensure_baseline_schema(bind)
+        inspector = inspect(bind)
+        tables = set(inspector.get_table_names())
+
+        assert {"companies", "users", "plans", "payments", "subscriptions", "products"} <= tables
+        # These tables are created by later revisions. They must not be
+        # pre-created from today's model metadata during the baseline revision.
+        assert "ai_campaigns" not in tables
+        assert "crm_opportunities" not in tables
+        assert "crm_activities" not in tables
+        assert "saas_lead_suppressions" not in tables
