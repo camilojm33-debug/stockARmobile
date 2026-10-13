@@ -2882,6 +2882,8 @@ def cancel_subscription():
     if subscription is None:
         flash("No hay suscripción activa.", "warning")
         return redirect(url_for("company_billing.subscription_portal"))
+    metadata = SubscriptionService._metadata_dict(subscription)
+    preapproval_id = str(metadata.get("mercadopago_preapproval_id") or "").strip()
     try:
         # BillingService performs and verifies the remote cancellation before it
         # changes the local renewal flags. Avoid a second unverified MP request here.
