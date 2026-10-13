@@ -1366,17 +1366,23 @@ def admin_referrals_register_payout():
         flash("Datos de pago incompletos.", "danger")
         return redirect(url_for("referrals.admin_referrals_commissions"))
 
-    payout = ReferralService.register_payout(
-        db.session,
-        seller_id=seller_id,
-        commission_ids=parsed_ids,
-        processed_by_user_id=current_user.id,
-        transfer_date=transfer_date,
-        payment_method=(request.form.get("payment_method") or "").strip() or None,
-        receipt=request.form.get("receipt"),
-        transfer_number=request.form.get("transfer_number"),
-        observations=request.form.get("observations"),
-    )
+    try:
+        payout = ReferralService.register_payout(
+            db.session,
+            seller_id=seller_id,
+            commission_ids=parsed_ids,
+            processed_by_user_id=current_user.id,
+            transfer_date=transfer_date,
+            payment_method=(request.form.get("payment_method") or "").strip() or None,
+            receipt=request.form.get("receipt"),
+            transfer_number=request.form.get("transfer_number"),
+            observations=request.form.get("observations"),
+        )
+    except ValueError as exc:
+        db.session.rollback()
+        flash(str(exc), "warning")
+        return redirect(url_for("referrals.admin_referrals_commissions"))
+
     record_audit(
         action="referral_seller_payout",
         entity="referral_payout",

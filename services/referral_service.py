@@ -204,15 +204,34 @@ class ReferralService:
     ):
         from app import ReferralCommission, ReferralPayout, ReferralPayoutItem
 
+        # Deduplicate input IDs but require the entire selected batch to remain
+        # eligible. A stale form or concurrent payout must not silently create a
+        # partial payout or a zero-value payout record.
+        requested_ids = list(dict.fromkeys(
+            int(value) for value in (commission_ids or [])
+            if value is not None and not isinstance(value, bool)
+        ))
+        if not requested_ids:
+            raise ValueError("Seleccioná al menos una comisión disponible.")
+
         commissions = (
-            ReferralCommission.query.filter(
-                ReferralCommission.id.in_(commission_ids),
+            db_session.query(ReferralCommission)
+            .filter(
+                ReferralCommission.id.in_(requested_ids),
                 ReferralCommission.seller_id == seller_id,
                 ReferralCommission.status == "disponible",
             )
+            .order_by(ReferralCommission.id.asc())
+            .with_for_update()
             .all()
         )
+        if len(commissions) != len(requested_ids):
+            raise ValueError(
+                "Una o más comisiones ya no están disponibles. Actualizá la lista antes de registrar el pago."
+            )
         total = sum((Decimal(str(c.commission_amount or 0)) for c in commissions), Decimal("0.00"))
+        if total <= 0:
+            raise ValueError("El total de comisiones debe ser mayor a cero.")
         payout = ReferralPayout(
             seller_id=seller_id,
             processed_by_user_id=processed_by_user_id,
