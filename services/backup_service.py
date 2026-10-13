@@ -875,10 +875,68 @@ class BackupService:
 
         current_products = Product.query.filter_by(company_id=expected_company_id).order_by(Product.id.asc()).all()
         if "products" in sections:
-            Product.query.filter_by(company_id=expected_company_id).delete(synchronize_session=False)
             product_rows = BackupService._deserialize_rows(Product, payload.get("products") or [])
-            if product_rows:
-                db.session.execute(Product.__table__.insert(), product_rows)
+            if full_restore:
+                # Full restore has already removed sale and purchase children.
+                # Delete products before suppliers, then recreate suppliers first
+                # because product.supplier_id is a foreign key.
+                Product.query.filter_by(company_id=expected_company_id).delete(synchronize_session=False)
+                Supplier.query.filter_by(company_id=expected_company_id).delete(synchronize_session=False)
+                supplier_rows = BackupService._deserialize_rows(Supplier, payload.get("suppliers") or [])
+                if supplier_rows:
+                    db.session.execute(Supplier.__table__.insert(), supplier_rows)
+                if product_rows:
+                    db.session.execute(Product.__table__.insert(), product_rows)
+            else:
+                # Partial product restores must not delete products referenced by
+                # sales or purchase history. Merge by tenant-scoped ID/barcode.
+                existing_by_id = {
+                    int(row.id): row
+                    for row in Product.query.filter_by(company_id=expected_company_id).all()
+                }
+                existing_by_barcode = {
+                    str(row.barcode or "").strip(): row
+                    for row in existing_by_id.values()
+                    if str(row.barcode or "").strip()
+                }
+                for product_row in product_rows:
+                    incoming_id = product_row.get("id")
+                    barcode = str(product_row.get("barcode") or "").strip()
+                    product = existing_by_id.get(int(incoming_id)) if incoming_id is not None else None
+                    if product is None and barcode:
+                        product = existing_by_barcode.get(barcode)
+                    if product is not None:
+                        for key, value in product_row.items():
+                            if key in {"id", "company_id", "supplier_id"}:
+                                continue
+                            if hasattr(product, key):
+                                setattr(product, key, value)
+                        supplier_id = product_row.get("supplier_id")
+                        if supplier_id is None or Supplier.query.filter_by(
+                            id=supplier_id, company_id=expected_company_id
+                        ).first() is not None:
+                            product.supplier_id = supplier_id
+                    else:
+                        candidate = dict(product_row)
+                        candidate["company_id"] = expected_company_id
+                        supplier_id = candidate.get("supplier_id")
+                        if supplier_id is not None and Supplier.query.filter_by(
+                            id=supplier_id, company_id=expected_company_id
+                        ).first() is None:
+                            candidate["supplier_id"] = None
+                        if incoming_id is not None:
+                            id_owner = db.session.get(Product, int(incoming_id))
+                            if id_owner is not None:
+                                candidate.pop("id", None)
+                        db.session.execute(Product.__table__.insert(), [candidate])
+                        db.session.flush()
+                        if barcode:
+                            inserted = Product.query.filter_by(
+                                company_id=expected_company_id, barcode=barcode
+                            ).first()
+                            if inserted is not None:
+                                existing_by_id[int(inserted.id)] = inserted
+                                existing_by_barcode[barcode] = inserted
             current_products = Product.query.filter_by(company_id=expected_company_id).order_by(Product.id.asc()).all()
         else:
             if "inventory" in sections:
@@ -887,10 +945,36 @@ class BackupService:
                 BackupService._restore_product_subset(current_products, payload.get("products") or [], ["category"])
 
         if "clients" in sections:
-            Client.query.filter_by(company_id=expected_company_id).delete(synchronize_session=False)
             client_rows = BackupService._deserialize_rows(Client, payload.get("clients") or [])
-            if client_rows:
-                db.session.execute(Client.__table__.insert(), client_rows)
+            if full_restore:
+                Client.query.filter_by(company_id=expected_company_id).delete(synchronize_session=False)
+                if client_rows:
+                    db.session.execute(Client.__table__.insert(), client_rows)
+            else:
+                # A selected client restore must preserve historical sales that
+                # reference existing clients. Update and insert; never cascade-delete.
+                existing_clients = {
+                    int(row.id): row
+                    for row in Client.query.filter_by(company_id=expected_company_id).all()
+                }
+                for client_row in client_rows:
+                    incoming_id = client_row.get("id")
+                    client = existing_clients.get(int(incoming_id)) if incoming_id is not None else None
+                    if client is not None:
+                        for key, value in client_row.items():
+                            if key not in {"id", "company_id"} and hasattr(client, key):
+                                setattr(client, key, value)
+                    else:
+                        candidate = dict(client_row)
+                        candidate["company_id"] = expected_company_id
+                        if incoming_id is not None and db.session.get(Client, int(incoming_id)) is not None:
+                            candidate.pop("id", None)
+                        db.session.execute(Client.__table__.insert(), [candidate])
+                        db.session.flush()
+                        if incoming_id is not None:
+                            inserted = Client.query.filter_by(id=int(incoming_id), company_id=expected_company_id).first()
+                            if inserted is not None:
+                                existing_clients[int(inserted.id)] = inserted
 
         if "sales" in sections:
             sales_ids = [row.id for row in Sale.query.filter_by(company_id=expected_company_id).all()]
@@ -925,19 +1009,15 @@ class BackupService:
             CashMovement.query.filter_by(company_id=expected_company_id).delete(synchronize_session=False)
             CashSession.query.filter_by(company_id=expected_company_id).delete(synchronize_session=False)
             Expense.query.filter_by(company_id=expected_company_id).delete(synchronize_session=False)
-            Supplier.query.filter_by(company_id=expected_company_id).delete(synchronize_session=False)
             cash_session_rows = BackupService._deserialize_rows(CashSession, payload.get("cash_sessions") or [])
             cash_movement_rows = BackupService._deserialize_rows(CashMovement, payload.get("cash_movements") or [])
             expense_rows = BackupService._deserialize_rows(Expense, payload.get("expenses") or [])
-            supplier_rows = BackupService._deserialize_rows(Supplier, payload.get("suppliers") or [])
             if cash_session_rows:
                 db.session.execute(CashSession.__table__.insert(), cash_session_rows)
             if cash_movement_rows:
                 db.session.execute(CashMovement.__table__.insert(), cash_movement_rows)
             if expense_rows:
                 db.session.execute(Expense.__table__.insert(), expense_rows)
-            if supplier_rows:
-                db.session.execute(Supplier.__table__.insert(), supplier_rows)
 
         BackupService._sync_sequences([Product, Client, Supplier, PurchaseOrder, PurchaseItem, Sale, SaleItem, CashSession, CashMovement, Expense, User])
 
