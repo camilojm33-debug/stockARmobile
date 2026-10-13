@@ -1,0 +1,226 @@
+{% extends "base_master.html" %}
+
+{% block title %}Atención WhatsApp - Pedidos IA{% endblock %}
+
+{% block content %}
+<div class="app-shell vendor-wa-attention-page">
+  <header class="vendor-wa-hero mb-4">
+    <div class="d-flex flex-column flex-lg-row justify-content-between align-items-lg-center gap-3">
+      <div>
+        <div class="vendor-wa-kicker"><i class="bi bi-headset me-1"></i> Pedidos IA · Atención humana</div>
+        <h1 class="h2 fw-bold mb-2">Atención por WhatsApp</h1>
+        <p class="mb-0 text-muted">Tomá una conversación, respondé desde StockArMobile y devolvé el control al Vendedor IA cuando termines.</p>
+      </div>
+      <a class="btn btn-outline-secondary" href="{{ url_for('whatsapp_agent.ai_orders') }}"><i class="bi bi-arrow-left me-1"></i>Volver a Pedidos IA</a>
+    </div>
+  </header>
+
+  <section class="row g-3 mb-4" aria-label="Resumen de conversaciones">
+    {% for key, label, icon in [
+      ('pending', 'Pendientes', 'bi-bell'),
+      ('human', 'Atención humana', 'bi-person-check'),
+      ('ai', 'IA activa', 'bi-robot'),
+      ('resolved', 'Resueltas', 'bi-check-circle')
+    ] %}
+    <div class="col-6 col-xl-3">
+      <a class="vendor-wa-stat {% if state == key %}is-active{% endif %}" href="{{ url_for('whatsapp_agent.ai_whatsapp_attention', state=key, q=q) }}">
+        <span class="vendor-wa-stat-icon"><i class="bi {{ icon }}"></i></span>
+        <span><small>{{ label }}</small><strong>{{ counts[key] }}</strong></span>
+      </a>
+    </div>
+    {% endfor %}
+  </section>
+
+  <section class="card app-card mb-4">
+    <div class="card-body">
+      <form method="get" action="{{ url_for('whatsapp_agent.ai_whatsapp_attention') }}" class="row g-2 align-items-end">
+        <input type="hidden" name="state" value="{{ state }}">
+        <div class="col-12 col-md">
+          <label for="vendorWaSearch" class="form-label fw-semibold">Buscar conversación</label>
+          <input id="vendorWaSearch" class="form-control" type="search" name="q" value="{{ q }}" placeholder="Número de WhatsApp o texto del último mensaje">
+        </div>
+        <div class="col-12 col-md-auto"><button class="btn btn-primary w-100" type="submit"><i class="bi bi-search me-1"></i>Buscar</button></div>
+        <div class="col-12 col-md-auto"><a class="btn btn-outline-secondary w-100" href="{{ url_for('whatsapp_agent.ai_whatsapp_attention', state='all') }}">Ver todas</a></div>
+      </form>
+      <div class="small text-muted mt-2">Se muestran hasta 200 conversaciones recientes de WhatsApp de este comercio. El canal comercial de SuperAdmin permanece separado.</div>
+    </div>
+  </section>
+
+  <div class="vendor-wa-inbox">
+    <aside class="card app-card vendor-wa-list-card">
+      <div class="card-header bg-transparent d-flex justify-content-between align-items-center gap-2">
+        <strong><i class="bi bi-inboxes me-2"></i>Conversaciones</strong>
+        <span class="badge text-bg-light border">{{ rows|length }}</span>
+      </div>
+      <div class="vendor-wa-list">
+        {% for row in rows %}
+        <a class="vendor-wa-list-item {% if selected and selected.conversation_id == row.conversation_id %}is-selected{% endif %}" href="{{ url_for('whatsapp_agent.ai_whatsapp_attention', conversation_id=row.conversation_id, state=state, q=q) }}">
+          <div class="d-flex justify-content-between align-items-start gap-2">
+            <strong class="vendor-wa-phone">{{ row.phone }}</strong>
+            {% if row.attention.status == 'human' and row.attention.pending %}
+            <span class="badge text-bg-danger">Pendiente</span>
+            {% elif row.attention.status == 'human' %}
+            <span class="badge text-bg-warning">Humano</span>
+            {% elif row.attention.status == 'resolved' %}
+            <span class="badge text-bg-success">Resuelta</span>
+            {% else %}
+            <span class="badge text-bg-primary">IA</span>
+            {% endif %}
+          </div>
+          <div class="vendor-wa-preview">
+            {% if row.latest_sender_type == 'human' %}<span class="text-success fw-semibold">Operador: </span>{% elif row.latest_sender_type == 'user' %}<span class="fw-semibold">Cliente: </span>{% elif row.latest_sender_type %}<span class="text-primary fw-semibold">Vendedor IA: </span>{% endif %}
+            {{ row.latest_text or 'Todavía no hay mensajes.' }}
+          </div>
+          <div class="d-flex justify-content-between gap-2 mt-2 small text-muted">
+            <span>Conversación #{{ row.conversation_id }}</span>
+            {% if row.updated_at %}<span>{{ row.updated_at.strftime('%d/%m %H:%M') }}</span>{% endif %}
+          </div>
+        </a>
+        {% else %}
+        <div class="vendor-wa-empty-list">
+          <i class="bi bi-chat-square-text"></i>
+          <strong>No hay conversaciones en este filtro</strong>
+          <span>Elegí otro estado o quitá la búsqueda para revisar más conversaciones.</span>
+          <a href="{{ url_for('whatsapp_agent.ai_whatsapp_attention', state='all') }}" class="btn btn-sm btn-outline-secondary mt-2">Ver todas</a>
+        </div>
+        {% endfor %}
+      </div>
+    </aside>
+
+    <main class="card app-card vendor-wa-chat-card">
+      {% if selected %}
+      <div class="card-header bg-transparent vendor-wa-chat-header">
+        <div class="d-flex flex-column flex-md-row justify-content-between gap-3">
+          <div>
+            <div class="d-flex flex-wrap align-items-center gap-2 mb-1">
+              <h2 class="h5 fw-bold mb-0">{{ selected.phone or 'Contacto sin número' }}</h2>
+              <span class="badge text-bg-light border">WhatsApp</span>
+              {% if selected.attention.status == 'human' %}
+              <span class="badge text-bg-danger">IA pausada</span>
+              {% elif selected.attention.status == 'resolved' %}
+              <span class="badge text-bg-success">Resuelta</span>
+              {% else %}
+              <span class="badge text-bg-primary">IA activa</span>
+              {% endif %}
+            </div>
+            <div class="small text-muted">Conversación #{{ selected.conversation_id }} · Historial de mensajes guardados en StockArMobile</div>
+            {% if selected.attention.reason %}<div class="small mt-2"><strong>Motivo:</strong> {{ selected.attention.reason }}</div>{% endif %}
+            {% if selected.attention.taken_by_user_id %}<div class="small mt-1 text-muted">Operador responsable: usuario #{{ selected.attention.taken_by_user_id }}</div>{% endif %}
+          </div>
+          <div class="d-flex flex-wrap align-content-start gap-2">
+            {% if selected.attention.status != 'human' %}
+            <form method="post" action="{{ url_for('whatsapp_agent.ai_whatsapp_attention_action', conversation_id=selected.conversation_id) }}">
+              <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+              <input type="hidden" name="action" value="take">
+              <button type="submit" class="btn btn-danger"><i class="bi bi-person-check me-1"></i>Tomar conversación</button>
+            </form>
+            {% elif selected.attention.pending %}
+            <form method="post" action="{{ url_for('whatsapp_agent.ai_whatsapp_attention_action', conversation_id=selected.conversation_id) }}">
+              <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+              <input type="hidden" name="action" value="take">
+              <button type="submit" class="btn btn-danger"><i class="bi bi-person-check me-1"></i>Tomar conversación</button>
+            </form>
+            {% elif selected.attention.taken_by_user_id == current_user.id %}
+            <form method="post" action="{{ url_for('whatsapp_agent.ai_whatsapp_attention_action', conversation_id=selected.conversation_id) }}">
+              <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+              <input type="hidden" name="action" value="resolve">
+              <button type="submit" class="btn btn-outline-success"><i class="bi bi-check2-circle me-1"></i>Marcar resuelta</button>
+            </form>
+            {% endif %}
+            {% if selected.attention.status in ['human', 'resolved'] and (not selected.attention.taken_by_user_id or selected.attention.taken_by_user_id == current_user.id) %}
+            <form method="post" action="{{ url_for('whatsapp_agent.ai_whatsapp_attention_action', conversation_id=selected.conversation_id) }}">
+              <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+              <input type="hidden" name="action" value="resume_ai">
+              <button type="submit" class="btn btn-outline-primary"><i class="bi bi-robot me-1"></i>Reanudar IA</button>
+            </form>
+            {% endif %}
+          </div>
+        </div>
+      </div>
+
+      <div class="vendor-wa-messages" aria-label="Historial de mensajes">
+        {% for message in selected.messages %}
+        <div class="vendor-wa-message-row {% if message.sender_type == 'user' %}from-customer{% elif message.sender_type == 'human' %}from-human{% else %}from-ai{% endif %}">
+          <div class="vendor-wa-message">
+            <div class="vendor-wa-message-author">
+              {% if message.sender_type == 'user' %}Cliente{% elif message.sender_type == 'human' %}Operador humano{% else %}Vendedor IA{% endif %}
+            </div>
+            <div class="vendor-wa-message-body">{{ message.content }}</div>
+            <div class="vendor-wa-message-time">{{ message.created_at.strftime('%d/%m/%Y %H:%M') if message.created_at else '' }}</div>
+          </div>
+        </div>
+        {% else %}
+        <div class="vendor-wa-empty-chat">Todavía no hay mensajes guardados en esta conversación.</div>
+        {% endfor %}
+      </div>
+
+      <div class="vendor-wa-composer">
+        {% if selected.attention.status == 'human' and selected.attention.taken_by_user_id == current_user.id %}
+        <form method="post" action="{{ url_for('whatsapp_agent.ai_whatsapp_attention_message', conversation_id=selected.conversation_id) }}">
+          <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+          <label for="vendorWaReply" class="form-label fw-semibold">Responder por WhatsApp</label>
+          <textarea id="vendorWaReply" class="form-control mb-2" name="body" rows="3" maxlength="4096" required placeholder="Escribí tu respuesta al cliente..."></textarea>
+          <div class="d-flex flex-column flex-sm-row justify-content-between align-items-sm-center gap-2">
+            <span class="small text-muted">La respuesta se envía desde el WhatsApp conectado a este comercio.</span>
+            <button class="btn btn-success" type="submit"><i class="bi bi-whatsapp me-1"></i>Enviar mensaje</button>
+          </div>
+        </form>
+        {% elif selected.attention.status == 'human' %}
+        <div class="alert alert-warning mb-0"><i class="bi bi-lock me-1"></i>La conversación está asignada a otro operador o pendiente de asignación. Tomala antes de responder.</div>
+        {% else %}
+        <div class="alert alert-light border mb-0"><i class="bi bi-info-circle me-1"></i>Para escribir desde aquí, tomá primero la conversación. Eso pausará al Vendedor IA para este cliente.</div>
+        {% endif %}
+      </div>
+      {% else %}
+      <div class="vendor-wa-empty-chat vendor-wa-empty-chat-main">
+        <span class="vendor-wa-empty-icon"><i class="bi bi-chat-square-dots"></i></span>
+        <h2 class="h5 fw-bold">Elegí una conversación</h2>
+        <p class="text-muted mb-0">Seleccioná un cliente de la bandeja para ver el historial y administrar el control entre IA y operador.</p>
+      </div>
+      {% endif %}
+    </main>
+  </div>
+</div>
+
+<style>
+.vendor-wa-attention-page { padding-bottom: 28px; }
+.vendor-wa-hero { padding: 24px 26px; border: 1px solid var(--app-line); border-radius: 20px; background: var(--app-panel); box-shadow: 0 12px 30px rgba(15,23,42,.05); }
+.vendor-wa-kicker { color: var(--app-primary); font-size: .78rem; font-weight: 800; letter-spacing: .06em; text-transform: uppercase; margin-bottom: 8px; }
+.vendor-wa-stat { display:flex; align-items:center; gap:12px; height:100%; padding:16px; border:1px solid var(--app-line); background:var(--app-panel); border-radius:15px; text-decoration:none; color:var(--app-ink); }
+.vendor-wa-stat:hover, .vendor-wa-stat.is-active { border-color:var(--app-primary); box-shadow:0 8px 20px rgba(37,99,235,.08); }
+.vendor-wa-stat-icon { display:grid; place-items:center; width:42px; height:42px; flex:0 0 42px; border-radius:12px; background:var(--app-panel-soft); color:var(--app-primary); font-size:1.2rem; }
+.vendor-wa-stat small, .vendor-wa-stat strong { display:block; }
+.vendor-wa-stat small { color:var(--app-muted); font-size:.77rem; }
+.vendor-wa-stat strong { font-size:1.45rem; line-height:1.2; }
+.vendor-wa-inbox { display:grid; grid-template-columns:minmax(280px, .85fr) minmax(0, 1.6fr); gap:18px; align-items:stretch; }
+.vendor-wa-list-card, .vendor-wa-chat-card { min-width:0; overflow:hidden; }
+.vendor-wa-list-card { min-height:600px; }
+.vendor-wa-list { max-height:780px; overflow:auto; }
+.vendor-wa-list-item { display:block; padding:14px 16px; color:var(--app-ink); text-decoration:none; border-top:1px solid var(--app-line); }
+.vendor-wa-list-item:hover { background:var(--app-panel-soft); }
+.vendor-wa-list-item.is-selected { background:rgba(37,99,235,.07); border-left:3px solid var(--app-primary); padding-left:13px; }
+.vendor-wa-phone { min-width:0; overflow-wrap:anywhere; }
+.vendor-wa-preview { margin-top:7px; color:var(--app-muted); font-size:.82rem; line-height:1.45; overflow-wrap:anywhere; display:-webkit-box; -webkit-line-clamp:2; -webkit-box-orient:vertical; overflow:hidden; }
+.vendor-wa-chat-card { min-height:600px; display:flex; flex-direction:column; }
+.vendor-wa-chat-header { padding:18px; }
+.vendor-wa-messages { flex:1; min-height:260px; max-height:560px; overflow:auto; padding:18px; display:flex; flex-direction:column; gap:12px; background:var(--app-panel-soft); }
+.vendor-wa-message-row { display:flex; }
+.vendor-wa-message-row.from-customer { justify-content:flex-start; }
+.vendor-wa-message-row.from-ai, .vendor-wa-message-row.from-human { justify-content:flex-end; }
+.vendor-wa-message { max-width:min(88%, 620px); padding:11px 13px; border:1px solid var(--app-line); border-radius:14px; background:var(--app-panel); box-shadow:0 3px 12px rgba(15,23,42,.035); overflow-wrap:anywhere; }
+.from-ai .vendor-wa-message { border-color:rgba(37,99,235,.2); }
+.from-human .vendor-wa-message { border-color:rgba(22,163,74,.25); background:rgba(22,163,74,.055); }
+.vendor-wa-message-author { font-size:.72rem; font-weight:800; color:var(--app-muted); margin-bottom:5px; }
+.from-ai .vendor-wa-message-author { color:var(--app-primary); }
+.from-human .vendor-wa-message-author { color:#16803d; }
+.vendor-wa-message-body { white-space:pre-wrap; line-height:1.5; }
+.vendor-wa-message-time { text-align:right; margin-top:6px; color:var(--app-muted); font-size:.68rem; }
+.vendor-wa-composer { padding:18px; border-top:1px solid var(--app-line); }
+.vendor-wa-empty-list, .vendor-wa-empty-chat { display:flex; flex-direction:column; align-items:center; justify-content:center; text-align:center; gap:9px; min-height:250px; padding:24px; color:var(--app-muted); }
+.vendor-wa-empty-list > i { font-size:1.8rem; }
+.vendor-wa-empty-chat-main { flex:1; min-height:500px; }
+.vendor-wa-empty-icon { display:grid; place-items:center; width:60px; height:60px; border-radius:18px; background:var(--app-panel-soft); color:var(--app-primary); font-size:1.7rem; }
+@media (max-width: 991.98px) { .vendor-wa-inbox { grid-template-columns:1fr; } .vendor-wa-list-card { min-height:0; } .vendor-wa-list { max-height:320px; } .vendor-wa-chat-card { min-height:520px; } }
+@media (max-width: 575.98px) { .vendor-wa-hero { padding:18px; border-radius:16px; } .vendor-wa-stat { padding:12px; gap:9px; } .vendor-wa-stat-icon { width:36px; height:36px; flex-basis:36px; } .vendor-wa-stat small { font-size:.68rem; } .vendor-wa-stat strong { font-size:1.25rem; } .vendor-wa-chat-header, .vendor-wa-composer { padding:14px; } .vendor-wa-messages { padding:12px; } .vendor-wa-message { max-width:96%; } }
+</style>
+{% endblock %}
