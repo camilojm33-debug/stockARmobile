@@ -606,7 +606,7 @@ def ai_whatsapp_attention():
     company_id, company = _tenant_attention_actor()
     agent = choose_agent(company_id, channel="whatsapp")
     query_text = str(request.args.get("q") or "").strip().lower()
-    state = str(request.args.get("state") or "pending").strip().lower()
+    state = str(request.args.get("state") or "all").strip().lower()
     if state not in {"all", "pending", "human", "ai", "resolved"}:
         state = "pending"
 
@@ -704,7 +704,7 @@ def ai_whatsapp_attention_action(conversation_id: int):
     action = str(request.form.get("action") or "").strip().lower()
     attention = attention_for(conversation)
     taken_by = attention.get("taken_by_user_id")
-    if taken_by and int(taken_by) != int(current_user.id):
+    if attention["status"] == "human" and taken_by and int(taken_by) != int(current_user.id):
         flash("La conversación ya está asignada a otro operador.", "warning")
         return redirect(url_for("whatsapp_agent.ai_whatsapp_attention", conversation_id=conversation.id, state="human"))
 
