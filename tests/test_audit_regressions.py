@@ -167,3 +167,15 @@ def test_campaign_all_failures_are_not_marked_as_sent(app, monkeypatch):
         assert refreshed.sent_count == 0
         assert refreshed.failed_count == 1
         assert refreshed.skipped_count == 0
+
+
+def test_offline_queue_is_bound_to_tenant_identity_and_stops_permanent_http_retries():
+    worker = (REPO_ROOT / "static" / "service-worker.js").read_text(encoding="utf-8")
+    offline = (REPO_ROOT / "static" / "assets" / "js" / "offline-manager-core.js").read_text(encoding="utf-8")
+    assert "X-Offline-User-Id" in offline
+    assert "X-Offline-Company-Id" in offline
+    assert "ACTIVE_IDENTITY_KEY" in worker
+    assert "attentionReason: queuedIdentity ? 'identity_mismatch' : 'identity_unverified'" in worker
+    assert "const PERMANENT_HTTP_STATUSES = new Set([400, 401, 403, 404, 405, 409, 410, 412, 413, 415, 422])" in worker
+    assert "item.status === 'needs_attention'" in worker
+    assert "await setActiveOfflineIdentity(null)" in worker
