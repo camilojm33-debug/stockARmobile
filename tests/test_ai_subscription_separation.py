@@ -2203,10 +2203,19 @@ def test_billing_reconciliation_flags_missing_invoice_and_legacy_qr_autorenew(su
     assert "Suscripción IA autorizada sin contrato registrado" in titles
 
     # Older rows may lack checkout_method entirely; local Auto flags still must
-    # never be treated as proof that Mercado Pago has an active contract.
-    from app import Subscription
+    # never be treated as proof that Mercado Pago has an active contract. The
+    # application enforces one subscription row per company, so use a separate
+    # QA tenant to model this legacy state.
+    from app import Company, Subscription
+    legacy_company = Company(
+        name="Legacy Auto Flag QA",
+        active=True,
+        preferences_json="{}",
+    )
+    db.session.add(legacy_company)
+    db.session.flush()
     legacy = Subscription(
-        company_id=company.id,
+        company_id=legacy_company.id,
         plan_id=subscription.plan_id,
         status="active",
         start_date=utcnow() - timedelta(days=10),
