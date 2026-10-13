@@ -390,6 +390,15 @@ class BackupService:
         return f"backup_company_{int(company_id)}_{timestamp}.json.gz"
 
     @staticmethod
+    def _sequence_reset_values(max_value):
+        """Return valid PostgreSQL setval arguments, including for empty tables."""
+        try:
+            current_max = int(max_value or 0)
+        except (TypeError, ValueError, OverflowError):
+            current_max = 0
+        return (current_max, True) if current_max > 0 else (1, False)
+
+    @staticmethod
     def _sync_sequences(models):
         from app import db
 
@@ -409,9 +418,14 @@ class BackupService:
             max_value = db.session.execute(
                 sa.select(sa.func.coalesce(sa.func.max(pk_column), 0)).select_from(model.__table__)
             ).scalar() or 0
+            reset_value, is_called = BackupService._sequence_reset_values(max_value)
             db.session.execute(
-                sa.text("SELECT setval(:sequence_name, :max_value, true)"),
-                {"sequence_name": sequence_name, "max_value": int(max_value)},
+                sa.text("SELECT setval(:sequence_name, :max_value, :is_called)"),
+                {
+                    "sequence_name": sequence_name,
+                    "max_value": reset_value,
+                    "is_called": is_called,
+                },
             )
 
     @staticmethod

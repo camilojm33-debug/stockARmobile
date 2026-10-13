@@ -308,3 +308,12 @@ def test_backup_creation_refuses_compressed_payload_over_limit(app, monkeypatch)
                 "company_id": 1,
                 "records": list(range(1000)),
             })
+
+
+
+def test_postgres_backup_sequence_reset_handles_empty_and_populated_tables():
+    from services.backup_service import BackupService
+
+    assert BackupService._sequence_reset_values(0) == (1, False)
+    assert BackupService._sequence_reset_values(None) == (1, False)
+    assert BackupService._sequence_reset_values(17) == (17, True)
