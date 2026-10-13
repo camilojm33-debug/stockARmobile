@@ -1,6 +1,5 @@
-const CACHE_NAME = 'stockarmobile-pwa-v12';
+const CACHE_NAME = 'stockarmobile-pwa-v13';
 const STATIC_ASSETS = [
-  '/',
   '/offline.html',
   '/manifest.json',
   '/static/assets/css/styles.css',
@@ -252,13 +251,23 @@ function extractRequestUuid(request) {
   return request.headers.get('X-Offline-Request-Id') || request.headers.get('X-Request-Id') || null;
 }
 
-async function cacheJsonSnapshot(request, response) {
+function identitySnapshotKey(requestUrl, identity) {
+  const normalized = normalizeOfflineIdentity(identity);
+  return normalized ? `${normalized.companyId}:${normalized.userId}:${requestUrl}` : null;
+}
+
+async function cacheJsonSnapshot(request, response, requestIdentity) {
   if (!response || !response.ok) return;
   const contentType = (response.headers.get('content-type') || '').toLowerCase();
   if (!contentType.includes('application/json')) return;
+  const identity = normalizeOfflineIdentity(requestIdentity);
+  const activeIdentity = normalizeOfflineIdentity(await readMetaValue(ACTIVE_IDENTITY_KEY, null));
+  const key = identitySnapshotKey(request.url, identity);
+  if (!key || !sameOfflineIdentity(identity, activeIdentity)) return;
   try {
     await dbPut(SNAPSHOT_STORE, {
-      key: request.url,
+      key,
+      identity,
       body: await response.clone().text(),
       headers: Array.from(response.headers.entries()),
       status: response.status,
@@ -269,9 +278,13 @@ async function cacheJsonSnapshot(request, response) {
   }
 }
 
-async function readJsonSnapshot(requestUrl) {
-  const snapshot = await dbGet(SNAPSHOT_STORE, requestUrl);
-  if (!snapshot) return null;
+async function readJsonSnapshot(requestUrl, requestIdentity) {
+  const identity = normalizeOfflineIdentity(requestIdentity);
+  const activeIdentity = normalizeOfflineIdentity(await readMetaValue(ACTIVE_IDENTITY_KEY, null));
+  const key = identitySnapshotKey(requestUrl, identity);
+  if (!key || !sameOfflineIdentity(identity, activeIdentity)) return null;
+  const snapshot = await dbGet(SNAPSHOT_STORE, key);
+  if (!snapshot || !sameOfflineIdentity(snapshot.identity, identity)) return null;
   return new Response(snapshot.body, {
     status: snapshot.status || 200,
     headers: snapshot.headers || [['Content-Type', 'application/json; charset=utf-8']],
@@ -385,7 +398,8 @@ async function cacheFirst(request) {
   if (cached) return cached;
   try {
     const response = await fetch(request);
-    if (response.ok) {
+    const contentType = (response.headers.get('content-type') || '').toLowerCase();
+    if (response.ok && !contentType.includes('text/html')) {
       const cache = await caches.open(CACHE_NAME);
       await cache.put(request, response.clone());
     }
@@ -399,16 +413,12 @@ async function cacheFirst(request) {
 }
 
 async function networkFirst(request, offlineFallback = false) {
+  // Never persist navigated HTML: authenticated pages are private even when
+  // addressed by the same URL on another user/tenant session.
   const cache = await caches.open(CACHE_NAME);
   try {
-    const response = await fetch(request);
-    if (response.ok) {
-      await cache.put(request, response.clone());
-    }
-    return response;
+    return await fetch(request);
   } catch (error) {
-    const cached = await cache.match(request);
-    if (cached) return cached;
     if (offlineFallback) {
       return (await cache.match('/offline.html')) || new Response('Offline', { status: 503, headers: { 'Content-Type': 'text/plain; charset=utf-8' } });
     }
@@ -420,14 +430,15 @@ async function networkFirst(request, offlineFallback = false) {
 }
 
 async function networkFirstApi(request) {
+  const requestIdentity = normalizeOfflineIdentity(await readMetaValue(ACTIVE_IDENTITY_KEY, null));
   try {
     const response = await fetch(request);
     if (response.ok) {
-      await cacheJsonSnapshot(request, response);
+      await cacheJsonSnapshot(request, response, requestIdentity);
     }
     return response;
   } catch (error) {
-    const snapshot = await readJsonSnapshot(request.url);
+    const snapshot = await readJsonSnapshot(request.url, requestIdentity);
     if (snapshot) return snapshot;
     return new Response(JSON.stringify({ offline: true, error: 'Sin conexion' }), {
       status: 503,

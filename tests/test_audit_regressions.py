@@ -186,3 +186,13 @@ def test_offline_queue_does_not_treat_login_redirect_as_successful_mutation():
     assert "function isAuthenticationRedirect(response)" in worker
     assert "attentionReason: 'session_required'" in worker
     assert "La sesión venció antes de sincronizar una operación offline" in worker
+
+
+def test_service_worker_never_caches_private_html_and_namespaces_api_snapshots():
+    worker = (REPO_ROOT / "static" / "service-worker.js").read_text(encoding="utf-8")
+    assert "const CACHE_NAME = 'stockarmobile-pwa-v13';" in worker
+    assert "  '/',\n  '/offline.html'," not in worker
+    assert "Never persist navigated HTML" in worker
+    assert "response.ok && !contentType.includes('text/html')" in worker
+    assert "identitySnapshotKey(request.url, identity)" in worker
+    assert "sameOfflineIdentity(snapshot.identity, identity)" in worker
