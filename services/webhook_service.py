@@ -343,12 +343,18 @@ class WebhookService:
                             preapproval_id=preapproval_id,
                             external_reference=external_reference,
                         )
-                    should_sync_ai_preapproval = persisted_status == "approved"
+                    should_sync_ai_preapproval = (
+                        persisted_status == "approved"
+                        and payment_needs_access_credit
+                    )
                     if ai_company is not None and preapproval_id and should_sync_ai_preapproval:
                         preapproval = self.mp_service.get_preapproval(preapproval_id)
                         if not preapproval.get("external_reference"):
                             preapproval["external_reference"] = external_reference
-                        ai_company = AISubscriptionService.sync_from_mercadopago(preapproval=preapproval)
+                        ai_company = AISubscriptionService.sync_from_mercadopago(
+                            preapproval=preapproval,
+                            verified_payment_id=payment_id,
+                        )
                         db_session.flush()
                 result = {"status": "processed_ai_subscription_payment", "company_id": getattr(ai_company, "id", None), "payment_status": payment_status, "payment_id": payment_id or None, "event_key": event_key}
                 event_row.status = result.get("status", "processed_ai_subscription_payment")
