@@ -21,6 +21,7 @@ from services.ai_agent.orchestrator_v2 import AgentRuntime, MAX_AGENT_MESSAGE_CH
 from services.ai_agent.usage_service import can_use_ai
 from services.ai_agent.vendor_followup_tools import install_vendor_followup_tools
 from services.ai_agent.vendor_order_service import VendorOrderService, _metadata, _set_metadata
+from services.ai_agent.human_attention import attention_for, conversation_metadata, persist_human_inbound, resume_ai, set_attention
 from services.ai_agent.whatsapp_service import WhatsAppService
 from services.saas_commercial_whatsapp import is_commercial_phone_number_id, process_commercial_message
 
@@ -288,7 +289,28 @@ def _send_persisted_reply(company, *, sender: str, assistant) -> bool:
         raise RuntimeError("La respuesta de WhatsApp ya no está disponible.")
     metadata = assistant.metadata_json if isinstance(assistant.metadata_json, dict) else {}
     delivery = metadata.get("whatsapp_delivery") if isinstance(metadata.get("whatsapp_delivery"), dict) else {}
-    if delivery.get("status") == "accepted":
+    if delivery.get("status") in {"accepted", "blocked_human"}:
+        return False
+
+    # Serialize sends against operator handoff. A response generated before
+    # takeover must not be sent after the conversation becomes human-owned.
+    conversation = (
+        db.session.query(Conversation)
+        .filter_by(id=assistant.conversation_id, company_id=company.id, channel="whatsapp")
+        .with_for_update()
+        .first()
+    )
+    if conversation is None:
+        raise RuntimeError("La conversación de WhatsApp ya no está disponible.")
+    if attention_for(conversation)["status"] == "human":
+        updated_metadata = dict(metadata)
+        updated_metadata["whatsapp_delivery"] = {
+            "status": "blocked_human",
+            "blocked_at": utcnow_naive().isoformat(),
+            "reason": "La conversación fue tomada por un operador humano.",
+        }
+        assistant.metadata_json = updated_metadata
+        db.session.commit()
         return False
 
     result = WhatsAppService.send_text(company, to=sender, body=str(assistant.content or ""))
@@ -305,7 +327,6 @@ def _send_persisted_reply(company, *, sender: str, assistant) -> bool:
     assistant.metadata_json = updated_metadata
     db.session.commit()
     return True
-
 
 def _persist_deterministic_turn(conversation, *, external_id: str, text: str, response: str):
     """Persist a retryable WhatsApp command turn without duplicating messages."""
@@ -456,6 +477,7 @@ def _ai_order_row(company_id: int, quote):
         attention_key, attention_label, attention_badge = "manual", "Seguimiento manual", "text-bg-secondary"
     return {
         "quote_id": quote.id,
+        "conversation_id": conversation.id if conversation is not None else None,
         "number": quote.number or f"P-{quote.id:06d}",
         "customer_name": getattr(client, "name", None) or getattr(quote, "consumer_name", None) or "Consumidor final",
         "customer_phone": getattr(client, "whatsapp", None) or getattr(client, "phone", None) or "",
@@ -523,13 +545,14 @@ def ai_orders():
     )
     all_rows = [_ai_order_row(company_id, quote) for quote in quotes]
     selected_status = (request.args.get("status") or "").strip().lower()
-    allowed_filters = {"pending", "shipping_pending", "paid", "confirmed", "problem"}
+    allowed_filters = {"pending", "shipping_pending", "paid", "confirmed", "problem", "human"}
     rows = [
         row for row in all_rows
         if not selected_status
         or selected_status not in allowed_filters
         or (selected_status == "shipping_pending" and row.get("delivery", {}).get("shipping_status") == "pending")
-        or (selected_status != "shipping_pending" and row["order_key"] == selected_status)
+        or (selected_status == "human" and row.get("attention", {}).get("key") == "human")
+        or (selected_status not in {"shipping_pending", "human"} and row["order_key"] == selected_status)
     ]
     channel_keys = []
     for row in all_rows:
@@ -550,6 +573,290 @@ def ai_orders():
         "channel_icon": _ai_order_channel_meta(channel_keys[0])["icon"] if len(channel_keys) == 1 else "bi-broadcast",
     }
     return render_template("ai_agent/orders.html", orders=rows, summary=summary, selected_status=selected_status if selected_status in allowed_filters else "")
+
+
+def _tenant_vendor_whatsapp_conversation(company_id: int, conversation_id: int, *, lock: bool = False):
+    """Resolve only this tenant's Vendedor IA WhatsApp conversation."""
+    agent = choose_agent(int(company_id), channel="whatsapp")
+    query = db.session.query(Conversation).filter_by(
+        id=int(conversation_id),
+        company_id=int(company_id),
+        agent_id=int(agent.id),
+        channel="whatsapp",
+    )
+    if lock:
+        query = query.with_for_update()
+    return query.first()
+
+
+def _tenant_attention_actor():
+    company_id = get_current_company_id()
+    if not company_id or getattr(current_user, "role", None) not in {"admin", "user"}:
+        abort(403)
+    from app import Company
+    company = Company.query.filter_by(id=int(company_id), active=True).first()
+    if company is None:
+        abort(404)
+    return int(company_id), company
+
+
+@bp.get("/pedidos-ia/atencion-whatsapp")
+@login_required
+def ai_whatsapp_attention():
+    company_id, company = _tenant_attention_actor()
+    agent = choose_agent(company_id, channel="whatsapp")
+    query_text = str(request.args.get("q") or "").strip().lower()
+    state = str(request.args.get("state") or "all").strip().lower()
+    if state not in {"all", "pending", "human", "ai", "resolved"}:
+        state = "pending"
+
+    conversations = (
+        db.session.query(Conversation)
+        .filter_by(company_id=company_id, agent_id=int(agent.id), channel="whatsapp")
+        .order_by(Conversation.updated_at.desc(), Conversation.id.desc())
+        .limit(200)
+        .all()
+    )
+    all_rows = []
+    for conversation in conversations:
+        attention = attention_for(conversation)
+        latest = (
+            ConversationMessage.query
+            .filter_by(company_id=company_id, conversation_id=int(conversation.id))
+            .order_by(ConversationMessage.id.desc())
+            .first()
+        )
+        phone = str(conversation.external_conversation_id or "").strip()
+        latest_text = str(getattr(latest, "content", "") or "")
+        if query_text and query_text not in phone.lower() and query_text not in latest_text.lower():
+            continue
+        all_rows.append({
+            "conversation_id": conversation.id,
+            "phone": phone or "Sin número",
+            "attention": attention,
+            "latest_text": latest_text,
+            "latest_sender_type": str(getattr(latest, "sender_type", "") or ""),
+            "latest_at": getattr(latest, "created_at", None),
+            "updated_at": getattr(conversation, "updated_at", None),
+        })
+
+    counts = {
+        "all": len(all_rows),
+        "pending": sum(1 for row in all_rows if row["attention"]["pending"]),
+        "human": sum(1 for row in all_rows if row["attention"]["status"] == "human"),
+        "ai": sum(1 for row in all_rows if row["attention"]["status"] == "ai"),
+        "resolved": sum(1 for row in all_rows if row["attention"]["status"] == "resolved"),
+    }
+    if state == "pending":
+        rows = [row for row in all_rows if row["attention"]["pending"]]
+    elif state == "human":
+        rows = [row for row in all_rows if row["attention"]["status"] == "human"]
+    elif state in {"ai", "resolved"}:
+        rows = [row for row in all_rows if row["attention"]["status"] == state]
+    else:
+        rows = all_rows
+
+    selected = None
+    selected_view = None
+    selected_id = request.args.get("conversation_id", type=int)
+    if selected_id:
+        selected = _tenant_vendor_whatsapp_conversation(company_id, selected_id)
+    if selected is None:
+        preferred = next((row for row in rows if row["attention"]["pending"]), None) or (rows[0] if rows else None)
+        if preferred:
+            selected = _tenant_vendor_whatsapp_conversation(company_id, preferred["conversation_id"])
+    if selected is not None:
+        message_rows = (
+            ConversationMessage.query
+            .filter_by(company_id=company_id, conversation_id=int(selected.id))
+            .order_by(ConversationMessage.id.desc())
+            .limit(300)
+            .all()
+        )
+        selected_view = {
+            "conversation_id": selected.id,
+            "phone": str(selected.external_conversation_id or "").strip(),
+            "attention": attention_for(selected),
+            "updated_at": selected.updated_at,
+            "messages": list(reversed(message_rows)),
+        }
+
+    return render_template(
+        "ai_agent/whatsapp_attention.html",
+        company=company,
+        rows=rows,
+        selected=selected_view,
+        q=query_text,
+        state=state,
+        counts=counts,
+        message_limit=300,
+    )
+
+
+@bp.post("/pedidos-ia/atencion-whatsapp/<int:conversation_id>/action")
+@login_required
+def ai_whatsapp_attention_action(conversation_id: int):
+    company_id, _company = _tenant_attention_actor()
+    conversation = _tenant_vendor_whatsapp_conversation(company_id, conversation_id, lock=True)
+    if conversation is None:
+        abort(404)
+
+    action = str(request.form.get("action") or "").strip().lower()
+    attention = attention_for(conversation)
+    taken_by = attention.get("taken_by_user_id")
+    if attention["status"] == "human" and taken_by and int(taken_by) != int(current_user.id):
+        flash("La conversación ya está asignada a otro operador.", "warning")
+        return redirect(url_for("whatsapp_agent.ai_whatsapp_attention", conversation_id=conversation.id, state="human"))
+    if (
+        attention["status"] == "human"
+        and action in {"resolve", "resume_ai"}
+        and int(taken_by or 0) != int(current_user.id)
+    ):
+        flash("Tomá la conversación antes de cerrar la atención o devolver el control a la IA.", "warning")
+        return redirect(url_for("whatsapp_agent.ai_whatsapp_attention", conversation_id=conversation.id, state="human"))
+
+    from app import record_audit
+    if action == "take":
+        try:
+            set_attention(
+                conversation,
+                status="human",
+                user_id=int(current_user.id),
+                reason=attention.get("reason") or "Tomada desde Atención WhatsApp de Pedidos IA.",
+            )
+        except PermissionError:
+            db.session.rollback()
+            flash("La conversación ya está asignada a otro operador.", "warning")
+            return redirect(url_for("whatsapp_agent.ai_whatsapp_attention", conversation_id=conversation.id, state="human"))
+        message = "Conversación tomada. El Vendedor IA queda pausado para este cliente."
+        audit_action = "vendor_whatsapp_take_human"
+    elif action == "resolve":
+        if attention["status"] != "human":
+            flash("La conversación no está bajo atención humana.", "warning")
+            return redirect(url_for("whatsapp_agent.ai_whatsapp_attention", conversation_id=conversation.id))
+        set_attention(conversation, status="resolved", user_id=int(current_user.id))
+        message = "Atención humana marcada como resuelta."
+        audit_action = "vendor_whatsapp_resolve_human"
+    elif action == "resume_ai":
+        resume_ai(conversation, user_id=int(current_user.id))
+        message = "Vendedor IA reanudado para esta conversación."
+        audit_action = "vendor_whatsapp_resume_ai"
+    else:
+        abort(400)
+
+    record_audit(
+        action=audit_action,
+        entity="conversation",
+        entity_id=conversation.id,
+        company_id=company_id,
+        detail=message,
+        user_id=current_user.id,
+        ip_address=request.remote_addr,
+    )
+    db.session.commit()
+    return_state = "human" if action != "resume_ai" else "all"
+    flash(message, "success")
+    return redirect(url_for("whatsapp_agent.ai_whatsapp_attention", conversation_id=conversation.id, state=return_state))
+
+
+@bp.post("/pedidos-ia/atencion-whatsapp/<int:conversation_id>/mensaje")
+@login_required
+def ai_whatsapp_attention_message(conversation_id: int):
+    company_id, company = _tenant_attention_actor()
+    conversation = _tenant_vendor_whatsapp_conversation(company_id, conversation_id, lock=True)
+    if conversation is None:
+        abort(404)
+
+    attention = attention_for(conversation)
+    if attention["status"] != "human":
+        flash("Tomá la conversación antes de enviar un mensaje humano.", "warning")
+        return redirect(url_for("whatsapp_agent.ai_whatsapp_attention", conversation_id=conversation.id))
+    if int(attention.get("taken_by_user_id") or 0) != int(current_user.id):
+        flash("Tomá la conversación antes de responder. Si ya está asignada, debe responder el operador responsable.", "warning")
+        return redirect(url_for("whatsapp_agent.ai_whatsapp_attention", conversation_id=conversation.id, state="human"))
+
+    body = str(request.form.get("body") or "").strip()
+    recipient = str(conversation.external_conversation_id or "").strip()
+    recipient_digits = "".join(character for character in recipient if character.isdigit())
+    if not body:
+        flash("Escribí un mensaje antes de enviarlo.", "warning")
+        return redirect(url_for("whatsapp_agent.ai_whatsapp_attention", conversation_id=conversation.id))
+    if len(body) > 4096:
+        flash("El mensaje no puede superar los 4096 caracteres.", "warning")
+        return redirect(url_for("whatsapp_agent.ai_whatsapp_attention", conversation_id=conversation.id))
+    if not recipient_digits:
+        flash("La conversación no tiene un número de WhatsApp válido.", "danger")
+        return redirect(url_for("whatsapp_agent.ai_whatsapp_attention", conversation_id=conversation.id))
+
+    connection = get_whatsapp_connection(company)
+    if not connection.get("enabled") or not connection.get("phone_number_id") or not connection.get("access_token"):
+        flash("WhatsApp no está conectado o habilitado para este comercio.", "danger")
+        return redirect(url_for("whatsapp_agent.ai_whatsapp_attention", conversation_id=conversation.id))
+
+    try:
+        result = WhatsAppService.send_text(company, to=recipient, body=body)
+        messages = result.get("messages") if isinstance(result, dict) else None
+        provider_message_id = ""
+        if isinstance(messages, list) and messages and isinstance(messages[0], dict):
+            provider_message_id = str(messages[0].get("id") or "").strip()
+
+        now = utcnow_naive()
+        outgoing = ConversationMessage(
+            company_id=company_id,
+            conversation_id=conversation.id,
+            sender_type="human",
+            sender_id=int(current_user.id),
+            role="assistant",
+            content=body,
+            content_type="text",
+            external_message_id=(f"human:{provider_message_id}" if provider_message_id else f"human:{uuid.uuid4().hex}")[:255],
+            metadata_json={
+                "channel": "whatsapp",
+                "human_operator": True,
+                "human_operator_user_id": int(current_user.id),
+                "whatsapp_delivery": {
+                    "status": "accepted",
+                    "accepted_at": now.isoformat(),
+                    "provider_message_id": provider_message_id,
+                },
+            },
+        )
+        db.session.add(outgoing)
+        metadata = conversation_metadata(conversation)
+        current_attention = metadata.get("ai_attention")
+        current_attention = dict(current_attention) if isinstance(current_attention, dict) else {}
+        current_attention.update({
+            "status": "human",
+            "taken_by_user_id": int(current_user.id),
+            "taken_at": current_attention.get("taken_at") or now.isoformat(),
+            "last_human_message_at": now.isoformat(),
+        })
+        metadata["ai_attention"] = current_attention
+        conversation.metadata_json = metadata
+        conversation.updated_at = now
+
+        from app import record_audit
+        record_audit(
+            action="vendor_whatsapp_human_message",
+            entity="conversation",
+            entity_id=conversation.id,
+            company_id=company_id,
+            detail="Mensaje humano enviado por el panel de Atención WhatsApp.",
+            user_id=current_user.id,
+            ip_address=request.remote_addr,
+        )
+        db.session.commit()
+        flash("Mensaje aceptado por WhatsApp y registrado en la conversación.", "success")
+    except Exception:
+        db.session.rollback()
+        current_app.logger.exception(
+            "No se pudo enviar mensaje humano por WhatsApp company_id=%s conversation_id=%s user_id=%s",
+            company_id,
+            conversation_id,
+            current_user.id,
+        )
+        flash("No se pudo enviar el mensaje. Revisá la conexión de WhatsApp y volvé a intentar.", "danger")
+    return redirect(url_for("whatsapp_agent.ai_whatsapp_attention", conversation_id=conversation_id, state="human"))
 
 
 @bp.post("/pedidos-ia/<int:quote_id>/shipping")
@@ -761,7 +1068,7 @@ def webhook():
                 continue
 
             connection = get_whatsapp_connection(company)
-            if not connection["enabled"] or not is_ai_enabled(company):
+            if not connection["enabled"]:
                 continue
 
             conversation = _get_or_create_conversation(company.id, sender)
@@ -771,6 +1078,40 @@ def webhook():
                 ConversationMessage.external_message_id == external_id,
                 ConversationMessage.role == "user",
             ).first()
+            attention = attention_for(conversation)
+
+            # Human-owned conversations persist inbound messages but never invoke
+            # deterministic vendor commands or the AI runtime.
+            if attention["status"] == "human":
+                persist_human_inbound(
+                    conversation,
+                    external_id=external_id,
+                    sender=sender,
+                    text=text,
+                )
+                db.session.commit()
+                processed += 1
+                continue
+
+            # Do not turn a Meta webhook retry for a human-owned message into an
+            # AI reply after the operator later resumes the conversation.
+            duplicate_metadata = (
+                duplicate.metadata_json
+                if duplicate is not None and isinstance(duplicate.metadata_json, dict)
+                else {}
+            )
+            if duplicate is not None and duplicate_metadata.get("human_attention"):
+                continue
+
+            # Resolution returns control to the AI on the next new customer
+            # message; blocked reminders are deliberately not resurrected.
+            if attention["status"] == "resolved":
+                resume_ai(conversation)
+                db.session.commit()
+
+            if not is_ai_enabled(company):
+                continue
+
             if duplicate is not None:
                 assistant_duplicate = _assistant_for_inbound(conversation, duplicate)
                 if assistant_duplicate is not None:

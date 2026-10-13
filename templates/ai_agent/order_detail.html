@@ -12,6 +12,7 @@
     </div>
     <div class="d-flex gap-2 flex-wrap">
       <a class="btn btn-outline-secondary" href="{{ url_for('whatsapp_agent.ai_orders') }}"><i class="bi bi-arrow-left me-1"></i>Pedidos IA</a>
+      {% if order.channel == 'whatsapp' and order.conversation_id %}<a class="btn btn-outline-success" href="{{ url_for('whatsapp_agent.ai_whatsapp_attention', conversation_id=order.conversation_id, state='all') }}"><i class="bi bi-headset me-1"></i>Atención WhatsApp</a>{% endif %}
       {% if quote_url %}<a class="btn btn-outline-primary" href="{{ quote_url }}"><i class="bi bi-file-earmark-text me-1"></i>Ver presupuesto</a>{% endif %}
       {% if order.sale_id %}<a class="btn btn-primary" href="/ventas/{{ order.sale_id }}"><i class="bi bi-bag-check me-1"></i>Ver venta</a>{% endif %}
     </div>

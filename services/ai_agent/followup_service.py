@@ -273,6 +273,16 @@ class AIFollowupService:
     @classmethod
     def pending_for_conversation(cls, conversation) -> list[dict[str, Any]]:
         metadata = _metadata(conversation)
+        attention = metadata.get("ai_attention")
+        attention_status = (
+            str(attention.get("status") or "").strip().lower()
+            if isinstance(attention, dict)
+            else ""
+        )
+        # A queued reminder must not escape after an operator has taken over,
+        # even when the item was queued before the handoff.
+        if attention_status in {"human", "resolved"}:
+            return []
         return [
             item for item in _outbox(conversation, metadata)
             if str(item.get("status") or "pending") == "pending"
