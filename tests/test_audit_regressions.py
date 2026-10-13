@@ -179,3 +179,10 @@ def test_offline_queue_is_bound_to_tenant_identity_and_stops_permanent_http_retr
     assert "const PERMANENT_HTTP_STATUSES = new Set([400, 401, 403, 404, 405, 409, 410, 412, 413, 415, 422])" in worker
     assert "item.status === 'needs_attention'" in worker
     assert "await setActiveOfflineIdentity(null)" in worker
+
+
+def test_offline_queue_does_not_treat_login_redirect_as_successful_mutation():
+    worker = (REPO_ROOT / "static" / "service-worker.js").read_text(encoding="utf-8")
+    assert "function isAuthenticationRedirect(response)" in worker
+    assert "attentionReason: 'session_required'" in worker
+    assert "La sesión venció antes de sincronizar una operación offline" in worker

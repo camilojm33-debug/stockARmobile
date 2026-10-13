@@ -193,6 +193,17 @@ function offlineJsonError(message, status = 409) {
   });
 }
 
+function isAuthenticationRedirect(response) {
+  if (!response || !response.redirected || !response.url) return false;
+  try {
+    const redirected = new URL(response.url);
+    if (redirected.origin !== self.location.origin) return false;
+    return redirected.pathname === '/auth/login' || redirected.pathname === '/login';
+  } catch (error) {
+    return false;
+  }
+}
+
 async function setSyncSummary(summary) {
   await updateMeta(LAST_SYNC_SUMMARY_KEY, summary);
 }
@@ -537,7 +548,17 @@ async function flushQueue(identityInput) {
         body: item.body || undefined,
         credentials: 'same-origin',
       });
-      if (response.ok) {
+      if (isAuthenticationRedirect(response)) {
+        await dbPut(REQUEST_STORE, {
+          ...item,
+          attempts: (item.attempts || 0) + 1,
+          status: 'needs_attention',
+          attentionReason: 'session_required',
+          lastAttemptAt: nowIso(),
+        });
+        await updateMeta(LAST_ERROR_KEY, 'La sesión venció antes de sincronizar una operación offline. Iniciá sesión y revisá la operación; no se volverá a enviar automáticamente.');
+        syncState.errorCount += 1;
+      } else if (response.ok) {
         await dbDelete(REQUEST_STORE, item.id);
         await updateMeta(LAST_SYNC_KEY, nowIso());
         await updateMeta(LAST_ERROR_KEY, '');
