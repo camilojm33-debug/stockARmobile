@@ -1145,6 +1145,27 @@ class WebhookService:
                         automatic_contract = flow == "subscription_auto" or (
                             not flow and checkout_method != "qr"
                         )
+                        renewal_enabled = automatic_contract
+                        preapproval_id = str(
+                            subscription_metadata.get("mercadopago_preapproval_id") or ""
+                        ).strip()
+                        if automatic_contract and preapproval_id:
+                            from services.mercadopago_subscription_service import MercadoPagoSubscriptionService
+
+                            preapproval = self.mp_service.get_preapproval(preapproval_id)
+                            if str(preapproval.get("id") or "").strip() != preapproval_id:
+                                raise RuntimeError("Mercado Pago devolvió una autorización distinta para el pago de suscripción.")
+                            remote_reference = str(preapproval.get("external_reference") or "").strip()
+                            expected_reference = str(
+                                subscription_metadata.get("mercadopago_external_reference") or ""
+                            ).strip()
+                            if expected_reference and remote_reference and expected_reference != remote_reference:
+                                raise RuntimeError("La autorización remota no coincide con la referencia de la suscripción.")
+                            MercadoPagoSubscriptionService.sync_preapproval(
+                                db_session=db_session,
+                                preapproval=preapproval,
+                            )
+                            renewal_enabled = str(preapproval.get("status") or "").strip().lower() == "authorized"
                         SubscriptionService.run_command(
                             db_session,
                             SubscriptionService.RenewSubscriptionCommand(
@@ -1152,7 +1173,7 @@ class WebhookService:
                                 subscription_id=subscription.id,
                                 payment_status="approved",
                                 paid_at=paid_at,
-                                renewal_enabled=automatic_contract,
+                                renewal_enabled=renewal_enabled,
                                 actor_user_id=payment.user_id,
                                 actor_role="system",
                                 origin="webhook",
