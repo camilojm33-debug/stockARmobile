@@ -30,3 +30,30 @@ def test_campaign_runner_accepts_https_worker_url_without_userinfo():
     )
     assert _validated_worker_url("http://www.stockarmobile.com/internal/crm/campaign-worker") is None
     assert _validated_worker_url("https://user:password@www.stockarmobile.com/worker") is None
+
+
+
+def test_campaign_runner_defers_after_three_transient_503_responses(monkeypatch):
+    import io
+    from contextlib import redirect_stderr
+    from urllib.error import HTTPError
+
+    import run_saas_campaigns as runner
+
+    monkeypatch.setattr(runner, "WORKER_URL", "https://www.stockarmobile.com/internal/crm/campaign-worker")
+    monkeypatch.setattr(runner, "WORKER_TOKEN", "worker-token")
+    monkeypatch.setenv("DATABASE_URL", "")
+    monkeypatch.setattr(runner.time, "sleep", lambda seconds: None)
+    calls = []
+
+    def fail_with_503(request, timeout):
+        calls.append((request.full_url, timeout))
+        raise HTTPError(request.full_url, 503, "Service Unavailable", {}, None)
+
+    monkeypatch.setattr(runner.urllib.request, "urlopen", fail_with_503)
+    stderr = io.StringIO()
+    with redirect_stderr(stderr):
+        result = runner.main()
+    assert result == 0
+    assert len(calls) == 3
+    assert "next scheduled cycle will retry" in stderr.getvalue()

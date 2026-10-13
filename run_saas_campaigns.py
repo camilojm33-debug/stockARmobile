@@ -87,7 +87,7 @@ def _run_via_web() -> int:
         except urllib.error.HTTPError as exc:
             last_error = exc
             if exc.code in {502, 503, 504}:
-                if attempt < 4:
+                if attempt < 3:
                     time.sleep(10 * attempt)
                     continue
                 print(
@@ -103,7 +103,7 @@ def _run_via_web() -> int:
             message = str(exc)
             transient = any(code in message for code in ("502", "503", "504", "Bad Gateway", "Service Unavailable", "Gateway Timeout"))
             if transient:
-                if attempt < 4:
+                if attempt < 3:
                     time.sleep(10 * attempt)
                     continue
                 print(
