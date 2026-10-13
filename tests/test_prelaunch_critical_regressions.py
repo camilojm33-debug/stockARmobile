@@ -209,3 +209,187 @@ def test_ai_subscription_cancel_preserves_paid_access_until_expiry(app, monkeypa
         assert persisted["mercadopago_status"] == "cancelled"
         assert persisted["status"] == "ACTIVA"
         assert datetime.fromisoformat(persisted["ends_at"]) == paid_until
+
+
+
+def test_purchase_edit_reverses_original_recorded_value_before_recalculating_average():
+    from purchases import _recalculate_purchase_edit_values
+
+    # Existing inventory: 5 units at $20 and 5 units at $25 -> WAC $22.50.
+    # Editing the second purchase from $25 to $20 must leave WAC at $20.
+    stock, average_cost = _recalculate_purchase_edit_values(
+        current_stock=10,
+        current_cost=22.5,
+        old_quantity=5,
+        old_value=125,
+        new_quantity=5,
+        new_value=100,
+        product_name="Producto QA",
+    )
+    assert stock == 10
+    assert average_cost == 20
+
+
+def test_purchase_edit_refuses_to_create_negative_inventory_value():
+    import pytest
+    from purchases import _recalculate_purchase_edit_values
+
+    with pytest.raises(ValueError, match="valor actual del stock"):
+        _recalculate_purchase_edit_values(
+            current_stock=2,
+            current_cost=10,
+            old_quantity=2,
+            old_value=50,
+            new_quantity=2,
+            new_value=40,
+            product_name="Producto QA",
+        )
+
+
+def test_invoice_confirmation_rejects_header_total_not_supported_by_lines():
+    import pytest
+    from services.invoice_purchase_service import InvoicePurchaseError, InvoicePurchaseService
+
+    with pytest.raises(InvoicePurchaseError, match="subtotal de la factura no coincide"):
+        InvoicePurchaseService._validate_line_subtotal(
+            [{"line_number": 1, "quantity": "2", "unit_cost": "40", "line_total": "80"}],
+            Decimal("120"),
+        )
+
+
+def test_invoice_confirmation_accepts_consistent_line_subtotal():
+    from services.invoice_purchase_service import InvoicePurchaseService
+
+    subtotal = InvoicePurchaseService._validate_line_subtotal(
+        [
+            {"line_number": 1, "quantity": "2", "unit_cost": "40", "line_total": "80"},
+            {"line_number": 2, "quantity": "1", "unit_cost": "20", "line_total": "20"},
+        ],
+        Decimal("100"),
+    )
+    assert subtotal == Decimal("100")
+
+
+def test_cash_expense_records_egress_and_reduces_expected_drawer_balance(app):
+    from app import CashSession, Expense
+    from cash import _session_summary
+    from expenses import _record_cash_expense_movement
+
+    with app.app_context():
+        company = Company(name="Caja QA", active=True)
+        db.session.add(company)
+        db.session.flush()
+        user = User(
+            username="cash_qa_admin",
+            email="cash_qa_admin@example.test",
+            password_hash="unused-test-hash",
+            role="admin",
+            active=True,
+            company_id=company.id,
+        )
+        db.session.add(user)
+        db.session.flush()
+        cash_session = CashSession(
+            user_id=user.id,
+            company_id=company.id,
+            opened_by_user_id=user.id,
+            opening_amount=Decimal("100.00"),
+            status="abierta",
+        )
+        db.session.add(cash_session)
+        db.session.flush()
+        expense = Expense(
+            category="Otros",
+            description="Gasto efectivo QA",
+            amount=Decimal("25.00"),
+            payment_method="EFECTIVO",
+            user_id=user.id,
+            company_id=company.id,
+        )
+        db.session.add(expense)
+        db.session.flush()
+
+        movement = _record_cash_expense_movement(user=user, expense=expense)
+        assert movement is not None
+        db.session.commit()
+        db.session.refresh(cash_session)
+        assert _session_summary(cash_session)["expected"] == Decimal("75.00")
+
+
+def test_non_cash_expense_does_not_change_the_open_drawer(app):
+    from app import CashSession, Expense
+    from cash import _session_summary
+    from expenses import _record_cash_expense_movement
+
+    with app.app_context():
+        company = Company(name="Caja sin efectivo QA", active=True)
+        db.session.add(company)
+        db.session.flush()
+        user = User(
+            username="cash_non_cash_admin",
+            email="cash_non_cash_admin@example.test",
+            password_hash="unused-test-hash",
+            role="admin",
+            active=True,
+            company_id=company.id,
+        )
+        db.session.add(user)
+        db.session.flush()
+        cash_session = CashSession(
+            user_id=user.id,
+            company_id=company.id,
+            opened_by_user_id=user.id,
+            opening_amount=Decimal("100.00"),
+            status="abierta",
+        )
+        db.session.add(cash_session)
+        db.session.flush()
+        expense = Expense(
+            category="Otros",
+            description="Gasto tarjeta QA",
+            amount=Decimal("25.00"),
+            payment_method="TARJETA",
+            user_id=user.id,
+            company_id=company.id,
+        )
+        db.session.add(expense)
+        db.session.flush()
+
+        assert _record_cash_expense_movement(user=user, expense=expense) is None
+        db.session.commit()
+        db.session.refresh(cash_session)
+        assert _session_summary(cash_session)["expected"] == Decimal("100.00")
+
+
+def test_sales_report_excludes_cancelled_sales(app):
+    from datetime import datetime, timedelta
+    from flask_login import login_user
+    from app import Sale
+    from reports import _rows_for
+
+    with app.app_context():
+        company = Company(name="Report QA", active=True)
+        db.session.add(company)
+        db.session.flush()
+        user = User(
+            username="report_qa_admin",
+            email="report_qa_admin@example.test",
+            password_hash="unused-test-hash",
+            role="admin",
+            active=True,
+            company_id=company.id,
+        )
+        db.session.add(user)
+        db.session.flush()
+        now = datetime.utcnow()
+        db.session.add_all([
+            Sale(company_id=company.id, customer="Anulada", total_amount=Decimal("100.00"), status="anulada", date=now),
+            Sale(company_id=company.id, customer="Confirmada", total_amount=Decimal("200.00"), status="confirmada", date=now),
+        ])
+        db.session.commit()
+        with app.test_request_context("/reportes/?desde=2026-10-13&hasta=2026-10-13"):
+            login_user(user)
+            rows, _ = _rows_for("ventas")
+        assert len(rows) == 2
+        assert rows[1][1] == "Confirmada"
+        assert rows[1][2] == Decimal("200.00")
