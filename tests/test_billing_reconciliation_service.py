@@ -96,7 +96,7 @@ def test_reconciler_repairs_interrupted_ai_payment_once(app, monkeypatch):
         assert payment is not None and payment.status == "approved"
         assert ai["status"] == "ACTIVA"
         assert ai["mercadopago_paid_payment_ids"].count("payment-reconcile-qa") == 1
-        assert datetime.fromisoformat(ai["ends_at"]) == datetime.fromisoformat(next_payment)
+        assert datetime.fromisoformat(ai["ends_at"]) == datetime.fromisoformat(next_payment).replace(tzinfo=None)
 
         second = BillingReconciliationService.run()
         db.session.refresh(payment)
