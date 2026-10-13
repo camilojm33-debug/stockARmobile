@@ -83,10 +83,10 @@ def test_embedded_signup_launch_uses_v4_and_offers_business_app_coexistence():
     template = (ROOT / "templates/ai_agents/whatsapp_onboarding.html").read_text(encoding="utf-8")
 
     assert "config_id: configId" in template
-    assert "extras: {setup: {}, featureType: 'whatsapp_business_app_onboarding'}" in template
+    assert "extras: {setup: {}, featureType: 'whatsapp_business_app_onboarding', sessionInfoVersion: '3'}" in template
     assert "onboardingEvent = eventName" in template
     assert "phone_number_id: sessionInfo.phone_number_id || ''" in template
-    assert "sessionInfoVersion: '3'" not in template
+    assert "sessionInfoVersion: '3'" in template
     assert "version: 'v3'" not in template
 
 
