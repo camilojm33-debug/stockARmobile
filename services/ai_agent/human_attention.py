@@ -80,6 +80,8 @@ def set_attention(
 
     if status == "human":
         payload["status"] = "human"
+        payload.pop("resolved_at", None)
+        payload.pop("resolved_by_user_id", None)
         payload.setdefault("requested_at", now)
         if reason:
             payload["reason"] = str(reason).strip()[:500]
