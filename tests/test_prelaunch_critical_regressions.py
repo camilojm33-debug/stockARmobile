@@ -72,10 +72,16 @@ def test_backup_restore_does_not_restore_paid_ai_entitlements():
     current = {
         "timezone": "America/Argentina/Cordoba",
         "ai_agent": {"plan_code": "inicio", "status": "VENCIDA", "enabled": False},
+        "crm_enabled": False,
+        "quotes_module_enabled": False,
+        "modules": {"crm": False, "inventory": True},
     }
     backup = {
         "timezone": "UTC",
         "ai_agent": {"plan_code": "pro", "status": "ACTIVA", "enabled": True},
+        "crm_enabled": True,
+        "quotes_module_enabled": True,
+        "modules": {"crm": True, "inventory": True},
         "layout": "compact",
     }
 
@@ -89,12 +95,17 @@ def test_backup_restore_does_not_restore_paid_ai_entitlements():
     assert restored["timezone"] == "UTC"
     assert restored["layout"] == "compact"
     assert restored["ai_agent"] == current["ai_agent"]
+    assert restored["crm_enabled"] is False
+    assert restored["quotes_module_enabled"] is False
+    assert restored["modules"] == current["modules"]
 
 
 def test_backup_cannot_invent_ai_entitlement_if_tenant_has_none():
     backup = {
         "timezone": "UTC",
         "ai_agent": {"plan_code": "pro", "status": "ACTIVA", "enabled": True},
+        "crm_enabled": True,
+        "modules": {"crm": True},
     }
 
     restored = json.loads(
