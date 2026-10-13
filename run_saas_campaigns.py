@@ -84,7 +84,7 @@ def _run_via_web() -> int:
     for attempt in range(1, 4):
         try:
             # nosec B310: worker_url is rejected unless parsed as HTTPS above.
-            with urllib.request.urlopen(request, timeout=60) as response:
+            with urllib.request.urlopen(request, timeout=60) as response:  # nosec B310 - URL allowlist enforces the fixed HTTPS StockArMobile worker host/path.
                 payload = response.read().decode("utf-8", errors="replace")
                 print(payload)
                 return 0 if 200 <= response.status < 300 else 1

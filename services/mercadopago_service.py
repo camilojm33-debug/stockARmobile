@@ -53,7 +53,7 @@ class MercadoPagoService:
         )
         try:
             self._logger().info("Mercado Pago request: method=%s path=%s timeout=%ss", method, path, self.REQUEST_TIMEOUT_SECONDS)
-            with urlrequest.urlopen(req, timeout=self.REQUEST_TIMEOUT_SECONDS) as response:  # nosec B310 - req uses the fixed HTTPS Mercado Pago API base.
+            with urlrequest.urlopen(req, timeout=self.REQUEST_TIMEOUT_SECONDS) as response:  # nosec B310 - URL is built from the fixed HTTPS Mercado Pago API base.
                 raw = response.read().decode("utf-8")
                 status_code = response.getcode()
         except HTTPError as exc:

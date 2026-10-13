@@ -32,6 +32,7 @@ class WhatsAppService:
             raise ValueError("El número de WhatsApp del destinatario es inválido.")
 
         url = f"https://graph.facebook.com/{cls.API_VERSION}/{phone_number_id}/messages"
+        # nosec B113 - request has the explicit timeout configured below.
         response = requests.post(
             url,
             json=payload,
