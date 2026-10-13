@@ -26,9 +26,6 @@ def _ensure_baseline_schema(bind):
     """
     inspector = sa.inspect(bind)
     existing = set(inspector.get_table_names())
-    required = {"users", "companies", "plans", "payments", "subscriptions"}
-    if required.issubset(existing):
-        return
 
     from app import db
 
@@ -53,6 +50,21 @@ def _ensure_baseline_schema(bind):
         "expenses",
         "product_price_history",
     )
+    # When running on a production database with all baseline tables present,
+    # avoid even introspective DDL. For an empty/partial database create only
+    # missing baseline tables, leaving all later feature tables to their own
+    # timestamped migrations.
+    baseline_present = {
+        name for name in baseline_tables
+        if name in db.metadata.tables and name in existing
+    }
+    baseline_expected = {
+        name for name in baseline_tables
+        if name in db.metadata.tables
+    }
+    if baseline_present == baseline_expected:
+        return
+
     tables = [
         db.metadata.tables[name]
         for name in baseline_tables
