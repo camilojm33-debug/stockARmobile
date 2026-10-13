@@ -15,7 +15,7 @@ def _to_float(value, default=0.0):
 @bp.route("/", methods=["GET", "POST"])
 @tenant_required
 def index():
-    from app import Expense, db, record_audit, scope_query_to_company
+    from app import CashMovement, CashSession, Expense, db, record_audit, scope_query_to_company
 
     if request.method == "POST":
         amount = _to_float(request.form.get("amount"))
@@ -33,6 +33,36 @@ def index():
         )
         db.session.add(expense)
         db.session.flush()
+
+        payment_method = str(expense.payment_method or "").strip().lower()
+        if payment_method in {"efectivo", "cash", "contado"}:
+            # A cash expense must also be reflected in the current operator's
+            # open drawer. Keep both records in one transaction so a rollback
+            # cannot leave the expense and cash balance out of sync.
+            company_id = getattr(current_user, "company_id", None)
+            open_session = (
+                CashSession.query
+                .filter_by(
+                    company_id=company_id,
+                    user_id=current_user.id,
+                    status="abierta",
+                )
+                .order_by(CashSession.opened_at.desc(), CashSession.id.desc())
+                .with_for_update()
+                .first()
+            )
+            if open_session is not None:
+                db.session.add(CashMovement(
+                    session_id=open_session.id,
+                    user_id=current_user.id,
+                    company_id=company_id,
+                    movement_type="egreso",
+                    category="gasto",
+                    amount=amount,
+                    description=f"Gasto #{expense.id}: {expense.description}",
+                ))
+                db.session.flush()
+
         record_audit(action="expense_create", entity="expense", entity_id=expense.id, detail=f"Gasto {expense.category} por {amount}")
         db.session.commit()
         flash("Gasto registrado.", "success")
