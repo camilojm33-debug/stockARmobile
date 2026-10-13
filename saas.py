@@ -4958,6 +4958,8 @@ def subscriptions_update(subscription_id):
                     subscription=target_subscription,
                     user_id=current_user.id,
                     cancel_at_period_end=False,
+                    origin="superadmin",
+                    actor_role=current_user.role,
                 )
             elif target_status == "suspended":
                 BillingService.suspend_subscription(
@@ -5083,12 +5085,16 @@ def subscriptions_action(subscription_id):
                 subscription=subscription,
                 user_id=current_user.id,
                 cancel_at_period_end=False,
+                origin="superadmin",
+                actor_role=current_user.role,
             )
         elif action == "reactivate":
             BillingService.reactivate_subscription(
                 db.session,
                 subscription=subscription,
                 user_id=current_user.id,
+                origin="superadmin",
+                actor_role=current_user.role,
             )
             reactivation_url = str(
                 SubscriptionService._metadata_dict(subscription).get("mercadopago_reactivation_init_point") or ""
