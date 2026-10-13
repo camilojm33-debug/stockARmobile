@@ -412,15 +412,39 @@ def edit_supplier_purchase(supplier_id, purchase_id):
                 new_value = new_totals.get(product_id, [None, 0.0, 0.0])[2]
                 product = (new_totals.get(product_id) or old_totals.get(product_id))[0]
                 current_stock = float(product.stock or 0)
+                current_cost = float(product.cost_price or 0)
                 base_stock = current_stock - old_qty
                 if base_stock < -1e-9:
                     raise ValueError(f"No se puede editar {product.name}: su stock actual es menor al stock aportado por esta compra.")
-                base_value = max(base_stock, 0.0) * float(product.cost_price or 0)
                 updated_stock = base_stock + new_qty
                 if updated_stock < -1e-9:
                     raise ValueError(f"La edición dejaría stock negativo para {product.name}.")
+
+                # Reverse the original purchase at its recorded value before
+                # applying the edited value. Multiplying the remaining quantity
+                # by today's blended average invents value and drifts the cost
+                # even when an invoice is edited without changing its quantity.
+                current_inventory_value = current_stock * current_cost
+                original_purchase_value = float(old_totals.get(product_id, [None, 0.0, 0.0])[2])
+                base_value = current_inventory_value - original_purchase_value
+                if base_value < -0.01:
+                    raise ValueError(
+                        f"No se puede recalcular el costo promedio de {product.name}: "
+                        "el valor actual del stock no permite revertir esta compra con seguridad."
+                    )
+                base_value = max(base_value, 0.0)
+                updated_value = base_value + new_value
+                if updated_stock <= 1e-9:
+                    if updated_value > 0.01:
+                        raise ValueError(
+                            f"No se puede editar {product.name}: quedaría valor de inventario sin stock."
+                        )
+                    updated_cost = 0.0
+                else:
+                    updated_cost = updated_value / updated_stock
+
                 product.stock = updated_stock
-                product.cost_price = ((base_value + new_value) / updated_stock) if updated_stock > 0 else 0
+                product.cost_price = updated_cost
                 product.margin = float(product.price or 0) - float(product.cost_price or 0)
                 product.profit_percent = product.margin / float(product.cost_price) * 100 if float(product.cost_price or 0) else 0
 
