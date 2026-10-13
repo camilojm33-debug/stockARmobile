@@ -976,6 +976,51 @@ class BackupService:
                             if inserted is not None:
                                 existing_clients[int(inserted.id)] = inserted
 
+        if "employees" in sections:
+            user_rows = BackupService._deserialize_rows(User, payload.get("users") or [])
+            if full_restore:
+                User.query.filter(User.company_id == expected_company_id, User.role != "superadmin").delete(synchronize_session=False)
+                if user_rows:
+                    db.session.execute(User.__table__.insert(), user_rows)
+            else:
+                # A selected employee restore must not delete users referenced by
+                # historical sales/cash sessions. Merge tenant-scoped records.
+                existing_users = {
+                    int(row.id): row
+                    for row in User.query.filter(
+                        User.company_id == expected_company_id,
+                        User.role != "superadmin",
+                    ).all()
+                }
+                for user_row in user_rows:
+                    incoming_id = user_row.get("id")
+                    user = existing_users.get(int(incoming_id)) if incoming_id is not None else None
+                    if user is not None:
+                        was_inactive = not bool(user.active)
+                        for key, value in user_row.items():
+                            if key in {"id", "company_id", "role", "active"} or not hasattr(user, key):
+                                continue
+                            setattr(user, key, value)
+                        # An old backup cannot reactivate a locally revoked account.
+                        user.active = bool(user_row.get("active", True)) and not was_inactive
+                    else:
+                        candidate = dict(user_row)
+                        candidate["company_id"] = expected_company_id
+                        if incoming_id is not None:
+                            id_owner = db_session.get(User, int(incoming_id))
+                            if id_owner is not None:
+                                raise ValueError(
+                                    "No se puede restaurar un empleado porque su ID ya pertenece a otra cuenta."
+                                )
+                        db.session.execute(User.__table__.insert(), [candidate])
+
+        # Sales can reference users and cash sessions. Restore those parents first
+        # in a full restore, after removing the old child rows above.
+        if full_restore:
+            cash_session_rows = BackupService._deserialize_rows(CashSession, payload.get("cash_sessions") or [])
+            if cash_session_rows:
+                db.session.execute(CashSession.__table__.insert(), cash_session_rows)
+
         if "sales" in sections:
             sales_ids = [row.id for row in Sale.query.filter_by(company_id=expected_company_id).all()]
             if sales_ids:
@@ -987,12 +1032,6 @@ class BackupService:
                 db.session.execute(Sale.__table__.insert(), sale_rows)
             if sale_item_rows:
                 db.session.execute(SaleItem.__table__.insert(), sale_item_rows)
-
-        if "employees" in sections:
-            User.query.filter(User.company_id == expected_company_id, User.role != "superadmin").delete(synchronize_session=False)
-            user_rows = BackupService._deserialize_rows(User, payload.get("users") or [])
-            if user_rows:
-                db.session.execute(User.__table__.insert(), user_rows)
 
         if sections == BackupService.FULL_RESTORE_SECTIONS or set(sections) == set(BackupService.FULL_RESTORE_SECTIONS):
             purchase_order_ids = [row.id for row in PurchaseOrder.query.filter_by(company_id=expected_company_id).all()]
@@ -1007,13 +1046,9 @@ class BackupService:
                 db.session.execute(PurchaseItem.__table__.insert(), purchase_item_rows)
 
             CashMovement.query.filter_by(company_id=expected_company_id).delete(synchronize_session=False)
-            CashSession.query.filter_by(company_id=expected_company_id).delete(synchronize_session=False)
             Expense.query.filter_by(company_id=expected_company_id).delete(synchronize_session=False)
-            cash_session_rows = BackupService._deserialize_rows(CashSession, payload.get("cash_sessions") or [])
             cash_movement_rows = BackupService._deserialize_rows(CashMovement, payload.get("cash_movements") or [])
             expense_rows = BackupService._deserialize_rows(Expense, payload.get("expenses") or [])
-            if cash_session_rows:
-                db.session.execute(CashSession.__table__.insert(), cash_session_rows)
             if cash_movement_rows:
                 db.session.execute(CashMovement.__table__.insert(), cash_movement_rows)
             if expense_rows:
