@@ -1958,6 +1958,18 @@ def test_standard_authorized_payment_is_amount_checked_invoiced_and_idempotent(s
         "payment": {"id": "pay-standard-authorized-once", "status": "approved"},
     }
     monkeypatch.setattr(service.mp_service, "get_authorized_payment", lambda _data_id: authorized)
+    from datetime import timedelta
+    provider_next_payment = (utcnow() + timedelta(days=30)).isoformat()
+    monkeypatch.setattr(
+        service.mp_service,
+        "get_preapproval",
+        lambda _preapproval_id: {
+            "id": "standard-pre-payment",
+            "status": "authorized",
+            "next_payment_date": provider_next_payment,
+            "external_reference": external_reference,
+        },
+    )
 
     first = service.process(
         db_session=db.session,
