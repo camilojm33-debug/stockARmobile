@@ -807,7 +807,43 @@ class BackupService:
         if "general" in sections or "schedules" in sections:
             for field in BackupService.COMPANY_GENERAL_FIELDS:
                 if field in company_payload:
-                    setattr(company, field, company_payload.get(field))
+                    value = company_payload.get(field)
+                    if field == "preferences_json":
+                        # Imported backups may restore operational preferences, but
+                        # must never grant paid AI entitlements or replace current
+                        # provider/channel credentials. Keep the live ai_agent
+                        # subsection (or omit it when no live entitlement exists).
+                        value = BackupService._preserve_ai_entitlement_preferences(
+                            current_raw=company.preferences_json,
+                            restored_raw=value,
+                        )
+                    setattr(company, field, value)
+
+        # Remove children before parents. With ON DELETE CASCADE foreign keys,
+        # deleting a product/client first can silently erase purchase/sale details
+        # or even sales before we have captured their IDs for restoration.
+        full_restore = set(sections) == set(BackupService.FULL_RESTORE_SECTIONS)
+        if "sales" in sections:
+            existing_sales_ids = [
+                row.id for row in Sale.query.filter_by(company_id=expected_company_id).all()
+            ]
+            if existing_sales_ids:
+                SaleItem.query.filter(SaleItem.sale_id.in_(existing_sales_ids)).delete(synchronize_session=False)
+            Sale.query.filter_by(company_id=expected_company_id).delete(synchronize_session=False)
+
+        if full_restore:
+            existing_purchase_ids = [
+                row.id for row in PurchaseOrder.query.filter_by(company_id=expected_company_id).all()
+            ]
+            if existing_purchase_ids:
+                PurchaseItem.query.filter(
+                    PurchaseItem.purchase_order_id.in_(existing_purchase_ids)
+                ).delete(synchronize_session=False)
+            PurchaseOrder.query.filter_by(company_id=expected_company_id).delete(synchronize_session=False)
+            CashMovement.query.filter_by(company_id=expected_company_id).delete(synchronize_session=False)
+            Expense.query.filter_by(company_id=expected_company_id).delete(synchronize_session=False)
+            CashSession.query.filter_by(company_id=expected_company_id).delete(synchronize_session=False)
+            Supplier.query.filter_by(company_id=expected_company_id).delete(synchronize_session=False)
 
         current_products = Product.query.filter_by(company_id=expected_company_id).order_by(Product.id.asc()).all()
         if "products" in sections:
