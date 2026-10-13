@@ -1,6 +1,9 @@
 import os
 
-from app import Client, Company, Product, db
+from app import (
+    CashMovement, CashSession, Client, Company, Expense, Product, PurchaseItem,
+    PurchaseOrder, Sale, SaleItem, Supplier, User, db,
+)
 from services.backup_service import BackupService
 
 
@@ -141,3 +144,121 @@ def test_backup_due_only_on_plan_monthly_slots(app, monkeypatch):
         assert BackupService.automated_backup_due(company.id, day_of_month=1) is True
         assert BackupService.automated_backup_due(company.id, day_of_month=15) is True
         assert BackupService.automated_backup_due(company.id, day_of_month=10) is False
+
+
+
+def test_full_backup_restore_round_trip_preserves_sales_purchase_and_cash_relations(app, monkeypatch):
+    monkeypatch.setenv("BACKUP_UPLOAD_DIR", str((__import__("pathlib").Path(app.instance_path) / "qa-backups-fk")))
+    with app.app_context():
+        company = Company(name="Backup FK QA", active=True)
+        db.session.add(company)
+        db.session.flush()
+
+        user = User(
+            username="backup_fk_user",
+            email="backup_fk_user@example.test",
+            password_hash="unused-test-hash",
+            role="admin",
+            active=True,
+            company_id=company.id,
+        )
+        supplier = Supplier(name="Proveedor FK QA", company_id=company.id, active=True)
+        client = Client(name="Cliente FK QA", phone="555", company_id=company.id)
+        db.session.add_all([user, supplier, client])
+        db.session.flush()
+
+        product = Product(
+            company_id=company.id,
+            supplier_id=supplier.id,
+            barcode="BKP-FK-001",
+            name="Producto FK QA",
+            price=120,
+            cost_price=40,
+            stock=5,
+            active=True,
+        )
+        db.session.add(product)
+        db.session.flush()
+
+        cash_session = CashSession(
+            user_id=user.id,
+            opened_by_user_id=user.id,
+            company_id=company.id,
+            opening_amount=100,
+            status="abierta",
+        )
+        db.session.add(cash_session)
+        db.session.flush()
+
+        purchase = PurchaseOrder(
+            company_id=company.id,
+            supplier_id=supplier.id,
+            status="recibida",
+            subtotal=40,
+            total_amount=40,
+        )
+        db.session.add(purchase)
+        db.session.flush()
+        db.session.add(PurchaseItem(
+            purchase_order_id=purchase.id,
+            product_id=product.id,
+            quantity=1,
+            unit_cost=40,
+        ))
+
+        sale = Sale(
+            company_id=company.id,
+            client_id=client.id,
+            cash_session_id=cash_session.id,
+            seller_id=user.id,
+            customer=client.name,
+            subtotal=120,
+            total_amount=120,
+            paid_amount=120,
+            status="confirmada",
+        )
+        db.session.add(sale)
+        db.session.flush()
+        db.session.add(SaleItem(
+            sale_id=sale.id,
+            product_id=product.id,
+            quantity=1,
+            price=120,
+            cost_price=40,
+        ))
+        db.session.add(CashMovement(
+            session_id=cash_session.id,
+            sale_id=sale.id,
+            user_id=user.id,
+            company_id=company.id,
+            movement_type="ingreso",
+            category="venta",
+            amount=120,
+            description="Venta vinculada",
+        ))
+        db.session.add(Expense(
+            category="Otros",
+            description="Gasto FK QA",
+            amount=10,
+            payment_method="EFECTIVO",
+            user_id=user.id,
+            company_id=company.id,
+        ))
+        db.session.commit()
+
+        backup, _plan = BackupService.create_manual_backup(company.id, user_id=user.id)
+        db.session.commit()
+
+        result = BackupService.verify_restore_round_trip(
+            backup,
+            expected_company_id=company.id,
+        )
+        assert result["valid"] is True
+        assert result["rolled_back"] is True
+        assert result["counts_after_restore"]["sales"] == 1
+        assert result["counts_after_restore"]["sale_items"] == 1
+        assert result["counts_after_restore"]["purchase_orders"] == 1
+        assert result["counts_after_restore"]["purchase_items"] == 1
+        assert result["counts_after_restore"]["cash_sessions"] == 1
+        assert result["counts_after_restore"]["cash_movements"] == 1
+        assert result["counts_after_restore"]["expenses"] == 1
