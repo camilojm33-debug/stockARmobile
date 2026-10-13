@@ -3612,7 +3612,7 @@ def mercado_pago_connections():
 @bp.route("/companies/<int:company_id>/toggle", methods=["POST"])
 @superadmin_required
 def toggle_company(company_id):
-    from app import AuditLog, Company, User, db
+    from app import AuditLog, Company, db
 
     _require_superadmin()
     if not _require_superadmin_step_up():
@@ -3621,7 +3621,9 @@ def toggle_company(company_id):
     if company is None:
         abort(404)
     company.active = not company.active
-    User.query.filter_by(company_id=company.id).update({User.active: company.active}, synchronize_session=False)
+    # Company-level suspension is enforced by the request/access guards. Do not
+    # mutate each user's personal active flag: doing so destroys the distinction
+    # between employees disabled by an administrator and a company-wide block.
     db.session.add(
         AuditLog(
             user_id=current_user.id,
