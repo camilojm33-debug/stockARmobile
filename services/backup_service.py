@@ -773,11 +773,40 @@ class BackupService:
 
         current = _as_dict(current_raw)
         restored = _as_dict(restored_raw)
-        current_ai = current.get("ai_agent")
-        if isinstance(current_ai, dict):
-            restored["ai_agent"] = current_ai
-        else:
-            restored.pop("ai_agent", None)
+
+        def _is_entitlement_key(key):
+            normalized = str(key or "").strip().lower()
+            reserved = {
+                "ai_agent", "crm", "crm_enabled", "crm_access", "crm_allowed",
+                "internal_channel", "features", "feature_flags", "modules",
+                "entitlements", "permissions", "module_permissions", "plan",
+                "plan_code", "subscription", "commercial_plan",
+                "commercial_promotions", "pricing_controller", "ai_access",
+            }
+            return (
+                normalized in reserved
+                or "entitlement" in normalized
+                or "permission" in normalized
+                or "crm" in normalized
+                or normalized.endswith("_module_enabled")
+                or normalized.endswith("_feature_enabled")
+                or normalized.endswith("_feature_allowed")
+                or normalized.endswith("_plan_code")
+            )
+
+        # Preserve all entitlement/control keys that exist today, and discard
+        # entitlement-looking keys introduced only by the untrusted backup. This
+        # covers CRM/module toggles as well as the nested AI subscription block.
+        reserved_keys = {
+            key for key in set(current) | set(restored)
+            if _is_entitlement_key(key)
+        }
+        for key in reserved_keys:
+            if key in current:
+                restored[key] = current[key]
+            else:
+                restored.pop(key, None)
+
         return json.dumps(restored, ensure_ascii=False, separators=(",", ":"))
 
     @staticmethod
