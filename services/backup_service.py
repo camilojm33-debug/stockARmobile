@@ -259,6 +259,41 @@ class BackupService:
             raise ValueError("No se pudo leer el archivo de backup.") from exc
 
     @staticmethod
+    def _encode_backup_payload(payload: dict) -> bytes:
+        """Serialize a backup within the same limits used by the importer."""
+        max_compressed = int(
+            current_app.config.get(
+                "BACKUP_MAX_COMPRESSED_BYTES",
+                BackupService.DEFAULT_MAX_COMPRESSED_BYTES,
+            )
+            or BackupService.DEFAULT_MAX_COMPRESSED_BYTES
+        )
+        max_uncompressed = int(
+            current_app.config.get(
+                "BACKUP_MAX_UNCOMPRESSED_BYTES",
+                BackupService.DEFAULT_MAX_UNCOMPRESSED_BYTES,
+            )
+            or BackupService.DEFAULT_MAX_UNCOMPRESSED_BYTES
+        )
+        raw_bytes = json.dumps(
+            payload,
+            ensure_ascii=False,
+            separators=(",", ":"),
+        ).encode("utf-8")
+        if len(raw_bytes) > max_uncompressed:
+            raise ValueError(
+                "El backup supera el tamaño máximo del contenido sin comprimir; "
+                "no se guardó una copia que no pudiera restaurarse."
+            )
+        compressed = gzip.compress(raw_bytes, mtime=0)
+        if len(compressed) > max_compressed:
+            raise ValueError(
+                "El backup comprimido supera el tamaño máximo permitido; "
+                "no se guardó una copia que no pudiera restaurarse."
+            )
+        return compressed
+
+    @staticmethod
     def _section_counts(payload):
         products = payload.get("products") or []
         categories = {str(row.get("category") or "").strip() for row in products if str(row.get("category") or "").strip()}
@@ -646,10 +681,10 @@ class BackupService:
         backup_path = backup_dir / file_name
 
         payload = BackupService._payload_for_company(company_id)
-        with gzip.open(backup_path, "wt", encoding="utf-8") as gz_file:
-            json.dump(payload, gz_file, ensure_ascii=False)
+        compressed_payload = BackupService._encode_backup_payload(payload)
+        backup_path.write_bytes(compressed_payload)
 
-        size_bytes = backup_path.stat().st_size if backup_path.exists() else 0
+        size_bytes = len(compressed_payload)
         backup = BackupLog(
             company_id=company_id,
             status="ready",
@@ -699,8 +734,8 @@ class BackupService:
         backup_dir = BackupService._company_dir(company_id)
         file_name = BackupService._backup_file_name(company_id)
         backup_path = backup_dir / file_name
-        with gzip.open(backup_path, "wt", encoding="utf-8") as gz_file:
-            json.dump(payload, gz_file, ensure_ascii=False)
+        compressed_payload = BackupService._encode_backup_payload(payload)
+        backup_path.write_bytes(compressed_payload)
 
         backup = BackupLog(
             company_id=company_id,
