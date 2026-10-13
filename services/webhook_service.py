@@ -29,6 +29,12 @@ class WebhookService:
         return f"{event_type}:{data_id}"
 
     @staticmethod
+    def _event_can_be_retried(event) -> bool:
+        """Only completed webhook records are deduplicated permanently."""
+        status = str(getattr(event, "status", "") or "").strip().lower()
+        return status in {"", "processing", "failed", "error", "retry", "pending"}
+
+    @staticmethod
     def _parse_mp_datetime(value: str | None):
         if not value:
             return None
@@ -99,9 +105,12 @@ class WebhookService:
         if not self.mp_service.validate_webhook_signature(request_id=request_id, x_signature=x_signature, data_id=data_id):
             raise RuntimeError("Firma de webhook invalida")
 
-        existing = WebhookEvent.query.filter_by(event_key=event_key).first()
-        if existing:
-            return {"status": "duplicate", "event_key": event_key}
+        retry_event = None
+        existing = WebhookEvent.query.filter_by(event_key=event_key).with_for_update().first()
+        if existing is not None:
+            if not self._event_can_be_retried(existing):
+                return {"status": "duplicate", "event_key": event_key}
+            retry_event = existing
 
         payment_data = None
         merchant_connection = None
@@ -133,18 +142,25 @@ class WebhookService:
                         "Webhook Mercado Pago rechazado: el collector del pago no coincide con la cuenta vinculada a la empresa."
                     )
             event_key = self._payment_event_key(payment_data, generic_event_key)
-            existing_payment_event = WebhookEvent.query.filter_by(event_key=event_key).first()
-            if existing_payment_event:
-                return {"status": "duplicate", "event_key": event_key}
+            existing_payment_event = WebhookEvent.query.filter_by(event_key=event_key).with_for_update().first()
+            if existing_payment_event is not None:
+                if not self._event_can_be_retried(existing_payment_event):
+                    return {"status": "duplicate", "event_key": event_key}
+                retry_event = existing_payment_event
 
-        event_row = WebhookEvent(
-            provider="mercadopago",
-            event_key=event_key,
-            event_type=event_type,
-            status="processing",
-            payload_json=json.dumps(payload, ensure_ascii=False),
-        )
-        db_session.add(event_row)
+        if retry_event is not None:
+            event_row = retry_event
+            event_row.status = "processing"
+            event_row.payload_json = json.dumps(payload, ensure_ascii=False)
+        else:
+            event_row = WebhookEvent(
+                provider="mercadopago",
+                event_key=event_key,
+                event_type=event_type,
+                status="processing",
+                payload_json=json.dumps(payload, ensure_ascii=False),
+            )
+            db_session.add(event_row)
         db_session.flush()
 
         payment_status = "pending"
@@ -229,27 +245,105 @@ class WebhookService:
                 if preapproval_id:
                     ai_company = AISubscriptionService.company_for_mercadopago_reference(preapproval_id=preapproval_id, external_reference=external_reference)
                 if ai_company is not None and payment_id:
-                    payment = Payment.query.filter_by(payment_id=payment_id).first()
-                    previous_payment_status = (payment.status or "").lower() if payment else ""
+                    ai_prefs = AISubscriptionService._ai_prefs(ai_company)
+                    previous_payment = Payment.query.filter_by(payment_id=payment_id).first()
+                    previous_payment_status = str(previous_payment.status or "").strip().lower() if previous_payment else ""
+                    try:
+                        incoming_amount = float(
+                            authorized.get("transaction_amount")
+                            or payment_info.get("transaction_amount")
+                            or (previous_payment.amount if previous_payment is not None else 0)
+                        )
+                    except (TypeError, ValueError, OverflowError) as exc:
+                        if payment_status == "approved":
+                            raise RuntimeError("Pago de suscripción IA aprobado sin importe verificable.") from exc
+                        incoming_amount = 0.0
+                    incoming_currency = str(
+                        authorized.get("currency_id")
+                        or payment_info.get("currency_id")
+                        or (previous_payment.currency if previous_payment is not None else "")
+                        or "ARS"
+                    ).strip().upper()
+
+                    if payment_status == "approved":
+                        expected_amount = AISubscriptionService.plan_amount_ars(str(ai_prefs.get("plan_code") or ""))
+                        if incoming_amount <= 0 or abs(expected_amount - incoming_amount) > 0.01:
+                            raise RuntimeError(
+                                f"Pago recurrente IA rechazado por importe: esperado={expected_amount:.2f}, recibido={incoming_amount:.2f}."
+                            )
+                        if incoming_currency != "ARS":
+                            raise RuntimeError(
+                                f"Pago recurrente IA rechazado por moneda: esperada=ARS, recibida={incoming_currency or 'vacía'}."
+                            )
+
+                    persisted_status = payment_status
+                    if previous_payment_status in {"refunded", "charged_back"}:
+                        # A delayed approved/pending delivery cannot undo an already
+                        # recorded refund or chargeback for this payment.
+                        persisted_status = (
+                            "charged_back"
+                            if previous_payment_status == "charged_back" or payment_status == "charged_back"
+                            else "refunded"
+                        )
+                    elif previous_payment_status == "approved" and payment_status not in {"refunded", "charged_back"}:
+                        # A delayed pending/rejected delivery cannot overwrite a verified approval.
+                        persisted_status = "approved"
+
+                    payment = previous_payment
                     if payment is None:
-                        payment = Payment(payment_id=payment_id, external_reference=external_reference, company_id=ai_company.id, subscription_id=None, user_id=None, amount=float(authorized.get("transaction_amount") or 0), currency=authorized.get("currency_id") or "ARS", status=payment_status, payment_method="mercadopago_ai_subscription", reference=preapproval_id, provider="mercadopago_ai_subscription", payload_json=json.dumps(authorized, ensure_ascii=False), paid_at=self._parse_mp_datetime(authorized.get("debit_date")) if payment_status == "approved" else None)
+                        payment = Payment(
+                            payment_id=payment_id,
+                            external_reference=external_reference,
+                            company_id=ai_company.id,
+                            subscription_id=None,
+                            user_id=None,
+                            amount=incoming_amount,
+                            currency=incoming_currency,
+                            status=persisted_status,
+                            payment_method="mercadopago_ai_subscription",
+                            reference=preapproval_id,
+                            provider="mercadopago_ai_subscription",
+                            payload_json=json.dumps(authorized, ensure_ascii=False),
+                            paid_at=self._parse_mp_datetime(authorized.get("debit_date")) if persisted_status == "approved" else None,
+                        )
                         db_session.add(payment)
                         db_session.flush()
                     else:
                         payment.external_reference = external_reference or payment.external_reference
                         payment.company_id = ai_company.id
                         payment.subscription_id = None
-                        payment.amount = float(authorized.get("transaction_amount") or payment.amount or 0)
-                        payment.currency = authorized.get("currency_id") or payment.currency or "ARS"
-                        payment.status = payment_status
+                        if incoming_amount > 0:
+                            payment.amount = incoming_amount
+                        payment.currency = incoming_currency or payment.currency or "ARS"
+                        payment.status = persisted_status
                         payment.payment_method = payment.payment_method or "mercadopago_ai_subscription"
                         payment.reference = preapproval_id
                         payment.provider = "mercadopago_ai_subscription"
                         payment.payload_json = json.dumps(authorized, ensure_ascii=False)
                         payment.paid_at = self._parse_mp_datetime(authorized.get("debit_date")) or payment.paid_at
-                    if previous_payment_status != payment_status:
-                        should_sync_ai_preapproval = payment_status == "approved"
-                        AISubscriptionService.record_mercadopago_payment(ai_company, payment_id=payment_id, payment_status=payment_status, amount=float(payment.amount or 0), currency=payment.currency or "ARS", paid_at=payment.paid_at, preapproval_id=preapproval_id, external_reference=external_reference)
+
+                    recorded_paid_ids = ai_prefs.get("mercadopago_paid_payment_ids") or []
+                    if not isinstance(recorded_paid_ids, list):
+                        recorded_paid_ids = []
+                    payment_needs_access_credit = (
+                        persisted_status == "approved"
+                        and payment_id not in {str(value) for value in recorded_paid_ids}
+                    )
+                    if (
+                        previous_payment_status != persisted_status
+                        or payment_needs_access_credit
+                    ):
+                        AISubscriptionService.record_mercadopago_payment(
+                            ai_company,
+                            payment_id=payment_id,
+                            payment_status=persisted_status,
+                            amount=float(payment.amount or 0),
+                            currency=payment.currency or "ARS",
+                            paid_at=payment.paid_at,
+                            preapproval_id=preapproval_id,
+                            external_reference=external_reference,
+                        )
+                    should_sync_ai_preapproval = persisted_status == "approved"
                     if ai_company is not None and preapproval_id and should_sync_ai_preapproval:
                         preapproval = self.mp_service.get_preapproval(preapproval_id)
                         if not preapproval.get("external_reference"):
