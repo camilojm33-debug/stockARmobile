@@ -2163,6 +2163,7 @@ def test_standard_qr_checkout_rejects_zero_price_before_calling_mercado_pago(sub
 
 
 def test_billing_reconciliation_flags_missing_invoice_and_legacy_qr_autorenew(subscription_app):
+    from datetime import timedelta
     from app import utcnow
     from saas import _billing_reconciliation_snapshot
 

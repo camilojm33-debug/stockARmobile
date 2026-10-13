@@ -4937,7 +4937,12 @@ def subscriptions_update(subscription_id):
     start_date = _parse_dt(request.form.get("start_date"))
     next_billing_date = _parse_dt(request.form.get("next_billing_date"))
     last_payment_date = _parse_dt(request.form.get("last_payment_date"))
-    renewal_enabled = (request.form.get("renewal_enabled") or "1") == "1"
+    renewal_value = request.form.get("renewal_enabled")
+    renewal_enabled = (
+        bool(subscription.renewal_enabled)
+        if renewal_value is None
+        else renewal_value == "1"
+    )
     target_status = _normalized_subscription_status(request.form.get("status") or subscription.status)
     requires_sensitive_step_up = (
         (plan is not None and plan.id != subscription.plan_id)
