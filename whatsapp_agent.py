@@ -21,6 +21,7 @@ from services.ai_agent.orchestrator_v2 import AgentRuntime, MAX_AGENT_MESSAGE_CH
 from services.ai_agent.usage_service import can_use_ai
 from services.ai_agent.vendor_followup_tools import install_vendor_followup_tools
 from services.ai_agent.vendor_order_service import VendorOrderService, _metadata, _set_metadata
+from services.ai_agent.human_attention import attention_for, conversation_metadata, persist_human_inbound, resume_ai, set_attention
 from services.ai_agent.whatsapp_service import WhatsAppService
 from services.saas_commercial_whatsapp import is_commercial_phone_number_id, process_commercial_message
 
@@ -288,7 +289,28 @@ def _send_persisted_reply(company, *, sender: str, assistant) -> bool:
         raise RuntimeError("La respuesta de WhatsApp ya no está disponible.")
     metadata = assistant.metadata_json if isinstance(assistant.metadata_json, dict) else {}
     delivery = metadata.get("whatsapp_delivery") if isinstance(metadata.get("whatsapp_delivery"), dict) else {}
-    if delivery.get("status") == "accepted":
+    if delivery.get("status") in {"accepted", "blocked_human"}:
+        return False
+
+    # Serialize sends against operator handoff. A response generated before
+    # takeover must not be sent after the conversation becomes human-owned.
+    conversation = (
+        db.session.query(Conversation)
+        .filter_by(id=assistant.conversation_id, company_id=company.id, channel="whatsapp")
+        .with_for_update()
+        .first()
+    )
+    if conversation is None:
+        raise RuntimeError("La conversación de WhatsApp ya no está disponible.")
+    if attention_for(conversation)["status"] == "human":
+        updated_metadata = dict(metadata)
+        updated_metadata["whatsapp_delivery"] = {
+            "status": "blocked_human",
+            "blocked_at": utcnow_naive().isoformat(),
+            "reason": "La conversación fue tomada por un operador humano.",
+        }
+        assistant.metadata_json = updated_metadata
+        db.session.commit()
         return False
 
     result = WhatsAppService.send_text(company, to=sender, body=str(assistant.content or ""))
@@ -305,7 +327,6 @@ def _send_persisted_reply(company, *, sender: str, assistant) -> bool:
     assistant.metadata_json = updated_metadata
     db.session.commit()
     return True
-
 
 def _persist_deterministic_turn(conversation, *, external_id: str, text: str, response: str):
     """Persist a retryable WhatsApp command turn without duplicating messages."""
