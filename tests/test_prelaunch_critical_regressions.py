@@ -446,6 +446,7 @@ def test_recurring_payment_does_not_add_month_to_provider_synced_boundary(monkey
     subscription = SimpleNamespace(
         id=17,
         company_id=9,
+        plan_id=3,
         status="active",
         plan=SimpleNamespace(duration_days=30),
         metadata_json=json.dumps(metadata),
@@ -503,6 +504,7 @@ def test_recurring_payment_without_provider_boundary_does_not_stack_on_placehold
     subscription = SimpleNamespace(
         id=18,
         company_id=9,
+        plan_id=3,
         status="active",
         plan=SimpleNamespace(duration_days=30),
         metadata_json=json.dumps(metadata),
