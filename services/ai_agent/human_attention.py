@@ -79,6 +79,12 @@ def set_attention(
     now = utcnow_naive().isoformat(timespec="seconds")
 
     if status == "human":
+        # A resolved conversation may later need another human handoff. Drop
+        # the previous assignee so a new operator can explicitly take it.
+        if str(payload.get("status") or "").strip().lower() == "resolved":
+            payload.pop("taken_by_user_id", None)
+            payload.pop("taken_at", None)
+            payload.pop("requested_at", None)
         payload["status"] = "human"
         payload.pop("resolved_at", None)
         payload.pop("resolved_by_user_id", None)
