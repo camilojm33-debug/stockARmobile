@@ -178,8 +178,7 @@ class MercadoPagoService:
     def debug_fetch_pos_catalog(self, *, access_token: str | None = None) -> dict[str, Any]:
         path = "/pos?limit=50&offset=0"; req = urlrequest.Request(url=f"{self.API_BASE}{path}", headers=self._headers(access_token=access_token), method="GET"); status_code=None; raw=""
         try:
-            # nosec B310: req.url is built from the fixed HTTPS Mercado Pago API base.
-            with urlrequest.urlopen(req, timeout=self.REQUEST_TIMEOUT_SECONDS) as response:
+            with urlrequest.urlopen(req, timeout=self.REQUEST_TIMEOUT_SECONDS) as response:  # nosec B310 - req.url uses the fixed HTTPS Mercado Pago API base.
                 status_code = response.getcode()
                 raw = response.read().decode("utf-8")
         except HTTPError as exc:
