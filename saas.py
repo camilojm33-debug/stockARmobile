@@ -383,14 +383,25 @@ def _hard_delete_company(company):
     _safe_delete_in(PasswordResetToken, "user_id", user_ids)
     _safe_delete_in(User, "id", user_ids)
 
+    reflected_tables = {}
+
+    def _reflected_table(table_name):
+        if table_name not in reflected_tables:
+            reflected_tables[table_name] = sa.Table(
+                table_name,
+                sa.MetaData(),
+                autoload_with=db.session.get_bind(),
+            )
+        return reflected_tables[table_name]
+
     def _raw_delete_company_rows(table_name):
         if table_name not in table_names:
             return
-        if table_name not in columns_cache:
-            columns_cache[table_name] = {column.get("name") for column in inspector.get_columns(table_name)}
-        if "company_id" not in columns_cache[table_name]:
+        table = _reflected_table(table_name)
+        company_column = table.c.get("company_id")
+        if company_column is None:
             return
-        db.session.execute(sa.text(f"DELETE FROM {table_name} WHERE company_id = :company_id"), {"company_id": company_id})
+        db.session.execute(sa.delete(table).where(company_column == company_id))
 
     # Defensive second pass to avoid leftovers when ORM bulk-delete skips rows due mapper/session edge cases.
     for table_name in [
@@ -427,12 +438,11 @@ def _hard_delete_company(company):
     def _raw_delete_where_in(table_name, column_name, values):
         if not values or table_name not in table_names:
             return
-        if table_name not in columns_cache:
-            columns_cache[table_name] = {column.get("name") for column in inspector.get_columns(table_name)}
-        if column_name not in columns_cache[table_name]:
+        table = _reflected_table(table_name)
+        column = table.c.get(column_name)
+        if column is None:
             return
-        statement = sa.text(f"DELETE FROM {table_name} WHERE {column_name} IN :ids").bindparams(sa.bindparam("ids", expanding=True))
-        db.session.execute(statement, {"ids": list(values)})
+        db.session.execute(sa.delete(table).where(column.in_(list(values))))
 
     # Final defensive pass for legacy/optional tables that may reference tenant entities without company_id.
     fk_value_sets = {

@@ -29,13 +29,17 @@ def _validated_worker_url(value: str) -> str | None:
         port = parsed.port
     except ValueError:
         return None
+    host = (parsed.hostname or "").lower()
+    allowed_hosts = {"www.stockarmobile.com", "stockarmobile.com"}
     if (
         parsed.scheme.lower() != "https"
-        or not parsed.hostname
+        or host not in allowed_hosts
         or parsed.username is not None
         or parsed.password is not None
         or parsed.fragment
-        or (port is not None and not 1 <= port <= 65535)
+        or parsed.path != "/internal/crm/campaign-worker"
+        or parsed.query
+        or (port is not None and port != 443)
     ):
         return None
     return raw

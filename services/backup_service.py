@@ -407,7 +407,7 @@ class BackupService:
             if not sequence_name:
                 continue
             max_value = db.session.execute(
-                sa.text(f'SELECT COALESCE(MAX("{pk_column.name}"), 0) FROM "{model.__tablename__}"')
+                sa.select(sa.func.coalesce(sa.func.max(pk_column), 0)).select_from(model.__table__)
             ).scalar() or 0
             db.session.execute(
                 sa.text("SELECT setval(:sequence_name, :max_value, true)"),

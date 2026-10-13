@@ -30,6 +30,9 @@ def test_campaign_runner_accepts_https_worker_url_without_userinfo():
     )
     assert _validated_worker_url("http://www.stockarmobile.com/internal/crm/campaign-worker") is None
     assert _validated_worker_url("https://user:password@www.stockarmobile.com/worker") is None
+    assert _validated_worker_url("https://attacker.example/internal/crm/campaign-worker") is None
+    assert _validated_worker_url("https://www.stockarmobile.com/other-path") is None
+    assert _validated_worker_url("https://www.stockarmobile.com/internal/crm/campaign-worker?next=https://attacker.example") is None
 
 
 
