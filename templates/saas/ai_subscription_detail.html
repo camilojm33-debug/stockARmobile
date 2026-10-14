@@ -245,22 +245,33 @@
           <div class="card app-card mb-4">
             <div class="card-header bg-white fw-bold">Dar prueba (trial)</div>
             <div class="card-body">
-              {% if status.origin != 'MERCADO_PAGO' %}
+              {% if status.origin != 'MERCADO_PAGO' or (status.mercadopago_status or '')|lower in ['cancelled', 'canceled', 'expired'] %}
+              {% if status.origin == 'MERCADO_PAGO' %}
+              <div class="alert alert-warning small">La prueba manual sólo se otorga después de verificar que la autorización anterior de Mercado Pago esté terminada. Al darla, se archiva el vínculo recurrente anterior y la IA pasa a gestión manual.</div>
+              {% else %}
+              <p class="small text-muted mb-2">El trial habilita el plan elegido por los días indicados. No crea cobros recurrentes y se puede cancelar desde «Acciones de acceso IA».</p>
+              {% endif %}
               <form method="post" action="{{ url_for('saas.ai_subscriptions_action', company_id=company.id) }}" class="d-flex flex-column gap-2">
                 <input type="hidden" name="action" value="grant_trial">
                 <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
-                  {% if step_up_required %}<input type="password" name="step_up_password" class="form-control form-control-sm" autocomplete="current-password" placeholder="Contraseña de SuperAdmin" required>{% endif %}
+                {% if step_up_required %}
+                <label class="form-label small mb-0" for="aiGrantTrialPassword">Verificación de SuperAdmin</label>
+                <input id="aiGrantTrialPassword" type="password" name="step_up_password" class="form-control form-control-sm" autocomplete="current-password" placeholder="Contraseña de SuperAdmin" required>
+                {% endif %}
                 <input type="hidden" name="next" value="{{ request.path }}">
-                <select class="form-select form-select-sm" name="plan_code" required>
-                  <option value="">Plan a probar...</option>
+                <label class="form-label small mb-0" for="aiTrialPlanCode">Plan a probar</label>
+                <select id="aiTrialPlanCode" class="form-select form-select-sm" name="plan_code" required>
+                  <option value="">Elegir plan...</option>
                   {% for plan in ai_plans %}<option value="{{ plan.code }}">{{ plan.name }}</option>{% endfor %}
                 </select>
-                <input class="form-control form-control-sm" type="number" name="days" min="1" max="365" value="14" placeholder="Días">
-                <input class="form-control form-control-sm" type="text" name="reason" placeholder="Motivo (opcional)">
-                <button class="btn btn-sm btn-outline-info" type="submit">Dar prueba</button>
+                <label class="form-label small mb-0" for="aiTrialDays">Duración del trial (días)</label>
+                <input id="aiTrialDays" class="form-control form-control-sm" type="number" name="days" min="1" max="365" value="14" required>
+                <label class="form-label small mb-0" for="aiTrialReason">Motivo / referencia interna</label>
+                <input id="aiTrialReason" class="form-control form-control-sm" type="text" name="reason" maxlength="300" placeholder="Ej.: prueba comercial (opcional)">
+                <button class="btn btn-sm btn-outline-info" type="submit" onclick="return confirm('¿Otorgar el trial IA? Si venía de Mercado Pago, primero se verificará que la autorización anterior esté terminada.');">Dar prueba de IA</button>
               </form>
               {% else %}
-              <div class="small text-muted">Los trials manuales no modifican una suscripción administrada por Mercado Pago.</div>
+              <div class="small text-muted">La suscripción IA de Mercado Pago todavía puede generar cobros. Cancelá primero la renovación; cuando se confirme la baja, vas a poder dar una prueba manual.</div>
               {% endif %}
             </div>
           </div>
