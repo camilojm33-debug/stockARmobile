@@ -952,6 +952,164 @@ def _session_standard_auto_preview(company, *, subscription_id=None):
     }
 
 
+
+def _persisted_standard_auto_preview(company, *, subscription_id=None):
+    """Recover a tenant's outstanding standard monthly checkout from persisted state.
+
+    The browser session is a convenience, not the source of truth: the portal
+    can recover the exact pending preapproval after a refresh, a lost session,
+    or a return from Mercado Pago in a different browser tab.
+    """
+    from app import Subscription, db
+    from services.mercadopago_service import MercadoPagoService
+    from services.mercadopago_subscription_service import MercadoPagoSubscriptionService
+
+    allowed_local_states = {
+        str(SubscriptionService.STATE_PENDING_PAYMENT).strip().lower(),
+        str(SubscriptionService.STATE_ACTIVE).strip().lower(),
+        str(getattr(SubscriptionService, "STATE_SCHEDULED", "scheduled")).strip().lower(),
+    }
+    query = Subscription.query.filter_by(company_id=company.id)
+    if subscription_id is not None:
+        query = query.filter_by(id=int(subscription_id))
+    rows = query.order_by(Subscription.id.desc()).all()
+
+    for subscription in rows:
+        if str(subscription.status or "").strip().lower() not in allowed_local_states:
+            continue
+        if subscription.plan is None:
+            continue
+        metadata = SubscriptionService._metadata_dict(subscription)
+        preapproval_id = str(metadata.get("mercadopago_preapproval_id") or "").strip()
+        method = str(metadata.get("checkout_method") or "").strip().lower()
+        local_mp_status = str(metadata.get("mercadopago_status") or "").strip().lower()
+        if (
+            not preapproval_id
+            or method != "automatic"
+            or metadata.get("checkout_cancelled")
+        ):
+            continue
+
+        # Avoid an unnecessary external request for a known operational contract
+        # on ordinary portal loads. Explicit return URLs still reconcile it.
+        explicitly_requested = subscription_id is not None
+        if not explicitly_requested and local_mp_status not in {"pending", "in_process", ""}:
+            continue
+
+        try:
+            remote = MercadoPagoService().get_preapproval(preapproval_id)
+        except Exception:
+            current_app.logger.exception(
+                "No se pudo recuperar el checkout mensual estándar company_id=%s subscription_id=%s",
+                company.id,
+                subscription.id,
+            )
+            continue
+
+        remote_id = str(remote.get("id") or "").strip()
+        remote_status = str(remote.get("status") or "").strip().lower()
+        external_reference = str(remote.get("external_reference") or "").strip()
+        ref_parts = WebhookService._external_reference_parts(external_reference)
+        if (
+            remote_id != preapproval_id
+            or ref_parts.get("flow") != MercadoPagoSubscriptionService.FLOW
+            or str(ref_parts.get("company_id") or "") != str(company.id)
+            or str(ref_parts.get("subscription_id") or "") != str(subscription.id)
+        ):
+            current_app.logger.warning(
+                "Se omitió un checkout mensual estándar cuya autorización no pudo verificarse company_id=%s subscription_id=%s",
+                company.id,
+                subscription.id,
+            )
+            continue
+
+        # Reconcile only after tenant, subscription and preapproval IDs all match.
+        if remote_status in {"authorized", "pending", "in_process", "cancelled", "canceled", "expired", "rejected"}:
+            try:
+                MercadoPagoSubscriptionService.sync_preapproval(
+                    db_session=db.session,
+                    preapproval=remote,
+                )
+                db.session.commit()
+            except Exception:
+                db.session.rollback()
+                current_app.logger.exception(
+                    "No se pudo sincronizar el checkout mensual estándar company_id=%s subscription_id=%s",
+                    company.id,
+                    subscription.id,
+                )
+                continue
+
+        if remote_status == "authorized":
+            # Authorization has completed. The access state is reconciled, and no
+            # cancellable checkout card is needed anymore.
+            return {
+                "kind": "standard_subscription",
+                "company_id": company.id,
+                "subscription_id": subscription.id,
+                "preapproval_id": preapproval_id,
+                "plan_name": subscription.plan.name or "Plan StockArMobile",
+                "amount": float(subscription.plan.price or 0),
+                "currency": str(subscription.plan.currency or "ARS"),
+                "status": "paid",
+                "checkout_url": "",
+                "qr_data_uri": "",
+            }
+
+        if remote_status in {"cancelled", "canceled", "expired", "rejected"}:
+            session_preview = session.get("standard_auto_checkout_preview")
+            if isinstance(session_preview, dict) and int(session_preview.get("subscription_id") or 0) == int(subscription.id):
+                session.pop("standard_auto_checkout_preview", None)
+            continue
+
+        if remote_status not in {"pending", "in_process", "paused"}:
+            continue
+        if remote_status == "paused" and str(subscription.status or "").strip().lower() != str(SubscriptionService.STATE_PENDING_PAYMENT).strip().lower():
+            # A paused, already-active contract is an administrative subscription
+            # state, not an unfinished checkout to put back in front of the payer.
+            continue
+
+        checkout_url = str(remote.get("init_point") or "").strip()
+        if not checkout_url:
+            from urllib.parse import urlencode
+            checkout_url = (
+                "https://www.mercadopago.com.ar/subscriptions/checkout?"
+                + urlencode({"preapproval_id": preapproval_id})
+            )
+        from urllib.parse import urlparse
+        parsed_checkout = urlparse(checkout_url)
+        allowed_checkout_hosts = {
+            "www.mercadopago.com", "mercadopago.com", "sandbox.mercadopago.com",
+            "www.mercadopago.com.ar", "mercadopago.com.ar", "sandbox.mercadopago.com.ar",
+            "www.mercadopago.com.br", "www.mercadopago.com.mx", "www.mercadopago.cl",
+            "www.mercadopago.com.co", "www.mercadopago.com.uy", "www.mercadopago.com.pe",
+        }
+        if current_app.testing and parsed_checkout.hostname == "mp.test":
+            allowed_checkout_hosts.add("mp.test")
+        if parsed_checkout.scheme != "https" or parsed_checkout.hostname not in allowed_checkout_hosts:
+            current_app.logger.warning(
+                "Mercado Pago devolvió un enlace de checkout estándar no reconocido company_id=%s subscription_id=%s host=%s",
+                company.id,
+                subscription.id,
+                parsed_checkout.hostname or "invalid-url",
+            )
+            continue
+
+        return {
+            "kind": "standard_subscription",
+            "company_id": company.id,
+            "subscription_id": subscription.id,
+            "preapproval_id": preapproval_id,
+            "plan_name": subscription.plan.name or "Plan StockArMobile",
+            "amount": float(subscription.plan.price or 0),
+            "currency": str(subscription.plan.currency or "ARS"),
+            "status": "pending",
+            "checkout_url": checkout_url,
+            "qr_data_uri": "",
+        }
+    return None
+
+
 def _ai_qr_plan_code(payment):
     external_reference = str(getattr(payment, "external_reference", "") or "")
     parts = {}
@@ -1633,10 +1791,18 @@ def subscription_portal():
             == str(checkout_preview.get("preference_id") or "")
         ):
             session.pop("standard_qr_checkout_preview", None)
+    standard_auto_subscription_id = checkout_subscription_id
+    if standard_auto_subscription_id is None and return_flow == "standard":
+        standard_auto_subscription_id = request.args.get("mp_subscription_id", type=int)
     if checkout_preview is None:
         checkout_preview = _session_standard_auto_preview(
             company,
-            subscription_id=checkout_subscription_id,
+            subscription_id=standard_auto_subscription_id,
+        )
+    if checkout_preview is None:
+        checkout_preview = _persisted_standard_auto_preview(
+            company,
+            subscription_id=standard_auto_subscription_id,
         )
 
     ai_status = AISubscriptionService.get_status(company)
