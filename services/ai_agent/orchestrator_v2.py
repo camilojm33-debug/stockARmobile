@@ -391,10 +391,29 @@ def _public_user_requested_quantity(messages, product_query: str, *, allow_singl
         r"rollos?|bolsas?|cajas?|paquetes?|packs?)\b",
         re.IGNORECASE,
     )
+    # Natural product-count expressions such as "5 cocas" or "3 bolsas de cemento"
+    # are just as explicit as "5 unidades". Tie the number to the product token
+    # so unrelated numbers in phone/address messages never become quantities.
+    product_word = re.escape(identifying_token)
+    quantity_before_product = re.compile(
+        rf"(?<![a-z0-9])(\d+(?:[.,]\d+)?)\s+"
+        rf"(?:(?:de|del|la|el|los|las|un|una|botellas?|latas?|packs?|paquetes?|cajas?)\s+)*"
+        rf"{product_word}(?:s|es)?\b",
+        re.IGNORECASE,
+    )
     quantity_action = re.compile(
         r"\b(?:cambiame|cambiar|cambia|modificame|modificar|modifica|dejame|deja|"
         r"bajame|baja|subime|subi|me llevo|me quedo con|en vez de|solamente)\b"
         r".{0,35}?\b(\d+(?:[.,]\d+)?)\b",
+        re.IGNORECASE,
+    )
+    # When there is exactly one item in the cart, short corrections like "5 te dije"
+    # are explicit too. Anchor the entire message to avoid interpreting an address,
+    # a phone number, or another arbitrary numeric detail as an item count.
+    single_item_quantity_reply = re.compile(
+        r"^\s*(?:(?:son|quiero|llevo|me llevo|eran|te dije|dije|"
+        r"confirmo(?: que son)?)\s+)?(\d+(?:[.,]\d+)?)"
+        r"\s*(?:(?:te dije|por favor|unidades?|unidad)\s*)?[.!?]*\s*$",
         re.IGNORECASE,
     )
     for row in reversed(list(messages or [])):
@@ -408,7 +427,22 @@ def _public_user_requested_quantity(messages, product_query: str, *, allow_singl
                     return amount if amount.is_finite() and amount > 0 else None
                 except (InvalidOperation, ValueError):
                     return None
+            if has_product:
+                product_match = list(quantity_before_product.finditer(text))
+                if product_match:
+                    try:
+                        amount = Decimal(product_match[-1].group(1).replace(",", "."))
+                        return amount if amount.is_finite() and amount > 0 else None
+                    except (InvalidOperation, ValueError):
+                        return None
         if allow_single_item_update:
+            short_reply = single_item_quantity_reply.fullmatch(text)
+            if short_reply:
+                try:
+                    amount = Decimal(short_reply.group(1).replace(",", "."))
+                    return amount if amount.is_finite() and amount > 0 else None
+                except (InvalidOperation, ValueError):
+                    return None
             action_match = quantity_action.search(text)
             if action_match:
                 try:
