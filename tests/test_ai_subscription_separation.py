@@ -2517,3 +2517,147 @@ def test_new_commercial_customer_is_provisioned_for_subscription_preapproval_web
     assert duplicate_result["status"] == "processed_commercial_checkout"
     assert Company.query.filter_by(name="Comercio Nuevo Mercado Pago").count() == 1
     assert Subscription.query.filter_by(company_id=company.id).count() == 1
+
+
+def test_standard_automatic_checkout_recovers_from_legacy_null_command(subscription_app, monkeypatch):
+    from app import SubscriptionCommandExecution
+
+    company, user, _, current = _tenant_with_standard_subscription()
+    target = Plan(
+        code="business",
+        name="Business",
+        price=29999,
+        currency="ARS",
+        duration_days=30,
+        active=True,
+    )
+    db.session.add(target)
+    db.session.flush()
+
+    # Older releases used a deterministic key. Its completed record can remain
+    # after the referenced subscription was deleted and the FK became NULL.
+    stale_key = f"mp-auto-plan:{company.id}:{current.id}:0:{target.id}:{user.id}"
+    db.session.add(
+        SubscriptionCommandExecution(
+            command_name="ChangePlanCommand",
+            command_key=stale_key,
+            command_status="completed",
+            company_id=company.id,
+            subscription_id=None,
+            actor_user_id=user.id,
+            origin="mercadopago_subscription",
+            payload_json="{}",
+            result_json="{}",
+        )
+    )
+    db.session.commit()
+
+    calls = []
+
+    def create_standard_preapproval(*, db_session, company, subscription, plan, payer_email, notification_url, back_url):
+        calls.append({"company_id": company.id, "subscription_id": subscription.id, "plan_id": plan.id})
+        return {
+            "id": "standard-pre-recovered",
+            "init_point": "https://mp.test/standard-recovered",
+            "status": "pending",
+        }
+
+    monkeypatch.setattr(
+        "services.mercadopago_subscription_service.MercadoPagoSubscriptionService.create",
+        create_standard_preapproval,
+    )
+    client = subscription_app.test_client()
+    _login(client, user)
+
+    response = client.post(
+        "/admin/subscription/mercadopago/create",
+        data={"plan_id": target.id},
+    )
+
+    assert response.status_code == 302
+    assert response.headers["Location"] == "https://mp.test/standard-recovered"
+    assert len(calls) == 1
+    assert current.status == SubscriptionService.STATE_ACTIVE
+    pending = Subscription.query.filter_by(
+        company_id=company.id,
+        plan_id=target.id,
+        status=SubscriptionService.STATE_PENDING_PAYMENT,
+    ).one()
+    assert calls[0]["subscription_id"] == pending.id
+    new_execution = SubscriptionCommandExecution.query.filter(
+        SubscriptionCommandExecution.company_id == company.id,
+        SubscriptionCommandExecution.command_key != stale_key,
+    ).one()
+    assert new_execution.subscription_id == pending.id
+
+
+def test_standard_qr_checkout_recovers_from_legacy_null_command(subscription_app, monkeypatch):
+    from app import SubscriptionCommandExecution
+    from services.billing_service import BillingService
+
+    company, user, _, current = _tenant_with_standard_subscription()
+    target = Plan(
+        code="business",
+        name="Business",
+        price=29999,
+        currency="ARS",
+        duration_days=30,
+        active=True,
+    )
+    db.session.add(target)
+    db.session.flush()
+
+    stale_key = f"portal-change:{company.id}:{current.id}:0:{target.id}:{user.id}"
+    db.session.add(
+        SubscriptionCommandExecution(
+            command_name="ChangePlanCommand",
+            command_key=stale_key,
+            command_status="completed",
+            company_id=company.id,
+            subscription_id=None,
+            actor_user_id=user.id,
+            origin="portal_confirm",
+            payload_json="{}",
+            result_json="{}",
+        )
+    )
+    db.session.commit()
+
+    calls = []
+
+    def fake_checkout(self, **kwargs):
+        calls.append(kwargs)
+        return {
+            "subscription": kwargs["subscription"],
+            "preference": {
+                "id": "pref-stale-command-recovered",
+                "init_point": "https://mp.test/qr-recovered",
+            },
+        }
+
+    monkeypatch.setattr(BillingService, "create_checkout_for_plan", fake_checkout)
+    client = subscription_app.test_client()
+    _login(client, user)
+
+    response = client.post(
+        "/admin/subscription/change",
+        data={"plan_id": target.id},
+        follow_redirects=False,
+    )
+
+    assert response.status_code == 302
+    assert "#payment-checkout" in response.headers["Location"]
+    assert len(calls) == 1
+    assert current.status == SubscriptionService.STATE_ACTIVE
+    pending = Subscription.query.filter_by(
+        company_id=company.id,
+        plan_id=target.id,
+        status=SubscriptionService.STATE_PENDING_PAYMENT,
+    ).one()
+    assert calls[0]["subscription"].id == pending.id
+    new_execution = SubscriptionCommandExecution.query.filter(
+        SubscriptionCommandExecution.company_id == company.id,
+        SubscriptionCommandExecution.command_key != stale_key,
+    ).one()
+    assert new_execution.subscription_id == pending.id
+
