@@ -2838,10 +2838,10 @@ def cancel_ai_qr_checkout():
 def cancel_ai_subscription():
     from app import Company, db
     from services.ai_agent.subscription_service import AISubscriptionService
-    from services.mercadopago_service import MercadoPagoService
 
     company_id = getattr(current_user, "company_id", None)
     company = Company.query.filter_by(id=company_id).first_or_404()
+    from_checkout = request.form.get("from_checkout") == "1"
     if request.form.get("confirm_ai_cancel") != "1":
         message = "Confirmá explícitamente la cancelación de la suscripción IA. Esta acción no afecta tu suscripción StockArMobile."
         if _wants_json_response():
@@ -2851,6 +2851,9 @@ def cancel_ai_subscription():
 
     ai_status = AISubscriptionService.get_status(company)
     current_status = str(ai_status.get("status") or "").strip().upper()
+    current_origin = str(ai_status.get("origin") or "").strip().upper()
+    checkout_method = str(ai_status.get("checkout_method") or "").strip().lower()
+    preapproval_id = str(ai_status.get("mercadopago_preapproval_id") or "").strip()
     if current_status not in {"ACTIVA", "PENDIENTE", "TRIAL", "SUSPENDIDA"}:
         message = "No hay una suscripción IA activa o pendiente para cancelar."
         if _wants_json_response():
@@ -2858,10 +2861,60 @@ def cancel_ai_subscription():
         flash(message, "warning")
         return redirect(url_for("company_billing.subscription_portal", _anchor="suscripcion-ia"))
 
-    preapproval_id = str(ai_status.get("mercadopago_preapproval_id") or "").strip()
     try:
-        AISubscriptionService.cancel(company, admin_user_id=current_user.id, reason="tenant_explicit_cancel")
-        db.session.commit()
+        if (
+            current_status == "PENDIENTE"
+            and current_origin == "MERCADO_PAGO"
+            and checkout_method == "automatic"
+            and preapproval_id
+        ):
+            # A pending authorization is a checkout, not a live paid contract.
+            # Verify/cancel it remotely, then restore any previous IA trial/access
+            # snapshot. The standard StockArMobile subscription remains untouched.
+            result = AISubscriptionService.cancel_pending_checkout(
+                company,
+                admin_user_id=current_user.id,
+                reason="tenant_cancelled_pending_ai_monthly_checkout",
+            )
+            db.session.commit()
+            current_ai = AISubscriptionService._ai_prefs(company)
+            for session_key in ("ai_auto_checkout_preview", "mp_checkout_preview"):
+                preview = session.get(session_key)
+                if isinstance(preview, dict) and str(preview.get("preapproval_id") or "") == preapproval_id:
+                    session.pop(session_key, None)
+
+            if (
+                str(result.get("status") or "").upper() == "ACTIVA"
+                and str(result.get("origin") or "").upper() == "MERCADO_PAGO"
+                and str(result.get("mercadopago_status") or "").lower() in {"cancelled", "canceled"}
+                and str(current_ai.get("mercadopago_preapproval_id") or "") == preapproval_id
+            ):
+                message = (
+                    "Mercado Pago ya había autorizado la suscripción IA. Se canceló la renovación y se conserva "
+                    "el acceso hasta el vencimiento correspondiente. StockArMobile no fue modificado."
+                )
+            elif str(result.get("status") or "").upper() in {"ACTIVA", "TRIAL"}:
+                message = (
+                    "Checkout mensual IA cancelado. Se restauró tu plan IA anterior y podés elegir otra modalidad. "
+                    "Tu suscripción StockArMobile no fue modificada."
+                )
+            else:
+                message = (
+                    "Checkout mensual IA cancelado. El nuevo plan no se activó y ya podés elegir otra modalidad. "
+                    "Tu suscripción StockArMobile no fue modificada."
+                )
+        else:
+            result = AISubscriptionService.cancel(
+                company,
+                admin_user_id=current_user.id,
+                reason="tenant_explicit_cancel",
+            )
+            db.session.commit()
+            for session_key in ("ai_auto_checkout_preview", "mp_checkout_preview"):
+                preview = session.get(session_key)
+                if isinstance(preview, dict) and preapproval_id and str(preview.get("preapproval_id") or "") == preapproval_id:
+                    session.pop(session_key, None)
+            message = "Suscripción IA cancelada. Tu suscripción StockArMobile no fue modificada."
     except Exception as exc:
         db.session.rollback()
         current_app.logger.exception("Error cancelando suscripción IA: %s", exc)
@@ -2869,16 +2922,19 @@ def cancel_ai_subscription():
         if _wants_json_response():
             return jsonify({"success": False, "error": message}), 500
         flash(message, "danger")
-        return redirect(url_for("company_billing.subscription_portal", _anchor="suscripcion-ia"))
+        return redirect(url_for(
+            "company_billing.subscription_portal",
+            ai_preapproval_id=preapproval_id or None,
+            _anchor="payment-checkout" if from_checkout else "suscripcion-ia",
+        ))
 
-    message = "Suscripción IA cancelada. Tu suscripción StockArMobile no fue modificada."
     if _wants_json_response():
         return jsonify({"success": True, "message": message})
     flash(message, "success")
     return redirect(
         url_for(
             "company_billing.subscription_portal",
-            _anchor="payment-checkout" if request.form.get("from_checkout") == "1" else "suscripcion-ia",
+            _anchor="payment-checkout" if from_checkout else "suscripcion-ia",
         )
     )
 
