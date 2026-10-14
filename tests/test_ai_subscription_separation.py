@@ -2775,7 +2775,7 @@ def test_superadmin_can_end_ai_access_immediately_after_mp_renewal_cancel(subscr
 
 
 def test_superadmin_can_grant_manual_trial_after_terminal_mp_preapproval(subscription_app, monkeypatch):
-    from datetime import timedelta
+    from datetime import datetime, timedelta
     from stockarmobile.helpers.dates import utcnow_naive
 
     company, _, _, standard_subscription = _tenant_with_standard_subscription()
