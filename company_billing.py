@@ -1778,7 +1778,7 @@ def _build_user_and_cash_rows(company_id, date_from=None, date_to=None, search_t
 def subscription_portal():
     from flask import session
 
-    from app import Company, Invoice, Payment, PaymentHistory, ReferralAttribution, Subscription
+    from app import Company, Invoice, Payment, PaymentHistory, ReferralAttribution, Subscription, db
     from services.ai_agent.usage_service import AI_PLANS
     from services.ai_agent.subscription_service import AISubscriptionService
     from services.mercadopago_service import MercadoPagoService
