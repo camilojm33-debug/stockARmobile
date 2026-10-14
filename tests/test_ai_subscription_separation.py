@@ -2781,7 +2781,7 @@ def test_superadmin_can_grant_manual_trial_after_terminal_mp_preapproval(subscri
     company, _, _, standard_subscription = _tenant_with_standard_subscription()
     before = _standard_snapshot(standard_subscription)
     now = utcnow_naive()
-    ends_at = (now + timedelta(days=3)).isoformat()
+    ends_at = (now + timedelta(days=30)).isoformat()
     update_ai_preferences(company, ai_updates={
         "plan_code": "pro",
         "status": "ACTIVA",
@@ -2819,7 +2819,7 @@ def test_superadmin_can_grant_manual_trial_after_terminal_mp_preapproval(subscri
     assert ai["mercadopago_previous_preapproval_id"] == "ai-pre-trial-takeover"
     assert ai["mercadopago_access_preserved_until"] is None
     trial_end = datetime.fromisoformat(result["ends_at"])
-    assert trial_end > now + timedelta(days=13)
+    assert trial_end > now + timedelta(days=29)  # no se recorta acceso ya pagado
     assert _standard_snapshot(standard_subscription) == before
 
 
