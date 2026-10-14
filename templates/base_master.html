@@ -1271,6 +1271,19 @@
         const previousError = form.querySelector('.' + errorClass);
         if (previousError) previousError.remove();
 
+        // Standard monthly authorization opens separately so StockArMobile
+        // stays available for the customer to cancel the pending checkout.
+        const openCheckoutInNewTab = form.dataset.mpCheckoutMode === 'new-tab';
+        let checkoutWindow = null;
+        if (openCheckoutInNewTab) {
+          try {
+            checkoutWindow = window.open('about:blank', '_blank');
+            if (checkoutWindow) checkoutWindow.opener = null;
+          } catch (popupError) {
+            checkoutWindow = null;
+          }
+        }
+
         const submitButtons = Array.from(form.querySelectorAll('button[type="submit"], input[type="submit"]'));
         const savedButtons = submitButtons.map(function(button) {
           return {
@@ -1348,10 +1361,24 @@
             throw new Error('El enlace recibido no pertenece a un checkout válido de Mercado Pago. No se abrió por seguridad.');
           }
 
-          // Same-tab navigation is not subject to popup blockers and works in
-          // browsers and installed PWAs alike.
+          if (openCheckoutInNewTab) {
+            // Even when pop-ups are blocked, return to the portal preview so the
+            // customer can click "Abrir Mercado Pago" manually or cancel the attempt.
+            const returnUrl = new URL(payload.return_url || '', window.location.origin);
+            if (!payload.return_url || returnUrl.origin !== window.location.origin) {
+              throw new Error('StockArMobile no devolvió una URL de retorno válida para administrar el checkout.');
+            }
+            if (checkoutWindow && !checkoutWindow.closed) {
+              checkoutWindow.location.replace(checkoutUrl.href);
+            }
+            window.location.assign(returnUrl.href);
+            return;
+          }
+
+          // Other external checkout flows (for example IA) retain same-tab behavior.
           window.location.assign(checkoutUrl.href);
         } catch (error) {
+          if (checkoutWindow && !checkoutWindow.closed) checkoutWindow.close();
           console.error('No se pudo iniciar navegación al checkout de Mercado Pago:', error);
           showError(error && error.message);
         }
