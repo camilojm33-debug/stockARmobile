@@ -1838,7 +1838,19 @@ def subscription_portal():
                     == str(ai_status_before_return.get("plan_code") or "").strip().lower()
                 ):
                     remote["external_reference"] = remote_reference
-                    AISubscriptionService.sync_from_mercadopago(preapproval=remote)
+                    remote_status = str(remote.get("status") or "").strip().lower()
+                    is_pending_monthly_checkout = (
+                        str(ai_status_before_return.get("status") or "").strip().upper() == "PENDIENTE"
+                        and str(ai_status_before_return.get("checkout_method") or "").strip().lower() == "automatic"
+                    )
+                    if is_pending_monthly_checkout and remote_status in {"cancelled", "canceled", "expired", "rejected"}:
+                        AISubscriptionService.cancel_pending_checkout(
+                            company,
+                            admin_user_id=None,
+                            reason="Mercado Pago devolvió la autorización IA terminada al regresar al portal.",
+                        )
+                    else:
+                        AISubscriptionService.sync_from_mercadopago(preapproval=remote)
                     db.session.commit()
             except Exception:
                 db.session.rollback()
