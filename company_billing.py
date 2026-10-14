@@ -2581,29 +2581,32 @@ def create_ai_subscription_checkout():
                 raise AISubscriptionError(
                     "Mercado Pago devolvió una autorización IA diferente de la registrada. No se creó otro checkout."
                 )
+            if str(remote.get("id") or "").strip() != existing_preapproval_id:
+                raise AISubscriptionError(
+                    "Mercado Pago devolvió una autorización IA diferente de la registrada. No se creó otro checkout."
+                )
             remote_status = str(remote.get("status") or "").strip().lower()
             remote_init_point = str(remote.get("init_point") or "").strip()
             remote_reference = str(remote.get("external_reference") or "").strip()
-            if remote_reference:
-                remote_parts = dict(
-                    segment.split(":", 1)
-                    for segment in remote_reference.split("|")
-                    if ":" in segment
-                )
-                if (
-                    (external_reference and external_reference != remote_reference)
-                    or remote_parts.get("ai_subscription") != "true"
-                    or str(remote_parts.get("company_id") or "") != str(company.id)
-                    or str(remote_parts.get("plan_code") or "").strip().lower() != plan_code
-                ):
-                    raise AISubscriptionError(
-                        "La autorización mensual IA no coincide con la empresa o el plan seleccionado. No se creó otro checkout."
-                    )
-                external_reference = remote_reference
-            elif not external_reference:
+            candidate_reference = remote_reference or external_reference
+            remote_parts = dict(
+                segment.split(":", 1)
+                for segment in candidate_reference.split("|")
+                if ":" in segment
+            )
+            if (
+                not candidate_reference
+                or (remote_reference and external_reference and external_reference != remote_reference)
+                or remote_parts.get("ai_subscription") != "true"
+                or str(remote_parts.get("company_id") or "") != str(company.id)
+                or str(remote_parts.get("plan_code") or "").strip().lower() != plan_code
+            ):
                 raise AISubscriptionError(
-                    "No se pudo verificar la referencia de la autorización IA pendiente. No se creó otro checkout."
+                    "La autorización mensual IA no coincide con la empresa o el plan seleccionado. No se creó otro checkout."
                 )
+            external_reference = candidate_reference
+            remote["external_reference"] = external_reference
+            response = remote
             if remote_status == "authorized":
                 AISubscriptionService.sync_from_mercadopago(preapproval=remote)
                 flash("Mercado Pago ya autorizó tu suscripción IA. El estado se actualizó.", "success")
@@ -2650,10 +2653,15 @@ def create_ai_subscription_checkout():
                 )
                 from services.ai_agent.subscription_service import AI_CHECKOUT_SNAPSHOT_KEYS
                 current_ai_preferences = AISubscriptionService._ai_prefs(company)
-                snapshot = {
-                    key: current_ai_preferences.get(key)
-                    for key in AI_CHECKOUT_SNAPSHOT_KEYS
-                }
+                existing_snapshot = current_ai_preferences.get("checkout_previous_ai_subscription")
+                snapshot = (
+                    existing_snapshot
+                    if isinstance(existing_snapshot, dict)
+                    else {
+                        key: current_ai_preferences.get(key)
+                        for key in AI_CHECKOUT_SNAPSHOT_KEYS
+                    }
+                )
                 AISubscriptionService._apply(
                     company,
                     admin_user_id=None,
@@ -2709,6 +2717,18 @@ def create_ai_subscription_checkout():
                 checkout_url = str(remote.get("init_point") or "").strip()
                 response = remote
 
+            if not external_reference:
+                external_reference = str(response.get("external_reference") or "").strip()
+            if not external_reference:
+                raise AISubscriptionError(
+                    "No se pudo verificar la referencia de Mercado Pago para esta suscripción IA."
+                )
+            returned_reference = str(response.get("external_reference") or "").strip()
+            if returned_reference and returned_reference != external_reference:
+                raise AISubscriptionError(
+                    "Mercado Pago devolvió una referencia diferente para el checkout IA. No se modificó el plan."
+                )
+            response["external_reference"] = external_reference
             AISubscriptionService.link_mercadopago_pending(
                 company,
                 plan_code=plan_code,
