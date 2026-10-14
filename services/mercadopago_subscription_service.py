@@ -66,6 +66,9 @@ class MercadoPagoSubscriptionService:
                         "checkout_cancelled": False,
                         "payment_method": "mercadopago_subscription",
                         "auto_renew": True,
+                        "checkout_previous_renewal_enabled": None,
+                        "checkout_previous_auto_renew": None,
+                        "checkout_previous_cancel_at_period_end": None,
                     },
                 )
                 # A retry can be the first request after Mercado Pago has already
@@ -137,17 +140,23 @@ class MercadoPagoSubscriptionService:
         # times out after MP creates the preapproval, a retry reuses the exact same
         # reference and idempotency key, so it cannot create another subscription.
         if external_reference != str(metadata.get("mercadopago_external_reference") or "").strip() or not metadata.get("mercadopago_creation_pending"):
-            SubscriptionService._set_metadata(
-                subscription,
-                {
-                    "mercadopago_external_reference": external_reference,
-                    "mercadopago_creation_pending": True,
-                    "payment_method": "mercadopago_subscription",
-                    "checkout_method": "automatic",
-                    "checkout_cancelled": False,
-                    "auto_renew": True,
-                },
-            )
+            attempt_metadata = {
+                "mercadopago_external_reference": external_reference,
+                "mercadopago_creation_pending": True,
+                "payment_method": "mercadopago_subscription",
+                "checkout_method": "automatic",
+                "checkout_cancelled": False,
+                "auto_renew": True,
+            }
+            # Save the exact local renewal flags before a new preapproval attempt
+            # temporarily disables them. If the payer cancels this checkout, the
+            # existing active plan can be restored without guessing the old state.
+            attempt_metadata.update({
+                "checkout_previous_renewal_enabled": bool(subscription.renewal_enabled),
+                "checkout_previous_auto_renew": bool(subscription.auto_renew),
+                "checkout_previous_cancel_at_period_end": bool(subscription.cancel_at_period_end),
+            })
+            SubscriptionService._set_metadata(subscription, attempt_metadata)
             db_session.commit()
 
         response = MercadoPagoService().create_preapproval(
@@ -194,6 +203,9 @@ class MercadoPagoSubscriptionService:
                 "checkout_method": "automatic",
                 "checkout_cancelled": False,
                 "auto_renew": True,
+                "checkout_previous_renewal_enabled": None if response_status == "authorized" else metadata.get("checkout_previous_renewal_enabled", bool(subscription.renewal_enabled)),
+                "checkout_previous_auto_renew": None if response_status == "authorized" else metadata.get("checkout_previous_auto_renew", bool(subscription.auto_renew)),
+                "checkout_previous_cancel_at_period_end": None if response_status == "authorized" else metadata.get("checkout_previous_cancel_at_period_end", bool(subscription.cancel_at_period_end)),
                 "subscription_auto_created_at": datetime.now(timezone.utc).isoformat(),
             },
         )
@@ -306,6 +318,9 @@ class MercadoPagoSubscriptionService:
                 metadata["mercadopago_next_payment_date"] = next_payment.isoformat()
             else:
                 metadata.pop("mercadopago_next_payment_date", None)
+            metadata["checkout_previous_renewal_enabled"] = None
+            metadata["checkout_previous_auto_renew"] = None
+            metadata["checkout_previous_cancel_at_period_end"] = None
             SubscriptionService._set_metadata(subscription, metadata)
         elif status in {"paused", "cancelled", "canceled", "expired"}:
             subscription.renewal_enabled = False
