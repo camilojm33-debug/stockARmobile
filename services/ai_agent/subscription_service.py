@@ -490,6 +490,7 @@ class AISubscriptionService:
             # The customer may have authorized in the other tab moments before
             # pressing Cancel. Reconcile first, then use the regular cancellation
             # policy so any newly paid period remains available until its boundary.
+            remote["external_reference"] = remote_reference
             cls.sync_from_mercadopago(preapproval=remote)
             return cls.cancel(
                 company,
