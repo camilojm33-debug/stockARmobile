@@ -107,7 +107,15 @@ def test_standard_active_ai_missing_can_start_ai_checkout(subscription_app, monk
     response = client.post("/admin/subscription/ai-agent/checkout", data={"plan_code": "inicio", "payment_method": "automatic"})
 
     assert response.status_code == 302
-    assert response.headers["Location"] == "https://mp.test/ai-new"
+    assert "/admin/portal?" in response.headers["Location"]
+    assert "checkout=ai_created" in response.headers["Location"]
+    assert "ai_preapproval_id=" in response.headers["Location"]
+    portal = client.get(response.headers["Location"])
+    html = portal.get_data(as_text=True)
+    assert portal.status_code == 200
+    assert "CHECKOUT LISTO" in html
+    assert "Abrir Mercado Pago" in html
+    assert "Cancelar autorización mensual" in html
     assert calls[0][0] == "create"
     assert calls[0][1]["amount"] == AISubscriptionService.plan_amount_ars("inicio")
     assert "ai_subscription:true" in calls[0][1]["external_reference"]
@@ -208,7 +216,7 @@ def test_pending_ai_automatic_checkout_form_skips_global_loading_overlay(subscri
     html = response.get_data(as_text=True)
 
     assert response.status_code == 200
-    assert 'action="/admin/subscription/ai-agent/checkout" data-mp-external-checkout="true" class="d-grid gap-2"' in html
+    assert 'action="/admin/subscription/ai-agent/checkout" data-mp-external-checkout="true" data-mp-checkout-mode="new-tab" class="d-grid gap-2"' in html
     assert "Continuar autorización mensual" in html
 
 
@@ -680,7 +688,7 @@ def test_standard_active_ai_active_different_plan_does_not_cancel_or_create(subs
 
 def test_standard_active_ai_pending_can_continue_same_ai_checkout(subscription_app, monkeypatch):
     company, user, _, subscription = _tenant_with_standard_subscription()
-    update_ai_preferences(company, ai_updates={"plan_code": "inicio", "status": "PENDIENTE", "origin": "MERCADO_PAGO", "mercadopago_preapproval_id": "ai-pre"})
+    update_ai_preferences(company, ai_updates={"plan_code": "inicio", "status": "PENDIENTE", "origin": "MERCADO_PAGO", "mercadopago_preapproval_id": "ai-pre", "mercadopago_external_reference": f"ai_subscription:true|company_id:{company.id}|plan_code:inicio|nonce:ai-pre", "checkout_method": "automatic"})
     db.session.commit()
     before = _standard_snapshot(subscription)
     calls = _mock_preapproval(monkeypatch)
@@ -690,7 +698,8 @@ def test_standard_active_ai_pending_can_continue_same_ai_checkout(subscription_a
     response = client.post("/admin/subscription/ai-agent/checkout", data={"plan_code": "inicio", "payment_method": "automatic"})
 
     assert response.status_code == 302
-    assert response.headers["Location"] == "https://mp.test/ai-pre"
+    assert "/admin/portal?" in response.headers["Location"]
+    assert "checkout=ai_created" in response.headers["Location"]
     assert calls == [("get", "ai-pre")]
     assert AISubscriptionService.get_status(company)["status"] == "PENDIENTE"
     assert _standard_snapshot(subscription) == before
@@ -829,7 +838,8 @@ def test_ai_pending_abandoned_checkout_remains_pending(subscription_app, monkeyp
     response = client.post("/admin/subscription/ai-agent/checkout", data={"plan_code": "inicio", "payment_method": "automatic"})
 
     assert response.status_code == 302
-    assert response.headers["Location"] == "https://mp.test/abandoned"
+    assert "/admin/portal?" in response.headers["Location"]
+    assert "checkout=ai_created" in response.headers["Location"]
     assert calls[0][0] == "create"
     status = AISubscriptionService.get_status(company)
     assert status["status"] == "PENDIENTE"
@@ -846,8 +856,10 @@ def test_double_click_ai_checkout_reuses_pending_preapproval(subscription_app, m
     first = client.post("/admin/subscription/ai-agent/checkout", data={"plan_code": "inicio", "payment_method": "automatic"})
     second = client.post("/admin/subscription/ai-agent/checkout", data={"plan_code": "inicio", "payment_method": "automatic"})
 
-    assert first.headers["Location"] == "https://mp.test/double"
-    assert second.headers["Location"] == "https://mp.test/ai-pre-double"
+    assert "/admin/portal?" in first.headers["Location"]
+    assert "/admin/portal?" in second.headers["Location"]
+    assert "checkout=ai_created" in first.headers["Location"]
+    assert "checkout=ai_created" in second.headers["Location"]
     assert [kind for kind, _ in calls] == ["create", "get"]
     assert AISubscriptionService.get_status(company)["status"] == "PENDIENTE"
     assert _standard_snapshot(subscription)["status"] == SubscriptionService.STATE_ACTIVE
@@ -893,7 +905,8 @@ def test_standard_active_ai_cancelled_can_start_ai_again(subscription_app, monke
     response = client.post("/admin/subscription/ai-agent/checkout", data={"plan_code": "inicio", "payment_method": "automatic"})
 
     assert response.status_code == 302
-    assert response.headers["Location"] == "https://mp.test/ai-renew"
+    assert "/admin/portal?" in response.headers["Location"]
+    assert "checkout=ai_created" in response.headers["Location"]
     assert calls[0][0] == "create"
     status = AISubscriptionService.get_status(company)
     assert status["status"] == "PENDIENTE"
@@ -1580,7 +1593,7 @@ def test_standard_auto_subscription_checkout_returns_json_redirect_for_ajax(subs
 
 def test_ai_auto_subscription_checkout_returns_json_redirect_for_ajax(subscription_app, monkeypatch):
     company, user, _, subscription = _tenant_with_standard_subscription()
-    update_ai_preferences(company, ai_updates={"plan_code": "inicio", "status": "PENDIENTE", "origin": "MERCADO_PAGO", "mercadopago_preapproval_id": "ai-pre"})
+    update_ai_preferences(company, ai_updates={"plan_code": "inicio", "status": "PENDIENTE", "origin": "MERCADO_PAGO", "mercadopago_preapproval_id": "ai-pre", "mercadopago_external_reference": f"ai_subscription:true|company_id:{company.id}|plan_code:inicio|nonce:ai-pre", "checkout_method": "automatic"})
     db.session.commit()
     _mock_preapproval(monkeypatch)
     client = subscription_app.test_client()
@@ -1593,7 +1606,12 @@ def test_ai_auto_subscription_checkout_returns_json_redirect_for_ajax(subscripti
     )
 
     assert response.status_code == 200
-    assert response.get_json() == {"success": True, "redirect_url": "https://mp.test/ai-pre"}
+    payload = response.get_json()
+    assert payload["success"] is True
+    assert payload["redirect_url"] == "https://mp.test/ai-pre"
+    assert "/admin/portal?" in payload["return_url"]
+    assert "checkout=ai_created" in payload["return_url"]
+    assert "ai_preapproval_id=ai-pre" in payload["return_url"]
     assert _standard_snapshot(subscription)["status"] == SubscriptionService.STATE_ACTIVE
 
 
