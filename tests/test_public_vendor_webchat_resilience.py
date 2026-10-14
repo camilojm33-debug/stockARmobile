@@ -1246,6 +1246,12 @@ def test_public_webchat_keeps_quantity_from_first_message_after_product_clarific
     )
     db.session.add(product)
     db.session.flush()
+    # Rebuild the published catalog after adding the test product; public
+    # WebChat intentionally searches only the tenant's published catalog.
+    from services.ai_agent.vendor_publication import publish_vendor
+    with setup["app"].test_request_context("/"):
+        publish_vendor(setup["company"])
+    db.session.commit()
 
     # The visitor states "5 cocas" first, then answers the product clarification
     # and gives delivery/contact information without repeating the quantity.
