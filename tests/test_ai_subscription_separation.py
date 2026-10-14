@@ -1573,7 +1573,7 @@ def test_standard_auto_subscription_checkout_returns_json_redirect_for_ajax(subs
     payload = response.get_json()
     assert payload["success"] is True
     assert payload["redirect_url"] == "https://mp.test/standard"
-    assert "/admin/subscription/portal?" in payload["return_url"]
+    assert "/admin/portal?" in payload["return_url"]
     assert "checkout=created" in payload["return_url"]
     assert f"checkout_subscription_id={subscription.id}" in payload["return_url"]
 
