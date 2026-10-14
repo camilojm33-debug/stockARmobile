@@ -197,6 +197,10 @@ class AISubscriptionService:
                 # manual management. This works even while paid-through access is
                 # still locally marked ACTIVA, and never strands the UI on a dead MP link.
                 now = utcnow_naive()
+                manual_ends_at = now + timedelta(days=30)
+                previous_ends_at = _parse_dt(ai.get("ends_at"))
+                if previous_ends_at is not None and previous_ends_at > manual_ends_at:
+                    manual_ends_at = previous_ends_at
                 archive_fields = {
                     "mercadopago_previous_preapproval_id": preapproval_id or ai.get("mercadopago_previous_preapproval_id"),
                     "mercadopago_previous_status": remote_status,
@@ -214,7 +218,7 @@ class AISubscriptionService:
                     "status": "ACTIVA",
                     "origin": "MANUAL",
                     "starts_at": now.isoformat(),
-                    "ends_at": (now + timedelta(days=30)).isoformat(),
+                    "ends_at": manual_ends_at.isoformat(),
                     "granted_by_user_id": admin_user_id,
                     "trial_reason": None,
                     "manual_reason": "Activación manual por Super Admin luego de terminar la suscripción Mercado Pago.",
@@ -518,6 +522,12 @@ class AISubscriptionService:
             raise AISubscriptionError("Plan IA inválido.")
         days_int = max(1, min(int(days or 0), 365))
         now = utcnow_naive()
+        trial_ends_at = now + timedelta(days=days_int)
+        previous_ends_at = _parse_dt(ai.get("ends_at"))
+        # Giving a trial after cancelling an MP renewal must never shorten an
+        # already-paid access period. The requested trial length is a minimum.
+        if takeover_fields and previous_ends_at is not None and previous_ends_at > trial_ends_at:
+            trial_ends_at = previous_ends_at
         return cls._apply(
             company,
             admin_user_id=admin_user_id,
@@ -528,7 +538,7 @@ class AISubscriptionService:
                 "status": "TRIAL",
                 "origin": "MANUAL",
                 "starts_at": now.isoformat(),
-                "ends_at": (now + timedelta(days=days_int)).isoformat(),
+                "ends_at": trial_ends_at.isoformat(),
                 "granted_by_user_id": admin_user_id,
                 "trial_reason": (reason or "").strip()[:300] or None,
             },
