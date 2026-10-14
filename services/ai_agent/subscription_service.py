@@ -464,8 +464,8 @@ class AISubscriptionService:
 
         remote = cls._get_mp_preapproval(company)
         remote_id = str(remote.get("id") or "").strip()
-        remote_reference = str(remote.get("external_reference") or "").strip()
         stored_reference = str(ai.get("mercadopago_external_reference") or "").strip()
+        remote_reference = str(remote.get("external_reference") or "").strip() or stored_reference
         parts = dict(
             segment.split(":", 1)
             for segment in remote_reference.split("|")
