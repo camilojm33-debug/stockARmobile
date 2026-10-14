@@ -396,11 +396,11 @@ def _public_user_requested_quantity(messages, product_query: str, *, allow_singl
     # recognized measurement/unit words such as "unidades" or "metros".
     product_token = re.escape(identifying_token)
     quantity_with_product = re.compile(
-        rf"(?<![a-z0-9])(\\d+(?:[.,]\\d+)?)\\s*(?:de\\s+)?{product_token}s?(?![a-z0-9])",
+        rf"(?<![a-z0-9])(\d+(?:[.,]\d+)?)\s*(?:de\s+)?{product_token}s?(?![a-z0-9])",
         re.IGNORECASE,
     )
     product_with_quantity = re.compile(
-        rf"(?<![a-z0-9]){product_token}s?\\s+(?:x|por)\\s*(\\d+(?:[.,]\\d+)?)(?![a-z0-9])",
+        rf"(?<![a-z0-9]){product_token}s?\s+(?:x|por)\s*(\d+(?:[.,]\d+)?)(?![a-z0-9])",
         re.IGNORECASE,
     )
     quantity_action = re.compile(
