@@ -241,3 +241,55 @@ def test_webhook_signature_matches_mercado_pago_manifest():
         x_signature=f"ts={ts},v1={'0' * 64}",
         data_id=data_id,
     )
+
+
+def test_new_standard_preapproval_records_renewal_state_for_safe_cancellation(monkeypatch):
+    import json
+
+    company = SimpleNamespace(id=12)
+    plan = SimpleNamespace(id=4, name="Business", price=29999, currency="ARS")
+    subscription = SimpleNamespace(
+        id=73,
+        company_id=12,
+        status="active",
+        metadata_json="{}",
+        renewal_enabled=True,
+        auto_renew=True,
+        cancel_at_period_end=False,
+    )
+    calls = []
+
+    class FakeSession:
+        def flush(self):
+            calls.append("flush")
+
+        def commit(self):
+            calls.append("commit")
+
+    def create_preapproval(self, **kwargs):
+        calls.append(("create", kwargs["external_reference"]))
+        return {
+            "id": "preapproval-new-state-snapshot",
+            "status": "pending",
+            "init_point": "https://www.mercadopago.com.ar/subscriptions/checkout?preapproval_id=preapproval-new-state-snapshot",
+        }
+
+    monkeypatch.setattr(MercadoPagoService, "create_preapproval", create_preapproval)
+    response = MercadoPagoSubscriptionService.create(
+        db_session=FakeSession(),
+        company=company,
+        subscription=subscription,
+        plan=plan,
+        payer_email="cliente@example.com",
+        notification_url="https://www.stockarmobile.com/admin/webhooks/mercadopago",
+        back_url="https://www.stockarmobile.com/admin/portal?mp_subscription_return=standard&mp_subscription_id=73",
+    )
+
+    metadata = json.loads(subscription.metadata_json)
+    assert response["id"] == "preapproval-new-state-snapshot"
+    assert metadata["checkout_previous_renewal_enabled"] is True
+    assert metadata["checkout_previous_auto_renew"] is True
+    assert metadata["checkout_previous_cancel_at_period_end"] is False
+    assert subscription.renewal_enabled is False
+    assert subscription.auto_renew is False
+    assert subscription.cancel_at_period_end is True
