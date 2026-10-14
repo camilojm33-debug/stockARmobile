@@ -107,7 +107,15 @@ def test_standard_active_ai_missing_can_start_ai_checkout(subscription_app, monk
     response = client.post("/admin/subscription/ai-agent/checkout", data={"plan_code": "inicio", "payment_method": "automatic"})
 
     assert response.status_code == 302
-    assert response.headers["Location"] == "https://mp.test/ai-new"
+    assert "/admin/portal?" in response.headers["Location"]
+    assert "checkout=ai_created" in response.headers["Location"]
+    assert "ai_preapproval_id=" in response.headers["Location"]
+    portal = client.get(response.headers["Location"])
+    html = portal.get_data(as_text=True)
+    assert portal.status_code == 200
+    assert "CHECKOUT LISTO" in html
+    assert "Abrir Mercado Pago" in html
+    assert "Cancelar autorización mensual" in html
     assert calls[0][0] == "create"
     assert calls[0][1]["amount"] == AISubscriptionService.plan_amount_ars("inicio")
     assert "ai_subscription:true" in calls[0][1]["external_reference"]
@@ -179,6 +187,7 @@ def test_ai_plans_page_posts_directly_to_ai_checkout(subscription_app):
     assert 'name="payment_method" value="automatic"' in html
     assert 'name="payment_method" value="qr"' in html
     assert '>Contratar<' not in html
+    assert 'data-mp-checkout-mode="new-tab"' in html
     # Regression: recurring checkout must navigate explicitly after its AJAX
     # response rather than relying solely on a cross-origin form POST redirect.
     assert "X-Requested-With" in html
@@ -208,7 +217,7 @@ def test_pending_ai_automatic_checkout_form_skips_global_loading_overlay(subscri
     html = response.get_data(as_text=True)
 
     assert response.status_code == 200
-    assert 'action="/admin/subscription/ai-agent/checkout" data-mp-external-checkout="true" class="d-grid gap-2"' in html
+    assert 'action="/admin/subscription/ai-agent/checkout" data-mp-external-checkout="true" data-mp-checkout-mode="new-tab" class="d-grid gap-2"' in html
     assert "Continuar autorización mensual" in html
 
 
@@ -680,7 +689,7 @@ def test_standard_active_ai_active_different_plan_does_not_cancel_or_create(subs
 
 def test_standard_active_ai_pending_can_continue_same_ai_checkout(subscription_app, monkeypatch):
     company, user, _, subscription = _tenant_with_standard_subscription()
-    update_ai_preferences(company, ai_updates={"plan_code": "inicio", "status": "PENDIENTE", "origin": "MERCADO_PAGO", "mercadopago_preapproval_id": "ai-pre"})
+    update_ai_preferences(company, ai_updates={"plan_code": "inicio", "status": "PENDIENTE", "origin": "MERCADO_PAGO", "mercadopago_preapproval_id": "ai-pre", "mercadopago_external_reference": f"ai_subscription:true|company_id:{company.id}|plan_code:inicio|nonce:ai-pre", "checkout_method": "automatic"})
     db.session.commit()
     before = _standard_snapshot(subscription)
     calls = _mock_preapproval(monkeypatch)
@@ -690,7 +699,8 @@ def test_standard_active_ai_pending_can_continue_same_ai_checkout(subscription_a
     response = client.post("/admin/subscription/ai-agent/checkout", data={"plan_code": "inicio", "payment_method": "automatic"})
 
     assert response.status_code == 302
-    assert response.headers["Location"] == "https://mp.test/ai-pre"
+    assert "/admin/portal?" in response.headers["Location"]
+    assert "checkout=ai_created" in response.headers["Location"]
     assert calls == [("get", "ai-pre")]
     assert AISubscriptionService.get_status(company)["status"] == "PENDIENTE"
     assert _standard_snapshot(subscription) == before
@@ -829,7 +839,8 @@ def test_ai_pending_abandoned_checkout_remains_pending(subscription_app, monkeyp
     response = client.post("/admin/subscription/ai-agent/checkout", data={"plan_code": "inicio", "payment_method": "automatic"})
 
     assert response.status_code == 302
-    assert response.headers["Location"] == "https://mp.test/abandoned"
+    assert "/admin/portal?" in response.headers["Location"]
+    assert "checkout=ai_created" in response.headers["Location"]
     assert calls[0][0] == "create"
     status = AISubscriptionService.get_status(company)
     assert status["status"] == "PENDIENTE"
@@ -846,8 +857,10 @@ def test_double_click_ai_checkout_reuses_pending_preapproval(subscription_app, m
     first = client.post("/admin/subscription/ai-agent/checkout", data={"plan_code": "inicio", "payment_method": "automatic"})
     second = client.post("/admin/subscription/ai-agent/checkout", data={"plan_code": "inicio", "payment_method": "automatic"})
 
-    assert first.headers["Location"] == "https://mp.test/double"
-    assert second.headers["Location"] == "https://mp.test/ai-pre-double"
+    assert "/admin/portal?" in first.headers["Location"]
+    assert "/admin/portal?" in second.headers["Location"]
+    assert "checkout=ai_created" in first.headers["Location"]
+    assert "checkout=ai_created" in second.headers["Location"]
     assert [kind for kind, _ in calls] == ["create", "get"]
     assert AISubscriptionService.get_status(company)["status"] == "PENDIENTE"
     assert _standard_snapshot(subscription)["status"] == SubscriptionService.STATE_ACTIVE
@@ -893,7 +906,8 @@ def test_standard_active_ai_cancelled_can_start_ai_again(subscription_app, monke
     response = client.post("/admin/subscription/ai-agent/checkout", data={"plan_code": "inicio", "payment_method": "automatic"})
 
     assert response.status_code == 302
-    assert response.headers["Location"] == "https://mp.test/ai-renew"
+    assert "/admin/portal?" in response.headers["Location"]
+    assert "checkout=ai_created" in response.headers["Location"]
     assert calls[0][0] == "create"
     status = AISubscriptionService.get_status(company)
     assert status["status"] == "PENDIENTE"
@@ -1580,7 +1594,7 @@ def test_standard_auto_subscription_checkout_returns_json_redirect_for_ajax(subs
 
 def test_ai_auto_subscription_checkout_returns_json_redirect_for_ajax(subscription_app, monkeypatch):
     company, user, _, subscription = _tenant_with_standard_subscription()
-    update_ai_preferences(company, ai_updates={"plan_code": "inicio", "status": "PENDIENTE", "origin": "MERCADO_PAGO", "mercadopago_preapproval_id": "ai-pre"})
+    update_ai_preferences(company, ai_updates={"plan_code": "inicio", "status": "PENDIENTE", "origin": "MERCADO_PAGO", "mercadopago_preapproval_id": "ai-pre", "mercadopago_external_reference": f"ai_subscription:true|company_id:{company.id}|plan_code:inicio|nonce:ai-pre", "checkout_method": "automatic"})
     db.session.commit()
     _mock_preapproval(monkeypatch)
     client = subscription_app.test_client()
@@ -1593,7 +1607,12 @@ def test_ai_auto_subscription_checkout_returns_json_redirect_for_ajax(subscripti
     )
 
     assert response.status_code == 200
-    assert response.get_json() == {"success": True, "redirect_url": "https://mp.test/ai-pre"}
+    payload = response.get_json()
+    assert payload["success"] is True
+    assert payload["redirect_url"] == "https://mp.test/ai-pre"
+    assert "/admin/portal?" in payload["return_url"]
+    assert "checkout=ai_created" in payload["return_url"]
+    assert "ai_preapproval_id=ai-pre" in payload["return_url"]
     assert _standard_snapshot(subscription)["status"] == SubscriptionService.STATE_ACTIVE
 
 
@@ -3055,3 +3074,265 @@ def test_cancel_standard_same_plan_monthly_checkout_restores_previous_renewal_fl
     assert metadata["checkout_previous_renewal_enabled"] is None
     assert metadata["checkout_previous_auto_renew"] is None
     assert metadata["checkout_previous_cancel_at_period_end"] is None
+
+
+def test_ai_monthly_checkout_recovers_from_server_state_after_session_is_lost(subscription_app, monkeypatch):
+    from services.mercadopago_service import MercadoPagoService
+
+    company, user, _, standard_subscription = _tenant_with_standard_subscription()
+    before_standard = _standard_snapshot(standard_subscription)
+    external_reference = (
+        f"ai_subscription:true|company_id:{company.id}|plan_code:vendedor|nonce:recover-session"
+    )
+    update_ai_preferences(
+        company,
+        ai_updates={
+            "plan_code": "vendedor",
+            "status": "PENDIENTE",
+            "origin": "MERCADO_PAGO",
+            "mercadopago_preapproval_id": "ai-pre-session-recovery",
+            "mercadopago_external_reference": external_reference,
+            "mercadopago_status": "pending",
+            "checkout_method": "automatic",
+            "mercadopago_payer_email": user.email,
+        },
+    )
+    db.session.commit()
+
+    monkeypatch.setattr(
+        MercadoPagoService,
+        "get_preapproval",
+        lambda self, preapproval_id: {
+            "id": preapproval_id,
+            "status": "pending",
+            "external_reference": external_reference,
+            "init_point": "https://mp.test/ai-session-recovered",
+        },
+    )
+    client = subscription_app.test_client()
+    _login(client, user)
+    with client.session_transaction() as stored:
+        stored.pop("ai_auto_checkout_preview", None)
+        stored.pop("mp_checkout_preview", None)
+
+    response = client.get("/admin/portal")
+    html = response.get_data(as_text=True)
+
+    assert response.status_code == 200
+    assert "CHECKOUT LISTO" in html
+    assert "Abrir Mercado Pago" in html
+    assert "https://mp.test/ai-session-recovered" in html
+    assert "Cancelar autorización mensual" in html
+    assert _standard_snapshot(standard_subscription) == before_standard
+
+
+def test_ai_monthly_checkout_cancel_restores_manual_trial_without_touching_standard(subscription_app, monkeypatch):
+    from app import db
+    from datetime import timedelta
+    from services.mercadopago_service import MercadoPagoService
+    from stockarmobile.helpers.dates import utcnow_naive
+
+    company, user, _, standard_subscription = _tenant_with_standard_subscription()
+    before_standard = _standard_snapshot(standard_subscription)
+    now = utcnow_naive()
+    trial_ends = (now + timedelta(days=14)).isoformat()
+    update_ai_preferences(
+        company,
+        ai_updates={
+            "plan_code": "inicio",
+            "status": "TRIAL",
+            "origin": "MANUAL",
+            "starts_at": now.isoformat(),
+            "ends_at": trial_ends,
+            "granted_by_user_id": user.id,
+            "trial_reason": "Trial comercial previo",
+            "mercadopago_preapproval_id": None,
+            "mercadopago_external_reference": None,
+            "mercadopago_status": None,
+            "checkout_method": None,
+        },
+    )
+    db.session.commit()
+    created = {}
+
+    def create_preapproval(self, **kwargs):
+        created["reference"] = kwargs["external_reference"]
+        return {
+            "id": "ai-pre-cancel-trial",
+            "status": "pending",
+            "init_point": "https://mp.test/ai-cancel-trial",
+        }
+
+    def get_preapproval(self, preapproval_id):
+        return {
+            "id": preapproval_id,
+            "status": "pending",
+            "external_reference": created["reference"],
+            "init_point": "https://mp.test/ai-cancel-trial",
+        }
+
+    def cancel_preapproval(self, preapproval_id):
+        assert preapproval_id == "ai-pre-cancel-trial"
+        return {"id": preapproval_id, "status": "cancelled"}
+
+    monkeypatch.setattr(MercadoPagoService, "create_preapproval", create_preapproval)
+    monkeypatch.setattr(MercadoPagoService, "get_preapproval", get_preapproval)
+    monkeypatch.setattr(MercadoPagoService, "cancel_preapproval", cancel_preapproval)
+
+    client = subscription_app.test_client()
+    _login(client, user)
+    created_response = client.post(
+        "/admin/subscription/ai-agent/checkout",
+        data={"plan_code": "vendedor", "payment_method": "automatic"},
+    )
+    assert created_response.status_code == 302
+    assert "checkout=ai_created" in created_response.headers["Location"]
+
+    portal = client.get(created_response.headers["Location"])
+    portal_html = portal.get_data(as_text=True)
+    assert portal.status_code == 200
+    assert "Cancelar autorización mensual" in portal_html
+    pending_ai = AISubscriptionService.get_status(company)
+    assert pending_ai["status"] == "PENDIENTE"
+    assert pending_ai["plan_code"] == "vendedor"
+    assert isinstance(AISubscriptionService._ai_prefs(company).get("checkout_previous_ai_subscription"), dict)
+
+    cancelled = client.post(
+        "/admin/subscription/ai-agent/cancel",
+        data={"confirm_ai_cancel": "1", "from_checkout": "1"},
+        follow_redirects=False,
+    )
+    assert cancelled.status_code == 302
+    restored = AISubscriptionService.get_status(company)
+    stored_ai = AISubscriptionService._ai_prefs(company)
+    assert restored["status"] == "TRIAL"
+    assert restored["origin"] == "MANUAL"
+    assert restored["plan_code"] == "inicio"
+    assert restored["trial_reason"] == "Trial comercial previo"
+    assert restored["ends_at"] == trial_ends
+    assert restored["mercadopago_preapproval_id"] is None
+    assert stored_ai["checkout_previous_ai_subscription"] is None
+    assert stored_ai["mercadopago_cancelled_preapproval_id"] == "ai-pre-cancel-trial"
+    assert _standard_snapshot(standard_subscription) == before_standard
+
+
+def test_ai_authorized_return_clears_pending_checkout_card(subscription_app, monkeypatch):
+    from app import db
+    from services.mercadopago_service import MercadoPagoService
+
+    company, user, _, standard_subscription = _tenant_with_standard_subscription()
+    before_standard = _standard_snapshot(standard_subscription)
+    external_reference = (
+        f"ai_subscription:true|company_id:{company.id}|plan_code:inicio|nonce:return-authorized"
+    )
+    update_ai_preferences(
+        company,
+        ai_updates={
+            "plan_code": "inicio",
+            "status": "PENDIENTE",
+            "origin": "MERCADO_PAGO",
+            "mercadopago_preapproval_id": "ai-pre-return-authorized",
+            "mercadopago_external_reference": external_reference,
+            "mercadopago_status": "pending",
+            "checkout_method": "automatic",
+            "ends_at": None,
+        },
+    )
+    db.session.commit()
+    monkeypatch.setattr(
+        MercadoPagoService,
+        "get_preapproval",
+        lambda self, preapproval_id: {
+            "id": preapproval_id,
+            "status": "authorized",
+            "external_reference": external_reference,
+            "next_payment_date": "2026-11-14T00:00:00Z",
+        },
+    )
+    client = subscription_app.test_client()
+    _login(client, user)
+
+    response = client.get("/admin/portal?mp_subscription_return=ai")
+    html = response.get_data(as_text=True)
+    status = AISubscriptionService.get_status(company)
+
+    assert response.status_code == 200
+    assert status["status"] == "ACTIVA"
+    assert status["mercadopago_status"] == "authorized"
+    assert AISubscriptionService._ai_prefs(company)["checkout_previous_ai_subscription"] is None
+    assert "CHECKOUT LISTO" not in html
+    assert _standard_snapshot(standard_subscription) == before_standard
+
+
+
+def test_ai_terminal_preapproval_webhook_restores_pre_checkout_trial(subscription_app):
+    from app import db
+    from datetime import timedelta
+    from stockarmobile.helpers.dates import utcnow_naive
+
+    company, _, _, standard_subscription = _tenant_with_standard_subscription()
+    before_standard = _standard_snapshot(standard_subscription)
+    now = utcnow_naive()
+    trial_ends = (now + timedelta(days=9)).isoformat()
+    external_reference = (
+        f"ai_subscription:true|company_id:{company.id}|plan_code:inicio|nonce:webhook-cancel-restore"
+    )
+    previous_ai = {
+        "plan_code": "inicio",
+        "status": "TRIAL",
+        "origin": "MANUAL",
+        "starts_at": now.isoformat(),
+        "ends_at": trial_ends,
+        "trial_reason": "Trial manual anterior",
+        "granted_by_user_id": None,
+        "manual_reason": None,
+        "mercadopago_preapproval_id": None,
+        "mercadopago_external_reference": None,
+        "mercadopago_payer_email": None,
+        "mercadopago_status": None,
+        "checkout_method": None,
+        "auto_renew": False,
+        "last_payment_id": None,
+        "last_payment_status": None,
+        "last_payment_at": None,
+        "last_payment_amount": None,
+        "last_payment_currency": None,
+    }
+    update_ai_preferences(
+        company,
+        ai_updates={
+            "plan_code": "vendedor",
+            "status": "PENDIENTE",
+            "origin": "MERCADO_PAGO",
+            "starts_at": now.isoformat(),
+            "ends_at": trial_ends,
+            "mercadopago_preapproval_id": "ai-pre-webhook-restore",
+            "mercadopago_external_reference": external_reference,
+            "mercadopago_status": "pending",
+            "checkout_method": "automatic",
+            "checkout_previous_ai_subscription": previous_ai,
+        },
+    )
+    db.session.commit()
+
+    synced = AISubscriptionService.sync_from_mercadopago(
+        preapproval={
+            "id": "ai-pre-webhook-restore",
+            "status": "cancelled",
+            "external_reference": external_reference,
+        }
+    )
+    status = AISubscriptionService.get_status(company)
+    stored = AISubscriptionService._ai_prefs(company)
+
+    assert synced.id == company.id
+    assert status["status"] == "TRIAL"
+    assert status["origin"] == "MANUAL"
+    assert status["plan_code"] == "inicio"
+    assert status["trial_reason"] == "Trial manual anterior"
+    assert status["ends_at"] == trial_ends
+    assert status["mercadopago_preapproval_id"] is None
+    assert stored["checkout_previous_ai_subscription"] is None
+    assert stored["mercadopago_cancelled_preapproval_id"] == "ai-pre-webhook-restore"
+    assert _standard_snapshot(standard_subscription) == before_standard
+
