@@ -1227,3 +1227,137 @@ def test_webchat_frontend_guards_click_enter_and_manual_retries():
     assert "function safeMessageUrl(value)" in source
     assert "const heading = trimmed.match(/^#{1,6}\\s+(.+)$/)" in source
     assert "const bullet = trimmed.match(/^(?:\\*|-)\\s+(.+)$/)" in source
+
+
+def test_public_quantity_extractor_recognizes_product_nouns_and_quantity_corrections():
+    from decimal import Decimal
+    from types import SimpleNamespace
+    from services.ai_agent.orchestrator_v2 import _public_user_requested_quantity
+
+    assert _public_user_requested_quantity(
+        [SimpleNamespace(content="hola quiero 5 cocas")],
+        "coca",
+    ) == Decimal("5")
+    assert _public_user_requested_quantity(
+        [SimpleNamespace(content="5 coca")],
+        "coca",
+    ) == Decimal("5")
+    assert _public_user_requested_quantity(
+        [SimpleNamespace(content="quiero 5 cajas de coca")],
+        "coca",
+    ) == Decimal("5")
+    assert _public_user_requested_quantity(
+        [SimpleNamespace(content="5 te dije")],
+        "coca",
+        allow_single_item_update=True,
+    ) == Decimal("5")
+    assert _public_user_requested_quantity(
+        [SimpleNamespace(content="celular 986578495 y entrega en calle 456, Resistencia")],
+        "coca",
+        allow_single_item_update=True,
+    ) is None
+
+
+def test_public_webchat_builds_quote_using_quantity_in_product_noun_phrase(qa_public_vendor_db, monkeypatch):
+    from app import Product, db
+    from services.ai_agent.orchestrator_v2 import VendorOrderPreviewTool, VendorOrderService
+    from services.ai_agent.vendor_order_service import CART_KEY
+    from stockarmobile.models.conversations import Conversation, ConversationMessage
+
+    setup = qa_public_vendor_db
+    observed = {}
+    with setup["app"].app_context():
+        try:
+            product = Product.query.filter_by(
+                id=setup["product"].id,
+                company_id=setup["company"].id,
+            ).first()
+            product.name = "Coca"
+            product.price = 6090
+            product.stock = 436
+            product.unit_measure = "unidad"
+            conversation = Conversation(
+                company_id=setup["company"].id,
+                channel="webchat",
+                external_conversation_id="qa-webchat-five-cocas",
+                status="open",
+                metadata_json={
+                    CART_KEY: {},
+                    "customer_name": "Walter Nuñez",
+                    "customer_phone": "986578495",
+                    "delivery": {
+                        "method": "envio",
+                        "recipient_name": "Walter Nuñez",
+                        "phone": "986578495",
+                        "address": "calle robertito funes 456",
+                        "city": "Resistencia",
+                        "province": "Chaco",
+                    },
+                },
+            )
+            db.session.add(conversation)
+            db.session.flush()
+            # Reproduce the actual customer flow: quantity first, product clarification,
+            # then delivery/contact details. None of these later turns should erase 5.
+            messages = [
+                "hola quiero 5 cocas",
+                "coca",
+                "con envio a calle robertito funes 456 resistencia chaco. cel 986578495",
+                "walter nuñez",
+            ]
+            for content in messages:
+                db.session.add(ConversationMessage(
+                    conversation_id=conversation.id,
+                    company_id=setup["company"].id,
+                    sender_type="customer",
+                    role="user",
+                    content=content,
+                ))
+            db.session.flush()
+
+            def fake_create_pending_order(**kwargs):
+                cart = VendorOrderService.get_cart(
+                    company_id=setup["company"].id,
+                    conversation_id=conversation.id,
+                )
+                observed["items"] = cart["items"]
+                observed["total"] = cart["total"]
+                observed.update(kwargs)
+                return {
+                    "success": True,
+                    "quote_number": "P-WEBCHAT-QA",
+                    "total": cart["total"],
+                    "payment_url": "https://payments.example.test/pending",
+                }
+
+            monkeypatch.setattr(
+                VendorOrderService,
+                "create_pending_order",
+                staticmethod(fake_create_pending_order),
+            )
+            tool = VendorOrderPreviewTool(
+                company_id=setup["company"].id,
+                conversation_id=conversation.id,
+                channel="webchat",
+            )
+            result = tool.execute(
+                product_query="coca",
+                quantity=1,
+                customer_name="Walter Nuñez",
+                customer_phone="986578495",
+                delivery_method="envio",
+                delivery_address="calle robertito funes 456",
+                delivery_city="Resistencia",
+                delivery_province="Chaco",
+            )
+
+            assert result["success"] is True
+            assert result["quote_number"] == "P-WEBCHAT-QA"
+            assert len(observed["items"]) == 1
+            assert observed["items"][0]["name"] == "Coca"
+            assert observed["items"][0]["quantity"] == 5
+            assert observed["total"] == 30450
+            assert observed["delivery_method"] == "envio"
+            assert observed["delivery_address"] == "calle robertito funes 456"
+        finally:
+            db.session.rollback()
