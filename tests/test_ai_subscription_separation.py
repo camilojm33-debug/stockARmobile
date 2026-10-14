@@ -2625,7 +2625,7 @@ def test_standard_automatic_checkout_recovers_from_legacy_null_command(subscript
     portal_response = client.get(portal_url)
     assert portal_response.status_code == 200
     assert b"Abrir Mercado Pago" in portal_response.data
-    assert b"Cancelar autorización mensual" in portal_response.data
+    assert "Cancelar autorización mensual".encode("utf-8") in portal_response.data
     assert b"https://mp.test/standard-recovered" in portal_response.data
 
     cancelled = []
