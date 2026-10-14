@@ -46,6 +46,11 @@ AI_CHECKOUT_SNAPSHOT_KEYS = (
     "mercadopago_previous_status",
     "mercadopago_previous_external_reference",
     "mercadopago_next_payment_date",
+    "last_payment_id",
+    "last_payment_status",
+    "last_payment_at",
+    "last_payment_amount",
+    "last_payment_currency",
     "checkout_method",
     "auto_renew",
 )
@@ -1019,12 +1024,49 @@ class AISubscriptionService:
             "cancelled": "CANCELADA",
             "canceled": "CANCELADA",
             "expired": "VENCIDA",
+            "rejected": "CANCELADA",
         }
         new_status = status_map.get(mp_status)
         if new_status is None:
             return company
 
         current_ai = cls._ai_prefs(company)
+        current_local_status = str(current_ai.get("status") or "").strip().upper()
+        current_checkout_method = str(current_ai.get("checkout_method") or "").strip().lower()
+        pending_snapshot = current_ai.get("checkout_previous_ai_subscription")
+        if (
+            current_local_status == "PENDIENTE"
+            and current_checkout_method == "automatic"
+            and mp_status in {"cancelled", "canceled", "expired", "rejected"}
+            and isinstance(pending_snapshot, dict)
+        ):
+            # A never-authorized monthly checkout must not inherit the previous
+            # trial's ends_at and be mistaken for a cancelled paid subscription.
+            # Restore the exact previous AI state after verifying this preapproval
+            # ID and tenant reference above; the standard plan is not touched.
+            restored_fields = {
+                key: pending_snapshot.get(key)
+                for key in AI_CHECKOUT_SNAPSHOT_KEYS
+            }
+            restored_fields.update({
+                "checkout_previous_ai_subscription": None,
+                "mercadopago_create_attempt_reference": None,
+                "mercadopago_create_attempt_plan_code": None,
+                "mercadopago_cancelled_preapproval_id": preapproval_id,
+                "mercadopago_cancelled_external_reference": external_reference,
+                "mercadopago_cancelled_status": mp_status,
+                "mercadopago_cancelled_at": utcnow_naive().isoformat(),
+                "mercadopago_cancelled_by_user_id": None,
+            })
+            cls._apply(
+                company,
+                admin_user_id=None,
+                action="ai_subscription_pending_checkout_ended",
+                new_fields=restored_fields,
+                reason=f"Mercado Pago terminó la autorización IA antes de ser aprobada ({mp_status}).",
+            )
+            return company
+
         paid_until = _parse_dt(current_ai.get("ends_at"))
         now = utcnow_naive()
         has_paid_access = bool(
