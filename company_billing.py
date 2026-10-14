@@ -1114,7 +1114,8 @@ def _persisted_standard_auto_preview(company, *, subscription_id=None):
 def _ai_auto_checkout_preview(company, *, requested_preapproval_id=None):
     """Recover a pending AI monthly authorization with the same safety as standard billing."""
     from app import db
-    from services.ai_agent.subscription_service import AISubscriptionService
+    from services.ai_agent.subscription_service import AISubscriptionError, AISubscriptionService
+    from services.ai_agent.usage_service import AI_PLAN_BY_CODE
     from services.mercadopago_service import MercadoPagoService
 
     ai = AISubscriptionService._ai_prefs(company)
@@ -2318,7 +2319,39 @@ def create_checkout():
     # checkout de Mercado Pago directamente. Los flujos QR existentes siguen
     # mostrando su pantalla de resumen cuando no solicitan esta modalidad.
     if request.form.get("direct_checkout") == "1":
-        return _checkout_redirect_response(checkout_url)
+        external_reference = (
+            external_reference
+            or str(response.get("external_reference") or "").strip()
+            or str(AISubscriptionService._ai_prefs(company).get("mercadopago_external_reference") or "").strip()
+        )
+        if not external_reference:
+            raise AISubscriptionError(
+                "No se pudo guardar una referencia verificable para la autorización IA. No se redirigió a Mercado Pago."
+            )
+        session["ai_auto_checkout_preview"] = {
+            "company_id": int(company.id),
+            "preapproval_id": preapproval_id,
+            "external_reference": external_reference,
+            "plan_code": plan_code,
+            "checkout_url": checkout_url,
+        }
+        return_url = url_for(
+            "company_billing.subscription_portal",
+            checkout="ai_created",
+            ai_preapproval_id=preapproval_id,
+            _anchor="payment-checkout",
+        )
+        if _wants_json_response():
+            return jsonify({
+                "success": True,
+                "redirect_url": checkout_url,
+                "return_url": return_url,
+            })
+        flash(
+            "Checkout mensual IA listo. Mercado Pago se abre aparte; podés volver acá y cancelar si el cliente cambia de opinión.",
+            "info",
+        )
+        return redirect(return_url)
 
     _remember_standard_qr_checkout(company, subscription, preference)
     flash("Pago con QR listo. Escanealo o abrí Mercado Pago para pagar este ciclo.", "info")
@@ -2417,6 +2450,7 @@ def create_ai_subscription_checkout():
     current_plan_code = str(ai_status.get("plan_code") or "").strip().lower()
     existing_preapproval_id = str(ai_status.get("mercadopago_preapproval_id") or "").strip()
     current_origin = str(ai_status.get("origin") or "").strip().upper()
+    external_reference = str(ai_status.get("mercadopago_external_reference") or "").strip()
 
     if payment_method == "qr":
         # Recuperación de datos históricos: antes, la opción etiquetada QR creaba
@@ -2577,6 +2611,27 @@ def create_ai_subscription_checkout():
                 ) from exc
             remote_status = str(remote.get("status") or "").strip().lower()
             remote_init_point = str(remote.get("init_point") or "").strip()
+            remote_reference = str(remote.get("external_reference") or "").strip()
+            if remote_reference:
+                remote_parts = dict(
+                    segment.split(":", 1)
+                    for segment in remote_reference.split("|")
+                    if ":" in segment
+                )
+                if (
+                    (external_reference and external_reference != remote_reference)
+                    or remote_parts.get("ai_subscription") != "true"
+                    or str(remote_parts.get("company_id") or "") != str(company.id)
+                    or str(remote_parts.get("plan_code") or "").strip().lower() != plan_code
+                ):
+                    raise AISubscriptionError(
+                        "La autorización mensual IA no coincide con la empresa o el plan seleccionado. No se creó otro checkout."
+                    )
+                external_reference = remote_reference
+            elif not external_reference:
+                raise AISubscriptionError(
+                    "No se pudo verificar la referencia de la autorización IA pendiente. No se creó otro checkout."
+                )
             if remote_status == "authorized":
                 AISubscriptionService.sync_from_mercadopago(preapproval=remote)
                 flash("Mercado Pago ya autorizó tu suscripción IA. El estado se actualizó.", "success")
@@ -2603,10 +2658,30 @@ def create_ai_subscription_checkout():
             attempt_plan_code = str(ai_status.get("mercadopago_create_attempt_plan_code") or "").strip().lower()
             if attempt_reference and attempt_plan_code == plan_code:
                 external_reference = attempt_reference
+                current_ai_preferences = AISubscriptionService._ai_prefs(company)
+                if not isinstance(current_ai_preferences.get("checkout_previous_ai_subscription"), dict):
+                    from services.ai_agent.subscription_service import AI_CHECKOUT_SNAPSHOT_KEYS
+                    snapshot = {
+                        key: current_ai_preferences.get(key)
+                        for key in AI_CHECKOUT_SNAPSHOT_KEYS
+                    }
+                    AISubscriptionService._apply(
+                        company,
+                        admin_user_id=None,
+                        action="ai_subscription_checkout_snapshot_recovered",
+                        new_fields={"checkout_previous_ai_subscription": snapshot},
+                        reason="Se recuperó el estado previo de IA para poder cancelar con seguridad el checkout.",
+                    )
             else:
                 external_reference = (
                     f"ai_subscription:true|company_id:{company.id}|plan_code:{plan_code}|nonce:{uuid.uuid4().hex}"
                 )
+                from services.ai_agent.subscription_service import AI_CHECKOUT_SNAPSHOT_KEYS
+                current_ai_preferences = AISubscriptionService._ai_prefs(company)
+                snapshot = {
+                    key: current_ai_preferences.get(key)
+                    for key in AI_CHECKOUT_SNAPSHOT_KEYS
+                }
                 AISubscriptionService._apply(
                     company,
                     admin_user_id=None,
@@ -2614,8 +2689,9 @@ def create_ai_subscription_checkout():
                     new_fields={
                         "mercadopago_create_attempt_reference": external_reference,
                         "mercadopago_create_attempt_plan_code": plan_code,
+                        "checkout_previous_ai_subscription": snapshot,
                     },
-                    reason="Intento recurrente independiente del plan estándar, persistido antes de invocar Mercado Pago.",
+                    reason="Intento recurrente IA persistido antes de llamar a Mercado Pago, con estado previo para restauración si se cancela.",
                 )
             config = load_billing_config()
             from urllib.parse import parse_qsl, urlencode, urlsplit, urlunsplit
@@ -2628,7 +2704,7 @@ def create_ai_subscription_checkout():
                 ai_back_parts.netloc,
                 ai_back_parts.path,
                 urlencode(ai_back_query),
-                ai_back_parts.fragment,
+                "payment-checkout",
             ))
             response = mp_service.create_preapproval(
                 reason=f"StockArMobile IA - Plan {plan['name']}",
