@@ -2644,7 +2644,9 @@ def subscription_change_confirm():
     from app import Company, Subscription, db, record_audit
 
     company_id = getattr(current_user, "company_id", None)
-    company = Company.query.filter_by(id=company_id).first_or_404()
+    # Serialize QR plan changes at the tenant boundary so simultaneous submits
+    # see the pending checkout created by the first request.
+    company = Company.query.filter_by(id=company_id).with_for_update().first_or_404()
 
     plan_id = request.form.get("plan_id", type=int)
     plan = PlanService.get_plan(plan_id=plan_id)
