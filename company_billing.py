@@ -1110,6 +1110,200 @@ def _persisted_standard_auto_preview(company, *, subscription_id=None):
     return None
 
 
+
+def _ai_auto_checkout_preview(company, *, requested_preapproval_id=None):
+    """Recover a pending AI monthly authorization with the same safety as standard billing."""
+    from app import db
+    from services.ai_agent.subscription_service import AISubscriptionService
+    from services.mercadopago_service import MercadoPagoService
+
+    ai = AISubscriptionService._ai_prefs(company)
+    preapproval_id = str(ai.get("mercadopago_preapproval_id") or "").strip()
+    external_reference = str(ai.get("mercadopago_external_reference") or "").strip()
+    plan_code = str(ai.get("plan_code") or "").strip().lower()
+    local_status = str(ai.get("status") or "").strip().upper()
+    origin = str(ai.get("origin") or "").strip().upper()
+    checkout_method = str(ai.get("checkout_method") or "").strip().lower()
+    if (
+        local_status != "PENDIENTE"
+        or origin != "MERCADO_PAGO"
+        or checkout_method != "automatic"
+        or not preapproval_id
+        or (requested_preapproval_id and str(requested_preapproval_id) != preapproval_id)
+    ):
+        remembered = session.get("ai_auto_checkout_preview")
+        if isinstance(remembered, dict) and int(remembered.get("company_id") or 0) == int(company.id):
+            session.pop("ai_auto_checkout_preview", None)
+        return None
+
+    remembered = session.get("ai_auto_checkout_preview")
+    remembered_matches = False
+    remembered_url = ""
+    remembered_reference = ""
+    if isinstance(remembered, dict):
+        try:
+            remembered_matches = (
+                int(remembered.get("company_id") or 0) == int(company.id)
+                and str(remembered.get("preapproval_id") or "").strip() == preapproval_id
+                and str(remembered.get("plan_code") or "").strip().lower() == plan_code
+            )
+        except (TypeError, ValueError):
+            remembered_matches = False
+        if remembered_matches:
+            remembered_url = str(remembered.get("checkout_url") or "").strip()
+            remembered_reference = str(remembered.get("external_reference") or "").strip()
+
+    def build_pending_preview(checkout_url):
+        from urllib.parse import urlparse
+        parsed = urlparse(checkout_url)
+        allowed_hosts = {
+            "www.mercadopago.com", "mercadopago.com", "sandbox.mercadopago.com",
+            "www.mercadopago.com.ar", "mercadopago.com.ar", "sandbox.mercadopago.com.ar",
+            "www.mercadopago.com.br", "www.mercadopago.com.mx", "www.mercadopago.com.cl",
+            "www.mercadopago.com.co", "www.mercadopago.com.uy", "www.mercadopago.com.pe",
+        }
+        if current_app.testing and parsed.hostname == "mp.test":
+            allowed_hosts.add("mp.test")
+        if parsed.scheme != "https" or parsed.hostname not in allowed_hosts:
+            return None
+        try:
+            amount = AISubscriptionService.plan_amount_ars(plan_code)
+        except (AISubscriptionError, RuntimeError, ValueError):
+            return None
+        return {
+            "kind": "ai_subscription",
+            "company_id": company.id,
+            "preapproval_id": preapproval_id,
+            "external_reference": external_reference,
+            "plan_code": plan_code,
+            "plan_name": AI_PLAN_BY_CODE[plan_code]["name"],
+            "amount": amount,
+            "currency": "ARS",
+            "status": "pending",
+            "checkout_url": checkout_url,
+            "qr_data_uri": "",
+        }
+
+    try:
+        remote = MercadoPagoService().get_preapproval(preapproval_id)
+    except Exception:
+        current_app.logger.warning(
+            "No se pudo consultar Mercado Pago para recuperar el checkout IA company_id=%s preapproval_id=%s",
+            company.id,
+            preapproval_id,
+            exc_info=True,
+        )
+        # The just-created, tenant-bound session entry is a safe temporary fallback
+        # when Mercado Pago is unavailable. Cancellation still verifies with MP before
+        # changing the subscription, so this never disables the safety checks.
+        if remembered_matches and remembered_url and external_reference and remembered_reference == external_reference:
+            preview = build_pending_preview(remembered_url)
+            if preview:
+                return preview
+        return None
+
+    remote_id = str(remote.get("id") or "").strip()
+    remote_status = str(remote.get("status") or "").strip().lower()
+    remote_reference = str(remote.get("external_reference") or "").strip()
+    if not remote_reference and remembered_matches and remembered_reference == external_reference:
+        # Mercado Pago responses can omit external_reference on some read paths.
+        # Only trust the same server-created session attempt when the ID matches.
+        remote_reference = remembered_reference
+    parts = dict(
+        segment.split(":", 1)
+        for segment in remote_reference.split("|")
+        if ":" in segment
+    )
+    if (
+        remote_id != preapproval_id
+        or not remote_reference
+        or (external_reference and remote_reference != external_reference)
+        or parts.get("ai_subscription") != "true"
+        or str(parts.get("company_id") or "") != str(company.id)
+        or str(parts.get("plan_code") or "").strip().lower() != plan_code
+    ):
+        current_app.logger.warning(
+            "Se omitió un checkout IA cuya pertenencia no pudo verificarse company_id=%s preapproval_id=%s",
+            company.id,
+            preapproval_id,
+        )
+        return None
+
+    if remote_status == "authorized":
+        try:
+            AISubscriptionService.sync_from_mercadopago(preapproval=remote)
+            db.session.commit()
+        except Exception:
+            db.session.rollback()
+            current_app.logger.exception(
+                "No se pudo sincronizar el preapproval IA autorizado company_id=%s preapproval_id=%s",
+                company.id,
+                preapproval_id,
+            )
+            return None
+        session.pop("ai_auto_checkout_preview", None)
+        return {
+            "kind": "ai_subscription",
+            "company_id": company.id,
+            "preapproval_id": preapproval_id,
+            "plan_code": plan_code,
+            "plan_name": AI_PLAN_BY_CODE[plan_code]["name"],
+            "amount": AISubscriptionService.plan_amount_ars(plan_code),
+            "currency": "ARS",
+            "status": "paid",
+            "checkout_url": "",
+            "qr_data_uri": "",
+        }
+
+    if remote_status in {"cancelled", "canceled", "expired", "rejected"}:
+        # A customer or an MP operator may have closed the authorization in the
+        # external tab. Restore the previous AI trial/access snapshot locally too.
+        try:
+            AISubscriptionService.cancel_pending_checkout(
+                company,
+                admin_user_id=None,
+                reason="Mercado Pago informó que el checkout mensual IA terminó.",
+            )
+            db.session.commit()
+        except Exception:
+            db.session.rollback()
+            current_app.logger.exception(
+                "No se pudo restaurar el estado IA tras terminar el checkout company_id=%s preapproval_id=%s",
+                company.id,
+                preapproval_id,
+            )
+        session.pop("ai_auto_checkout_preview", None)
+        return None
+
+    if remote_status not in {"pending", "in_process", "paused"}:
+        return None
+
+    checkout_url = str(remote.get("init_point") or "").strip()
+    if not checkout_url:
+        from urllib.parse import urlencode
+        checkout_url = (
+            "https://www.mercadopago.com.ar/subscriptions/checkout?"
+            + urlencode({"preapproval_id": preapproval_id})
+        )
+    preview = build_pending_preview(checkout_url)
+    if preview is None:
+        current_app.logger.warning(
+            "Mercado Pago devolvió un enlace IA no permitido company_id=%s preapproval_id=%s",
+            company.id,
+            preapproval_id,
+        )
+        return None
+
+    session["ai_auto_checkout_preview"] = {
+        "company_id": int(company.id),
+        "preapproval_id": preapproval_id,
+        "external_reference": external_reference or remote_reference,
+        "plan_code": plan_code,
+        "checkout_url": checkout_url,
+    }
+    return preview
+
+
 def _ai_qr_plan_code(payment):
     external_reference = str(getattr(payment, "external_reference", "") or "")
     parts = {}
