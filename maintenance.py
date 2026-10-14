@@ -116,6 +116,11 @@ def run_backup_maintenance():
                     "backup_id": backup.id,
                     "plan": plan["code"],
                     "file_name": backup.file_name,
+                    "reason": (
+                        "first_backup_bootstrap"
+                        if trigger_type == "automated_render_bootstrap"
+                        else "scheduled_monthly_slot"
+                    ),
                 }
             )
         except Exception as exc:
