@@ -2620,12 +2620,12 @@ def test_standard_automatic_checkout_recovers_from_legacy_null_command(subscript
     assert new_execution.subscription_id == pending.id
 
     # The portal remains open and gives the user both "Abrir Mercado Pago"
-    # and "Cancelar checkout" actions instead of stranding them in MP.
+    # and "Cancelar autorización mensual" actions instead of stranding them in MP.
     portal_url = response.headers["Location"].split("#", 1)[0]
     portal_response = client.get(portal_url)
     assert portal_response.status_code == 200
     assert b"Abrir Mercado Pago" in portal_response.data
-    assert b"Cancelar checkout" in portal_response.data
+    assert b"Cancelar autorización mensual" in portal_response.data
     assert b"https://mp.test/standard-recovered" in portal_response.data
 
     cancelled = []
