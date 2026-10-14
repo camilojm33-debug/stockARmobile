@@ -1206,9 +1206,12 @@ def _ai_auto_checkout_preview(company, *, requested_preapproval_id=None):
     remote_id = str(remote.get("id") or "").strip()
     remote_status = str(remote.get("status") or "").strip().lower()
     remote_reference = str(remote.get("external_reference") or "").strip()
-    if not remote_reference and remembered_matches and remembered_reference == external_reference:
-        # Mercado Pago responses can omit external_reference on some read paths.
-        # Only trust the same server-created session attempt when the ID matches.
+    if not remote_reference and external_reference:
+        # The local preapproval ID is already linked to this tenant and the
+        # stored reference was written before the provider call. Reuse that
+        # reference if Mercado Pago omits it on a read response.
+        remote_reference = external_reference
+    if not remote_reference and remembered_matches and remembered_reference:
         remote_reference = remembered_reference
     parts = dict(
         segment.split(":", 1)
@@ -1232,6 +1235,7 @@ def _ai_auto_checkout_preview(company, *, requested_preapproval_id=None):
 
     if remote_status == "authorized":
         try:
+            remote["external_reference"] = remote_reference
             AISubscriptionService.sync_from_mercadopago(preapproval=remote)
             db.session.commit()
         except Exception:
@@ -1821,12 +1825,19 @@ def subscription_portal():
         if ai_preapproval_id:
             try:
                 remote = MercadoPagoService().get_preapproval(ai_preapproval_id)
-                ref_parts = WebhookService._external_reference_parts(str(remote.get("external_reference") or ""))
+                stored_reference = str(ai_status_before_return.get("mercadopago_external_reference") or "").strip()
+                remote_reference = str(remote.get("external_reference") or "").strip() or stored_reference
+                ref_parts = WebhookService._external_reference_parts(remote_reference)
                 if (
                     str(remote.get("id") or "").strip() == ai_preapproval_id
+                    and remote_reference
+                    and (not str(remote.get("external_reference") or "").strip() or remote_reference == stored_reference)
                     and ref_parts.get("ai_subscription") == "true"
                     and str(ref_parts.get("company_id") or "") == str(company.id)
+                    and str(ref_parts.get("plan_code") or "").strip().lower()
+                    == str(ai_status_before_return.get("plan_code") or "").strip().lower()
                 ):
+                    remote["external_reference"] = remote_reference
                     AISubscriptionService.sync_from_mercadopago(preapproval=remote)
                     db.session.commit()
             except Exception:
