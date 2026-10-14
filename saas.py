@@ -3834,7 +3834,14 @@ def ai_subscription_detail(company_id):
     if company is None:
         abort(404)
     status = AISubscriptionService.get_status(company)
-    return render_template("saas/ai_subscription_detail.html", company=company, status=status, ai_plans=AI_PLANS)
+    step_up_required = not _superadmin_step_up_is_valid()
+    return render_template(
+        "saas/ai_subscription_detail.html",
+        company=company,
+        status=status,
+        ai_plans=AI_PLANS,
+        step_up_required=step_up_required,
+    )
 
 
 @bp.route("/ai-subscriptions/<int:company_id>/action", methods=["POST"])
@@ -3862,6 +3869,12 @@ def ai_subscriptions_action(company_id):
             result = AISubscriptionService.reactivate(company, admin_user_id=current_user.id)
         elif action == "cancel":
             result = AISubscriptionService.cancel(company, admin_user_id=current_user.id, reason=request.form.get("reason"))
+        elif action == "end_access":
+            result = AISubscriptionService.end_access_now(
+                company,
+                admin_user_id=current_user.id,
+                reason=request.form.get("reason") or "Acceso IA finalizado inmediatamente por Super Admin.",
+            )
         elif action == "grant_trial":
             result = AISubscriptionService.grant_trial(company, plan_code=request.form.get("plan_code"), days=request.form.get("days"), admin_user_id=current_user.id, reason=request.form.get("reason"))
         elif action == "renew":
@@ -3882,6 +3895,10 @@ def ai_subscriptions_action(company_id):
                 flash("Se procesó la renovación, pero la suscripción no quedó ACTIVA. Revisá el estado antes de continuar.", "warning")
         elif action == "assign_plan" and final_status == "VENCIDA":
             flash("El plan quedó asignado, pero la suscripción continúa VENCIDA. Asignar un plan no renueva la vigencia: usá «Renovar suscripción IA vencida».", "warning")
+        elif action == "end_access":
+            flash("Acceso a los agentes IA finalizado inmediatamente. La suscripción general de StockArMobile no fue modificada.", "success")
+        elif action == "grant_trial":
+            flash("Trial manual de IA otorgado correctamente. El acceso queda administrado por Super Admin y no genera cobros recurrentes.", "success")
         else:
             flash("Suscripción IA actualizada.", "success")
     except AISubscriptionError as exc:
