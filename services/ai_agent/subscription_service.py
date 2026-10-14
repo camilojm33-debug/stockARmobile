@@ -23,6 +23,33 @@ VALID_STATUSES = {"TRIAL", "ACTIVA", "PENDIENTE", "VENCIDA", "SUSPENDIDA", "CANC
 VALID_ORIGINS = {"MANUAL", "MERCADO_PAGO"}
 MP_TERMINAL_STATUSES = {"cancelled", "canceled", "expired"}
 
+# Only billing/access fields are snapshotted when a new AI recurring checkout
+# replaces an existing manual trial or a previously ended plan. QR and standard
+# StockArMobile subscriptions remain independent.
+AI_CHECKOUT_SNAPSHOT_KEYS = (
+    "plan_code",
+    "status",
+    "origin",
+    "starts_at",
+    "ends_at",
+    "granted_by_user_id",
+    "trial_reason",
+    "manual_reason",
+    "mercadopago_preapproval_id",
+    "mercadopago_payer_email",
+    "mercadopago_external_reference",
+    "mercadopago_status",
+    "mercadopago_creation_pending",
+    "mercadopago_access_preserved_until",
+    "mercadopago_access_preserved_reason",
+    "mercadopago_previous_preapproval_id",
+    "mercadopago_previous_status",
+    "mercadopago_previous_external_reference",
+    "mercadopago_next_payment_date",
+    "checkout_method",
+    "auto_renew",
+)
+
 
 def _parse_dt(value: Any) -> datetime | None:
     if not value:
@@ -421,6 +448,134 @@ class AISubscriptionService:
             )
 
         return cls._apply(company, admin_user_id=admin_user_id, action="ai_subscription_cancel", new_fields={"status": "CANCELADA", "origin": "MANUAL"}, reason=reason)
+
+    @classmethod
+    def cancel_pending_checkout(cls, company, *, admin_user_id, reason: str | None = None) -> dict[str, Any]:
+        """Cancel a pending IA monthly checkout and restore the exact prior IA access state."""
+        ai = cls._ai_prefs(company)
+        preapproval_id = cls._preapproval_id(ai)
+        if (
+            str(ai.get("status") or "").strip().upper() != "PENDIENTE"
+            or cls._origin(ai) != "MERCADO_PAGO"
+            or str(ai.get("checkout_method") or "").strip().lower() != "automatic"
+            or not preapproval_id
+        ):
+            raise AISubscriptionError("No hay una autorización mensual IA pendiente para cancelar.")
+
+        remote = cls._get_mp_preapproval(company)
+        remote_id = str(remote.get("id") or "").strip()
+        remote_reference = str(remote.get("external_reference") or "").strip()
+        stored_reference = str(ai.get("mercadopago_external_reference") or "").strip()
+        parts = dict(
+            segment.split(":", 1)
+            for segment in remote_reference.split("|")
+            if ":" in segment
+        )
+        if (
+            remote_id != preapproval_id
+            or not remote_reference
+            or (stored_reference and remote_reference != stored_reference)
+            or parts.get("ai_subscription") != "true"
+            or str(parts.get("company_id") or "") != str(company.id)
+            or str(parts.get("plan_code") or "").strip().lower()
+            != str(ai.get("plan_code") or "").strip().lower()
+        ):
+            raise AISubscriptionError(
+                "No se pudo verificar que la autorización de Mercado Pago pertenezca a este checkout IA. "
+                "No se modificó el plan ni el acceso."
+            )
+
+        remote_status = str(remote.get("status") or "").strip().lower()
+        if remote_status == "authorized":
+            # The customer may have authorized in the other tab moments before
+            # pressing Cancel. Reconcile first, then use the regular cancellation
+            # policy so any newly paid period remains available until its boundary.
+            cls.sync_from_mercadopago(preapproval=remote)
+            return cls.cancel(
+                company,
+                admin_user_id=admin_user_id,
+                reason=reason or "El checkout IA ya estaba autorizado al solicitar la cancelación.",
+            )
+
+        terminal_statuses = {"cancelled", "canceled", "expired", "rejected"}
+        if remote_status in {"pending", "in_process", "paused"}:
+            try:
+                updated = cls._mp_service().cancel_preapproval(preapproval_id)
+            except Exception as exc:
+                raise AISubscriptionError(
+                    "No se pudo cancelar la autorización IA en Mercado Pago. El plan anterior permanece sin cambios."
+                ) from exc
+            updated_id = str(updated.get("id") or "").strip()
+            updated_status = str(updated.get("status") or "").strip().lower()
+            if updated_id != preapproval_id or updated_status not in terminal_statuses:
+                raise AISubscriptionError(
+                    "Mercado Pago no confirmó la cancelación de esta autorización IA. "
+                    "El plan anterior permanece sin cambios."
+                )
+            remote_status = updated_status
+        elif remote_status not in terminal_statuses:
+            raise AISubscriptionError(
+                f"Mercado Pago devolvió un estado no compatible con la cancelación del checkout IA: "
+                f"{remote_status or 'desconocido'}. No se modificó el acceso."
+            )
+
+        snapshot = ai.get("checkout_previous_ai_subscription")
+        fields: dict[str, Any] = {
+            "checkout_previous_ai_subscription": None,
+            "mercadopago_create_attempt_reference": None,
+            "mercadopago_create_attempt_plan_code": None,
+            "mercadopago_cancelled_preapproval_id": preapproval_id,
+            "mercadopago_cancelled_external_reference": remote_reference,
+            "mercadopago_cancelled_status": remote_status,
+            "mercadopago_cancelled_at": utcnow_naive().isoformat(),
+            "mercadopago_cancelled_by_user_id": admin_user_id,
+        }
+        if isinstance(snapshot, dict):
+            for key in AI_CHECKOUT_SNAPSHOT_KEYS:
+                fields[key] = snapshot.get(key)
+        else:
+            # Legacy recovery for checkouts created before the state snapshot
+            # existed. Preserve a still-live trial/paid-through period where the
+            # remaining preference fields provide evidence; otherwise close it.
+            previous_end = _parse_dt(ai.get("ends_at"))
+            has_remaining_access = previous_end is not None and previous_end > utcnow_naive()
+            has_trial_context = bool(ai.get("trial_reason") or ai.get("granted_by_user_id"))
+            if has_remaining_access:
+                fields.update({
+                    "status": "TRIAL" if has_trial_context else "ACTIVA",
+                    "origin": "MANUAL",
+                    "mercadopago_preapproval_id": None,
+                    "mercadopago_payer_email": None,
+                    "mercadopago_external_reference": None,
+                    "mercadopago_status": None,
+                    "mercadopago_creation_pending": False,
+                    "checkout_method": None,
+                    "auto_renew": False,
+                    "mercadopago_access_preserved_until": previous_end.isoformat(),
+                    "mercadopago_access_preserved_reason": "previous_access_restored_after_checkout_cancel",
+                })
+            else:
+                fields.update({
+                    "status": "CANCELADA",
+                    "origin": "MANUAL",
+                    "mercadopago_preapproval_id": None,
+                    "mercadopago_payer_email": None,
+                    "mercadopago_external_reference": None,
+                    "mercadopago_status": None,
+                    "mercadopago_creation_pending": False,
+                    "checkout_method": None,
+                    "auto_renew": False,
+                    "mercadopago_access_preserved_until": None,
+                    "mercadopago_access_preserved_reason": None,
+                })
+
+        return cls._apply(
+            company,
+            admin_user_id=admin_user_id,
+            action="ai_subscription_pending_checkout_cancelled",
+            new_fields=fields,
+            reason=reason or f"Checkout mensual IA cancelado; preapproval={preapproval_id}; estado remoto={remote_status}.",
+        )
 
     @classmethod
     def end_access_now(cls, company, *, admin_user_id, reason: str | None = None) -> dict[str, Any]:
@@ -888,6 +1043,8 @@ class AISubscriptionService:
             "origin": "MERCADO_PAGO",
             "mercadopago_status": mp_status,
         }
+        if mp_status == "authorized":
+            new_fields["checkout_previous_ai_subscription"] = None
         has_verified_paid_payment = bool(
             current_ai.get("last_payment_id")
             and str(current_ai.get("last_payment_status") or "").strip().lower() == "approved"
