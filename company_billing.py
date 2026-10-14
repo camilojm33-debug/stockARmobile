@@ -2577,6 +2577,10 @@ def create_ai_subscription_checkout():
                 raise AISubscriptionError(
                     "No se pudo verificar el checkout IA pendiente. No se creó otro cobro; intentá nuevamente."
                 ) from exc
+            if str(remote.get("id") or "").strip() != existing_preapproval_id:
+                raise AISubscriptionError(
+                    "Mercado Pago devolvió una autorización IA diferente de la registrada. No se creó otro checkout."
+                )
             remote_status = str(remote.get("status") or "").strip().lower()
             remote_init_point = str(remote.get("init_point") or "").strip()
             remote_reference = str(remote.get("external_reference") or "").strip()
@@ -2721,11 +2725,21 @@ def create_ai_subscription_checkout():
                 return redirect(url_for("company_billing.subscription_portal", mp_subscription_return="ai", _anchor="suscripcion-ia"))
 
             if remote_status in {"cancelled", "canceled", "expired", "rejected"}:
-                AISubscriptionService.sync_from_mercadopago(preapproval=response)
-                db.session.commit()
-                raise AISubscriptionError(
-                    "Mercado Pago devolvió una autorización IA terminada. Podés volver a intentar la suscripción."
+                # If the external contract ended while the portal was closed,
+                # restore the pre-checkout AI state rather than leaving a trial
+                # stranded as a cancelled Mercado Pago plan.
+                AISubscriptionService.cancel_pending_checkout(
+                    company,
+                    admin_user_id=current_user.id,
+                    reason="Mercado Pago devolvió el checkout IA en estado terminal.",
                 )
+                db.session.commit()
+                session.pop("ai_auto_checkout_preview", None)
+                flash(
+                    "La autorización mensual IA ya había terminado en Mercado Pago. Se restauró el estado IA anterior si existía; podés volver a intentar.",
+                    "info",
+                )
+                return redirect(url_for("company_billing.subscription_portal", _anchor="planes-ia"))
 
             if not checkout_url:
                 from urllib.parse import urlencode
