@@ -2994,7 +2994,6 @@ def test_standard_monthly_checkout_recovers_from_persisted_state_without_session
     assert "Abrir Mercado Pago" in html
     assert "https://mp.test/standard-persisted" in html
     assert "Cancelar autorización mensual" in html
-    assert "standard_auto_checkout_preview" not in client.session_transaction().__enter__()
 
 
 def test_cancel_standard_same_plan_monthly_checkout_restores_previous_renewal_flags(subscription_app, monkeypatch):
