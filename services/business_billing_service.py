@@ -630,7 +630,7 @@ class BusinessBillingService:
         quotes = quotes_query.limit(1200 if (date_from or date_to) else 400).all()
         for quote in quotes:
             event_date = quote.date
-            if not BusinessBillingService._filter_period(event_date, date_from, date_to):
+            if not BusinessBillingService._period_contains(event_date, period_start_utc, period_end_utc):
                 continue
             amount = BusinessBillingService._safe_float(quote.total_amount)
             doc_type_key = "presupuesto"
