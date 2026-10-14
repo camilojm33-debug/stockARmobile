@@ -2620,12 +2620,12 @@ def test_standard_automatic_checkout_recovers_from_legacy_null_command(subscript
     assert new_execution.subscription_id == pending.id
 
     # The portal remains open and gives the user both "Abrir Mercado Pago"
-    # and "Cancelar checkout" actions instead of stranding them in MP.
+    # and "Cancelar autorización mensual" actions instead of stranding them in MP.
     portal_url = response.headers["Location"].split("#", 1)[0]
     portal_response = client.get(portal_url)
     assert portal_response.status_code == 200
     assert b"Abrir Mercado Pago" in portal_response.data
-    assert b"Cancelar checkout" in portal_response.data
+    assert "Cancelar autorización mensual".encode("utf-8") in portal_response.data
     assert b"https://mp.test/standard-recovered" in portal_response.data
 
     cancelled = []
@@ -2948,3 +2948,110 @@ def test_superadmin_end_access_cancels_live_mp_preapproval_before_local_revocati
     assert result["mercadopago_preapproval_id"] is None
     assert AISubscriptionService._ai_prefs(company)["mercadopago_previous_preapproval_id"] == "ai-pre-live-end"
     assert _standard_snapshot(standard_subscription) == before
+
+
+def test_standard_monthly_checkout_recovers_from_persisted_state_without_session(subscription_app, monkeypatch):
+    from services.mercadopago_service import MercadoPagoService
+
+    company, user, _, subscription = _tenant_with_standard_subscription()
+    external_reference = (
+        f"stockarmobile|flow:subscription_auto|company_id:{company.id}|"
+        f"subscription_id:{subscription.id}|nonce:persisted-preview"
+    )
+    SubscriptionService._set_metadata(
+        subscription,
+        {
+            "mercadopago_preapproval_id": "standard-persisted-preapproval",
+            "mercadopago_external_reference": external_reference,
+            "mercadopago_status": "pending",
+            "checkout_method": "automatic",
+            "checkout_cancelled": False,
+            "pending_plan_change": False,
+        },
+    )
+    db.session.commit()
+
+    def get_preapproval(self, preapproval_id):
+        assert preapproval_id == "standard-persisted-preapproval"
+        return {
+            "id": preapproval_id,
+            "status": "pending",
+            "external_reference": external_reference,
+            "init_point": "https://mp.test/standard-persisted",
+        }
+
+    monkeypatch.setattr(MercadoPagoService, "get_preapproval", get_preapproval)
+    client = subscription_app.test_client()
+    _login(client, user)
+    with client.session_transaction() as remembered:
+        remembered.pop("standard_auto_checkout_preview", None)
+
+    response = client.get("/admin/portal")
+    html = response.get_data(as_text=True)
+
+    assert response.status_code == 200
+    assert "CHECKOUT LISTO" in html
+    assert "Abrir Mercado Pago" in html
+    assert "https://mp.test/standard-persisted" in html
+    assert "Cancelar autorización mensual" in html
+
+
+def test_cancel_standard_same_plan_monthly_checkout_restores_previous_renewal_flags(subscription_app, monkeypatch):
+    from services.mercadopago_service import MercadoPagoService
+
+    company, user, _, subscription = _tenant_with_standard_subscription()
+    subscription.renewal_enabled = True
+    subscription.auto_renew = False
+    subscription.cancel_at_period_end = True
+    external_reference = (
+        f"stockarmobile|flow:subscription_auto|company_id:{company.id}|"
+        f"subscription_id:{subscription.id}|nonce:cancel-same-plan"
+    )
+    SubscriptionService._set_metadata(
+        subscription,
+        {
+            "mercadopago_preapproval_id": "standard-same-plan-preapproval",
+            "mercadopago_external_reference": external_reference,
+            "mercadopago_status": "pending",
+            "checkout_method": "automatic",
+            "checkout_cancelled": False,
+            "pending_plan_change": False,
+            "checkout_previous_renewal_enabled": True,
+            "checkout_previous_auto_renew": False,
+            "checkout_previous_cancel_at_period_end": True,
+        },
+    )
+    db.session.commit()
+
+    def get_preapproval(self, preapproval_id):
+        return {
+            "id": preapproval_id,
+            "status": "pending",
+            "external_reference": external_reference,
+        }
+
+    def cancel_preapproval(self, preapproval_id):
+        return {"id": preapproval_id, "status": "cancelled"}
+
+    monkeypatch.setattr(MercadoPagoService, "get_preapproval", get_preapproval)
+    monkeypatch.setattr(MercadoPagoService, "cancel_preapproval", cancel_preapproval)
+
+    client = subscription_app.test_client()
+    _login(client, user)
+    response = client.post(
+        "/admin/subscription/checkout/cancel",
+        data={"subscription_id": subscription.id},
+        follow_redirects=False,
+    )
+
+    assert response.status_code == 302
+    db.session.refresh(subscription)
+    metadata = SubscriptionService._metadata_dict(subscription)
+    assert subscription.status == SubscriptionService.STATE_ACTIVE
+    assert subscription.renewal_enabled is True
+    assert subscription.auto_renew is False
+    assert subscription.cancel_at_period_end is True
+    assert metadata["checkout_cancelled"] is True
+    assert metadata["checkout_previous_renewal_enabled"] is None
+    assert metadata["checkout_previous_auto_renew"] is None
+    assert metadata["checkout_previous_cancel_at_period_end"] is None
