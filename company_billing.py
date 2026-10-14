@@ -2002,53 +2002,21 @@ def subscription_portal():
 
     ai_status = AISubscriptionService.get_status(company)
     requested_ai_preapproval = str(request.args.get("ai_preapproval_id") or "").strip()
-    stored_ai_preapproval = str(ai_status.get("mercadopago_preapproval_id") or "").strip()
-    if (
-        checkout_preview is None
-        and requested_ai_preapproval
-        and requested_ai_preapproval == stored_ai_preapproval
-        and ai_status.get("status") in {"PENDIENTE", "ACTIVA"}
-    ):
-        try:
-            from services.mercadopago_service import MercadoPagoService
+    if checkout_preview is None:
+        previous_ai_status = str(ai_status.get("status") or "").strip().upper()
+        checkout_preview = _ai_auto_checkout_preview(
+            company,
+            requested_preapproval_id=requested_ai_preapproval or None,
+        )
+        # The recovery helper may reconcile authorization or restore the saved
+        # state after an externally cancelled preapproval; re-read before
+        # rendering the plan cards so the UI never shows stale entitlements.
+        ai_status = AISubscriptionService.get_status(company)
+        if checkout_preview and checkout_preview.get("status") == "paid":
+            checkout_status = "success"
+        elif previous_ai_status == "PENDIENTE" and ai_status.get("status") != "PENDIENTE":
+            checkout_status = checkout_status or "failure"
 
-            remote = MercadoPagoService().get_preapproval(requested_ai_preapproval)
-            remote_status = str(remote.get("status") or "").strip().lower()
-            remote_url = str(remote.get("init_point") or "").strip()
-            amount = AISubscriptionService.plan_amount_ars(ai_status.get("plan_code"))
-            if remote_status == "authorized":
-                checkout_preview = {
-                    "kind": "ai_subscription",
-                    "company_id": company.id,
-                    "preapproval_id": requested_ai_preapproval,
-                    "plan_name": ai_status.get("plan_name") or "Plan IA",
-                    "amount": amount,
-                    "currency": "ARS",
-                    "status": "paid",
-                    "checkout_url": "",
-                    "qr_data_uri": "",
-                }
-                checkout_status = "success"
-            elif remote_status not in {"cancelled", "canceled", "expired", "rejected"} and remote_url:
-                checkout_preview = {
-                    "kind": "ai_subscription",
-                    "company_id": company.id,
-                    "preapproval_id": requested_ai_preapproval,
-                    "plan_name": ai_status.get("plan_name") or "Plan IA",
-                    "amount": amount,
-                    "currency": "ARS",
-                    "status": "pending",
-                    "checkout_url": remote_url,
-                    "qr_data_uri": BillingService._qr_data_uri(remote_url),
-                }
-            else:
-                checkout_status = "failure"
-        except Exception:
-            current_app.logger.exception(
-                "No se pudo recuperar el preapproval IA al volver al portal company_id=%s",
-                company.id,
-            )
-            checkout_status = "failure"
     ai_preview = session.get("mp_checkout_preview")
     if (
         checkout_preview is None
