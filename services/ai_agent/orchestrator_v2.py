@@ -391,6 +391,18 @@ def _public_user_requested_quantity(messages, product_query: str, *, allow_singl
         r"rollos?|bolsas?|cajas?|paquetes?|packs?)\b",
         re.IGNORECASE,
     )
+    # Spanish chat users commonly state quantity using the product name:
+    # "quiero 5 cocas", "4 machimbres", "necesito 2 fanta". The old parser only
+    # recognized measurement/unit words such as "unidades" or "metros".
+    product_token = re.escape(identifying_token)
+    quantity_with_product = re.compile(
+        rf"(?<![a-z0-9])(\d+(?:[.,]\d+)?)\s*(?:de\s+)?{product_token}s?(?![a-z0-9])",
+        re.IGNORECASE,
+    )
+    product_with_quantity = re.compile(
+        rf"(?<![a-z0-9]){product_token}s?\s+(?:x|por)\s*(\d+(?:[.,]\d+)?)(?![a-z0-9])",
+        re.IGNORECASE,
+    )
     quantity_action = re.compile(
         r"\b(?:cambiame|cambiar|cambia|modificame|modificar|modifica|dejame|deja|"
         r"bajame|baja|subime|subi|me llevo|me quedo con|en vez de|solamente)\b"
@@ -408,6 +420,23 @@ def _public_user_requested_quantity(messages, product_query: str, *, allow_singl
                     return amount if amount.is_finite() and amount > 0 else None
                 except (InvalidOperation, ValueError):
                     return None
+            if has_product:
+                # Only read a number directly associated with the requested
+                # product, so unrelated price/stock numbers aren't quantities.
+                product_matches = list(quantity_with_product.finditer(text))
+                if product_matches:
+                    try:
+                        amount = Decimal(product_matches[-1].group(1).replace(",", "."))
+                        return amount if amount.is_finite() and amount > 0 else None
+                    except (InvalidOperation, ValueError):
+                        return None
+                reversed_matches = list(product_with_quantity.finditer(text))
+                if reversed_matches:
+                    try:
+                        amount = Decimal(reversed_matches[-1].group(1).replace(",", "."))
+                        return amount if amount.is_finite() and amount > 0 else None
+                    except (InvalidOperation, ValueError):
+                        return None
         if allow_single_item_update:
             action_match = quantity_action.search(text)
             if action_match:
@@ -653,13 +682,18 @@ class VendorOrderPreviewTool(AgentTool):
             requested_delivery_method = "retiro"
 
         def explicit_delivery_from_user_messages():
+            import unicodedata
+
             relevant_messages = (
                 recent_user_messages[identity_change_index:]
                 if identity_change_index is not None
                 else recent_user_messages
             )
             for row in reversed(relevant_messages):
-                text = _normalize_text(row.content)
+                # Treat accented and unaccented Spanish ("envío"/"envio",
+                # "teléfono"/"telefono") consistently when resolving intent.
+                text = unicodedata.normalize("NFKD", _normalize_text(row.content))
+                text = "".join(char for char in text if not unicodedata.combining(char))
                 if any(term in text for term in (
                     "prefiero envio", "con envio", "envio a domicilio", "a domicilio",
                     "que me lo envien", "que lo envien", "mandalo a casa", "entrega a domicilio",
