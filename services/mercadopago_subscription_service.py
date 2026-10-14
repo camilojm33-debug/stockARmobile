@@ -157,6 +157,7 @@ class MercadoPagoSubscriptionService:
                 "checkout_previous_cancel_at_period_end": bool(subscription.cancel_at_period_end),
             })
             SubscriptionService._set_metadata(subscription, attempt_metadata)
+            metadata.update(attempt_metadata)
             db_session.commit()
 
         response = MercadoPagoService().create_preapproval(
