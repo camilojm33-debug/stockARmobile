@@ -2412,7 +2412,7 @@ def cancel_ai_subscription():
 @company_admin_required
 def create_mercadopago_subscription():
     from flask import session
-    from app import Company, db
+    from app import Company, Subscription, db
     from services.mercadopago_subscription_service import MercadoPagoSubscriptionService
 
     company_id = getattr(current_user, "company_id", None)
@@ -2495,6 +2495,11 @@ def create_mercadopago_subscription():
         if pending_plan is not None and pending_plan.plan_id == plan.id:
             subscription = pending_plan
         elif current_subscription is None or current_subscription.plan_id != plan.id:
+            # Do not reuse a deterministic key across separate checkout attempts.
+            # Old completed command rows can outlive their target subscription (the FK
+            # is nullable), causing run_command() to replay a result with subscription_id=None.
+            # Each explicit attempt gets its own key; retries after a subscription exists reuse
+            # the pending subscription above rather than creating a second one.
             command = SubscriptionService.ChangePlanCommand(
                 company_id=company.id,
                 plan_id=plan.id,
@@ -2504,11 +2509,32 @@ def create_mercadopago_subscription():
                 ip_address=request.remote_addr,
                 idempotency_key=(
                     f"mp-auto-plan:{company.id}:{getattr(current_subscription, 'id', 0)}:"
-                    f"{replaced_pending_id or 0}:{plan.id}:{current_user.id}"
+                    f"{replaced_pending_id or 0}:{plan.id}:{current_user.id}:{uuid.uuid4().hex}"
                 ),
             )
             result = SubscriptionService.run_command(db.session, command)
-            subscription = db.session.get(__import__("app").Subscription, result.subscription_id)
+            subscription = (
+                db.session.get(Subscription, result.subscription_id)
+                if result.subscription_id is not None
+                else None
+            )
+            if subscription is None:
+                # Defensive recovery for incomplete/legacy idempotency records:
+                # do not strand the payer on a stale command result.
+                current_app.logger.warning(
+                    "Checkout recurrente recibió un resultado sin suscripción recuperable; se reintentará con una clave nueva. company_id=%s plan_id=%s",
+                    company.id,
+                    plan.id,
+                )
+                command.idempotency_key = (
+                    f"mp-auto-plan-retry:{company.id}:{plan.id}:{current_user.id}:{uuid.uuid4().hex}"
+                )
+                result = SubscriptionService.run_command(db.session, command)
+                subscription = (
+                    db.session.get(Subscription, result.subscription_id)
+                    if result.subscription_id is not None
+                    else None
+                )
         else:
             subscription = current_subscription
 
@@ -2681,28 +2707,52 @@ def subscription_change_confirm():
     subscription = pending_plan if pending_plan is not None else None
     try:
         if subscription is None:
-            command_result = SubscriptionService.run_command(
-                db.session,
-                SubscriptionService.ChangePlanCommand(
-                    company_id=company.id,
-                    plan_id=plan.id,
-                    actor_user_id=current_user.id,
-                    actor_role=getattr(current_user, "role", None),
-                    origin="portal_confirm",
-                    ip_address=request.remote_addr,
-                    idempotency_key=(
-                        request.form.get("idempotency_key")
-                        or (
-                            f"portal-change:{company.id}:{getattr(current_subscription, 'id', 0)}:"
-                            f"{replaced_pending_id or 0}:{plan.id}:{current_user.id}"
-                        )
-                    ),
-                ),
+            # A legacy deterministic idempotency key can point to a completed command
+            # whose subscription was later removed. Use a unique key for this new user
+            # action, but honor an explicitly supplied request key on the first attempt.
+            request_command_key = (request.form.get("idempotency_key") or "").strip()
+            attempt_key = request_command_key or (
+                f"portal-change:{company.id}:{getattr(current_subscription, 'id', 0)}:"
+                f"{replaced_pending_id or 0}:{plan.id}:{current_user.id}:attempt:{uuid.uuid4().hex}"
             )
-            subscription = Subscription.query.filter_by(
-                id=command_result.subscription_id,
+            change_command = SubscriptionService.ChangePlanCommand(
                 company_id=company.id,
-            ).first()
+                plan_id=plan.id,
+                actor_user_id=current_user.id,
+                actor_role=getattr(current_user, "role", None),
+                origin="portal_confirm",
+                ip_address=request.remote_addr,
+                idempotency_key=attempt_key,
+            )
+            command_result = SubscriptionService.run_command(db.session, change_command)
+            subscription = (
+                Subscription.query.filter_by(
+                    id=command_result.subscription_id,
+                    company_id=company.id,
+                ).first()
+                if command_result.subscription_id is not None
+                else None
+            )
+            if subscription is None:
+                # Recover from a legacy/stale completed command result without changing
+                # the plan already in force or reusing the broken command key.
+                current_app.logger.warning(
+                    "Checkout QR recibió un resultado sin suscripción recuperable; se reintentará con una clave nueva. company_id=%s plan_id=%s",
+                    company.id,
+                    plan.id,
+                )
+                change_command.idempotency_key = (
+                    f"portal-change-retry:{company.id}:{plan.id}:{current_user.id}:{uuid.uuid4().hex}"
+                )
+                command_result = SubscriptionService.run_command(db.session, change_command)
+                subscription = (
+                    Subscription.query.filter_by(
+                        id=command_result.subscription_id,
+                        company_id=company.id,
+                    ).first()
+                    if command_result.subscription_id is not None
+                    else None
+                )
         if subscription is None:
             raise RuntimeError("No se pudo recuperar la suscripción creada por el comando.")
 
