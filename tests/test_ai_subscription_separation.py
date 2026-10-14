@@ -612,7 +612,8 @@ def test_pending_standard_monthly_checkout_can_be_replaced_with_cheaper_plan(sub
     response = client.post("/admin/subscription/mercadopago/create", data={"plan_id": cheaper_id})
 
     assert response.status_code == 302
-    assert response.headers["Location"] == "https://mp.test/cheaper-monthly"
+    assert "checkout=created" in response.headers["Location"]
+    assert "checkout_subscription_id=" in response.headers["Location"]
     assert calls == [
         ("get", "old-premium-preapproval"),
         ("cancel", "old-premium-preapproval"),
@@ -1515,7 +1516,8 @@ def test_standard_auto_subscription_checkout_works_when_ai_is_active(subscriptio
     response = client.post("/admin/subscription/mercadopago/create", data={"plan_id": subscription.plan_id})
 
     assert response.status_code == 302
-    assert response.headers["Location"] == "https://mp.test/standard"
+    assert "checkout=created" in response.headers["Location"]
+    assert "checkout_subscription_id=" in response.headers["Location"]
     assert calls == [{
         "company_id": company.id,
         "subscription_id": subscription.id,
@@ -1543,7 +1545,8 @@ def test_standard_missing_ai_active_can_start_standard_checkout(subscription_app
     response = client.post("/admin/subscription/mercadopago/create", data={"plan_id": plan.id})
 
     assert response.status_code == 302
-    assert response.headers["Location"] == "https://mp.test/standard"
+    assert "checkout=created" in response.headers["Location"]
+    assert "checkout_subscription_id=" in response.headers["Location"]
     assert Subscription.query.filter_by(company_id=company.id).count() == 1
     assert AISubscriptionService.get_status(company) == ai_before
 
@@ -1567,7 +1570,12 @@ def test_standard_auto_subscription_checkout_returns_json_redirect_for_ajax(subs
     )
 
     assert response.status_code == 200
-    assert response.get_json() == {"success": True, "redirect_url": "https://mp.test/standard"}
+    payload = response.get_json()
+    assert payload["success"] is True
+    assert payload["redirect_url"] == "https://mp.test/standard"
+    assert "/admin/portal?" in payload["return_url"]
+    assert "checkout=created" in payload["return_url"]
+    assert f"checkout_subscription_id={subscription.id}" in payload["return_url"]
 
 
 def test_ai_auto_subscription_checkout_returns_json_redirect_for_ajax(subscription_app, monkeypatch):
@@ -2520,7 +2528,8 @@ def test_new_commercial_customer_is_provisioned_for_subscription_preapproval_web
 
 
 def test_standard_automatic_checkout_recovers_from_legacy_null_command(subscription_app, monkeypatch):
-    from app import SubscriptionCommandExecution
+    from app import SubscriptionCommandExecution, Subscription
+    from services.mercadopago_service import MercadoPagoService
 
     company, user, _, current = _tenant_with_standard_subscription()
     target = Plan(
@@ -2553,13 +2562,31 @@ def test_standard_automatic_checkout_recovers_from_legacy_null_command(subscript
     db.session.commit()
 
     calls = []
+    external_references = {}
 
     def create_standard_preapproval(*, db_session, company, subscription, plan, payer_email, notification_url, back_url):
         calls.append({"company_id": company.id, "subscription_id": subscription.id, "plan_id": plan.id})
+        external_reference = (
+            f"stockarmobile|flow:subscription_auto|company_id:{company.id}|"
+            f"subscription_id:{subscription.id}|nonce:standard-pre-recovered"
+        )
+        external_references["value"] = external_reference
+        SubscriptionService._set_metadata(
+            subscription,
+            {
+                "mercadopago_preapproval_id": "standard-pre-recovered",
+                "mercadopago_external_reference": external_reference,
+                "mercadopago_status": "pending",
+                "checkout_method": "automatic",
+                "checkout_cancelled": False,
+                "pending_plan_change": True,
+            },
+        )
         return {
             "id": "standard-pre-recovered",
             "init_point": "https://mp.test/standard-recovered",
             "status": "pending",
+            "external_reference": external_reference,
         }
 
     monkeypatch.setattr(
@@ -2575,7 +2602,9 @@ def test_standard_automatic_checkout_recovers_from_legacy_null_command(subscript
     )
 
     assert response.status_code == 302
-    assert response.headers["Location"] == "https://mp.test/standard-recovered"
+    assert "checkout=created" in response.headers["Location"]
+    assert "checkout_subscription_id=" in response.headers["Location"]
+    assert "mp.test/standard-recovered" not in response.headers["Location"]
     assert len(calls) == 1
     assert current.status == SubscriptionService.STATE_ACTIVE
     pending = Subscription.query.filter_by(
@@ -2590,6 +2619,44 @@ def test_standard_automatic_checkout_recovers_from_legacy_null_command(subscript
     ).one()
     assert new_execution.subscription_id == pending.id
 
+    # The portal remains open and gives the user both "Abrir Mercado Pago"
+    # and "Cancelar checkout" actions instead of stranding them in MP.
+    portal_url = response.headers["Location"].split("#", 1)[0]
+    portal_response = client.get(portal_url)
+    assert portal_response.status_code == 200
+    assert b"Abrir Mercado Pago" in portal_response.data
+    assert b"Cancelar checkout" in portal_response.data
+    assert b"https://mp.test/standard-recovered" in portal_response.data
+
+    cancelled = []
+
+    def get_preapproval(self, preapproval_id):
+        return {
+            "id": preapproval_id,
+            "status": "pending",
+            "external_reference": external_references["value"],
+        }
+
+    def cancel_preapproval(self, preapproval_id):
+        cancelled.append(preapproval_id)
+        return {"id": preapproval_id, "status": "cancelled"}
+
+    monkeypatch.setattr(MercadoPagoService, "get_preapproval", get_preapproval)
+    monkeypatch.setattr(MercadoPagoService, "cancel_preapproval", cancel_preapproval)
+    cancel_response = client.post(
+        "/admin/subscription/checkout/cancel",
+        data={"subscription_id": pending.id},
+        follow_redirects=True,
+    )
+    assert cancel_response.status_code == 200
+    assert cancelled == ["standard-pre-recovered"]
+
+    db.session.refresh(current)
+    db.session.refresh(pending)
+    assert current.status == SubscriptionService.STATE_ACTIVE
+    assert current.plan_id != target.id
+    assert pending.status == SubscriptionService.STATE_CANCELLED
+    assert SubscriptionService._metadata_dict(pending)["checkout_cancelled"] is True
 
 def test_standard_qr_checkout_recovers_from_legacy_null_command(subscription_app, monkeypatch):
     from app import SubscriptionCommandExecution

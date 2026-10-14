@@ -887,6 +887,71 @@ def _remember_standard_qr_checkout(company, subscription, preference):
     }
 
 
+def _session_standard_auto_preview(company, *, subscription_id=None):
+    """Recover a pending recurring checkout so it can be opened separately or cancelled."""
+    from app import Subscription
+
+    remembered = session.get("standard_auto_checkout_preview")
+    if not isinstance(remembered, dict):
+        return None
+    try:
+        remembered_company_id = int(remembered.get("company_id") or 0)
+        remembered_subscription_id = int(remembered.get("subscription_id") or 0)
+    except (TypeError, ValueError):
+        return None
+    remembered_preapproval_id = str(remembered.get("preapproval_id") or "").strip()
+    checkout_url = str(remembered.get("checkout_url") or "").strip()
+    if (
+        remembered_company_id != int(company.id)
+        or not remembered_subscription_id
+        or (subscription_id is not None and remembered_subscription_id != int(subscription_id))
+        or not remembered_preapproval_id
+    ):
+        return None
+
+    subscription = Subscription.query.filter_by(
+        id=remembered_subscription_id,
+        company_id=company.id,
+    ).first()
+    if subscription is None or subscription.plan is None:
+        return None
+    metadata = SubscriptionService._metadata_dict(subscription)
+    actual_preapproval_id = str(metadata.get("mercadopago_preapproval_id") or "").strip()
+    checkout_method = str(metadata.get("checkout_method") or "").strip().lower()
+    mp_status = str(metadata.get("mercadopago_status") or "").strip().lower()
+    if (
+        metadata.get("checkout_cancelled")
+        or actual_preapproval_id != remembered_preapproval_id
+        or checkout_method != "automatic"
+    ):
+        session.pop("standard_auto_checkout_preview", None)
+        return None
+
+    if mp_status == "authorized":
+        state = "paid"
+        checkout_url = ""
+    elif mp_status in {"cancelled", "canceled", "expired", "rejected"}:
+        session.pop("standard_auto_checkout_preview", None)
+        return None
+    elif mp_status in {"pending", "in_process", "paused", ""} and checkout_url:
+        state = "pending"
+    else:
+        return None
+
+    return {
+        "kind": "standard_subscription",
+        "company_id": company.id,
+        "subscription_id": subscription.id,
+        "preapproval_id": remembered_preapproval_id,
+        "plan_name": subscription.plan.name or "Plan StockArMobile",
+        "amount": float(subscription.plan.price or 0),
+        "currency": str(subscription.plan.currency or "ARS"),
+        "status": state,
+        "checkout_url": checkout_url,
+        "qr_data_uri": "",
+    }
+
+
 def _ai_qr_plan_code(payment):
     external_reference = str(getattr(payment, "external_reference", "") or "")
     parts = {}
@@ -1568,6 +1633,12 @@ def subscription_portal():
             == str(checkout_preview.get("preference_id") or "")
         ):
             session.pop("standard_qr_checkout_preview", None)
+    if checkout_preview is None:
+        checkout_preview = _session_standard_auto_preview(
+            company,
+            subscription_id=checkout_subscription_id,
+        )
+
     ai_status = AISubscriptionService.get_status(company)
     requested_ai_preapproval = str(request.args.get("ai_preapproval_id") or "").strip()
     stored_ai_preapproval = str(ai_status.get("mercadopago_preapproval_id") or "").strip()
@@ -2610,7 +2681,30 @@ def create_mercadopago_subscription():
             plan.id,
             response.get("id"),
         )
-        return _checkout_redirect_response(checkout_url)
+        preapproval_id = str(response.get("id") or "").strip()
+        session["standard_auto_checkout_preview"] = {
+            "company_id": int(company.id),
+            "subscription_id": int(subscription.id),
+            "preapproval_id": preapproval_id,
+            "checkout_url": checkout_url,
+        }
+        return_url = url_for(
+            "company_billing.subscription_portal",
+            checkout="created",
+            checkout_subscription_id=subscription.id,
+            _anchor="payment-checkout",
+        )
+        if _wants_json_response():
+            return jsonify({
+                "success": True,
+                "redirect_url": checkout_url,
+                "return_url": return_url,
+            })
+        flash(
+            "Checkout mensual listo. Mercado Pago se abre aparte; podés volver acá y cancelar si el cliente cambia de opinión.",
+            "info",
+        )
+        return redirect(return_url)
     except ValueError as exc:
         db.session.rollback()
         pending_plan = locals().get("pending_plan")
@@ -2853,18 +2947,52 @@ def cancel_checkout():
 
     metadata = SubscriptionService._metadata_dict(subscription)
     checkout_method = str(metadata.get("checkout_method") or "").strip().lower()
+    preapproval_id = str(metadata.get("mercadopago_preapproval_id") or "").strip()
     is_pending_plan_change = (
         subscription.status == SubscriptionService.STATE_PENDING_PAYMENT
         and bool(metadata.get("pending_plan_change"))
     )
     is_qr_checkout = checkout_method == "qr"
+    is_auto_checkout = checkout_method == "automatic" and bool(preapproval_id)
 
-    if not (is_pending_plan_change or is_qr_checkout):
+    if not (is_pending_plan_change or is_qr_checkout or is_auto_checkout):
         flash("No hay un checkout pendiente para cancelar en este momento.", "info")
         return redirect(url_for("company_billing.subscription_portal", _anchor="payment-checkout"))
 
     try:
         from app import utcnow
+
+        remote_status = ""
+        if is_auto_checkout:
+            # Cancel the remote preapproval first. A local flag alone would still
+            # leave a pending Mercado Pago authorization open in another tab.
+            from services.mercadopago_service import MercadoPagoService
+            from services.mercadopago_subscription_service import MercadoPagoSubscriptionService
+
+            mp_service = MercadoPagoService()
+            remote = mp_service.get_preapproval(preapproval_id)
+            ref_parts = WebhookService._external_reference_parts(
+                str(remote.get("external_reference") or "")
+            )
+            if (
+                str(remote.get("id") or "").strip() != preapproval_id
+                or ref_parts.get("flow") != MercadoPagoSubscriptionService.FLOW
+                or str(ref_parts.get("company_id") or "") != str(company.id)
+                or str(ref_parts.get("subscription_id") or "") != str(subscription.id)
+            ):
+                raise RuntimeError(
+                    "No se pudo verificar que la autorización mensual pertenezca a este checkout. No se modificó la suscripción."
+                )
+            remote_status = str(remote.get("status") or "").strip().lower()
+            if remote_status in {"pending", "in_process", "paused", "authorized"}:
+                cancelled_remote = mp_service.cancel_preapproval(preapproval_id)
+                if str(cancelled_remote.get("id") or preapproval_id).strip() != preapproval_id:
+                    raise RuntimeError("Mercado Pago devolvió una autorización distinta al cancelar el checkout.")
+                remote_status = str(cancelled_remote.get("status") or "cancelled").strip().lower()
+            if remote_status not in {"cancelled", "canceled", "expired", "rejected"}:
+                raise RuntimeError(
+                    f"Mercado Pago no confirmó la cancelación de la autorización mensual (estado: {remote_status or 'desconocido'})."
+                )
 
         if is_pending_plan_change:
             SubscriptionService.run_command(
@@ -2888,8 +3016,17 @@ def cancel_checkout():
                 "checkout_cancelled_at": utcnow().isoformat(),
                 "checkout_cancelled_by_user_id": current_user.id,
                 "pending_plan_change": False if is_pending_plan_change else metadata.get("pending_plan_change"),
+                "mercadopago_status": remote_status if is_auto_checkout else metadata.get("mercadopago_status"),
+                "auto_renew": False if is_auto_checkout else metadata.get("auto_renew"),
             },
         )
+        if is_auto_checkout:
+            subscription.auto_renew = False
+            subscription.renewal_enabled = False
+            subscription.cancel_at_period_end = False
+            preview = session.get("standard_auto_checkout_preview")
+            if isinstance(preview, dict) and int(preview.get("subscription_id") or 0) == subscription.id:
+                session.pop("standard_auto_checkout_preview", None)
         NotificationService.record_event(
             db.session,
             company_id=company.id,
@@ -2910,7 +3047,9 @@ def cancel_checkout():
         )
         db.session.commit()
         flash(
-            "Checkout cancelado. Ya podés elegir otra modalidad o cambiar de plan.",
+            "Checkout cancelado en Mercado Pago. Tu plan vigente se mantiene y ya podés elegir otra modalidad o cambiar de plan."
+            if is_auto_checkout
+            else "Checkout cancelado. Ya podés elegir otra modalidad o cambiar de plan.",
             "success",
         )
     except SubscriptionCommandError as exc:
