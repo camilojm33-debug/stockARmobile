@@ -3263,3 +3263,76 @@ def test_ai_authorized_return_clears_pending_checkout_card(subscription_app, mon
     assert "CHECKOUT LISTO" not in html
     assert _standard_snapshot(standard_subscription) == before_standard
 
+
+
+def test_ai_terminal_preapproval_webhook_restores_pre_checkout_trial(subscription_app):
+    from app import db
+    from datetime import timedelta
+    from stockarmobile.helpers.dates import utcnow_naive
+
+    company, _, _, standard_subscription = _tenant_with_standard_subscription()
+    before_standard = _standard_snapshot(standard_subscription)
+    now = utcnow_naive()
+    trial_ends = (now + timedelta(days=9)).isoformat()
+    external_reference = (
+        f"ai_subscription:true|company_id:{company.id}|plan_code:inicio|nonce:webhook-cancel-restore"
+    )
+    previous_ai = {
+        "plan_code": "inicio",
+        "status": "TRIAL",
+        "origin": "MANUAL",
+        "starts_at": now.isoformat(),
+        "ends_at": trial_ends,
+        "trial_reason": "Trial manual anterior",
+        "granted_by_user_id": None,
+        "manual_reason": None,
+        "mercadopago_preapproval_id": None,
+        "mercadopago_external_reference": None,
+        "mercadopago_payer_email": None,
+        "mercadopago_status": None,
+        "checkout_method": None,
+        "auto_renew": False,
+        "last_payment_id": None,
+        "last_payment_status": None,
+        "last_payment_at": None,
+        "last_payment_amount": None,
+        "last_payment_currency": None,
+    }
+    update_ai_preferences(
+        company,
+        ai_updates={
+            "plan_code": "vendedor",
+            "status": "PENDIENTE",
+            "origin": "MERCADO_PAGO",
+            "starts_at": now.isoformat(),
+            "ends_at": trial_ends,
+            "mercadopago_preapproval_id": "ai-pre-webhook-restore",
+            "mercadopago_external_reference": external_reference,
+            "mercadopago_status": "pending",
+            "checkout_method": "automatic",
+            "checkout_previous_ai_subscription": previous_ai,
+        },
+    )
+    db.session.commit()
+
+    synced = AISubscriptionService.sync_from_mercadopago(
+        preapproval={
+            "id": "ai-pre-webhook-restore",
+            "status": "cancelled",
+            "external_reference": external_reference,
+        }
+    )
+    status = AISubscriptionService.get_status(company)
+    stored = AISubscriptionService._ai_prefs(company)
+
+    assert synced.id == company.id
+    assert status["status"] == "TRIAL"
+    assert status["origin"] == "MANUAL"
+    assert status["plan_code"] == "inicio"
+    assert status["trial_reason"] == "Trial manual anterior"
+    assert status["ends_at"] == trial_ends
+    assert status["mercadopago_preapproval_id"] is None
+    assert stored["checkout_previous_ai_subscription"] is None
+    assert stored["mercadopago_cancelled_preapproval_id"] == "ai-pre-webhook-restore"
+    assert _standard_snapshot(standard_subscription) == before_standard
+
