@@ -408,8 +408,100 @@ class AISubscriptionService:
         return cls._apply(company, admin_user_id=admin_user_id, action="ai_subscription_cancel", new_fields={"status": "CANCELADA", "origin": "MANUAL"}, reason=reason)
 
     @classmethod
+    def end_access_now(cls, company, *, admin_user_id, reason: str | None = None) -> dict[str, Any]:
+        """Immediately remove AI access, distinct from cancelling future renewals."""
+        ai = cls._ai_prefs(company)
+        origin = cls._origin(ai)
+        preapproval_id = cls._preapproval_id(ai)
+        fields: dict[str, Any] = {
+            "status": "CANCELADA",
+            "origin": "MANUAL",
+            "ends_at": utcnow_naive().isoformat(),
+            "manual_reason": (reason or "Acceso IA finalizado inmediatamente por Super Admin.").strip()[:300],
+            "checkout_method": None,
+            "auto_renew": False,
+            "mercadopago_access_preserved_until": None,
+            "mercadopago_access_preserved_reason": None,
+        }
+
+        if origin == "MERCADO_PAGO":
+            if not preapproval_id:
+                raise AISubscriptionError(
+                    "La suscripción IA figura administrada por Mercado Pago, pero no tiene un preapproval verificable. "
+                    "No se retiró el acceso ni se modificó el estado."
+                )
+            remote = cls._get_mp_preapproval(company)
+            remote_status = str(remote.get("status") or "").strip().lower()
+            if remote_status not in MP_TERMINAL_STATUSES:
+                try:
+                    updated = cls._mp_service().cancel_preapproval(preapproval_id)
+                except Exception as exc:
+                    raise AISubscriptionError(
+                        "No se pudo cancelar la renovación en Mercado Pago. El acceso IA permanece sin cambios."
+                    ) from exc
+                updated_id = str(updated.get("id") or preapproval_id).strip()
+                updated_status = str(updated.get("status") or "").strip().lower()
+                if updated_id != preapproval_id or updated_status not in MP_TERMINAL_STATUSES:
+                    raise AISubscriptionError(
+                        "Mercado Pago no confirmó la cancelación de la autorización correcta. El acceso IA permanece sin cambios."
+                    )
+                remote_status = updated_status
+
+            fields.update({
+                "mercadopago_previous_preapproval_id": preapproval_id,
+                "mercadopago_previous_status": remote_status,
+                "mercadopago_previous_external_reference": ai.get("mercadopago_external_reference"),
+                "mercadopago_preapproval_id": None,
+                "mercadopago_status": None,
+                "mercadopago_external_reference": None,
+                "mercadopago_payer_email": None,
+                "mercadopago_creation_pending": False,
+            })
+
+        return cls._apply(
+            company,
+            admin_user_id=admin_user_id,
+            action="ai_subscription_access_ended",
+            new_fields=fields,
+            reason=reason,
+        )
+
+    @classmethod
     def grant_trial(cls, company, *, plan_code: str, days: int, admin_user_id, reason: str | None = None) -> dict[str, Any]:
-        cls._require_manual(company, "otorgar un trial")
+        ai = cls._ai_prefs(company)
+        takeover_fields: dict[str, Any] = {}
+        if cls._origin(ai) == "MERCADO_PAGO":
+            preapproval_id = cls._preapproval_id(ai)
+            if not preapproval_id:
+                raise AISubscriptionError(
+                    "La suscripción IA sigue marcada como Mercado Pago pero no tiene un preapproval verificable. "
+                    "No se puede convertir a trial manual con seguridad."
+                )
+            remote = cls._get_mp_preapproval(company)
+            remote_status = str(remote.get("status") or "").strip().lower()
+            if remote_status not in MP_TERMINAL_STATUSES:
+                raise AISubscriptionError(
+                    "La suscripción IA de Mercado Pago todavía está operativa. Cancelá primero la renovación "
+                    "y volvé a otorgar el trial cuando Mercado Pago confirme la baja."
+                )
+            # A terminal Mercado Pago preapproval cannot charge again. Archive it
+            # and detach it before granting a manual trial, otherwise the UI and
+            # billing guards would continue treating the trial as Mercado Pago-owned.
+            takeover_fields = {
+                "mercadopago_previous_preapproval_id": preapproval_id,
+                "mercadopago_previous_status": remote_status,
+                "mercadopago_previous_external_reference": ai.get("mercadopago_external_reference"),
+                "mercadopago_preapproval_id": None,
+                "mercadopago_status": None,
+                "mercadopago_external_reference": None,
+                "mercadopago_payer_email": None,
+                "mercadopago_creation_pending": False,
+                "checkout_method": None,
+                "auto_renew": False,
+                "mercadopago_access_preserved_until": None,
+                "mercadopago_access_preserved_reason": None,
+            }
+
         code = str(plan_code or "").strip().lower()
         if code not in AI_PLAN_BY_CODE:
             raise AISubscriptionError("Plan IA inválido.")
@@ -420,6 +512,7 @@ class AISubscriptionService:
             admin_user_id=admin_user_id,
             action="ai_subscription_grant_trial",
             new_fields={
+                **takeover_fields,
                 "plan_code": code,
                 "status": "TRIAL",
                 "origin": "MANUAL",
