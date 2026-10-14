@@ -1287,6 +1287,17 @@ def test_public_webchat_keeps_quantity_from_first_message_after_product_clarific
     ])
     _install_provider(monkeypatch, provider)
 
+    from services.ai_agent.orchestrator_v2 import VendorOrderPreviewTool
+    tool_results = []
+    original_execute = VendorOrderPreviewTool.execute
+
+    def capture_tool_result(self, **kwargs):
+        result = original_execute(self, **kwargs)
+        tool_results.append(result)
+        return result
+
+    monkeypatch.setattr(VendorOrderPreviewTool, "execute", capture_tool_result)
+
     preference_calls = []
 
     def ensure_token(self, *, company_id):
@@ -1338,7 +1349,8 @@ def test_public_webchat_keeps_quantity_from_first_message_after_product_clarific
     ).first()
     assert quote is not None, (
         f"No se creó el presupuesto. Respuesta={second.json.get('content')!r}; "
-        f"cart={second.json.get('cart')!r}; pagos_mock={len(preference_calls)}"
+        f"cart={second.json.get('cart')!r}; pagos_mock={len(preference_calls)}; "
+        f"tool_results={tool_results!r}; quotes_total={Quote.query.filter_by(company_id=setup['company'].id).count()}"
     )
     payment = Payment.query.filter_by(
         company_id=setup["company"].id,
