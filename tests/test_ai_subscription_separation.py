@@ -2728,3 +2728,173 @@ def test_standard_qr_checkout_recovers_from_legacy_null_command(subscription_app
     ).one()
     assert new_execution.subscription_id == pending.id
 
+
+
+def test_superadmin_can_end_ai_access_immediately_after_mp_renewal_cancel(subscription_app, monkeypatch):
+    from datetime import timedelta
+    from services.ai_agent.usage_service import can_use_ai
+    from stockarmobile.helpers.dates import utcnow_naive
+
+    company, _, _, standard_subscription = _tenant_with_standard_subscription()
+    before = _standard_snapshot(standard_subscription)
+    paid_until = (utcnow_naive() + timedelta(days=10)).isoformat()
+    update_ai_preferences(company, ai_updates={
+        "plan_code": "pro",
+        "status": "ACTIVA",
+        "origin": "MERCADO_PAGO",
+        "mercadopago_preapproval_id": "ai-pre-ended-now",
+        "mercadopago_external_reference": f"ai_subscription:true|company_id:{company.id}|plan_code:pro|nonce:end-now",
+        "mercadopago_status": "cancelled",
+        "mercadopago_access_preserved_until": paid_until,
+        "mercadopago_access_preserved_reason": "renewal_cancelled",
+        "starts_at": utcnow_naive().isoformat(),
+        "ends_at": paid_until,
+    })
+    db.session.commit()
+
+    monkeypatch.setattr(
+        AISubscriptionService,
+        "_get_mp_preapproval",
+        lambda company: {"id": "ai-pre-ended-now", "status": "cancelled"},
+    )
+
+    result = AISubscriptionService.end_access_now(
+        company,
+        admin_user_id=None,
+        reason="QA: retirar acceso inmediatamente",
+    )
+
+    assert result["status"] == "CANCELADA"
+    assert result["origin"] == "MANUAL"
+    assert result["mercadopago_preapproval_id"] is None
+    ai = AISubscriptionService._ai_prefs(company)
+    assert ai["mercadopago_previous_preapproval_id"] == "ai-pre-ended-now"
+    assert ai["mercadopago_access_preserved_until"] is None
+    assert can_use_ai(company, "asistente").allowed is False
+    assert _standard_snapshot(standard_subscription) == before
+
+
+def test_superadmin_can_grant_manual_trial_after_terminal_mp_preapproval(subscription_app, monkeypatch):
+    from datetime import timedelta
+    from stockarmobile.helpers.dates import utcnow_naive
+
+    company, _, _, standard_subscription = _tenant_with_standard_subscription()
+    before = _standard_snapshot(standard_subscription)
+    now = utcnow_naive()
+    ends_at = (now + timedelta(days=3)).isoformat()
+    update_ai_preferences(company, ai_updates={
+        "plan_code": "pro",
+        "status": "ACTIVA",
+        "origin": "MERCADO_PAGO",
+        "mercadopago_preapproval_id": "ai-pre-trial-takeover",
+        "mercadopago_external_reference": f"ai_subscription:true|company_id:{company.id}|plan_code:pro|nonce:trial-takeover",
+        "mercadopago_status": "cancelled",
+        "mercadopago_access_preserved_until": ends_at,
+        "mercadopago_access_preserved_reason": "renewal_cancelled",
+        "starts_at": now.isoformat(),
+        "ends_at": ends_at,
+    })
+    db.session.commit()
+    verified = []
+
+    def get_terminal_preapproval(company):
+        verified.append(company.id)
+        return {"id": "ai-pre-trial-takeover", "status": "cancelled"}
+
+    monkeypatch.setattr(AISubscriptionService, "_get_mp_preapproval", get_terminal_preapproval)
+
+    result = AISubscriptionService.grant_trial(
+        company,
+        plan_code="pro",
+        days=14,
+        admin_user_id=None,
+        reason="Prueba comercial QA",
+    )
+
+    assert verified == [company.id]
+    assert result["status"] == "TRIAL"
+    assert result["origin"] == "MANUAL"
+    ai = AISubscriptionService._ai_prefs(company)
+    assert ai["mercadopago_preapproval_id"] is None
+    assert ai["mercadopago_previous_preapproval_id"] == "ai-pre-trial-takeover"
+    assert ai["mercadopago_access_preserved_until"] is None
+    trial_end = datetime.fromisoformat(result["ends_at"])
+    assert trial_end > now + timedelta(days=13)
+    assert _standard_snapshot(standard_subscription) == before
+
+
+def test_superadmin_ai_detail_shows_immediate_end_and_manual_trial_for_cancelled_mp(subscription_app, monkeypatch):
+    from datetime import timedelta
+    from stockarmobile.helpers.dates import utcnow_naive
+
+    company, _, _, standard_subscription = _tenant_with_standard_subscription()
+    admin = User(username="super_ai_cancelled_mp", email="super_ai_cancelled_mp@test.local", role="superadmin", active=True)
+    admin.set_password("admin123")
+    db.session.add(admin)
+    now = utcnow_naive()
+    ends_at = (now + timedelta(days=2)).isoformat()
+    update_ai_preferences(company, ai_updates={
+        "plan_code": "pro",
+        "status": "ACTIVA",
+        "origin": "MERCADO_PAGO",
+        "mercadopago_preapproval_id": "ai-pre-detail-cancelled",
+        "mercadopago_external_reference": f"ai_subscription:true|company_id:{company.id}|plan_code:pro|nonce:detail-cancelled",
+        "mercadopago_status": "cancelled",
+        "mercadopago_access_preserved_until": ends_at,
+        "starts_at": now.isoformat(),
+        "ends_at": ends_at,
+    })
+    db.session.commit()
+    before = _standard_snapshot(standard_subscription)
+    client = subscription_app.test_client()
+    _login(client, admin)
+    monkeypatch.setattr("saas._superadmin_step_up_is_valid", lambda: True)
+
+    response = client.get(f"/superadmin/ai-subscriptions/{company.id}")
+    html = response.get_data(as_text=True)
+
+    assert response.status_code == 200
+    assert "Renovación cancelada." in html
+    assert "Finalizar acceso IA ahora" in html
+    assert "Dar prueba de IA" in html
+    # Once step-up is valid, do not clutter every action with duplicate password prompts.
+    assert 'name="step_up_password"' not in html
+    assert _standard_snapshot(standard_subscription) == before
+
+
+def test_superadmin_ai_cancel_action_terminates_manual_trial_only(subscription_app):
+    from datetime import timedelta
+    from stockarmobile.helpers.dates import utcnow_naive
+
+    company, _, _, standard_subscription = _tenant_with_standard_subscription()
+    admin = User(username="super_ai_trial_cancel", email="super_ai_trial_cancel@test.local", role="superadmin", active=True)
+    admin.set_password("admin123")
+    db.session.add(admin)
+    update_ai_preferences(company, ai_updates={
+        "plan_code": "pro",
+        "status": "TRIAL",
+        "origin": "MANUAL",
+        "starts_at": utcnow_naive().isoformat(),
+        "ends_at": (utcnow_naive() + timedelta(days=14)).isoformat(),
+        "trial_reason": "QA test",
+    })
+    db.session.commit()
+    before = _standard_snapshot(standard_subscription)
+    client = subscription_app.test_client()
+    _login(client, admin)
+
+    response = client.post(
+        f"/superadmin/ai-subscriptions/{company.id}/action",
+        data={
+            "action": "cancel",
+            "step_up_password": "admin123",
+            "reason": "Cancelar prueba QA",
+            "next": f"/superadmin/ai-subscriptions/{company.id}",
+        },
+    )
+
+    assert response.status_code == 302
+    status = AISubscriptionService.get_status(company)
+    assert status["status"] == "CANCELADA"
+    assert status["origin"] == "MANUAL"
+    assert _standard_snapshot(standard_subscription) == before
