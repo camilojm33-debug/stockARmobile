@@ -392,7 +392,8 @@ def test_sales_report_excludes_cancelled_sales(app):
         )
         db.session.add(user)
         db.session.flush()
-        now = datetime.utcnow()
+        # Keep both rows inside the fixed report-day filter even when CI runs after local midnight.
+        now = datetime(2026, 10, 13, 15, 0, 0)
         db.session.add_all([
             Sale(company_id=company.id, customer="Anulada", total_amount=Decimal("100.00"), status="anulada", date=now),
             Sale(company_id=company.id, customer="Confirmada", total_amount=Decimal("200.00"), status="confirmada", date=now),
