@@ -1227,3 +1227,117 @@ def test_webchat_frontend_guards_click_enter_and_manual_retries():
     assert "function safeMessageUrl(value)" in source
     assert "const heading = trimmed.match(/^#{1,6}\\s+(.+)$/)" in source
     assert "const bullet = trimmed.match(/^(?:\\*|-)\\s+(.+)$/)" in source
+
+
+def test_public_webchat_keeps_quantity_from_first_message_after_product_clarification(qa_public_vendor_db, monkeypatch):
+    from app import Payment, Product, Quote, QuoteDelivery, Sale, db
+
+    setup = qa_public_vendor_db
+    product = Product(
+        barcode="COCA-WEBCHAT-001",
+        name="Coca",
+        price=6090,
+        cost_price=4000,
+        stock=436,
+        min_stock=1,
+        active=True,
+        company_id=setup["company"].id,
+        unit_measure="unidad",
+    )
+    db.session.add(product)
+    db.session.flush()
+
+    # The visitor states "5 cocas" first, then answers the product clarification
+    # and gives delivery/contact information without repeating the quantity.
+    # Mimic the model confusing the stock figure (436) with the requested quantity.
+    provider = SequenceProvider([
+        {"content": "¿Qué producto o presentación de Coca buscás?", "tool_call": None},
+        {
+            "content": "",
+            "tool_call": {
+                "id": "tool-coca-quote",
+                "name": "preparar_pedido",
+                "arguments": {
+                    "product_query": "coca",
+                    "quantity": 436,
+                    "customer_name": "Walter Nuñez",
+                    "customer_phone": "986578495",
+                    "delivery_method": "envio",
+                    "delivery_address": "calle Robertito Funes 456",
+                    "delivery_city": "Resistencia",
+                    "delivery_province": "Chaco",
+                },
+            },
+        },
+        {"content": "Pedido preparado.", "tool_call": None},
+    ])
+    _install_provider(monkeypatch, provider)
+
+    preference_calls = []
+
+    def ensure_token(self, *, company_id):
+        return "qa-token"
+
+    def create_preference(self, **kwargs):
+        preference_calls.append(kwargs)
+        return {
+            "id": "pref-webchat-coca-5",
+            "init_point": "https://payments.test/webchat-coca-5",
+        }
+
+    monkeypatch.setattr(
+        "services.ai_agent.vendor_order_service.MercadoPagoOAuthService.ensure_access_token",
+        ensure_token,
+    )
+    monkeypatch.setattr(
+        "services.ai_agent.vendor_order_service.MercadoPagoService.create_ai_order_checkout_preference",
+        create_preference,
+    )
+
+    client = _public_client(setup)
+    first = _post_message(
+        client,
+        setup,
+        "operation-coca-first-turn",
+        "Hola, quiero 5 cocas.",
+    )
+    second = _post_message(
+        client,
+        setup,
+        "operation-coca-product-and-delivery",
+        "Coca. Con envío a calle Robertito Funes 456, Resistencia, Chaco. "
+        "Soy Walter Nuñez, celular 986578495.",
+        conversation_id=first.json["conversation_id"],
+    )
+
+    quote = Quote.query.filter_by(
+        company_id=setup["company"].id,
+        observations="Pedido generado por el Vendedor 24 hs de StockARmobile.",
+    ).one()
+    payment = Payment.query.filter_by(
+        company_id=setup["company"].id,
+        provider="mercadopago_ai_order",
+    ).one()
+    delivery = QuoteDelivery.query.filter_by(quote_id=quote.id).one()
+
+    assert first.status_code == second.status_code == 200
+    assert first.json["conversation_id"] == second.json["conversation_id"]
+    assert second.json["payment_url"] == "https://payments.test/webchat-coca-5"
+    assert second.json["quote_url"]
+    assert provider.calls == 3
+    assert len(preference_calls) == 1
+    assert len(quote.items) == 1
+    assert quote.items[0].description == "Coca"
+    assert float(quote.items[0].quantity) == 5
+    assert quote.status == "ENVIADO"
+    assert payment.status == "pending"
+    assert payment.preference_id == "pref-webchat-coca-5"
+    assert delivery.recipient_name == "Walter Nuñez"
+    assert delivery.phone == "986578495"
+    assert delivery.method == "envio"
+    assert delivery.address == "calle Robertito Funes 456"
+    assert delivery.city == "Resistencia"
+    assert delivery.province == "Chaco"
+    assert float(product.stock) == 436
+    assert Sale.query.filter_by(company_id=setup["company"].id).count() == 0
+
