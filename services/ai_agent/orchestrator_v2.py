@@ -682,13 +682,18 @@ class VendorOrderPreviewTool(AgentTool):
             requested_delivery_method = "retiro"
 
         def explicit_delivery_from_user_messages():
+            import unicodedata
+
             relevant_messages = (
                 recent_user_messages[identity_change_index:]
                 if identity_change_index is not None
                 else recent_user_messages
             )
             for row in reversed(relevant_messages):
-                text = _normalize_text(row.content)
+                # Treat accented and unaccented Spanish ("envío"/"envio",
+                # "teléfono"/"telefono") consistently when resolving intent.
+                text = unicodedata.normalize("NFKD", _normalize_text(row.content))
+                text = "".join(char for char in text if not unicodedata.combining(char))
                 if any(term in text for term in (
                     "prefiero envio", "con envio", "envio a domicilio", "a domicilio",
                     "que me lo envien", "que lo envien", "mandalo a casa", "entrega a domicilio",
