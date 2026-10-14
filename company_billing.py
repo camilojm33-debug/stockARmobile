@@ -3174,6 +3174,31 @@ def cancel_checkout():
                 ),
             )
 
+        # Cancel a pending plan-change row without touching the current subscription.
+        # When the customer authorized automatic billing on the same active row,
+        # restore its exact pre-checkout renewal flags instead of leaving the paid
+        # plan silently changed by a cancelled attempt.
+        previous_renewal_enabled = metadata.get("checkout_previous_renewal_enabled")
+        previous_auto_renew = metadata.get("checkout_previous_auto_renew")
+        previous_cancel_at_period_end = metadata.get("checkout_previous_cancel_at_period_end")
+        if is_auto_checkout:
+            if is_pending_plan_change:
+                subscription.auto_renew = False
+                subscription.renewal_enabled = False
+                subscription.cancel_at_period_end = False
+            else:
+                if isinstance(previous_renewal_enabled, bool):
+                    subscription.renewal_enabled = previous_renewal_enabled
+                if isinstance(previous_auto_renew, bool):
+                    subscription.auto_renew = previous_auto_renew
+                if isinstance(previous_cancel_at_period_end, bool):
+                    subscription.cancel_at_period_end = previous_cancel_at_period_end
+
+        restored_auto_renew = (
+            previous_auto_renew
+            if is_auto_checkout and not is_pending_plan_change and isinstance(previous_auto_renew, bool)
+            else (False if is_auto_checkout else metadata.get("auto_renew"))
+        )
         SubscriptionService._set_metadata(
             subscription,
             {
@@ -3183,13 +3208,13 @@ def cancel_checkout():
                 "checkout_cancelled_by_user_id": current_user.id,
                 "pending_plan_change": False if is_pending_plan_change else metadata.get("pending_plan_change"),
                 "mercadopago_status": remote_status if is_auto_checkout else metadata.get("mercadopago_status"),
-                "auto_renew": False if is_auto_checkout else metadata.get("auto_renew"),
+                "auto_renew": restored_auto_renew,
+                "checkout_previous_renewal_enabled": None if is_auto_checkout else metadata.get("checkout_previous_renewal_enabled"),
+                "checkout_previous_auto_renew": None if is_auto_checkout else metadata.get("checkout_previous_auto_renew"),
+                "checkout_previous_cancel_at_period_end": None if is_auto_checkout else metadata.get("checkout_previous_cancel_at_period_end"),
             },
         )
         if is_auto_checkout:
-            subscription.auto_renew = False
-            subscription.renewal_enabled = False
-            subscription.cancel_at_period_end = False
             preview = session.get("standard_auto_checkout_preview")
             if isinstance(preview, dict) and int(preview.get("subscription_id") or 0) == subscription.id:
                 session.pop("standard_auto_checkout_preview", None)
