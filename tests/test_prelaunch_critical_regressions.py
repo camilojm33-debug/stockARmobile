@@ -555,3 +555,45 @@ def test_recurring_payment_without_provider_boundary_does_not_stack_on_placehold
 
     assert subscription.next_billing_date == paid_at + timedelta(days=30)
     assert subscription.ends_at == paid_at + timedelta(days=30)
+
+
+def test_business_billing_document_list_filters_quotes_without_missing_method(app):
+    from app import Quote
+    from services.business_billing_service import BusinessBillingService
+
+    with app.app_context():
+        company = Company(name="Facturación QA", active=True, timezone="America/Argentina/Cordoba")
+        db.session.add(company)
+        db.session.flush()
+        user = User(
+            username="billing_qa_admin",
+            email="billing_qa_admin@example.test",
+            password_hash="unused-test-hash",
+            role="admin",
+            active=True,
+            company_id=company.id,
+        )
+        db.session.add(user)
+        db.session.flush()
+        quote = Quote(
+            number="QA-FILTRO-001",
+            date=datetime(2026, 10, 14, 12, 0, 0),
+            total_amount=Decimal("1500.00"),
+            status="ENVIADO",
+            company_id=company.id,
+            created_by_user_id=user.id,
+        )
+        db.session.add(quote)
+        db.session.commit()
+
+        config = BusinessBillingService.default_config(company)
+        rows = BusinessBillingService.list_documents(
+            company.id,
+            config,
+            {
+                "date_from": datetime(2026, 10, 1),
+                "date_to": datetime(2026, 10, 31),
+            },
+        )
+
+        assert any(row["source"] == "quote" and row["id"] == quote.id for row in rows)
