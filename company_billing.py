@@ -2592,10 +2592,6 @@ def create_ai_subscription_checkout():
                 raise AISubscriptionError(
                     "Mercado Pago devolvió una autorización IA diferente de la registrada. No se creó otro checkout."
                 )
-            if str(remote.get("id") or "").strip() != existing_preapproval_id:
-                raise AISubscriptionError(
-                    "Mercado Pago devolvió una autorización IA diferente de la registrada. No se creó otro checkout."
-                )
             remote_status = str(remote.get("status") or "").strip().lower()
             remote_init_point = str(remote.get("init_point") or "").strip()
             remote_reference = str(remote.get("external_reference") or "").strip()
