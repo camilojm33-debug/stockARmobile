@@ -1253,6 +1253,14 @@ def test_public_webchat_keeps_quantity_from_first_message_after_product_clarific
         publish_vendor(setup["company"])
     db.session.commit()
 
+    from decimal import Decimal
+    from types import SimpleNamespace
+    from services.ai_agent.orchestrator_v2 import _public_user_requested_quantity
+    assert _public_user_requested_quantity(
+        [SimpleNamespace(content="Hola, quiero 5 cocas.")],
+        "coca",
+    ) == Decimal("5")
+
     # The visitor states "5 cocas" first, then answers the product clarification
     # and gives delivery/contact information without repeating the quantity.
     # Mimic the model confusing the stock figure (436) with the requested quantity.
@@ -1316,14 +1324,30 @@ def test_public_webchat_keeps_quantity_from_first_message_after_product_clarific
         conversation_id=first.json["conversation_id"],
     )
 
+    assert second.json["cart"]["items"], (
+        f"El carrito no se completó. Respuesta={second.json.get('content')!r}; "
+        f"cart={second.json.get('cart')!r}; pagos_mock={len(preference_calls)}"
+    )
+    assert float(second.json["cart"]["items"][0]["quantity"]) == 5, (
+        f"El Webchat no conservó las 5 unidades. Respuesta={second.json.get('content')!r}; "
+        f"cart={second.json.get('cart')!r}"
+    )
     quote = Quote.query.filter_by(
         company_id=setup["company"].id,
         observations="Pedido generado por el Vendedor 24 hs de StockARmobile.",
-    ).one()
+    ).first()
+    assert quote is not None, (
+        f"No se creó el presupuesto. Respuesta={second.json.get('content')!r}; "
+        f"cart={second.json.get('cart')!r}; pagos_mock={len(preference_calls)}"
+    )
     payment = Payment.query.filter_by(
         company_id=setup["company"].id,
         provider="mercadopago_ai_order",
-    ).one()
+    ).first()
+    assert payment is not None, (
+        f"No se creó el pago. Respuesta={second.json.get('content')!r}; "
+        f"cart={second.json.get('cart')!r}; pagos_mock={len(preference_calls)}"
+    )
     delivery = QuoteDelivery.query.filter_by(quote_id=quote.id).one()
 
     assert first.status_code == second.status_code == 200
