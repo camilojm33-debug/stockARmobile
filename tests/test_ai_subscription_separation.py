@@ -612,7 +612,13 @@ def test_pending_standard_monthly_checkout_can_be_replaced_with_cheaper_plan(sub
     response = client.post("/admin/subscription/mercadopago/create", data={"plan_id": cheaper_id})
 
     assert response.status_code == 302
-    assert response.headers["Location"] == "https://mp.test/cheaper-monthly"
+    assert "checkout=created" in response.headers["Location"]
+    assert "checkout_subscription_id=" in response.headers["Location"]
+    portal = client.get(response.headers["Location"])
+    assert portal.status_code == 200
+    assert b"Abrir Mercado Pago" in portal.data
+    assert b"Cancelar checkout" in portal.data
+
     assert calls == [
         ("get", "old-premium-preapproval"),
         ("cancel", "old-premium-preapproval"),
@@ -1515,7 +1521,13 @@ def test_standard_auto_subscription_checkout_works_when_ai_is_active(subscriptio
     response = client.post("/admin/subscription/mercadopago/create", data={"plan_id": subscription.plan_id})
 
     assert response.status_code == 302
-    assert response.headers["Location"] == "https://mp.test/standard"
+    assert "checkout=created" in response.headers["Location"]
+    assert "checkout_subscription_id=" in response.headers["Location"]
+    portal = client.get(response.headers["Location"])
+    assert portal.status_code == 200
+    assert b"Abrir Mercado Pago" in portal.data
+    assert b"Cancelar checkout" in portal.data
+
     assert calls == [{
         "company_id": company.id,
         "subscription_id": subscription.id,
@@ -1543,7 +1555,13 @@ def test_standard_missing_ai_active_can_start_standard_checkout(subscription_app
     response = client.post("/admin/subscription/mercadopago/create", data={"plan_id": plan.id})
 
     assert response.status_code == 302
-    assert response.headers["Location"] == "https://mp.test/standard"
+    assert "checkout=created" in response.headers["Location"]
+    assert "checkout_subscription_id=" in response.headers["Location"]
+    portal = client.get(response.headers["Location"])
+    assert portal.status_code == 200
+    assert b"Abrir Mercado Pago" in portal.data
+    assert b"Cancelar checkout" in portal.data
+
     assert Subscription.query.filter_by(company_id=company.id).count() == 1
     assert AISubscriptionService.get_status(company) == ai_before
 
@@ -1567,7 +1585,12 @@ def test_standard_auto_subscription_checkout_returns_json_redirect_for_ajax(subs
     )
 
     assert response.status_code == 200
-    assert response.get_json() == {"success": True, "redirect_url": "https://mp.test/standard"}
+    payload = response.get_json()
+    assert payload["success"] is True
+    assert payload["redirect_url"] == "https://mp.test/standard"
+    assert "/admin/subscription/portal?" in payload["return_url"]
+    assert "checkout=created" in payload["return_url"]
+    assert f"checkout_subscription_id={subscription.id}" in payload["return_url"]
 
 
 def test_ai_auto_subscription_checkout_returns_json_redirect_for_ajax(subscription_app, monkeypatch):
