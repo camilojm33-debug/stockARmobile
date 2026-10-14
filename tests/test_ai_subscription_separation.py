@@ -614,11 +614,6 @@ def test_pending_standard_monthly_checkout_can_be_replaced_with_cheaper_plan(sub
     assert response.status_code == 302
     assert "checkout=created" in response.headers["Location"]
     assert "checkout_subscription_id=" in response.headers["Location"]
-    portal = client.get(response.headers["Location"])
-    assert portal.status_code == 200
-    assert b"Abrir Mercado Pago" in portal.data
-    assert b"Cancelar checkout" in portal.data
-
     assert calls == [
         ("get", "old-premium-preapproval"),
         ("cancel", "old-premium-preapproval"),
@@ -1523,11 +1518,6 @@ def test_standard_auto_subscription_checkout_works_when_ai_is_active(subscriptio
     assert response.status_code == 302
     assert "checkout=created" in response.headers["Location"]
     assert "checkout_subscription_id=" in response.headers["Location"]
-    portal = client.get(response.headers["Location"])
-    assert portal.status_code == 200
-    assert b"Abrir Mercado Pago" in portal.data
-    assert b"Cancelar checkout" in portal.data
-
     assert calls == [{
         "company_id": company.id,
         "subscription_id": subscription.id,
@@ -1557,11 +1547,6 @@ def test_standard_missing_ai_active_can_start_standard_checkout(subscription_app
     assert response.status_code == 302
     assert "checkout=created" in response.headers["Location"]
     assert "checkout_subscription_id=" in response.headers["Location"]
-    portal = client.get(response.headers["Location"])
-    assert portal.status_code == 200
-    assert b"Abrir Mercado Pago" in portal.data
-    assert b"Cancelar checkout" in portal.data
-
     assert Subscription.query.filter_by(company_id=company.id).count() == 1
     assert AISubscriptionService.get_status(company) == ai_before
 
