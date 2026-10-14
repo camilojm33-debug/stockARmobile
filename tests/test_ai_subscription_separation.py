@@ -2898,3 +2898,53 @@ def test_superadmin_ai_cancel_action_terminates_manual_trial_only(subscription_a
     assert status["status"] == "CANCELADA"
     assert status["origin"] == "MANUAL"
     assert _standard_snapshot(standard_subscription) == before
+
+
+def test_superadmin_end_access_cancels_live_mp_preapproval_before_local_revocation(subscription_app, monkeypatch):
+    from datetime import timedelta
+    from stockarmobile.helpers.dates import utcnow_naive
+
+    company, _, _, standard_subscription = _tenant_with_standard_subscription()
+    before = _standard_snapshot(standard_subscription)
+    ends_at = (utcnow_naive() + timedelta(days=10)).isoformat()
+    update_ai_preferences(company, ai_updates={
+        "plan_code": "pro",
+        "status": "ACTIVA",
+        "origin": "MERCADO_PAGO",
+        "mercadopago_preapproval_id": "ai-pre-live-end",
+        "mercadopago_external_reference": f"ai_subscription:true|company_id:{company.id}|plan_code:pro|nonce:live-end",
+        "mercadopago_status": "authorized",
+        "starts_at": utcnow_naive().isoformat(),
+        "ends_at": ends_at,
+    })
+    db.session.commit()
+    calls = []
+
+    class FakeMercadoPago:
+        def cancel_preapproval(self, preapproval_id):
+            calls.append(preapproval_id)
+            return {"id": preapproval_id, "status": "cancelled"}
+
+    monkeypatch.setattr(
+        AISubscriptionService,
+        "_get_mp_preapproval",
+        lambda company: {"id": "ai-pre-live-end", "status": "authorized"},
+    )
+    monkeypatch.setattr(
+        AISubscriptionService,
+        "_mp_service",
+        staticmethod(lambda: FakeMercadoPago()),
+    )
+
+    result = AISubscriptionService.end_access_now(
+        company,
+        admin_user_id=None,
+        reason="QA: baja inmediata",
+    )
+
+    assert calls == ["ai-pre-live-end"]
+    assert result["status"] == "CANCELADA"
+    assert result["origin"] == "MANUAL"
+    assert result["mercadopago_preapproval_id"] is None
+    assert AISubscriptionService._ai_prefs(company)["mercadopago_previous_preapproval_id"] == "ai-pre-live-end"
+    assert _standard_snapshot(standard_subscription) == before
