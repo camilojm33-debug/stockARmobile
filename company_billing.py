@@ -2298,39 +2298,7 @@ def create_checkout():
     # checkout de Mercado Pago directamente. Los flujos QR existentes siguen
     # mostrando su pantalla de resumen cuando no solicitan esta modalidad.
     if request.form.get("direct_checkout") == "1":
-        external_reference = (
-            external_reference
-            or str(response.get("external_reference") or "").strip()
-            or str(AISubscriptionService._ai_prefs(company).get("mercadopago_external_reference") or "").strip()
-        )
-        if not external_reference:
-            raise AISubscriptionError(
-                "No se pudo guardar una referencia verificable para la autorización IA. No se redirigió a Mercado Pago."
-            )
-        session["ai_auto_checkout_preview"] = {
-            "company_id": int(company.id),
-            "preapproval_id": preapproval_id,
-            "external_reference": external_reference,
-            "plan_code": plan_code,
-            "checkout_url": checkout_url,
-        }
-        return_url = url_for(
-            "company_billing.subscription_portal",
-            checkout="ai_created",
-            ai_preapproval_id=preapproval_id,
-            _anchor="payment-checkout",
-        )
-        if _wants_json_response():
-            return jsonify({
-                "success": True,
-                "redirect_url": checkout_url,
-                "return_url": return_url,
-            })
-        flash(
-            "Checkout mensual IA listo. Mercado Pago se abre aparte; podés volver acá y cancelar si el cliente cambia de opinión.",
-            "info",
-        )
-        return redirect(return_url)
+        return _checkout_redirect_response(checkout_url)
 
     _remember_standard_qr_checkout(company, subscription, preference)
     flash("Pago con QR listo. Escanealo o abrí Mercado Pago para pagar este ciclo.", "info")
@@ -2794,7 +2762,39 @@ def create_ai_subscription_checkout():
                 remote_status,
                 parsed_ai_checkout.hostname,
             )
-        return _checkout_redirect_response(checkout_url)
+        external_reference = (
+            external_reference
+            or str(response.get("external_reference") or "").strip()
+            or str(AISubscriptionService._ai_prefs(company).get("mercadopago_external_reference") or "").strip()
+        )
+        if not external_reference:
+            raise AISubscriptionError(
+                "No se pudo guardar una referencia verificable para la autorización IA. No se redirigió a Mercado Pago."
+            )
+        session["ai_auto_checkout_preview"] = {
+            "company_id": int(company.id),
+            "preapproval_id": preapproval_id,
+            "external_reference": external_reference,
+            "plan_code": plan_code,
+            "checkout_url": checkout_url,
+        }
+        return_url = url_for(
+            "company_billing.subscription_portal",
+            checkout="ai_created",
+            ai_preapproval_id=preapproval_id,
+            _anchor="payment-checkout",
+        )
+        if _wants_json_response():
+            return jsonify({
+                "success": True,
+                "redirect_url": checkout_url,
+                "return_url": return_url,
+            })
+        flash(
+            "Checkout mensual IA listo. Mercado Pago se abre aparte; podés volver acá y cancelar si el cliente cambia de opinión.",
+            "info",
+        )
+        return redirect(return_url)
     except AISubscriptionError as exc:
         db.session.rollback()
         if _wants_json_response():
