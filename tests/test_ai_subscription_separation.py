@@ -3127,6 +3127,7 @@ def test_ai_monthly_checkout_recovers_from_server_state_after_session_is_lost(su
 
 
 def test_ai_monthly_checkout_cancel_restores_manual_trial_without_touching_standard(subscription_app, monkeypatch):
+    from app import db
     from datetime import timedelta
     from services.mercadopago_service import MercadoPagoService
     from stockarmobile.helpers.dates import utcnow_naive
@@ -3216,6 +3217,7 @@ def test_ai_monthly_checkout_cancel_restores_manual_trial_without_touching_stand
 
 
 def test_ai_authorized_return_clears_pending_checkout_card(subscription_app, monkeypatch):
+    from app import db
     from services.mercadopago_service import MercadoPagoService
 
     company, user, _, standard_subscription = _tenant_with_standard_subscription()
