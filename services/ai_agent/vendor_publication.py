@@ -399,6 +399,21 @@ def _public_conversation(company, conversation_id=None, *, create=False, chat_se
         # another chat (or create a replacement under a mismatched token).
         if conversation_id not in (None, ""):
             return None
+        if session_digest:
+            # A stale token must not silently create a second conversation if
+            # the browser cookie changed while the tab's sessionStorage survived.
+            other_visitors = Conversation.query.filter_by(
+                company_id=company.id,
+                channel="webchat",
+                agent_id=vendor_agent.id,
+            ).all()
+            token_owned_by_another_visitor = any(
+                candidate.external_conversation_id != visitor_id
+                and _conversation_metadata(candidate).get("public_chat_session_digest") == session_digest
+                for candidate in other_visitors
+            )
+            if token_owned_by_another_visitor:
+                return None
         metadata = {"source": "public_webchat_stable"}
         if session_digest:
             metadata["public_chat_session_digest"] = session_digest
