@@ -641,38 +641,18 @@ def public_vendor_chat_message(token):
         from services.ai_agent.providers.base import AIProviderError
 
         with public_operation_lock(scope="visitor", company_id=company_id, conversation_id=0, key=visitor_id):
-            if conversation_id not in (None, ""):
-                try:
-                    conversation = Conversation.query.filter_by(
-                        id=int(conversation_id),
-                        company_id=company_id,
-                        channel="webchat",
-                        external_conversation_id=visitor_id,
-                    ).first()
-                except (TypeError, ValueError):
-                    conversation = None
-                if conversation is None:
-                    return jsonify({"success": False, "error": "La conversación ya no es válida."}), 403
-                if conversation.agent_id != vendor_agent.id:
-                    return jsonify({"success": False, "error": "La conversación no corresponde al vendedor."}), 403
-            else:
-                conversation = Conversation.query.filter_by(
-                    company_id=company_id,
-                    channel="webchat",
-                    external_conversation_id=visitor_id,
-                    agent_id=vendor_agent.id,
-                ).filter(Conversation.status == "open").order_by(Conversation.id.desc()).first()
-                if conversation is None:
-                    conversation = Conversation(
-                        company_id=company_id,
-                        agent_id=vendor_agent.id,
-                        channel="webchat",
-                        external_conversation_id=visitor_id,
-                        status="open",
-                        metadata_json={"source": "public_webchat"},
-                    )
-                    db.session.add(conversation)
-                    db.session.flush()
+            # Share the same strict tenant/visitor/tab-token validator as the
+            # published URL so old signed links cannot resolve a newer tab's chat.
+            from services.ai_agent.vendor_publication import _public_conversation
+
+            conversation = _public_conversation(
+                company,
+                conversation_id,
+                create=True,
+                chat_session_id=payload.get("chat_session_id"),
+            )
+            if conversation is None:
+                return jsonify({"success": False, "error": "La conversación ya no es válida."}), 403
 
             with public_operation_lock(scope="request", company_id=company_id, conversation_id=conversation.id, key=idempotency_key):
                 operation = PublicVendorOperation.query.filter_by(

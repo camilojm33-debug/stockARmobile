@@ -10,7 +10,7 @@ import re
 import secrets
 import time
 import unicodedata
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 
 import qrcode
 from flask import jsonify, render_template, request, url_for, abort, current_app, session
@@ -182,6 +182,14 @@ def _visitor_id(company_id: int) -> str:
     return value
 
 
+def _public_chat_session_digest(value) -> str | None:
+    """Validate and hash a random per-tab chat token; never persist the bearer token."""
+    token = str(value or "").strip()
+    if not re.fullmatch(r"[A-Za-z0-9_-]{32,120}", token):
+        return None
+    return hashlib.sha256(token.encode("utf-8")).hexdigest()
+
+
 def _public_request_key(payload: dict) -> str | None:
     raw = request.headers.get("Idempotency-Key") or payload.get("idempotency_key")
     key = str(raw or "").strip()
@@ -320,44 +328,102 @@ def _conversation_metadata(conversation) -> dict:
     return parsed if isinstance(parsed, dict) else {}
 
 
-def _public_conversation(company, conversation_id=None, *, create=False):
+def _public_conversation(company, conversation_id=None, *, create=False, chat_session_id=None):
     visitor_id = _visitor_id(company.id)
     vendor_agent = _agent_for_company(company.id)
     conversation = None
+    has_chat_session = chat_session_id not in (None, "")
+    session_digest = _public_chat_session_digest(chat_session_id) if has_chat_session else None
+    if has_chat_session and session_digest is None:
+        return None
 
-    if conversation_id not in (None, ""):
-        try:
-            conversation = Conversation.query.filter_by(
-                id=int(conversation_id),
-                company_id=company.id,
-                channel="webchat",
-                external_conversation_id=visitor_id,
-            ).first()
-        except (TypeError, ValueError):
-            conversation = None
-        if conversation is None or conversation.agent_id != vendor_agent.id:
-            return None
-    else:
-        conversation = (
-            Conversation.query.filter_by(
-                company_id=company.id,
-                channel="webchat",
-                external_conversation_id=visitor_id,
-                agent_id=vendor_agent.id,
+    scoped_query = Conversation.query.filter_by(
+        company_id=company.id,
+        channel="webchat",
+        external_conversation_id=visitor_id,
+        agent_id=vendor_agent.id,
+    )
+
+    if session_digest:
+        # A browser visitor can own several parallel chats. Resolve a chat only
+        # when its high-entropy per-tab token matches the digest persisted on it.
+        if conversation_id not in (None, ""):
+            try:
+                conversation = scoped_query.filter_by(id=int(conversation_id)).first()
+            except (TypeError, ValueError):
+                conversation = None
+            if (
+                conversation is None
+                or _conversation_metadata(conversation).get("public_chat_session_digest") != session_digest
+            ):
+                return None
+        else:
+            candidates = scoped_query.order_by(Conversation.id.desc()).all()
+            conversation = next(
+                (
+                    candidate for candidate in candidates
+                    if _conversation_metadata(candidate).get("public_chat_session_digest") == session_digest
+                ),
+                None,
             )
-            .filter(Conversation.status == "open")
-            .order_by(Conversation.id.desc())
-            .first()
-        )
+    else:
+        # Backward compatibility for already-open pages using the legacy client.
+        # Legacy requests must never select a conversation owned by a per-tab token.
+        if conversation_id not in (None, ""):
+            try:
+                conversation = scoped_query.filter_by(id=int(conversation_id)).first()
+            except (TypeError, ValueError):
+                conversation = None
+            if (
+                conversation is None
+                or _conversation_metadata(conversation).get("public_chat_session_digest")
+                or conversation.agent_id != vendor_agent.id
+            ):
+                return None
+        else:
+            candidates = (
+                scoped_query.filter(Conversation.status == "open")
+                .order_by(Conversation.id.desc())
+                .all()
+            )
+            conversation = next(
+                (
+                    candidate for candidate in candidates
+                    if not _conversation_metadata(candidate).get("public_chat_session_digest")
+                ),
+                None,
+            )
 
     if conversation is None and create:
+        # If a caller supplied a conversation ID, never silently switch it to
+        # another chat (or create a replacement under a mismatched token).
+        if conversation_id not in (None, ""):
+            return None
+        if session_digest:
+            # A stale token must not silently create a second conversation if
+            # the browser cookie changed while the tab's sessionStorage survived.
+            other_visitors = Conversation.query.filter_by(
+                company_id=company.id,
+                channel="webchat",
+                agent_id=vendor_agent.id,
+            ).all()
+            token_owned_by_another_visitor = any(
+                candidate.external_conversation_id != visitor_id
+                and _conversation_metadata(candidate).get("public_chat_session_digest") == session_digest
+                for candidate in other_visitors
+            )
+            if token_owned_by_another_visitor:
+                return None
+        metadata = {"source": "public_webchat_stable"}
+        if session_digest:
+            metadata["public_chat_session_digest"] = session_digest
         conversation = Conversation(
             company_id=company.id,
             agent_id=vendor_agent.id,
             channel="webchat",
             external_conversation_id=visitor_id,
             status="open",
-            metadata_json={"source": "public_webchat_stable"},
+            metadata_json=metadata,
         )
         db.session.add(conversation)
         db.session.flush()
@@ -1019,15 +1085,65 @@ def _catalog_for_company(company, query: str = "", limit: int = PUBLIC_VENDOR_CA
     return [_product_payload(row) for row in rows]
 
 
-def _initial_page_state(company):
-    conversation = _public_conversation(company, create=False)
+def _empty_public_page_state(company) -> dict:
+    options = get_vendor_options(company)
+    return {
+        "conversation_id": None,
+        "cart": {"items": [], "total": 0, "currency": "ARS", "line_count": 0},
+        "payment_url": None,
+        "quote_url": None,
+        "pending_quote_id": None,
+        "delivery": None,
+        "shipping_config": {
+            "mode": "fixed",
+            "fixed_cost": float(options.get("standard_shipping_cost") or 0),
+        },
+        "order": None,
+        "messages": [],
+    }
+
+
+def _public_chat_history(conversation, limit: int = 60) -> list[dict]:
+    """Return only visible chat turns, scoped to this tenant and conversation."""
+    rows = (
+        ConversationMessage.query.filter(
+            ConversationMessage.company_id == int(conversation.company_id),
+            ConversationMessage.conversation_id == int(conversation.id),
+            ConversationMessage.role.in_(("user", "assistant")),
+        )
+        .order_by(ConversationMessage.id.desc())
+        .limit(max(1, min(int(limit or 60), 100)))
+        .all()
+    )
+    rows.reverse()
+    return [
+        {
+            "id": int(row.id),
+            "role": str(row.role),
+            "content": str(row.content or "")[:8000],
+        }
+        for row in rows
+    ]
+
+
+def _initial_page_state(company, chat_session_id=None):
+    # Never infer the current tab's state from the browser-wide visitor cookie.
+    # The browser token is not available to server rendering; the tab restores
+    # its own conversation through /state after loading.
+    if not chat_session_id:
+        return _empty_public_page_state(company)
+    conversation = _public_conversation(
+        company,
+        create=False,
+        chat_session_id=chat_session_id,
+    )
     if conversation is None:
-        return {"conversation_id": None, "cart": {"items": [], "total": 0, "currency": "ARS", "line_count": 0}, "payment_url": None}
+        return _empty_public_page_state(company)
     try:
-        return _cart_public_state(conversation)
+        return {**_cart_public_state(conversation), "messages": _public_chat_history(conversation)}
     except Exception:
-        current_app.logger.exception("No se pudo cargar el carrito público company_id=%s", company.id)
-        return {"conversation_id": conversation.id, "cart": {"items": [], "total": 0, "currency": "ARS", "line_count": 0}, "payment_url": None}
+        current_app.logger.exception("No se pudo cargar el chat público company_id=%s", company.id)
+        return _empty_public_page_state(company)
 
 
 def public_vendor_page(slug: str):
@@ -1081,23 +1197,19 @@ def public_vendor_state(slug: str):
     access = can_use_ai(company, "vendedor")
     if not access.allowed:
         return jsonify({"success": False, "error": access.reason}), 403
-    conversation = _public_conversation(company, request.args.get("conversation_id"), create=False)
+    conversation = _public_conversation(
+        company,
+        request.args.get("conversation_id"),
+        create=False,
+        chat_session_id=request.args.get("chat_session_id"),
+    )
     if conversation is None:
-        return jsonify({
-            "success": True,
-            "conversation_id": None,
-            "cart": {"items": [], "total": 0, "currency": "ARS", "line_count": 0},
-            "payment_url": None,
-            "quote_url": None,
-            "pending_quote_id": None,
-            "delivery": None,
-            "shipping_config": {
-                "mode": "fixed",
-                "fixed_cost": float(get_vendor_options(company).get("standard_shipping_cost") or 0),
-            },
-            "order": None,
-        })
-    return jsonify({"success": True, **_cart_public_state(conversation)})
+        return jsonify({"success": True, **_empty_public_page_state(company)})
+    return jsonify({
+        "success": True,
+        **_cart_public_state(conversation),
+        "messages": _public_chat_history(conversation),
+    })
 
 
 def public_vendor_cart(slug: str):
@@ -1130,7 +1242,7 @@ def public_vendor_cart(slug: str):
     visitor_id = _visitor_id(company.id)
     operation_type = f"cart:{action}"
     with public_operation_lock(scope="visitor", company_id=company.id, conversation_id=0, key=visitor_id):
-        conversation = _public_conversation(company, payload.get("conversation_id"), create=True)
+        conversation = _public_conversation(company, payload.get("conversation_id"), create=True, chat_session_id=payload.get("chat_session_id"))
         if conversation is None:
             return jsonify({"success": False, "error": "La conversación no es válida."}), 403
         with public_operation_lock(scope="request", company_id=company.id, conversation_id=conversation.id, key=idempotency_key):
@@ -1214,7 +1326,7 @@ def public_vendor_checkout(slug: str):
     delivery_notes = str(payload.get("delivery_notes") or "").strip()[:2000]
     visitor_id = _visitor_id(company.id)
     with public_operation_lock(scope="visitor", company_id=company.id, conversation_id=0, key=visitor_id):
-        conversation = _public_conversation(company, payload.get("conversation_id"), create=True)
+        conversation = _public_conversation(company, payload.get("conversation_id"), create=True, chat_session_id=payload.get("chat_session_id"))
         if conversation is None:
             return jsonify({"success": False, "error": "La conversación no es válida."}), 403
         with public_operation_lock(scope="request", company_id=company.id, conversation_id=conversation.id, key=idempotency_key):
@@ -1309,7 +1421,7 @@ def public_vendor_message(slug: str):
             conversation_id=0,
             key=visitor_id,
         ):
-            conversation = _public_conversation(company, payload.get("conversation_id"), create=True)
+            conversation = _public_conversation(company, payload.get("conversation_id"), create=True, chat_session_id=payload.get("chat_session_id"))
             if conversation is None:
                 return jsonify({"success": False, "error": "La conversación ya no es válida."}), 403
 
