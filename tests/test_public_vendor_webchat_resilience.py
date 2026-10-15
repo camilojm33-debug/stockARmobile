@@ -1449,10 +1449,20 @@ def test_legacy_signed_webchat_endpoint_honors_per_tab_session_token(qa_public_v
         },
     )
     assert cross_session.status_code == 403
-    assert Conversation.query.filter_by(
-        company_id=qa_public_vendor_setup["company"].id,
-        channel="webchat",
-    ).count() == 2
+    from hashlib import sha256
+
+    expected_digests = {
+        sha256(tab_a.encode("utf-8")).hexdigest(),
+        sha256(tab_b.encode("utf-8")).hexdigest(),
+    }
+    stored_tokens = [
+        (row.metadata_json or {}).get("public_chat_session_digest")
+        for row in Conversation.query.filter_by(
+            company_id=qa_public_vendor_setup["company"].id,
+            channel="webchat",
+        ).all()
+    ]
+    assert sum(value in expected_digests for value in stored_tokens) == 2
     assert provider.calls == 2
 
 
