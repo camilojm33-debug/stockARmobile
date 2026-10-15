@@ -41,6 +41,9 @@
     .panel-head { padding: 16px 18px; border-bottom: 1px solid var(--line); background: linear-gradient(135deg, #fbfdff, #fff); }
     .panel-title { font-weight: 800; font-size: 1rem; }
     .panel-sub { margin-top: 3px; font-size: .78rem; color: var(--muted); }
+    .chat-head-row { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+    .new-conversation-link { flex: 0 0 auto; text-decoration: none; white-space: nowrap; }
+    @media (max-width: 420px) { .chat-head-row { align-items: flex-start; } .new-conversation-link { font-size: .7rem; padding: 7px 8px; } }
     .catalog-tools { display: flex; gap: 8px; padding: 12px 14px; border-bottom: 1px solid var(--line); background: #fff; }
     .catalog-tools input { min-width: 0; width: 100%; padding: 11px 12px; border: 1px solid #cbd5e1; border-radius: 12px; outline: none; background: #fff; }
     .catalog-tools input:focus, .checkout input:focus { border-color: #93c5fd; box-shadow: 0 0 0 3px rgba(37,99,235,.10); }
@@ -222,8 +225,13 @@
       <div class="right">
         <section class="panel chat-panel">
           <div class="panel-head">
-            <div class="panel-title">💬 Vendedor IA</div>
-            <div class="panel-sub">{{ greeting or 'Hola 👋 ¿Qué producto estás buscando?' }}</div>
+            <div class="chat-head-row">
+              <div>
+                <div class="panel-title">💬 Vendedor IA</div>
+                <div class="panel-sub">{{ greeting or 'Hola 👋 ¿Qué producto estás buscando?' }}</div>
+              </div>
+              <a class="btn btn-light new-conversation-link" id="newConversation" href="{{ request.path }}" target="_blank" rel="noopener noreferrer" title="Abrir un chat independiente sin perder este pedido">＋ Nuevo chat</a>
+            </div>
           </div>
           <div class="messages" id="messages" aria-live="polite">
             {% if disabled_reason %}
@@ -337,18 +345,24 @@
     const mobileCartCount = document.getElementById('mobileCartCount');
     const mobileCartTotal = document.getElementById('mobileCartTotal');
     const mobileCartButton = document.getElementById('mobileCartButton');
-    let conversationId = initialState && initialState.conversation_id ? initialState.conversation_id : null;
-    let currentState = initialState || { cart: { items: [], total: 0, line_count: 0, currency: 'ARS' }, payment_url: null };
-    const operationStoragePrefix = 'stockarmobile:public-vendor:' + chatEndpoint + ':';
-    const chatStorageKey = operationStoragePrefix + 'chat';
+    let conversationId = null;
+    let currentState = { cart: { items: [], total: 0, line_count: 0, currency: 'ARS' }, payment_url: null, shipping_config: shippingConfig };
+    const storageScope = 'stockarmobile:public-vendor:' + chatEndpoint + ':';
+    const chatSessionStorageKey = storageScope + 'session';
+    let chatSessionId = null;
+    let operationStoragePrefix = '';
+    let chatStorageKey = '';
     const renderedMessageIds = new Set();
     const cartInFlight = new Set();
     let sendInFlight = false;
     let checkoutInFlight = false;
     let activeChatOperation = null;
-    let activeCheckoutOperation = readStoredOperation(operationStoragePrefix + 'checkout');
+    let activeCheckoutOperation = null;
     let searchTimer = null;
     let orderPollTimer = null;
+    if (input) input.disabled = true;
+    if (send) send.disabled = true;
+    if (checkoutButton) checkoutButton.disabled = true;
 
     function createIdempotencyKey() {
       if (window.crypto && typeof window.crypto.randomUUID === 'function') {
@@ -379,7 +393,49 @@
       return fallback || 'No se pudo completar la operación.';
     }
 
-    activeChatOperation = readStoredOperation(chatStorageKey);
+    function prepareChatSession() {
+      let candidate = '';
+      try { candidate = String(sessionStorage.getItem(chatSessionStorageKey) || '').trim(); } catch (err) {}
+      if (!/^[A-Za-z0-9_-]{32,120}$/.test(candidate)) candidate = createIdempotencyKey();
+
+      // sessionStorage survives reloads but may be cloned by the browser's
+      // "Duplicate tab" command. A BroadcastChannel handshake detects a live
+      // owner and rotates the copied tab's token before any state is requested.
+      let ownedSessionId = candidate;
+      let collisionDetected = false;
+      let channel = null;
+      const probeId = createIdempotencyKey();
+      try {
+        if (typeof window.BroadcastChannel === 'function') {
+          channel = new window.BroadcastChannel('stockarmobile-public-vendor:' + chatEndpoint);
+        }
+      } catch (err) {
+        channel = null;
+      }
+      if (channel) {
+        channel.addEventListener('message', function (event) {
+          const data = event && event.data ? event.data : {};
+          if (data.type === 'probe' && data.sessionId === ownedSessionId && data.probeId !== probeId) {
+            channel.postMessage({ type: 'claimed', sessionId: ownedSessionId, probeId: data.probeId });
+          } else if (data.type === 'claimed' && data.probeId === probeId && data.sessionId === candidate) {
+            collisionDetected = true;
+          }
+        });
+        channel.postMessage({ type: 'probe', sessionId: candidate, probeId: probeId });
+      }
+      return new Promise(function (resolve) {
+        window.setTimeout(function () {
+          if (collisionDetected) ownedSessionId = createIdempotencyKey();
+          try { sessionStorage.setItem(chatSessionStorageKey, ownedSessionId); } catch (err) {}
+          chatSessionId = ownedSessionId;
+          operationStoragePrefix = storageScope + chatSessionId + ':';
+          chatStorageKey = operationStoragePrefix + 'chat';
+          activeChatOperation = readStoredOperation(chatStorageKey);
+          activeCheckoutOperation = readStoredOperation(operationStoragePrefix + 'checkout');
+          resolve();
+        }, channel ? 140 : 0);
+      });
+    }
 
     function escapeHtml(value) {
       return String(value == null ? '' : value)
@@ -513,6 +569,7 @@
       try {
         const url = new URL(stateEndpoint, window.location.origin);
         url.searchParams.set('conversation_id', String(conversationId));
+        url.searchParams.set('chat_session_id', chatSessionId);
         const data = await requestJson(url.toString(), { credentials: 'include' });
         const previousStatus = currentState.order && currentState.order.order_status;
         setState(data);
@@ -735,7 +792,7 @@
           method: 'POST',
           credentials: 'same-origin',
           headers: { 'Content-Type': 'application/json', 'X-CSRFToken': csrf, 'Idempotency-Key': operation.key },
-          body: JSON.stringify({ conversation_id: conversationId, action: 'add', product_id: productId, quantity: 1 })
+          body: JSON.stringify({ chat_session_id: chatSessionId, conversation_id: conversationId, action: 'add', product_id: productId, quantity: 1 })
         });
         setState(data);
         storeOperation(storageKey, null);
@@ -765,7 +822,7 @@
           method: 'POST',
           credentials: 'same-origin',
           headers: { 'Content-Type': 'application/json', 'X-CSRFToken': csrf, 'Idempotency-Key': operation.key },
-          body: JSON.stringify({ conversation_id: conversationId, action: 'remove', product_id: productId })
+          body: JSON.stringify({ chat_session_id: chatSessionId, conversation_id: conversationId, action: 'remove', product_id: productId })
         });
         setState(data);
         storeOperation(storageKey, null);
@@ -795,6 +852,7 @@
       checkoutError.textContent = '';
       const checkoutStorageKey = operationStoragePrefix + 'checkout';
       const requestBody = {
+        chat_session_id: chatSessionId,
         conversation_id: conversationId,
         customer_name: customerName.value.trim(),
         customer_phone: customerPhone.value.trim(),
@@ -884,7 +942,7 @@
           method: 'POST',
           credentials: 'same-origin',
           headers: { 'Content-Type': 'application/json', 'X-CSRFToken': csrf, 'Idempotency-Key': operation.key },
-          body: JSON.stringify({ message: message, ...(conversationId ? { conversation_id: conversationId } : {}) })
+          body: JSON.stringify({ chat_session_id: chatSessionId, message: message, ...(conversationId ? { conversation_id: conversationId } : {}) })
         });
         conversationId = data.conversation_id || conversationId;
         add('assistant', data.content || '', data.assistant_message_id);
@@ -952,27 +1010,6 @@
       }
     }
 
-    if (productsEl) renderProducts(initialCatalog);
-    if (activeChatOperation && input && send) {
-      input.value = String(activeChatOperation.message || '');
-      input.readOnly = true;
-      add('user', activeChatOperation.message || '', 'user:' + activeChatOperation.key);
-      send.textContent = 'Reintentar';
-    }
-    if (activeCheckoutOperation) {
-      customerName.value = activeCheckoutOperation.body.customer_name || '';
-      customerPhone.value = activeCheckoutOperation.body.customer_phone || '';
-      deliveryMethod.value = activeCheckoutOperation.body.delivery_method || 'retiro';
-      deliveryAddress.value = activeCheckoutOperation.body.delivery_address || '';
-      deliveryCity.value = activeCheckoutOperation.body.delivery_city || '';
-      deliveryProvince.value = activeCheckoutOperation.body.delivery_province || '';
-      deliveryPostalCode.value = activeCheckoutOperation.body.delivery_postal_code || '';
-      deliveryReference.value = activeCheckoutOperation.body.delivery_reference || '';
-      deliveryNotes.value = activeCheckoutOperation.body.delivery_notes || '';
-      setCheckoutFieldsDisabled(true);
-      checkoutButton.textContent = 'Reintentar pedido';
-    }
-    renderCart(currentState);
     if (searchEl) {
       searchEl.addEventListener('input', function () {
         window.clearTimeout(searchTimer);
@@ -990,13 +1027,69 @@
           ask();
         }
       });
-      input.focus();
     }
     if (checkoutButton) checkoutButton.addEventListener('click', checkout);
-    ensureOrderPolling();
     if (mobileCartButton) mobileCartButton.addEventListener('click', function () {
       const panel = document.querySelector('.cart-panel');
       if (panel) panel.scrollIntoView({ behavior: 'smooth', block: 'start' });
+    });
+
+    async function restoreCurrentChatState() {
+      if (!stateEndpoint || !chatSessionId) return;
+      const url = new URL(stateEndpoint, window.location.origin);
+      url.searchParams.set('chat_session_id', chatSessionId);
+      const data = await requestJson(url.toString(), { credentials: 'same-origin' });
+      const history = Array.isArray(data.messages) ? data.messages : [];
+      history.forEach(function (item) {
+        add(item.role === 'assistant' ? 'assistant' : 'user', item.content || '', 'history:' + item.id);
+      });
+      setState(data);
+    }
+
+    async function initializeChat() {
+      await prepareChatSession();
+      if (productsEl) renderProducts(initialCatalog);
+      try {
+        await restoreCurrentChatState();
+      } catch (err) {
+        if (error) error.textContent = 'No se pudo recuperar este chat. Podés reintentar el envío sin perder la operación.';
+      }
+
+      if (activeChatOperation && input && send) {
+        input.value = String(activeChatOperation.message || '');
+        input.readOnly = true;
+        const lastMessage = Array.isArray(currentState.messages) && currentState.messages.length
+          ? currentState.messages[currentState.messages.length - 1]
+          : null;
+        const alreadyRendered = messages && Array.from(messages.querySelectorAll('.msg.user'))
+          .some(function (node) { return node.textContent === activeChatOperation.message; });
+        if (!alreadyRendered) add('user', activeChatOperation.message || '', 'user:' + activeChatOperation.key);
+        send.textContent = 'Reintentar';
+      }
+      if (activeCheckoutOperation && customerName) {
+        customerName.value = activeCheckoutOperation.body.customer_name || '';
+        customerPhone.value = activeCheckoutOperation.body.customer_phone || '';
+        deliveryMethod.value = activeCheckoutOperation.body.delivery_method || 'retiro';
+        deliveryAddress.value = activeCheckoutOperation.body.delivery_address || '';
+        deliveryCity.value = activeCheckoutOperation.body.delivery_city || '';
+        deliveryProvince.value = activeCheckoutOperation.body.delivery_province || '';
+        deliveryPostalCode.value = activeCheckoutOperation.body.delivery_postal_code || '';
+        deliveryReference.value = activeCheckoutOperation.body.delivery_reference || '';
+        deliveryNotes.value = activeCheckoutOperation.body.delivery_notes || '';
+        setCheckoutFieldsDisabled(true);
+        if (checkoutButton) checkoutButton.textContent = 'Reintentar pedido';
+      }
+      renderCart(currentState);
+      if (input) input.disabled = false;
+      if (send) send.disabled = false;
+      ensureOrderPolling();
+      if (input) input.focus();
+    }
+
+    initializeChat().catch(function () {
+      if (error) error.textContent = 'No se pudo iniciar una sesión independiente de chat. Recargá la página para reintentar.';
+      if (input) input.disabled = false;
+      if (send) send.disabled = false;
     });
   })();
   </script>
