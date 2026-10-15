@@ -713,6 +713,7 @@ def test_public_webchat_recovers_explicit_five_cocas_when_model_skips_order_tool
 def test_new_quote_intent_does_not_capture_previous_quote_retrieval():
     from services.ai_agent.vendor_publication import (
         _assistant_requests_order_details,
+        _public_order_intent,
         _starts_new_quote_request,
     )
     from types import SimpleNamespace
@@ -725,6 +726,8 @@ def test_new_quote_intent_does_not_capture_previous_quote_retrieval():
     assert _starts_new_quote_request("Quiero cotizar otro producto") is True
     assert _starts_new_quote_request("Quiero otro presupuesto parecido al anterior") is True
     assert _starts_new_quote_request("Haceme un presupuesto con 3 metros de machimbre") is True
+    assert _starts_new_quote_request("Hola, quiero 5 cocas") is True
+    assert _public_order_intent("Hola, quiero 5 cocas") is True
     assert _starts_new_quote_request("Quiero consultar cuánto era el presupuesto") is False
     assert _same_public_customer_name("Nelson Mandele", "Nelson Mandela") is True
     assert _same_public_customer_name("Julia Acosta", "María Rodríguez") is False
