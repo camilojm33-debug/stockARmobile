@@ -972,11 +972,30 @@ class VendorOrderService:
         phone = _normalize_phone(customer_phone)
         client = None
         if phone:
-            client = Client.query.filter(
+            phone_matches = Client.query.filter(
                 Client.company_id == company_id,
                 or_(Client.whatsapp == customer_phone, Client.phone == customer_phone, Client.whatsapp == phone, Client.phone == phone),
                 Client.active.is_(True),
-            ).order_by(Client.id.asc()).first()
+            ).order_by(Client.id.asc()).all()
+
+            normalized_customer_name = _normalize_text(customer_name)
+            if normalized_customer_name:
+                # A phone number can be shared or reassigned. Reuse an existing
+                # profile only if its name agrees, or the profile is generic.
+                client = next(
+                    (candidate for candidate in phone_matches
+                     if _normalize_text(candidate.name) == normalized_customer_name),
+                    None,
+                )
+                if client is None:
+                    client = next(
+                        (candidate for candidate in phone_matches
+                         if _normalize_text(candidate.name) in {"", "consumidor final"}),
+                        None,
+                    )
+            elif len(phone_matches) == 1:
+                client = phone_matches[0]
+
         if client is None and (customer_name.strip() or phone):
             clean_name = customer_name.strip()[:200] or "Consumidor final"
             client = Client(
@@ -993,16 +1012,11 @@ class VendorOrderService:
             db.session.add(client)
             db.session.flush()
         else:
-            if customer_name.strip() and client.name == "Consumidor final":
+            if customer_name.strip() and _normalize_text(client.name) in {"", "consumidor final"}:
                 client.name = customer_name.strip()[:200]
-            if delivery["address"]:
-                client.address = delivery["address"]
-            if delivery["city"]:
-                client.city = delivery["city"]
-            if delivery["province"]:
-                client.province = delivery["province"]
-            if delivery["postal_code"]:
-                client.postal_code = delivery["postal_code"]
+            # Delivery details belong to this order's snapshot, not necessarily
+            # the customer's permanent profile. Do not overwrite an existing
+            # customer's saved address with a one-off shipping destination.
             if phone:
                 client.phone = client.phone or phone[:20]
                 client.whatsapp = client.whatsapp or phone[:30]
@@ -1343,7 +1357,7 @@ class VendorOrderService:
         return {
             "quote_id": quote.id,
             "quote_number": quote.number or f"P-{quote.id:06d}",
-            "customer_name": getattr(client, "name", None) or getattr(quote, "consumer_name", None) or "Consumidor final",
+            "customer_name": getattr(delivery, "recipient_name", None) or getattr(quote, "consumer_name", None) or getattr(client, "name", None) or "Consumidor final",
             "total": float(quote.total_amount or 0),
             "currency": quote.currency or "ARS",
             "order_status": order_status,
@@ -1607,6 +1621,71 @@ class VendorOrderService:
         _set_metadata(conversation, state)
 
     @staticmethod
+    def _ensure_vendor_quote_customer(*, company_id: int, quote):
+        """Keep legacy Vendedor quotes from converting under another client's identity."""
+        from app import Client
+
+        if quote.observations != "Pedido generado por el Vendedor 24 hs de StockARmobile.":
+            return getattr(quote, "client", None)
+
+        delivery = getattr(quote, "delivery", None)
+        recipient_name = str(getattr(delivery, "recipient_name", "") or "").strip()[:200]
+        current_client = getattr(quote, "client", None)
+        if not recipient_name or (
+            current_client is not None
+            and _normalize_text(current_client.name) == _normalize_text(recipient_name)
+        ):
+            return current_client
+
+        raw_phone = str(
+            getattr(delivery, "phone", "")
+            or (getattr(current_client, "whatsapp", None) if current_client is not None else "")
+            or (getattr(current_client, "phone", None) if current_client is not None else "")
+            or ""
+        ).strip()
+        phone = _normalize_phone(raw_phone)
+        matching_clients = []
+        if phone:
+            matching_clients = Client.query.filter(
+                Client.company_id == int(company_id),
+                Client.active.is_(True),
+                or_(
+                    Client.whatsapp == raw_phone,
+                    Client.phone == raw_phone,
+                    Client.whatsapp == phone,
+                    Client.phone == phone,
+                ),
+            ).order_by(Client.id.asc()).all()
+
+        customer_client = next(
+            (
+                candidate
+                for candidate in matching_clients
+                if _normalize_text(candidate.name) == _normalize_text(recipient_name)
+            ),
+            None,
+        )
+        if customer_client is None:
+            customer_client = Client(
+                name=recipient_name,
+                phone=phone[:20] or None,
+                whatsapp=phone[:30] or None,
+                company_id=int(company_id),
+                active=True,
+                address=(getattr(delivery, "address", None) or None) if delivery is not None else None,
+                city=(getattr(delivery, "city", None) or None) if delivery is not None else None,
+                province=(getattr(delivery, "province", None) or None) if delivery is not None else None,
+                postal_code=(getattr(delivery, "postal_code", None) or None) if delivery is not None else None,
+            )
+            db.session.add(customer_client)
+            db.session.flush()
+
+        quote.client = customer_client
+        quote.client_id = customer_client.id
+        db.session.flush()
+        return customer_client
+
+    @staticmethod
     def finalize_paid_order(*, company_id: int, quote_id: int, payment_data: Dict[str, Any], commit: bool = True) -> Dict[str, Any]:
         from app import Payment, Product, Quote, Sale, SaleItem, db as app_db
 
@@ -1692,9 +1771,10 @@ class VendorOrderService:
                 raise ValueError(f"Stock insuficiente para completar {product.name} después del pago.")
             lines.append({"product": product, "quantity": float(quantity), "price": _money(item.unit_price), "discount": _money(item.discount)})
 
+        order_client = VendorOrderService._ensure_vendor_quote_customer(company_id=company_id, quote=quote)
         sale = Sale(
             date=__import__("datetime").datetime.utcnow(),
-            customer=quote.client.name if quote.client is not None else (quote.consumer_name or "Consumidor final"),
+            customer=order_client.name if order_client is not None else (quote.consumer_name or "Consumidor final"),
             subtotal=_money(quote.subtotal),
             discount=_money(quote.discount),
             tax=_money(quote.tax),
@@ -1716,7 +1796,7 @@ class VendorOrderService:
             comprobante_emitido=False,
             status="confirmada",
             note=f"Venta generada automáticamente por Vendedor 24 hs. Presupuesto {quote.number or quote.id}.",
-            client_id=quote.client_id,
+            client_id=order_client.id if order_client is not None else quote.client_id,
             seller_id=quote.seller_id or quote.created_by_user_id,
             company_id=company_id,
             cash_session_id=None,
