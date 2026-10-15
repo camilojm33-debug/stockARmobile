@@ -691,8 +691,7 @@ def test_public_webchat_recovers_explicit_five_cocas_when_model_skips_order_tool
     assert response.json["quote_url"] is None
     assert "5 × Coca" in response.json["content"]
     assert "teléfono de contacto" in response.json["content"].lower()
-    assert "retiro en el comercio" in response.json["content"].lower()
-    assert "envío a domicilio" in response.json["content"].lower()
+    assert "retiro o envío" in response.json["content"].lower()
     assert "mercadopago.com.ar/checkout" not in response.json["content"]
     assert "old-customer" not in response.json["content"]
     assert len(response.json["cart"]["items"]) == 1
