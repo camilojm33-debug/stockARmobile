@@ -1504,6 +1504,9 @@ def test_webchat_frontend_guards_click_enter_and_manual_retries():
     assert "chat_session_id: chatSessionId" in source
     assert "function prepareChatSession()" in source
     assert "BroadcastChannel" in source
+    assert "ownerProbeId: probeId" in source
+    assert "incumbent: !handshakeActive" in source
+    assert "winsSimultaneousProbe" in source
     assert "async function restoreCurrentChatState()" in source
     assert "href=\"{{ request.path }}\" target=\"_blank\" rel=\"noopener noreferrer\"" in source
 
