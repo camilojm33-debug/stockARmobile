@@ -403,7 +403,10 @@
       // "Duplicate tab" command. A BroadcastChannel handshake detects a live
       // owner and rotates the copied tab's token before any state is requested.
       let ownedSessionId = candidate;
+      let handshakeActive = true;
       let collisionDetected = false;
+      let incumbentCollisionDetected = false;
+      const competingProbeIds = [];
       let channel = null;
       const probeId = createIdempotencyKey();
       try {
@@ -417,16 +420,33 @@
         channel.addEventListener('message', function (event) {
           const data = event && event.data ? event.data : {};
           if (data.type === 'probe' && data.sessionId === ownedSessionId && data.probeId !== probeId) {
-            channel.postMessage({ type: 'claimed', sessionId: ownedSessionId, probeId: data.probeId });
+            // Established tabs keep their session. When two duplicated tabs
+            // initialize simultaneously, a deterministic probe-ID tie-break
+            // makes exactly one rotate instead of making both lose continuity.
+            channel.postMessage({
+              type: 'claimed',
+              sessionId: ownedSessionId,
+              probeId: data.probeId,
+              ownerProbeId: probeId,
+              incumbent: !handshakeActive
+            });
           } else if (data.type === 'claimed' && data.probeId === probeId && data.sessionId === candidate) {
             collisionDetected = true;
+            if (data.incumbent) incumbentCollisionDetected = true;
+            if (data.ownerProbeId) competingProbeIds.push(String(data.ownerProbeId));
           }
         });
         channel.postMessage({ type: 'probe', sessionId: candidate, probeId: probeId });
       }
       return new Promise(function (resolve) {
         window.setTimeout(function () {
-          if (collisionDetected) ownedSessionId = createIdempotencyKey();
+          handshakeActive = false;
+          const winsSimultaneousProbe = competingProbeIds.some(function (peerProbeId) {
+            return String(probeId) > peerProbeId;
+          });
+          if (collisionDetected && (incumbentCollisionDetected || winsSimultaneousProbe)) {
+            ownedSessionId = createIdempotencyKey();
+          }
           try { sessionStorage.setItem(chatSessionStorageKey, ownedSessionId); } catch (err) {}
           chatSessionId = ownedSessionId;
           operationStoragePrefix = storageScope + chatSessionId + ':';
