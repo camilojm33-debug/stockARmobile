@@ -1042,7 +1042,7 @@
       const data = await requestJson(url.toString(), { credentials: 'same-origin' });
       const history = Array.isArray(data.messages) ? data.messages : [];
       history.forEach(function (item) {
-        add(item.role === 'assistant' ? 'assistant' : 'user', item.content || '', 'history:' + item.id);
+        add(item.role === 'assistant' ? 'assistant' : 'user', item.content || '', String(item.id));
       });
       setState(data);
     }
