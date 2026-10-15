@@ -1344,6 +1344,15 @@ def test_public_webchat_per_tab_sessions_isolate_history_cart_and_conversation_i
         chat_session_id=tab_b,
     )
     assert cross_session.status_code == 403
+
+    # The random tab token is also bound to its visitor cookie. A different
+    # browser session cannot replay it to create a duplicate order thread.
+    other_client = _public_client(qa_public_vendor_setup)
+    other_visitor = _post_message(
+        other_client, qa_public_vendor_setup, "different-visitor-replay-001", "No debo heredar el chat.",
+        chat_session_id=tab_a,
+    )
+    assert other_visitor.status_code == 403
     assert Conversation.query.filter_by(
         company_id=qa_public_vendor_setup["company"].id,
         channel="webchat",
