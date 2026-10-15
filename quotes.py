@@ -254,12 +254,10 @@ def _quote_customer_name(quote):
     recipient_name = (getattr(delivery, "recipient_name", None) or "").strip() if delivery is not None else ""
     if recipient_name:
         return recipient_name
-    raw_name = (getattr(quote, "consumer_name", None) or "").strip()
-    if raw_name:
-        return raw_name
     if getattr(quote, "client", None) is not None:
         return quote.client.name
-    return "Consumidor final"
+    raw_name = (getattr(quote, "consumer_name", None) or "").strip()
+    return raw_name or "Consumidor final"
 
 
 def _plain_whatsapp_text(value, *, max_length=500):
