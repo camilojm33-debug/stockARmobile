@@ -310,6 +310,7 @@
     const cartEndpoint = chatEndpoint ? chatEndpoint.replace(/\/message$/, '/cart') : '';
     const checkoutEndpoint = chatEndpoint ? chatEndpoint.replace(/\/message$/, '/checkout') : '';
     const stateEndpoint = chatEndpoint ? chatEndpoint.replace(/\/message$/, '/state') : '';
+    const supportsConversationState = Boolean(stateEndpoint) && !chatEndpoint.includes('/public/vendedor/');
     const shippingConfig = {{ (shipping_config or {"mode": "fixed", "fixed_cost": 0})|tojson }};
     const csrf = {{ csrf_token()|tojson }};
     const initialCatalog = {{ catalog|tojson }};
@@ -551,7 +552,7 @@
     }
 
     function ensureOrderPolling() {
-      if (!stateEndpoint || !conversationId || orderPollTimer) return;
+      if (!supportsConversationState || !conversationId || orderPollTimer) return;
       orderPollTimer = window.setInterval(refreshOrderState, 6000);
       refreshOrderState();
     }
@@ -565,7 +566,7 @@
     }
 
     async function refreshOrderState() {
-      if (!stateEndpoint || !conversationId) return;
+      if (!supportsConversationState || !conversationId) return;
       try {
         const url = new URL(stateEndpoint, window.location.origin);
         url.searchParams.set('conversation_id', String(conversationId));
@@ -1035,7 +1036,7 @@
     });
 
     async function restoreCurrentChatState() {
-      if (!stateEndpoint || !chatSessionId) return;
+      if (!supportsConversationState || !chatSessionId) return;
       const url = new URL(stateEndpoint, window.location.origin);
       url.searchParams.set('chat_session_id', chatSessionId);
       const data = await requestJson(url.toString(), { credentials: 'same-origin' });
