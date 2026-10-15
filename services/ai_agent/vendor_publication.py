@@ -415,7 +415,16 @@ def _public_order_intent(message: str) -> bool:
         "quiero pagar", "pasame el link", "link de pago",
         "enlace de pago", "confirmar compra", "comprar",
     )
-    return any(phrase in normalized for phrase in phrases)
+    if any(phrase in normalized for phrase in phrases):
+        return True
+    # Natural order requests like "quiero 5 cocas" may omit the word presupuesto.
+    explicit_line = _explicit_public_quantity_product(message)
+    return bool(
+        explicit_line
+        and any(phrase in normalized for phrase in (
+            "quiero ", "necesito ", "me llevo ", "llevo ", "comprame ", "dame ",
+        ))
+    )
 
 
 
@@ -705,7 +714,17 @@ def _starts_new_quote_request(message: str) -> bool:
         "hacer una nueva cotizacion",
         "armar otro presupuesto",
     )
-    return any(phrase in normalized for phrase in phrases)
+    if any(phrase in normalized for phrase in phrases):
+        return True
+    # An explicit new item/count request is its own order by default; don't append
+    # it silently to a previous visitor cart or pending checkout.
+    explicit_line = _explicit_public_quantity_product(message)
+    return bool(
+        explicit_line
+        and any(phrase in normalized for phrase in (
+            "quiero ", "necesito ", "me llevo ", "llevo ", "comprame ", "dame ",
+        ))
+    )
 
 
 def _begin_new_quote_context(conversation) -> None:
