@@ -8,7 +8,7 @@ import pytest
 
 import app as stock_app
 from app import Client, Company, Payment, Product, Quote, QuoteDelivery, User, db
-from quotes import _build_public_quote_accept_url, _build_public_quote_pdf_url, _build_public_quote_url, _build_quote_whatsapp_message, _quote_charge_display_rows
+from quotes import _build_public_quote_accept_url, _build_public_quote_pdf_url, _build_public_quote_url, _build_quote_whatsapp_message, _quote_charge_display_rows, _quote_customer_name
 from services.ai_agent.orchestrator_v2 import AgentRuntime
 from services.ai_agent.followup_service import AIFollowupService
 from services.ai_agent.vendor_order_service import (
@@ -531,6 +531,141 @@ def test_create_pending_order_does_not_reuse_pending_quote_for_different_buyer(v
     assert second_delivery.address == "La Libertad 434"
     assert second_quote.id != first_quote.id
     assert [kind for kind, _ in calls].count("checkout") == 2
+
+
+def test_vendor_order_does_not_reuse_or_mutate_client_when_phone_name_conflicts(vendor_database, monkeypatch):
+    data = vendor_database
+    existing = Client(
+        name="Adolfo Piris",
+        phone="3624228396",
+        whatsapp="3624228396",
+        address="Dirección anterior",
+        city="Resistencia",
+        province="Chaco",
+        active=True,
+        company_id=data["company_a"].id,
+    )
+    db.session.add(existing)
+    db.session.commit()
+
+    conversation = _conversation(data["company_a"].id)
+    calls = []
+    _mock_checkout(monkeypatch, calls)
+    VendorOrderService.update_cart(
+        company_id=data["company_a"].id,
+        conversation_id=conversation.id,
+        items=[{"product_query": "Cafe clasico", "quantity": 1}],
+    )
+
+    result = VendorOrderService.create_pending_order(
+        company_id=data["company_a"].id,
+        conversation_id=conversation.id,
+        customer_name="Claudio Aguirre",
+        customer_phone="3624228396",
+        delivery_method="envio",
+        delivery_address="calle peron 545",
+        delivery_city="Villa Vertet",
+        delivery_province="Chaco",
+        actor_user_id=data["user_a"].id,
+    )
+    quote = db.session.get(Quote, result["quote_id"])
+    delivery = QuoteDelivery.query.filter_by(quote_id=quote.id).one()
+    db.session.refresh(existing)
+
+    assert quote.client_id != existing.id
+    assert quote.client.name == "Claudio Aguirre"
+    assert delivery.recipient_name == "Claudio Aguirre"
+    assert delivery.phone == "3624228396"
+    assert existing.name == "Adolfo Piris"
+    assert existing.address == "Dirección anterior"
+    assert existing.city == "Resistencia"
+    assert existing.province == "Chaco"
+    assert quote.client.address == "calle peron 545"
+    assert _quote_customer_name(quote) == "Claudio Aguirre"
+
+    public_path = result["quote_url"].replace("http://test.local", "")
+    response = stock_app.app.test_client().get(public_path)
+    assert response.status_code == 200
+    page = response.get_data(as_text=True)
+    assert "Claudio Aguirre" in page
+    assert "Adolfo Piris" not in page
+    assert "calle peron 545" in page
+
+
+def test_finalize_paid_legacy_vendor_quote_repairs_conflicting_client_identity(vendor_database, monkeypatch):
+    data = vendor_database
+    existing = Client(
+        name="Adolfo Piris",
+        phone="3624228396",
+        whatsapp="3624228396",
+        address="Dirección anterior",
+        city="Resistencia",
+        province="Chaco",
+        active=True,
+        company_id=data["company_a"].id,
+    )
+    db.session.add(existing)
+    db.session.commit()
+
+    conversation = _conversation(data["company_a"].id)
+    calls = []
+    _mock_checkout(monkeypatch, calls)
+    VendorOrderService.update_cart(
+        company_id=data["company_a"].id,
+        conversation_id=conversation.id,
+        items=[{"product_query": "Cafe clasico", "quantity": 1}],
+    )
+    created = VendorOrderService.create_pending_order(
+        company_id=data["company_a"].id,
+        conversation_id=conversation.id,
+        customer_name="Adolfo Piris",
+        customer_phone="3624228396",
+        delivery_method="envio",
+        delivery_address="calle peron 545",
+        delivery_city="Villa Vertet",
+        delivery_province="Chaco",
+        actor_user_id=data["user_a"].id,
+    )
+    quote = db.session.get(Quote, created["quote_id"])
+    delivery = QuoteDelivery.query.filter_by(quote_id=quote.id).one()
+    delivery.recipient_name = "Claudio Aguirre"
+    db.session.commit()
+
+    # Legacy quotes can still link the old client while storing the current
+    # recipient correctly in the delivery snapshot. Public views/PDFs must honor it.
+    assert quote.client.name == "Adolfo Piris"
+    assert _quote_customer_name(quote) == "Claudio Aguirre"
+    public_path = _build_public_quote_url(quote.id).replace("http://test.local", "")
+    response = stock_app.app.test_client().get(public_path)
+    assert response.status_code == 200
+    page = response.get_data(as_text=True)
+    assert "Claudio Aguirre" in page
+    assert "Adolfo Piris" not in page
+
+    payment = Payment.query.filter_by(company_id=data["company_a"].id).one()
+    payment_data = {
+        "id": "123456",
+        "transaction_amount": float(quote.total_amount),
+        "currency_id": "ARS",
+        "external_reference": payment.external_reference,
+        "payment_method_id": "account_money",
+    }
+    result = VendorOrderService.finalize_paid_order(
+        company_id=data["company_a"].id,
+        quote_id=quote.id,
+        payment_data=payment_data,
+    )
+    sale = stock_app.db.session.get(stock_app.Sale, result["sale_id"])
+    db.session.refresh(quote)
+    db.session.refresh(existing)
+
+    assert result["status"] == "converted"
+    assert quote.client.name == "Claudio Aguirre"
+    assert sale.customer == "Claudio Aguirre"
+    assert sale.client_id == quote.client_id
+    assert quote.client_id != existing.id
+    assert existing.name == "Adolfo Piris"
+    assert existing.address == "Dirección anterior"
 
 
 def test_create_pending_order_rejects_empty_cart(vendor_database):

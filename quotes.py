@@ -250,6 +250,10 @@ def _quote_totals(items, *, general_discount=0, surcharge=0):
 
 
 def _quote_customer_name(quote):
+    delivery = getattr(quote, "delivery", None)
+    recipient_name = (getattr(delivery, "recipient_name", None) or "").strip() if delivery is not None else ""
+    if recipient_name:
+        return recipient_name
     if getattr(quote, "client", None) is not None:
         return quote.client.name
     raw_name = (getattr(quote, "consumer_name", None) or "").strip()

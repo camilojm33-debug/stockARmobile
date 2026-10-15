@@ -87,7 +87,7 @@
           {% for quote in quotes %}
           <tr>
             <td data-label="Número"><div class="quotes-main-cell"><div class="quotes-row-icon"><i class="bi bi-receipt"></i></div><div><div class="fw-bold quotes-number">{{ quote.number or ('P-' ~ '%06d'|format(quote.id)) }}</div><div class="small text-muted">Presupuesto #{{ quote.id }}</div></div></div></td>
-            <td data-label="Cliente"><div class="quotes-person-cell"><div class="quotes-avatar"><i class="bi bi-person"></i></div><div><div class="fw-semibold">{{ quote.client.name if quote.client else (quote.consumer_name or 'Consumidor final') }}</div><div class="small text-muted">Cliente</div></div></div></td>
+            <td data-label="Cliente"><div class="quotes-person-cell"><div class="quotes-avatar"><i class="bi bi-person"></i></div><div><div class="fw-semibold">{{ quote.delivery.recipient_name if quote.delivery and quote.delivery.recipient_name else (quote.client.name if quote.client else (quote.consumer_name or 'Consumidor final')) }}</div><div class="small text-muted">Cliente</div></div></div></td>
             <td data-label="Vendedor"><div class="quotes-seller-cell"><div class="quotes-avatar quotes-avatar-soft"><i class="bi bi-person-badge"></i></div><span>{{ quote.seller.name if quote.seller else 'Sin asignar' }}</span></div></td>
             <td data-label="Fecha"><div class="fw-semibold">{{ quote.date.strftime('%d/%m/%Y') if quote.date else '-' }}</div><div class="small text-muted">{{ quote.date.strftime('%H:%M') if quote.date else '' }}</div></td>
             <td data-label="Vence"><div class="fw-semibold">{{ quote.expires_at.strftime('%d/%m/%Y') if quote.expires_at else '-' }}</div></td>
