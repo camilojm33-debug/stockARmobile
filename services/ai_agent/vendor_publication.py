@@ -415,7 +415,264 @@ def _public_order_intent(message: str) -> bool:
         "quiero pagar", "pasame el link", "link de pago",
         "enlace de pago", "confirmar compra", "comprar",
     )
-    return any(phrase in normalized for phrase in phrases)
+    if any(phrase in normalized for phrase in phrases):
+        return True
+    # Natural order requests like "quiero 5 cocas" may omit the word presupuesto.
+    explicit_line = _explicit_public_quantity_product(message)
+    return bool(
+        explicit_line
+        and any(phrase in normalized for phrase in (
+            "quiero ", "necesito ", "me llevo ", "llevo ", "comprame ", "dame ",
+        ))
+    )
+
+
+
+_PUBLIC_EXPLICIT_QUANTITY_PRODUCT_RE = re.compile(
+    r"(?<![a-z0-9])(?P<quantity>\d+(?:[.,]\d+)?)\s+"
+    r"(?P<product>[a-záéíóúüñ0-9][a-záéíóúüñ0-9 .'\-]*?)"
+    r"(?=\s+(?:para|con|a nombre de|mi nombre es|soy|telefono|tel[eé]fono|"
+    r"celular|whats ?app|envio|retiro|direccion|localidad|provincia|por favor|y)\b"
+    r"|[,.;!?]|$)",
+    re.IGNORECASE,
+)
+
+
+def _explicit_public_quantity_product(message: str) -> dict | None:
+    """Extract one directly stated quantity/product line without trusting model text."""
+    from decimal import Decimal, InvalidOperation
+
+    matches = list(_PUBLIC_EXPLICIT_QUANTITY_PRODUCT_RE.finditer(str(message or "")))
+    if len(matches) != 1:
+        return None
+    match = matches[0]
+    product_query = match.group("product").strip(" \t\r\n-")
+    wrapper = re.compile(
+        r"^(?:(?:botellas?|latas?|packs?|paquetes?|cajas?|metros?|mts?\.?|"
+        r"unidades?|unidad|unid\.?|uds?\.?|kilos?|kilogramos?|kg|gramos?|grs?\.?|"
+        r"litros?|lts?\.?|l)\s+(?:(?:de|del)\s+)?|(?:de|del|la|el|los|las|un|una)\s+)",
+        re.IGNORECASE,
+    )
+    while True:
+        reduced = wrapper.sub("", product_query, count=1).strip()
+        if reduced == product_query:
+            break
+        product_query = reduced
+    product_query = " ".join(product_query.split()).strip(" \t\r\n-")
+    if not product_query:
+        return None
+    try:
+        quantity = Decimal(match.group("quantity").replace(",", "."))
+    except (InvalidOperation, ValueError):
+        return None
+    if not quantity.is_finite() or quantity <= 0:
+        return None
+    return {"quantity": float(quantity), "product_query": product_query}
+
+
+def _recover_explicit_public_order(
+    *,
+    company,
+    conversation,
+    message: str,
+    state: dict,
+    idempotency_key: str,
+    trace_id: str | None,
+) -> dict | None:
+    """Recover a clearly stated public order when the model omits the order tool."""
+    parsed = _explicit_public_quantity_product(message)
+    if parsed is None:
+        return None
+
+    from services.ai_agent.config_service import vendor_allowed_tool_names
+    from services.ai_agent.orchestrator_v2 import (
+        AgentRuntime,
+        _extract_explicit_public_recipient_name,
+        _extract_public_customer_name,
+    )
+    from services.ai_agent.vendor_order_service import (
+        _normalize_product_score,
+        _search_candidates,
+    )
+
+    query = parsed["product_query"]
+    candidate_queries = [query]
+    if query.lower().endswith("s") and len(query) > 2:
+        candidate_queries.append(query[:-1])
+    products = []
+    matched_query = query
+    for candidate_query in candidate_queries:
+        products = _search_candidates(company.id, candidate_query)
+        if products:
+            matched_query = candidate_query
+            break
+    if not products:
+        return {"kind": "product_not_found", **parsed}
+
+    selected = products[0]
+    if len(products) > 1:
+        second = products[1]
+        normalized_query = _normalize_vendor_text(matched_query)
+        if (
+            _normalize_vendor_text(selected.name) != normalized_query
+            and _normalize_vendor_text(second.name) != normalized_query
+            and abs(
+                _normalize_product_score(selected, matched_query)
+                - _normalize_product_score(second, matched_query)
+            ) < 20
+        ):
+            return {
+                "kind": "ambiguous_product",
+                **parsed,
+                "options": [str(item.name) for item in products[:5]],
+            }
+
+    cart_items = list(((state.get("cart") or {}).get("items") or []))
+    if cart_items and not any(int(item.get("product_id") or 0) == int(selected.id) for item in cart_items):
+        return {"kind": "cart_conflict", **parsed, "selected_product": str(selected.name)}
+
+    options = get_vendor_options(company)
+    allowed_tools = set(vendor_allowed_tool_names(options))
+    if "preparar_pedido" not in allowed_tools:
+        return {"kind": "tool_unavailable", **parsed}
+
+    # Derive contact fields from this message only; VendorOrderPreviewTool then
+    # validates them against the persisted user-authored conversation history.
+    current_message_rows = [type("UserTurn", (), {"content": str(message or "")})()]
+    recipient_name = _extract_explicit_public_recipient_name(current_message_rows)
+    customer_name = recipient_name or _extract_public_customer_name(current_message_rows) or ""
+    phone_match = re.search(
+        r"(?:tel[eé]fono|tel\b|cel(?:ular)?|whats\s*app|whatsapp|"
+        r"n[uú]mero(?:\s+de\s+contacto)?|contacto)\s*"
+        r"(?:es|de contacto|:|-)?\s*(\+?\d[\d\s().-]{6,}\d)",
+        str(message or ""),
+        re.IGNORECASE,
+    )
+    customer_phone = re.sub(r"\D", "", phone_match.group(1)) if phone_match else ""
+
+    context = {
+        "conversation_id": int(conversation.id),
+        "channel": "webchat",
+        "actor_user_id": None,
+        "idempotency_key": str(idempotency_key),
+        "trace_id": trace_id,
+        "user_message": str(message or ""),
+        "previous_assistant_message": "",
+    }
+    arguments = {
+        "product_query": str(selected.name),
+        "quantity": float(parsed["quantity"]),
+        "customer_name": customer_name,
+        "customer_phone": customer_phone,
+    }
+    try:
+        result = AgentRuntime._execute_tool(
+            "preparar_pedido",
+            company_id=int(company.id),
+            arguments=arguments,
+            context=context,
+            allowed_tool_names=allowed_tools,
+        )
+    except ValueError as exc:
+        result = {"success": False, "error": str(exc)[:700], "retryable": False}
+    return {
+        "kind": "tool_result",
+        "product": str(selected.name),
+        "quantity": float(parsed["quantity"]),
+        "result": result if isinstance(result, dict) else {"success": False, "error": "No se pudo validar el pedido."},
+    }
+
+
+def _public_order_recovery_reply(recovery: dict, state: dict) -> str:
+    """Produce a safe, actionable customer reply from backend-verified results."""
+    kind = recovery.get("kind")
+    if kind == "ambiguous_product":
+        options = recovery.get("options") or []
+        choices = "; ".join(str(item) for item in options)
+        return (
+            f"Entendí que querés {recovery.get('quantity'):g} unidades de {recovery.get('product_query')}, "
+            f"pero hay varias presentaciones posibles ({choices}). ¿Cuál querés presupuestar? "
+            "Conservo tu pedido en este mismo chat."
+        )
+    if kind == "product_not_found":
+        return (
+            f"No pude identificar con seguridad el producto «{recovery.get('product_query')}». "
+            "¿Me confirmás el nombre o la presentación tal como figura en el catálogo? "
+            "No hace falta que repitas los demás datos."
+        )
+    if kind == "cart_conflict":
+        return (
+            f"Veo otro producto en el carrito y no quiero mezclarlo con tu solicitud de "
+            f"{recovery.get('quantity'):g} de {recovery.get('product_query')}. "
+            "¿Querés iniciar un presupuesto separado para este producto?"
+        )
+    if kind == "tool_unavailable":
+        return (
+            "El comercio no tiene habilitada la preparación automática de presupuestos en este momento. "
+            "Tu consulta sigue en este chat; no voy a reutilizar enlaces de otros pedidos."
+        )
+
+    result = recovery.get("result") if isinstance(recovery.get("result"), dict) else {}
+    status = str(result.get("status") or "")
+    if result.get("success") is False:
+        detail = str(result.get("error") or "").strip()
+        if detail:
+            return f"Tengo tu solicitud en este chat, pero no pude completar el presupuesto: {detail} No hace falta que repitas el pedido."
+        return "Tengo tu solicitud en este chat, pero no pude completar el presupuesto ahora. No hace falta que repitas el pedido."
+
+    if status == "needs_quantity_confirmation":
+        return (
+            f"Encontré {recovery.get('product')}, pero necesito confirmar la cantidad exacta antes de cotizar. "
+            "¿Cuántas unidades necesitás?"
+        )
+
+    if status == "needs_customer_details":
+        missing = [_normalize_vendor_text(item) for item in (result.get("missing_fields") or [])]
+        questions = []
+        if any(item == "nombre" for item in missing):
+            questions.append("tu nombre y apellido")
+        if any("telefono" in item for item in missing):
+            questions.append("tu teléfono de contacto")
+        if any("modalidad de entrega" in item for item in missing):
+            questions.append("si preferís retiro o envío")
+        if any(item == "direccion" for item in missing):
+            questions.append("la dirección de entrega")
+        if any(item == "localidad" for item in missing):
+            questions.append("la localidad")
+        if any(item == "provincia" for item in missing):
+            questions.append("la provincia")
+        cart_items = list(((state.get("cart") or {}).get("items") or []))
+        summary = ", ".join(
+            f"{float(item.get('quantity') or 0):g} × {str(item.get('name') or 'producto')}"
+            for item in cart_items
+        )
+        opening = f"Perfecto, tengo anotado {summary}. " if summary else "Perfecto, tengo tu pedido en este chat. "
+        if questions:
+            return opening + "Para completar el presupuesto, necesito " + ", ".join(questions) + ". No hace falta que repitas el producto ni la cantidad."
+        return opening + "Para completar el presupuesto, confirmame los datos de contacto y entrega que falten. No hace falta que repitas el pedido."
+
+    return (
+        "No pude confirmar el presupuesto en este intento, pero conservo tu consulta en este chat. "
+        "No voy a reutilizar enlaces de otros pedidos; escribí «continuar» para retomarlo."
+    )
+
+
+def _generic_public_order_followup(state: dict) -> str:
+    cart_items = list(((state.get("cart") or {}).get("items") or []))
+    if cart_items:
+        summary = ", ".join(
+            f"{float(item.get('quantity') or 0):g} × {str(item.get('name') or 'producto')}"
+            for item in cart_items
+        )
+        return (
+            f"Tengo anotado {summary} en este chat, pero todavía no pude confirmar el presupuesto. "
+            "No voy a mostrar un enlace de otro pedido. Decime «continuar» y retomo desde estos datos; no hace falta repetirlos."
+        )
+    return (
+        "No pude confirmar el presupuesto en este intento y no voy a reutilizar enlaces anteriores. "
+        "No hace falta que empieces de cero: confirmame el producto y la cantidad que querés incluir, y seguimos en este chat."
+    )
+
 
 
 def _starts_new_quote_request(message: str) -> bool:
@@ -457,7 +714,17 @@ def _starts_new_quote_request(message: str) -> bool:
         "hacer una nueva cotizacion",
         "armar otro presupuesto",
     )
-    return any(phrase in normalized for phrase in phrases)
+    if any(phrase in normalized for phrase in phrases):
+        return True
+    # An explicit new item/count request is its own order by default; don't append
+    # it silently to a previous visitor cart or pending checkout.
+    explicit_line = _explicit_public_quantity_product(message)
+    return bool(
+        explicit_line
+        and any(phrase in normalized for phrase in (
+            "quiero ", "necesito ", "me llevo ", "llevo ", "comprame ", "dame ",
+        ))
+    )
 
 
 def _begin_new_quote_context(conversation) -> None:
@@ -1164,6 +1431,37 @@ def public_vendor_message(slug: str):
                         company_id=int(company.id),
                         observations="Pedido generado por el Vendedor 24 hs de StockARmobile.",
                     ).first()
+
+                # If the model omitted preparar_pedido, recover only from an
+                # explicit product/quantity phrase authored in this visitor turn.
+                # The same backend tool validates stock, contact, delivery and payment;
+                # the recovery path never accepts or reuses a model-supplied checkout URL.
+                order_recovery = None
+                if active_quote is None and _public_order_intent(message):
+                    order_recovery = _recover_explicit_public_order(
+                        company=company,
+                        conversation=conversation,
+                        message=message,
+                        state=state,
+                        idempotency_key=idempotency_key,
+                        trace_id=result.get("trace_id") or operation.trace_id,
+                    )
+                    if order_recovery and order_recovery.get("kind") == "tool_result":
+                        recovery_result = order_recovery.get("result") or {}
+                        recovered_quote_id = recovery_result.get("quote_id")
+                        if recovered_quote_id:
+                            operation.quote_id = int(recovered_quote_id)
+                            db.session.flush()
+                        state = _cart_public_state(conversation)
+                        active_quote_id = getattr(operation, "quote_id", None)
+                        if active_quote_id and str(state.get("pending_quote_id") or "") == str(active_quote_id):
+                            from app import Quote
+                            active_quote = Quote.query.filter_by(
+                                id=int(active_quote_id),
+                                company_id=int(company.id),
+                                observations="Pedido generado por el Vendedor 24 hs de StockARmobile.",
+                            ).first()
+
                 if active_quote is not None and state.get("payment_url") and state.get("quote_url"):
                     content = _public_order_confirmation_text(
                         active_quote,
@@ -1193,15 +1491,15 @@ def public_vendor_message(slug: str):
                 else:
                     raw_content = str(result.get("content") or "")
                     content = _strip_unscoped_checkout_links(raw_content)
-                    if _public_order_intent(message) and (
+                    if order_recovery is not None:
+                        content = _public_order_recovery_reply(order_recovery, state)
+                    elif _public_order_intent(message) and (
                         not _assistant_requests_order_details(content)
                         or _contains_unscoped_checkout_link(raw_content)
                     ):
-                        content = (
-                            "No pude generar un presupuesto nuevo y su enlace de pago para esta solicitud. "
-                            "Para evitar confusiones, no voy a reutilizar un enlace de un pedido anterior. "
-                            "Por favor, enviá nuevamente el pedido para prepararlo desde cero."
-                        )
+                        # Keep the link-safety gate while preserving the visitor's
+                        # conversation and previously entered product details.
+                        content = _generic_public_order_followup(state)
                     response_payload = {
                         "success": True,
                         "conversation_id": result.get("conversation_id"),

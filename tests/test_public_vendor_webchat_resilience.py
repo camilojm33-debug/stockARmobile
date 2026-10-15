@@ -561,6 +561,8 @@ def test_general_chat_turn_does_not_reexpose_previous_checkout_links(qa_public_v
 
 
 def test_new_order_without_new_checkout_does_not_replay_previous_customer_link(qa_public_vendor_db, monkeypatch):
+    from app import Payment, Quote
+
     provider = SequenceProvider([
         {
             "content": "",
@@ -587,8 +589,13 @@ def test_new_order_without_new_checkout_does_not_replay_previous_customer_link(q
     def ensure_token(self, *, company_id):
         return "qa-token"
 
+    preferences = []
+
     def create_preference(self, **kwargs):
-        return {"id": "pref-previous-customer", "init_point": "https://payments.test/previous-customer"}
+        preferences.append(kwargs)
+        if len(preferences) == 1:
+            return {"id": "pref-previous-customer", "init_point": "https://payments.test/previous-customer"}
+        return {"id": "pref-pedro-new", "init_point": "https://payments.test/pedro-new"}
 
     monkeypatch.setattr("services.ai_agent.vendor_order_service.MercadoPagoOAuthService.ensure_access_token", ensure_token)
     monkeypatch.setattr("services.ai_agent.vendor_order_service.MercadoPagoService.create_ai_order_checkout_preference", create_preference)
@@ -609,16 +616,103 @@ def test_new_order_without_new_checkout_does_not_replay_previous_customer_link(q
     )
 
     assert first.status_code == second.status_code == 200
-    assert second.json["payment_url"] is None
-    assert second.json["quote_url"] is None
-    assert "No pude generar un presupuesto nuevo" in second.json["content"]
+    assert first.json["payment_url"] == "https://payments.test/previous-customer"
+    assert second.json["payment_url"] == "https://payments.test/pedro-new"
+    assert second.json["quote_url"]
+    assert second.json["quote_url"] != first.json["quote_url"]
     assert "pref_id=previous" not in second.json["content"]
+    assert "payments.test/previous-customer" not in second.json["content"]
     assert "Julia Acosta" not in second.json["content"]
+    assert "Pedro Silva" in second.json["content"]
+    assert len(preferences) == 2
+
+    quotes = (
+        Quote.query.filter_by(
+            company_id=qa_public_vendor_db["company"].id,
+            observations="Pedido generado por el Vendedor 24 hs de StockARmobile.",
+        )
+        .order_by(Quote.id.asc())
+        .all()
+    )
+    assert len(quotes) == 2
+    assert float(quotes[0].items[0].quantity) == 2
+    assert float(quotes[1].items[0].quantity) == 3
+    assert quotes[1].client.name == "Pedro Silva"
+    payments = Payment.query.filter_by(
+        company_id=qa_public_vendor_db["company"].id,
+        provider="mercadopago_ai_order",
+    ).order_by(Payment.id.asc()).all()
+    assert len(payments) == 2
+    assert payments[1].preference_id == "pref-pedro-new"
+
+
+def test_public_webchat_recovers_explicit_five_cocas_when_model_skips_order_tool(qa_public_vendor_db, monkeypatch):
+    from app import Payment, Product, Quote, Sale, db
+    from services.ai_agent.vendor_publication import publish_vendor
+
+    setup = qa_public_vendor_db
+    product = Product(
+        barcode="COCA-WEBCHAT-RECOVERY-001",
+        name="Coca",
+        price=6090,
+        cost_price=4000,
+        stock=436,
+        min_stock=1,
+        active=True,
+        company_id=setup["company"].id,
+        unit_measure="unidad",
+    )
+    db.session.add(product)
+    db.session.flush()
+    with setup["app"].test_request_context("/"):
+        publish_vendor(setup["company"])
+    db.session.commit()
+
+    # The model fails to call preparar_pedido and tries to attach an old checkout.
+    # The backend must recover the explicit product/quantity, remove the unsafe
+    # link and ask only for missing contact/delivery details.
+    provider = SequenceProvider([
+        {
+            "content": "No pude completar el presupuesto. [Pagar con Mercado Pago](https://www.mercadopago.com.ar/checkout/v1/redirect?pref_id=old-customer)",
+            "tool_call": None,
+        },
+    ])
+    _install_provider(monkeypatch, provider)
+    client = _public_client(setup)
+    response = _post_message(
+        client,
+        setup,
+        "operation-five-cocas-model-skipped-tool",
+        "Hola, soy Claudio Aguirre. Quiero un presupuesto de 5 cocas.",
+    )
+
+    assert response.status_code == 200
+    assert response.json["payment_url"] is None
+    assert response.json["quote_url"] is None
+    assert "5 × Coca" in response.json["content"]
+    assert "teléfono de contacto" in response.json["content"].lower()
+    assert "retiro o envío" in response.json["content"].lower()
+    assert "mercadopago.com.ar/checkout" not in response.json["content"]
+    assert "old-customer" not in response.json["content"]
+    assert len(response.json["cart"]["items"]) == 1
+    assert response.json["cart"]["items"][0]["name"] == "Coca"
+    assert float(response.json["cart"]["items"][0]["quantity"]) == 5
+    assert Quote.query.filter_by(
+        company_id=setup["company"].id,
+        observations="Pedido generado por el Vendedor 24 hs de StockARmobile.",
+    ).count() == 0
+    assert Payment.query.filter_by(
+        company_id=setup["company"].id,
+        provider="mercadopago_ai_order",
+    ).count() == 0
+    assert Sale.query.filter_by(company_id=setup["company"].id).count() == 0
+    assert float(Product.query.filter_by(id=product.id, company_id=setup["company"].id).one().stock) == 436
 
 
 def test_new_quote_intent_does_not_capture_previous_quote_retrieval():
     from services.ai_agent.vendor_publication import (
         _assistant_requests_order_details,
+        _public_order_intent,
         _starts_new_quote_request,
     )
     from types import SimpleNamespace
@@ -631,6 +725,8 @@ def test_new_quote_intent_does_not_capture_previous_quote_retrieval():
     assert _starts_new_quote_request("Quiero cotizar otro producto") is True
     assert _starts_new_quote_request("Quiero otro presupuesto parecido al anterior") is True
     assert _starts_new_quote_request("Haceme un presupuesto con 3 metros de machimbre") is True
+    assert _starts_new_quote_request("Hola, quiero 5 cocas") is True
+    assert _public_order_intent("Hola, quiero 5 cocas") is True
     assert _starts_new_quote_request("Quiero consultar cuánto era el presupuesto") is False
     assert _same_public_customer_name("Nelson Mandele", "Nelson Mandela") is True
     assert _same_public_customer_name("Julia Acosta", "María Rodríguez") is False
