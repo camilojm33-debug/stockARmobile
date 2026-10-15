@@ -629,7 +629,18 @@ def test_finalize_paid_legacy_vendor_quote_repairs_conflicting_client_identity(v
     quote = db.session.get(Quote, created["quote_id"])
     delivery = QuoteDelivery.query.filter_by(quote_id=quote.id).one()
     delivery.recipient_name = "Claudio Aguirre"
-    db.session.flush()
+    db.session.commit()
+
+    # Legacy quotes can still link the old client while storing the current
+    # recipient correctly in the delivery snapshot. Public views/PDFs must honor it.
+    assert quote.client.name == "Adolfo Piris"
+    assert _quote_customer_name(quote) == "Claudio Aguirre"
+    public_path = _build_public_quote_url(quote.id).replace("http://test.local", "")
+    response = stock_app.app.test_client().get(public_path)
+    assert response.status_code == 200
+    page = response.get_data(as_text=True)
+    assert "Claudio Aguirre" in page
+    assert "Adolfo Piris" not in page
 
     payment = Payment.query.filter_by(company_id=data["company_a"].id).one()
     payment_data = {
