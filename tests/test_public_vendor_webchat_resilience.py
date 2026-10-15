@@ -1292,6 +1292,10 @@ def test_public_webchat_per_tab_sessions_isolate_history_cart_and_conversation_i
     _install_provider(monkeypatch, provider)
     _count_rate_limit(monkeypatch)
     client = _public_client(qa_public_vendor_setup)
+    baseline_conversations = Conversation.query.filter_by(
+        company_id=qa_public_vendor_setup["company"].id,
+        channel="webchat",
+    ).count()
     tab_a = "a" * 32
     tab_b = "b" * 32
 
@@ -1356,7 +1360,21 @@ def test_public_webchat_per_tab_sessions_isolate_history_cart_and_conversation_i
     assert Conversation.query.filter_by(
         company_id=qa_public_vendor_setup["company"].id,
         channel="webchat",
-    ).count() == 2
+    ).count() == baseline_conversations + 2
+    # Each tab token maps to exactly one stored conversation digest.
+    from hashlib import sha256
+    expected_digests = {
+        sha256(tab_a.encode("utf-8")).hexdigest(),
+        sha256(tab_b.encode("utf-8")).hexdigest(),
+    }
+    stored_tokens = [
+        (row.metadata_json or {}).get("public_chat_session_digest")
+        for row in Conversation.query.filter_by(
+            company_id=qa_public_vendor_setup["company"].id,
+            channel="webchat",
+        ).all()
+    ]
+    assert sum(value in expected_digests for value in stored_tokens) == 2
     assert provider.calls == 2
 
 
@@ -1405,6 +1423,13 @@ def test_legacy_signed_webchat_endpoint_honors_per_tab_session_token(qa_public_v
     ])
     _install_provider(monkeypatch, provider)
     _count_rate_limit(monkeypatch)
+    from services.ai_agent.config_service import update_ai_preferences
+
+    update_ai_preferences(
+        qa_public_vendor_setup["company"],
+        ai_updates={"public_webchat_enabled": True},
+    )
+    db.session.commit()
     client = _public_client(qa_public_vendor_setup)
     signed_token = _public_vendor_token(qa_public_vendor_setup["company"].id)
     tab_a, tab_b = "d" * 32, "e" * 32
