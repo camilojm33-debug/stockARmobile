@@ -634,7 +634,7 @@ def _public_order_recovery_reply(recovery: dict, state: dict) -> str:
         if any("telefono" in item for item in missing):
             questions.append("tu teléfono de contacto")
         if any("modalidad de entrega" in item for item in missing):
-            questions.append("si preferís retiro en el comercio o envío a domicilio")
+            questions.append("si preferís retiro o envío")
         if any(item == "direccion" for item in missing):
             questions.append("la dirección de entrega")
         if any(item == "localidad" for item in missing):
