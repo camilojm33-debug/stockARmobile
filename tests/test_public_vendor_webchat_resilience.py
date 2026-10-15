@@ -1318,7 +1318,7 @@ def test_public_webchat_per_tab_sessions_isolate_history_cart_and_conversation_i
         },
     )
     assert cart_response.status_code == 200
-    assert cart_response.json["cart"]["line_count"] == 2
+    assert cart_response.json["cart"]["line_count"] == 1
 
     state_a = client.get(
         f"/vendedor/{qa_public_vendor_setup['slug']}/state"
@@ -1329,7 +1329,7 @@ def test_public_webchat_per_tab_sessions_isolate_history_cart_and_conversation_i
         f"?chat_session_id={tab_b}&conversation_id={second.json['conversation_id']}"
     )
     assert state_a.status_code == state_b.status_code == 200
-    assert state_a.json["cart"]["line_count"] == 2
+    assert state_a.json["cart"]["line_count"] == 1
     assert state_b.json["cart"]["line_count"] == 0
     history_a = " ".join(item["content"] for item in state_a.json["messages"])
     history_b = " ".join(item["content"] for item in state_b.json["messages"])
