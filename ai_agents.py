@@ -85,6 +85,17 @@ def _decode_public_vendor_token(token: str):
         return None
 
 
+def _legacy_public_conversation_is_tab_scoped(conversation) -> bool:
+    """Keep the legacy endpoint away from newer per-tab public chat sessions."""
+    raw = getattr(conversation, "metadata_json", None) or {}
+    if isinstance(raw, str):
+        try:
+            raw = json.loads(raw)
+        except (TypeError, ValueError, json.JSONDecodeError):
+            raw = {}
+    return isinstance(raw, dict) and bool(raw.get("public_chat_session_digest"))
+
+
 def _public_vendor_rate_limit(company_id: int, *, conversation_id=None, request_key=None) -> bool:
     remote = (request.remote_addr or "unknown").strip()
     redis_url = (os.getenv("REDIS_URL") or "").strip()
@@ -651,17 +662,22 @@ def public_vendor_chat_message(token):
                     ).first()
                 except (TypeError, ValueError):
                     conversation = None
-                if conversation is None:
+                if conversation is None or _legacy_public_conversation_is_tab_scoped(conversation):
                     return jsonify({"success": False, "error": "La conversación ya no es válida."}), 403
                 if conversation.agent_id != vendor_agent.id:
                     return jsonify({"success": False, "error": "La conversación no corresponde al vendedor."}), 403
             else:
-                conversation = Conversation.query.filter_by(
+                legacy_candidates = Conversation.query.filter_by(
                     company_id=company_id,
                     channel="webchat",
                     external_conversation_id=visitor_id,
                     agent_id=vendor_agent.id,
-                ).filter(Conversation.status == "open").order_by(Conversation.id.desc()).first()
+                ).filter(Conversation.status == "open").order_by(Conversation.id.desc()).all()
+                conversation = next(
+                    (candidate for candidate in legacy_candidates
+                     if not _legacy_public_conversation_is_tab_scoped(candidate)),
+                    None,
+                )
                 if conversation is None:
                     conversation = Conversation(
                         company_id=company_id,
