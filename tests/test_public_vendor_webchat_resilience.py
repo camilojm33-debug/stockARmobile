@@ -1384,6 +1384,52 @@ def test_new_tab_session_does_not_adopt_legacy_browser_conversation(qa_public_ve
     assert state.json["quote_url"] is None
 
 
+def test_legacy_signed_webchat_endpoint_honors_per_tab_session_token(qa_public_vendor_setup, monkeypatch):
+    from app import db
+    from ai_agents import _public_vendor_token
+    from stockarmobile.models.conversations import Conversation
+
+    monkeypatch.delenv("REDIS_URL", raising=False)
+    provider = SequenceProvider([
+        {"content": "Legacy tab A.", "tool_call": None},
+        {"content": "Legacy tab B.", "tool_call": None},
+    ])
+    _install_provider(monkeypatch, provider)
+    _count_rate_limit(monkeypatch)
+    client = _public_client(qa_public_vendor_setup)
+    signed_token = _public_vendor_token(qa_public_vendor_setup["company"].id)
+    tab_a, tab_b = "d" * 32, "e" * 32
+
+    first = client.post(
+        f"/public/vendedor/{signed_token}/message",
+        headers={"Idempotency-Key": "legacy-tab-a-001"},
+        json={"message": "Soy el chat A.", "chat_session_id": tab_a},
+    )
+    second = client.post(
+        f"/public/vendedor/{signed_token}/message",
+        headers={"Idempotency-Key": "legacy-tab-b-001"},
+        json={"message": "Soy el chat B.", "chat_session_id": tab_b},
+    )
+    assert first.status_code == second.status_code == 200
+    assert first.json["conversation_id"] != second.json["conversation_id"]
+
+    cross_session = client.post(
+        f"/public/vendedor/{signed_token}/message",
+        headers={"Idempotency-Key": "legacy-tab-cross-001"},
+        json={
+            "message": "No debería entrar en el otro hilo.",
+            "conversation_id": first.json["conversation_id"],
+            "chat_session_id": tab_b,
+        },
+    )
+    assert cross_session.status_code == 403
+    assert Conversation.query.filter_by(
+        company_id=qa_public_vendor_setup["company"].id,
+        channel="webchat",
+    ).count() == 2
+    assert provider.calls == 2
+
+
 def test_other_company_cannot_reuse_conversation_or_operation_key(qa_public_vendor_setup, monkeypatch):
     from app import Company, db
     from services.ai_agent.config_service import ensure_default_agents
