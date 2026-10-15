@@ -184,10 +184,12 @@ def _public_client(setup):
     return client
 
 
-def _post_message(client, setup, key, message, conversation_id=None):
+def _post_message(client, setup, key, message, conversation_id=None, chat_session_id=None):
     payload = {"message": message}
     if conversation_id is not None:
         payload["conversation_id"] = conversation_id
+    if chat_session_id is not None:
+        payload["chat_session_id"] = chat_session_id
     return client.post(
         f"/vendedor/{setup['slug']}/message",
         headers={"Idempotency-Key": key},
@@ -1278,6 +1280,110 @@ def test_checkout_timeout_reuses_quote_and_same_mp_idempotency_reference(qa_publ
     assert payment.preference_id == "pref-checkout-retry"
 
 
+def test_public_webchat_per_tab_sessions_isolate_history_cart_and_conversation_ids(qa_public_vendor_setup, monkeypatch):
+    from app import db
+    from stockarmobile.models.conversations import Conversation
+
+    monkeypatch.delenv("REDIS_URL", raising=False)
+    provider = SequenceProvider([
+        {"content": "Hola Ana, ¿en qué te ayudo?", "tool_call": None},
+        {"content": "Hola Bruno, ¿qué estás buscando?", "tool_call": None},
+    ])
+    _install_provider(monkeypatch, provider)
+    _count_rate_limit(monkeypatch)
+    client = _public_client(qa_public_vendor_setup)
+    tab_a = "a" * 32
+    tab_b = "b" * 32
+
+    first = _post_message(
+        client, qa_public_vendor_setup, "tab-a-message-001", "Soy Ana, busco machimbre.",
+        chat_session_id=tab_a,
+    )
+    second = _post_message(
+        client, qa_public_vendor_setup, "tab-b-message-001", "Soy Bruno, consulto otra cosa.",
+        chat_session_id=tab_b,
+    )
+    assert first.status_code == second.status_code == 200
+    assert first.json["conversation_id"] != second.json["conversation_id"]
+
+    cart_response = client.post(
+        f"/vendedor/{qa_public_vendor_setup['slug']}/cart",
+        headers={"Idempotency-Key": "tab-a-cart-add-001"},
+        json={
+            "chat_session_id": tab_a,
+            "conversation_id": first.json["conversation_id"],
+            "action": "add",
+            "product_id": qa_public_vendor_setup["product"].id,
+            "quantity": 2,
+        },
+    )
+    assert cart_response.status_code == 200
+    assert cart_response.json["cart"]["line_count"] == 2
+
+    state_a = client.get(
+        f"/vendedor/{qa_public_vendor_setup['slug']}/state"
+        f"?chat_session_id={tab_a}&conversation_id={first.json['conversation_id']}"
+    )
+    state_b = client.get(
+        f"/vendedor/{qa_public_vendor_setup['slug']}/state"
+        f"?chat_session_id={tab_b}&conversation_id={second.json['conversation_id']}"
+    )
+    assert state_a.status_code == state_b.status_code == 200
+    assert state_a.json["cart"]["line_count"] == 2
+    assert state_b.json["cart"]["line_count"] == 0
+    history_a = " ".join(item["content"] for item in state_a.json["messages"])
+    history_b = " ".join(item["content"] for item in state_b.json["messages"])
+    assert "Soy Ana" in history_a and "Soy Bruno" not in history_a
+    assert "Soy Bruno" in history_b and "Soy Ana" not in history_b
+    assert state_b.json["payment_url"] is None
+    assert state_b.json["quote_url"] is None
+
+    cross_session = _post_message(
+        client, qa_public_vendor_setup, "tab-b-cross-session-001", "Intento usar el otro hilo.",
+        conversation_id=first.json["conversation_id"],
+        chat_session_id=tab_b,
+    )
+    assert cross_session.status_code == 403
+    assert Conversation.query.filter_by(
+        company_id=qa_public_vendor_setup["company"].id,
+        channel="webchat",
+    ).count() == 2
+    assert provider.calls == 2
+
+
+def test_new_tab_session_does_not_adopt_legacy_browser_conversation(qa_public_vendor_setup, monkeypatch):
+    monkeypatch.delenv("REDIS_URL", raising=False)
+    provider = SequenceProvider([
+        {"content": "Respuesta privada del hilo anterior.", "tool_call": None},
+        {"content": "Respuesta del nuevo hilo.", "tool_call": None},
+    ])
+    _install_provider(monkeypatch, provider)
+    _count_rate_limit(monkeypatch)
+    client = _public_client(qa_public_vendor_setup)
+
+    legacy = _post_message(
+        client, qa_public_vendor_setup, "legacy-chat-message-001", "Dato del hilo anterior."
+    )
+    new_tab = _post_message(
+        client, qa_public_vendor_setup, "new-tab-message-001", "Dato del hilo nuevo.",
+        chat_session_id="c" * 32,
+    )
+    assert legacy.status_code == new_tab.status_code == 200
+    assert legacy.json["conversation_id"] != new_tab.json["conversation_id"]
+
+    state = client.get(
+        f"/vendedor/{qa_public_vendor_setup['slug']}/state"
+        f"?chat_session_id={'c' * 32}&conversation_id={new_tab.json['conversation_id']}"
+    )
+    assert state.status_code == 200
+    history = " ".join(item["content"] for item in state.json["messages"])
+    assert "Dato del hilo nuevo." in history
+    assert "Dato del hilo anterior." not in history
+    assert "Respuesta privada del hilo anterior." not in history
+    assert state.json["payment_url"] is None
+    assert state.json["quote_url"] is None
+
+
 def test_other_company_cannot_reuse_conversation_or_operation_key(qa_public_vendor_setup, monkeypatch):
     from app import Company, db
     from services.ai_agent.config_service import ensure_default_agents
@@ -1323,6 +1429,11 @@ def test_webchat_frontend_guards_click_enter_and_manual_retries():
     assert "function safeMessageUrl(value)" in source
     assert "const heading = trimmed.match(/^#{1,6}\\s+(.+)$/)" in source
     assert "const bullet = trimmed.match(/^(?:\\*|-)\\s+(.+)$/)" in source
+    assert "chat_session_id: chatSessionId" in source
+    assert "function prepareChatSession()" in source
+    assert "BroadcastChannel" in source
+    assert "async function restoreCurrentChatState()" in source
+    assert "href=\"{{ request.path }}\" target=\"_blank\" rel=\"noopener noreferrer\"" in source
 
 
 def test_public_quantity_extractor_recognizes_product_nouns_and_quantity_corrections():
