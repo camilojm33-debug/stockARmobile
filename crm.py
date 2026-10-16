@@ -207,7 +207,7 @@ def index():
 @tenant_required
 @ai_pro_crm_required
 def pipeline():
-    from app import User
+    from app import Client, User
 
     status_filter = (request.args.get("status") or "open").strip().lower()
     if status_filter not in {"open", "closed", "all"}:
@@ -226,7 +226,7 @@ def pipeline():
         query = query.filter(CRMOpportunity.owner_user_id == owner_filter)
     if search:
         like = f"%{search}%"
-        query = query.join(CRMOpportunity.client).filter(or_(CRMOpportunity.title.ilike(like), CRMOpportunity.source.ilike(like), __import__("app").Client.name.ilike(like)))
+        query = query.join(CRMOpportunity.client).filter(or_(CRMOpportunity.title.ilike(like), CRMOpportunity.source.ilike(like), Client.name.ilike(like)))
     opportunities = query.order_by(CRMOpportunity.updated_at.desc()).limit(500).all()
     grouped = {stage: [] for stage, _ in STAGES}
     for opportunity in opportunities:
@@ -467,7 +467,14 @@ def activity_edit(activity_id):
         return redirect(url_for("crm.activities", status="all"))
 
     clients = scope_query_to_company(Client.query.filter(Client.active.is_(True)), Client).order_by(Client.name).all()
-    opportunities = _opportunity_query().filter(CRMOpportunity.status == "open").order_by(CRMOpportunity.updated_at.desc()).all()
+    opportunities_query = _opportunity_query()
+    if activity.opportunity_id:
+        opportunities_query = opportunities_query.filter(
+            or_(CRMOpportunity.status == "open", CRMOpportunity.id == activity.opportunity_id)
+        )
+    else:
+        opportunities_query = opportunities_query.filter(CRMOpportunity.status == "open")
+    opportunities = opportunities_query.order_by(CRMOpportunity.updated_at.desc()).all()
     return render_template(
         "crm/activity_form.html",
         activity=activity,
