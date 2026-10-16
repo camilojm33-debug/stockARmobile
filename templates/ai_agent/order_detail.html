@@ -122,7 +122,7 @@
         <div class="card-body">
           <div class="ai-order-timeline">
             <div class="ai-order-step"><span class="ai-order-dot"></span><div><div class="fw-semibold">Pedido generado por Vendedor IA</div><div class="small text-muted">{{ order.created_at.strftime('%d/%m/%Y %H:%M') if order.created_at else '-' }}</div></div></div>
-            <div class="ai-order-step"><span class="ai-order-dot"></span><div><div class="fw-semibold">Estado del pago: {{ order.payment_label }}</div><div class="small text-muted">{{ order.paid_at.strftime('%d/%m/%Y %H:%M') if order.paid_at else 'Pendiente de aprobación' }}</div></div></div>
+            <div class="ai-order-step"><span class="ai-order-dot"></span><div><div class="fw-semibold">Estado del pago: {{ order.payment_label }}</div><div class="small text-muted">{% if order.payment_label == 'Cerrado por venta manual' and order.sale_id %}No requiere aprobación online · Venta #{{ order.sale_id }} confirmada{% elif order.paid_at %}{{ order.paid_at.strftime('%d/%m/%Y %H:%M') }}{% else %}Pendiente de aprobación{% endif %}</div></div></div>
             {% if order.sale_id %}<div class="ai-order-step"><span class="ai-order-dot ai-order-dot-success"></span><div><div class="fw-semibold">Venta confirmada</div><div class="small text-muted">Venta #{{ order.sale_id }} · stock aplicado</div></div></div>{% else %}<div class="ai-order-step"><span class="ai-order-dot"></span><div><div class="fw-semibold">Venta confirmada</div><div class="small text-muted">Todavía no hay una venta convertida.</div></div></div>{% endif %}
           </div>
         </div>
