@@ -10,6 +10,8 @@ import re
 from datetime import timedelta
 from typing import Any
 
+from sqlalchemy import func, or_
+
 AI_ORDER_MARKER = "Pedido generado por el Vendedor 24 hs de StockARmobile."
 AI_ORDER_PROVIDER = "mercadopago_ai_order"
 
@@ -119,13 +121,20 @@ class QuoteCleanupService:
         considered_statuses = sorted(
             set(requested_statuses) | {"ENVIADO", "APROBADO", "CONVERTIDO"}
         )
+        # Apply the origin filter in SQL before LIMIT. Filtering after fetching the
+        # first page can hide all matching records when older quotes of the other
+        # origin occupy the page.
         query = Quote.query.filter(
             Quote.company_id == int(company_id),
             Quote.status.in_(considered_statuses),
             Quote.date < cutoff,
-        ).order_by(Quote.date.asc(), Quote.id.asc()).limit(safe_limit)
-
-        quotes = query.all()
+        )
+        normalized_origin = func.trim(func.coalesce(Quote.observations, ""))
+        if normalized_kind == "ai":
+            query = query.filter(normalized_origin == AI_ORDER_MARKER)
+        elif normalized_kind == "manual":
+            query = query.filter(normalized_origin != AI_ORDER_MARKER)
+        quotes = query.order_by(Quote.date.asc(), Quote.id.asc()).limit(safe_limit).all()
         payment_states = cls._payment_state_by_quote(company_id)
 
         eligible = []
@@ -212,10 +221,20 @@ class QuoteCleanupService:
             .all()
         )
 
-        # Re-check every safety rule from current DB state immediately before deletion.
+        # Re-check age, origin, status, and safety rules from current DB state
+        # immediately before deleting, in case a quote changed after the preview.
         payment_states = cls._payment_state_by_quote(company_id)
         deleted = []
         for quote in quotes:
+            if quote.date is None or quote.date >= preview["cutoff"]:
+                continue
+            is_ai = cls.is_ai_quote(quote)
+            if preview["kind"] == "ai" and not is_ai:
+                continue
+            if preview["kind"] == "manual" and is_ai:
+                continue
+            if str(quote.status or "").strip().upper() not in DEFAULT_ELIGIBLE_STATUSES:
+                continue
             reason = cls._protected_reason(quote, payment_states)
             if reason:
                 continue
@@ -230,8 +249,8 @@ class QuoteCleanupService:
             )
             db.session.delete(quote)
 
-        db.session.commit()
-
+        # Commit deletions and their audit rows together. Without this final commit,
+        # record_audit only stages the audit rows and they are discarded at teardown.
         if deleted:
             from app import record_audit
 
@@ -247,6 +266,8 @@ class QuoteCleanupService:
                     ),
                     ip_address=ip_address,
                 )
+
+        db.session.commit()
 
         return {
             **preview,
