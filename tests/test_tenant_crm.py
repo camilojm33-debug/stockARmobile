@@ -167,6 +167,28 @@ def test_quote_conversion_updates_only_its_linked_crm_opportunity(app):
     assert unrelated.stage == "presupuesto"
     assert unrelated.status == "open"
 
+    # If that confirmed sale is later annulled, its opportunity must no longer
+    # remain falsely marked as won; keep the sale link for auditability.
+    from decimal import Decimal
+    from services.sales.sale_service import SaleService
+
+    service = SaleService(
+        require_open_cash_session=lambda **kwargs: None,
+        calculate_lines=lambda *args, **kwargs: [],
+        mark_quote_as_converted=lambda *args, **kwargs: None,
+        cart_key=lambda: "test-cart",
+        to_decimal=lambda value: Decimal(str(value or 0)),
+    )
+    sale.status = "anulada"
+    service._sync_crm_opportunity_after_sale_annulment(sale)
+    db.session.commit()
+    db.session.refresh(opportunity)
+    assert opportunity.stage == "perdido"
+    assert opportunity.status == "closed"
+    assert float(opportunity.probability) == 0
+    assert opportunity.sale_id == sale.id
+    assert "Venta #" + str(sale.id) + " anulada" in opportunity.notes
+
 
 def test_crm_commercial_links_require_same_tenant_and_client(app):
     from app import Client, Company, Quote, User, db, utcnow
