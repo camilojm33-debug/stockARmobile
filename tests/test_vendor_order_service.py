@@ -14,7 +14,6 @@ from services.ai_agent.followup_service import AIFollowupService
 from services.ai_agent.vendor_order_service import (
     CART_KEY,
     LAST_ORDER_KEY,
-    NEW_QUOTE_CONTEXT_KEY,
     PENDING_PAYMENT_KEY,
     PENDING_QUOTE_KEY,
     VendorOrderService,
@@ -1698,10 +1697,6 @@ def test_new_quote_cancels_superseded_unpaid_quote_and_payment(vendor_database, 
 
     # A clearly requested new quote should replace the old unpaid checkout,
     # but only after the replacement quote/payment link is successfully created.
-    state = dict(conversation.metadata_json or {})
-    state[NEW_QUOTE_CONTEXT_KEY] = True
-    conversation.metadata_json = state
-    db.session.commit()
     VendorOrderService.update_cart(
         company_id=data["company_a"].id,
         conversation_id=conversation.id,
@@ -1757,10 +1752,6 @@ def test_new_quote_does_not_cancel_superseded_quote_when_payment_preference_fail
         quote_id=previous_quote.id,
     )
 
-    state = dict(conversation.metadata_json or {})
-    state[NEW_QUOTE_CONTEXT_KEY] = True
-    conversation.metadata_json = state
-    db.session.commit()
     VendorOrderService.update_cart(
         company_id=data["company_a"].id,
         conversation_id=conversation.id,
