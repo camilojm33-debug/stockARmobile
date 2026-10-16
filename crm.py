@@ -394,15 +394,72 @@ def activity_complete(activity_id):
 @ai_pro_crm_required
 def client_360(client_id):
     from app import Client, Quote, Sale
+
     client = _client_for_company(client_id)
     if not client:
         abort(404)
-    sales = scope_query_to_company(Sale.query.filter(Sale.client_id == client.id), Sale).order_by(Sale.date.desc()).limit(12).all()
-    quotes = scope_query_to_company(Quote.query.filter(Quote.client_id == client.id), Quote).order_by(Quote.date.desc()).limit(12).all()
+
+    all_sales_query = scope_query_to_company(Sale.query.filter(Sale.client_id == client.id), Sale)
+    all_sales_query = all_sales_query.filter(Sale.status.notin_(["cancelada", "anulada", "cancelled", "voided"]))
+    sales_count = all_sales_query.count()
+    total_spent = float(
+        all_sales_query.with_entities(func.coalesce(func.sum(Sale.total_amount), 0)).scalar() or 0
+    )
+    sales = all_sales_query.order_by(Sale.date.desc()).limit(12).all()
+
+    all_quotes_query = scope_query_to_company(Quote.query.filter(Quote.client_id == client.id), Quote)
+    quotes_count = all_quotes_query.count()
+    quotes = all_quotes_query.order_by(Quote.date.desc()).limit(12).all()
+
     opportunities = _opportunity_query().filter(CRMOpportunity.client_id == client.id).order_by(CRMOpportunity.updated_at.desc()).all()
-    activities = _activity_query().filter(CRMActivity.client_id == client.id).order_by(CRMActivity.created_at.desc()).limit(20).all()
-    total_spent = float(sum(float(s.total_amount or 0) for s in sales))
-    return render_template("crm/client_360.html", client=client, sales=sales, quotes=quotes, opportunities=opportunities, activities=activities, total_spent=total_spent, stages=STAGES, activity_types=ACTIVITY_TYPES)
+    activities = _activity_query().filter(CRMActivity.client_id == client.id).order_by(CRMActivity.created_at.desc()).limit(50).all()
+
+    timeline = []
+    for item in activities:
+        occurred_at = item.completed_at if item.status == "completed" and item.completed_at else item.created_at
+        timeline.append({
+            "date": occurred_at,
+            "title": item.subject,
+            "subtitle": f"{dict(ACTIVITY_TYPES).get(item.type, item.type)} · {'Completada' if item.status == 'completed' else 'Pendiente'}",
+            "description": item.description,
+            "color": "primary",
+            "url": url_for("crm.opportunity_detail", opportunity_id=item.opportunity_id) if item.opportunity_id else None,
+        })
+    for item in quotes:
+        timeline.append({
+            "date": item.date,
+            "title": f"Presupuesto {getattr(item, 'number', None) or '#' + str(item.id)}",
+            "subtitle": f"ARS {float(item.total_amount or 0):.2f} · {item.status or 'Sin estado'}",
+            "description": getattr(item, "notes", None) or getattr(item, "observations", None),
+            "color": "info",
+            "url": url_for("quotes.view", quote_id=item.id) if False else None,
+        })
+    for item in sales:
+        timeline.append({
+            "date": item.date,
+            "title": f"Venta #{item.id}",
+            "subtitle": f"ARS {float(item.total_amount or 0):.2f} · {item.status or 'Registrada'}",
+            "description": item.note,
+            "color": "success",
+            "url": url_for("sales.view_sale", sale_id=item.id),
+        })
+    timeline.sort(key=lambda event: event["date"] or datetime.min, reverse=True)
+    timeline = timeline[:50]
+
+    return render_template(
+        "crm/client_360.html",
+        client=client,
+        sales=sales,
+        sales_count=sales_count,
+        quotes=quotes,
+        quotes_count=quotes_count,
+        opportunities=opportunities,
+        activities=activities,
+        timeline=timeline,
+        total_spent=total_spent,
+        stages=STAGES,
+        activity_types=ACTIVITY_TYPES,
+    )
 
 
 @bp.route("/clients")
