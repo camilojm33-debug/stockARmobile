@@ -140,8 +140,10 @@ def _parse_opportunity_form(client_id, opportunity_id=None):
     quote, sale = _resolve_commercial_links(client.id, quote_id, sale_id, opportunity_id)
     if opportunity_id:
         existing_opportunity = _opportunity_query().filter(CRMOpportunity.id == opportunity_id).first()
-        if existing_opportunity and existing_opportunity.sale_id and sale_id != existing_opportunity.sale_id:
-            raise ValueError("No se puede desvincular o reemplazar una venta registrada; conservá la trazabilidad de la operación.")
+        if existing_opportunity and existing_opportunity.sale_id and (
+            sale_id != existing_opportunity.sale_id or quote_id != existing_opportunity.quote_id
+        ):
+            raise ValueError("No se puede desvincular o reemplazar el presupuesto/venta de una operación registrada; conservá la trazabilidad comercial.")
     owner_id = request.form.get("owner_user_id", type=int) or current_user.id
     from app import User
     owner = scope_query_to_company(User.query.filter(User.active.is_(True)), User).filter(User.id == owner_id).first()
