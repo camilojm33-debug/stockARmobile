@@ -356,6 +356,184 @@ def _quote_charge_snapshot(quote) -> list[dict[str, Any]]:
     return payload if isinstance(payload, list) else []
 
 
+def _format_vendor_currency(value: Any, currency: str = "ARS") -> str:
+    amount = _money(value)
+    rendered = f"{amount:,.2f}".replace(",", "__GROUP__").replace(".", ",").replace("__GROUP__", ".")
+    code = str(currency or "ARS").strip().upper()[:8] or "ARS"
+    return "$" + rendered + " " + code
+
+
+def format_vendor_order_confirmation(*, company_id: int, order: Dict[str, Any]) -> str:
+    """Build the final seller reply only from the persisted quote and checkout snapshot."""
+    from app import Quote, QuoteItem, QuoteDelivery
+
+    try:
+        quote_id = int((order or {}).get("quote_id") or 0)
+    except (TypeError, ValueError):
+        return ""
+    quote = Quote.query.filter_by(id=quote_id, company_id=int(company_id)).first()
+    if quote is None:
+        return ""
+
+    items = (
+        QuoteItem.query.filter_by(quote_id=quote.id)
+        .order_by(QuoteItem.sort_order.asc(), QuoteItem.id.asc())
+        .all()
+    )
+    if not items:
+        return ""
+
+    delivery = QuoteDelivery.query.filter_by(
+        quote_id=quote.id,
+        company_id=int(company_id),
+    ).first()
+    currency = str(quote.currency or (order or {}).get("currency") or "ARS").strip().upper() or "ARS"
+    product_subtotal = sum((_money(item.subtotal) for item in items), Decimal("0.00"))
+    line_discount_total = sum((_money(item.discount) for item in items), Decimal("0.00"))
+    general_discount = max(_money(quote.discount) - line_discount_total, Decimal("0.00"))
+    charges = _quote_charge_snapshot(quote)
+
+    # Keep compatibility with older quotes that predate charges_json. Never invent
+    # a percentage: use only persisted shipping/tax amounts, and label unknown charges.
+    if not charges:
+        shipping_cost = _money(getattr(delivery, "shipping_cost", 0) or 0)
+        if shipping_cost > Decimal("0.00"):
+            charges.append({
+                "id": "shipping",
+                "name": "Envío a domicilio",
+                "type": "fixed",
+                "amount": str(shipping_cost),
+            })
+        if _money(quote.tax) > Decimal("0.00"):
+            charges.append({
+                "id": "legacy-tax",
+                "name": "Impuestos/cargos registrados",
+                "type": "fixed",
+                "amount": str(_money(quote.tax)),
+            })
+
+    charge_total = sum(
+        (_money(charge.get("amount")) for charge in charges if isinstance(charge, dict)),
+        Decimal("0.00"),
+    )
+    calculated_total = product_subtotal - general_discount + charge_total
+    components_reconcile = abs(calculated_total - _money(quote.total_amount)) <= Decimal("0.01")
+
+    number = str(quote.number or (order or {}).get("quote_number") or f"P-{quote.id:06d}")
+    lines = [
+        f"¡Listo! Preparé el presupuesto *{number}*.",
+        "",
+        "*Detalle de productos:*",
+    ]
+    for item in items:
+        quantity = Decimal(str(item.quantity or 0))
+        quantity_text = format(quantity.normalize(), "f")
+        if "." in quantity_text:
+            quantity_text = quantity_text.replace(".", ",")
+        description = " ".join(str(item.description or "Producto").split())[:255]
+        unit_price = _money(item.unit_price)
+        subtotal = _money(item.subtotal)
+        lines.append(
+            f"• {quantity_text} × {description}: "
+            f"{_format_vendor_currency(unit_price, currency)} c/u; "
+            f"subtotal {_format_vendor_currency(subtotal, currency)}"
+        )
+        line_discount = _money(item.discount)
+        if line_discount > Decimal("0.00"):
+            lines.append(f"  Descuento de línea incluido: -{_format_vendor_currency(line_discount, currency)}")
+
+    if components_reconcile:
+        lines.extend([
+            "",
+            f"*Subtotal productos:* {_format_vendor_currency(product_subtotal, currency)}",
+        ])
+        if general_discount > Decimal("0.00"):
+            lines.append(f"*Descuento general:* -{_format_vendor_currency(general_discount, currency)}")
+        for charge in charges:
+            if not isinstance(charge, dict):
+                continue
+            amount = _money(charge.get("amount"))
+            if amount <= Decimal("0.00"):
+                continue
+            name = " ".join(str(charge.get("name") or "Cargo").split())[:120]
+            charge_id = str(charge.get("id") or "").strip().lower()
+            charge_type = str(charge.get("type") or "fixed").strip().lower()
+            if charge_id == "shipping" or "envío a domicilio" in name.lower() or "envio a domicilio" in name.lower():
+                lines.append(
+                    f"*Envío a domicilio (costo fijo configurado):* {_format_vendor_currency(amount, currency)}"
+                )
+            elif charge_type == "percentage":
+                try:
+                    percent = format(Decimal(str(charge.get("value") or 0)).normalize(), "f")
+                except Exception:
+                    percent = str(charge.get("value") or "0")
+                base = str(charge.get("base") or "products").strip().lower()
+                base_labels = {
+                    "products": "productos",
+                    "products_shipping": "productos + envío",
+                    "previous_total": "total acumulado",
+                }
+                base_label = base_labels.get(base, "base configurada")
+                base_amount = _money(charge.get("base_amount"))
+                base_detail = (
+                    f", base {_format_vendor_currency(base_amount, currency)}"
+                    if base_amount > Decimal("0.00")
+                    else ""
+                )
+                lines.append(
+                    f"*{name} ({percent}% sobre {base_label}{base_detail}):* "
+                    f"{_format_vendor_currency(amount, currency)}"
+                )
+            else:
+                lines.append(f"*{name} (cargo fijo):* {_format_vendor_currency(amount, currency)}")
+    else:
+        # If a legacy/discounted quote cannot be reconciled from its saved components,
+        # do not send a misleading arithmetic breakdown; the linked quote remains authoritative.
+        lines.extend([
+            "",
+            "El desglose detallado está disponible en el presupuesto enlazado.",
+        ])
+
+    lines.extend(["", f"*Total final:* {_format_vendor_currency(quote.total_amount, currency)}"])
+
+    if delivery is not None:
+        method = str(delivery.method or "retiro").strip().lower()
+        if method == "envio":
+            lines.extend(["", "*Datos de entrega:*"])
+            recipient = str(delivery.recipient_name or quote.consumer_name or "").strip()
+            phone = str(delivery.phone or "").strip()
+            location = ", ".join(
+                value for value in (
+                    str(delivery.address or "").strip(),
+                    str(delivery.city or "").strip(),
+                    str(delivery.province or "").strip(),
+                    str(delivery.postal_code or "").strip(),
+                ) if value
+            )
+            if recipient:
+                lines.append(f"• Cliente: {recipient}")
+            if phone:
+                lines.append(f"• Teléfono: {phone}")
+            if location:
+                lines.append(f"• Dirección: {location}")
+        else:
+            lines.extend(["", "*Modalidad de entrega:* Retiro en local"])
+
+    quote_url = str((order or {}).get("quote_url") or "").strip()
+    payment_url = str((order or {}).get("payment_url") or "").strip()
+    if quote_url or payment_url:
+        lines.extend(["", "*Presupuesto y pago:*"])
+        if quote_url:
+            lines.append(f"• Ver presupuesto: {quote_url}")
+        if payment_url:
+            lines.append(f"• Pagar con Mercado Pago: {payment_url}")
+    lines.extend([
+        "",
+        "El pedido queda pendiente de pago hasta que Mercado Pago confirme el pago.",
+    ])
+    return "\n".join(lines)
+
+
 def _quote_checkout_items(quote) -> list[dict[str, Any]]:
     """Build the exact Mercado Pago line items from a persisted quote snapshot."""
     items = []
