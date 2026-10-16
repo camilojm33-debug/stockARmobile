@@ -240,7 +240,7 @@ def opportunity_new():
             values = _parse_opportunity_form(request.form.get("client_id", type=int))
         except ValueError as exc:
             flash(str(exc), "danger")
-            return render_template("crm/opportunity_form.html", **options, stages=STAGES, opportunity=None), 400
+            return render_template("crm/opportunity_form.html", **options, stages=STAGES, opportunity=None, selected_client_id=request.form.get("client_id", type=int)), 400
         now = _now()
         opportunity = CRMOpportunity(
             company_id=_company_id(),
@@ -266,7 +266,7 @@ def opportunity_new():
         db.session.commit()
         flash("Oportunidad creada y vinculada a sus registros comerciales.", "success")
         return redirect(url_for("crm.opportunity_detail", opportunity_id=opportunity.id))
-    return render_template("crm/opportunity_form.html", **options, stages=STAGES, opportunity=None)
+    return render_template("crm/opportunity_form.html", **options, stages=STAGES, opportunity=None, selected_client_id=request.args.get("client_id", type=int))
 
 
 @bp.route("/opportunities/<int:opportunity_id>/edit", methods=["GET", "POST"])
