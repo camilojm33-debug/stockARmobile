@@ -23,6 +23,7 @@ class CRMOpportunity(db.Model):
     quote_id = db.Column(db.Integer, db.ForeignKey("quotes.id", ondelete="SET NULL"), nullable=True, index=True)
     sale_id = db.Column(db.Integer, db.ForeignKey("sales.id", ondelete="SET NULL"), nullable=True, index=True)
     notes = db.Column(db.Text, nullable=True)
+    loss_reason = db.Column(db.Text, nullable=True)
     created_at = db.Column(db.DateTime, nullable=False)
     updated_at = db.Column(db.DateTime, nullable=False)
 
