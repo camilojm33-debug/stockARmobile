@@ -105,7 +105,12 @@
   <section class="app-card text-center py-5">
     <div class="fs-1 text-success mb-2"><i class="bi bi-check-circle"></i></div>
     <h2 class="h5 fw-bold">No hay presupuestos elegibles</h2>
-    <p class="text-muted mb-0">Con estos filtros no encontramos registros seguros para eliminar.</p>
+    <p class="text-muted mb-2">Con estos filtros no encontramos registros seguros para eliminar.</p>
+    <p class="small text-muted mb-0">
+      La antigüedad se calcula desde la fecha del presupuesto, no desde su vencimiento.
+      Este filtro revisa presupuestos anteriores al {{ preview.cutoff.strftime('%d/%m/%Y') }}.
+      Podés reducir la antigüedad arriba para revisar registros más recientes.
+    </p>
   </section>
   {% endif %}
 
