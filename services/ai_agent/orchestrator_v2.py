@@ -1142,7 +1142,38 @@ class AgentRuntime:
         if "company_id" in arguments:
             return {"success": False, "error": "company_id must be passed explicitly"}
         result = tool_class(company_id=company_id, **(context or {})).execute(**arguments)
-        return result if isinstance(result, dict) else {"success": False, "error": "tool result must be an object"}
+        if not isinstance(result, dict):
+            return {"success": False, "error": "tool result must be an object"}
+
+        # Once the backend has persisted a quote and payment link, the closing
+        # WhatsApp reply must come from the authoritative quote snapshot. Do not
+        # ask the language model to recalculate prices, taxes, shipping, or totals.
+        if (
+            name == "preparar_pedido"
+            and str((context or {}).get("channel") or "").strip().lower() in {"whatsapp", "whatsapp_business"}
+            and result.get("success")
+            and result.get("quote_id")
+            and result.get("payment_url")
+        ):
+            try:
+                from services.ai_agent.vendor_order_service import format_vendor_order_confirmation
+
+                confirmation = format_vendor_order_confirmation(
+                    company_id=int(company_id),
+                    order=result,
+                )
+            except Exception:
+                import logging
+                logging.getLogger(__name__).exception(
+                    "Could not format persisted vendor order confirmation: company_id=%s quote_id=%s",
+                    company_id,
+                    result.get("quote_id"),
+                )
+                confirmation = ""
+            if confirmation:
+                result = dict(result)
+                result["confirmation_message"] = confirmation
+        return result
 
     @classmethod
     def _provider_model(cls, provider, config):
@@ -1305,6 +1336,32 @@ class AgentRuntime:
                         "error": "No se pudo completar la operación solicitada en este momento.",
                         "retryable": True,
                     }
+
+                # The final customer-facing confirmation is derived from the saved
+                # quote/payment. Return it directly instead of letting a second model
+                # call paraphrase authoritative numeric values and introduce mistakes.
+                if (
+                    name == "preparar_pedido"
+                    and str((context or {}).get("channel") or "").strip().lower() in {"whatsapp", "whatsapp_business"}
+                    and isinstance(result, dict)
+                    and result.get("success")
+                    and str(result.get("confirmation_message") or "").strip()
+                ):
+                    return (
+                        str(result["confirmation_message"]),
+                        campaign_context,
+                        tool_rounds,
+                        {
+                            "provider": provider.__class__.__name__.replace("Provider", "").lower(),
+                            "model": last_model or getattr(provider, "model", None) or kwargs.get("model"),
+                            "provider_calls": provider_calls,
+                            "tool_rounds": tool_rounds,
+                            "input_tokens": input_tokens,
+                            "output_tokens": output_tokens,
+                            "total_tokens": total_tokens,
+                        },
+                    )
+
                 if name == "preparar_campana" and isinstance(result, dict):
                     campaign_context = result.get("campaign_context") or campaign_context
                 results_to_append.append(
