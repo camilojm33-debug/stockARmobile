@@ -1076,8 +1076,10 @@ class VendorOrderService:
 
         state = _metadata(conversation)
         # An explicit request for another quote starts an independent checkout.
-        # Keep prior Quote/Payment rows intact, but do not reuse their pending pointer.
+        # Keep the previous quote id so it can be cancelled only after the replacement
+        # quote and its payment preference have been created successfully.
         force_new_quote = bool(state.get(NEW_QUOTE_CONTEXT_KEY))
+        superseded_quote_id = state.get(PENDING_QUOTE_KEY) if force_new_quote else None
         operation = None
         if idempotency_key:
             operation = PublicVendorOperation.query.filter_by(
@@ -1424,6 +1426,40 @@ class VendorOrderService:
             quote=quote,
             state=state,
         )
+
+        # A replacement checkout supersedes the prior unpaid quote. Do this only
+        # after the new payment preference is persisted, so a Mercado Pago failure
+        # never cancels the customer's working checkout. Never cancel paid/converted
+        # orders: an approval webhook may be arriving concurrently.
+        if preference.get("success") and superseded_quote_id:
+            try:
+                previous_id = int(superseded_quote_id)
+            except (TypeError, ValueError):
+                previous_id = None
+            if previous_id and previous_id != int(quote.id):
+                previous_quote = Quote.query.filter_by(
+                    id=previous_id,
+                    company_id=company_id,
+                ).with_for_update().first()
+                if (
+                    previous_quote is not None
+                    and previous_quote.converted_sale_id is None
+                    and previous_quote.status not in {"ANULADO", "RECHAZADO", "VENCIDO", "CONVERTIDO"}
+                ):
+                    previous_payment = VendorOrderService._payment_for_quote(
+                        company_id=company_id,
+                        quote_id=previous_quote.id,
+                    )
+                    previous_payment_status = str(
+                        getattr(previous_payment, "status", "") or ""
+                    ).strip().lower()
+                    if previous_payment_status not in {"approved", "paid", "succeeded"}:
+                        previous_quote.status = "ANULADO"
+                        if previous_payment is not None and previous_payment_status in {
+                            "pending", "in_process", "authorized"
+                        }:
+                            previous_payment.status = "cancelled"
+                        db.session.commit()
 
         return {
             **preference,
