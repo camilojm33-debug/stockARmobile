@@ -827,7 +827,7 @@ def test_vendor_checkout_confirmation_skips_second_llm_rewrite(monkeypatch):
         tools=[],
         kwargs={},
         company_id=1,
-        context={"conversation_id": 58},
+        context={"conversation_id": 58, "channel": "whatsapp"},
     )
 
     assert content == confirmation
