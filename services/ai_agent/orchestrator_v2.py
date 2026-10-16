@@ -1150,6 +1150,7 @@ class AgentRuntime:
         # ask the language model to recalculate prices, taxes, shipping, or totals.
         if (
             name == "preparar_pedido"
+            and str((context or {}).get("channel") or "").strip().lower() in {"whatsapp", "whatsapp_business"}
             and result.get("success")
             and result.get("quote_id")
             and result.get("payment_url")
@@ -1341,6 +1342,7 @@ class AgentRuntime:
                 # call paraphrase authoritative numeric values and introduce mistakes.
                 if (
                     name == "preparar_pedido"
+                    and str((context or {}).get("channel") or "").strip().lower() in {"whatsapp", "whatsapp_business"}
                     and isinstance(result, dict)
                     and result.get("success")
                     and str(result.get("confirmation_message") or "").strip()
