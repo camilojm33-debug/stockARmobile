@@ -4,7 +4,7 @@ from datetime import timedelta
 import pytest
 
 import app as stock_app
-from app import Company, Product, User, db
+from app import Company, Product, Sale, SaleItem, User, db
 from pricing_controller import PriceControllerBatch, PriceControllerItem, _calculate_new_price, _exceeds_max_change, _parse_rules
 from services.ai_agent.pricing_controller_service import create_preview, consult_prices, pricing_opportunities, rollback_batch
 from services.ai_agent.campaign_service import CampaignService
@@ -1009,3 +1009,42 @@ def test_ai_partial_rollback_retry_preserves_unresolved_conflicts(qa_ai_database
     assert second["restored"] == 0
     assert second["conflicts"] == 1
     assert db.session.get(PriceControllerBatch, batch.id).status == "partial_rollback"
+
+
+def test_pricing_opportunities_ignore_cancelled_sales(qa_ai_database):
+    from decimal import Decimal
+
+    company = qa_ai_database["companies"]["pro"]
+    admin = qa_ai_database["users"]["pro"]
+    product = Product(
+        company_id=company.id,
+        barcode="PRICE-OPPORTUNITY-CANCELLED-SALE",
+        name="Producto de bajo margen",
+        cost_price=Decimal("10.00"),
+        price=Decimal("11.00"),
+        stock=10,
+        active=True,
+    )
+    db.session.add(product)
+    db.session.flush()
+    valid_sale = Sale(
+        company_id=company.id,
+        status="confirmada",
+        total_amount=Decimal("22.00"),
+    )
+    cancelled_sale = Sale(
+        company_id=company.id,
+        status="anulada",
+        total_amount=Decimal("110.00"),
+    )
+    db.session.add_all([valid_sale, cancelled_sale])
+    db.session.flush()
+    db.session.add_all([
+        SaleItem(sale_id=valid_sale.id, product_id=product.id, quantity=2, price=Decimal("11.00"), cost_price=Decimal("10.00")),
+        SaleItem(sale_id=cancelled_sale.id, product_id=product.id, quantity=10, price=Decimal("11.00"), cost_price=Decimal("10.00")),
+    ])
+    db.session.commit()
+
+    result = pricing_opportunities(company_id=company.id, user_id=admin.id, target_margin_percent=20)
+    match = next(item for item in result["candidates"] if item["product_id"] == product.id)
+    assert match["units_sold_period"] == 2.0
