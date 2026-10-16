@@ -1247,7 +1247,9 @@
             (form.getAttribute('action') || '').includes('/subscription/ai-agent/checkout') &&
             submittedMethodIsAutomatic;
           // No cubrir con el overlay el envío que debe navegar directamente a Mercado Pago.
-          if (form.matches('[data-mp-external-checkout="true"]') || isAiAutomaticCheckout) return;
+          // Some POSTs hand off to an external app (WhatsApp/mail); their navigation may
+          // leave this document alive, so never leave the app-wide overlay covering it.
+          if (form.matches('[data-mp-external-checkout="true"], [data-skip-app-loading="true"]') || isAiAutomaticCheckout) return;
           const loading = document.getElementById('appLoading');
           if (loading) loading.classList.add('show');
         });
