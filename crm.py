@@ -3,6 +3,7 @@
 IMPORTANTE: no contiene ni reutiliza entidades del CRM de SuperAdmin.
 """
 from datetime import datetime, timedelta
+import re
 
 from flask import Blueprint, abort, flash, redirect, render_template, request, url_for
 from flask_login import current_user
@@ -243,6 +244,146 @@ def pipeline():
         owners=owners,
         result_count=len(opportunities),
     )
+
+
+@bp.route("/prospects/new", methods=["GET", "POST"])
+@tenant_required
+@ai_pro_crm_required
+def prospect_new():
+    from app import Client, db
+
+    if request.method == "POST":
+        name = (request.form.get("name") or "").strip()[:200]
+        email = (request.form.get("email") or "").strip().lower() or None
+        phone = (request.form.get("phone") or "").strip() or None
+        whatsapp = (request.form.get("whatsapp") or "").strip() or None
+        if not name:
+            flash("El nombre del prospecto es obligatorio.", "danger")
+            return render_template("crm/prospect_form.html"), 400
+        if not any((email, phone, whatsapp)):
+            flash("Ingresá al menos un email, teléfono o WhatsApp para poder dar seguimiento.", "danger")
+            return render_template("crm/prospect_form.html"), 400
+        try:
+            value = round(float(request.form.get("value") or 0), 2)
+            probability = float(request.form.get("probability") or 10)
+        except (TypeError, ValueError):
+            flash("El valor o la probabilidad no tienen un formato válido.", "danger")
+            return render_template("crm/prospect_form.html"), 400
+        if value < 0 or not 0 <= probability <= 100:
+            flash("El valor debe ser positivo y la probabilidad debe estar entre 0 y 100.", "danger")
+            return render_template("crm/prospect_form.html"), 400
+        expected_close_date = _parse_datetime(request.form.get("expected_close_date"))
+        if (request.form.get("expected_close_date") or "").strip() and expected_close_date is None:
+            flash("La fecha estimada de cierre no es válida.", "danger")
+            return render_template("crm/prospect_form.html"), 400
+
+        def phone_digits(raw):
+            return re.sub(r"\D+", "", str(raw or ""))
+
+        phone_digits_input = phone_digits(phone or whatsapp)
+        candidate_query = scope_query_to_company(Client.query, Client)
+        match_conditions = []
+        if email:
+            match_conditions.append(func.lower(Client.email) == email)
+        if len(phone_digits_input) >= 7:
+            tail = phone_digits_input[-7:]
+            match_conditions.extend((Client.phone.ilike(f"%{tail}%"), Client.whatsapp.ilike(f"%{tail}%")))
+        if match_conditions:
+            candidates = candidate_query.filter(or_(*match_conditions)).limit(100).all()
+        else:
+            candidates = []
+        exact_matches = {}
+        for existing in candidates:
+            same_email = bool(email and (existing.email or "").strip().lower() == email)
+            input_phones = {phone_digits(v) for v in (phone, whatsapp) if v}
+            existing_phones = {phone_digits(v) for v in (existing.phone, existing.whatsapp) if v}
+            same_phone = bool(input_phones.intersection(existing_phones))
+            if same_email or same_phone:
+                exact_matches[existing.id] = existing
+        if len(exact_matches) > 1:
+            flash("Los datos coinciden con más de un cliente. Revisá la ficha existente antes de crear otra oportunidad.", "danger")
+            return render_template("crm/prospect_form.html"), 409
+
+        now = _now()
+        client = next(iter(exact_matches.values()), None)
+        created_client = client is None
+        if client is None:
+            client = Client(
+                company_id=_company_id(),
+                name=name,
+                email=email,
+                phone=phone,
+                whatsapp=whatsapp,
+                address=(request.form.get("address") or "").strip() or None,
+                city=(request.form.get("city") or "").strip() or None,
+                province=(request.form.get("province") or "").strip() or None,
+                postal_code=(request.form.get("postal_code") or "").strip() or None,
+                notes=(request.form.get("client_notes") or "").strip() or "Contacto inicial registrado desde CRM.",
+                active=True,
+            )
+            db.session.add(client)
+            db.session.flush()
+        else:
+            if not client.active:
+                client.active = True
+            # Enrichment fills blanks only; never silently overwrites existing contact data.
+            for field, value_in in (
+                ("email", email),
+                ("phone", phone),
+                ("whatsapp", whatsapp),
+                ("address", (request.form.get("address") or "").strip() or None),
+                ("city", (request.form.get("city") or "").strip() or None),
+                ("province", (request.form.get("province") or "").strip() or None),
+                ("postal_code", (request.form.get("postal_code") or "").strip() or None),
+            ):
+                if not getattr(client, field, None) and value_in:
+                    setattr(client, field, value_in)
+
+        opportunity = CRMOpportunity(
+            company_id=_company_id(),
+            client_id=client.id,
+            title=(request.form.get("opportunity_title") or "").strip()[:180] or f"Oportunidad para {client.name}",
+            stage="nuevo",
+            status="open",
+            value=value,
+            probability=probability,
+            expected_close_date=expected_close_date,
+            owner_user_id=current_user.id,
+            source=(request.form.get("source") or "CRM").strip()[:60] or "CRM",
+            notes=(request.form.get("notes") or "").strip() or None,
+            created_at=now,
+            updated_at=now,
+        )
+        db.session.add(opportunity)
+        followup_subject = (request.form.get("followup_subject") or "").strip()
+        followup_due_raw = (request.form.get("followup_due_at") or "").strip()
+        followup_due = _parse_datetime(followup_due_raw)
+        if followup_due_raw and followup_due is None:
+            db.session.rollback()
+            flash("La fecha del primer seguimiento no es válida.", "danger")
+            return render_template("crm/prospect_form.html"), 400
+        if followup_subject or followup_due:
+            db.session.add(CRMActivity(
+                company_id=_company_id(),
+                client_id=client.id,
+                opportunity=opportunity,
+                user_id=current_user.id,
+                type="seguimiento",
+                status="pending",
+                subject=followup_subject[:180] or "Primer seguimiento al prospecto",
+                description="Primer seguimiento creado al registrar el prospecto.",
+                due_at=followup_due,
+                created_at=now,
+                updated_at=now,
+            ))
+        db.session.commit()
+        flash(
+            ("Cliente existente reutilizado; " if not created_client else "Prospecto creado; ")
+            + "oportunidad y seguimiento guardados.",
+            "success",
+        )
+        return redirect(url_for("crm.opportunity_detail", opportunity_id=opportunity.id))
+    return render_template("crm/prospect_form.html")
 
 
 @bp.route("/opportunities/new", methods=["GET", "POST"])
