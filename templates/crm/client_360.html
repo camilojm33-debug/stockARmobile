@@ -8,10 +8,12 @@
     <div class="d-flex flex-wrap gap-2"><a class="btn btn-outline-primary" href="{{ url_for('crm.opportunity_new', client_id=client.id) }}">Nueva oportunidad</a><a class="btn btn-primary" href="{{ url_for('crm.activities', client_id=client.id) }}">Nuevo seguimiento</a></div>
   </div>
   <div class="card app-card mb-3"><div class="card-body d-flex flex-wrap gap-2 align-items-center">
-    {% if client.whatsapp or client.phone %}{% set wa_phone = (client.whatsapp or client.phone)|replace('+','')|replace(' ','')|replace('-','')|replace('(','')|replace(')','') %}
-      <a class="btn btn-success" target="_blank" rel="noopener noreferrer" href="https://wa.me/{{ wa_phone }}"><i class="bi bi-whatsapp me-1"></i>Abrir WhatsApp</a>
+    {% if client.whatsapp or client.phone %}
+      <form method="post" action="{{ url_for('crm.client_contact', client_id=client.id, channel='whatsapp') }}"><input type="hidden" name="csrf_token" value="{{ csrf_token() }}"><button class="btn btn-success" type="submit"><i class="bi bi-whatsapp me-1"></i>Abrir WhatsApp + seguimiento</button></form>
     {% endif %}
-    {% if client.email %}<a class="btn btn-outline-primary" href="mailto:{{ client.email }}"><i class="bi bi-envelope me-1"></i>Enviar email</a>{% endif %}
+    {% if client.email %}
+      <form method="post" action="{{ url_for('crm.client_contact', client_id=client.id, channel='email') }}"><input type="hidden" name="csrf_token" value="{{ csrf_token() }}"><button class="btn btn-outline-primary" type="submit"><i class="bi bi-envelope me-1"></i>Preparar email + seguimiento</button></form>
+    {% endif %}
     <a class="btn btn-outline-secondary" href="{{ url_for('crm.clients') }}">Volver a clientes</a>
   </div></div>
   <div class="row g-3 mb-4">
