@@ -346,3 +346,44 @@ def test_new_opportunity_won_stage_closes_and_sets_probability(app):
     assert opportunity.stage == "ganado"
     assert opportunity.status == "closed"
     assert float(opportunity.probability) == 100
+
+
+
+def test_client_contact_action_logs_followup_and_opens_whatsapp(app):
+    from app import Client, Company, User, db
+    from crm_models import CRMActivity
+
+    company = Company(
+        name="CRM Contactos",
+        active=True,
+        preferences_json=json.dumps({"ai_agent": {"plan_code": "pro"}}),
+    )
+    db.session.add(company)
+    db.session.flush()
+    user = User(
+        username="crm_contact_admin",
+        email="crm-contact@test.local",
+        password_hash="x",
+        role="admin",
+        active=True,
+        company_id=company.id,
+    )
+    client_record = Client(
+        name="Contacto WhatsApp",
+        company_id=company.id,
+        phone="+54 (9) 11-1234-5678",
+        active=True,
+    )
+    db.session.add_all([user, client_record])
+    db.session.commit()
+
+    test_client = app.test_client()
+    _login_crm_user(test_client, user)
+    response = test_client.post(f"/crm/clients/{client_record.id}/contact/whatsapp")
+    assert response.status_code == 302
+    assert response.headers["Location"] == "https://wa.me/5491112345678"
+    activity = CRMActivity.query.filter_by(company_id=company.id).one()
+    assert activity.client_id == client_record.id
+    assert activity.type == "whatsapp"
+    assert activity.status == "pending"
+    assert "no puede confirmar" in activity.description
