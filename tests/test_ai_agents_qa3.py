@@ -4,7 +4,9 @@ from datetime import timedelta
 import pytest
 
 import app as stock_app
-from app import Company, User, db
+from app import Company, Product, User, db
+from pricing_controller import PriceControllerBatch, PriceControllerItem, _calculate_new_price, _exceeds_max_change, _parse_rules
+from services.ai_agent.pricing_controller_service import create_preview, consult_prices, pricing_opportunities, rollback_batch
 from services.ai_agent.campaign_service import CampaignService
 from services.ai_agent.orchestrator_v2 import AgentRuntime, _explicit_price_action_confirmation
 from services.ai_agent.usage_service import AI_PLANS, can_use_ai, can_use_ai_feature, record_ai_usage, usage_snapshot
@@ -265,7 +267,11 @@ def test_pricing_tools_follow_plan_entitlements_for_assistant_and_analyst(qa_ai_
         for agent_key in ("asistente", "analista"):
             names = {
                 item["function"]["name"]
-                for item in AgentRuntime._tool_definitions(agent_key, company_id=company.id)
+                for item in AgentRuntime._tool_definitions(
+                    agent_key,
+                    company_id=company.id,
+                    user_id=qa_ai_database["users"][plan_code].id,
+                )
             }
             assert {name for name in names if name in pricing_tool_names} == expected_pricing_tools
 
@@ -833,3 +839,160 @@ def test_vendor_checkout_confirmation_skips_second_llm_rewrite(monkeypatch):
     assert content == confirmation
     assert provider.calls == 1
     assert tool_rounds == 1
+
+
+
+def test_pricing_rounding_never_breaks_hard_price_bounds():
+    max_rules = _parse_rules({
+        "adjustment_type": "percent",
+        "direction": "increase",
+        "adjustment_value": "20",
+        "max_price": "95",
+        "rounding": "100",
+    })
+    assert _calculate_new_price(__import__("decimal").Decimal("80"), max_rules) == __import__("decimal").Decimal("95.00")
+
+    min_rules = _parse_rules({
+        "adjustment_type": "percent",
+        "direction": "increase",
+        "adjustment_value": "20",
+        "min_price": "105",
+        "rounding": "100",
+    })
+    assert _calculate_new_price(__import__("decimal").Decimal("90"), min_rules) == __import__("decimal").Decimal("105.00")
+
+
+def test_max_change_guard_cannot_be_bypassed_by_zero_old_price():
+    from decimal import Decimal
+
+    assert _exceeds_max_change(Decimal("0"), Decimal("50"), Decimal("10")) is True
+    assert _exceeds_max_change(Decimal("0"), Decimal("0"), Decimal("10")) is False
+    assert _exceeds_max_change(Decimal("100"), Decimal("110"), Decimal("10")) is False
+    assert _exceeds_max_change(Decimal("100"), Decimal("111"), Decimal("10")) is True
+
+
+def test_pricing_ai_blocks_non_admin_preview_and_financial_queries(qa_ai_database):
+    from decimal import Decimal
+
+    company = qa_ai_database["companies"]["pro"]
+    admin = qa_ai_database["users"]["pro"]
+    employee = User(
+        username="pricing_employee",
+        email="pricing_employee@qa.local",
+        password_hash="not-used",
+        role="user",
+        active=True,
+        company_id=company.id,
+    )
+    db.session.add(employee)
+    db.session.flush()
+    product = Product(
+        company_id=company.id,
+        barcode="PRICE-NOCOST-1",
+        name="Producto sin costo",
+        cost_price=Decimal("0.00"),
+        price=Decimal("100.00"),
+        stock=5,
+        active=True,
+    )
+    db.session.add(product)
+    db.session.commit()
+
+    rules = {
+        "adjustment_type": "percent",
+        "direction": "increase",
+        "adjustment_value": "10",
+        "min_margin_percent": "5",
+    }
+    denied_preview = create_preview(company_id=company.id, user_id=employee.id, rules=rules)
+    denied_lookup = consult_prices(company_id=company.id, user_id=employee.id, query="Producto sin costo")
+    denied_analysis = pricing_opportunities(company_id=company.id, user_id=employee.id)
+    assert denied_preview["success"] is False
+    assert denied_lookup["success"] is False
+    assert denied_analysis["success"] is False
+    assert PriceControllerBatch.query.filter_by(company_id=company.id).count() == 0
+
+    allowed = create_preview(company_id=company.id, user_id=admin.id, rules=rules)
+    assert allowed["success"] is True
+    batch = db.session.get(PriceControllerBatch, allowed["batch_id"])
+    item = PriceControllerItem.query.filter_by(batch_id=batch.id, product_id=product.id).one()
+    assert item.status == "blocked"
+    assert "costo válido" in item.reason
+
+
+def test_ai_partial_rollback_retry_preserves_unresolved_conflicts(qa_ai_database):
+    from decimal import Decimal
+
+    company = qa_ai_database["companies"]["pro"]
+    admin = qa_ai_database["users"]["pro"]
+    conflict_product = Product(
+        company_id=company.id,
+        barcode="PRICE-ROLLBACK-CONFLICT",
+        name="Producto con conflicto",
+        cost_price=Decimal("50.00"),
+        price=Decimal("130.00"),
+        active=True,
+    )
+    restorable_product = Product(
+        company_id=company.id,
+        barcode="PRICE-ROLLBACK-RESTORE",
+        name="Producto reversible",
+        cost_price=Decimal("50.00"),
+        price=Decimal("120.00"),
+        margin=Decimal("70.00"),
+        profit_percent=Decimal("140.0000"),
+        active=True,
+    )
+    db.session.add_all([conflict_product, restorable_product])
+    db.session.flush()
+    batch = PriceControllerBatch(
+        company_id=company.id,
+        user_id=admin.id,
+        name="Prueba de reversión parcial",
+        adjustment_type="fixed",
+        direction="increase",
+        adjustment_value=Decimal("20"),
+        status="partial_rollback",
+        product_count=2,
+    )
+    db.session.add(batch)
+    db.session.flush()
+    conflict_item = PriceControllerItem(
+        batch_id=batch.id,
+        product_id=conflict_product.id,
+        old_price=Decimal("100.00"),
+        new_price=Decimal("120.00"),
+        old_margin=Decimal("50.00"),
+        new_margin=Decimal("70.00"),
+        old_profit_percent=Decimal("100.0000"),
+        new_profit_percent=Decimal("140.0000"),
+        status="rollback_conflict",
+        reason="El producto cambió",
+    )
+    restorable_item = PriceControllerItem(
+        batch_id=batch.id,
+        product_id=restorable_product.id,
+        old_price=Decimal("100.00"),
+        new_price=Decimal("120.00"),
+        old_margin=Decimal("50.00"),
+        new_margin=Decimal("70.00"),
+        old_profit_percent=Decimal("100.0000"),
+        new_profit_percent=Decimal("140.0000"),
+        status="applied",
+    )
+    db.session.add_all([conflict_item, restorable_item])
+    db.session.commit()
+
+    first = rollback_batch(company_id=company.id, user_id=admin.id, batch_id=batch.id)
+    assert first["success"] is True
+    assert first["status"] == "partial_rollback"
+    assert first["restored"] == 1
+    assert first["conflicts"] == 1
+    assert db.session.get(Product, restorable_product.id).price == Decimal("100.00")
+
+    second = rollback_batch(company_id=company.id, user_id=admin.id, batch_id=batch.id)
+    assert second["success"] is True
+    assert second["status"] == "partial_rollback"
+    assert second["restored"] == 0
+    assert second["conflicts"] == 1
+    assert db.session.get(PriceControllerBatch, batch.id).status == "partial_rollback"
