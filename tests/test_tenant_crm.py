@@ -371,6 +371,7 @@ def test_client_contact_action_logs_followup_and_opens_whatsapp(app):
     client_record = Client(
         name="Contacto WhatsApp",
         company_id=company.id,
+        email="contacto@example.com",
         phone="+54 (9) 11-1234-5678",
         active=True,
     )
