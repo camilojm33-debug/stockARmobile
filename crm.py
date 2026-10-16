@@ -65,6 +65,98 @@ def _client_for_company(client_id):
     return scope_query_to_company(Client.query, Client).filter(Client.id == client_id).first()
 
 
+def _stage_status(stage):
+    return "closed" if stage in {"ganado", "perdido"} else "open"
+
+
+def _resolve_commercial_links(client_id, quote_id, sale_id, opportunity_id=None):
+    """Resolve quote/sale links strictly inside this tenant and for the same client."""
+    from app import Quote, Sale
+
+    quote = None
+    sale = None
+    if quote_id:
+        quote = scope_query_to_company(Quote.query, Quote).filter(Quote.id == quote_id).first()
+        if quote is None or int(quote.client_id or 0) != int(client_id):
+            raise ValueError("El presupuesto debe pertenecer al mismo cliente y empresa.")
+        duplicate = _opportunity_query().filter(CRMOpportunity.quote_id == quote.id)
+        if opportunity_id:
+            duplicate = duplicate.filter(CRMOpportunity.id != opportunity_id)
+        if duplicate.first():
+            raise ValueError("Ese presupuesto ya está vinculado a otra oportunidad del CRM.")
+
+    if sale_id:
+        sale = scope_query_to_company(Sale.query, Sale).filter(Sale.id == sale_id).first()
+        if sale is None or int(sale.client_id or 0) != int(client_id):
+            raise ValueError("La venta debe pertenecer al mismo cliente y empresa.")
+        if quote is not None and quote.converted_sale_id and int(quote.converted_sale_id) != int(sale.id):
+            raise ValueError("La venta seleccionada no corresponde al presupuesto vinculado.")
+    elif quote is not None and quote.converted_sale_id:
+        sale = scope_query_to_company(Sale.query, Sale).filter(Sale.id == quote.converted_sale_id).first()
+        if sale is not None and int(sale.client_id or 0) != int(client_id):
+            raise ValueError("La venta convertida no corresponde al cliente de la oportunidad.")
+
+    return quote, sale
+
+
+def _opportunity_form_options():
+    from app import Client, Quote, Sale, User
+
+    return {
+        "clients": scope_query_to_company(Client.query.filter(Client.active.is_(True)), Client).order_by(Client.name).all(),
+        "quotes": scope_query_to_company(Quote.query, Quote).order_by(Quote.date.desc(), Quote.id.desc()).limit(250).all(),
+        "sales": scope_query_to_company(Sale.query, Sale).order_by(Sale.date.desc(), Sale.id.desc()).limit(250).all(),
+        "owners": scope_query_to_company(User.query.filter(User.active.is_(True)), User).order_by(User.username).all(),
+    }
+
+
+def _parse_opportunity_form(client_id, opportunity_id=None):
+    client = _client_for_company(client_id)
+    if not client:
+        raise ValueError("El cliente no pertenece a tu empresa o no existe.")
+    title = (request.form.get("title") or "").strip()[:180] or f"Oportunidad para {client.name}"
+    stage = (request.form.get("stage") or "nuevo").strip().lower()
+    if stage not in STAGE_LABELS:
+        raise ValueError("La etapa comercial no es válida.")
+    try:
+        value = round(float(request.form.get("value") or 0), 2)
+        probability = float(request.form.get("probability") or 0)
+    except (TypeError, ValueError):
+        raise ValueError("El valor o la probabilidad no tienen un formato válido.")
+    if value < 0 or not 0 <= probability <= 100:
+        raise ValueError("El valor debe ser positivo y la probabilidad debe estar entre 0 y 100.")
+    quote_id = request.form.get("quote_id", type=int)
+    sale_id = request.form.get("sale_id", type=int)
+    quote, sale = _resolve_commercial_links(client.id, quote_id, sale_id, opportunity_id)
+    owner_id = request.form.get("owner_user_id", type=int) or current_user.id
+    from app import User
+    owner = scope_query_to_company(User.query.filter(User.active.is_(True)), User).filter(User.id == owner_id).first()
+    if not owner:
+        raise ValueError("El responsable debe ser un usuario activo de tu empresa.")
+    expected_close_date = _parse_datetime(request.form.get("expected_close_date"))
+    date_raw = (request.form.get("expected_close_date") or "").strip()
+    if date_raw and expected_close_date is None:
+        raise ValueError("La fecha estimada de cierre no es válida.")
+    if sale is not None:
+        stage = "ganado"
+        value = float(sale.total_amount or 0)
+        probability = 100
+    return {
+        "client": client,
+        "title": title,
+        "stage": stage,
+        "status": _stage_status(stage),
+        "value": value,
+        "probability": probability,
+        "expected_close_date": expected_close_date,
+        "owner_user_id": owner.id,
+        "source": (request.form.get("source") or "").strip()[:60] or None,
+        "notes": (request.form.get("notes") or "").strip() or None,
+        "quote_id": quote.id if quote else None,
+        "sale_id": sale.id if sale else None,
+    }
+
+
 @bp.route("/")
 @tenant_required
 @ai_pro_crm_required
@@ -109,36 +201,77 @@ def pipeline():
 @tenant_required
 @ai_pro_crm_required
 def opportunity_new():
-    from app import Client
-    clients = scope_query_to_company(Client.query.filter(Client.active.is_(True)), Client).order_by(Client.name).all()
+    from app import db
+
+    options = _opportunity_form_options()
     if request.method == "POST":
-        client_id = request.form.get("client_id", type=int)
-        client = _client_for_company(client_id)
-        if not client:
-            flash("El cliente no pertenece a tu empresa o no existe.", "danger")
-            return redirect(url_for("crm.opportunity_new"))
         try:
-            value = max(0, float(request.form.get("value") or 0))
-            probability = min(100, max(0, float(request.form.get("probability") or 0)))
-        except (TypeError, ValueError):
-            flash("Valor o probabilidad inválidos.", "danger")
-            return redirect(url_for("crm.opportunity_new"))
+            values = _parse_opportunity_form(request.form.get("client_id", type=int))
+        except ValueError as exc:
+            flash(str(exc), "danger")
+            return render_template("crm/opportunity_form.html", **options, stages=STAGES, opportunity=None), 400
         now = _now()
         opportunity = CRMOpportunity(
-            company_id=_company_id(), client_id=client.id,
-            title=(request.form.get("title") or "").strip() or f"Oportunidad para {client.name}",
-            stage=request.form.get("stage") if request.form.get("stage") in STAGE_LABELS else "nuevo",
-            status="open", value=value, probability=probability,
-            expected_close_date=_parse_datetime(request.form.get("expected_close_date")),
-            owner_user_id=current_user.id, source=(request.form.get("source") or "").strip() or None,
-            notes=(request.form.get("notes") or "").strip() or None,
-            created_at=now, updated_at=now,
+            company_id=_company_id(),
+            client_id=values["client"].id,
+            title=values["title"],
+            stage=values["stage"],
+            status=values["status"],
+            value=values["value"],
+            probability=values["probability"],
+            expected_close_date=values["expected_close_date"],
+            owner_user_id=values["owner_user_id"],
+            source=values["source"],
+            quote_id=values["quote_id"],
+            sale_id=values["sale_id"],
+            notes=values["notes"],
+            created_at=now,
+            updated_at=now,
         )
         db.session.add(opportunity)
+        if opportunity.sale_id:
+            opportunity.stage = "ganado"
+            opportunity.status = "closed"
         db.session.commit()
-        flash("Oportunidad creada.", "success")
+        flash("Oportunidad creada y vinculada a sus registros comerciales.", "success")
         return redirect(url_for("crm.opportunity_detail", opportunity_id=opportunity.id))
-    return render_template("crm/opportunity_form.html", clients=clients, stages=STAGES, opportunity=None)
+    return render_template("crm/opportunity_form.html", **options, stages=STAGES, opportunity=None)
+
+
+@bp.route("/opportunities/<int:opportunity_id>/edit", methods=["GET", "POST"])
+@tenant_required
+@ai_pro_crm_required
+def opportunity_edit(opportunity_id):
+    from app import db
+
+    opportunity = _opportunity_query().filter(CRMOpportunity.id == opportunity_id).first_or_404()
+    options = _opportunity_form_options()
+    if request.method == "POST":
+        try:
+            values = _parse_opportunity_form(request.form.get("client_id", type=int), opportunity_id=opportunity.id)
+        except ValueError as exc:
+            flash(str(exc), "danger")
+            return render_template("crm/opportunity_form.html", **options, stages=STAGES, opportunity=opportunity), 400
+        opportunity.client_id = values["client"].id
+        opportunity.title = values["title"]
+        opportunity.stage = values["stage"]
+        opportunity.status = values["status"]
+        opportunity.value = values["value"]
+        opportunity.probability = values["probability"]
+        opportunity.expected_close_date = values["expected_close_date"]
+        opportunity.owner_user_id = values["owner_user_id"]
+        opportunity.source = values["source"]
+        opportunity.notes = values["notes"]
+        opportunity.quote_id = values["quote_id"]
+        opportunity.sale_id = values["sale_id"]
+        if opportunity.sale_id:
+            opportunity.stage = "ganado"
+            opportunity.status = "closed"
+        opportunity.updated_at = _now()
+        db.session.commit()
+        flash("Oportunidad actualizada.", "success")
+        return redirect(url_for("crm.opportunity_detail", opportunity_id=opportunity.id))
+    return render_template("crm/opportunity_form.html", **options, stages=STAGES, opportunity=opportunity)
 
 
 @bp.route("/opportunities/<int:opportunity_id>")
