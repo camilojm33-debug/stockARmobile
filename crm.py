@@ -522,7 +522,7 @@ def client_360(client_id):
             "subtitle": f"ARS {float(item.total_amount or 0):.2f} · {item.status or 'Sin estado'}",
             "description": getattr(item, "notes", None) or getattr(item, "observations", None),
             "color": "info",
-            "url": url_for("quotes.view", quote_id=item.id) if False else None,
+            "url": url_for("quotes.view_quote", quote_id=item.id),
         })
     for item in sales:
         timeline.append({
