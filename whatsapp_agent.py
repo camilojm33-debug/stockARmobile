@@ -458,7 +458,13 @@ def _ai_order_row(company_id: int, quote):
         "refunded": ("Reembolsado", "text-bg-secondary"),
         "charged_back": ("Contracargo", "text-bg-danger"),
     }
-    if getattr(quote, "converted_sale_id", None) and payment_status in {"pending", "in_process", "authorized"}:
+    if (
+        getattr(quote, "converted_sale_id", None)
+        and payment_status not in {"approved", "paid", "succeeded", "refunded", "charged_back"}
+    ):
+        # The online checkout is closed when the quote is converted directly from
+        # the cart into a sale. Its cancelled payment record must not make the
+        # successfully converted order look cancelled in Pedidos IA.
         payment_label, payment_badge = "Cerrado por venta manual", "text-bg-success"
     else:
         payment_label, payment_badge = payment_labels.get(payment_status, (payment_status.replace("_", " ").title(), "text-bg-secondary"))
