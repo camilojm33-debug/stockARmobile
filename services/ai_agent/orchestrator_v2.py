@@ -1033,11 +1033,18 @@ class AgentRuntime:
         if allowed_tool_names is not None:
             names = names.intersection(set(allowed_tool_names))
         if company_id is not None:
-            from app import Company
+            from app import Company, User, db
             company = Company.query.filter_by(id=int(company_id)).first()
+            actor = db.session.get(User, int(user_id)) if user_id else None
+            is_company_admin = bool(
+                actor is not None
+                and getattr(actor, "active", True)
+                and getattr(actor, "company_id", None) == int(company_id)
+                and (getattr(actor, "role", None) or "").strip().lower() == "admin"
+            )
             pricing_access = can_use_ai_feature(company, "pricing_controller") if company is not None else None
             rollback_access = can_use_ai_feature(company, "pricing_rollback") if company is not None else None
-            if pricing_access is None or not pricing_access.allowed:
+            if not is_company_admin or pricing_access is None or not pricing_access.allowed:
                 names.difference_update(PRICING_TOOL_NAMES)
             elif rollback_access is None or not rollback_access.allowed:
                 names.discard("revertir_cambio_precios")
