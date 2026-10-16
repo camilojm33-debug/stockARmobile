@@ -455,9 +455,6 @@ def opportunity_new():
             updated_at=now,
         )
         db.session.add(opportunity)
-        if opportunity.sale_id:
-            opportunity.stage = "ganado"
-            opportunity.status = "closed"
         db.session.commit()
         flash("Oportunidad creada y vinculada a sus registros comerciales.", "success")
         return redirect(url_for("crm.opportunity_detail", opportunity_id=opportunity.id))
@@ -498,9 +495,6 @@ def opportunity_edit(opportunity_id):
         opportunity.loss_reason = values["loss_reason"]
         opportunity.quote_id = values["quote_id"]
         opportunity.sale_id = values["sale_id"]
-        if opportunity.sale_id:
-            opportunity.stage = "ganado"
-            opportunity.status = "closed"
         opportunity.updated_at = _now()
         db.session.commit()
         flash("Oportunidad actualizada.", "success")
