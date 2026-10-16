@@ -906,10 +906,23 @@ def test_pricing_ai_blocks_non_admin_preview_and_financial_queries(qa_ai_databas
     }
     denied_preview = create_preview(company_id=company.id, user_id=employee.id, rules=rules)
     denied_lookup = consult_prices(company_id=company.id, user_id=employee.id, query="Producto sin costo")
+    employee_tool_names = {
+        item["function"]["name"]
+        for item in AgentRuntime._tool_definitions("asistente", company_id=company.id, user_id=employee.id)
+    }
+    assert not (employee_tool_names & {
+        "consultar_precios",
+        "analizar_oportunidades_precios",
+        "previsualizar_cambio_precios",
+        "confirmar_cambio_precios",
+        "revertir_cambio_precios",
+    })
     denied_analysis = pricing_opportunities(company_id=company.id, user_id=employee.id)
     assert denied_preview["success"] is False
     assert denied_lookup["success"] is False
     assert denied_analysis["success"] is False
+    from stockarmobile.permissions import employee_endpoint_permission
+    assert employee_endpoint_permission("dashboard.ai_agent_chat", "POST") == "ai_access"
     assert PriceControllerBatch.query.filter_by(company_id=company.id).count() == 0
 
     allowed = create_preview(company_id=company.id, user_id=admin.id, rules=rules)
