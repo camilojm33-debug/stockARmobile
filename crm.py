@@ -677,7 +677,8 @@ def client_contact(client_id, channel):
         if not email or "@" not in email:
             flash("El cliente no tiene un email válido.", "warning")
             return redirect(url_for("crm.client_360", client_id=client.id))
-        destination = f"mailto:{email}?{urlencode({'subject': f'Seguimiento comercial - {client.name}'})}"
+        email_subject = urlencode({"subject": f"Seguimiento comercial - {client.name}"})
+        destination = f"mailto:{email}?{email_subject}"
         activity_type = "email"
         subject = f"Contactar por email: {client.name}"
     else:
