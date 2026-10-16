@@ -386,15 +386,21 @@ def _ai_order_payment(company_id: int, quote_id: int):
     )
 
 
+def _ai_order_conversation_id(payment) -> int | None:
+    """Extract the conversation ID from any position in an AI-order reference."""
+    external_reference = str(getattr(payment, "external_reference", "") or "")
+    match = re.search(r"(?:^|\|)conversation_id:(\d+)(?:\||$)", external_reference)
+    return int(match.group(1)) if match else None
+
+
 def _ai_order_conversation(company_id: int, quote_id: int, payment=None):
     """Resolve the tenant-scoped conversation that originated an AI order."""
     payment = payment or _ai_order_payment(company_id, quote_id)
-    external_reference = str(getattr(payment, "external_reference", "") or "")
-    match = re.search(r"(?:^|\|)conversation_id:(\d+)(?:\|$)", external_reference)
-    if not match:
+    conversation_id = _ai_order_conversation_id(payment)
+    if conversation_id is None:
         return None
     return Conversation.query.filter_by(
-        id=int(match.group(1)),
+        id=conversation_id,
         company_id=int(company_id),
     ).first()
 
