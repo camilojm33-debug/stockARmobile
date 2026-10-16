@@ -28,9 +28,12 @@ from pricing_controller import (
 
 def _admin_user(company_id: int, user_id: int | None):
     if not user_id:
-        return None, "La confirmación de precios requiere un usuario administrador autenticado."
+        return None, "La operación de precios requiere una sesión válida de administrador de la empresa."
+    company = db.session.get(Company, int(company_id))
+    if company is None or not getattr(company, "active", False):
+        return None, "La empresa no está activa."
     user = db.session.get(User, int(user_id))
-    if user is None or getattr(user, "company_id", None) != company_id or not getattr(user, "active", True):
+    if user is None or getattr(user, "company_id", None) != int(company_id) or not getattr(user, "active", True):
         return None, "El usuario no pertenece a la empresa activa o no está habilitado."
     if (getattr(user, "role", None) or "").strip().lower() != "admin":
         return None, "Solo el administrador de la empresa puede consultar, previsualizar, aplicar o revertir precios."
