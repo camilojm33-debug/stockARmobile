@@ -15,9 +15,24 @@
         <hr><div class="small text-muted mb-1">Responsable</div><div class="mb-2">{{ opportunity.owner.username if opportunity.owner else 'Sin responsable' }}</div>
         <div class="small text-muted mb-1">Origen</div><div class="mb-2">{{ opportunity.source or 'No informado' }}</div>
         <div class="small text-muted mb-1">Cierre estimado</div><div>{{ opportunity.expected_close_date.strftime('%d/%m/%Y %H:%M') if opportunity.expected_close_date else 'Sin fecha' }}</div>
-        {% if opportunity.notes %}<hr><div class="small text-muted mb-1">Notas</div><div class="text-break">{{ opportunity.notes }}</div>{% endif %}
+        {% if opportunity.loss_reason %}<hr><div class="small text-danger fw-semibold mb-1">Motivo de pérdida</div><div class="text-break">{{ opportunity.loss_reason }}</div>{% endif %}
+        {% if opportunity.notes %}<hr><div class="small text-muted mb-1">Notas e historial</div><div class="text-break">{{ opportunity.notes }}</div>{% endif %}
       </div></div>
-      <div class="card app-card"><div class="card-body"><h2 class="h6 fw-bold">Actualizar etapa</h2><form method="post" action="{{ url_for('crm.opportunity_stage', opportunity_id=opportunity.id) }}"><input type="hidden" name="csrf_token" value="{{ csrf_token() }}"><select name="stage" class="form-select mb-3">{% for value,label in stages %}<option value="{{ value }}" {% if opportunity.stage == value %}selected{% endif %}>{{ label }}</option>{% endfor %}</select><button class="btn btn-primary w-100">Guardar etapa</button></form><div class="small text-muted mt-2">Ganado y Perdido cierran la oportunidad. Una venta vinculada se refleja con su importe real.</div></div></div>
+      <div class="card app-card"><div class="card-body"><h2 class="h6 fw-bold">Actualizar etapa</h2><form method="post" action="{{ url_for('crm.opportunity_stage', opportunity_id=opportunity.id) }}"><input type="hidden" name="csrf_token" value="{{ csrf_token() }}"><select id="crm-opportunity-stage" name="stage" class="form-select mb-3">{% for value,label in stages %}<option value="{{ value }}" {% if opportunity.stage == value %}selected{% endif %}>{{ label }}</option>{% endfor %}</select><div id="crm-loss-reason-container" class="mb-3 {% if opportunity.stage != 'perdido' %}d-none{% endif %}"><label class="form-label small fw-semibold">Motivo de pérdida (obligatorio)</label><textarea id="crm-loss-reason" name="loss_reason" class="form-control" rows="3" placeholder="Ej. Eligió otra solución, precio o falta de presupuesto">{{ opportunity.loss_reason or '' }}</textarea></div><button class="btn btn-primary w-100">Guardar etapa</button></form><div class="small text-muted mt-2">Ganado y Perdido cierran la oportunidad. Las operaciones con venta vinculada deben reflejar el estado real de esa venta.</div></div></div>
+<script>
+document.addEventListener('DOMContentLoaded', function () {
+  const stage = document.getElementById('crm-opportunity-stage');
+  const reason = document.getElementById('crm-loss-reason-container');
+  if (!stage || !reason) return;
+  const sync = () => {
+    reason.classList.toggle('d-none', stage.value !== 'perdido');
+    const textarea = document.getElementById('crm-loss-reason');
+    if (textarea) textarea.required = stage.value === 'perdido' && !{{ 'true' if opportunity.sale_id else 'false' }};
+  };
+  stage.addEventListener('change', sync);
+  sync();
+});
+</script>
     </div>
     <div class="col-xl-8">
       <div class="card app-card mb-4"><div class="card-body">
