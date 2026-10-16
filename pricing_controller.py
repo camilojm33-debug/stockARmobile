@@ -200,8 +200,15 @@ def _calculate_new_price(old_price: Decimal, rules: dict) -> Decimal:
     return new_price.quantize(TWOPLACES, rounding=ROUND_HALF_UP)
 
 
-def _products_for_rules(rules):
-    query = scope_query_to_company(Product.query.filter(Product.active.is_(True)), Product)
+def _products_for_rules(rules, *, company_id=None):
+    # Resolve tenant scope explicitly so background/AI tool calls do not rely on
+    # Flask's current_user proxy and fail closed when no company is supplied.
+    effective_company_id = company_id if company_id is not None else get_current_company_id(current_user)
+    query = Product.query.filter(Product.active.is_(True))
+    if effective_company_id is None:
+        query = query.filter(false())
+    else:
+        query = query.filter(Product.company_id == effective_company_id)
     if rules["category"]:
         query = query.filter(Product.category == rules["category"])
     if rules["brand"]:
@@ -210,9 +217,10 @@ def _products_for_rules(rules):
         # The selector is populated only from the tenant's Supplier master.
         # Keep compatibility with legacy products that only have the supplier
         # name in Product.supplier and no supplier_id.
-        company_id = current_user.company_id
+        if effective_company_id is None:
+            return query.filter(false())
         supplier_row = Supplier.query.filter_by(
-            company_id=company_id,
+            company_id=effective_company_id,
             name=rules["supplier"],
             active=True,
         ).first()
