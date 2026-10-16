@@ -1106,6 +1106,13 @@ class VendorOrderService:
                     customer_phone=customer_phone,
                     delivery=delivery,
                 )
+                if not same_checkout:
+                    # This conversation already had a live quote, but the newly
+                    # requested cart/customer/delivery differs. Remember it as
+                    # superseded even for WhatsApp, which does not set
+                    # NEW_QUOTE_CONTEXT_KEY (that marker is used by public WebChat).
+                    if not operation_quote_id:
+                        superseded_quote_id = int(existing.id)
                 if same_checkout:
                     external_reference = _ai_order_external_reference(
                         company_id=company_id,
