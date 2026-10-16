@@ -71,6 +71,17 @@ def _stage_status(stage):
     return "closed" if stage in {"ganado", "perdido"} else "open"
 
 
+def _archive_loss_reason(opportunity):
+    previous = (getattr(opportunity, "loss_reason", None) or "").strip()
+    if not previous:
+        return
+    marker = f"Motivo de pérdida anterior: {previous}"
+    notes = (opportunity.notes or "").strip()
+    if marker not in notes:
+        opportunity.notes = f"{notes}\n{marker}".strip()
+    opportunity.loss_reason = None
+
+
 def _resolve_commercial_links(client_id, quote_id, sale_id, opportunity_id=None):
     """Resolve quote/sale links strictly inside this tenant and for the same client."""
     from app import Quote, Sale
@@ -153,15 +164,25 @@ def _parse_opportunity_form(client_id, opportunity_id=None):
     date_raw = (request.form.get("expected_close_date") or "").strip()
     if date_raw and expected_close_date is None:
         raise ValueError("La fecha estimada de cierre no es válida.")
+    loss_reason = (request.form.get("loss_reason") or "").strip() or None
     if sale is not None:
         value = float(sale.total_amount or 0)
         sale_is_annulled = str(sale.status or "").strip().lower() in {"anulada", "cancelada", "cancelled", "voided"}
         stage = "perdido" if sale_is_annulled else "ganado"
         probability = 0 if sale_is_annulled else 100
+        if sale_is_annulled:
+            loss_reason = loss_reason or f"Venta vinculada #{sale.id} anulada."
+        else:
+            loss_reason = None
     elif stage == "ganado":
         probability = 100
+        loss_reason = None
     elif stage == "perdido":
         probability = 0
+        if not loss_reason:
+            raise ValueError("Para cerrar una oportunidad como Perdida, indicá el motivo.")
+    else:
+        loss_reason = None
     return {
         "client": client,
         "title": title,
@@ -175,6 +196,7 @@ def _parse_opportunity_form(client_id, opportunity_id=None):
         "notes": (request.form.get("notes") or "").strip() or None,
         "quote_id": quote.id if quote else None,
         "sale_id": sale.id if sale else None,
+        "loss_reason": loss_reason,
     }
 
 
@@ -427,6 +449,7 @@ def opportunity_new():
             quote_id=values["quote_id"],
             sale_id=values["sale_id"],
             notes=values["notes"],
+            loss_reason=values["loss_reason"],
             created_at=now,
             updated_at=now,
         )
@@ -454,6 +477,9 @@ def opportunity_edit(opportunity_id):
         except ValueError as exc:
             flash(str(exc), "danger")
             return render_template("crm/opportunity_form.html", **options, stages=STAGES, opportunity=opportunity), 400
+        previous_loss_reason = (opportunity.loss_reason or "").strip()
+        if previous_loss_reason and not values["loss_reason"]:
+            _archive_loss_reason(opportunity)
         opportunity.client_id = values["client"].id
         opportunity.title = values["title"]
         opportunity.stage = values["stage"]
@@ -463,7 +489,8 @@ def opportunity_edit(opportunity_id):
         opportunity.expected_close_date = values["expected_close_date"]
         opportunity.owner_user_id = values["owner_user_id"]
         opportunity.source = values["source"]
-        opportunity.notes = values["notes"]
+        opportunity.notes = values["notes"] or opportunity.notes
+        opportunity.loss_reason = values["loss_reason"]
         opportunity.quote_id = values["quote_id"]
         opportunity.sale_id = values["sale_id"]
         if opportunity.sale_id:
@@ -495,6 +522,8 @@ def opportunity_stage(opportunity_id):
         abort(400)
     from app import Sale
 
+    loss_reason = (request.form.get("loss_reason") or "").strip() or None
+    linked_sale = None
     if opportunity.sale_id:
         linked_sale = scope_query_to_company(Sale.query, Sale).filter(Sale.id == opportunity.sale_id).first()
         if linked_sale is not None:
@@ -504,13 +533,25 @@ def opportunity_stage(opportunity_id):
                 flash("La etapa debe reflejar el resultado real de la venta vinculada. Para cambiarla, corregí primero el estado de la venta.", "warning")
                 return redirect(request.referrer or url_for("crm.opportunity_detail", opportunity_id=opportunity.id))
             opportunity.value = linked_sale.total_amount or opportunity.value
+            if sale_is_annulled:
+                loss_reason = loss_reason or f"Venta vinculada #{linked_sale.id} anulada."
+
+    if stage == "perdido" and not loss_reason and linked_sale is None:
+        flash("Para cerrar una oportunidad como Perdida, indicá el motivo.", "danger")
+        return redirect(request.referrer or url_for("crm.opportunity_detail", opportunity_id=opportunity.id))
+
+    if stage == "perdido":
+        opportunity.loss_reason = loss_reason
+        opportunity.probability = 0
+    else:
+        if opportunity.loss_reason:
+            _archive_loss_reason(opportunity)
+        opportunity.loss_reason = None
+        if stage == "ganado":
+            opportunity.probability = 100
 
     opportunity.stage = stage
     opportunity.status = _stage_status(stage)
-    if stage == "ganado":
-        opportunity.probability = 100
-    elif stage == "perdido":
-        opportunity.probability = 0
     opportunity.updated_at = _now()
     db.session.commit()
     flash("Etapa actualizada.", "success")
