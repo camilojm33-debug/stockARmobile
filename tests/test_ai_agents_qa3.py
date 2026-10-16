@@ -774,7 +774,7 @@ def test_vendor_order_confirmation_uses_persisted_quote_and_charge_values(qa_ai_
 
     assert "5 × Coca: $6.090,00 ARS c/u; subtotal $30.450,00 ARS" in message
     assert "Subtotal productos:* $30.450,00 ARS" in message
-    assert "IVA (21% sobre productos, base $30.450,00 ARS): $6.394,50 ARS" in message
+    assert "IVA (21% sobre productos, base $30.450,00 ARS):* $6.394,50 ARS" in message
     assert "Envío a domicilio (costo fijo configurado): $50.000,00 ARS" in message
     assert "Total final:* $86.844,50 ARS" in message
     assert "$26.500,00" not in message
