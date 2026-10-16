@@ -320,10 +320,6 @@ function restoreQuotePricingSnapshotFromStorage() {
 
   quotePricingSnapshot = snapshot;
   checkoutToken = token;
-  window.__quoteLineDiscounts = (
-    persisted.lineDiscounts && typeof persisted.lineDiscounts === 'object' && !Array.isArray(persisted.lineDiscounts)
-  ) ? persisted.lineDiscounts : {};
-  applyQuotePricingFormSnapshot(persisted.form);
 
   // A saved quote context is valid only for the exact product/quantity/price
   // combination it came with. If the user edited the cart, don't apply stale
@@ -335,6 +331,11 @@ function restoreQuotePricingSnapshotFromStorage() {
     clearPersistedQuotePricingSnapshot();
     return false;
   }
+
+  window.__quoteLineDiscounts = (
+    persisted.lineDiscounts && typeof persisted.lineDiscounts === 'object' && !Array.isArray(persisted.lineDiscounts)
+  ) ? persisted.lineDiscounts : {};
+  applyQuotePricingFormSnapshot(persisted.form);
 
   const banner = document.getElementById('quote-prefill-banner');
   const bannerText = document.getElementById('quote-prefill-banner-text');
