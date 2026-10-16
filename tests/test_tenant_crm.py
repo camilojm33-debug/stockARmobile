@@ -387,3 +387,58 @@ def test_client_contact_action_logs_followup_and_opens_whatsapp(app):
     assert activity.type == "whatsapp"
     assert activity.status == "pending"
     assert "no puede confirmar" in activity.description
+
+
+
+def test_lost_crm_opportunity_requires_reason_and_persists_it(app):
+    from app import Client, Company, User, db
+    from crm_models import CRMOpportunity
+
+    company = Company(
+        name="CRM Motivos",
+        active=True,
+        preferences_json=json.dumps({"ai_agent": {"plan_code": "pro"}}),
+    )
+    db.session.add(company)
+    db.session.flush()
+    user = User(
+        username="crm_loss_admin",
+        email="crm-loss@test.local",
+        password_hash="x",
+        role="admin",
+        active=True,
+        company_id=company.id,
+    )
+    db.session.add(user)
+    db.session.flush()
+    client = Client(name="Cliente no convertido", company_id=company.id, active=True)
+    db.session.add(client)
+    db.session.commit()
+
+    test_client = app.test_client()
+    _login_crm_user(test_client, user)
+    base_payload = {
+        "client_id": str(client.id),
+        "title": "Oportunidad perdida con motivo",
+        "stage": "perdido",
+        "value": "32000",
+        "probability": "10",
+        "expected_close_date": "",
+        "owner_user_id": str(user.id),
+        "source": "WhatsApp",
+        "quote_id": "",
+        "sale_id": "",
+        "notes": "Seguimiento inicial",
+    }
+    missing_reason = test_client.post("/crm/opportunities/new", data=base_payload)
+    assert missing_reason.status_code == 400
+    assert CRMOpportunity.query.filter_by(company_id=company.id).count() == 0
+
+    valid_payload = {**base_payload, "loss_reason": "Eligió otra solución"}
+    response = test_client.post("/crm/opportunities/new", data=valid_payload)
+    assert response.status_code == 302
+    opportunity = CRMOpportunity.query.filter_by(company_id=company.id, title=base_payload["title"]).one()
+    assert opportunity.stage == "perdido"
+    assert opportunity.status == "closed"
+    assert float(opportunity.probability) == 0
+    assert opportunity.loss_reason == "Eligió otra solución"
