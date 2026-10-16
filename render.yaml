@@ -44,8 +44,9 @@ services:
         sync: false
       - key: APP_URL
         value: https://www.stockarmobile.com
+      # Use the repository's local StockArMobile demo video; do not embed an unrelated music livestream.
       - key: LANDING_DEMO_VIDEO_URL
-        value: https://www.youtube.com/embed/5qap5aO4i9A
+        value: ""
       - key: MP_NOTIFICATION_URL
         value: https://www.stockarmobile.com/admin/webhooks/mercadopago
       - key: MP_SUCCESS_URL
