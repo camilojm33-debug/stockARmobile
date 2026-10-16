@@ -393,7 +393,13 @@ def pricing_opportunities(*, company_id: int, user_id: int | None = None, object
     sales_rows = (
         db.session.query(SaleItem.product_id, func.coalesce(func.sum(SaleItem.quantity), 0))
         .join(Sale, Sale.id == SaleItem.sale_id)
-        .filter(Sale.company_id == company_id, Sale.date >= cutoff)
+        .filter(
+            Sale.company_id == company_id,
+            Sale.date >= cutoff,
+            func.lower(func.coalesce(Sale.status, "confirmada")).notin_(
+                ["cancelada", "anulada", "rechazada", "cancelled", "voided"]
+            ),
+        )
         .group_by(SaleItem.product_id)
         .all()
     )
