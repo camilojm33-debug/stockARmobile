@@ -190,11 +190,42 @@ def index():
 @tenant_required
 @ai_pro_crm_required
 def pipeline():
-    opportunities = _opportunity_query().filter(CRMOpportunity.status == "open").order_by(CRMOpportunity.updated_at.desc()).all()
-    grouped = {stage: [] for stage, _ in STAGES if stage not in {"ganado", "perdido"}}
+    from app import User
+
+    status_filter = (request.args.get("status") or "open").strip().lower()
+    if status_filter not in {"open", "closed", "all"}:
+        status_filter = "open"
+    stage_filter = (request.args.get("stage") or "").strip().lower()
+    if stage_filter not in STAGE_LABELS:
+        stage_filter = ""
+    owner_filter = request.args.get("owner_id", type=int)
+    search = (request.args.get("q") or "").strip()
+    query = _opportunity_query()
+    if status_filter in {"open", "closed"}:
+        query = query.filter(CRMOpportunity.status == status_filter)
+    if stage_filter:
+        query = query.filter(CRMOpportunity.stage == stage_filter)
+    if owner_filter:
+        query = query.filter(CRMOpportunity.owner_user_id == owner_filter)
+    if search:
+        like = f"%{search}%"
+        query = query.join(CRMOpportunity.client).filter(or_(CRMOpportunity.title.ilike(like), CRMOpportunity.source.ilike(like), __import__("app").Client.name.ilike(like)))
+    opportunities = query.order_by(CRMOpportunity.updated_at.desc()).limit(500).all()
+    grouped = {stage: [] for stage, _ in STAGES}
     for opportunity in opportunities:
         grouped.setdefault(opportunity.stage, []).append(opportunity)
-    return render_template("crm/pipeline.html", grouped=grouped, stages=STAGES)
+    owners = scope_query_to_company(User.query.filter(User.active.is_(True)), User).order_by(User.username).all()
+    return render_template(
+        "crm/pipeline.html",
+        grouped=grouped,
+        stages=STAGES,
+        status_filter=status_filter,
+        stage_filter=stage_filter,
+        owner_filter=owner_filter,
+        search=search,
+        owners=owners,
+        result_count=len(opportunities),
+    )
 
 
 @bp.route("/opportunities/new", methods=["GET", "POST"])
@@ -291,8 +322,18 @@ def opportunity_stage(opportunity_id):
     stage = request.form.get("stage")
     if stage not in STAGE_LABELS:
         abort(400)
+    from app import Sale
+
     opportunity.stage = stage
-    opportunity.status = "closed" if stage in {"ganado", "perdido"} else "open"
+    opportunity.status = _stage_status(stage)
+    if stage == "ganado":
+        opportunity.probability = 100
+        if opportunity.sale_id:
+            sale = scope_query_to_company(Sale.query, Sale).filter(Sale.id == opportunity.sale_id).first()
+            if sale is not None:
+                opportunity.value = sale.total_amount or opportunity.value
+    elif stage == "perdido":
+        opportunity.probability = 0
     opportunity.updated_at = _now()
     db.session.commit()
     flash("Etapa actualizada.", "success")
