@@ -21,18 +21,22 @@ from pricing_controller import (
     _money,
     _parse_rules,
     _profit_percent,
+    _exceeds_max_change,
     _products_for_rules,
 )
 
 
 def _admin_user(company_id: int, user_id: int | None):
     if not user_id:
-        return None, "La confirmación de precios requiere un usuario administrador autenticado."
+        return None, "La operación de precios requiere una sesión válida de administrador de la empresa."
+    company = db.session.get(Company, int(company_id))
+    if company is None or not getattr(company, "active", False):
+        return None, "La empresa no está activa."
     user = db.session.get(User, int(user_id))
-    if user is None or getattr(user, "company_id", None) != company_id:
-        return None, "El usuario no pertenece a la empresa activa."
-    if getattr(user, "role", None) not in {"admin", "superadmin"}:
-        return None, "Solo un administrador puede confirmar o revertir cambios globales de precios."
+    if user is None or getattr(user, "company_id", None) != int(company_id) or not getattr(user, "active", True):
+        return None, "El usuario no pertenece a la empresa activa o no está habilitado."
+    if (getattr(user, "role", None) or "").strip().lower() != "admin":
+        return None, "Solo el administrador de la empresa puede consultar, previsualizar, aplicar o revertir precios."
     return user, None
 
 
@@ -55,13 +59,16 @@ def _rules_form(rules: dict):
 
 
 def create_preview(*, company_id: int, user_id: int | None, rules: dict) -> dict:
+    actor, error = _admin_user(company_id, user_id)
+    if error:
+        return {"success": False, "error": error}
     access = can_use_ai_feature(db.session.get(Company, int(company_id)), "pricing_controller")
     if not access.allowed:
         return {"success": False, "error": access.reason}
     normalized = _parse_rules(_rules_form(rules))
     batch = PriceControllerBatch(
         company_id=company_id,
-        user_id=int(user_id) if user_id else int(rules.get("actor_user_id") or 0),
+        user_id=actor.id,
         **normalized,
         status="preview",
     )
@@ -74,7 +81,7 @@ def create_preview(*, company_id: int, user_id: int | None, rules: dict) -> dict
     total_delta = Decimal("0")
     sample = []
 
-    for product in _products_for_rules(normalized).yield_per(1000):
+    for product in _products_for_rules(normalized, company_id=company_id).yield_per(1000):
         old_price = _money(product.price)
         new_price = _calculate_new_price(old_price, normalized)
         if new_price == old_price:
@@ -90,10 +97,17 @@ def create_preview(*, company_id: int, user_id: int | None, rules: dict) -> dict
         if new_price < 0:
             status = "blocked"
             reason = "El precio resultante sería negativo."
-        elif normalized["max_change_percent"] is not None and change_pct > normalized["max_change_percent"]:
+        elif normalized["max_change_percent"] is not None and _exceeds_max_change(old_price, new_price, normalized["max_change_percent"]):
             status = "blocked"
-            reason = f"Supera el cambio máximo permitido ({normalized['max_change_percent']}%)."
-        elif normalized["min_margin_percent"] is not None and cost > 0 and new_profit < normalized["min_margin_percent"]:
+            reason = (
+                "No se puede validar el cambio porcentual porque el precio actual es cero o negativo."
+                if old_price <= 0
+                else f"Supera el cambio máximo permitido ({normalized['max_change_percent']}%)."
+            )
+        elif normalized["min_margin_percent"] is not None and cost <= 0:
+            status = "blocked"
+            reason = "No se puede validar el margen mínimo porque el producto no tiene un costo válido."
+        elif normalized["min_margin_percent"] is not None and new_profit < normalized["min_margin_percent"]:
             status = "blocked"
             reason = f"Queda por debajo del margen mínimo ({normalized['min_margin_percent']}%)."
 
@@ -157,7 +171,7 @@ def apply_batch(*, company_id: int, user_id: int | None, batch_id: int) -> dict:
     if error:
         return {"success": False, "error": error}
 
-    batch = PriceControllerBatch.query.filter_by(id=int(batch_id), company_id=company_id).first()
+    batch = PriceControllerBatch.query.filter_by(id=int(batch_id), company_id=company_id).with_for_update().populate_existing().first()
     if batch is None:
         return {"success": False, "error": "No existe esa propuesta de precios."}
     if batch.status != "preview":
@@ -170,10 +184,20 @@ def apply_batch(*, company_id: int, user_id: int | None, batch_id: int) -> dict:
 
         items = PriceControllerItem.query.filter_by(batch_id=batch.id, status="ready").order_by(PriceControllerItem.id).yield_per(1000)
         for item in items:
-            product = Product.query.filter_by(id=item.product_id, company_id=company_id, active=True).first()
-            if product is None or _money(product.price) != _money(item.old_price):
+            product = (
+                Product.query.filter_by(id=item.product_id, company_id=company_id, active=True)
+                .with_for_update()
+                .populate_existing()
+                .first()
+            )
+            expected_cost = _money(item.old_price - item.old_margin)
+            if (
+                product is None
+                or _money(product.price) != _money(item.old_price)
+                or _money(product.cost_price) != expected_cost
+            ):
                 item.status = "conflict"
-                item.reason = "El precio cambió después de la vista previa."
+                item.reason = "El precio o costo cambió después de la vista previa."
                 conflicts += 1
                 continue
 
@@ -235,22 +259,34 @@ def rollback_batch(*, company_id: int, user_id: int | None, batch_id: int) -> di
     if error:
         return {"success": False, "error": error}
 
-    batch = PriceControllerBatch.query.filter_by(id=int(batch_id), company_id=company_id).first()
+    batch = PriceControllerBatch.query.filter_by(id=int(batch_id), company_id=company_id).with_for_update().populate_existing().first()
     if batch is None:
         return {"success": False, "error": "No existe ese lote de precios."}
     if batch.status not in {"applied", "partial_rollback"}:
         return {"success": False, "error": f"El lote no puede revertirse desde el estado {batch.status}."}
 
-    restored = conflicts = 0
+    restored = 0
+    # Preserve conflicts from earlier attempts so the batch cannot be marked fully reverted incorrectly.
+    conflicts = PriceControllerItem.query.filter_by(batch_id=batch.id, status="rollback_conflict").count()
     try:
         from app import ProductModification, ProductPriceHistory
 
         items = PriceControllerItem.query.filter_by(batch_id=batch.id, status="applied").order_by(PriceControllerItem.id).yield_per(1000)
         for item in items:
-            product = Product.query.filter_by(id=item.product_id, company_id=company_id, active=True).first()
-            if product is None or _money(product.price) != _money(item.new_price):
+            product = (
+                Product.query.filter_by(id=item.product_id, company_id=company_id, active=True)
+                .with_for_update()
+                .populate_existing()
+                .first()
+            )
+            expected_cost = _money(item.old_price - item.old_margin)
+            if (
+                product is None
+                or _money(product.price) != _money(item.new_price)
+                or _money(product.cost_price) != expected_cost
+            ):
                 item.status = "rollback_conflict"
-                item.reason = "No se revirtió porque el precio actual fue modificado posteriormente."
+                item.reason = "No se revirtió porque el precio o costo actual difiere del registrado por el lote."
                 conflicts += 1
                 continue
 
@@ -302,7 +338,10 @@ def rollback_batch(*, company_id: int, user_id: int | None, batch_id: int) -> di
     }
 
 
-def consult_prices(*, company_id: int, query: str = "", category: str = "", brand: str = "", supplier: str = "", limit: int = 20) -> dict:
+def consult_prices(*, company_id: int, user_id: int | None = None, query: str = "", category: str = "", brand: str = "", supplier: str = "", limit: int = 20) -> dict:
+    _, error = _admin_user(company_id, user_id)
+    if error:
+        return {"success": False, "error": error}
     access = can_use_ai_feature(db.session.get(__import__("app").Company, int(company_id)), "pricing_controller")
     if not access.allowed:
         return {"success": False, "error": access.reason}
@@ -338,8 +377,11 @@ def consult_prices(*, company_id: int, query: str = "", category: str = "", bran
     return {"success": True, "count": len(rows), "products": rows}
 
 
-def pricing_opportunities(*, company_id: int, objective: str = "margin", days: int = 30, target_margin_percent: float = 20.0, limit: int = 20) -> dict:
+def pricing_opportunities(*, company_id: int, user_id: int | None = None, objective: str = "margin", days: int = 30, target_margin_percent: float = 20.0, limit: int = 20) -> dict:
     """Return evidence-based candidates; it does not change any price."""
+    _, error = _admin_user(company_id, user_id)
+    if error:
+        return {"success": False, "error": error}
     access = can_use_ai_feature(db.session.get(__import__("app").Company, int(company_id)), "pricing_controller")
     if not access.allowed:
         return {"success": False, "error": access.reason}
@@ -351,7 +393,13 @@ def pricing_opportunities(*, company_id: int, objective: str = "margin", days: i
     sales_rows = (
         db.session.query(SaleItem.product_id, func.coalesce(func.sum(SaleItem.quantity), 0))
         .join(Sale, Sale.id == SaleItem.sale_id)
-        .filter(Sale.company_id == company_id, Sale.date >= cutoff)
+        .filter(
+            Sale.company_id == company_id,
+            Sale.date >= cutoff,
+            func.lower(func.coalesce(Sale.status, "confirmada")).notin_(
+                ["cancelada", "anulada", "rechazada", "cancelled", "voided"]
+            ),
+        )
         .group_by(SaleItem.product_id)
         .all()
     )

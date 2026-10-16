@@ -29,6 +29,7 @@ class ConsultarPreciosTool(AgentTool):
     def execute(self, **kwargs):
         return consult_prices(
             company_id=self.company_id,
+            user_id=self._context.get("actor_user_id"),
             query=str(kwargs.get("query") or ""),
             category=str(kwargs.get("category") or ""),
             brand=str(kwargs.get("brand") or ""),
@@ -54,6 +55,7 @@ class AnalizarOportunidadesPreciosTool(AgentTool):
     def execute(self, **kwargs):
         return pricing_opportunities(
             company_id=self.company_id,
+            user_id=self._context.get("actor_user_id"),
             objective=str(kwargs.get("objective") or "margin"),
             days=int(kwargs.get("days") or 30),
             target_margin_percent=float(kwargs.get("target_margin_percent") or 20.0),
