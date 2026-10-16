@@ -3,7 +3,7 @@ from uuid import uuid4
 
 import pytest
 
-from app import Company, Payment, Quote, User, db, utcnow
+from app import AuditLog, Company, Payment, Quote, User, db, utcnow
 from services.quote_cleanup_service import AI_ORDER_MARKER, QuoteCleanupService
 
 
@@ -85,6 +85,55 @@ def test_cleanup_preview_is_tenant_scoped_and_conservative(cleanup_database):
     assert other_quote.id not in ids
 
 
+def test_cleanup_origin_filter_is_applied_before_limit(cleanup_database):
+    company = cleanup_database["company"]
+    other = cleanup_database["other"]
+    admin = cleanup_database["admin"]
+
+    # The matching AI quote is older than 90 days, but older manual quotes would
+    # consume a pre-filter LIMIT and make the AI-only preview incorrectly empty.
+    old_manual = [
+        make_quote(company.id, admin.id, status="VENCIDO", days_old=600 - index * 10)
+        for index in range(4)
+    ]
+    ai_target = make_quote(company.id, admin.id, status="VENCIDO", days_old=200, ai=True)
+
+    # Check the inverse direction in a second tenant: old AI quotes must not
+    # hide an eligible manual quote from a manual-only preview.
+    other_admin = User(
+        username="cleanup_other_admin",
+        email="cleanup-other@test.local",
+        password_hash="x",
+        role="admin",
+        active=True,
+        company_id=other.id,
+    )
+    db.session.add(other_admin)
+    db.session.flush()
+    old_ai = [
+        make_quote(other.id, other_admin.id, status="VENCIDO", days_old=600 - index * 10, ai=True)
+        for index in range(4)
+    ]
+    manual_target = make_quote(other.id, other_admin.id, status="VENCIDO", days_old=200)
+
+    db.session.add_all([*old_manual, ai_target, *old_ai, manual_target])
+    db.session.commit()
+
+    ai_preview = QuoteCleanupService.preview(
+        company_id=company.id, older_than_days=90, kind="ai", limit=3
+    )
+    manual_preview = QuoteCleanupService.preview(
+        company_id=other.id, older_than_days=90, kind="manual", limit=3
+    )
+
+    assert {row["id"] for row in ai_preview["eligible"]} == {ai_target.id}
+    assert ai_preview["manual_count"] == 0
+    assert ai_preview["ai_count"] == 1
+    assert {row["id"] for row in manual_preview["eligible"]} == {manual_target.id}
+    assert manual_preview["ai_count"] == 0
+    assert manual_preview["manual_count"] == 1
+
+
 def test_cleanup_deletes_only_eligible_rows(cleanup_database):
     company = cleanup_database["company"]
     admin = cleanup_database["admin"]
@@ -148,3 +197,27 @@ def test_cleanup_page_and_confirmation_are_admin_only(app, cleanup_database):
     )
     assert rejected.status_code == 200
     assert db.session.get(Quote, old_quote.id) is not None
+    assert not AuditLog.query.filter_by(
+        company_id=company.id,
+        action="quote_cleanup_delete",
+        entity="quote",
+        entity_id=old_quote.id,
+    ).first()
+
+    deleted = test_client.post(
+        "/presupuestos/limpieza/eliminar",
+        data={"days": "90", "kind": "all", "confirmation": "BORRAR"},
+        follow_redirects=True,
+    )
+    assert deleted.status_code == 200
+    assert "Se eliminaron 1 presupuestos." in deleted.get_data(as_text=True)
+    assert db.session.get(Quote, old_quote.id) is None
+
+    audit = AuditLog.query.filter_by(
+        company_id=company.id,
+        action="quote_cleanup_delete",
+        entity="quote",
+        entity_id=old_quote.id,
+    ).first()
+    assert audit is not None
+    assert "antiguedad>90d" in audit.detail
