@@ -78,7 +78,7 @@ def create_preview(*, company_id: int, user_id: int | None, rules: dict) -> dict
     total_delta = Decimal("0")
     sample = []
 
-    for product in _products_for_rules(normalized).yield_per(1000):
+    for product in _products_for_rules(normalized, company_id=company_id).yield_per(1000):
         old_price = _money(product.price)
         new_price = _calculate_new_price(old_price, normalized)
         if new_price == old_price:
