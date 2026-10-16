@@ -11,6 +11,7 @@
 <span class="crm-nav-label"><i class="bi bi-briefcase"></i> CRM</span>
 <a class="{% if request.endpoint == 'crm.index' %}active{% endif %}" href="{{ url_for('crm.index') }}"><i class="bi bi-grid-1x2"></i>Resumen</a>
 <a class="{% if request.endpoint and request.endpoint.startswith('crm.pipeline') %}active{% endif %}" href="{{ url_for('crm.pipeline') }}"><i class="bi bi-kanban"></i>Pipeline</a>
+<a class="{% if request.endpoint == 'crm.prospect_new' %}active{% endif %}" href="{{ url_for('crm.prospect_new') }}"><i class="bi bi-person-plus"></i>Nuevo prospecto</a>
 <a class="{% if request.endpoint and request.endpoint.startswith('crm.client') %}active{% endif %}" href="{{ url_for('crm.clients') }}"><i class="bi bi-people"></i>Clientes</a>
 <a class="{% if request.endpoint and request.endpoint.startswith('crm.activit') %}active{% endif %}" href="{{ url_for('crm.activities') }}"><i class="bi bi-check2-square"></i>Seguimientos</a>
 {% if current_user.is_authenticated and (current_user.role in ["admin", "superadmin"] or '"ai_access"' in (current_user.permissions_json or "")) %}

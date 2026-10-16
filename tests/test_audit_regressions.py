@@ -190,7 +190,7 @@ def test_offline_queue_does_not_treat_login_redirect_as_successful_mutation():
 
 def test_service_worker_never_caches_private_html_and_namespaces_api_snapshots():
     worker = (REPO_ROOT / "static" / "service-worker.js").read_text(encoding="utf-8")
-    assert "const CACHE_NAME = 'stockarmobile-pwa-v13';" in worker
+    assert "const CACHE_NAME = 'stockarmobile-pwa-v14';" in worker
     assert "  '/',\n  '/offline.html'," not in worker
     assert "Never persist navigated HTML" in worker
     assert "response.ok && !contentType.includes('text/html')" in worker

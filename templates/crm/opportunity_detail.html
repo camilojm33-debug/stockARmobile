@@ -1,4 +1,54 @@
 {% extends "base_master.html" %}
 {% block title %}{{ opportunity.title }} — CRM{% endblock %}
 {% block content %}
-{% include 'crm/_nav.html' %}<div class="app-shell"><div class="d-flex flex-wrap justify-content-between gap-3 align-items-start mb-4"><div><span class="page-kicker"><i class="bi bi-bullseye"></i> Oportunidad</span><h1 class="h3 fw-bold mb-1">{{ opportunity.title }}</h1><p class="text-muted mb-0"><a href="{{ url_for('crm.client_360', client_id=opportunity.client_id) }}">{{ opportunity.client.name }}</a></p></div><a class="btn btn-outline-secondary" href="{{ url_for('crm.pipeline') }}">Volver</a></div><div class="row g-4"><div class="col-xl-4"><div class="card app-card mb-4"><div class="card-body"><div class="small text-muted">Valor estimado</div><div class="display-6 fw-bold">ARS {{ '%.0f'|format(opportunity.value or 0) }}</div><div class="mt-3"><span class="badge text-bg-primary">{{ '%.0f'|format(opportunity.probability or 0) }}% probabilidad</span></div></div></div><div class="card app-card"><div class="card-body"><h2 class="h6 fw-bold">Mover etapa</h2><form method="post" action="{{ url_for('crm.opportunity_stage', opportunity_id=opportunity.id) }}"><input type="hidden" name="csrf_token" value="{{ csrf_token() }}"><select name="stage" class="form-select mb-3">{% for value,label in stages %}<option value="{{ value }}" {% if opportunity.stage == value %}selected{% endif %}>{{ label }}</option>{% endfor %}</select><button class="btn btn-primary w-100">Guardar etapa</button></form></div></div></div><div class="col-xl-8"><div class="card app-card"><div class="card-body"><div class="d-flex justify-content-between align-items-center mb-3"><div><h2 class="h5 fw-bold mb-1">Actividad</h2><p class="small text-muted mb-0">Todo seguimiento queda registrado.</p></div><a class="btn btn-sm btn-outline-primary" href="{{ url_for('crm.activities') }}">Nueva actividad</a></div>{% for item in activities %}<div class="border rounded-3 p-3 mb-2"><div class="d-flex justify-content-between gap-3"><div><div class="fw-semibold">{{ item.subject }}</div><div class="small text-muted">{{ item.description or 'Sin detalle' }}</div></div>{% if item.status == 'completed' %}<span class="badge text-bg-success">Completada</span>{% else %}<span class="badge text-bg-warning">Pendiente</span>{% endif %}</div>{% if item.due_at %}<div class="small text-muted mt-2">{{ item.due_at.strftime('%d/%m/%Y %H:%M') }}</div>{% endif %}{% if item.status != 'completed' %}<form method="post" action="{{ url_for('crm.activity_complete', activity_id=item.id) }}" class="mt-2"><input type="hidden" name="csrf_token" value="{{ csrf_token() }}"><button class="btn btn-sm btn-outline-success">Marcar completada</button></form>{% endif %}</div>{% else %}<div class="empty-state">Sin actividad registrada.</div>{% endfor %}</div></div></div></div></div>{% endblock %}
+{% include 'crm/_nav.html' %}
+<div class="app-shell">
+  <div class="d-flex flex-wrap justify-content-between gap-3 align-items-start mb-4">
+    <div><span class="page-kicker"><i class="bi bi-bullseye"></i> Oportunidad #{{ opportunity.id }}</span><h1 class="h3 fw-bold mb-1">{{ opportunity.title }}</h1><p class="text-muted mb-0"><a href="{{ url_for('crm.client_360', client_id=opportunity.client_id) }}">{{ opportunity.client.name }}</a></p></div>
+    <div class="d-flex flex-wrap gap-2"><a class="btn btn-outline-primary" href="{{ url_for('crm.opportunity_edit', opportunity_id=opportunity.id) }}"><i class="bi bi-pencil me-1"></i>Editar</a><a class="btn btn-outline-secondary" href="{{ url_for('crm.pipeline') }}">Volver al pipeline</a></div>
+  </div>
+  <div class="row g-4">
+    <div class="col-xl-4">
+      <div class="card app-card mb-4"><div class="card-body">
+        <div class="small text-muted">Valor estimado / ganado</div><div class="display-6 fw-bold">ARS {{ '%.2f'|format(opportunity.value or 0) }}</div>
+        <div class="mt-3 d-flex flex-wrap gap-2"><span class="badge {% if opportunity.stage == 'ganado' %}text-bg-success{% elif opportunity.stage == 'perdido' %}text-bg-danger{% else %}text-bg-primary{% endif %}">{{ dict(stages).get(opportunity.stage, opportunity.stage)|capitalize }}</span><span class="badge text-bg-secondary">{{ '%.0f'|format(opportunity.probability or 0) }}% probabilidad</span></div>
+        <hr><div class="small text-muted mb-1">Responsable</div><div class="mb-2">{{ opportunity.owner.username if opportunity.owner else 'Sin responsable' }}</div>
+        <div class="small text-muted mb-1">Origen</div><div class="mb-2">{{ opportunity.source or 'No informado' }}</div>
+        <div class="small text-muted mb-1">Cierre estimado</div><div>{{ opportunity.expected_close_date.strftime('%d/%m/%Y %H:%M') if opportunity.expected_close_date else 'Sin fecha' }}</div>
+        {% if opportunity.loss_reason %}<hr><div class="small text-danger fw-semibold mb-1">Motivo de pérdida</div><div class="text-break">{{ opportunity.loss_reason }}</div>{% endif %}
+        {% if opportunity.notes %}<hr><div class="small text-muted mb-1">Notas e historial</div><div class="text-break">{{ opportunity.notes }}</div>{% endif %}
+      </div></div>
+      <div class="card app-card"><div class="card-body"><h2 class="h6 fw-bold">Actualizar etapa</h2><form method="post" action="{{ url_for('crm.opportunity_stage', opportunity_id=opportunity.id) }}"><input type="hidden" name="csrf_token" value="{{ csrf_token() }}"><select id="crm-opportunity-stage" name="stage" class="form-select mb-3">{% for value,label in stages %}<option value="{{ value }}" {% if opportunity.stage == value %}selected{% endif %}>{{ label }}</option>{% endfor %}</select><div id="crm-loss-reason-container" class="mb-3 {% if opportunity.stage != 'perdido' %}d-none{% endif %}"><label class="form-label small fw-semibold">Motivo de pérdida (obligatorio)</label><textarea id="crm-loss-reason" name="loss_reason" class="form-control" rows="3" placeholder="Ej. Eligió otra solución, precio o falta de presupuesto">{{ opportunity.loss_reason or '' }}</textarea></div><button class="btn btn-primary w-100">Guardar etapa</button></form><div class="small text-muted mt-2">Ganado y Perdido cierran la oportunidad. Las operaciones con venta vinculada deben reflejar el estado real de esa venta.</div></div></div>
+<script>
+document.addEventListener('DOMContentLoaded', function () {
+  const stage = document.getElementById('crm-opportunity-stage');
+  const reason = document.getElementById('crm-loss-reason-container');
+  if (!stage || !reason) return;
+  const sync = () => {
+    reason.classList.toggle('d-none', stage.value !== 'perdido');
+    const textarea = document.getElementById('crm-loss-reason');
+    if (textarea) textarea.required = stage.value === 'perdido' && !{{ 'true' if opportunity.sale_id else 'false' }};
+  };
+  stage.addEventListener('change', sync);
+  sync();
+});
+</script>
+    </div>
+    <div class="col-xl-8">
+      <div class="card app-card mb-4"><div class="card-body">
+        <h2 class="h5 fw-bold mb-3">Presupuesto y venta</h2>
+        {% if opportunity.quote %}
+          <div class="border rounded-3 p-3 mb-2 d-flex flex-wrap justify-content-between gap-3"><div><div class="fw-semibold">Presupuesto {{ opportunity.quote.number or ('#' ~ opportunity.quote.id) }}</div><div class="small text-muted">{{ opportunity.quote.status }} · ARS {{ '%.2f'|format(opportunity.quote.total_amount or 0) }}</div></div><a class="btn btn-sm btn-outline-primary align-self-center" href="{{ url_for('quotes.view_quote', quote_id=opportunity.quote.id) }}">Abrir presupuesto</a></div>
+        {% else %}<div class="small text-muted mb-3">Todavía no hay presupuesto vinculado. Editá la oportunidad para asociarlo.</div>{% endif %}
+        {% if opportunity.sale %}
+          <div class="border border-success rounded-3 p-3 d-flex flex-wrap justify-content-between gap-3"><div><div class="fw-semibold text-success">Venta #{{ opportunity.sale.id }} confirmada</div><div class="small text-muted">{{ opportunity.sale.status }} · ARS {{ '%.2f'|format(opportunity.sale.total_amount or 0) }}</div></div><a class="btn btn-sm btn-outline-success align-self-center" href="{{ url_for('sales.view_sale', sale_id=opportunity.sale.id) }}">Abrir venta</a></div>
+        {% else %}<div class="small text-muted">La oportunidad no está vinculada a una venta.</div>{% endif %}
+      </div></div>
+      <div class="card app-card"><div class="card-body">
+        <div class="d-flex justify-content-between align-items-center mb-3"><div><h2 class="h5 fw-bold mb-1">Seguimientos</h2><p class="small text-muted mb-0">Registro de llamadas, mensajes, tareas y próximos pasos.</p></div><a class="btn btn-sm btn-outline-primary" href="{{ url_for('crm.activities', client_id=opportunity.client_id, opportunity_id=opportunity.id) }}">Nueva actividad</a></div>
+        {% for item in activities %}<div class="border rounded-3 p-3 mb-2"><div class="d-flex justify-content-between gap-3"><div><div class="fw-semibold">{{ item.subject }}</div><div class="small text-muted">{{ item.type|capitalize }} · {{ item.description or 'Sin detalle' }}</div></div>{% if item.status == 'completed' %}<span class="badge text-bg-success">Completada</span>{% else %}<span class="badge text-bg-warning">Pendiente</span>{% endif %}</div>{% if item.due_at %}<div class="small text-muted mt-2">{{ item.due_at.strftime('%d/%m/%Y %H:%M') }}</div>{% endif %}<div class="d-flex gap-2 mt-2">{% if item.status != 'completed' %}<form method="post" action="{{ url_for('crm.activity_complete', activity_id=item.id) }}"><input type="hidden" name="csrf_token" value="{{ csrf_token() }}"><button class="btn btn-sm btn-outline-success">Completar</button></form>{% endif %}<a class="btn btn-sm btn-outline-secondary" href="{{ url_for('crm.activity_edit', activity_id=item.id) }}">Editar</a></div></div>{% else %}<div class="empty-state">Sin seguimientos registrados.</div>{% endfor %}
+      </div></div>
+    </div>
+  </div>
+</div>
+{% endblock %}

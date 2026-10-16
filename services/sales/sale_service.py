@@ -548,11 +548,32 @@ class SaleService:
         db.session.commit()
         return sale
 
+    def _sync_crm_opportunity_after_sale_annulment(self, sale):
+        from app import utcnow
+        from crm_models import CRMOpportunity
+
+        now = utcnow()
+        opportunities = CRMOpportunity.query.filter_by(
+            company_id=sale.company_id,
+            sale_id=sale.id,
+        ).all()
+        for opportunity in opportunities:
+            opportunity.stage = "perdido"
+            opportunity.status = "closed"
+            opportunity.probability = 0
+            previous_notes = (opportunity.notes or "").strip()
+            audit_note = f"Venta #{sale.id} anulada el {now:%d/%m/%Y %H:%M}."
+            opportunity.loss_reason = audit_note
+            if audit_note not in previous_notes:
+                opportunity.notes = f"{previous_notes}\n{audit_note}".strip()
+            opportunity.updated_at = now
+
     def cancel_sale(self, *, sale, detail):
         from app import db, record_audit
 
         ValidationService.validate_cancel_status(getattr(sale, "status", None))
         sale.status = "anulada"
+        self._sync_crm_opportunity_after_sale_annulment(sale)
         AuditService.record_cancel(record_audit, sale_id=sale.id, detail=detail)
         db.session.commit()
         return sale
@@ -568,6 +589,7 @@ class SaleService:
         CashMovement.query.filter_by(sale_id=sale.id).delete(synchronize_session=False)
         InventoryService.reverse_stock(sale_items=sale.items, resolve_product_func=resolve_product_for_item)
         sale.status = "anulada"
+        self._sync_crm_opportunity_after_sale_annulment(sale)
         AuditService.record_cancel(
             record_audit,
             sale_id=sale.id,
