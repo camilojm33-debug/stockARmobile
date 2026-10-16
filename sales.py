@@ -137,7 +137,8 @@ def _quote_id_from_checkout_token(token):
 
 
 def _mark_quote_as_converted_from_checkout_token(checkout_token, sale_id):
-    from app import Payment, Quote, db, scope_query_to_company
+    from app import Payment, Quote, Sale, db, scope_query_to_company, utcnow
+    from crm_models import CRMOpportunity
 
     quote_id = _quote_id_from_checkout_token(checkout_token)
     if not quote_id:
@@ -147,6 +148,24 @@ def _mark_quote_as_converted_from_checkout_token(checkout_token, sale_id):
         return
     quote.status = "CONVERTIDO"
     quote.converted_sale_id = sale_id
+
+    # Keep an explicitly linked CRM opportunity in sync with the authoritative
+    # quote conversion. A closed/won opportunity must reference the actual sale,
+    # not just retain an estimated amount and an unlinked "Ganado" label.
+    sale = scope_query_to_company(Sale.query, Sale).filter(Sale.id == sale_id).first()
+    if sale is not None:
+        opportunities = CRMOpportunity.query.filter_by(
+            company_id=quote.company_id,
+            quote_id=quote.id,
+            client_id=quote.client_id,
+        ).all()
+        for opportunity in opportunities:
+            opportunity.sale_id = sale.id
+            opportunity.stage = "ganado"
+            opportunity.status = "closed"
+            opportunity.value = sale.total_amount
+            opportunity.probability = 100
+            opportunity.updated_at = utcnow()
 
     # A manual POS conversion closes the AI checkout locally. Any late Mercado
     # Pago webhook must see the converted quote and must never create a second sale.
