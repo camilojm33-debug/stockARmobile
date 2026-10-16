@@ -34,7 +34,7 @@ def test_tenant_crm_requires_ia_pro_route_guards():
 
     source = __import__("crm", fromlist=["__file__"]).__file__
     source_text = Path(source).read_text(encoding="utf-8")
-    assert source_text.count("@tenant_required\n@ai_pro_crm_required") == 13
+    assert source_text.count("@tenant_required\n@ai_pro_crm_required") == 14
 
 
 def test_tenant_crm_menu_is_plan_gated():
