@@ -12,7 +12,7 @@
       <a class="btn btn-success" target="_blank" rel="noopener noreferrer" href="https://wa.me/{{ wa_phone }}"><i class="bi bi-whatsapp me-1"></i>Abrir WhatsApp</a>
     {% endif %}
     {% if client.email %}<a class="btn btn-outline-primary" href="mailto:{{ client.email }}"><i class="bi bi-envelope me-1"></i>Enviar email</a>{% endif %}
-    <a class="btn btn-outline-secondary" href="{{ url_for('clients.edit', client_id=client.id) if false else url_for('crm.clients') }}">Volver a clientes</a>
+    <a class="btn btn-outline-secondary" href="{{ url_for('crm.clients') }}">Volver a clientes</a>
   </div></div>
   <div class="row g-3 mb-4">
     <div class="col-6 col-lg-3"><div class="crm-kpi"><div><div class="small text-muted">Compras históricas</div><div class="value">{{ sales_count }}</div></div></div></div>
