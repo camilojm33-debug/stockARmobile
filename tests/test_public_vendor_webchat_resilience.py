@@ -1121,8 +1121,11 @@ def test_public_chat_can_start_second_quote_after_clarification(qa_public_vendor
         "pref-second-quote-1",
         "pref-second-quote-2",
     ]
-    assert all(payment.status == "pending" for payment in payments)
+    assert [payment.status for payment in payments] == ["cancelled", "pending"]
+    assert quotes[0].status == "ANULADO"
+    assert quotes[1].status == "ENVIADO"
     assert "vendor_new_quote_context" not in conversation.metadata_json
+    assert "vendor_superseded_quote_ids" not in conversation.metadata_json
 
 
 def test_public_chat_can_list_the_full_active_catalog(qa_public_vendor_db, monkeypatch):
