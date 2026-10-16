@@ -770,7 +770,9 @@ def client_360(client_id):
         abort(404)
 
     all_sales_query = scope_query_to_company(Sale.query.filter(Sale.client_id == client.id), Sale)
-    all_sales_query = all_sales_query.filter(Sale.status.notin_(["cancelada", "anulada", "cancelled", "voided"]))
+    all_sales_query = all_sales_query.filter(
+        or_(Sale.status.is_(None), Sale.status.notin_(["cancelada", "anulada", "cancelled", "voided"]))
+    )
     sales_count = all_sales_query.count()
     total_spent = float(
         all_sales_query.with_entities(func.coalesce(func.sum(Sale.total_amount), 0)).scalar() or 0
