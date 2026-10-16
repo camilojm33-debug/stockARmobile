@@ -1335,6 +1335,31 @@ class AgentRuntime:
                         "error": "No se pudo completar la operación solicitada en este momento.",
                         "retryable": True,
                     }
+
+                # The final customer-facing confirmation is derived from the saved
+                # quote/payment. Return it directly instead of letting a second model
+                # call paraphrase authoritative numeric values and introduce mistakes.
+                if (
+                    name == "preparar_pedido"
+                    and isinstance(result, dict)
+                    and result.get("success")
+                    and str(result.get("confirmation_message") or "").strip()
+                ):
+                    return (
+                        str(result["confirmation_message"]),
+                        campaign_context,
+                        tool_rounds,
+                        {
+                            "provider": provider.__class__.__name__.replace("Provider", "").lower(),
+                            "model": last_model or getattr(provider, "model", None) or kwargs.get("model"),
+                            "provider_calls": provider_calls,
+                            "tool_rounds": tool_rounds,
+                            "input_tokens": input_tokens,
+                            "output_tokens": output_tokens,
+                            "total_tokens": total_tokens,
+                        },
+                    )
+
                 if name == "preparar_campana" and isinstance(result, dict):
                     campaign_context = result.get("campaign_context") or campaign_context
                 results_to_append.append(
