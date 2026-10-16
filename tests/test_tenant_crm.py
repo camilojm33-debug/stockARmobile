@@ -387,6 +387,11 @@ def test_client_contact_action_logs_followup_and_opens_whatsapp(app):
     assert activity.type == "whatsapp"
     assert activity.status == "pending"
     assert "no puede confirmar" in activity.description
+    # External app handoffs must not block the original CRM tab with the global loader.
+    page = test_client.get(f"/crm/clients/{client_record.id}")
+    assert page.status_code == 200
+    page_html = page.get_data(as_text=True)
+    assert page_html.count('target="_blank" rel="noopener" data-skip-app-loading="true"') == 2
 
 
 
