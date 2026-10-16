@@ -344,6 +344,8 @@ def opportunity_stage(opportunity_id):
 @tenant_required
 @ai_pro_crm_required
 def activities():
+    from app import Client
+
     if request.method == "POST":
         client_id = request.form.get("client_id", type=int)
         client = _client_for_company(client_id)
@@ -352,27 +354,114 @@ def activities():
             return redirect(url_for("crm.activities"))
         opportunity_id = request.form.get("opportunity_id", type=int)
         opportunity = _opportunity_query().filter(CRMOpportunity.id == opportunity_id).first() if opportunity_id else None
+        if opportunity_id and opportunity is None:
+            flash("La oportunidad no pertenece a tu empresa o ya no existe.", "danger")
+            return redirect(url_for("crm.activities"))
         if opportunity and opportunity.client_id != client.id:
             flash("La oportunidad no corresponde al cliente seleccionado.", "danger")
             return redirect(url_for("crm.activities"))
         activity_type = request.form.get("type") if request.form.get("type") in dict(ACTIVITY_TYPES) else "tarea"
+        due_raw = (request.form.get("due_at") or "").strip()
+        due_at = _parse_datetime(due_raw)
+        if due_raw and due_at is None:
+            flash("La fecha del seguimiento no tiene un formato válido.", "danger")
+            return redirect(url_for("crm.activities", client_id=client.id, opportunity_id=opportunity.id if opportunity else None))
         now = _now()
         activity = CRMActivity(
             company_id=_company_id(), client_id=client.id, opportunity_id=opportunity.id if opportunity else None,
             user_id=current_user.id, type=activity_type, status="pending",
-            subject=(request.form.get("subject") or "").strip() or "Seguimiento comercial",
+            subject=(request.form.get("subject") or "").strip()[:180] or "Seguimiento comercial",
             description=(request.form.get("description") or "").strip() or None,
-            due_at=_parse_datetime(request.form.get("due_at")), created_at=now, updated_at=now,
+            due_at=due_at, created_at=now, updated_at=now,
         )
         db.session.add(activity)
         db.session.commit()
-        flash("Actividad creada.", "success")
-        return redirect(url_for("crm.activities"))
-    activities = _activity_query().order_by(CRMActivity.status.asc(), CRMActivity.due_at.asc().nullslast(), CRMActivity.id.desc()).limit(100).all()
-    from app import Client
+        flash("Seguimiento creado.", "success")
+        return redirect(url_for("crm.activities", client_id=client.id, opportunity_id=opportunity.id if opportunity else None))
+
+    status_filter = (request.args.get("status") or "pending").strip().lower()
+    if status_filter not in {"pending", "completed", "all"}:
+        status_filter = "pending"
+    activity_query = _activity_query()
+    if status_filter in {"pending", "completed"}:
+        activity_query = activity_query.filter(CRMActivity.status == status_filter)
+    activities = activity_query.order_by(
+        CRMActivity.due_at.asc().nullslast(),
+        CRMActivity.id.desc(),
+    ).limit(250).all()
     clients = scope_query_to_company(Client.query.filter(Client.active.is_(True)), Client).order_by(Client.name).all()
     opportunities = _opportunity_query().filter(CRMOpportunity.status == "open").order_by(CRMOpportunity.updated_at.desc()).all()
-    return render_template("crm/activities.html", activities=activities, clients=clients, opportunities=opportunities, activity_types=ACTIVITY_TYPES)
+    return render_template(
+        "crm/activities.html",
+        activities=activities,
+        clients=clients,
+        opportunities=opportunities,
+        activity_types=ACTIVITY_TYPES,
+        selected_client_id=request.args.get("client_id", type=int),
+        selected_opportunity_id=request.args.get("opportunity_id", type=int),
+        status_filter=status_filter,
+    )
+
+
+@bp.route("/activities/<int:activity_id>/edit", methods=["GET", "POST"])
+@tenant_required
+@ai_pro_crm_required
+def activity_edit(activity_id):
+    from app import Client, db
+
+    activity = _activity_query().filter(CRMActivity.id == activity_id).first_or_404()
+    if request.method == "POST":
+        client_id = request.form.get("client_id", type=int)
+        client = _client_for_company(client_id)
+        opportunity_id = request.form.get("opportunity_id", type=int)
+        opportunity = _opportunity_query().filter(CRMOpportunity.id == opportunity_id).first() if opportunity_id else None
+        if not client or (opportunity_id and not opportunity):
+            flash("El cliente o la oportunidad seleccionados no pertenecen a tu empresa.", "danger")
+            return redirect(url_for("crm.activity_edit", activity_id=activity.id))
+        if opportunity and opportunity.client_id != client.id:
+            flash("La oportunidad debe pertenecer al cliente seleccionado.", "danger")
+            return redirect(url_for("crm.activity_edit", activity_id=activity.id))
+        activity_type = request.form.get("type") if request.form.get("type") in dict(ACTIVITY_TYPES) else "tarea"
+        due_raw = (request.form.get("due_at") or "").strip()
+        due_at = _parse_datetime(due_raw)
+        if due_raw and due_at is None:
+            flash("La fecha del seguimiento no tiene un formato válido.", "danger")
+            return redirect(url_for("crm.activity_edit", activity_id=activity.id))
+        subject = (request.form.get("subject") or "").strip()
+        if not subject:
+            flash("El asunto del seguimiento es obligatorio.", "danger")
+            return redirect(url_for("crm.activity_edit", activity_id=activity.id))
+        activity.client_id = client.id
+        activity.opportunity_id = opportunity.id if opportunity else None
+        activity.type = activity_type
+        activity.subject = subject[:180]
+        activity.description = (request.form.get("description") or "").strip() or None
+        activity.due_at = due_at
+        activity.updated_at = _now()
+        db.session.commit()
+        flash("Seguimiento actualizado.", "success")
+        return redirect(url_for("crm.activities", status="all"))
+
+    clients = scope_query_to_company(Client.query.filter(Client.active.is_(True)), Client).order_by(Client.name).all()
+    opportunities = _opportunity_query().filter(CRMOpportunity.status == "open").order_by(CRMOpportunity.updated_at.desc()).all()
+    return render_template(
+        "crm/activity_form.html",
+        activity=activity,
+        clients=clients,
+        opportunities=opportunities,
+        activity_types=ACTIVITY_TYPES,
+    )
+
+
+@bp.route("/activities/<int:activity_id>/delete", methods=["POST"])
+@tenant_required
+@ai_pro_crm_required
+def activity_delete(activity_id):
+    activity = _activity_query().filter(CRMActivity.id == activity_id).first_or_404()
+    db.session.delete(activity)
+    db.session.commit()
+    flash("Seguimiento eliminado.", "success")
+    return redirect(url_for("crm.activities", status="all"))
 
 
 @bp.route("/activities/<int:activity_id>/complete", methods=["POST"])
