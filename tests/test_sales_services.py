@@ -301,6 +301,10 @@ def test_sale_service_cancel_sale_and_delete_sale_unit(monkeypatch):
         to_decimal=lambda value: Decimal("0.00"),
     )
 
+    # This test isolates the sale service's cancellation mechanics; CRM state
+    # synchronization is covered separately with a real app/database context.
+    monkeypatch.setattr(service, "_sync_crm_opportunity_after_sale_annulment", lambda sale: None)
+
     sale_cancel = SimpleNamespace(id=7, status="confirmada")
     cancelled = service.cancel_sale(sale=sale_cancel, detail="Anulación de prueba")
     assert cancelled.status == "anulada"
