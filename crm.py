@@ -400,6 +400,7 @@ def activities():
         selected_client_id=request.args.get("client_id", type=int),
         selected_opportunity_id=request.args.get("opportunity_id", type=int),
         status_filter=status_filter,
+        now=_now(),
     )
 
 
