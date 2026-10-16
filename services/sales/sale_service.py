@@ -563,6 +563,7 @@ class SaleService:
             opportunity.probability = 0
             previous_notes = (opportunity.notes or "").strip()
             audit_note = f"Venta #{sale.id} anulada el {now:%d/%m/%Y %H:%M}."
+            opportunity.loss_reason = audit_note
             if audit_note not in previous_notes:
                 opportunity.notes = f"{previous_notes}\n{audit_note}".strip()
             opportunity.updated_at = now
