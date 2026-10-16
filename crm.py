@@ -71,14 +71,15 @@ def _stage_status(stage):
     return "closed" if stage in {"ganado", "perdido"} else "open"
 
 
-def _archive_loss_reason(opportunity):
+def _archive_loss_reason(opportunity, *, notes_override=None):
     previous = (getattr(opportunity, "loss_reason", None) or "").strip()
-    if not previous:
-        return
-    marker = f"Motivo de pérdida anterior: {previous}"
-    notes = (opportunity.notes or "").strip()
-    if marker not in notes:
-        opportunity.notes = f"{notes}\n{marker}".strip()
+    notes = (notes_override if notes_override is not None else opportunity.notes) or ""
+    notes = str(notes).strip()
+    if previous:
+        marker = f"Motivo de pérdida anterior: {previous}"
+        if marker not in notes:
+            notes = f"{notes}\n{marker}".strip()
+    opportunity.notes = notes or None
     opportunity.loss_reason = None
 
 
@@ -478,8 +479,13 @@ def opportunity_edit(opportunity_id):
             flash(str(exc), "danger")
             return render_template("crm/opportunity_form.html", **options, stages=STAGES, opportunity=opportunity), 400
         previous_loss_reason = (opportunity.loss_reason or "").strip()
-        if previous_loss_reason and not values["loss_reason"]:
-            _archive_loss_reason(opportunity)
+        if previous_loss_reason and values["loss_reason"] != previous_loss_reason:
+            _archive_loss_reason(
+                opportunity,
+                notes_override=values["notes"] if values["notes"] is not None else opportunity.notes,
+            )
+        else:
+            opportunity.notes = values["notes"] or opportunity.notes
         opportunity.client_id = values["client"].id
         opportunity.title = values["title"]
         opportunity.stage = values["stage"]
@@ -489,7 +495,6 @@ def opportunity_edit(opportunity_id):
         opportunity.expected_close_date = values["expected_close_date"]
         opportunity.owner_user_id = values["owner_user_id"]
         opportunity.source = values["source"]
-        opportunity.notes = values["notes"] or opportunity.notes
         opportunity.loss_reason = values["loss_reason"]
         opportunity.quote_id = values["quote_id"]
         opportunity.sale_id = values["sale_id"]
