@@ -280,14 +280,15 @@ def prospect_new():
         def phone_digits(raw):
             return re.sub(r"\D+", "", str(raw or ""))
 
-        phone_digits_input = phone_digits(phone or whatsapp)
+        phone_digits_inputs = {phone_digits(value) for value in (phone, whatsapp) if value}
         candidate_query = scope_query_to_company(Client.query, Client)
         match_conditions = []
         if email:
             match_conditions.append(func.lower(Client.email) == email)
-        if len(phone_digits_input) >= 7:
-            tail = phone_digits_input[-7:]
-            match_conditions.extend((Client.phone.ilike(f"%{tail}%"), Client.whatsapp.ilike(f"%{tail}%")))
+        for digits in phone_digits_inputs:
+            if len(digits) >= 4:
+                tail = digits[-4:]
+                match_conditions.extend((Client.phone.ilike(f"%{tail}%"), Client.whatsapp.ilike(f"%{tail}%")))
         if match_conditions:
             candidates = candidate_query.filter(or_(*match_conditions)).limit(100).all()
         else:
