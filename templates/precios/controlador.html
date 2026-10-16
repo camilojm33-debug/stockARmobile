@@ -174,7 +174,7 @@
       <div class="row g-3 mb-4">
         <div class="col-sm-4"><div class="border rounded-3 p-3"><div class="small text-muted">Productos con cambio</div><div class="fs-4 fw-bold">{{ preview.product_count }}</div></div></div>
         <div class="col-sm-4"><div class="border rounded-3 p-3"><div class="small text-muted">Bloqueados</div><div class="fs-4 fw-bold text-warning">{{ preview.blocked_count }}</div></div></div>
-        <div class="col-sm-4"><div class="border rounded-3 p-3"><div class="small text-muted">Variación total del catálogo</div><div class="fs-4 fw-bold">${{ '%.2f'|format(preview.total_delta or 0) }}</div></div></div>
+        <div class="col-sm-4"><div class="border rounded-3 p-3"><div class="small text-muted">Suma de cambios unitarios</div><div class="fs-4 fw-bold">${{ '%.2f'|format(preview.total_delta or 0) }}</div><div class="small text-muted mt-1">No pondera por stock ni estima ventas.</div></div></div>
       </div>
 
       {% if preview_rows %}
