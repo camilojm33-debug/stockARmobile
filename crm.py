@@ -263,6 +263,15 @@ def prospect_new():
         if not name:
             flash("El nombre del prospecto es obligatorio.", "danger")
             return render_template("crm/prospect_form.html"), 400
+        if email and (len(email) > 120 or email.count("@") != 1):
+            flash("El email no tiene un formato válido o supera el máximo permitido.", "danger")
+            return render_template("crm/prospect_form.html"), 400
+        if phone and (len(phone) > 20 or len(re.sub(r"\D+", "", phone)) < 6):
+            flash("El teléfono debe contener al menos seis dígitos y no superar los 20 caracteres.", "danger")
+            return render_template("crm/prospect_form.html"), 400
+        if whatsapp and (len(whatsapp) > 30 or len(re.sub(r"\D+", "", whatsapp)) < 6):
+            flash("El WhatsApp debe contener al menos seis dígitos y no superar los 30 caracteres.", "danger")
+            return render_template("crm/prospect_form.html"), 400
         if not any((email, phone, whatsapp)):
             flash("Ingresá al menos un email, teléfono o WhatsApp para poder dar seguimiento.", "danger")
             return render_template("crm/prospect_form.html"), 400
@@ -319,9 +328,9 @@ def prospect_new():
                 phone=phone,
                 whatsapp=whatsapp,
                 address=(request.form.get("address") or "").strip() or None,
-                city=(request.form.get("city") or "").strip() or None,
-                province=(request.form.get("province") or "").strip() or None,
-                postal_code=(request.form.get("postal_code") or "").strip() or None,
+                city=(request.form.get("city") or "").strip()[:100] or None,
+                province=(request.form.get("province") or "").strip()[:120] or None,
+                postal_code=(request.form.get("postal_code") or "").strip()[:20] or None,
                 notes=(request.form.get("client_notes") or "").strip() or "Contacto inicial registrado desde CRM.",
                 active=True,
             )
@@ -336,9 +345,9 @@ def prospect_new():
                 ("phone", phone),
                 ("whatsapp", whatsapp),
                 ("address", (request.form.get("address") or "").strip() or None),
-                ("city", (request.form.get("city") or "").strip() or None),
-                ("province", (request.form.get("province") or "").strip() or None),
-                ("postal_code", (request.form.get("postal_code") or "").strip() or None),
+                ("city", (request.form.get("city") or "").strip()[:100] or None),
+                ("province", (request.form.get("province") or "").strip()[:120] or None),
+                ("postal_code", (request.form.get("postal_code") or "").strip()[:20] or None),
             ):
                 if not getattr(client, field, None) and value_in:
                     setattr(client, field, value_in)
