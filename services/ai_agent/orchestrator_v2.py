@@ -1142,7 +1142,37 @@ class AgentRuntime:
         if "company_id" in arguments:
             return {"success": False, "error": "company_id must be passed explicitly"}
         result = tool_class(company_id=company_id, **(context or {})).execute(**arguments)
-        return result if isinstance(result, dict) else {"success": False, "error": "tool result must be an object"}
+        if not isinstance(result, dict):
+            return {"success": False, "error": "tool result must be an object"}
+
+        # Once the backend has persisted a quote and payment link, the closing
+        # WhatsApp reply must come from the authoritative quote snapshot. Do not
+        # ask the language model to recalculate prices, taxes, shipping, or totals.
+        if (
+            name == "preparar_pedido"
+            and result.get("success")
+            and result.get("quote_id")
+            and result.get("payment_url")
+        ):
+            try:
+                from services.ai_agent.vendor_order_service import format_vendor_order_confirmation
+
+                confirmation = format_vendor_order_confirmation(
+                    company_id=int(company_id),
+                    order=result,
+                )
+            except Exception:
+                import logging
+                logging.getLogger(__name__).exception(
+                    "Could not format persisted vendor order confirmation: company_id=%s quote_id=%s",
+                    company_id,
+                    result.get("quote_id"),
+                )
+                confirmation = ""
+            if confirmation:
+                result = dict(result)
+                result["confirmation_message"] = confirmation
+        return result
 
     @classmethod
     def _provider_model(cls, provider, config):
