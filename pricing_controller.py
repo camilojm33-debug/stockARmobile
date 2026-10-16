@@ -105,6 +105,15 @@ def _pct(old_price: Decimal, new_price: Decimal) -> Decimal:
     return ((new_price - old_price) / old_price * Decimal("100")).quantize(FOURPLACES, rounding=ROUND_HALF_UP)
 
 
+def _exceeds_max_change(old_price: Decimal, new_price: Decimal, max_change_percent: Optional[Decimal]) -> bool:
+    """A percentage cap cannot be bypassed by starting from a zero/invalid price."""
+    if max_change_percent is None:
+        return False
+    if old_price <= 0:
+        return new_price != old_price
+    return abs(_pct(old_price, new_price)) > max_change_percent
+
+
 def _profit_percent(price: Decimal, cost: Decimal) -> Decimal:
     if cost <= 0:
         return Decimal("0.0000")
@@ -181,7 +190,14 @@ def _calculate_new_price(old_price: Decimal, rules: dict) -> Decimal:
         new_price = max(new_price, rules["min_price"])
     if rules["max_price"] is not None:
         new_price = min(new_price, rules["max_price"])
-    return _rounded(new_price, rules["rounding"])
+
+    # Rounding is cosmetic; configured price boundaries are hard constraints.
+    new_price = _rounded(new_price, rules["rounding"])
+    if rules["min_price"] is not None:
+        new_price = max(new_price, rules["min_price"])
+    if rules["max_price"] is not None:
+        new_price = min(new_price, rules["max_price"])
+    return new_price.quantize(TWOPLACES, rounding=ROUND_HALF_UP)
 
 
 def _products_for_rules(rules):
@@ -312,10 +328,17 @@ def preview():
         if new_price < 0:
             item_status = "blocked"
             reason = "El precio resultante sería negativo."
-        elif rules["max_change_percent"] is not None and change_pct > rules["max_change_percent"]:
+        elif rules["max_change_percent"] is not None and _exceeds_max_change(old_price, new_price, rules["max_change_percent"]):
             item_status = "blocked"
-            reason = f"Supera el cambio máximo permitido ({rules['max_change_percent']}%)."
-        elif rules["min_margin_percent"] is not None and cost > 0 and new_profit < rules["min_margin_percent"]:
+            reason = (
+                "No se puede validar el cambio porcentual porque el precio actual es cero o negativo."
+                if old_price <= 0
+                else f"Supera el cambio máximo permitido ({rules['max_change_percent']}%)."
+            )
+        elif rules["min_margin_percent"] is not None and cost <= 0:
+            item_status = "blocked"
+            reason = "No se puede validar el margen mínimo porque el producto no tiene un costo válido."
+        elif rules["min_margin_percent"] is not None and new_profit < rules["min_margin_percent"]:
             item_status = "blocked"
             reason = f"Queda por debajo del margen mínimo ({rules['min_margin_percent']}%)."
 
@@ -354,7 +377,7 @@ def apply(batch_id: int):
     blocked = _ai_pricing_entitlement()
     if blocked is not None:
         return blocked
-    batch = PriceControllerBatch.query.filter_by(id=batch_id, company_id=current_user.company_id).first_or_404()
+    batch = PriceControllerBatch.query.filter_by(id=batch_id, company_id=current_user.company_id).with_for_update().populate_existing().first_or_404()
     if batch.status != "preview":
         flash("Ese ajuste ya fue aplicado o no está disponible para aplicar.", "warning")
         return redirect(url_for("pricing_controller.index"))
@@ -366,10 +389,16 @@ def apply(batch_id: int):
 
         items = PriceControllerItem.query.filter_by(batch_id=batch.id, status="ready").order_by(PriceControllerItem.id).yield_per(1000)
         for item in items:
-            product = scope_query_to_company(Product.query.filter_by(id=item.product_id), Product).first()
-            if product is None or _money(product.price) != _money(item.old_price):
+            product_query = scope_query_to_company(Product.query.filter_by(id=item.product_id), Product)
+            product = product_query.with_for_update().populate_existing().first()
+            expected_cost = _money(item.old_price - item.old_margin)
+            if (
+                product is None
+                or _money(product.price) != _money(item.old_price)
+                or _money(product.cost_price) != expected_cost
+            ):
                 item.status = "conflict"
-                item.reason = "El precio cambió después de la vista previa."
+                item.reason = "El precio o costo cambió después de la vista previa."
                 skipped += 1
                 continue
 
@@ -433,21 +462,29 @@ def rollback(batch_id: int):
     if rollback_access is None or not rollback_access.allowed:
         flash(rollback_access.reason or "El Controlador Global de Precios requiere el plan Negocio o superior.", "warning")
         return redirect(url_for("pricing_controller.index"))
-    batch = PriceControllerBatch.query.filter_by(id=batch_id, company_id=current_user.company_id).first_or_404()
+    batch = PriceControllerBatch.query.filter_by(id=batch_id, company_id=current_user.company_id).with_for_update().populate_existing().first_or_404()
     if batch.status not in {"applied", "partial_rollback"}:
         flash("Ese ajuste no puede revertirse desde su estado actual.", "warning")
         return redirect(url_for("pricing_controller.index"))
 
-    restored = conflicts = 0
+    restored = 0
+    # Keep pre-existing conflicts in the batch state when a partial rollback is retried.
+    conflicts = PriceControllerItem.query.filter_by(batch_id=batch.id, status="rollback_conflict").count()
     try:
         from app import ProductModification, ProductPriceHistory
 
         items = PriceControllerItem.query.filter_by(batch_id=batch.id, status="applied").order_by(PriceControllerItem.id).yield_per(1000)
         for item in items:
-            product = scope_query_to_company(Product.query.filter_by(id=item.product_id), Product).first()
-            if product is None or _money(product.price) != _money(item.new_price):
+            product_query = scope_query_to_company(Product.query.filter_by(id=item.product_id), Product)
+            product = product_query.with_for_update().populate_existing().first()
+            expected_cost = _money(item.old_price - item.old_margin)
+            if (
+                product is None
+                or _money(product.price) != _money(item.new_price)
+                or _money(product.cost_price) != expected_cost
+            ):
                 item.status = "rollback_conflict"
-                item.reason = "No se revirtió porque el precio actual fue modificado posteriormente."
+                item.reason = "No se revirtió porque el precio o costo actual difiere del registrado por el lote."
                 conflicts += 1
                 continue
 
