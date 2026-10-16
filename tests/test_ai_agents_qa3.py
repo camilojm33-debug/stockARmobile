@@ -686,3 +686,150 @@ def test_deterministic_whatsapp_turn_reuses_messages_on_retry(qa_ai_database):
         conversation_id=conversation.id,
         role="assistant",
     ).count() == 1
+
+
+def test_vendor_order_confirmation_uses_persisted_quote_and_charge_values(qa_ai_database):
+    import json
+
+    from app import Quote, QuoteDelivery, QuoteItem
+    from services.ai_agent.vendor_order_service import format_vendor_order_confirmation
+    from stockarmobile.helpers.dates import utcnow_naive
+
+    company = qa_ai_database["companies"]["vendedor"]
+    user = qa_ai_database["users"]["vendedor"]
+    now = utcnow_naive()
+    quote = Quote(
+        number="P-QA-CONFIRMATION",
+        date=now,
+        expires_at=now + timedelta(hours=24),
+        subtotal=30450,
+        discount=0,
+        surcharge=50000,
+        tax=6394.50,
+        total_amount=86844.50,
+        charges_json=json.dumps([
+            {
+                "id": "shipping",
+                "name": "Envío a domicilio",
+                "type": "fixed",
+                "value": "50000.00",
+                "base": "none",
+                "base_amount": "0.00",
+                "amount": "50000.00",
+            },
+            {
+                "id": "charge-qa-iva",
+                "name": "IVA",
+                "type": "percentage",
+                "value": "21.00",
+                "base": "products",
+                "base_amount": "30450.00",
+                "amount": "6394.50",
+            },
+        ]),
+        status="ENVIADO",
+        currency="ARS",
+        created_by_user_id=user.id,
+        seller_id=user.id,
+        company_id=company.id,
+    )
+    db.session.add(quote)
+    db.session.flush()
+    db.session.add(QuoteItem(
+        quote_id=quote.id,
+        product_id=None,
+        description="Coca",
+        quantity=5,
+        unit_price=6090,
+        discount=0,
+        subtotal=30450,
+        sort_order=0,
+    ))
+    db.session.add(QuoteDelivery(
+        quote_id=quote.id,
+        company_id=company.id,
+        method="envio",
+        recipient_name="Camilo Menendez",
+        phone="5493624000000",
+        address="Calle de prueba 123",
+        city="Resistencia",
+        province="Chaco",
+        shipping_cost=50000,
+        shipping_rate=0,
+        shipping_reason="Envío a domicilio · costo fijo del comercio.",
+        shipping_status="confirmed",
+        shipping_source="fixed",
+    ))
+    db.session.flush()
+
+    message = format_vendor_order_confirmation(
+        company_id=company.id,
+        order={
+            "quote_id": quote.id,
+            "quote_number": quote.number,
+            "quote_url": "https://example.test/presupuesto",
+            "payment_url": "https://example.test/pago",
+        },
+    )
+
+    assert "5 × Coca: $6.090,00 ARS c/u; subtotal $30.450,00 ARS" in message
+    assert "Subtotal productos:* $30.450,00 ARS" in message
+    assert "IVA (21% sobre productos, base $30.450,00 ARS): $6.394,50 ARS" in message
+    assert "Envío a domicilio (costo fijo configurado): $50.000,00 ARS" in message
+    assert "Total final:* $86.844,50 ARS" in message
+    assert "$26.500,00" not in message
+    assert "incl. IVA" not in message
+    assert "https://example.test/pago" in message
+
+
+def test_vendor_checkout_confirmation_skips_second_llm_rewrite(monkeypatch):
+    from services.ai_agent.orchestrator_v2 import AgentRuntime
+
+    confirmation = (
+        "Presupuesto P-QA. 5 × Coca: $6.090,00 ARS c/u; "
+        "subtotal $30.450,00 ARS. Total final: $86.844,50 ARS."
+    )
+
+    class Provider:
+        def __init__(self):
+            self.calls = 0
+
+        def generate(self, **kwargs):
+            self.calls += 1
+            if self.calls == 1:
+                return {
+                    "content": "",
+                    "tool_call": {
+                        "id": "quote-call-1",
+                        "name": "preparar_pedido",
+                        "arguments": {},
+                    },
+                }
+            return {
+                "content": "5 cocas $26.500,00 ARS. Subtotal con IVA.",
+                "tool_call": None,
+            }
+
+    def execute_tool(cls, name, **kwargs):
+        assert name == "preparar_pedido"
+        return {
+            "success": True,
+            "quote_id": 40,
+            "payment_url": "https://example.test/pago",
+            "confirmation_message": confirmation,
+        }
+
+    monkeypatch.setattr(AgentRuntime, "_execute_tool", classmethod(execute_tool))
+    provider = Provider()
+    content, _campaign, tool_rounds, _telemetry = AgentRuntime._run_tool_loop(
+        provider=provider,
+        messages=[],
+        tools=[],
+        kwargs={},
+        company_id=1,
+        context={"conversation_id": 58},
+    )
+
+    assert content == confirmation
+    assert provider.calls == 1
+    assert tool_rounds == 1
