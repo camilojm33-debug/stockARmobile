@@ -49,7 +49,7 @@ def test_onboarding_checks_all_server_side_meta_configuration_without_exposing_s
 
 def test_meta_ids_are_validated_before_becoming_graph_api_path_segments():
     source = (ROOT / "ai_agents.py").read_text(encoding="utf-8")
-    assert "\\nimport re\\n" in source.split("from itsdangerous", 1)[0]
+    assert "\nimport re\n" in source.split("from itsdangerous", 1)[0]
     start = source.index("def vendor_whatsapp_complete():")
     end = source.index('@bp.get("/public/vendedor/<token>")', start)
     route = source[start:end]
