@@ -16,6 +16,7 @@ from services.ai_agent.vendor_order_service import (
     LAST_ORDER_KEY,
     PENDING_PAYMENT_KEY,
     PENDING_QUOTE_KEY,
+    SUPERSEDED_QUOTE_IDS_KEY,
     VendorOrderService,
 )
 from services.mercadopago_service import MercadoPagoService
@@ -1726,6 +1727,7 @@ def test_new_quote_cancels_superseded_unpaid_quote_and_payment(vendor_database, 
     assert previous_payment.status == "cancelled"
     assert conversation.metadata_json[PENDING_QUOTE_KEY] == replacement_quote.id
     assert conversation.metadata_json[PENDING_PAYMENT_KEY] == second["payment_url"]
+    assert SUPERSEDED_QUOTE_IDS_KEY not in conversation.metadata_json
 
 
 def test_new_quote_does_not_cancel_superseded_quote_when_payment_preference_fails(vendor_database, monkeypatch):
@@ -1779,3 +1781,21 @@ def test_new_quote_does_not_cancel_superseded_quote_when_payment_preference_fail
     db.session.refresh(previous_payment)
     assert previous_quote.status == "ENVIADO"
     assert previous_payment.status == "pending"
+    assert conversation.metadata_json[SUPERSEDED_QUOTE_IDS_KEY] == [previous_quote.id]
+
+    # A retry can finish the replacement checkout; only then should it cancel
+    # the earlier quote whose ID survived the failed Mercado Pago attempt.
+    _mock_checkout(monkeypatch, calls)
+    retry = VendorOrderService.create_pending_order(
+        company_id=data["company_a"].id,
+        conversation_id=conversation.id,
+        customer_name="Cliente A",
+        customer_phone="5491112345678",
+        actor_user_id=data["user_a"].id,
+    )
+    db.session.refresh(previous_quote)
+    db.session.refresh(previous_payment)
+    assert retry["success"] is True
+    assert previous_quote.status == "ANULADO"
+    assert previous_payment.status == "cancelled"
+    assert SUPERSEDED_QUOTE_IDS_KEY not in conversation.metadata_json
