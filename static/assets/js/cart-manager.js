@@ -206,6 +206,147 @@ function getCartStorageKey() {
   return `${CART_KEY_PREFIX}_${getCartTenantKey()}`;
 }
 
+/*
+ * A quote conversion can be interrupted by opening the cash register. The cart
+ * itself is stored in localStorage, but quotePricingSnapshot used to live only
+ * in memory. Returning to /ventas therefore kept the products while losing the
+ * quote's discounts, surcharge, tax, total and canonical quote-cart token.
+ */
+const QUOTE_CONTEXT_STORAGE_PREFIX = 'stockarmobile_quote_checkout_context_v1';
+
+function getQuoteContextStorageKey() {
+  return `${QUOTE_CONTEXT_STORAGE_PREFIX}_${getCartTenantKey()}`;
+}
+
+function clearPersistedQuotePricingSnapshot() {
+  try {
+    localStorage.removeItem(getQuoteContextStorageKey());
+  } catch (error) {
+    console.warn('No se pudo limpiar el contexto de presupuesto del carrito', error);
+  }
+}
+
+function getQuotePricingFormSnapshot() {
+  return {
+    clientId: document.getElementById('checkout-client-select')?.value ?? '',
+    note: document.getElementById('checkout-note')?.value ?? '',
+    documentType: document.getElementById('checkout-document-type')?.value ?? '',
+    discountMode: document.getElementById('checkout-discount-mode')?.value ?? '',
+    generalDiscount: document.getElementById('checkout-general-discount')?.value ?? '',
+    discountReason: document.getElementById('checkout-discount-reason')?.value ?? '',
+    surchargeMode: document.getElementById('checkout-surcharge-mode')?.value ?? '',
+    surchargeValue: document.getElementById('checkout-surcharge')?.value ?? '',
+    surchargeReason: document.getElementById('checkout-surcharge-reason')?.value ?? '',
+  };
+}
+
+function applyQuotePricingFormSnapshot(formSnapshot) {
+  if (!formSnapshot || typeof formSnapshot !== 'object') return;
+  const fields = {
+    'checkout-client-select': 'clientId',
+    'checkout-note': 'note',
+    'checkout-document-type': 'documentType',
+    'checkout-discount-mode': 'discountMode',
+    'checkout-general-discount': 'generalDiscount',
+    'checkout-discount-reason': 'discountReason',
+    'checkout-surcharge-mode': 'surchargeMode',
+    'checkout-surcharge': 'surchargeValue',
+    'checkout-surcharge-reason': 'surchargeReason',
+  };
+  Object.entries(fields).forEach(([elementId, key]) => {
+    const element = document.getElementById(elementId);
+    if (element && formSnapshot[key] !== undefined && formSnapshot[key] !== null) {
+      element.value = String(formSnapshot[key]);
+    }
+  });
+}
+
+function persistQuotePricingSnapshot() {
+  if (!quotePricingSnapshot) {
+    clearPersistedQuotePricingSnapshot();
+    return;
+  }
+  try {
+    if (!quoteSnapshotMatchesCart()) {
+      clearPersistedQuotePricingSnapshot();
+      return;
+    }
+    const quoteId = Number(quotePricingSnapshot.quoteId || 0);
+    const token = String(quotePricingSnapshot.checkoutToken || checkoutToken || '');
+    // Only persist a server-issued canonical quote token, not an ordinary POS sale.
+    if (!quoteId || token !== `quote-cart-${quoteId}`) {
+      clearPersistedQuotePricingSnapshot();
+      return;
+    }
+    localStorage.setItem(getQuoteContextStorageKey(), JSON.stringify({
+      version: 1,
+      quoteId,
+      checkoutToken: token,
+      quotePricingSnapshot,
+      lineDiscounts: (window.__quoteLineDiscounts && typeof window.__quoteLineDiscounts === 'object')
+        ? window.__quoteLineDiscounts
+        : {},
+      form: getQuotePricingFormSnapshot(),
+    }));
+  } catch (error) {
+    console.warn('No se pudo guardar el contexto de precios del presupuesto', error);
+  }
+}
+
+function restoreQuotePricingSnapshotFromStorage() {
+  let persisted;
+  try {
+    const raw = localStorage.getItem(getQuoteContextStorageKey());
+    if (!raw) return false;
+    persisted = JSON.parse(raw);
+  } catch (error) {
+    clearPersistedQuotePricingSnapshot();
+    return false;
+  }
+
+  const snapshot = persisted?.quotePricingSnapshot;
+  const quoteId = Number(persisted?.quoteId || snapshot?.quoteId || 0);
+  const token = String(persisted?.checkoutToken || snapshot?.checkoutToken || '');
+  if (
+    persisted?.version !== 1
+    || !quoteId
+    || token !== `quote-cart-${quoteId}`
+    || !snapshot
+    || !Array.isArray(snapshot.items)
+  ) {
+    clearPersistedQuotePricingSnapshot();
+    return false;
+  }
+
+  quotePricingSnapshot = snapshot;
+  checkoutToken = token;
+  window.__quoteLineDiscounts = (
+    persisted.lineDiscounts && typeof persisted.lineDiscounts === 'object' && !Array.isArray(persisted.lineDiscounts)
+  ) ? persisted.lineDiscounts : {};
+  applyQuotePricingFormSnapshot(persisted.form);
+
+  // A saved quote context is valid only for the exact product/quantity/price
+  // combination it came with. If the user edited the cart, don't apply stale
+  // discounts or a stale quote token to the new checkout.
+  if (!quoteSnapshotMatchesCart()) {
+    quotePricingSnapshot = null;
+    checkoutToken = null;
+    window.__quoteLineDiscounts = {};
+    clearPersistedQuotePricingSnapshot();
+    return false;
+  }
+
+  const banner = document.getElementById('quote-prefill-banner');
+  const bannerText = document.getElementById('quote-prefill-banner-text');
+  if (banner) banner.classList.remove('d-none');
+  if (bannerText) {
+    const quoteLabel = snapshot.quoteNumber || `#${quoteId}`;
+    bannerText.textContent = `Origen: presupuesto ${quoteLabel}. Se conservaron los precios y cargos originales; revisa y confirma la venta.`;
+  }
+  renderQuoteChargeBreakdown();
+  return true;
+}
+
 /**
  * Cargar carrito desde localStorage al iniciar
  */
@@ -233,6 +374,9 @@ function loadCart() {
       cart = [];
     }
   }
+  // Restore the quote snapshot before the first total refresh; opening the cash
+  // register navigates away and destroys in-memory JS state.
+  restoreQuotePricingSnapshotFromStorage();
   updateCartUI();
 }
 
@@ -242,6 +386,7 @@ function loadCart() {
 function saveCart() {
   try {
     localStorage.setItem(getCartStorageKey(), JSON.stringify(cart));
+    persistQuotePricingSnapshot();
     updateCartUI();
   } catch (error) {
     console.error('Excepcion en saveCart():', error);
@@ -392,6 +537,7 @@ function applyQuoteCartPrefillFromServer() {
 function invalidateQuoteSnapshot() {
   if (quotePrefillApplying || !quotePricingSnapshot) return;
   quotePricingSnapshot = null;
+  clearPersistedQuotePricingSnapshot();
   window.__quoteLineDiscounts = {};
   window.__quoteCartPrefill = null;
   window.__quoteCartPrefillSeeded = false;
@@ -489,6 +635,7 @@ function clearCart() {
   cart = [];
   resetCheckoutToken();
   quotePricingSnapshot = null;
+  clearPersistedQuotePricingSnapshot();
   window.__quoteLineDiscounts = {};
   saveCart();
   renderCartModal();
