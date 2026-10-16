@@ -3,6 +3,7 @@
 IMPORTANTE: no contiene ni reutiliza entidades del CRM de SuperAdmin.
 """
 from datetime import datetime, timedelta
+from urllib.parse import urlencode
 import re
 
 from flask import Blueprint, abort, flash, redirect, render_template, request, url_for
@@ -649,6 +650,55 @@ def activity_complete(activity_id):
     db.session.commit()
     flash("Actividad completada.", "success")
     return redirect(request.referrer or url_for("crm.activities"))
+
+
+@bp.route("/clients/<int:client_id>/contact/<channel>", methods=["POST"])
+@tenant_required
+@ai_pro_crm_required
+def client_contact(client_id, channel):
+    """Open a real communication channel and record a follow-up task without pretending it was sent."""
+    from app import Client, db
+
+    client = _client_for_company(client_id)
+    if not client:
+        abort(404)
+    channel = (channel or "").strip().lower()
+    if channel == "whatsapp":
+        raw_phone = str(client.whatsapp or client.phone or "").strip()
+        phone = re.sub(r"\D+", "", raw_phone)
+        if not phone:
+            flash("El cliente no tiene un teléfono válido para WhatsApp.", "warning")
+            return redirect(url_for("crm.client_360", client_id=client.id))
+        destination = f"https://wa.me/{phone}"
+        activity_type = "whatsapp"
+        subject = f"Contactar por WhatsApp: {client.name}"
+    elif channel == "email":
+        email = str(client.email or "").strip()
+        if not email or "@" not in email:
+            flash("El cliente no tiene un email válido.", "warning")
+            return redirect(url_for("crm.client_360", client_id=client.id))
+        destination = f"mailto:{email}?{urlencode({'subject': f'Seguimiento comercial - {client.name}'})}"
+        activity_type = "email"
+        subject = f"Contactar por email: {client.name}"
+    else:
+        abort(400)
+
+    now = _now()
+    activity = CRMActivity(
+        company_id=_company_id(),
+        client_id=client.id,
+        user_id=current_user.id,
+        type=activity_type,
+        status="pending",
+        subject=subject[:180],
+        description="Contacto abierto desde la ficha CRM. Marcá el seguimiento como completado después de enviar el mensaje; el CRM no puede confirmar por sí solo que se haya enviado.",
+        created_at=now,
+        updated_at=now,
+    )
+    db.session.add(activity)
+    db.session.commit()
+    flash("Canal abierto y seguimiento registrado. Confirmá el envío y completá la actividad luego.", "info")
+    return redirect(destination)
 
 
 @bp.route("/clients/<int:client_id>")
