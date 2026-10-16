@@ -89,6 +89,14 @@ def _resolve_commercial_links(client_id, quote_id, sale_id, opportunity_id=None)
         sale = scope_query_to_company(Sale.query, Sale).filter(Sale.id == sale_id).first()
         if sale is None or int(sale.client_id or 0) != int(client_id):
             raise ValueError("La venta debe pertenecer al mismo cliente y empresa.")
+        sale_is_annulled = str(sale.status or "").strip().lower() in {"anulada", "cancelada", "cancelled", "voided"}
+        if sale_is_annulled:
+            already_linked_here = opportunity_id and _opportunity_query().filter(
+                CRMOpportunity.id == opportunity_id,
+                CRMOpportunity.sale_id == sale.id,
+            ).first()
+            if not already_linked_here:
+                raise ValueError("No se puede vincular una venta anulada a una oportunidad.")
         if quote is not None and quote.converted_sale_id and int(quote.converted_sale_id) != int(sale.id):
             raise ValueError("La venta seleccionada no corresponde al presupuesto vinculado.")
     elif quote is not None and quote.converted_sale_id:
@@ -128,6 +136,10 @@ def _parse_opportunity_form(client_id, opportunity_id=None):
     quote_id = request.form.get("quote_id", type=int)
     sale_id = request.form.get("sale_id", type=int)
     quote, sale = _resolve_commercial_links(client.id, quote_id, sale_id, opportunity_id)
+    if opportunity_id:
+        existing_opportunity = _opportunity_query().filter(CRMOpportunity.id == opportunity_id).first()
+        if existing_opportunity and existing_opportunity.sale_id and sale_id != existing_opportunity.sale_id:
+            raise ValueError("No se puede desvincular o reemplazar una venta registrada; conservá la trazabilidad de la operación.")
     owner_id = request.form.get("owner_user_id", type=int) or current_user.id
     from app import User
     owner = scope_query_to_company(User.query.filter(User.active.is_(True)), User).filter(User.id == owner_id).first()
@@ -138,9 +150,14 @@ def _parse_opportunity_form(client_id, opportunity_id=None):
     if date_raw and expected_close_date is None:
         raise ValueError("La fecha estimada de cierre no es válida.")
     if sale is not None:
-        stage = "ganado"
         value = float(sale.total_amount or 0)
+        sale_is_annulled = str(sale.status or "").strip().lower() in {"anulada", "cancelada", "cancelled", "voided"}
+        stage = "perdido" if sale_is_annulled else "ganado"
+        probability = 0 if sale_is_annulled else 100
+    elif stage == "ganado":
         probability = 100
+    elif stage == "perdido":
+        probability = 0
     return {
         "client": client,
         "title": title,
@@ -324,14 +341,20 @@ def opportunity_stage(opportunity_id):
         abort(400)
     from app import Sale
 
+    if opportunity.sale_id:
+        linked_sale = scope_query_to_company(Sale.query, Sale).filter(Sale.id == opportunity.sale_id).first()
+        if linked_sale is not None:
+            sale_is_annulled = str(linked_sale.status or "").strip().lower() in {"anulada", "cancelada", "cancelled", "voided"}
+            required_stage = "perdido" if sale_is_annulled else "ganado"
+            if stage != required_stage:
+                flash("La etapa debe reflejar el resultado real de la venta vinculada. Para cambiarla, corregí primero el estado de la venta.", "warning")
+                return redirect(request.referrer or url_for("crm.opportunity_detail", opportunity_id=opportunity.id))
+            opportunity.value = linked_sale.total_amount or opportunity.value
+
     opportunity.stage = stage
     opportunity.status = _stage_status(stage)
     if stage == "ganado":
         opportunity.probability = 100
-        if opportunity.sale_id:
-            sale = scope_query_to_company(Sale.query, Sale).filter(Sale.id == opportunity.sale_id).first()
-            if sale is not None:
-                opportunity.value = sale.total_amount or opportunity.value
     elif stage == "perdido":
         opportunity.probability = 0
     opportunity.updated_at = _now()
