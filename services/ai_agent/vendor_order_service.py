@@ -91,6 +91,7 @@ PENDING_QUOTE_KEY = "pending_quote_id"
 PENDING_PAYMENT_KEY = "pending_payment_url"
 LAST_ORDER_KEY = "vendor_last_order"
 NEW_QUOTE_CONTEXT_KEY = "vendor_new_quote_context"
+SUPERSEDED_QUOTE_IDS_KEY = "vendor_superseded_quote_ids"
 MAX_CART_LINES = 30
 
 
@@ -884,6 +885,21 @@ class VendorOrderService:
 
         cart = {key: qty for key, qty in cart.items() if float(qty or 0) > 0}
         state[CART_KEY] = cart
+        # Keep a durable pointer to the quote being replaced. The active quote
+        # pointer and payment URL are cleared for the new draft, but the previous
+        # quote must not be forgotten before the replacement checkout succeeds.
+        previous_quote_id = state.get(PENDING_QUOTE_KEY)
+        if previous_quote_id:
+            raw_superseded = state.get(SUPERSEDED_QUOTE_IDS_KEY)
+            superseded_ids = raw_superseded if isinstance(raw_superseded, list) else []
+            try:
+                normalized_previous_id = int(previous_quote_id)
+            except (TypeError, ValueError):
+                normalized_previous_id = None
+            if normalized_previous_id and normalized_previous_id not in superseded_ids:
+                superseded_ids.append(normalized_previous_id)
+            if superseded_ids:
+                state[SUPERSEDED_QUOTE_IDS_KEY] = superseded_ids
         state.pop(PENDING_QUOTE_KEY, None)
         state.pop(PENDING_PAYMENT_KEY, None)
         _set_metadata(conversation, state)
@@ -1031,6 +1047,58 @@ class VendorOrderService:
         }
 
     @staticmethod
+    def _cancel_superseded_quotes(
+        *,
+        company_id: int,
+        conversation,
+        quote_id: int,
+        state: Dict[str, Any],
+        preference: Dict[str, Any],
+    ) -> None:
+        """Cancel replaced unpaid quotes only after a usable replacement checkout exists."""
+        from app import Quote
+
+        if not isinstance(preference, dict) or not preference.get("success"):
+            return
+        if SUPERSEDED_QUOTE_IDS_KEY not in state:
+            return
+        raw_ids = state.get(SUPERSEDED_QUOTE_IDS_KEY)
+        quote_ids = raw_ids if isinstance(raw_ids, list) else []
+        for raw_id in quote_ids:
+            try:
+                previous_id = int(raw_id)
+            except (TypeError, ValueError):
+                continue
+            if previous_id <= 0 or previous_id == int(quote_id):
+                continue
+            previous_quote = Quote.query.filter_by(
+                id=previous_id,
+                company_id=int(company_id),
+            ).with_for_update().first()
+            if (
+                previous_quote is None
+                or previous_quote.converted_sale_id is not None
+                or previous_quote.status in {"ANULADO", "RECHAZADO", "VENCIDO", "CONVERTIDO"}
+            ):
+                continue
+            previous_payment = VendorOrderService._payment_for_quote(
+                company_id=company_id,
+                quote_id=previous_quote.id,
+            )
+            payment_status = str(getattr(previous_payment, "status", "") or "").strip().lower()
+            # If payment was already approved, leave this order intact for webhook
+            # reconciliation; never annul a paid or converted order.
+            if payment_status in {"approved", "paid", "succeeded"}:
+                continue
+            previous_quote.status = "ANULADO"
+            if previous_payment is not None and payment_status in {"pending", "in_process", "authorized"}:
+                previous_payment.status = "cancelled"
+
+        state.pop(SUPERSEDED_QUOTE_IDS_KEY, None)
+        _set_metadata(conversation, state)
+        db.session.commit()
+
+    @staticmethod
     def create_pending_order(
         *,
         company_id: int,
@@ -1076,10 +1144,19 @@ class VendorOrderService:
 
         state = _metadata(conversation)
         # An explicit request for another quote starts an independent checkout.
-        # Keep the previous quote id so it can be cancelled only after the replacement
-        # quote and its payment preference have been created successfully.
+        # Keep superseded quote IDs across retries until the replacement checkout works.
         force_new_quote = bool(state.get(NEW_QUOTE_CONTEXT_KEY))
-        superseded_quote_id = state.get(PENDING_QUOTE_KEY) if force_new_quote else None
+        raw_superseded_ids = state.get(SUPERSEDED_QUOTE_IDS_KEY)
+        superseded_quote_ids = raw_superseded_ids if isinstance(raw_superseded_ids, list) else []
+        if force_new_quote and state.get(PENDING_QUOTE_KEY):
+            try:
+                forced_previous_id = int(state.get(PENDING_QUOTE_KEY))
+            except (TypeError, ValueError):
+                forced_previous_id = None
+            if forced_previous_id and forced_previous_id not in superseded_quote_ids:
+                superseded_quote_ids.append(forced_previous_id)
+        if superseded_quote_ids:
+            state[SUPERSEDED_QUOTE_IDS_KEY] = superseded_quote_ids
         operation = None
         if idempotency_key:
             operation = PublicVendorOperation.query.filter_by(
@@ -1106,13 +1183,14 @@ class VendorOrderService:
                     customer_phone=customer_phone,
                     delivery=delivery,
                 )
-                if not same_checkout:
-                    # This conversation already had a live quote, but the newly
-                    # requested cart/customer/delivery differs. Remember it as
-                    # superseded even for WhatsApp, which does not set
-                    # NEW_QUOTE_CONTEXT_KEY (that marker is used by public WebChat).
-                    if not operation_quote_id:
-                        superseded_quote_id = int(existing.id)
+                if not same_checkout and not operation_quote_id:
+                    # A new cart/buyer/delivery replaces the prior checkout. Keep
+                    # the ID through payment-provider failures so a later retry can
+                    # finish the cancellation too.
+                    existing_id = int(existing.id)
+                    if existing_id not in superseded_quote_ids:
+                        superseded_quote_ids.append(existing_id)
+                    state[SUPERSEDED_QUOTE_IDS_KEY] = superseded_quote_ids
                 if same_checkout:
                     external_reference = _ai_order_external_reference(
                         company_id=company_id,
@@ -1141,12 +1219,20 @@ class VendorOrderService:
                     else:
                         if operation is not None:
                             operation.quote_id = existing.id
-                        return VendorOrderService._ensure_payment_preference(
+                        preference = VendorOrderService._ensure_payment_preference(
                             company_id=company_id,
                             conversation=conversation,
                             quote=existing,
                             state=state,
                         )
+                        VendorOrderService._cancel_superseded_quotes(
+                            company_id=company_id,
+                            conversation=conversation,
+                            quote_id=existing.id,
+                            state=state,
+                            preference=preference,
+                        )
+                        return preference
 
         actor = None
         if actor_user_id:
@@ -1434,39 +1520,15 @@ class VendorOrderService:
             state=state,
         )
 
-        # A replacement checkout supersedes the prior unpaid quote. Do this only
-        # after the new payment preference is persisted, so a Mercado Pago failure
-        # never cancels the customer's working checkout. Never cancel paid/converted
-        # orders: an approval webhook may be arriving concurrently.
-        if preference.get("success") and superseded_quote_id:
-            try:
-                previous_id = int(superseded_quote_id)
-            except (TypeError, ValueError):
-                previous_id = None
-            if previous_id and previous_id != int(quote.id):
-                previous_quote = Quote.query.filter_by(
-                    id=previous_id,
-                    company_id=company_id,
-                ).with_for_update().first()
-                if (
-                    previous_quote is not None
-                    and previous_quote.converted_sale_id is None
-                    and previous_quote.status not in {"ANULADO", "RECHAZADO", "VENCIDO", "CONVERTIDO"}
-                ):
-                    previous_payment = VendorOrderService._payment_for_quote(
-                        company_id=company_id,
-                        quote_id=previous_quote.id,
-                    )
-                    previous_payment_status = str(
-                        getattr(previous_payment, "status", "") or ""
-                    ).strip().lower()
-                    if previous_payment_status not in {"approved", "paid", "succeeded"}:
-                        previous_quote.status = "ANULADO"
-                        if previous_payment is not None and previous_payment_status in {
-                            "pending", "in_process", "authorized"
-                        }:
-                            previous_payment.status = "cancelled"
-                        db.session.commit()
+        # Do not retire old checkout links until the replacement preference
+        # exists. This also clears the durable superseded IDs after a successful retry.
+        VendorOrderService._cancel_superseded_quotes(
+            company_id=company_id,
+            conversation=conversation,
+            quote_id=quote.id,
+            state=state,
+            preference=preference,
+        )
 
         return {
             **preference,
