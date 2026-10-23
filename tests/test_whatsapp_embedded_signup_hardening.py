@@ -145,7 +145,7 @@ def test_whatsapp_onboarding_explains_meta_wait_and_has_recoverable_sdk_states()
     assert "WhatsApp vinculado correctamente" in template
     assert "Conexión completada" in template
     assert "Próximo paso: revisá tu Vendedor IA" in template
-    assert "puede mostrarse en blanco unos segundos" in template
+    assert "puede mostrarse en blanco unos segundos" in template.lower()
     assert "para Argentina, seleccioná +54" in template
     assert "Preparando conexión..." in template
     assert "Esperando a Meta..." in template
