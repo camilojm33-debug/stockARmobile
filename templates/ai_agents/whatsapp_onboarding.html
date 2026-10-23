@@ -56,7 +56,6 @@
 {% endblock %}
 {% block extra_js %}
 {% if onboarding_ready and not connected %}
-<script async defer crossorigin="anonymous" src="https://connect.facebook.net/en_US/sdk.js"></script>
 <script>
 (function () {
   const appId = {{ app_id|tojson }};
@@ -166,6 +165,8 @@
     }
   });
 
+  // La configuración v4 se selecciona en Meta (Facebook Login for Business).
+  // Se conserva sessionInfoVersion=3 junto a featureType para el callback de coexistencia.
   window.fbAsyncInit = function () {
     FB.init({appId: appId, cookie: true, xfbml: true, version: 'v26.0'});
   };
@@ -193,5 +194,6 @@
   });
 })();
 </script>
+<script async defer crossorigin="anonymous" src="https://connect.facebook.net/en_US/sdk.js"></script>
 {% endif %}
 {% endblock %}
