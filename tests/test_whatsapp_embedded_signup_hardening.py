@@ -122,3 +122,36 @@ def test_vendor_dashboard_connection_badge_requires_decryptable_access_token():
     assert 'whatsapp_connection.get("access_token")' in source
     assert '"whatsapp_connected": whatsapp_connected' in source
     assert "{{ 'Conectado' if whatsapp_connected else 'No conectado' }}" in template
+
+
+def test_vendor_dashboard_state_reflects_real_channels_and_template_has_no_stray_brace():
+    template = (ROOT / "templates/ai_agents/index.html").read_text(encoding="utf-8")
+
+    assert '{% endif %}}\n<div class="app-shell ai-hub">' not in template
+    assert "{% set vendor_webchat_live = public_webchat_enabled and public_vendor_url %}" in template
+    assert "2 canales activos" in template
+    assert "Vendedor web activo" in template
+    assert "WhatsApp conectado" in template
+    assert "Sin canales activos" in template
+    assert 'class="badge text-bg-success fs-6"><i class="bi bi-circle-fill me-1"></i>Trabajando</span>' not in template
+
+
+def test_whatsapp_onboarding_explains_meta_wait_and_has_recoverable_sdk_states():
+    template = (ROOT / "templates/ai_agents/whatsapp_onboarding.html").read_text(encoding="utf-8")
+
+    assert "WhatsApp vinculado correctamente" in template
+    assert "Conexión completada" in template
+    assert "Próximo paso: revisá tu Vendedor IA" in template
+    assert "puede mostrarse en blanco unos segundos" in template
+    assert "para Argentina, seleccioná +54" in template
+    assert "Preparando conexión..." in template
+    assert "Esperando a Meta..." in template
+    assert "Guardando conexión..." in template
+    assert "function loadMetaSdk()" in template
+    assert "sdkScript.onerror = function ()" in template
+    assert "Reintentar conexión" in template
+    assert "resetConnectButton(" in template
+    assert "statusBox.textContent = String(message || '').slice(0, 500);" in template
+    assert "statusBox.innerHTML" not in template
+    assert "extras: {setup: {}, featureType: 'whatsapp_business_app_onboarding', sessionInfoVersion: '3'}" in template
+
