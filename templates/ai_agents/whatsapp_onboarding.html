@@ -14,6 +14,17 @@
   .wa-status.error { background:#fef2f2; color:#991b1b; border:1px solid #fecaca; }
   .wa-status.ok { background:#f0fdf4; color:#166534; border:1px solid #bbf7d0; }
   .wa-note { border:1px solid var(--app-line); border-radius:14px; padding:1rem; background:var(--app-panel-soft); color:var(--app-muted); font-size:.86rem; }
+  .wa-status:not(.error):not(.ok) { background:#eff6ff; color:#1e40af; border:1px solid #bfdbfe; }
+  .wa-connected-state { display:flex; align-items:flex-start; gap:1rem; padding:1.25rem; border:1px solid #bbf7d0; border-radius:18px; background:linear-gradient(135deg,#f0fdf4,#fff); }
+  .wa-connected-mark { flex:0 0 48px; width:48px; height:48px; display:grid; place-items:center; border-radius:15px; background:#dcfce7; color:#15803d; font-size:1.45rem; }
+  .wa-connected-eyebrow { color:#15803d; font-size:.72rem; font-weight:900; letter-spacing:.08em; text-transform:uppercase; }
+  .wa-number-row { display:flex; align-items:center; justify-content:space-between; gap:1rem; margin-top:1rem; padding:.85rem 1rem; border:1px solid #bbf7d0; border-radius:12px; background:rgba(255,255,255,.8); }
+  .wa-number-value { color:var(--app-text); font-size:1.05rem; font-weight:800; overflow-wrap:anywhere; }
+  .wa-next-step { display:flex; gap:.8rem; align-items:flex-start; margin:1rem 0; padding:1rem; border:1px solid var(--app-line); border-radius:14px; background:var(--app-panel-soft); }
+  .wa-next-icon { flex:0 0 36px; width:36px; height:36px; display:grid; place-items:center; border-radius:11px; background:#eef4ff; color:#2563eb; font-size:1.1rem; }
+  .wa-preflight { display:flex; gap:.75rem; align-items:flex-start; margin:1rem 0; padding:1rem; border:1px solid #dbeafe; border-radius:14px; background:#f8fbff; color:#334155; font-size:.86rem; }
+  .wa-preflight > i { color:#2563eb; font-size:1.2rem; margin-top:.1rem; }
+  @media (max-width: 600px) { .wa-head,.wa-body { padding:1.25rem; } .wa-connected-state { flex-direction:column; } .wa-number-row { align-items:flex-start; flex-direction:column; } }
 </style>
 {% endblock %}
 {% block content %}
@@ -32,8 +43,23 @@
     </div>
     <div class="wa-body">
       {% if connected %}
-        <div class="alert alert-success"><i class="bi bi-check-circle-fill me-2"></i>Este comercio ya tiene un WhatsApp conectado: <strong>{{ whatsapp.display_phone_number or 'número conectado' }}</strong>.</div>
-        <a class="btn btn-primary" href="{{ vendor_url }}"><i class="bi bi-cart-check me-1"></i>Ir al Vendedor IA</a>
+        <section class="wa-connected-state" role="status" aria-live="polite">
+          <div class="wa-connected-mark"><i class="bi bi-check-lg"></i></div>
+          <div class="flex-grow-1">
+            <div class="wa-connected-eyebrow mb-1">Conexión completada</div>
+            <h2 class="h4 fw-bold mb-2">WhatsApp vinculado correctamente</h2>
+            <p class="text-muted mb-0">El número quedó vinculado a tu comercio. Desde el panel podés revisar los canales y probar el Vendedor IA.</p>
+            <div class="wa-number-row">
+              <div><div class="small text-muted mb-1">WhatsApp del comercio</div><div class="wa-number-value">{{ whatsapp.display_phone_number or 'Número conectado' }}</div></div>
+              <span class="badge text-bg-success"><i class="bi bi-check-circle-fill me-1"></i>Conectado</span>
+            </div>
+          </div>
+        </section>
+        <div class="wa-next-step">
+          <div class="wa-next-icon"><i class="bi bi-lightning-charge"></i></div>
+          <div><strong>Próximo paso: revisá tu Vendedor IA</strong><div class="small text-muted mt-1">Entrá al panel para revisar la configuración y comprobar la atención por el canal conectado.</div></div>
+        </div>
+        <a class="btn btn-primary btn-lg w-100" href="{{ vendor_url }}"><i class="bi bi-cart-check me-2"></i>Ir al Vendedor IA</a>
       {% elif not onboarding_ready %}
         <div class="alert alert-warning mb-3"><i class="bi bi-exclamation-triangle me-2"></i>La conexión automática todavía no está habilitada en la cuenta de StockArMobile.</div>
         <div class="wa-note">El administrador debe terminar la configuración de Meta Embedded Signup antes de habilitar este botón para clientes.</div>
@@ -41,9 +67,10 @@
         <div class="mb-3">
           <div class="fw-bold mb-2">Es muy simple</div>
           <div class="wa-step"><div class="wa-step-num">1</div><div><strong>Tocá “Conectar WhatsApp”.</strong><div class="text-muted small">Se abre el flujo oficial de Meta.</div></div></div>
-          <div class="wa-step"><div class="wa-step-num">2</div><div><strong>Elegí tu cuenta y número.</strong><div class="text-muted small">Meta te pedirá las verificaciones necesarias.</div></div></div>
-          <div class="wa-step"><div class="wa-step-num">3</div><div><strong>Volvés a StockArMobile.</strong><div class="text-muted small">Guardamos la conexión y activamos el Vendedor IA 24/7.</div></div></div>
+          <div class="wa-step"><div class="wa-step-num">2</div><div><strong>Elegí tu cuenta y número.</strong><div class="text-muted small">Revisá el código de país antes de confirmar; para Argentina, seleccioná +54. Meta puede pedirte verificaciones adicionales.</div></div></div>
+          <div class="wa-step"><div class="wa-step-num">3</div><div><strong>Volvés a StockArMobile.</strong><div class="text-muted small">Validamos los datos y te mostramos el resultado de la conexión.</div></div></div>
         </div>
+        <div class="wa-preflight" role="note"><i class="bi bi-shield-check"></i><div><strong>Vas a continuar en Meta</strong><div class="small mt-1">Se abrirá una ventana segura. Puede mostrarse en blanco unos segundos mientras carga; dejá esta página abierta y esperá a que termine el registro.</div></div></div>
         <button id="connect-whatsapp" class="btn btn-success btn-lg w-100" type="button">
           <i class="bi bi-whatsapp me-2"></i>Conectar WhatsApp
         </button>
@@ -69,11 +96,31 @@
   let onboardingEvent = '';
   let submitted = false;
   let finishTimer = null;
+  let loginTimer = null;
+  let loginPending = false;
+  let sdkLoading = false;
 
   function setStatus(message, type) {
     if (!statusBox) return;
     statusBox.className = 'wa-status show ' + (type || '');
     statusBox.textContent = String(message || '').slice(0, 500);
+  }
+
+  function resetConnectButton(message, type) {
+    if (loginTimer) clearTimeout(loginTimer);
+    if (finishTimer) clearTimeout(finishTimer);
+    loginTimer = null;
+    finishTimer = null;
+    loginPending = false;
+    submitted = false;
+    button.disabled = false;
+    button.innerHTML = '<i class="bi bi-whatsapp me-2"></i>Conectar WhatsApp';
+    if (message) {
+      setStatus(message, type || 'error');
+    } else if (statusBox) {
+      statusBox.className = 'wa-status';
+      statusBox.textContent = '';
+    }
   }
 
   function isTrustedMetaOrigin(origin) {
@@ -95,8 +142,13 @@
     if (submitted || !authCode || !sessionInfo || !isMetaId(sessionInfo.waba_id)) return;
     submitted = true;
     if (finishTimer) clearTimeout(finishTimer);
+    finishTimer = null;
+    if (loginTimer) clearTimeout(loginTimer);
+    loginTimer = null;
+    loginPending = false;
     button.disabled = true;
-    button.innerHTML = '<span class="spinner-border spinner-border-sm me-2"></span>Conectando...';
+    button.innerHTML = '<span class="spinner-border spinner-border-sm me-2"></span>Guardando conexión...';
+    setStatus('Estamos validando la cuenta y guardando la conexión en StockArMobile.', '');
     const csrf = document.querySelector('meta[name="csrf-token"]')?.content || '';
     fetch(completeUrl, {
       method: 'POST',
@@ -109,10 +161,7 @@
       setStatus('WhatsApp conectado. Activando tu Vendedor IA...', 'ok');
       window.location.href = data.redirect_url || vendorUrl;
     }).catch((error) => {
-      submitted = false;
-      button.disabled = false;
-      button.innerHTML = '<i class="bi bi-whatsapp me-2"></i>Conectar WhatsApp';
-      setStatus(error.message || 'No pudimos completar la conexión.', 'error');
+      resetConnectButton(error.message || 'No pudimos completar la conexión.', 'error');
     });
   }
 
@@ -139,51 +188,101 @@
       }
     }
     if (eventName === 'ERROR') {
-      submitted = false;
-      button.disabled = false;
-      button.innerHTML = '<i class="bi bi-whatsapp me-2"></i>Conectar WhatsApp';
-      setStatus(data.data?.error_message || 'Meta no pudo completar la conexión.', 'error');
+      resetConnectButton(data.data?.error_message || 'Meta no pudo completar la conexión.', 'error');
       return;
     }
     if (eventName === 'CANCEL') {
-      submitted = false;
-      button.disabled = false;
-      button.innerHTML = '<i class="bi bi-whatsapp me-2"></i>Conectar WhatsApp';
-      setStatus('La conexión fue cancelada. Podés intentarlo nuevamente.', 'error');
+      resetConnectButton('La conexión fue cancelada. Podés intentarlo nuevamente.', 'error');
       return;
     }
     if (eventName === 'FINISH' || eventName === 'FINISH_ONLY_WABA' || eventName === 'FINISH_WHATSAPP_BUSINESS_APP_ONBOARDING') {
       onboardingEvent = eventName;
       if (!sessionInfo || !isMetaId(sessionInfo.waba_id)) {
-        submitted = false;
-        button.disabled = false;
-        button.innerHTML = '<i class="bi bi-whatsapp me-2"></i>Conectar WhatsApp';
-        setStatus('Meta terminó el registro, pero no devolvió el identificador de la cuenta de WhatsApp. Volvé a intentarlo.', 'error');
+        resetConnectButton('Meta terminó el registro, pero no devolvió el identificador de la cuenta de WhatsApp. Volvé a intentarlo.', 'error');
         return;
       }
       tryComplete();
     }
   });
 
-  // La configuración v4 se selecciona en Meta (Facebook Login for Business).
-  // Se conserva sessionInfoVersion=3 junto a featureType para el callback de coexistencia.
+  // Embedded Signup v4 se configura en Meta; esta versión corresponde a Graph API.
+  // Conservamos los parámetros del flujo de coexistencia de WhatsApp Business App.
   window.fbAsyncInit = function () {
     FB.init({appId: appId, cookie: true, xfbml: true, version: 'v26.0'});
+    sdkLoading = false;
+    resetConnectButton();
   };
+
+  function loadMetaSdk() {
+    if (window.FB) {
+      sdkLoading = false;
+      resetConnectButton();
+      return;
+    }
+    if (sdkLoading) return;
+    sdkLoading = true;
+    button.disabled = true;
+    button.innerHTML = '<span class="spinner-border spinner-border-sm me-2"></span>Preparando conexión...';
+    setStatus('Estamos cargando la conexión oficial de Meta. El botón se habilitará cuando esté lista.', '');
+    const sdkScript = document.createElement('script');
+    sdkScript.src = 'https://connect.facebook.net/en_US/sdk.js';
+    sdkScript.async = true;
+    sdkScript.crossOrigin = 'anonymous';
+    sdkScript.onerror = function () {
+      sdkLoading = false;
+      button.disabled = false;
+      button.innerHTML = '<i class="bi bi-arrow-clockwise me-2"></i>Reintentar conexión';
+      setStatus('No se pudo cargar Meta. Revisá tu conexión y volvé a intentarlo.', 'error');
+    };
+    document.head.appendChild(sdkScript);
+  }
 
   button.addEventListener('click', function () {
     if (!window.FB) {
-      setStatus('No se pudo cargar Meta. Actualizá la página e intentá nuevamente.', 'error');
+      loadMetaSdk();
       return;
     }
-    setStatus('Abriendo el registro seguro de Meta...', '');
+    if (loginPending || submitted) return;
+    authCode = null;
+    sessionInfo = null;
+    onboardingEvent = '';
+    submitted = false;
+    loginPending = true;
+    button.disabled = true;
+    button.innerHTML = '<span class="spinner-border spinner-border-sm me-2"></span>Esperando a Meta...';
+    setStatus('Meta abrirá una ventana segura para elegir la cuenta comercial y el número. Si tarda unos segundos, dejá esta página abierta.', '');
+    if (loginTimer) clearTimeout(loginTimer);
+    loginTimer = setTimeout(function () {
+      if (loginPending) {
+        resetConnectButton('No recibimos respuesta de Meta. Podés volver a intentar la conexión.', 'error');
+      }
+    }, 90000);
+
     FB.login(function (response) {
       if (response && response.authResponse && response.authResponse.code) {
+        if (loginTimer) clearTimeout(loginTimer);
+        loginTimer = null;
+        loginPending = false;
         authCode = response.authResponse.code;
-        finishTimer = setTimeout(tryComplete, 1500);
+        button.disabled = true;
+        button.innerHTML = '<span class="spinner-border spinner-border-sm me-2"></span>Validando conexión...';
+        setStatus('Autorización recibida. Estamos esperando la confirmación de la cuenta y el número.', '');
+        if (finishTimer) clearTimeout(finishTimer);
+        finishTimer = setTimeout(function () {
+          if (!sessionInfo || !isMetaId(sessionInfo.waba_id)) {
+            authCode = null;
+            sessionInfo = null;
+            onboardingEvent = '';
+            resetConnectButton('Meta autorizó el acceso, pero no recibimos la confirmación de la cuenta de WhatsApp. Volvé a intentarlo.', 'error');
+            return;
+          }
+          tryComplete();
+        }, 45000);
         tryComplete();
       } else if (response && response.status === 'unknown') {
-        setStatus('La conexión no fue autorizada. Podés intentarlo nuevamente.', 'error');
+        resetConnectButton('La conexión fue cancelada o no fue autorizada. Podés intentarlo nuevamente.', 'error');
+      } else {
+        resetConnectButton('Meta cerró la ventana antes de completar la autorización. Podés intentarlo nuevamente.', 'error');
       }
     }, {
       config_id: configId,
@@ -192,8 +291,9 @@
       extras: {setup: {}, featureType: 'whatsapp_business_app_onboarding', sessionInfoVersion: '3'}
     });
   });
+
+  loadMetaSdk();
 })();
 </script>
-<script async defer crossorigin="anonymous" src="https://connect.facebook.net/en_US/sdk.js"></script>
 {% endif %}
 {% endblock %}
