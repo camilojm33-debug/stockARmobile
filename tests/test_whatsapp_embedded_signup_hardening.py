@@ -80,15 +80,27 @@ def test_webhook_signature_uses_same_meta_secret_alias_as_embedded_signup():
     assert 'if not app_secret:\n        return not bool(current_app.config.get("IS_PRODUCTION_ENV"))' in source
 
 
-def test_embedded_signup_launch_uses_v4_and_offers_business_app_coexistence():
+def test_embedded_signup_launch_uses_meta_config_and_preserves_coexistence():
     template = (ROOT / "templates/ai_agents/whatsapp_onboarding.html").read_text(encoding="utf-8")
 
+    # Embedded Signup v4 is selected by the Facebook Login for Business configuration
+    # in Meta, not by adding a version field to FB.login extras.
     assert "config_id: configId" in template
+    assert "version: 'v3'" not in template
+    assert "version: 'v4'" not in template
+    # Coexistence still uses this feature type and session callback version.
     assert "extras: {setup: {}, featureType: 'whatsapp_business_app_onboarding', sessionInfoVersion: '3'}" in template
     assert "onboardingEvent = eventName" in template
     assert "phone_number_id: sessionInfo.phone_number_id || ''" in template
     assert "sessionInfoVersion: '3'" in template
-    assert "version: 'v3'" not in template
+
+
+def test_facebook_sdk_loads_only_after_fb_async_init_is_registered():
+    template = (ROOT / "templates/ai_agents/whatsapp_onboarding.html").read_text(encoding="utf-8")
+
+    init_callback = template.index("window.fbAsyncInit = function ()")
+    sdk_script = template.index('<script async defer crossorigin="anonymous" src="https://connect.facebook.net/en_US/sdk.js"></script>')
+    assert init_callback < sdk_script
 
 
 def test_embedded_signup_completion_resolves_missing_phone_id_server_side_and_skips_register_for_coexistence():
