@@ -99,8 +99,11 @@ def test_facebook_sdk_loads_only_after_fb_async_init_is_registered():
     template = (ROOT / "templates/ai_agents/whatsapp_onboarding.html").read_text(encoding="utf-8")
 
     init_callback = template.index("window.fbAsyncInit = function ()")
-    sdk_script = template.index('<script async defer crossorigin="anonymous" src="https://connect.facebook.net/en_US/sdk.js"></script>')
-    assert init_callback < sdk_script
+    sdk_loader = template.index("const sdkScript = document.createElement('script');")
+    sdk_url = template.index("sdkScript.src = 'https://connect.facebook.net/en_US/sdk.js';")
+    sdk_append = template.index("document.head.appendChild(sdkScript);")
+    assert init_callback < sdk_loader < sdk_url < sdk_append
+    assert "sdkScript.onerror = function ()" in template
 
 
 def test_embedded_signup_completion_resolves_missing_phone_id_server_side_and_skips_register_for_coexistence():
