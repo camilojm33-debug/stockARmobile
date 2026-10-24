@@ -1587,7 +1587,7 @@ class AgentRuntime:
         history = cls._history(
             company_id,
             conversation.id,
-            PUBLIC_WEBCHAT_HISTORY_LIMIT if is_public_webchat else 19,
+            PUBLIC_WEBCHAT_HISTORY_LIMIT if is_public_webchat else 18,
             exclude_message_id=retry_incoming.id if retry_incoming is not None else None,
         )
         trace_id = (
