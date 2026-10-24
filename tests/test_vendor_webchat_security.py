@@ -81,19 +81,39 @@ def test_public_visitor_cookie_keeps_identity_when_flask_session_changes(qa_ai_d
     with stock_app.app.test_request_context("/"):
         first = vendor_publication._visitor_id(company_id)
         response = vendor_publication._persist_public_visitor_cookies(jsonify({"success": True}))
-        assert g._public_vendor_visitor_cookies[cookie_name] == first
-        assert f"{cookie_name}={first}" in response.headers["Set-Cookie"]
+        cookie_pair = response.headers["Set-Cookie"].split(";", 1)[0]
+        cookie_value = cookie_pair.split("=", 1)[1]
+        assert g._public_vendor_visitor_cookies[cookie_name] == cookie_value
+        assert vendor_publication._public_visitor_cookie_serializer().loads(cookie_value) == first
         assert session[session_key] == first
 
     # A new Flask session (as can happen after a session cookie is refreshed)
     # must continue to use the stable public-visitor cookie value.
-    with stock_app.app.test_request_context("/", headers={"Cookie": f"{cookie_name}={first}"}):
+    with stock_app.app.test_request_context("/", headers={"Cookie": f"{cookie_name}={cookie_value}"}):
         second = vendor_publication._visitor_id(company_id)
         assert second == first
         assert session[session_key] == first
         assert not getattr(g, "_public_vendor_visitor_cookies", {})
 
 
+def test_public_visitor_cookie_rejects_a_forged_visitor_id(qa_ai_database):
+    from services.ai_agent import vendor_publication
+
+    company_id = qa_ai_database["companies"]["vendedor"].id
+    cookie_name = vendor_publication._public_visitor_cookie_name(company_id)
+    serializer = vendor_publication._public_visitor_cookie_serializer()
+    victim_id = "a" * 32
+    signed = serializer.dumps(victim_id)
+    payload, signature = signed.rsplit(".", 1)
+    tampered_signature = ("A" if signature[0] != "A" else "B") + signature[1:]
+    tampered_cookie = payload + "." + tampered_signature
+
+    with stock_app.app.test_request_context("/", headers={"Cookie": f"{cookie_name}={tampered_cookie}"}):
+        visitor_id = vendor_publication._visitor_id(company_id)
+        assert visitor_id != victim_id
+        response = vendor_publication._persist_public_visitor_cookies(jsonify({"success": True}))
+        replacement = response.headers["Set-Cookie"].split(";", 1)[0].split("=", 1)[1]
+        assert serializer.loads(replacement) == visitor_id
 
 def test_public_chat_session_cannot_resolve_with_another_tab_token(qa_ai_database, monkeypatch):
     import hashlib
