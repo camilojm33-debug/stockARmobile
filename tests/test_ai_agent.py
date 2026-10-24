@@ -311,10 +311,16 @@ def test_orchestrator_integration_flow_with_fake_provider(ai_database, monkeypat
     first_call = fake_provider.calls[0]
     second_call = fake_provider.calls[1]
 
-    assert first_call["messages"] == [{"role": "user", "content": "Hola"}]
+    assert first_call["messages"][-1] == {"role": "user", "content": "Hola"}
+    assert first_call["messages"][0]["role"] == "system"
+    assert "LÍMITES OBLIGATORIOS DEL ROL" in first_call["messages"][0]["content"]
     assert any(tool["function"]["name"] == "buscar_producto" for tool in first_call["tools"])
 
-    assert second_call["messages"][1]["tool_calls"][0]["function"]["name"] == "buscar_producto"
+    assistant_tool_message = next(
+        item for item in second_call["messages"]
+        if item.get("role") == "assistant" and item.get("tool_calls")
+    )
+    assert assistant_tool_message["tool_calls"][0]["function"]["name"] == "buscar_producto"
     tool_result = json.loads(second_call["messages"][-1]["content"])
     assert tool_result["success"] is True
     assert tool_result["items"][0]["id"] == data["product_a"].id
@@ -530,8 +536,10 @@ def test_conversation_history_preserves_order(ai_database, monkeypatch):
     )
 
     messages = fake_provider.calls[0]["messages"]
-    content_order = [message["content"] for message in messages]
+    content_order = [message["content"] for message in messages if message.get("role") != "system"]
     assert content_order == ["Primero", "Segundo", "Tercero", "Cuarto"]
+    assert messages[0]["role"] == "system"
+    assert "LÍMITES OBLIGATORIOS DEL ROL" in messages[0]["content"]
 
 
 def test_tool_flow_preserves_context(ai_database, monkeypatch):

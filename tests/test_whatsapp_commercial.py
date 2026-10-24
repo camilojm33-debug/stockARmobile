@@ -152,6 +152,47 @@ def test_commercial_runtime_exposes_only_offer_tool(commercial_database):
     assert "preparar_pedido" not in names
 
 
+def test_commercial_runtime_blocks_biblical_question_before_provider_call(commercial_database):
+    company = commercial_database["company"]
+    conversation = get_commercial_conversation(company.id, "549999000333")
+
+    class CapturingProvider:
+        def __init__(self):
+            self.calls = []
+
+        def generate(self, **payload):
+            self.calls.append(payload)
+            return {"content": "No debería generarse una respuesta del modelo."}
+
+    provider = CapturingProvider()
+    result = AgentRuntime.process(
+        company_id=company.id,
+        conversation_id=conversation.id,
+        message="¿Qué dice la Biblia sobre el perdón?",
+        channel="whatsapp_commercial",
+        sender_id=None,
+        external_message_id="wamid.QA.SCOPE.001",
+        idempotency_key="whatsapp-commercial:wamid.QA.SCOPE.001",
+        metadata={"channel": "whatsapp_commercial", "commercial_acquisition": True},
+        provider_override=provider,
+    )
+
+    assert result["status"] == "completed"
+    assert result["scope_guard"] == {"blocked": True, "category": "religion"}
+    assert "Soy el asistente comercial de StockArMobile." in result["content"]
+    assert "Biblia" not in result["content"]
+    assert provider.calls == []
+
+    response = ConversationMessage.query.filter_by(
+        company_id=company.id,
+        conversation_id=conversation.id,
+        role="assistant",
+    ).order_by(ConversationMessage.id.desc()).first()
+    assert response is not None
+    assert response.metadata_json["scope_guard"] == {"blocked": True, "category": "religion"}
+    assert response.metadata_json["ai_usage_telemetry"]["provider_calls"] == 0
+
+
 def test_commercial_message_can_retry_send_after_runtime_duplicate(commercial_database):
     sends = []
     runtime_calls = []
