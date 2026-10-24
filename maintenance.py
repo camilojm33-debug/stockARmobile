@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import hmac
 import os
+from pathlib import Path
 
 from flask import Blueprint, current_app, jsonify, request
 
@@ -75,8 +76,19 @@ def run_backup_maintenance():
     today = __import__("datetime").datetime.utcnow().date()
     for company in companies:
         try:
-            if not BackupService.automated_backup_due(company.id, day_of_month=today.day):
-                plan = BackupService._plan_context(company.id)
+            plan = BackupService._plan_context(company.id)
+            existing_backups = BackupService.company_backups(company.id)
+            has_usable_backup = any(
+                item.status in {"ready", "restored"}
+                and bool(str(item.path or "").strip())
+                and Path(str(item.path)).is_file()
+                for item in existing_backups
+            )
+            due_today = BackupService.automated_backup_due(
+                company.id,
+                day_of_month=today.day,
+            )
+            if not due_today and has_usable_backup:
                 results.append({
                     "company_id": company.id,
                     "status": "skipped",
@@ -85,10 +97,16 @@ def run_backup_maintenance():
                 })
                 continue
 
+            # Bootstrap the first usable copy immediately, even if the monthly
+            # plan slot has passed. Otherwise a new tenant can go weeks without
+            # the backup advertised in the plan, and the verifier fails daily.
+            trigger_type = (
+                "automated_render" if due_today else "automated_render_bootstrap"
+            )
             backup, plan = BackupService.create_manual_backup(
                 company.id,
                 user_id=None,
-                trigger_type="automated_render",
+                trigger_type=trigger_type,
             )
             db.session.commit()
             results.append(
@@ -98,6 +116,11 @@ def run_backup_maintenance():
                     "backup_id": backup.id,
                     "plan": plan["code"],
                     "file_name": backup.file_name,
+                    "reason": (
+                        "first_backup_bootstrap"
+                        if trigger_type == "automated_render_bootstrap"
+                        else "scheduled_monthly_slot"
+                    ),
                 }
             )
         except Exception as exc:

@@ -155,3 +155,59 @@ def test_billing_reconciliation_cron_report_omits_response_bodies_and_secrets(ca
     )
     assert _report_response(ok_response) == 0
     assert "events_scanned=3" in capsys.readouterr().out
+
+
+def test_backup_maintenance_bootstraps_first_backup_outside_monthly_slot(app, monkeypatch, tmp_path):
+    from types import SimpleNamespace
+
+    from app import Company, db
+    from services.backup_service import BackupService
+
+    monkeypatch.setenv("BACKUP_AUTOMATION_TOKEN", "backup-test-token")
+    company = Company(name="Backup bootstrap QA", active=True)
+    db.session.add(company)
+    db.session.commit()
+    monkeypatch.setenv("BACKUP_VERIFY_COMPANY_ID", str(company.id))
+
+    monkeypatch.setattr(
+        BackupService,
+        "automated_backup_due",
+        staticmethod(lambda company_id, day_of_month=None: False),
+    )
+    backup_path = tmp_path / "bootstrap-backup.gz"
+    created = []
+    backup = SimpleNamespace(
+        id=901,
+        status="ready",
+        path=str(backup_path),
+        file_name=backup_path.name,
+    )
+
+    def create_backup(company_id, *, user_id, trigger_type):
+        created.append({"company_id": company_id, "trigger_type": trigger_type})
+        backup_path.write_bytes(b"test backup placeholder")
+        return backup, {"code": "trial", "limit": 1}
+
+    def company_backups(company_id):
+        return [backup] if created and company_id == company.id else []
+
+    monkeypatch.setattr(BackupService, "create_manual_backup", create_backup)
+    monkeypatch.setattr(BackupService, "company_backups", company_backups)
+    monkeypatch.setattr(
+        BackupService,
+        "verify_restore_round_trip",
+        lambda item, *, expected_company_id: {"valid": True, "company_id": expected_company_id},
+    )
+
+    response = app.test_client().post(
+        "/internal/maintenance/backups/run",
+        headers={"X-Backup-Automation-Token": "backup-test-token"},
+    )
+
+    assert response.status_code == 200
+    payload = response.get_json()
+    assert payload["ok"] is True
+    assert payload["results"][0]["status"] == "ready"
+    assert payload["results"][0]["reason"] == "first_backup_bootstrap"
+    assert created == [{"company_id": company.id, "trigger_type": "automated_render_bootstrap"}]
+    assert payload["restore_verification"]["valid"] is True
