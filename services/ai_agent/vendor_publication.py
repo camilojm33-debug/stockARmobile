@@ -337,35 +337,30 @@ def _public_conversation(company, conversation_id=None, *, create=False, chat_se
     if has_chat_session and session_digest is None:
         return None
 
-    scoped_query = Conversation.query.filter_by(
+    tenant_query = Conversation.query.filter_by(
         company_id=company.id,
         channel="webchat",
-        external_conversation_id=visitor_id,
         agent_id=vendor_agent.id,
     )
+    scoped_query = tenant_query.filter_by(external_conversation_id=visitor_id)
 
     if session_digest:
-        # A browser visitor can own several parallel chats. Resolve a chat only
-        # when its high-entropy per-tab token matches the digest persisted on it.
+        # The high-entropy per-tab token is the stable identifier for this chat.
+        # Do not also require the Flask visitor cookie to match: cookies can be
+        # renewed/lost between requests or across app workers, which otherwise
+        # makes a valid chat look empty after a successful message POST.
+        session_query = tenant_query.filter(
+            Conversation.metadata_json["public_chat_session_digest"].as_string() == session_digest
+        )
         if conversation_id not in (None, ""):
             try:
-                conversation = scoped_query.filter_by(id=int(conversation_id)).first()
+                conversation = session_query.filter_by(id=int(conversation_id)).first()
             except (TypeError, ValueError):
                 conversation = None
-            if (
-                conversation is None
-                or _conversation_metadata(conversation).get("public_chat_session_digest") != session_digest
-            ):
+            if conversation is None:
                 return None
         else:
-            candidates = scoped_query.order_by(Conversation.id.desc()).all()
-            conversation = next(
-                (
-                    candidate for candidate in candidates
-                    if _conversation_metadata(candidate).get("public_chat_session_digest") == session_digest
-                ),
-                None,
-            )
+            conversation = session_query.order_by(Conversation.id.desc()).first()
     else:
         # Backward compatibility for already-open pages using the legacy client.
         # Legacy requests must never select a conversation owned by a per-tab token.
@@ -399,21 +394,6 @@ def _public_conversation(company, conversation_id=None, *, create=False, chat_se
         # another chat (or create a replacement under a mismatched token).
         if conversation_id not in (None, ""):
             return None
-        if session_digest:
-            # A stale token must not silently create a second conversation if
-            # the browser cookie changed while the tab's sessionStorage survived.
-            other_visitors = Conversation.query.filter_by(
-                company_id=company.id,
-                channel="webchat",
-                agent_id=vendor_agent.id,
-            ).all()
-            token_owned_by_another_visitor = any(
-                candidate.external_conversation_id != visitor_id
-                and _conversation_metadata(candidate).get("public_chat_session_digest") == session_digest
-                for candidate in other_visitors
-            )
-            if token_owned_by_another_visitor:
-                return None
         metadata = {"source": "public_webchat_stable"}
         if session_digest:
             metadata["public_chat_session_digest"] = session_digest
@@ -428,7 +408,6 @@ def _public_conversation(company, conversation_id=None, *, create=False, chat_se
         db.session.add(conversation)
         db.session.flush()
     return conversation
-
 
 def _cart_public_state(conversation) -> dict:
     cart = VendorOrderService.get_cart(company_id=conversation.company_id, conversation_id=conversation.id)

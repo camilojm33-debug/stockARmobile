@@ -67,3 +67,77 @@ def test_public_vendor_limits_fallback_without_redis_in_production(qa_ai_databas
             conversation_id=conversation.id,
             request_key="qa-rate-cart",
         ) is True
+
+
+def test_public_chat_session_resolves_when_visitor_cookie_changes(qa_ai_database, monkeypatch):
+    """The per-tab token must recover the same chat even if the Flask cookie changes."""
+    import hashlib
+
+    from services.ai_agent import vendor_publication
+    from services.ai_agent.config_service import VENDOR_AGENT_NAME
+    from stockarmobile.models.conversations import Agent, Conversation
+
+    company = qa_ai_database["companies"]["vendedor"]
+    agent = Agent.query.filter_by(company_id=company.id, name=VENDOR_AGENT_NAME).first()
+    token = "qa-public-chat-session-" + ("x" * 32)
+    digest = hashlib.sha256(token.encode("utf-8")).hexdigest()
+    conversation = Conversation(
+        company_id=company.id,
+        agent_id=agent.id,
+        channel="webchat",
+        external_conversation_id="qa-original-visitor",
+        status="open",
+        metadata_json={"source": "public_webchat_stable", "public_chat_session_digest": digest},
+    )
+    stock_app.db.session.add(conversation)
+    stock_app.db.session.flush()
+
+    monkeypatch.setattr(vendor_publication, "_visitor_id", lambda company_id: "qa-renewed-visitor")
+    resolved_by_id = vendor_publication._public_conversation(
+        company,
+        conversation.id,
+        create=False,
+        chat_session_id=token,
+    )
+    resolved_after_reload = vendor_publication._public_conversation(
+        company,
+        create=False,
+        chat_session_id=token,
+    )
+
+    assert resolved_by_id is not None
+    assert resolved_by_id.id == conversation.id
+    assert resolved_after_reload is not None
+    assert resolved_after_reload.id == conversation.id
+
+
+def test_public_chat_session_cannot_resolve_with_another_tab_token(qa_ai_database, monkeypatch):
+    import hashlib
+
+    from services.ai_agent import vendor_publication
+    from services.ai_agent.config_service import VENDOR_AGENT_NAME
+    from stockarmobile.models.conversations import Agent, Conversation
+
+    company = qa_ai_database["companies"]["vendedor"]
+    agent = Agent.query.filter_by(company_id=company.id, name=VENDOR_AGENT_NAME).first()
+    token = "qa-public-chat-session-" + ("a" * 32)
+    other_token = "qa-public-chat-session-" + ("b" * 32)
+    digest = hashlib.sha256(token.encode("utf-8")).hexdigest()
+    conversation = Conversation(
+        company_id=company.id,
+        agent_id=agent.id,
+        channel="webchat",
+        external_conversation_id="qa-visitor",
+        status="open",
+        metadata_json={"source": "public_webchat_stable", "public_chat_session_digest": digest},
+    )
+    stock_app.db.session.add(conversation)
+    stock_app.db.session.flush()
+    monkeypatch.setattr(vendor_publication, "_visitor_id", lambda company_id: "qa-visitor")
+
+    assert vendor_publication._public_conversation(
+        company,
+        conversation.id,
+        create=False,
+        chat_session_id=other_token,
+    ) is None
