@@ -40,7 +40,7 @@ _OUT_OF_SCOPE_INTENTS = (
     (
         "politics",
         re.compile(
-            r"\b(?:por quien votar|intencion de voto|resultados? de las elecciones|"
+            r"\b(?:por quien(?: deberia| debo| tendria que)? votar|intencion de voto|resultados? de las elecciones|"
             r"quien es el presidente|quien es la presidenta|que opinas del presidente|"
             r"partidos politicos|encuesta electoral)\b"
         ),
