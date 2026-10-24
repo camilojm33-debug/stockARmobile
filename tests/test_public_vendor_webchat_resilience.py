@@ -197,6 +197,44 @@ def _post_message(client, setup, key, message, conversation_id=None, chat_sessio
     )
 
 
+def test_public_webchat_restores_cart_after_flask_session_changes(qa_public_vendor_setup):
+    client = _public_client(qa_public_vendor_setup)
+    tab_id = "a" * 40
+    cookie_name = (
+        f"stockarmobile_public_vendor_visitor_{qa_public_vendor_setup['company'].id}"
+    )
+    visitor_cookie = client.get_cookie(cookie_name)
+    assert visitor_cookie is not None
+
+    cart_response = client.post(
+        f"/vendedor/{qa_public_vendor_setup['slug']}/cart",
+        headers={"Idempotency-Key": "stable-public-chat-cart-001"},
+        json={
+            "chat_session_id": tab_id,
+            "action": "add",
+            "product_id": qa_public_vendor_setup["product"].id,
+            "quantity": 2,
+        },
+    )
+    assert cart_response.status_code == 200
+    conversation_id = cart_response.json["conversation_id"]
+
+    state_url = (
+        f"/vendedor/{qa_public_vendor_setup['slug']}/state"
+        f"?chat_session_id={tab_id}"
+    )
+    before_session_change = client.get(state_url)
+    assert before_session_change.status_code == 200
+    assert before_session_change.json["conversation_id"] == conversation_id
+    assert before_session_change.json["cart"] == cart_response.json["cart"]
+
+    client.delete_cookie("session")
+    after_session_change = client.get(state_url)
+    assert after_session_change.status_code == 200
+    assert after_session_change.json["conversation_id"] == conversation_id
+    assert after_session_change.json["cart"] == cart_response.json["cart"]
+
+
 def _count_rate_limit(monkeypatch):
     import ai_agents
 
