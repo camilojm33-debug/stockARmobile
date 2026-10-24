@@ -1616,6 +1616,64 @@ class AgentRuntime:
             db.session.add(incoming)
         db.session.flush()
 
+        # Deterministic high-confidence filter: clearly unrelated requests are
+        # answered without invoking the LLM or exposing any business tools.
+        from services.ai_agent.scope_guard import detect_out_of_scope_intent
+        out_of_scope_topic = detect_out_of_scope_intent(agent_key, request_message)
+        if out_of_scope_topic:
+            scope_reply = AGENT_SCOPE_REDIRECTS[agent_key]
+            scope_telemetry = {
+                "provider": "scope_guard",
+                "model": "deterministic",
+                "provider_calls": 0,
+                "tool_rounds": 0,
+                "input_tokens": 0,
+                "output_tokens": 0,
+                "total_tokens": 0,
+            }
+            assistant = ConversationMessage(
+                conversation_id=conversation.id,
+                company_id=company_id,
+                sender_type="agent",
+                sender_id=agent.id,
+                role="assistant",
+                content=scope_reply,
+                content_type="text",
+                trace_id=trace_id,
+                metadata_json={
+                    "channel": channel,
+                    "agent_name": agent.name,
+                    "agent_key": agent_key,
+                    "tool_rounds": 0,
+                    "ai_usage_telemetry": scope_telemetry,
+                    "scope_guard": {"blocked": True, "category": out_of_scope_topic},
+                },
+            )
+            db.session.add(assistant)
+            db.session.flush()
+            record_ai_usage(
+                company_id=company_id,
+                agent_id=agent.id,
+                conversation_id=conversation.id,
+                user_id=sender_id,
+                external_actor_id=(metadata or {}).get("from"),
+                interaction_type=agent_key,
+                message_id=assistant.id,
+                telemetry=scope_telemetry,
+            )
+            db.session.commit()
+            return {
+                "status": "completed",
+                "company_id": company_id,
+                "conversation_id": conversation.id,
+                "agent_id": agent.id,
+                "message_id": incoming.id,
+                "assistant_message_id": assistant.id,
+                "content": scope_reply,
+                "trace_id": trace_id,
+                "scope_guard": {"blocked": True, "category": out_of_scope_topic},
+            }
+
         config = cls._config(agent, company_id)
         prompt = {
             "vendedor": VENDOR_SYSTEM_PROMPT,
