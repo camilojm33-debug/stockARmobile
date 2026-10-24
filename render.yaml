@@ -16,6 +16,10 @@ services:
     env: python
     buildCommand: pip install -r requirements.txt
     healthCheckPath: /healthz
+    disk:
+      name: disk
+      mountPath: /var/data
+      sizeGB: 5
     startCommand: python -m flask db upgrade && gunicorn --timeout 120 wsgi:application
     envVars:
       - fromGroup: stockarmobile-campaign-controls
@@ -98,6 +102,21 @@ services:
         sync: false
       - key: TRUST_PROXY_HOPS
         value: "1"
+      # Password recovery for the web service must use the same configured
+      # SMTP provider as the scheduled campaign workers. Values remain managed
+      # in the Render dashboard and are never committed to the repository.
+      - key: SMTP_HOST
+        sync: false
+      - key: SMTP_PORT
+        value: "587"
+      - key: SMTP_USE_TLS
+        value: "1"
+      - key: SMTP_USER
+        sync: false
+      - key: SMTP_PASSWORD
+        sync: false
+      - key: SMTP_FROM_EMAIL
+        sync: false
       - key: REDIS_URL
         sync: false
       - key: DATABASE_URL
