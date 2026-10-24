@@ -141,3 +141,86 @@ def test_public_chat_session_cannot_resolve_with_another_tab_token(qa_ai_databas
         create=False,
         chat_session_id=other_token,
     ) is None
+
+
+
+def test_public_state_returns_session_chat_after_visitor_cookie_changes(qa_ai_database, monkeypatch):
+    """The state endpoint must not turn a persisted chat into an empty state."""
+    import hashlib
+
+    from flask import request
+
+    from services.ai_agent import vendor_publication
+    from services.ai_agent.config_service import VENDOR_AGENT_NAME
+    from services.ai_agent.vendor_order_service import VendorOrderService
+    from stockarmobile.models.conversations import Agent, Conversation, ConversationMessage
+
+    company = qa_ai_database["companies"]["vendedor"]
+    agent = Agent.query.filter_by(company_id=company.id, name=VENDOR_AGENT_NAME).first()
+    token = "qa-public-chat-session-" + ("z" * 32)
+    digest = hashlib.sha256(token.encode("utf-8")).hexdigest()
+    conversation = Conversation(
+        company_id=company.id,
+        agent_id=agent.id,
+        channel="webchat",
+        external_conversation_id="qa-original-visitor",
+        status="open",
+        metadata_json={"source": "public_webchat_stable", "public_chat_session_digest": digest},
+    )
+    stock_app.db.session.add(conversation)
+    stock_app.db.session.flush()
+    stock_app.db.session.add_all([
+        ConversationMessage(
+            company_id=company.id,
+            conversation_id=conversation.id,
+            sender_type="user",
+            role="user",
+            content="Agregar Yerba Mate Tradicional 1 kg",
+            content_type="text",
+        ),
+        ConversationMessage(
+            company_id=company.id,
+            conversation_id=conversation.id,
+            sender_type="agent",
+            role="assistant",
+            content="Agregué 2 unidades al carrito.",
+            content_type="text",
+        ),
+    ])
+    stock_app.db.session.flush()
+
+    expected_cart = {
+        "items": [{
+            "product_id": 71,
+            "name": "Yerba Mate Tradicional 1 kg",
+            "quantity": 2,
+            "unit_measure": "u",
+            "unit_price": 5355,
+            "subtotal": 10710,
+            "stock": 10,
+        }],
+        "total": 10710,
+        "currency": "ARS",
+        "line_count": 1,
+    }
+    monkeypatch.setattr(vendor_publication, "_public_available_company", lambda slug: company)
+    monkeypatch.setattr(vendor_publication, "_visitor_id", lambda company_id: "qa-renewed-visitor")
+    monkeypatch.setattr(
+        vendor_publication,
+        "can_use_ai",
+        lambda company, agent: type("Access", (), {"allowed": True, "reason": ""})(),
+    )
+    monkeypatch.setattr(VendorOrderService, "get_cart", lambda **kwargs: expected_cart)
+
+    with stock_app.app.test_request_context(
+        f"/vendedor/demo/state?conversation_id={conversation.id}&chat_session_id={token}"
+    ):
+        response = vendor_publication.public_vendor_state("demo")
+
+    payload = response.get_json()
+    assert payload["success"] is True
+    assert payload["conversation_id"] == conversation.id
+    assert payload["cart"]["items"][0]["quantity"] == 2
+    assert payload["cart"]["total"] == 10710
+    assert [message["role"] for message in payload["messages"]] == ["user", "assistant"]
+    assert "Yerba Mate" in payload["messages"][0]["content"]
