@@ -536,8 +536,10 @@ def test_conversation_history_preserves_order(ai_database, monkeypatch):
     )
 
     messages = fake_provider.calls[0]["messages"]
-    content_order = [message["content"] for message in messages]
+    content_order = [message["content"] for message in messages if message.get("role") != "system"]
     assert content_order == ["Primero", "Segundo", "Tercero", "Cuarto"]
+    assert messages[0]["role"] == "system"
+    assert "LÍMITES OBLIGATORIOS DEL ROL" in messages[0]["content"]
 
 
 def test_tool_flow_preserves_context(ai_database, monkeypatch):
