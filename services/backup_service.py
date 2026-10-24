@@ -15,8 +15,8 @@ from flask import current_app
 
 
 class BackupService:
-    CURRENT_SCHEMA_VERSION = 2
-    SUPPORTED_SCHEMA_VERSIONS = {1, 2}
+    CURRENT_SCHEMA_VERSION = 3
+    SUPPORTED_SCHEMA_VERSIONS = {1, 2, 3}
     DEFAULT_MAX_COMPRESSED_BYTES = 5 * 1024 * 1024
     DEFAULT_MAX_UNCOMPRESSED_BYTES = 20 * 1024 * 1024
     PLAN_LIMITS = {
@@ -481,6 +481,7 @@ class BackupService:
             Supplier,
             User,
         )
+        from stockarmobile.supplier_purchase_payments import PurchasePaymentDetail
 
         company = Company.query.filter_by(id=company_id).first_or_404()
 
@@ -503,6 +504,17 @@ class BackupService:
             purchase_items = (
                 PurchaseItem.query.filter(PurchaseItem.purchase_order_id.in_(purchase_order_ids))
                 .order_by(PurchaseItem.id.asc())
+                .all()
+            )
+
+        purchase_payment_details = []
+        if purchase_order_ids:
+            purchase_payment_details = (
+                PurchasePaymentDetail.query.filter(
+                    PurchasePaymentDetail.company_id == company_id,
+                    PurchasePaymentDetail.purchase_order_id.in_(purchase_order_ids),
+                )
+                .order_by(PurchasePaymentDetail.id.asc())
                 .all()
             )
 
@@ -541,6 +553,7 @@ class BackupService:
             "suppliers": [BackupService._row_to_dict(row) for row in suppliers],
             "purchase_orders": [BackupService._row_to_dict(row) for row in purchase_orders],
             "purchase_items": [BackupService._row_to_dict(row) for row in purchase_items],
+            "purchase_payment_details": [BackupService._row_to_dict(row) for row in purchase_payment_details],
             "sales": [BackupService._row_to_dict(row) for row in sales],
             "sale_items": [BackupService._row_to_dict(row) for row in sale_items],
             "cash_sessions": [BackupService._row_to_dict(row) for row in cash_sessions],
@@ -588,6 +601,7 @@ class BackupService:
             "clients",
             "suppliers",
             "purchase_orders",
+            "purchase_payment_details",
             "sales",
             "cash_sessions",
             "cash_movements",
@@ -633,6 +647,7 @@ class BackupService:
             ("purchase_orders", "supplier_id", "suppliers"),
             ("purchase_items", "purchase_order_id", "purchase_orders"),
             ("purchase_items", "product_id", "products"),
+            ("purchase_payment_details", "purchase_order_id", "purchase_orders"),
             ("cash_movements", "session_id", "cash_sessions"),
             ("cash_movements", "sale_id", "sales"),
         )
@@ -962,6 +977,7 @@ class BackupService:
             db,
             utcnow,
         )
+        from stockarmobile.supplier_purchase_payments import PurchasePaymentDetail
 
         if int(backup_log.company_id or 0) != int(expected_company_id):
             raise PermissionError("Backup fuera de alcance para la empresa solicitada.")
@@ -971,6 +987,20 @@ class BackupService:
             raise ValueError("El backup no corresponde a la empresa seleccionada.")
 
         sections = BackupService._normalize_sections(sections)
+        from stockarmobile.supplier_purchase_payments import PurchasePaymentDetail
+
+        full_restore = set(sections) == set(BackupService.FULL_RESTORE_SECTIONS)
+        if full_restore and "purchase_payment_details" not in payload:
+            # Legacy backups did not contain supplier payment history. Refuse a
+            # destructive restore when live payment records would otherwise be lost.
+            existing_payment_details = PurchasePaymentDetail.query.filter_by(
+                company_id=expected_company_id
+            ).count()
+            if existing_payment_details:
+                raise ValueError(
+                    "Este respaldo antiguo no incluye los detalles de pagos a proveedores. "
+                    "No se restauró para evitar perder importes, vencimientos o referencias."
+                )
 
         company = Company.query.filter_by(id=expected_company_id).first_or_404()
         company_payload = payload.get("company") or {}
@@ -997,7 +1027,6 @@ class BackupService:
         # Remove children before parents. With ON DELETE CASCADE foreign keys,
         # deleting a product/client first can silently erase purchase/sale details
         # or even sales before we have captured their IDs for restoration.
-        full_restore = set(sections) == set(BackupService.FULL_RESTORE_SECTIONS)
         if "sales" in sections:
             existing_sales_ids = [
                 row.id for row in Sale.query.filter_by(company_id=expected_company_id).all()
@@ -1007,6 +1036,7 @@ class BackupService:
             Sale.query.filter_by(company_id=expected_company_id).delete(synchronize_session=False)
 
         if full_restore:
+            PurchasePaymentDetail.query.filter_by(company_id=expected_company_id).delete(synchronize_session=False)
             existing_purchase_ids = [
                 row.id for row in PurchaseOrder.query.filter_by(company_id=expected_company_id).all()
             ]
@@ -1159,6 +1189,11 @@ class BackupService:
                 db.session.execute(PurchaseOrder.__table__.insert(), purchase_order_rows)
             if purchase_item_rows:
                 db.session.execute(PurchaseItem.__table__.insert(), purchase_item_rows)
+            payment_detail_rows = BackupService._deserialize_rows(
+                PurchasePaymentDetail, payload.get("purchase_payment_details") or []
+            )
+            if payment_detail_rows:
+                db.session.execute(PurchasePaymentDetail.__table__.insert(), payment_detail_rows)
 
             CashMovement.query.filter_by(company_id=expected_company_id).delete(synchronize_session=False)
             Expense.query.filter_by(company_id=expected_company_id).delete(synchronize_session=False)
@@ -1169,7 +1204,7 @@ class BackupService:
             if expense_rows:
                 db.session.execute(Expense.__table__.insert(), expense_rows)
 
-        BackupService._sync_sequences([Product, Client, Supplier, PurchaseOrder, PurchaseItem, Sale, SaleItem, CashSession, CashMovement, Expense, User])
+        BackupService._sync_sequences([Product, Client, Supplier, PurchaseOrder, PurchaseItem, PurchasePaymentDetail, Sale, SaleItem, CashSession, CashMovement, Expense, User])
 
         backup_log.restored_at = utcnow()
         backup_log.restored_by_user_id = restored_by_user_id
@@ -1194,6 +1229,7 @@ class BackupService:
             User,
             db,
         )
+        from stockarmobile.supplier_purchase_payments import PurchasePaymentDetail
 
         if int(backup_log.company_id or 0) != int(expected_company_id):
             raise PermissionError("Backup fuera de alcance para la empresa solicitada.")
@@ -1220,6 +1256,7 @@ class BackupService:
                     .filter(PurchaseOrder.company_id == expected_company_id)
                     .count()
                 ),
+                "purchase_payment_details": PurchasePaymentDetail.query.filter_by(company_id=expected_company_id).count(),
                 "sale_items": (
                     db.session.query(SaleItem.id)
                     .join(Sale, Sale.id == SaleItem.sale_id)
@@ -1252,6 +1289,7 @@ class BackupService:
                 "suppliers": len(payload.get("suppliers") or []),
                 "purchase_orders": len(payload.get("purchase_orders") or []),
                 "purchase_items": len(payload.get("purchase_items") or []),
+                "purchase_payment_details": len(payload.get("purchase_payment_details") or []),
                 "sale_items": len(payload.get("sale_items") or []),
                 "cash_sessions": len(payload.get("cash_sessions") or []),
                 "cash_movements": len(payload.get("cash_movements") or []),
