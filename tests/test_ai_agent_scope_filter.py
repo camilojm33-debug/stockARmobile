@@ -20,6 +20,8 @@ def test_religious_general_knowledge_request_is_blocked_for_every_agent(agent_ke
         ("¿Quién ganó el partido de anoche?", "sports"),
         ("¿Por quién debería votar?", "politics"),
         ("Haceme la tarea sobre la fotosíntesis", "schoolwork"),
+        ("Resolvé la tarea sobre la fotosíntesis", "schoolwork"),
+        ("Contame algo bíblico", "religion"),
     ],
 )
 def test_other_high_confidence_general_topics_are_identified(message, expected):
