@@ -8,6 +8,7 @@ from purchases import _apply_product_purchase_totals
 class _FakeQuery:
     def __init__(self, rows):
         self.rows = rows
+        self.populate_existing_called = False
 
     def filter(self, *_args, **_kwargs):
         return self
@@ -16,6 +17,7 @@ class _FakeQuery:
         return self
 
     def populate_existing(self):
+        self.populate_existing_called = True
         return self
 
     def all(self):
@@ -26,9 +28,11 @@ class _FakeSession:
     def __init__(self, locked_rows):
         self.locked_rows = locked_rows
         self.lock_called = False
+        self.last_query = None
 
     def query(self, _model):
-        return _FakeQuery(self.locked_rows)
+        self.last_query = _FakeQuery(self.locked_rows)
+        return self.last_query
 
 
 def test_purchase_totals_lock_product_rows_before_mutation(monkeypatch):
@@ -45,4 +49,5 @@ def test_purchase_totals_lock_product_rows_before_mutation(monkeypatch):
     # object loaded before the transaction acquired the row lock.
     assert locked.stock == 22.0
     assert locked.cost_price == (20.0 * 6.0 + 20.0) / 22.0
+    assert session.last_query.populate_existing_called is True
     assert stale.stock == 10.0
