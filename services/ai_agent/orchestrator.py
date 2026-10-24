@@ -84,6 +84,6 @@ class AgentOrchestrator:
             sender_id=sender_id,
             idempotency_key=(metadata or {}).get("idempotency_key"),
             metadata=metadata or {},
-            include_system_prompt=False,
+            include_system_prompt=True,
             provider_override=LMStudioProvider(),
         )
