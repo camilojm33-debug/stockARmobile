@@ -13,7 +13,7 @@ import unicodedata
 from datetime import datetime, timedelta, timezone
 
 import qrcode
-from flask import jsonify, render_template, request, url_for, abort, current_app, session
+from flask import jsonify, render_template, request, url_for, abort, current_app, g, session
 from flask.signals import appcontext_pushed
 from flask_login import current_user
 from sqlalchemy import or_
@@ -173,14 +173,58 @@ def _authenticated_company():
     return company
 
 
+def _public_visitor_cookie_name(company_id: int) -> str:
+    return f"stockarmobile_public_vendor_visitor_{int(company_id)}"
+
+
 def _visitor_id(company_id: int) -> str:
-    key = f"public_vendor_visitor_{int(company_id)}"
+    """Return a stable per-company visitor ID independent of Flask session re-signing."""
     import uuid
 
-    value = str(session.get(key) or uuid.uuid4().hex)
-    session[key] = value
+    company_id = int(company_id)
+    session_key = f"public_vendor_visitor_{company_id}"
+    cookie_name = _public_visitor_cookie_name(company_id)
+    cookie_value = str(request.cookies.get(cookie_name) or "").strip().lower()
+
+    if re.fullmatch(r"[0-9a-f]{32}", cookie_value):
+        value = cookie_value
+    else:
+        # Migrate an existing browser to the dedicated cookie using its current
+        # Flask-session ID. This keeps existing public conversations addressable.
+        legacy_value = str(session.get(session_key) or "").strip().lower()
+        value = legacy_value if re.fullmatch(r"[0-9a-f]{32}", legacy_value) else uuid.uuid4().hex
+        pending = getattr(g, "_public_vendor_visitor_cookies", None)
+        if not isinstance(pending, dict):
+            pending = {}
+        pending[cookie_name] = value
+        g._public_vendor_visitor_cookies = pending
+
+    if session.get(session_key) != value:
+        session[session_key] = value
     return value
 
+
+def _persist_public_visitor_cookies(response):
+    """Persist visitor IDs in dedicated HttpOnly cookies, not only Flask's signed session."""
+    try:
+        pending = getattr(g, "_public_vendor_visitor_cookies", None)
+    except RuntimeError:
+        pending = None
+    if not isinstance(pending, dict):
+        return response
+
+    secure = bool(current_app.config.get("SESSION_COOKIE_SECURE", request.is_secure))
+    for name, value in pending.items():
+        response.set_cookie(
+            name,
+            str(value),
+            max_age=180 * 24 * 60 * 60,
+            secure=secure,
+            httponly=True,
+            samesite="Lax",
+            path="/",
+        )
+    return response
 
 def _public_chat_session_digest(value) -> str | None:
     """Validate and hash a random per-tab chat token; never persist the bearer token."""
@@ -337,30 +381,35 @@ def _public_conversation(company, conversation_id=None, *, create=False, chat_se
     if has_chat_session and session_digest is None:
         return None
 
-    tenant_query = Conversation.query.filter_by(
+    scoped_query = Conversation.query.filter_by(
         company_id=company.id,
         channel="webchat",
+        external_conversation_id=visitor_id,
         agent_id=vendor_agent.id,
     )
-    scoped_query = tenant_query.filter_by(external_conversation_id=visitor_id)
 
     if session_digest:
-        # The high-entropy per-tab token is the stable identifier for this chat.
-        # Do not also require the Flask visitor cookie to match: cookies can be
-        # renewed/lost between requests or across app workers, which otherwise
-        # makes a valid chat look empty after a successful message POST.
-        session_query = tenant_query.filter(
-            Conversation.metadata_json["public_chat_session_digest"].as_string() == session_digest
-        )
+        # A browser visitor can own several parallel chats. Resolve a chat only
+        # when its high-entropy per-tab token matches the digest persisted on it.
         if conversation_id not in (None, ""):
             try:
-                conversation = session_query.filter_by(id=int(conversation_id)).first()
+                conversation = scoped_query.filter_by(id=int(conversation_id)).first()
             except (TypeError, ValueError):
                 conversation = None
-            if conversation is None:
+            if (
+                conversation is None
+                or _conversation_metadata(conversation).get("public_chat_session_digest") != session_digest
+            ):
                 return None
         else:
-            conversation = session_query.order_by(Conversation.id.desc()).first()
+            candidates = scoped_query.order_by(Conversation.id.desc()).all()
+            conversation = next(
+                (
+                    candidate for candidate in candidates
+                    if _conversation_metadata(candidate).get("public_chat_session_digest") == session_digest
+                ),
+                None,
+            )
     else:
         # Backward compatibility for already-open pages using the legacy client.
         # Legacy requests must never select a conversation owned by a per-tab token.
@@ -394,6 +443,21 @@ def _public_conversation(company, conversation_id=None, *, create=False, chat_se
         # another chat (or create a replacement under a mismatched token).
         if conversation_id not in (None, ""):
             return None
+        if session_digest:
+            # A stale token must not silently create a second conversation if
+            # the browser cookie changed while the tab's sessionStorage survived.
+            other_visitors = Conversation.query.filter_by(
+                company_id=company.id,
+                channel="webchat",
+                agent_id=vendor_agent.id,
+            ).all()
+            token_owned_by_another_visitor = any(
+                candidate.external_conversation_id != visitor_id
+                and _conversation_metadata(candidate).get("public_chat_session_digest") == session_digest
+                for candidate in other_visitors
+            )
+            if token_owned_by_another_visitor:
+                return None
         metadata = {"source": "public_webchat_stable"}
         if session_digest:
             metadata["public_chat_session_digest"] = session_digest
@@ -408,6 +472,7 @@ def _public_conversation(company, conversation_id=None, *, create=False, chat_se
         db.session.add(conversation)
         db.session.flush()
     return conversation
+
 
 def _cart_public_state(conversation) -> dict:
     cart = VendorOrderService.get_cart(company_id=conversation.company_id, conversation_id=conversation.id)
@@ -1716,6 +1781,7 @@ def install_routes(app) -> None:
     app.add_url_rule("/agentes-ia/vendedor/publicacion", endpoint="vendor_publication.publication_page", view_func=publication_page, methods=["GET"])
     app.add_url_rule("/agentes-ia/vendedor/publicacion/<action>", endpoint="vendor_publication.publication_action", view_func=publication_action, methods=["POST"])
     app.add_url_rule("/agentes-ia/vendedor/publicacion/preview", endpoint="vendor_publication.preview_vendor", view_func=preview_vendor, methods=["GET"])
+    app.after_request(_persist_public_visitor_cookies)
     app._vendor_publication_routes_installed = True
 
 

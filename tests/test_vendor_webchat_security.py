@@ -69,46 +69,30 @@ def test_public_vendor_limits_fallback_without_redis_in_production(qa_ai_databas
         ) is True
 
 
-def test_public_chat_session_resolves_when_visitor_cookie_changes(qa_ai_database, monkeypatch):
-    """The per-tab token must recover the same chat even if the Flask cookie changes."""
-    import hashlib
+def test_public_visitor_cookie_keeps_identity_when_flask_session_changes(qa_ai_database):
+    from flask import g, jsonify, session
 
     from services.ai_agent import vendor_publication
-    from services.ai_agent.config_service import VENDOR_AGENT_NAME
-    from stockarmobile.models.conversations import Agent, Conversation
 
-    company = qa_ai_database["companies"]["vendedor"]
-    agent = Agent.query.filter_by(company_id=company.id, name=VENDOR_AGENT_NAME).first()
-    token = "qa-public-chat-session-" + ("x" * 32)
-    digest = hashlib.sha256(token.encode("utf-8")).hexdigest()
-    conversation = Conversation(
-        company_id=company.id,
-        agent_id=agent.id,
-        channel="webchat",
-        external_conversation_id="qa-original-visitor",
-        status="open",
-        metadata_json={"source": "public_webchat_stable", "public_chat_session_digest": digest},
-    )
-    stock_app.db.session.add(conversation)
-    stock_app.db.session.flush()
+    company_id = qa_ai_database["companies"]["vendedor"].id
+    cookie_name = vendor_publication._public_visitor_cookie_name(company_id)
+    session_key = f"public_vendor_visitor_{company_id}"
 
-    monkeypatch.setattr(vendor_publication, "_visitor_id", lambda company_id: "qa-renewed-visitor")
-    resolved_by_id = vendor_publication._public_conversation(
-        company,
-        conversation.id,
-        create=False,
-        chat_session_id=token,
-    )
-    resolved_after_reload = vendor_publication._public_conversation(
-        company,
-        create=False,
-        chat_session_id=token,
-    )
+    with stock_app.app.test_request_context("/"):
+        first = vendor_publication._visitor_id(company_id)
+        response = vendor_publication._persist_public_visitor_cookies(jsonify({"success": True}))
+        assert g._public_vendor_visitor_cookies[cookie_name] == first
+        assert f"{cookie_name}={first}" in response.headers["Set-Cookie"]
+        assert session[session_key] == first
 
-    assert resolved_by_id is not None
-    assert resolved_by_id.id == conversation.id
-    assert resolved_after_reload is not None
-    assert resolved_after_reload.id == conversation.id
+    # A new Flask session (as can happen after a session cookie is refreshed)
+    # must continue to use the stable public-visitor cookie value.
+    with stock_app.app.test_request_context("/", headers={"Cookie": f"{cookie_name}={first}"}):
+        second = vendor_publication._visitor_id(company_id)
+        assert second == first
+        assert session[session_key] == first
+        assert not getattr(g, "_public_vendor_visitor_cookies", {})
+
 
 
 def test_public_chat_session_cannot_resolve_with_another_tab_token(qa_ai_database, monkeypatch):
@@ -144,11 +128,9 @@ def test_public_chat_session_cannot_resolve_with_another_tab_token(qa_ai_databas
 
 
 
-def test_public_state_returns_session_chat_after_visitor_cookie_changes(qa_ai_database, monkeypatch):
+def test_public_state_returns_persisted_chat_for_bound_visitor(qa_ai_database, monkeypatch):
     """The state endpoint must not turn a persisted chat into an empty state."""
     import hashlib
-
-    from flask import request
 
     from services.ai_agent import vendor_publication
     from services.ai_agent.config_service import VENDOR_AGENT_NAME
@@ -204,7 +186,7 @@ def test_public_state_returns_session_chat_after_visitor_cookie_changes(qa_ai_da
         "line_count": 1,
     }
     monkeypatch.setattr(vendor_publication, "_public_available_company", lambda slug: company)
-    monkeypatch.setattr(vendor_publication, "_visitor_id", lambda company_id: "qa-renewed-visitor")
+    monkeypatch.setattr(vendor_publication, "_visitor_id", lambda company_id: "qa-original-visitor")
     monkeypatch.setattr(
         vendor_publication,
         "can_use_ai",
