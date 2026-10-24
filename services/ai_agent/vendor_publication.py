@@ -13,8 +13,9 @@ import unicodedata
 from datetime import datetime, timedelta, timezone
 
 import qrcode
-from flask import jsonify, render_template, request, url_for, abort, current_app, session
+from flask import jsonify, render_template, request, url_for, abort, current_app, g, session
 from flask.signals import appcontext_pushed
+from itsdangerous import BadSignature, URLSafeSerializer
 from flask_login import current_user
 from sqlalchemy import or_
 
@@ -173,14 +174,70 @@ def _authenticated_company():
     return company
 
 
+def _public_visitor_cookie_name(company_id: int) -> str:
+    return f"stockarmobile_public_vendor_visitor_{int(company_id)}"
+
+
+def _public_visitor_cookie_serializer():
+    return URLSafeSerializer(
+        current_app.config.get("SECRET_KEY", "stockarmobile-dev-secret"),
+        salt="stockarmobile-public-vendor-visitor-v1",
+    )
+
+
 def _visitor_id(company_id: int) -> str:
-    key = f"public_vendor_visitor_{int(company_id)}"
+    """Return a stable per-company visitor ID verified by a signed cookie."""
     import uuid
 
-    value = str(session.get(key) or uuid.uuid4().hex)
-    session[key] = value
+    company_id = int(company_id)
+    session_key = f"public_vendor_visitor_{company_id}"
+    cookie_name = _public_visitor_cookie_name(company_id)
+    cookie_value = str(request.cookies.get(cookie_name) or "").strip()
+    value = ""
+    if cookie_value:
+        try:
+            candidate = _public_visitor_cookie_serializer().loads(cookie_value)
+        except BadSignature:
+            candidate = ""
+        if isinstance(candidate, str) and re.fullmatch(r"[0-9a-f]{32}", candidate):
+            value = candidate
+
+    if not value:
+        # Migrate an existing browser to the dedicated cookie using its current
+        # Flask-session ID. This keeps existing public conversations addressable.
+        legacy_value = str(session.get(session_key) or "").strip().lower()
+        value = legacy_value if re.fullmatch(r"[0-9a-f]{32}", legacy_value) else uuid.uuid4().hex
+        pending = getattr(g, "_public_vendor_visitor_cookies", None)
+        if not isinstance(pending, dict):
+            pending = {}
+        pending[cookie_name] = _public_visitor_cookie_serializer().dumps(value)
+        g._public_vendor_visitor_cookies = pending
+
+    if session.get(session_key) != value:
+        session[session_key] = value
     return value
 
+def _persist_public_visitor_cookies(response):
+    """Persist visitor IDs in dedicated HttpOnly cookies, not only Flask's signed session."""
+    try:
+        pending = getattr(g, "_public_vendor_visitor_cookies", None)
+    except RuntimeError:
+        pending = None
+    if not isinstance(pending, dict):
+        return response
+
+    secure = bool(current_app.config.get("SESSION_COOKIE_SECURE", request.is_secure))
+    for name, value in pending.items():
+        response.set_cookie(
+            name,
+            str(value),
+            max_age=180 * 24 * 60 * 60,
+            secure=secure,
+            httponly=True,
+            samesite="Lax",
+            path="/",
+        )
+    return response
 
 def _public_chat_session_digest(value) -> str | None:
     """Validate and hash a random per-tab chat token; never persist the bearer token."""
@@ -1737,6 +1794,7 @@ def install_routes(app) -> None:
     app.add_url_rule("/agentes-ia/vendedor/publicacion", endpoint="vendor_publication.publication_page", view_func=publication_page, methods=["GET"])
     app.add_url_rule("/agentes-ia/vendedor/publicacion/<action>", endpoint="vendor_publication.publication_action", view_func=publication_action, methods=["POST"])
     app.add_url_rule("/agentes-ia/vendedor/publicacion/preview", endpoint="vendor_publication.preview_vendor", view_func=preview_vendor, methods=["GET"])
+    app.after_request(_persist_public_visitor_cookies)
     app._vendor_publication_routes_installed = True
 
 
