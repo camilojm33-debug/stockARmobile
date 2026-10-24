@@ -157,6 +157,7 @@ def _apply_product_purchase_totals(product_totals):
         for product in db.session.query(Product)
         .filter(Product.id.in_(product_ids))
         .with_for_update()
+        .populate_existing()
         .all()
     }
 
