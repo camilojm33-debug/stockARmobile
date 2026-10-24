@@ -152,7 +152,7 @@ def test_commercial_runtime_exposes_only_offer_tool(commercial_database):
     assert "preparar_pedido" not in names
 
 
-def test_commercial_runtime_prompt_restricts_superadmin_to_stockarmobile_topics(commercial_database):
+def test_commercial_runtime_blocks_biblical_question_before_provider_call(commercial_database):
     company = commercial_database["company"]
     conversation = get_commercial_conversation(company.id, "549999000333")
 
@@ -162,7 +162,7 @@ def test_commercial_runtime_prompt_restricts_superadmin_to_stockarmobile_topics(
 
         def generate(self, **payload):
             self.calls.append(payload)
-            return {"content": "Estoy para ayudarte con StockArMobile."}
+            return {"content": "No debería generarse una respuesta del modelo."}
 
     provider = CapturingProvider()
     result = AgentRuntime.process(
@@ -178,13 +178,19 @@ def test_commercial_runtime_prompt_restricts_superadmin_to_stockarmobile_topics(
     )
 
     assert result["status"] == "completed"
-    system_prompt = provider.calls[0]["messages"][0]["content"]
-    assert "QA commercial agent." in system_prompt
-    assert "Información verificable sobre StockArMobile" in system_prompt
-    assert "No sos un asistente de cultura general" in system_prompt
-    assert "bíblicas o religiosas" in system_prompt
-    assert "Soy el asistente comercial de StockArMobile." in system_prompt
-    assert system_prompt.index("QA commercial agent.") < system_prompt.index("LÍMITES OBLIGATORIOS DEL ROL")
+    assert result["scope_guard"] == {"blocked": True, "category": "religion"}
+    assert "Soy el asistente comercial de StockArMobile." in result["content"]
+    assert "Biblia" not in result["content"]
+    assert provider.calls == []
+
+    response = ConversationMessage.query.filter_by(
+        company_id=company.id,
+        conversation_id=conversation.id,
+        role="assistant",
+    ).order_by(ConversationMessage.id.desc()).first()
+    assert response is not None
+    assert response.metadata_json["scope_guard"] == {"blocked": True, "category": "religion"}
+    assert response.metadata_json["ai_usage_telemetry"]["provider_calls"] == 0
 
 
 def test_commercial_message_can_retry_send_after_runtime_duplicate(commercial_database):
