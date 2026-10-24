@@ -362,6 +362,12 @@ class SaleService:
     ):
         from app import CashMovement, Client, Product, SaleItem, SaleModificationHistory, db, record_audit, scope_query_to_company
 
+        # A cancelled sale is immutable: editing it would reverse/reapply stock and
+        # rewrite cash movements while leaving its cancelled status intact.
+        sale_status = str(getattr(sale, "status", "") or "").strip().lower()
+        if sale_status in {"anulada", "anulado", "cancelada", "cancelado", "cancelled", "canceled", "void", "voided"}:
+            raise ValueError("No se puede editar una venta anulada.")
+
         ValidationService.validate_edit_reason(reason)
 
         existing_line_discount_total = sum(self._to_decimal(item.discount or 0) for item in sale.items)

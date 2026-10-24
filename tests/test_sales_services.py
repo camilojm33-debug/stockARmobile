@@ -238,6 +238,31 @@ def test_validation_service_lifecycle_rules():
         assert "comprobante" in str(exc)
 
 
+def test_sale_service_update_sale_rejects_cancelled_sale_before_touching_inventory():
+    service = SaleService(
+        require_open_cash_session=lambda json_response=False: None,
+        calculate_lines=lambda items, lock_for_update=False, discount_overrides=None: [],
+        mark_quote_as_converted=lambda checkout_token, sale_id: None,
+        cart_key=lambda: "cart_test",
+        to_decimal=lambda value: Decimal("0.00"),
+    )
+    fake_sale = SimpleNamespace(status="anulada", items=[])
+    fake_form = SimpleNamespace(getlist=lambda _key: [], get=lambda _key: "")
+
+    try:
+        service.update_sale(
+            sale=fake_sale,
+            form=fake_form,
+            reason="corrección de prueba",
+            current_open_cash_session=lambda: None,
+            sale_snapshot=lambda _sale: (_ for _ in ()).throw(AssertionError("snapshot touched")),
+            json_dumps=lambda payload: str(payload),
+        )
+        assert False, "Expected cancelled sale edit to be rejected"
+    except ValueError as exc:
+        assert "anulada" in str(exc)
+
+
 def test_sale_service_update_sale_rejects_missing_reason_early():
     service = SaleService(
         require_open_cash_session=lambda json_response=False: None,
