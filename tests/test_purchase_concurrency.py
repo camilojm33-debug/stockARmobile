@@ -15,6 +15,9 @@ class _FakeQuery:
     def with_for_update(self):
         return self
 
+    def populate_existing(self):
+        return self
+
     def all(self):
         return self.rows
 
