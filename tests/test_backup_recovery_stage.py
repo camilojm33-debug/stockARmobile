@@ -1,10 +1,13 @@
 import os
+from datetime import date
+from decimal import Decimal
 
 from app import (
     CashMovement, CashSession, Client, Company, Expense, Product, PurchaseItem,
     PurchaseOrder, Sale, SaleItem, Supplier, User, db,
 )
 from services.backup_service import BackupService
+from stockarmobile.supplier_purchase_payments import PurchasePaymentDetail
 
 
 def test_backup_restore_round_trip_rolls_back_changes(app, monkeypatch):
@@ -205,6 +208,18 @@ def test_full_backup_restore_round_trip_preserves_sales_purchase_and_cash_relati
             quantity=1,
             unit_cost=40,
         ))
+        db.session.add(PurchasePaymentDetail(
+            purchase_order_id=purchase.id,
+            company_id=company.id,
+            payment_method="TRANSFERENCIA",
+            paid_amount=Decimal("15.00"),
+            secondary_paid_amount=Decimal("0.00"),
+            payment_term_days=30,
+            due_date=date(2026, 11, 23),
+            payment_status="parcial",
+            payment_reference="QA-TRANSFER-001",
+            notes="Pago parcial de prueba",
+        ))
 
         sale = Sale(
             company_id=company.id,
@@ -259,6 +274,7 @@ def test_full_backup_restore_round_trip_preserves_sales_purchase_and_cash_relati
         assert result["counts_after_restore"]["sale_items"] == 1
         assert result["counts_after_restore"]["purchase_orders"] == 1
         assert result["counts_after_restore"]["purchase_items"] == 1
+        assert result["counts_after_restore"]["purchase_payment_details"] == 1
         assert result["counts_after_restore"]["cash_sessions"] == 1
         assert result["counts_after_restore"]["cash_movements"] == 1
         assert result["counts_after_restore"]["expenses"] == 1
@@ -317,3 +333,60 @@ def test_postgres_backup_sequence_reset_handles_empty_and_populated_tables():
     assert BackupService._sequence_reset_values(0) == (1, False)
     assert BackupService._sequence_reset_values(None) == (1, False)
     assert BackupService._sequence_reset_values(17) == (17, True)
+
+
+def test_full_restore_refuses_legacy_backup_when_supplier_payment_details_exist(app, monkeypatch, tmp_path):
+    import pytest
+    from pathlib import Path
+
+    monkeypatch.setenv("BACKUP_UPLOAD_DIR", str(tmp_path / "qa-legacy-payment-backups"))
+    with app.app_context():
+        company = Company(name="Legacy payment guard QA", active=True)
+        db.session.add(company)
+        db.session.flush()
+        supplier = Supplier(name="Proveedor QA", company_id=company.id, active=True)
+        db.session.add(supplier)
+        db.session.flush()
+        purchase = PurchaseOrder(
+            company_id=company.id,
+            supplier_id=supplier.id,
+            status="recibida",
+            subtotal=80,
+            total_amount=80,
+        )
+        db.session.add(purchase)
+        db.session.flush()
+        detail = PurchasePaymentDetail(
+            purchase_order_id=purchase.id,
+            company_id=company.id,
+            payment_method="TRANSFERENCIA",
+            paid_amount=Decimal("25.00"),
+            secondary_paid_amount=Decimal("0.00"),
+            payment_status="parcial",
+            payment_reference="KEEP-THIS-REFERENCE",
+        )
+        db.session.add(detail)
+        db.session.commit()
+
+        backup, _plan = BackupService.create_manual_backup(company.id, user_id=None)
+        db.session.commit()
+        payload = BackupService._load_payload(backup)
+        payload.pop("purchase_payment_details", None)
+        payload["schema_version"] = 2
+        Path(backup.path).write_bytes(BackupService._encode_backup_payload(payload))
+
+        with pytest.raises(ValueError, match="respaldo antiguo"):
+            BackupService.restore_backup(
+                backup,
+                expected_company_id=company.id,
+                restored_by_user_id=None,
+                sections=list(BackupService.FULL_RESTORE_SECTIONS),
+            )
+
+        db.session.rollback()
+        assert PurchaseOrder.query.filter_by(id=purchase.id, company_id=company.id).count() == 1
+        restored_detail = PurchasePaymentDetail.query.filter_by(
+            purchase_order_id=purchase.id, company_id=company.id
+        ).one()
+        assert restored_detail.paid_amount == Decimal("25.00")
+        assert restored_detail.payment_reference == "KEEP-THIS-REFERENCE"
