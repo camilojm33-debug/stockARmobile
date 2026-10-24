@@ -87,6 +87,10 @@ def test_public_visitor_cookie_keeps_identity_when_flask_session_changes(qa_ai_d
         assert vendor_publication._public_visitor_cookie_serializer().loads(cookie_value) == first
         assert session[session_key] == first
 
+    # The database fixture keeps an outer app context alive across requests;
+    # clear its app-scoped g to model the clean context of a real HTTP request.
+    g.pop("_public_vendor_visitor_cookies", None)
+
     # A new Flask session (as can happen after a session cookie is refreshed)
     # must continue to use the stable public-visitor cookie value.
     with stock_app.app.test_request_context("/", headers={"Cookie": f"{cookie_name}={cookie_value}"}):
@@ -97,6 +101,8 @@ def test_public_visitor_cookie_keeps_identity_when_flask_session_changes(qa_ai_d
 
 
 def test_public_visitor_cookie_rejects_a_forged_visitor_id(qa_ai_database):
+    from flask import jsonify
+
     from services.ai_agent import vendor_publication
 
     company_id = qa_ai_database["companies"]["vendedor"].id
