@@ -22,7 +22,7 @@ _OUT_OF_SCOPE_INTENTS = (
         "religion",
         re.compile(
             r"\b(?:que dice|que ensena|explicame|explica|interpreta|interpretame|resumime|resume|"
-            r"cita|dame|decime|contame)\b.{0,65}\b(?:la biblia|biblia|versiculos?|salmos?|"
+            r"cita|dame|decime|contame)\b.{0,65}\b(?:la biblia|biblia|biblic[oa]s?|pasajes? biblic[oa]s?|versiculos?|salmos?|"
             r"evangelio|jesus|jesucristo|dios|el coran|coran|torah|religion)\b"
             r"|\b(?:quien es|quien fue)\s+(?:jesus|jesucristo|dios)\b"
             r"|\b(?:oracion|rezos?)\s+(?:para|por)\b"
@@ -56,7 +56,7 @@ _OUT_OF_SCOPE_INTENTS = (
     (
         "schoolwork",
         re.compile(
-            r"\b(?:haceme|hace|resolveme|resuelve|resolvé)\s+(?:la )?(?:tarea|deberes|trabajo practico)\b"
+            r"\b(?:haceme|hace|resolveme|resuelve|resolve)\s+(?:la )?(?:tarea|deberes|trabajo practico)\b"
             r"|\b(?:explicame|explica|resumime|resume)\s+(?:la )?"
             r"(?:fotosintesis|gravedad|sistema solar|guerra mundial|revolucion francesa)\b"
             r"|\b(?:que es|define|definime)\s+(?:la )?"
