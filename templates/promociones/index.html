@@ -39,9 +39,7 @@
             .forEach(([element, type]) => {
               const enabled = active === type;
               element.classList.toggle("d-none", !enabled);
-              element.querySelectorAll("input").forEach(input => {
-                input.disabled = !enabled;
-              });
+              element.querySelectorAll("input").forEach(input=>input.disabled=!enabled);
             });
         }
 
