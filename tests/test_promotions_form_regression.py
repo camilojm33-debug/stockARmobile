@@ -8,6 +8,7 @@ from pathlib import Path
 import pytest
 
 from promotions import _parse_datetime, _validate_payload
+from stockarmobile.helpers.dates import format_local_date
 
 
 def _promotion_rule_script():
@@ -130,3 +131,9 @@ def test_promotion_validity_dates_are_saved_as_company_local_day_in_utc():
 
     assert starts_at == datetime(2026, 10, 25, 3, 0, 0)
     assert ends_at == datetime(2026, 10, 26, 2, 59, 59, 999999)
+    assert format_local_date(starts_at, timezone_name, "%d/%m/%Y") == "25/10/2026"
+    assert format_local_date(ends_at, timezone_name, "%d/%m/%Y") == "25/10/2026"
+
+    template = Path("templates/promociones/index.html").read_text(encoding="utf-8")
+    assert "format_local_date(promotion.starts_at, timezone_name" in template
+    assert "format_local_date(promotion.ends_at, timezone_name" in template
