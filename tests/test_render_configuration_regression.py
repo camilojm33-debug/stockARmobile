@@ -7,4 +7,5 @@ def test_render_blueprint_uses_existing_production_database_and_readiness_probe(
     assert "healthCheckPath: /readyz" in render_config
     assert "name: stockarmobile-prod" in render_config
     assert "databaseName: stockarmobile_prod" in render_config
+    assert "ipAllowList: []" in render_config
     assert "name: stockarmobile-db" not in render_config
