@@ -280,8 +280,8 @@ def reset_password(token):
         new_password = (request.form.get("new_password") or "").strip()
         confirm_password = (request.form.get("confirm_password") or "").strip()
 
-        if len(new_password) < 6:
-            flash("La nueva contrasena debe tener al menos 6 caracteres.", "danger")
+        if len(new_password) < 8:
+            flash("La nueva contrasena debe tener al menos 8 caracteres.", "danger")
             return render_template("auth/reset_password.html", token=token)
         if new_password != confirm_password:
             flash("Las contrasenas no coinciden.", "danger")
@@ -316,8 +316,8 @@ def force_password_change():
         new_password = (request.form.get("new_password") or "").strip()
         confirm_password = (request.form.get("confirm_password") or "").strip()
 
-        if len(new_password) < 6:
-            flash("La nueva contrasena debe tener al menos 6 caracteres.", "danger")
+        if len(new_password) < 8:
+            flash("La nueva contrasena debe tener al menos 8 caracteres.", "danger")
             return render_template("auth/force_password_change.html")
         if new_password != confirm_password:
             flash("Las contrasenas no coinciden.", "danger")
