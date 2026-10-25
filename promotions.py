@@ -74,9 +74,15 @@ def _decimal(value, default=None):
     if value in (None, ""):
         return default
     try:
-        return Decimal(str(value).replace(",", "."))
+        parsed = Decimal(str(value).replace(",", "."))
     except (ArithmeticError, ValueError) as exc:
         raise ValueError("Uno de los valores numéricos de la regla no es válido.") from exc
+    # Decimal accepts NaN and Infinity as syntactically valid values. They are
+    # not valid quantities or discounts and can raise Decimal.InvalidOperation
+    # later during comparisons or database persistence.
+    if not parsed.is_finite():
+        raise ValueError("Uno de los valores numéricos de la regla no es válido.")
+    return parsed
 
 def _validate_payload(form):
     ptype = (form.get("type") or "").strip().lower()
