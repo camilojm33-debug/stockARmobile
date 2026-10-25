@@ -77,15 +77,29 @@ def _outbox(conversation, metadata: dict[str, Any]) -> list[dict[str, Any]]:
     rows = metadata.get(OUTBOX_KEY)
     if not isinstance(rows, list):
         rows = []
-    # Bound metadata growth while preserving recent delivery history.
-    rows = [row for row in rows if isinstance(row, dict)][-50:]
-    return rows
+    rows = [row for row in rows if isinstance(row, dict)]
+
+    # Never trim active/uncertain work: losing its dedupe key can re-enqueue
+    # an item whose provider outcome is still unknown. Bound terminal history
+    # first, retaining all active items even when that means exceeding 50 rows.
+    active_statuses = {"pending", "sending", "uncertain"}
+    active = [
+        row for row in rows
+        if str(row.get("status") or "pending").strip().lower() in active_statuses
+    ]
+    terminal = [
+        row for row in rows
+        if str(row.get("status") or "pending").strip().lower() not in active_statuses
+    ]
+    history_slots = max(0, 50 - len(active))
+    return active + (terminal[-history_slots:] if history_slots else [])
 
 
 def _has_queued(outbox: list[dict[str, Any]], dedupe_key: str) -> bool:
     return any(
         str(item.get("dedupe_key") or "") == dedupe_key
-        and str(item.get("status") or "pending") in {"pending", "sent"}
+        and str(item.get("status") or "pending").strip().lower()
+        in {"pending", "sending", "sent", "uncertain"}
         for item in outbox
     )
 
@@ -262,7 +276,7 @@ class AIFollowupService:
                 continue
 
             outbox.append(payload)
-            metadata[OUTBOX_KEY] = outbox[-50:]
+            metadata[OUTBOX_KEY] = outbox
             _set_metadata(conversation, metadata)
             db.session.add(conversation)
 
