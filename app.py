@@ -535,6 +535,20 @@ def trace_mp_qr_response(response):
 
 
 @app.before_request
+def enforce_demo_read_only():
+    """Prevent anonymous visitors of the shared demo tenant from mutating its data."""
+    if not session.get("demo_mode"):
+        return None
+    if request.method in {"GET", "HEAD", "OPTIONS"} or request.endpoint == "auth.logout":
+        return None
+
+    message = "El modo demo es de solo lectura. Salí de la demo para usar una cuenta propia."
+    if is_api_request():
+        return api_error(message, 403)
+    abort(403, description=message)
+
+
+@app.before_request
 def enforce_password_change_if_required():
     if not current_user.is_authenticated:
         return None
@@ -1965,7 +1979,7 @@ def record_audit(*, action, entity=None, entity_id=None, detail=None, user_id=No
 class RegisterForm(FlaskForm):
     username = StringField("Empresa / Negocio", validators=[DataRequired(), Length(min=3, max=50)])
     email = StringField("Email", validators=[DataRequired(), Email()])
-    password = PasswordField("Contrasena", validators=[DataRequired(), Length(min=6)])
+    password = PasswordField("Contrasena", validators=[DataRequired(), Length(min=8)])
     submit = SubmitField("Registrarse")
 
 
