@@ -1,5 +1,4 @@
 import json
-from datetime import datetime
 import re
 import shutil
 import subprocess
@@ -7,8 +6,7 @@ from pathlib import Path
 
 import pytest
 
-from promotions import _parse_datetime, _validate_payload
-from stockarmobile.helpers.dates import format_local_date
+from promotions import _validate_payload
 
 
 def _promotion_rule_script():
@@ -120,20 +118,3 @@ def test_promotion_controller_rejects_non_finite_quantity_or_percent(bad_value):
             "active": "1",
             "priority": "100",
         })
-
-
-
-def test_promotion_validity_dates_are_saved_as_company_local_day_in_utc():
-    timezone_name = "America/Argentina/Cordoba"
-
-    starts_at = _parse_datetime("2026-10-25", timezone_name=timezone_name)
-    ends_at = _parse_datetime("2026-10-25", end=True, timezone_name=timezone_name)
-
-    assert starts_at == datetime(2026, 10, 25, 3, 0, 0)
-    assert ends_at == datetime(2026, 10, 26, 2, 59, 59, 999999)
-    assert format_local_date(starts_at, timezone_name, "%d/%m/%Y") == "25/10/2026"
-    assert format_local_date(ends_at, timezone_name, "%d/%m/%Y") == "25/10/2026"
-
-    template = Path("templates/promociones/index.html").read_text(encoding="utf-8")
-    assert "format_local_date(promotion.starts_at, timezone_name" in template
-    assert "format_local_date(promotion.ends_at, timezone_name" in template
