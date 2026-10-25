@@ -1403,7 +1403,6 @@ class BackupService:
             if payment_detail_rows:
                 db.session.execute(PurchasePaymentDetail.__table__.insert(), payment_detail_rows)
 
-            Expense.query.filter_by(company_id=expected_company_id).delete(synchronize_session=False)
             cash_movement_rows = BackupService._deserialize_rows(CashMovement, payload.get("cash_movements") or [])
             expense_rows = BackupService._deserialize_rows(Expense, payload.get("expenses") or [])
 
