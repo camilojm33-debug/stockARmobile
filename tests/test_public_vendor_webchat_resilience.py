@@ -328,6 +328,16 @@ def test_two_simultaneous_posts_with_same_key_create_one_conversation_and_turn(q
     if cookie is not None:
         second_client.set_cookie("session", cookie.value)
 
+    # The public Vendor visitor identity is held in a dedicated signed cookie,
+    # not only in Flask's session cookie. Both clients must represent the same
+    # browser; otherwise this test races two unrelated visitors over SQLite.
+    visitor_cookie_name = (
+        f"stockarmobile_public_vendor_visitor_{qa_public_vendor_db['company'].id}"
+    )
+    visitor_cookie = first_client.get_cookie(visitor_cookie_name)
+    assert visitor_cookie is not None
+    second_client.set_cookie(visitor_cookie_name, visitor_cookie.value)
+
     def post(client):
         return _post_message(client, qa_public_vendor_db, "operation-chat-race", "Hola.")
 
