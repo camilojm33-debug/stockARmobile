@@ -1027,6 +1027,11 @@ class BackupService:
         # Remove children before parents. With ON DELETE CASCADE foreign keys,
         # deleting a product/client first can silently erase purchase/sale details
         # or even sales before we have captured their IDs for restoration.
+        if full_restore:
+            # CashMovement.sale_id is a restrictive FK to Sale. Remove its rows
+            # before deleting sales, then restore them from the backup below.
+            CashMovement.query.filter_by(company_id=expected_company_id).delete(synchronize_session=False)
+
         if "sales" in sections:
             existing_sales_ids = [
                 row.id for row in Sale.query.filter_by(company_id=expected_company_id).all()
@@ -1045,7 +1050,6 @@ class BackupService:
                     PurchaseItem.purchase_order_id.in_(existing_purchase_ids)
                 ).delete(synchronize_session=False)
             PurchaseOrder.query.filter_by(company_id=expected_company_id).delete(synchronize_session=False)
-            CashMovement.query.filter_by(company_id=expected_company_id).delete(synchronize_session=False)
             Expense.query.filter_by(company_id=expected_company_id).delete(synchronize_session=False)
             CashSession.query.filter_by(company_id=expected_company_id).delete(synchronize_session=False)
 
@@ -1323,7 +1327,6 @@ class BackupService:
             if payment_detail_rows:
                 db.session.execute(PurchasePaymentDetail.__table__.insert(), payment_detail_rows)
 
-            CashMovement.query.filter_by(company_id=expected_company_id).delete(synchronize_session=False)
             Expense.query.filter_by(company_id=expected_company_id).delete(synchronize_session=False)
             cash_movement_rows = BackupService._deserialize_rows(CashMovement, payload.get("cash_movements") or [])
             expense_rows = BackupService._deserialize_rows(Expense, payload.get("expenses") or [])
