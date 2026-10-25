@@ -53,7 +53,7 @@
       {% for promotion in promotions %}<tr>
         <td><strong>{{ promotion.name }}</strong><div class="small text-muted">{{ promotion.product.name if promotion.product else ('Categoría: ' ~ promotion.category) }}</div></td>
         <td>{% if promotion.type == 'bogo' %}{{ promotion.buy_quantity }}x{{ promotion.pay_quantity }}{% elif promotion.type == 'percent_quantity' %}{{ promotion.min_quantity }}+ → {{ promotion.discount_percent }}%{% else %}{{ promotion.min_quantity }}+ → ${{ promotion.discount_amount }}{% endif %}</td>
-        <td class="small">{{ format_local_date(promotion.starts_at, timezone_name, '%d/%m/%Y') if promotion.starts_at else 'Siempre' }}{% if promotion.ends_at %} → {{ format_local_date(promotion.ends_at, timezone_name, '%d/%m/%Y') }}{% endif %}</td>
+        <td class="small">{{ promotion.starts_at.strftime('%d/%m/%Y') if promotion.starts_at else 'Siempre' }}{% if promotion.ends_at %} → {{ promotion.ends_at.strftime('%d/%m/%Y') }}{% endif %}</td>
         <td><span class="badge {{ 'text-bg-success' if promotion.active else 'text-bg-secondary' }}">{{ 'Activa' if promotion.active else 'Inactiva' }}</span></td>
         <td class="text-end"><form method="post" action="{{ url_for('promotions.toggle', promotion_id=promotion.id) }}"><input type="hidden" name="csrf_token" value="{{ csrf_token() }}"><button class="btn btn-sm btn-outline-secondary" type="submit">{{ 'Desactivar' if promotion.active else 'Activar'}}</button></form></td>
       </tr>{% endfor %}</tbody></table></div>
