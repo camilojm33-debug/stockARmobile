@@ -1557,7 +1557,7 @@ class BackupService:
             # every backed-up supplier/product is present instead of equating total
             # physical rows with the snapshot's row count.
             preserved_entities = {
-                "products", "suppliers", "clients", "sales",
+                "products", "suppliers", "clients", "sales", "employees",
                 "cash_sessions", "cash_movements", "expenses",
             }
             mismatches = {
