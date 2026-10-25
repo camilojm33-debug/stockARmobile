@@ -71,18 +71,18 @@ def test_maintenance_endpoints_keep_token_auth_when_csrf_is_enabled(app, monkeyp
         assert accepted.get_json()["ok"] is True
 
 
-def test_render_health_check_targets_the_existing_wsgi_endpoint():
+def test_render_health_check_targets_the_database_readiness_endpoint():
     from pathlib import Path
 
     render = Path("render.yaml").read_text(encoding="utf-8")
-    wsgi_source = Path("wsgi.py").read_text(encoding="utf-8")
-    assert "healthCheckPath: /health" in render
+    app_source = Path("app.py").read_text(encoding="utf-8")
+    assert "healthCheckPath: /readyz" in render
+    assert 'app.route("/readyz", methods=["GET"])' in app_source
     assert "name: stockarmobile-daily-backup" in render
     assert 'schedule: "15 3 * * *"' in render
     assert "name: stockarmobile-billing-reconciliation" in render
     assert 'schedule: "*/15 * * * *"' in render
     assert "BILLING_RECONCILIATION_TOKEN" in render
-    assert 'app.add_url_rule("/health", endpoint="stockarmobile_health"' in wsgi_source
 
 
 def test_backup_cron_reports_only_safe_json_summary(capsys):

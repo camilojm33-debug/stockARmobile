@@ -69,3 +69,33 @@ jobs:
             pytest-output.txt
             pytest-exit-code.txt
           retention-days: 2
+
+  postgres-backup-restore:
+    name: PostgreSQL backup/restore regression tests
+    runs-on: ubuntu-latest
+    env:
+      PYTHONPATH: .
+      DATABASE_URL: postgresql+psycopg://test:test@localhost:5432/stockarmobile_test
+    services:
+      postgres:
+        image: postgres:18
+        env:
+          POSTGRES_USER: test
+          POSTGRES_PASSWORD: test
+          POSTGRES_DB: stockarmobile_test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U test -d stockarmobile_test"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.14'
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+      - name: Run PostgreSQL recovery regression tests
+        run: pytest -q --tb=short tests/test_backup_recovery_stage.py tests/test_persistent_storage.py tests/test_readiness_endpoint.py

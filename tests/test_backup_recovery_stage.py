@@ -4,14 +4,22 @@ from decimal import Decimal
 
 from app import (
     CashMovement, CashSession, Client, Company, Expense, Product, PurchaseItem,
-    PurchaseOrder, Sale, SaleItem, Supplier, User, db,
+    PurchaseOrder, Quote, Sale, SaleItem, Supplier, User, db,
 )
 from services.backup_service import BackupService
 from stockarmobile.supplier_purchase_payments import PurchasePaymentDetail
+from pricing_controller import PriceControllerBatch, PriceControllerItem
+from promotions import Promotion
 
 
 def test_backup_restore_round_trip_rolls_back_changes(app, monkeypatch):
     monkeypatch.setenv("BACKUP_UPLOAD_DIR", str((__import__("pathlib").Path(app.instance_path) / "qa-backups")))
+    sequence_sync_calls = []
+    monkeypatch.setattr(
+        BackupService,
+        "_sync_sequences",
+        staticmethod(lambda models: sequence_sync_calls.append(tuple(model.__name__ for model in models))),
+    )
     with app.app_context():
         company = Company(name="Backup QA", active=True)
         db.session.add(company)
@@ -48,6 +56,7 @@ def test_backup_restore_round_trip_rolls_back_changes(app, monkeypatch):
         assert result["counts_before"]["products"] == 1
         assert result["counts_before"]["clients"] == 1
         assert backup.status == "ready"
+        assert sequence_sync_calls == [], "Verification must not mutate PostgreSQL sequences outside its rollbackable savepoint."
 
 
 def test_backup_maintenance_endpoint_requires_token(app, monkeypatch):
@@ -183,6 +192,31 @@ def test_full_backup_restore_round_trip_preserves_sales_purchase_and_cash_relati
         db.session.add(product)
         db.session.flush()
 
+        promotion = Promotion(
+            company_id=company.id,
+            product_id=product.id,
+            name="Promoción FK QA",
+            type="percentage",
+            created_by_user_id=user.id,
+        )
+        price_batch = PriceControllerBatch(
+            company_id=company.id,
+            user_id=user.id,
+            adjustment_type="percent",
+            direction="increase",
+            adjustment_value=Decimal("5.0"),
+            name="Lote FK QA",
+        )
+        db.session.add_all([promotion, price_batch])
+        db.session.flush()
+        price_item = PriceControllerItem(
+            batch_id=price_batch.id,
+            product_id=product.id,
+            old_price=Decimal("120.00"),
+            new_price=Decimal("126.00"),
+        )
+        db.session.add(price_item)
+
         cash_session = CashSession(
             user_id=user.id,
             opened_by_user_id=user.id,
@@ -241,6 +275,18 @@ def test_full_backup_restore_round_trip_preserves_sales_purchase_and_cash_relati
             price=120,
             cost_price=40,
         ))
+        quote_before_snapshot = Quote(
+            company_id=company.id,
+            number="BKP-FK-QUOTE-001",
+            client_id=client.id,
+            created_by_user_id=user.id,
+            seller_id=user.id,
+            converted_sale_id=sale.id,
+            subtotal=120,
+            total_amount=120,
+            status="CONVERTIDO",
+        )
+        db.session.add(quote_before_snapshot)
         db.session.add(CashMovement(
             session_id=cash_session.id,
             sale_id=sale.id,
@@ -264,20 +310,155 @@ def test_full_backup_restore_round_trip_preserves_sales_purchase_and_cash_relati
         backup, _plan = BackupService.create_manual_backup(company.id, user_id=user.id)
         db.session.commit()
 
+        # A newer product not present in the backup must be archived, not deleted:
+        # retained catalog history may still reference products outside the snapshot.
+        extra_product = Product(
+            company_id=company.id,
+            barcode="BKP-FK-EXTRA",
+            name="Producto posterior al backup",
+            price=99,
+            stock=9,
+            active=True,
+        )
+        db.session.add(extra_product)
+        extra_cash_session = CashSession(
+            user_id=user.id,
+            opened_by_user_id=user.id,
+            company_id=company.id,
+            opening_amount=0,
+            status="abierta",
+            note="Sesión posterior al backup",
+        )
+        db.session.add(extra_cash_session)
+        db.session.flush()
+        extra_client = Client(
+            name="Cliente posterior al backup",
+            phone="556",
+            company_id=company.id,
+            active=True,
+        )
+        db.session.add(extra_client)
+        db.session.flush()
+        extra_sale = Sale(
+            company_id=company.id,
+            client_id=extra_client.id,
+            customer=extra_client.name,
+            subtotal=33,
+            total_amount=33,
+            paid_amount=33,
+            seller_id=user.id,
+            cash_session_id=extra_cash_session.id,
+            status="confirmada",
+        )
+        db.session.add(extra_sale)
+        db.session.flush()
+        extra_movement = CashMovement(
+            session_id=extra_cash_session.id,
+            sale_id=extra_sale.id,
+            user_id=user.id,
+            company_id=company.id,
+            movement_type="ingreso",
+            category="venta",
+            amount=33,
+            description="Movimiento posterior al backup",
+        )
+        extra_expense = Expense(
+            category="Otros",
+            description="Gasto posterior al backup",
+            amount=7,
+            payment_method="EFECTIVO",
+            user_id=user.id,
+            company_id=company.id,
+        )
+        db.session.add_all([extra_movement, extra_expense])
+        extra_quote = Quote(
+            company_id=company.id,
+            number="BKP-FK-QUOTE-POST",
+            client_id=extra_client.id,
+            created_by_user_id=user.id,
+            seller_id=user.id,
+            converted_sale_id=extra_sale.id,
+            subtotal=33,
+            total_amount=33,
+            status="CONVERTIDO",
+        )
+        db.session.add(extra_quote)
+        db.session.commit()
+        extra_product_id = extra_product.id
+        extra_client_id = extra_client.id
+        extra_sale_id = extra_sale.id
+        extra_quote_id = extra_quote.id
+        extra_cash_session_id = extra_cash_session.id
+        extra_movement_id = extra_movement.id
+        extra_expense_id = extra_expense.id
+        product_id = product.id
+        client_id = client.id
+        sale_id = sale.id
+        price_batch_id = price_batch.id
+
         result = BackupService.verify_restore_round_trip(
             backup,
             expected_company_id=company.id,
         )
         assert result["valid"] is True
         assert result["rolled_back"] is True
-        assert result["counts_after_restore"]["sales"] == 1
-        assert result["counts_after_restore"]["sale_items"] == 1
+        assert result["counts_after_restore"]["sales"] >= 1
+        assert result["counts_after_restore"]["sale_items"] >= 1
         assert result["counts_after_restore"]["purchase_orders"] == 1
         assert result["counts_after_restore"]["purchase_items"] == 1
         assert result["counts_after_restore"]["purchase_payment_details"] == 1
-        assert result["counts_after_restore"]["cash_sessions"] == 1
-        assert result["counts_after_restore"]["cash_movements"] == 1
-        assert result["counts_after_restore"]["expenses"] == 1
+        assert result["counts_after_restore"]["cash_sessions"] >= 1
+        assert result["counts_after_restore"]["cash_movements"] >= 1
+        assert result["counts_after_restore"]["expenses"] >= 1
+
+        # Exercise a real restore in a savepoint so the FK guarantee and archive
+        # policy are observable without persisting QA data.
+        savepoint = db.session.begin_nested()
+        try:
+            BackupService.restore_backup(
+                backup,
+                expected_company_id=company.id,
+                restored_by_user_id=None,
+                sections=list(BackupService.FULL_RESTORE_SECTIONS),
+            )
+            db.session.flush()
+            restored_product = Product.query.filter_by(id=product_id, company_id=company.id).one()
+            assert restored_product.active is True
+            assert restored_product.barcode == "BKP-FK-001"
+            archived_extra = Product.query.filter_by(id=extra_product_id, company_id=company.id).one()
+            assert archived_extra.active is False
+            assert archived_extra.stock == 0
+            assert Promotion.query.filter_by(
+                company_id=company.id, product_id=product_id
+            ).count() == 1
+            assert PriceControllerItem.query.filter_by(
+                batch_id=price_batch_id, product_id=product_id
+            ).count() == 1
+            # Parent rows outside the snapshot are preserved, not deleted by a
+            # point-in-time restore, so their dependent quotes remain intact.
+            assert Client.query.filter_by(id=extra_client_id, company_id=company.id).one().active is False
+            assert Sale.query.filter_by(id=extra_sale_id, company_id=company.id).count() == 1
+            preserved_quote = db.session.get(Quote, extra_quote_id)
+            assert preserved_quote is not None
+            assert preserved_quote.client_id == extra_client_id
+            assert preserved_quote.converted_sale_id == extra_sale_id
+            original_quote = db.session.get(Quote, quote_before_snapshot.id)
+            assert original_quote is not None
+            assert original_quote.client_id == client_id
+            assert original_quote.converted_sale_id == sale_id
+            assert CashSession.query.filter_by(
+                id=extra_cash_session_id, company_id=company.id
+            ).count() == 1
+            assert CashMovement.query.filter_by(
+                id=extra_movement_id, company_id=company.id, sale_id=extra_sale_id
+            ).count() == 1
+            assert Expense.query.filter_by(
+                id=extra_expense_id, company_id=company.id
+            ).count() == 1
+        finally:
+            if savepoint.is_active:
+                savepoint.rollback()
+            db.session.expire_all()
 
 
 def test_backup_creation_refuses_payload_over_import_size_limit(app, monkeypatch, tmp_path):
