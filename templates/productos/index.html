@@ -50,7 +50,7 @@
       <h1 class="h3 fw-bold mb-0">Productos</h1>
       <p class="text-muted mb-0">Inventario y precios.</p>
     </div>
-    <button class="btn btn-primary" data-bs-toggle="collapse" data-bs-target="#productForm"><i class="bi bi-plus-lg me-1"></i>Agregar producto</button>
+    <button type="button" class="btn btn-primary" data-product-form-toggle aria-controls="productForm" aria-expanded="{{ 'true' if edit else 'false' }}"><i class="bi bi-plus-lg me-1"></i>Agregar producto</button>
   </div>
 
   <div class="collapse {{ 'show' if edit else '' }} mb-4" id="productForm">
@@ -241,6 +241,22 @@
 <script src="{{ url_for('static', filename='assets/js/barcode-scanner.js') }}"></script>
 <script>
   (() => {
+    // Native click activation supports keyboard and mouse. Keep form toggling
+    // independent from the Bootstrap JavaScript CDN so creation never silently
+    // stops working when that external script fails to load.
+    const productForm = document.getElementById('productForm');
+    const productFormToggle = document.querySelector('[data-product-form-toggle]');
+    if (productForm && productFormToggle) {
+      productFormToggle.addEventListener('click', () => {
+        const isExpanded = productForm.classList.toggle('show');
+        productFormToggle.setAttribute('aria-expanded', isExpanded ? 'true' : 'false');
+        if (isExpanded) {
+          const nameField = productForm.querySelector('input[name="name"]');
+          if (nameField) nameField.focus({ preventScroll: true });
+        }
+      });
+    }
+
     const input = document.getElementById('photoFileInput');
     const preview = document.getElementById('photoPreview');
     const pricingSourceInput = document.getElementById('pricingSource');
