@@ -10,6 +10,7 @@ from __future__ import annotations
 import hashlib
 import json
 import os
+from copy import deepcopy
 from datetime import datetime, timedelta
 from typing import Any
 
@@ -26,14 +27,15 @@ PENDING_PAYMENT_KEY = "pending_payment_url"
 
 
 def _metadata(conversation) -> dict[str, Any]:
+    """Return an independent JSON snapshot so nested edits are detected by SQLAlchemy."""
     raw = conversation.metadata_json or {}
     if isinstance(raw, dict):
-        return dict(raw)
+        return deepcopy(raw)
     try:
         parsed = json.loads(raw) if isinstance(raw, str) else {}
     except json.JSONDecodeError:
         parsed = {}
-    return parsed if isinstance(parsed, dict) else {}
+    return deepcopy(parsed) if isinstance(parsed, dict) else {}
 
 
 def _set_metadata(conversation, payload: dict[str, Any]) -> None:
