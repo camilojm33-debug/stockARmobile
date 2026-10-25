@@ -1,10 +1,7 @@
 """Tenant scoping helpers."""
 
-import os
-
 from sqlalchemy import false, inspect
 
-from .constants import ROLE_SUPERADMIN
 from .permissions import is_superadmin
 
 
@@ -38,11 +35,3 @@ def model_table_exists(db_engine, model):
         return inspect(db_engine).has_table(table_name)
     except Exception:
         return False
-
-
-def is_control_panel_owner(user):
-    owner_username = (os.environ.get("ADMIN_USERNAME") or "admin").strip().lower()
-    owner_email = (os.environ.get("ADMIN_EMAIL") or "admin@stockarmobile.local").strip().lower()
-    username = (getattr(user, "username", None) or "").strip().lower()
-    email = (getattr(user, "email", None) or "").strip().lower()
-    return username == owner_username or email == owner_email

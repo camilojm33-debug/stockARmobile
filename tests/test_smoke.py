@@ -1453,6 +1453,7 @@ def test_superadmin_login_survives_admin_bootstrap_with_different_env_owner(monk
     with stock_app.app.app_context():
         monkeypatch.setenv("ADMIN_USERNAME", "otro_admin")
         monkeypatch.setenv("ADMIN_EMAIL", "otro_admin@test.local")
+        monkeypatch.delenv("ADMIN_PASSWORD", raising=False)
 
         super_user = User.query.filter_by(username="superadmin").first()
         assert super_user is not None
@@ -1473,37 +1474,165 @@ def test_superadmin_login_survives_admin_bootstrap_with_different_env_owner(monk
     assert panel.status_code == 200
 
 
-def test_default_superadmin_bootstrap_creates_missing_account():
+def test_init_db_does_not_promote_preexisting_public_admin(monkeypatch):
+    with stock_app.app.app_context():
+        clear_test_data(db)
+        public_admin = User(username="admin", email="attacker@test.local", role="user", active=True)
+        public_admin.set_password("attacker-chosen-password")
+        db.session.add(public_admin)
+        db.session.commit()
+        public_admin_id = public_admin.id
+
+    monkeypatch.setenv("ADMIN_USERNAME", "admin")
+    monkeypatch.setenv("ADMIN_EMAIL", "attacker@test.local")
+    monkeypatch.setenv("ADMIN_PASSWORD", "ExplicitBootstrapPassword!42")
+    monkeypatch.setattr("flask_migrate.upgrade", lambda: None)
+
+    result = stock_app.app.test_cli_runner().invoke(args=["init-db"])
+
+    assert result.exit_code == 0, result.output
+    with stock_app.app.app_context():
+        public_admin = db.session.get(User, public_admin_id)
+        assert public_admin is not None
+        assert public_admin.role == "user"
+        assert public_admin.active is True
+        assert public_admin.company_id is None
+        assert public_admin.check_password("attacker-chosen-password")
+        assert User.query.filter_by(role="superadmin").count() == 0
+        assert User.query.count() == 1
+
+
+def test_init_db_is_idempotent_and_preserves_existing_user_roles(monkeypatch):
+    with stock_app.app.app_context():
+        clear_test_data(db)
+        regular_user = User(username="empleado", email="empleado@test.local", role="user", active=True)
+        regular_user.set_password("employee-password")
+        existing_superadmin = User(username="root_existente", email="root@test.local", role="superadmin", active=True)
+        existing_superadmin.set_password("existing-root-password")
+        db.session.add_all([regular_user, existing_superadmin])
+        db.session.commit()
+        regular_user_id = regular_user.id
+        existing_superadmin_id = existing_superadmin.id
+        existing_superadmin_hash = existing_superadmin.password_hash
+
+    monkeypatch.setenv("ADMIN_USERNAME", "bootstrap-admin")
+    monkeypatch.setenv("ADMIN_EMAIL", "bootstrap-admin@test.local")
+    monkeypatch.setenv("ADMIN_PASSWORD", "ExplicitBootstrapPassword!42")
+    monkeypatch.setattr("flask_migrate.upgrade", lambda: None)
+    runner = stock_app.app.test_cli_runner()
+
+    for _ in range(2):
+        result = runner.invoke(args=["init-db"])
+        assert result.exit_code == 0, result.output
+
+    with stock_app.app.app_context():
+        regular_user = db.session.get(User, regular_user_id)
+        existing_superadmin = db.session.get(User, existing_superadmin_id)
+        assert regular_user is not None
+        assert regular_user.role == "user"
+        assert regular_user.check_password("employee-password")
+        assert existing_superadmin is not None
+        assert existing_superadmin.role == "superadmin"
+        assert existing_superadmin.active is True
+        assert existing_superadmin.password_hash == existing_superadmin_hash
+        assert User.query.filter_by(role="superadmin").count() == 1
+        bootstrap_admin = User.query.filter_by(username="bootstrap-admin").one()
+        assert bootstrap_admin.role == "admin"
+        assert bootstrap_admin.check_password("ExplicitBootstrapPassword!42")
+
+
+def test_create_superadmin_command_refuses_registered_identity():
+    with stock_app.app.app_context():
+        clear_test_data(db)
+        public_user = User(username="root_inicial", email="publico@test.local", role="user", active=True)
+        public_user.set_password("public-user-password")
+        db.session.add(public_user)
+        db.session.commit()
+        public_user_id = public_user.id
+        public_password_hash = public_user.password_hash
+
+    result = stock_app.app.test_cli_runner().invoke(
+        args=["create-superadmin"],
+        input="root_inicial\nroot-superadmin@test.local\nSafeInitialPassword!42\nSafeInitialPassword!42\n",
+    )
+
+    assert result.exit_code != 0
+    with stock_app.app.app_context():
+        public_user = db.session.get(User, public_user_id)
+        assert public_user is not None
+        assert public_user.role == "user"
+        assert public_user.password_hash == public_password_hash
+        assert User.query.filter_by(role="superadmin").count() == 0
+
+
+def test_create_superadmin_command_creates_first_account_without_default_credentials(monkeypatch):
     with stock_app.app.app_context():
         clear_test_data(db)
 
-        created = stock_app.ensure_default_superadmin_user()
+    result = stock_app.app.test_cli_runner().invoke(
+        args=["create-superadmin"],
+        input="root_inicial\nroot-inicial@test.local\nSafeInitialPassword!42\nSafeInitialPassword!42\n",
+    )
 
-        assert created is True
-        user = User.query.filter_by(username="superadmin").first()
-        assert user is not None
-        assert user.email == "superadmin@stockarmobile.local"
-        assert user.role == "superadmin"
-        assert user.active is True
-        assert user.check_password("admin123")
+    assert result.exit_code == 0, result.output
+    assert "Superadministrador inicial creado." in result.output
+    with stock_app.app.app_context():
+        superadmin = User.query.filter_by(username="root_inicial").one()
+        assert superadmin.role == "superadmin"
+        assert superadmin.active is True
+        assert superadmin.check_password("SafeInitialPassword!42")
+        assert not superadmin.check_password("admin123")
+
+
+def test_create_superadmin_command_refuses_to_change_existing_superadmin():
+    with stock_app.app.app_context():
+        clear_test_data(db)
+        existing_superadmin = User(
+            username="root_existente",
+            email="root@test.local",
+            role="superadmin",
+            active=True,
+        )
+        existing_superadmin.set_password("existing-root-password")
+        db.session.add(existing_superadmin)
+        db.session.commit()
+        existing_superadmin_id = existing_superadmin.id
+        existing_password_hash = existing_superadmin.password_hash
+
+    result = stock_app.app.test_cli_runner().invoke(
+        args=["create-superadmin"],
+        input="otro_root\notro-root@test.local\nAnotherSafePassword!42\nAnotherSafePassword!42\n",
+    )
+
+    assert result.exit_code != 0
+    with stock_app.app.app_context():
+        existing_superadmin = db.session.get(User, existing_superadmin_id)
+        assert existing_superadmin is not None
+        assert existing_superadmin.role == "superadmin"
+        assert existing_superadmin.password_hash == existing_password_hash
         assert User.query.filter_by(role="superadmin").count() == 1
 
 
-def test_default_superadmin_bootstrap_skips_duplicates_when_username_or_email_exists():
+def test_create_admin_user_requires_explicit_password_and_never_creates_superadmin(monkeypatch):
     with stock_app.app.app_context():
         clear_test_data(db)
+    monkeypatch.setenv("ADMIN_USERNAME", "empresa_admin_inicial")
+    monkeypatch.setenv("ADMIN_EMAIL", "empresa-admin@test.local")
+    monkeypatch.setenv("ADMIN_PASSWORD", "ExplicitCompanyAdminPassword!42")
 
-        conflict = User(username="superadmin", email="otro_correo@test.local", role="admin", active=True)
-        conflict.set_password("otra123")
-        db.session.add(conflict)
-        db.session.commit()
-
-        created = stock_app.ensure_default_superadmin_user()
-
-        assert created is False
-        assert User.query.filter_by(username="superadmin").count() == 1
-        assert User.query.filter_by(email="superadmin@stockarmobile.local").count() == 0
+    with stock_app.app.app_context():
+        created = stock_app.create_admin_user()
+        user = User.query.filter_by(username="empresa_admin_inicial").one()
+        password_hash = user.password_hash
+        assert created is True
+        assert user.role == "admin"
+        assert user.check_password("ExplicitCompanyAdminPassword!42")
         assert User.query.filter_by(role="superadmin").count() == 0
+
+        assert stock_app.create_admin_user() is False
+        db.session.refresh(user)
+        assert user.role == "admin"
+        assert user.password_hash == password_hash
 
 
 def test_scope_query_to_company_fails_closed_without_company_context():

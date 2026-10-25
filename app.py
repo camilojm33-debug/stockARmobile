@@ -20,8 +20,8 @@ from flask import abort, current_app, flash, g, jsonify, make_response, redirect
 from flask_login import UserMixin, current_user, login_required
 from flask_wtf import FlaskForm
 from flask_wtf.csrf import CSRFError
-from sqlalchemy import CheckConstraint, Index, inspect, text
-from sqlalchemy.exc import IntegrityError, OperationalError, ProgrammingError
+from sqlalchemy import CheckConstraint, Index, text
+from sqlalchemy.exc import ProgrammingError
 from werkzeug.exceptions import HTTPException
 from werkzeug.security import check_password_hash, generate_password_hash
 from wtforms import BooleanField, DateField, DecimalField, PasswordField, SelectField, StringField, SubmitField, TextAreaField
@@ -49,7 +49,6 @@ from stockarmobile.responses import api_error
 from stockarmobile.permissions import EMPLOYEE_ADMIN_ONLY, employee_endpoint_permission, user_role
 from stockarmobile.tenant import (
     get_current_company_id as _shared_get_current_company_id,
-    is_control_panel_owner,
     model_table_exists as _shared_model_table_exists,
     scope_query_to_company as _shared_scope_query_to_company,
 )
@@ -71,7 +70,6 @@ configure_logging()
 app = create_app(__name__, template_folder="templates", static_folder="static")
 sys.modules.setdefault("app", sys.modules[__name__])
 is_production_env = bool(app.config.get("IS_PRODUCTION_ENV", False))
-is_pytest_context = bool(app.config.get("IS_PYTEST_CONTEXT", False))
 
 MONEY = db.Numeric(18, 2)
 PERCENT = db.Numeric(10, 4)
@@ -2711,7 +2709,6 @@ def create_admin_user():
     from services.subscription_service import SubscriptionService
 
     admin_created = False
-    admin_updated = False
     company = Company.query.first()
     if company is None:
         company = Company(name=os.environ.get("COMPANY_NAME", "StockArmobile"))
@@ -2725,113 +2722,31 @@ def create_admin_user():
     admin_email = (os.environ.get("ADMIN_EMAIL", "admin@stockarmobile.local") or "admin@stockarmobile.local").strip().lower()
     by_username = User.query.filter_by(username=admin_username).first()
     by_email = User.query.filter_by(email=admin_email).first()
-
-    is_production = os.environ.get("FLASK_ENV") == "production" or os.environ.get("RENDER")
     admin_password = os.environ.get("ADMIN_PASSWORD")
 
-    target_admin = by_email or by_username
-    if target_admin is not None:
-        changed = False
-        if by_email is not None:
-            # Priorizamos el email para evitar IntegrityError cuando OAuth ya creó ese usuario.
-            username_taken_by_other = by_username is not None and by_username.id != by_email.id
-            if not username_taken_by_other and target_admin.username != admin_username:
-                target_admin.username = admin_username
-                changed = True
-            elif username_taken_by_other and target_admin.username != admin_username:
-                app.logger.warning("No se pudo normalizar username admin por conflicto con otro usuario existente.")
-        desired_role = target_admin.role or "user"
-        if desired_role != "superadmin":
-            desired_role = "superadmin" if is_control_panel_owner(target_admin) else "admin"
-        if target_admin.role != desired_role:
-            target_admin.role = desired_role
-            changed = True
-        if not target_admin.active:
-            target_admin.active = True
-            changed = True
-        if target_admin.company_id is None:
-            target_admin.company_id = company.id
-            changed = True
-        if changed:
-            admin_updated = True
+    if not admin_password or not admin_password.strip():
+        app.logger.warning("ADMIN_PASSWORD no configurado; no se crea el usuario admin.")
+    elif by_username is not None or by_email is not None:
+        app.logger.warning("No se crea el usuario admin porque el nombre o correo ya está en uso.")
     else:
-        if is_production and not admin_password:
-            app.logger.warning("ADMIN_PASSWORD no configurado; no se pudo crear el usuario admin.")
-        else:
-            user = User(
-                username=admin_username,
-                email=admin_email,
-                company_id=company.id,
-                active=True,
-            )
-            user.set_password(admin_password or "admin123")
-            user.role = "superadmin"
-            db.session.add(user)
-            admin_created = True
+        user = User(
+            username=admin_username,
+            email=admin_email,
+            company_id=company.id,
+            active=True,
+            role="admin",
+        )
+        user.set_password(admin_password)
+        db.session.add(user)
+        admin_created = True
 
     if Subscription.query.filter_by(company_id=company.id).first() is None:
         trial_plan = Plan.query.filter_by(code="trial").first() or Plan.query.order_by(Plan.id.asc()).first()
         SubscriptionService.ensure_company_trial(db.session, company=company, trial_plan=trial_plan)
     db.session.commit()
     if admin_created:
-        app.logger.info("Admin creado")
-    elif admin_updated:
-        app.logger.info("Admin actualizado")
+        app.logger.info("Administrador de empresa creado")
     return admin_created
-
-
-DEFAULT_SUPERADMIN_USERNAME = (os.environ.get("DEFAULT_SUPERADMIN_USERNAME") or "superadmin").strip()
-DEFAULT_SUPERADMIN_EMAIL = (os.environ.get("DEFAULT_SUPERADMIN_EMAIL") or "superadmin@stockarmobile.local").strip().lower()
-DEFAULT_SUPERADMIN_PASSWORD = (os.environ.get("DEFAULT_SUPERADMIN_PASSWORD") or "").strip()
-DEFAULT_SUPERADMIN_ROLE = "superadmin"
-
-
-def _users_table_ready_for_superadmin_bootstrap():
-    try:
-        with app.app_context():
-            return inspect(db.engine).has_table("users")
-    except Exception:
-        return False
-
-
-def ensure_default_superadmin_user():
-    """Crea el Super Admin fijo solo si no existe ningun usuario con ese rol."""
-    if getattr(app, "_default_superadmin_bootstrap_blocked", False):
-        return False
-
-    if not _users_table_ready_for_superadmin_bootstrap():
-        return False
-
-    created = False
-    try:
-        bootstrap_password = DEFAULT_SUPERADMIN_PASSWORD
-        if not bootstrap_password:
-            if is_production_env and not is_pytest_context:
-                app.logger.error("DEFAULT_SUPERADMIN_PASSWORD no configurado. Se omite bootstrap de Super Admin en produccion.")
-                app._default_superadmin_bootstrap_blocked = True
-                return False
-            bootstrap_password = "admin123"
-
-        existing_superadmin = User.query.filter(User.role == DEFAULT_SUPERADMIN_ROLE).first()
-        if existing_superadmin is None:
-            by_username = User.query.filter_by(username=DEFAULT_SUPERADMIN_USERNAME).first()
-            by_email = User.query.filter_by(email=DEFAULT_SUPERADMIN_EMAIL).first()
-            if by_username is None and by_email is None:
-                user = User(
-                    username=DEFAULT_SUPERADMIN_USERNAME,
-                    email=DEFAULT_SUPERADMIN_EMAIL,
-                    active=True,
-                    role=DEFAULT_SUPERADMIN_ROLE,
-                )
-                user.set_password(bootstrap_password)
-                db.session.add(user)
-                db.session.commit()
-                app.logger.info("Super Admin creado correctamente")
-                created = True
-        return created
-    except (IntegrityError, OperationalError, ProgrammingError):
-        db.session.rollback()
-        return False
 
 
 def bootstrap_database():
@@ -2847,41 +2762,9 @@ def bootstrap_database():
 
         app.logger.info("Aplicando migraciones por bootstrap...")
         upgrade()
-        ensure_default_superadmin_user()
         create_admin_user()
-        ensure_primary_superadmin()
         app.logger.info("Bootstrap completado")
     app._bootstrap_done = True
-
-
-def ensure_primary_superadmin():
-    """Garantiza que el primer usuario tenga acceso total al sistema."""
-    first_user = User.query.order_by(User.id.asc()).first()
-    if first_user is None:
-        return
-
-    changed = False
-    company = Company.query.first()
-    if company is None:
-        company = Company(name=os.environ.get("COMPANY_NAME", "StockArmobile"), active=True)
-        db.session.add(company)
-        db.session.flush()
-
-    if first_user.company_id is None:
-        first_user.company_id = company.id
-        changed = True
-    if not first_user.active:
-        first_user.active = True
-        changed = True
-    expected_role = first_user.role or "user"
-    if expected_role != "superadmin" and is_control_panel_owner(first_user):
-        expected_role = "superadmin"
-    if first_user.role != expected_role:
-        first_user.role = expected_role
-        changed = True
-
-    if changed:
-        db.session.commit()
 
 
 def ensure_database_schema():
@@ -2955,23 +2838,39 @@ def init_db_command():
     from flask_migrate import upgrade
 
     upgrade()
-    ensure_default_superadmin_user()
     create_admin_user()
-    ensure_primary_superadmin()
     app.logger.info("Base de datos inicializada correctamente.")
 
 
-@app.before_request
-def ensure_superadmin_on_startup():
-    ensure_default_superadmin_user()
+@app.cli.command("create-superadmin")
+def create_superadmin_command():
+    """Crea el primer superadministrador desde una consola local confiable."""
+    username = click.prompt("Usuario del superadministrador").strip()
+    email = click.prompt("Correo del superadministrador").strip().lower()
+    password = click.prompt("Contraseña (mínimo 12 caracteres)", hide_input=True, confirmation_prompt=True)
 
+    if len(username) < 3 or len(username) > 80:
+        raise click.ClickException("El usuario debe tener entre 3 y 80 caracteres.")
+    if len(email) > 120 or not is_valid_email(email):
+        raise click.ClickException("El correo no es válido.")
+    if len(password) < 12:
+        raise click.ClickException("La contraseña debe tener al menos 12 caracteres.")
+    if User.query.filter_by(role="superadmin").first() is not None:
+        raise click.ClickException("Ya existe un superadministrador; no se modificó ninguna cuenta.")
+    if User.query.filter(db.func.lower(User.username) == username.lower()).first() is not None:
+        raise click.ClickException("El usuario ya está en uso; no se modificó ninguna cuenta.")
+    if User.query.filter(db.func.lower(User.email) == email).first() is not None:
+        raise click.ClickException("El correo ya está en uso; no se modificó ninguna cuenta.")
 
-with app.app_context():
-    ensure_default_superadmin_user()
+    user = User(username=username, email=email, active=True, role="superadmin")
+    user.set_password(password)
+    db.session.add(user)
+    db.session.commit()
+    app.logger.info("Superadministrador inicial creado desde la consola local.")
+    click.echo("Superadministrador inicial creado.")
 
 
 if __name__ == "__main__":
     debug_enabled = str(os.environ.get("FLASK_DEBUG", "")).strip().lower() in {"1", "true", "yes", "on"}
     host = (os.environ.get("FLASK_RUN_HOST") or "127.0.0.1").strip()
     app.run(debug=debug_enabled, host=host, port=int(os.environ.get("PORT", 5000)))
-

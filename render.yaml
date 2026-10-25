@@ -26,8 +26,6 @@ services:
       - fromGroup: stockarmobile-billing-reconciliation-controls
       - key: SECRET_KEY
         generateValue: true
-      - key: DEFAULT_SUPERADMIN_PASSWORD
-        generateValue: true
       - key: ADMIN_PASSWORD
         generateValue: true
       - key: MP_MODE

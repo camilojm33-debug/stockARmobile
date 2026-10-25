@@ -17,7 +17,7 @@ Estado de referencia al 2026-07-16.
 - [ ] Confirmar dominio final y `APP_URL` productivo.
 - [ ] Ejecutar prueba manual completa sobre PostgreSQL en Render.
 - [ ] Verificar webhook real de Mercado Pago en entorno productivo o sandbox estable.
-- [ ] Definir y guardar credenciales iniciales de `superadmin` fuera del codigo.
+- [ ] Tras aplicar migraciones, crear el primer `superadmin` desde una consola confiable con `flask create-superadmin`; el comando solicita usuario, correo y una contraseña confirmada.
 - [ ] Probar restauracion real de backup en ambiente controlado.
 
 ## Variables de entorno obligatorias
@@ -25,17 +25,17 @@ Estado de referencia al 2026-07-16.
 - [ ] `SECRET_KEY`
 - [ ] `DATABASE_URL`
 - [ ] `APP_URL`
-- [ ] `DEFAULT_SUPERADMIN_PASSWORD`
-- [ ] `ADMIN_PASSWORD`
 - [ ] `MP_CLIENT_ID`
 - [ ] `MP_CLIENT_SECRET`
 - [ ] `MP_OAUTH_ENCRYPTION_KEY`
 - [ ] `MP_WEBHOOK_SECRET`
 
+## Variables opcionales
+
+- [ ] `ADMIN_PASSWORD` (solo para crear un administrador de empresa mediante `flask init-db`; nunca crea un superadmin)
+
 ## Variables recomendadas
 
-- [ ] `DEFAULT_SUPERADMIN_USERNAME`
-- [ ] `DEFAULT_SUPERADMIN_EMAIL`
 - [ ] `COMPANY_PIN_SESSION_TTL_MINUTES`
 - [ ] `SUPPORT_EMAIL`
 - [ ] `SUPPORT_WHATSAPP_DISPLAY`

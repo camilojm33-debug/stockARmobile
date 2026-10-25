@@ -15,7 +15,7 @@ from stockarmobile.helpers.strings import is_safe_relative_redirect, normalize_d
 from stockarmobile.helpers.validators import is_positive_number, is_valid_email
 from stockarmobile.permissions import has_any_permission, is_admin, is_superadmin, parse_permissions_json
 from stockarmobile.responses import api_error, api_success
-from stockarmobile.tenant import get_current_company_id, is_control_panel_owner, scope_query_to_company
+from stockarmobile.tenant import get_current_company_id, scope_query_to_company
 
 
 class _FakeQuery:
@@ -98,7 +98,7 @@ def test_permissions_helpers():
     assert has_any_permission(admin, {"reports"}) is True
 
 
-def test_tenant_helpers_scope_and_context(monkeypatch):
+def test_tenant_helpers_scope_and_context():
     user = SimpleNamespace(is_authenticated=True, role=ROLE_ADMIN, company_id=10)
     superadmin = SimpleNamespace(is_authenticated=True, role=ROLE_SUPERADMIN, company_id=99)
     anon = SimpleNamespace(is_authenticated=False, role=None, company_id=None)
@@ -117,11 +117,6 @@ def test_tenant_helpers_scope_and_context(monkeypatch):
     user_without_company = SimpleNamespace(is_authenticated=True, role=ROLE_ADMIN, company_id=None)
     scope_query_to_company(fake_query_no_company, fake_model, current_user_obj=user_without_company)
     assert fake_query_no_company.filtered_with is not None
-
-    monkeypatch.setenv("ADMIN_USERNAME", "owner")
-    monkeypatch.setenv("ADMIN_EMAIL", "owner@example.com")
-    owner_user = SimpleNamespace(username="owner", email="other@example.com")
-    assert is_control_panel_owner(owner_user) is True
 
 
 def test_response_helpers_json_shape():
