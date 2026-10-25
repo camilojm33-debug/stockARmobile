@@ -125,7 +125,6 @@ def _mutate_item(
         .first()
     )
     if locked is None:
-        db.session.rollback()
         return False
 
     metadata = _metadata(locked)
@@ -136,7 +135,6 @@ def _mutate_item(
             continue
         current_status = str(item.get("status") or "pending").strip().lower()
         if current_status != "pending":
-            db.session.rollback()
             return False
         item["status"] = status
         changed = True
@@ -184,12 +182,30 @@ def _claim_pending_item(
         row for row in outbox
         if str(row.get("dedupe_key") or "") == str(dedupe_key)
     ]
-    if not matching or any(
-        str(row.get("status") or "pending").strip().lower()
-        in {"sending", "sent", "uncertain"}
-        for row in matching
-    ):
+    if not matching:
         db.session.rollback()
+        return None
+
+    blocking_statuses = {"sending", "sent", "uncertain"}
+    has_blocking_copy = any(
+        str(row.get("status") or "pending").strip().lower() in blocking_statuses
+        for row in matching
+    )
+    if has_blocking_copy:
+        # Clean legacy duplicate pending rows rather than leaving them to spin forever.
+        changed = False
+        for row in matching:
+            if str(row.get("status") or "pending").strip().lower() == "pending":
+                row["status"] = "stale"
+                row["stale_at"] = now.isoformat()
+                row["last_error"] = "Duplicado suprimido: existe otro registro con la misma clave de deduplicación."
+                changed = True
+        if changed:
+            metadata[OUTBOX_KEY] = outbox
+            _set_metadata(locked, metadata)
+            db.session.commit()
+        else:
+            db.session.rollback()
         return None
 
     target = next(
