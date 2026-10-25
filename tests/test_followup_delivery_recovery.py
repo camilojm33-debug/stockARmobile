@@ -6,6 +6,7 @@ from stockarmobile.models.conversations import Agent, Conversation
 from services.ai_agent.followup_delivery_service import (
     SENDING_LEASE_MINUTES,
     _claim_pending_item,
+    _mark_delivery_uncertain,
     _recover_expired_sending,
 )
 from services.ai_agent.followup_service import _has_queued, _outbox
@@ -140,3 +141,33 @@ def test_definitive_http_rejection_can_retry_but_ambiguous_errors_cannot():
     assert not _is_definitive_whatsapp_rejection(RuntimeError("WhatsApp API HTTP 503: temporary failure"))
     assert not _is_definitive_whatsapp_rejection(RuntimeError("WhatsApp API devolvió JSON inválido."))
     assert not _is_definitive_whatsapp_rejection(TimeoutError("connection timed out"))
+
+
+
+def test_ambiguous_provider_result_is_quarantined_for_reconciliation(app):
+    now = datetime(2026, 10, 25, 12, 0, 0)
+    company_id, conversation_id = _create_conversation({
+        "ai_outbox": [{
+            "dedupe_key": "followup-uncertain",
+            "status": "sending",
+            "sending_at": (now - timedelta(seconds=10)).isoformat(),
+            "attempts": 0,
+            "body": "Mensaje sintético",
+        }]
+    })
+    conversation = db.session.get(Conversation, conversation_id)
+
+    changed = _mark_delivery_uncertain(
+        conversation,
+        "followup-uncertain",
+        now=now,
+        error="Timeout después de iniciar la solicitud",
+    )
+    assert changed is True
+
+    db.session.expire_all()
+    item = db.session.get(Conversation, conversation_id).metadata_json["ai_outbox"][0]
+    assert item["status"] == "uncertain"
+    assert item["attempts"] == 1
+    assert item["reconciliation_required"] is True
+    assert "next_attempt_at" not in item
