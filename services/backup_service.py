@@ -960,7 +960,7 @@ class BackupService:
             db_session.execute(model.__table__.insert(), BackupService._deserialize_rows(model, rows))
 
     @staticmethod
-    def restore_backup(backup_log, *, expected_company_id: int, restored_by_user_id: int | None, sections=None):
+    def restore_backup(backup_log, *, expected_company_id: int, restored_by_user_id: int | None, sections=None, sync_sequences: bool = True):
         from app import (
             CashMovement,
             CashSession,
@@ -1204,7 +1204,8 @@ class BackupService:
             if expense_rows:
                 db.session.execute(Expense.__table__.insert(), expense_rows)
 
-        BackupService._sync_sequences([Product, Client, Supplier, PurchaseOrder, PurchaseItem, PurchasePaymentDetail, Sale, SaleItem, CashSession, CashMovement, Expense, User])
+        if sync_sequences:
+            BackupService._sync_sequences([Product, Client, Supplier, PurchaseOrder, PurchaseItem, PurchasePaymentDetail, Sale, SaleItem, CashSession, CashMovement, Expense, User])
 
         backup_log.restored_at = utcnow()
         backup_log.restored_by_user_id = restored_by_user_id
@@ -1276,6 +1277,7 @@ class BackupService:
                 expected_company_id=expected_company_id,
                 restored_by_user_id=None,
                 sections=list(BackupService.FULL_RESTORE_SECTIONS),
+                sync_sequences=False,
             )
             db.session.flush()
             after = counts()
