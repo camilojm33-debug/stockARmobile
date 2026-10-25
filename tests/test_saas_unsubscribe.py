@@ -161,11 +161,17 @@ def test_human_and_one_click_unsubscribe_urls_are_distinct(app):
 
     _lead_id, _consent_id = _create_lead_with_consent("url-token", "Comercio URLs")
     lead = SaaSLead.query.filter_by(company_name="Comercio URLs").one()
+    original_app_url = app.config.get("APP_URL")
     app.config["APP_URL"] = "https://www.stockarmobile.com"
-
-    assert _unsubscribe_url(lead) == (
-        "https://www.stockarmobile.com/superadmin/crm/unsubscribe/url-token"
-    )
-    assert _one_click_unsubscribe_url(lead) == (
-        "https://www.stockarmobile.com/superadmin/crm/unsubscribe-one-click/url-token"
-    )
+    try:
+        assert _unsubscribe_url(lead) == (
+            "https://www.stockarmobile.com/superadmin/crm/unsubscribe/url-token"
+        )
+        assert _one_click_unsubscribe_url(lead) == (
+            "https://www.stockarmobile.com/superadmin/crm/unsubscribe-one-click/url-token"
+        )
+    finally:
+        if original_app_url is None:
+            app.config.pop("APP_URL", None)
+        else:
+            app.config["APP_URL"] = original_app_url
