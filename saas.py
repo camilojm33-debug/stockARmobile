@@ -3150,17 +3150,63 @@ def crm_email_click(tracking_token):
 
 @bp.route("/crm/unsubscribe/<token>", methods=["GET", "POST"])
 def crm_unsubscribe(token):
+    """Render a human confirmation page; only an explicit CSRF-protected POST revokes consent."""
     from app import SaaSLeadConsent, db, utcnow
 
     consent = SaaSLeadConsent.query.filter_by(unsubscribe_token=(token or "").strip()).first()
-    if consent is None:
-        return render_template("saas/crm_unsubscribe.html", ok=False), 404
+    if consent is None or consent.lead is None:
+        return render_template("saas/crm_unsubscribe.html", ok=False, confirm=False), 404
+
+    lead = consent.lead
+    if request.method == "GET":
+        # Mail scanners and link previews routinely fetch URLs. A GET must never mutate consent.
+        return render_template(
+            "saas/crm_unsubscribe.html",
+            ok=False,
+            confirm=True,
+            company_name=lead.company_name,
+        )
+
+    if request.form.get("confirm_unsubscribe") != "1":
+        abort(400)
+
+    consent.email_status = "opted_out"
+    consent.revoked_at = consent.revoked_at or utcnow()
+    lead.email_consent_status = "opted_out"
+    db.session.commit()
+    return render_template(
+        "saas/crm_unsubscribe.html",
+        ok=True,
+        confirm=False,
+        company_name=lead.company_name,
+    )
+
+
+@bp.post("/crm/unsubscribe-one-click/<token>")
+@csrf.exempt
+def crm_unsubscribe_one_click(token):
+    """RFC 8058 one-click endpoint, narrowly exempt from browser CSRF protection."""
+    from app import SaaSLeadConsent, db, utcnow
+
+    # RFC 8058 uses a URL-encoded POST body. Reject other content types, extra
+    # fields, duplicated fields, and alternate payloads before changing consent.
+    if (
+        request.mimetype != "application/x-www-form-urlencoded"
+        or request.form.getlist("List-Unsubscribe") != ["One-Click"]
+        or len(request.form) != 1
+    ):
+        abort(400)
+
+    consent = SaaSLeadConsent.query.filter_by(unsubscribe_token=(token or "").strip()).first()
+    if consent is None or consent.lead is None:
+        return "", 404
+
     lead = consent.lead
     consent.email_status = "opted_out"
     consent.revoked_at = consent.revoked_at or utcnow()
     lead.email_consent_status = "opted_out"
     db.session.commit()
-    return render_template("saas/crm_unsubscribe.html", ok=True, company_name=lead.company_name)
+    return "", 204
 
 
 @bp.post("/crm/leads/<int:lead_id>/consent-link")

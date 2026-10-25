@@ -50,7 +50,7 @@ def _run_once(flask_app) -> None:
             planned = AIFollowupService.scan()
             delivered = AIFollowupDeliveryService.dispatch_pending()
             logger.info(
-                "AI follow-up cycle planned_scanned=%s eligible=%s queued=%s sent=%s stale=%s blocked=%s blocked_reasons=%s failed=%s",
+                "AI follow-up cycle planned_scanned=%s eligible=%s queued=%s sent=%s stale=%s blocked=%s blocked_reasons=%s failed=%s uncertain=%s",
                 planned["scanned"],
                 planned["eligible"],
                 planned["queued"],
@@ -59,6 +59,7 @@ def _run_once(flask_app) -> None:
                 delivered["blocked"],
                 delivered.get("blocked_reasons", {}),
                 delivered["failed"],
+                delivered.get("uncertain", 0),
             )
 
     try:

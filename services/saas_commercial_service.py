@@ -736,11 +736,21 @@ def render_merge(text: str, lead) -> str:
 
 
 def _unsubscribe_url(lead) -> str:
+    """Human-readable unsubscribe URL; opening it only shows a confirmation page."""
     from flask import current_app
 
     token = getattr(getattr(lead, "consent", None), "unsubscribe_token", None)
     base = _clean(current_app.config.get("APP_URL")).rstrip("/")
     return f"{base}/superadmin/crm/unsubscribe/{quote(token)}" if base and token else ""
+
+
+def _one_click_unsubscribe_url(lead) -> str:
+    """RFC 8058 URL used only in List-Unsubscribe headers."""
+    from flask import current_app
+
+    token = getattr(getattr(lead, "consent", None), "unsubscribe_token", None)
+    base = _clean(current_app.config.get("APP_URL")).rstrip("/")
+    return f"{base}/superadmin/crm/unsubscribe-one-click/{quote(token)}" if base and token else ""
 
 
 def _tracking_open_url(recipient) -> str:
@@ -848,13 +858,28 @@ def _send_email(recipient, campaign) -> tuple[bool, str]:
     msg["To"] = recipient.destination
     msg["Reply-To"] = msg["From"]
     unsub = _unsubscribe_url(recipient.lead)
-    if unsub:
-        msg["List-Unsubscribe"] = f"<{unsub}>"
+    one_click_unsub = _one_click_unsubscribe_url(recipient.lead)
+    if one_click_unsub:
+        msg["List-Unsubscribe"] = f"<{one_click_unsub}>"
         msg["List-Unsubscribe-Post"] = "List-Unsubscribe=One-Click"
     msg["X-StockArMobile-Campaign"] = str(campaign.id)
     msg["X-StockArMobile-Recipient"] = str(recipient.id)
-    msg.set_content(render_merge(campaign.body_text or campaign.body_html, recipient.lead))
-    msg.add_alternative(_render_tracking_html(render_merge(campaign.body_html, recipient.lead), recipient), subtype="html")
+
+    text_body = render_merge(campaign.body_text or campaign.body_html, recipient.lead).rstrip()
+    html_body = _render_tracking_html(render_merge(campaign.body_html, recipient.lead), recipient)
+    if unsub:
+        text_body += (
+            "\n\nPara dejar de recibir comunicaciones comerciales por email, visitá: "
+            f"{unsub}"
+        )
+        # Keep the human link separate from the RFC 8058 endpoint and do not
+        # route it through click tracking: opening it must not alter consent.
+        html_body += (
+            '<p class="unsubscribe-link">Para dejar de recibir comunicaciones comerciales por email, '
+            f'<a href="{escape(unsub, quote=True)}">darse de baja</a>.</p>'
+        )
+    msg.set_content(text_body)
+    msg.add_alternative(html_body, subtype="html")
 
     try:
         preferred_port = int(current_app.config.get("SMTP_PORT") or 587)

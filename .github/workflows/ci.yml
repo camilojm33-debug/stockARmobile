@@ -97,5 +97,10 @@ jobs:
           python-version: '3.14'
       - name: Install dependencies
         run: pip install -r requirements.txt
-      - name: Run PostgreSQL recovery regression tests
-        run: pytest -q --tb=short tests/test_backup_recovery_stage.py tests/test_persistent_storage.py tests/test_readiness_endpoint.py
+      - name: Run PostgreSQL recovery and AI outbox regression tests
+        run: >-
+          pytest -q --tb=short
+          tests/test_backup_recovery_stage.py
+          tests/test_persistent_storage.py
+          tests/test_readiness_endpoint.py
+          tests/test_followup_delivery_recovery.py
