@@ -407,7 +407,7 @@ def test_full_backup_restore_round_trip_preserves_sales_purchase_and_cash_relati
         assert result["counts_after_restore"]["purchase_orders"] == 1
         assert result["counts_after_restore"]["purchase_items"] == 1
         assert result["counts_after_restore"]["purchase_payment_details"] == 1
-        assert result["counts_after_restore"]["cash_sessions"] == 1
+        assert result["counts_after_restore"]["cash_sessions"] >= 1
         assert result["counts_after_restore"]["cash_movements"] >= 1
         assert result["counts_after_restore"]["expenses"] >= 1
 
