@@ -8,7 +8,7 @@ from sqlalchemy import Index
 from app import Company, Product, db, record_audit, utcnow, scope_query_to_company
 from services.ai_agent.usage_service import can_use_commercial_feature
 from stockarmobile.tenant import get_current_company_id
-from stockarmobile.helpers.dates import local_day_bounds_utc_naive
+from stockarmobile.helpers.dates import format_local_date, local_day_bounds_utc_naive
 
 bp = Blueprint("promotions", __name__, url_prefix="/promociones")
 
@@ -151,12 +151,15 @@ def _index_context(company):
 
 def _render_index(company, form_data=None):
     promotions, products, categories = _index_context(company)
+    timezone_name = getattr(company, "timezone", None) or "America/Argentina/Buenos_Aires"
     return render_template(
         "promociones/index.html",
         promotions=promotions,
         products=products,
         categories=categories,
         form_data=form_data or {},
+        timezone_name=timezone_name,
+        format_local_date=format_local_date,
     )
 
 @bp.route("/", methods=["GET"])
