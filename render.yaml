@@ -236,3 +236,4 @@ databases:
   - name: stockarmobile-prod
     databaseName: stockarmobile_prod
     user: stockarmobile
+    ipAllowList: [] # Only internal Render network connections
