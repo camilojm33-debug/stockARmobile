@@ -1024,21 +1024,14 @@ class BackupService:
                         )
                     setattr(company, field, value)
 
-        # Remove children before parents. With ON DELETE CASCADE foreign keys,
-        # deleting a product/client first can silently erase purchase/sale details
-        # or even sales before we have captured their IDs for restoration.
-        if full_restore:
-            # CashMovement.sale_id is a restrictive FK to Sale. Remove its rows
-            # before deleting sales, then restore them from the backup below.
-            CashMovement.query.filter_by(company_id=expected_company_id).delete(synchronize_session=False)
-
-        if "sales" in sections:
-            existing_sales_ids = [
-                row.id for row in Sale.query.filter_by(company_id=expected_company_id).all()
-            ]
-            if existing_sales_ids:
-                SaleItem.query.filter(SaleItem.sale_id.in_(existing_sales_ids)).delete(synchronize_session=False)
-            Sale.query.filter_by(company_id=expected_company_id).delete(synchronize_session=False)
+        # Full restores reconcile parent rows in place instead of deleting them.
+        # Clients, sales, cash sessions and products may be referenced by features
+        # not represented in this backup payload (quotes, campaigns, price history,
+        # CRM). Deleting those parents can cascade-delete legitimate history or
+        # fail on NO ACTION constraints.
+        client_id_map: dict[int, int] = {}
+        sale_id_map: dict[int, int] = {}
+        cash_session_id_map: dict[int, int] = {}
 
         if full_restore:
             PurchasePaymentDetail.query.filter_by(company_id=expected_company_id).delete(synchronize_session=False)
@@ -1050,8 +1043,6 @@ class BackupService:
                     PurchaseItem.purchase_order_id.in_(existing_purchase_ids)
                 ).delete(synchronize_session=False)
             PurchaseOrder.query.filter_by(company_id=expected_company_id).delete(synchronize_session=False)
-            Expense.query.filter_by(company_id=expected_company_id).delete(synchronize_session=False)
-            CashSession.query.filter_by(company_id=expected_company_id).delete(synchronize_session=False)
 
         supplier_id_map: dict[int, int] = {}
         product_id_map: dict[int, int] = {}
@@ -1234,35 +1225,37 @@ class BackupService:
 
         if "clients" in sections:
             client_rows = BackupService._deserialize_rows(Client, payload.get("clients") or [])
+            existing_clients = {
+                int(row.id): row
+                for row in Client.query.filter_by(company_id=expected_company_id).all()
+            }
+            restored_client_ids = set()
+            for source_row in client_rows:
+                incoming_id = int(source_row["id"]) if source_row.get("id") is not None else None
+                client = existing_clients.get(incoming_id) if incoming_id is not None else None
+                if client is None:
+                    candidate = dict(source_row)
+                    candidate["company_id"] = expected_company_id
+                    if incoming_id is not None and db.session.get(Client, incoming_id) is not None:
+                        candidate.pop("id", None)
+                    client = Client(**candidate)
+                    db.session.add(client)
+                    db.session.flush()
+                else:
+                    for key, value in source_row.items():
+                        if key not in {"id", "company_id"} and hasattr(client, key):
+                            setattr(client, key, value)
+                if incoming_id is not None:
+                    client_id_map[incoming_id] = int(client.id)
+                restored_client_ids.add(int(client.id))
+                existing_clients[int(client.id)] = client
+
             if full_restore:
-                Client.query.filter_by(company_id=expected_company_id).delete(synchronize_session=False)
-                if client_rows:
-                    db.session.execute(Client.__table__.insert(), client_rows)
-            else:
-                # A selected client restore must preserve historical sales that
-                # reference existing clients. Update and insert; never cascade-delete.
-                existing_clients = {
-                    int(row.id): row
-                    for row in Client.query.filter_by(company_id=expected_company_id).all()
-                }
-                for client_row in client_rows:
-                    incoming_id = client_row.get("id")
-                    client = existing_clients.get(int(incoming_id)) if incoming_id is not None else None
-                    if client is not None:
-                        for key, value in client_row.items():
-                            if key not in {"id", "company_id"} and hasattr(client, key):
-                                setattr(client, key, value)
-                    else:
-                        candidate = dict(client_row)
-                        candidate["company_id"] = expected_company_id
-                        if incoming_id is not None and db.session.get(Client, int(incoming_id)) is not None:
-                            candidate.pop("id", None)
-                        db.session.execute(Client.__table__.insert(), [candidate])
-                        db.session.flush()
-                        if incoming_id is not None:
-                            inserted = Client.query.filter_by(id=int(incoming_id), company_id=expected_company_id).first()
-                            if inserted is not None:
-                                existing_clients[int(inserted.id)] = inserted
+                # Preserve clients absent from the snapshot: their quotes, CRM
+                # activities and AI-campaign records may still refer to them.
+                for client in existing_clients.values():
+                    if int(client.id) not in restored_client_ids:
+                        client.active = False
 
         if "employees" in sections:
             BackupService._restore_employee_rows(
@@ -1271,29 +1264,112 @@ class BackupService:
                 rows=payload.get("users") or [],
             )
 
-        # Sales can reference users and cash sessions. Restore those parents first
-        # in a full restore, after removing the old child rows above.
+        # Restore cash sessions in place. Sales and cash movements reference
+        # these rows, so deleting sessions can cascade-delete financial history.
         if full_restore:
             cash_session_rows = BackupService._deserialize_rows(CashSession, payload.get("cash_sessions") or [])
-            if cash_session_rows:
-                db.session.execute(CashSession.__table__.insert(), cash_session_rows)
+            existing_sessions = {
+                int(row.id): row
+                for row in CashSession.query.filter_by(company_id=expected_company_id).all()
+            }
+            for source_row in cash_session_rows:
+                incoming_id = int(source_row["id"]) if source_row.get("id") is not None else None
+                session = existing_sessions.get(incoming_id) if incoming_id is not None else None
+                if session is None:
+                    candidate = dict(source_row)
+                    candidate["company_id"] = expected_company_id
+                    if incoming_id is not None and db.session.get(CashSession, incoming_id) is not None:
+                        candidate.pop("id", None)
+                    session = CashSession(**candidate)
+                    db.session.add(session)
+                    db.session.flush()
+                else:
+                    for key, value in source_row.items():
+                        if key not in {"id", "company_id"} and hasattr(session, key):
+                            setattr(session, key, value)
+                if incoming_id is not None:
+                    cash_session_id_map[incoming_id] = int(session.id)
+                existing_sessions[int(session.id)] = session
 
         if "sales" in sections:
-            sales_ids = [row.id for row in Sale.query.filter_by(company_id=expected_company_id).all()]
-            if sales_ids:
-                SaleItem.query.filter(SaleItem.sale_id.in_(sales_ids)).delete(synchronize_session=False)
-            Sale.query.filter_by(company_id=expected_company_id).delete(synchronize_session=False)
             sale_rows = BackupService._deserialize_rows(Sale, payload.get("sales") or [])
             sale_item_rows = BackupService._deserialize_rows(SaleItem, payload.get("sale_items") or [])
-            if full_restore:
-                for item_row in sale_item_rows:
-                    source_product_id = item_row.get("product_id")
-                    if source_product_id is not None:
-                        item_row["product_id"] = product_id_map.get(int(source_product_id), int(source_product_id))
-            if sale_rows:
-                db.session.execute(Sale.__table__.insert(), sale_rows)
-            if sale_item_rows:
-                db.session.execute(SaleItem.__table__.insert(), sale_item_rows)
+            existing_sales = {
+                int(row.id): row
+                for row in Sale.query.filter_by(company_id=expected_company_id).all()
+            }
+            sales_by_transaction = {
+                str(row.client_txn_id): row
+                for row in existing_sales.values()
+                if str(row.client_txn_id or "").strip()
+            }
+            restored_sale_ids = set()
+            for source_row in sale_rows:
+                incoming_id = int(source_row["id"]) if source_row.get("id") is not None else None
+                transaction_id = str(source_row.get("client_txn_id") or "").strip()
+                sale = existing_sales.get(incoming_id) if incoming_id is not None else None
+                if sale is None and transaction_id:
+                    sale = sales_by_transaction.get(transaction_id)
+
+                candidate = dict(source_row)
+                candidate["company_id"] = expected_company_id
+                source_client_id = candidate.get("client_id")
+                if source_client_id is not None:
+                    candidate["client_id"] = client_id_map.get(
+                        int(source_client_id), int(source_client_id)
+                    )
+                source_session_id = candidate.get("cash_session_id")
+                if source_session_id is not None:
+                    candidate["cash_session_id"] = cash_session_id_map.get(
+                        int(source_session_id), int(source_session_id)
+                    )
+
+                if sale is None:
+                    if incoming_id is not None and db.session.get(Sale, incoming_id) is not None:
+                        candidate.pop("id", None)
+                    sale = Sale(**candidate)
+                    db.session.add(sale)
+                    db.session.flush()
+                else:
+                    for key, value in candidate.items():
+                        if key not in {"id", "company_id"} and hasattr(sale, key):
+                            setattr(sale, key, value)
+
+                if incoming_id is not None:
+                    sale_id_map[incoming_id] = int(sale.id)
+                restored_sale_ids.add(int(sale.id))
+                existing_sales[int(sale.id)] = sale
+                if transaction_id:
+                    sales_by_transaction[transaction_id] = sale
+
+            # Replace sale items only for sales present in the snapshot. Other
+            # post-snapshot sales and their items remain intact.
+            if restored_sale_ids:
+                SaleItem.query.filter(SaleItem.sale_id.in_(restored_sale_ids)).delete(
+                    synchronize_session=False
+                )
+
+            normalized_sale_items = []
+            for source_row in sale_item_rows:
+                candidate = dict(source_row)
+                source_sale_id = candidate.get("sale_id")
+                if source_sale_id is not None:
+                    candidate["sale_id"] = sale_id_map.get(
+                        int(source_sale_id), int(source_sale_id)
+                    )
+                source_product_id = candidate.get("product_id")
+                if full_restore and source_product_id is not None:
+                    candidate["product_id"] = product_id_map.get(
+                        int(source_product_id), int(source_product_id)
+                    )
+                incoming_item_id = candidate.get("id")
+                if incoming_item_id is not None:
+                    existing_item = db.session.get(SaleItem, int(incoming_item_id))
+                    if existing_item is not None and int(existing_item.sale_id) not in restored_sale_ids:
+                        candidate.pop("id", None)
+                normalized_sale_items.append(candidate)
+            if normalized_sale_items:
+                db.session.execute(SaleItem.__table__.insert(), normalized_sale_items)
 
         if sections == BackupService.FULL_RESTORE_SECTIONS or set(sections) == set(BackupService.FULL_RESTORE_SECTIONS):
             purchase_order_ids = [row.id for row in PurchaseOrder.query.filter_by(company_id=expected_company_id).all()]
@@ -1330,10 +1406,58 @@ class BackupService:
             Expense.query.filter_by(company_id=expected_company_id).delete(synchronize_session=False)
             cash_movement_rows = BackupService._deserialize_rows(CashMovement, payload.get("cash_movements") or [])
             expense_rows = BackupService._deserialize_rows(Expense, payload.get("expenses") or [])
-            if cash_movement_rows:
-                db.session.execute(CashMovement.__table__.insert(), cash_movement_rows)
-            if expense_rows:
-                db.session.execute(Expense.__table__.insert(), expense_rows)
+
+            existing_movements = {
+                int(row.id): row
+                for row in CashMovement.query.filter_by(company_id=expected_company_id).all()
+            }
+            for source_row in cash_movement_rows:
+                incoming_id = int(source_row["id"]) if source_row.get("id") is not None else None
+                candidate = dict(source_row)
+                source_sale_id = candidate.get("sale_id")
+                if source_sale_id is not None:
+                    candidate["sale_id"] = sale_id_map.get(
+                        int(source_sale_id), int(source_sale_id)
+                    )
+                source_session_id = candidate.get("session_id")
+                if source_session_id is not None:
+                    candidate["session_id"] = cash_session_id_map.get(
+                        int(source_session_id), int(source_session_id)
+                    )
+                movement = existing_movements.get(incoming_id) if incoming_id is not None else None
+                if movement is None:
+                    candidate["company_id"] = expected_company_id
+                    if incoming_id is not None and db.session.get(CashMovement, incoming_id) is not None:
+                        candidate.pop("id", None)
+                    movement = CashMovement(**candidate)
+                    db.session.add(movement)
+                    db.session.flush()
+                else:
+                    for key, value in candidate.items():
+                        if key not in {"id", "company_id"} and hasattr(movement, key):
+                            setattr(movement, key, value)
+                existing_movements[int(movement.id)] = movement
+
+            existing_expenses = {
+                int(row.id): row
+                for row in Expense.query.filter_by(company_id=expected_company_id).all()
+            }
+            for source_row in expense_rows:
+                incoming_id = int(source_row["id"]) if source_row.get("id") is not None else None
+                expense = existing_expenses.get(incoming_id) if incoming_id is not None else None
+                if expense is None:
+                    candidate = dict(source_row)
+                    candidate["company_id"] = expected_company_id
+                    if incoming_id is not None and db.session.get(Expense, incoming_id) is not None:
+                        candidate.pop("id", None)
+                    expense = Expense(**candidate)
+                    db.session.add(expense)
+                    db.session.flush()
+                else:
+                    for key, value in source_row.items():
+                        if key not in {"id", "company_id"} and hasattr(expense, key):
+                            setattr(expense, key, value)
+                existing_expenses[int(expense.id)] = expense
 
         if sync_sequences:
             BackupService._sync_sequences([Product, Client, Supplier, PurchaseOrder, PurchaseItem, PurchasePaymentDetail, Sale, SaleItem, CashSession, CashMovement, Expense, User])
@@ -1432,11 +1556,20 @@ class BackupService:
             # retained inactive to protect historical foreign keys. Validate that
             # every backed-up supplier/product is present instead of equating total
             # physical rows with the snapshot's row count.
-            preserved_catalog = {"products", "suppliers"}
+            preserved_entities = {
+                "products", "suppliers", "clients", "sales",
+                "cash_sessions", "cash_movements", "expenses",
+            }
             mismatches = {
-                key: {"expected": value, "actual": after.get(key)}
+                key: {"expected_at_least": value, "actual": after.get(key)}
                 for key, value in expected.items()
-                if key not in preserved_catalog and int(after.get(key) or 0) != int(value or 0)
+                if (
+                    (key in preserved_entities and int(after.get(key) or 0) < int(value or 0))
+                    or (
+                        key not in preserved_entities
+                        and int(after.get(key) or 0) != int(value or 0)
+                    )
+                )
             }
             missing_products = []
             for row in payload.get("products") or []:
