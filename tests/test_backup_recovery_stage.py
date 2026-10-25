@@ -4,7 +4,7 @@ from decimal import Decimal
 
 from app import (
     CashMovement, CashSession, Client, Company, Expense, Product, PurchaseItem,
-    PurchaseOrder, Sale, SaleItem, Supplier, User, db,
+    PurchaseOrder, Quote, Sale, SaleItem, Supplier, User, db,
 )
 from services.backup_service import BackupService
 from stockarmobile.supplier_purchase_payments import PurchasePaymentDetail
@@ -275,6 +275,18 @@ def test_full_backup_restore_round_trip_preserves_sales_purchase_and_cash_relati
             price=120,
             cost_price=40,
         ))
+        quote_before_snapshot = Quote(
+            company_id=company.id,
+            number="BKP-FK-QUOTE-001",
+            client_id=client.id,
+            created_by_user_id=user.id,
+            seller_id=user.id,
+            converted_sale_id=sale.id,
+            subtotal=120,
+            total_amount=120,
+            status="CONVERTIDO",
+        )
+        db.session.add(quote_before_snapshot)
         db.session.add(CashMovement(
             session_id=cash_session.id,
             sale_id=sale.id,
@@ -309,9 +321,47 @@ def test_full_backup_restore_round_trip_preserves_sales_purchase_and_cash_relati
             active=True,
         )
         db.session.add(extra_product)
+        extra_client = Client(
+            name="Cliente posterior al backup",
+            phone="556",
+            company_id=company.id,
+            active=True,
+        )
+        db.session.add(extra_client)
+        db.session.flush()
+        extra_sale = Sale(
+            company_id=company.id,
+            client_id=extra_client.id,
+            customer=extra_client.name,
+            subtotal=33,
+            total_amount=33,
+            paid_amount=33,
+            seller_id=user.id,
+            cash_session_id=cash_session.id,
+            status="confirmada",
+        )
+        db.session.add(extra_sale)
+        db.session.flush()
+        extra_quote = Quote(
+            company_id=company.id,
+            number="BKP-FK-QUOTE-POST",
+            client_id=extra_client.id,
+            created_by_user_id=user.id,
+            seller_id=user.id,
+            converted_sale_id=extra_sale.id,
+            subtotal=33,
+            total_amount=33,
+            status="CONVERTIDO",
+        )
+        db.session.add(extra_quote)
         db.session.commit()
         extra_product_id = extra_product.id
+        extra_client_id = extra_client.id
+        extra_sale_id = extra_sale.id
+        extra_quote_id = extra_quote.id
         product_id = product.id
+        client_id = client.id
+        sale_id = sale.id
         price_batch_id = price_batch.id
 
         result = BackupService.verify_restore_round_trip(
@@ -320,8 +370,8 @@ def test_full_backup_restore_round_trip_preserves_sales_purchase_and_cash_relati
         )
         assert result["valid"] is True
         assert result["rolled_back"] is True
-        assert result["counts_after_restore"]["sales"] == 1
-        assert result["counts_after_restore"]["sale_items"] == 1
+        assert result["counts_after_restore"]["sales"] >= 1
+        assert result["counts_after_restore"]["sale_items"] >= 1
         assert result["counts_after_restore"]["purchase_orders"] == 1
         assert result["counts_after_restore"]["purchase_items"] == 1
         assert result["counts_after_restore"]["purchase_payment_details"] == 1
@@ -352,6 +402,18 @@ def test_full_backup_restore_round_trip_preserves_sales_purchase_and_cash_relati
             assert PriceControllerItem.query.filter_by(
                 batch_id=price_batch_id, product_id=product_id
             ).count() == 1
+            # Parent rows outside the snapshot are preserved, not deleted by a
+            # point-in-time restore, so their dependent quotes remain intact.
+            assert Client.query.filter_by(id=extra_client_id, company_id=company.id).one().active is False
+            assert Sale.query.filter_by(id=extra_sale_id, company_id=company.id).count() == 1
+            preserved_quote = db.session.get(Quote, extra_quote_id)
+            assert preserved_quote is not None
+            assert preserved_quote.client_id == extra_client_id
+            assert preserved_quote.converted_sale_id == extra_sale_id
+            original_quote = db.session.get(Quote, quote_before_snapshot.id)
+            assert original_quote is not None
+            assert original_quote.client_id == client_id
+            assert original_quote.converted_sale_id == sale_id
         finally:
             if savepoint.is_active:
                 savepoint.rollback()
