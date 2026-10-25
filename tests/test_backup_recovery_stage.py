@@ -12,6 +12,12 @@ from stockarmobile.supplier_purchase_payments import PurchasePaymentDetail
 
 def test_backup_restore_round_trip_rolls_back_changes(app, monkeypatch):
     monkeypatch.setenv("BACKUP_UPLOAD_DIR", str((__import__("pathlib").Path(app.instance_path) / "qa-backups")))
+    sequence_sync_calls = []
+    monkeypatch.setattr(
+        BackupService,
+        "_sync_sequences",
+        staticmethod(lambda models: sequence_sync_calls.append(tuple(model.__name__ for model in models))),
+    )
     with app.app_context():
         company = Company(name="Backup QA", active=True)
         db.session.add(company)
@@ -48,6 +54,7 @@ def test_backup_restore_round_trip_rolls_back_changes(app, monkeypatch):
         assert result["counts_before"]["products"] == 1
         assert result["counts_before"]["clients"] == 1
         assert backup.status == "ready"
+        assert sequence_sync_calls == [], "Verification must not mutate PostgreSQL sequences outside its rollbackable savepoint."
 
 
 def test_backup_maintenance_endpoint_requires_token(app, monkeypatch):
