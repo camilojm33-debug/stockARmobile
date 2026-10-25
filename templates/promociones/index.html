@@ -27,7 +27,27 @@
         <div class="mb-3 mt-2"><label class="form-label">Descripción</label><textarea class="form-control" name="description" rows="2" placeholder="Condiciones de la promoción">{{ form_data.get('description', '') }}</textarea></div>
         <button class="btn btn-primary w-100" type="submit"><i class="bi bi-plus-lg me-1"></i>Crear promoción</button>
       </form>
-      <script>const promotionType=document.getElementById("promotionType");const ruleBogo=document.getElementById("ruleBogo");const rulePercent=document.getElementById("rulePercent");const ruleFixed=document.getElementById("ruleFixed");function syncPromotionRule(){const active=promotionType.value;[[ruleBogo,"bogo"],[rulePercent,"percent_quantity"],[ruleFixed,"fixed_quantity"]].forEach(([el,type])=>{const enabled=active===type;el.classList.toggle("d-none",!enabled);el.querySelectorAll("input").forEach(input=>input.disabled=!enabled);}}promotionType.addEventListener("change",syncPromotionRule);syncPromotionRule();</script>
+      <script>
+        const promotionType = document.getElementById("promotionType");
+        const ruleBogo = document.getElementById("ruleBogo");
+        const rulePercent = document.getElementById("rulePercent");
+        const ruleFixed = document.getElementById("ruleFixed");
+
+        function syncPromotionRule() {
+          const active = promotionType.value;
+          [[ruleBogo, "bogo"], [rulePercent, "percent_quantity"], [ruleFixed, "fixed_quantity"]]
+            .forEach(([element, type]) => {
+              const enabled = active === type;
+              element.classList.toggle("d-none", !enabled);
+              element.querySelectorAll("input").forEach(input => {
+                input.disabled = !enabled;
+              });
+            });
+        }
+
+        promotionType.addEventListener("change", syncPromotionRule);
+        syncPromotionRule();
+      </script>
     </div></section></div>
     <div class="col-xl-7"><section class="card app-card"><div class="card-body p-4">
       <div class="d-flex justify-content-between align-items-center mb-3"><div><h2 class="h5 fw-bold mb-1">Promociones configuradas</h2><p class="small text-muted mb-0">Se aplica como máximo una promoción por producto y línea.</p></div><span class="badge text-bg-light border">{{ promotions|length }} configuradas</span></div>
