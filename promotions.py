@@ -1,6 +1,6 @@
 """Gestión de promociones comerciales para empresas."""
 from __future__ import annotations
-from datetime import datetime, time, timedelta
+from datetime import datetime, time
 from decimal import Decimal
 from flask import Blueprint, flash, redirect, render_template, request, url_for
 from flask_login import current_user, login_required
@@ -8,7 +8,6 @@ from sqlalchemy import Index
 from app import Company, Product, db, record_audit, utcnow, scope_query_to_company
 from services.ai_agent.usage_service import can_use_commercial_feature
 from stockarmobile.tenant import get_current_company_id
-from stockarmobile.helpers.dates import format_local_date, local_day_bounds_utc_naive
 
 bp = Blueprint("promotions", __name__, url_prefix="/promociones")
 
@@ -61,7 +60,7 @@ def _require_access():
         return None, redirect(url_for("dashboard.index"))
     return company, None
 
-def _parse_datetime(value: str, end=False, timezone_name="UTC"):
+def _parse_datetime(value: str, end=False):
     raw = (value or "").strip()
     if not raw:
         return None
@@ -69,11 +68,7 @@ def _parse_datetime(value: str, end=False, timezone_name="UTC"):
         parsed = datetime.strptime(raw, "%Y-%m-%d")
     except ValueError as exc:
         raise ValueError("La fecha ingresada no es válida.") from exc
-
-    # Date inputs represent company-local calendar days. Persist the matching
-    # UTC-naive instants because PromotionEngine compares against utcnow().
-    start_utc, next_day_utc = local_day_bounds_utc_naive(parsed.date(), timezone_name)
-    return next_day_utc - timedelta(microseconds=1) if end else start_utc
+    return datetime.combine(parsed.date(), time.max if end else time.min)
 
 def _decimal(value, default=None):
     if value in (None, ""):
@@ -89,7 +84,7 @@ def _decimal(value, default=None):
         raise ValueError("Uno de los valores numéricos de la regla no es válido.")
     return parsed
 
-def _validate_payload(form, timezone_name="UTC"):
+def _validate_payload(form):
     ptype = (form.get("type") or "").strip().lower()
     if ptype not in {"bogo", "percent_quantity", "fixed_quantity"}:
         raise ValueError("Tipo de promoción inválido.")
@@ -116,8 +111,8 @@ def _validate_payload(form, timezone_name="UTC"):
             raise ValueError("Completá la regla: indicá el Mínimo de unidades y el importe de descuento.")
         if minimum <= 0 or amount <= 0:
             raise ValueError("La regla debe tener un mínimo y un importe de descuento mayores a 0.")
-    starts = _parse_datetime(form.get("starts_at"), timezone_name=timezone_name)
-    ends = _parse_datetime(form.get("ends_at"), end=True, timezone_name=timezone_name)
+    starts = _parse_datetime(form.get("starts_at"))
+    ends = _parse_datetime(form.get("ends_at"), end=True)
     if starts and ends and ends < starts:
         raise ValueError("La fecha de fin no puede ser anterior al inicio.")
     try:
@@ -151,15 +146,12 @@ def _index_context(company):
 
 def _render_index(company, form_data=None):
     promotions, products, categories = _index_context(company)
-    timezone_name = getattr(company, "timezone", None) or "America/Argentina/Buenos_Aires"
     return render_template(
         "promociones/index.html",
         promotions=promotions,
         products=products,
         categories=categories,
         form_data=form_data or {},
-        timezone_name=timezone_name,
-        format_local_date=format_local_date,
     )
 
 @bp.route("/", methods=["GET"])
@@ -177,10 +169,7 @@ def save():
     if response:
         return response
     try:
-        payload = _validate_payload(
-            request.form,
-            timezone_name=(getattr(company, "timezone", None) or "America/Argentina/Buenos_Aires"),
-        )
+        payload = _validate_payload(request.form)
         if not payload["name"]:
             raise ValueError("Ingresá un nombre para la promoción.")
         if payload["product_id"]:
