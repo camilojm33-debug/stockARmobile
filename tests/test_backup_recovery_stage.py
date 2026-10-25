@@ -8,6 +8,8 @@ from app import (
 )
 from services.backup_service import BackupService
 from stockarmobile.supplier_purchase_payments import PurchasePaymentDetail
+from pricing_controller import PriceControllerBatch, PriceControllerItem
+from promotions import Promotion
 
 
 def test_backup_restore_round_trip_rolls_back_changes(app, monkeypatch):
@@ -190,6 +192,31 @@ def test_full_backup_restore_round_trip_preserves_sales_purchase_and_cash_relati
         db.session.add(product)
         db.session.flush()
 
+        promotion = Promotion(
+            company_id=company.id,
+            product_id=product.id,
+            name="Promoción FK QA",
+            type="percentage",
+            created_by_user_id=user.id,
+        )
+        price_batch = PriceControllerBatch(
+            company_id=company.id,
+            user_id=user.id,
+            adjustment_type="percent",
+            direction="increase",
+            adjustment_value=Decimal("5.0"),
+            name="Lote FK QA",
+        )
+        db.session.add_all([promotion, price_batch])
+        db.session.flush()
+        price_item = PriceControllerItem(
+            batch_id=price_batch.id,
+            product_id=product.id,
+            old_price=Decimal("120.00"),
+            new_price=Decimal("126.00"),
+        )
+        db.session.add(price_item)
+
         cash_session = CashSession(
             user_id=user.id,
             opened_by_user_id=user.id,
@@ -271,6 +298,22 @@ def test_full_backup_restore_round_trip_preserves_sales_purchase_and_cash_relati
         backup, _plan = BackupService.create_manual_backup(company.id, user_id=user.id)
         db.session.commit()
 
+        # A newer product not present in the backup must be archived, not deleted:
+        # retained catalog history may still reference products outside the snapshot.
+        extra_product = Product(
+            company_id=company.id,
+            barcode="BKP-FK-EXTRA",
+            name="Producto posterior al backup",
+            price=99,
+            stock=9,
+            active=True,
+        )
+        db.session.add(extra_product)
+        db.session.commit()
+        extra_product_id = extra_product.id
+        product_id = product.id
+        price_batch_id = price_batch.id
+
         result = BackupService.verify_restore_round_trip(
             backup,
             expected_company_id=company.id,
@@ -285,6 +328,34 @@ def test_full_backup_restore_round_trip_preserves_sales_purchase_and_cash_relati
         assert result["counts_after_restore"]["cash_sessions"] == 1
         assert result["counts_after_restore"]["cash_movements"] == 1
         assert result["counts_after_restore"]["expenses"] == 1
+
+        # Exercise a real restore in a savepoint so the FK guarantee and archive
+        # policy are observable without persisting QA data.
+        savepoint = db.session.begin_nested()
+        try:
+            BackupService.restore_backup(
+                backup,
+                expected_company_id=company.id,
+                restored_by_user_id=None,
+                sections=list(BackupService.FULL_RESTORE_SECTIONS),
+            )
+            db.session.flush()
+            restored_product = Product.query.filter_by(id=product_id, company_id=company.id).one()
+            assert restored_product.active is True
+            assert restored_product.barcode == "BKP-FK-001"
+            archived_extra = Product.query.filter_by(id=extra_product_id, company_id=company.id).one()
+            assert archived_extra.active is False
+            assert archived_extra.stock == 0
+            assert Promotion.query.filter_by(
+                company_id=company.id, product_id=product_id
+            ).count() == 1
+            assert PriceControllerItem.query.filter_by(
+                batch_id=price_batch_id, product_id=product_id
+            ).count() == 1
+        finally:
+            if savepoint.is_active:
+                savepoint.rollback()
+            db.session.expire_all()
 
 
 def test_backup_creation_refuses_payload_over_import_size_limit(app, monkeypatch, tmp_path):
