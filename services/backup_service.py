@@ -1049,20 +1049,128 @@ class BackupService:
             Expense.query.filter_by(company_id=expected_company_id).delete(synchronize_session=False)
             CashSession.query.filter_by(company_id=expected_company_id).delete(synchronize_session=False)
 
+        supplier_id_map: dict[int, int] = {}
+        product_id_map: dict[int, int] = {}
         current_products = Product.query.filter_by(company_id=expected_company_id).order_by(Product.id.asc()).all()
         if "products" in sections:
             product_rows = BackupService._deserialize_rows(Product, payload.get("products") or [])
             if full_restore:
-                # Full restore has already removed sale and purchase children.
-                # Delete products before suppliers, then recreate suppliers first
-                # because product.supplier_id is a foreign key.
-                Product.query.filter_by(company_id=expected_company_id).delete(synchronize_session=False)
-                Supplier.query.filter_by(company_id=expected_company_id).delete(synchronize_session=False)
+                # Reconcile suppliers and products in place. Other live modules
+                # (promotions, AI campaigns, price-controller history, quotes, etc.)
+                # retain foreign keys to Product; deleting catalog rows here would
+                # either fail or cascade away valuable history.
                 supplier_rows = BackupService._deserialize_rows(Supplier, payload.get("suppliers") or [])
-                if supplier_rows:
-                    db.session.execute(Supplier.__table__.insert(), supplier_rows)
-                if product_rows:
-                    db.session.execute(Product.__table__.insert(), product_rows)
+                existing_suppliers = Supplier.query.filter_by(company_id=expected_company_id).order_by(Supplier.id.asc()).all()
+                suppliers_by_id = {int(row.id): row for row in existing_suppliers}
+                suppliers_by_name = {}
+                for row in existing_suppliers:
+                    name_key = str(row.name or "").strip().casefold()
+                    if name_key:
+                        suppliers_by_name.setdefault(name_key, []).append(row)
+
+                restored_supplier_ids = set()
+                for source_row in supplier_rows:
+                    incoming_id = int(source_row["id"]) if source_row.get("id") is not None else None
+                    name_key = str(source_row.get("name") or "").strip().casefold()
+                    supplier = suppliers_by_id.get(incoming_id) if incoming_id is not None else None
+                    if supplier is None and name_key:
+                        name_matches = suppliers_by_name.get(name_key, [])
+                        if len(name_matches) == 1:
+                            supplier = name_matches[0]
+
+                    if supplier is None:
+                        candidate = dict(source_row)
+                        candidate["company_id"] = expected_company_id
+                        if incoming_id is not None and db.session.get(Supplier, incoming_id) is not None:
+                            candidate.pop("id", None)
+                        supplier = Supplier(**candidate)
+                        db.session.add(supplier)
+                        db.session.flush()
+                    else:
+                        for key, value in source_row.items():
+                            if key not in {"id", "company_id"} and hasattr(supplier, key):
+                                setattr(supplier, key, value)
+
+                    if incoming_id is not None:
+                        supplier_id_map[incoming_id] = int(supplier.id)
+                    restored_supplier_ids.add(int(supplier.id))
+                    suppliers_by_id[int(supplier.id)] = supplier
+                    updated_name_key = str(supplier.name or "").strip().casefold()
+                    if updated_name_key:
+                        matches = suppliers_by_name.setdefault(updated_name_key, [])
+                        if supplier not in matches:
+                            matches.append(supplier)
+
+                # Keep suppliers referenced by old product/history rows, but make
+                # suppliers absent from the snapshot unavailable for new purchases.
+                for supplier in existing_suppliers:
+                    if int(supplier.id) not in restored_supplier_ids:
+                        supplier.active = False
+
+                current_products = Product.query.filter_by(company_id=expected_company_id).order_by(Product.id.asc()).all()
+                products_by_id = {int(row.id): row for row in current_products}
+                products_by_barcode = {
+                    str(row.barcode or "").strip(): row
+                    for row in current_products
+                    if str(row.barcode or "").strip()
+                }
+                restored_product_ids = set()
+
+                for source_row in product_rows:
+                    incoming_id = int(source_row["id"]) if source_row.get("id") is not None else None
+                    barcode = str(source_row.get("barcode") or "").strip()
+                    product = products_by_id.get(incoming_id) if incoming_id is not None else None
+                    barcode_match = products_by_barcode.get(barcode) if barcode else None
+                    if product is None:
+                        product = barcode_match
+                    elif barcode_match is not None and int(barcode_match.id) != int(product.id):
+                        raise ValueError(
+                            "No se puede restaurar el catálogo: el código de barras "
+                            f"{barcode!r} está asignado a dos productos distintos."
+                        )
+
+                    source_supplier_id = source_row.get("supplier_id")
+                    restored_supplier_id = None
+                    if source_supplier_id is not None:
+                        restored_supplier_id = supplier_id_map.get(int(source_supplier_id))
+                        if restored_supplier_id is None:
+                            existing_supplier = Supplier.query.filter_by(
+                                id=int(source_supplier_id),
+                                company_id=expected_company_id,
+                            ).first()
+                            if existing_supplier is not None:
+                                restored_supplier_id = int(existing_supplier.id)
+
+                    if product is None:
+                        candidate = dict(source_row)
+                        candidate["company_id"] = expected_company_id
+                        candidate["supplier_id"] = restored_supplier_id
+                        if incoming_id is not None and db.session.get(Product, incoming_id) is not None:
+                            candidate.pop("id", None)
+                        product = Product(**candidate)
+                        db.session.add(product)
+                        db.session.flush()
+                    else:
+                        for key, value in source_row.items():
+                            if key not in {"id", "company_id", "supplier_id"} and hasattr(product, key):
+                                setattr(product, key, value)
+                        product.supplier_id = restored_supplier_id
+
+                    if incoming_id is not None:
+                        product_id_map[incoming_id] = int(product.id)
+                    restored_product_ids.add(int(product.id))
+                    products_by_id[int(product.id)] = product
+                    if barcode:
+                        products_by_barcode[barcode] = product
+
+                # Products absent from the snapshot are preserved as inactive,
+                # zero-stock records so foreign-key-backed history remains valid.
+                for product in current_products:
+                    if int(product.id) not in restored_product_ids:
+                        product.active = False
+                        product.stock = 0
+
+                db.session.flush()
             else:
                 # Partial product restores must not delete products referenced by
                 # sales or purchase history. Merge by tenant-scoped ID/barcode.
@@ -1173,6 +1281,11 @@ class BackupService:
             Sale.query.filter_by(company_id=expected_company_id).delete(synchronize_session=False)
             sale_rows = BackupService._deserialize_rows(Sale, payload.get("sales") or [])
             sale_item_rows = BackupService._deserialize_rows(SaleItem, payload.get("sale_items") or [])
+            if full_restore:
+                for item_row in sale_item_rows:
+                    source_product_id = item_row.get("product_id")
+                    if source_product_id is not None:
+                        item_row["product_id"] = product_id_map.get(int(source_product_id), int(source_product_id))
             if sale_rows:
                 db.session.execute(Sale.__table__.insert(), sale_rows)
             if sale_item_rows:
@@ -1185,6 +1298,21 @@ class BackupService:
             PurchaseOrder.query.filter_by(company_id=expected_company_id).delete(synchronize_session=False)
             purchase_order_rows = BackupService._deserialize_rows(PurchaseOrder, payload.get("purchase_orders") or [])
             purchase_item_rows = BackupService._deserialize_rows(PurchaseItem, payload.get("purchase_items") or [])
+            for purchase_row in purchase_order_rows:
+                source_supplier_id = purchase_row.get("supplier_id")
+                if source_supplier_id is not None:
+                    mapped_supplier_id = supplier_id_map.get(int(source_supplier_id))
+                    if mapped_supplier_id is None:
+                        existing_supplier = Supplier.query.filter_by(
+                            id=int(source_supplier_id),
+                            company_id=expected_company_id,
+                        ).first()
+                        mapped_supplier_id = int(existing_supplier.id) if existing_supplier is not None else None
+                    purchase_row["supplier_id"] = mapped_supplier_id
+            for item_row in purchase_item_rows:
+                source_product_id = item_row.get("product_id")
+                if source_product_id is not None:
+                    item_row["product_id"] = product_id_map.get(int(source_product_id), int(source_product_id))
             if purchase_order_rows:
                 db.session.execute(PurchaseOrder.__table__.insert(), purchase_order_rows)
             if purchase_item_rows:
@@ -1297,13 +1425,50 @@ class BackupService:
                 "cash_movements": len(payload.get("cash_movements") or []),
                 "expenses": len(payload.get("expenses") or []),
             }
+            # Catalog rows that existed after the snapshot are intentionally
+            # retained inactive to protect historical foreign keys. Validate that
+            # every backed-up supplier/product is present instead of equating total
+            # physical rows with the snapshot's row count.
+            preserved_catalog = {"products", "suppliers"}
             mismatches = {
                 key: {"expected": value, "actual": after.get(key)}
                 for key, value in expected.items()
-                if int(after.get(key) or 0) != int(value or 0)
+                if key not in preserved_catalog and int(after.get(key) or 0) != int(value or 0)
             }
+            missing_products = []
+            for row in payload.get("products") or []:
+                match = None
+                if row.get("id") is not None:
+                    match = Product.query.filter_by(
+                        id=int(row["id"]), company_id=expected_company_id
+                    ).first()
+                if match is None and str(row.get("barcode") or "").strip():
+                    match = Product.query.filter_by(
+                        company_id=expected_company_id,
+                        barcode=str(row.get("barcode") or "").strip(),
+                    ).first()
+                if match is None or match.name != row.get("name") or match.barcode != row.get("barcode"):
+                    missing_products.append(row.get("id") or row.get("barcode"))
+            missing_suppliers = []
+            for row in payload.get("suppliers") or []:
+                match = None
+                if row.get("id") is not None:
+                    match = Supplier.query.filter_by(
+                        id=int(row["id"]), company_id=expected_company_id
+                    ).first()
+                if match is None:
+                    match = Supplier.query.filter_by(
+                        company_id=expected_company_id,
+                        name=str(row.get("name") or ""),
+                    ).first()
+                if match is None or match.name != row.get("name"):
+                    missing_suppliers.append(row.get("id") or row.get("name"))
+            if missing_products:
+                mismatches["product_snapshot"] = {"missing_or_mismatched": missing_products}
+            if missing_suppliers:
+                mismatches["supplier_snapshot"] = {"missing_or_mismatched": missing_suppliers}
             if mismatches:
-                raise ValueError(f"Round-trip restore count mismatch: {mismatches}")
+                raise ValueError(f"Round-trip restore mismatch: {mismatches}")
 
             savepoint.rollback()
         except Exception:
