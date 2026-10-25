@@ -47,6 +47,19 @@ def _positive_int_env(name: str, default: int, minimum: int, maximum: int) -> in
     return max(minimum, min(value, maximum))
 
 
+def _is_definitive_whatsapp_rejection(exc: Exception) -> bool:
+    """A received 4xx response (except 408) proves rejection; transport/5xx is ambiguous."""
+    message = str(exc or "")
+    marker = "WhatsApp API HTTP "
+    if marker not in message:
+        return False
+    try:
+        status_code = int(message.split(marker, 1)[1][:3])
+    except (TypeError, ValueError):
+        return False
+    return 400 <= status_code < 500 and status_code != 408
+
+
 def _latest_user_message(conversation: Conversation):
     return (
         ConversationMessage.query.filter(
@@ -104,12 +117,27 @@ def _mutate_item(
     provider_message_id: str = "",
     template_name: str = "",
 ) -> bool:
-    metadata = _metadata(conversation)
-    outbox = _outbox(conversation, metadata)
+    """Mutate an item only while it is still pending, so stale checks cannot race a claim."""
+    locked = (
+        Conversation.query.filter_by(id=int(conversation.id), company_id=int(conversation.company_id))
+        .with_for_update()
+        .populate_existing()
+        .first()
+    )
+    if locked is None:
+        db.session.rollback()
+        return False
+
+    metadata = _metadata(locked)
+    outbox = _outbox(locked, metadata)
     changed = False
     for item in outbox:
         if str(item.get("dedupe_key") or "") != str(dedupe_key):
             continue
+        current_status = str(item.get("status") or "pending").strip().lower()
+        if current_status != "pending":
+            db.session.rollback()
+            return False
         item["status"] = status
         changed = True
         if status == "sending":
@@ -123,32 +151,198 @@ def _mutate_item(
         elif status in {"failed", "blocked", "stale"}:
             item["failed_at"] = now.isoformat()
             item["error"] = str(error or "")[:500]
-            attempts = int(item.get("attempts") or 0)
-            item["attempts"] = attempts
+            item["attempts"] = int(item.get("attempts") or 0)
+        break
+
     if changed:
-        metadata[OUTBOX_KEY] = outbox[-50:]
-        _set_metadata(conversation, metadata)
+        metadata[OUTBOX_KEY] = outbox
+        _set_metadata(locked, metadata)
     return changed
 
 
-def _record_failure(conversation: Conversation, dedupe_key: str, *, now: datetime, error: str) -> None:
-    metadata = _metadata(conversation)
-    outbox = _outbox(conversation, metadata)
-    for item in outbox:
-        if str(item.get("dedupe_key") or "") != str(dedupe_key):
-            continue
-        attempts = int(item.get("attempts") or 0) + 1
-        item["attempts"] = attempts
-        item["status"] = "pending"
-        item["last_error"] = str(error or "")[:500]
-        item["failed_at"] = now.isoformat()
-        # Backoff: 15m, 30m, 1h, 2h, 4h, 6h max.
-        delay_minutes = min(360, 15 * (2 ** max(0, attempts - 1)))
-        item["next_attempt_at"] = (now + timedelta(minutes=delay_minutes)).isoformat()
-        break
-    metadata[OUTBOX_KEY] = outbox[-50:]
-    _set_metadata(conversation, metadata)
+def _claim_pending_item(
+    *,
+    company_id: int,
+    conversation_id: int,
+    dedupe_key: str,
+    now: datetime,
+) -> dict[str, Any] | None:
+    """Atomically claim one pending item under a row lock before external I/O."""
+    locked = (
+        Conversation.query.filter_by(id=int(conversation_id), company_id=int(company_id))
+        .with_for_update()
+        .populate_existing()
+        .first()
+    )
+    if locked is None:
+        db.session.rollback()
+        return None
+
+    metadata = _metadata(locked)
+    outbox = _outbox(locked, metadata)
+    matching = [
+        row for row in outbox
+        if str(row.get("dedupe_key") or "") == str(dedupe_key)
+    ]
+    if not matching or any(
+        str(row.get("status") or "pending").strip().lower()
+        in {"sending", "sent", "uncertain"}
+        for row in matching
+    ):
+        db.session.rollback()
+        return None
+
+    target = next(
+        (row for row in matching if str(row.get("status") or "pending").strip().lower() == "pending"),
+        None,
+    )
+    if target is None:
+        db.session.rollback()
+        return None
+
+    next_attempt_at = _parse_dt(target.get("next_attempt_at"))
+    if next_attempt_at is not None and next_attempt_at > now:
+        db.session.rollback()
+        return None
+
+    target["status"] = "sending"
+    target["sending_at"] = now.isoformat()
+    target.pop("next_attempt_at", None)
+    metadata[OUTBOX_KEY] = outbox
+    _set_metadata(locked, metadata)
     db.session.commit()
+    return dict(target)
+
+
+def _recover_expired_sending(
+    *,
+    company_id: int,
+    conversation_id: int,
+    now: datetime,
+) -> int:
+    """Move expired in-flight records to uncertain; never resend after an ambiguous outcome."""
+    locked = (
+        Conversation.query.filter_by(id=int(conversation_id), company_id=int(company_id))
+        .with_for_update()
+        .populate_existing()
+        .first()
+    )
+    if locked is None:
+        db.session.rollback()
+        return 0
+
+    metadata = _metadata(locked)
+    outbox = _outbox(locked, metadata)
+    recovered = 0
+    for item in outbox:
+        if str(item.get("status") or "pending").strip().lower() != "sending":
+            continue
+        sending_at = _parse_dt(item.get("sending_at"))
+        if sending_at is not None and now - sending_at < timedelta(minutes=SENDING_LEASE_MINUTES):
+            continue
+        item["status"] = "uncertain"
+        item["uncertain_at"] = now.isoformat()
+        item["reconciliation_required"] = True
+        item["last_error"] = (
+            "El proceso se interrumpió durante la entrega. Verificar el estado con el proveedor "
+            "antes de considerar un nuevo envío."
+        )
+        item.pop("next_attempt_at", None)
+        recovered += 1
+
+    if recovered:
+        metadata[OUTBOX_KEY] = outbox
+        _set_metadata(locked, metadata)
+        db.session.commit()
+    else:
+        db.session.rollback()
+    return recovered
+
+
+def _mark_delivery_uncertain(
+    conversation: Conversation,
+    dedupe_key: str,
+    *,
+    now: datetime,
+    error: str,
+    provider_message_id: str = "",
+) -> bool:
+    """Persist ambiguous provider outcomes without blindly retrying the message."""
+    locked = (
+        Conversation.query.filter_by(id=int(conversation.id), company_id=int(conversation.company_id))
+        .with_for_update()
+        .populate_existing()
+        .first()
+    )
+    if locked is None:
+        db.session.rollback()
+        return False
+
+    metadata = _metadata(locked)
+    outbox = _outbox(locked, metadata)
+    target = next(
+        (row for row in outbox if str(row.get("dedupe_key") or "") == str(dedupe_key)),
+        None,
+    )
+    if target is None:
+        db.session.rollback()
+        return False
+    current_status = str(target.get("status") or "pending").strip().lower()
+    if current_status not in {"sending", "uncertain"}:
+        db.session.rollback()
+        return False
+
+    if current_status == "sending":
+        target["attempts"] = int(target.get("attempts") or 0) + 1
+    target["status"] = "uncertain"
+    target["uncertain_at"] = now.isoformat()
+    target["reconciliation_required"] = True
+    target["last_error"] = str(error or "")[:500]
+    if provider_message_id:
+        target["provider_message_id"] = provider_message_id
+    metadata[OUTBOX_KEY] = outbox
+    _set_metadata(locked, metadata)
+    db.session.commit()
+    return True
+
+
+def _record_failure(conversation: Conversation, dedupe_key: str, *, now: datetime, error: str) -> bool:
+    """Back off only after a failure known not to have been accepted by the provider."""
+    locked = (
+        Conversation.query.filter_by(id=int(conversation.id), company_id=int(conversation.company_id))
+        .with_for_update()
+        .populate_existing()
+        .first()
+    )
+    if locked is None:
+        db.session.rollback()
+        return False
+
+    metadata = _metadata(locked)
+    outbox = _outbox(locked, metadata)
+    target = next(
+        (row for row in outbox if str(row.get("dedupe_key") or "") == str(dedupe_key)),
+        None,
+    )
+    if target is None or str(target.get("status") or "pending").strip().lower() != "sending":
+        db.session.rollback()
+        return False
+
+    attempts = int(target.get("attempts") or 0) + 1
+    target["attempts"] = attempts
+    target["status"] = "pending"
+    target["last_error"] = str(error or "")[:500]
+    target["failed_at"] = now.isoformat()
+    target.pop("sending_at", None)
+    target.pop("uncertain_at", None)
+    target.pop("reconciliation_required", None)
+    # Backoff: 15m, 30m, 1h, 2h, 4h, 6h max.
+    delay_minutes = min(360, 15 * (2 ** max(0, attempts - 1)))
+    target["next_attempt_at"] = (now + timedelta(minutes=delay_minutes)).isoformat()
+    metadata[OUTBOX_KEY] = outbox
+    _set_metadata(locked, metadata)
+    db.session.commit()
+    return True
 
 
 def _mark_sent_and_audit(
@@ -158,25 +352,44 @@ def _mark_sent_and_audit(
     now: datetime,
     provider_message_id: str,
     template_name: str = "",
-) -> None:
-    metadata = _metadata(conversation)
-    outbox = _outbox(conversation, metadata)
-    for row in outbox:
-        if str(row.get("dedupe_key") or "") == str(item.get("dedupe_key") or ""):
-            row["status"] = "sent"
-            row["sent_at"] = now.isoformat()
-            row["provider_message_id"] = provider_message_id or ""
-            if template_name:
-                row["sent_template_name"] = template_name
-            row.pop("last_error", None)
-            row.pop("next_attempt_at", None)
-            break
+) -> bool:
+    """Record provider acceptance once; this does not claim recipient delivery."""
+    locked = (
+        Conversation.query.filter_by(id=int(conversation.id), company_id=int(conversation.company_id))
+        .with_for_update()
+        .populate_existing()
+        .first()
+    )
+    if locked is None:
+        db.session.rollback()
+        return False
+
+    metadata = _metadata(locked)
+    outbox = _outbox(locked, metadata)
+    target = next(
+        (row for row in outbox if str(row.get("dedupe_key") or "") == str(item.get("dedupe_key") or "")),
+        None,
+    )
+    if target is None or str(target.get("status") or "pending").strip().lower() not in {"sending", "uncertain"}:
+        db.session.rollback()
+        return False
+
+    target["status"] = "sent"
+    target["sent_at"] = now.isoformat()
+    target["provider_message_id"] = provider_message_id or ""
+    if template_name:
+        target["sent_template_name"] = template_name
+    target.pop("last_error", None)
+    target.pop("next_attempt_at", None)
+    target.pop("sending_at", None)
+    target.pop("uncertain_at", None)
+    target.pop("reconciliation_required", None)
 
     assistant = ConversationMessage(
-        conversation_id=conversation.id,
-        company_id=conversation.company_id,
+        conversation_id=locked.id,
+        company_id=locked.company_id,
         sender_type="agent",
-        sender_id=conversation.agent_id,
+        sender_id=locked.agent_id,
         role="assistant",
         content=str(item.get("body") or ""),
         content_type="text",
@@ -192,9 +405,10 @@ def _mark_sent_and_audit(
         },
     )
     db.session.add(assistant)
-    metadata[OUTBOX_KEY] = outbox[-50:]
-    _set_metadata(conversation, metadata)
+    metadata[OUTBOX_KEY] = outbox
+    _set_metadata(locked, metadata)
     db.session.commit()
+    return True
 
 
 class AIFollowupDeliveryService:
@@ -225,6 +439,7 @@ class AIFollowupDeliveryService:
             "blocked": 0,
             "blocked_reasons": {},
             "failed": 0,
+            "uncertain": 0,
             "pending": 0,
             "skipped": 0,
         }
@@ -241,6 +456,22 @@ class AIFollowupDeliveryService:
             if stats["sent"] >= limit:
                 break
             metadata = _metadata(conversation)
+            existing_outbox = _outbox(conversation, metadata)
+            has_expired_sending = any(
+                str(item.get("status") or "pending").strip().lower() == "sending"
+                and (
+                    _parse_dt(item.get("sending_at")) is None
+                    or effective_now - _parse_dt(item.get("sending_at")) >= timedelta(minutes=SENDING_LEASE_MINUTES)
+                )
+                for item in existing_outbox
+            )
+            if has_expired_sending:
+                stats["uncertain"] += _recover_expired_sending(
+                    company_id=int(conversation.company_id),
+                    conversation_id=int(conversation.id),
+                    now=effective_now,
+                )
+                metadata = _metadata(conversation)
             attention = metadata.get("ai_attention")
             if isinstance(attention, dict) and str(attention.get("status") or "").strip().lower() in {"human", "resolved"}:
                 continue
@@ -370,25 +601,25 @@ class AIFollowupDeliveryService:
                     stats["stale"] += 1
                     continue
 
-                # Claim one item before external I/O. A lease makes crash recovery possible.
-                metadata = _metadata(conversation)
-                outbox = _outbox(conversation, metadata)
-                target = next((row for row in outbox if str(row.get("dedupe_key") or "") == dedupe_key), None)
-                if target is None or str(target.get("status") or "pending") != "pending":
+                # Atomically claim the latest database state before external I/O.
+                target = _claim_pending_item(
+                    company_id=int(conversation.company_id),
+                    conversation_id=int(conversation.id),
+                    dedupe_key=dedupe_key,
+                    now=effective_now,
+                )
+                if target is None:
                     continue
-                sending_at = _parse_dt(target.get("sending_at"))
-                if sending_at is not None and effective_now - sending_at < timedelta(minutes=SENDING_LEASE_MINUTES):
-                    continue
-                target["status"] = "sending"
-                target["sending_at"] = effective_now.isoformat()
-                metadata[OUTBOX_KEY] = outbox[-50:]
-                _set_metadata(conversation, metadata)
-                db.session.commit()
 
+                provider_call_started = False
+                provider_message_id = ""
+                template_name = str(connection.get("template_name") or "").strip()
+                template_language = str(connection.get("template_language") or "es_AR").strip() or "es_AR"
                 try:
                     requires_template = effective_now - last_activity >= timedelta(hours=24)
-                    template_name = str(connection.get("template_name") or "").strip()
-                    template_language = str(connection.get("template_language") or "es_AR").strip() or "es_AR"
+                    recipient = "".join(ch for ch in str(conversation.external_conversation_id or "") if ch.isdigit())
+                    if not recipient:
+                        raise ValueError("El número de WhatsApp del destinatario es inválido.")
 
                     if requires_template:
                         if not template_name:
@@ -396,45 +627,60 @@ class AIFollowupDeliveryService:
                                 "No hay una plantilla de WhatsApp configurada para seguimientos fuera de la ventana de 24 horas."
                             )
                         parameters = _template_parameters(conversation, cart)
+                        provider_call_started = True
                         result = WhatsAppService.send_template(
                             company,
-                            to=str(conversation.external_conversation_id or ""),
+                            to=recipient,
                             template_name=template_name,
                             template_language=template_language,
                             body_parameters=parameters,
                         )
                     else:
+                        provider_call_started = True
                         result = WhatsAppService.send_text(
                             company,
-                            to=str(conversation.external_conversation_id or ""),
+                            to=recipient,
                             body=str(target.get("body") or ""),
                         )
 
-                    provider_message_id = ""
                     if isinstance(result, dict):
                         messages = result.get("messages")
                         if isinstance(messages, list) and messages and isinstance(messages[0], dict):
                             provider_message_id = str(messages[0].get("id") or "").strip()
-                    _mark_sent_and_audit(
+                    marked_sent = _mark_sent_and_audit(
                         conversation,
                         target,
                         now=utcnow_naive(),
                         provider_message_id=provider_message_id,
                         template_name=template_name if requires_template else "",
                     )
-                    stats["sent"] += 1
+                    if marked_sent:
+                        stats["sent"] += 1
+                    else:
+                        stats["skipped"] += 1
                 except Exception as exc:
+                    db.session.rollback()
                     current_app.logger.exception(
                         "AI follow-up delivery failed conversation=%s dedupe=%s",
                         conversation.id,
                         dedupe_key,
                     )
-                    _record_failure(
-                        conversation,
-                        dedupe_key,
-                        now=utcnow_naive(),
-                        error=str(exc),
-                    )
-                    stats["failed"] += 1
+                    if provider_call_started and not _is_definitive_whatsapp_rejection(exc):
+                        _mark_delivery_uncertain(
+                            conversation,
+                            dedupe_key,
+                            now=utcnow_naive(),
+                            error=str(exc),
+                            provider_message_id=provider_message_id,
+                        )
+                        stats["uncertain"] += 1
+                    else:
+                        _record_failure(
+                            conversation,
+                            dedupe_key,
+                            now=utcnow_naive(),
+                            error=str(exc),
+                        )
+                        stats["failed"] += 1
 
         return stats
