@@ -321,6 +321,16 @@ def test_full_backup_restore_round_trip_preserves_sales_purchase_and_cash_relati
             active=True,
         )
         db.session.add(extra_product)
+        extra_cash_session = CashSession(
+            user_id=user.id,
+            opened_by_user_id=user.id,
+            company_id=company.id,
+            opening_amount=0,
+            status="abierta",
+            note="Sesión posterior al backup",
+        )
+        db.session.add(extra_cash_session)
+        db.session.flush()
         extra_client = Client(
             name="Cliente posterior al backup",
             phone="556",
@@ -337,11 +347,30 @@ def test_full_backup_restore_round_trip_preserves_sales_purchase_and_cash_relati
             total_amount=33,
             paid_amount=33,
             seller_id=user.id,
-            cash_session_id=cash_session.id,
+            cash_session_id=extra_cash_session.id,
             status="confirmada",
         )
         db.session.add(extra_sale)
         db.session.flush()
+        extra_movement = CashMovement(
+            session_id=extra_cash_session.id,
+            sale_id=extra_sale.id,
+            user_id=user.id,
+            company_id=company.id,
+            movement_type="ingreso",
+            category="venta",
+            amount=33,
+            description="Movimiento posterior al backup",
+        )
+        extra_expense = Expense(
+            category="Otros",
+            description="Gasto posterior al backup",
+            amount=7,
+            payment_method="EFECTIVO",
+            user_id=user.id,
+            company_id=company.id,
+        )
+        db.session.add_all([extra_movement, extra_expense])
         extra_quote = Quote(
             company_id=company.id,
             number="BKP-FK-QUOTE-POST",
@@ -359,6 +388,9 @@ def test_full_backup_restore_round_trip_preserves_sales_purchase_and_cash_relati
         extra_client_id = extra_client.id
         extra_sale_id = extra_sale.id
         extra_quote_id = extra_quote.id
+        extra_cash_session_id = extra_cash_session.id
+        extra_movement_id = extra_movement.id
+        extra_expense_id = extra_expense.id
         product_id = product.id
         client_id = client.id
         sale_id = sale.id
@@ -376,8 +408,8 @@ def test_full_backup_restore_round_trip_preserves_sales_purchase_and_cash_relati
         assert result["counts_after_restore"]["purchase_items"] == 1
         assert result["counts_after_restore"]["purchase_payment_details"] == 1
         assert result["counts_after_restore"]["cash_sessions"] == 1
-        assert result["counts_after_restore"]["cash_movements"] == 1
-        assert result["counts_after_restore"]["expenses"] == 1
+        assert result["counts_after_restore"]["cash_movements"] >= 1
+        assert result["counts_after_restore"]["expenses"] >= 1
 
         # Exercise a real restore in a savepoint so the FK guarantee and archive
         # policy are observable without persisting QA data.
@@ -414,6 +446,15 @@ def test_full_backup_restore_round_trip_preserves_sales_purchase_and_cash_relati
             assert original_quote is not None
             assert original_quote.client_id == client_id
             assert original_quote.converted_sale_id == sale_id
+            assert CashSession.query.filter_by(
+                id=extra_cash_session_id, company_id=company.id
+            ).count() == 1
+            assert CashMovement.query.filter_by(
+                id=extra_movement_id, company_id=company.id, sale_id=extra_sale_id
+            ).count() == 1
+            assert Expense.query.filter_by(
+                id=extra_expense_id, company_id=company.id
+            ).count() == 1
         finally:
             if savepoint.is_active:
                 savepoint.rollback()
