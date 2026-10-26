@@ -231,9 +231,12 @@ def _parse_items(payload, *, client=None):
                 client=client,
             )
             if resolution["source"] == "mayorista":
+                explicitly_manual = can_modify_prices and str(raw_item.get("price_source") or "").strip().lower() == "manual"
                 is_list_price = unit_price == resolution["price"]
                 is_unmodified_retail_default = unit_price == to_decimal(product.price)
-                if not can_modify_prices or is_list_price or is_unmodified_retail_default:
+                if explicitly_manual:
+                    price_source = "manual"
+                elif not can_modify_prices or is_list_price or is_unmodified_retail_default:
                     unit_price = resolution["price"]
                     discount = Decimal("0.00")
                     price_source = "mayorista"
@@ -728,6 +731,8 @@ def _quote_form_items(quote):
             "quantity": float(item.quantity or 0),
             "unit_price": float(item.unit_price or 0),
             "discount": float(item.discount or 0),
+            "price_source": getattr(item, "price_source", None) or "minorista",
+            "price_list_id": getattr(item, "price_list_id", None),
         }
         for item in quote.items
     ]
