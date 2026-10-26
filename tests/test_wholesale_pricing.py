@@ -259,6 +259,7 @@ def test_retail_quote_keeps_existing_price_and_product_discount(wholesale_databa
 
 def test_admin_can_create_price_list_and_add_a_product_price(wholesale_database, app):
     data = wholesale_database
+    client_id = int(data["wholesale_client"].id)
     browser = app.test_client()
     # Set a deterministic password for this test administrator.
     with app.app_context():
@@ -302,6 +303,14 @@ def test_admin_can_create_price_list_and_add_a_product_price(wholesale_database,
         assert saved is not None
         assert Decimal(str(saved.unit_price)) == Decimal("75.50")
 
+    management_page = browser.get(f"/precios-mayoristas/?list_id={list_id}")
+    assert management_page.status_code == 200
+    assert b"Tramos cargados" in management_page.data
+
+    client_page = browser.get(f"/clientes/edit/{client_id}")
+    assert client_page.status_code == 200
+    assert b"Tipo de cliente" in client_page.data
+    assert b"Lista de precios" in client_page.data
 
 
 def _make_wholesale_excel(rows):
