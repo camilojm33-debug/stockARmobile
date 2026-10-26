@@ -80,18 +80,19 @@ def resolve_product_price(
         return fallback
     if str(getattr(client, "customer_type", "minorista") or "minorista").strip().lower() != "mayorista":
         return fallback
-    try:
-        price_list_id = int(getattr(client, "price_list_id", 0) or 0)
-    except (TypeError, ValueError):
-        price_list_id = 0
-    if price_list_id <= 0:
-        return {**fallback, "reason": "mayorista_sin_lista"}
 
     plan_access_allowed = _plan_access_allowed
     if plan_access_allowed is None:
         plan_access_allowed = _has_wholesale_pricing_access(effective_company_id)
     if not plan_access_allowed:
         return {**fallback, "reason": "plan_sin_mayoristas"}
+
+    try:
+        price_list_id = int(getattr(client, "price_list_id", 0) or 0)
+    except (TypeError, ValueError):
+        price_list_id = 0
+    if price_list_id <= 0:
+        return {**fallback, "reason": "mayorista_sin_lista"}
 
     # Deferred imports avoid coupling model import order to the resolver.
     from wholesale_pricing import PriceList, PriceListItem
