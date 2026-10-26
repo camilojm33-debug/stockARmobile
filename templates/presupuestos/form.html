@@ -645,7 +645,11 @@
     }
     if (field === 'quantity') {
       const product = productCatalog.find((row) => String(row.id) === String(line.product_id));
-      if (line.price_source === 'mayorista') syncLinePriceToClient(line, product);
+      if (selectedClientData()?.customer_type === 'mayorista' && line.price_source !== 'manual') {
+        syncLinePriceToClient(line, product);
+      } else if (line.price_source === 'mayorista') {
+        syncLinePriceToClient(line, product);
+      }
       const priceInput = document.getElementById(`linePrice-${index}`);
       if (priceInput && document.activeElement !== priceInput) priceInput.value = formatEditableNumber(line.unit_price, 2);
     }
