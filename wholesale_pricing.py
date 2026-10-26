@@ -7,7 +7,6 @@ import unicodedata
 from datetime import date
 from decimal import Decimal, InvalidOperation
 from io import BytesIO
-import unicodedata
 
 from flask import Blueprint, abort, current_app, flash, redirect, render_template, request, send_file, url_for
 from flask_login import current_user, login_required
