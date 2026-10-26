@@ -633,8 +633,24 @@ def checkout():
     if not cart.get("items"):
         flash("Carrito vacio.", "warning")
         return redirect(url_for("sales.new_sale"))
+    selected_client_id = request.args.get("client_id", type=int)
+    selected_client = None
+    if selected_client_id:
+        selected_client = scope_query_to_company(
+            Client.query.filter_by(id=selected_client_id, active=True), Client
+        ).first()
+        if selected_client is None:
+            flash("El cliente seleccionado no pertenece a tu empresa.", "danger")
+            return redirect(url_for("sales.checkout"))
     try:
         products = _calculate_lines(cart["items"])
+        if selected_client is not None:
+            from services.wholesale_pricing_service import apply_wholesale_prices
+            products = apply_wholesale_prices(
+                products,
+                company_id=getattr(current_user, "company_id", None),
+                client=selected_client,
+            )
         sale_totals = calculate_sale_totals(
             [{"price": line["price"], "quantity": line["quantity"], "line_discount": line["discount"]} for line in products]
         )
@@ -651,6 +667,7 @@ def checkout():
         total=sale_totals["total"],
         checkout_token=_new_checkout_token(),
         checkout_url=url_for("sales.checkout"),
+        selected_client_id=selected_client_id,
     )
 
 
@@ -854,7 +871,7 @@ def api_mp_qr_points():
 @tenant_required
 def api_mp_qr_create():
     _mp_qr_trace_enter("sales.api_mp_qr_create")
-    from app import Payment, db, scope_query_to_company
+    from app import Client, Payment, db, scope_query_to_company
     from services.payment_flow import expire_stale_pos_drafts
 
     payload = request.get_json(silent=True) or {}
@@ -912,7 +929,23 @@ def api_mp_qr_create():
         return open_session
 
     try:
+        selected_client = None
+        raw_client_id = payload.get("client_id") or payload.get("cliente_id")
+        if raw_client_id not in (None, ""):
+            try:
+                selected_client_id = int(raw_client_id)
+            except (TypeError, ValueError):
+                return _api_error("Cliente inválido para esta empresa.", status=400)
+            selected_client = scope_query_to_company(
+                Client.query.filter_by(id=selected_client_id, active=True), Client
+            ).first()
+            if selected_client is None:
+                return _api_error("El cliente seleccionado no pertenece a tu empresa.", status=400)
+
         lines = _calculate_lines(items, lock_for_update=True, discount_overrides=(payload.get("line_discounts") or payload.get("line_discount_overrides") or {}))
+        if selected_client is not None:
+            from services.wholesale_pricing_service import apply_wholesale_prices
+            lines = apply_wholesale_prices(lines, company_id=company_id, client=selected_client)
         sale_totals = PricingService.calculate(
             [{"price": line["price"], "quantity": line["quantity"], "line_discount": line["discount"]} for line in lines],
             payload,
@@ -921,8 +954,18 @@ def api_mp_qr_create():
         amount = final_total
         currency = "ARS"
         description = f"StockArmobile POS - {company_id}"
+        snapshot_items = [
+            {
+                "productId": int(line["product"].id),
+                "name": str(line["product"].name or ""),
+                "price": float(line["price"]),
+                "quantity": float(line["quantity"]),
+                "barcode": str(line["product"].barcode or ""),
+            }
+            for line in lines
+        ]
         snapshot = _pos_qr_snapshot(
-            payload.get("items", []),
+            snapshot_items,
             payload,
             total_amount=final_total,
             currency=currency,
