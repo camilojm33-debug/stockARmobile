@@ -50,7 +50,7 @@
             <select class="form-select" id="priceListId" name="price_list_id">
               <option value="">Seleccionar lista mayorista…</option>
               {% for price_list in price_lists %}
-              <option value="{{ price_list.id }}" {% if client and client.price_list_id == price_list.id %}selected{% endif %} {% if not price_list.active %}disabled{% endif %}>{{ price_list.name }}{% if not price_list.active %} (inactiva){% endif %}</option>
+              <option value="{{ price_list.id }}" {% if client and client.price_list_id == price_list.id %}selected{% endif %} {% if not price_list.active and (not client or client.price_list_id != price_list.id) %}disabled{% endif %}>{{ price_list.name }}{% if not price_list.active %} (inactiva){% endif %}</option>
               {% endfor %}
             </select>
             <div class="form-text">Solo el administrador puede asignar tarifas. El precio minorista sigue siendo el predeterminado para los demás clientes.</div>
