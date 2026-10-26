@@ -253,7 +253,8 @@ def test_admin_can_create_price_list_and_add_a_product_price(wholesale_database,
     browser = app.test_client()
     # Set a deterministic password for this test administrator.
     with app.app_context():
-        data["admin"].set_password("test-password-123")
+        admin = db.session.get(User, int(data["admin"].id))
+        admin.set_password("test-password-123")
         db.session.commit()
     login = browser.post(
         "/auth/login",
@@ -309,7 +310,8 @@ def _make_wholesale_excel(rows):
 def test_wholesale_price_excel_import_is_atomic_and_export_roundtrips(wholesale_database, app):
     data = wholesale_database
     with app.app_context():
-        data["admin"].set_password("test-password-123")
+        admin = db.session.get(User, int(data["admin"].id))
+        admin.set_password("test-password-123")
         db.session.commit()
         list_id = data["price_list"].id
         product_id = data["product"].id
