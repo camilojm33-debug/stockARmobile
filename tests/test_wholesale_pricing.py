@@ -756,7 +756,22 @@ def test_wholesale_bulk_fill_missing_preserves_existing_prices(wholesale_databas
         name="Producto sin tramo base",
         category="Bebidas",
     )
-    db.session.add(missing_product)
+    disabled_tier_product = _create_wholesale_test_product(
+        data["company"].id,
+        barcode="WHOLESALE-INACTIVE-TIER",
+        name="Producto con tramo desactivado",
+        category="Limpieza",
+    )
+    db.session.add_all([missing_product, disabled_tier_product])
+    db.session.flush()
+    db.session.add(PriceListItem(
+        company_id=data["company"].id,
+        price_list_id=data["price_list"].id,
+        product_id=disabled_tier_product.id,
+        min_quantity=Decimal("1.000"),
+        unit_price=Decimal("55.00"),
+        active=False,
+    ))
     db.session.commit()
     browser = _wholesale_admin_client(app, data["admin"])
 
@@ -799,6 +814,15 @@ def test_wholesale_bulk_fill_missing_preserves_existing_prices(wholesale_databas
         assert Decimal(str(added_price.unit_price)) == Decimal("45.00")
         assert other_tier is not None
         assert Decimal(str(other_tier.unit_price)) == Decimal("70.00")
+        reactivated = PriceListItem.query.filter_by(
+            company_id=data["company"].id,
+            price_list_id=data["price_list"].id,
+            product_id=disabled_tier_product.id,
+            min_quantity=Decimal("1.000"),
+        ).first()
+        assert reactivated is not None
+        assert reactivated.active is True
+        assert Decimal(str(reactivated.unit_price)) == Decimal("45.00")
 
 
 def test_wholesale_bulk_fill_missing_with_no_missing_tiers_does_not_require_price(wholesale_database, app):
