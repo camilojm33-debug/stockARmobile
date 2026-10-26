@@ -9,7 +9,7 @@ from decimal import Decimal, InvalidOperation
 from io import BytesIO
 import unicodedata
 
-from flask import Blueprint, abort, flash, redirect, render_template, request, send_file, url_for
+from flask import Blueprint, abort, current_app, flash, redirect, render_template, request, send_file, url_for
 from flask_login import current_user, login_required
 from sqlalchemy import Index, UniqueConstraint
 
@@ -367,7 +367,9 @@ def import_list(list_id):
             seen.add(key)
             raw_active = row[positions["active"]] if "active" in positions and positions["active"] < len(row) else True
             active_value = str(raw_active or "").strip().lower()
-            active = raw_active is True or active_value in {"1", "true", "si", "sí", "yes", "activo", "on"}
+            active = True if raw_active in (None, "") else (
+                raw_active is True or active_value in {"1", "true", "si", "sí", "yes", "activo", "on"}
+            )
             parsed_rows.append({
                 "barcode": barcode,
                 "quantity": quantity,
