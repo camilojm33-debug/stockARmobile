@@ -44,7 +44,10 @@
       <div class="card shadow-sm mb-3">
         <div class="card-header d-flex justify-content-between align-items-center gap-2 flex-wrap">
           <div><h2 class="h5 mb-1">{{ selected_list.name }}</h2><div class="text-muted small">Código: {{ selected_list.code }}{% if selected_list.effective_from %} · Desde {{ selected_list.effective_from.strftime('%d/%m/%Y') }}{% endif %}{% if selected_list.effective_until %} · Hasta {{ selected_list.effective_until.strftime('%d/%m/%Y') }}{% endif %}</div></div>
-          <form method="post" action="{{ url_for('wholesale_pricing.toggle_list', list_id=selected_list.id) }}"><input type="hidden" name="csrf_token" value="{{ csrf_token() }}"><button class="btn {{ 'btn-outline-danger' if selected_list.active else 'btn-outline-success' }}" type="submit">{{ 'Desactivar lista' if selected_list.active else 'Activar lista' }}</button></form>
+          <div class="d-flex flex-wrap gap-2">
+            <a class="btn btn-outline-primary" href="{{ url_for('wholesale_pricing.export_list', list_id=selected_list.id) }}">Exportar Excel</a>
+            <form method="post" action="{{ url_for('wholesale_pricing.toggle_list', list_id=selected_list.id) }}"><input type="hidden" name="csrf_token" value="{{ csrf_token() }}"><button class="btn {{ 'btn-outline-danger' if selected_list.active else 'btn-outline-success' }}" type="submit">{{ 'Desactivar lista' if selected_list.active else 'Activar lista' }}</button></form>
+          </div>
         </div>
         <div class="card-body">
           <form method="post" action="{{ url_for('wholesale_pricing.save_item', list_id=selected_list.id) }}" class="row g-2 align-items-end">
@@ -54,7 +57,12 @@
             <div class="col-md-2"><label class="form-label" for="wholesaleUnitPrice">Precio unitario</label><input class="form-control" id="wholesaleUnitPrice" name="unit_price" type="number" min="0.01" step="0.01" required></div>
             <div class="col-md-2 d-grid"><button class="btn btn-primary" type="submit">Guardar precio</button></div>
           </form>
-          <p class="text-muted small mt-2 mb-0">Para escalas, cargá varias filas del mismo producto. Ejemplo: desde 1 unidad y desde 12 unidades. Se elige el tramo más alto que alcance la cantidad comprada. No se acumulan automáticamente descuentos o promociones minoristas.</p>
+          <p class="text-muted small mt-2 mb-3">Para escalas, cargá varias filas del mismo producto. Ejemplo: desde 1 unidad y desde 12 unidades. Se elige el tramo más alto que alcance la cantidad comprada. No se acumulan automáticamente descuentos o promociones minoristas.</p>
+          <form class="row g-2 align-items-end border-top pt-3" method="post" enctype="multipart/form-data" action="{{ url_for('wholesale_pricing.import_list', list_id=selected_list.id) }}">
+            <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+            <div class="col-md-8"><label class="form-label" for="wholesaleExcel">Importar precios desde Excel</label><input class="form-control" type="file" id="wholesaleExcel" name="file" accept=".xlsx" required><div class="form-text">Usá el Excel exportado desde esta lista. Se validan todas las filas antes de guardar; los tramos omitidos se conservan.</div></div>
+            <div class="col-md-4 d-grid"><button class="btn btn-outline-secondary" type="submit">Validar e importar</button></div>
+          </form>
         </div>
       </div>
       <div class="card shadow-sm">
