@@ -636,24 +636,26 @@ def download_template(list_id):
     workbook = Workbook()
     sheet = workbook.active
     sheet.title = "Precios mayoristas"
-    sheet.append(["barcode", "product_name", "min_quantity", "unit_price", "active"])
+    sheet.append(["barcode", "product_name", "min_quantity", "unit_price", "discount_percent", "active"])
     for product in products:
         tiers = tiers_by_product.get(int(product.id), [])
         if tiers:
             for tier in tiers:
+                is_percentage = tier.discount_percent is not None
                 sheet.append([
                     product.barcode or "",
                     product.name or "",
                     float(tier.min_quantity or 1),
-                    float(tier.unit_price or 0) if tier.unit_price is not None else None,
+                    None if is_percentage else (float(tier.unit_price) if tier.unit_price is not None else None),
+                    float(tier.discount_percent) if is_percentage else None,
                     bool(tier.active),
                 ])
         else:
-            # Blank price means "do not import this product until a price is entered".
-            sheet.append([product.barcode or "", product.name or "", 1, None, True])
+            # Blank fixed price and discount means "do not import until a value is entered".
+            sheet.append([product.barcode or "", product.name or "", 1, None, None, True])
     sheet.freeze_panes = "A2"
     sheet.auto_filter.ref = sheet.dimensions
-    for column, width in (("A", 24), ("B", 36), ("C", 18), ("D", 18), ("E", 12)):
+    for column, width in (("A", 24), ("B", 36), ("C", 18), ("D", 18), ("E", 20), ("F", 12)):
         sheet.column_dimensions[column].width = width
     buffer = BytesIO()
     workbook.save(buffer)
@@ -687,21 +689,23 @@ def export_list(list_id):
     workbook = Workbook()
     sheet = workbook.active
     sheet.title = "Precios mayoristas"
-    sheet.append(["barcode", "product_name", "min_quantity", "unit_price", "active"])
+    sheet.append(["barcode", "product_name", "min_quantity", "unit_price", "discount_percent", "active"])
     for row in rows:
         product = row.product
         if product is None or int(product.company_id) != company_id:
             continue
+        is_percentage = row.discount_percent is not None
         sheet.append([
             product.barcode or "",
             product.name or "",
             float(row.min_quantity or 1),
-            float(row.unit_price or 0),
+            None if is_percentage else float(row.unit_price or 0),
+            float(row.discount_percent) if is_percentage else None,
             bool(row.active),
         ])
     sheet.freeze_panes = "A2"
     sheet.auto_filter.ref = sheet.dimensions
-    for column, width in (("A", 24), ("B", 36), ("C", 18), ("D", 18), ("E", 12)):
+    for column, width in (("A", 24), ("B", 36), ("C", 18), ("D", 18), ("E", 20), ("F", 12)):
         sheet.column_dimensions[column].width = width
     buffer = BytesIO()
     workbook.save(buffer)
