@@ -141,7 +141,7 @@ def index():
     category_expr = func.trim(func.coalesce(Product.category, ""))
     category_rows = (
         db.session.query(category_expr, func.count(Product.id))
-        .filter_by(company_id=company_id, active=True)
+        .filter(Product.company_id == company_id, Product.active.is_(True))
         .group_by(category_expr)
         .order_by(category_expr.asc())
         .all()
