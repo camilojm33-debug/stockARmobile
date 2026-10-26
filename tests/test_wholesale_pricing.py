@@ -644,6 +644,7 @@ def test_wholesale_bulk_apply_to_all_active_products_is_tenant_scoped_and_preser
         f"/precios-mayoristas/listas/{data['price_list'].id}/items",
         data={
             "bulk_mode": "all",
+            "bulk_action": "replace_existing",
             "product_id": "",
             "category": "",
             "min_quantity": "1",
@@ -706,6 +707,7 @@ def test_wholesale_bulk_apply_by_category_only_changes_active_products_in_that_c
         f"/precios-mayoristas/listas/{data['price_list'].id}/items",
         data={
             "bulk_mode": "category",
+            "bulk_action": "replace_existing",
             "product_id": "",
             "category": "Bebidas",
             "min_quantity": "12",
@@ -743,6 +745,116 @@ def test_wholesale_bulk_apply_by_category_only_changes_active_products_in_that_c
         assert beverage_new is not None and Decimal(str(beverage_new.unit_price)) == Decimal("66.50")
         assert cleaning_row is None
         assert other_company_row is None
+
+
+
+def test_wholesale_bulk_fill_missing_preserves_existing_prices(wholesale_database, app):
+    data = wholesale_database
+    missing_product = _create_wholesale_test_product(
+        data["company"].id,
+        barcode="WHOLESALE-MISSING-001",
+        name="Producto sin tramo base",
+        category="Bebidas",
+    )
+    db.session.add(missing_product)
+    db.session.commit()
+    browser = _wholesale_admin_client(app, data["admin"])
+
+    response = browser.post(
+        f"/precios-mayoristas/listas/{data['price_list'].id}/items",
+        data={
+            "bulk_mode": "all",
+            "bulk_action": "fill_missing",
+            "product_id": "",
+            "category": "",
+            "min_quantity": "1",
+            "unit_price": "45",
+        },
+    )
+    assert response.status_code in (301, 302)
+
+    with app.app_context():
+        existing_price = PriceListItem.query.filter_by(
+            company_id=data["company"].id,
+            price_list_id=data["price_list"].id,
+            product_id=data["product"].id,
+            min_quantity=Decimal("1.000"),
+        ).first()
+        added_price = PriceListItem.query.filter_by(
+            company_id=data["company"].id,
+            price_list_id=data["price_list"].id,
+            product_id=missing_product.id,
+            min_quantity=Decimal("1.000"),
+        ).first()
+        other_tier = PriceListItem.query.filter_by(
+            company_id=data["company"].id,
+            price_list_id=data["price_list"].id,
+            product_id=data["product"].id,
+            min_quantity=Decimal("12.000"),
+        ).first()
+
+        assert existing_price is not None
+        assert Decimal(str(existing_price.unit_price)) == Decimal("80.00")
+        assert added_price is not None
+        assert Decimal(str(added_price.unit_price)) == Decimal("45.00")
+        assert other_tier is not None
+        assert Decimal(str(other_tier.unit_price)) == Decimal("70.00")
+
+
+def test_wholesale_bulk_fill_missing_with_no_missing_tiers_does_not_require_price(wholesale_database, app):
+    data = wholesale_database
+    browser = _wholesale_admin_client(app, data["admin"])
+
+    response = browser.post(
+        f"/precios-mayoristas/listas/{data['price_list'].id}/items",
+        data={
+            "bulk_mode": "all",
+            "bulk_action": "fill_missing",
+            "product_id": "",
+            "category": "",
+            "min_quantity": "1",
+            "unit_price": "",
+        },
+        follow_redirects=True,
+    )
+    assert response.status_code == 200
+    assert "No se modificó ningún precio".encode() in response.data
+
+    with app.app_context():
+        existing_price = PriceListItem.query.filter_by(
+            company_id=data["company"].id,
+            price_list_id=data["price_list"].id,
+            product_id=data["product"].id,
+            min_quantity=Decimal("1.000"),
+        ).first()
+        assert existing_price is not None
+        assert Decimal(str(existing_price.unit_price)) == Decimal("80.00")
+
+
+def test_wholesale_bulk_preview_counts_existing_and_missing_tiers(wholesale_database, app):
+    data = wholesale_database
+    missing_product = _create_wholesale_test_product(
+        data["company"].id,
+        barcode="WHOLESALE-PREVIEW-001",
+        name="Producto sin precio",
+        category="Bebidas",
+    )
+    db.session.add(missing_product)
+    db.session.commit()
+    browser = _wholesale_admin_client(app, data["admin"])
+
+    response = browser.get(
+        f"/precios-mayoristas/listas/{data['price_list'].id}/previsualizar-masivo"
+        "?bulk_mode=all&min_quantity=1"
+    )
+    assert response.status_code == 200
+    payload = response.get_json()
+    assert payload == {
+        "total": 2,
+        "already_priced": 1,
+        "missing": 1,
+        "min_quantity": "1.000",
+    }
 
 
 def test_wholesale_product_search_and_category_selector_are_company_scoped(wholesale_database, app):
