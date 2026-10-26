@@ -15,7 +15,7 @@ from flask_migrate import stamp, upgrade
 
 
 BASE_REVISION = "20261024_01_release_readiness"
-WHOLESALE_REVISION = "20261025_01_wholesale_prices"
+HEAD_REVISION = "20261025_02_wholesale_plan"
 
 
 def main() -> None:
@@ -78,11 +78,11 @@ def main() -> None:
                 raise AssertionError(f"{table_name} missing FK {fk_name}")
 
         version = db.session.execute(text("SELECT version_num FROM alembic_version")).scalar_one()
-        if version != WHOLESALE_REVISION:
+        if version != HEAD_REVISION:
             raise AssertionError(f"Unexpected Alembic revision after upgrade: {version}")
 
-        print("PASS: wholesale-pricing migration upgraded the pre-feature PostgreSQL schema.")
-        print("PASS: wholesale tables, customer assignment, sale/quote price snapshots, and foreign keys exist.")
+        print("PASS: wholesale-pricing and Negocio-plan migrations upgraded the pre-feature PostgreSQL schema.")
+        print("PASS: wholesale tables, customer assignment, sale/quote price snapshots, foreign keys, and latest Alembic revision exist.")
 
 
 if __name__ == "__main__":
