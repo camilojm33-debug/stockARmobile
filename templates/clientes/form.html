@@ -37,6 +37,25 @@
           <div class="col-12"><label class="form-label">Notas</label><textarea class="form-control" name="notes" rows="3">{{ (client.notes or '') if client else '' }}</textarea></div>
           <div class="col-12"><label class="form-label">Observaciones</label><textarea class="form-control" name="observations" rows="3">{{ (client.observations or '') if client else '' }}</textarea></div>
           <div class="col-12"><div class="form-check"><input class="form-check-input" type="checkbox" name="account_current_enabled" id="cc-edit" {% if client and client.account_current_enabled %}checked{% endif %}><label class="form-check-label" for="cc-edit">Cuenta corriente habilitada</label></div></div>
+          {% if current_user.role == 'admin' %}
+          <div class="col-md-4">
+            <label class="form-label" for="customerType">Tipo de cliente</label>
+            <select class="form-select" id="customerType" name="customer_type">
+              <option value="minorista" {% if not client or client.customer_type != 'mayorista' %}selected{% endif %}>Minorista</option>
+              <option value="mayorista" {% if client and client.customer_type == 'mayorista' %}selected{% endif %}>Mayorista</option>
+            </select>
+          </div>
+          <div class="col-md-8">
+            <label class="form-label" for="priceListId">Lista de precios</label>
+            <select class="form-select" id="priceListId" name="price_list_id">
+              <option value="">Seleccionar lista mayorista…</option>
+              {% for price_list in price_lists %}
+              <option value="{{ price_list.id }}" {% if client and client.price_list_id == price_list.id %}selected{% endif %} {% if not price_list.active and (not client or client.price_list_id != price_list.id) %}disabled{% endif %}>{{ price_list.name }}{% if not price_list.active %} (inactiva){% endif %}</option>
+              {% endfor %}
+            </select>
+            <div class="form-text">Solo el administrador puede asignar tarifas. El precio minorista sigue siendo el predeterminado para los demás clientes.</div>
+          </div>
+          {% endif %}
         </div>
         <div class="row g-3 mt-1">
           <div class="col-md-6"><label class="form-label fw-semibold">Permiso de email</label><select class="form-select" name="email_marketing_consent"><option value="unknown" {% if (client and client.email_marketing_consent == 'unknown') or not client %}selected{% endif %}>Desconocido</option><option value="opted_in" {% if client and client.email_marketing_consent == 'opted_in' %}selected{% endif %}>Permiso registrado</option><option value="opted_out" {% if client and client.email_marketing_consent == 'opted_out' %}selected{% endif %}>No permitido / baja</option></select></div>

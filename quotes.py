@@ -171,8 +171,9 @@ def _quote_filter_bounds(date_from, date_to):
     return start_utc, end_utc
 
 
-def _parse_items(payload):
-    from app import Product, QuoteItem, db, scope_query_to_company
+def _parse_items(payload, *, client=None):
+    from app import Product, db, scope_query_to_company
+    from services.wholesale_pricing_service import resolve_product_price
 
     items = []
     total_lines = payload.get("items", [])
@@ -199,6 +200,7 @@ def _parse_items(payload):
             .all()
         }
 
+    can_modify_prices = _can_modify_prices()
     for raw_item in total_lines:
         if not isinstance(raw_item, dict):
             continue
@@ -218,11 +220,34 @@ def _parse_items(payload):
         description = (raw_item.get("description") or raw_item.get("name") or (product.name if product else "")).strip()
         if not description:
             raise ValueError("Cada línea debe tener una descripción.")
+
+        price_source = "minorista"
+        price_list_id = None
         if product is not None:
-            if not _can_modify_prices() and unit_price != to_decimal(product.price):
+            resolution = resolve_product_price(
+                company_id=getattr(current_user, "company_id", None),
+                product=product,
+                quantity=quantity,
+                client=client,
+            )
+            if resolution["source"] == "mayorista":
+                explicitly_manual = can_modify_prices and str(raw_item.get("price_source") or "").strip().lower() == "manual"
+                is_list_price = unit_price == resolution["price"]
+                is_unmodified_retail_default = unit_price == to_decimal(product.price)
+                if explicitly_manual:
+                    price_source = "manual"
+                elif not can_modify_prices or is_list_price or is_unmodified_retail_default:
+                    unit_price = resolution["price"]
+                    discount = Decimal("0.00")
+                    price_source = "mayorista"
+                    price_list_id = resolution["price_list_id"]
+                else:
+                    price_source = "manual"
+            elif not can_modify_prices and unit_price != to_decimal(product.price):
                 raise ValueError("No tenés permiso para modificar precios.")
-        elif not _can_modify_prices():
+        elif not can_modify_prices:
             raise ValueError("No tenés permiso para cargar precios manuales.")
+
         gross = unit_price * quantity
         net = max(gross - discount, Decimal("0.00"))
         items.append(
@@ -234,6 +259,8 @@ def _parse_items(payload):
                 "unit_price": unit_price,
                 "discount": discount,
                 "subtotal": net,
+                "price_source": price_source,
+                "price_list_id": price_list_id,
             }
         )
 
@@ -457,12 +484,26 @@ def _quote_from_form(*, quote=None):
     from app import Company, Quote, QuoteItem, Client, db, scope_query_to_company
 
     payload = request.form.to_dict(flat=True)
+    client_id = payload.get("client_id") or None
+    consumer_name = (payload.get("consumer_name") or "").strip()
+    selected_client = None
+    if client_id not in (None, ""):
+        try:
+            parsed_client_id = int(client_id)
+        except (TypeError, ValueError):
+            raise ValueError("Cliente inválido.")
+        selected_client = scope_query_to_company(db.session.query(Client), Client).filter(
+            Client.id == parsed_client_id, Client.active.is_(True)
+        ).first()
+        if selected_client is None:
+            raise ValueError("El cliente seleccionado no pertenece a tu empresa.")
+
     items_raw = payload.get("items_json") or request.form.get("items_json") or "[]"
     try:
         parsed = json.loads(items_raw)
     except json.JSONDecodeError:
         raise ValueError("Los productos del presupuesto son inválidos.")
-    parsed_items = _parse_items({"items": parsed})
+    parsed_items = _parse_items({"items": parsed}, client=selected_client)
     if not parsed_items:
         raise ValueError("Debes agregar al menos un producto al presupuesto.")
 
@@ -472,7 +513,8 @@ def _quote_from_form(*, quote=None):
     promotion_results = []
     if not any(to_decimal(item.get("discount")) > 0 for item in parsed_items if item.get("product") is not None):
         promotable_lines = [
-            item for item in parsed_items if item.get("product") is not None
+            item for item in parsed_items
+            if item.get("product") is not None and item.get("price_source") != "mayorista"
         ]
         if promotable_lines:
             _enriched, promotion_results = PromotionEngine.apply_to_lines(
@@ -482,18 +524,6 @@ def _quote_from_form(*, quote=None):
             for item, result in zip(promotable_lines, promotion_results):
                 item["discount"] = result.discount
                 item["promotion"] = result
-
-    client_id = payload.get("client_id") or None
-    consumer_name = (payload.get("consumer_name") or "").strip()
-    selected_client = None
-    if client_id not in (None, ""):
-        try:
-            parsed_client_id = int(client_id)
-        except (TypeError, ValueError):
-            raise ValueError("Cliente inválido.")
-        selected_client = scope_query_to_company(db.session.query(Client), Client).filter(Client.id == parsed_client_id, Client.active.is_(True)).first()
-        if selected_client is None:
-            raise ValueError("El cliente seleccionado no pertenece a tu empresa.")
 
     if selected_client is None:
         consumer_name = consumer_name[:160]
@@ -604,6 +634,8 @@ def _quote_from_form(*, quote=None):
             discount=line["final_discount"],
             subtotal=line["line_total"],
             sort_order=position,
+            price_source=parsed_item.get("price_source", "minorista"),
+            price_list_id=parsed_item.get("price_list_id"),
         )
         db.session.add(quote_item)
 
@@ -636,6 +668,8 @@ def _quote_snapshot(quote):
                 "unit_price": float(item.unit_price or 0),
                 "discount": float(item.discount or 0),
                 "subtotal": float(item.subtotal or 0),
+                "price_source": getattr(item, "price_source", None) or "minorista",
+                "price_list_id": getattr(item, "price_list_id", None),
             }
             for item in quote.items
         ],
@@ -697,6 +731,8 @@ def _quote_form_items(quote):
             "quantity": float(item.quantity or 0),
             "unit_price": float(item.unit_price or 0),
             "discount": float(item.discount or 0),
+            "price_source": getattr(item, "price_source", None) or "minorista",
+            "price_list_id": getattr(item, "price_list_id", None),
         }
         for item in quote.items
     ]
@@ -726,7 +762,13 @@ def _product_category_name(product):
 
 
 def _build_product_catalog(products):
+    from services.wholesale_pricing_service import product_price_catalog
+
     catalog = []
+    price_tiers = product_price_catalog(
+        company_id=getattr(current_user, "company_id", None),
+        product_ids=[product.id for product in products],
+    )
     for product in products:
         category = _product_category_name(product)
         brand = str(getattr(product, "brand", None) or getattr(product, "brand_name", None) or "").strip()
@@ -758,6 +800,7 @@ def _build_product_catalog(products):
                 "barcode": code,
                 "stock": float(getattr(product, "stock", 0) or 0),
                 "price": float(getattr(product, "price", 0) or 0),
+                "price_lists": price_tiers.get(int(product.id), {}),
                 "discount": float(getattr(product, "discount", 0) or 0),
                 "brand": brand,
                 "supplier": supplier,
@@ -784,6 +827,8 @@ def _build_client_catalog(clients, *, sales_history):
                     or ""
                 ).strip(),
                 "price_list": str(getattr(client, "price_list", None) or "").strip(),
+                "price_list_id": int(getattr(client, "price_list_id", 0) or 0) or None,
+                "customer_type": str(getattr(client, "customer_type", "minorista") or "minorista"),
                 "usual_discount": float(getattr(client, "usual_discount", 0) or 0),
                 "address": str(getattr(client, "address", None) or "").strip(),
                 "observations": str(getattr(client, "notes", None) or getattr(client, "observations", None) or "").strip(),

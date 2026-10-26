@@ -224,6 +224,9 @@ def _pos_qr_snapshot(items, payload, *, total_amount, currency):
                 "name": item.get("name") or "",
                 "price": float(item.get("price") or 0),
                 "quantity": float(item.get("quantity") or 0),
+                "discount": float(item.get("discount") or 0),
+                "price_source": str(item.get("price_source") or "minorista"),
+                "price_list_id": int(item.get("price_list_id")) if item.get("price_list_id") not in (None, "") else None,
                 "barcode": item.get("barcode") or "",
             }
         )
@@ -243,9 +246,13 @@ def _pos_qr_snapshot(items, payload, *, total_amount, currency):
         "discount_type": payload.get("discount_type"),
         "discount_value": payload.get("discount_value"),
         "discount_reason": payload.get("discount_reason"),
+        "discount_applied_amount": payload.get("discount_applied_amount"),
         "surcharge_type": payload.get("surcharge_type"),
         "surcharge_value": payload.get("surcharge_value"),
         "surcharge_reason": payload.get("surcharge_reason"),
+        "surcharge_applied_amount": payload.get("surcharge_applied_amount"),
+        "tax_amount": float(payload.get("tax_amount") if payload.get("tax_amount") not in (None, "") else (payload.get("tax") or 0)),
+        "charges_json": payload.get("charges_json"),
         "total_amount": float(total_amount),
         "currency": currency,
         "cart_hash": cart_hash,
@@ -633,8 +640,24 @@ def checkout():
     if not cart.get("items"):
         flash("Carrito vacio.", "warning")
         return redirect(url_for("sales.new_sale"))
+    selected_client_id = request.args.get("client_id", type=int)
+    selected_client = None
+    if selected_client_id:
+        selected_client = scope_query_to_company(
+            Client.query.filter_by(id=selected_client_id, active=True), Client
+        ).first()
+        if selected_client is None:
+            flash("El cliente seleccionado no pertenece a tu empresa.", "danger")
+            return redirect(url_for("sales.checkout"))
     try:
         products = _calculate_lines(cart["items"])
+        if selected_client is not None:
+            from services.wholesale_pricing_service import apply_wholesale_prices
+            products = apply_wholesale_prices(
+                products,
+                company_id=getattr(current_user, "company_id", None),
+                client=selected_client,
+            )
         sale_totals = calculate_sale_totals(
             [{"price": line["price"], "quantity": line["quantity"], "line_discount": line["discount"]} for line in products]
         )
@@ -651,6 +674,7 @@ def checkout():
         total=sale_totals["total"],
         checkout_token=_new_checkout_token(),
         checkout_url=url_for("sales.checkout"),
+        selected_client_id=selected_client_id,
     )
 
 
@@ -854,7 +878,7 @@ def api_mp_qr_points():
 @tenant_required
 def api_mp_qr_create():
     _mp_qr_trace_enter("sales.api_mp_qr_create")
-    from app import Payment, db, scope_query_to_company
+    from app import Client, Payment, db, scope_query_to_company
     from services.payment_flow import expire_stale_pos_drafts
 
     payload = request.get_json(silent=True) or {}
@@ -912,7 +936,23 @@ def api_mp_qr_create():
         return open_session
 
     try:
+        selected_client = None
+        raw_client_id = payload.get("client_id") or payload.get("cliente_id")
+        if raw_client_id not in (None, ""):
+            try:
+                selected_client_id = int(raw_client_id)
+            except (TypeError, ValueError):
+                return _api_error("Cliente inválido para esta empresa.", status=400)
+            selected_client = scope_query_to_company(
+                Client.query.filter_by(id=selected_client_id, active=True), Client
+            ).first()
+            if selected_client is None:
+                return _api_error("El cliente seleccionado no pertenece a tu empresa.", status=400)
+
         lines = _calculate_lines(items, lock_for_update=True, discount_overrides=(payload.get("line_discounts") or payload.get("line_discount_overrides") or {}))
+        if selected_client is not None:
+            from services.wholesale_pricing_service import apply_wholesale_prices
+            lines = apply_wholesale_prices(lines, company_id=company_id, client=selected_client)
         sale_totals = PricingService.calculate(
             [{"price": line["price"], "quantity": line["quantity"], "line_discount": line["discount"]} for line in lines],
             payload,
@@ -921,8 +961,21 @@ def api_mp_qr_create():
         amount = final_total
         currency = "ARS"
         description = f"StockArmobile POS - {company_id}"
+        snapshot_items = [
+            {
+                "productId": int(line["product"].id),
+                "name": str(line["product"].name or ""),
+                "price": float(line["price"]),
+                "quantity": float(line["quantity"]),
+                "discount": float(line["discount"] or 0),
+                "price_source": line.get("price_source", "minorista"),
+                "price_list_id": line.get("price_list_id"),
+                "barcode": str(line["product"].barcode or ""),
+            }
+            for line in lines
+        ]
         snapshot = _pos_qr_snapshot(
-            payload.get("items", []),
+            snapshot_items,
             payload,
             total_amount=final_total,
             currency=currency,
@@ -1255,12 +1308,22 @@ def api_mp_qr_finalize():
         "discount_type": snapshot.get("discount_type"),
         "discount_value": snapshot.get("discount_value"),
         "discount_reason": snapshot.get("discount_reason"),
+        "discount_applied_amount": snapshot.get("discount_applied_amount"),
         "surcharge_type": snapshot.get("surcharge_type"),
         "surcharge_value": snapshot.get("surcharge_value"),
         "surcharge_reason": snapshot.get("surcharge_reason"),
+        "surcharge_applied_amount": snapshot.get("surcharge_applied_amount"),
+        "tax_amount": snapshot.get("tax_amount") or 0,
+        "charges_json": snapshot.get("charges_json"),
+        "pos_expected_total": float(payment.amount or 0),
     }
 
-    result = _create_sale_from_items({str(item["productId"]): item["quantity"] for item in items}, sale_payload, json_response=True)
+    result = _create_sale_from_items(
+        {str(item["productId"]): item["quantity"] for item in items},
+        sale_payload,
+        json_response=True,
+        trusted_line_snapshots=items,
+    )
     if hasattr(result, "json"):
         data = result.get_json() if hasattr(result, "get_json") else None
     else:
@@ -1277,7 +1340,7 @@ def api_mp_qr_finalize():
     return jsonify({"sale_id": sale_id, "redirect_url": data.get("redirect_url")})
 
 
-def _create_sale_from_items(items, data, json_response=False):
+def _create_sale_from_items(items, data, json_response=False, *, trusted_line_snapshots=None):
     service = SaleService(
         require_open_cash_session=_require_open_cash_session,
         calculate_lines=_calculate_lines,
@@ -1285,7 +1348,12 @@ def _create_sale_from_items(items, data, json_response=False):
         cart_key=_cart_key,
         to_decimal=to_decimal,
     )
-    return service.create_sale_from_items(items=items, data=data, json_response=json_response)
+    return service.create_sale_from_items(
+        items=items,
+        data=data,
+        json_response=json_response,
+        trusted_line_snapshots=trusted_line_snapshots,
+    )
 
 
 @bp.route("/success/<int:sale_id>")

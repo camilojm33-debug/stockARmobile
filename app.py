@@ -741,9 +741,27 @@ class Client(db.Model):
     observations = db.Column(db.Text)
     account_current_enabled = db.Column(db.Boolean, default=False, nullable=False)
     active = db.Column(db.Boolean, default=True, nullable=False)
+    customer_type = db.Column(db.String(20), nullable=False, default="minorista", server_default="minorista", index=True)
+    # The physical FK is added by the wholesale-pricing migration. Keeping this
+    # column free of an ORM FK lets the legacy baseline migration create clients
+    # before the new price_lists table exists.
+    price_list_id = db.Column(db.Integer, index=True)
     company_id = db.Column(db.Integer, db.ForeignKey("companies.id"))
     created_at = db.Column(db.DateTime, default=utcnow)
     updated_at = db.Column(db.DateTime, default=utcnow, onupdate=utcnow)
+
+    @property
+    def price_list(self):
+        list_id = getattr(self, "price_list_id", None)
+        company_id = getattr(self, "company_id", None)
+        if not list_id or not company_id:
+            return ""
+        try:
+            from wholesale_pricing import PriceList
+            row = db.session.get(PriceList, int(list_id))
+            return row.name if row is not None and row.company_id == company_id else ""
+        except Exception:
+            return ""
 
     @property
     def nombre(self):
@@ -814,6 +832,9 @@ class SaleItem(db.Model):
     price = db.Column(MONEY, nullable=False)
     cost_price = db.Column(MONEY, default=Decimal("0.00"))
     discount = db.Column(MONEY, default=Decimal("0.00"))
+    price_source = db.Column(db.String(20), nullable=False, default="minorista", server_default="minorista")
+    # Physical FK is added after price_lists exists in Alembic upgrade.
+    price_list_id = db.Column(db.Integer, index=True)
     sale_id = db.Column(db.Integer, db.ForeignKey("sales.id"), nullable=False)
     product_id = db.Column(db.Integer, db.ForeignKey("products.id"), nullable=False)
     product = db.relationship("Product", backref="sale_items")
@@ -883,6 +904,9 @@ class QuoteItem(db.Model):
     discount = db.Column(MONEY, default=Decimal("0.00"))
     subtotal = db.Column(MONEY, default=Decimal("0.00"))
     sort_order = db.Column(db.Integer, default=0, nullable=False)
+    price_source = db.Column(db.String(20), nullable=False, default="minorista", server_default="minorista")
+    # Physical FK is added after price_lists exists in Alembic upgrade.
+    price_list_id = db.Column(db.Integer, index=True)
 
     product = db.relationship("Product")
 
@@ -2065,6 +2089,7 @@ import support  # noqa: E402
 import seo_pages  # noqa: E402
 import ai_agents  # noqa: E402
 import promotions  # noqa: E402
+import wholesale_pricing  # noqa: E402
 from services.ai_agent.admin import bp as ai_admin_bp  # noqa: E402
 from whatsapp_agent import bp as whatsapp_agent_bp  # noqa: E402
 
@@ -2111,6 +2136,7 @@ app.register_blueprint(support_bp, url_prefix="/soporte")
 app.register_blueprint(seo_pages_bp)
 app.register_blueprint(ai_agents_bp)
 app.register_blueprint(promotions_bp)
+app.register_blueprint(wholesale_pricing.bp)
 app.register_blueprint(ai_admin_bp)
 app.register_blueprint(whatsapp_agent_bp)
 app.register_blueprint(maintenance_bp)

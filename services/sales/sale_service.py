@@ -34,7 +34,7 @@ class SaleService:
         self._cart_key = cart_key
         self._to_decimal = to_decimal
 
-    def create_sale_from_items(self, *, items, data, json_response=False):
+    def create_sale_from_items(self, *, items, data, json_response=False, trusted_line_snapshots=None):
         from app import CashMovement, Client, Payment, Sale, SaleItem, db, record_audit, scope_query_to_company, utcnow
 
         sale = None
@@ -136,13 +136,42 @@ class SaleService:
                         return redirect(url_for("sales.success", sale_id=existing_sale.id))
                     raise ValueError("El presupuesto ya figura convertido pero no se encontró su venta.")
 
+            client_id = data.get("client_id") or data.get("cliente_id") or None
+            if quote_snapshot is not None:
+                # For quote conversion, the quote's saved customer is authoritative.
+                client_id = quote_snapshot.client_id
+            parsed_client_id = None
+            if client_id not in (None, ""):
+                try:
+                    parsed_client_id = int(client_id)
+                except (TypeError, ValueError):
+                    raise ValueError("Cliente inválido para esta empresa.")
+            client_query = (
+                scope_query_to_company(Client.query, Client).filter(Client.id == parsed_client_id)
+                if parsed_client_id
+                else None
+            )
+            if client_query is not None and quote_snapshot is None and trusted_line_snapshots is None:
+                client_query = client_query.filter(Client.active.is_(True))
+            client = client_query.first() if client_query is not None else None
+            if parsed_client_id and client is None:
+                raise ValueError("El cliente seleccionado no pertenece a tu empresa.")
+
             lines = self._calculate_lines(items, lock_for_update=True, discount_overrides=(data.get("line_discounts") or data.get("line_discount_overrides") or {}))
+            if trusted_line_snapshots is not None:
+                from services.wholesale_pricing_service import apply_price_snapshot
+                lines = apply_price_snapshot(lines, trusted_line_snapshots)
+            elif quote_snapshot is None:
+                from services.wholesale_pricing_service import apply_wholesale_prices
+                lines = apply_wholesale_prices(lines, company_id=company_id, client=client)
             if quote_snapshot is not None:
                 expected = {
                     int(item.product_id): {
                         "quantity": self._to_decimal(item.quantity),
                         "price": self._to_decimal(item.unit_price),
                         "discount": self._to_decimal(item.discount),
+                        "price_source": getattr(item, "price_source", None) or "minorista",
+                        "price_list_id": getattr(item, "price_list_id", None),
                     }
                     for item in quote_snapshot.items
                     if item.product_id
@@ -158,11 +187,27 @@ class SaleService:
                     # InventoryService already stores line discount as a total
                     # amount, not a per-unit amount.
                     line["discount"] = expected_line["discount"]
+                    line["price_source"] = expected_line["price_source"]
+                    line["price_list_id"] = expected_line["price_list_id"]
                 promotion_results = []
-            elif checkout_token and checkout_token.startswith("quote-cart-") or data.get("line_discounts") or data.get("line_discount_overrides"):
+            elif trusted_line_snapshots is not None:
+                # The paid QR amount was calculated from this persisted snapshot.
+                # Do not re-evaluate promotions or today's list prices at finalization.
+                promotion_results = []
+            elif (checkout_token and checkout_token.startswith("quote-cart-")) or data.get("line_discounts") or data.get("line_discount_overrides"):
                 promotion_results = []
             else:
-                lines, promotion_results = PromotionEngine.apply_to_lines(company_id=company_id, lines=lines)
+                retail_lines = [line for line in lines if line.get("price_source") != "mayorista"]
+                if retail_lines:
+                    enriched_retail_lines, promotion_results = PromotionEngine.apply_to_lines(
+                        company_id=company_id,
+                        lines=retail_lines,
+                    )
+                    for original, enriched in zip(retail_lines, enriched_retail_lines):
+                        original["discount"] = enriched["discount"]
+                        original["promotion"] = enriched.get("promotion")
+                else:
+                    promotion_results = []
             promotion_names = []
             for result in promotion_results:
                 if result.promotion_name and result.promotion_name not in promotion_names:
@@ -215,24 +260,15 @@ class SaleService:
             discount = sale_totals["line_discount_total"]
             tax_total = sale_totals["tax"]
             final_total = sale_totals["total"]
+            if trusted_line_snapshots is not None:
+                try:
+                    expected_qr_total = self._to_decimal(data.get("pos_expected_total"))
+                except (TypeError, ValueError):
+                    raise ValueError("Falta el importe validado del QR.")
+                if abs(final_total - expected_qr_total) > Decimal("0.01"):
+                    raise ValueError("El total calculado no coincide con el importe cobrado por el QR; no se creó la venta.")
 
             payment_split = PaymentService.normalize_split(total_amount=final_total, data=data)
-
-            client_id = data.get("client_id") or data.get("cliente_id") or None
-            parsed_client_id = None
-            if client_id not in (None, ""):
-                try:
-                    parsed_client_id = int(client_id)
-                except (TypeError, ValueError):
-                    raise ValueError("Cliente inválido para esta empresa.")
-
-            client = (
-                scope_query_to_company(Client.query.filter_by(id=parsed_client_id, active=True), Client).first()
-                if parsed_client_id
-                else None
-            )
-            if parsed_client_id and client is None:
-                raise ValueError("El cliente seleccionado no pertenece a tu empresa.")
 
             requiere_comprobante, tipo_comprobante, observacion_comprobante = ValidationService.resolve_comprobante_payload(data)
             if ValidationService.requires_identified_client(data, requiere_comprobante, tipo_comprobante) and client is None:
@@ -302,6 +338,8 @@ class SaleService:
                         price=line["price"],
                         cost_price=self._to_decimal(product.cost_price),
                         discount=calculated_line["final_discount"],
+                        price_source=line.get("price_source", "minorista"),
+                        price_list_id=line.get("price_list_id"),
                     )
                 )
 
