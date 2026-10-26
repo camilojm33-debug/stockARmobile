@@ -6,7 +6,8 @@ from openpyxl import Workbook, load_workbook
 import pytest
 from flask_login import login_user, logout_user
 
-from app import Client, Company, Product, User, db, utcnow
+from app import Client, Company, Plan, Product, Subscription, User, db, utcnow
+from services.plan_service import PlanService
 from services.wholesale_pricing_service import (
     apply_price_snapshot,
     apply_wholesale_prices,
@@ -29,6 +30,23 @@ def wholesale_database(app):
         trial_ends_at=utcnow() + timedelta(days=10),
     )
     db.session.add_all([company, other_company])
+    db.session.flush()
+
+    PlanService.ensure_defaults(db.session)
+    business_plan = Plan.query.filter_by(code="business").first()
+    entrepreneur_plan = Plan.query.filter_by(code="entrepreneur").first()
+    assert business_plan is not None and entrepreneur_plan is not None
+    business_tokens = [item.strip() for item in str(business_plan.features_json or "").replace(";", ",").split(",") if item.strip()]
+    if "wholesale_pricing" not in {item.lower() for item in business_tokens} and "all" not in {item.lower() for item in business_tokens}:
+        business_tokens.append("wholesale_pricing")
+        business_plan.features_json = ",".join(business_tokens)
+    entrepreneur_tokens = [item.strip() for item in str(entrepreneur_plan.features_json or "").replace(";", ",").split(",") if item.strip()]
+    entrepreneur_tokens = [item for item in entrepreneur_tokens if item.lower() != "wholesale_pricing"]
+    if "all" in {item.lower() for item in entrepreneur_tokens}:
+        entrepreneur_tokens = ["inventario", "ventas", "clientes", "reportes", "excel"]
+    entrepreneur_plan.features_json = ",".join(entrepreneur_tokens)
+    subscription = Subscription(company_id=company.id, plan_id=business_plan.id, status="active")
+    db.session.add(subscription)
     db.session.flush()
 
     admin = User(
@@ -125,6 +143,9 @@ def wholesale_database(app):
     return {
         "company": company,
         "other_company": other_company,
+        "business_plan": business_plan,
+        "entrepreneur_plan": entrepreneur_plan,
+        "subscription": subscription,
         "admin": admin,
         "employee": employee,
         "product": product,
@@ -308,6 +329,31 @@ def test_admin_can_create_price_list_and_add_a_product_price(wholesale_database,
     assert b"Tipo de cliente" in client_page.data
     assert b"Lista de precios" in client_page.data
 
+
+def test_wholesale_pricing_is_available_on_business_and_blocked_on_entrepreneur(wholesale_database, app):
+    from services.ai_agent.usage_service import can_use_commercial_feature
+
+    data = wholesale_database
+    assert can_use_commercial_feature(data["company"], "wholesale_pricing").allowed is True
+
+    browser = app.test_client()
+    with browser.session_transaction() as session:
+        session["_user_id"] = str(data["admin"].id)
+        session["_fresh"] = True
+    assert browser.get("/precios-mayoristas/").status_code == 200
+
+    data["subscription"].plan_id = data["entrepreneur_plan"].id
+    db.session.commit()
+    assert can_use_commercial_feature(data["company"], "wholesale_pricing").allowed is False
+    blocked = browser.get("/precios-mayoristas/")
+    assert blocked.status_code == 302
+    assert "precios-mayoristas" not in blocked.location
+
+
+def test_business_plan_catalog_includes_wholesale_pricing():
+    business = next(plan for plan in PlanService.PLAN_CATALOG if plan["code"] == "business")
+    features = {item.strip() for item in business["features_json"].split(",") if item.strip()}
+    assert "wholesale_pricing" in features
 
 def _make_wholesale_excel(rows):
     workbook = Workbook()
