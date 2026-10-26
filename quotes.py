@@ -665,6 +665,8 @@ def _quote_snapshot(quote):
                 "unit_price": float(item.unit_price or 0),
                 "discount": float(item.discount or 0),
                 "subtotal": float(item.subtotal or 0),
+                "price_source": getattr(item, "price_source", None) or "minorista",
+                "price_list_id": getattr(item, "price_list_id", None),
             }
             for item in quote.items
         ],
