@@ -238,7 +238,14 @@ def save_item(list_id):
             item.unit_price = unit_price
             item.active = True
     db.session.commit()
-    flash("Precio mayorista guardado.", "success")
+    cost = Decimal(str(product.cost_price or 0))
+    if cost > 0 and unit_price < cost:
+        flash(
+            f"Precio guardado, pero queda por debajo del costo ({cost:.2f}). Revisá la rentabilidad antes de vender.",
+            "warning",
+        )
+    else:
+        flash("Precio mayorista guardado.", "success")
     return redirect(url_for("wholesale_pricing.index", list_id=list_id))
 
 
@@ -394,6 +401,11 @@ def import_list(list_id):
     if missing_codes:
         flash("No se importó ningún precio. Códigos inexistentes o inactivos: " + ", ".join(missing_codes[:8]), "danger")
         return redirect(url_for("wholesale_pricing.index", list_id=list_id))
+    below_cost_count = sum(
+        1 for row in parsed_rows
+        if Decimal(str(products[row["barcode"]].cost_price or 0)) > 0
+        and row["unit_price"] < Decimal(str(products[row["barcode"]].cost_price or 0))
+    )
 
     try:
         updated = 0
@@ -428,7 +440,11 @@ def import_list(list_id):
         flash("No se aplicó la importación. No se guardaron cambios.", "danger")
         return redirect(url_for("wholesale_pricing.index", list_id=list_id))
 
-    flash(f"Importación aplicada a '{price_list.name}': {created} tramos creados y {updated} actualizados. Las filas que no aparecen en el archivo se conservaron.", "success")
+    summary = f"Importación aplicada a '{price_list.name}': {created} tramos creados y {updated} actualizados. Las filas que no aparecen en el archivo se conservaron."
+    if below_cost_count:
+        flash(summary + f" Atención: {below_cost_count} tramo(s) quedan por debajo del costo de producto.", "warning")
+    else:
+        flash(summary, "success")
     return redirect(url_for("wholesale_pricing.index", list_id=list_id))
 
 
