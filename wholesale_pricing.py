@@ -26,13 +26,13 @@ class PriceList(db.Model):
     )
 
     id = db.Column(db.Integer, primary_key=True)
-    company_id = db.Column(db.Integer, db.ForeignKey("companies.id"), nullable=False, index=True)
+    company_id = db.Column(db.Integer, db.ForeignKey("companies.id", ondelete="CASCADE"), nullable=False, index=True)
     name = db.Column(db.String(120), nullable=False)
     code = db.Column(db.String(80), nullable=False)
     active = db.Column(db.Boolean, nullable=False, default=True, server_default=db.true())
     effective_from = db.Column(db.Date)
     effective_until = db.Column(db.Date)
-    created_by_user_id = db.Column(db.Integer, db.ForeignKey("users.id"), nullable=False)
+    created_by_user_id = db.Column(db.Integer, db.ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
     created_at = db.Column(db.DateTime, nullable=False, default=utcnow_naive)
     updated_at = db.Column(db.DateTime, nullable=False, default=utcnow_naive, onupdate=utcnow_naive)
 
@@ -49,7 +49,7 @@ class PriceListItem(db.Model):
     )
 
     id = db.Column(db.Integer, primary_key=True)
-    company_id = db.Column(db.Integer, db.ForeignKey("companies.id"), nullable=False, index=True)
+    company_id = db.Column(db.Integer, db.ForeignKey("companies.id", ondelete="CASCADE"), nullable=False, index=True)
     price_list_id = db.Column(db.Integer, db.ForeignKey("price_lists.id", ondelete="CASCADE"), nullable=False, index=True)
     product_id = db.Column(db.Integer, db.ForeignKey("products.id", ondelete="CASCADE"), nullable=False, index=True)
     min_quantity = db.Column(db.Numeric(18, 3), nullable=False, default=Decimal("1.000"), server_default="1.000")
