@@ -43,10 +43,16 @@ def upgrade():
             sa.Column("active", sa.Boolean(), nullable=False, server_default=sa.true()),
             sa.Column("effective_from", sa.Date(), nullable=True),
             sa.Column("effective_until", sa.Date(), nullable=True),
+            sa.Column("allow_promotions", sa.Boolean(), nullable=False, server_default=sa.false()),
             sa.Column("created_by_user_id", sa.Integer(), sa.ForeignKey("users.id", ondelete="SET NULL"), nullable=True),
             sa.Column("created_at", sa.DateTime(), nullable=False, server_default=sa.func.now()),
             sa.Column("updated_at", sa.DateTime(), nullable=False, server_default=sa.func.now()),
             sa.UniqueConstraint("company_id", "code", name="uq_price_lists_company_code"),
+        )
+    if "allow_promotions" not in _columns(bind, "price_lists"):
+        op.add_column(
+            "price_lists",
+            sa.Column("allow_promotions", sa.Boolean(), nullable=False, server_default=sa.false()),
         )
     if "ix_price_lists_company_id" not in _indexes(bind, "price_lists"):
         op.create_index("ix_price_lists_company_id", "price_lists", ["company_id"])
