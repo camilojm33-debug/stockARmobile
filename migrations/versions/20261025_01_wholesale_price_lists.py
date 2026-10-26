@@ -3,7 +3,7 @@
 from alembic import op
 import sqlalchemy as sa
 
-revision = "20261025_01_wholesale_price_lists"
+revision = "20261025_01_wholesale_prices"
 down_revision = "20261024_01_release_readiness"
 branch_labels = None
 depends_on = None
