@@ -349,6 +349,34 @@ def test_wholesale_pricing_is_available_on_business_and_blocked_on_entrepreneur(
     assert blocked.status_code == 302
     assert "precios-mayoristas" not in blocked.location
 
+    resolver_result = resolve_product_price(
+        company_id=data["company"].id,
+        product=data["product"],
+        quantity=12,
+        client=data["wholesale_client"],
+    )
+    assert resolver_result["source"] == "minorista"
+    assert resolver_result["reason"] == "plan_sin_mayoristas"
+    assert resolver_result["price"] == Decimal("100.00")
+
+    stale_quote_line = {
+        "product": data["product"],
+        "quantity": Decimal("12"),
+        "price": Decimal("70.00"),
+        "discount": Decimal("0.00"),
+    }
+    applied = apply_wholesale_prices(
+        [stale_quote_line],
+        company_id=data["company"].id,
+        client=data["wholesale_client"],
+    )
+    assert applied[0]["price"] == Decimal("100.00")
+    assert applied[0]["price_source"] == "minorista"
+    assert product_price_catalog(
+        company_id=data["company"].id,
+        product_ids=[data["product"].id],
+    ) == {}
+
 
 def test_business_plan_catalog_includes_wholesale_pricing():
     business = next(plan for plan in PlanService.PLAN_CATALOG if plan["code"] == "business")
