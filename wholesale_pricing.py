@@ -6,13 +6,15 @@ import re
 import unicodedata
 from datetime import date
 from decimal import Decimal, InvalidOperation
+from functools import wraps
 from io import BytesIO
 
 from flask import Blueprint, abort, current_app, flash, redirect, render_template, request, send_file, url_for
 from flask_login import current_user, login_required
 from sqlalchemy import Index, UniqueConstraint
 
-from app import db, tenant_required
+from app import Company, db, tenant_required
+from services.ai_agent.usage_service import can_use_commercial_feature
 from stockarmobile.helpers.dates import utcnow_naive
 
 bp = Blueprint("wholesale_pricing", __name__, url_prefix="/precios-mayoristas")
@@ -73,6 +75,26 @@ def _require_admin():
         abort(403)
 
 
+def _wholesale_plan_required(view):
+    """Require an active commercial plan with wholesale-pricing entitlement."""
+    @wraps(view)
+    def decorated(*args, **kwargs):
+        _require_admin()
+        company = Company.query.filter_by(id=_company_id(), active=True).first()
+        if company is None:
+            flash("No se encontró la empresa activa.", "danger")
+            return redirect(url_for("dashboard.index"))
+        access = can_use_commercial_feature(company, "wholesale_pricing")
+        if not access.allowed:
+            flash(
+                access.reason or "Los precios mayoristas requieren el plan Negocio o superior.",
+                "warning",
+            )
+            return redirect(url_for("company_billing.subscription_portal"))
+        return view(*args, **kwargs)
+    return decorated
+
+
 def _slug(value):
     normalized = unicodedata.normalize("NFKD", str(value or "").strip().lower())
     normalized = "".join(char for char in normalized if not unicodedata.combining(char))
@@ -99,6 +121,7 @@ def active_price_lists(company_id: int, *, include_inactive: bool = False):
 @bp.get("/")
 @tenant_required
 @login_required
+@_wholesale_plan_required
 def index():
     _require_admin()
     from app import Product
@@ -136,6 +159,7 @@ def index():
 @bp.post("/listas")
 @tenant_required
 @login_required
+@_wholesale_plan_required
 def create_list():
     _require_admin()
     company_id = _company_id()
@@ -174,6 +198,7 @@ def create_list():
 @bp.post("/listas/<int:list_id>/items")
 @tenant_required
 @login_required
+@_wholesale_plan_required
 def save_item(list_id):
     _require_admin()
     from app import Product
@@ -254,6 +279,7 @@ def save_item(list_id):
 @bp.get("/listas/<int:list_id>/exportar.xlsx")
 @tenant_required
 @login_required
+@_wholesale_plan_required
 def export_list(list_id):
     _require_admin()
     from openpyxl import Workbook
@@ -299,6 +325,7 @@ def export_list(list_id):
 @bp.post("/listas/<int:list_id>/importar.xlsx")
 @tenant_required
 @login_required
+@_wholesale_plan_required
 def import_list(list_id):
     _require_admin()
     from openpyxl import load_workbook
@@ -453,6 +480,7 @@ def import_list(list_id):
 @bp.post("/listas/<int:list_id>/items/<int:item_id>/desactivar")
 @tenant_required
 @login_required
+@_wholesale_plan_required
 def deactivate_item(list_id, item_id):
     _require_admin()
     item = PriceListItem.query.filter_by(
@@ -467,6 +495,7 @@ def deactivate_item(list_id, item_id):
 @bp.post("/listas/<int:list_id>/estado")
 @tenant_required
 @login_required
+@_wholesale_plan_required
 def toggle_list(list_id):
     _require_admin()
     row = PriceList.query.filter_by(id=list_id, company_id=_company_id()).first_or_404()
