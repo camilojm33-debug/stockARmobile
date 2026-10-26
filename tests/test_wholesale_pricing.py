@@ -1,3 +1,4 @@
+from datetime import timedelta
 from decimal import Decimal
 from io import BytesIO
 
@@ -5,7 +6,7 @@ from openpyxl import Workbook, load_workbook
 import pytest
 from flask_login import login_user, logout_user
 
-from app import Client, Company, Product, User, db
+from app import Client, Company, Product, User, db, utcnow
 from services.wholesale_pricing_service import (
     apply_wholesale_prices,
     product_price_catalog,
@@ -16,8 +17,16 @@ from wholesale_pricing import PriceList, PriceListItem
 
 @pytest.fixture
 def wholesale_database(app):
-    company = Company(name="Empresa mayorista QA", active=True)
-    other_company = Company(name="Otra empresa QA", active=True)
+    company = Company(
+        name="Empresa mayorista QA",
+        active=True,
+        trial_ends_at=utcnow() + timedelta(days=10),
+    )
+    other_company = Company(
+        name="Otra empresa QA",
+        active=True,
+        trial_ends_at=utcnow() + timedelta(days=10),
+    )
     db.session.add_all([company, other_company])
     db.session.flush()
 
