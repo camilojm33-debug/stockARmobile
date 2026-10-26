@@ -19,7 +19,8 @@ def test_main_sidebar_has_fixed_header_scroll_navigation_and_footer():
     assert "app-sidebar-footer" not in sidebar[scroll_start:scroll_end]
 
     nav_markup = sidebar[nav_start:scroll_end]
-    assert len(re.findall(r'class="nav-link', nav_markup)) == 54
+    assert len(re.findall(r'class="nav-link', nav_markup)) == 55
+    assert "Precios mayoristas" in nav_markup
     assert re.findall(r'class="nav-section-label">([^<]+)</div>', nav_markup) == [
         "Administración",
         "IA",
