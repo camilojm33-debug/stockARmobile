@@ -1,5 +1,7 @@
 from decimal import Decimal
+from io import BytesIO
 
+from openpyxl import Workbook, load_workbook
 import pytest
 from flask_login import login_user, logout_user
 
@@ -289,3 +291,79 @@ def test_admin_can_create_price_list_and_add_a_product_price(wholesale_database,
         ).first()
         assert saved is not None
         assert Decimal(str(saved.unit_price)) == Decimal("75.50")
+
+
+
+def _make_wholesale_excel(rows):
+    workbook = Workbook()
+    sheet = workbook.active
+    sheet.append(["barcode", "product_name", "min_quantity", "unit_price", "active"])
+    for row in rows:
+        sheet.append(row)
+    buffer = BytesIO()
+    workbook.save(buffer)
+    buffer.seek(0)
+    return buffer.getvalue()
+
+
+def test_wholesale_price_excel_import_is_atomic_and_export_roundtrips(wholesale_database, app):
+    data = wholesale_database
+    with app.app_context():
+        data["admin"].set_password("test-password-123")
+        db.session.commit()
+        list_id = data["price_list"].id
+        product_id = data["product"].id
+
+    browser = app.test_client()
+    login = browser.post(
+        "/auth/login",
+        data={"username": "wholesale_admin", "password": "test-password-123"},
+    )
+    assert login.status_code in (301, 302)
+
+    invalid_upload = _make_wholesale_excel([
+        ["WHOLESALE-001", "Producto mayorista QA", 1, 77, True],
+        ["NO-EXISTE", "Producto no cargado", 1, 55, True],
+    ])
+    response = browser.post(
+        f"/precios-mayoristas/listas/{list_id}/importar.xlsx",
+        data={"file": (BytesIO(invalid_upload), "precios.xlsx")},
+        content_type="multipart/form-data",
+    )
+    assert response.status_code in (301, 302)
+    with app.app_context():
+        original = PriceListItem.query.filter_by(
+            company_id=data["company"].id,
+            price_list_id=list_id,
+            product_id=product_id,
+            min_quantity=Decimal("1.000"),
+        ).first()
+        assert Decimal(str(original.unit_price)) == Decimal("80.00")
+
+    valid_upload = _make_wholesale_excel([
+        ["WHOLESALE-001", "Producto mayorista QA", 1, 77, True],
+        ["WHOLESALE-001", "Producto mayorista QA", 24, 65, True],
+    ])
+    response = browser.post(
+        f"/precios-mayoristas/listas/{list_id}/importar.xlsx",
+        data={"file": (BytesIO(valid_upload), "precios.xlsx")},
+        content_type="multipart/form-data",
+    )
+    assert response.status_code in (301, 302)
+
+    exported = browser.get(f"/precios-mayoristas/listas/{list_id}/exportar.xlsx")
+    assert exported.status_code == 200
+    workbook = load_workbook(BytesIO(exported.data), read_only=True, data_only=True)
+    exported_rows = list(workbook.active.iter_rows(values_only=True))
+    workbook.close()
+    assert exported_rows[0] == ("barcode", "product_name", "min_quantity", "unit_price", "active")
+    assert any(row[0] == "WHOLESALE-001" and row[2] == 1 and row[3] == 77 for row in exported_rows[1:])
+    assert any(row[0] == "WHOLESALE-001" and row[2] == 24 and row[3] == 65 for row in exported_rows[1:])
+
+    with app.app_context():
+        assert PriceListItem.query.filter_by(
+            company_id=data["company"].id,
+            price_list_id=list_id,
+            product_id=product_id,
+            min_quantity=Decimal("1.000"),
+        ).first().unit_price == Decimal("77.00")
