@@ -340,6 +340,11 @@ def save_item(list_id):
     item_id = request.form.get("item_id", type=int)
     bulk_mode = str(request.form.get("bulk_mode") or "single").strip().lower()
     bulk_action = str(request.form.get("bulk_action") or "fill_missing").strip().lower()
+    pricing_mode = str(request.form.get("pricing_mode") or "fixed").strip().lower()
+
+    if pricing_mode not in {"fixed", "discount_percent"}:
+        flash("Seleccioná un tipo de precio válido.", "danger")
+        return redirect(url_for("wholesale_pricing.index", list_id=list_id))
 
     try:
         quantity = Decimal(str(request.form.get("min_quantity") or "1").replace(",", "."))
@@ -352,17 +357,35 @@ def save_item(list_id):
         return redirect(url_for("wholesale_pricing.index", list_id=list_id))
 
     unit_price = None
-    raw_price = str(request.form.get("unit_price") or "").strip().replace(",", ".")
-    if raw_price:
-        try:
-            unit_price = Decimal(raw_price)
-            if not unit_price.is_finite() or unit_price <= 0:
-                raise ValueError("El precio mayorista debe ser mayor a cero.")
-            unit_price = unit_price.quantize(Decimal("0.01"))
-        except (InvalidOperation, TypeError, ValueError) as exc:
-            message = str(exc) if isinstance(exc, ValueError) and str(exc) else "Ingresá un precio mayorista válido."
-            flash(message, "danger")
-            return redirect(url_for("wholesale_pricing.index", list_id=list_id))
+    discount_percent = None
+    if pricing_mode == "fixed":
+        raw_price = str(request.form.get("unit_price") or "").strip().replace(",", ".")
+        if raw_price:
+            try:
+                unit_price = Decimal(raw_price)
+                if not unit_price.is_finite() or unit_price <= 0:
+                    raise ValueError("El precio mayorista debe ser mayor a cero.")
+                unit_price = unit_price.quantize(Decimal("0.01"), rounding=ROUND_HALF_UP)
+            except (InvalidOperation, TypeError, ValueError) as exc:
+                message = str(exc) if isinstance(exc, ValueError) and str(exc) else "Ingresá un precio mayorista válido."
+                flash(message, "danger")
+                return redirect(url_for("wholesale_pricing.index", list_id=list_id))
+    else:
+        raw_percent = str(request.form.get("discount_percent") or "").strip().replace(",", ".")
+        if raw_percent:
+            try:
+                discount_percent = Decimal(raw_percent)
+                if (
+                    not discount_percent.is_finite()
+                    or discount_percent <= 0
+                    or discount_percent >= Decimal("100")
+                ):
+                    raise ValueError("El descuento debe ser mayor a 0% y menor a 100%.")
+                discount_percent = discount_percent.quantize(Decimal("0.01"), rounding=ROUND_HALF_UP)
+            except (InvalidOperation, TypeError, ValueError) as exc:
+                message = str(exc) if isinstance(exc, ValueError) and str(exc) else "Ingresá un porcentaje válido."
+                flash(message, "danger")
+                return redirect(url_for("wholesale_pricing.index", list_id=list_id))
 
     if bulk_mode in {"all", "category"}:
         if item_id:
@@ -408,27 +431,41 @@ def save_item(list_id):
                     "info",
                 )
                 return redirect(url_for("wholesale_pricing.index", list_id=list_id))
-            if unit_price is None:
-                flash(
-                    f"Hay {len(products_to_apply)} productos sin precio desde {quantity:g}. "
-                    "Ingresá el precio que querés aplicar solamente a esos productos.",
-                    "warning",
-                )
-                return redirect(url_for("wholesale_pricing.index", list_id=list_id))
         else:
             products_to_apply = products
-            if unit_price is None:
-                flash(
-                    "Ingresá el nuevo precio para reemplazar el tramo existente en los productos seleccionados.",
-                    "warning",
+
+        if pricing_mode == "fixed" and unit_price is None:
+            flash(
+                f"Hay {len(products_to_apply)} productos seleccionados para el tramo desde {quantity:g}. "
+                "Ingresá el precio fijo que querés aplicar.",
+                "warning",
+            )
+            return redirect(url_for("wholesale_pricing.index", list_id=list_id))
+        if pricing_mode == "discount_percent" and discount_percent is None:
+            flash("Ingresá el porcentaje de descuento sobre el precio minorista.", "warning")
+            return redirect(url_for("wholesale_pricing.index", list_id=list_id))
+
+        # Calculate all per-product prices before changing the session so a
+        # missing retail price cannot leave a partially applied bulk operation.
+        try:
+            prices_by_product = {
+                int(product.id): (
+                    unit_price
+                    if pricing_mode == "fixed"
+                    else _discounted_retail_price(product, discount_percent)
                 )
-                return redirect(url_for("wholesale_pricing.index", list_id=list_id))
+                for product in products_to_apply
+            }
+        except ValueError as exc:
+            flash(f"No se aplicaron cambios: {exc}. Corregí los precios minoristas e intentá nuevamente.", "danger")
+            return redirect(url_for("wholesale_pricing.index", list_id=list_id))
 
         created = 0
         updated = 0
         below_cost = 0
         try:
             for product in products_to_apply:
+                applied_price = prices_by_product[int(product.id)]
                 item = items_by_product.get(int(product.id))
                 if item is None:
                     item = PriceListItem(
@@ -436,7 +473,8 @@ def save_item(list_id):
                         price_list_id=price_list.id,
                         product_id=product.id,
                         min_quantity=quantity,
-                        unit_price=unit_price,
+                        unit_price=applied_price,
+                        discount_percent=discount_percent if pricing_mode == "discount_percent" else None,
                         active=True,
                     )
                     db.session.add(item)
@@ -444,11 +482,12 @@ def save_item(list_id):
                     created += 1
                 else:
                     # Existing rows are touched only in explicit replace mode.
-                    item.unit_price = unit_price
+                    item.unit_price = applied_price
+                    item.discount_percent = discount_percent if pricing_mode == "discount_percent" else None
                     item.active = True
                     updated += 1
                 cost = Decimal(str(product.cost_price or 0))
-                if cost > 0 and unit_price < cost:
+                if cost > 0 and applied_price < cost:
                     below_cost += 1
             db.session.commit()
         except Exception:
@@ -465,15 +504,20 @@ def save_item(list_id):
             if bulk_mode == "all"
             else (category if category != "__stockar_uncategorized__" else "Sin categoría")
         )
+        amount_label = (
+            f"un descuento del {discount_percent}% sobre el precio minorista"
+            if pricing_mode == "discount_percent"
+            else f"un precio fijo de {unit_price:.2f}"
+        )
         if bulk_action == "fill_missing":
             flash(
-                f"Se completaron los precios de {created} productos sin tramo desde {quantity:g} en {scope_label}. "
-                "Los precios que ya existían no se modificaron.",
+                f"Se completaron los precios de {created} productos sin tramo desde {quantity:g} en {scope_label} "
+                f"con {amount_label}. Los precios que ya existían no se modificaron.",
                 "success",
             )
         else:
             flash(
-                f"Precio mayorista reemplazado para {len(products_to_apply)} productos "
+                f"Se aplicó {amount_label} desde {quantity:g} unidades a {len(products_to_apply)} productos "
                 f"({created} tramos nuevos y {updated} actualizados) en {scope_label}.",
                 "success",
             )
@@ -487,14 +531,25 @@ def save_item(list_id):
     if bulk_mode != "single":
         flash("Seleccioná un producto, todos los productos o una categoría válida.", "danger")
         return redirect(url_for("wholesale_pricing.index", list_id=list_id))
-    if unit_price is None:
-        flash("Ingresá un precio mayorista válido.", "danger")
-        return redirect(url_for("wholesale_pricing.index", list_id=list_id))
 
     product = Product.query.filter_by(id=product_id, company_id=company_id, active=True).first()
     if product is None:
         flash("El producto no pertenece a tu empresa o está inactivo.", "danger")
         return redirect(url_for("wholesale_pricing.index", list_id=list_id))
+    if pricing_mode == "fixed":
+        if unit_price is None:
+            flash("Ingresá un precio mayorista válido.", "danger")
+            return redirect(url_for("wholesale_pricing.index", list_id=list_id))
+        applied_price = unit_price
+    else:
+        if discount_percent is None:
+            flash("Ingresá un porcentaje de descuento válido.", "danger")
+            return redirect(url_for("wholesale_pricing.index", list_id=list_id))
+        try:
+            applied_price = _discounted_retail_price(product, discount_percent)
+        except ValueError as exc:
+            flash(str(exc), "danger")
+            return redirect(url_for("wholesale_pricing.index", list_id=list_id))
 
     if item_id:
         item = PriceListItem.query.filter_by(
@@ -513,7 +568,8 @@ def save_item(list_id):
             return redirect(url_for("wholesale_pricing.index", list_id=list_id))
         item.product_id = product_id
         item.min_quantity = quantity
-        item.unit_price = unit_price
+        item.unit_price = applied_price
+        item.discount_percent = discount_percent if pricing_mode == "discount_percent" else None
         item.active = True
     else:
         item = PriceListItem.query.filter_by(
@@ -528,18 +584,20 @@ def save_item(list_id):
                 price_list_id=price_list.id,
                 product_id=product_id,
                 min_quantity=quantity,
-                unit_price=unit_price,
+                unit_price=applied_price,
+                discount_percent=discount_percent if pricing_mode == "discount_percent" else None,
                 active=True,
             )
             db.session.add(item)
         else:
-            item.unit_price = unit_price
+            item.unit_price = applied_price
+            item.discount_percent = discount_percent if pricing_mode == "discount_percent" else None
             item.active = True
     db.session.commit()
     cost = Decimal(str(product.cost_price or 0))
-    if cost > 0 and unit_price < cost:
+    if cost > 0 and applied_price < cost:
         flash(
-            f"Precio guardado, pero queda por debajo del costo ({cost:.2f}). Revisá la rentabilidad antes de vender.",
+            f"Precio mayorista guardado, pero queda por debajo del costo ({cost:.2f}). Revisá la rentabilidad antes de vender.",
             "warning",
         )
     else:
