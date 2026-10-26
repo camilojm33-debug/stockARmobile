@@ -524,6 +524,8 @@
       quantity: Number(item.quantity || 0),
       unit_price: Number(item.unit_price || 0),
       discount: Number(item.discount || 0),
+      price_source: item.price_source || 'minorista',
+      price_list_id: item.price_list_id || null,
     })));
   }
 
@@ -538,19 +540,65 @@
     return { quantity, unitPrice, gross, discountValue: safeDiscount, discountPct, subtotal };
   }
 
+  function selectedClientData() {
+    const clientId = Number(document.getElementById('quoteClientSelect')?.value || 0);
+    return clientCatalog.find((client) => Number(client.id) === clientId) || null;
+  }
+
+  function wholesaleUnitPrice(product, quantity, clientData = selectedClientData()) {
+    if (!product || !clientData || clientData.customer_type !== 'mayorista' || !clientData.price_list_id) return null;
+    const tiers = (product.price_lists || {})[String(clientData.price_list_id)] || [];
+    const qty = Math.max(Number(quantity || 0), 0);
+    const eligible = tiers
+      .filter((tier) => Number(tier.min_quantity || 1) <= qty)
+      .sort((a, b) => Number(a.min_quantity || 1) - Number(b.min_quantity || 1));
+    if (!eligible.length) return null;
+    const price = Number(eligible[eligible.length - 1].price);
+    return Number.isFinite(price) && price > 0 ? price : null;
+  }
+
+  function syncLinePriceToClient(line, product, force = false) {
+    if (!line || !product) return;
+    if (line.price_source === 'manual' && canModifyPrices && !force) return;
+    const clientData = selectedClientData();
+    const listPrice = wholesaleUnitPrice(product, line.quantity, clientData);
+    if (listPrice !== null) {
+      line.unit_price = listPrice;
+      line.discount = 0;
+      line.price_source = 'mayorista';
+      line.price_list_id = Number(clientData.price_list_id);
+      return;
+    }
+    if (line.price_source === 'mayorista') {
+      line.unit_price = Number(product.price || 0);
+      line.discount = Number(product.discount || 0);
+    }
+    if (line.price_source !== 'manual') {
+      line.price_source = 'minorista';
+      line.price_list_id = null;
+    }
+  }
+
   function addProduct(product) {
     const existing = items.find((line) => String(line.product_id) === String(product.id));
     if (existing) {
       existing.quantity = Number(existing.quantity || 0) + 1;
+      syncLinePriceToClient(existing, product);
     } else {
-      items.push({
+      const listPrice = wholesaleUnitPrice(product, 1);
+      const wholesale = listPrice !== null;
+      const line = {
         product_id: product.id,
         description: product.name,
         quantity: 1,
-        unit_price: Number(product.price || 0),
-        discount: Number(product.discount || 0),
+        unit_price: wholesale ? listPrice : Number(product.price || 0),
+        discount: wholesale ? 0 : Number(product.discount || 0),
         cost: Number(product.cost || 0),
-      });
+        price_source: wholesale ? 'mayorista' : 'minorista',
+        price_list_id: wholesale ? Number(selectedClientData()?.price_list_id || 0) || null : null,
+      };
+      items.push(line);
+      syncLinePriceToClient(line, product);
     }
     renderLines();
     renderCatalog();
@@ -590,6 +638,16 @@
       line.discount = Math.min(gross, gross * (pct / 100));
     } else {
       line[field] = field === 'description' ? value : parseNumberInput(value);
+      if (field === 'unit_price' && canModifyPrices) {
+        line.price_source = 'manual';
+        line.price_list_id = null;
+      }
+    }
+    if (field === 'quantity') {
+      const product = productCatalog.find((row) => String(row.id) === String(line.product_id));
+      if (line.price_source === 'mayorista') syncLinePriceToClient(line, product);
+      const priceInput = document.getElementById(`linePrice-${index}`);
+      if (priceInput && document.activeElement !== priceInput) priceInput.value = formatEditableNumber(line.unit_price, 2);
     }
 
     updateLinePreview(index, field);
@@ -613,10 +671,18 @@
       element.value = formatEditableNumber(line.discount, 2);
     } else if (field === 'unit_price') {
       line.unit_price = Math.max(numeric, 0);
+      if (canModifyPrices) {
+        line.price_source = 'manual';
+        line.price_list_id = null;
+      }
       element.value = formatEditableNumber(line.unit_price, 2);
     } else if (field === 'quantity') {
       line.quantity = Math.max(numeric, 0);
+      const product = productCatalog.find((row) => String(row.id) === String(line.product_id));
+      if (line.price_source === 'mayorista') syncLinePriceToClient(line, product);
       element.value = formatEditableNumber(line.quantity, 2);
+      const priceInput = document.getElementById(`linePrice-${index}`);
+      if (priceInput) priceInput.value = formatEditableNumber(line.unit_price, 2);
     }
 
     updateLinePreview(index, field);
@@ -685,6 +751,7 @@
 
     container.innerHTML = visible.map((product) => {
       const alreadyAdded = selectedIds.has(Number(product.id));
+      const displayedPrice = wholesaleUnitPrice(product, 1) ?? Number(product.price || 0);
       const image = product.image
         ? `<img class="catalog-thumb" src="${escapeHtml(product.image)}" alt="${escapeHtml(product.name)}" loading="lazy" data-product-image data-category="${escapeHtml(product.category || '')}" data-product-name="${escapeHtml(product.name)}" data-fallback-class="catalog-thumb" data-fallback-extra-class="d-flex align-items-center justify-content-center">`
         : window.StockArProductVisual.buildFallbackHtml({
@@ -702,7 +769,7 @@
             <div class="catalog-meta" title="Stock: ${formatStock(product.stock)} · ${escapeHtml(product.brand || '-')} · ${escapeHtml(product.supplier || '-')}">Stock: ${formatStock(product.stock)} · ${escapeHtml(product.brand || '-')} · ${escapeHtml(product.supplier || '-')}</div>
           </div>
           <div class="catalog-side">
-            <div class="catalog-price">${money(product.price || 0)}</div>
+            <div class="catalog-price">${money(displayedPrice)}</div>
             <button type="button" class="btn btn-sm ${alreadyAdded ? 'btn-success' : 'btn-outline-primary'} focus-ring" onclick="addProductById(${Number(product.id)})" aria-label="Agregar ${escapeHtml(product.name)}">${alreadyAdded ? 'Agregado +' : 'Agregar'}</button>
           </div>
         </article>
@@ -733,7 +800,7 @@
     wrap.innerHTML = items.map((item, index) => {
       const line = computeLine(item);
       const disablePrice = !canModifyPrices ? 'disabled' : '';
-      const disableDiscount = !canApplyDiscounts ? 'disabled' : '';
+      const disableDiscount = (!canApplyDiscounts || item.price_source === 'mayorista') ? 'disabled' : '';
       return `
         <div class="quote-line" role="group" aria-label="Línea ${index + 1}">
           <div class="quote-line-grid">
@@ -828,10 +895,7 @@
   }
 
   function hydrateClientSummary() {
-    const select = document.getElementById('quoteClientSelect');
-    const clientId = Number(select.value || 0);
-    const data = clientCatalog.find((client) => Number(client.id) === clientId);
-
+    const data = selectedClientData();
     document.getElementById('clientCondition').textContent = data?.commercial_condition || '-';
     document.getElementById('clientPriceList').textContent = data?.price_list || '-';
     document.getElementById('clientDiscount').textContent = `${Number(data?.usual_discount || 0).toFixed(2)}%`;
@@ -840,6 +904,13 @@
     document.getElementById('clientHistory').textContent = data
       ? `${data.purchase_count} compras · ${money(data.purchase_total)} · Última: ${data.last_purchase || '-'}`
       : 'Sin datos';
+
+    items.forEach((line) => {
+      const product = productCatalog.find((row) => String(row.id) === String(line.product_id));
+      syncLinePriceToClient(line, product, true);
+    });
+    renderLines(false);
+    renderCatalog();
   }
 
   function applyCommercialCondition(value) {
@@ -925,6 +996,8 @@
         unit_price: Number(item.unit_price || 0),
         discount: Number(item.discount || 0),
         cost: 0,
+        price_source: item.price_source || 'minorista',
+        price_list_id: item.price_list_id || null,
       });
     });
 
