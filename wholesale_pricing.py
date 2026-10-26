@@ -6,8 +6,10 @@ import re
 import unicodedata
 from datetime import date
 from decimal import Decimal, InvalidOperation
+from io import BytesIO
+import unicodedata
 
-from flask import Blueprint, abort, flash, redirect, render_template, request, url_for
+from flask import Blueprint, abort, flash, redirect, render_template, request, send_file, url_for
 from flask_login import current_user, login_required
 from sqlalchemy import Index, UniqueConstraint
 
@@ -238,6 +240,194 @@ def save_item(list_id):
             item.active = True
     db.session.commit()
     flash("Precio mayorista guardado.", "success")
+    return redirect(url_for("wholesale_pricing.index", list_id=list_id))
+
+
+@bp.get("/listas/<int:list_id>/exportar.xlsx")
+@tenant_required
+@login_required
+def export_list(list_id):
+    _require_admin()
+    from openpyxl import Workbook
+    from app import Product
+
+    company_id = _company_id()
+    price_list = PriceList.query.filter_by(id=list_id, company_id=company_id).first_or_404()
+    rows = (
+        PriceListItem.query.filter_by(company_id=company_id, price_list_id=price_list.id)
+        .order_by(PriceListItem.product_id.asc(), PriceListItem.min_quantity.asc())
+        .all()
+    )
+    workbook = Workbook()
+    sheet = workbook.active
+    sheet.title = "Precios mayoristas"
+    sheet.append(["barcode", "product_name", "min_quantity", "unit_price", "active"])
+    for row in rows:
+        product = Product.query.filter_by(id=row.product_id, company_id=company_id).first()
+        if product is None:
+            continue
+        sheet.append([
+            product.barcode or "",
+            product.name or "",
+            float(row.min_quantity or 1),
+            float(row.unit_price or 0),
+            bool(row.active),
+        ])
+    sheet.freeze_panes = "A2"
+    sheet.auto_filter.ref = sheet.dimensions
+    for column, width in (("A", 24), ("B", 36), ("C", 18), ("D", 18), ("E", 12)):
+        sheet.column_dimensions[column].width = width
+    buffer = BytesIO()
+    workbook.save(buffer)
+    buffer.seek(0)
+    return send_file(
+        buffer,
+        as_attachment=True,
+        download_name=f"precios_mayoristas_{price_list.code}.xlsx",
+        mimetype="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+    )
+
+
+@bp.post("/listas/<int:list_id>/importar.xlsx")
+@tenant_required
+@login_required
+def import_list(list_id):
+    _require_admin()
+    from openpyxl import load_workbook
+    from app import Product
+
+    company_id = _company_id()
+    price_list = PriceList.query.filter_by(id=list_id, company_id=company_id).first_or_404()
+    upload = request.files.get("file")
+    if upload is None or not upload.filename or not upload.filename.lower().endswith(".xlsx"):
+        flash("Seleccioná un archivo Excel .xlsx.", "danger")
+        return redirect(url_for("wholesale_pricing.index", list_id=list_id))
+    raw = upload.read(5 * 1024 * 1024 + 1)
+    if len(raw) > 5 * 1024 * 1024:
+        flash("El archivo no puede superar los 5 MB.", "danger")
+        return redirect(url_for("wholesale_pricing.index", list_id=list_id))
+    try:
+        workbook = load_workbook(BytesIO(raw), read_only=True, data_only=True)
+        sheet = workbook.active
+        values = list(sheet.iter_rows(values_only=True))
+        workbook.close()
+    except Exception:
+        flash("No se pudo leer el Excel. Exportá primero la plantilla de la lista.", "danger")
+        return redirect(url_for("wholesale_pricing.index", list_id=list_id))
+    if not values:
+        flash("El archivo Excel está vacío.", "danger")
+        return redirect(url_for("wholesale_pricing.index", list_id=list_id))
+
+    def normalize_header(value):
+        raw_header = unicodedata.normalize("NFKD", str(value or "").strip().lower())
+        raw_header = "".join(char for char in raw_header if not unicodedata.combining(char))
+        return re.sub(r"[^a-z0-9]+", "_", raw_header).strip("_")
+
+    header = [normalize_header(value) for value in values[0]]
+    aliases = {
+        "barcode": {"barcode", "codigo", "sku", "ean", "product_code"},
+        "min_quantity": {"min_quantity", "cantidad_minima", "desde_cantidad", "min_qty"},
+        "unit_price": {"unit_price", "precio_mayorista", "precio", "price"},
+        "active": {"active", "activo", "habilitado"},
+    }
+    positions = {}
+    for index, value in enumerate(header):
+        for canonical, options in aliases.items():
+            if value in options:
+                positions[canonical] = index
+    missing = {"barcode", "min_quantity", "unit_price"} - set(positions)
+    if missing:
+        flash("Faltan columnas obligatorias: código/sku, cantidad mínima y precio mayorista.", "danger")
+        return redirect(url_for("wholesale_pricing.index", list_id=list_id))
+    if len(values) > 10001:
+        flash("El archivo admite hasta 10.000 filas de precios más el encabezado.", "danger")
+        return redirect(url_for("wholesale_pricing.index", list_id=list_id))
+
+    parsed_rows = []
+    seen = set()
+    errors = []
+    for line_number, row in enumerate(values[1:], start=2):
+        if not row or not any(value not in (None, "") for value in row):
+            continue
+        try:
+            barcode = str(row[positions["barcode"]] or "").strip()[:50]
+            if not barcode:
+                raise ValueError("falta código/sku")
+            quantity = Decimal(str(row[positions["min_quantity"]]).replace(",", "."))
+            unit_price = Decimal(str(row[positions["unit_price"]]).replace(",", "."))
+            if not quantity.is_finite() or quantity <= 0:
+                raise ValueError("la cantidad mínima debe ser mayor a cero")
+            if not unit_price.is_finite() or unit_price <= 0:
+                raise ValueError("el precio debe ser mayor a cero")
+            quantity = quantity.quantize(Decimal("0.001"))
+            unit_price = unit_price.quantize(Decimal("0.01"))
+            key = (barcode, quantity)
+            if key in seen:
+                raise ValueError("fila duplicada para el mismo código y cantidad mínima")
+            seen.add(key)
+            raw_active = row[positions["active"]] if "active" in positions and positions["active"] < len(row) else True
+            active_value = str(raw_active or "").strip().lower()
+            active = raw_active is True or active_value in {"1", "true", "si", "sí", "yes", "activo", "on"}
+            parsed_rows.append({
+                "barcode": barcode,
+                "quantity": quantity,
+                "unit_price": unit_price,
+                "active": active,
+            })
+        except (InvalidOperation, TypeError, ValueError, IndexError) as exc:
+            errors.append(f"Fila {line_number}: {exc}")
+    if errors:
+        flash("No se importó ningún precio. " + " · ".join(errors[:5]), "danger")
+        return redirect(url_for("wholesale_pricing.index", list_id=list_id))
+    if not parsed_rows:
+        flash("No se encontraron filas de precios para importar.", "warning")
+        return redirect(url_for("wholesale_pricing.index", list_id=list_id))
+
+    products = {
+        product.barcode: product
+        for product in Product.query.filter_by(company_id=company_id, active=True)
+        .filter(Product.barcode.in_(sorted({row["barcode"] for row in parsed_rows})))
+        .all()
+    }
+    missing_codes = sorted({row["barcode"] for row in parsed_rows} - set(products))
+    if missing_codes:
+        flash("No se importó ningún precio. Códigos inexistentes o inactivos: " + ", ".join(missing_codes[:8]), "danger")
+        return redirect(url_for("wholesale_pricing.index", list_id=list_id))
+
+    try:
+        updated = 0
+        created = 0
+        for row in parsed_rows:
+            product = products[row["barcode"]]
+            item = PriceListItem.query.filter_by(
+                company_id=company_id,
+                price_list_id=price_list.id,
+                product_id=product.id,
+                min_quantity=row["quantity"],
+            ).first()
+            if item is None:
+                item = PriceListItem(
+                    company_id=company_id,
+                    price_list_id=price_list.id,
+                    product_id=product.id,
+                    min_quantity=row["quantity"],
+                    unit_price=row["unit_price"],
+                    active=row["active"],
+                )
+                db.session.add(item)
+                created += 1
+            else:
+                item.unit_price = row["unit_price"]
+                item.active = row["active"]
+                updated += 1
+        db.session.commit()
+    except Exception:
+        db.session.rollback()
+        current_app.logger.exception("Wholesale price-list import failed: company_id=%s list_id=%s", company_id, list_id)
+        flash("No se aplicó la importación. No se guardaron cambios.", "danger")
+        return redirect(url_for("wholesale_pricing.index", list_id=list_id))
+
+    flash(f"Importación aplicada a '{price_list.name}': {created} tramos creados y {updated} actualizados. Las filas que no aparecen en el archivo se conservaron.", "success")
     return redirect(url_for("wholesale_pricing.index", list_id=list_id))
 
 
