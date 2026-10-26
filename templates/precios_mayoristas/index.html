@@ -86,13 +86,13 @@
               </select>
               <div class="form-text">Por defecto, los precios ya cargados se conservan. Reemplazarlos requiere elegirlo explícitamente.</div>
             </div>
-            <div class="col-md-6 col-lg-4 d-none" id="wholesalePricingModeGroup">
-              <label class="form-label" for="wholesalePricingMode">Tipo de precio masivo</label>
-              <select class="form-select" id="wholesalePricingMode" name="pricing_mode" disabled>
+            <div class="col-md-6 col-lg-4" id="wholesalePricingModeGroup">
+              <label class="form-label" for="wholesalePricingMode">Tipo de precio</label>
+              <select class="form-select" id="wholesalePricingMode" name="pricing_mode">
                 <option value="fixed" selected>Precio fijo para la selección</option>
                 <option value="discount_percent">Descuento % sobre precio minorista</option>
               </select>
-              <div class="form-text">El porcentaje se calcula por separado sobre el precio minorista actual de cada producto.</div>
+              <div class="form-text">El porcentaje se calcula sobre el precio minorista actual de cada producto, también cuando elegís uno solo.</div>
             </div>
             <div class="col-6 col-md-2">
               <label class="form-label" for="wholesaleMinQty">Desde cantidad</label>
@@ -216,7 +216,7 @@
   const updateAmountInputs = () => {
     const single = scope.value === 'single';
     const replacing = !single && bulkAction.value === 'replace_existing';
-    const percentage = !single && pricingMode.value === 'discount_percent';
+    const percentage = pricingMode.value === 'discount_percent';
     const missing = bulkPreview ? Number(bulkPreview.missing || 0) : null;
     const canFillMissing = !previewPending && missing !== null && missing > 0;
     const canEnterAmount = single || replacing || canFillMissing;
@@ -225,7 +225,9 @@
     priceInput.disabled = percentage || !canEnterAmount;
     priceInput.required = !percentage && canEnterAmount;
     priceHelp.textContent = single
-      ? 'Precio fijo para este producto.'
+      ? (percentage
+        ? 'Se guardará el porcentaje sobre el precio minorista actual de este producto.'
+        : 'Precio fijo para este producto.')
       : (percentage
         ? 'No se usa un precio fijo: el descuento se calcula por producto.'
         : (canEnterAmount
@@ -243,7 +245,6 @@
     const mode = scope.value;
     const single = mode === 'single';
     const category = mode === 'category';
-    if (single) pricingMode.value = 'fixed';
 
     productGroup.classList.toggle('d-none', !single);
     productSelect.disabled = !single;
@@ -256,11 +257,13 @@
 
     bulkActionGroup.classList.toggle('d-none', single);
     bulkAction.disabled = single;
-    pricingModeGroup.classList.toggle('d-none', single);
-    pricingMode.disabled = single;
+    pricingModeGroup.classList.remove('d-none');
+    pricingMode.disabled = false;
 
     if (single) {
-      hint.textContent = 'Se guardará el precio fijo solo para el producto seleccionado. Para escalas, agregá otros tramos desde distintas cantidades mínimas.';
+      hint.textContent = pricingMode.value === 'discount_percent'
+        ? 'Se guardará el descuento porcentual solo para el producto seleccionado; el precio se calculará sobre su precio minorista actual.'
+        : 'Se guardará el precio fijo solo para el producto seleccionado. Para escalas, agregá otros tramos desde distintas cantidades mínimas.';
       previewStatus.textContent = '';
       saveButton.textContent = 'Guardar precio';
       saveButton.disabled = false;
@@ -379,7 +382,7 @@
     updateScope();
     schedulePreview();
   });
-  pricingMode.addEventListener('change', updateAmountInputs);
+  pricingMode.addEventListener('change', updateScope);
   quantityInput.addEventListener('input', () => {
     if (scope.value !== 'single') schedulePreview();
   });
