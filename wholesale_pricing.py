@@ -759,6 +759,7 @@ def import_list(list_id):
         "barcode": {"barcode", "codigo", "sku", "ean", "product_code"},
         "min_quantity": {"min_quantity", "cantidad_minima", "desde_cantidad", "min_qty"},
         "unit_price": {"unit_price", "precio_mayorista", "precio", "price"},
+        "discount_percent": {"discount_percent", "descuento_porcentaje", "porcentaje_descuento", "discount_pct", "descuento_pct"},
         "active": {"active", "activo", "habilitado"},
     }
     positions = {}
@@ -766,9 +767,12 @@ def import_list(list_id):
         for canonical, options in aliases.items():
             if value in options:
                 positions[canonical] = index
-    missing = {"barcode", "min_quantity", "unit_price"} - set(positions)
-    if missing:
-        flash("Faltan columnas obligatorias: código/sku, cantidad mínima y precio mayorista.", "danger")
+    missing = {"barcode", "min_quantity"} - set(positions)
+    if missing or not ({"unit_price", "discount_percent"} & set(positions)):
+        flash(
+            "El Excel debe incluir código/sku, cantidad mínima y al menos una columna de precio fijo o descuento porcentual.",
+            "danger",
+        )
         return redirect(url_for("wholesale_pricing.index", list_id=list_id))
     if len(values) > 10001:
         flash("El archivo admite hasta 10.000 filas de precios más el encabezado.", "danger")
@@ -785,21 +789,38 @@ def import_list(list_id):
             if not barcode:
                 raise ValueError("falta código/sku")
             raw_quantity = row[positions["min_quantity"]] if positions["min_quantity"] < len(row) else None
-            raw_price = row[positions["unit_price"]] if positions["unit_price"] < len(row) else None
-            # A blank price is an explicit omission, not a $0 price. This lets the
-            # full catalog template include products the user does not want to price yet.
-            if raw_price is None or (isinstance(raw_price, str) and not raw_price.strip()):
+            raw_price = row[positions["unit_price"]] if "unit_price" in positions and positions["unit_price"] < len(row) else None
+            raw_percent = row[positions["discount_percent"]] if "discount_percent" in positions and positions["discount_percent"] < len(row) else None
+            price_blank = raw_price is None or (isinstance(raw_price, str) and not raw_price.strip())
+            percent_blank = raw_percent is None or (isinstance(raw_percent, str) and not raw_percent.strip())
+            # Blank price and discount mean "skip this row"; old five-column files
+            # are still supported and are interpreted as fixed prices.
+            if price_blank and percent_blank:
                 continue
+            if not price_blank and not percent_blank:
+                raise ValueError("completá precio fijo o descuento porcentual, no ambos")
             if raw_quantity is None or (isinstance(raw_quantity, str) and not raw_quantity.strip()):
                 raise ValueError("falta cantidad mínima")
             quantity = Decimal(str(raw_quantity).replace(",", "."))
-            unit_price = Decimal(str(raw_price).replace(",", "."))
+            unit_price = None
+            discount_percent = None
+            if not percent_blank:
+                discount_percent = Decimal(str(raw_percent).replace(",", "."))
+                if (
+                    not discount_percent.is_finite()
+                    or discount_percent <= 0
+                    or discount_percent >= Decimal("100")
+                ):
+                    raise ValueError("el descuento debe ser mayor a 0% y menor a 100%")
+                discount_percent = discount_percent.quantize(Decimal("0.01"), rounding=ROUND_HALF_UP)
+            else:
+                unit_price = Decimal(str(raw_price).replace(",", "."))
+                if not unit_price.is_finite() or unit_price <= 0:
+                    raise ValueError("el precio debe ser mayor a cero")
+                unit_price = unit_price.quantize(Decimal("0.01"), rounding=ROUND_HALF_UP)
             if not quantity.is_finite() or quantity <= 0:
                 raise ValueError("la cantidad mínima debe ser mayor a cero")
-            if not unit_price.is_finite() or unit_price <= 0:
-                raise ValueError("el precio debe ser mayor a cero")
             quantity = quantity.quantize(Decimal("0.001"))
-            unit_price = unit_price.quantize(Decimal("0.01"))
             key = (barcode, quantity)
             if key in seen:
                 raise ValueError("fila duplicada para el mismo código y cantidad mínima")
@@ -813,6 +834,7 @@ def import_list(list_id):
                 "barcode": barcode,
                 "quantity": quantity,
                 "unit_price": unit_price,
+                "discount_percent": discount_percent,
                 "active": active,
             })
         except (InvalidOperation, TypeError, ValueError, IndexError) as exc:
@@ -834,11 +856,22 @@ def import_list(list_id):
     if missing_codes:
         flash("No se importó ningún precio. Códigos inexistentes o inactivos: " + ", ".join(missing_codes[:8]), "danger")
         return redirect(url_for("wholesale_pricing.index", list_id=list_id))
-    below_cost_count = sum(
-        1 for row in parsed_rows
-        if Decimal(str(products[row["barcode"]].cost_price or 0)) > 0
-        and row["unit_price"] < Decimal(str(products[row["barcode"]].cost_price or 0))
-    )
+    below_cost_count = 0
+    for row in parsed_rows:
+        product = products[row["barcode"]]
+        try:
+            applied_price = (
+                row["unit_price"]
+                if row["discount_percent"] is None
+                else _discounted_retail_price(product, row["discount_percent"])
+            )
+        except ValueError as exc:
+            flash(f"No se importó ningún precio. {exc}. Corregí el precio minorista y volvé a importar.", "danger")
+            return redirect(url_for("wholesale_pricing.index", list_id=list_id))
+        row["applied_price"] = applied_price
+        cost = Decimal(str(product.cost_price or 0))
+        if cost > 0 and applied_price < cost:
+            below_cost_count += 1
 
     # Load existing tiers in one query instead of a database lookup for each Excel row.
     existing_items = PriceListItem.query.filter_by(
@@ -862,14 +895,16 @@ def import_list(list_id):
                     price_list_id=price_list.id,
                     product_id=product.id,
                     min_quantity=row["quantity"],
-                    unit_price=row["unit_price"],
+                    unit_price=row["applied_price"],
+                    discount_percent=row["discount_percent"],
                     active=row["active"],
                 )
                 db.session.add(item)
                 items_by_key[key] = item
                 created += 1
             else:
-                item.unit_price = row["unit_price"]
+                item.unit_price = row["applied_price"]
+                item.discount_percent = row["discount_percent"]
                 item.active = row["active"]
                 updated += 1
         db.session.commit()
