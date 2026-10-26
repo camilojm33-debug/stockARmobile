@@ -402,6 +402,97 @@ def _make_wholesale_excel(rows):
     return buffer.getvalue()
 
 
+
+def test_wholesale_catalog_template_includes_all_active_products_and_existing_tiers(wholesale_database, app):
+    data = wholesale_database
+    second_product = Product(
+        company_id=data["company"].id,
+        barcode="WHOLESALE-002",
+        name="Producto sin tarifa",
+        price=Decimal("60.00"),
+        cost_price=Decimal("30.00"),
+        discount=Decimal("0.00"),
+        stock=20,
+        min_stock=1,
+        active=True,
+        sale_type="unidad",
+        unit_measure="u",
+    )
+    db.session.add(second_product)
+    db.session.commit()
+
+    browser = app.test_client()
+    with browser.session_transaction() as session:
+        session["_user_id"] = str(data["admin"].id)
+        session["_fresh"] = True
+
+    response = browser.get(
+        f"/precios-mayoristas/listas/{data['price_list'].id}/plantilla.xlsx"
+    )
+    assert response.status_code == 200
+    assert "plantilla_precios_mayoristas_" in response.headers["Content-Disposition"]
+
+    workbook = load_workbook(BytesIO(response.data), read_only=True, data_only=True)
+    rows = list(workbook.active.iter_rows(values_only=True))
+    workbook.close()
+
+    assert rows[0] == ("barcode", "product_name", "min_quantity", "unit_price", "active")
+    assert len(rows) == 4  # header, two existing tiers and one product awaiting a price
+    assert any(row[0] == "WHOLESALE-001" and row[2] == 1 and row[3] == 80 for row in rows[1:])
+    assert any(row[0] == "WHOLESALE-001" and row[2] == 12 and row[3] == 70 for row in rows[1:])
+    blank_price = next(row for row in rows[1:] if row[0] == "WHOLESALE-002")
+    assert blank_price[1] == "Producto sin tarifa"
+    assert blank_price[2] == 1
+    assert blank_price[3] is None
+    assert blank_price[4] is True
+    assert all(row[0] != "OTHER-001" for row in rows[1:])
+
+
+def test_wholesale_import_skips_blank_price_rows_and_preserves_omitted_tiers(wholesale_database, app):
+    data = wholesale_database
+    list_id = data["price_list"].id
+    product_id = data["product"].id
+    browser = app.test_client()
+    with browser.session_transaction() as session:
+        session["_user_id"] = str(data["admin"].id)
+        session["_fresh"] = True
+
+    upload = _make_wholesale_excel([
+        ["WHOLESALE-001", "Producto mayorista QA", 1, 77, True],
+        ["WHOLESALE-001", "Producto mayorista QA", 12, None, True],
+        ["WHOLESALE-001", "Producto mayorista QA", 48, None, True],
+    ])
+    response = browser.post(
+        f"/precios-mayoristas/listas/{list_id}/importar.xlsx",
+        data={"file": (BytesIO(upload), "precios.xlsx")},
+        content_type="multipart/form-data",
+    )
+    assert response.status_code in (301, 302)
+
+    with app.app_context():
+        one_unit = PriceListItem.query.filter_by(
+            company_id=data["company"].id,
+            price_list_id=list_id,
+            product_id=product_id,
+            min_quantity=Decimal("1.000"),
+        ).first()
+        twelve_units = PriceListItem.query.filter_by(
+            company_id=data["company"].id,
+            price_list_id=list_id,
+            product_id=product_id,
+            min_quantity=Decimal("12.000"),
+        ).first()
+        forty_eight_units = PriceListItem.query.filter_by(
+            company_id=data["company"].id,
+            price_list_id=list_id,
+            product_id=product_id,
+            min_quantity=Decimal("48.000"),
+        ).first()
+        assert one_unit is not None and Decimal(str(one_unit.unit_price)) == Decimal("77.00")
+        assert twelve_units is not None and Decimal(str(twelve_units.unit_price)) == Decimal("70.00")
+        assert forty_eight_units is None
+
+
 def test_wholesale_price_excel_import_is_atomic_and_export_roundtrips(wholesale_database, app):
     data = wholesale_database
     with app.app_context():
