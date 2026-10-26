@@ -830,7 +830,11 @@
       </a>
       {% endif %}
       {% if current_user.role == 'admin' %}
-      <a class="nav-link {% if request.endpoint and request.endpoint.startswith('wholesale_pricing.') %}active{% endif %}" href="{{ url_for('wholesale_pricing.index') }}"><i class="bi bi-tags"></i><span class="nav-text">Precios mayoristas</span></a>
+      {% set wholesale_prices_href = url_for('wholesale_pricing.index') if commercial_wholesale_pricing_allowed else url_for('company_billing.subscription_portal') %}
+      <a class="nav-link {% if request.endpoint and request.endpoint.startswith('wholesale_pricing.') %}active{% endif %}" href="{{ wholesale_prices_href }}">
+        <i class="bi bi-tags"></i><span class="nav-text">Precios mayoristas</span>
+        {% if not commercial_wholesale_pricing_allowed %}<span class="nav-badge badge rounded-pill text-bg-warning ms-auto">Negocio</span>{% endif %}
+      </a>
       {% endif %}
       {% if current_user.role == 'admin' %}
       <a class="nav-link {% if request.endpoint and request.endpoint.startswith('company_billing.') %}active{% endif %}" href="{{ url_for('company_billing.subscription_portal') }}"><i class="bi bi-credit-card-2-front"></i><span class="nav-text">Suscripción</span></a>
