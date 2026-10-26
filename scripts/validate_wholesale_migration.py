@@ -10,7 +10,7 @@ from __future__ import annotations
 import os
 from sqlalchemy import inspect, text
 
-from app import app, db
+from app import Plan, app, db
 from flask_migrate import stamp, upgrade
 
 
@@ -30,6 +30,23 @@ def main() -> None:
             connection.execute(text("DROP TABLE IF EXISTS alembic_version CASCADE"))
         db.drop_all()
         db.create_all()
+
+        # Emulate an existing Negocio plan so the data migration is validated,
+        # not merely the schema revision.
+        db.session.add(Plan(
+            code="business",
+            name="Negocio",
+            price=29999,
+            currency="ARS",
+            duration_days=30,
+            max_users=8,
+            max_products=12000,
+            max_clients=12000,
+            features_json="inventario,ventas,clientes,compras,caja,reportes,excel,kardex,pricing_controller,promotions",
+            state="active",
+            active=True,
+        ))
+        db.session.commit()
 
         with db.engine.begin() as connection:
             connection.execute(text("DROP TABLE IF EXISTS price_list_items CASCADE"))
@@ -81,8 +98,24 @@ def main() -> None:
         if version != HEAD_REVISION:
             raise AssertionError(f"Unexpected Alembic revision after upgrade: {version}")
 
+        business_features = db.session.execute(
+            text("SELECT features_json FROM plans WHERE code = :code"),
+            {"code": "business"},
+        ).scalar_one()
+        feature_tokens = {
+            item.strip().lower()
+            for item in str(business_features or "").replace(";", ",").split(",")
+            if item.strip()
+        }
+        if "wholesale_pricing" not in feature_tokens:
+            raise AssertionError("Existing Negocio plan did not receive wholesale_pricing entitlement.")
+        for expected in ("pricing_controller", "promotions", "inventario", "ventas"):
+            if expected not in feature_tokens:
+                raise AssertionError(f"Existing Negocio plan lost expected feature: {expected}")
+
         print("PASS: wholesale-pricing and Negocio-plan migrations upgraded the pre-feature PostgreSQL schema.")
         print("PASS: wholesale tables, customer assignment, sale/quote price snapshots, foreign keys, and latest Alembic revision exist.")
+        print("PASS: existing Negocio plan gains wholesale_pricing while preserving other commercial features.")
 
 
 if __name__ == "__main__":
