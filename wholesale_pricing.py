@@ -31,8 +31,6 @@ class PriceList(db.Model):
     active = db.Column(db.Boolean, nullable=False, default=True, server_default=db.true())
     effective_from = db.Column(db.Date)
     effective_until = db.Column(db.Date)
-    # Promotions are deliberately not stacked on wholesale list prices by default.
-    allow_promotions = db.Column(db.Boolean, nullable=False, default=False, server_default=db.false())
     created_by_user_id = db.Column(db.Integer, db.ForeignKey("users.id"), nullable=False)
     created_at = db.Column(db.DateTime, nullable=False, default=utcnow_naive)
     updated_at = db.Column(db.DateTime, nullable=False, default=utcnow_naive, onupdate=utcnow_naive)
