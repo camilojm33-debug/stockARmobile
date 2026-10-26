@@ -224,6 +224,9 @@ def _pos_qr_snapshot(items, payload, *, total_amount, currency):
                 "name": item.get("name") or "",
                 "price": float(item.get("price") or 0),
                 "quantity": float(item.get("quantity") or 0),
+                "discount": float(item.get("discount") or 0),
+                "price_source": str(item.get("price_source") or "minorista"),
+                "price_list_id": int(item.get("price_list_id")) if item.get("price_list_id") not in (None, "") else None,
                 "barcode": item.get("barcode") or "",
             }
         )
@@ -960,6 +963,9 @@ def api_mp_qr_create():
                 "name": str(line["product"].name or ""),
                 "price": float(line["price"]),
                 "quantity": float(line["quantity"]),
+                "discount": float(line["discount"] or 0),
+                "price_source": line.get("price_source", "minorista"),
+                "price_list_id": line.get("price_list_id"),
                 "barcode": str(line["product"].barcode or ""),
             }
             for line in lines
@@ -1301,9 +1307,15 @@ def api_mp_qr_finalize():
         "surcharge_type": snapshot.get("surcharge_type"),
         "surcharge_value": snapshot.get("surcharge_value"),
         "surcharge_reason": snapshot.get("surcharge_reason"),
+        "pos_expected_total": float(payment.amount or 0),
     }
 
-    result = _create_sale_from_items({str(item["productId"]): item["quantity"] for item in items}, sale_payload, json_response=True)
+    result = _create_sale_from_items(
+        {str(item["productId"]): item["quantity"] for item in items},
+        sale_payload,
+        json_response=True,
+        trusted_line_snapshots=items,
+    )
     if hasattr(result, "json"):
         data = result.get_json() if hasattr(result, "get_json") else None
     else:
@@ -1320,7 +1332,7 @@ def api_mp_qr_finalize():
     return jsonify({"sale_id": sale_id, "redirect_url": data.get("redirect_url")})
 
 
-def _create_sale_from_items(items, data, json_response=False):
+def _create_sale_from_items(items, data, json_response=False, *, trusted_line_snapshots=None):
     service = SaleService(
         require_open_cash_session=_require_open_cash_session,
         calculate_lines=_calculate_lines,
@@ -1328,7 +1340,12 @@ def _create_sale_from_items(items, data, json_response=False):
         cart_key=_cart_key,
         to_decimal=to_decimal,
     )
-    return service.create_sale_from_items(items=items, data=data, json_response=json_response)
+    return service.create_sale_from_items(
+        items=items,
+        data=data,
+        json_response=json_response,
+        trusted_line_snapshots=trusted_line_snapshots,
+    )
 
 
 @bp.route("/success/<int:sale_id>")

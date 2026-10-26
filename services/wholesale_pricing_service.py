@@ -126,6 +126,73 @@ def apply_wholesale_prices(lines: list[dict], *, company_id: int, client) -> lis
     return lines
 
 
+def apply_price_snapshot(lines: list[dict], snapshots: list[dict]) -> list[dict]:
+    """Apply a server-persisted POS QR line snapshot without re-resolving today's prices.
+
+    This is intentionally for internal payment finalization only; the public request
+    payload must never be passed directly as a trusted snapshot.
+    """
+    if not isinstance(snapshots, list) or not snapshots:
+        raise ValueError("El snapshot de precios del QR está vacío o no es válido.")
+
+    parsed = {}
+    for raw in snapshots:
+        if not isinstance(raw, dict):
+            raise ValueError("El snapshot de precios del QR contiene una línea inválida.")
+        try:
+            product_id = int(raw.get("productId") or raw.get("product_id") or 0)
+            quantity = Decimal(str(raw.get("quantity")))
+            price = Decimal(str(raw.get("price")))
+            discount = Decimal(str(raw.get("discount") or 0))
+        except (InvalidOperation, TypeError, ValueError):
+            raise ValueError("El snapshot de precios del QR contiene importes inválidos.")
+        if product_id <= 0 or product_id in parsed:
+            raise ValueError("El snapshot de precios del QR contiene productos duplicados o inválidos.")
+        if (
+            not quantity.is_finite()
+            or quantity <= 0
+            or not price.is_finite()
+            or price < 0
+            or not discount.is_finite()
+            or discount < 0
+            or discount > price * quantity + CENT
+        ):
+            raise ValueError("El snapshot de precios del QR contiene cantidades o importes fuera de rango.")
+        source = str(raw.get("price_source") or "minorista").strip().lower()
+        if source not in {"minorista", "mayorista", "manual"}:
+            raise ValueError("El origen del precio guardado en el QR no es válido.")
+        raw_list_id = raw.get("price_list_id")
+        try:
+            price_list_id = int(raw_list_id) if raw_list_id not in (None, "") else None
+        except (TypeError, ValueError):
+            raise ValueError("La lista de precios guardada en el QR no es válida.")
+        if source != "mayorista":
+            price_list_id = None
+        parsed[product_id] = {
+            "quantity": quantity,
+            "price": price.quantize(CENT, rounding=ROUND_HALF_UP),
+            "discount": discount.quantize(CENT, rounding=ROUND_HALF_UP),
+            "price_source": source,
+            "price_list_id": price_list_id,
+        }
+
+    line_ids = {int(line["product"].id) for line in lines}
+    if line_ids != set(parsed):
+        raise ValueError("Los productos del carrito ya no coinciden con el snapshot de precios del QR.")
+
+    for line in lines:
+        product_id = int(line["product"].id)
+        saved = parsed[product_id]
+        quantity = Decimal(str(line.get("quantity") or 0))
+        if quantity != saved["quantity"]:
+            raise ValueError("La cantidad del carrito ya no coincide con el snapshot de precios del QR.")
+        line["price"] = saved["price"]
+        line["discount"] = saved["discount"]
+        line["price_source"] = saved["price_source"]
+        line["price_list_id"] = saved["price_list_id"]
+    return lines
+
+
 def product_price_catalog(*, company_id: int, product_ids: list[int]) -> dict:
     """Return active list tiers for quote UI; never returns data from another tenant."""
     ids = sorted({int(value) for value in (product_ids or []) if int(value) > 0})

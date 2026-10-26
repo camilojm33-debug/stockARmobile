@@ -8,6 +8,7 @@ from flask_login import login_user, logout_user
 
 from app import Client, Company, Product, User, db, utcnow
 from services.wholesale_pricing_service import (
+    apply_price_snapshot,
     apply_wholesale_prices,
     product_price_catalog,
     resolve_product_price,
@@ -387,3 +388,53 @@ def test_wholesale_price_excel_import_is_atomic_and_export_roundtrips(wholesale_
             product_id=product_id,
             min_quantity=Decimal("1.000"),
         ).first().unit_price == Decimal("77.00")
+
+
+
+def test_saved_qr_price_snapshot_survives_current_product_price_change(wholesale_database):
+    from types import SimpleNamespace
+
+    data = wholesale_database
+    product = SimpleNamespace(
+        id=data["product"].id,
+        company_id=data["company"].id,
+        price=Decimal("125.00"),
+    )
+    lines = [{
+        "product": product,
+        "quantity": 12.0,
+        "price": Decimal("125.00"),
+        "discount": Decimal("0.00"),
+    }]
+    saved = [{
+        "productId": product.id,
+        "quantity": 12,
+        "price": 70,
+        "discount": 0,
+        "price_source": "mayorista",
+        "price_list_id": data["price_list"].id,
+    }]
+
+    result = apply_price_snapshot(lines, saved)
+
+    assert result[0]["price"] == Decimal("70.00")
+    assert result[0]["price_source"] == "mayorista"
+    assert result[0]["price_list_id"] == data["price_list"].id
+
+
+def test_saved_qr_price_snapshot_rejects_quantity_or_total_drift(wholesale_database):
+    from types import SimpleNamespace
+
+    data = wholesale_database
+    product = SimpleNamespace(id=data["product"].id, company_id=data["company"].id)
+    lines = [{"product": product, "quantity": 2.0, "price": Decimal("100"), "discount": Decimal("0")}]
+    saved = [{
+        "productId": product.id,
+        "quantity": 3,
+        "price": 80,
+        "discount": 0,
+        "price_source": "mayorista",
+        "price_list_id": data["price_list"].id,
+    }]
+    with pytest.raises(ValueError, match="cantidad"):
+        apply_price_snapshot(lines, saved)
