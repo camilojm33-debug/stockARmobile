@@ -51,14 +51,49 @@
           </div>
         </div>
         <div class="card-body">
-          <form method="post" action="{{ url_for('wholesale_pricing.save_item', list_id=selected_list.id) }}" class="row g-2 align-items-end">
+          <form method="post" id="wholesalePriceForm" action="{{ url_for('wholesale_pricing.save_item', list_id=selected_list.id) }}" class="row g-2 align-items-end" data-search-url="{{ url_for('wholesale_pricing.search_products') }}" data-total-products="{{ active_products_count }}">
             <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
-            <div class="col-md-6"><label class="form-label" for="wholesaleProduct">Producto</label><select class="form-select" id="wholesaleProduct" name="product_id" required><option value="">Seleccionar producto…</option>{% for product in products %}<option value="{{ product.id }}">{{ product.name }} · {{ product.barcode }}</option>{% endfor %}</select></div>
-            <div class="col-md-2"><label class="form-label" for="wholesaleMinQty">Desde cantidad</label><input class="form-control" id="wholesaleMinQty" name="min_quantity" type="number" min="0.001" step="0.001" value="1" required></div>
-            <div class="col-md-2"><label class="form-label" for="wholesaleUnitPrice">Precio unitario</label><input class="form-control" id="wholesaleUnitPrice" name="unit_price" type="number" min="0.01" step="0.01" required></div>
-            <div class="col-md-2 d-grid"><button class="btn btn-primary" type="submit">Guardar precio</button></div>
+            <div class="col-md-4 col-lg-3">
+              <label class="form-label" for="wholesaleScope">Aplicar precio a</label>
+              <select class="form-select" id="wholesaleScope" name="bulk_mode">
+                <option value="single" selected>Un solo producto</option>
+                <option value="category">Una categoría completa</option>
+                <option value="all">Todos los productos activos</option>
+              </select>
+            </div>
+            <div class="col-md-8 col-lg-5" id="wholesaleProductGroup">
+              <label class="form-label" for="wholesaleProductSearch">Buscar producto</label>
+              <input class="form-control mb-2" id="wholesaleProductSearch" type="search" placeholder="Nombre o código de barras…" autocomplete="off">
+              <select class="form-select" id="wholesaleProduct" name="product_id" required>
+                <option value="">Seleccionar producto…</option>
+                {% for product in products %}<option value="{{ product.id }}">{{ product.name }}{% if product.barcode %} · {{ product.barcode }}{% endif %}</option>{% endfor %}
+              </select>
+              <div class="form-text" id="wholesaleProductSearchStatus" aria-live="polite">Mostrando productos recientes. Escribí para buscar en todo el catálogo.</div>
+            </div>
+            <div class="col-md-8 col-lg-4 d-none" id="wholesaleCategoryGroup">
+              <label class="form-label" for="wholesaleCategory">Categoría</label>
+              <select class="form-select" id="wholesaleCategory" name="category" disabled>
+                <option value="">Seleccionar categoría…</option>
+                {% for category in category_options %}<option value="{{ category.value }}" data-count="{{ category.count }}">{{ category.label }} ({{ category.count }})</option>{% endfor %}
+              </select>
+              <div class="form-text">Solo se incluyen productos activos de tu empresa dentro de esta categoría.</div>
+            </div>
+            <div class="col-6 col-md-2">
+              <label class="form-label" for="wholesaleMinQty">Desde cantidad</label>
+              <input class="form-control" id="wholesaleMinQty" name="min_quantity" type="number" min="0.001" step="0.001" value="1" required>
+            </div>
+            <div class="col-6 col-md-2">
+              <label class="form-label" for="wholesaleUnitPrice">Precio unitario</label>
+              <input class="form-control" id="wholesaleUnitPrice" name="unit_price" type="number" min="0.01" step="0.01" required>
+            </div>
+            <div class="col-12 col-md-3 col-lg-2 d-grid">
+              <button class="btn btn-primary" type="submit" id="wholesaleSavePrice">Guardar precio</button>
+            </div>
+            <div class="col-12">
+              <div class="form-text" id="wholesaleScopeHint" aria-live="polite">Se guardará el precio solo para el producto seleccionado. Para escalas, agregá otros tramos desde distintas cantidades mínimas.</div>
+            </div>
           </form>
-          <p class="text-muted small mt-2 mb-3">Para escalas, cargá varias filas del mismo producto. Ejemplo: desde 1 unidad y desde 12 unidades. Se elige el tramo más alto que alcance la cantidad comprada. No se acumulan automáticamente descuentos o promociones minoristas.</p>
+          <p class="text-muted small mt-2 mb-3">Para escalas, cargá varias filas del mismo producto. Se conserva el resto de los tramos. No se acumulan automáticamente descuentos o promociones minoristas.</p>
           <form class="row g-2 align-items-end border-top pt-3" method="post" enctype="multipart/form-data" action="{{ url_for('wholesale_pricing.import_list', list_id=selected_list.id) }}">
             <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
             <div class="col-md-8"><label class="form-label" for="wholesaleExcel">Importar precios desde Excel</label><input class="form-control" type="file" id="wholesaleExcel" name="file" accept=".xlsx" required><div class="form-text">Descargá la plantilla del catálogo para cargar muchos productos de una vez. Las filas sin precio se omiten; los tramos no incluidos se conservan. Se valida todo antes de guardar y no se aplican cambios parciales.</div></div>
@@ -97,4 +132,118 @@
     </div>
   </div>
 </div>
+
+<script>
+(() => {
+  const form = document.getElementById('wholesalePriceForm');
+  if (!form) return;
+  const scope = document.getElementById('wholesaleScope');
+  const productGroup = document.getElementById('wholesaleProductGroup');
+  const productSearch = document.getElementById('wholesaleProductSearch');
+  const productSelect = document.getElementById('wholesaleProduct');
+  const productSearchStatus = document.getElementById('wholesaleProductSearchStatus');
+  const categoryGroup = document.getElementById('wholesaleCategoryGroup');
+  const categorySelect = document.getElementById('wholesaleCategory');
+  const quantityInput = document.getElementById('wholesaleMinQty');
+  const priceInput = document.getElementById('wholesaleUnitPrice');
+  const hint = document.getElementById('wholesaleScopeHint');
+  const searchUrl = form.dataset.searchUrl || '';
+  const totalProducts = Number.parseInt(form.dataset.totalProducts || '0', 10);
+  let searchTimer = null;
+  let searchSequence = 0;
+
+  const selectedCategoryCount = () => {
+    const option = categorySelect.options[categorySelect.selectedIndex];
+    return option ? Number.parseInt(option.dataset.count || '0', 10) : 0;
+  };
+
+  const updateScope = () => {
+    const mode = scope.value;
+    const single = mode === 'single';
+    const category = mode === 'category';
+    productGroup.classList.toggle('d-none', !single);
+    productSelect.disabled = !single;
+    productSearch.disabled = !single;
+    productSelect.required = single;
+    categoryGroup.classList.toggle('d-none', !category);
+    categorySelect.disabled = !category;
+    categorySelect.required = category;
+    if (single) {
+      hint.textContent = 'Se guardará el precio solo para el producto seleccionado. Para escalas, agregá otros tramos desde distintas cantidades mínimas.';
+    } else if (category) {
+      const option = categorySelect.options[categorySelect.selectedIndex];
+      const label = option && option.value ? option.textContent : 'la categoría elegida';
+      const count = selectedCategoryCount();
+      hint.textContent = count ? 'Se aplicará a ' + count + ' productos activos de ' + label + '. Los tramos de otras cantidades se conservan.' : 'Seleccioná una categoría para ver cuántos productos se incluirán.';
+    } else {
+      hint.textContent = 'Se aplicará a ' + totalProducts + ' productos activos de tu empresa. Los tramos de otras cantidades se conservan.';
+    }
+    document.getElementById('wholesaleSavePrice').textContent = single ? 'Guardar precio' : 'Aplicar precios';
+  };
+
+  const loadProducts = async (term, sequence) => {
+    if (!searchUrl) return;
+    productSearchStatus.textContent = 'Buscando productos…';
+    try {
+      const response = await fetch(searchUrl + '?q=' + encodeURIComponent(term), {
+        headers: { 'Accept': 'application/json' },
+        credentials: 'same-origin'
+      });
+      if (!response.ok) throw new Error('No se pudo completar la búsqueda.');
+      const payload = await response.json();
+      if (sequence !== searchSequence) return;
+      const previous = productSelect.value;
+      productSelect.replaceChildren(new Option('Seleccionar producto…', ''));
+      const products = Array.isArray(payload.products) ? payload.products : [];
+      products.forEach((product) => {
+        const label = product.barcode ? product.name + ' · ' + product.barcode : product.name;
+        productSelect.add(new Option(label, String(product.id)));
+      });
+      if (products.some((product) => String(product.id) === previous)) productSelect.value = previous;
+      productSearchStatus.textContent = products.length
+        ? 'Se muestran ' + products.length + ' resultados. Refiná la búsqueda si no aparece el producto.'
+        : 'No se encontraron productos activos con esa búsqueda.';
+    } catch (error) {
+      productSearchStatus.textContent = 'No se pudo buscar en el catálogo. Probá nuevamente.';
+    }
+  };
+
+  scope.addEventListener('change', updateScope);
+  categorySelect.addEventListener('change', updateScope);
+  productSearch.addEventListener('input', () => {
+    window.clearTimeout(searchTimer);
+    searchTimer = window.setTimeout(() => {
+      searchSequence += 1;
+      loadProducts(productSearch.value.trim(), searchSequence);
+    }, 250);
+  });
+
+  form.addEventListener('submit', (event) => {
+    const mode = scope.value;
+    if (mode === 'single') return;
+    const quantity = quantityInput.value || '1';
+    const price = priceInput.value;
+    let count = totalProducts;
+    let target = 'todos los productos activos de tu empresa';
+    if (mode === 'category') {
+      count = selectedCategoryCount();
+      const option = categorySelect.options[categorySelect.selectedIndex];
+      target = option && option.value ? option.textContent : 'la categoría seleccionada';
+    }
+    if (!count) {
+      event.preventDefault();
+      window.alert('No hay productos activos en esta selección. Elegí otra categoría.');
+      return;
+    }
+    const confirmed = window.confirm(
+      'Vas a aplicar un precio mayorista de $' + price +
+      ' desde ' + quantity + ' unidad(es) a ' + count + ' productos en ' + target + '.\n\n' +
+      'Si ya existe un tramo con esa cantidad mínima, se actualizará. Los demás tramos se conservarán.\n\n' +
+      '¿Confirmás la operación?'
+    );
+    if (!confirmed) event.preventDefault();
+  });
+  updateScope();
+})();
+</script>
 {% endblock %}
