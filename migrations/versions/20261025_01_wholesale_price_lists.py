@@ -137,6 +137,8 @@ def downgrade():
 
     if _has_table(bind, "clients"):
         cols = _columns(bind, "clients")
+        if "ix_clients_customer_type" in _indexes(bind, "clients"):
+            op.drop_index("ix_clients_customer_type", table_name="clients")
         with op.batch_alter_table("clients") as batch:
             if "price_list_id" in cols:
                 try:
