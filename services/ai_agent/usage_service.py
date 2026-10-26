@@ -22,6 +22,7 @@ AGENT_LABELS = {"vendedor": "Vendedor IA", "asistente": "Asistente Empresarial",
 COMMERCIAL_FEATURE_LABELS = {
     "pricing_controller": "Controlador global de precios",
     "promotions": "Promociones comerciales",
+    "wholesale_pricing": "Precios mayoristas",
 }
 
 AI_FEATURE_LABELS = {
