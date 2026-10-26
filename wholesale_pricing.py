@@ -325,6 +325,7 @@ def bulk_preview(list_id):
             PriceListItem.company_id == company_id,
             PriceListItem.price_list_id == price_list.id,
             PriceListItem.min_quantity == quantity,
+            PriceListItem.active.is_(True),
             Product.company_id == company_id,
             Product.active.is_(True),
         )
@@ -441,7 +442,10 @@ def save_item(list_id):
         if bulk_action == "fill_missing":
             products_to_apply = [
                 product for product in products
-                if int(product.id) not in items_by_product
+                if (
+                    int(product.id) not in items_by_product
+                    or not bool(items_by_product[int(product.id)].active)
+                )
             ]
             if not products_to_apply:
                 flash(
@@ -530,8 +534,9 @@ def save_item(list_id):
         )
         if bulk_action == "fill_missing":
             flash(
-                f"Se completaron los precios de {created} productos sin tramo desde {quantity:g} en {scope_label} "
-                f"con {amount_label}. Los precios que ya existían no se modificaron.",
+                f"Se completaron/reactivaron los precios de {len(products_to_apply)} productos sin un tramo activo "
+                f"desde {quantity:g} en {scope_label} con {amount_label} "
+                f"({created} tramos nuevos y {updated} actualizados). Los precios activos que ya existían no se modificaron.",
                 "success",
             )
         else:
