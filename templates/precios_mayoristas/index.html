@@ -1,0 +1,91 @@
+{% extends "base.html" %}
+{% block title %}Precios mayoristas · StockArMobile{% endblock %}
+{% block content %}
+<div class="container-fluid py-3">
+  <div class="d-flex flex-wrap justify-content-between align-items-center gap-2 mb-3">
+    <div>
+      <h1 class="h3 mb-1">Precios mayoristas</h1>
+      <p class="text-muted mb-0">Listas por comercio, precios por producto y escalas según cantidad.</p>
+    </div>
+    <a class="btn btn-outline-secondary" href="{{ url_for('clients.index') }}">Clientes</a>
+  </div>
+  <div class="row g-3">
+    <div class="col-xl-4">
+      <div class="card shadow-sm mb-3">
+        <div class="card-header fw-semibold">Crear lista</div>
+        <div class="card-body">
+          <form method="post" action="{{ url_for('wholesale_pricing.create_list') }}">
+            <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+            <div class="mb-3"><label class="form-label" for="wholesaleListName">Nombre</label><input class="form-control" id="wholesaleListName" name="name" maxlength="120" placeholder="Mayorista general" required></div>
+            <div class="mb-3"><label class="form-label" for="wholesaleListCode">Código (opcional)</label><input class="form-control" id="wholesaleListCode" name="code" maxlength="80" placeholder="Se genera desde el nombre"></div>
+            <div class="row g-2 mb-3">
+              <div class="col-6"><label class="form-label" for="wholesaleStart">Vigente desde</label><input class="form-control" type="date" id="wholesaleStart" name="effective_from"></div>
+              <div class="col-6"><label class="form-label" for="wholesaleEnd">Vigente hasta</label><input class="form-control" type="date" id="wholesaleEnd" name="effective_until"></div>
+            </div>
+            <div class="form-text mb-3">Las listas nuevas no alteran los precios minoristas. Fuera de la vigencia se utiliza el precio minorista como alternativa segura.</div>
+            <button class="btn btn-primary w-100" type="submit">Crear lista</button>
+          </form>
+        </div>
+      </div>
+      <div class="card shadow-sm">
+        <div class="card-header fw-semibold">Listas de tu empresa</div>
+        <div class="list-group list-group-flush">
+          {% for price_list in lists %}
+            <a class="list-group-item list-group-item-action d-flex justify-content-between align-items-start gap-2 {{ 'active' if selected_list and selected_list.id == price_list.id else '' }}" href="{{ url_for('wholesale_pricing.index', list_id=price_list.id) }}">
+              <span><span class="d-block fw-semibold">{{ price_list.name }}</span><small class="{{ 'text-white-50' if selected_list and selected_list.id == price_list.id else 'text-muted' }}">{{ price_list.code }} · {{ price_list.items|length }} tramos</small></span>
+              <span class="badge {{ 'bg-success' if price_list.active else 'bg-secondary' }}">{{ 'Activa' if price_list.active else 'Inactiva' }}</span>
+            </a>
+          {% else %}<div class="p-3 text-muted small">Todavía no creaste listas.</div>{% endfor %}
+        </div>
+      </div>
+    </div>
+    <div class="col-xl-8">
+      {% if selected_list %}
+      <div class="card shadow-sm mb-3">
+        <div class="card-header d-flex justify-content-between align-items-center gap-2 flex-wrap">
+          <div><h2 class="h5 mb-1">{{ selected_list.name }}</h2><div class="text-muted small">Código: {{ selected_list.code }}{% if selected_list.effective_from %} · Desde {{ selected_list.effective_from.strftime('%d/%m/%Y') }}{% endif %}{% if selected_list.effective_until %} · Hasta {{ selected_list.effective_until.strftime('%d/%m/%Y') }}{% endif %}</div></div>
+          <form method="post" action="{{ url_for('wholesale_pricing.toggle_list', list_id=selected_list.id) }}"><input type="hidden" name="csrf_token" value="{{ csrf_token() }}"><button class="btn {{ 'btn-outline-danger' if selected_list.active else 'btn-outline-success' }}" type="submit">{{ 'Desactivar lista' if selected_list.active else 'Activar lista' }}</button></form>
+        </div>
+        <div class="card-body">
+          <form method="post" action="{{ url_for('wholesale_pricing.save_item', list_id=selected_list.id) }}" class="row g-2 align-items-end">
+            <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+            <div class="col-md-6"><label class="form-label" for="wholesaleProduct">Producto</label><select class="form-select" id="wholesaleProduct" name="product_id" required><option value="">Seleccionar producto…</option>{% for product in products %}<option value="{{ product.id }}">{{ product.name }} · {{ product.barcode }}</option>{% endfor %}</select></div>
+            <div class="col-md-2"><label class="form-label" for="wholesaleMinQty">Desde cantidad</label><input class="form-control" id="wholesaleMinQty" name="min_quantity" type="number" min="0.001" step="0.001" value="1" required></div>
+            <div class="col-md-2"><label class="form-label" for="wholesaleUnitPrice">Precio unitario</label><input class="form-control" id="wholesaleUnitPrice" name="unit_price" type="number" min="0.01" step="0.01" required></div>
+            <div class="col-md-2 d-grid"><button class="btn btn-primary" type="submit">Guardar precio</button></div>
+          </form>
+          <p class="text-muted small mt-2 mb-0">Para escalas, cargá varias filas del mismo producto. Ejemplo: desde 1 unidad y desde 12 unidades. Se elige el tramo más alto que alcance la cantidad comprada. No se acumulan automáticamente descuentos o promociones minoristas.</p>
+        </div>
+      </div>
+      <div class="card shadow-sm">
+        <div class="card-header fw-semibold">Tramos cargados</div>
+        <div class="table-responsive">
+          <table class="table table-hover align-middle mb-0">
+            <thead class="table-light"><tr><th>Producto</th><th>Desde</th><th>Precio mayorista</th><th>Precio minorista</th><th>Estado</th><th class="text-end">Acción</th></tr></thead>
+            <tbody>
+              {% for row in price_rows %}
+                <tr>
+                  <td><div class="fw-semibold">{{ row.product.name if row.product else 'Producto eliminado' }}</div><small class="text-muted">{{ row.product.barcode if row.product else '' }}</small></td>
+                  <td>{{ '%.3f'|format(row.min_quantity|float) }}</td>
+                  <td><form class="d-flex gap-1 align-items-center" method="post" action="{{ url_for('wholesale_pricing.save_item', list_id=selected_list.id) }}">
+                    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}"><input type="hidden" name="item_id" value="{{ row.id }}"><input type="hidden" name="product_id" value="{{ row.product_id }}">
+                    <input class="form-control form-control-sm" style="max-width:130px" type="number" name="unit_price" min="0.01" step="0.01" value="{{ '%.2f'|format(row.unit_price|float) }}" required aria-label="Precio mayorista">
+                    <input class="form-control form-control-sm" style="max-width:94px" type="number" name="min_quantity" min="0.001" step="0.001" value="{{ '%.3f'|format(row.min_quantity|float) }}" required aria-label="Cantidad mínima">
+                    <button class="btn btn-sm btn-outline-primary" type="submit">Actualizar</button>
+                  </form></td>
+                  <td>{{ '$%.2f'|format(row.product.price|float) if row.product else '—' }}</td>
+                  <td><span class="badge {{ 'bg-success' if row.active else 'bg-secondary' }}">{{ 'Activo' if row.active else 'Inactivo' }}</span></td>
+                  <td class="text-end">{% if row.active %}<form method="post" action="{{ url_for('wholesale_pricing.deactivate_item', list_id=selected_list.id, item_id=row.id) }}"><input type="hidden" name="csrf_token" value="{{ csrf_token() }}"><button class="btn btn-sm btn-outline-danger" type="submit">Desactivar</button></form>{% endif %}</td>
+                </tr>
+              {% else %}<tr><td colspan="6" class="text-center text-muted py-4">No hay precios cargados en esta lista.</td></tr>{% endfor %}
+            </tbody>
+          </table>
+        </div>
+      </div>
+      {% else %}
+      <div class="card shadow-sm"><div class="card-body py-5 text-center"><h2 class="h5">Creá tu primera lista mayorista</h2><p class="text-muted mb-0">Después cargá los precios y asigná esa lista desde la ficha de cada cliente.</p></div></div>
+      {% endif %}
+    </div>
+  </div>
+</div>
+{% endblock %}
