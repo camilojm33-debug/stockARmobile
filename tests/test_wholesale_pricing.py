@@ -445,7 +445,8 @@ def test_wholesale_catalog_template_includes_all_active_products_and_existing_ti
     assert blank_price[1] == "Producto sin tarifa"
     assert blank_price[2] == 1
     assert blank_price[3] is None
-    assert blank_price[4] is True
+    assert blank_price[4] is None
+    assert blank_price[5] is True
     assert all(row[0] != "OTHER-001" for row in rows[1:])
 
 
