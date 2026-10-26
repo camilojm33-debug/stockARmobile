@@ -958,23 +958,34 @@ def test_wholesale_bulk_percentage_discount_calculates_each_product_and_tracks_r
             min_quantity=Decimal("1.000"),
         ).first()
         assert Decimal(str(base_tier.unit_price)) == Decimal("80.00")
-        second_product.price = Decimal("400.00")
+        # Re-fetch the product and client in this app context's SQLAlchemy
+        # session, then commit the retail-price change before resolving the tier.
+        stored_second_product = Product.query.filter_by(
+            id=second_product.id,
+            company_id=data["company"].id,
+        ).first()
+        stored_client = Client.query.filter_by(
+            id=data["wholesale_client"].id,
+            company_id=data["company"].id,
+        ).first()
+        assert stored_second_product is not None and stored_client is not None
+        stored_second_product.price = Decimal("400.00")
         db.session.commit()
 
         result = resolve_product_price(
             company_id=data["company"].id,
-            product=second_product,
+            product=stored_second_product,
             quantity=3,
-            client=data["wholesale_client"],
+            client=stored_client,
         )
         assert result["price"] == Decimal("340.00")
         assert result["discount_percent"] == Decimal("15.00")
 
         catalog = product_price_catalog(
             company_id=data["company"].id,
-            product_ids=[second_product.id],
+            product_ids=[stored_second_product.id],
         )
-        catalog_tiers = catalog[second_product.id][str(data["price_list"].id)]
+        catalog_tiers = catalog[stored_second_product.id][str(data["price_list"].id)]
         quantity_three = next(tier for tier in catalog_tiers if tier["min_quantity"] == 3.0)
         assert quantity_three["price"] == 340.0
         assert quantity_three["discount_percent"] == 15.0
