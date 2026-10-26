@@ -1083,3 +1083,43 @@ def test_wholesale_discount_percentage_requires_value_below_100(wholesale_databa
         ).first()
         assert created is None
 
+
+
+def test_single_product_can_use_percentage_discount_tier(wholesale_database, app):
+    data = wholesale_database
+    browser = _wholesale_admin_client(app, data["admin"])
+
+    response = browser.post(
+        f"/precios-mayoristas/listas/{data['price_list'].id}/items",
+        data={
+            "bulk_mode": "single",
+            "pricing_mode": "discount_percent",
+            "product_id": str(data["product"].id),
+            "min_quantity": "3",
+            "unit_price": "",
+            "discount_percent": "10",
+        },
+    )
+    assert response.status_code in (301, 302)
+
+    with app.app_context():
+        tier = PriceListItem.query.filter_by(
+            company_id=data["company"].id,
+            price_list_id=data["price_list"].id,
+            product_id=data["product"].id,
+            min_quantity=Decimal("3.000"),
+        ).first()
+        assert tier is not None
+        assert Decimal(str(tier.discount_percent)) == Decimal("10.00")
+        assert Decimal(str(tier.unit_price)) == Decimal("90.00")
+
+        data["product"].price = Decimal("200.00")
+        db.session.commit()
+        resolution = resolve_product_price(
+            company_id=data["company"].id,
+            product=data["product"],
+            quantity=3,
+            client=data["wholesale_client"],
+        )
+        assert resolution["price"] == Decimal("180.00")
+
