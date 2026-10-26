@@ -873,6 +873,7 @@ def test_wholesale_product_search_and_category_selector_are_company_scoped(whole
     assert b"Todos los productos activos" in page.data
     assert b"Una categor" in page.data
     assert b"Bebidas" in page.data
+    assert b"Descuento % sobre precio minorista" in page.data
 
 
 def test_wholesale_bulk_percentage_discount_calculates_each_product_and_tracks_retail_price(wholesale_database, app):
@@ -943,6 +944,15 @@ def test_wholesale_bulk_percentage_discount_calculates_each_product_and_tracks_r
         )
         assert result["price"] == Decimal("340.00")
         assert result["discount_percent"] == Decimal("15.00")
+
+        catalog = product_price_catalog(
+            company_id=data["company"].id,
+            product_ids=[second_product.id],
+        )
+        catalog_tiers = catalog[second_product.id][str(data["price_list"].id)]
+        quantity_three = next(tier for tier in catalog_tiers if tier["min_quantity"] == 3.0)
+        assert quantity_three["price"] == 340.0
+        assert quantity_three["discount_percent"] == 15.0
 
 
 def test_wholesale_bulk_percentage_discount_replaces_existing_tier_only_when_requested(wholesale_database, app):
