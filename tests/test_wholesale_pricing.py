@@ -37,9 +37,16 @@ def wholesale_database(app):
     entrepreneur_plan = Plan.query.filter_by(code="entrepreneur").first()
     assert business_plan is not None and entrepreneur_plan is not None
     business_tokens = [item.strip() for item in str(business_plan.features_json or "").replace(";", ",").split(",") if item.strip()]
-    if "wholesale_pricing" not in {item.lower() for item in business_tokens} and "all" not in {item.lower() for item in business_tokens}:
-        business_tokens.append("wholesale_pricing")
-        business_plan.features_json = ",".join(business_tokens)
+    if "all" in {item.lower() for item in business_tokens}:
+        business_tokens = ["inventario", "ventas", "clientes", "compras", "caja", "reportes", "excel", "kardex"]
+    # The test app omits these unrelated blueprints; keep their menu links locked
+    # so the wholesale page can render without requiring unrelated route modules.
+    business_tokens = [
+        item for item in business_tokens
+        if item.lower() not in {"pricing_controller", "promotions", "wholesale_pricing"}
+    ]
+    business_tokens.append("wholesale_pricing")
+    business_plan.features_json = ",".join(business_tokens)
     entrepreneur_tokens = [item.strip() for item in str(entrepreneur_plan.features_json or "").replace(";", ",").split(",") if item.strip()]
     entrepreneur_tokens = [item for item in entrepreneur_tokens if item.lower() != "wholesale_pricing"]
     if "all" in {item.lower() for item in entrepreneur_tokens}:
