@@ -137,9 +137,15 @@ def _discounted_retail_price(product, discount_percent: Decimal) -> Decimal:
         )
     if not discount_percent.is_finite() or discount_percent <= 0 or discount_percent >= Decimal("100"):
         raise ValueError("el descuento debe ser mayor a 0% y menor a 100%")
-    return (
+    discounted_price = (
         retail_price * (Decimal("100") - discount_percent) / Decimal("100")
     ).quantize(Decimal("0.01"), rounding=ROUND_HALF_UP)
+    if discounted_price <= 0:
+        raise ValueError(
+            f"el descuento del producto {getattr(product, 'name', '') or getattr(product, 'barcode', '')} "
+            "genera un precio de cero después del redondeo"
+        )
+    return discounted_price
 
 
 def active_price_lists(company_id: int, *, include_inactive: bool = False):
@@ -799,17 +805,18 @@ def import_list(list_id):
             continue
         try:
             barcode = str(row[positions["barcode"]] or "").strip()[:50]
-            if not barcode:
-                raise ValueError("falta código/sku")
             raw_quantity = row[positions["min_quantity"]] if positions["min_quantity"] < len(row) else None
             raw_price = row[positions["unit_price"]] if "unit_price" in positions and positions["unit_price"] < len(row) else None
             raw_percent = row[positions["discount_percent"]] if "discount_percent" in positions and positions["discount_percent"] < len(row) else None
             price_blank = raw_price is None or (isinstance(raw_price, str) and not raw_price.strip())
             percent_blank = raw_percent is None or (isinstance(raw_percent, str) and not raw_percent.strip())
             # Blank price and discount mean "skip this row"; old five-column files
-            # are still supported and are interpreted as fixed prices.
+            # are still supported and are interpreted as fixed prices. Check blank
+            # values first so catalog rows with no barcode and no price are harmless.
             if price_blank and percent_blank:
                 continue
+            if not barcode:
+                raise ValueError("falta código/sku")
             if not price_blank and not percent_blank:
                 raise ValueError("completá precio fijo o descuento porcentual, no ambos")
             if raw_quantity is None or (isinstance(raw_quantity, str) and not raw_quantity.strip()):
