@@ -51,7 +51,7 @@
           </div>
         </div>
         <div class="card-body">
-          <form method="post" id="wholesalePriceForm" action="{{ url_for('wholesale_pricing.save_item', list_id=selected_list.id) }}" class="row g-2 align-items-end" data-search-url="{{ url_for('wholesale_pricing.search_products') }}" data-total-products="{{ active_products_count }}">
+          <form method="post" id="wholesalePriceForm" action="{{ url_for('wholesale_pricing.save_item', list_id=selected_list.id) }}" class="row g-2 align-items-end" data-search-url="{{ url_for('wholesale_pricing.search_products') }}" data-preview-url="{{ url_for('wholesale_pricing.bulk_preview', list_id=selected_list.id) }}" data-total-products="{{ active_products_count }}">
             <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
             <div class="col-md-4 col-lg-3">
               <label class="form-label" for="wholesaleScope">Aplicar precio a</label>
@@ -78,22 +78,45 @@
               </select>
               <div class="form-text">Solo se incluyen productos activos de tu empresa dentro de esta categoría.</div>
             </div>
+            <div class="col-md-6 col-lg-5 d-none" id="wholesaleBulkActionGroup">
+              <label class="form-label" for="wholesaleBulkAction">Qué hacer con precios existentes</label>
+              <select class="form-select" id="wholesaleBulkAction" name="bulk_action" disabled>
+                <option value="fill_missing" selected>Completar solo los que no tienen precio</option>
+                <option value="replace_existing">Reemplazar precios existentes</option>
+              </select>
+              <div class="form-text">Por defecto, los precios ya cargados se conservan. Reemplazarlos requiere elegirlo explícitamente.</div>
+            </div>
+            <div class="col-md-6 col-lg-4" id="wholesalePricingModeGroup">
+              <label class="form-label" for="wholesalePricingMode">Tipo de precio</label>
+              <select class="form-select" id="wholesalePricingMode" name="pricing_mode">
+                <option value="fixed" selected>Precio fijo para la selección</option>
+                <option value="discount_percent">Descuento % sobre precio minorista</option>
+              </select>
+              <div class="form-text">El porcentaje se calcula sobre el precio minorista actual de cada producto, también cuando elegís uno solo.</div>
+            </div>
             <div class="col-6 col-md-2">
               <label class="form-label" for="wholesaleMinQty">Desde cantidad</label>
               <input class="form-control" id="wholesaleMinQty" name="min_quantity" type="number" min="0.001" step="0.001" value="1" required>
             </div>
-            <div class="col-6 col-md-2">
+            <div class="col-6 col-md-2" id="wholesaleUnitPriceGroup">
               <label class="form-label" for="wholesaleUnitPrice">Precio unitario</label>
-              <input class="form-control" id="wholesaleUnitPrice" name="unit_price" type="number" min="0.01" step="0.01" required>
+              <input class="form-control" id="wholesaleUnitPrice" name="unit_price" type="number" min="0.01" step="0.01">
+              <div class="form-text" id="wholesaleUnitPriceHelp">Precio del producto seleccionado.</div>
+            </div>
+            <div class="col-6 col-md-2 d-none" id="wholesaleDiscountPercentGroup">
+              <label class="form-label" for="wholesaleDiscountPercent">Descuento mayorista (%)</label>
+              <input class="form-control" id="wholesaleDiscountPercent" name="discount_percent" type="number" min="0.01" max="99.99" step="0.01" disabled>
+              <div class="form-text" id="wholesaleDiscountPercentHelp">Ej.: 15% menos sobre el precio minorista.</div>
             </div>
             <div class="col-12 col-md-3 col-lg-2 d-grid">
               <button class="btn btn-primary" type="submit" id="wholesaleSavePrice">Guardar precio</button>
             </div>
             <div class="col-12">
               <div class="form-text" id="wholesaleScopeHint" aria-live="polite">Se guardará el precio solo para el producto seleccionado. Para escalas, agregá otros tramos desde distintas cantidades mínimas.</div>
+              <div class="small mt-1" id="wholesaleBulkPreviewStatus" aria-live="polite"></div>
             </div>
           </form>
-          <p class="text-muted small mt-2 mb-3">Para escalas, cargá varias filas del mismo producto. Se conserva el resto de los tramos. No se acumulan automáticamente descuentos o promociones minoristas.</p>
+          <p class="text-muted small mt-2 mb-3">Para escalas, definí la cantidad mínima (por ejemplo, 3) y aplicá un precio fijo o un porcentaje de descuento sobre el precio minorista de cada producto. Se conserva el resto de los tramos y no se acumulan otros descuentos minoristas.</p>
           <form class="row g-2 align-items-end border-top pt-3" method="post" enctype="multipart/form-data" action="{{ url_for('wholesale_pricing.import_list', list_id=selected_list.id) }}">
             <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
             <div class="col-md-8"><label class="form-label" for="wholesaleExcel">Importar precios desde Excel</label><input class="form-control" type="file" id="wholesaleExcel" name="file" accept=".xlsx" required><div class="form-text">Descargá la plantilla del catálogo para cargar muchos productos de una vez. Las filas sin precio se omiten; los tramos no incluidos se conservan. Se valida todo antes de guardar y no se aplican cambios parciales.</div></div>
@@ -105,18 +128,30 @@
         <div class="card-header fw-semibold">Tramos cargados</div>
         <div class="table-responsive">
           <table class="table table-hover align-middle mb-0">
-            <thead class="table-light"><tr><th>Producto</th><th>Desde</th><th>Precio mayorista</th><th>Precio minorista</th><th>Estado</th><th class="text-end">Acción</th></tr></thead>
+            <thead class="table-light"><tr><th>Producto</th><th>Desde</th><th>Precio mayorista / descuento</th><th>Precio minorista</th><th>Estado</th><th class="text-end">Acción</th></tr></thead>
             <tbody>
               {% for row in price_rows %}
                 <tr>
                   <td><div class="fw-semibold">{{ row.product.name if row.product else 'Producto eliminado' }}</div><small class="text-muted">{{ row.product.barcode if row.product else '' }}</small></td>
                   <td>{{ '%.3f'|format(row.min_quantity|float) }}</td>
-                  <td><form class="d-flex gap-1 align-items-center" method="post" action="{{ url_for('wholesale_pricing.save_item', list_id=selected_list.id) }}">
-                    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}"><input type="hidden" name="item_id" value="{{ row.id }}"><input type="hidden" name="product_id" value="{{ row.product_id }}">
-                    <input class="form-control form-control-sm" style="max-width:130px" type="number" name="unit_price" min="0.01" step="0.01" value="{{ '%.2f'|format(row.unit_price|float) }}" required aria-label="Precio mayorista">
-                    <input class="form-control form-control-sm" style="max-width:94px" type="number" name="min_quantity" min="0.001" step="0.001" value="{{ '%.3f'|format(row.min_quantity|float) }}" required aria-label="Cantidad mínima">
-                    <button class="btn btn-sm btn-outline-primary" type="submit">Actualizar</button>
-                  </form></td>
+                  <td>
+                    <form class="d-flex gap-1 align-items-center flex-wrap" method="post" action="{{ url_for('wholesale_pricing.save_item', list_id=selected_list.id) }}">
+                      <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                      <input type="hidden" name="item_id" value="{{ row.id }}">
+                      <input type="hidden" name="product_id" value="{{ row.product_id }}">
+                      <input type="hidden" name="pricing_mode" value="{{ 'discount_percent' if row.discount_percent is not none else 'fixed' }}">
+                      {% if row.discount_percent is not none %}
+                        <input class="form-control form-control-sm" style="max-width:95px" type="number" name="discount_percent" min="0.01" max="99.99" step="0.01" value="{{ '%.2f'|format(row.discount_percent|float) }}" required aria-label="Descuento mayorista en porcentaje">
+                      {% else %}
+                        <input class="form-control form-control-sm" style="max-width:130px" type="number" name="unit_price" min="0.01" step="0.01" value="{{ '%.2f'|format(row.unit_price|float) }}" required aria-label="Precio mayorista fijo">
+                      {% endif %}
+                      <input class="form-control form-control-sm" style="max-width:94px" type="number" name="min_quantity" min="0.001" step="0.001" value="{{ '%.3f'|format(row.min_quantity|float) }}" required aria-label="Cantidad mínima">
+                      <button class="btn btn-sm btn-outline-primary" type="submit">Actualizar</button>
+                    </form>
+                    {% if row.discount_percent is not none %}
+                      <small class="text-muted d-block mt-1">Precio actual calculado: {{ '$%.2f'|format(row.effective_unit_price|float) }} ({{ '%.2f'|format(row.discount_percent|float) }}% de descuento)</small>
+                    {% endif %}
+                  </td>
                   <td>{{ '$%.2f'|format(row.product.price|float) if row.product else '—' }}</td>
                   <td><span class="badge {{ 'bg-success' if row.active else 'bg-secondary' }}">{{ 'Activo' if row.active else 'Inactivo' }}</span></td>
                   <td class="text-end">{% if row.active %}<form method="post" action="{{ url_for('wholesale_pricing.deactivate_item', list_id=selected_list.id, item_id=row.id) }}"><input type="hidden" name="csrf_token" value="{{ csrf_token() }}"><button class="btn btn-sm btn-outline-danger" type="submit">Desactivar</button></form>{% endif %}</td>
@@ -144,41 +179,105 @@
   const productSearchStatus = document.getElementById('wholesaleProductSearchStatus');
   const categoryGroup = document.getElementById('wholesaleCategoryGroup');
   const categorySelect = document.getElementById('wholesaleCategory');
-  const quantityInput = document.getElementById('wholesaleMinQty');
+  const bulkActionGroup = document.getElementById('wholesaleBulkActionGroup');
+  const bulkAction = document.getElementById('wholesaleBulkAction');
+  const pricingModeGroup = document.getElementById('wholesalePricingModeGroup');
+  const pricingMode = document.getElementById('wholesalePricingMode');
+  const unitPriceGroup = document.getElementById('wholesaleUnitPriceGroup');
   const priceInput = document.getElementById('wholesaleUnitPrice');
+  const priceHelp = document.getElementById('wholesaleUnitPriceHelp');
+  const discountPercentGroup = document.getElementById('wholesaleDiscountPercentGroup');
+  const discountPercentInput = document.getElementById('wholesaleDiscountPercent');
+  const quantityInput = document.getElementById('wholesaleMinQty');
   const hint = document.getElementById('wholesaleScopeHint');
+  const previewStatus = document.getElementById('wholesaleBulkPreviewStatus');
+  const saveButton = document.getElementById('wholesaleSavePrice');
   const searchUrl = form.dataset.searchUrl || '';
+  const previewUrl = form.dataset.previewUrl || '';
   const totalProducts = Number.parseInt(form.dataset.totalProducts || '0', 10);
   let searchTimer = null;
+  let previewTimer = null;
   let searchSequence = 0;
+  let previewSequence = 0;
+  let bulkPreview = null;
+  let previewPending = false;
 
   const selectedCategoryCount = () => {
     const option = categorySelect.options[categorySelect.selectedIndex];
     return option ? Number.parseInt(option.dataset.count || '0', 10) : 0;
   };
 
+  const selectedTargetLabel = () => {
+    if (scope.value === 'all') return 'todos los productos activos de tu empresa';
+    const option = categorySelect.options[categorySelect.selectedIndex];
+    return option && option.value ? option.textContent : 'la categoría elegida';
+  };
+
+  const updateAmountInputs = () => {
+    const single = scope.value === 'single';
+    const replacing = !single && bulkAction.value === 'replace_existing';
+    const percentage = pricingMode.value === 'discount_percent';
+    const missing = bulkPreview ? Number(bulkPreview.missing || 0) : null;
+    const canFillMissing = !previewPending && missing !== null && missing > 0;
+    const canEnterAmount = single || replacing || canFillMissing;
+
+    unitPriceGroup.classList.toggle('d-none', percentage);
+    priceInput.disabled = percentage || !canEnterAmount;
+    priceInput.required = !percentage && canEnterAmount;
+    priceHelp.textContent = single
+      ? (percentage
+        ? 'Se guardará el porcentaje sobre el precio minorista actual de este producto.'
+        : 'Precio fijo para este producto.')
+      : (percentage
+        ? 'No se usa un precio fijo: el descuento se calcula por producto.'
+        : (canEnterAmount
+          ? (replacing
+            ? 'El importe reemplazará el precio de esta cantidad en los productos seleccionados.'
+            : 'El importe se aplicará solamente a productos que no tienen este tramo.')
+          : 'Se habilitará si hay productos sin precio para la cantidad seleccionada.'));
+
+    discountPercentGroup.classList.toggle('d-none', !percentage);
+    discountPercentInput.disabled = !percentage || !canEnterAmount;
+    discountPercentInput.required = percentage && canEnterAmount;
+  };
+
   const updateScope = () => {
     const mode = scope.value;
     const single = mode === 'single';
     const category = mode === 'category';
+
     productGroup.classList.toggle('d-none', !single);
     productSelect.disabled = !single;
     productSearch.disabled = !single;
     productSelect.required = single;
+
     categoryGroup.classList.toggle('d-none', !category);
     categorySelect.disabled = !category;
     categorySelect.required = category;
+
+    bulkActionGroup.classList.toggle('d-none', single);
+    bulkAction.disabled = single;
+    pricingModeGroup.classList.remove('d-none');
+    pricingMode.disabled = false;
+
     if (single) {
-      hint.textContent = 'Se guardará el precio solo para el producto seleccionado. Para escalas, agregá otros tramos desde distintas cantidades mínimas.';
+      hint.textContent = pricingMode.value === 'discount_percent'
+        ? 'Se guardará el descuento porcentual solo para el producto seleccionado; el precio se calculará sobre su precio minorista actual.'
+        : 'Se guardará el precio fijo solo para el producto seleccionado. Para escalas, agregá otros tramos desde distintas cantidades mínimas.';
+      previewStatus.textContent = '';
+      saveButton.textContent = 'Guardar precio';
+      saveButton.disabled = false;
     } else if (category) {
-      const option = categorySelect.options[categorySelect.selectedIndex];
-      const label = option && option.value ? option.textContent : 'la categoría elegida';
-      const count = selectedCategoryCount();
-      hint.textContent = count ? 'Se aplicará a ' + count + ' productos activos de ' + label + '. Los tramos de otras cantidades se conservan.' : 'Seleccioná una categoría para ver cuántos productos se incluirán.';
+      hint.textContent = selectedCategoryCount()
+        ? 'Se aplicará a productos activos de ' + selectedTargetLabel() + '. Los tramos de otras cantidades se conservan.'
+        : 'Seleccioná una categoría para consultar sus precios actuales.';
+      saveButton.textContent = 'Aplicar precios';
     } else {
-      hint.textContent = 'Se aplicará a ' + totalProducts + ' productos activos de tu empresa. Los tramos de otras cantidades se conservan.';
+      hint.textContent = 'Se aplicará a todos los productos activos de tu empresa. Los precios que ya existen para esta cantidad se conservan por defecto.';
+      saveButton.textContent = 'Aplicar precios';
     }
-    document.getElementById('wholesaleSavePrice').textContent = single ? 'Guardar precio' : 'Aplicar precios';
+    updateAmountInputs();
+    if (!single) schedulePreview();
   };
 
   const loadProducts = async (term, sequence) => {
@@ -208,8 +307,85 @@
     }
   };
 
+  const schedulePreview = () => {
+    window.clearTimeout(previewTimer);
+    previewTimer = window.setTimeout(loadBulkPreview, 180);
+  };
+
+  const loadBulkPreview = async () => {
+    if (scope.value === 'single') return;
+    const sequence = ++previewSequence;
+    const quantity = quantityInput.value || '1';
+    if (scope.value === 'category' && !categorySelect.value) {
+      bulkPreview = null;
+      previewPending = false;
+      previewStatus.textContent = 'Seleccioná una categoría para consultar cuántos productos ya tienen precio.';
+      saveButton.disabled = true;
+      updateAmountInputs();
+      return;
+    }
+    if (!quantityInput.value || Number(quantity) <= 0) {
+      bulkPreview = null;
+      previewPending = false;
+      previewStatus.textContent = 'Ingresá una cantidad mínima válida para verificar los tramos existentes.';
+      saveButton.disabled = true;
+      updateAmountInputs();
+      return;
+    }
+    previewPending = true;
+    bulkPreview = null;
+    saveButton.disabled = true;
+    previewStatus.textContent = 'Consultando precios actuales…';
+    updateAmountInputs();
+    const params = new URLSearchParams({
+      bulk_mode: scope.value,
+      min_quantity: quantity
+    });
+    if (scope.value === 'category') params.set('category', categorySelect.value);
+    try {
+      const response = await fetch(previewUrl + '?' + params.toString(), {
+        headers: { 'Accept': 'application/json' },
+        credentials: 'same-origin'
+      });
+      if (!response.ok) throw new Error('No se pudo consultar los precios actuales.');
+      const result = await response.json();
+      if (sequence !== previewSequence) return;
+      bulkPreview = result;
+      previewPending = false;
+      if (Number(result.total) === 0) {
+        previewStatus.textContent = 'No hay productos activos dentro de esta selección.';
+      } else if (bulkAction.value === 'fill_missing' && Number(result.missing) === 0) {
+        previewStatus.textContent = 'Los ' + result.total + ' productos ya tienen precio desde ' + quantity + '. No hace falta cargar otro precio. Para cambiarlos, elegí “Reemplazar precios existentes”.';
+      } else {
+        previewStatus.textContent = result.already_priced + ' productos ya tienen un tramo para esta cantidad; ' +
+          result.missing + ' no lo tienen. ' +
+          (bulkAction.value === 'fill_missing'
+            ? 'Solo se completarán los faltantes.'
+            : 'Se actualizarán los precios de todos los productos seleccionados.');
+      }
+      saveButton.disabled = Number(result.total) === 0 ||
+        (bulkAction.value === 'fill_missing' && Number(result.missing) === 0);
+      updateAmountInputs();
+    } catch (error) {
+      if (sequence !== previewSequence) return;
+      previewPending = false;
+      bulkPreview = null;
+      previewStatus.textContent = 'No se pudieron verificar los precios actuales. Volvé a intentar antes de aplicar cambios.';
+      saveButton.disabled = true;
+      updateAmountInputs();
+    }
+  };
+
   scope.addEventListener('change', updateScope);
   categorySelect.addEventListener('change', updateScope);
+  bulkAction.addEventListener('change', () => {
+    updateScope();
+    schedulePreview();
+  });
+  pricingMode.addEventListener('change', updateScope);
+  quantityInput.addEventListener('input', () => {
+    if (scope.value !== 'single') schedulePreview();
+  });
   productSearch.addEventListener('input', () => {
     window.clearTimeout(searchTimer);
     searchTimer = window.setTimeout(() => {
@@ -221,28 +397,38 @@
   form.addEventListener('submit', (event) => {
     const mode = scope.value;
     if (mode === 'single') return;
-    const quantity = quantityInput.value || '1';
-    const price = priceInput.value;
-    let count = totalProducts;
-    let target = 'todos los productos activos de tu empresa';
-    if (mode === 'category') {
-      count = selectedCategoryCount();
-      const option = categorySelect.options[categorySelect.selectedIndex];
-      target = option && option.value ? option.textContent : 'la categoría seleccionada';
-    }
-    if (!count) {
+    if (!bulkPreview || previewPending) {
       event.preventDefault();
-      window.alert('No hay productos activos en esta selección. Elegí otra categoría.');
+      window.alert('Esperá a que se verifiquen los precios actuales antes de continuar.');
       return;
     }
-    const confirmed = window.confirm(
-      'Vas a aplicar un precio mayorista de $' + price +
-      ' desde ' + quantity + ' unidad(es) a ' + count + ' productos en ' + target + '.\n\n' +
-      'Si ya existe un tramo con esa cantidad mínima, se actualizará. Los demás tramos se conservarán.\n\n' +
-      '¿Confirmás la operación?'
-    );
-    if (!confirmed) event.preventDefault();
+    if (bulkAction.value === 'fill_missing' && Number(bulkPreview.missing) === 0) {
+      event.preventDefault();
+      return;
+    }
+    const quantity = quantityInput.value || '1';
+    const percentage = pricingMode.value === 'discount_percent';
+    const amount = percentage ? discountPercentInput.value : priceInput.value;
+    const target = selectedTargetLabel();
+    const count = bulkAction.value === 'fill_missing'
+      ? Number(bulkPreview.missing)
+      : Number(bulkPreview.total);
+    if (!count || !amount) {
+      event.preventDefault();
+      window.alert(percentage
+        ? 'Ingresá el porcentaje de descuento.'
+        : 'Ingresá el precio fijo que querés aplicar.');
+      return;
+    }
+    const calculation = percentage
+      ? amount + '% de descuento sobre el precio minorista actual de cada producto'
+      : 'precio fijo de $' + amount;
+    const message = bulkAction.value === 'fill_missing'
+      ? 'Vas a completar el tramo desde ' + quantity + ' unidad(es) en ' + count + ' productos sin ese precio en ' + target + ', con ' + calculation + '. Los precios existentes no se cambiarán.\n\n¿Confirmás?'
+      : 'ATENCIÓN: vas a aplicar ' + calculation + ' desde ' + quantity + ' unidad(es) a ' + count + ' productos de ' + target + '. Los precios del tramo existente serán sobrescritos.\n\n¿Confirmás el reemplazo?';
+    if (!window.confirm(message)) event.preventDefault();
   });
+
   updateScope();
 })();
 </script>

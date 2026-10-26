@@ -66,6 +66,7 @@ def resolve_product_price(
         "price_list_id": None,
         "price_list_name": None,
         "min_quantity": None,
+        "discount_percent": None,
         "reason": None,
     }
     if client is None:
@@ -116,14 +117,29 @@ def resolve_product_price(
         .order_by(PriceListItem.min_quantity.desc(), PriceListItem.id.desc())
         .first()
     )
-    if row is None or _decimal(row.unit_price) <= 0:
+    if row is None:
+        return {**fallback, "reason": "producto_sin_tarifa_mayorista"}
+
+    price = _decimal(row.unit_price).quantize(CENT, rounding=ROUND_HALF_UP)
+    discount_percent = None
+    if getattr(row, "discount_percent", None) is not None:
+        candidate_percent = _decimal(row.discount_percent, "0")
+        if Decimal("0") <= candidate_percent < Decimal("100") and retail_price > 0:
+            discounted = (
+                retail_price * (Decimal("100") - candidate_percent) / Decimal("100")
+            ).quantize(CENT, rounding=ROUND_HALF_UP)
+            if discounted > 0:
+                price = discounted
+                discount_percent = candidate_percent
+    if price <= 0:
         return {**fallback, "reason": "producto_sin_tarifa_mayorista"}
     return {
-        "price": _decimal(row.unit_price).quantize(CENT, rounding=ROUND_HALF_UP),
+        "price": price,
         "source": "mayorista",
         "price_list_id": int(price_list.id),
         "price_list_name": str(price_list.name),
         "min_quantity": _decimal(row.min_quantity),
+        "discount_percent": discount_percent,
         "reason": None,
     }
 
@@ -236,8 +252,16 @@ def product_price_catalog(*, company_id: int, product_ids: list[int]) -> dict:
     ids = sorted({int(value) for value in (product_ids or []) if int(value) > 0})
     if not ids or not company_id or not _has_wholesale_pricing_access(company_id):
         return {}
+    from app import Product
     from wholesale_pricing import PriceList, PriceListItem
 
+    products = {
+        int(product.id): product
+        for product in Product.query.filter(
+            Product.company_id == int(company_id),
+            Product.id.in_(ids),
+        ).all()
+    }
     today = date.today()
     lists = PriceList.query.filter(
         PriceList.company_id == int(company_id),
@@ -267,8 +291,24 @@ def product_price_catalog(*, company_id: int, product_ids: list[int]) -> dict:
             continue
         product_rows = result.setdefault(int(row.product_id), {})
         tiers = product_rows.setdefault(str(row.price_list_id), [])
-        tiers.append({
+        product = products.get(int(row.product_id))
+        price = _decimal(row.unit_price).quantize(CENT, rounding=ROUND_HALF_UP)
+        discount_percent = None
+        if product is not None and getattr(row, "discount_percent", None) is not None:
+            candidate_percent = _decimal(row.discount_percent, "0")
+            retail_price = _decimal(getattr(product, "price", 0)).quantize(CENT, rounding=ROUND_HALF_UP)
+            if Decimal("0") <= candidate_percent < Decimal("100") and retail_price > 0:
+                discounted = (
+                    retail_price * (Decimal("100") - candidate_percent) / Decimal("100")
+                ).quantize(CENT, rounding=ROUND_HALF_UP)
+                if discounted > 0:
+                    price = discounted
+                    discount_percent = float(candidate_percent)
+        tier = {
             "min_quantity": float(_decimal(row.min_quantity)),
-            "price": float(_decimal(row.unit_price).quantize(CENT, rounding=ROUND_HALF_UP)),
-        })
+            "price": float(price),
+        }
+        if discount_percent is not None:
+            tier["discount_percent"] = discount_percent
+        tiers.append(tier)
     return result

@@ -15,7 +15,7 @@ from flask_migrate import stamp, upgrade
 
 
 BASE_REVISION = "20261024_01_release_readiness"
-HEAD_REVISION = "20261025_02_wholesale_plan"
+HEAD_REVISION = "20261026_01_discount_pct"
 
 
 def main() -> None:
@@ -72,6 +72,7 @@ def main() -> None:
             "clients": {"customer_type", "price_list_id"},
             "sale_items": {"price_source", "price_list_id"},
             "quote_items": {"price_source", "price_list_id"},
+            "price_list_items": {"discount_percent"},
         }
         for table_name, expected in expected_columns.items():
             present = {column["name"] for column in inspector.get_columns(table_name)}
@@ -113,8 +114,8 @@ def main() -> None:
             if expected not in feature_tokens:
                 raise AssertionError(f"Existing Negocio plan lost expected feature: {expected}")
 
-        print("PASS: wholesale-pricing and Negocio-plan migrations upgraded the pre-feature PostgreSQL schema.")
-        print("PASS: wholesale tables, customer assignment, sale/quote price snapshots, foreign keys, and latest Alembic revision exist.")
+        print("PASS: wholesale-pricing, percentage-discount, and Negocio-plan migrations upgraded the pre-feature PostgreSQL schema.")
+        print("PASS: wholesale tables, percentage discounts, customer assignment, sale/quote price snapshots, foreign keys, and latest Alembic revision exist.")
         print("PASS: existing Negocio plan gains wholesale_pricing while preserving other commercial features.")
 
 

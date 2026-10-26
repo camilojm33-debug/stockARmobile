@@ -391,10 +391,10 @@ def test_business_plan_catalog_includes_wholesale_pricing():
     features = {item.strip() for item in business["features_json"].split(",") if item.strip()}
     assert "wholesale_pricing" in features
 
-def _make_wholesale_excel(rows):
+def _make_wholesale_excel(rows, headers=None):
     workbook = Workbook()
     sheet = workbook.active
-    sheet.append(["barcode", "product_name", "min_quantity", "unit_price", "active"])
+    sheet.append(headers or ["barcode", "product_name", "min_quantity", "unit_price", "active"])
     for row in rows:
         sheet.append(row)
     buffer = BytesIO()
@@ -437,7 +437,7 @@ def test_wholesale_catalog_template_includes_all_active_products_and_existing_ti
     rows = list(workbook.active.iter_rows(values_only=True))
     workbook.close()
 
-    assert rows[0] == ("barcode", "product_name", "min_quantity", "unit_price", "active")
+    assert rows[0] == ("barcode", "product_name", "min_quantity", "unit_price", "discount_percent", "active")
     assert len(rows) == 4  # header, two existing tiers and one product awaiting a price
     assert any(row[0] == "WHOLESALE-001" and row[2] == 1 and row[3] == 80 for row in rows[1:])
     assert any(row[0] == "WHOLESALE-001" and row[2] == 12 and row[3] == 70 for row in rows[1:])
@@ -445,7 +445,8 @@ def test_wholesale_catalog_template_includes_all_active_products_and_existing_ti
     assert blank_price[1] == "Producto sin tarifa"
     assert blank_price[2] == 1
     assert blank_price[3] is None
-    assert blank_price[4] is True
+    assert blank_price[4] is None
+    assert blank_price[5] is True
     assert all(row[0] != "OTHER-001" for row in rows[1:])
 
 
@@ -540,7 +541,7 @@ def test_wholesale_price_excel_import_is_atomic_and_export_roundtrips(wholesale_
     workbook = load_workbook(BytesIO(exported.data), read_only=True, data_only=True)
     exported_rows = list(workbook.active.iter_rows(values_only=True))
     workbook.close()
-    assert exported_rows[0] == ("barcode", "product_name", "min_quantity", "unit_price", "active")
+    assert exported_rows[0] == ("barcode", "product_name", "min_quantity", "unit_price", "discount_percent", "active")
     assert any(row[0] == "WHOLESALE-001" and row[2] == 1 and row[3] == 77 for row in exported_rows[1:])
     assert any(row[0] == "WHOLESALE-001" and row[2] == 24 and row[3] == 65 for row in exported_rows[1:])
 
@@ -644,6 +645,7 @@ def test_wholesale_bulk_apply_to_all_active_products_is_tenant_scoped_and_preser
         f"/precios-mayoristas/listas/{data['price_list'].id}/items",
         data={
             "bulk_mode": "all",
+            "bulk_action": "replace_existing",
             "product_id": "",
             "category": "",
             "min_quantity": "1",
@@ -706,6 +708,7 @@ def test_wholesale_bulk_apply_by_category_only_changes_active_products_in_that_c
         f"/precios-mayoristas/listas/{data['price_list'].id}/items",
         data={
             "bulk_mode": "category",
+            "bulk_action": "replace_existing",
             "product_id": "",
             "category": "Bebidas",
             "min_quantity": "12",
@@ -745,6 +748,140 @@ def test_wholesale_bulk_apply_by_category_only_changes_active_products_in_that_c
         assert other_company_row is None
 
 
+
+def test_wholesale_bulk_fill_missing_preserves_existing_prices(wholesale_database, app):
+    data = wholesale_database
+    missing_product = _create_wholesale_test_product(
+        data["company"].id,
+        barcode="WHOLESALE-MISSING-001",
+        name="Producto sin tramo base",
+        category="Bebidas",
+    )
+    disabled_tier_product = _create_wholesale_test_product(
+        data["company"].id,
+        barcode="WHOLESALE-INACTIVE-TIER",
+        name="Producto con tramo desactivado",
+        category="Limpieza",
+    )
+    db.session.add_all([missing_product, disabled_tier_product])
+    db.session.flush()
+    db.session.add(PriceListItem(
+        company_id=data["company"].id,
+        price_list_id=data["price_list"].id,
+        product_id=disabled_tier_product.id,
+        min_quantity=Decimal("1.000"),
+        unit_price=Decimal("55.00"),
+        active=False,
+    ))
+    db.session.commit()
+    browser = _wholesale_admin_client(app, data["admin"])
+
+    response = browser.post(
+        f"/precios-mayoristas/listas/{data['price_list'].id}/items",
+        data={
+            "bulk_mode": "all",
+            "bulk_action": "fill_missing",
+            "product_id": "",
+            "category": "",
+            "min_quantity": "1",
+            "unit_price": "45",
+        },
+    )
+    assert response.status_code in (301, 302)
+
+    with app.app_context():
+        existing_price = PriceListItem.query.filter_by(
+            company_id=data["company"].id,
+            price_list_id=data["price_list"].id,
+            product_id=data["product"].id,
+            min_quantity=Decimal("1.000"),
+        ).first()
+        added_price = PriceListItem.query.filter_by(
+            company_id=data["company"].id,
+            price_list_id=data["price_list"].id,
+            product_id=missing_product.id,
+            min_quantity=Decimal("1.000"),
+        ).first()
+        other_tier = PriceListItem.query.filter_by(
+            company_id=data["company"].id,
+            price_list_id=data["price_list"].id,
+            product_id=data["product"].id,
+            min_quantity=Decimal("12.000"),
+        ).first()
+
+        assert existing_price is not None
+        assert Decimal(str(existing_price.unit_price)) == Decimal("80.00")
+        assert added_price is not None
+        assert Decimal(str(added_price.unit_price)) == Decimal("45.00")
+        assert other_tier is not None
+        assert Decimal(str(other_tier.unit_price)) == Decimal("70.00")
+        reactivated = PriceListItem.query.filter_by(
+            company_id=data["company"].id,
+            price_list_id=data["price_list"].id,
+            product_id=disabled_tier_product.id,
+            min_quantity=Decimal("1.000"),
+        ).first()
+        assert reactivated is not None
+        assert reactivated.active is True
+        assert Decimal(str(reactivated.unit_price)) == Decimal("45.00")
+
+
+def test_wholesale_bulk_fill_missing_with_no_missing_tiers_does_not_require_price(wholesale_database, app):
+    data = wholesale_database
+    browser = _wholesale_admin_client(app, data["admin"])
+
+    response = browser.post(
+        f"/precios-mayoristas/listas/{data['price_list'].id}/items",
+        data={
+            "bulk_mode": "all",
+            "bulk_action": "fill_missing",
+            "product_id": "",
+            "category": "",
+            "min_quantity": "1",
+            "unit_price": "",
+        },
+        follow_redirects=True,
+    )
+    assert response.status_code == 200
+    assert "No se modificó ningún precio".encode() in response.data
+
+    with app.app_context():
+        existing_price = PriceListItem.query.filter_by(
+            company_id=data["company"].id,
+            price_list_id=data["price_list"].id,
+            product_id=data["product"].id,
+            min_quantity=Decimal("1.000"),
+        ).first()
+        assert existing_price is not None
+        assert Decimal(str(existing_price.unit_price)) == Decimal("80.00")
+
+
+def test_wholesale_bulk_preview_counts_existing_and_missing_tiers(wholesale_database, app):
+    data = wholesale_database
+    missing_product = _create_wholesale_test_product(
+        data["company"].id,
+        barcode="WHOLESALE-PREVIEW-001",
+        name="Producto sin precio",
+        category="Bebidas",
+    )
+    db.session.add(missing_product)
+    db.session.commit()
+    browser = _wholesale_admin_client(app, data["admin"])
+
+    response = browser.get(
+        f"/precios-mayoristas/listas/{data['price_list'].id}/previsualizar-masivo"
+        "?bulk_mode=all&min_quantity=1"
+    )
+    assert response.status_code == 200
+    payload = response.get_json()
+    assert payload == {
+        "total": 2,
+        "already_priced": 1,
+        "missing": 1,
+        "min_quantity": "1.000",
+    }
+
+
 def test_wholesale_product_search_and_category_selector_are_company_scoped(wholesale_database, app):
     data = wholesale_database
     browser = _wholesale_admin_client(app, data["admin"])
@@ -761,3 +898,264 @@ def test_wholesale_product_search_and_category_selector_are_company_scoped(whole
     assert b"Todos los productos activos" in page.data
     assert b"Una categor" in page.data
     assert b"Bebidas" in page.data
+    assert b"Descuento % sobre precio minorista" in page.data
+
+
+def test_wholesale_bulk_percentage_discount_calculates_each_product_and_tracks_retail_price(wholesale_database, app):
+    data = wholesale_database
+    second_product = _create_wholesale_test_product(
+        data["company"].id,
+        barcode="WHOLESALE-PCT-002",
+        name="Producto de precio minorista doble",
+        category="Bebidas",
+        cost="40.00",
+    )
+    second_product.price = Decimal("200.00")
+    db.session.add(second_product)
+    db.session.commit()
+    browser = _wholesale_admin_client(app, data["admin"])
+
+    response = browser.post(
+        f"/precios-mayoristas/listas/{data['price_list'].id}/items",
+        data={
+            "bulk_mode": "all",
+            "bulk_action": "fill_missing",
+            "pricing_mode": "discount_percent",
+            "product_id": "",
+            "category": "",
+            "min_quantity": "3",
+            "unit_price": "",
+            "discount_percent": "15",
+        },
+    )
+    assert response.status_code in (301, 302)
+
+    with app.app_context():
+        product_tier = PriceListItem.query.filter_by(
+            company_id=data["company"].id,
+            price_list_id=data["price_list"].id,
+            product_id=data["product"].id,
+            min_quantity=Decimal("3.000"),
+        ).first()
+        second_tier = PriceListItem.query.filter_by(
+            company_id=data["company"].id,
+            price_list_id=data["price_list"].id,
+            product_id=second_product.id,
+            min_quantity=Decimal("3.000"),
+        ).first()
+        assert product_tier is not None
+        assert Decimal(str(product_tier.discount_percent)) == Decimal("15.00")
+        assert Decimal(str(product_tier.unit_price)) == Decimal("85.00")
+        assert second_tier is not None
+        assert Decimal(str(second_tier.discount_percent)) == Decimal("15.00")
+        assert Decimal(str(second_tier.unit_price)) == Decimal("170.00")
+
+        # Existing quantities remain as before and percentage tiers are dynamic.
+        base_tier = PriceListItem.query.filter_by(
+            company_id=data["company"].id,
+            price_list_id=data["price_list"].id,
+            product_id=data["product"].id,
+            min_quantity=Decimal("1.000"),
+        ).first()
+        assert Decimal(str(base_tier.unit_price)) == Decimal("80.00")
+        # Re-fetch the product and client in this app context's SQLAlchemy
+        # session, then commit the retail-price change before resolving the tier.
+        stored_second_product = Product.query.filter_by(
+            id=second_product.id,
+            company_id=data["company"].id,
+        ).first()
+        stored_client = Client.query.filter_by(
+            id=data["wholesale_client"].id,
+            company_id=data["company"].id,
+        ).first()
+        assert stored_second_product is not None and stored_client is not None
+        stored_second_product.price = Decimal("400.00")
+        db.session.commit()
+
+        result = resolve_product_price(
+            company_id=data["company"].id,
+            product=stored_second_product,
+            quantity=3,
+            client=stored_client,
+        )
+        assert result["price"] == Decimal("340.00")
+        assert result["discount_percent"] == Decimal("15.00")
+
+        catalog = product_price_catalog(
+            company_id=data["company"].id,
+            product_ids=[stored_second_product.id],
+        )
+        catalog_tiers = catalog[stored_second_product.id][str(data["price_list"].id)]
+        quantity_three = next(tier for tier in catalog_tiers if tier["min_quantity"] == 3.0)
+        assert quantity_three["price"] == 340.0
+        assert quantity_three["discount_percent"] == 15.0
+
+
+def test_wholesale_bulk_percentage_discount_replaces_existing_tier_only_when_requested(wholesale_database, app):
+    data = wholesale_database
+    browser = _wholesale_admin_client(app, data["admin"])
+
+    response = browser.post(
+        f"/precios-mayoristas/listas/{data['price_list'].id}/items",
+        data={
+            "bulk_mode": "all",
+            "bulk_action": "replace_existing",
+            "pricing_mode": "discount_percent",
+            "product_id": "",
+            "category": "",
+            "min_quantity": "1",
+            "unit_price": "",
+            "discount_percent": "20",
+        },
+    )
+    assert response.status_code in (301, 302)
+
+    with app.app_context():
+        tier = PriceListItem.query.filter_by(
+            company_id=data["company"].id,
+            price_list_id=data["price_list"].id,
+            product_id=data["product"].id,
+            min_quantity=Decimal("1.000"),
+        ).first()
+        other_tier = PriceListItem.query.filter_by(
+            company_id=data["company"].id,
+            price_list_id=data["price_list"].id,
+            product_id=data["product"].id,
+            min_quantity=Decimal("12.000"),
+        ).first()
+        assert tier is not None
+        assert Decimal(str(tier.discount_percent)) == Decimal("20.00")
+        assert Decimal(str(tier.unit_price)) == Decimal("80.00")
+        assert other_tier is not None
+        assert other_tier.discount_percent is None
+        assert Decimal(str(other_tier.unit_price)) == Decimal("70.00")
+
+
+def test_wholesale_discount_percent_excel_roundtrips_and_accepts_legacy_templates(wholesale_database, app):
+    data = wholesale_database
+    browser = _wholesale_admin_client(app, data["admin"])
+    headers = ["barcode", "product_name", "min_quantity", "unit_price", "discount_percent", "active"]
+    upload = _make_wholesale_excel(
+        [["WHOLESALE-001", "Producto mayorista QA", 3, None, 15, True]],
+        headers=headers,
+    )
+    response = browser.post(
+        f"/precios-mayoristas/listas/{data['price_list'].id}/importar.xlsx",
+        data={"file": (BytesIO(upload), "descuentos.xlsx")},
+        content_type="multipart/form-data",
+    )
+    assert response.status_code in (301, 302)
+
+    with app.app_context():
+        tier = PriceListItem.query.filter_by(
+            company_id=data["company"].id,
+            price_list_id=data["price_list"].id,
+            product_id=data["product"].id,
+            min_quantity=Decimal("3.000"),
+        ).first()
+        assert tier is not None
+        assert Decimal(str(tier.discount_percent)) == Decimal("15.00")
+        assert Decimal(str(tier.unit_price)) == Decimal("85.00")
+
+    exported = browser.get(f"/precios-mayoristas/listas/{data['price_list'].id}/exportar.xlsx")
+    assert exported.status_code == 200
+    workbook = load_workbook(BytesIO(exported.data), read_only=True, data_only=True)
+    rows = list(workbook.active.iter_rows(values_only=True))
+    workbook.close()
+    pct_row = next(row for row in rows[1:] if row[0] == "WHOLESALE-001" and row[2] == 3)
+    assert pct_row[3] is None
+    assert pct_row[4] == 15
+    assert pct_row[5] is True
+
+    # Older exported sheets have no discount_percent column and still import as fixed prices.
+    legacy_upload = _make_wholesale_excel(
+        [["WHOLESALE-001", "Producto mayorista QA", 24, 64, True]]
+    )
+    response = browser.post(
+        f"/precios-mayoristas/listas/{data['price_list'].id}/importar.xlsx",
+        data={"file": (BytesIO(legacy_upload), "legacy.xlsx")},
+        content_type="multipart/form-data",
+    )
+    assert response.status_code in (301, 302)
+    with app.app_context():
+        legacy_tier = PriceListItem.query.filter_by(
+            company_id=data["company"].id,
+            price_list_id=data["price_list"].id,
+            product_id=data["product"].id,
+            min_quantity=Decimal("24.000"),
+        ).first()
+        assert legacy_tier is not None
+        assert legacy_tier.discount_percent is None
+        assert Decimal(str(legacy_tier.unit_price)) == Decimal("64.00")
+
+
+def test_wholesale_discount_percentage_requires_value_below_100(wholesale_database, app):
+    data = wholesale_database
+    browser = _wholesale_admin_client(app, data["admin"])
+
+    response = browser.post(
+        f"/precios-mayoristas/listas/{data['price_list'].id}/items",
+        data={
+            "bulk_mode": "all",
+            "bulk_action": "fill_missing",
+            "pricing_mode": "discount_percent",
+            "product_id": "",
+            "category": "",
+            "min_quantity": "3",
+            "unit_price": "",
+            "discount_percent": "100",
+        },
+        follow_redirects=True,
+    )
+    assert response.status_code == 200
+    assert "mayor a 0% y menor a 100%".encode() in response.data
+
+    with app.app_context():
+        created = PriceListItem.query.filter_by(
+            company_id=data["company"].id,
+            price_list_id=data["price_list"].id,
+            product_id=data["product"].id,
+            min_quantity=Decimal("3.000"),
+        ).first()
+        assert created is None
+
+
+
+def test_single_product_can_use_percentage_discount_tier(wholesale_database, app):
+    data = wholesale_database
+    browser = _wholesale_admin_client(app, data["admin"])
+
+    response = browser.post(
+        f"/precios-mayoristas/listas/{data['price_list'].id}/items",
+        data={
+            "bulk_mode": "single",
+            "pricing_mode": "discount_percent",
+            "product_id": str(data["product"].id),
+            "min_quantity": "3",
+            "unit_price": "",
+            "discount_percent": "10",
+        },
+    )
+    assert response.status_code in (301, 302)
+
+    with app.app_context():
+        tier = PriceListItem.query.filter_by(
+            company_id=data["company"].id,
+            price_list_id=data["price_list"].id,
+            product_id=data["product"].id,
+            min_quantity=Decimal("3.000"),
+        ).first()
+        assert tier is not None
+        assert Decimal(str(tier.discount_percent)) == Decimal("10.00")
+        assert Decimal(str(tier.unit_price)) == Decimal("90.00")
+
+        data["product"].price = Decimal("200.00")
+        db.session.commit()
+        resolution = resolve_product_price(
+            company_id=data["company"].id,
+            product=data["product"],
+            quantity=3,
+            client=data["wholesale_client"],
+        )
+        assert resolution["price"] == Decimal("180.00")
+

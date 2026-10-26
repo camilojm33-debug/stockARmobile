@@ -5,7 +5,7 @@ from __future__ import annotations
 import re
 import unicodedata
 from datetime import date
-from decimal import Decimal, InvalidOperation
+from decimal import Decimal, InvalidOperation, ROUND_HALF_UP
 from functools import wraps
 from io import BytesIO
 
@@ -58,12 +58,28 @@ class PriceListItem(db.Model):
     product_id = db.Column(db.Integer, db.ForeignKey("products.id", ondelete="CASCADE"), nullable=False, index=True)
     min_quantity = db.Column(db.Numeric(18, 3), nullable=False, default=Decimal("1.000"), server_default="1.000")
     unit_price = db.Column(db.Numeric(18, 2), nullable=False)
+    # NULL means a fixed wholesale unit price. A percentage tier is evaluated
+    # dynamically against the product's current retail price at sale/quote time.
+    discount_percent = db.Column(db.Numeric(5, 2), nullable=True)
     active = db.Column(db.Boolean, nullable=False, default=True, server_default=db.true())
     created_at = db.Column(db.DateTime, nullable=False, default=utcnow_naive)
     updated_at = db.Column(db.DateTime, nullable=False, default=utcnow_naive, onupdate=utcnow_naive)
 
     product = db.relationship("Product")
     company = db.relationship("Company")
+
+    @property
+    def effective_unit_price(self):
+        """Current displayed price: fixed amount or percentage of current retail price."""
+        if self.discount_percent is not None and self.product is not None:
+            try:
+                return _discounted_retail_price(
+                    self.product, Decimal(str(self.discount_percent))
+                )
+            except ValueError:
+                # Keep a valid stored amount visible if retail price was later removed.
+                pass
+        return self.unit_price
 
 
 def _company_id():
@@ -109,6 +125,27 @@ def _date_value(value):
         return date.fromisoformat(raw)
     except ValueError:
         raise ValueError("La fecha de vigencia no es válida.")
+
+
+def _discounted_retail_price(product, discount_percent: Decimal) -> Decimal:
+    """Return a rounded wholesale price derived from the current retail price."""
+    retail_price = Decimal(str(getattr(product, "price", 0) or 0))
+    if not retail_price.is_finite() or retail_price <= 0:
+        raise ValueError(
+            f"el producto {getattr(product, 'name', '') or getattr(product, 'barcode', '')} "
+            "no tiene un precio minorista válido para calcular el descuento"
+        )
+    if not discount_percent.is_finite() or discount_percent <= 0 or discount_percent >= Decimal("100"):
+        raise ValueError("el descuento debe ser mayor a 0% y menor a 100%")
+    discounted_price = (
+        retail_price * (Decimal("100") - discount_percent) / Decimal("100")
+    ).quantize(Decimal("0.01"), rounding=ROUND_HALF_UP)
+    if discounted_price <= 0:
+        raise ValueError(
+            f"el descuento del producto {getattr(product, 'name', '') or getattr(product, 'barcode', '')} "
+            "genera un precio de cero después del redondeo"
+        )
+    return discounted_price
 
 
 def active_price_lists(company_id: int, *, include_inactive: bool = False):
@@ -245,6 +282,70 @@ def search_products():
     })
 
 
+
+@bp.get("/listas/<int:list_id>/previsualizar-masivo")
+@tenant_required
+@login_required
+@_wholesale_plan_required
+def bulk_preview(list_id):
+    """Count existing and missing tiers for a safe bulk-price operation."""
+    _require_admin()
+    from app import Product
+
+    company_id = _company_id()
+    price_list = PriceList.query.filter_by(id=list_id, company_id=company_id).first_or_404()
+    mode = str(request.args.get("bulk_mode") or "").strip().lower()
+    if mode not in {"all", "category"}:
+        abort(400)
+    try:
+        quantity = Decimal(str(request.args.get("min_quantity") or "1").replace(",", "."))
+        if not quantity.is_finite() or quantity <= 0:
+            raise ValueError
+        quantity = quantity.quantize(Decimal("0.001"))
+    except (InvalidOperation, TypeError, ValueError):
+        return jsonify({"error": "La cantidad mínima no es válida."}), 400
+
+    products_query = Product.query.filter_by(company_id=company_id, active=True)
+    category = None
+    if mode == "category":
+        category = str(request.args.get("category") or "").strip()[:120]
+        if not category:
+            return jsonify({"error": "Seleccioná una categoría."}), 400
+        category_expr = func.trim(func.coalesce(Product.category, ""))
+        if category == "__stockar_uncategorized__":
+            products_query = products_query.filter(category_expr == "")
+        else:
+            products_query = products_query.filter(category_expr == category)
+
+    total = products_query.count()
+    existing_query = (
+        PriceListItem.query
+        .join(Product, Product.id == PriceListItem.product_id)
+        .filter(
+            PriceListItem.company_id == company_id,
+            PriceListItem.price_list_id == price_list.id,
+            PriceListItem.min_quantity == quantity,
+            PriceListItem.active.is_(True),
+            Product.company_id == company_id,
+            Product.active.is_(True),
+        )
+    )
+    if mode == "category":
+        category_expr = func.trim(func.coalesce(Product.category, ""))
+        if category == "__stockar_uncategorized__":
+            existing_query = existing_query.filter(category_expr == "")
+        else:
+            existing_query = existing_query.filter(category_expr == category)
+
+    already_priced = min(existing_query.count(), total)
+    return jsonify({
+        "total": int(total),
+        "already_priced": int(already_priced),
+        "missing": int(max(total - already_priced, 0)),
+        "min_quantity": str(quantity),
+    })
+
+
 @bp.post("/listas/<int:list_id>/items")
 @tenant_required
 @login_required
@@ -258,25 +359,63 @@ def save_item(list_id):
     product_id = request.form.get("product_id", type=int)
     item_id = request.form.get("item_id", type=int)
     bulk_mode = str(request.form.get("bulk_mode") or "single").strip().lower()
+    bulk_action = str(request.form.get("bulk_action") or "fill_missing").strip().lower()
+    pricing_mode = str(request.form.get("pricing_mode") or "fixed").strip().lower()
+
+    if pricing_mode not in {"fixed", "discount_percent"}:
+        flash("Seleccioná un tipo de precio válido.", "danger")
+        return redirect(url_for("wholesale_pricing.index", list_id=list_id))
 
     try:
         quantity = Decimal(str(request.form.get("min_quantity") or "1").replace(",", "."))
-        unit_price = Decimal(str(request.form.get("unit_price") or "").replace(",", "."))
         if not quantity.is_finite() or quantity <= 0:
             raise ValueError("La cantidad mínima debe ser mayor a cero.")
-        if not unit_price.is_finite() or unit_price <= 0:
-            raise ValueError("El precio mayorista debe ser mayor a cero.")
         quantity = quantity.quantize(Decimal("0.001"))
-        unit_price = unit_price.quantize(Decimal("0.01"))
     except (InvalidOperation, TypeError, ValueError) as exc:
-        message = str(exc) if isinstance(exc, ValueError) and str(exc) else "Ingresá una cantidad y un precio válidos."
+        message = str(exc) if isinstance(exc, ValueError) and str(exc) else "Ingresá una cantidad mínima válida."
         flash(message, "danger")
         return redirect(url_for("wholesale_pricing.index", list_id=list_id))
+
+    unit_price = None
+    discount_percent = None
+    if pricing_mode == "fixed":
+        raw_price = str(request.form.get("unit_price") or "").strip().replace(",", ".")
+        if raw_price:
+            try:
+                unit_price = Decimal(raw_price)
+                if not unit_price.is_finite() or unit_price <= 0:
+                    raise ValueError("El precio mayorista debe ser mayor a cero.")
+                unit_price = unit_price.quantize(Decimal("0.01"), rounding=ROUND_HALF_UP)
+            except (InvalidOperation, TypeError, ValueError) as exc:
+                message = str(exc) if isinstance(exc, ValueError) and str(exc) else "Ingresá un precio mayorista válido."
+                flash(message, "danger")
+                return redirect(url_for("wholesale_pricing.index", list_id=list_id))
+    else:
+        raw_percent = str(request.form.get("discount_percent") or "").strip().replace(",", ".")
+        if raw_percent:
+            try:
+                discount_percent = Decimal(raw_percent)
+                if (
+                    not discount_percent.is_finite()
+                    or discount_percent <= 0
+                    or discount_percent >= Decimal("100")
+                ):
+                    raise ValueError("El descuento debe ser mayor a 0% y menor a 100%.")
+                discount_percent = discount_percent.quantize(Decimal("0.01"), rounding=ROUND_HALF_UP)
+            except (InvalidOperation, TypeError, ValueError) as exc:
+                message = str(exc) if isinstance(exc, ValueError) and str(exc) else "Ingresá un porcentaje válido."
+                flash(message, "danger")
+                return redirect(url_for("wholesale_pricing.index", list_id=list_id))
 
     if bulk_mode in {"all", "category"}:
         if item_id:
             abort(400)
+        if bulk_action not in {"fill_missing", "replace_existing"}:
+            flash("Seleccioná una operación masiva válida.", "danger")
+            return redirect(url_for("wholesale_pricing.index", list_id=list_id))
+
         products_query = Product.query.filter_by(company_id=company_id, active=True)
+        category = None
         if bulk_mode == "category":
             category = str(request.form.get("category") or "").strip()[:120]
             if not category:
@@ -292,19 +431,64 @@ def save_item(list_id):
             flash("No hay productos activos dentro de la selección indicada.", "warning")
             return redirect(url_for("wholesale_pricing.index", list_id=list_id))
 
-        # Fetch matching tiers once. Existing items at other quantity thresholds
-        # remain untouched; only the selected minimum quantity is created/updated.
+        # Match a tier by list, company, product and quantity. Other tiers are
+        # never changed. The safe default only fills products without that tier.
         existing_items = PriceListItem.query.filter_by(
             company_id=company_id,
             price_list_id=price_list.id,
             min_quantity=quantity,
         ).all()
         items_by_product = {int(item.product_id): item for item in existing_items}
+        if bulk_action == "fill_missing":
+            products_to_apply = [
+                product for product in products
+                if (
+                    int(product.id) not in items_by_product
+                    or not bool(items_by_product[int(product.id)].active)
+                )
+            ]
+            if not products_to_apply:
+                flash(
+                    f"Los {len(products)} productos seleccionados ya tienen un tramo desde {quantity:g}. "
+                    "No se modificó ningún precio. Elegí «Reemplazar precios existentes» si realmente querés cambiar esos importes.",
+                    "info",
+                )
+                return redirect(url_for("wholesale_pricing.index", list_id=list_id))
+        else:
+            products_to_apply = products
+
+        if pricing_mode == "fixed" and unit_price is None:
+            flash(
+                f"Hay {len(products_to_apply)} productos seleccionados para el tramo desde {quantity:g}. "
+                "Ingresá el precio fijo que querés aplicar.",
+                "warning",
+            )
+            return redirect(url_for("wholesale_pricing.index", list_id=list_id))
+        if pricing_mode == "discount_percent" and discount_percent is None:
+            flash("Ingresá el porcentaje de descuento sobre el precio minorista.", "warning")
+            return redirect(url_for("wholesale_pricing.index", list_id=list_id))
+
+        # Calculate all per-product prices before changing the session so a
+        # missing retail price cannot leave a partially applied bulk operation.
+        try:
+            prices_by_product = {
+                int(product.id): (
+                    unit_price
+                    if pricing_mode == "fixed"
+                    else _discounted_retail_price(product, discount_percent)
+                )
+                for product in products_to_apply
+            }
+        except ValueError as exc:
+            flash(f"No se aplicaron cambios: {exc}. Corregí los precios minoristas e intentá nuevamente.", "danger")
+            return redirect(url_for("wholesale_pricing.index", list_id=list_id))
+
         created = 0
         updated = 0
         below_cost = 0
         try:
-            for product in products:
+            for product in products_to_apply:
+                applied_price = prices_by_product[int(product.id)]
                 item = items_by_product.get(int(product.id))
                 if item is None:
                     item = PriceListItem(
@@ -312,25 +496,28 @@ def save_item(list_id):
                         price_list_id=price_list.id,
                         product_id=product.id,
                         min_quantity=quantity,
-                        unit_price=unit_price,
+                        unit_price=applied_price,
+                        discount_percent=discount_percent if pricing_mode == "discount_percent" else None,
                         active=True,
                     )
                     db.session.add(item)
                     items_by_product[int(product.id)] = item
                     created += 1
                 else:
-                    item.unit_price = unit_price
+                    # Existing rows are touched only in explicit replace mode.
+                    item.unit_price = applied_price
+                    item.discount_percent = discount_percent if pricing_mode == "discount_percent" else None
                     item.active = True
                     updated += 1
                 cost = Decimal(str(product.cost_price or 0))
-                if cost > 0 and unit_price < cost:
+                if cost > 0 and applied_price < cost:
                     below_cost += 1
             db.session.commit()
         except Exception:
             db.session.rollback()
             current_app.logger.exception(
-                "Wholesale bulk price update failed: company_id=%s list_id=%s mode=%s",
-                company_id, price_list.id, bulk_mode,
+                "Wholesale bulk price update failed: company_id=%s list_id=%s mode=%s action=%s",
+                company_id, price_list.id, bulk_mode, bulk_action,
             )
             flash("No se pudieron guardar los precios masivos. No se aplicaron cambios parciales.", "danger")
             return redirect(url_for("wholesale_pricing.index", list_id=list_id))
@@ -340,10 +527,24 @@ def save_item(list_id):
             if bulk_mode == "all"
             else (category if category != "__stockar_uncategorized__" else "Sin categoría")
         )
-        flash(
-            f"Precio mayorista aplicado a {len(products)} productos ({created} tramos nuevos y {updated} actualizados) en {scope_label}.",
-            "success",
+        amount_label = (
+            f"un descuento del {discount_percent}% sobre el precio minorista"
+            if pricing_mode == "discount_percent"
+            else f"un precio fijo de {unit_price:.2f}"
         )
+        if bulk_action == "fill_missing":
+            flash(
+                f"Se completaron/reactivaron los precios de {len(products_to_apply)} productos sin un tramo activo "
+                f"desde {quantity:g} en {scope_label} con {amount_label} "
+                f"({created} tramos nuevos y {updated} actualizados). Los precios activos que ya existían no se modificaron.",
+                "success",
+            )
+        else:
+            flash(
+                f"Se aplicó {amount_label} desde {quantity:g} unidades a {len(products_to_apply)} productos "
+                f"({created} tramos nuevos y {updated} actualizados) en {scope_label}.",
+                "success",
+            )
         if below_cost:
             flash(
                 f"Atención: {below_cost} productos quedaron con precio mayorista por debajo de su costo. Revisá la rentabilidad.",
@@ -359,6 +560,20 @@ def save_item(list_id):
     if product is None:
         flash("El producto no pertenece a tu empresa o está inactivo.", "danger")
         return redirect(url_for("wholesale_pricing.index", list_id=list_id))
+    if pricing_mode == "fixed":
+        if unit_price is None:
+            flash("Ingresá un precio mayorista válido.", "danger")
+            return redirect(url_for("wholesale_pricing.index", list_id=list_id))
+        applied_price = unit_price
+    else:
+        if discount_percent is None:
+            flash("Ingresá un porcentaje de descuento válido.", "danger")
+            return redirect(url_for("wholesale_pricing.index", list_id=list_id))
+        try:
+            applied_price = _discounted_retail_price(product, discount_percent)
+        except ValueError as exc:
+            flash(str(exc), "danger")
+            return redirect(url_for("wholesale_pricing.index", list_id=list_id))
 
     if item_id:
         item = PriceListItem.query.filter_by(
@@ -377,7 +592,8 @@ def save_item(list_id):
             return redirect(url_for("wholesale_pricing.index", list_id=list_id))
         item.product_id = product_id
         item.min_quantity = quantity
-        item.unit_price = unit_price
+        item.unit_price = applied_price
+        item.discount_percent = discount_percent if pricing_mode == "discount_percent" else None
         item.active = True
     else:
         item = PriceListItem.query.filter_by(
@@ -392,18 +608,20 @@ def save_item(list_id):
                 price_list_id=price_list.id,
                 product_id=product_id,
                 min_quantity=quantity,
-                unit_price=unit_price,
+                unit_price=applied_price,
+                discount_percent=discount_percent if pricing_mode == "discount_percent" else None,
                 active=True,
             )
             db.session.add(item)
         else:
-            item.unit_price = unit_price
+            item.unit_price = applied_price
+            item.discount_percent = discount_percent if pricing_mode == "discount_percent" else None
             item.active = True
     db.session.commit()
     cost = Decimal(str(product.cost_price or 0))
-    if cost > 0 and unit_price < cost:
+    if cost > 0 and applied_price < cost:
         flash(
-            f"Precio guardado, pero queda por debajo del costo ({cost:.2f}). Revisá la rentabilidad antes de vender.",
+            f"Precio mayorista guardado, pero queda por debajo del costo ({cost:.2f}). Revisá la rentabilidad antes de vender.",
             "warning",
         )
     else:
@@ -442,24 +660,26 @@ def download_template(list_id):
     workbook = Workbook()
     sheet = workbook.active
     sheet.title = "Precios mayoristas"
-    sheet.append(["barcode", "product_name", "min_quantity", "unit_price", "active"])
+    sheet.append(["barcode", "product_name", "min_quantity", "unit_price", "discount_percent", "active"])
     for product in products:
         tiers = tiers_by_product.get(int(product.id), [])
         if tiers:
             for tier in tiers:
+                is_percentage = tier.discount_percent is not None
                 sheet.append([
                     product.barcode or "",
                     product.name or "",
                     float(tier.min_quantity or 1),
-                    float(tier.unit_price or 0) if tier.unit_price is not None else None,
+                    None if is_percentage else (float(tier.unit_price) if tier.unit_price is not None else None),
+                    float(tier.discount_percent) if is_percentage else None,
                     bool(tier.active),
                 ])
         else:
-            # Blank price means "do not import this product until a price is entered".
-            sheet.append([product.barcode or "", product.name or "", 1, None, True])
+            # Blank fixed price and discount means "do not import until a value is entered".
+            sheet.append([product.barcode or "", product.name or "", 1, None, None, True])
     sheet.freeze_panes = "A2"
     sheet.auto_filter.ref = sheet.dimensions
-    for column, width in (("A", 24), ("B", 36), ("C", 18), ("D", 18), ("E", 12)):
+    for column, width in (("A", 24), ("B", 36), ("C", 18), ("D", 18), ("E", 20), ("F", 12)):
         sheet.column_dimensions[column].width = width
     buffer = BytesIO()
     workbook.save(buffer)
@@ -493,21 +713,23 @@ def export_list(list_id):
     workbook = Workbook()
     sheet = workbook.active
     sheet.title = "Precios mayoristas"
-    sheet.append(["barcode", "product_name", "min_quantity", "unit_price", "active"])
+    sheet.append(["barcode", "product_name", "min_quantity", "unit_price", "discount_percent", "active"])
     for row in rows:
         product = row.product
         if product is None or int(product.company_id) != company_id:
             continue
+        is_percentage = row.discount_percent is not None
         sheet.append([
             product.barcode or "",
             product.name or "",
             float(row.min_quantity or 1),
-            float(row.unit_price or 0),
+            None if is_percentage else float(row.unit_price or 0),
+            float(row.discount_percent) if is_percentage else None,
             bool(row.active),
         ])
     sheet.freeze_panes = "A2"
     sheet.auto_filter.ref = sheet.dimensions
-    for column, width in (("A", 24), ("B", 36), ("C", 18), ("D", 18), ("E", 12)):
+    for column, width in (("A", 24), ("B", 36), ("C", 18), ("D", 18), ("E", 20), ("F", 12)):
         sheet.column_dimensions[column].width = width
     buffer = BytesIO()
     workbook.save(buffer)
@@ -561,6 +783,7 @@ def import_list(list_id):
         "barcode": {"barcode", "codigo", "sku", "ean", "product_code"},
         "min_quantity": {"min_quantity", "cantidad_minima", "desde_cantidad", "min_qty"},
         "unit_price": {"unit_price", "precio_mayorista", "precio", "price"},
+        "discount_percent": {"discount_percent", "descuento_porcentaje", "porcentaje_descuento", "discount_pct", "descuento_pct"},
         "active": {"active", "activo", "habilitado"},
     }
     positions = {}
@@ -568,9 +791,12 @@ def import_list(list_id):
         for canonical, options in aliases.items():
             if value in options:
                 positions[canonical] = index
-    missing = {"barcode", "min_quantity", "unit_price"} - set(positions)
-    if missing:
-        flash("Faltan columnas obligatorias: código/sku, cantidad mínima y precio mayorista.", "danger")
+    missing = {"barcode", "min_quantity"} - set(positions)
+    if missing or not ({"unit_price", "discount_percent"} & set(positions)):
+        flash(
+            "El Excel debe incluir código/sku, cantidad mínima y al menos una columna de precio fijo o descuento porcentual.",
+            "danger",
+        )
         return redirect(url_for("wholesale_pricing.index", list_id=list_id))
     if len(values) > 10001:
         flash("El archivo admite hasta 10.000 filas de precios más el encabezado.", "danger")
@@ -584,24 +810,42 @@ def import_list(list_id):
             continue
         try:
             barcode = str(row[positions["barcode"]] or "").strip()[:50]
+            raw_quantity = row[positions["min_quantity"]] if positions["min_quantity"] < len(row) else None
+            raw_price = row[positions["unit_price"]] if "unit_price" in positions and positions["unit_price"] < len(row) else None
+            raw_percent = row[positions["discount_percent"]] if "discount_percent" in positions and positions["discount_percent"] < len(row) else None
+            price_blank = raw_price is None or (isinstance(raw_price, str) and not raw_price.strip())
+            percent_blank = raw_percent is None or (isinstance(raw_percent, str) and not raw_percent.strip())
+            # Blank price and discount mean "skip this row"; old five-column files
+            # are still supported and are interpreted as fixed prices. Check blank
+            # values first so catalog rows with no barcode and no price are harmless.
+            if price_blank and percent_blank:
+                continue
             if not barcode:
                 raise ValueError("falta código/sku")
-            raw_quantity = row[positions["min_quantity"]] if positions["min_quantity"] < len(row) else None
-            raw_price = row[positions["unit_price"]] if positions["unit_price"] < len(row) else None
-            # A blank price is an explicit omission, not a $0 price. This lets the
-            # full catalog template include products the user does not want to price yet.
-            if raw_price is None or (isinstance(raw_price, str) and not raw_price.strip()):
-                continue
+            if not price_blank and not percent_blank:
+                raise ValueError("completá precio fijo o descuento porcentual, no ambos")
             if raw_quantity is None or (isinstance(raw_quantity, str) and not raw_quantity.strip()):
                 raise ValueError("falta cantidad mínima")
             quantity = Decimal(str(raw_quantity).replace(",", "."))
-            unit_price = Decimal(str(raw_price).replace(",", "."))
+            unit_price = None
+            discount_percent = None
+            if not percent_blank:
+                discount_percent = Decimal(str(raw_percent).replace(",", "."))
+                if (
+                    not discount_percent.is_finite()
+                    or discount_percent <= 0
+                    or discount_percent >= Decimal("100")
+                ):
+                    raise ValueError("el descuento debe ser mayor a 0% y menor a 100%")
+                discount_percent = discount_percent.quantize(Decimal("0.01"), rounding=ROUND_HALF_UP)
+            else:
+                unit_price = Decimal(str(raw_price).replace(",", "."))
+                if not unit_price.is_finite() or unit_price <= 0:
+                    raise ValueError("el precio debe ser mayor a cero")
+                unit_price = unit_price.quantize(Decimal("0.01"), rounding=ROUND_HALF_UP)
             if not quantity.is_finite() or quantity <= 0:
                 raise ValueError("la cantidad mínima debe ser mayor a cero")
-            if not unit_price.is_finite() or unit_price <= 0:
-                raise ValueError("el precio debe ser mayor a cero")
             quantity = quantity.quantize(Decimal("0.001"))
-            unit_price = unit_price.quantize(Decimal("0.01"))
             key = (barcode, quantity)
             if key in seen:
                 raise ValueError("fila duplicada para el mismo código y cantidad mínima")
@@ -615,6 +859,7 @@ def import_list(list_id):
                 "barcode": barcode,
                 "quantity": quantity,
                 "unit_price": unit_price,
+                "discount_percent": discount_percent,
                 "active": active,
             })
         except (InvalidOperation, TypeError, ValueError, IndexError) as exc:
@@ -636,11 +881,22 @@ def import_list(list_id):
     if missing_codes:
         flash("No se importó ningún precio. Códigos inexistentes o inactivos: " + ", ".join(missing_codes[:8]), "danger")
         return redirect(url_for("wholesale_pricing.index", list_id=list_id))
-    below_cost_count = sum(
-        1 for row in parsed_rows
-        if Decimal(str(products[row["barcode"]].cost_price or 0)) > 0
-        and row["unit_price"] < Decimal(str(products[row["barcode"]].cost_price or 0))
-    )
+    below_cost_count = 0
+    for row in parsed_rows:
+        product = products[row["barcode"]]
+        try:
+            applied_price = (
+                row["unit_price"]
+                if row["discount_percent"] is None
+                else _discounted_retail_price(product, row["discount_percent"])
+            )
+        except ValueError as exc:
+            flash(f"No se importó ningún precio. {exc}. Corregí el precio minorista y volvé a importar.", "danger")
+            return redirect(url_for("wholesale_pricing.index", list_id=list_id))
+        row["applied_price"] = applied_price
+        cost = Decimal(str(product.cost_price or 0))
+        if cost > 0 and applied_price < cost:
+            below_cost_count += 1
 
     # Load existing tiers in one query instead of a database lookup for each Excel row.
     existing_items = PriceListItem.query.filter_by(
@@ -664,14 +920,16 @@ def import_list(list_id):
                     price_list_id=price_list.id,
                     product_id=product.id,
                     min_quantity=row["quantity"],
-                    unit_price=row["unit_price"],
+                    unit_price=row["applied_price"],
+                    discount_percent=row["discount_percent"],
                     active=row["active"],
                 )
                 db.session.add(item)
                 items_by_key[key] = item
                 created += 1
             else:
-                item.unit_price = row["unit_price"]
+                item.unit_price = row["applied_price"]
+                item.discount_percent = row["discount_percent"]
                 item.active = row["active"]
                 updated += 1
         db.session.commit()
