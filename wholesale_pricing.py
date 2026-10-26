@@ -9,9 +9,9 @@ from decimal import Decimal, InvalidOperation
 from functools import wraps
 from io import BytesIO
 
-from flask import Blueprint, abort, current_app, flash, redirect, render_template, request, send_file, url_for
+from flask import Blueprint, abort, current_app, flash, jsonify, redirect, render_template, request, send_file, url_for
 from flask_login import current_user, login_required
-from sqlalchemy import Index, UniqueConstraint
+from sqlalchemy import Index, UniqueConstraint, func, or_
 
 from app import Company, db, tenant_required
 from services.ai_agent.usage_service import can_use_commercial_feature
@@ -134,10 +134,27 @@ def index():
         selected = next((row for row in lists if row.active), None)
     products = (
         Product.query.filter_by(company_id=company_id, active=True)
-        .order_by(Product.name.asc())
-        .limit(1000)
+        .order_by(Product.name.asc(), Product.id.asc())
+        .limit(50)
         .all()
     )
+    category_expr = func.trim(func.coalesce(Product.category, ""))
+    category_rows = (
+        db.session.query(category_expr, func.count(Product.id))
+        .filter(Product.company_id == company_id, Product.active.is_(True))
+        .group_by(category_expr)
+        .order_by(category_expr.asc())
+        .all()
+    )
+    category_options = [
+        {
+            "value": category if category else "__stockar_uncategorized__",
+            "label": category if category else "Sin categoría",
+            "count": int(count),
+        }
+        for category, count in category_rows
+    ]
+    active_products_count = Product.query.filter_by(company_id=company_id, active=True).count()
     rows = (
         PriceListItem.query.filter_by(company_id=company_id, price_list_id=selected.id)
         .join(Product, Product.id == PriceListItem.product_id)
@@ -151,6 +168,8 @@ def index():
         lists=lists,
         selected_list=selected,
         products=products,
+        category_options=category_options,
+        active_products_count=active_products_count,
         price_rows=rows,
         today=date.today().isoformat(),
     )
@@ -195,6 +214,37 @@ def create_list():
     return redirect(url_for("wholesale_pricing.index", list_id=row.id))
 
 
+
+
+@bp.get("/productos/buscar")
+@tenant_required
+@login_required
+@_wholesale_plan_required
+def search_products():
+    """Search active products within the current company for the individual selector."""
+    _require_admin()
+    from app import Product
+
+    company_id = _company_id()
+    term = str(request.args.get("q") or "").strip()[:100]
+    query = Product.query.filter_by(company_id=company_id, active=True)
+    if term:
+        pattern = f"%{term}%"
+        query = query.filter(or_(Product.name.ilike(pattern), Product.barcode.ilike(pattern)))
+    matches = query.order_by(Product.name.asc(), Product.id.asc()).limit(50).all()
+    return jsonify({
+        "products": [
+            {
+                "id": int(product.id),
+                "name": product.name or "",
+                "barcode": product.barcode or "",
+            }
+            for product in matches
+        ],
+        "limit": 50,
+    })
+
+
 @bp.post("/listas/<int:list_id>/items")
 @tenant_required
 @login_required
@@ -207,6 +257,8 @@ def save_item(list_id):
     price_list = PriceList.query.filter_by(id=list_id, company_id=company_id).first_or_404()
     product_id = request.form.get("product_id", type=int)
     item_id = request.form.get("item_id", type=int)
+    bulk_mode = str(request.form.get("bulk_mode") or "single").strip().lower()
+
     try:
         quantity = Decimal(str(request.form.get("min_quantity") or "1").replace(",", "."))
         unit_price = Decimal(str(request.form.get("unit_price") or "").replace(",", "."))
@@ -220,6 +272,89 @@ def save_item(list_id):
         message = str(exc) if isinstance(exc, ValueError) and str(exc) else "Ingresá una cantidad y un precio válidos."
         flash(message, "danger")
         return redirect(url_for("wholesale_pricing.index", list_id=list_id))
+
+    if bulk_mode in {"all", "category"}:
+        if item_id:
+            abort(400)
+        products_query = Product.query.filter_by(company_id=company_id, active=True)
+        if bulk_mode == "category":
+            category = str(request.form.get("category") or "").strip()[:120]
+            if not category:
+                flash("Seleccioná una categoría para aplicar el precio.", "danger")
+                return redirect(url_for("wholesale_pricing.index", list_id=list_id))
+            category_expr = func.trim(func.coalesce(Product.category, ""))
+            if category == "__stockar_uncategorized__":
+                products_query = products_query.filter(category_expr == "")
+            else:
+                products_query = products_query.filter(category_expr == category)
+        products = products_query.order_by(Product.id.asc()).all()
+        if not products:
+            flash("No hay productos activos dentro de la selección indicada.", "warning")
+            return redirect(url_for("wholesale_pricing.index", list_id=list_id))
+
+        # Fetch matching tiers once. Existing items at other quantity thresholds
+        # remain untouched; only the selected minimum quantity is created/updated.
+        existing_items = PriceListItem.query.filter_by(
+            company_id=company_id,
+            price_list_id=price_list.id,
+            min_quantity=quantity,
+        ).all()
+        items_by_product = {int(item.product_id): item for item in existing_items}
+        created = 0
+        updated = 0
+        below_cost = 0
+        try:
+            for product in products:
+                item = items_by_product.get(int(product.id))
+                if item is None:
+                    item = PriceListItem(
+                        company_id=company_id,
+                        price_list_id=price_list.id,
+                        product_id=product.id,
+                        min_quantity=quantity,
+                        unit_price=unit_price,
+                        active=True,
+                    )
+                    db.session.add(item)
+                    items_by_product[int(product.id)] = item
+                    created += 1
+                else:
+                    item.unit_price = unit_price
+                    item.active = True
+                    updated += 1
+                cost = Decimal(str(product.cost_price or 0))
+                if cost > 0 and unit_price < cost:
+                    below_cost += 1
+            db.session.commit()
+        except Exception:
+            db.session.rollback()
+            current_app.logger.exception(
+                "Wholesale bulk price update failed: company_id=%s list_id=%s mode=%s",
+                company_id, price_list.id, bulk_mode,
+            )
+            flash("No se pudieron guardar los precios masivos. No se aplicaron cambios parciales.", "danger")
+            return redirect(url_for("wholesale_pricing.index", list_id=list_id))
+
+        scope_label = (
+            "todos los productos activos"
+            if bulk_mode == "all"
+            else (category if category != "__stockar_uncategorized__" else "Sin categoría")
+        )
+        flash(
+            f"Precio mayorista aplicado a {len(products)} productos ({created} tramos nuevos y {updated} actualizados) en {scope_label}.",
+            "success",
+        )
+        if below_cost:
+            flash(
+                f"Atención: {below_cost} productos quedaron con precio mayorista por debajo de su costo. Revisá la rentabilidad.",
+                "warning",
+            )
+        return redirect(url_for("wholesale_pricing.index", list_id=list_id))
+
+    if bulk_mode != "single":
+        flash("Seleccioná un producto, todos los productos o una categoría válida.", "danger")
+        return redirect(url_for("wholesale_pricing.index", list_id=list_id))
+
     product = Product.query.filter_by(id=product_id, company_id=company_id, active=True).first()
     if product is None:
         flash("El producto no pertenece a tu empresa o está inactivo.", "danger")

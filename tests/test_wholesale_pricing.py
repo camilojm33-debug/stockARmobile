@@ -79,6 +79,7 @@ def wholesale_database(app):
         company_id=company.id,
         barcode="WHOLESALE-001",
         name="Producto mayorista QA",
+        category="Bebidas",
         price=Decimal("100.00"),
         cost_price=Decimal("50.00"),
         discount=Decimal("5.00"),
@@ -600,3 +601,163 @@ def test_saved_qr_price_snapshot_rejects_quantity_or_total_drift(wholesale_datab
     }]
     with pytest.raises(ValueError, match="cantidad"):
         apply_price_snapshot(lines, saved)
+
+
+def _create_wholesale_test_product(company_id, *, barcode, name, category, active=True, cost="20.00"):
+    return Product(
+        company_id=company_id,
+        barcode=barcode,
+        name=name,
+        category=category,
+        price=Decimal("100.00"),
+        cost_price=Decimal(cost),
+        discount=Decimal("0.00"),
+        stock=10,
+        min_stock=1,
+        active=active,
+        sale_type="unidad",
+        unit_measure="u",
+    )
+
+
+def _wholesale_admin_client(app, user):
+    browser = app.test_client()
+    with browser.session_transaction() as session:
+        session["_user_id"] = str(user.id)
+        session["_fresh"] = True
+    return browser
+
+
+def test_wholesale_bulk_apply_to_all_active_products_is_tenant_scoped_and_preserves_other_tiers(wholesale_database, app):
+    data = wholesale_database
+    second_product = _create_wholesale_test_product(
+        data["company"].id, barcode="WHOLESALE-002", name="Agua mineral", category="Bebidas"
+    )
+    inactive_product = _create_wholesale_test_product(
+        data["company"].id, barcode="WHOLESALE-003", name="Producto inactivo", category="Bebidas", active=False
+    )
+    db.session.add_all([second_product, inactive_product])
+    db.session.commit()
+    browser = _wholesale_admin_client(app, data["admin"])
+
+    response = browser.post(
+        f"/precios-mayoristas/listas/{data['price_list'].id}/items",
+        data={
+            "bulk_mode": "all",
+            "product_id": "",
+            "category": "",
+            "min_quantity": "1",
+            "unit_price": "45",
+        },
+    )
+    assert response.status_code in (301, 302)
+
+    with app.app_context():
+        original_base = PriceListItem.query.filter_by(
+            company_id=data["company"].id,
+            price_list_id=data["price_list"].id,
+            product_id=data["product"].id,
+            min_quantity=Decimal("1.000"),
+        ).first()
+        original_tier = PriceListItem.query.filter_by(
+            company_id=data["company"].id,
+            price_list_id=data["price_list"].id,
+            product_id=data["product"].id,
+            min_quantity=Decimal("12.000"),
+        ).first()
+        second_tier = PriceListItem.query.filter_by(
+            company_id=data["company"].id,
+            price_list_id=data["price_list"].id,
+            product_id=second_product.id,
+            min_quantity=Decimal("1.000"),
+        ).first()
+        inactive_tier = PriceListItem.query.filter_by(
+            company_id=data["company"].id,
+            price_list_id=data["price_list"].id,
+            product_id=inactive_product.id,
+            min_quantity=Decimal("1.000"),
+        ).first()
+        cross_tenant_tiers = PriceListItem.query.filter_by(
+            company_id=data["other_company"].id,
+            price_list_id=data["price_list"].id,
+            product_id=data["other_product"].id,
+        ).count()
+
+        assert original_base is not None and Decimal(str(original_base.unit_price)) == Decimal("45.00")
+        assert original_tier is not None and Decimal(str(original_tier.unit_price)) == Decimal("70.00")
+        assert second_tier is not None and Decimal(str(second_tier.unit_price)) == Decimal("45.00")
+        assert inactive_tier is None
+        assert cross_tenant_tiers == 0
+
+
+def test_wholesale_bulk_apply_by_category_only_changes_active_products_in_that_category(wholesale_database, app):
+    data = wholesale_database
+    second_beverage = _create_wholesale_test_product(
+        data["company"].id, barcode="WHOLESALE-004", name="Jugo de naranja", category="Bebidas"
+    )
+    cleaning_product = _create_wholesale_test_product(
+        data["company"].id, barcode="WHOLESALE-005", name="Detergente", category="Limpieza"
+    )
+    db.session.add_all([second_beverage, cleaning_product])
+    db.session.commit()
+    browser = _wholesale_admin_client(app, data["admin"])
+
+    response = browser.post(
+        f"/precios-mayoristas/listas/{data['price_list'].id}/items",
+        data={
+            "bulk_mode": "category",
+            "product_id": "",
+            "category": "Bebidas",
+            "min_quantity": "12",
+            "unit_price": "66.50",
+        },
+    )
+    assert response.status_code in (301, 302)
+
+    with app.app_context():
+        beverage_existing = PriceListItem.query.filter_by(
+            company_id=data["company"].id,
+            price_list_id=data["price_list"].id,
+            product_id=data["product"].id,
+            min_quantity=Decimal("12.000"),
+        ).first()
+        beverage_new = PriceListItem.query.filter_by(
+            company_id=data["company"].id,
+            price_list_id=data["price_list"].id,
+            product_id=second_beverage.id,
+            min_quantity=Decimal("12.000"),
+        ).first()
+        cleaning_row = PriceListItem.query.filter_by(
+            company_id=data["company"].id,
+            price_list_id=data["price_list"].id,
+            product_id=cleaning_product.id,
+            min_quantity=Decimal("12.000"),
+        ).first()
+        other_company_row = PriceListItem.query.filter_by(
+            price_list_id=data["price_list"].id,
+            product_id=data["other_product"].id,
+            min_quantity=Decimal("12.000"),
+        ).first()
+
+        assert beverage_existing is not None and Decimal(str(beverage_existing.unit_price)) == Decimal("66.50")
+        assert beverage_new is not None and Decimal(str(beverage_new.unit_price)) == Decimal("66.50")
+        assert cleaning_row is None
+        assert other_company_row is None
+
+
+def test_wholesale_product_search_and_category_selector_are_company_scoped(wholesale_database, app):
+    data = wholesale_database
+    browser = _wholesale_admin_client(app, data["admin"])
+
+    response = browser.get("/precios-mayoristas/productos/buscar?q=WHOLESALE")
+    assert response.status_code == 200
+    payload = response.get_json()
+    assert payload is not None
+    assert [item["id"] for item in payload["products"]] == [data["product"].id]
+    assert all("OTHER-001" not in item["barcode"] for item in payload["products"])
+
+    page = browser.get(f"/precios-mayoristas/?list_id={data['price_list'].id}")
+    assert page.status_code == 200
+    assert b"Todos los productos activos" in page.data
+    assert b"Una categor" in page.data
+    assert b"Bebidas" in page.data
