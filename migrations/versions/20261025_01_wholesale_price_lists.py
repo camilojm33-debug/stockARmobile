@@ -88,6 +88,9 @@ def upgrade():
                     )
                     batch.create_index("ix_clients_price_list_id", ["price_list_id"])
 
+    if "ix_clients_customer_type" not in _indexes(bind, "clients"):
+        op.create_index("ix_clients_customer_type", "clients", ["customer_type"])
+
     for table_name, fk_name in (
         ("sale_items", "fk_sale_items_price_list_id_price_lists"),
         ("quote_items", "fk_quote_items_price_list_id_price_lists"),
