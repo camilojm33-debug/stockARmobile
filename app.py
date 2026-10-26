@@ -2505,6 +2505,7 @@ def inject_notifications():
     ai_feature_marketing_allowed = False
     ai_feature_crm_allowed = False
     commercial_promotions_allowed = False
+    commercial_wholesale_pricing_allowed = False
     ai_employee_access_allowed = False
     support_contact = {
         "email": app.config.get("SUPPORT_EMAIL", "stockarmobile@gmail.com"),
@@ -2531,6 +2532,7 @@ def inject_notifications():
                 ai_feature_marketing_allowed = can_use_ai_feature(company, "marketing").allowed
                 ai_feature_crm_allowed = can_use_ai_feature(company, "crm").allowed
                 commercial_promotions_allowed = can_use_commercial_feature(company, "promotions").allowed
+                commercial_wholesale_pricing_allowed = can_use_commercial_feature(company, "wholesale_pricing").allowed
                 ai_employee_access_allowed = (
                     getattr(current_user, "role", None) in {"admin", "superadmin"}
                     or _user_has_permission(current_user, "ai_access")
@@ -2540,6 +2542,7 @@ def inject_notifications():
                 ai_feature_vendor_allowed = False
                 ai_feature_marketing_allowed = False
                 commercial_promotions_allowed = False
+                commercial_wholesale_pricing_allowed = False
         if getattr(current_user, "role", None) != "superadmin":
             has_active_seller_profile = ReferralSeller.query.filter_by(user_id=current_user.id, active=True).first() is not None
         if getattr(current_user, "role", None) == "admin" and getattr(current_user, "company_id", None):
@@ -2567,6 +2570,7 @@ def inject_notifications():
             "ai_feature_marketing_allowed": ai_feature_marketing_allowed,
             "ai_feature_crm_allowed": ai_feature_crm_allowed,
             "commercial_promotions_allowed": commercial_promotions_allowed,
+            "commercial_wholesale_pricing_allowed": commercial_wholesale_pricing_allowed,
             "ai_employee_access_allowed": ai_employee_access_allowed,
         }
     return {
@@ -2579,6 +2583,7 @@ def inject_notifications():
         "company_feature_enabled": lambda key, default=False: bool(default),
         "current_user_has_permission": lambda key: _user_has_permission(current_user, key),
         "ai_feature_crm_allowed": False,
+        "commercial_wholesale_pricing_allowed": False,
     }
 
 
