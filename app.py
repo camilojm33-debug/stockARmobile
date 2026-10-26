@@ -742,15 +742,26 @@ class Client(db.Model):
     account_current_enabled = db.Column(db.Boolean, default=False, nullable=False)
     active = db.Column(db.Boolean, default=True, nullable=False)
     customer_type = db.Column(db.String(20), nullable=False, default="minorista", server_default="minorista", index=True)
-    price_list_id = db.Column(db.Integer, db.ForeignKey("price_lists.id", ondelete="SET NULL"), index=True)
+    # The physical FK is added by the wholesale-pricing migration. Keeping this
+    # column free of an ORM FK lets the legacy baseline migration create clients
+    # before the new price_lists table exists.
+    price_list_id = db.Column(db.Integer, index=True)
     company_id = db.Column(db.Integer, db.ForeignKey("companies.id"))
     created_at = db.Column(db.DateTime, default=utcnow)
     updated_at = db.Column(db.DateTime, default=utcnow, onupdate=utcnow)
-    price_list_ref = db.relationship("PriceList", foreign_keys=[price_list_id])
 
     @property
     def price_list(self):
-        return self.price_list_ref.name if self.price_list_ref else ""
+        list_id = getattr(self, "price_list_id", None)
+        company_id = getattr(self, "company_id", None)
+        if not list_id or not company_id:
+            return ""
+        try:
+            from wholesale_pricing import PriceList
+            row = db.session.get(PriceList, int(list_id))
+            return row.name if row is not None and row.company_id == company_id else ""
+        except Exception:
+            return ""
 
     @property
     def nombre(self):
@@ -822,7 +833,8 @@ class SaleItem(db.Model):
     cost_price = db.Column(MONEY, default=Decimal("0.00"))
     discount = db.Column(MONEY, default=Decimal("0.00"))
     price_source = db.Column(db.String(20), nullable=False, default="minorista", server_default="minorista")
-    price_list_id = db.Column(db.Integer, db.ForeignKey("price_lists.id", ondelete="SET NULL"), index=True)
+    # Physical FK is added after price_lists exists in Alembic upgrade.
+    price_list_id = db.Column(db.Integer, index=True)
     sale_id = db.Column(db.Integer, db.ForeignKey("sales.id"), nullable=False)
     product_id = db.Column(db.Integer, db.ForeignKey("products.id"), nullable=False)
     product = db.relationship("Product", backref="sale_items")
@@ -893,7 +905,8 @@ class QuoteItem(db.Model):
     subtotal = db.Column(MONEY, default=Decimal("0.00"))
     sort_order = db.Column(db.Integer, default=0, nullable=False)
     price_source = db.Column(db.String(20), nullable=False, default="minorista", server_default="minorista")
-    price_list_id = db.Column(db.Integer, db.ForeignKey("price_lists.id", ondelete="SET NULL"), index=True)
+    # Physical FK is added after price_lists exists in Alembic upgrade.
+    price_list_id = db.Column(db.Integer, index=True)
 
     product = db.relationship("Product")
 
