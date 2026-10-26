@@ -249,11 +249,7 @@ def test_retail_quote_keeps_existing_price_and_product_discount(wholesale_databa
 def test_admin_can_create_price_list_and_add_a_product_price(wholesale_database, app):
     data = wholesale_database
     browser = app.test_client()
-    login = browser.post(
-        "/auth/login",
-        data={"username": "wholesale_admin", "password": "not-used"},
-    )
-    # Test clients in this repository use set_password; set it on the fixture user for this request.
+    # Set a deterministic password for this test administrator.
     with app.app_context():
         data["admin"].set_password("test-password-123")
         db.session.commit()
