@@ -51,7 +51,7 @@
           </div>
         </div>
         <div class="card-body">
-          <form method="post" id="wholesalePriceForm" action="{{ url_for('wholesale_pricing.save_item', list_id=selected_list.id) }}" class="row g-2 align-items-end" data-search-url="{{ url_for('wholesale_pricing.search_products') }}" data-total-products="{{ active_products_count }}">
+          <form method="post" id="wholesalePriceForm" action="{{ url_for('wholesale_pricing.save_item', list_id=selected_list.id) }}" class="row g-2 align-items-end" data-search-url="{{ url_for('wholesale_pricing.search_products') }}" data-preview-url="{{ url_for('wholesale_pricing.bulk_preview', list_id=selected_list.id) }}" data-total-products="{{ active_products_count }}">
             <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
             <div class="col-md-4 col-lg-3">
               <label class="form-label" for="wholesaleScope">Aplicar precio a</label>
@@ -78,6 +78,14 @@
               </select>
               <div class="form-text">Solo se incluyen productos activos de tu empresa dentro de esta categoría.</div>
             </div>
+            <div class="col-md-6 col-lg-5 d-none" id="wholesaleBulkActionGroup">
+              <label class="form-label" for="wholesaleBulkAction">Qué hacer con precios existentes</label>
+              <select class="form-select" id="wholesaleBulkAction" name="bulk_action" disabled>
+                <option value="fill_missing" selected>Completar solo los que no tienen precio</option>
+                <option value="replace_existing">Reemplazar precios existentes</option>
+              </select>
+              <div class="form-text">Por defecto, los precios ya cargados se conservan. Reemplazarlos requiere elegirlo explícitamente.</div>
+            </div>
             <div class="col-6 col-md-2">
               <label class="form-label" for="wholesaleMinQty">Desde cantidad</label>
               <input class="form-control" id="wholesaleMinQty" name="min_quantity" type="number" min="0.001" step="0.001" value="1" required>
@@ -85,12 +93,14 @@
             <div class="col-6 col-md-2">
               <label class="form-label" for="wholesaleUnitPrice">Precio unitario</label>
               <input class="form-control" id="wholesaleUnitPrice" name="unit_price" type="number" min="0.01" step="0.01" required>
+              <div class="form-text" id="wholesaleUnitPriceHelp">Precio del producto seleccionado.</div>
             </div>
             <div class="col-12 col-md-3 col-lg-2 d-grid">
               <button class="btn btn-primary" type="submit" id="wholesaleSavePrice">Guardar precio</button>
             </div>
             <div class="col-12">
               <div class="form-text" id="wholesaleScopeHint" aria-live="polite">Se guardará el precio solo para el producto seleccionado. Para escalas, agregá otros tramos desde distintas cantidades mínimas.</div>
+              <div class="small mt-1" id="wholesaleBulkPreviewStatus" aria-live="polite"></div>
             </div>
           </form>
           <p class="text-muted small mt-2 mb-3">Para escalas, cargá varias filas del mismo producto. Se conserva el resto de los tramos. No se acumulan automáticamente descuentos o promociones minoristas.</p>
@@ -144,17 +154,53 @@
   const productSearchStatus = document.getElementById('wholesaleProductSearchStatus');
   const categoryGroup = document.getElementById('wholesaleCategoryGroup');
   const categorySelect = document.getElementById('wholesaleCategory');
+  const bulkActionGroup = document.getElementById('wholesaleBulkActionGroup');
+  const bulkAction = document.getElementById('wholesaleBulkAction');
   const quantityInput = document.getElementById('wholesaleMinQty');
   const priceInput = document.getElementById('wholesaleUnitPrice');
+  const priceHelp = document.getElementById('wholesaleUnitPriceHelp');
   const hint = document.getElementById('wholesaleScopeHint');
+  const previewStatus = document.getElementById('wholesaleBulkPreviewStatus');
+  const saveButton = document.getElementById('wholesaleSavePrice');
   const searchUrl = form.dataset.searchUrl || '';
+  const previewUrl = form.dataset.previewUrl || '';
   const totalProducts = Number.parseInt(form.dataset.totalProducts || '0', 10);
   let searchTimer = null;
+  let previewTimer = null;
   let searchSequence = 0;
+  let previewSequence = 0;
+  let bulkPreview = null;
+  let previewPending = false;
 
   const selectedCategoryCount = () => {
     const option = categorySelect.options[categorySelect.selectedIndex];
     return option ? Number.parseInt(option.dataset.count || '0', 10) : 0;
+  };
+
+  const selectedTargetLabel = () => {
+    if (scope.value === 'all') return 'todos los productos activos de tu empresa';
+    const option = categorySelect.options[categorySelect.selectedIndex];
+    return option && option.value ? option.textContent : 'la categoría elegida';
+  };
+
+  const updatePriceInput = () => {
+    const single = scope.value === 'single';
+    const replacing = bulkAction.value === 'replace_existing';
+    if (single || replacing) {
+      priceInput.disabled = false;
+      priceInput.required = true;
+      priceHelp.textContent = single
+        ? 'Precio del producto seleccionado.'
+        : 'Este importe reemplazará el precio de la cantidad elegida en todos los productos seleccionados.';
+      return;
+    }
+    const missing = bulkPreview ? Number(bulkPreview.missing || 0) : null;
+    const ready = !previewPending && missing !== null && missing > 0;
+    priceInput.disabled = !ready;
+    priceInput.required = ready;
+    priceHelp.textContent = ready
+      ? 'Este precio se asignará solamente a los ' + missing + ' productos que todavía no tienen este tramo.'
+      : 'Se habilitará si hay productos sin precio para la cantidad seleccionada.';
   };
 
   const updateScope = () => {
@@ -168,17 +214,25 @@
     categoryGroup.classList.toggle('d-none', !category);
     categorySelect.disabled = !category;
     categorySelect.required = category;
+    bulkActionGroup.classList.toggle('d-none', single);
+    bulkAction.disabled = single;
+
     if (single) {
       hint.textContent = 'Se guardará el precio solo para el producto seleccionado. Para escalas, agregá otros tramos desde distintas cantidades mínimas.';
+      previewStatus.textContent = '';
+      saveButton.textContent = 'Guardar precio';
+      saveButton.disabled = false;
     } else if (category) {
-      const option = categorySelect.options[categorySelect.selectedIndex];
-      const label = option && option.value ? option.textContent : 'la categoría elegida';
-      const count = selectedCategoryCount();
-      hint.textContent = count ? 'Se aplicará a ' + count + ' productos activos de ' + label + '. Los tramos de otras cantidades se conservan.' : 'Seleccioná una categoría para ver cuántos productos se incluirán.';
+      hint.textContent = selectedCategoryCount()
+        ? 'Se aplicará a productos activos de ' + selectedTargetLabel() + '. Los tramos de otras cantidades se conservan.'
+        : 'Seleccioná una categoría para consultar sus precios actuales.';
+      saveButton.textContent = 'Aplicar precios';
     } else {
-      hint.textContent = 'Se aplicará a ' + totalProducts + ' productos activos de tu empresa. Los tramos de otras cantidades se conservan.';
+      hint.textContent = 'Se aplicará a todos los productos activos de tu empresa. Los precios existentes para esa cantidad se conservarán por defecto.';
+      saveButton.textContent = 'Aplicar precios';
     }
-    document.getElementById('wholesaleSavePrice').textContent = single ? 'Guardar precio' : 'Aplicar precios';
+    updatePriceInput();
+    if (!single) schedulePreview();
   };
 
   const loadProducts = async (term, sequence) => {
@@ -208,8 +262,84 @@
     }
   };
 
+  const schedulePreview = () => {
+    window.clearTimeout(previewTimer);
+    previewTimer = window.setTimeout(loadBulkPreview, 180);
+  };
+
+  const loadBulkPreview = async () => {
+    if (scope.value === 'single') return;
+    const sequence = ++previewSequence;
+    const quantity = quantityInput.value || '1';
+    if (scope.value === 'category' && !categorySelect.value) {
+      bulkPreview = null;
+      previewPending = false;
+      previewStatus.textContent = 'Seleccioná una categoría para consultar cuántos productos ya tienen precio.';
+      saveButton.disabled = true;
+      updatePriceInput();
+      return;
+    }
+    if (!quantityInput.value || Number(quantity) <= 0) {
+      bulkPreview = null;
+      previewPending = false;
+      previewStatus.textContent = 'Ingresá una cantidad mínima válida para verificar los tramos existentes.';
+      saveButton.disabled = true;
+      updatePriceInput();
+      return;
+    }
+    previewPending = true;
+    bulkPreview = null;
+    saveButton.disabled = true;
+    previewStatus.textContent = 'Consultando precios actuales…';
+    updatePriceInput();
+    const params = new URLSearchParams({
+      bulk_mode: scope.value,
+      min_quantity: quantity
+    });
+    if (scope.value === 'category') params.set('category', categorySelect.value);
+    try {
+      const response = await fetch(previewUrl + '?' + params.toString(), {
+        headers: { 'Accept': 'application/json' },
+        credentials: 'same-origin'
+      });
+      if (!response.ok) throw new Error('No se pudo consultar los precios actuales.');
+      const result = await response.json();
+      if (sequence !== previewSequence) return;
+      bulkPreview = result;
+      previewPending = false;
+      if (Number(result.total) === 0) {
+        previewStatus.textContent = 'No hay productos activos dentro de esta selección.';
+      } else if (bulkAction.value === 'fill_missing' && Number(result.missing) === 0) {
+        previewStatus.textContent = 'Los ' + result.total + ' productos ya tienen precio desde ' + quantity + '. No hace falta cargar otro precio. Para cambiarlos, elegí “Reemplazar precios existentes”.';
+      } else {
+        previewStatus.textContent = result.already_priced + ' productos ya tienen un precio para esta cantidad; ' +
+          result.missing + ' no lo tienen. ' +
+          (bulkAction.value === 'fill_missing'
+            ? 'Solo se completarán los faltantes.'
+            : 'Se actualizarán los precios de todos los productos seleccionados.');
+      }
+      saveButton.disabled = Number(result.total) === 0 ||
+        (bulkAction.value === 'fill_missing' && Number(result.missing) === 0);
+      updatePriceInput();
+    } catch (error) {
+      if (sequence !== previewSequence) return;
+      previewPending = false;
+      bulkPreview = null;
+      previewStatus.textContent = 'No se pudieron verificar los precios actuales. Volvé a intentar antes de aplicar cambios.';
+      saveButton.disabled = true;
+      updatePriceInput();
+    }
+  };
+
   scope.addEventListener('change', updateScope);
   categorySelect.addEventListener('change', updateScope);
+  bulkAction.addEventListener('change', () => {
+    updateScope();
+    schedulePreview();
+  });
+  quantityInput.addEventListener('input', () => {
+    if (scope.value !== 'single') schedulePreview();
+  });
   productSearch.addEventListener('input', () => {
     window.clearTimeout(searchTimer);
     searchTimer = window.setTimeout(() => {
@@ -221,28 +351,32 @@
   form.addEventListener('submit', (event) => {
     const mode = scope.value;
     if (mode === 'single') return;
-    const quantity = quantityInput.value || '1';
-    const price = priceInput.value;
-    let count = totalProducts;
-    let target = 'todos los productos activos de tu empresa';
-    if (mode === 'category') {
-      count = selectedCategoryCount();
-      const option = categorySelect.options[categorySelect.selectedIndex];
-      target = option && option.value ? option.textContent : 'la categoría seleccionada';
-    }
-    if (!count) {
+    if (!bulkPreview || previewPending) {
       event.preventDefault();
-      window.alert('No hay productos activos en esta selección. Elegí otra categoría.');
+      window.alert('Esperá a que se verifiquen los precios actuales antes de continuar.');
       return;
     }
-    const confirmed = window.confirm(
-      'Vas a aplicar un precio mayorista de $' + price +
-      ' desde ' + quantity + ' unidad(es) a ' + count + ' productos en ' + target + '.\n\n' +
-      'Si ya existe un tramo con esa cantidad mínima, se actualizará. Los demás tramos se conservarán.\n\n' +
-      '¿Confirmás la operación?'
-    );
-    if (!confirmed) event.preventDefault();
+    if (bulkAction.value === 'fill_missing' && Number(bulkPreview.missing) === 0) {
+      event.preventDefault();
+      return;
+    }
+    const quantity = quantityInput.value || '1';
+    const price = priceInput.value;
+    const target = selectedTargetLabel();
+    const count = bulkAction.value === 'fill_missing'
+      ? Number(bulkPreview.missing)
+      : Number(bulkPreview.total);
+    if (!count || !price) {
+      event.preventDefault();
+      window.alert('Revisá la selección e ingresá el precio que corresponda.');
+      return;
+    }
+    const message = bulkAction.value === 'fill_missing'
+      ? 'Vas a completar el precio desde ' + quantity + ' unidad(es) solamente en ' + count + ' productos que no tienen ese tramo en ' + target + '. Los precios existentes no se cambiarán.\n\n¿Confirmás?'
+      : 'ATENCIÓN: vas a reemplazar el precio desde ' + quantity + ' unidad(es) en ' + count + ' productos de ' + target + '. Los precios actuales de ese tramo serán sobrescritos.\n\n¿Confirmás el reemplazo?';
+    if (!window.confirm(message)) event.preventDefault();
   });
+
   updateScope();
 })();
 </script>
