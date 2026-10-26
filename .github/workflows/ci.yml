@@ -97,8 +97,8 @@ jobs:
           python-version: '3.14'
       - name: Install dependencies
         run: pip install -r requirements.txt
-      - name: Validate complete Alembic migration chain on PostgreSQL
-        run: python -m flask db upgrade
+      - name: Validate wholesale migration on PostgreSQL
+        run: python scripts/validate_wholesale_migration.py
       - name: Run PostgreSQL recovery and AI outbox regression tests
         run: >-
           pytest -q --tb=short
