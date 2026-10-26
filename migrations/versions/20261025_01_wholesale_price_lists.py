@@ -25,6 +25,12 @@ def _indexes(bind, table_name):
     return {row.get("name") for row in sa.inspect(bind).get_indexes(table_name)}
 
 
+def _foreign_keys(bind, table_name):
+    if not _has_table(bind, table_name):
+        return set()
+    return {row.get("name") for row in sa.inspect(bind).get_foreign_keys(table_name)}
+
+
 def upgrade():
     bind = op.get_bind()
     if not _has_table(bind, "price_lists"):
@@ -70,7 +76,9 @@ def upgrade():
         if index_name not in _indexes(bind, "price_list_items"):
             op.create_index(index_name, "price_list_items", columns)
 
-    # Add fields without overwriting or rebuilding existing customer and document rows.
+    # Add nullable/defaulted fields before creating FKs. Some legacy baseline
+    # migrations use current ORM metadata to bootstrap these tables; the columns
+    # may therefore already exist without the wholesale tables/constraints.
     if _has_table(bind, "clients"):
         cols = _columns(bind, "clients")
         if "customer_type" not in cols or "price_list_id" not in cols:
@@ -79,17 +87,20 @@ def upgrade():
                     batch.add_column(sa.Column("customer_type", sa.String(length=20), nullable=False, server_default="minorista"))
                 if "price_list_id" not in cols:
                     batch.add_column(sa.Column("price_list_id", sa.Integer(), nullable=True))
-                    batch.create_foreign_key(
-                        "fk_clients_price_list_id_price_lists",
-                        "price_lists",
-                        ["price_list_id"],
-                        ["id"],
-                        ondelete="SET NULL",
-                    )
-                    batch.create_index("ix_clients_price_list_id", ["price_list_id"])
 
-    if "ix_clients_customer_type" not in _indexes(bind, "clients"):
-        op.create_index("ix_clients_customer_type", "clients", ["customer_type"])
+        if "fk_clients_price_list_id_price_lists" not in _foreign_keys(bind, "clients"):
+            with op.batch_alter_table("clients") as batch:
+                batch.create_foreign_key(
+                    "fk_clients_price_list_id_price_lists",
+                    "price_lists",
+                    ["price_list_id"],
+                    ["id"],
+                    ondelete="SET NULL",
+                )
+        if "ix_clients_price_list_id" not in _indexes(bind, "clients"):
+            op.create_index("ix_clients_price_list_id", "clients", ["price_list_id"])
+        if "ix_clients_customer_type" not in _indexes(bind, "clients"):
+            op.create_index("ix_clients_customer_type", "clients", ["customer_type"])
 
     for table_name, fk_name in (
         ("sale_items", "fk_sale_items_price_list_id_price_lists"),
@@ -104,14 +115,19 @@ def upgrade():
                     batch.add_column(sa.Column("price_source", sa.String(length=20), nullable=False, server_default="minorista"))
                 if "price_list_id" not in cols:
                     batch.add_column(sa.Column("price_list_id", sa.Integer(), nullable=True))
-                    batch.create_foreign_key(
-                        fk_name,
-                        "price_lists",
-                        ["price_list_id"],
-                        ["id"],
-                        ondelete="SET NULL",
-                    )
-                    batch.create_index(f"ix_{table_name}_price_list_id", ["price_list_id"])
+
+        if fk_name not in _foreign_keys(bind, table_name):
+            with op.batch_alter_table(table_name) as batch:
+                batch.create_foreign_key(
+                    fk_name,
+                    "price_lists",
+                    ["price_list_id"],
+                    ["id"],
+                    ondelete="SET NULL",
+                )
+        index_name = f"ix_{table_name}_price_list_id"
+        if index_name not in _indexes(bind, table_name):
+            op.create_index(index_name, table_name, ["price_list_id"])
 
 
 def downgrade():
