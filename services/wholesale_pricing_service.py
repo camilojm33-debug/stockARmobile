@@ -34,7 +34,30 @@ def _active_today(price_list, today=None):
     return True
 
 
-def resolve_product_price(*, company_id: int, product, quantity=1, client=None) -> dict:
+def _has_wholesale_pricing_access(company_id: int) -> bool:
+    """Fail closed when a company plan does not include wholesale pricing."""
+    try:
+        normalized_company_id = int(company_id)
+    except (TypeError, ValueError):
+        return False
+    if normalized_company_id <= 0:
+        return False
+
+    from app import Company
+    from services.ai_agent.usage_service import can_use_commercial_feature
+
+    company = Company.query.filter_by(id=normalized_company_id, active=True).first()
+    return bool(company is not None and can_use_commercial_feature(company, "wholesale_pricing").allowed)
+
+
+def resolve_product_price(
+    *,
+    company_id: int,
+    product,
+    quantity=1,
+    client=None,
+    _plan_access_allowed: bool | None = None,
+) -> dict:
     """Resolve price for one line without modifying Product or customer records."""
     retail_price = _decimal(getattr(product, "price", 0)).quantize(CENT, rounding=ROUND_HALF_UP)
     fallback = {
@@ -57,6 +80,13 @@ def resolve_product_price(*, company_id: int, product, quantity=1, client=None) 
         return fallback
     if str(getattr(client, "customer_type", "minorista") or "minorista").strip().lower() != "mayorista":
         return fallback
+
+    plan_access_allowed = _plan_access_allowed
+    if plan_access_allowed is None:
+        plan_access_allowed = _has_wholesale_pricing_access(effective_company_id)
+    if not plan_access_allowed:
+        return {**fallback, "reason": "plan_sin_mayoristas"}
+
     try:
         price_list_id = int(getattr(client, "price_list_id", 0) or 0)
     except (TypeError, ValueError):
@@ -104,6 +134,10 @@ def apply_wholesale_prices(lines: list[dict], *, company_id: int, client) -> lis
     Product-level legacy discounts and promotions are intentionally not stacked on
     top of a wholesale list price in this first version.
     """
+    wholesale_client = (
+        str(getattr(client, "customer_type", "minorista") or "minorista").strip().lower() == "mayorista"
+    )
+    plan_access_allowed = _has_wholesale_pricing_access(company_id) if wholesale_client else None
     for line in lines:
         product = line.get("product")
         if product is None:
@@ -115,6 +149,7 @@ def apply_wholesale_prices(lines: list[dict], *, company_id: int, client) -> lis
             product=product,
             quantity=line.get("quantity", 1),
             client=client,
+            _plan_access_allowed=plan_access_allowed,
         )
         line["price_source"] = resolution["source"]
         line["price_list_id"] = resolution["price_list_id"]
@@ -123,6 +158,9 @@ def apply_wholesale_prices(lines: list[dict], *, company_id: int, client) -> lis
         if resolution["source"] == "mayorista":
             line["price"] = resolution["price"]
             line["discount"] = Decimal("0.00")
+        elif resolution["reason"] == "plan_sin_mayoristas":
+            # A previously assigned list must not keep applying after a downgrade.
+            line["price"] = resolution["price"]
     return lines
 
 
@@ -196,7 +234,7 @@ def apply_price_snapshot(lines: list[dict], snapshots: list[dict]) -> list[dict]
 def product_price_catalog(*, company_id: int, product_ids: list[int]) -> dict:
     """Return active list tiers for quote UI; never returns data from another tenant."""
     ids = sorted({int(value) for value in (product_ids or []) if int(value) > 0})
-    if not ids or not company_id:
+    if not ids or not company_id or not _has_wholesale_pricing_access(company_id):
         return {}
     from wholesale_pricing import PriceList, PriceListItem
 

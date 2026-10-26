@@ -21,6 +21,8 @@ def test_main_sidebar_has_fixed_header_scroll_navigation_and_footer():
     nav_markup = sidebar[nav_start:scroll_end]
     assert len(re.findall(r'class="nav-link', nav_markup)) == 55
     assert "Precios mayoristas" in nav_markup
+    assert "commercial_wholesale_pricing_allowed" in nav_markup
+    assert "url_for('wholesale_pricing.index')" in nav_markup
     assert re.findall(r'class="nav-section-label">([^<]+)</div>', nav_markup) == [
         "Administración",
         "IA",
