@@ -41,6 +41,43 @@ def _coerce_payload():
     return request.form
 
 
+def _price_lists_for_form():
+    if getattr(current_user, "role", None) != "admin":
+        return []
+    from wholesale_pricing import active_price_lists
+    company_id = getattr(current_user, "company_id", None)
+    return active_price_lists(company_id, include_inactive=True) if company_id else []
+
+
+def _apply_client_price_assignment(client):
+    # Only the company administrator can change customer classification or tariff.
+    if getattr(current_user, "role", None) != "admin":
+        return
+    from wholesale_pricing import PriceList
+
+    customer_type = str(request.form.get("customer_type") or "minorista").strip().lower()
+    if customer_type not in {"minorista", "mayorista"}:
+        raise ValueError("El tipo de cliente no es válido.")
+    raw_list_id = str(request.form.get("price_list_id") or "").strip()
+    price_list = None
+    if raw_list_id:
+        try:
+            list_id = int(raw_list_id)
+        except (TypeError, ValueError):
+            raise ValueError("La lista de precios seleccionada no es válida.")
+        price_list = PriceList.query.filter_by(
+            id=list_id,
+            company_id=getattr(current_user, "company_id", None),
+            active=True,
+        ).first()
+        if price_list is None:
+            raise ValueError("La lista debe estar activa y pertenecer a tu empresa.")
+    if customer_type == "mayorista" and price_list is None:
+        raise ValueError("Para clasificar al cliente como mayorista, asignale una lista activa.")
+    client.customer_type = customer_type
+    client.price_list_id = price_list.id if customer_type == "mayorista" and price_list else None
+
+
 def _client_stats_for_export(clients, Sale, Quote, db, scope_query_to_company):
     client_ids = {client.id for client in clients}
     stats = {client_id: {} for client_id in client_ids}
@@ -248,7 +285,7 @@ def index():
 @bp.route("/add", methods=["GET"])
 @tenant_required
 def new():
-    return render_template("clientes/form.html", client=None)
+    return render_template("clientes/form.html", client=None, price_lists=_price_lists_for_form())
 
 
 @bp.route("/add", methods=["POST"])
@@ -289,6 +326,11 @@ def post():
     )
     if not client.name:
         flash("El nombre del cliente es obligatorio.", "danger")
+        return redirect(url_for("clients.index"))
+    try:
+        _apply_client_price_assignment(client)
+    except ValueError as exc:
+        flash(str(exc), "danger")
         return redirect(url_for("clients.index"))
     db.session.add(client)
     db.session.commit()
@@ -332,10 +374,15 @@ def edit(client_id=None, id=None):
         client.notes = request.form.get("notes") or None
         client.observations = request.form.get("observations") or None
         client.account_current_enabled = bool(request.form.get("account_current_enabled"))
+        try:
+            _apply_client_price_assignment(client)
+        except ValueError as exc:
+            flash(str(exc), "danger")
+            return redirect(url_for("clients.edit", id=client.id))
         db.session.commit()
         flash("Cliente actualizado exitosamente.", "success")
         return redirect(url_for("clients.index"))
-    return render_template("clientes/form.html", client=client)
+    return render_template("clientes/form.html", client=client, price_lists=_price_lists_for_form())
 
 
 @bp.route("/show/<int:id>")
