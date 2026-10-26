@@ -5,7 +5,7 @@ from __future__ import annotations
 import re
 import unicodedata
 from datetime import date
-from decimal import Decimal, InvalidOperation
+from decimal import Decimal, InvalidOperation, ROUND_HALF_UP
 from functools import wraps
 from io import BytesIO
 
@@ -58,6 +58,9 @@ class PriceListItem(db.Model):
     product_id = db.Column(db.Integer, db.ForeignKey("products.id", ondelete="CASCADE"), nullable=False, index=True)
     min_quantity = db.Column(db.Numeric(18, 3), nullable=False, default=Decimal("1.000"), server_default="1.000")
     unit_price = db.Column(db.Numeric(18, 2), nullable=False)
+    # NULL means a fixed wholesale unit price. A percentage tier is evaluated
+    # dynamically against the product's current retail price at sale/quote time.
+    discount_percent = db.Column(db.Numeric(5, 2), nullable=True)
     active = db.Column(db.Boolean, nullable=False, default=True, server_default=db.true())
     created_at = db.Column(db.DateTime, nullable=False, default=utcnow_naive)
     updated_at = db.Column(db.DateTime, nullable=False, default=utcnow_naive, onupdate=utcnow_naive)
@@ -109,6 +112,21 @@ def _date_value(value):
         return date.fromisoformat(raw)
     except ValueError:
         raise ValueError("La fecha de vigencia no es válida.")
+
+
+def _discounted_retail_price(product, discount_percent: Decimal) -> Decimal:
+    """Return a rounded wholesale price derived from the current retail price."""
+    retail_price = Decimal(str(getattr(product, "price", 0) or 0))
+    if not retail_price.is_finite() or retail_price <= 0:
+        raise ValueError(
+            f"el producto {getattr(product, 'name', '') or getattr(product, 'barcode', '')} "
+            "no tiene un precio minorista válido para calcular el descuento"
+        )
+    if not discount_percent.is_finite() or discount_percent <= 0 or discount_percent >= Decimal("100"):
+        raise ValueError("el descuento debe ser mayor a 0% y menor a 100%")
+    return (
+        retail_price * (Decimal("100") - discount_percent) / Decimal("100")
+    ).quantize(Decimal("0.01"), rounding=ROUND_HALF_UP)
 
 
 def active_price_lists(company_id: int, *, include_inactive: bool = False):
