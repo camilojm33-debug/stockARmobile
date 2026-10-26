@@ -68,6 +68,19 @@ class PriceListItem(db.Model):
     product = db.relationship("Product")
     company = db.relationship("Company")
 
+    @property
+    def effective_unit_price(self):
+        """Current displayed price: fixed amount or percentage of current retail price."""
+        if self.discount_percent is not None and self.product is not None:
+            try:
+                return _discounted_retail_price(
+                    self.product, Decimal(str(self.discount_percent))
+                )
+            except ValueError:
+                # Keep a valid stored amount visible if retail price was later removed.
+                pass
+        return self.unit_price
+
 
 def _company_id():
     return int(getattr(current_user, "company_id", 0) or 0)
