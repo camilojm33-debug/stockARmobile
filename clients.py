@@ -68,9 +68,13 @@ def _apply_client_price_assignment(client):
         price_list = PriceList.query.filter_by(
             id=list_id,
             company_id=getattr(current_user, "company_id", None),
-            active=True,
         ).first()
-        if price_list is None:
+        current_list_can_remain = bool(
+            price_list is not None
+            and not price_list.active
+            and getattr(client, "price_list_id", None) == list_id
+        )
+        if price_list is None or (not price_list.active and not current_list_can_remain):
             raise ValueError("La lista debe estar activa y pertenecer a tu empresa.")
     if customer_type == "mayorista" and price_list is None:
         raise ValueError("Para clasificar al cliente como mayorista, asignale una lista activa.")
