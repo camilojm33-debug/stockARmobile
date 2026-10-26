@@ -249,6 +249,7 @@ def _pos_qr_snapshot(items, payload, *, total_amount, currency):
         "surcharge_type": payload.get("surcharge_type"),
         "surcharge_value": payload.get("surcharge_value"),
         "surcharge_reason": payload.get("surcharge_reason"),
+        "tax_amount": float(payload.get("tax_amount") if payload.get("tax_amount") not in (None, "") else (payload.get("tax") or 0)),
         "total_amount": float(total_amount),
         "currency": currency,
         "cart_hash": cart_hash,
@@ -1307,6 +1308,7 @@ def api_mp_qr_finalize():
         "surcharge_type": snapshot.get("surcharge_type"),
         "surcharge_value": snapshot.get("surcharge_value"),
         "surcharge_reason": snapshot.get("surcharge_reason"),
+        "tax_amount": snapshot.get("tax_amount") or 0,
         "pos_expected_total": float(payment.amount or 0),
     }
 

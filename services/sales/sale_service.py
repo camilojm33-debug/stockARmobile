@@ -151,7 +151,7 @@ class SaleService:
                 if parsed_client_id
                 else None
             )
-            if client_query is not None and quote_snapshot is None:
+            if client_query is not None and quote_snapshot is None and trusted_line_snapshots is None:
                 client_query = client_query.filter(Client.active.is_(True))
             client = client_query.first() if client_query is not None else None
             if parsed_client_id and client is None:
@@ -160,8 +160,6 @@ class SaleService:
             lines = self._calculate_lines(items, lock_for_update=True, discount_overrides=(data.get("line_discounts") or data.get("line_discount_overrides") or {}))
             if trusted_line_snapshots is not None:
                 from services.wholesale_pricing_service import apply_price_snapshot
-                if quote_snapshot is not None:
-                    raise ValueError("No se pueden combinar un presupuesto y un snapshot de QR.")
                 lines = apply_price_snapshot(lines, trusted_line_snapshots)
             elif quote_snapshot is None:
                 from services.wholesale_pricing_service import apply_wholesale_prices
