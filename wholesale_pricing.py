@@ -276,6 +276,68 @@ def save_item(list_id):
     return redirect(url_for("wholesale_pricing.index", list_id=list_id))
 
 
+@bp.get("/listas/<int:list_id>/plantilla.xlsx")
+@tenant_required
+@login_required
+@_wholesale_plan_required
+def download_template(list_id):
+    """Download a full active-product catalog ready for wholesale price entry."""
+    _require_admin()
+    from openpyxl import Workbook
+    from app import Product
+
+    company_id = _company_id()
+    price_list = PriceList.query.filter_by(id=list_id, company_id=company_id).first_or_404()
+    products = (
+        Product.query.filter_by(company_id=company_id, active=True)
+        .order_by(Product.name.asc(), Product.id.asc())
+        .all()
+    )
+    product_ids = {int(product.id) for product in products}
+    existing_rows = (
+        PriceListItem.query.filter_by(company_id=company_id, price_list_id=price_list.id)
+        .order_by(PriceListItem.product_id.asc(), PriceListItem.min_quantity.asc(), PriceListItem.id.asc())
+        .all()
+    )
+    tiers_by_product = {}
+    for item in existing_rows:
+        if int(item.product_id) in product_ids:
+            tiers_by_product.setdefault(int(item.product_id), []).append(item)
+
+    workbook = Workbook()
+    sheet = workbook.active
+    sheet.title = "Precios mayoristas"
+    sheet.append(["barcode", "product_name", "min_quantity", "unit_price", "active"])
+    for product in products:
+        tiers = tiers_by_product.get(int(product.id), [])
+        if tiers:
+            for tier in tiers:
+                sheet.append([
+                    product.barcode or "",
+                    product.name or "",
+                    float(tier.min_quantity or 1),
+                    float(tier.unit_price or 0) if tier.unit_price is not None else None,
+                    bool(tier.active),
+                ])
+        else:
+            # Blank price means "do not import this product until a price is entered".
+            sheet.append([product.barcode or "", product.name or "", 1, None, True])
+    sheet.freeze_panes = "A2"
+    sheet.auto_filter.ref = sheet.dimensions
+    for column, width in (("A", 24), ("B", 36), ("C", 18), ("D", 18), ("E", 12)):
+        sheet.column_dimensions[column].width = width
+    buffer = BytesIO()
+    workbook.save(buffer)
+    workbook.close()
+    buffer.seek(0)
+    return send_file(
+        buffer,
+        as_attachment=True,
+        download_name=f"plantilla_precios_mayoristas_{price_list.code}.xlsx",
+        mimetype="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+    )
+
+
 @bp.get("/listas/<int:list_id>/exportar.xlsx")
 @tenant_required
 @login_required
@@ -283,12 +345,13 @@ def save_item(list_id):
 def export_list(list_id):
     _require_admin()
     from openpyxl import Workbook
-    from app import Product
+    from sqlalchemy.orm import joinedload
 
     company_id = _company_id()
     price_list = PriceList.query.filter_by(id=list_id, company_id=company_id).first_or_404()
     rows = (
-        PriceListItem.query.filter_by(company_id=company_id, price_list_id=price_list.id)
+        PriceListItem.query.options(joinedload(PriceListItem.product))
+        .filter_by(company_id=company_id, price_list_id=price_list.id)
         .order_by(PriceListItem.product_id.asc(), PriceListItem.min_quantity.asc())
         .all()
     )
@@ -297,8 +360,8 @@ def export_list(list_id):
     sheet.title = "Precios mayoristas"
     sheet.append(["barcode", "product_name", "min_quantity", "unit_price", "active"])
     for row in rows:
-        product = Product.query.filter_by(id=row.product_id, company_id=company_id).first()
-        if product is None:
+        product = row.product
+        if product is None or int(product.company_id) != company_id:
             continue
         sheet.append([
             product.barcode or "",
@@ -388,8 +451,16 @@ def import_list(list_id):
             barcode = str(row[positions["barcode"]] or "").strip()[:50]
             if not barcode:
                 raise ValueError("falta código/sku")
-            quantity = Decimal(str(row[positions["min_quantity"]]).replace(",", "."))
-            unit_price = Decimal(str(row[positions["unit_price"]]).replace(",", "."))
+            raw_quantity = row[positions["min_quantity"]] if positions["min_quantity"] < len(row) else None
+            raw_price = row[positions["unit_price"]] if positions["unit_price"] < len(row) else None
+            # A blank price is an explicit omission, not a $0 price. This lets the
+            # full catalog template include products the user does not want to price yet.
+            if raw_price is None or (isinstance(raw_price, str) and not raw_price.strip()):
+                continue
+            if raw_quantity is None or (isinstance(raw_quantity, str) and not raw_quantity.strip()):
+                raise ValueError("falta cantidad mínima")
+            quantity = Decimal(str(raw_quantity).replace(",", "."))
+            unit_price = Decimal(str(raw_price).replace(",", "."))
             if not quantity.is_finite() or quantity <= 0:
                 raise ValueError("la cantidad mínima debe ser mayor a cero")
             if not unit_price.is_finite() or unit_price <= 0:
@@ -436,17 +507,22 @@ def import_list(list_id):
         and row["unit_price"] < Decimal(str(products[row["barcode"]].cost_price or 0))
     )
 
+    # Load existing tiers in one query instead of a database lookup for each Excel row.
+    existing_items = PriceListItem.query.filter_by(
+        company_id=company_id, price_list_id=price_list.id
+    ).all()
+    items_by_key = {
+        (int(item.product_id), Decimal(str(item.min_quantity)).quantize(Decimal("0.001"))): item
+        for item in existing_items
+    }
+
     try:
         updated = 0
         created = 0
         for row in parsed_rows:
             product = products[row["barcode"]]
-            item = PriceListItem.query.filter_by(
-                company_id=company_id,
-                price_list_id=price_list.id,
-                product_id=product.id,
-                min_quantity=row["quantity"],
-            ).first()
+            key = (int(product.id), row["quantity"])
+            item = items_by_key.get(key)
             if item is None:
                 item = PriceListItem(
                     company_id=company_id,
@@ -457,6 +533,7 @@ def import_list(list_id):
                     active=row["active"],
                 )
                 db.session.add(item)
+                items_by_key[key] = item
                 created += 1
             else:
                 item.unit_price = row["unit_price"]
