@@ -245,6 +245,69 @@ def search_products():
     })
 
 
+
+@bp.get("/listas/<int:list_id>/previsualizar-masivo")
+@tenant_required
+@login_required
+@_wholesale_plan_required
+def bulk_preview(list_id):
+    """Count existing and missing tiers for a safe bulk-price operation."""
+    _require_admin()
+    from app import Product
+
+    company_id = _company_id()
+    price_list = PriceList.query.filter_by(id=list_id, company_id=company_id).first_or_404()
+    mode = str(request.args.get("bulk_mode") or "").strip().lower()
+    if mode not in {"all", "category"}:
+        abort(400)
+    try:
+        quantity = Decimal(str(request.args.get("min_quantity") or "1").replace(",", "."))
+        if not quantity.is_finite() or quantity <= 0:
+            raise ValueError
+        quantity = quantity.quantize(Decimal("0.001"))
+    except (InvalidOperation, TypeError, ValueError):
+        return jsonify({"error": "La cantidad mínima no es válida."}), 400
+
+    products_query = Product.query.filter_by(company_id=company_id, active=True)
+    category = None
+    if mode == "category":
+        category = str(request.args.get("category") or "").strip()[:120]
+        if not category:
+            return jsonify({"error": "Seleccioná una categoría."}), 400
+        category_expr = func.trim(func.coalesce(Product.category, ""))
+        if category == "__stockar_uncategorized__":
+            products_query = products_query.filter(category_expr == "")
+        else:
+            products_query = products_query.filter(category_expr == category)
+
+    total = products_query.count()
+    existing_query = (
+        PriceListItem.query
+        .join(Product, Product.id == PriceListItem.product_id)
+        .filter(
+            PriceListItem.company_id == company_id,
+            PriceListItem.price_list_id == price_list.id,
+            PriceListItem.min_quantity == quantity,
+            Product.company_id == company_id,
+            Product.active.is_(True),
+        )
+    )
+    if mode == "category":
+        category_expr = func.trim(func.coalesce(Product.category, ""))
+        if category == "__stockar_uncategorized__":
+            existing_query = existing_query.filter(category_expr == "")
+        else:
+            existing_query = existing_query.filter(category_expr == category)
+
+    already_priced = min(existing_query.count(), total)
+    return jsonify({
+        "total": int(total),
+        "already_priced": int(already_priced),
+        "missing": int(max(total - already_priced, 0)),
+        "min_quantity": str(quantity),
+    })
+
+
 @bp.post("/listas/<int:list_id>/items")
 @tenant_required
 @login_required
@@ -258,25 +321,40 @@ def save_item(list_id):
     product_id = request.form.get("product_id", type=int)
     item_id = request.form.get("item_id", type=int)
     bulk_mode = str(request.form.get("bulk_mode") or "single").strip().lower()
+    bulk_action = str(request.form.get("bulk_action") or "fill_missing").strip().lower()
 
     try:
         quantity = Decimal(str(request.form.get("min_quantity") or "1").replace(",", "."))
-        unit_price = Decimal(str(request.form.get("unit_price") or "").replace(",", "."))
         if not quantity.is_finite() or quantity <= 0:
             raise ValueError("La cantidad mínima debe ser mayor a cero.")
-        if not unit_price.is_finite() or unit_price <= 0:
-            raise ValueError("El precio mayorista debe ser mayor a cero.")
         quantity = quantity.quantize(Decimal("0.001"))
-        unit_price = unit_price.quantize(Decimal("0.01"))
     except (InvalidOperation, TypeError, ValueError) as exc:
-        message = str(exc) if isinstance(exc, ValueError) and str(exc) else "Ingresá una cantidad y un precio válidos."
+        message = str(exc) if isinstance(exc, ValueError) and str(exc) else "Ingresá una cantidad mínima válida."
         flash(message, "danger")
         return redirect(url_for("wholesale_pricing.index", list_id=list_id))
+
+    unit_price = None
+    raw_price = str(request.form.get("unit_price") or "").strip().replace(",", ".")
+    if raw_price:
+        try:
+            unit_price = Decimal(raw_price)
+            if not unit_price.is_finite() or unit_price <= 0:
+                raise ValueError("El precio mayorista debe ser mayor a cero.")
+            unit_price = unit_price.quantize(Decimal("0.01"))
+        except (InvalidOperation, TypeError, ValueError) as exc:
+            message = str(exc) if isinstance(exc, ValueError) and str(exc) else "Ingresá un precio mayorista válido."
+            flash(message, "danger")
+            return redirect(url_for("wholesale_pricing.index", list_id=list_id))
 
     if bulk_mode in {"all", "category"}:
         if item_id:
             abort(400)
+        if bulk_action not in {"fill_missing", "replace_existing"}:
+            flash("Seleccioná una operación masiva válida.", "danger")
+            return redirect(url_for("wholesale_pricing.index", list_id=list_id))
+
         products_query = Product.query.filter_by(company_id=company_id, active=True)
+        category = None
         if bulk_mode == "category":
             category = str(request.form.get("category") or "").strip()[:120]
             if not category:
@@ -292,19 +370,47 @@ def save_item(list_id):
             flash("No hay productos activos dentro de la selección indicada.", "warning")
             return redirect(url_for("wholesale_pricing.index", list_id=list_id))
 
-        # Fetch matching tiers once. Existing items at other quantity thresholds
-        # remain untouched; only the selected minimum quantity is created/updated.
+        # Match a tier by list, company, product and quantity. Other tiers are
+        # never changed. The safe default only fills products without that tier.
         existing_items = PriceListItem.query.filter_by(
             company_id=company_id,
             price_list_id=price_list.id,
             min_quantity=quantity,
         ).all()
         items_by_product = {int(item.product_id): item for item in existing_items}
+        if bulk_action == "fill_missing":
+            products_to_apply = [
+                product for product in products
+                if int(product.id) not in items_by_product
+            ]
+            if not products_to_apply:
+                flash(
+                    f"Los {len(products)} productos seleccionados ya tienen un tramo desde {quantity:g}. "
+                    "No se modificó ningún precio. Elegí «Reemplazar precios existentes» si realmente querés cambiar esos importes.",
+                    "info",
+                )
+                return redirect(url_for("wholesale_pricing.index", list_id=list_id))
+            if unit_price is None:
+                flash(
+                    f"Hay {len(products_to_apply)} productos sin precio desde {quantity:g}. "
+                    "Ingresá el precio que querés aplicar solamente a esos productos.",
+                    "warning",
+                )
+                return redirect(url_for("wholesale_pricing.index", list_id=list_id))
+        else:
+            products_to_apply = products
+            if unit_price is None:
+                flash(
+                    "Ingresá el nuevo precio para reemplazar el tramo existente en los productos seleccionados.",
+                    "warning",
+                )
+                return redirect(url_for("wholesale_pricing.index", list_id=list_id))
+
         created = 0
         updated = 0
         below_cost = 0
         try:
-            for product in products:
+            for product in products_to_apply:
                 item = items_by_product.get(int(product.id))
                 if item is None:
                     item = PriceListItem(
@@ -319,6 +425,7 @@ def save_item(list_id):
                     items_by_product[int(product.id)] = item
                     created += 1
                 else:
+                    # Existing rows are touched only in explicit replace mode.
                     item.unit_price = unit_price
                     item.active = True
                     updated += 1
@@ -329,8 +436,8 @@ def save_item(list_id):
         except Exception:
             db.session.rollback()
             current_app.logger.exception(
-                "Wholesale bulk price update failed: company_id=%s list_id=%s mode=%s",
-                company_id, price_list.id, bulk_mode,
+                "Wholesale bulk price update failed: company_id=%s list_id=%s mode=%s action=%s",
+                company_id, price_list.id, bulk_mode, bulk_action,
             )
             flash("No se pudieron guardar los precios masivos. No se aplicaron cambios parciales.", "danger")
             return redirect(url_for("wholesale_pricing.index", list_id=list_id))
@@ -340,10 +447,18 @@ def save_item(list_id):
             if bulk_mode == "all"
             else (category if category != "__stockar_uncategorized__" else "Sin categoría")
         )
-        flash(
-            f"Precio mayorista aplicado a {len(products)} productos ({created} tramos nuevos y {updated} actualizados) en {scope_label}.",
-            "success",
-        )
+        if bulk_action == "fill_missing":
+            flash(
+                f"Se completaron los precios de {created} productos sin tramo desde {quantity:g} en {scope_label}. "
+                "Los precios que ya existían no se modificaron.",
+                "success",
+            )
+        else:
+            flash(
+                f"Precio mayorista reemplazado para {len(products_to_apply)} productos "
+                f"({created} tramos nuevos y {updated} actualizados) en {scope_label}.",
+                "success",
+            )
         if below_cost:
             flash(
                 f"Atención: {below_cost} productos quedaron con precio mayorista por debajo de su costo. Revisá la rentabilidad.",
@@ -353,6 +468,9 @@ def save_item(list_id):
 
     if bulk_mode != "single":
         flash("Seleccioná un producto, todos los productos o una categoría válida.", "danger")
+        return redirect(url_for("wholesale_pricing.index", list_id=list_id))
+    if unit_price is None:
+        flash("Ingresá un precio mayorista válido.", "danger")
         return redirect(url_for("wholesale_pricing.index", list_id=list_id))
 
     product = Product.query.filter_by(id=product_id, company_id=company_id, active=True).first()
