@@ -577,6 +577,8 @@ def test_saved_qr_price_snapshot_survives_current_product_price_change(wholesale
         "discount": 0,
         "price_source": "mayorista",
         "price_list_id": data["price_list"].id,
+        "wholesale_discount_percent": 44,
+        "wholesale_reference_price": 125,
     }]
 
     result = apply_price_snapshot(lines, saved)
@@ -584,6 +586,8 @@ def test_saved_qr_price_snapshot_survives_current_product_price_change(wholesale
     assert result[0]["price"] == Decimal("70.00")
     assert result[0]["price_source"] == "mayorista"
     assert result[0]["price_list_id"] == data["price_list"].id
+    assert result[0]["wholesale_discount_percent"] == Decimal("44")
+    assert result[0]["wholesale_reference_price"] == Decimal("125.00")
 
 
 def test_saved_qr_price_snapshot_rejects_quantity_or_total_drift(wholesale_database):
