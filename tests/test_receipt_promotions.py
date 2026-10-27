@@ -103,3 +103,35 @@ def test_ticket_renders_persisted_quote_charge_breakdown():
     assert "Recargo: " not in ticket
     assert "Impuestos: " not in ticket
     assert "TOTAL: $320.00" in ticket
+
+
+def test_ticket_displays_wholesale_percentage_and_savings_without_double_subtracting():
+    sale = make_sale()
+    product = SimpleNamespace(name="coca", unit_measure="u", price=Decimal("7000.00"))
+    item = SimpleNamespace(
+        product=product,
+        product_id=1,
+        quantity=3,
+        price=Decimal("6090.00"),
+        discount=Decimal("0.00"),
+        price_source="mayorista",
+        price_list_id=2,
+        wholesale_discount_percent=Decimal("13.00"),
+        wholesale_reference_price=Decimal("7000.00"),
+    )
+    sale.items = [item]
+    sale.subtotal = Decimal("18270.00")
+    sale.discount = Decimal("0.00")
+    sale.discount_reason = None
+    sale.total_amount = Decimal("18270.00")
+
+    ticket = ReceiptService.ticket_text(sale, "STOCK ARMOBILE")
+    row = ReceiptService.ticket_rows(sale)[0]
+
+    assert "Descuento mayorista (13%): -$2730.00 (ya aplicado en el precio)" in ticket
+    assert "Ahorro mayorista ya incluido en precios unitarios: $2730.00" in ticket
+    assert "Descuento adicional: -$0.00" in ticket
+    assert "TOTAL: $18270.00" in ticket
+    assert row["wholesale_discount_percent"] == Decimal("13.00")
+    assert row["wholesale_reference_price"] == Decimal("7000.00")
+    assert row["wholesale_discount_amount"] == Decimal("2730.00")
