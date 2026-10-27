@@ -1,7 +1,7 @@
 """Ticket and receipt rendering helpers for sales."""
 
 import json
-from decimal import Decimal
+from decimal import Decimal, InvalidOperation, ROUND_HALF_UP
 
 from stockarmobile.helpers.dates import format_local_datetime
 
@@ -39,6 +39,98 @@ class ReceiptService:
         return max(stored, line_total).quantize(Decimal("0.01"))
 
     @staticmethod
+    def wholesale_discount_info(item):
+        """Return stored savings; infer legacy rows only when the current rule matches the charged price."""
+        try:
+            quantity = Decimal(str(getattr(item, "quantity", 0) or 0))
+            unit_price = Decimal(str(getattr(item, "price", 0) or 0)).quantize(
+                Decimal("0.01"), rounding=ROUND_HALF_UP
+            )
+            percent_raw = getattr(item, "wholesale_discount_percent", None)
+            reference_raw = getattr(item, "wholesale_reference_price", None)
+            percent = Decimal(str(percent_raw)) if percent_raw not in (None, "") else None
+            reference_price = Decimal(str(reference_raw)).quantize(
+                Decimal("0.01"), rounding=ROUND_HALF_UP
+            ) if reference_raw not in (None, "") else None
+        except (InvalidOperation, TypeError, ValueError):
+            return None
+
+        if percent is None or reference_price is None:
+            if (
+                str(getattr(item, "price_source", "") or "").strip().lower() != "mayorista"
+                or not getattr(item, "price_list_id", None)
+                or not getattr(item, "product_id", None)
+                or quantity <= 0
+            ):
+                return None
+            product = getattr(item, "product", None)
+            if product is None:
+                return None
+            try:
+                from wholesale_pricing import PriceListItem
+
+                query = PriceListItem.query.filter(
+                    PriceListItem.price_list_id == int(item.price_list_id),
+                    PriceListItem.product_id == int(item.product_id),
+                    PriceListItem.active.is_(True),
+                    PriceListItem.min_quantity <= quantity,
+                )
+                sale = getattr(item, "sale", None)
+                if getattr(sale, "company_id", None) is not None:
+                    query = query.filter(PriceListItem.company_id == int(sale.company_id))
+                rule = query.order_by(
+                    PriceListItem.min_quantity.desc(), PriceListItem.id.desc()
+                ).first()
+                if rule is None or getattr(rule, "discount_percent", None) is None:
+                    return None
+                percent = Decimal(str(rule.discount_percent))
+                reference_price = Decimal(str(getattr(product, "price", 0) or 0)).quantize(
+                    Decimal("0.01"), rounding=ROUND_HALF_UP
+                )
+                expected_price = (
+                    reference_price * (Decimal("100") - percent) / Decimal("100")
+                ).quantize(Decimal("0.01"), rounding=ROUND_HALF_UP)
+                # Safe fallback for tickets created before snapshots existed: never
+                # infer a discount unless it exactly reproduces the saved charged price.
+                if expected_price != unit_price:
+                    return None
+            except Exception:
+                return None
+
+        if (
+            percent is None or not percent.is_finite()
+            or percent <= 0 or percent >= Decimal("100")
+            or reference_price is None or reference_price <= unit_price
+            or quantity <= 0
+        ):
+            return None
+        unit_saving = (reference_price - unit_price).quantize(
+            Decimal("0.01"), rounding=ROUND_HALF_UP
+        )
+        amount = (unit_saving * quantity).quantize(
+            Decimal("0.01"), rounding=ROUND_HALF_UP
+        )
+        if amount <= 0:
+            return None
+        return {
+            "percent": percent,
+            "reference_price": reference_price,
+            "unit_saving": unit_saving,
+            "amount": amount,
+        }
+
+    @staticmethod
+    def wholesale_discount_total(sale):
+        total = sum(
+            (
+                (ReceiptService.wholesale_discount_info(item) or {}).get("amount", Decimal("0.00"))
+                for item in (getattr(sale, "items", []) or [])
+            ),
+            Decimal("0.00"),
+        )
+        return total.quantize(Decimal("0.01"), rounding=ROUND_HALF_UP)
+
+    @staticmethod
     def _ticket_lines(sale):
         lines = []
         for item in sale.items:
@@ -46,8 +138,15 @@ class ReceiptService:
             unit_measure = item.product.unit_measure if item.product else "u"
             quantity, price, discount, gross, total = ReceiptService._line_values(item)
             lines.append(f"{name}: $" + f"{price:.2f} x {quantity:g} {unit_measure} = $" + f"{gross:.2f}")
+            wholesale_info = ReceiptService.wholesale_discount_info(item)
+            if wholesale_info:
+                lines.append(
+                    "  Descuento mayorista (" + f"{wholesale_info['percent']:g}%): -$"
+                    + f"{wholesale_info['amount']:.2f} (ya aplicado en el precio)"
+                )
             if discount > 0:
                 lines.append("  Descuento promoción: -$" + f"{discount:.2f}")
+            if discount > 0 or wholesale_info:
                 lines.append("  Total línea: $" + f"{total:.2f}")
         return lines
 
@@ -146,8 +245,12 @@ class ReceiptService:
         if ticket_note:
             lines.extend(["-" * 32, f"Obs.: {ticket_note}"])
         effective_discount = ReceiptService._effective_discount(sale)
+        wholesale_savings = ReceiptService.wholesale_discount_total(sale)
         lines.extend(["-" * 32, f"Subtotal: ${sale.subtotal:.2f}"])
-        lines.extend(ReceiptService._adjustment_lines("Descuento", sale.discount_type, sale.discount_value, effective_discount, sale.discount_reason, "-"))
+        if wholesale_savings > 0:
+            lines.append(f"Ahorro mayorista ya incluido en precios unitarios: ${wholesale_savings:.2f}")
+        discount_label = "Descuento adicional" if wholesale_savings > 0 else "Descuento"
+        lines.extend(ReceiptService._adjustment_lines(discount_label, sale.discount_type, sale.discount_value, effective_discount, sale.discount_reason, "-"))
         charge_rows = ReceiptService.charge_rows(sale)
         if charge_rows:
             for row in charge_rows:
@@ -182,6 +285,7 @@ class ReceiptService:
             name = item.product.name if item.product else f"Producto {item.product_id}"
             unit_measure = item.product.unit_measure if item.product else "u"
             quantity, price, discount, gross, total = ReceiptService._line_values(item)
+            wholesale_info = ReceiptService.wholesale_discount_info(item)
             rows.append({
                 "name": name,
                 "unit_measure": unit_measure,
@@ -190,6 +294,10 @@ class ReceiptService:
                 "discount": discount,
                 "gross": gross,
                 "total": total,
+                "wholesale_discount_percent": wholesale_info["percent"] if wholesale_info else None,
+                "wholesale_reference_price": wholesale_info["reference_price"] if wholesale_info else None,
+                "wholesale_unit_saving": wholesale_info["unit_saving"] if wholesale_info else Decimal("0.00"),
+                "wholesale_discount_amount": wholesale_info["amount"] if wholesale_info else Decimal("0.00"),
             })
         return rows
 
@@ -202,7 +310,12 @@ class ReceiptService:
         lines.append("------------------------------")
         lines.extend(ReceiptService._ticket_lines(sale))
         effective_discount = ReceiptService._effective_discount(sale)
-        lines.extend(["------------------------------", f"Subtotal: ${sale.subtotal:.2f}", *ReceiptService._adjustment_lines("Descuento", sale.discount_type, sale.discount_value, effective_discount, sale.discount_reason, "-")])
+        wholesale_savings = ReceiptService.wholesale_discount_total(sale)
+        lines.extend(["------------------------------", f"Subtotal: ${sale.subtotal:.2f}"])
+        if wholesale_savings > 0:
+            lines.append(f"Ahorro mayorista ya incluido en precios unitarios: ${wholesale_savings:.2f}")
+        discount_label = "Descuento adicional" if wholesale_savings > 0 else "Descuento"
+        lines.extend(ReceiptService._adjustment_lines(discount_label, sale.discount_type, sale.discount_value, effective_discount, sale.discount_reason, "-"))
         charge_rows = ReceiptService.charge_rows(sale)
         if charge_rows:
             for row in charge_rows:
