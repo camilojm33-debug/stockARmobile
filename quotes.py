@@ -1514,6 +1514,10 @@ def duplicate_quote(quote_id):
                 discount=item.discount,
                 subtotal=item.subtotal,
                 sort_order=item.sort_order,
+                price_source=getattr(item, "price_source", None) or "minorista",
+                price_list_id=getattr(item, "price_list_id", None),
+                wholesale_discount_percent=getattr(item, "wholesale_discount_percent", None),
+                wholesale_reference_price=getattr(item, "wholesale_reference_price", None),
             )
         )
     db.session.commit()
