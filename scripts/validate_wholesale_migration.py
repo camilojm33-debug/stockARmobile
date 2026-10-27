@@ -15,7 +15,7 @@ from flask_migrate import stamp, upgrade
 
 
 BASE_REVISION = "20261024_01_release_readiness"
-HEAD_REVISION = "20261026_01_discount_pct"
+HEAD_REVISION = "20261026_02_wholesale_disc_snap"
 
 
 def main() -> None:
@@ -53,8 +53,8 @@ def main() -> None:
             connection.execute(text("DROP TABLE IF EXISTS price_lists CASCADE"))
             for table_name, columns in (
                 ("clients", ("customer_type", "price_list_id")),
-                ("sale_items", ("price_source", "price_list_id")),
-                ("quote_items", ("price_source", "price_list_id")),
+                ("sale_items", ("price_source", "price_list_id", "wholesale_discount_percent", "wholesale_reference_price")),
+                ("quote_items", ("price_source", "price_list_id", "wholesale_discount_percent", "wholesale_reference_price")),
             ):
                 for column_name in columns:
                     connection.execute(
@@ -70,8 +70,8 @@ def main() -> None:
         inspector = inspect(db.engine)
         expected_columns = {
             "clients": {"customer_type", "price_list_id"},
-            "sale_items": {"price_source", "price_list_id"},
-            "quote_items": {"price_source", "price_list_id"},
+            "sale_items": {"price_source", "price_list_id", "wholesale_discount_percent", "wholesale_reference_price"},
+            "quote_items": {"price_source", "price_list_id", "wholesale_discount_percent", "wholesale_reference_price"},
             "price_list_items": {"discount_percent"},
         }
         for table_name, expected in expected_columns.items():
@@ -114,8 +114,8 @@ def main() -> None:
             if expected not in feature_tokens:
                 raise AssertionError(f"Existing Negocio plan lost expected feature: {expected}")
 
-        print("PASS: wholesale-pricing, percentage-discount, and Negocio-plan migrations upgraded the pre-feature PostgreSQL schema.")
-        print("PASS: wholesale tables, percentage discounts, customer assignment, sale/quote price snapshots, foreign keys, and latest Alembic revision exist.")
+        print("PASS: wholesale-pricing, percentage-discount, sale/quote snapshot, and Negocio-plan migrations upgraded the pre-feature PostgreSQL schema.")
+        print("PASS: wholesale tables, percentage discounts, sale/quote discount snapshots, customer assignment, foreign keys, and latest Alembic revision exist.")
         print("PASS: existing Negocio plan gains wholesale_pricing while preserving other commercial features.")
 
 
