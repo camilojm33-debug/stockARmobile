@@ -972,6 +972,8 @@ def api_mp_qr_create():
                 "discount": float(line["discount"] or 0),
                 "price_source": line.get("price_source", "minorista"),
                 "price_list_id": line.get("price_list_id"),
+                "wholesale_discount_percent": line.get("wholesale_discount_percent"),
+                "wholesale_reference_price": line.get("wholesale_reference_price"),
                 "barcode": str(line["product"].barcode or ""),
             }
             for line in lines
