@@ -171,6 +171,12 @@ def apply_wholesale_prices(lines: list[dict], *, company_id: int, client) -> lis
         line["price_list_id"] = resolution["price_list_id"]
         line["price_list_name"] = resolution["price_list_name"]
         line["price_resolution_reason"] = resolution["reason"]
+        line["wholesale_discount_percent"] = resolution.get("discount_percent")
+        line["wholesale_reference_price"] = (
+            _decimal(getattr(product, "price", 0)).quantize(CENT, rounding=ROUND_HALF_UP)
+            if resolution["source"] == "mayorista" and resolution.get("discount_percent") is not None
+            else None
+        )
         if resolution["source"] == "mayorista":
             line["price"] = resolution["price"]
             line["discount"] = Decimal("0.00")
@@ -220,14 +226,35 @@ def apply_price_snapshot(lines: list[dict], snapshots: list[dict]) -> list[dict]
             price_list_id = int(raw_list_id) if raw_list_id not in (None, "") else None
         except (TypeError, ValueError):
             raise ValueError("La lista de precios guardada en el QR no es válida.")
+        raw_percent = raw.get("wholesale_discount_percent")
+        raw_reference_price = raw.get("wholesale_reference_price")
+        try:
+            discount_percent = Decimal(str(raw_percent)) if raw_percent not in (None, "") else None
+            reference_price = Decimal(str(raw_reference_price)) if raw_reference_price not in (None, "") else None
+        except (InvalidOperation, TypeError, ValueError):
+            raise ValueError("El snapshot de descuento mayorista contiene importes inválidos.")
+        if discount_percent is not None and (
+            not discount_percent.is_finite() or discount_percent <= 0 or discount_percent >= Decimal("100")
+        ):
+            raise ValueError("El snapshot de descuento mayorista está fuera de rango.")
+        if reference_price is not None and (
+            not reference_price.is_finite() or reference_price <= 0
+        ):
+            raise ValueError("El precio minorista de referencia guardado en el QR no es válido.")
         if source != "mayorista":
             price_list_id = None
+            discount_percent = None
+            reference_price = None
+        elif (discount_percent is None) != (reference_price is None):
+            raise ValueError("El snapshot de descuento mayorista está incompleto.")
         parsed[product_id] = {
             "quantity": quantity,
             "price": price.quantize(CENT, rounding=ROUND_HALF_UP),
             "discount": discount.quantize(CENT, rounding=ROUND_HALF_UP),
             "price_source": source,
             "price_list_id": price_list_id,
+            "wholesale_discount_percent": discount_percent,
+            "wholesale_reference_price": reference_price.quantize(CENT, rounding=ROUND_HALF_UP) if reference_price is not None else None,
         }
 
     line_ids = {int(line["product"].id) for line in lines}
@@ -244,6 +271,8 @@ def apply_price_snapshot(lines: list[dict], snapshots: list[dict]) -> list[dict]
         line["discount"] = saved["discount"]
         line["price_source"] = saved["price_source"]
         line["price_list_id"] = saved["price_list_id"]
+        line["wholesale_discount_percent"] = saved["wholesale_discount_percent"]
+        line["wholesale_reference_price"] = saved["wholesale_reference_price"]
     return lines
 
 
