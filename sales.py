@@ -227,6 +227,8 @@ def _pos_qr_snapshot(items, payload, *, total_amount, currency):
                 "discount": float(item.get("discount") or 0),
                 "price_source": str(item.get("price_source") or "minorista"),
                 "price_list_id": int(item.get("price_list_id")) if item.get("price_list_id") not in (None, "") else None,
+                "wholesale_discount_percent": float(item.get("wholesale_discount_percent")) if item.get("wholesale_discount_percent") not in (None, "") else None,
+                "wholesale_reference_price": float(item.get("wholesale_reference_price")) if item.get("wholesale_reference_price") not in (None, "") else None,
                 "barcode": item.get("barcode") or "",
             }
         )
