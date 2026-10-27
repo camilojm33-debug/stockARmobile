@@ -692,8 +692,8 @@ def _quote_snapshot(quote):
                 "subtotal": float(item.subtotal or 0),
                 "price_source": getattr(item, "price_source", None) or "minorista",
                 "price_list_id": getattr(item, "price_list_id", None),
-                "wholesale_discount_percent": getattr(item, "wholesale_discount_percent", None),
-                "wholesale_reference_price": getattr(item, "wholesale_reference_price", None),
+                "wholesale_discount_percent": float(item.wholesale_discount_percent) if getattr(item, "wholesale_discount_percent", None) is not None else None,
+                "wholesale_reference_price": float(item.wholesale_reference_price) if getattr(item, "wholesale_reference_price", None) is not None else None,
             }
             for item in quote.items
         ],
@@ -856,8 +856,8 @@ def _quote_form_items(quote):
             "discount": float(item.discount or 0),
             "price_source": getattr(item, "price_source", None) or "minorista",
             "price_list_id": getattr(item, "price_list_id", None),
-            "wholesale_discount_percent": getattr(item, "wholesale_discount_percent", None),
-            "wholesale_reference_price": getattr(item, "wholesale_reference_price", None),
+            "wholesale_discount_percent": float(item.wholesale_discount_percent) if getattr(item, "wholesale_discount_percent", None) is not None else None,
+            "wholesale_reference_price": float(item.wholesale_reference_price) if getattr(item, "wholesale_reference_price", None) is not None else None,
         }
         for item in quote.items
     ]
