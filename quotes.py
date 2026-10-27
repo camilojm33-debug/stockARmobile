@@ -6,7 +6,7 @@ import json
 import os
 import mimetypes
 from datetime import datetime, timedelta
-from decimal import Decimal, ROUND_HALF_UP
+from decimal import Decimal, InvalidOperation, ROUND_HALF_UP
 from email.message import EmailMessage
 from io import BytesIO
 import smtplib
@@ -388,8 +388,14 @@ def _build_quote_whatsapp_message(quote, company):
             f"Cant: {_quote_quantity(item.quantity)} | "
             f"Precio: {_quote_money(item.unit_price, currency)}"
         )
+        wholesale_info = _quote_wholesale_discount_info(item)
+        if wholesale_info:
+            line += (
+                f" | Descuento mayorista {wholesale_info['percent']:.2f}%"
+                f" (ahorro {_quote_money(wholesale_info['amount'], currency)}, ya incluido)"
+            )
         if float(item.discount or 0) > 0:
-            line += f" | Desc: {_quote_money(item.discount, currency)}"
+            line += f" | Desc. adicional: {_quote_money(item.discount, currency)}"
         line += f" | Subtotal: {_quote_money(item.subtotal, currency)}"
         lines.append(line)
 
@@ -399,6 +405,11 @@ def _build_quote_whatsapp_message(quote, company):
             f"Subtotal: {_quote_money(quote.subtotal, currency)}",
         ]
     )
+    wholesale_savings = _quote_wholesale_savings(quote)
+    if wholesale_savings > 0:
+        lines.append(
+            f"Ahorro mayorista ya incluido en los precios unitarios: {_quote_money(wholesale_savings, currency)}"
+        )
     if float(quote.discount or 0) > 0:
         lines.append(f"Descuento: -{_quote_money(quote.discount, currency)}")
         if quote.discount_reason:
@@ -1041,11 +1052,30 @@ def _quote_pdf_response(quote, *, as_attachment=False):
         pdf.drawRightString(360, y, f"${float(item.unit_price or 0):.2f}")
         pdf.drawRightString(470, y, f"${float(item.subtotal or 0):.2f}")
         y -= 14
+        wholesale_info = _quote_wholesale_discount_info(item)
+        if wholesale_info:
+            if y < 90:
+                pdf.showPage()
+                y = height - 45
+            pdf.setFont("Helvetica", 8)
+            description = (
+                f"Precio minorista ref. ${float(wholesale_info['reference_price']):.2f} | "
+                f"Descuento mayorista {float(wholesale_info['percent']):.2f}% | "
+                f"Ahorro ${float(wholesale_info['amount']):.2f} (ya incluido)"
+            )
+            pdf.drawString(48, y, description[:105])
+            pdf.setFont("Helvetica", 10)
+            y -= 12
 
     y -= 8
     pdf.setFont("Helvetica-Bold", 11)
     pdf.drawRightString(470, y, f"Subtotal: ${float(quote.subtotal or 0):.2f}")
     y -= 14
+    wholesale_savings = _quote_wholesale_savings(quote)
+    if wholesale_savings > 0:
+        pdf.setFont("Helvetica", 9)
+        pdf.drawRightString(470, y, f"Ahorro mayorista ya incluido: ${float(wholesale_savings):.2f}")
+        y -= 14
     discount_label = f"{float(quote.discount_value):.2f}%" if quote.discount_type == "percentage" and quote.discount_value is not None else f"-${float(quote.discount or 0):.2f}"
     pdf.drawRightString(470, y, f"Descuento: {discount_label}")
     y -= 14
