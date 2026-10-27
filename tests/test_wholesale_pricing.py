@@ -577,6 +577,8 @@ def test_saved_qr_price_snapshot_survives_current_product_price_change(wholesale
         "discount": 0,
         "price_source": "mayorista",
         "price_list_id": data["price_list"].id,
+        "wholesale_discount_percent": 44,
+        "wholesale_reference_price": 125,
     }]
 
     result = apply_price_snapshot(lines, saved)
@@ -584,6 +586,8 @@ def test_saved_qr_price_snapshot_survives_current_product_price_change(wholesale
     assert result[0]["price"] == Decimal("70.00")
     assert result[0]["price_source"] == "mayorista"
     assert result[0]["price_list_id"] == data["price_list"].id
+    assert result[0]["wholesale_discount_percent"] == Decimal("44")
+    assert result[0]["wholesale_reference_price"] == Decimal("125.00")
 
 
 def test_saved_qr_price_snapshot_rejects_quantity_or_total_drift(wholesale_database):
@@ -1159,3 +1163,61 @@ def test_single_product_can_use_percentage_discount_tier(wholesale_database, app
         )
         assert resolution["price"] == Decimal("180.00")
 
+
+
+def test_quote_shows_wholesale_discount_percent_and_savings(wholesale_database, app):
+    from types import SimpleNamespace
+    import quotes
+
+    data = wholesale_database
+    percentage_tier = PriceListItem(
+        company_id=data["company"].id,
+        price_list_id=data["price_list"].id,
+        product_id=data["product"].id,
+        min_quantity=Decimal("3.000"),
+        unit_price=Decimal("87.00"),
+        discount_percent=Decimal("13.00"),
+        active=True,
+    )
+    db.session.add(percentage_tier)
+    db.session.commit()
+
+    with app.test_request_context("/presupuestos/nuevo"):
+        login_user(data["employee"])
+        try:
+            parsed_items = quotes._parse_items(
+                {"items": [{
+                    "product_id": data["product"].id,
+                    "description": data["product"].name,
+                    "quantity": 3,
+                    "unit_price": 100,
+                    "discount": 0,
+                }]},
+                client=data["wholesale_client"],
+            )
+        finally:
+            logout_user()
+
+    assert len(parsed_items) == 1
+    assert parsed_items[0]["unit_price"] == Decimal("87.00")
+    assert parsed_items[0]["price_source"] == "mayorista"
+    assert parsed_items[0]["wholesale_discount_percent"] == Decimal("13.00")
+    assert parsed_items[0]["wholesale_reference_price"] == Decimal("100.00")
+
+    quote_item = SimpleNamespace(
+        description="Coca",
+        quantity=3,
+        unit_price=parsed_items[0]["unit_price"],
+        discount=Decimal("0.00"),
+        subtotal=Decimal("261.00"),
+        price_source="mayorista",
+        price_list_id=data["price_list"].id,
+        wholesale_discount_percent=parsed_items[0]["wholesale_discount_percent"],
+        wholesale_reference_price=parsed_items[0]["wholesale_reference_price"],
+        product=data["product"],
+    )
+    rows = quotes._quote_rows(SimpleNamespace(items=[quote_item]))
+
+    assert rows[0]["wholesale_discount_percent"] == 13.0
+    assert rows[0]["wholesale_reference_price"] == 100.0
+    assert rows[0]["wholesale_discount_amount"] == 39.0

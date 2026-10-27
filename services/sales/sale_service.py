@@ -172,6 +172,8 @@ class SaleService:
                         "discount": self._to_decimal(item.discount),
                         "price_source": getattr(item, "price_source", None) or "minorista",
                         "price_list_id": getattr(item, "price_list_id", None),
+                        "wholesale_discount_percent": getattr(item, "wholesale_discount_percent", None),
+                        "wholesale_reference_price": getattr(item, "wholesale_reference_price", None),
                     }
                     for item in quote_snapshot.items
                     if item.product_id
@@ -189,6 +191,8 @@ class SaleService:
                     line["discount"] = expected_line["discount"]
                     line["price_source"] = expected_line["price_source"]
                     line["price_list_id"] = expected_line["price_list_id"]
+                    line["wholesale_discount_percent"] = expected_line["wholesale_discount_percent"]
+                    line["wholesale_reference_price"] = expected_line["wholesale_reference_price"]
                 promotion_results = []
             elif trusted_line_snapshots is not None:
                 # The paid QR amount was calculated from this persisted snapshot.
@@ -340,6 +344,8 @@ class SaleService:
                         discount=calculated_line["final_discount"],
                         price_source=line.get("price_source", "minorista"),
                         price_list_id=line.get("price_list_id"),
+                        wholesale_discount_percent=line.get("wholesale_discount_percent"),
+                        wholesale_reference_price=line.get("wholesale_reference_price"),
                     )
                 )
 

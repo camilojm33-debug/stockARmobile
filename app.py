@@ -833,6 +833,10 @@ class SaleItem(db.Model):
     cost_price = db.Column(MONEY, default=Decimal("0.00"))
     discount = db.Column(MONEY, default=Decimal("0.00"))
     price_source = db.Column(db.String(20), nullable=False, default="minorista", server_default="minorista")
+    # Immutable snapshot used to explain wholesale savings on receipts without
+    # subtracting the already-net wholesale price from the sale a second time.
+    wholesale_discount_percent = db.Column(db.Numeric(5, 2), nullable=True)
+    wholesale_reference_price = db.Column(MONEY, nullable=True)
     # Physical FK is added after price_lists exists in Alembic upgrade.
     price_list_id = db.Column(db.Integer, index=True)
     sale_id = db.Column(db.Integer, db.ForeignKey("sales.id"), nullable=False)
@@ -905,6 +909,9 @@ class QuoteItem(db.Model):
     subtotal = db.Column(MONEY, default=Decimal("0.00"))
     sort_order = db.Column(db.Integer, default=0, nullable=False)
     price_source = db.Column(db.String(20), nullable=False, default="minorista", server_default="minorista")
+    # Immutable snapshot used to display percentage pricing in saved quotes.
+    wholesale_discount_percent = db.Column(db.Numeric(5, 2), nullable=True)
+    wholesale_reference_price = db.Column(MONEY, nullable=True)
     # Physical FK is added after price_lists exists in Alembic upgrade.
     price_list_id = db.Column(db.Integer, index=True)
 

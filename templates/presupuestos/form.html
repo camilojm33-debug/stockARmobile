@@ -526,6 +526,8 @@
       discount: Number(item.discount || 0),
       price_source: item.price_source || 'minorista',
       price_list_id: item.price_list_id || null,
+      wholesale_discount_percent: item.wholesale_discount_percent ?? null,
+      wholesale_reference_price: item.wholesale_reference_price ?? null,
     })));
   }
 
@@ -545,15 +547,19 @@
     return clientCatalog.find((client) => Number(client.id) === clientId) || null;
   }
 
-  function wholesaleUnitPrice(product, quantity, clientData = selectedClientData()) {
+  function wholesalePriceTier(product, quantity, clientData = selectedClientData()) {
     if (!product || !clientData || clientData.customer_type !== 'mayorista' || !clientData.price_list_id) return null;
     const tiers = (product.price_lists || {})[String(clientData.price_list_id)] || [];
     const qty = Math.max(Number(quantity || 0), 0);
     const eligible = tiers
       .filter((tier) => Number(tier.min_quantity || 1) <= qty)
       .sort((a, b) => Number(a.min_quantity || 1) - Number(b.min_quantity || 1));
-    if (!eligible.length) return null;
-    const price = Number(eligible[eligible.length - 1].price);
+    return eligible.length ? eligible[eligible.length - 1] : null;
+  }
+
+  function wholesaleUnitPrice(product, quantity, clientData = selectedClientData()) {
+    const tier = wholesalePriceTier(product, quantity, clientData);
+    const price = tier ? Number(tier.price) : NaN;
     return Number.isFinite(price) && price > 0 ? price : null;
   }
 
@@ -561,12 +567,15 @@
     if (!line || !product) return;
     if (line.price_source === 'manual' && canModifyPrices && !force) return;
     const clientData = selectedClientData();
-    const listPrice = wholesaleUnitPrice(product, line.quantity, clientData);
-    if (listPrice !== null) {
+    const tier = wholesalePriceTier(product, line.quantity, clientData);
+    const listPrice = tier ? Number(tier.price) : null;
+    if (listPrice !== null && Number.isFinite(listPrice) && listPrice > 0) {
       line.unit_price = listPrice;
       line.discount = 0;
       line.price_source = 'mayorista';
       line.price_list_id = Number(clientData.price_list_id);
+      line.wholesale_discount_percent = tier.discount_percent == null ? null : Number(tier.discount_percent);
+      line.wholesale_reference_price = line.wholesale_discount_percent != null ? Number(product.price || 0) : null;
       return;
     }
     if (line.price_source === 'mayorista') {
@@ -577,6 +586,8 @@
       line.price_source = 'minorista';
       line.price_list_id = null;
     }
+    line.wholesale_discount_percent = null;
+    line.wholesale_reference_price = null;
   }
 
   function addProduct(product) {
@@ -641,6 +652,8 @@
       if (field === 'unit_price' && canModifyPrices) {
         line.price_source = 'manual';
         line.price_list_id = null;
+        line.wholesale_discount_percent = null;
+        line.wholesale_reference_price = null;
       }
     }
     if (field === 'quantity') {
@@ -678,6 +691,8 @@
       if (canModifyPrices) {
         line.price_source = 'manual';
         line.price_list_id = null;
+        line.wholesale_discount_percent = null;
+        line.wholesale_reference_price = null;
       }
       element.value = formatEditableNumber(line.unit_price, 2);
     } else if (field === 'quantity') {
@@ -811,6 +826,7 @@
             <div>
               <label class="form-label small mb-1">Producto</label>
               <input class="form-control form-control-sm focus-ring" value="${escapeHtml(item.description || '')}" oninput="updateLine(${index}, 'description', this.value)">
+              ${item.price_source === 'mayorista' && item.wholesale_discount_percent != null ? `<div class="small text-success mt-1">Descuento mayorista ${formatEditableNumber(item.wholesale_discount_percent, 2)}% sobre precio minorista ${money(item.wholesale_reference_price || 0)}</div>` : ''}
             </div>
             <div>
               <label class="form-label small mb-1">Cant.</label>

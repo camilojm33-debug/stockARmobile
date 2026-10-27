@@ -24,6 +24,10 @@
       <div class="ticket-line">
         <div class="ticket-line-name">{{ row.name }}</div>
         <div class="ticket-line-detail">{{ row.quantity }} x ${{ "%.2f"|format(row.price) }} = ${{ "%.2f"|format(row.gross) }}</div>
+        {% if row.wholesale_discount_percent is not none %}
+        <div class="ticket-line-promo">Precio minorista ref.: ${{ "%.2f"|format(row.wholesale_reference_price) }}</div>
+        <div class="ticket-line-promo">Descuento mayorista ({{ "%.2f"|format(row.wholesale_discount_percent) }}%): -${{ "%.2f"|format(row.wholesale_discount_amount) }} (ya aplicado)</div>
+        {% endif %}
         {% if row.discount > 0 %}
         <div class="ticket-line-promo">Promoción: -${{ "%.2f"|format(row.discount) }}</div>
         {% endif %}
@@ -36,9 +40,11 @@
 
     {% set line_discount_total = rows|sum(attribute="discount") %}
     {% set effective_discount = [sale.discount or 0, line_discount_total or 0]|max %}
+    {% set wholesale_savings = rows|sum(attribute="wholesale_discount_amount") %}
     <div class="ticket-totals">
       <div><span>Subtotal</span><strong>${{ "%.2f"|format(sale.subtotal) }}</strong></div>
-      <div><span>Descuento</span><strong>-${{ "%.2f"|format(effective_discount) }}</strong></div>
+      {% if wholesale_savings > 0 %}<div><span>Ahorro mayorista (ya incluido)</span><strong>${{ "%.2f"|format(wholesale_savings) }}</strong></div>{% endif %}
+      <div><span>{% if wholesale_savings > 0 %}Descuento adicional{% else %}Descuento{% endif %}</span><strong>-${{ "%.2f"|format(effective_discount) }}</strong></div>
       {% if sale.discount_type == 'percentage' and sale.discount_value is not none %}<div><span>Descuento aplicado</span><strong>-${{ "%.2f"|format(sale.discount) }}</strong></div>{% endif %}
       {% if sale.discount_reason %}<div><span>Motivo descuento</span><strong>{{ sale.discount_reason }}</strong></div>{% endif %}
       {% if charge_rows %}

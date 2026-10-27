@@ -6,7 +6,7 @@ import json
 import os
 import mimetypes
 from datetime import datetime, timedelta
-from decimal import Decimal
+from decimal import Decimal, InvalidOperation, ROUND_HALF_UP
 from email.message import EmailMessage
 from io import BytesIO
 import smtplib
@@ -223,6 +223,8 @@ def _parse_items(payload, *, client=None):
 
         price_source = "minorista"
         price_list_id = None
+        wholesale_discount_percent = None
+        wholesale_reference_price = None
         if product is not None:
             resolution = resolve_product_price(
                 company_id=getattr(current_user, "company_id", None),
@@ -241,6 +243,11 @@ def _parse_items(payload, *, client=None):
                     discount = Decimal("0.00")
                     price_source = "mayorista"
                     price_list_id = resolution["price_list_id"]
+                    wholesale_discount_percent = resolution.get("discount_percent")
+                    if wholesale_discount_percent is not None:
+                        wholesale_reference_price = to_decimal(product.price).quantize(
+                            Decimal("0.01"), rounding=ROUND_HALF_UP
+                        )
                 else:
                     price_source = "manual"
             elif not can_modify_prices and unit_price != to_decimal(product.price):
@@ -261,6 +268,8 @@ def _parse_items(payload, *, client=None):
                 "subtotal": net,
                 "price_source": price_source,
                 "price_list_id": price_list_id,
+                "wholesale_discount_percent": wholesale_discount_percent,
+                "wholesale_reference_price": wholesale_reference_price,
             }
         )
 
@@ -379,8 +388,14 @@ def _build_quote_whatsapp_message(quote, company):
             f"Cant: {_quote_quantity(item.quantity)} | "
             f"Precio: {_quote_money(item.unit_price, currency)}"
         )
+        wholesale_info = _quote_wholesale_discount_info(item)
+        if wholesale_info:
+            line += (
+                f" | Descuento mayorista {wholesale_info['percent']:.2f}%"
+                f" (ahorro {_quote_money(wholesale_info['amount'], currency)}, ya incluido)"
+            )
         if float(item.discount or 0) > 0:
-            line += f" | Desc: {_quote_money(item.discount, currency)}"
+            line += f" | Desc. adicional: {_quote_money(item.discount, currency)}"
         line += f" | Subtotal: {_quote_money(item.subtotal, currency)}"
         lines.append(line)
 
@@ -390,10 +405,17 @@ def _build_quote_whatsapp_message(quote, company):
             f"Subtotal: {_quote_money(quote.subtotal, currency)}",
         ]
     )
+    wholesale_savings = _quote_wholesale_savings(quote)
+    if wholesale_savings > 0:
+        lines.append(
+            f"Ahorro mayorista ya incluido en los precios unitarios: {_quote_money(wholesale_savings, currency)}"
+        )
     if float(quote.discount or 0) > 0:
-        lines.append(f"Descuento: -{_quote_money(quote.discount, currency)}")
+        discount_label = "Descuento adicional" if wholesale_savings > 0 else "Descuento"
+        lines.append(f"{discount_label}: -{_quote_money(quote.discount, currency)}")
         if quote.discount_reason:
-            lines.append(f"Motivo descuento: {_plain_whatsapp_text(quote.discount_reason, max_length=180)}")
+            reason_label = "Motivo descuento adicional" if wholesale_savings > 0 else "Motivo descuento"
+            lines.append(f"{reason_label}: {_plain_whatsapp_text(quote.discount_reason, max_length=180)}")
     charge_rows = _quote_charge_display_rows(quote)
     if charge_rows:
         for charge in charge_rows:
@@ -636,6 +658,8 @@ def _quote_from_form(*, quote=None):
             sort_order=position,
             price_source=parsed_item.get("price_source", "minorista"),
             price_list_id=parsed_item.get("price_list_id"),
+            wholesale_discount_percent=parsed_item.get("wholesale_discount_percent"),
+            wholesale_reference_price=parsed_item.get("wholesale_reference_price"),
         )
         db.session.add(quote_item)
 
@@ -670,6 +694,8 @@ def _quote_snapshot(quote):
                 "subtotal": float(item.subtotal or 0),
                 "price_source": getattr(item, "price_source", None) or "minorista",
                 "price_list_id": getattr(item, "price_list_id", None),
+                "wholesale_discount_percent": float(item.wholesale_discount_percent) if getattr(item, "wholesale_discount_percent", None) is not None else None,
+                "wholesale_reference_price": float(item.wholesale_reference_price) if getattr(item, "wholesale_reference_price", None) is not None else None,
             }
             for item in quote.items
         ],
@@ -707,10 +733,105 @@ def _duplicate_commercial_quote(original):
 
 
 
+def _quote_wholesale_discount_info(item):
+    """Return a stored, or safely inferred legacy, wholesale discount snapshot.
+
+    Old quote lines predate the discount snapshot columns. For those lines only,
+    infer the current rule when its computed price exactly matches the saved unit
+    price; otherwise do not guess a historical discount.
+    """
+    try:
+        quantity = Decimal(str(getattr(item, "quantity", 0) or 0))
+        unit_price = Decimal(str(getattr(item, "unit_price", 0) or 0)).quantize(
+            Decimal("0.01"), rounding=ROUND_HALF_UP
+        )
+        percent_raw = getattr(item, "wholesale_discount_percent", None)
+        reference_raw = getattr(item, "wholesale_reference_price", None)
+        percent = Decimal(str(percent_raw)) if percent_raw not in (None, "") else None
+        reference_price = Decimal(str(reference_raw)).quantize(
+            Decimal("0.01"), rounding=ROUND_HALF_UP
+        ) if reference_raw not in (None, "") else None
+    except (InvalidOperation, TypeError, ValueError, NameError):
+        return None
+
+    if percent is None or reference_price is None:
+        if (
+            str(getattr(item, "price_source", "") or "").strip().lower() != "mayorista"
+            or not getattr(item, "price_list_id", None)
+            or not getattr(item, "product_id", None)
+            or quantity <= 0
+        ):
+            return None
+        product = getattr(item, "product", None)
+        if product is None:
+            return None
+        try:
+            from wholesale_pricing import PriceListItem
+
+            query = PriceListItem.query.filter(
+                PriceListItem.price_list_id == int(item.price_list_id),
+                PriceListItem.product_id == int(item.product_id),
+                PriceListItem.active.is_(True),
+                PriceListItem.min_quantity <= quantity,
+            )
+            quote = getattr(item, "quote", None)
+            if getattr(quote, "company_id", None) is not None:
+                query = query.filter(PriceListItem.company_id == int(quote.company_id))
+            rule = query.order_by(
+                PriceListItem.min_quantity.desc(), PriceListItem.id.desc()
+            ).first()
+            if rule is None or getattr(rule, "discount_percent", None) is None:
+                return None
+            percent = Decimal(str(rule.discount_percent))
+            reference_price = Decimal(str(getattr(product, "price", 0) or 0)).quantize(
+                Decimal("0.01"), rounding=ROUND_HALF_UP
+            )
+            calculated = (
+                reference_price * (Decimal("100") - percent) / Decimal("100")
+            ).quantize(Decimal("0.01"), rounding=ROUND_HALF_UP)
+            if calculated != unit_price:
+                return None
+        except Exception:
+            return None
+
+    if (
+        percent is None or not percent.is_finite()
+        or percent <= 0 or percent >= Decimal("100")
+        or reference_price is None or reference_price <= unit_price
+        or quantity <= 0
+    ):
+        return None
+    unit_saving = (reference_price - unit_price).quantize(
+        Decimal("0.01"), rounding=ROUND_HALF_UP
+    )
+    amount = (unit_saving * quantity).quantize(
+        Decimal("0.01"), rounding=ROUND_HALF_UP
+    )
+    if amount <= 0:
+        return None
+    return {
+        "percent": percent,
+        "reference_price": reference_price,
+        "unit_saving": unit_saving,
+        "amount": amount,
+    }
+
+
+def _quote_wholesale_savings(quote):
+    return sum(
+        (
+            info["amount"]
+            for item in (getattr(quote, "items", []) or [])
+            if (info := _quote_wholesale_discount_info(item)) is not None
+        ),
+        Decimal("0.00"),
+    ).quantize(Decimal("0.01"), rounding=ROUND_HALF_UP)
+
+
 def _quote_rows(quote):
     rows = []
-    line_discounts = {}
     for item in quote.items:
+        wholesale_info = _quote_wholesale_discount_info(item)
         rows.append(
             {
                 "name": item.description,
@@ -718,6 +839,10 @@ def _quote_rows(quote):
                 "price": float(item.unit_price or 0),
                 "discount": float(item.discount or 0),
                 "total": float(item.subtotal or 0),
+                "price_source": getattr(item, "price_source", None) or "minorista",
+                "wholesale_discount_percent": float(wholesale_info["percent"]) if wholesale_info else None,
+                "wholesale_reference_price": float(wholesale_info["reference_price"]) if wholesale_info else None,
+                "wholesale_discount_amount": float(wholesale_info["amount"]) if wholesale_info else 0.0,
             }
         )
     return rows
@@ -733,6 +858,8 @@ def _quote_form_items(quote):
             "discount": float(item.discount or 0),
             "price_source": getattr(item, "price_source", None) or "minorista",
             "price_list_id": getattr(item, "price_list_id", None),
+            "wholesale_discount_percent": float(item.wholesale_discount_percent) if getattr(item, "wholesale_discount_percent", None) is not None else None,
+            "wholesale_reference_price": float(item.wholesale_reference_price) if getattr(item, "wholesale_reference_price", None) is not None else None,
         }
         for item in quote.items
     ]
@@ -927,13 +1054,33 @@ def _quote_pdf_response(quote, *, as_attachment=False):
         pdf.drawRightString(360, y, f"${float(item.unit_price or 0):.2f}")
         pdf.drawRightString(470, y, f"${float(item.subtotal or 0):.2f}")
         y -= 14
+        wholesale_info = _quote_wholesale_discount_info(item)
+        if wholesale_info:
+            if y < 90:
+                pdf.showPage()
+                y = height - 45
+            pdf.setFont("Helvetica", 8)
+            description = (
+                f"Precio minorista ref. ${float(wholesale_info['reference_price']):.2f} | "
+                f"Descuento mayorista {float(wholesale_info['percent']):.2f}% | "
+                f"Ahorro ${float(wholesale_info['amount']):.2f} (ya incluido)"
+            )
+            pdf.drawString(48, y, description[:105])
+            pdf.setFont("Helvetica", 10)
+            y -= 12
 
     y -= 8
     pdf.setFont("Helvetica-Bold", 11)
     pdf.drawRightString(470, y, f"Subtotal: ${float(quote.subtotal or 0):.2f}")
     y -= 14
+    wholesale_savings = _quote_wholesale_savings(quote)
+    if wholesale_savings > 0:
+        pdf.setFont("Helvetica", 9)
+        pdf.drawRightString(470, y, f"Ahorro mayorista ya incluido: ${float(wholesale_savings):.2f}")
+        y -= 14
     discount_label = f"{float(quote.discount_value):.2f}%" if quote.discount_type == "percentage" and quote.discount_value is not None else f"-${float(quote.discount or 0):.2f}"
-    pdf.drawRightString(470, y, f"Descuento: {discount_label}")
+    discount_caption = "Descuento adicional" if wholesale_savings > 0 else "Descuento"
+    pdf.drawRightString(470, y, f"{discount_caption}: {discount_label}")
     y -= 14
     if quote.discount_type == "percentage":
         pdf.drawRightString(470, y, f"Descuento aplicado: -${float(quote.discount or 0):.2f}")
@@ -1370,6 +1517,10 @@ def duplicate_quote(quote_id):
                 discount=item.discount,
                 subtotal=item.subtotal,
                 sort_order=item.sort_order,
+                price_source=getattr(item, "price_source", None) or "minorista",
+                price_list_id=getattr(item, "price_list_id", None),
+                wholesale_discount_percent=getattr(item, "wholesale_discount_percent", None),
+                wholesale_reference_price=getattr(item, "wholesale_reference_price", None),
             )
         )
     db.session.commit()

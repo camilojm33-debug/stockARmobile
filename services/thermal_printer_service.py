@@ -100,15 +100,28 @@ class ThermalPrinterService:
             if getattr(sale, "secondary_payment_method", None):
                 payment_line += f" + {sale.secondary_payment_method}"
             printer.text(f"Pago: {payment_line}\n")
+        from services.sales.receipt_service import ReceiptService
+
         printer.text("-" * 32 + "\n")
         for item in sale.items:
             name = item.product.name if item.product else f"Producto {item.product_id}"
             qty = float(item.quantity or 0)
             line = f"{name[:18]:18}\n{qty:g} x ${float(item.price or 0):.2f} = ${float(item.total_amount or 0):.2f}\n"
             printer.text(line)
+            wholesale_info = ReceiptService.wholesale_discount_info(item)
+            if wholesale_info:
+                printer.text(
+                    f"  Mayorista {float(wholesale_info['percent']):.2f}%: "
+                    f"ahorro ${float(wholesale_info['amount']):.2f} (incluido)\n"
+                )
         printer.text("-" * 32 + "\n")
         printer.text(f"Subtotal: ${float(sale.subtotal or 0):.2f}\n")
-        printer.text(f"Descuento: -${float(sale.discount or 0):.2f}\n")
+        wholesale_savings = ReceiptService.wholesale_discount_total(sale)
+        if wholesale_savings > 0:
+            printer.text(f"Ahorro mayorista ya incluido: ${float(wholesale_savings):.2f}\n")
+            printer.text(f"Descuento adicional: -${float(sale.discount or 0):.2f}\n")
+        else:
+            printer.text(f"Descuento: -${float(sale.discount or 0):.2f}\n")
         printer.text(f"Impuestos: ${float(sale.tax or 0):.2f}\n")
         printer.set(align="left", bold=True)
         printer.text(f"TOTAL: ${float(sale.total_amount or 0):.2f}\n")

@@ -43,7 +43,16 @@
       {% elif status == 'VENCIDO' %}<div class="alert warning"><strong>Este presupuesto está vencido.</strong> Consultá con la empresa antes de realizar el pedido.</div>
       {% elif status == 'RECHAZADO' or status == 'ANULADO' %}<div class="alert warning"><strong>Este presupuesto ya no está disponible para aceptación.</strong></div>
       {% else %}<div class="alert"><strong>Revisá el detalle y el total.</strong> Podés consultar a la empresa desde esta misma página.</div>{% endif %}
-      <div class="table-wrap"><table><thead><tr><th>Producto / servicio</th><th>Cant.</th><th>Precio unit.</th><th>Subtotal</th></tr></thead><tbody>{% for row in rows %}<tr><td><span class="product-name">{{ row.name }}</span></td><td>{{ '%.3g'|format(row.quantity) }}</td><td>${{ '%.2f'|format(row.price) }}</td><td><strong>${{ '%.2f'|format(row.total) }}</strong></td></tr>{% endfor %}</tbody></table></div>
+      <div class="table-wrap"><table><thead><tr><th>Producto / servicio</th><th>Cant.</th><th>Precio unit.</th><th>Subtotal</th></tr></thead><tbody>{% for row in rows %}<tr><td>
+        <span class="product-name">{{ row.name }}</span>
+        {% if row.wholesale_discount_percent is not none %}
+        <div class="small" style="color:#13804a;margin-top:4px">
+          Precio minorista ref. ${{ '%.2f'|format(row.wholesale_reference_price) }} ·
+          Descuento mayorista {{ '%.2f'|format(row.wholesale_discount_percent) }}% ·
+          ahorro ${{ '%.2f'|format(row.wholesale_discount_amount) }} (ya incluido)
+        </div>
+        {% endif %}
+      </td><td>{{ '%.3g'|format(row.quantity) }}</td><td>${{ '%.2f'|format(row.price) }}</td><td><strong>${{ '%.2f'|format(row.total) }}</strong></td></tr>{% endfor %}</tbody></table></div>
       <div class="bottom-grid"><div>
         {% if quote.observations or quote.commercial_conditions %}<div class="notes">{% if quote.commercial_conditions %}<h3>Condiciones comerciales</h3><p>{{ quote.commercial_conditions }}</p>{% endif %}{% if quote.observations %}<h3>Observaciones</h3><p>{{ quote.observations }}</p>{% endif %}</div>{% endif %}
         {% if status not in ['APROBADO','RECHAZADO','ANULADO','VENCIDO'] %}<div class="accept-box"><h2>¿Querés avanzar con este presupuesto?</h2><p>Al aceptar, la empresa recibirá la confirmación y podrá continuar con el pedido.</p>
@@ -54,7 +63,8 @@
           <div class="cta-row"><a class="btn secondary" style="flex:1" href="https://wa.me/?text={{ ('Hola, quisiera consultar sobre el presupuesto ' ~ (quote.number or ('P-' ~ '%06d'|format(quote.id))))|urlencode }}" target="_blank" rel="noopener">💬 Consultar por WhatsApp</a></div>
         </div>{% endif %}
       </div>
-      <aside class="totals"><div class="line"><span>Subtotal</span><strong>${{ '%.2f'|format(quote.subtotal or 0) }}</strong></div><div class="line"><span>Descuento</span><strong>-${{ '%.2f'|format(quote.discount or 0) }}</strong></div>{% if charge_rows %}{% for charge in charge_rows %}<div class="line"><span>{{ charge.label }}</span><strong>${{ '%.2f'|format(charge.amount or 0) }}</strong></div>{% endfor %}{% else %}{% if quote.surcharge and quote.surcharge > 0 %}<div class="line"><span>Recargo</span><strong>${{ '%.2f'|format(quote.surcharge or 0) }}</strong></div>{% endif %}{% if quote.tax and quote.tax > 0 %}<div class="line"><span>Impuestos</span><strong>${{ '%.2f'|format(quote.tax or 0) }}</strong></div>{% endif %}{% endif %}<div class="line total"><span>Total</span><strong>{{ quote.currency or 'ARS' }} {{ '%.2f'|format(quote.total_amount or 0) }}</strong></div></aside>
+      {% set wholesale_savings = rows|sum(attribute="wholesale_discount_amount") %}
+      <aside class="totals"><div class="line"><span>Subtotal</span><strong>${{ '%.2f'|format(quote.subtotal or 0) }}</strong></div>{% if wholesale_savings > 0 %}<div class="line" style="color:#13804a"><span>Ahorro mayorista (ya incluido)</span><strong>${{ '%.2f'|format(wholesale_savings) }}</strong></div>{% endif %}<div class="line"><span>{% if wholesale_savings > 0 %}Descuento adicional{% else %}Descuento{% endif %}</span><strong>-${{ '%.2f'|format(quote.discount or 0) }}</strong></div>{% if charge_rows %}{% for charge in charge_rows %}<div class="line"><span>{{ charge.label }}</span><strong>${{ '%.2f'|format(charge.amount or 0) }}</strong></div>{% endfor %}{% else %}{% if quote.surcharge and quote.surcharge > 0 %}<div class="line"><span>Recargo</span><strong>${{ '%.2f'|format(quote.surcharge or 0) }}</strong></div>{% endif %}{% if quote.tax and quote.tax > 0 %}<div class="line"><span>Impuestos</span><strong>${{ '%.2f'|format(quote.tax or 0) }}</strong></div>{% endif %}{% endif %}<div class="line total"><span>Total</span><strong>{{ quote.currency or 'ARS' }} {{ '%.2f'|format(quote.total_amount or 0) }}</strong></div></aside>
       </div>
     </div>
     <footer class="footer">Documento generado por <strong>StockARmobile</strong>. El enlace permite consultar únicamente este presupuesto.</footer>
