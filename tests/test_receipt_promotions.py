@@ -128,7 +128,7 @@ def test_ticket_displays_wholesale_percentage_and_savings_without_double_subtrac
     ticket = ReceiptService.ticket_text(sale, "STOCK ARMOBILE")
     row = ReceiptService.ticket_rows(sale)[0]
 
-    assert "Descuento mayorista (13%): -$2730.00 (ya aplicado en el precio)" in ticket
+    assert "Descuento mayorista (13.00%): -$2730.00 (ya aplicado en el precio)" in ticket
     assert "Ahorro mayorista ya incluido en precios unitarios: $2730.00" in ticket
     assert "Descuento adicional: -$0.00" in ticket
     assert "TOTAL: $18270.00" in ticket
