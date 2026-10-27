@@ -411,9 +411,11 @@ def _build_quote_whatsapp_message(quote, company):
             f"Ahorro mayorista ya incluido en los precios unitarios: {_quote_money(wholesale_savings, currency)}"
         )
     if float(quote.discount or 0) > 0:
-        lines.append(f"Descuento: -{_quote_money(quote.discount, currency)}")
+        discount_label = "Descuento adicional" if wholesale_savings > 0 else "Descuento"
+        lines.append(f"{discount_label}: -{_quote_money(quote.discount, currency)}")
         if quote.discount_reason:
-            lines.append(f"Motivo descuento: {_plain_whatsapp_text(quote.discount_reason, max_length=180)}")
+            reason_label = "Motivo descuento adicional" if wholesale_savings > 0 else "Motivo descuento"
+            lines.append(f"{reason_label}: {_plain_whatsapp_text(quote.discount_reason, max_length=180)}")
     charge_rows = _quote_charge_display_rows(quote)
     if charge_rows:
         for charge in charge_rows:
@@ -1077,7 +1079,8 @@ def _quote_pdf_response(quote, *, as_attachment=False):
         pdf.drawRightString(470, y, f"Ahorro mayorista ya incluido: ${float(wholesale_savings):.2f}")
         y -= 14
     discount_label = f"{float(quote.discount_value):.2f}%" if quote.discount_type == "percentage" and quote.discount_value is not None else f"-${float(quote.discount or 0):.2f}"
-    pdf.drawRightString(470, y, f"Descuento: {discount_label}")
+    discount_caption = "Descuento adicional" if wholesale_savings > 0 else "Descuento"
+    pdf.drawRightString(470, y, f"{discount_caption}: {discount_label}")
     y -= 14
     if quote.discount_type == "percentage":
         pdf.drawRightString(470, y, f"Descuento aplicado: -${float(quote.discount or 0):.2f}")
