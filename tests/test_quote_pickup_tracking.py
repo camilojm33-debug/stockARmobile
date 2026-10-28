@@ -1,3 +1,4 @@
+from datetime import datetime
 from decimal import Decimal
 from pathlib import Path
 from types import SimpleNamespace
@@ -21,7 +22,7 @@ def test_pickup_status_is_exposed_in_ai_order_summary_without_changing_commercia
     delivery = SimpleNamespace(
         method="retiro",
         pickup_status="picked_up",
-        picked_up_at=None,
+        picked_up_at=datetime(2026, 10, 28, 15, 0),
         picked_up_by=SimpleNamespace(name="Operador"),
         shipping_status="confirmed",
     )
@@ -38,6 +39,7 @@ def test_pickup_status_is_exposed_in_ai_order_summary_without_changing_commercia
     assert row["sale_id"] == 8
     assert row["delivery"]["pickup_status"] == "picked_up"
     assert row["delivery"]["picked_up_by"] == "Operador"
+    assert row["delivery"]["picked_up_at_local"] == "28/10/2026 12:00"
 
 
 def test_pickup_tracking_is_shown_in_both_ai_order_and_quote_screens():
@@ -47,10 +49,11 @@ def test_pickup_tracking_is_shown_in_both_ai_order_and_quote_screens():
     quote_index = (REPO_ROOT / "templates/presupuestos/index.html").read_text(encoding="utf-8")
 
     assert "Marcar retirado" in ai_detail
-    assert "delivery.picked_up_at" in ai_detail
+    assert "delivery.picked_up_at_local" in ai_detail
     assert "pickup_pending" in ai_orders
     assert "picked_up" in ai_orders
     assert "Seguimiento de entrega" in quote_detail
+    assert "quote.delivery.picked_up_at_local" in quote_detail
     assert "Listo para retirar" in quote_index
 
 
