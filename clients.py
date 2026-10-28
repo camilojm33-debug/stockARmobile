@@ -41,19 +41,29 @@ def _coerce_payload():
     return request.form
 
 
-def _price_lists_for_form():
+def _price_lists_for_form(client=None):
     if getattr(current_user, "role", None) != "admin":
         return []
-    from wholesale_pricing import active_price_lists
+    from wholesale_pricing import PriceList, active_price_lists
     company_id = getattr(current_user, "company_id", None)
-    return active_price_lists(company_id, include_inactive=True) if company_id else []
+    if not company_id:
+        return []
+    lists = active_price_lists(company_id)
+    assigned_id = getattr(client, "price_list_id", None) if client is not None else None
+    if assigned_id and all(int(row.id) != int(assigned_id) for row in lists):
+        # Keep a pre-existing inactive/expired assignment visible while editing
+        # the client, but never offer it as a new assignment.
+        assigned = PriceList.query.filter_by(id=assigned_id, company_id=company_id).first()
+        if assigned is not None:
+            lists.append(assigned)
+    return sorted(lists, key=lambda row: (str(row.name or "").lower(), int(row.id)))
 
 
 def _apply_client_price_assignment(client):
     # Only the company administrator can change customer classification or tariff.
     if getattr(current_user, "role", None) != "admin":
         return
-    from wholesale_pricing import PriceList
+    from wholesale_pricing import PriceList, price_list_is_current
 
     customer_type = str(request.form.get("customer_type") or "minorista").strip().lower()
     if customer_type not in {"minorista", "mayorista"}:
@@ -71,11 +81,11 @@ def _apply_client_price_assignment(client):
         ).first()
         current_list_can_remain = bool(
             price_list is not None
-            and not price_list.active
             and getattr(client, "price_list_id", None) == list_id
+            and not price_list_is_current(price_list)
         )
-        if price_list is None or (not price_list.active and not current_list_can_remain):
-            raise ValueError("La lista debe estar activa y pertenecer a tu empresa.")
+        if price_list is None or (not price_list_is_current(price_list) and not current_list_can_remain):
+            raise ValueError("La lista debe estar activa, dentro de su vigencia y pertenecer a tu empresa.")
     if customer_type == "mayorista" and price_list is None:
         raise ValueError("Para clasificar al cliente como mayorista, asignale una lista activa.")
     client.customer_type = customer_type
@@ -386,7 +396,7 @@ def edit(client_id=None, id=None):
         db.session.commit()
         flash("Cliente actualizado exitosamente.", "success")
         return redirect(url_for("clients.index"))
-    return render_template("clientes/form.html", client=client, price_lists=_price_lists_for_form())
+    return render_template("clientes/form.html", client=client, price_lists=_price_lists_for_form(client))
 
 
 @bp.route("/show/<int:id>")
@@ -498,14 +508,13 @@ def api_quick_create():
             parsed_price_list_id = int(raw_price_list_id)
         except (TypeError, ValueError):
             return jsonify({"error": "La lista mayorista seleccionada no es válida."}), 400
-        from wholesale_pricing import PriceList
+        from wholesale_pricing import PriceList, price_list_is_current
         price_list = PriceList.query.filter_by(
             id=parsed_price_list_id,
             company_id=getattr(current_user, "company_id", None),
-            active=True,
         ).first()
-        if price_list is None:
-            return jsonify({"error": "La lista debe estar activa y pertenecer a tu empresa."}), 400
+        if price_list is None or not price_list_is_current(price_list):
+            return jsonify({"error": "La lista debe estar activa, dentro de su vigencia y pertenecer a tu empresa."}), 400
     elif raw_price_list_id not in (None, "") and getattr(current_user, "role", None) == "admin":
         return jsonify({"error": "La lista mayorista solo se puede asignar a un cliente de tipo mayorista."}), 400
 
