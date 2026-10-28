@@ -15,7 +15,7 @@ def test_pickup_status_is_exposed_in_ai_order_summary_without_changing_commercia
     monkeypatch.setattr(whatsapp_agent, "_ai_order_conversation", lambda company_id, quote_id, payment=None: None)
     monkeypatch.setattr(whatsapp_agent, "_ai_order_channel", lambda company_id, quote_id, payment=None: "webchat")
     monkeypatch.setattr(whatsapp_agent, "get_vendor_options", lambda company: {"can_follow_up": False})
-    from app import Company
+    from app import app as flask_app, Company
     monkeypatch.setattr(Company, "query", SimpleNamespace(filter_by=lambda **kwargs: SimpleNamespace(first=lambda: SimpleNamespace(id=1))), raising=False)
 
     delivery = SimpleNamespace(
@@ -32,7 +32,8 @@ def test_pickup_status_is_exposed_in_ai_order_summary_without_changing_commercia
         items=[], date=None, created_at=None, client=None, consumer_name="Cliente",
         client_id=None, delivery=delivery,
     )
-    row = _ai_order_row(1, quote)
+    with flask_app.app_context():
+        row = _ai_order_row(1, quote)
     assert row["order_key"] == "confirmed"
     assert row["sale_id"] == 8
     assert row["delivery"]["pickup_status"] == "picked_up"
