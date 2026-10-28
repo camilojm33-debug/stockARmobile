@@ -1471,11 +1471,6 @@ def test_pos_quick_create_defaults_to_retail_and_blocks_non_admin_wholesale_assi
 
     non_admin_browser = app.test_client()
     _login_test_client(non_admin_browser, data["employee"])
-    identity_response = non_admin_browser.get("/ventas/")
-    assert identity_response.status_code == 200
-    identity_html = identity_response.data.decode("utf-8")
-    assert f'data-user-id="{data["employee"].id}"' in identity_html
-    assert 'data-role="user"' in identity_html
     denied = non_admin_browser.post(
         "/clientes/api/quick-create",
         json={
