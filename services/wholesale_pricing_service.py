@@ -145,17 +145,21 @@ def resolve_product_price(
         try:
             price = _discounted_retail_price(product, candidate_percent)
         except ValueError:
-            return {**fallback, "reason": "regla_general_sin_precio_minorista"}
-        return {
-            "price": price,
-            "source": "mayorista",
-            "price_list_id": int(price_list.id),
-            "price_list_name": str(price_list.name),
-            "min_quantity": general_quantity,
-            "discount_percent": candidate_percent,
-            "reason": None,
-            "price_rule_type": "general",
-        }
+            # If the generic rule cannot be calculated (for example, missing
+            # retail base price), keep a valid product-specific tariff if one exists.
+            if row is None:
+                return {**fallback, "reason": "regla_general_sin_precio_minorista"}
+        else:
+            return {
+                "price": price,
+                "source": "mayorista",
+                "price_list_id": int(price_list.id),
+                "price_list_name": str(price_list.name),
+                "min_quantity": general_quantity,
+                "discount_percent": candidate_percent,
+                "reason": None,
+                "price_rule_type": "general",
+            }
 
     if row is None:
         return {**fallback, "reason": "producto_sin_tarifa_mayorista"}
