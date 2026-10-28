@@ -950,7 +950,7 @@ class QuoteDelivery(db.Model):
     shipping_confirmed_at = db.Column(db.DateTime, nullable=True)
     shipping_confirmed_by = db.relationship("User", foreign_keys=[shipping_confirmed_by_user_id])
     # Retiro físico: separado del estado comercial/pago para no alterar ventas ni stock.
-    pickup_status = db.Column(db.String(24), nullable=True, index=True)
+    pickup_status = db.Column(db.String(24), nullable=False, default="pending", server_default="pending", index=True)
     picked_up_at = db.Column(db.DateTime, nullable=True)
     picked_up_by_user_id = db.Column(db.Integer, db.ForeignKey("users.id"), nullable=True)
     picked_up_by = db.relationship("User", foreign_keys=[picked_up_by_user_id])
