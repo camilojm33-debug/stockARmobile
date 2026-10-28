@@ -1799,3 +1799,154 @@ def test_new_quote_does_not_cancel_superseded_quote_when_payment_preference_fail
     assert previous_quote.status == "ANULADO"
     assert previous_payment.status == "cancelled"
     assert SUPERSEDED_QUOTE_IDS_KEY not in conversation.metadata_json
+
+def test_registered_wholesale_client_get_cart_quote_and_payment_use_same_quantity_tier(vendor_database, monkeypatch):
+    from decimal import Decimal
+    from wholesale_pricing import PriceList, PriceListDiscountRule
+
+    data = vendor_database
+    monkeypatch.setattr(
+        "services.wholesale_pricing_service._has_wholesale_pricing_access",
+        lambda company_id: True,
+    )
+    price_list = PriceList(
+        company_id=data["company_a"].id,
+        name="Mayorista web QA",
+        code="mayorista-web-qa",
+        active=True,
+        created_by_user_id=data["user_a"].id,
+    )
+    db.session.add(price_list)
+    db.session.flush()
+    db.session.add_all([
+        PriceListDiscountRule(
+            company_id=data["company_a"].id,
+            price_list_id=price_list.id,
+            min_quantity=Decimal("3.000"),
+            discount_percent=Decimal("15.00"),
+            active=True,
+        ),
+        PriceListDiscountRule(
+            company_id=data["company_a"].id,
+            price_list_id=price_list.id,
+            min_quantity=Decimal("12.000"),
+            discount_percent=Decimal("25.00"),
+            active=True,
+        ),
+    ])
+    data["client_a"].customer_type = "mayorista"
+    data["client_a"].price_list_id = price_list.id
+    # A legacy product discount must not be stacked over the wholesale list.
+    data["product_a"].discount = 10
+    db.session.commit()
+
+    conversation = _conversation(data["company_a"].id)
+    calls = []
+    _mock_checkout(monkeypatch, calls)
+    VendorOrderService.update_cart(
+        company_id=data["company_a"].id,
+        conversation_id=conversation.id,
+        items=[{"product_query": "Cafe clasico", "quantity": 3}],
+    )
+
+    cart = VendorOrderService.get_cart(
+        company_id=data["company_a"].id,
+        conversation_id=conversation.id,
+        customer_name="Cliente A",
+        customer_phone="5491112345678",
+    )
+    assert cart["customer_type"] == "mayorista"
+    assert cart["price_list_id"] == price_list.id
+    assert cart["pricing_valid"] is True
+    assert cart["items"][0]["price_source"] == "mayorista"
+    assert cart["items"][0]["wholesale_discount_percent"] == 15.0
+    assert cart["items"][0]["unit_price"] == 85.0
+    assert cart["items"][0]["subtotal"] == 255.0
+    assert cart["total"] == 255.0
+
+    result = VendorOrderService.create_pending_order(
+        company_id=data["company_a"].id,
+        conversation_id=conversation.id,
+        customer_name="Cliente A",
+        customer_phone="5491112345678",
+        actor_user_id=data["user_a"].id,
+    )
+    quote = db.session.get(Quote, result["quote_id"])
+    checkout = next(payload for kind, payload in calls if kind == "checkout")
+    item = quote.items[0]
+
+    assert quote.client_id == data["client_a"].id
+    assert Decimal(str(quote.total_amount)) == Decimal("255.00")
+    assert Decimal(str(item.unit_price)) == Decimal("85.00")
+    assert Decimal(str(item.discount)) == Decimal("0.00")
+    assert item.price_source == "mayorista"
+    assert item.price_list_id == price_list.id
+    assert Decimal(str(item.wholesale_discount_percent)) == Decimal("15.00")
+    assert Decimal(str(item.wholesale_reference_price)) == Decimal("100.00")
+    assert checkout["amount"] == 255.0
+    product_items = [
+        row for row in checkout["items"]
+        if not str(row["id"]).startswith("shipping-")
+    ]
+    assert product_items[0]["unit_price"] == 85.0
+    assert product_items[0]["quantity"] == 3
+
+
+def test_vendor_wholesale_order_blocks_when_quantity_has_no_active_tier(vendor_database, monkeypatch):
+    from decimal import Decimal
+    from wholesale_pricing import PriceList, PriceListDiscountRule
+
+    data = vendor_database
+    monkeypatch.setattr(
+        "services.wholesale_pricing_service._has_wholesale_pricing_access",
+        lambda company_id: True,
+    )
+    price_list = PriceList(
+        company_id=data["company_a"].id,
+        name="Mayorista mínimo tres QA",
+        code="mayorista-minimo-tres-qa",
+        active=True,
+        created_by_user_id=data["user_a"].id,
+    )
+    db.session.add(price_list)
+    db.session.flush()
+    db.session.add(PriceListDiscountRule(
+        company_id=data["company_a"].id,
+        price_list_id=price_list.id,
+        min_quantity=Decimal("3.000"),
+        discount_percent=Decimal("15.00"),
+        active=True,
+    ))
+    data["client_a"].customer_type = "mayorista"
+    data["client_a"].price_list_id = price_list.id
+    db.session.commit()
+
+    conversation = _conversation(data["company_a"].id)
+    calls = []
+    _mock_checkout(monkeypatch, calls)
+    VendorOrderService.update_cart(
+        company_id=data["company_a"].id,
+        conversation_id=conversation.id,
+        items=[{"product_query": "Cafe clasico", "quantity": 1}],
+    )
+
+    cart = VendorOrderService.get_cart(
+        company_id=data["company_a"].id,
+        conversation_id=conversation.id,
+        customer_name="Cliente A",
+        customer_phone="5491112345678",
+    )
+    assert cart["pricing_valid"] is False
+    assert "cantidad 1" in cart["pricing_error"]
+
+    with pytest.raises(ValueError, match="No se puede confirmar el pedido mayorista"):
+        VendorOrderService.create_pending_order(
+            company_id=data["company_a"].id,
+            conversation_id=conversation.id,
+            customer_name="Cliente A",
+            customer_phone="5491112345678",
+            actor_user_id=data["user_a"].id,
+        )
+
+    assert Quote.query.filter_by(company_id=data["company_a"].id).count() == 0
+    assert not [call for kind, call in calls if kind == "checkout"]
