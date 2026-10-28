@@ -1891,6 +1891,44 @@ def test_registered_wholesale_client_get_cart_quote_and_payment_use_same_quantit
     assert product_items[0]["unit_price"] == 85.0
     assert product_items[0]["quantity"] == 3
 
+    from services.ai_agent.vendor_order_service import format_vendor_order_confirmation
+    confirmation = format_vendor_order_confirmation(
+        company_id=data["company_a"].id,
+        order=result,
+    )
+    assert "Precio de lista: $100,00 ARS c/u" in confirmation
+    assert "Descuento mayorista (15%): -$15,00 ARS c/u; ahorro total $45,00 ARS" in confirmation
+    assert "precio mayorista" in confirmation.lower()
+
+    from whatsapp_agent import _handle_vendor_wholesale_inquiry
+    whatsapp_reply = _handle_vendor_wholesale_inquiry(
+        data["company_a"].id,
+        conversation.id,
+        "5491112345678",
+        "Y mayorista?",
+    )
+    assert whatsapp_reply is not None
+    assert "presupuesto" in whatsapp_reply.lower()
+    assert "Precio de lista: $100,00 ARS c/u" in whatsapp_reply
+    assert "Descuento mayorista (15%): -$15,00 ARS c/u; ahorro total $45,00 ARS" in whatsapp_reply
+
+
+def test_vendor_wholesale_inquiry_does_not_claim_no_wholesale_prices_for_retail_profile(vendor_database):
+    from whatsapp_agent import _handle_vendor_wholesale_inquiry
+
+    data = vendor_database
+    conversation = _conversation(data["company_a"].id)
+    reply = _handle_vendor_wholesale_inquiry(
+        data["company_a"].id,
+        conversation.id,
+        "5491112345678",
+        "No me haces precio mayorista?",
+    )
+
+    assert reply is not None
+    assert "Eso no significa que el comercio no tenga precios mayoristas" in reply
+    assert "no tenemos configurados precios" not in reply.lower()
+
 
 def test_vendor_wholesale_order_blocks_when_quantity_has_no_active_tier(vendor_database, monkeypatch):
     from decimal import Decimal
