@@ -1403,9 +1403,15 @@ def test_general_discount_rule_admin_ui_is_company_scoped_and_upserts_threshold(
 
 
 def _login_test_client(browser, user):
+    # The app fixture keeps an application context open for the whole test.
+    # Flask-Login caches current_user on flask.g, so clear that cache whenever
+    # a test switches identities after a previous request in the same context.
+    from flask import g
+
     with browser.session_transaction() as session:
         session["_user_id"] = str(user.id)
         session["_fresh"] = True
+    g.pop("_login_user", None)
 
 
 def test_pos_quick_create_can_assign_wholesale_list_and_select_customer(wholesale_database, app):
