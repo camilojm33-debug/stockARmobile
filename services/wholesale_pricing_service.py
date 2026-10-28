@@ -413,7 +413,6 @@ def product_price_catalog(*, company_id: int, product_ids: list[int]) -> dict:
         tier = {
             "min_quantity": float(_decimal(row.min_quantity)),
             "price": float(price),
-            "is_general_rule": False,
         }
         if discount_percent is not None:
             tier["discount_percent"] = discount_percent
