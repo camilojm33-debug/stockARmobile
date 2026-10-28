@@ -41,6 +41,13 @@ class PriceList(db.Model):
     updated_at = db.Column(db.DateTime, nullable=False, default=utcnow_naive, onupdate=utcnow_naive)
 
     items = db.relationship("PriceListItem", backref="price_list", cascade="all, delete-orphan", lazy="selectin")
+    discount_rules = db.relationship(
+        "PriceListDiscountRule",
+        backref="price_list",
+        cascade="all, delete-orphan",
+        lazy="selectin",
+        order_by="PriceListDiscountRule.min_quantity",
+    )
     company = db.relationship("Company")
     created_by = db.relationship("User")
 
@@ -80,6 +87,26 @@ class PriceListItem(db.Model):
                 # Keep a valid stored amount visible if retail price was later removed.
                 pass
         return self.unit_price
+
+
+class PriceListDiscountRule(db.Model):
+    """Quantity-based general percentage discount rules shared by a whole price list."""
+    __tablename__ = "price_list_discount_rules"
+    __table_args__ = (
+        UniqueConstraint("price_list_id", "min_quantity", name="uq_price_list_discount_rule_tier"),
+        Index("ix_price_list_discount_rules_company_list", "company_id", "price_list_id", "active"),
+    )
+
+    id = db.Column(db.Integer, primary_key=True)
+    company_id = db.Column(db.Integer, db.ForeignKey("companies.id", ondelete="CASCADE"), nullable=False, index=True)
+    price_list_id = db.Column(db.Integer, db.ForeignKey("price_lists.id", ondelete="CASCADE"), nullable=False, index=True)
+    min_quantity = db.Column(db.Numeric(18, 3), nullable=False, default=Decimal("1.000"))
+    discount_percent = db.Column(db.Numeric(5, 2), nullable=False)
+    active = db.Column(db.Boolean, nullable=False, default=True, server_default=db.true())
+    created_at = db.Column(db.DateTime, nullable=False, default=utcnow_naive)
+    updated_at = db.Column(db.DateTime, nullable=False, default=utcnow_naive, onupdate=utcnow_naive)
+
+    company = db.relationship("Company")
 
 
 def _company_id():
@@ -192,6 +219,13 @@ def index():
         for category, count in category_rows
     ]
     active_products_count = Product.query.filter_by(company_id=company_id, active=True).count()
+    general_rules = (
+        PriceListDiscountRule.query.filter_by(
+            company_id=company_id, price_list_id=selected.id, active=True
+        ).order_by(PriceListDiscountRule.min_quantity.asc()).all()
+        if selected is not None
+        else []
+    )
     rows = (
         PriceListItem.query.filter_by(company_id=company_id, price_list_id=selected.id)
         .join(Product, Product.id == PriceListItem.product_id)
@@ -208,6 +242,7 @@ def index():
         category_options=category_options,
         active_products_count=active_products_count,
         price_rows=rows,
+        general_rules=general_rules,
         today=date.today().isoformat(),
     )
 
@@ -251,6 +286,100 @@ def create_list():
     return redirect(url_for("wholesale_pricing.index", list_id=row.id))
 
 
+
+
+
+@bp.post("/listas/<int:list_id>/reglas-generales")
+@tenant_required
+@login_required
+@_wholesale_plan_required
+def save_general_rule(list_id):
+    """Create or edit a general quantity discount rule scoped to this company's list."""
+    _require_admin()
+    company_id = _company_id()
+    price_list = PriceList.query.filter_by(id=list_id, company_id=company_id).first_or_404()
+    rule_id = request.form.get("rule_id", type=int)
+    try:
+        quantity = Decimal(str(request.form.get("min_quantity") or "").replace(",", "."))
+        percent = Decimal(str(request.form.get("discount_percent") or "").replace(",", "."))
+        if not quantity.is_finite() or quantity <= 0:
+            raise ValueError("La cantidad mínima debe ser mayor a cero.")
+        if not percent.is_finite() or percent <= 0 or percent >= Decimal("100"):
+            raise ValueError("El descuento debe ser mayor a 0% y menor a 100%.")
+        quantity = quantity.quantize(Decimal("0.001"))
+        percent = percent.quantize(Decimal("0.01"), rounding=ROUND_HALF_UP)
+    except (InvalidOperation, TypeError, ValueError) as exc:
+        message = str(exc) if isinstance(exc, ValueError) and str(exc) else "Ingresá una cantidad y un porcentaje válidos."
+        flash(message, "danger")
+        return redirect(url_for("wholesale_pricing.index", list_id=list_id))
+
+    if rule_id:
+        rule = PriceListDiscountRule.query.filter_by(
+            id=rule_id, company_id=company_id, price_list_id=price_list.id
+        ).first_or_404()
+    else:
+        rule = None
+
+    collision = PriceListDiscountRule.query.filter_by(
+        company_id=company_id,
+        price_list_id=price_list.id,
+        min_quantity=quantity,
+        active=True,
+    ).first()
+    if collision is not None and (rule is None or collision.id != rule.id):
+        if rule is not None:
+            flash(
+                "Ya existe otra regla para esa cantidad mínima. Editá la regla existente para evitar escalas duplicadas.",
+                "warning",
+            )
+            return redirect(url_for("wholesale_pricing.index", list_id=list_id))
+        rule = collision
+
+    if rule is None:
+        rule = PriceListDiscountRule(
+            company_id=company_id,
+            price_list_id=price_list.id,
+            min_quantity=quantity,
+            discount_percent=percent,
+            active=True,
+        )
+        db.session.add(rule)
+    else:
+        rule.min_quantity = quantity
+        rule.discount_percent = percent
+        rule.active = True
+    try:
+        db.session.commit()
+    except Exception:
+        db.session.rollback()
+        current_app.logger.exception(
+            "Could not save general wholesale discount rule: company_id=%s list_id=%s",
+            company_id, price_list.id,
+        )
+        flash("No se pudo guardar la regla general. No se aplicaron cambios.", "danger")
+        return redirect(url_for("wholesale_pricing.index", list_id=list_id))
+    flash(
+        f"Regla general guardada: {percent:.2f}% de descuento desde {quantity:g} unidades.",
+        "success",
+    )
+    return redirect(url_for("wholesale_pricing.index", list_id=list_id))
+
+
+@bp.post("/listas/<int:list_id>/reglas-generales/<int:rule_id>/eliminar")
+@tenant_required
+@login_required
+@_wholesale_plan_required
+def delete_general_rule(list_id, rule_id):
+    _require_admin()
+    company_id = _company_id()
+    price_list = PriceList.query.filter_by(id=list_id, company_id=company_id).first_or_404()
+    rule = PriceListDiscountRule.query.filter_by(
+        id=rule_id, company_id=company_id, price_list_id=price_list.id
+    ).first_or_404()
+    db.session.delete(rule)
+    db.session.commit()
+    flash("Regla general eliminada. Las tarifas específicas por producto se conservan.", "success")
+    return redirect(url_for("wholesale_pricing.index", list_id=list_id))
 
 
 @bp.get("/productos/buscar")
