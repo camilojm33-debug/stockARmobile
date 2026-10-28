@@ -1757,3 +1757,113 @@ def test_wholesale_price_list_page_shows_edit_metadata_form(wholesale_database, 
     assert "Editar datos de esta lista" in page
     assert f"/precios-mayoristas/listas/{data['price_list'].id}/editar" in page
     assert "Los tramos, descuentos y clientes vinculados se mantienen." in page
+
+def test_delete_wholesale_list_blocks_when_clients_are_assigned(wholesale_database, app):
+    data = wholesale_database
+    list_id = data["price_list"].id
+    browser = _wholesale_admin_client(app, data["admin"])
+
+    response = browser.post(
+        f"/precios-mayoristas/listas/{list_id}/eliminar",
+        follow_redirects=True,
+    )
+
+    assert response.status_code == 200
+    assert "No se puede eliminar" in response.get_data(as_text=True)
+    db.session.expire_all()
+    saved = PriceList.query.filter_by(
+        id=list_id, company_id=data["company"].id
+    ).first()
+    assert saved is not None
+    assert PriceListItem.query.filter_by(
+        company_id=data["company"].id, price_list_id=list_id
+    ).count() == 2
+    assert Client.query.filter_by(
+        company_id=data["company"].id, price_list_id=list_id
+    ).count() == 1
+
+
+def test_delete_unassigned_wholesale_list_cascades_only_its_pricing_rules(wholesale_database, app):
+    data = wholesale_database
+    list_id = data["price_list"].id
+    with app.app_context():
+        # Detach the only client using this list; deletion is deliberately blocked otherwise.
+        data["wholesale_client"].price_list_id = None
+        db.session.add(PriceListDiscountRule(
+            company_id=data["company"].id,
+            price_list_id=list_id,
+            min_quantity=Decimal("3.000"),
+            discount_percent=Decimal("15.00"),
+            active=True,
+        ))
+        db.session.commit()
+
+    browser = _wholesale_admin_client(app, data["admin"])
+    response = browser.post(
+        f"/precios-mayoristas/listas/{list_id}/eliminar",
+        follow_redirects=True,
+    )
+
+    assert response.status_code == 200
+    assert "eliminada junto con sus tramos y reglas" in response.get_data(as_text=True)
+    db.session.expire_all()
+    assert PriceList.query.filter_by(
+        id=list_id, company_id=data["company"].id
+    ).first() is None
+    assert PriceListItem.query.filter_by(
+        company_id=data["company"].id, price_list_id=list_id
+    ).count() == 0
+    assert PriceListDiscountRule.query.filter_by(
+        company_id=data["company"].id, price_list_id=list_id
+    ).count() == 0
+    # The product catalog and existing retail price are not changed by deleting a list.
+    product = Product.query.filter_by(id=data["product"].id, company_id=data["company"].id).first()
+    assert product is not None
+    assert Decimal(str(product.price)) == Decimal("100.00")
+
+
+def test_delete_wholesale_list_is_company_scoped_and_admin_only(wholesale_database, app):
+    data = wholesale_database
+    foreign_list = PriceList(
+        company_id=data["other_company"].id,
+        name="Lista ajena",
+        code="lista-ajena-delete",
+        active=True,
+        created_by_user_id=None,
+    )
+    db.session.add(foreign_list)
+    db.session.commit()
+    foreign_list_id = foreign_list.id
+
+    admin_browser = _wholesale_admin_client(app, data["admin"])
+    forbidden_tenant_response = admin_browser.post(
+        f"/precios-mayoristas/listas/{foreign_list_id}/eliminar"
+    )
+    assert forbidden_tenant_response.status_code == 404
+
+    employee_browser = app.test_client()
+    _login_test_client(employee_browser, data["employee"])
+    forbidden_role_response = employee_browser.post(
+        f"/precios-mayoristas/listas/{data['price_list'].id}/eliminar"
+    )
+    assert forbidden_role_response.status_code == 403
+
+    db.session.expire_all()
+    assert PriceList.query.filter_by(
+        id=foreign_list_id, company_id=data["other_company"].id
+    ).first() is not None
+    assert PriceList.query.filter_by(
+        id=data["price_list"].id, company_id=data["company"].id
+    ).first() is not None
+
+
+def test_wholesale_price_list_page_shows_guarded_delete_button(wholesale_database, app):
+    data = wholesale_database
+    browser = _wholesale_admin_client(app, data["admin"])
+    response = browser.get(f"/precios-mayoristas/?list_id={data['price_list'].id}")
+
+    assert response.status_code == 200
+    page = response.get_data(as_text=True)
+    assert "Eliminar lista" in page
+    assert "ningún cliente la tiene asignada" in page
+    assert f"/precios-mayoristas/listas/{data['price_list'].id}/eliminar" in page
