@@ -517,12 +517,14 @@ def format_vendor_order_confirmation(*, company_id: int, order: Dict[str, Any]) 
         description = " ".join(str(item.description or "Producto").split())[:255]
         unit_price = _money(item.unit_price)
         subtotal = _money(item.subtotal)
+        price_source = str(getattr(item, "price_source", "") or "").strip().lower()
+        price_label = "precio mayorista " if price_source == "mayorista" else ""
         lines.append(
             f"• {quantity_text} × {description}: "
-            f"{_format_vendor_currency(unit_price, currency)} c/u; "
+            f"{price_label}{_format_vendor_currency(unit_price, currency)} c/u; "
             f"subtotal {_format_vendor_currency(subtotal, currency)}"
         )
-        if str(getattr(item, "price_source", "") or "").strip().lower() == "mayorista":
+        if price_source == "mayorista":
             lines.extend(format_vendor_wholesale_price_details(
                 quantity=quantity,
                 unit_price=unit_price,
