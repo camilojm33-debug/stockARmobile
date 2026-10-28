@@ -110,6 +110,54 @@ def _normalize_text(value: Any) -> str:
     return " ".join(str(value or "").strip().lower().split())
 
 
+def _find_registered_client(*, company_id: int, customer_name: str = "", customer_phone: str = ""):
+    """Match an existing client only by a tenant-local, verified phone and compatible name."""
+    from app import Client
+
+    phone = _normalize_phone(customer_phone)
+    if len(phone) < 8:
+        return None
+    raw_phone = str(customer_phone or "").strip()
+    phone_values = list(dict.fromkeys([value for value in (raw_phone, phone) if value]))
+    filters = [
+        Client.phone.in_(phone_values),
+        Client.whatsapp.in_(phone_values),
+    ]
+    # Include formatted phone values in candidate retrieval, then require an
+    # exact normalized-digit match below. The suffix is only an index-friendly
+    # candidate filter; it is never sufficient on its own to identify a client.
+    if len(phone) >= 8:
+        suffix = f"%{phone[-8:]}"
+        filters.extend([Client.phone.ilike(suffix), Client.whatsapp.ilike(suffix)])
+    candidates = (
+        Client.query.filter(
+            Client.company_id == int(company_id),
+            Client.active.is_(True),
+            or_(*filters),
+        )
+        .order_by(Client.id.asc())
+        .all()
+    )
+    matches = [
+        row for row in candidates
+        if phone in {_normalize_phone(row.phone), _normalize_phone(row.whatsapp)}
+    ]
+    if not matches:
+        return None
+
+    normalized_name = _normalize_text(customer_name)
+    if normalized_name:
+        exact = [row for row in matches if _normalize_text(row.name) == normalized_name]
+        if exact:
+            return exact[0]
+        generic = [
+            row for row in matches
+            if _normalize_text(row.name) in {"", "consumidor final"}
+        ]
+        return generic[0] if generic else None
+    return matches[0] if len(matches) == 1 else None
+
+
 def _metadata(conversation) -> Dict[str, Any]:
     raw = conversation.metadata_json or {}
     if isinstance(raw, dict):
@@ -683,7 +731,13 @@ class VendorOrderService:
         return conversation
 
     @staticmethod
-    def get_cart(*, company_id: int, conversation_id: int) -> Dict[str, Any]:
+    def get_cart(
+        *,
+        company_id: int,
+        conversation_id: int,
+        customer_name: str = "",
+        customer_phone: str = "",
+    ) -> Dict[str, Any]:
         from stockarmobile.models.conversations import Conversation
         from app import Product
 
@@ -695,6 +749,31 @@ class VendorOrderService:
             raise ValueError("Conversación no encontrada para esta empresa.")
 
         state = _metadata(conversation)
+        saved_delivery = state.get("delivery") if isinstance(state.get("delivery"), dict) else {}
+        effective_name = str(
+            customer_name or state.get("customer_name") or saved_delivery.get("recipient_name") or ""
+        ).strip()
+        effective_phone = str(
+            customer_phone or state.get("customer_phone") or saved_delivery.get("phone") or ""
+        ).strip()
+        if (
+            not effective_phone
+            and str(getattr(conversation, "channel", "") or "").strip().lower()
+            in {"whatsapp", "whatsapp_business"}
+        ):
+            # WhatsApp's external conversation ID is the sender phone. Public
+            # Webchat uses a visitor token and must never be interpreted as one.
+            effective_phone = str(
+                getattr(conversation, "external_conversation_id", "") or state.get("whatsapp_user") or ""
+            ).strip()
+        buyer = _find_registered_client(
+            company_id=int(company_id),
+            customer_name=effective_name,
+            customer_phone=effective_phone,
+        )
+        from services.wholesale_pricing_service import is_wholesale_client
+        wholesale_buyer = is_wholesale_client(buyer)
+
         raw_cart = state.get(CART_KEY) or {}
         if not isinstance(raw_cart, dict):
             raw_cart = {}
@@ -707,8 +786,46 @@ class VendorOrderService:
                 continue
         products = {
             row.id: row
-            for row in Product.query.filter(Product.company_id == company_id, Product.id.in_(sorted(set(ids)))).all()
+            for row in Product.query.filter(
+                Product.company_id == company_id,
+                Product.id.in_(sorted(set(ids))),
+            ).all()
         } if ids else {}
+
+        wholesale_lines_by_product = {}
+        wholesale_error = None
+        if wholesale_buyer and products:
+            pricing_inputs = []
+            for key, raw_qty in raw_cart.items():
+                try:
+                    product_id = int(key)
+                    quantity = Decimal(str(raw_qty))
+                except (TypeError, ValueError, ArithmeticError):
+                    continue
+                product = products.get(product_id)
+                if product is None or quantity <= 0:
+                    continue
+                pricing_inputs.append({
+                    "product": product,
+                    "price": _money(product.price),
+                    "quantity": quantity,
+                    "line_discount": Decimal("0.00"),
+                })
+            from services.wholesale_pricing_service import (
+                apply_wholesale_prices,
+                wholesale_pricing_error,
+            )
+            resolved_lines = apply_wholesale_prices(
+                pricing_inputs,
+                company_id=int(company_id),
+                client=buyer,
+            )
+            wholesale_lines_by_product = {
+                int(line["product"].id): line
+                for line in resolved_lines
+                if line.get("product") is not None
+            }
+            wholesale_error = wholesale_pricing_error(resolved_lines, client=buyer)
 
         items = []
         total = Decimal("0.00")
@@ -721,6 +838,45 @@ class VendorOrderService:
             product = products.get(product_id)
             if product is None or quantity <= 0:
                 continue
+
+            if wholesale_buyer:
+                pricing_line = wholesale_lines_by_product.get(product.id) or {}
+                unit_price = _money(pricing_line.get("price", product.price))
+                discount = _money(pricing_line.get("line_discount", pricing_line.get("discount", 0)))
+                subtotal = max((unit_price * quantity) - discount, Decimal("0.00"))
+                total += subtotal
+                percent = pricing_line.get("wholesale_discount_percent")
+                reference = pricing_line.get("wholesale_reference_price")
+                saving = Decimal("0.00")
+                if percent is not None and reference is not None:
+                    saving = max(
+                        (_money(reference) - unit_price) * quantity,
+                        Decimal("0.00"),
+                    ).quantize(Decimal("0.01"))
+                items.append({
+                    "product_id": product.id,
+                    "name": product.name,
+                    "quantity": float(quantity),
+                    "unit_measure": product.unit_measure or "u",
+                    "unit_price": float(unit_price),
+                    "stock": normalized_stock_quantity(product.stock),
+                    "subtotal": float(subtotal),
+                    "promotion_id": None,
+                    "promotion_name": None,
+                    "paid_quantity": float(quantity),
+                    "free_quantity": 0.0,
+                    "discount": float(discount),
+                    "price_source": str(pricing_line.get("price_source") or "minorista"),
+                    "price_list_id": pricing_line.get("price_list_id"),
+                    "price_list_name": str(pricing_line.get("price_list_name") or ""),
+                    "price_resolution_reason": pricing_line.get("price_resolution_reason"),
+                    "wholesale_discount_percent": float(percent) if percent is not None else None,
+                    "wholesale_reference_price": float(_money(reference)) if reference is not None else None,
+                    "wholesale_discount_amount": float(saving),
+                })
+                continue
+
+            # Keep the existing retail promotion path unchanged.
             promotion = PromotionEngine.evaluate(company_id=company_id, product=product, quantity=quantity)
             subtotal = promotion.final_amount
             total += subtotal
@@ -739,7 +895,15 @@ class VendorOrderService:
                 "discount": float(promotion.discount),
             })
 
-        return {"items": items, "total": float(total), "currency": "ARS", "line_count": len(items)}
+        result = {"items": items, "total": float(total), "currency": "ARS", "line_count": len(items)}
+        if wholesale_buyer:
+            result.update({
+                "customer_type": "mayorista",
+                "price_list_id": getattr(buyer, "price_list_id", None),
+                "pricing_valid": bool(items) and not bool(wholesale_error),
+                "pricing_error": wholesale_error,
+            })
+        return result
 
     @staticmethod
     def update_cart(
@@ -1126,7 +1290,12 @@ class VendorOrderService:
         if conversation is None:
             raise ValueError("Conversación no encontrada para esta empresa.")
 
-        cart = VendorOrderService.get_cart(company_id=company_id, conversation_id=conversation_id)
+        cart = VendorOrderService.get_cart(
+            company_id=company_id,
+            conversation_id=conversation_id,
+            customer_name=customer_name,
+            customer_phone=customer_phone,
+        )
         if not cart["items"]:
             raise ValueError("El carrito está vacío.")
 
@@ -1243,31 +1412,11 @@ class VendorOrderService:
             raise ValueError("No hay un usuario activo para registrar el pedido.")
 
         phone = _normalize_phone(customer_phone)
-        client = None
-        if phone:
-            phone_matches = Client.query.filter(
-                Client.company_id == company_id,
-                or_(Client.whatsapp == customer_phone, Client.phone == customer_phone, Client.whatsapp == phone, Client.phone == phone),
-                Client.active.is_(True),
-            ).order_by(Client.id.asc()).all()
-
-            normalized_customer_name = _normalize_text(customer_name)
-            if normalized_customer_name:
-                # A phone number can be shared or reassigned. Reuse an existing
-                # profile only if its name agrees, or the profile is generic.
-                client = next(
-                    (candidate for candidate in phone_matches
-                     if _normalize_text(candidate.name) == normalized_customer_name),
-                    None,
-                )
-                if client is None:
-                    client = next(
-                        (candidate for candidate in phone_matches
-                         if _normalize_text(candidate.name) in {"", "consumidor final"}),
-                        None,
-                    )
-            elif len(phone_matches) == 1:
-                client = phone_matches[0]
+        client = _find_registered_client(
+            company_id=int(company_id),
+            customer_name=customer_name,
+            customer_phone=customer_phone,
+        )
 
         if client is None and (customer_name.strip() or phone):
             clean_name = customer_name.strip()[:200] or "Consumidor final"
@@ -1336,7 +1485,27 @@ class VendorOrderService:
                 ).quantize(Decimal("0.01")),
             })
 
-        line_inputs, promotion_results = PromotionEngine.apply_to_lines(company_id=company_id, lines=line_inputs)
+        from services.wholesale_pricing_service import (
+            apply_wholesale_prices,
+            is_wholesale_client,
+            validate_wholesale_prices,
+        )
+        wholesale_buyer = is_wholesale_client(client)
+        if wholesale_buyer:
+            # Wholesale list prices are authoritative and do not stack legacy
+            # product discounts or retail promotions.
+            line_inputs = apply_wholesale_prices(
+                line_inputs,
+                company_id=int(company_id),
+                client=client,
+            )
+            validate_wholesale_prices(line_inputs, client=client)
+            promotion_results = []
+        else:
+            line_inputs, promotion_results = PromotionEngine.apply_to_lines(
+                company_id=company_id,
+                lines=line_inputs,
+            )
         promotion_by_product_id = {
             int(line["product"].id): line["promotion"]
             for line in line_inputs
@@ -1346,6 +1515,11 @@ class VendorOrderService:
         for result in promotion_results:
             if result.promotion_name and result.promotion_name not in promotion_names:
                 promotion_names.append(result.promotion_name)
+        pricing_line_by_product_id = {
+            int(line["product"].id): line
+            for line in line_inputs
+            if line.get("product") is not None
+        }
         base_totals = PricingService.calculate(lines=line_inputs, data={})
         shipping = _shipping_plan(
             company_id=company_id,
@@ -1400,9 +1574,14 @@ class VendorOrderService:
         for index, item in enumerate(cart["items"]):
             product = products[int(item["product_id"])]
             quantity = Decimal(str(item["quantity"]))
-            unit_price = _money(product.price)
+            pricing_line = pricing_line_by_product_id.get(int(product.id), {})
+            unit_price = _money(pricing_line.get("price", product.price))
             promotion = promotion_by_product_id.get(product.id)
-            discount = promotion.discount if promotion is not None else (_money(product.discount) * quantity).quantize(Decimal("0.01"))
+            discount = (
+                _money(promotion.discount)
+                if promotion is not None
+                else _money(pricing_line.get("line_discount", (_money(product.discount) * quantity)))
+            )
             subtotal = max((unit_price * quantity) - discount, Decimal("0.00"))
             db.session.add(
                 QuoteItem(
@@ -1413,6 +1592,10 @@ class VendorOrderService:
                     unit_price=unit_price,
                     discount=discount,
                     subtotal=subtotal,
+                    price_source=str(pricing_line.get("price_source") or "minorista"),
+                    price_list_id=pricing_line.get("price_list_id"),
+                    wholesale_discount_percent=pricing_line.get("wholesale_discount_percent"),
+                    wholesale_reference_price=pricing_line.get("wholesale_reference_price"),
                     sort_order=index,
                 )
             )

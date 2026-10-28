@@ -1056,6 +1056,8 @@ async function refreshCartPricing({ quiet = true, force = false } = {}) {
     if (requestId !== cartPricingRequestId) return false;
 
     const lines = new Map((Array.isArray(data.lines) ? data.lines : []).map(line => [String(line.product_id), line]));
+    const wholesalePricingIncomplete = String(data.customer_type || 'minorista').trim().toLowerCase() === 'mayorista'
+      && [...lines.values()].some(line => String(line.price_source || 'minorista').trim().toLowerCase() !== 'mayorista');
     if (lines.size !== cart.length) {
       throw new Error('El servidor no devolvió el precio de todos los productos. Volvé a intentar.');
     }
@@ -1082,6 +1084,10 @@ async function refreshCartPricing({ quiet = true, force = false } = {}) {
     updateCartWholesalePricingStatus(data);
     renderCartModal();
     updateCheckoutTotals();
+    if (wholesalePricingIncomplete) {
+      if (!quiet) showNotification('No se puede cobrar: una o más líneas no tienen una tarifa mayorista vigente para esa cantidad. Corregí la lista o los tramos y volvé a calcular.', 'danger');
+      return false;
+    }
     return true;
   } catch (error) {
     if (requestId !== cartPricingRequestId) return false;

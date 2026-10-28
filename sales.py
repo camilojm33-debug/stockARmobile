@@ -1077,8 +1077,9 @@ def api_mp_qr_create():
 
         lines = _calculate_lines(items, lock_for_update=True, discount_overrides=(payload.get("line_discounts") or payload.get("line_discount_overrides") or {}))
         if selected_client is not None:
-            from services.wholesale_pricing_service import apply_wholesale_prices
+            from services.wholesale_pricing_service import apply_wholesale_prices, validate_wholesale_prices
             lines = apply_wholesale_prices(lines, company_id=company_id, client=selected_client)
+            validate_wholesale_prices(lines, client=selected_client)
         sale_totals = PricingService.calculate(
             [{"price": line["price"], "quantity": line["quantity"], "line_discount": line["discount"]} for line in lines],
             payload,

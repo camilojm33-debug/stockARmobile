@@ -176,10 +176,29 @@ def _discounted_retail_price(product, discount_percent: Decimal) -> Decimal:
     return discounted_price
 
 
+def price_list_is_current(price_list, *, today=None) -> bool:
+    """Return whether a list is active and within its inclusive validity dates."""
+    today = today or date.today()
+    if price_list is None or not bool(getattr(price_list, "active", False)):
+        return False
+    starts = getattr(price_list, "effective_from", None)
+    ends = getattr(price_list, "effective_until", None)
+    if starts is not None and starts > today:
+        return False
+    if ends is not None and ends < today:
+        return False
+    return True
+
+
 def active_price_lists(company_id: int, *, include_inactive: bool = False):
     query = PriceList.query.filter_by(company_id=int(company_id))
     if not include_inactive:
-        query = query.filter(PriceList.active.is_(True))
+        today = date.today()
+        query = query.filter(
+            PriceList.active.is_(True),
+            or_(PriceList.effective_from.is_(None), PriceList.effective_from <= today),
+            or_(PriceList.effective_until.is_(None), PriceList.effective_until >= today),
+        )
     return query.order_by(PriceList.name.asc(), PriceList.id.asc()).all()
 
 

@@ -971,9 +971,23 @@ class VendorOrderPreviewTool(AgentTool):
             if not delivery_province:
                 missing_fields.append("provincia")
         if missing_fields:
-            # Keep the chosen products, but do not create a quote/payment from
-            # incomplete identity or delivery data. The model can ask only for
-            # the missing fields and resume the same cart on the next turn.
+            # Keep verified buyer identity in this same conversation so the cart
+            # can resolve an already-registered wholesale customer while asking
+            # only for missing checkout/delivery fields. Public Webchat contact
+            # values above were checked against the visitor's own messages.
+            if has_app_context() and conversation is not None:
+                state = _metadata(conversation)
+                if not profile_reusable:
+                    state.pop("customer_name", None)
+                    state.pop("customer_phone", None)
+                    state.pop("delivery", None)
+                if customer_name:
+                    state["customer_name"] = customer_name[:160]
+                if customer_phone:
+                    state["customer_phone"] = customer_phone[:40]
+                conversation.metadata_json = state
+            # A partial checkout is not allowed to bypass current wholesale
+            # rules; get_cart returns an explicit pricing_valid/error indicator.
             return {
                 "success": True,
                 "status": "needs_customer_details",
@@ -981,6 +995,8 @@ class VendorOrderPreviewTool(AgentTool):
                 "cart": VendorOrderService.get_cart(
                     company_id=self.company_id,
                     conversation_id=self._context["conversation_id"],
+                    customer_name=customer_name,
+                    customer_phone=customer_phone,
                 ),
             }
 

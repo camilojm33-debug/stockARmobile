@@ -91,6 +91,7 @@
     .qty { font-size: .75rem; font-weight: 800; min-width: 28px; text-align: center; }
     .mini-btn { width: 29px; height: 29px; border-radius: 9px; background: #f1f5f9; color: #334155; font-weight: 850; }
     .cart-empty { padding: 12px; border: 1px dashed #cbd5e1; border-radius: 12px; color: var(--muted); font-size: .78rem; }
+    .cart-pricing-warning { margin-bottom: 8px; padding: 10px 11px; border: 1px solid #f0d98b; border-radius: 11px; background: #fff8dc; color: #704f00; font-size: .76rem; line-height: 1.4; }
     .cart-total { display: flex; justify-content: space-between; align-items: center; margin-top: 12px; padding-top: 12px; border-top: 1px solid var(--line); }
     .total-label { color: var(--muted); font-size: .78rem; }
     .total-value { font-size: 1.15rem; font-weight: 900; }
@@ -537,12 +538,15 @@
       if (checkoutGrandTotal) checkoutGrandTotal.textContent = grandTotalLabel;
       if (mobileCartCount) mobileCartCount.textContent = label;
       if (mobileCartTotal) mobileCartTotal.textContent = money(cart.total);
-      if (checkoutButton) checkoutButton.disabled = items.length === 0;
+      if (checkoutButton) checkoutButton.disabled = items.length === 0 || cart.pricing_valid === false;
       if (cartItemsEl) {
         if (!items.length) {
           cartItemsEl.innerHTML = '<div class="cart-empty">Todavía no agregaste productos. Elegí uno del catálogo o pedile al Vendedor IA que te ayude.</div>';
         } else {
-          cartItemsEl.innerHTML = items.map(function (item) {
+          const pricingWarning = cart.pricing_valid === false
+            ? '<div class="cart-pricing-warning" role="alert">' + escapeHtml(cart.pricing_error || 'No se puede confirmar el pedido porque falta una tarifa mayorista válida.') + '</div>'
+            : '';
+          cartItemsEl.innerHTML = pricingWarning + items.map(function (item) {
             return '' +
               '<div class="cart-item">' +
                 '<div><div class="cart-item-name">' + escapeHtml(item.name) + '</div>' +
