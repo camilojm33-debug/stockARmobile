@@ -96,7 +96,12 @@ def resolve_product_price(
         return {**fallback, "reason": "mayorista_sin_lista"}
 
     # Deferred imports avoid coupling model import order to the resolver.
-    from wholesale_pricing import PriceList, PriceListItem
+    from wholesale_pricing import (
+        PriceList,
+        PriceListDiscountRule,
+        PriceListItem,
+        _discounted_retail_price,
+    )
 
     price_list = PriceList.query.filter_by(id=price_list_id, company_id=effective_company_id).first()
     if not _active_today(price_list):
@@ -117,6 +122,41 @@ def resolve_product_price(
         .order_by(PriceListItem.min_quantity.desc(), PriceListItem.id.desc())
         .first()
     )
+    general_rule = (
+        PriceListDiscountRule.query.filter(
+            PriceListDiscountRule.company_id == effective_company_id,
+            PriceListDiscountRule.price_list_id == price_list.id,
+            PriceListDiscountRule.active.is_(True),
+            PriceListDiscountRule.min_quantity <= qty,
+        )
+        .order_by(PriceListDiscountRule.min_quantity.desc(), PriceListDiscountRule.id.desc())
+        .first()
+    )
+
+    row_quantity = _decimal(row.min_quantity) if row is not None else None
+    general_quantity = _decimal(general_rule.min_quantity) if general_rule is not None else None
+
+    # Choose the highest eligible quantity threshold across the product-specific
+    # tariff and the list-wide rules. A product-specific tariff wins exact ties.
+    if general_rule is not None and (
+        row is None or general_quantity > row_quantity
+    ):
+        candidate_percent = _decimal(general_rule.discount_percent, "0")
+        try:
+            price = _discounted_retail_price(product, candidate_percent)
+        except ValueError:
+            return {**fallback, "reason": "regla_general_sin_precio_minorista"}
+        return {
+            "price": price,
+            "source": "mayorista",
+            "price_list_id": int(price_list.id),
+            "price_list_name": str(price_list.name),
+            "min_quantity": general_quantity,
+            "discount_percent": candidate_percent,
+            "reason": None,
+            "price_rule_type": "general",
+        }
+
     if row is None:
         return {**fallback, "reason": "producto_sin_tarifa_mayorista"}
 
@@ -138,9 +178,10 @@ def resolve_product_price(
         "source": "mayorista",
         "price_list_id": int(price_list.id),
         "price_list_name": str(price_list.name),
-        "min_quantity": _decimal(row.min_quantity),
+        "min_quantity": row_quantity,
         "discount_percent": discount_percent,
         "reason": None,
+        "price_rule_type": "product",
     }
 
 
