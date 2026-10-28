@@ -553,7 +553,12 @@
     const qty = Math.max(Number(quantity || 0), 0);
     const eligible = tiers
       .filter((tier) => Number(tier.min_quantity || 1) <= qty)
-      .sort((a, b) => Number(a.min_quantity || 1) - Number(b.min_quantity || 1));
+      .sort((a, b) => {
+        const quantityOrder = Number(a.min_quantity || 1) - Number(b.min_quantity || 1);
+        if (quantityOrder !== 0) return quantityOrder;
+        // A product-specific rate wins when its threshold exactly matches a list-wide rule.
+        return Number(Boolean(b.is_general_rule)) - Number(Boolean(a.is_general_rule));
+      });
     return eligible.length ? eligible[eligible.length - 1] : null;
   }
 
