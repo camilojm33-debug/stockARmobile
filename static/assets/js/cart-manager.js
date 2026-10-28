@@ -646,6 +646,7 @@ function updateQuantity(productId, newQuantity) {
 function clearCart() {
   cartPricingRequestId += 1;
   cartPricingInFlight = false;
+  setCartWholesalePricingStatus('');
   cart = [];
   resetCheckoutToken();
   quotePricingSnapshot = null;
@@ -1015,7 +1016,10 @@ function restoreRetailCartPrices() {
  * values when creating a sale.
  */
 async function refreshCartPricing({ quiet = true, force = false } = {}) {
-  if (!Array.isArray(cart) || !cart.length) return true;
+  if (!Array.isArray(cart) || !cart.length) {
+    setCartWholesalePricingStatus('');
+    return true;
+  }
   if (quoteSnapshotMatchesCart()) return true;
 
   if (!navigator.onLine) {
@@ -1075,6 +1079,7 @@ async function refreshCartPricing({ quiet = true, force = false } = {}) {
     });
     cartPricingInFlight = false;
     saveCart();
+    updateCartWholesalePricingStatus(data);
     renderCartModal();
     updateCheckoutTotals();
     return true;
@@ -1093,6 +1098,61 @@ async function refreshCartPricing({ quiet = true, force = false } = {}) {
   } finally {
     if (requestId === cartPricingRequestId) cartPricingInFlight = false;
   }
+}
+
+function setCartWholesalePricingStatus(message, variant = 'warning') {
+  const status = document.getElementById('cart-wholesale-status');
+  if (!status) return;
+  if (!message) {
+    status.textContent = '';
+    status.className = 'd-none';
+    return;
+  }
+  const safeVariant = ['warning', 'danger', 'info', 'success'].includes(variant) ? variant : 'warning';
+  status.className = `alert alert-${safeVariant} py-2 px-3 small mt-2 mb-0`;
+  status.textContent = message;
+}
+
+function updateCartWholesalePricingStatus(data) {
+  const customerType = String(data?.customer_type || 'minorista').trim().toLowerCase();
+  if (customerType !== 'mayorista') {
+    setCartWholesalePricingStatus('');
+    return;
+  }
+
+  if (!data?.price_list_id) {
+    setCartWholesalePricingStatus(
+      'Este cliente está marcado como mayorista, pero no tiene una lista de precios asignada. Se mantienen los precios minoristas. Editá el cliente y asignale una lista mayorista activa.'
+    );
+    return;
+  }
+
+  const fallbackLines = (Array.isArray(data.lines) ? data.lines : [])
+    .filter(line => String(line?.price_source || 'minorista').trim().toLowerCase() !== 'mayorista');
+  if (!fallbackLines.length) {
+    setCartWholesalePricingStatus('');
+    return;
+  }
+
+  const first = fallbackLines[0];
+  const reasons = {
+    plan_sin_mayoristas: 'El plan de la empresa no habilita precios mayoristas.',
+    lista_no_vigente: 'La lista asignada está inactiva o fuera de su período de vigencia.',
+    mayorista_sin_lista: 'El cliente no tiene una lista mayorista asignada.',
+    producto_sin_tarifa_mayorista: 'No hay una tarifa por producto ni un descuento general que cubra esa cantidad.',
+    regla_general_sin_precio_minorista: 'No se pudo calcular la regla de descuento sobre el precio minorista.'
+  };
+  const reason = reasons[String(first?.price_resolution_reason || '')]
+    || 'El sistema no encontró una tarifa mayorista aplicable para todos los productos del carrito.';
+  const products = fallbackLines.slice(0, 3).map(line => {
+    const quantity = Number(line.quantity) || 0;
+    return `${String(line.name || 'Producto')} (cantidad ${formatQuantity(quantity)})`;
+  });
+  const productSummary = products.join(', ') + (fallbackLines.length > 3 ? ', y otros productos' : '');
+  const listName = String(data.client_price_list_name || 'lista asignada');
+  setCartWholesalePricingStatus(
+    `No se aplicó precio mayorista de "${listName}" a: ${productSummary}. ${reason} Se mantienen los precios minoristas para esas líneas; revisá la tarifa y el mínimo de cantidad.`
+  );
 }
 
 function updateCheckoutTotals() {
