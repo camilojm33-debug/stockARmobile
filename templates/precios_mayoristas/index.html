@@ -107,7 +107,7 @@
                 </tbody>
               </table>
             </div>
-            <p class="form-text mb-0">Se usa el tramo aplicable con mayor cantidad mínima. Si una tarifa específica del producto empieza en la misma cantidad, prevalece esa tarifa. Las reglas no se acumulan entre sí.</p>
+            <p class="form-text mb-0">Las tarifas específicas de un producto tienen prioridad cuando existe un tramo aplicable. La regla general completa productos o cantidades sin tarifa específica. Dentro de cada grupo se usa el tramo aplicable con mayor cantidad mínima; los porcentajes no se acumulan.</p>
             {% else %}
             <p class="small text-muted mb-0">Todavía no hay reglas generales. Agregá la primera para aplicar descuentos a la lista completa sin cargar cada producto por separado.</p>
             {% endif %}
