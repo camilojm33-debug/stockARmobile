@@ -15,7 +15,7 @@ from flask_migrate import stamp, upgrade
 
 
 BASE_REVISION = "20261024_01_release_readiness"
-HEAD_REVISION = "20261028_01_general_discount_rules"
+HEAD_REVISION = "20261028_01_gen_disc_rules"
 
 
 def main() -> None:
