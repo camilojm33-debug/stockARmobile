@@ -12,7 +12,7 @@ from flask import Blueprint, abort, current_app, flash, jsonify, redirect, rende
 from flask_login import current_user, login_required
 from sqlalchemy.exc import IntegrityError
 from stockarmobile.extensions import csrf, db
-from stockarmobile.helpers.dates import utcnow_naive
+from stockarmobile.helpers.dates import format_local_datetime, utcnow_naive
 from stockarmobile.decorators import company_admin_required
 from app import get_current_company_id
 from stockarmobile.models.conversations import Conversation, ConversationMessage
@@ -714,6 +714,7 @@ def _ai_order_row(company_id: int, quote):
             "shipping_confirmed_at": getattr(getattr(quote, "delivery", None), "shipping_confirmed_at", None) if getattr(quote, "delivery", None) else None,
             "pickup_status": getattr(getattr(quote, "delivery", None), "pickup_status", None) if getattr(quote, "delivery", None) else None,
             "picked_up_at": getattr(getattr(quote, "delivery", None), "picked_up_at", None) if getattr(quote, "delivery", None) else None,
+            "picked_up_at_local": format_local_datetime(getattr(delivery_for_status, "picked_up_at", None), getattr(company, "timezone", None), "%d/%m/%Y %H:%M") if delivery_for_status and getattr(delivery_for_status, "picked_up_at", None) else "",
             "picked_up_by": getattr(getattr(getattr(quote, "delivery", None), "picked_up_by", None), "name", None) if getattr(quote, "delivery", None) else None,
         },
     }
