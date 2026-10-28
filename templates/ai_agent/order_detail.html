@@ -194,7 +194,7 @@
             {% if pickup_done %}
             <div class="alert alert-success mb-0">
               <div class="fw-bold"><i class="bi bi-check-circle-fill me-1"></i>Retirado</div>
-              <div class="small">Fecha y hora: {{ delivery.picked_up_at.strftime('%d/%m/%Y %H:%M') if delivery.picked_up_at else 'registrado' }}</div>
+              <div class="small">Fecha y hora: {{ delivery.picked_up_at_local or 'registrado' }}</div>
               {% if delivery.picked_up_by %}<div class="small">Entregado por: {{ delivery.picked_up_by }}</div>{% endif %}
             </div>
             {% elif delivery and delivery.pickup_status == 'legacy' %}
