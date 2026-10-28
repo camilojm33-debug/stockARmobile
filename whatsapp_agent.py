@@ -166,6 +166,181 @@ def _customer_order_response(company_id: int, conversation_id: int, order_number
     return f"El pedido *{result['quote_number']}* por *${result['total']:.2f} ARS* {body}{extra}"
 
 
+def _handle_vendor_wholesale_inquiry(company_id: int, conversation_id: int, sender: str, text: str):
+    """Answer wholesale questions from the saved quote or resolved cart, never from model guesswork."""
+    import unicodedata
+    from decimal import Decimal
+    from app import Quote, QuoteItem
+    from wholesale_pricing import PriceList, price_list_is_current
+    from services.ai_agent.vendor_order_service import (
+        PENDING_QUOTE_KEY,
+        _format_vendor_currency,
+        _money,
+        format_vendor_wholesale_price_details,
+    )
+
+    normalized = unicodedata.normalize("NFKD", str(text or "").strip().lower())
+    normalized = "".join(char for char in normalized if not unicodedata.combining(char))
+    normalized = " ".join(normalized.split())
+    if not any(term in normalized for term in ("mayorista", "por mayor", "al por mayor")):
+        return None
+
+    conversation = Conversation.query.filter_by(
+        id=int(conversation_id),
+        company_id=int(company_id),
+        channel="whatsapp",
+    ).first()
+    if conversation is None:
+        return None
+
+    def quantity_text(value):
+        quantity = Decimal(str(value or 0))
+        return format(quantity.normalize(), "f").replace(".", ",")
+
+    def quote_wholesale_reply(quote, quote_items):
+        wholesale_items = [
+            item for item in quote_items
+            if str(getattr(item, "price_source", "") or "").strip().lower() == "mayorista"
+        ]
+        if not wholesale_items:
+            return None
+        currency = str(getattr(quote, "currency", None) or "ARS").strip().upper() or "ARS"
+        list_ids = {int(item.price_list_id) for item in wholesale_items if getattr(item, "price_list_id", None)}
+        list_names = []
+        for list_id in sorted(list_ids):
+            price_list = PriceList.query.filter_by(
+                id=list_id,
+                company_id=int(company_id),
+            ).first()
+            if price_list is not None and str(price_list.name or "").strip():
+                list_names.append(str(price_list.name).strip())
+        lines = [
+            f"Sí. El presupuesto *{quote.number or f'P-{quote.id:06d}'}* tiene guardados los precios mayoristas aplicados.",
+        ]
+        if list_names:
+            lines.append(f"Lista de precios: *{', '.join(list_names)}*.")
+        for item in quote_items:
+            quantity = Decimal(str(item.quantity or 0))
+            name = " ".join(str(item.description or "Producto").split())[:180]
+            unit_price = _money(item.unit_price)
+            subtotal = _money(item.subtotal)
+            if str(getattr(item, "price_source", "") or "").strip().lower() == "mayorista":
+                lines.append(
+                    f"• {quantity_text(quantity)} × {name}: precio mayorista "
+                    f"{_format_vendor_currency(unit_price, currency)} c/u; "
+                    f"subtotal {_format_vendor_currency(subtotal, currency)}"
+                )
+                lines.extend(format_vendor_wholesale_price_details(
+                    quantity=quantity,
+                    unit_price=unit_price,
+                    reference_price=getattr(item, "wholesale_reference_price", None),
+                    discount_percent=getattr(item, "wholesale_discount_percent", None),
+                    currency=currency,
+                ))
+            else:
+                lines.append(
+                    f"• {quantity_text(quantity)} × {name}: "
+                    f"{_format_vendor_currency(unit_price, currency)} c/u. "
+                    "Esta línea no tiene una tarifa mayorista guardada en ese presupuesto."
+                )
+        lines.extend([
+            "",
+            f"*Total final guardado del presupuesto:* {_format_vendor_currency(quote.total_amount, currency)}",
+            "El descuento indicado ya está reflejado en el precio unitario; no se resta una segunda vez.",
+        ])
+        return "\n".join(lines)
+
+    state = _metadata(conversation)
+    pending_quote_id = state.get(PENDING_QUOTE_KEY)
+    if pending_quote_id:
+        try:
+            quote = Quote.query.filter_by(
+                id=int(pending_quote_id),
+                company_id=int(company_id),
+            ).first()
+        except (TypeError, ValueError):
+            quote = None
+        if quote is not None and quote.status not in {"ANULADO", "RECHAZADO", "VENCIDO", "CONVERTIDO"}:
+            quote_items = QuoteItem.query.filter_by(quote_id=quote.id).order_by(
+                QuoteItem.sort_order.asc(),
+                QuoteItem.id.asc(),
+            ).all()
+            answer = quote_wholesale_reply(quote, quote_items)
+            if answer:
+                return answer
+
+    cart = VendorOrderService.get_cart(
+        company_id=int(company_id),
+        conversation_id=int(conversation_id),
+        customer_phone=sender,
+    )
+    if cart.get("customer_type") == "mayorista":
+        price_list = None
+        if cart.get("price_list_id"):
+            price_list = PriceList.query.filter_by(
+                id=int(cart["price_list_id"]),
+                company_id=int(company_id),
+            ).first()
+        if not price_list or not price_list_is_current(price_list):
+            list_name = str(getattr(price_list, "name", "") or "").strip()
+            detail = f' "{list_name}"' if list_name else ""
+            return (
+                "Tu ficha figura como mayorista, pero no encuentro una lista de precios "
+                f"mayorista{detail} activa y vigente para aplicar. No voy a inventar un descuento. "
+                "El comercio debe asignarte o activar una lista vigente."
+            )
+        if cart.get("items"):
+            if cart.get("pricing_valid") is False:
+                return (
+                    "Tu ficha sí figura como mayorista, pero no puedo confirmar un precio mayorista "
+                    f"para todas las líneas del carrito: {cart.get('pricing_error') or 'hay productos sin una tarifa válida para esa cantidad.'}"
+                )
+            lines = [
+                f"Sí. Tu ficha está como mayorista y tiene asignada la lista *{price_list.name}*.",
+                "Estos son los precios resueltos para las cantidades actuales:",
+            ]
+            for item in cart["items"]:
+                name = str(item.get("name") or "Producto")
+                quantity = Decimal(str(item.get("quantity") or 0))
+                unit = _money(item.get("unit_price"))
+                subtotal = _money(item.get("subtotal"))
+                if str(item.get("price_source") or "").strip().lower() == "mayorista":
+                    lines.append(
+                        f"• {quantity_text(quantity)} × {name}: precio mayorista "
+                        f"{_format_vendor_currency(unit)} c/u; subtotal {_format_vendor_currency(subtotal)}"
+                    )
+                    lines.extend(format_vendor_wholesale_price_details(
+                        quantity=quantity,
+                        unit_price=unit,
+                        reference_price=item.get("wholesale_reference_price"),
+                        discount_percent=item.get("wholesale_discount_percent"),
+                    ))
+                else:
+                    lines.append(
+                        f"• {quantity_text(quantity)} × {name}: falta una tarifa mayorista válida "
+                        f"para esa cantidad. Motivo: {item.get('price_resolution_reason') or 'sin tarifa aplicable'}."
+                    )
+            lines.extend([
+                "",
+                f"*Total de productos:* {_format_vendor_currency(cart.get('total', 0))}",
+                "Los descuentos indicados ya están incluidos en los precios unitarios.",
+            ])
+            return "\n".join(lines)
+        return (
+            f"Sí. Tu ficha figura como mayorista y tiene asignada la lista *{price_list.name}*. "
+            "El descuento depende del producto y de la cantidad. Decime qué producto y cuántas unidades "
+            "necesitás, y te confirmo el precio de lista, el porcentaje de descuento y el precio mayorista "
+            "que devuelve el sistema."
+        )
+
+    return (
+        "No quiero darte una respuesta incorrecta: con este número no encuentro una ficha de cliente "
+        "configurada como mayorista con una lista vigente asignada. Eso no significa que el comercio "
+        "no tenga precios mayoristas. Para calcularlos, el comercio debe marcar tu ficha como mayorista "
+        "y asignarle una lista activa; después puedo mostrarte el descuento real por producto y cantidad."
+    )
+
+
 def _handle_vendor_command(company_id: int, conversation_id: int, sender: str, text: str):
     """Deterministic WhatsApp commands keep order and payment actions outside the LLM."""
     normalized = " ".join(text.lower().strip().split())
@@ -1141,6 +1316,13 @@ def webhook():
                 continue
 
             command_response = _handle_vendor_command(company.id, conversation.id, sender, text)
+            if command_response is None:
+                command_response = _handle_vendor_wholesale_inquiry(
+                    company.id,
+                    conversation.id,
+                    sender,
+                    text,
+                )
             if command_response is not None:
                 assistant = _persist_deterministic_turn(
                     conversation,
