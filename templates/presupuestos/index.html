@@ -96,8 +96,10 @@
               {% if quote.delivery and quote.delivery.method != 'envio' %}
                 {% if quote.delivery.pickup_status == 'picked_up' or quote.delivery.picked_up_at %}
                   <div class="small text-success fw-semibold mt-1"><i class="bi bi-check2-circle me-1"></i>Retirado{% if quote.delivery.picked_up_at %} · {{ quote.delivery.picked_up_at.strftime('%d/%m/%Y %H:%M') }}{% endif %}</div>
-                {% elif quote.converted_sale_id or quote.status == 'CONVERTIDO' %}
+                {% elif quote.delivery.pickup_status == 'pending' and (quote.converted_sale_id or quote.status == 'CONVERTIDO') %}
                   <div class="small text-warning fw-semibold mt-1"><i class="bi bi-box-seam me-1"></i>Listo para retirar</div>
+                {% elif quote.delivery.pickup_status == 'legacy' or not quote.delivery.pickup_status %}
+                  <div class="small text-muted mt-1"><i class="bi bi-clock-history me-1"></i>Anterior al seguimiento de retiros</div>
                 {% endif %}
               {% endif %}
             </td>
