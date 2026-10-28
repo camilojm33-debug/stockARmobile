@@ -22,16 +22,9 @@ def _decimal(value, default="0"):
 
 
 def _active_today(price_list, today=None):
-    today = today or date.today()
-    if not price_list or not bool(price_list.active):
-        return False
-    starts = getattr(price_list, "effective_from", None)
-    ends = getattr(price_list, "effective_until", None)
-    if starts is not None and starts > today:
-        return False
-    if ends is not None and ends < today:
-        return False
-    return True
+    from wholesale_pricing import price_list_is_current
+
+    return price_list_is_current(price_list, today=today)
 
 
 def _has_wholesale_pricing_access(company_id: int) -> bool:
@@ -230,6 +223,82 @@ def apply_wholesale_prices(lines: list[dict], *, company_id: int, client) -> lis
             # A previously assigned list must not keep applying after a downgrade.
             line["price"] = resolution["price"]
     return lines
+
+
+def is_wholesale_client(client) -> bool:
+    return (
+        client is not None
+        and str(getattr(client, "customer_type", "minorista") or "minorista").strip().lower() == "mayorista"
+    )
+
+
+def wholesale_pricing_error(lines: list[dict], *, client) -> str | None:
+    """Describe why a wholesale order cannot be safely priced end to end."""
+    if not is_wholesale_client(client):
+        return None
+    unresolved = [
+        line for line in (lines or [])
+        if str(line.get("price_source") or "minorista").strip().lower() != "mayorista"
+    ]
+    if not unresolved:
+        return None
+
+    reasons = {
+        "plan_sin_mayoristas": "el plan de la empresa no habilita precios mayoristas",
+        "mayorista_sin_lista": "el cliente no tiene una lista mayorista asignada",
+        "lista_no_vigente": "la lista asignada está inactiva o fuera de su vigencia",
+        "producto_sin_tarifa_mayorista": "no existe una tarifa por producto ni una regla general que cubra esa cantidad",
+        "regla_general_sin_precio_minorista": "no se puede calcular el descuento porque falta un precio minorista válido",
+        "cantidad_invalida": "la cantidad del producto no es válida",
+    }
+    first_reason = next(
+        (reasons.get(str(line.get("price_resolution_reason") or "")) for line in unresolved
+         if reasons.get(str(line.get("price_resolution_reason") or ""))),
+        "no se encontró una tarifa mayorista aplicable",
+    )
+    products = []
+    for line in unresolved[:4]:
+        product = line.get("product")
+        name = str(getattr(product, "name", "") or line.get("name") or "Producto")
+        try:
+            quantity = _decimal(line.get("quantity"), "0")
+            detail = f"{name} (cantidad {quantity:g})"
+        except Exception:
+            detail = name
+        if detail not in products:
+            products.append(detail)
+    extra = f", y {len(unresolved) - 4} producto(s) más" if len(unresolved) > 4 else ""
+    try:
+        list_id = int(getattr(client, "price_list_id", 0) or 0)
+    except (TypeError, ValueError):
+        list_id = 0
+    list_name = next(
+        (str(line.get("price_list_name") or "").strip() for line in unresolved if line.get("price_list_name")),
+        "",
+    )
+    if not list_name and list_id:
+        try:
+            from wholesale_pricing import PriceList
+            price_list = PriceList.query.filter_by(
+                id=list_id,
+                company_id=int(getattr(client, "company_id", 0) or 0),
+            ).first()
+            list_name = str(getattr(price_list, "name", "") or "").strip()
+        except Exception:
+            list_name = ""
+    list_label = f' "{list_name}"' if list_name else ""
+    return (
+        f"No se puede confirmar el pedido mayorista{list_label}. "
+        f"Revisá {first_reason}: {', '.join(products)}{extra}. "
+        "Corregí la lista o el mínimo de cantidad y volvé a calcular el carrito."
+    )
+
+
+def validate_wholesale_prices(lines: list[dict], *, client) -> None:
+    """Fail closed before quote, payment or sale when any wholesale line falls back."""
+    error = wholesale_pricing_error(lines, client=client)
+    if error:
+        raise ValueError(error)
 
 
 def apply_price_snapshot(lines: list[dict], snapshots: list[dict]) -> list[dict]:
