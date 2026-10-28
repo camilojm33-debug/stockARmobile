@@ -1,6 +1,8 @@
 // CartManager - Gestor del Carrito de Compras
 // Guarda y maneja productos en localStorage
 let cart = [];
+let cartPricingRequestId = 0;
+let cartPricingInFlight = false;
 const CART_KEY_PREFIX = 'stockarmobile_cart';
 let scannerStream = null;
 let scannerLoopActive = false;
@@ -379,6 +381,9 @@ function loadCart() {
   // register navigates away and destroys in-memory JS state.
   restoreQuotePricingSnapshotFromStorage();
   updateCartUI();
+  if (cart.length && !quoteSnapshotMatchesCart()) {
+    void refreshCartPricing({ quiet: true });
+  }
 }
 
 /**
@@ -583,6 +588,8 @@ function addToCart(productId, name, price, stock, barcode = '', quantity = 1, un
         productId: productId,
         name: name,
         price: parseFloat(price),
+        retailPrice: parseFloat(price),
+        priceSource: 'minorista',
         stock: availableStock,
         barcode: barcode,
         unitMeasure: unitMeasure || 'u',
@@ -592,6 +599,7 @@ function addToCart(productId, name, price, stock, barcode = '', quantity = 1, un
     }
 
     saveCart();
+    void refreshCartPricing({ quiet: true });
     emitPosUiEvent('pos:product-added', { productId });
 
     showNotification(name + ' agregado al carrito', 'success');
@@ -607,8 +615,10 @@ function addToCart(productId, name, price, stock, barcode = '', quantity = 1, un
  */
 function removeFromCart(productId) {
   invalidateQuoteSnapshot();
+  cartPricingRequestId += 1;
   cart = cart.filter(item => item.productId !== productId);
   saveCart();
+  void refreshCartPricing({ quiet: true });
 }
 
 /**
@@ -620,19 +630,22 @@ function updateQuantity(productId, newQuantity) {
   invalidateQuoteSnapshot();
   const item = cart.find(item => item.productId === productId);
   const parsedQty = parseFloat(newQuantity);
-  if (item && Number.isFinite(parsedQty) && parsedQty > 0) {
-    item.quantity = Math.min(parsedQty, item.stock);
-  } else {
-    // Si la cantidad es <= 0, eliminar el producto
+  if (!item) return;
+  if (!Number.isFinite(parsedQty) || parsedQty <= 0) {
     removeFromCart(productId);
+    return;
   }
+  item.quantity = Math.min(parsedQty, item.stock);
   saveCart();
+  void refreshCartPricing({ quiet: true });
 }
 
 /**
  * Limpiar todo el carrito
  */
 function clearCart() {
+  cartPricingRequestId += 1;
+  cartPricingInFlight = false;
   cart = [];
   resetCheckoutToken();
   quotePricingSnapshot = null;
@@ -692,11 +705,17 @@ function renderCartModal() {
       const productId = parseInt(item.productId, 10) || 0;
       const quantity = parseFloat(item.quantity) || 0;
       const stock = parseFloat(item.stock) || 0;
+      const wholesaleDetail = item.priceSource === 'mayorista'
+        ? (item.wholesaleDiscountPercent != null
+          ? `<small class="d-block text-success mt-1">Descuento mayorista ${Number(item.wholesaleDiscountPercent).toFixed(2)}% · ahorro ${formatPrice(item.wholesaleDiscountAmount || 0)} (incluido)</small>`
+          : `<small class="d-block text-success mt-1">Tarifa mayorista${item.priceListName ? ' · ' + escapeHtml(item.priceListName) : ''}</small>`)
+        : '';
       return `
         <div class="pos-cart-modal-line">
           <div class="pos-cart-modal-info">
             <strong class="d-block text-truncate">${escapeHtml(item.name)}</strong>
           <small class="text-muted">${formatPrice(item.price)} x ${formatQuantity(quantity)} ${escapeHtml(item.unitMeasure || 'u')}</small>
+          ${wholesaleDetail}
         </div>
           <div class="pos-cart-modal-controls">
           <button class="btn btn-sm btn-outline-secondary" onclick="updateQuantity(${productId}, ${quantity - 1}); renderCartModal();">-</button>
@@ -726,11 +745,17 @@ function renderCartSidebar() {
     const productId = parseInt(item.productId, 10) || 0;
     const quantity = parseFloat(item.quantity) || 0;
     const stock = parseFloat(item.stock) || 0;
+    const wholesaleDetail = item.priceSource === 'mayorista'
+      ? (item.wholesaleDiscountPercent != null
+        ? `<small class="d-block text-success">Mayorista ${Number(item.wholesaleDiscountPercent).toFixed(2)}% · ahorro ${formatPrice(item.wholesaleDiscountAmount || 0)}</small>`
+        : `<small class="d-block text-success">Tarifa mayorista${item.priceListName ? ' · ' + escapeHtml(item.priceListName) : ''}</small>`)
+      : '';
     return `
     <div class="pos-cart-line">
       <div class="min-w-0">
         <strong class="d-block text-truncate">${escapeHtml(item.name)}</strong>
         <small class="text-muted">${formatPrice(item.price)} x ${formatQuantity(quantity)} ${escapeHtml(item.unitMeasure || 'u')}</small>
+        ${wholesaleDetail}
       </div>
       <div class="d-flex align-items-center gap-1">
         <button class="btn btn-sm btn-outline-secondary" type="button" onclick="updateQuantity(${productId}, ${quantity - 1})" aria-label="Restar">-</button>
@@ -936,7 +961,124 @@ function renderQuoteChargeBreakdown() {
   container.classList.remove('d-none');
 }
 
+
+function selectedPosClientIsWholesale() {
+  const select = document.getElementById('checkout-client-select');
+  const option = select?.selectedOptions?.[0];
+  return String(option?.dataset?.customerType || 'minorista').trim().toLowerCase() === 'mayorista';
+}
+
+function clearCartWholesaleMetadata(item) {
+  item.priceSource = 'minorista';
+  item.priceListName = '';
+  item.priceListId = null;
+  item.wholesaleDiscountPercent = null;
+  item.wholesaleReferencePrice = null;
+  item.wholesaleDiscountAmount = 0;
+}
+
+function restoreRetailCartPrices() {
+  cart.forEach(item => {
+    const retail = Number(item.retailPrice);
+    if (Number.isFinite(retail) && retail >= 0) item.price = retail;
+    clearCartWholesaleMetadata(item);
+  });
+  saveCart();
+  renderCartModal();
+}
+
+/**
+ * Ask the server's authoritative pricing resolver for current cart prices.
+ * The browser displays these prices but never supplies them as authoritative
+ * values when creating a sale.
+ */
+async function refreshCartPricing({ quiet = true, force = false } = {}) {
+  if (!Array.isArray(cart) || !cart.length) return true;
+  if (quoteSnapshotMatchesCart()) return true;
+
+  if (!navigator.onLine) {
+    if (selectedPosClientIsWholesale()) {
+      if (!quiet) showNotification('No se pueden verificar los precios mayoristas sin conexión. Conectate antes de cobrar.', 'warning');
+      return false;
+    }
+    restoreRetailCartPrices();
+    return true;
+  }
+
+  const requestId = ++cartPricingRequestId;
+  cartPricingInFlight = true;
+  try {
+    const response = await fetch('/ventas/api/cart-pricing', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'X-CSRFToken': getCsrfToken(),
+        'X-Cart-Tenant': getCartTenantKey(),
+      },
+      body: JSON.stringify({
+        client_id: document.getElementById('checkout-client-select')?.value || '',
+        items: cart.map(item => ({
+          productId: Number(item.productId),
+          quantity: Number(item.quantity),
+        })),
+      }),
+    });
+    const data = await response.json();
+    if (!response.ok || data?.success !== true) {
+      throw new Error(data?.error || 'No se pudieron actualizar los precios del carrito.');
+    }
+    if (requestId !== cartPricingRequestId) return false;
+
+    const lines = new Map((Array.isArray(data.lines) ? data.lines : []).map(line => [String(line.product_id), line]));
+    if (lines.size !== cart.length) {
+      throw new Error('El servidor no devolvió el precio de todos los productos. Volvé a intentar.');
+    }
+    for (const item of cart) {
+      const line = lines.get(String(item.productId));
+      if (!line || Math.abs(Number(line.quantity) - Number(item.quantity)) > 0.0005) {
+        throw new Error('El carrito cambió mientras se actualizaban los precios. Volvé a intentar.');
+      }
+    }
+
+    cart.forEach(item => {
+      const line = lines.get(String(item.productId));
+      item.retailPrice = Number(line.retail_price);
+      item.price = Number(line.unit_price);
+      item.priceSource = String(line.price_source || 'minorista');
+      item.priceListId = line.price_list_id || null;
+      item.priceListName = String(line.price_list_name || '');
+      item.wholesaleDiscountPercent = line.discount_percent == null ? null : Number(line.discount_percent);
+      item.wholesaleReferencePrice = line.reference_price == null ? null : Number(line.reference_price);
+      item.wholesaleDiscountAmount = Number(line.wholesale_discount_amount || 0);
+    });
+    cartPricingInFlight = false;
+    saveCart();
+    renderCartModal();
+    updateCheckoutTotals();
+    return true;
+  } catch (error) {
+    if (requestId !== cartPricingRequestId) return false;
+    console.warn('[sales] No se pudo actualizar el precio del carrito:', error);
+    if (selectedPosClientIsWholesale()) {
+      if (!quiet) showNotification(error.message || 'No se pudieron verificar los precios mayoristas. No se puede cobrar con importes sin validar.', 'danger');
+      return false;
+    }
+    restoreRetailCartPrices();
+    if (!quiet) showNotification('No se pudieron verificar las tarifas del carrito. Se muestran precios minoristas; revisá la conexión antes de cobrar.', 'warning');
+    // The sale endpoint recalculates server-side. For a normal retail cart the
+    // pre-existing offline/fallback behavior is preserved after restoring bases.
+    return !navigator.onLine;
+  } finally {
+    if (requestId === cartPricingRequestId) cartPricingInFlight = false;
+  }
+}
+
 function updateCheckoutTotals() {
+  const wholesaleSavings = cart.reduce((sum, item) => sum + Math.max(Number(item.wholesaleDiscountAmount) || 0, 0), 0);
+  const wholesaleSavingsRow = document.getElementById('cart-wholesale-savings-row');
+  if (wholesaleSavingsRow) wholesaleSavingsRow.classList.toggle('d-none', wholesaleSavings <= 0);
+  const wholesaleSavingsLabel = document.getElementById('cart-wholesale-savings');
+  if (wholesaleSavingsLabel) wholesaleSavingsLabel.textContent = formatPrice(wholesaleSavings);
   const totals = getCheckoutTotals();
   const pairs = {
     'cart-subtotal': totals.subtotal,
@@ -1037,7 +1179,23 @@ function setupCheckoutPaymentBehavior() {
     refresh();
   });
   paid2.addEventListener('input', refresh);
-  document.getElementById('checkout-client-select')?.addEventListener('change', refresh);
+  document.getElementById('checkout-client-select')?.addEventListener('change', () => {
+    refresh();
+    void refreshCartPricing({ quiet: true });
+  });
+  const quickClientType = document.getElementById('quick-client-type');
+  const quickClientListWrap = document.getElementById('quick-client-price-list-wrap');
+  const quickClientList = document.getElementById('quick-client-price-list');
+  const syncQuickClientType = () => {
+    const isWholesale = quickClientType?.value === 'mayorista';
+    quickClientListWrap?.classList.toggle('d-none', !isWholesale);
+    if (quickClientList) {
+      quickClientList.required = Boolean(isWholesale);
+      if (!isWholesale) quickClientList.value = '';
+    }
+  };
+  quickClientType?.addEventListener('change', syncQuickClientType);
+  syncQuickClientType();
   document.getElementById('checkout-document-type')?.addEventListener('change', refresh);
   document.getElementById('checkout-discount-mode')?.addEventListener('change', () => {
     const mode = document.getElementById('checkout-discount-mode')?.value || 'amount';
@@ -1527,7 +1685,15 @@ async function createQuickClient() {
   const emailInput = document.getElementById('quick-client-email');
   const whatsappInput = document.getElementById('quick-client-whatsapp');
   const actionButton = document.getElementById('quick-client-create-btn');
+  const customerType = document.getElementById('quick-client-type')?.value || 'minorista';
+  const priceListId = document.getElementById('quick-client-price-list')?.value || '';
   const name = (nameInput?.value || '').trim();
+
+  if (customerType === 'mayorista' && !priceListId) {
+    showNotification('Seleccioná una lista mayorista activa.', 'warning');
+    document.getElementById('quick-client-price-list')?.focus();
+    return;
+  }
 
   if (!name) {
     showNotification('Ingresá el nombre del cliente.', 'warning');
@@ -1551,6 +1717,8 @@ async function createQuickClient() {
         name,
         email: (emailInput?.value || '').trim(),
         whatsapp: (whatsappInput?.value || '').trim(),
+        customer_type: customerType,
+        price_list_id: customerType === 'mayorista' ? priceListId : '',
       }),
     });
     const data = await response.json();
@@ -1563,7 +1731,9 @@ async function createQuickClient() {
     if (select && client.id) {
       const newOption = document.createElement('option');
       newOption.value = String(client.id);
-      newOption.textContent = client.name || `Cliente #${client.id}`;
+      newOption.dataset.customerType = client.customer_type || 'minorista';
+      newOption.dataset.priceListId = client.price_list_id || '';
+      newOption.textContent = `${client.name || `Cliente #${client.id}`}${client.customer_type === 'mayorista' ? ' · Mayorista' : ''}`;
       select.appendChild(newOption);
       select.value = String(client.id);
       select.dispatchEvent(new Event('change'));
@@ -1572,6 +1742,14 @@ async function createQuickClient() {
     if (nameInput) nameInput.value = '';
     if (emailInput) emailInput.value = '';
     if (whatsappInput) whatsappInput.value = '';
+    const quickClientTypeInput = document.getElementById('quick-client-type');
+    const quickClientPriceListInput = document.getElementById('quick-client-price-list');
+    if (quickClientTypeInput) quickClientTypeInput.value = 'minorista';
+    if (quickClientPriceListInput) {
+      quickClientPriceListInput.value = '';
+      quickClientPriceListInput.required = false;
+    }
+    document.getElementById('quick-client-price-list-wrap')?.classList.add('d-none');
 
     bootstrap.Modal.getInstance(document.getElementById('quickClientModal'))?.hide();
     showNotification('Cliente creado y seleccionado.', 'success');
