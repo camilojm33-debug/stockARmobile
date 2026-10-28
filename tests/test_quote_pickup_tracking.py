@@ -2,7 +2,7 @@ from decimal import Decimal
 from pathlib import Path
 from types import SimpleNamespace
 
-from whatsapp_agent import _ai_order_channel_meta, _ai_order_row
+from whatsapp_agent import _ai_order_row
 
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
@@ -53,8 +53,9 @@ def test_pickup_tracking_is_shown_in_both_ai_order_and_quote_screens():
     assert "Listo para retirar" in quote_index
 
 
-def test_pickup_migration_does_not_backfill_historical_deliveries_as_picked_up():
+def test_pickup_migration_marks_legacy_rows_without_inventing_completion():
     migration = (REPO_ROOT / "migrations/versions/20261028_02_quote_pickup_tracking.py").read_text(encoding="utf-8")
     assert "picked_up_at" in migration
-    assert "UPDATE quote_deliveries" not in migration
-    assert "pickup_status" in migration
+    assert "pickup_status = 'legacy'" in migration
+    assert "pickup_status = 'picked_up'" not in migration
+    assert 'server_default="pending"' in migration
