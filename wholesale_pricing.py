@@ -12,6 +12,7 @@ from io import BytesIO
 from flask import Blueprint, abort, current_app, flash, jsonify, redirect, render_template, request, send_file, url_for
 from flask_login import current_user, login_required
 from sqlalchemy import Index, UniqueConstraint, func, or_
+from sqlalchemy.exc import IntegrityError
 
 from app import Company, db, tenant_required
 from services.ai_agent.usage_service import can_use_commercial_feature
@@ -284,6 +285,64 @@ def create_list():
     db.session.commit()
     flash("Lista de precios creada. Cargá los precios por producto y asignala a los clientes correspondientes.", "success")
     return redirect(url_for("wholesale_pricing.index", list_id=row.id))
+
+
+@bp.post("/listas/<int:list_id>/editar")
+@tenant_required
+@login_required
+@_wholesale_plan_required
+def edit_list(list_id):
+    """Edit list metadata without changing its product tiers or discount rules."""
+    _require_admin()
+    company_id = _company_id()
+    row = PriceList.query.filter_by(id=list_id, company_id=company_id).first_or_404()
+
+    name = str(request.form.get("name") or "").strip()[:120]
+    code = _slug(request.form.get("code") or name)
+    try:
+        effective_from = _date_value(request.form.get("effective_from"))
+        effective_until = _date_value(request.form.get("effective_until"))
+    except ValueError as exc:
+        flash(str(exc), "danger")
+        return redirect(url_for("wholesale_pricing.index", list_id=list_id))
+
+    if not name or not code:
+        flash("Ingresá un nombre y un código válidos para la lista.", "danger")
+        return redirect(url_for("wholesale_pricing.index", list_id=list_id))
+    if effective_from and effective_until and effective_until < effective_from:
+        flash("La fecha final no puede ser anterior a la fecha inicial.", "danger")
+        return redirect(url_for("wholesale_pricing.index", list_id=list_id))
+
+    duplicate = PriceList.query.filter(
+        PriceList.company_id == company_id,
+        PriceList.code == code,
+        PriceList.id != row.id,
+    ).first()
+    if duplicate is not None:
+        flash("Ya existe otra lista con ese código en tu empresa.", "warning")
+        return redirect(url_for("wholesale_pricing.index", list_id=list_id))
+
+    row.name = name
+    row.code = code
+    row.effective_from = effective_from
+    row.effective_until = effective_until
+    try:
+        db.session.commit()
+    except IntegrityError:
+        db.session.rollback()
+        flash("Ya existe otra lista con ese código en tu empresa. No se guardaron cambios.", "warning")
+        return redirect(url_for("wholesale_pricing.index", list_id=list_id))
+    except Exception:
+        db.session.rollback()
+        current_app.logger.exception(
+            "Wholesale price-list metadata update failed: company_id=%s list_id=%s",
+            company_id, list_id,
+        )
+        flash("No se pudo actualizar la lista. No se guardaron cambios.", "danger")
+        return redirect(url_for("wholesale_pricing.index", list_id=list_id))
+
+    flash("Datos de la lista actualizados. Los precios y reglas existentes se conservaron.", "success")
+    return redirect(url_for("wholesale_pricing.index", list_id=list_id))
 
 
 
