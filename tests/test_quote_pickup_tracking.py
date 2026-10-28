@@ -1,26 +1,21 @@
+from decimal import Decimal
 from pathlib import Path
+from types import SimpleNamespace
 
-import pytest
-
-from whatsapp_agent import _ai_order_row, _ai_order_channel_meta
+from whatsapp_agent import _ai_order_channel_meta, _ai_order_row
 
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 
 
 def test_pickup_status_is_exposed_in_ai_order_summary_without_changing_commercial_state(monkeypatch):
-    from types import SimpleNamespace
     import whatsapp_agent
 
     monkeypatch.setattr(whatsapp_agent, "_ai_order_payment", lambda company_id, quote_id: None)
     monkeypatch.setattr(whatsapp_agent, "_ai_order_conversation", lambda company_id, quote_id, payment=None: None)
     monkeypatch.setattr(whatsapp_agent, "_ai_order_channel", lambda company_id, quote_id, payment=None: "webchat")
     monkeypatch.setattr(whatsapp_agent, "get_vendor_options", lambda company: {"can_follow_up": False})
-    monkeypatch.setattr(whatsapp_agent, "Company", SimpleNamespace(query=SimpleNamespace(filter_by=lambda **kwargs: SimpleNamespace(first=lambda: SimpleNamespace(id=1)))))
-    monkeypatch.setattr(whatsapp_agent, "db", SimpleNamespace(session=SimpleNamespace()))
-    # Avoid importing QuoteDelivery or hitting the database: _ai_order_row reads only attributes below.
-    import app as stock_app
-    monkeypatch.setattr(stock_app, "Company", SimpleNamespace(query=SimpleNamespace(filter_by=lambda **kwargs: SimpleNamespace(first=lambda: SimpleNamespace(id=1)))))
+    monkeypatch.setattr(whatsapp_agent.Company, "query", SimpleNamespace(filter_by=lambda **kwargs: SimpleNamespace(first=lambda: SimpleNamespace(id=1))), raising=False)
 
     delivery = SimpleNamespace(
         method="retiro",
@@ -30,9 +25,11 @@ def test_pickup_status_is_exposed_in_ai_order_summary_without_changing_commercia
         shipping_status="confirmed",
     )
     quote = SimpleNamespace(
-        id=42, number="P-000042", company_id=1, observations="Pedido generado por el Vendedor 24 hs de StockARmobile.",
-        converted_sale_id=8, total_amount=Decimal("100.00"), currency="ARS", items=[], date=None, created_at=None,
-        client=None, consumer_name="Cliente", client_id=None, delivery=delivery,
+        id=42, number="P-000042", company_id=1,
+        observations="Pedido generado por el Vendedor 24 hs de StockARmobile.",
+        converted_sale_id=8, total_amount=Decimal("100.00"), currency="ARS",
+        items=[], date=None, created_at=None, client=None, consumer_name="Cliente",
+        client_id=None, delivery=delivery,
     )
     row = _ai_order_row(1, quote)
     assert row["order_key"] == "confirmed"
