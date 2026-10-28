@@ -748,7 +748,7 @@ def ai_orders():
         or (selected_status == "human" and row.get("attention", {}).get("key") == "human")
         or (selected_status == "pickup_pending" and row.get("delivery", {}).get("method") != "envio" and row.get("sale_id") and not row.get("delivery", {}).get("picked_up_at") and row.get("delivery", {}).get("pickup_status") != "picked_up")
         or (selected_status == "picked_up" and row.get("delivery", {}).get("pickup_status") == "picked_up")
-        or (selected_status not in {"shipping_pending", "human"} and row["order_key"] == selected_status)
+        or (selected_status not in {"shipping_pending", "human", "pickup_pending", "picked_up"} and row["order_key"] == selected_status)
     ]
     channel_keys = []
     for row in all_rows:
