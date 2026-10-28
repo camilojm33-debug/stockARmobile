@@ -173,7 +173,7 @@ def _quote_filter_bounds(date_from, date_to):
 
 def _parse_items(payload, *, client=None):
     from app import Product, db, scope_query_to_company
-    from services.wholesale_pricing_service import resolve_product_price
+    from services.wholesale_pricing_service import is_wholesale_client, resolve_product_price, validate_wholesale_prices
 
     items = []
     total_lines = payload.get("items", [])
@@ -250,6 +250,23 @@ def _parse_items(payload, *, client=None):
                         )
                 else:
                     price_source = "manual"
+            elif is_wholesale_client(client):
+                explicitly_manual = (
+                    can_modify_prices
+                    and str(raw_item.get("price_source") or "").strip().lower() == "manual"
+                )
+                if explicitly_manual:
+                    price_source = "manual"
+                else:
+                    validate_wholesale_prices(
+                        [{
+                            "product": product,
+                            "quantity": quantity,
+                            "price_source": resolution["source"],
+                            "price_resolution_reason": resolution.get("reason"),
+                        }],
+                        client=client,
+                    )
             elif not can_modify_prices and unit_price != to_decimal(product.price):
                 raise ValueError("No tenés permiso para modificar precios.")
         elif not can_modify_prices:
