@@ -646,6 +646,7 @@ function updateQuantity(productId, newQuantity) {
 function clearCart() {
   cartPricingRequestId += 1;
   cartPricingInFlight = false;
+  setCartWholesalePricingStatus('');
   cart = [];
   resetCheckoutToken();
   quotePricingSnapshot = null;
