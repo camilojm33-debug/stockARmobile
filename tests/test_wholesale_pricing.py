@@ -1285,6 +1285,9 @@ def test_general_list_discount_rules_fill_gaps_and_specific_tiers_override(whole
 
     # The general rule starts at quantity 3, above the product's base tier at 1,
     # so it applies. At quantity 12, the product-specific tier ties and wins.
+    assert product_at_three["price"] == Decimal("85.00")
+    assert product_at_three["discount_percent"] == Decimal("15.00")
+    assert product_at_three["price_rule_type"] == "general"
     assert product_specific_tie["price"] == Decimal("70.00")
     assert product_specific_tie["discount_percent"] is None
     assert product_specific_tie["price_rule_type"] == "product"
