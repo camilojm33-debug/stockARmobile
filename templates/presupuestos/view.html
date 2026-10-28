@@ -97,7 +97,7 @@
       {% elif quote.delivery.pickup_status == 'picked_up' or quote.delivery.picked_up_at %}
       <div class="alert alert-success mb-0">
         <div class="fw-bold"><i class="bi bi-check-circle-fill me-1"></i>Mercadería retirada</div>
-        <div>Fecha y hora: {{ quote.delivery.picked_up_at.strftime('%d/%m/%Y %H:%M') if quote.delivery.picked_up_at else '—' }}</div>
+        <div>Fecha y hora: {{ quote.delivery.picked_up_at_local or '—' }}</div>
         {% if quote.delivery.picked_up_by %}<div>Entregado por: {{ quote.delivery.picked_up_by.name or quote.delivery.picked_up_by.username }}</div>{% endif %}
       </div>
       {% elif quote.delivery.pickup_status == 'pending' and (quote.status == 'CONVERTIDO' or quote.converted_sale_id) %}
