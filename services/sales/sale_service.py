@@ -162,8 +162,9 @@ class SaleService:
                 from services.wholesale_pricing_service import apply_price_snapshot
                 lines = apply_price_snapshot(lines, trusted_line_snapshots)
             elif quote_snapshot is None:
-                from services.wholesale_pricing_service import apply_wholesale_prices
+                from services.wholesale_pricing_service import apply_wholesale_prices, validate_wholesale_prices
                 lines = apply_wholesale_prices(lines, company_id=company_id, client=client)
+                validate_wholesale_prices(lines, client=client)
             if quote_snapshot is not None:
                 expected = {
                     int(item.product_id): {
