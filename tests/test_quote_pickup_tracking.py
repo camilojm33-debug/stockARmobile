@@ -18,7 +18,9 @@ def test_pickup_status_is_exposed_in_ai_order_summary_without_changing_commercia
     monkeypatch.setattr(whatsapp_agent, "get_vendor_options", lambda company: {"can_follow_up": False})
     import app as app_module
     from app import app as flask_app
-    # Mock the module symbol, not Company.query: the latter is a Flask-SQLAlchemy\n    # descriptor and replacing it can leak a resolved Query object into later tests.\n    monkeypatch.setattr(app_module, "Company", SimpleNamespace(query=SimpleNamespace(filter_by=lambda **kwargs: SimpleNamespace(first=lambda: SimpleNamespace(id=1)))))
+    # Mock the module symbol, not Company.query: the latter is a Flask-SQLAlchemy
+    # descriptor and replacing it can leak a resolved Query object into later tests.
+    monkeypatch.setattr(app_module, "Company", SimpleNamespace(query=SimpleNamespace(filter_by=lambda **kwargs: SimpleNamespace(first=lambda: SimpleNamespace(id=1)))))
 
     delivery = SimpleNamespace(
         method="retiro",
