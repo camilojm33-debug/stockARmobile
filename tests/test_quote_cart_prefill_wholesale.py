@@ -44,6 +44,7 @@ def test_quote_to_pos_prefill_preserves_saved_wholesale_price_and_savings():
 def test_quote_cart_prefill_does_not_start_retail_pricing_before_client_selection():
     cart_manager = (REPO_ROOT / "static/assets/js/cart-manager.js").read_text(encoding="utf-8")
     pos_template = (REPO_ROOT / "templates/ventas/index.html").read_text(encoding="utf-8")
+    service_worker = (REPO_ROOT / "static/service-worker.js").read_text(encoding="utf-8")
 
     load_start = cart_manager.index("function loadCart()")
     load_end = cart_manager.index("function saveCart()", load_start)
@@ -57,3 +58,5 @@ def test_quote_cart_prefill_does_not_start_retail_pricing_before_client_selectio
     assert "wholesaleDiscountPercent" in pos_template
     assert "wholesaleReferencePrice" in pos_template
     assert "wholesaleDiscountAmount" in pos_template
+    assert "/static/assets/js/cart-manager.js?v=20261028-wholesale-quote-prefill-fix" in pos_template
+    assert "/static/assets/js/cart-manager.js?v=20261028-wholesale-quote-prefill-fix" in service_worker
